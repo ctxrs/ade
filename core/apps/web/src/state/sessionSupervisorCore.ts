@@ -1,7 +1,5 @@
 import {
-  getSessionHistory,
   idToString,
-  listTurnTools,
   type GitStatusSummary,
   type Message,
   type ProviderOptions,
@@ -11,8 +9,6 @@ import {
   type SessionHeadSnapshot,
   type SessionState,
   type SessionTurn,
-  type SessionTurnTool,
-  type SessionTurnToolSummary,
   type SubagentInvocation,
 } from "../api/client";
 import type { WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
@@ -21,10 +17,8 @@ import {
   findWorkspaceSessionHead,
 } from "./workspaceActiveSnapshot/projection";
 import {
-  loadSessionHistoryPageV1,
-  saveSessionHistoryPageV1,
+  type PersistedTaskThoughtsV1,
 } from "./uiStateStore";
-import type { PersistedTaskThoughtsV1 } from "./uiStateStore";
 import { SessionReplicaBridge } from "./sessionReplicaBridge";
 import type { SessionReplicaFreshnessState, SessionReplicaPatch } from "./sessionReplicaProtocol";
 import { emitUiDiagnostic } from "./diagnosticsChannel";
@@ -97,7 +91,17 @@ import {
   refreshSubscriptions,
 } from "./sessionSupervisor/subscriptions";
 import { resolveSessionMode, shouldFailPendingSessionOpen } from "./sessionSupervisor/sessionMode";
-import { summarizeToolPayload } from "./sessionSupervisor/toolStateProjection";
+import {
+  EVENT_BUFFER_LIMIT,
+  HEAD_LIMIT,
+  MAX_CACHED_SESSIONS,
+  TURN_PAGE_LIMIT,
+  WARM_TTL_MS,
+  isReplicaAuthority,
+  shouldSkipBoundedBootstrapSeed,
+  toReplicaFreshness,
+} from "./sessionSupervisor/config";
+import { loadMoreTurnsForEntry, loadTurnToolsForEntry } from "./sessionSupervisor/historySupport";
 import {
   adoptLoadedSubagentInvocationsRevision,
   adoptLoadedStateRevision,
@@ -122,50 +126,6 @@ export type {
   SessionSupportLoadErrorKey,
   SessionSupervisorSnapshot,
 } from "./sessionSupervisor/entryState";
-
-const readTunableInt = (key: string, fallback: number) => {
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return fallback;
-    const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-    return parsed;
-  } catch {
-    return fallback;
-  }
-};
-
-const EVENT_BUFFER_LIMIT = readTunableInt("contextEventBufferLimit", 800);
-const TURN_PAGE_LIMIT = readTunableInt("contextTurnPageLimit", 60);
-const WARM_SESSION_BUDGET = readTunableInt("contextWarmSessionBudget", 12);
-const MAX_CACHED_SESSIONS = readTunableInt(
-  "contextMaxCachedSessions",
-  Math.max(30, WARM_SESSION_BUDGET * 3),
-);
-const WARM_TTL_MS = readTunableInt("contextWarmSessionTtlMs", 10 * 60 * 1000);
-const HEAD_LIMIT = readTunableInt("contextSessionHeadLimit", TURN_PAGE_LIMIT);
-
-const isReplicaAuthority = (freshness: InternalEntry["freshness"]) =>
-  freshness === "replica" || freshness === "authoritative";
-
-const toReplicaFreshness = (freshness: SessionReplicaFreshnessState): InternalEntry["freshness"] =>
-  freshness === "authoritative" ? "replica" : freshness;
-
-const isBoundedHeadSeed = (head: SessionHeadSnapshot): boolean =>
-  typeof head.head_window?.turn_limit === "number" && head.head_window.turn_limit > 0;
-
-const shouldSkipBoundedBootstrapSeed = (
-  entry: InternalEntry,
-  head: SessionHeadSnapshot,
-): boolean => {
-  const freshBootstrapOpen =
-    entry.freshness === "bootstrap" &&
-    !entry.turnsHydrated &&
-    entry.turns.length === 0 &&
-    entry.messages.length === 0 &&
-    entry.events.length === 0;
-  return freshBootstrapOpen && isBoundedHeadSeed(head);
-};
 
 // The daemon serializes transient events with `seq: null` (see Rust `SessionEvent` Serialize).
 // We assign a stable synthetic seq in a negative JS-safe range so sorting never scrambles
@@ -402,21 +362,18 @@ export class SessionSupervisor {
     const entry = this.ensureEntry(id);
     void this.ensureState(entry, opts);
   };
-
   loadArtifacts = (sessionId: string, opts?: { force?: boolean }) => {
     const id = String(sessionId || "").trim();
     if (!id) return;
     const entry = this.ensureEntry(id);
     void this.ensureArtifacts(entry, opts);
   };
-
   loadSubagentInvocations = (sessionId: string, opts?: { force?: boolean }) => {
     const id = String(sessionId || "").trim();
     if (!id) return;
     const entry = this.ensureEntry(id);
     void this.ensureSubagentInvocations(entry, opts);
   };
-
   refreshQueue = (sessionId: string) => {
     this.replica.dispatch({ type: "refresh_session", sessionId });
   };
@@ -462,14 +419,12 @@ export class SessionSupervisor {
     this.activeTaskSessionIds = next;
     this.refreshSubscriptions({ emitIfUnchanged: true });
   };
-
   setWarmSessionIds = (sessionIds: string[]) => {
     const next = dedupeIds(sessionIds);
     if (sameIdList(next, this.warmSessionIds)) return;
     this.warmSessionIds = next;
     this.refreshSubscriptions();
   };
-
   setSession = (session: Session) => {
     const sessionId = idToString(session.id);
     if (!sessionId) return;
@@ -622,73 +577,27 @@ export class SessionSupervisor {
   async loadMoreTurns(sessionId: string): Promise<number | null> {
     const entry = this.entries.get(String(sessionId));
     if (!entry) return null;
-    if (entry.fetching.history) return null;
-    if (!entry.hasMoreTurns) return 0;
-    const beforeSeq = entry.oldestTurnSeq;
-    if (beforeSeq == null || !Number.isFinite(beforeSeq)) {
-      return 0;
-    }
-    entry.fetching.history = true;
-    const beforeLen = entry.turns.length;
-    try {
-      const ownerScope = this.resolveEntryWorkspaceOwnerScope(entry);
-      const cached = ownerScope
-        ? await loadSessionHistoryPageV1(ownerScope, sessionId, beforeSeq, TURN_PAGE_LIMIT)
-        : null;
-      if (cached?.page) {
-        const page = cached.page;
-        this.mergeTurns(entry, page.turns);
-        this.mergeMessages(entry, page.messages);
-        entry.hasMoreTurns = page.has_more;
-        entry.oldestTurnSeq = page.next_cursor ?? entry.oldestTurnSeq;
-        entry.historyExtended = true;
-        entry.updatedAtMs = Date.now();
-        this.publish();
-        await this.persistHead(entry);
-        return entry.turns.length - beforeLen;
-      }
-      const page = await getSessionHistory(sessionId, beforeSeq, TURN_PAGE_LIMIT);
-      this.mergeTurns(entry, page.turns);
-      this.mergeMessages(entry, page.messages);
-      entry.hasMoreTurns = page.has_more;
-      entry.oldestTurnSeq = page.next_cursor ?? entry.oldestTurnSeq;
-      entry.historyExtended = true;
-      entry.updatedAtMs = Date.now();
-      this.publish();
-      if (ownerScope) {
-        await saveSessionHistoryPageV1(ownerScope, sessionId, beforeSeq, TURN_PAGE_LIMIT, page);
-      }
-      await this.persistHead(entry);
-      return entry.turns.length - beforeLen;
-    } finally {
-      entry.fetching.history = false;
-    }
+    return loadMoreTurnsForEntry({
+      sessionId,
+      entry,
+      turnPageLimit: TURN_PAGE_LIMIT,
+      resolveEntryWorkspaceOwnerScope: (nextEntry) => this.resolveEntryWorkspaceOwnerScope(nextEntry),
+      mergeTurns: (nextEntry, turns) => this.mergeTurns(nextEntry, turns),
+      mergeMessages: (nextEntry, messages) => this.mergeMessages(nextEntry, messages),
+      publish: () => this.publish(),
+      persistHead: (nextEntry) => this.persistHead(nextEntry),
+    });
   }
 
   async loadTurnTools(sessionId: string, turnId: string) {
     const entry = this.entries.get(String(sessionId));
     if (!entry) return;
-    if (entry.turnToolsHydratedByTurnId?.[turnId]) return;
-    if (entry.turnToolsLoadingSet.has(turnId)) return;
-    entry.turnToolsLoadingSet.add(turnId);
-    entry.turnToolsLoading = [...entry.turnToolsLoadingSet];
-    this.publish();
-    try {
-      const tools = await listTurnTools(sessionId, turnId);
-      // TEMP: Keep only summary-level tool data to reduce memory pressure in the webapp.
-      // Restore full tool payload hydration after the native migration stabilizes.
-      const summarized = tools.map(summarizeToolPayload);
-      entry.turnToolsByTurnId = {
-        ...entry.turnToolsByTurnId,
-        [turnId]: summarized,
-      };
-      entry.turnToolsHydratedByTurnId[turnId] = true;
-    } finally {
-      entry.turnToolsLoadingSet.delete(turnId);
-      entry.turnToolsLoading = [...entry.turnToolsLoadingSet];
-      entry.updatedAtMs = Date.now();
-      this.publish();
-    }
+    return loadTurnToolsForEntry({
+      sessionId,
+      turnId,
+      entry,
+      publish: () => this.publish(),
+    });
   }
 
   private handleReplicaPatches = (patches: SessionReplicaPatch[]) => {

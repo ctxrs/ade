@@ -4,9 +4,6 @@ import type { User } from "@supabase/supabase-js";
 import {
   ExecutionSettings as ApiExecutionSettings,
   DevRestartProvidersResult,
-  EnableMobileAccessResponse,
-  MobileAccessStatus,
-  PublicExecutionSettings,
   ResourceGovernanceLimits,
   ResourceGovernanceSettings,
   ResourceGovernanceStatus,
@@ -15,9 +12,6 @@ import {
   TelemetrySettings,
   UpdateSettingsRequest,
   devRestartProviders,
-  disableMobileAccess,
-  enableMobileAccess,
-  getMobileAccessStatus,
   Workspace,
   getResourceUtilization,
   getSettings,
@@ -66,8 +60,17 @@ import {
 import { SettingsContentRouter } from "./settings/SettingsContentRouter";
 import { SettingsShell } from "./settings/SettingsShell";
 import { useDesktopEditorSettingsController } from "./settings/hooks/useDesktopEditorSettingsController";
+import { useMobileAccessController } from "./settings/hooks/useMobileAccessController";
 import { useSettingsActions } from "./settings/useSettingsActions";
 import { useSettingsState } from "./settings/useSettingsState";
+import {
+  DEFAULT_MACHINE_HOST_PRESSURE_SWAP_THRESHOLD_MB,
+  DEFAULT_MACHINE_IDLE_SHUTDOWN_SECONDS,
+  canSaveSandboxMachineSettings,
+  defaultExecutionSettings,
+  normalizeExecutionSettings,
+  parseUnsignedInteger,
+} from "./settings/sandboxExecutionSettings";
 import type { SectionId, SettingsSectionMeta } from "./SettingsPage.types";
 import { runBillingCheckoutFlow } from "./settings/billingCheckoutFlow";
 import { shouldTrackEntitlementActivated } from "./settings/entitlementAnalytics";
@@ -77,75 +80,6 @@ import {
   parseGiB,
   sectionFromHash,
 } from "./SettingsPage.utils";
-
-const DEFAULT_MACHINE_IDLE_SHUTDOWN_SECONDS = 60 * 60;
-const DEFAULT_MACHINE_HOST_PRESSURE_SWAP_THRESHOLD_MB = 1024;
-export const MIN_MACHINE_IDLE_SHUTDOWN_SECONDS = 60;
-
-function defaultExecutionSettings(): ApiExecutionSettings {
-  return {
-    mode: "host",
-    container: {
-      runtime: "podman",
-      mount_mode: "host_mounted",
-      network_mode: "llm_only",
-      allowlist: [],
-      image: null,
-      machine: {
-        memory_profile: "economy",
-        custom_memory_mb: null,
-        idle_shutdown_seconds: DEFAULT_MACHINE_IDLE_SHUTDOWN_SECONDS,
-        host_pressure_swap_threshold_mb: DEFAULT_MACHINE_HOST_PRESSURE_SWAP_THRESHOLD_MB,
-      },
-    },
-  };
-}
-
-function normalizeExecutionSettings(
-  value: ApiExecutionSettings | PublicExecutionSettings | null | undefined,
-): ApiExecutionSettings {
-  const fallback = defaultExecutionSettings();
-  return {
-    mode: value?.mode ?? fallback.mode,
-    container: {
-      runtime: value?.container?.runtime ?? fallback.container.runtime,
-      mount_mode: value?.container?.mount_mode ?? fallback.container.mount_mode,
-      network_mode: value?.container?.network_mode ?? fallback.container.network_mode,
-      allowlist: value?.container?.allowlist ?? fallback.container.allowlist,
-      image: value?.container?.image ?? fallback.container.image,
-      machine: {
-        memory_profile: value?.container?.machine?.memory_profile ?? fallback.container.machine.memory_profile,
-        custom_memory_mb: value?.container?.machine?.custom_memory_mb ?? fallback.container.machine.custom_memory_mb,
-        idle_shutdown_seconds:
-          value?.container?.machine?.idle_shutdown_seconds ?? fallback.container.machine.idle_shutdown_seconds,
-        host_pressure_swap_threshold_mb:
-          value?.container?.machine?.host_pressure_swap_threshold_mb
-          ?? fallback.container.machine.host_pressure_swap_threshold_mb,
-      },
-    },
-  };
-}
-
-function parseUnsignedInteger(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const parsed = Number(trimmed);
-  if (!Number.isFinite(parsed) || parsed < 0) return null;
-  return Math.round(parsed);
-}
-
-export function canSaveSandboxMachineSettings({
-  machineHostPressureSwapThresholdMb,
-  machineIdleShutdownSeconds,
-}: {
-  machineHostPressureSwapThresholdMb: string;
-  machineIdleShutdownSeconds: string;
-}): boolean {
-  const idle = parseUnsignedInteger(machineIdleShutdownSeconds);
-  if (idle === null || idle < MIN_MACHINE_IDLE_SHUTDOWN_SECONDS) return false;
-  const threshold = parseUnsignedInteger(machineHostPressureSwapThresholdMb);
-  return threshold !== null;
-}
 
 export default function SettingsPage() {
   const location = useLocation();
@@ -201,13 +135,6 @@ export default function SettingsPage() {
   const [devRestartError, setDevRestartError] = useState<string | null>(null);
   const [devRestartResults, setDevRestartResults] = useState<DevRestartProvidersResult[] | null>(null);
 
-  const [mobileStatus, setMobileStatus] = useState<MobileAccessStatus | null>(null);
-  const [mobileStatusBusy, setMobileStatusBusy] = useState(false);
-  const [mobileStatusError, setMobileStatusError] = useState<string | null>(null);
-  const [mobileEnableBusy, setMobileEnableBusy] = useState(false);
-  const [mobileEnableError, setMobileEnableError] = useState<string | null>(null);
-  const [mobileQr, setMobileQr] = useState<EnableMobileAccessResponse | null>(null);
-
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -262,6 +189,18 @@ export default function SettingsPage() {
   const resourcePollRef = useRef<number | null>(null);
   const [expandedProcessPids, setExpandedProcessPids] = useState<Record<number, boolean>>({});
 
+  const {
+    mobileStatus,
+    mobileStatusBusy,
+    mobileStatusError,
+    mobileEnableBusy,
+    mobileEnableError,
+    mobileQr,
+    refreshMobileAccess,
+    handleEnableMobile,
+    handleDisableMobile,
+  } = useMobileAccessController({ supabase });
+
 
   useEffect(() => {
     if (!supabase) return;
@@ -314,62 +253,6 @@ export default function SettingsPage() {
       }
     }
   }, [supabase]);
-
-  const refreshMobileAccess = useCallback(async () => {
-    setMobileStatusBusy(true);
-    setMobileStatusError(null);
-    try {
-      const status = await getMobileAccessStatus();
-      setMobileStatus(status);
-    } catch (e: unknown) {
-      setMobileStatusError(errorMessage(e));
-    } finally {
-      setMobileStatusBusy(false);
-    }
-  }, []);
-
-  const getSupabaseToken = useCallback(async (): Promise<string> => {
-    if (!supabase) {
-      throw new Error("Supabase is not configured.");
-    }
-    const { data, error } = await supabase.auth.getSession();
-    if (error) throw error;
-    const token = data.session?.access_token;
-    if (!token) {
-      throw new Error("Sign in required to manage mobile access.");
-    }
-    return token;
-  }, [supabase]);
-
-  const handleEnableMobile = useCallback(async () => {
-    setMobileEnableBusy(true);
-    setMobileEnableError(null);
-    try {
-      const token = await getSupabaseToken();
-      const resp = await enableMobileAccess(token);
-      setMobileQr(resp);
-      setMobileStatus(resp.status);
-    } catch (e: unknown) {
-      setMobileEnableError(errorMessage(e));
-    } finally {
-      setMobileEnableBusy(false);
-    }
-  }, [getSupabaseToken]);
-
-  const handleDisableMobile = useCallback(async () => {
-    setMobileEnableBusy(true);
-    setMobileEnableError(null);
-    try {
-      const token = await getSupabaseToken();
-      await disableMobileAccess(token);
-      setMobileQr(null);
-      await refreshMobileAccess();
-    } catch (e: unknown) {
-      setMobileEnableError(errorMessage(e));
-    } finally {
-      setMobileEnableBusy(false);
-    }
-  }, [getSupabaseToken, refreshMobileAccess]);
 
   const checkoutStatus = useMemo(
     () => new URLSearchParams(location.search).get("checkout"),
