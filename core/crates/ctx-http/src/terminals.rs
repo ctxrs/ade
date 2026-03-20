@@ -137,6 +137,7 @@ enum TerminalBackend {
 
 pub struct TerminalSessionHandle {
     info: TerminalSession,
+    container_backed: bool,
     runtime: Arc<Mutex<TerminalRuntime>>,
     output_tx: broadcast::Sender<Vec<u8>>,
     status_tx: broadcast::Sender<TerminalStatusEvent>,
@@ -264,6 +265,11 @@ impl TerminalSessionHandle {
             exit_code,
         });
     }
+
+    fn is_running(&self) -> bool {
+        let runtime = lock_or_recover(self.runtime.as_ref(), "terminal runtime");
+        matches!(runtime.status, TerminalStatus::Running)
+    }
 }
 
 #[derive(Default)]
@@ -323,9 +329,14 @@ impl TerminalManager {
 
     pub async fn has_running(&self) -> bool {
         let sessions = self.sessions.lock().await;
+        sessions.values().any(|sess| sess.is_running())
+    }
+
+    pub async fn has_running_container_backed(&self) -> bool {
+        let sessions = self.sessions.lock().await;
         sessions
             .values()
-            .any(|sess| matches!(sess.snapshot().status, TerminalStatus::Running))
+            .any(|sess| sess.container_backed && sess.is_running())
     }
 
     pub async fn get(&self, id: TerminalId) -> Option<Arc<TerminalSessionHandle>> {
@@ -476,6 +487,7 @@ impl TerminalManager {
 
         let session = Arc::new(TerminalSessionHandle {
             info,
+            container_backed: req.podman.is_some(),
             runtime,
             output_tx,
             status_tx,
@@ -535,6 +547,7 @@ impl TerminalManager {
 
         let session = Arc::new(TerminalSessionHandle {
             info,
+            container_backed: false,
             runtime: runtime.clone(),
             output_tx: output_tx.clone(),
             status_tx: status_tx.clone(),

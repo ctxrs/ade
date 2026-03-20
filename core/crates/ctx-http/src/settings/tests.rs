@@ -3,6 +3,7 @@ use super::update::{
     UpdateTitleGenerationRemoteSettingsReq, UpdateTitleGenerationSettingsReq,
 };
 use super::*;
+use serde_json::json;
 
 #[test]
 fn network_profiles_defaults_are_safe_for_system_tasks() {
@@ -20,9 +21,10 @@ fn container_machine_defaults_are_stable() {
     let settings = ContainerExecutionSettings::default();
     assert_eq!(
         settings.machine.memory_profile,
-        ContainerMachineMemoryProfile::Balanced
+        ContainerMachineMemoryProfile::Economy
     );
     assert_eq!(settings.machine.custom_memory_mb, None);
+    assert_eq!(default_container_machine_idle_shutdown_seconds(), 60 * 60);
     assert_eq!(
         settings.machine.idle_shutdown_seconds,
         default_container_machine_idle_shutdown_seconds()
@@ -90,7 +92,7 @@ fn to_public_redacts_secret_values() {
             .container
             .machine
             .memory_profile,
-        ContainerMachineMemoryProfile::Balanced
+        ContainerMachineMemoryProfile::Economy
     );
 
     let oracle = public.oracle.as_ref().expect("oracle");
@@ -235,4 +237,57 @@ fn apply_update_replaces_container_machine_settings() {
     assert_eq!(machine.custom_memory_mb, Some(6144));
     assert_eq!(machine.idle_shutdown_seconds, 90);
     assert_eq!(machine.host_pressure_swap_threshold_mb, 256);
+}
+
+#[test]
+fn apply_update_clamps_container_machine_idle_shutdown_seconds() {
+    let next = apply_update(
+        Settings::default(),
+        UpdateSettingsReq {
+            dictation: None,
+            title_generation: None,
+            oracle: None,
+            telemetry: None,
+            resource_governance: None,
+            provider_guard: None,
+            tool_limits: None,
+            provider_restart: None,
+            subagents: None,
+            sandboxing: None,
+            execution: Some(update::UpdateExecutionSettingsReq {
+                mode: ExecutionMode::Container,
+                container: ContainerExecutionSettings {
+                    machine: ContainerMachineSettings {
+                        idle_shutdown_seconds: 5,
+                        ..ContainerMachineSettings::default()
+                    },
+                    ..ContainerExecutionSettings::default()
+                },
+            }),
+            network_profiles: None,
+        },
+    );
+
+    let machine = &next
+        .execution
+        .as_ref()
+        .expect("execution settings")
+        .container
+        .machine;
+    assert_eq!(machine.idle_shutdown_seconds, 60);
+}
+
+#[test]
+fn container_machine_settings_deserialize_clamps_idle_shutdown_seconds() {
+    let parsed: ContainerMachineSettings = serde_json::from_value(json!({
+        "memory_profile": "economy",
+        "idle_shutdown_seconds": 15,
+        "host_pressure_swap_threshold_mb": 512
+    }))
+    .expect("deserialize machine settings");
+
+    assert_eq!(
+        parsed.idle_shutdown_seconds,
+        MIN_CONTAINER_MACHINE_IDLE_SHUTDOWN_SECONDS
+    );
 }

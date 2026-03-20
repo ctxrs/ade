@@ -247,7 +247,14 @@ impl ExecutionSetupCoordinator {
 
             let job_id = uuid::Uuid::new_v4().to_string();
             let job = Arc::new(LaunchJob::new(job_id.clone(), workspace.id));
-            seed_workspace_launch_initial_state(job.as_ref(), &settings);
+            if matches!(settings.mode, ExecutionMode::Host) {
+                seed_workspace_launch_initial_state(job.as_ref(), &settings);
+            } else {
+                let _ = job.transition_phase(
+                    HarnessSetupPhase::MachineCheck,
+                    "checking container runtime",
+                );
+            }
             let snapshot = job.snapshot();
 
             inner
@@ -352,22 +359,119 @@ impl ExecutionSetupCoordinator {
             job: Arc::clone(&job),
         };
         let is_host_mode = matches!(settings.mode, ExecutionMode::Host);
+        let image = harness_runtime::resolve_container_image(&settings.container);
         let run_result = if is_host_mode {
             Ok(())
         } else {
-            let startup_running = {
-                let inner = self.inner.lock().await;
-                inner.startup.state == StartupPrewarmState::Running
-            };
-            if startup_running {
-                match self
-                    .prewarm
-                    .ensure_runtime(&settings, Some(&observer))
-                    .await
-                    .context("container runtime warmup failed")
-                {
-                    Ok(()) => self
+            async {
+                let runtime_prewarm_running = self.prewarm.runtime_is_running(&settings).await;
+                let shared_runtime_can_make_runtime_ready = if runtime_prewarm_running {
+                    match normalize_podman_engine_ready_for_gate(
+                        harness_runtime::podman_engine_ready(&self.data_root).await,
+                    ) {
+                        Ok(machine_ready) => machine_ready,
+                        Err(err) => {
+                            observer.on_log(
+                                HarnessSetupPhase::MachineCheck,
+                                HarnessSetupLogLevel::Warn,
+                                &format!(
+                                    "failed to inspect local sandbox runtime before deciding whether to join shared warmup: {}",
+                                    format_error_chain(&err)
+                                ),
+                            );
+                            false
+                        }
+                    }
+                } else {
+                    false
+                };
+                let join_shared_runtime = if runtime_prewarm_running {
+                    let inner = self.inner.lock().await;
+                    shared_runtime_can_make_runtime_ready
+                        && !(inner.startup.state == StartupPrewarmState::Running
+                            && !inner.startup.machine_ready)
+                } else {
+                    false
+                };
+
+                if runtime_prewarm_running {
+                    let reusable_container_exists = self
                         .harness
+                        .workspace_container_exists(workspace.id)
+                        .await
+                        .context("failed to probe existing workspace container")?;
+                    if reusable_container_exists {
+                        return self
+                            .harness
+                            .ensure_workspace_container_with_observer(
+                                &workspace,
+                                &settings,
+                                &daemon_url,
+                                Some(&observer),
+                            )
+                            .await
+                            .context("container runtime failed");
+                    }
+
+                    let _runtime_activity = self.harness.begin_runtime_operation();
+                    self.harness
+                        .ensure_container_machine_ready(&settings.container, Some(&observer))
+                        .await
+                        .context("podman unavailable and execution mode is container")?;
+
+                    let joined_shared_runtime = if join_shared_runtime {
+                        match self
+                            .prewarm
+                            .attach_runtime_if_running(&settings, Some(&observer))
+                            .await
+                        {
+                            Ok(joined) => joined,
+                            Err(err) => {
+                                observer.on_log(
+                                    HarnessSetupPhase::MachineStartOrInit,
+                                    HarnessSetupLogLevel::Warn,
+                                    &format!(
+                                        "shared runtime warmup failed, continuing with direct launch: {}",
+                                        format_error_chain(&err)
+                                    ),
+                                );
+                                false
+                            }
+                        }
+                    } else {
+                        false
+                    };
+
+                    if joined_shared_runtime {
+                        let (machine_ready, image_present) = self
+                            .startup_runtime_state(&image)
+                            .await
+                            .context("failed to inspect container runtime after shared warmup")?;
+                        if machine_ready && image_present {
+                            return self
+                                .harness
+                                .ensure_workspace_container_after_runtime_ready_with_observer(
+                                    &workspace,
+                                    &settings,
+                                    &daemon_url,
+                                    Some(&observer),
+                                )
+                                .await
+                                .context("container runtime failed");
+                        }
+                    }
+
+                    self.harness
+                        .ensure_workspace_container_after_machine_ready_with_observer(
+                            &workspace,
+                            &settings,
+                            &daemon_url,
+                            Some(&observer),
+                        )
+                        .await
+                        .context("container runtime failed")
+                } else {
+                    self.harness
                         .ensure_workspace_container_with_observer(
                             &workspace,
                             &settings,
@@ -375,25 +479,17 @@ impl ExecutionSetupCoordinator {
                             Some(&observer),
                         )
                         .await
-                        .context("container runtime failed"),
-                    Err(err) => Err(err),
+                        .context("container runtime failed")
                 }
-            } else {
-                self.harness
-                    .ensure_workspace_container_with_observer(
-                        &workspace,
-                        &settings,
-                        &daemon_url,
-                        Some(&observer),
-                    )
-                    .await
-                    .context("container runtime failed")
             }
+            .await
         };
 
         match run_result {
             Ok(()) => {
                 if !matches!(settings.mode, ExecutionMode::Host) {
+                    self.refresh_startup_prewarm_metadata_after_successful_container_launch(&image)
+                        .await;
                     self.emit_phase(&job, HarnessSetupPhase::Ready, "workspace runtime is ready");
                 }
                 let terminal = job.mark_terminal(ExecutionLaunchState::Ready, None);
@@ -447,12 +543,14 @@ impl ExecutionSetupCoordinator {
             job: Arc::clone(&job),
         };
         let is_host_mode = matches!(settings.mode, ExecutionMode::Host);
+        let image = harness_runtime::resolve_container_image(&settings.container);
         let run_result = if is_host_mode {
             Ok(())
         } else if shared_job.runtime_requested() {
             if !harness_runtime::container_runtime_available(&self.data_root) {
                 Err(anyhow::anyhow!("container runtime unavailable"))
             } else {
+                let _artifact_warmup = self.harness.begin_prewarm_artifact_activity();
                 match self
                     .prewarm
                     .ensure_runtime(&settings, Some(&observer))
@@ -487,6 +585,36 @@ impl ExecutionSetupCoordinator {
 
         match run_result {
             Ok(()) => {
+                if shared_job.runtime_requested() {
+                    match self.startup_runtime_state(&image).await {
+                        Ok((machine_ready, image_present)) => {
+                            if !machine_ready || !image_present {
+                                let message = if machine_ready {
+                                    format!(
+                                        "runtime prewarm completed but harness image '{image}' is still unavailable in the local sandbox runtime"
+                                    )
+                                } else {
+                                    format!(
+                                        "runtime prewarm downloaded startup artifacts for '{image}', but the local sandbox runtime still needs machine and image startup on first workspace launch"
+                                    )
+                                };
+                                self.finish_runtime_prewarm_error(
+                                    shared_job,
+                                    job,
+                                    launch_started,
+                                    anyhow::anyhow!(message),
+                                )
+                                .await;
+                                return;
+                            }
+                        }
+                        Err(err) => {
+                            self.finish_runtime_prewarm_error(shared_job, job, launch_started, err)
+                                .await;
+                            return;
+                        }
+                    }
+                }
                 if !matches!(settings.mode, ExecutionMode::Host) {
                     let ready_message = if shared_job.runtime_requested() {
                         "container runtime is ready"
@@ -716,6 +844,10 @@ impl ExecutionSetupCoordinator {
         };
         let exec = settings.execution.unwrap_or_default();
         let image = harness_runtime::resolve_container_image(&exec.container);
+        let (initial_machine_ready, initial_image_present) = self
+            .startup_runtime_state(&image)
+            .await
+            .unwrap_or((false, false));
 
         if !harness_runtime::container_runtime_available(&self.data_root) {
             let snapshot = StartupPrewarmSnapshot {
@@ -740,8 +872,8 @@ impl ExecutionSetupCoordinator {
                 state: StartupPrewarmState::Running,
                 target_image: image.clone(),
                 needs_prewarm: false,
-                machine_ready: false,
-                image_present: false,
+                machine_ready: initial_machine_ready,
+                image_present: initial_image_present,
                 image_ref_changed: false,
                 bundled_image_digest_changed: false,
                 last_attempt_at: Some(attempted_at.clone()),
@@ -758,8 +890,8 @@ impl ExecutionSetupCoordinator {
                     state: StartupPrewarmState::Error,
                     target_image: image.clone(),
                     needs_prewarm: true,
-                    machine_ready: false,
-                    image_present: false,
+                    machine_ready: initial_machine_ready,
+                    image_present: initial_image_present,
                     image_ref_changed: false,
                     bundled_image_digest_changed: false,
                     last_attempt_at: Some(attempted_at),
@@ -791,28 +923,108 @@ impl ExecutionSetupCoordinator {
             return;
         }
 
-        match self
-            .prewarm
-            .ensure_scope(&exec, RuntimePrewarmScope::Runtime, None)
-            .await
-        {
+        match self.startup_prewarm_runtime(&exec).await {
             Ok(()) => {
-                let metadata = StartupPrewarmMetadata {
-                    image_ref: image.clone(),
-                    bundled_image_fingerprint: gate.bundled_image_fingerprint,
-                    ready_at: format_ts(Utc::now()),
+                let (machine_ready, image_present) = match self.startup_runtime_state(&image).await
+                {
+                    Ok(state) => state,
+                    Err(err) => {
+                        let message = format_error_chain(&err);
+                        let snapshot = StartupPrewarmSnapshot {
+                            state: StartupPrewarmState::Error,
+                            target_image: image.clone(),
+                            needs_prewarm: true,
+                            machine_ready: gate.machine_ready,
+                            image_present: gate.image_present,
+                            image_ref_changed: gate.image_ref_changed,
+                            bundled_image_digest_changed: gate.bundled_image_digest_changed,
+                            last_attempt_at: Some(attempted_at),
+                            last_success_at: None,
+                            error: Some(message.clone()),
+                        };
+                        self.set_startup_snapshot(snapshot).await;
+                        let mut event = OpsEvent::new("warn", "execution.startup_prewarm_error");
+                        event.meta = Some(json!({"image": image, "error": message}));
+                        self.ops_events.emit(event);
+                        return;
+                    }
                 };
-                let _ = write_prewarm_metadata(&self.data_root, &metadata).await;
+
+                if machine_ready && !image_present {
+                    let message = format!(
+                        "startup prewarm completed but harness image '{image}' is still unavailable in the local sandbox runtime"
+                    );
+                    let snapshot = StartupPrewarmSnapshot {
+                        state: StartupPrewarmState::Error,
+                        target_image: image.clone(),
+                        needs_prewarm: true,
+                        machine_ready,
+                        image_present,
+                        image_ref_changed: gate.image_ref_changed,
+                        bundled_image_digest_changed: gate.bundled_image_digest_changed,
+                        last_attempt_at: Some(attempted_at),
+                        last_success_at: None,
+                        error: Some(message.clone()),
+                    };
+                    self.set_startup_snapshot(snapshot).await;
+                    let mut event = OpsEvent::new("warn", "execution.startup_prewarm_error");
+                    event.meta = Some(json!({"image": image, "error": message}));
+                    self.ops_events.emit(event);
+                    return;
+                }
+
+                if gate.machine_ready && gate.image_present && gate.bundled_image_digest_changed {
+                    let message =
+                        "startup prewarm downloaded updated local sandbox artifacts, but the loaded harness image is still stale and will be refreshed on the next workspace launch"
+                            .to_string();
+                    let snapshot = StartupPrewarmSnapshot {
+                        state: StartupPrewarmState::Skipped,
+                        target_image: image.clone(),
+                        needs_prewarm: true,
+                        machine_ready,
+                        image_present,
+                        image_ref_changed: gate.image_ref_changed,
+                        bundled_image_digest_changed: gate.bundled_image_digest_changed,
+                        last_attempt_at: Some(attempted_at),
+                        last_success_at: None,
+                        error: Some(message.clone()),
+                    };
+                    self.set_startup_snapshot(snapshot).await;
+                    let mut event = OpsEvent::new("warn", "execution.startup_prewarm_deferred");
+                    event.meta = Some(json!({"image": image, "reason": message}));
+                    self.ops_events.emit(event);
+                    return;
+                }
+                let needs_prewarm = !machine_ready || !image_present;
+                let last_success_at = if machine_ready && image_present {
+                    let metadata = StartupPrewarmMetadata {
+                        image_ref: image.clone(),
+                        bundled_image_fingerprint: gate.bundled_image_fingerprint,
+                        ready_at: format_ts(Utc::now()),
+                    };
+                    let _ = write_prewarm_metadata(&self.data_root, &metadata).await;
+                    Some(metadata.ready_at)
+                } else {
+                    None
+                };
                 let snapshot = StartupPrewarmSnapshot {
                     state: StartupPrewarmState::Ready,
                     target_image: image,
-                    needs_prewarm: true,
-                    machine_ready: gate.machine_ready,
-                    image_present: gate.image_present,
-                    image_ref_changed: gate.image_ref_changed,
-                    bundled_image_digest_changed: gate.bundled_image_digest_changed,
+                    needs_prewarm,
+                    machine_ready,
+                    image_present,
+                    image_ref_changed: if needs_prewarm {
+                        gate.image_ref_changed
+                    } else {
+                        false
+                    },
+                    bundled_image_digest_changed: if needs_prewarm {
+                        gate.bundled_image_digest_changed
+                    } else {
+                        false
+                    },
                     last_attempt_at: Some(attempted_at),
-                    last_success_at: Some(metadata.ready_at),
+                    last_success_at,
                     error: None,
                 };
                 self.set_startup_snapshot(snapshot).await;
@@ -843,14 +1055,7 @@ impl ExecutionSetupCoordinator {
 
     async fn compute_prewarm_gate(&self, image: &str) -> Result<PrewarmGate> {
         let metadata = read_prewarm_metadata(&self.data_root).await?;
-        let machine_ready = normalize_podman_engine_ready_for_gate(
-            harness_runtime::podman_engine_ready(&self.data_root).await,
-        )?;
-        let image_present = if machine_ready {
-            harness_runtime::container_image_present(&self.data_root, image).await?
-        } else {
-            false
-        };
+        let (machine_ready, image_present) = self.startup_runtime_state(image).await?;
         let bundled_image_fingerprint = bundled_image_fingerprint(image).await?;
 
         let image_ref_changed = metadata
@@ -877,6 +1082,93 @@ impl ExecutionSetupCoordinator {
             needs_prewarm,
             bundled_image_fingerprint,
         })
+    }
+
+    async fn startup_runtime_state(&self, image: &str) -> Result<(bool, bool)> {
+        let machine_ready = normalize_podman_engine_ready_for_gate(
+            harness_runtime::podman_engine_ready(&self.data_root).await,
+        )?;
+        let image_present = if machine_ready {
+            harness_runtime::container_image_present(&self.data_root, image).await?
+        } else {
+            false
+        };
+        Ok((machine_ready, image_present))
+    }
+
+    async fn startup_prewarm_runtime(&self, exec: &ExecutionSettings) -> Result<()> {
+        let _artifact_warmup = self.harness.begin_prewarm_artifact_activity();
+        self.prewarm
+            .ensure_scope(exec, RuntimePrewarmScope::Runtime, None)
+            .await
+    }
+
+    async fn refresh_startup_prewarm_metadata_after_successful_container_launch(
+        &self,
+        image: &str,
+    ) {
+        let metadata_missing = match read_prewarm_metadata(&self.data_root).await {
+            Ok(metadata) => metadata.is_none(),
+            Err(err) => {
+                tracing::warn!(
+                    image,
+                    error = %format_error_chain(&err),
+                    "failed to read startup prewarm metadata after successful launch; leaving metadata unchanged"
+                );
+                return;
+            }
+        };
+        let should_refresh = {
+            let inner = self.inner.lock().await;
+            (inner.startup.target_image.is_empty() || inner.startup.target_image == image)
+                && (inner.startup.bundled_image_digest_changed || metadata_missing)
+        };
+        if !should_refresh {
+            return;
+        }
+
+        let bundled_image_fingerprint = match bundled_image_fingerprint(image).await {
+            Ok(fingerprint) => fingerprint,
+            Err(err) => {
+                tracing::warn!(
+                    image,
+                    error = %format_error_chain(&err),
+                    "failed to compute bundled image fingerprint after successful launch; leaving startup prewarm metadata unchanged"
+                );
+                return;
+            }
+        };
+
+        let ready_at = format_ts(Utc::now());
+        let metadata = StartupPrewarmMetadata {
+            image_ref: image.to_string(),
+            bundled_image_fingerprint,
+            ready_at: ready_at.clone(),
+        };
+        if let Err(err) = write_prewarm_metadata(&self.data_root, &metadata).await {
+            tracing::warn!(
+                image,
+                error = %format_error_chain(&err),
+                "failed to persist refreshed startup prewarm metadata after successful launch"
+            );
+            return;
+        }
+
+        let mut inner = self.inner.lock().await;
+        if inner.startup.target_image.is_empty() || inner.startup.target_image == image {
+            inner.startup.target_image = image.to_string();
+            if inner.startup.state == StartupPrewarmState::Running {
+                return;
+            }
+            inner.startup.state = StartupPrewarmState::Ready;
+            inner.startup.needs_prewarm = false;
+            inner.startup.machine_ready = true;
+            inner.startup.image_present = true;
+            inner.startup.image_ref_changed = false;
+            inner.startup.bundled_image_digest_changed = false;
+            inner.startup.last_success_at = Some(ready_at);
+            inner.startup.error = None;
+        }
     }
 
     async fn set_startup_snapshot(&self, snapshot: StartupPrewarmSnapshot) {

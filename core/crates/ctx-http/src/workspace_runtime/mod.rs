@@ -7,9 +7,12 @@ use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use ctx_core::ids::SessionId;
+use ctx_core::models::ExecutionEnvironment;
 use ctx_store::StoreManager;
 use futures::StreamExt;
 use sha2::Digest;
+use sysinfo::System;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::{fs, io::AsyncWriteExt};
@@ -23,9 +26,11 @@ use crate::bundled_assets;
 use crate::network_allowlist;
 use crate::resource_utilization::{ResourceSampler, SystemSnapshot};
 use crate::settings::{
-    ContainerExecutionSettings, ContainerMachineMemoryProfile, ContainerMountMode,
-    ContainerNetworkMode, ExecutionMode, ExecutionSettings,
+    normalize_container_machine_idle_shutdown_seconds, ContainerExecutionSettings,
+    ContainerMachineMemoryProfile, ContainerMountMode, ContainerNetworkMode, ExecutionMode,
+    ExecutionSettings,
 };
+use crate::terminals::TerminalManager;
 use crate::updates;
 use url::Url;
 
@@ -112,9 +117,12 @@ const PODMAN_MACHINE_INIT_TIMEOUT: Duration = Duration::from_secs(8 * 60);
 const PODMAN_MACHINE_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 const PODMAN_OP_TIMEOUT: Duration = Duration::from_secs(60);
 const PODMAN_LOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const PODMAN_MACHINE_MEMORY_ECONOMY_MB: u32 = 2048;
-const PODMAN_MACHINE_MEMORY_BALANCED_MB: u32 = 4096;
-const PODMAN_MACHINE_MEMORY_PERFORMANCE_MB: u32 = 8192;
+const DEFAULT_PRESET_HOST_MEMORY_MB: u32 = 32 * 1024;
+const PODMAN_MACHINE_MEMORY_PRESET_FLOOR_MB: u32 = 4096;
+const PODMAN_MACHINE_MEMORY_ECONOMY_CAP_MB: u32 = 8192;
+const PODMAN_MACHINE_MEMORY_BALANCED_CAP_MB: u32 = 16 * 1024;
+const PODMAN_MACHINE_MEMORY_PERFORMANCE_CAP_MB: u32 = 32 * 1024;
+const MI_B: u64 = 1024 * 1024;
 
 fn podman_machine_reclaim_poll_interval() -> Duration {
     if cfg!(test) {
@@ -132,17 +140,67 @@ fn podman_machine_pressure_idle_grace() -> Duration {
     }
 }
 
-fn container_machine_memory_mb(settings: &ContainerExecutionSettings) -> u32 {
+fn detected_host_memory_mb() -> Option<u32> {
+    #[cfg(test)]
+    if let Ok(raw) = std::env::var("CTX_TEST_HOST_MEMORY_MB") {
+        if let Ok(value) = raw.parse::<u32>() {
+            if value > 0 {
+                return Some(value);
+            }
+        }
+    }
+
+    let mut system = System::new();
+    system.refresh_memory();
+    let total_bytes = system.total_memory();
+    let total_mb = total_bytes / MI_B;
+    if total_mb == 0 {
+        return None;
+    }
+    u32::try_from(total_mb).ok()
+}
+
+fn preset_memory_mb(total_memory_mb: u32, numerator: u32, denominator: u32, cap_mb: u32) -> u32 {
+    total_memory_mb
+        .saturating_mul(numerator)
+        .checked_div(denominator)
+        .unwrap_or(PODMAN_MACHINE_MEMORY_PRESET_FLOOR_MB)
+        .clamp(PODMAN_MACHINE_MEMORY_PRESET_FLOOR_MB, cap_mb)
+}
+
+fn container_machine_memory_mb_for_host_memory(
+    settings: &ContainerExecutionSettings,
+    host_memory_mb: u32,
+) -> u32 {
     match settings.machine.memory_profile {
-        ContainerMachineMemoryProfile::Economy => PODMAN_MACHINE_MEMORY_ECONOMY_MB,
-        ContainerMachineMemoryProfile::Balanced => PODMAN_MACHINE_MEMORY_BALANCED_MB,
-        ContainerMachineMemoryProfile::Performance => PODMAN_MACHINE_MEMORY_PERFORMANCE_MB,
+        ContainerMachineMemoryProfile::Economy => {
+            preset_memory_mb(host_memory_mb, 1, 8, PODMAN_MACHINE_MEMORY_ECONOMY_CAP_MB)
+        }
+        ContainerMachineMemoryProfile::Balanced => {
+            preset_memory_mb(host_memory_mb, 1, 4, PODMAN_MACHINE_MEMORY_BALANCED_CAP_MB)
+        }
+        ContainerMachineMemoryProfile::Performance => preset_memory_mb(
+            host_memory_mb,
+            1,
+            2,
+            PODMAN_MACHINE_MEMORY_PERFORMANCE_CAP_MB,
+        ),
         ContainerMachineMemoryProfile::Custom => settings
             .machine
             .custom_memory_mb
-            .unwrap_or(PODMAN_MACHINE_MEMORY_BALANCED_MB)
+            .unwrap_or(preset_memory_mb(
+                host_memory_mb,
+                1,
+                4,
+                PODMAN_MACHINE_MEMORY_BALANCED_CAP_MB,
+            ))
             .max(1024),
     }
+}
+
+fn container_machine_memory_mb(settings: &ContainerExecutionSettings) -> u32 {
+    let host_memory_mb = detected_host_memory_mb().unwrap_or(DEFAULT_PRESET_HOST_MEMORY_MB);
+    container_machine_memory_mb_for_host_memory(settings, host_memory_mb)
 }
 
 fn podman_machine_init_created_machine_grace() -> Duration {
@@ -345,6 +403,7 @@ pub struct HarnessRuntimeManager {
     containers: Mutex<HashMap<WorkspaceId, HarnessContainer>>,
     last_activity: StdMutex<Instant>,
     active_runtime_operations: AtomicUsize,
+    active_prewarm_artifact_operations: AtomicUsize,
     reclaim_loop_started: AtomicBool,
 }
 
@@ -356,7 +415,7 @@ pub struct HarnessRuntimeStats {
     pub container_egress_guards: usize,
 }
 
-struct RuntimeOperationGuard<'a> {
+pub(crate) struct RuntimeOperationGuard<'a> {
     manager: &'a HarnessRuntimeManager,
 }
 
@@ -369,6 +428,19 @@ impl Drop for RuntimeOperationGuard<'_> {
     }
 }
 
+pub(crate) struct PrewarmArtifactActivityGuard<'a> {
+    manager: &'a HarnessRuntimeManager,
+}
+
+impl Drop for PrewarmArtifactActivityGuard<'_> {
+    fn drop(&mut self) {
+        self.manager.note_runtime_activity();
+        self.manager
+            .active_prewarm_artifact_operations
+            .fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 impl HarnessRuntimeManager {
     pub fn new(data_root: PathBuf) -> Self {
         Self {
@@ -376,6 +448,7 @@ impl HarnessRuntimeManager {
             containers: Mutex::new(HashMap::new()),
             last_activity: StdMutex::new(Instant::now()),
             active_runtime_operations: AtomicUsize::new(0),
+            active_prewarm_artifact_operations: AtomicUsize::new(0),
             reclaim_loop_started: AtomicBool::new(false),
         }
     }
@@ -396,14 +469,26 @@ impl HarnessRuntimeManager {
         last_activity.elapsed()
     }
 
-    fn begin_runtime_operation(&self) -> RuntimeOperationGuard<'_> {
+    pub(crate) fn begin_runtime_operation(&self) -> RuntimeOperationGuard<'_> {
         self.note_runtime_activity();
         self.active_runtime_operations
             .fetch_add(1, Ordering::SeqCst);
         RuntimeOperationGuard { manager: self }
     }
 
-    pub fn spawn_background_podman_machine_reclaim(self: &Arc<Self>, stores: StoreManager) {
+    pub(crate) fn begin_prewarm_artifact_activity(&self) -> PrewarmArtifactActivityGuard<'_> {
+        self.note_runtime_activity();
+        self.active_prewarm_artifact_operations
+            .fetch_add(1, Ordering::SeqCst);
+        PrewarmArtifactActivityGuard { manager: self }
+    }
+
+    pub fn spawn_background_podman_machine_reclaim(
+        self: &Arc<Self>,
+        stores: StoreManager,
+        running_sessions: Arc<Mutex<HashSet<SessionId>>>,
+        terminals: Arc<TerminalManager>,
+    ) {
         if cfg!(test) || !podman_machine_required() {
             return;
         }
@@ -420,7 +505,12 @@ impl HarnessRuntimeManager {
             loop {
                 tokio::time::sleep(podman_machine_reclaim_poll_interval()).await;
                 if let Err(err) = manager
-                    .run_podman_machine_reclaim_once(&stores, &mut sampler)
+                    .run_podman_machine_reclaim_once(
+                        &stores,
+                        &running_sessions,
+                        terminals.as_ref(),
+                        &mut sampler,
+                    )
                     .await
                 {
                     tracing::debug!("podman machine reclaim skipped: {err:#}");
@@ -452,6 +542,8 @@ impl HarnessRuntimeManager {
     async fn run_podman_machine_reclaim_once(
         &self,
         stores: &StoreManager,
+        running_sessions: &Arc<Mutex<HashSet<SessionId>>>,
+        terminals: &TerminalManager,
         sampler: &mut ResourceSampler,
     ) -> Result<()> {
         if !podman_machine_required() {
@@ -463,7 +555,14 @@ impl HarnessRuntimeManager {
             .unwrap_or_default();
         let (system, _disks, _cache_age_ms) = sampler.system_snapshot();
         let _ = self
-            .maybe_reclaim_podman_machine(&execution.container, &system, None)
+            .maybe_reclaim_podman_machine(
+                &execution.container,
+                &system,
+                None,
+                stores,
+                running_sessions,
+                terminals,
+            )
             .await?;
         Ok(())
     }
@@ -558,6 +657,41 @@ impl HarnessRuntimeManager {
             })
             .and_then(|memory| memory.as_u64())
             .and_then(|memory| u32::try_from(memory).ok()))
+    }
+
+    async fn inspect_podman_machine_state(&self, machine_name: &str) -> Result<Option<String>> {
+        let mut cmd = podman_command(&self.data_root)?;
+        cmd.arg("machine").arg("inspect").arg(machine_name);
+        let output = match command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await {
+            Ok(output) => output,
+            Err(err) => {
+                tracing::debug!(
+                    "unable to inspect local sandbox runtime state during workload probe fallback: {err:#}"
+                );
+                return Ok(None);
+            }
+        };
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let value: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::debug!(
+                    "unable to parse local sandbox runtime inspect output during workload probe fallback: {err:#}"
+                );
+                return Ok(None);
+            }
+        };
+        let machine = value
+            .as_array()
+            .and_then(|items| items.first())
+            .unwrap_or(&value);
+        Ok(machine
+            .get("State")
+            .or_else(|| machine.get("state"))
+            .and_then(|state| state.as_str())
+            .map(|state| state.trim().to_ascii_lowercase()))
     }
 
     async fn init_podman_machine_locked(
@@ -671,6 +805,22 @@ impl HarnessRuntimeManager {
                 return Ok(());
             }
             if self
+                .should_defer_disk_isolated_machine_reconfiguration(
+                    settings,
+                    &machine_name,
+                    observer,
+                )
+                .await?
+            {
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::MachineStartOrInit,
+                    HarnessSetupLogLevel::Warn,
+                    "deferring local sandbox runtime memory reconfiguration because disk-isolated workspace volumes would be destroyed by machine recreation",
+                );
+                return Ok(());
+            }
+            if self
                 .has_running_workspace_containers_for_stopped_machine_reconfiguration(observer)
                 .await?
             {
@@ -729,7 +879,22 @@ impl HarnessRuntimeManager {
         if actual_memory_mb == Some(desired_memory_mb) {
             return Ok(());
         }
-        if self.has_running_workspace_containers().await? {
+        if self
+            .should_defer_disk_isolated_machine_reconfiguration(settings, &machine_name, observer)
+            .await?
+        {
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineStartOrInit,
+                HarnessSetupLogLevel::Warn,
+                "deferring local sandbox runtime memory reconfiguration because disk-isolated workspace volumes would be destroyed by machine recreation",
+            );
+            return Ok(());
+        }
+        if self
+            .has_running_workspace_containers_for_stopped_machine_reconfiguration(observer)
+            .await?
+        {
             observe_log(
                 observer,
                 HarnessSetupPhase::MachineStartOrInit,
@@ -770,6 +935,111 @@ impl HarnessRuntimeManager {
             .any(|name| name.starts_with("ctx-harness-")))
     }
 
+    async fn should_defer_disk_isolated_machine_reconfiguration(
+        &self,
+        settings: &ContainerExecutionSettings,
+        machine_name: &str,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<bool> {
+        if !matches!(settings.mount_mode, ContainerMountMode::DiskIsolated) {
+            return Ok(false);
+        }
+        self.disk_isolated_workspace_volumes_exist(machine_name, observer)
+            .await
+    }
+
+    async fn disk_isolated_workspace_volumes_exist(
+        &self,
+        machine_name: &str,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<bool> {
+        if !self
+            .ensure_engine_ready_for_disk_state_inspection(machine_name, observer)
+            .await?
+        {
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineStartOrInit,
+                HarnessSetupLogLevel::Warn,
+                "unable to verify disk-isolated workspace volumes before memory reconfiguration; leaving local sandbox runtime unchanged",
+            );
+            return Ok(true);
+        }
+
+        let mut cmd = podman_command(&self.data_root)?;
+        cmd.arg("volume").arg("ls").arg("--format").arg("{{.Name}}");
+        let output = match command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await {
+            Ok(output) => output,
+            Err(err) => {
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::MachineStartOrInit,
+                    HarnessSetupLogLevel::Warn,
+                    &format!(
+                        "failed to inspect disk-isolated workspace volumes before memory reconfiguration: {err}"
+                    ),
+                );
+                return Ok(true);
+            }
+        };
+        if !output.status.success() {
+            let detail = command_output_message(&output);
+            let suffix = if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            };
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineStartOrInit,
+                HarnessSetupLogLevel::Warn,
+                &format!(
+                    "unable to inspect disk-isolated workspace volumes before memory reconfiguration{suffix}"
+                ),
+            );
+            return Ok(true);
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .any(|name| name.starts_with("ctx-ws-")))
+    }
+
+    async fn ensure_engine_ready_for_disk_state_inspection(
+        &self,
+        machine_name: &str,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<bool> {
+        if podman_engine_ready(&self.data_root).await? {
+            return Ok(true);
+        }
+
+        observe_log(
+            observer,
+            HarnessSetupPhase::MachineStartOrInit,
+            HarnessSetupLogLevel::Info,
+            "starting local sandbox runtime to inspect disk-isolated workspace volumes before memory reconfiguration",
+        );
+        let mut start = podman_command(&self.data_root)?;
+        start.arg("machine").arg("start").arg(machine_name);
+        let output = command_output_with_timeout(start, PODMAN_MACHINE_START_TIMEOUT).await?;
+        if !output.status.success() {
+            return Ok(false);
+        }
+
+        let deadline = Instant::now() + podman_machine_ready_timeout();
+        loop {
+            if podman_engine_ready(&self.data_root).await? {
+                return Ok(true);
+            }
+            if Instant::now() >= deadline {
+                return Ok(false);
+            }
+            tokio::time::sleep(podman_machine_ready_poll_interval()).await;
+        }
+    }
+
     async fn has_running_workspace_containers_for_stopped_machine_reconfiguration(
         &self,
         observer: Option<&dyn HarnessSetupObserver>,
@@ -779,6 +1049,34 @@ impl HarnessRuntimeManager {
             Err(err) => {
                 if podman_engine_ready(&self.data_root).await.unwrap_or(false) {
                     return Err(err);
+                }
+                let machine_name = ctx_podman_machine_name(&self.data_root);
+                match self.inspect_podman_machine_state(&machine_name).await? {
+                    Some(state) if state.contains("running") || state.contains("starting") => {
+                        observe_log(
+                            observer,
+                            HarnessSetupPhase::MachineStartOrInit,
+                            HarnessSetupLogLevel::Warn,
+                            "local sandbox runtime appears to be running but unreachable; deferring memory reconfiguration until workload probes recover",
+                        );
+                        tracing::debug!(
+                            "treating workspace container probe failure as busy because the local sandbox runtime still reports a running state: {err:#}"
+                        );
+                        return Ok(true);
+                    }
+                    Some(_) => {}
+                    None => {
+                        observe_log(
+                            observer,
+                            HarnessSetupPhase::MachineStartOrInit,
+                            HarnessSetupLogLevel::Warn,
+                            "local sandbox runtime state is unknown while workload probes are unreachable; deferring memory reconfiguration until the runtime can be inspected safely",
+                        );
+                        tracing::debug!(
+                            "treating workspace container probe failure as busy because the local sandbox runtime state is unknown: {err:#}"
+                        );
+                        return Ok(true);
+                    }
                 }
                 observe_log(
                     observer,
@@ -799,27 +1097,32 @@ impl HarnessRuntimeManager {
         settings: &ContainerExecutionSettings,
         system: &SystemSnapshot,
         observer: Option<&dyn HarnessSetupObserver>,
+        stores: &StoreManager,
+        running_sessions: &Arc<Mutex<HashSet<SessionId>>>,
+        terminals: &TerminalManager,
     ) -> Result<bool> {
         if !podman_machine_required() {
             return Ok(false);
         }
-        if self.active_runtime_operations.load(Ordering::SeqCst) > 0 {
-            return Ok(false);
-        }
-        if self
-            .has_running_workspace_containers()
-            .await
-            .inspect_err(|err| {
-                tracing::warn!(
-                    "skipping local sandbox reclaim because workload check failed: {err:#}"
-                );
-            })
-            .unwrap_or(true)
+        if self.active_runtime_operations.load(Ordering::SeqCst) > 0
+            || self
+                .active_prewarm_artifact_operations
+                .load(Ordering::SeqCst)
+                > 0
         {
             return Ok(false);
         }
+        if self
+            .should_defer_reclaim_for_active_container_runtime(stores, running_sessions, terminals)
+            .await
+        {
+            self.note_runtime_activity();
+            return Ok(false);
+        }
         let idle_for = self.runtime_idle_for();
-        let idle_timeout = Duration::from_secs(settings.machine.idle_shutdown_seconds);
+        let idle_timeout = Duration::from_secs(normalize_container_machine_idle_shutdown_seconds(
+            settings.machine.idle_shutdown_seconds,
+        ));
         let swap_threshold_bytes =
             u64::from(settings.machine.host_pressure_swap_threshold_mb) * 1024 * 1024;
         let host_pressure =
@@ -833,19 +1136,19 @@ impl HarnessRuntimeManager {
         let machine_name = ctx_podman_machine_name(&self.data_root);
         let machine_lock = podman_machine_singleflight_lock(&machine_name);
         let _machine_guard = machine_lock.lock().await;
-        if self.active_runtime_operations.load(Ordering::SeqCst) > 0 {
+        if self.active_runtime_operations.load(Ordering::SeqCst) > 0
+            || self
+                .active_prewarm_artifact_operations
+                .load(Ordering::SeqCst)
+                > 0
+        {
             return Ok(false);
         }
         if self
-            .has_running_workspace_containers()
+            .should_defer_reclaim_for_active_container_runtime(stores, running_sessions, terminals)
             .await
-            .inspect_err(|err| {
-                tracing::warn!(
-                    "skipping local sandbox reclaim because workload check failed: {err:#}"
-                );
-            })
-            .unwrap_or(true)
         {
+            self.note_runtime_activity();
             return Ok(false);
         }
         if !podman_machine_present(&self.data_root, &machine_name).await? {
@@ -860,6 +1163,55 @@ impl HarnessRuntimeManager {
         Ok(stopped)
     }
 
+    async fn should_defer_reclaim_for_active_container_runtime(
+        &self,
+        stores: &StoreManager,
+        running_sessions: &Arc<Mutex<HashSet<SessionId>>>,
+        terminals: &TerminalManager,
+    ) -> bool {
+        if terminals.has_running_container_backed().await {
+            return true;
+        }
+
+        let session_ids = {
+            let running = running_sessions.lock().await;
+            running.iter().copied().collect::<Vec<_>>()
+        };
+
+        for session_id in session_ids {
+            let store = match stores.store_for_session(session_id).await {
+                Ok(store) => store,
+                Err(err) => {
+                    tracing::warn!(
+                        session_id = ?session_id,
+                        "deferring local sandbox reclaim because running session store lookup failed: {err:#}"
+                    );
+                    return true;
+                }
+            };
+            let session = match store.get_session(session_id).await {
+                Ok(Some(session)) => session,
+                Ok(None) => continue,
+                Err(err) => {
+                    tracing::warn!(
+                        session_id = ?session_id,
+                        "deferring local sandbox reclaim because running session lookup failed: {err:#}"
+                    );
+                    return true;
+                }
+            };
+            if matches!(
+                session.execution_environment,
+                ExecutionEnvironment::ContainerHostMounted
+                    | ExecutionEnvironment::ContainerDiskIsolated
+            ) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     pub async fn prepare(
         &self,
         workspace: &Workspace,
@@ -867,7 +1219,6 @@ impl HarnessRuntimeManager {
         settings: &ExecutionSettings,
         daemon_url: &str,
     ) -> Result<HarnessExecutionPlan> {
-        let _activity = self.begin_runtime_operation();
         let mut env_overrides = HashMap::new();
         env_overrides.insert(
             "CTX_DATA_ROOT_HOST".to_string(),
@@ -879,6 +1230,7 @@ impl HarnessRuntimeManager {
                 env_overrides,
             });
         }
+        let _activity = self.begin_runtime_operation();
         let podman_bin = ensure_managed_podman_runtime(&self.data_root, None, None)
             .await
             .context("podman unavailable and execution mode is container")?;
@@ -944,14 +1296,27 @@ impl HarnessRuntimeManager {
         daemon_url: &str,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<()> {
-        let _activity = self.begin_runtime_operation();
         if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(());
         }
+        let _activity = self.begin_runtime_operation();
         self.ensure_container_machine_ready(&settings.container, observer)
             .await
             .context("podman unavailable and execution mode is container")?;
         self.ensure_workspace_container_after_machine_ready_with_observer(
+            workspace, settings, daemon_url, observer,
+        )
+        .await
+    }
+
+    pub(crate) async fn ensure_workspace_container_after_machine_ready_with_observer(
+        &self,
+        workspace: &Workspace,
+        settings: &ExecutionSettings,
+        daemon_url: &str,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()> {
+        self.ensure_workspace_container_after_readiness_with_observer(
             workspace,
             settings,
             daemon_url,
@@ -961,7 +1326,7 @@ impl HarnessRuntimeManager {
         .await
     }
 
-    async fn ensure_workspace_container_after_machine_ready_with_observer(
+    async fn ensure_workspace_container_after_readiness_with_observer(
         &self,
         workspace: &Workspace,
         settings: &ExecutionSettings,
@@ -995,11 +1360,11 @@ impl HarnessRuntimeManager {
         daemon_url: &str,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<()> {
-        let _activity = self.begin_runtime_operation();
         if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(());
         }
-        self.ensure_workspace_container_after_machine_ready_with_observer(
+        let _activity = self.begin_runtime_operation();
+        self.ensure_workspace_container_after_readiness_with_observer(
             workspace,
             settings,
             daemon_url,
@@ -1009,7 +1374,7 @@ impl HarnessRuntimeManager {
         .await
     }
 
-    async fn ensure_container_machine_ready(
+    pub(crate) async fn ensure_container_machine_ready(
         &self,
         settings: &ContainerExecutionSettings,
         observer: Option<&dyn HarnessSetupObserver>,
@@ -1041,6 +1406,23 @@ impl HarnessRuntimeManager {
             .await?;
         ensure_podman_machine_running_with_observer(&self.data_root, observer).await?;
         Ok(())
+    }
+
+    pub(crate) async fn workspace_container_exists(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<bool> {
+        let name = workspace_container_name(workspace_id);
+        match container_exists(&self.data_root, &name).await {
+            Ok(exists) => Ok(exists),
+            Err(err) => {
+                if podman_engine_ready(&self.data_root).await.unwrap_or(false) {
+                    Err(err)
+                } else {
+                    Ok(false)
+                }
+            }
+        }
     }
 
     async fn ensure_container_image_ready(
@@ -1395,6 +1777,168 @@ impl HarnessRuntimeManager {
         };
         containers.insert(workspace.id, container.clone());
         Ok(container)
+    }
+}
+
+#[cfg(test)]
+mod reclaim_unit_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(prev) = self.prev.take() {
+                std::env::set_var(self.key, prev);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    fn env_var_test_lock() -> &'static tokio::sync::Mutex<()> {
+        crate::test_support::podman_env_test_lock()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_container() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _serial = env_var_test_lock().lock().await;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manager = HarnessRuntimeManager::new(temp.path().to_path_buf());
+        let machine_name = ctx_podman_machine_name(temp.path());
+        let log_path = temp.path().join("podman-invocations.log");
+        let podman_path = temp.path().join("podman.sh");
+        std::fs::write(
+            &podman_path,
+            format!(
+                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"ps\" ]; then\n  printf 'ctx-harness-123\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+                log = log_path.display(),
+            ),
+        )
+        .expect("write podman shim");
+        std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod podman shim");
+        let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        {
+            let mut last_activity = manager
+                .last_activity
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *last_activity = Instant::now() - Duration::from_secs(600);
+        }
+        let settings = ContainerExecutionSettings {
+            machine: crate::settings::ContainerMachineSettings {
+                idle_shutdown_seconds: 60,
+                ..crate::settings::ContainerMachineSettings::default()
+            },
+            ..ContainerExecutionSettings::default()
+        };
+        let stores = StoreManager::open(temp.path()).await.expect("open stores");
+        let running_sessions = Arc::new(Mutex::new(HashSet::new()));
+        let terminals = TerminalManager::default();
+        let snapshot = SystemSnapshot {
+            cpu_pct: 0.0,
+            memory_total_bytes: 32 * 1024 * 1024 * 1024,
+            memory_used_bytes: 8 * 1024 * 1024 * 1024,
+            swap_total_bytes: 4 * 1024 * 1024 * 1024,
+            swap_used_bytes: 0,
+        };
+
+        let stopped = manager
+            .maybe_reclaim_podman_machine(
+                &settings,
+                &snapshot,
+                None,
+                &stores,
+                &running_sessions,
+                &terminals,
+            )
+            .await
+            .expect("idle reclaim should not be blocked by parked workspace containers");
+
+        let log = std::fs::read_to_string(&log_path).expect("read invocation log");
+        assert!(stopped);
+        assert!(log.contains(&format!("machine stop {machine_name}")));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn active_prewarm_artifact_activity_suppresses_reclaim() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _serial = env_var_test_lock().lock().await;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manager = HarnessRuntimeManager::new(temp.path().to_path_buf());
+        let machine_name = ctx_podman_machine_name(temp.path());
+        let log_path = temp.path().join("podman-invocations.log");
+        let podman_path = temp.path().join("podman.sh");
+        std::fs::write(
+            &podman_path,
+            format!(
+                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+                log = log_path.display(),
+            ),
+        )
+        .expect("write podman shim");
+        std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod podman shim");
+        let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        {
+            let mut last_activity = manager
+                .last_activity
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *last_activity = Instant::now() - Duration::from_secs(600);
+        }
+        let settings = ContainerExecutionSettings {
+            machine: crate::settings::ContainerMachineSettings {
+                idle_shutdown_seconds: 60,
+                ..crate::settings::ContainerMachineSettings::default()
+            },
+            ..ContainerExecutionSettings::default()
+        };
+        let stores = StoreManager::open(temp.path()).await.expect("open stores");
+        let running_sessions = Arc::new(Mutex::new(HashSet::new()));
+        let terminals = TerminalManager::default();
+        let snapshot = SystemSnapshot {
+            cpu_pct: 0.0,
+            memory_total_bytes: 32 * 1024 * 1024 * 1024,
+            memory_used_bytes: 8 * 1024 * 1024 * 1024,
+            swap_total_bytes: 4 * 1024 * 1024 * 1024,
+            swap_used_bytes: 0,
+        };
+        let _prewarm_activity = manager.begin_prewarm_artifact_activity();
+
+        let stopped = manager
+            .maybe_reclaim_podman_machine(
+                &settings,
+                &snapshot,
+                None,
+                &stores,
+                &running_sessions,
+                &terminals,
+            )
+            .await
+            .expect("active prewarm should suppress reclaim");
+
+        let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+        assert!(!stopped);
+        assert!(!log.contains(&format!("machine stop {machine_name}")));
     }
 }
 

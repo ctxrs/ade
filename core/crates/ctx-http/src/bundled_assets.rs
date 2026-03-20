@@ -558,6 +558,15 @@ pub fn managed_runtime_source(id: &str, os: &str, arch: &str) -> Option<ManagedR
 }
 
 pub fn managed_ctx_harness_image_source(_expected_image: &str) -> Option<ManagedArtifactSource> {
+    #[cfg(test)]
+    if let Some(source) = test_managed_ctx_harness_image_source_override()
+        .lock()
+        .expect("test managed harness image override lock poisoned")
+        .clone()
+    {
+        return Some(source);
+    }
+
     managed_image_source("ctx-harness", "linux", current_arch())
 }
 
@@ -583,6 +592,14 @@ fn test_managed_podman_machine_cache_source_override(
 }
 
 #[cfg(test)]
+fn test_managed_ctx_harness_image_source_override(
+) -> &'static std::sync::Mutex<Option<ManagedArtifactSource>> {
+    static OVERRIDE: std::sync::OnceLock<std::sync::Mutex<Option<ManagedArtifactSource>>> =
+        std::sync::OnceLock::new();
+    OVERRIDE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+#[cfg(test)]
 pub(crate) struct TestManagedPodmanMachineCacheSourceGuard {
     previous: Option<ManagedArtifactSource>,
 }
@@ -598,6 +615,21 @@ impl Drop for TestManagedPodmanMachineCacheSourceGuard {
 }
 
 #[cfg(test)]
+pub(crate) struct TestManagedCtxHarnessImageSourceGuard {
+    previous: Option<ManagedArtifactSource>,
+}
+
+#[cfg(test)]
+impl Drop for TestManagedCtxHarnessImageSourceGuard {
+    fn drop(&mut self) {
+        let mut guard = test_managed_ctx_harness_image_source_override()
+            .lock()
+            .expect("test managed harness image override lock poisoned");
+        *guard = self.previous.take();
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn override_managed_podman_machine_cache_source_for_test(
     source: ManagedArtifactSource,
 ) -> TestManagedPodmanMachineCacheSourceGuard {
@@ -607,6 +639,18 @@ pub(crate) fn override_managed_podman_machine_cache_source_for_test(
     let previous = guard.clone();
     *guard = Some(source);
     TestManagedPodmanMachineCacheSourceGuard { previous }
+}
+
+#[cfg(test)]
+pub(crate) fn override_managed_ctx_harness_image_source_for_test(
+    source: ManagedArtifactSource,
+) -> TestManagedCtxHarnessImageSourceGuard {
+    let mut guard = test_managed_ctx_harness_image_source_override()
+        .lock()
+        .expect("test managed harness image override lock poisoned");
+    let previous = guard.clone();
+    *guard = Some(source);
+    TestManagedCtxHarnessImageSourceGuard { previous }
 }
 
 #[cfg(test)]

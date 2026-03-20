@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useLocation, useNavigate } from "react-router-dom";
 import type { User } from "@supabase/supabase-js";
 import {
-  ContainerMachineMemoryProfile,
   ExecutionSettings as ApiExecutionSettings,
   DevRestartProvidersResult,
   EnableMobileAccessResponse,
   MobileAccessStatus,
+  PublicExecutionSettings,
   ResourceGovernanceLimits,
   ResourceGovernanceSettings,
   ResourceGovernanceStatus,
@@ -78,9 +78,9 @@ import {
   sectionFromHash,
 } from "./SettingsPage.utils";
 
-const DEFAULT_MACHINE_MEMORY_PROFILE: ContainerMachineMemoryProfile = "balanced";
-const DEFAULT_MACHINE_IDLE_SHUTDOWN_SECONDS = 15 * 60;
+const DEFAULT_MACHINE_IDLE_SHUTDOWN_SECONDS = 60 * 60;
 const DEFAULT_MACHINE_HOST_PRESSURE_SWAP_THRESHOLD_MB = 1024;
+export const MIN_MACHINE_IDLE_SHUTDOWN_SECONDS = 60;
 
 function defaultExecutionSettings(): ApiExecutionSettings {
   return {
@@ -92,7 +92,7 @@ function defaultExecutionSettings(): ApiExecutionSettings {
       allowlist: [],
       image: null,
       machine: {
-        memory_profile: DEFAULT_MACHINE_MEMORY_PROFILE,
+        memory_profile: "economy",
         custom_memory_mb: null,
         idle_shutdown_seconds: DEFAULT_MACHINE_IDLE_SHUTDOWN_SECONDS,
         host_pressure_swap_threshold_mb: DEFAULT_MACHINE_HOST_PRESSURE_SWAP_THRESHOLD_MB,
@@ -101,7 +101,9 @@ function defaultExecutionSettings(): ApiExecutionSettings {
   };
 }
 
-function normalizeExecutionSettings(value: ApiExecutionSettings | null | undefined): ApiExecutionSettings {
+function normalizeExecutionSettings(
+  value: ApiExecutionSettings | PublicExecutionSettings | null | undefined,
+): ApiExecutionSettings {
   const fallback = defaultExecutionSettings();
   return {
     mode: value?.mode ?? fallback.mode,
@@ -124,16 +126,25 @@ function normalizeExecutionSettings(value: ApiExecutionSettings | null | undefin
   };
 }
 
-function formatOptionalInteger(value: number | null | undefined): string {
-  return value === null || value === undefined ? "" : String(value);
-}
-
 function parseUnsignedInteger(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
   const parsed = Number(trimmed);
   if (!Number.isFinite(parsed) || parsed < 0) return null;
   return Math.round(parsed);
+}
+
+export function canSaveSandboxMachineSettings({
+  machineHostPressureSwapThresholdMb,
+  machineIdleShutdownSeconds,
+}: {
+  machineHostPressureSwapThresholdMb: string;
+  machineIdleShutdownSeconds: string;
+}): boolean {
+  const idle = parseUnsignedInteger(machineIdleShutdownSeconds);
+  if (idle === null || idle < MIN_MACHINE_IDLE_SHUTDOWN_SECONDS) return false;
+  const threshold = parseUnsignedInteger(machineHostPressureSwapThresholdMb);
+  return threshold !== null;
 }
 
 export default function SettingsPage() {
@@ -214,8 +225,7 @@ export default function SettingsPage() {
   const [resourceGovernanceEnabled, setResourceGovernanceEnabled] = useState(true);
   const [providerControlMode, setProviderControlMode] = useState<SandboxingSettings["provider_control_mode"]>("full");
   const [executionSettings, setExecutionSettings] = useState<ApiExecutionSettings>(() => defaultExecutionSettings());
-  const [machineMemoryProfile, setMachineMemoryProfile] = useState<ContainerMachineMemoryProfile>(DEFAULT_MACHINE_MEMORY_PROFILE);
-  const [machineCustomMemoryMb, setMachineCustomMemoryMb] = useState("");
+  const [machineResolvedMemoryMb, setMachineResolvedMemoryMb] = useState<number | null>(null);
   const [machineIdleShutdownSeconds, setMachineIdleShutdownSeconds] = useState(String(DEFAULT_MACHINE_IDLE_SHUTDOWN_SECONDS));
   const [machineHostPressureSwapThresholdMb, setMachineHostPressureSwapThresholdMb] = useState(
     String(DEFAULT_MACHINE_HOST_PRESSURE_SWAP_THRESHOLD_MB),
@@ -494,10 +504,9 @@ export default function SettingsPage() {
           setProviderControlMode(sb.provider_control_mode);
         }
         const execution = normalizeExecutionSettings(s.execution ?? null);
+        setMachineResolvedMemoryMb(s.execution?.container.machine.resolved_memory_mb ?? null);
         savedExecutionPayloadKey.current = executionSettingsStableKey(execution);
         setExecutionSettings(execution);
-        setMachineMemoryProfile(execution.container.machine.memory_profile);
-        setMachineCustomMemoryMb(formatOptionalInteger(execution.container.machine.custom_memory_mb));
         setMachineIdleShutdownSeconds(String(execution.container.machine.idle_shutdown_seconds));
         setMachineHostPressureSwapThresholdMb(
           String(execution.container.machine.host_pressure_swap_threshold_mb),
@@ -553,10 +562,9 @@ export default function SettingsPage() {
         setProviderControlMode(next.sandboxing.provider_control_mode);
       }
       const execution = normalizeExecutionSettings(next.execution ?? null);
+      setMachineResolvedMemoryMb(next.execution?.container.machine.resolved_memory_mb ?? null);
       savedExecutionPayloadKey.current = executionSettingsStableKey(execution);
       setExecutionSettings(execution);
-      setMachineMemoryProfile(execution.container.machine.memory_profile);
-      setMachineCustomMemoryMb(formatOptionalInteger(execution.container.machine.custom_memory_mb));
       setMachineIdleShutdownSeconds(String(execution.container.machine.idle_shutdown_seconds));
       setMachineHostPressureSwapThresholdMb(
         String(execution.container.machine.host_pressure_swap_threshold_mb),
@@ -576,7 +584,6 @@ export default function SettingsPage() {
   }, [providerControlMode]);
 
   const executionPayload = useMemo((): ApiExecutionSettings => {
-    const customMemoryMb = parseUnsignedInteger(machineCustomMemoryMb);
     const idleShutdownSeconds =
       parseUnsignedInteger(machineIdleShutdownSeconds) ?? DEFAULT_MACHINE_IDLE_SHUTDOWN_SECONDS;
     const hostPressureSwapThresholdMb =
@@ -588,8 +595,8 @@ export default function SettingsPage() {
       container: {
         ...executionSettings.container,
         machine: {
-          memory_profile: machineMemoryProfile,
-          custom_memory_mb: machineMemoryProfile === "custom" ? customMemoryMb : null,
+          memory_profile: executionSettings.container.machine.memory_profile,
+          custom_memory_mb: executionSettings.container.machine.custom_memory_mb,
           idle_shutdown_seconds: idleShutdownSeconds,
           host_pressure_swap_threshold_mb: hostPressureSwapThresholdMb,
         },
@@ -597,10 +604,8 @@ export default function SettingsPage() {
     };
   }, [
     executionSettings,
-    machineCustomMemoryMb,
     machineHostPressureSwapThresholdMb,
     machineIdleShutdownSeconds,
-    machineMemoryProfile,
   ]);
 
   const executionPayloadKey = useMemo(
@@ -638,20 +643,13 @@ export default function SettingsPage() {
   }, [resourceGovernanceEnabled, resourceGovernanceMode, resourceMemoryHighGb, resourceMemoryMaxGb]);
 
   const sandboxMachineCanSave = useMemo(() => {
-    const idle = parseUnsignedInteger(machineIdleShutdownSeconds);
-    if (idle === null || idle === 0) return false;
-    const threshold = parseUnsignedInteger(machineHostPressureSwapThresholdMb);
-    if (threshold === null) return false;
-    if (machineMemoryProfile === "custom") {
-      const customMemory = parseUnsignedInteger(machineCustomMemoryMb);
-      return customMemory !== null && customMemory >= 1024;
-    }
-    return true;
+    return canSaveSandboxMachineSettings({
+      machineHostPressureSwapThresholdMb,
+      machineIdleShutdownSeconds,
+    });
   }, [
-    machineCustomMemoryMb,
     machineHostPressureSwapThresholdMb,
     machineIdleShutdownSeconds,
-    machineMemoryProfile,
   ]);
 
   useEffect(() => {
@@ -1062,10 +1060,7 @@ export default function SettingsPage() {
         }}
         providerControlMode={providerControlMode}
         setProviderControlMode={setProviderControlMode}
-        machineMemoryProfile={machineMemoryProfile}
-        setMachineMemoryProfile={setMachineMemoryProfile}
-        machineCustomMemoryMb={machineCustomMemoryMb}
-        setMachineCustomMemoryMb={setMachineCustomMemoryMb}
+        machineResolvedMemoryMb={machineResolvedMemoryMb}
         machineIdleShutdownSeconds={machineIdleShutdownSeconds}
         setMachineIdleShutdownSeconds={setMachineIdleShutdownSeconds}
         machineHostPressureSwapThresholdMb={machineHostPressureSwapThresholdMb}

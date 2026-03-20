@@ -13,8 +13,9 @@ use crate::harness_runtime::{
 use crate::settings::ExecutionSettings;
 
 use super::{
-    seed_runtime_prewarm_initial_state, ExecutionLaunchSnapshot, ExecutionLaunchState,
-    ExecutionSetupJobKind, LaunchJob, LaunchTerminalMutation, RuntimePrewarmScope,
+    normalize_podman_engine_ready_for_gate, seed_runtime_prewarm_initial_state,
+    ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionSetupJobKind, LaunchJob,
+    LaunchTerminalMutation, RuntimePrewarmScope,
 };
 
 const SHARED_WARMUP_EVENT_CAP: usize = 256;
@@ -50,12 +51,24 @@ impl SharedWarmupOperations for DefaultWarmupOperations {
         observer: Arc<dyn HarnessSetupObserver>,
     ) -> Result<()> {
         let image = harness_runtime::resolve_container_image(&settings.container);
-        harness_runtime::prefetch_container_startup_artifacts_with_observer(
-            &self.data_root,
-            &image,
-            Some(observer.as_ref()),
-        )
-        .await
+        let machine_ready = normalize_podman_engine_ready_for_gate(
+            harness_runtime::podman_engine_ready(&self.data_root).await,
+        )?;
+        if machine_ready {
+            harness_runtime::prefetch_container_image_with_observer(
+                &self.data_root,
+                &image,
+                Some(observer.as_ref()),
+            )
+            .await
+        } else {
+            harness_runtime::prefetch_container_startup_artifacts_with_observer(
+                &self.data_root,
+                &image,
+                Some(observer.as_ref()),
+            )
+            .await
+        }
     }
 
     async fn warm_builder(&self, observer: Arc<dyn HarnessSetupObserver>) -> Result<()> {
@@ -104,6 +117,33 @@ impl LaunchPrewarmCoordinator {
         };
         let task = self.runtime_task(key, settings.clone()).await;
         task.attach(observer).await
+    }
+
+    pub(crate) async fn attach_runtime_if_running(
+        &self,
+        settings: &ExecutionSettings,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<bool> {
+        let key = SharedWarmupKey::Runtime {
+            image: harness_runtime::resolve_container_image(&settings.container),
+        };
+        let task = {
+            let tasks = self.inner.tasks.lock().await;
+            tasks.get(&key).cloned()
+        };
+        let Some(task) = task else {
+            return Ok(false);
+        };
+        task.attach(observer).await?;
+        Ok(true)
+    }
+
+    pub(crate) async fn runtime_is_running(&self, settings: &ExecutionSettings) -> bool {
+        let key = SharedWarmupKey::Runtime {
+            image: harness_runtime::resolve_container_image(&settings.container),
+        };
+        let tasks = self.inner.tasks.lock().await;
+        tasks.contains_key(&key)
     }
 
     pub(crate) async fn ensure_builder(

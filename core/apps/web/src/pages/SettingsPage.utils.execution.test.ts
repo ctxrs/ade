@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MIN_MACHINE_IDLE_SHUTDOWN_SECONDS,
+  canSaveSandboxMachineSettings,
+} from "./SettingsPage";
+import {
   desktopEditorSettingsEqual,
   executionSettingsStableKey,
   isContainerizedEnvironment,
@@ -104,6 +108,67 @@ describe("executionSettingsStableKey", () => {
         },
       }),
     );
+  });
+
+  it("ignores display-only resolved machine memory from public settings", () => {
+    const baseSettings = {
+      mode: "host" as const,
+      container: {
+        runtime: "podman" as const,
+        mount_mode: "host_mounted" as const,
+        network_mode: "llm_only" as const,
+        allowlist: [],
+        image: null,
+        machine: {
+          memory_profile: "balanced" as const,
+          custom_memory_mb: null,
+          idle_shutdown_seconds: 900,
+          host_pressure_swap_threshold_mb: 1024,
+        },
+      },
+    };
+    const publicSettingsWithDisplayOnlyFields: typeof baseSettings & {
+      container: typeof baseSettings.container & {
+        machine: typeof baseSettings.container.machine & {
+          resolved_memory_mb: number;
+        };
+      };
+    } = {
+      ...baseSettings,
+      container: {
+        ...baseSettings.container,
+        machine: {
+          ...baseSettings.container.machine,
+          resolved_memory_mb: 4096,
+        },
+      },
+    };
+
+    expect(executionSettingsStableKey(publicSettingsWithDisplayOnlyFields)).toBe(
+      executionSettingsStableKey(baseSettings),
+    );
+  });
+});
+
+describe("canSaveSandboxMachineSettings", () => {
+  it("blocks save and autosave for idle shutdown values below the 60-second minimum", () => {
+    for (let idleSeconds = 1; idleSeconds < MIN_MACHINE_IDLE_SHUTDOWN_SECONDS; idleSeconds += 1) {
+      expect(
+        canSaveSandboxMachineSettings({
+          machineIdleShutdownSeconds: String(idleSeconds),
+          machineHostPressureSwapThresholdMb: "1024",
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it("allows save again at the 60-second minimum", () => {
+    expect(
+      canSaveSandboxMachineSettings({
+        machineIdleShutdownSeconds: String(MIN_MACHINE_IDLE_SHUTDOWN_SECONDS),
+        machineHostPressureSwapThresholdMb: "1024",
+      }),
+    ).toBe(true);
   });
 });
 

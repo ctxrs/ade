@@ -19,6 +19,20 @@ async fn save_test_execution_settings(data_root: &Path, execution: ExecutionSett
     store.close().await;
 }
 
+async fn write_invalid_test_execution_settings(data_root: &Path, settings_json: &str) {
+    let db_dir = data_root.join("db");
+    std::fs::create_dir_all(&db_dir).expect("create db dir");
+    let db_path = db_dir.join("db.sqlite");
+    let store = ctx_store::Store::open_sqlite(&db_path, None)
+        .await
+        .expect("open settings db");
+    store
+        .upsert_runtime_settings_document(1, settings_json)
+        .await
+        .expect("write invalid runtime settings");
+    store.close().await;
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn prepare_starts_existing_workspace_container_when_not_cached() {
@@ -332,6 +346,95 @@ async fn ensure_podman_machine_running_recreate_recovery_uses_configured_memory(
     assert!(
         log.contains("--memory 7168"),
         "recreate recovery should preserve configured memory override:\n{log}"
+    );
+    machine_cache_server.abort();
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn ensure_podman_machine_running_uses_info_fast_path_before_recovery_settings_load() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _serial = env_var_test_lock().lock().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let log_path = temp.path().join("podman-invocations.log");
+    let podman_path = temp.path().join("podman.sh");
+    std::fs::create_dir_all(temp.path().join("db").join("db.sqlite"))
+        .expect("create invalid settings store path");
+
+    std::fs::write(
+        &podman_path,
+        format!(
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            log = log_path.display(),
+        ),
+    )
+    .expect("write podman shim");
+    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod podman shim");
+    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+
+    ensure_podman_machine_running_with_observer(temp.path(), None)
+        .await
+        .expect("reachable runtime should not load recovery settings before the info fast path");
+
+    let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+    assert!(
+        log.contains("info"),
+        "expected podman info fast path to run:\n{log}"
+    );
+    assert!(
+        !log.contains("machine start "),
+        "reachable runtime should not attempt machine recovery:\n{log}"
+    );
+    assert!(
+        !log.contains("machine init "),
+        "reachable runtime should not attempt machine initialization:\n{log}"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn ensure_podman_machine_running_falls_back_to_default_memory_when_recovery_settings_are_corrupt(
+) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _serial = env_var_test_lock().lock().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let machine_name = ctx_podman_machine_name(temp.path());
+    let log_path = temp.path().join("podman-invocations.log");
+    let state_path = temp.path().join("podman-ready");
+    let init_state_path = temp.path().join("podman-initialized");
+    let podman_path = temp.path().join("podman.sh");
+    write_invalid_test_execution_settings(temp.path(), "{").await;
+
+    std::fs::write(
+        &podman_path,
+        format!(
+            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nINIT_STATE=\"{init_state}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STATE\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  if [ -f \"$INIT_STATE\" ]; then\n    touch \"$STATE\"\n    exit 0\n  fi\n  echo 'error: machine does not exist' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  touch \"$INIT_STATE\"\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            log = log_path.display(),
+            state = state_path.display(),
+            init_state = init_state_path.display(),
+        ),
+    )
+    .expect("write podman shim");
+    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod podman shim");
+    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    let _host_memory = EnvGuard::set("CTX_TEST_HOST_MEMORY_MB", "49152");
+    let (_machine_cache_guard, machine_cache_server) =
+        install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
+
+    ensure_podman_machine_running_with_observer(temp.path(), None)
+        .await
+        .expect("corrupt recovery settings should fall back to default machine memory");
+
+    let log = std::fs::read_to_string(&log_path).expect("read invocation log");
+    assert!(log.contains(&format!("machine start {machine_name}")));
+    assert!(log.contains(&format!("machine init {machine_name}")));
+    assert!(
+        log.contains("--memory 6144"),
+        "corrupt recovery settings should fall back to the default machine memory:\n{log}"
     );
     machine_cache_server.abort();
 }

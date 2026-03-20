@@ -1,18 +1,24 @@
-import type {
-  ContainerMachineMemoryProfile,
-  SandboxingSettings,
-} from "../../../api/client";
+import type { SandboxingSettings } from "../../../api/client";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
 import { Card, Row } from "../../SettingsPage.components";
+import { formatGiB } from "../../SettingsPage.utils";
+
+export const MACHINE_MEMORY_DESCRIPTION =
+  "ctx sizes the local sandbox runtime automatically for this machine.";
+
+export function formatResolvedMachineMemory(memoryMb: number | null | undefined): string {
+  if (typeof memoryMb !== "number" || !Number.isFinite(memoryMb) || memoryMb <= 0) {
+    return "Automatic";
+  }
+  const gib = formatGiB(memoryMb);
+  return gib ? `${gib.replace(/\.0$/, "")} GiB` : "Automatic";
+}
 
 export function SandboxingSection({
   loaded,
   providerControlMode,
   onProviderControlModeChange,
-  machineMemoryProfile,
-  onMachineMemoryProfileChange,
-  customMemoryMb,
-  onCustomMemoryMbChange,
+  resolvedMachineMemoryMb,
   idleShutdownSeconds,
   onIdleShutdownSecondsChange,
   hostPressureSwapThresholdMb,
@@ -22,10 +28,7 @@ export function SandboxingSection({
   loaded: boolean;
   providerControlMode: SandboxingSettings["provider_control_mode"];
   onProviderControlModeChange: (value: SandboxingSettings["provider_control_mode"]) => void;
-  machineMemoryProfile: ContainerMachineMemoryProfile;
-  onMachineMemoryProfileChange: (value: ContainerMachineMemoryProfile) => void;
-  customMemoryMb: string;
-  onCustomMemoryMbChange: (value: string) => void;
+  resolvedMachineMemoryMb: number | null;
   idleShutdownSeconds: string;
   onIdleShutdownSecondsChange: (value: string) => void;
   hostPressureSwapThresholdMb: string;
@@ -55,40 +58,10 @@ export function SandboxingSection({
 
       <Card title="Local Sandbox Runtime">
         <Row
-          title="Machine memory profile"
-          description="Podman on macOS uses fixed VM memory. Changing the profile recreates the local sandbox runtime on next launch."
-          control={
-            <Select value={machineMemoryProfile} onValueChange={(value) => onMachineMemoryProfileChange(value as ContainerMachineMemoryProfile)} disabled={!loaded}>
-              <SelectTrigger className="tw-min-w-[12rem]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="economy">Economy (2 GiB)</SelectItem>
-                <SelectItem value="balanced">Balanced (4 GiB)</SelectItem>
-                <SelectItem value="performance">Performance (8 GiB)</SelectItem>
-                <SelectItem value="custom">Custom</SelectItem>
-              </SelectContent>
-            </Select>
-          }
+          title="Machine memory"
+          description={MACHINE_MEMORY_DESCRIPTION}
+          control={<span className="settings-control">{formatResolvedMachineMemory(resolvedMachineMemoryMb)}</span>}
         />
-        {machineMemoryProfile === "custom" ? (
-          <Row
-            title="Custom memory (MiB)"
-            description="Minimum 1024 MiB. The runtime will be recreated from the cached machine image on next use."
-            control={
-              <input
-                className="settings-control"
-                type="number"
-                min={1024}
-                step={256}
-                value={customMemoryMb}
-                onChange={(event) => onCustomMemoryMbChange(event.target.value)}
-                disabled={!loaded}
-                placeholder="4096"
-              />
-            }
-          />
-        ) : null}
         <Row
           title="Idle shutdown (seconds)"
           description="Stop the local sandbox VM after this much inactivity to reclaim RAM and swap."
@@ -125,7 +98,7 @@ export function SandboxingSection({
 
       {!canSaveMachineSettings ? (
         <div className="settings-banner settings-banner-error">
-          Enter a valid idle timeout and swap threshold. Custom memory profiles require at least 1024 MiB.
+          Enter a valid idle timeout and swap threshold.
         </div>
       ) : null}
     </>

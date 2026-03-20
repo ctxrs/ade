@@ -1,9 +1,9 @@
 use serde::Deserialize;
 
 use super::{
-    ContainerExecutionSettings, DictationProvider, ExecutionMode, NetworkProfilesSettings,
-    ProviderControlMode, ResourceGovernanceMode, Settings, TitleGenerationLocalSettings,
-    TitleGenerationMode,
+    normalize_container_machine_settings, ContainerExecutionSettings, DictationProvider,
+    ExecutionMode, NetworkProfilesSettings, ProviderControlMode, ResourceGovernanceMode, Settings,
+    TitleGenerationLocalSettings, TitleGenerationMode,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -269,9 +269,11 @@ pub(super) fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Set
         current.sandboxing = Some(next);
     }
     if let Some(e) = req.execution {
+        let mut container = e.container;
+        normalize_container_machine_settings(&mut container.machine);
         current.execution = Some(super::ExecutionSettings {
             mode: e.mode,
-            container: e.container,
+            container,
         });
     }
     if let Some(p) = req.network_profiles {

@@ -146,6 +146,8 @@ impl AppState {
         let perf_telemetry = PerfTelemetry::new(data_root.clone());
         let harness_runtime = Arc::new(HarnessRuntimeManager::new(data_root.clone()));
         let storage_guard = crate::storage_guard::StorageGuardRuntime::new(&data_root);
+        let running_sessions = Arc::new(Mutex::new(HashSet::new()));
+        let terminals = Arc::new(TerminalManager::default());
         let execution_setup = Arc::new(ExecutionSetupCoordinator::new(
             data_root.clone(),
             harness_runtime.clone(),
@@ -153,7 +155,11 @@ impl AppState {
             ops_events.clone(),
         ));
         execution_setup.spawn_startup_prewarm();
-        harness_runtime.spawn_background_podman_machine_reclaim(stores.clone());
+        harness_runtime.spawn_background_podman_machine_reclaim(
+            stores.clone(),
+            running_sessions.clone(),
+            terminals.clone(),
+        );
         let workspace_active_snapshot = Arc::new(WorkspaceActiveSnapshotHub::new());
         let web_sessions = Arc::new(WebSessionManager::new());
         let merge_queue_notify = Arc::new(Notify::new());
@@ -182,7 +188,7 @@ impl AppState {
                 order_seq_states: Mutex::new(HashMap::new()),
                 active_head_projections: Mutex::new(HashMap::new()),
                 active_task_refreshes: Mutex::new(HashMap::new()),
-                running_sessions: Mutex::new(HashSet::new()),
+                running_sessions,
                 session_meta_cache: Mutex::new(HashMap::new()),
             },
             workspaces: WorkspaceRuntime {
@@ -232,7 +238,7 @@ impl AppState {
                 resource_sampler: Mutex::new(ResourceSampler::new()),
             },
             transport: TransportRuntime {
-                terminals: Arc::new(TerminalManager::default()),
+                terminals,
                 mobile_tunnel: MobileTunnelManager::default(),
                 web_sessions,
                 merge_queue_notify,

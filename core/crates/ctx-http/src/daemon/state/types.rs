@@ -25,7 +25,7 @@ pub struct SessionRuntime {
     pub order_seq_states: Mutex<HashMap<SessionId, TimedEntry<Arc<Mutex<OrderSeqState>>>>>,
     pub(crate) active_head_projections: Mutex<HashMap<SessionId, ActiveHeadProjectionEntry>>,
     pub(crate) active_task_refreshes: Mutex<HashMap<TaskId, ActiveTaskRefreshEntry>>,
-    pub running_sessions: Mutex<HashSet<SessionId>>,
+    pub running_sessions: Arc<Mutex<HashSet<SessionId>>>,
     pub session_meta_cache: Mutex<HashMap<SessionId, TimedEntry<Session>>>,
 }
 

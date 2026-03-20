@@ -1,6 +1,6 @@
 use anyhow::Context;
 use ctx_store::Store;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 mod public;
 pub(crate) mod update;
@@ -237,8 +237,8 @@ pub enum ContainerNetworkMode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ContainerMachineMemoryProfile {
-    Economy,
     #[default]
+    Economy,
     Balanced,
     Performance,
     Custom,
@@ -250,7 +250,10 @@ pub struct ContainerMachineSettings {
     pub memory_profile: ContainerMachineMemoryProfile,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_memory_mb: Option<u32>,
-    #[serde(default = "default_container_machine_idle_shutdown_seconds")]
+    #[serde(
+        default = "default_container_machine_idle_shutdown_seconds",
+        deserialize_with = "deserialize_container_machine_idle_shutdown_seconds"
+    )]
     pub idle_shutdown_seconds: u64,
     #[serde(default = "default_container_machine_host_pressure_swap_threshold_mb")]
     pub host_pressure_swap_threshold_mb: u32,
@@ -259,7 +262,7 @@ pub struct ContainerMachineSettings {
 impl Default for ContainerMachineSettings {
     fn default() -> Self {
         Self {
-            memory_profile: ContainerMachineMemoryProfile::Balanced,
+            memory_profile: ContainerMachineMemoryProfile::Economy,
             custom_memory_mb: None,
             idle_shutdown_seconds: default_container_machine_idle_shutdown_seconds(),
             host_pressure_swap_threshold_mb:
@@ -268,12 +271,37 @@ impl Default for ContainerMachineSettings {
     }
 }
 
+pub const MIN_CONTAINER_MACHINE_IDLE_SHUTDOWN_SECONDS: u64 = 60;
+
 pub const fn default_container_machine_idle_shutdown_seconds() -> u64 {
-    15 * 60
+    60 * 60
+}
+
+fn deserialize_container_machine_idle_shutdown_seconds<'de, D>(
+    deserializer: D,
+) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u64::deserialize(deserializer)?;
+    Ok(normalize_container_machine_idle_shutdown_seconds(value))
 }
 
 pub const fn default_container_machine_host_pressure_swap_threshold_mb() -> u32 {
     1024
+}
+
+pub const fn normalize_container_machine_idle_shutdown_seconds(value: u64) -> u64 {
+    if value < MIN_CONTAINER_MACHINE_IDLE_SHUTDOWN_SECONDS {
+        MIN_CONTAINER_MACHINE_IDLE_SHUTDOWN_SECONDS
+    } else {
+        value
+    }
+}
+
+pub fn normalize_container_machine_settings(machine: &mut ContainerMachineSettings) {
+    machine.idle_shutdown_seconds =
+        normalize_container_machine_idle_shutdown_seconds(machine.idle_shutdown_seconds);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

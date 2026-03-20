@@ -213,7 +213,7 @@ export type PublicSettings = {
   provider_guard?: ProviderGuardSettings | null;
   subagents?: SubagentSettings | null;
   sandboxing?: SandboxingSettings | null;
-  execution?: ExecutionSettings | null;
+  execution?: PublicExecutionSettings | null;
   network_profiles?: NetworkProfilesSettings | null;
 };
 
@@ -242,6 +242,10 @@ export type ContainerMachineSettings = {
   host_pressure_swap_threshold_mb: number;
 };
 
+export type PublicContainerMachineSettings = ContainerMachineSettings & {
+  resolved_memory_mb?: number | null;
+};
+
 export type ContainerExecutionSettings = {
   runtime: ContainerRuntimeKind;
   mount_mode: ContainerMountMode;
@@ -254,6 +258,14 @@ export type ContainerExecutionSettings = {
 export type ExecutionSettings = {
   mode: ExecutionMode;
   container: ContainerExecutionSettings;
+};
+
+export type PublicContainerExecutionSettings = Omit<ContainerExecutionSettings, "machine"> & {
+  machine: PublicContainerMachineSettings;
+};
+
+export type PublicExecutionSettings = Omit<ExecutionSettings, "container"> & {
+  container: PublicContainerExecutionSettings;
 };
 
 export type NetworkProfile = {

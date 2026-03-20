@@ -1,6 +1,8 @@
 use serde::Serialize;
+use sysinfo::System;
 
 use super::{
+    normalize_container_machine_idle_shutdown_seconds, ContainerMachineMemoryProfile,
     ContainerMachineSettings, ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind,
     DictationProvider, ExecutionMode, NetworkProfile, ProviderControlMode, ResourceGovernanceMode,
     Settings, TitleGenerationLocalSettings, TitleGenerationMode,
@@ -113,7 +115,17 @@ pub struct PublicContainerExecutionSettings {
     pub allowlist: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
-    pub machine: ContainerMachineSettings,
+    pub machine: PublicContainerMachineSettings,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicContainerMachineSettings {
+    pub memory_profile: ContainerMachineMemoryProfile,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_memory_mb: Option<u32>,
+    pub idle_shutdown_seconds: u64,
+    pub host_pressure_swap_threshold_mb: u32,
+    pub resolved_memory_mb: u32,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -208,6 +220,79 @@ pub struct PublicProviderRestartSettings {
 pub struct PublicSubagentSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_per_call: Option<u32>,
+}
+
+const DEFAULT_PRESET_HOST_MEMORY_MB: u32 = 32 * 1024;
+const PODMAN_MACHINE_MEMORY_PRESET_FLOOR_MB: u32 = 4096;
+const PODMAN_MACHINE_MEMORY_ECONOMY_CAP_MB: u32 = 8192;
+const PODMAN_MACHINE_MEMORY_BALANCED_CAP_MB: u32 = 16 * 1024;
+const PODMAN_MACHINE_MEMORY_PERFORMANCE_CAP_MB: u32 = 32 * 1024;
+const MI_B: u64 = 1024 * 1024;
+
+fn detected_host_memory_mb() -> Option<u32> {
+    #[cfg(test)]
+    if let Ok(raw) = std::env::var("CTX_TEST_HOST_MEMORY_MB") {
+        if let Ok(value) = raw.parse::<u32>() {
+            if value > 0 {
+                return Some(value);
+            }
+        }
+    }
+
+    let mut system = System::new();
+    system.refresh_memory();
+    let total_bytes = system.total_memory();
+    let total_mb = total_bytes / MI_B;
+    if total_mb == 0 {
+        return None;
+    }
+    u32::try_from(total_mb).ok()
+}
+
+fn preset_memory_mb(total_memory_mb: u32, numerator: u32, denominator: u32, cap_mb: u32) -> u32 {
+    total_memory_mb
+        .saturating_mul(numerator)
+        .checked_div(denominator)
+        .unwrap_or(PODMAN_MACHINE_MEMORY_PRESET_FLOOR_MB)
+        .clamp(PODMAN_MACHINE_MEMORY_PRESET_FLOOR_MB, cap_mb)
+}
+
+fn resolved_machine_memory_mb(machine: &ContainerMachineSettings) -> u32 {
+    let host_memory_mb = detected_host_memory_mb().unwrap_or(DEFAULT_PRESET_HOST_MEMORY_MB);
+    match machine.memory_profile {
+        ContainerMachineMemoryProfile::Economy => {
+            preset_memory_mb(host_memory_mb, 1, 8, PODMAN_MACHINE_MEMORY_ECONOMY_CAP_MB)
+        }
+        ContainerMachineMemoryProfile::Balanced => {
+            preset_memory_mb(host_memory_mb, 1, 4, PODMAN_MACHINE_MEMORY_BALANCED_CAP_MB)
+        }
+        ContainerMachineMemoryProfile::Performance => preset_memory_mb(
+            host_memory_mb,
+            1,
+            2,
+            PODMAN_MACHINE_MEMORY_PERFORMANCE_CAP_MB,
+        ),
+        ContainerMachineMemoryProfile::Custom => machine
+            .custom_memory_mb
+            .unwrap_or_else(|| {
+                preset_memory_mb(host_memory_mb, 1, 4, PODMAN_MACHINE_MEMORY_BALANCED_CAP_MB)
+            })
+            .max(1024),
+    }
+}
+
+fn to_public_container_machine_settings(
+    machine: &ContainerMachineSettings,
+) -> PublicContainerMachineSettings {
+    PublicContainerMachineSettings {
+        memory_profile: machine.memory_profile.clone(),
+        custom_memory_mb: machine.custom_memory_mb,
+        idle_shutdown_seconds: normalize_container_machine_idle_shutdown_seconds(
+            machine.idle_shutdown_seconds,
+        ),
+        host_pressure_swap_threshold_mb: machine.host_pressure_swap_threshold_mb,
+        resolved_memory_mb: resolved_machine_memory_mb(machine),
+    }
 }
 
 pub(super) fn to_public(settings: &Settings) -> PublicSettings {
@@ -324,7 +409,7 @@ pub(super) fn to_public(settings: &Settings) -> PublicSettings {
                 network_mode: e.container.network_mode.clone(),
                 allowlist: e.container.allowlist.clone(),
                 image: e.container.image.clone(),
-                machine: e.container.machine.clone(),
+                machine: to_public_container_machine_settings(&e.container.machine),
             },
         });
     let network_profiles =
@@ -350,5 +435,121 @@ pub(super) fn to_public(settings: &Settings) -> PublicSettings {
         sandboxing,
         execution,
         network_profiles,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::{ContainerExecutionSettings, ExecutionSettings};
+
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(prev) = self.prev.take() {
+                std::env::set_var(self.key, prev);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[test]
+    fn default_public_machine_memory_uses_automatic_economy_target() {
+        let _host_memory = EnvVarGuard::set("CTX_TEST_HOST_MEMORY_MB", "49152");
+        let settings = Settings {
+            execution: Some(ExecutionSettings {
+                container: ContainerExecutionSettings::default(),
+                ..ExecutionSettings::default()
+            }),
+            ..Settings::default()
+        };
+
+        let public = to_public(&settings);
+        let machine = public.execution.expect("execution").container.machine;
+        assert_eq!(
+            machine.memory_profile,
+            ContainerMachineMemoryProfile::Economy
+        );
+        assert_eq!(machine.resolved_memory_mb, 6144);
+    }
+
+    #[test]
+    fn public_machine_memory_prefers_explicit_custom_value() {
+        let _host_memory = EnvVarGuard::set("CTX_TEST_HOST_MEMORY_MB", "49152");
+        let settings = Settings {
+            execution: Some(ExecutionSettings {
+                container: ContainerExecutionSettings {
+                    machine: ContainerMachineSettings {
+                        memory_profile: ContainerMachineMemoryProfile::Custom,
+                        custom_memory_mb: Some(28672),
+                        ..ContainerMachineSettings::default()
+                    },
+                    ..ContainerExecutionSettings::default()
+                },
+                ..ExecutionSettings::default()
+            }),
+            ..Settings::default()
+        };
+
+        let public = to_public(&settings);
+        let machine = public.execution.expect("execution").container.machine;
+        assert_eq!(machine.resolved_memory_mb, 28672);
+    }
+
+    #[test]
+    fn public_machine_memory_uses_runtime_fallback_for_missing_custom_value() {
+        let _host_memory = EnvVarGuard::set("CTX_TEST_HOST_MEMORY_MB", "49152");
+        let settings = Settings {
+            execution: Some(ExecutionSettings {
+                container: ContainerExecutionSettings {
+                    machine: ContainerMachineSettings {
+                        memory_profile: ContainerMachineMemoryProfile::Custom,
+                        custom_memory_mb: None,
+                        ..ContainerMachineSettings::default()
+                    },
+                    ..ContainerExecutionSettings::default()
+                },
+                ..ExecutionSettings::default()
+            }),
+            ..Settings::default()
+        };
+
+        let public = to_public(&settings);
+        let machine = public.execution.expect("execution").container.machine;
+        assert_eq!(machine.resolved_memory_mb, 12288);
+    }
+
+    #[test]
+    fn public_machine_idle_shutdown_is_clamped_to_minimum() {
+        let settings = Settings {
+            execution: Some(ExecutionSettings {
+                container: ContainerExecutionSettings {
+                    machine: ContainerMachineSettings {
+                        idle_shutdown_seconds: 5,
+                        ..ContainerMachineSettings::default()
+                    },
+                    ..ContainerExecutionSettings::default()
+                },
+                ..ExecutionSettings::default()
+            }),
+            ..Settings::default()
+        };
+
+        let public = to_public(&settings);
+        let machine = public.execution.expect("execution").container.machine;
+        assert_eq!(machine.idle_shutdown_seconds, 60);
     }
 }

@@ -1,7 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { DesktopEditorSettings } from "../../utils/desktop";
 import type {
-  ContainerMachineMemoryProfile,
   DevRestartProvidersResult,
   EnableMobileAccessResponse,
   MobileAccessStatus,
@@ -116,10 +115,7 @@ export function SettingsContentRouter(props: {
   };
   providerControlMode: SandboxingSettings["provider_control_mode"];
   setProviderControlMode: (value: SandboxingSettings["provider_control_mode"]) => void;
-  machineMemoryProfile: ContainerMachineMemoryProfile;
-  setMachineMemoryProfile: (value: ContainerMachineMemoryProfile) => void;
-  machineCustomMemoryMb: string;
-  setMachineCustomMemoryMb: (value: string) => void;
+  machineResolvedMemoryMb: number | null;
   machineIdleShutdownSeconds: string;
   setMachineIdleShutdownSeconds: (value: string) => void;
   machineHostPressureSwapThresholdMb: string;
@@ -162,10 +158,7 @@ export function SettingsContentRouter(props: {
     resourceUtilization,
     providerControlMode,
     setProviderControlMode,
-    machineMemoryProfile,
-    setMachineMemoryProfile,
-    machineCustomMemoryMb,
-    setMachineCustomMemoryMb,
+    machineResolvedMemoryMb,
     machineIdleShutdownSeconds,
     setMachineIdleShutdownSeconds,
     machineHostPressureSwapThresholdMb,
@@ -349,10 +342,7 @@ export function SettingsContentRouter(props: {
         loaded={loaded}
         providerControlMode={providerControlMode}
         onProviderControlModeChange={setProviderControlMode}
-        machineMemoryProfile={machineMemoryProfile}
-        onMachineMemoryProfileChange={setMachineMemoryProfile}
-        customMemoryMb={machineCustomMemoryMb}
-        onCustomMemoryMbChange={setMachineCustomMemoryMb}
+        resolvedMachineMemoryMb={machineResolvedMemoryMb}
         idleShutdownSeconds={machineIdleShutdownSeconds}
         onIdleShutdownSecondsChange={setMachineIdleShutdownSeconds}
         hostPressureSwapThresholdMb={machineHostPressureSwapThresholdMb}
