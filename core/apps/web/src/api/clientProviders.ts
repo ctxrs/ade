@@ -434,10 +434,6 @@ export type ClaudeLoginStartResponse = {
   auth_url?: string | null;
 };
 
-export type ClaudeLoginCompleteResponse = {
-  accepted: boolean;
-};
-
 export type GeminiLoginStatus = {
   login_id: string;
   auth_url?: string | null;
@@ -621,12 +617,6 @@ export const startClaudeLogin = (label?: string) =>
 
 export const getClaudeLogin = (loginId: string) =>
   apiAny<ClaudeLoginStatus>(`/api/providers/claude-crp/accounts/login/${loginId}`);
-
-export const completeClaudeLogin = (loginId: string, callbackCode: string) =>
-  apiAny<ClaudeLoginCompleteResponse>(`/api/providers/claude-crp/accounts/login/${loginId}`, {
-    method: "POST",
-    body: JSON.stringify({ callback_code: callbackCode }),
-  });
 
 export const upsertClaudeAccount = (setupToken: string, label?: string) =>
   apiAny<ClaudeAccountsResponse>(`/api/providers/claude-crp/accounts`, {

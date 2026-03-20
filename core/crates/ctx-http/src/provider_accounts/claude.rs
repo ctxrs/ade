@@ -4,17 +4,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use super::shared::{
-    apply_label_update, ensure_safe_account_id, load_json_registry, normalize_optional_email,
-    parse_optional_json_value, parse_required_json_object, prepend_dir_to_path_env,
+    apply_label_update, ensure_safe_account_id, load_json_registry, prepend_dir_to_path_env,
     remove_projected_account_home_for_runtime_roots, save_json_registry, write_secure_file_atomic,
 };
 use super::{
     claude_account_dir, claude_registry_path, claude_secret_path,
-    CLAUDE_CREDENTIAL_KIND_CLAUDE_AI_OAUTH, CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN,
-    CLAUDE_SECRET_VERSION,
+    CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN, CLAUDE_SECRET_VERSION,
 };
 
 const CLAUDE_AUTH_ENV_KEY: &str = "CLAUDE_CODE_OAUTH_TOKEN";
@@ -103,27 +100,63 @@ pub struct ClaudeLoginStatus {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct ClaudeOauthLoginSession {
-    pub label: Option<String>,
-    pub state: String,
-    pub code_verifier: String,
-    pub redirect_uri: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ClaudeSecretEnvelope {
     version: u32,
     #[serde(default, alias = "anthropic_auth_token")]
     claude_code_oauth_token: Option<String>,
-    #[serde(default)]
-    credentials_json: Option<Value>,
-    #[serde(default)]
-    claude_json: Option<Value>,
 }
 
 pub async fn load_claude_registry(data_root: &Path) -> ClaudeAccountRegistry {
-    load_json_registry(&claude_registry_path(data_root)).await
+    let mut registry: ClaudeAccountRegistry =
+        load_json_registry(&claude_registry_path(data_root)).await;
+    let legacy_account_ids: Vec<String> = registry
+        .accounts
+        .iter()
+        .filter(|entry| entry.kind.trim() != CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN)
+        .map(|entry| entry.id.clone())
+        .collect();
+    if legacy_account_ids.is_empty() {
+        return registry;
+    }
+
+    let legacy_account_id_set: std::collections::HashSet<&str> =
+        legacy_account_ids.iter().map(String::as_str).collect();
+    let removed_entries: Vec<ClaudeAccountEntry> = registry
+        .accounts
+        .iter()
+        .filter(|entry| legacy_account_id_set.contains(entry.id.as_str()))
+        .cloned()
+        .collect();
+    registry
+        .accounts
+        .retain(|entry| !legacy_account_id_set.contains(entry.id.as_str()));
+    if registry
+        .active_account_id
+        .as_deref()
+        .is_some_and(|account_id| legacy_account_id_set.contains(account_id))
+    {
+        registry.active_account_id = None;
+    }
+    if let Err(error) = save_json_registry(&claude_registry_path(data_root), &registry).await {
+        tracing::warn!("failed to persist migrated Claude registry: {error}");
+    }
+    for entry in removed_entries {
+        if let Some(secret_ref) = entry.secret_ref {
+            let secret_path = claude_secret_path(data_root, &secret_ref);
+            let _ = tokio::fs::remove_file(secret_path).await;
+        }
+        let account_dir = claude_account_dir(data_root, &entry.id);
+        let _ = tokio::fs::remove_dir_all(account_dir).await;
+        let _ = remove_projected_account_home_for_runtime_roots(
+            data_root,
+            &entry.id,
+            claude_account_dir,
+            "claude-crp",
+        )
+        .await;
+    }
+    registry
 }
 
 pub async fn save_claude_registry(
@@ -182,87 +215,6 @@ pub async fn add_claude_account(
         kind: CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN.to_string(),
         email: None,
         subscription_type: None,
-        created_at: Utc::now(),
-        last_used_at: Some(Utc::now()),
-        secret_ref: Some(secret_ref),
-    };
-    registry.accounts.push(entry);
-    registry.active_account_id = Some(account_id);
-    save_claude_registry(data_root, &registry).await?;
-    Ok(registry)
-}
-
-pub async fn add_claude_oauth_account(
-    data_root: &Path,
-    label: Option<String>,
-    credentials_json: String,
-    claude_json: Option<String>,
-) -> Result<ClaudeAccountRegistry> {
-    let credentials = normalize_claude_oauth_credentials(&credentials_json)?;
-    let credential_identity = claude_oauth_token_identity(&credentials)?;
-    let claude_config = parse_optional_json_value(claude_json.as_deref(), "claude_json")?;
-    let derived_email = extract_claude_oauth_email(claude_config.as_ref());
-    let derived_subscription_type =
-        extract_claude_oauth_subscription_type(&credentials, claude_config.as_ref());
-    let mut registry = load_claude_registry(data_root).await;
-    let mut existing_account_id: Option<String> = None;
-
-    for existing in &registry.accounts {
-        let Some(secret_ref) = existing.secret_ref.as_deref() else {
-            continue;
-        };
-        if let Ok(existing_secret) = read_claude_secret_for_ref(data_root, secret_ref).await {
-            if let Some(existing_credentials) = existing_secret.credentials_json.as_ref() {
-                if claude_oauth_token_identity(existing_credentials)
-                    .ok()
-                    .as_ref()
-                    == Some(&credential_identity)
-                {
-                    existing_account_id = Some(existing.id.clone());
-                    break;
-                }
-            }
-        }
-    }
-
-    if let Some(account_id) = existing_account_id {
-        write_claude_oauth_secret_for_account(
-            data_root,
-            &account_id,
-            &credentials_json,
-            claude_json.as_deref(),
-        )
-        .await?;
-        if let Some(entry) = registry
-            .accounts
-            .iter_mut()
-            .find(|entry| entry.id == account_id)
-        {
-            apply_label_update(label.clone(), &mut entry.label);
-            entry.kind = CLAUDE_CREDENTIAL_KIND_CLAUDE_AI_OAUTH.to_string();
-            entry.email = derived_email.clone();
-            entry.subscription_type = derived_subscription_type.clone();
-            entry.last_used_at = Some(Utc::now());
-        }
-        registry.active_account_id = Some(account_id);
-        save_claude_registry(data_root, &registry).await?;
-        return Ok(registry);
-    }
-
-    let account_id = uuid::Uuid::new_v4().to_string();
-    let secret_ref = write_claude_oauth_secret_for_account(
-        data_root,
-        &account_id,
-        &credentials_json,
-        claude_json.as_deref(),
-    )
-    .await?;
-    let entry = ClaudeAccountEntry {
-        id: account_id.clone(),
-        label: normalize_claude_label(label, &account_id),
-        kind: CLAUDE_CREDENTIAL_KIND_CLAUDE_AI_OAUTH.to_string(),
-        email: normalize_optional_email(derived_email),
-        subscription_type: derived_subscription_type,
         created_at: Utc::now(),
         last_used_at: Some(Utc::now()),
         secret_ref: Some(secret_ref),
@@ -386,24 +338,6 @@ pub fn claude_env_for_account(
     Ok(env)
 }
 
-fn claude_oauth_env_for_account(
-    data_root: &Path,
-    account_id: &str,
-) -> Result<HashMap<String, String>> {
-    let mut env = HashMap::new();
-    let account_home = claude_account_dir(data_root, account_id);
-    env.insert(CLAUDE_AUTH_ENV_KEY.to_string(), String::new());
-    env.insert(
-        CLAUDE_CONFIG_DIR_ENV_KEY.to_string(),
-        account_home.to_string_lossy().to_string(),
-    );
-    env.insert(
-        "PATH".to_string(),
-        claude_security_shim_path_env(&account_home)?,
-    );
-    Ok(env)
-}
-
 pub async fn claude_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
     let registry = load_claude_registry(data_root).await;
     let Some(active) = registry
@@ -504,28 +438,6 @@ async fn write_claude_secret_for_account(
     let envelope = ClaudeSecretEnvelope {
         version: CLAUDE_SECRET_VERSION,
         claude_code_oauth_token: Some(token),
-        credentials_json: None,
-        claude_json: None,
-    };
-    write_secure_file_atomic(&path, &serde_json::to_vec_pretty(&envelope)?).await?;
-    Ok(secret_ref)
-}
-
-async fn write_claude_oauth_secret_for_account(
-    data_root: &Path,
-    account_id: &str,
-    credentials_json: &str,
-    claude_json: Option<&str>,
-) -> Result<String> {
-    let credentials = normalize_claude_oauth_credentials(credentials_json)?;
-    let claude_json = parse_optional_json_value(claude_json, "claude_json")?;
-    let secret_ref = format!("{account_id}.json");
-    let path = claude_secret_path(data_root, &secret_ref);
-    let envelope = ClaudeSecretEnvelope {
-        version: CLAUDE_SECRET_VERSION,
-        claude_code_oauth_token: None,
-        credentials_json: Some(credentials),
-        claude_json,
     };
     write_secure_file_atomic(&path, &serde_json::to_vec_pretty(&envelope)?).await?;
     Ok(secret_ref)
@@ -551,11 +463,8 @@ async fn read_claude_secret_for_ref(
     if let Some(token) = parsed.claude_code_oauth_token.as_deref() {
         let _ = normalize_claude_setup_token(token)?;
     }
-    if let Some(credentials) = parsed.credentials_json.as_ref() {
-        validate_claude_oauth_credentials_value(credentials)?;
-    }
-    if parsed.claude_code_oauth_token.is_none() && parsed.credentials_json.is_none() {
-        bail!("claude secret must contain either setup token or browser oauth credentials");
+    if parsed.claude_code_oauth_token.is_none() {
+        bail!("claude secret must contain a setup token");
     }
     Ok(parsed)
 }
@@ -568,86 +477,7 @@ fn claude_env_from_secret(
     if let Some(token) = secret.claude_code_oauth_token.as_deref() {
         return claude_env_for_account(data_root, account_id, token);
     }
-    if secret.credentials_json.is_some() {
-        return claude_oauth_env_for_account(data_root, account_id);
-    }
     bail!("claude secret did not contain usable credentials")
-}
-
-fn normalize_claude_oauth_credentials(credentials_json: &str) -> Result<Value> {
-    let credentials = parse_required_json_object(credentials_json, "credentials_json")?;
-    validate_claude_oauth_credentials_value(&credentials)?;
-    Ok(credentials)
-}
-
-fn validate_claude_oauth_credentials_value(credentials: &Value) -> Result<()> {
-    let oauth = credentials
-        .get("claudeAiOauth")
-        .and_then(Value::as_object)
-        .ok_or_else(|| anyhow::anyhow!("credentials_json.claudeAiOauth must be a JSON object"))?;
-    for key in ["accessToken", "refreshToken"] {
-        let Some(value) = oauth.get(key).and_then(Value::as_str) else {
-            bail!("credentials_json.claudeAiOauth.{key} is required");
-        };
-        if value.trim().is_empty() {
-            bail!("credentials_json.claudeAiOauth.{key} is required");
-        }
-    }
-    Ok(())
-}
-
-fn claude_oauth_token_identity(credentials: &Value) -> Result<(String, String)> {
-    let oauth = credentials
-        .get("claudeAiOauth")
-        .and_then(Value::as_object)
-        .ok_or_else(|| anyhow::anyhow!("credentials_json.claudeAiOauth must be a JSON object"))?;
-    let access_token = oauth
-        .get("accessToken")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("credentials_json.claudeAiOauth.accessToken is required"))?;
-    let refresh_token = oauth
-        .get("refreshToken")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            anyhow::anyhow!("credentials_json.claudeAiOauth.refreshToken is required")
-        })?;
-    Ok((access_token.to_string(), refresh_token.to_string()))
-}
-
-fn extract_claude_oauth_email(claude_json: Option<&Value>) -> Option<String> {
-    claude_json
-        .and_then(|value| value.get("oauthAccount"))
-        .and_then(|value| value.get("emailAddress"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn extract_claude_oauth_subscription_type(
-    credentials_json: &Value,
-    claude_json: Option<&Value>,
-) -> Option<String> {
-    credentials_json
-        .get("claudeAiOauth")
-        .and_then(|value| value.get("subscriptionType"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            claude_json
-                .and_then(|value| value.get("oauthAccount"))
-                .and_then(|value| value.get("billingType"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
 }
 
 async fn ensure_claude_account_home(
@@ -656,25 +486,9 @@ async fn ensure_claude_account_home(
     secret: &ClaudeSecretEnvelope,
 ) -> Result<PathBuf> {
     let dir = ensure_claude_account_dir(data_root, account_id).await?;
-    if let Some(credentials) = secret.credentials_json.as_ref() {
-        write_secure_file_atomic(
-            &dir.join(CLAUDE_CREDENTIALS_FILENAME),
-            &serde_json::to_vec_pretty(credentials)?,
-        )
-        .await?;
-        if let Some(config) = secret.claude_json.as_ref() {
-            write_secure_file_atomic(
-                &dir.join(CLAUDE_CONFIG_FILENAME),
-                &serde_json::to_vec_pretty(config)?,
-            )
-            .await?;
-        } else {
-            remove_optional_file(&dir.join(CLAUDE_CONFIG_FILENAME)).await?;
-        }
-    } else {
-        remove_optional_file(&dir.join(CLAUDE_CREDENTIALS_FILENAME)).await?;
-        remove_optional_file(&dir.join(CLAUDE_CONFIG_FILENAME)).await?;
-    }
+    let _ = secret;
+    remove_optional_file(&dir.join(CLAUDE_CREDENTIALS_FILENAME)).await?;
+    remove_optional_file(&dir.join(CLAUDE_CONFIG_FILENAME)).await?;
     let _ = ensure_claude_security_shim(&dir).await?;
     Ok(dir)
 }
@@ -690,24 +504,10 @@ async fn remove_optional_file(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider_accounts::CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN;
 
     const CLAUDE_TEST_SETUP_TOKEN: &str =
         "sk-ant-oat01-abcDEF1234567890_abcdefghijklmnopqrstuvwxyz_0123456789";
-    const CLAUDE_TEST_CREDENTIALS_JSON: &str = r#"{
-  "claudeAiOauth": {
-    "accessToken": "access-token",
-    "refreshToken": "refresh-token",
-    "expiresAt": 4102444800000,
-    "scopes": ["user:inference", "user:profile"],
-    "subscriptionType": "pro"
-  }
-}"#;
-    const CLAUDE_TEST_CONFIG_JSON: &str = r#"{
-  "oauthAccount": {
-    "emailAddress": "contact-086a332885a5@fixture.example.test",
-    "billingType": "stripe_subscription"
-  }
-}"#;
 
     fn assert_unsafe_account_id_error(err: anyhow::Error) {
         assert!(
@@ -777,55 +577,6 @@ mod tests {
         assert!(
             path_env.starts_with(&shim_dir.to_string_lossy().to_string()),
             "expected PATH to start with shim dir, got {path_env}"
-        );
-    }
-
-    #[tokio::test]
-    async fn claude_oauth_account_projects_credentials_file_to_env() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let registry = add_claude_oauth_account(
-            root,
-            Some("Claude OAuth".to_string()),
-            CLAUDE_TEST_CREDENTIALS_JSON.to_string(),
-            Some(CLAUDE_TEST_CONFIG_JSON.to_string()),
-        )
-        .await
-        .unwrap();
-        let active_id = registry.active_account_id.clone().expect("active account");
-
-        let env = claude_env_for_active_account(root).await.unwrap();
-        assert_eq!(env.get(CLAUDE_AUTH_ENV_KEY), Some(&String::new()));
-        let cfg_dir = PathBuf::from(
-            env.get(CLAUDE_CONFIG_DIR_ENV_KEY)
-                .expect("CLAUDE_CONFIG_DIR should be set"),
-        );
-        assert!(cfg_dir.ends_with(&active_id));
-        let credentials_path = cfg_dir.join(CLAUDE_CREDENTIALS_FILENAME);
-        let config_path = cfg_dir.join(CLAUDE_CONFIG_FILENAME);
-        let shim_dir = cfg_dir.join(CLAUDE_SECURITY_SHIM_DIRNAME);
-        let shim_path = shim_dir.join(CLAUDE_SECURITY_SHIM_FILENAME);
-        assert!(credentials_path.exists());
-        assert!(config_path.exists());
-        assert!(shim_path.exists());
-        let path_env = env.get("PATH").expect("PATH should be set");
-        assert!(
-            path_env.starts_with(&shim_dir.to_string_lossy().to_string()),
-            "expected PATH to start with shim dir, got {path_env}"
-        );
-
-        let registry = load_claude_registry(root).await;
-        assert_eq!(
-            registry.accounts[0].email.as_deref(),
-            Some("contact-086a332885a5@fixture.example.test")
-        );
-        assert_eq!(
-            registry.accounts[0].subscription_type.as_deref(),
-            Some("pro")
-        );
-        assert_eq!(
-            registry.accounts[0].kind,
-            CLAUDE_CREDENTIAL_KIND_CLAUDE_AI_OAUTH.to_string()
         );
     }
 
@@ -905,39 +656,62 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn adding_existing_claude_oauth_account_updates_metadata() {
+    async fn load_claude_registry_prunes_legacy_non_setup_token_accounts() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let refreshed_credentials_json = CLAUDE_TEST_CREDENTIALS_JSON.replace(
-            "\"expiresAt\": 4102444800000",
-            "\"expiresAt\": 4102444809999",
-        );
-
-        let first = add_claude_oauth_account(
-            root,
-            Some("Claude OAuth Initial".to_string()),
-            CLAUDE_TEST_CREDENTIALS_JSON.to_string(),
-            None,
+        let legacy_id = "legacy-claude-oauth";
+        let setup_id = "setup-claude";
+        let legacy_secret_ref = format!("{legacy_id}.json");
+        let setup_secret_ref =
+            write_claude_secret_for_account(root, setup_id, CLAUDE_TEST_SETUP_TOKEN)
+                .await
+                .expect("write setup secret");
+        let legacy_secret_path = claude_secret_path(root, &legacy_secret_ref);
+        write_secure_file_atomic(
+            &legacy_secret_path,
+            br#"{"version":1,"anthropic_auth_token":"sk-ant-oat01-legacy1234567890_abcdefghijklmnopqrstuvwxyz_0123456789"}"#,
         )
         .await
-        .unwrap();
-        let first_id = first.active_account_id.clone().expect("active account");
+        .expect("write legacy secret");
+        let legacy_account_dir = claude_account_dir(root, legacy_id);
+        tokio::fs::create_dir_all(&legacy_account_dir)
+            .await
+            .expect("create legacy account dir");
 
-        let second = add_claude_oauth_account(
-            root,
-            Some("Claude OAuth Updated".to_string()),
-            refreshed_credentials_json,
-            Some(CLAUDE_TEST_CONFIG_JSON.to_string()),
-        )
-        .await
-        .unwrap();
+        let registry = ClaudeAccountRegistry {
+            active_account_id: Some(legacy_id.to_string()),
+            accounts: vec![
+                ClaudeAccountEntry {
+                    id: legacy_id.to_string(),
+                    label: "Legacy OAuth".to_string(),
+                    kind: "claude-ai-oauth".to_string(),
+                    email: Some("legacy@example.com".to_string()),
+                    subscription_type: Some("pro".to_string()),
+                    created_at: Utc::now(),
+                    last_used_at: Some(Utc::now()),
+                    secret_ref: Some(legacy_secret_ref.clone()),
+                },
+                ClaudeAccountEntry {
+                    id: setup_id.to_string(),
+                    label: "Setup Token".to_string(),
+                    kind: CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN.to_string(),
+                    email: None,
+                    subscription_type: None,
+                    created_at: Utc::now(),
+                    last_used_at: Some(Utc::now()),
+                    secret_ref: Some(setup_secret_ref),
+                },
+            ],
+        };
+        save_claude_registry(root, &registry)
+            .await
+            .expect("save registry");
 
-        assert_eq!(second.accounts.len(), 1);
-        assert_eq!(second.active_account_id.as_deref(), Some(first_id.as_str()));
-        assert_eq!(second.accounts[0].label, "Claude OAuth Updated");
-        assert_eq!(
-            second.accounts[0].email.as_deref(),
-            Some("contact-086a332885a5@fixture.example.test")
-        );
+        let loaded = load_claude_registry(root).await;
+        assert_eq!(loaded.accounts.len(), 1);
+        assert_eq!(loaded.accounts[0].id, setup_id);
+        assert_eq!(loaded.active_account_id, None);
+        assert!(!legacy_secret_path.exists());
+        assert!(!legacy_account_dir.exists());
     }
 }

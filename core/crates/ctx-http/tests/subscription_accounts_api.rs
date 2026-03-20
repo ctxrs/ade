@@ -52,16 +52,6 @@ struct ClaudeLoginStatusResponse {
     error: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct ClaudeTokenExchangeRequest {
-    grant_type: String,
-    client_id: String,
-    code: String,
-    redirect_uri: String,
-    code_verifier: String,
-    state: String,
-}
-
 #[derive(Debug, Deserialize)]
 struct GeminiLoginStartResponse {
     login_id: String,
@@ -602,11 +592,6 @@ fn providers_with_amp_adapter(
     providers
 }
 
-#[derive(Debug, Deserialize)]
-struct ClaudeLoginCompleteResponse {
-    accepted: bool,
-}
-
 async fn assert_managed_subscription_crud(provider_id: &str, upsert_body: serde_json::Value) {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
@@ -730,8 +715,6 @@ async fn write_mock_cursor_runtime(
     script_path
 }
 
-const MOCK_CLAUDE_OAUTH_CREDENTIALS_JSON: &str = r#"{"claudeAiOauth":{"accessToken":"access-token","refreshToken":"refresh-token","expiresAt":4102444800000,"scopes":["user:inference","user:profile"],"subscriptionType":"pro"}}"#;
-const MOCK_CLAUDE_CONFIG_JSON: &str = r#"{"oauthAccount":{"emailAddress":"contact-086a332885a5@fixture.example.test","organizationUuid":"org-test","organizationName":"Profound App"}} "#;
 static CLAUDE_TOKEN_ENV_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 static KIMI_TOKEN_ENV_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 
@@ -761,41 +744,6 @@ impl Drop for TestEnvVar {
             },
         }
     }
-}
-
-async fn start_claude_token_exchange_server(
-    status: StatusCode,
-    response_body: serde_json::Value,
-) -> (
-    String,
-    Arc<Mutex<Vec<ClaudeTokenExchangeRequest>>>,
-    tokio::task::JoinHandle<()>,
-) {
-    let captured = Arc::new(Mutex::new(Vec::<ClaudeTokenExchangeRequest>::new()));
-    let captured_clone = Arc::clone(&captured);
-    let app = axum::Router::new().route(
-        "/v1/oauth/token",
-        axum::routing::post(
-            move |axum::Json(payload): axum::Json<ClaudeTokenExchangeRequest>| {
-                let captured = Arc::clone(&captured_clone);
-                let response_body = response_body.clone();
-                async move {
-                    captured.lock().expect("capture lock").push(payload);
-                    (status, axum::Json(response_body))
-                }
-            },
-        ),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind claude token server");
-    let addr = listener.local_addr().expect("claude token addr");
-    let handle = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .await
-            .expect("serve claude token server");
-    });
-    (format!("http://{addr}/v1/oauth/token"), captured, handle)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1094,7 +1042,7 @@ async fn claude_subscription_accounts_crud_round_trip() {
 }
 
 #[tokio::test]
-async fn claude_login_start_returns_pending_pkce_session() {
+async fn claude_login_start_returns_pending_setup_token_session() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
@@ -1105,8 +1053,15 @@ async fn claude_login_start_returns_pending_pkce_session() {
     );
     let server = common::spawn_http_server(common::router(state)).await;
 
-    let script_path =
-        write_mock_claude_runtime(data_dir.path(), "#!/usr/bin/env bash\nexit 0\n").await;
+    let script_path = write_mock_claude_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+echo "Claude setup-token URL: https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fcallback&state=test"
+sleep 30
+"#,
+    )
+    .await;
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
         provider_login_commands: HashMap::new(),
@@ -1114,7 +1069,7 @@ async fn claude_login_start_returns_pending_pkce_session() {
         managed_provider_targets: HashMap::new(),
         managed_install_targets: HashMap::new(),
     };
-    cfg.providers.insert(
+    cfg.provider_login_commands.insert(
         "claude-cli".to_string(),
         AgentServerCommand {
             command: script_path.to_string_lossy().to_string(),
@@ -1134,7 +1089,7 @@ async fn claude_login_start_returns_pending_pkce_session() {
     let start_resp = server
         .client
         .post(start_url)
-        .json(&json!({ "label": "Claude OAuth" }))
+        .json(&json!({ "label": "Claude setup-token" }))
         .send()
         .await
         .expect("start claude login request");
@@ -1148,52 +1103,11 @@ async fn claude_login_start_returns_pending_pkce_session() {
     assert_eq!(
         auth_url
             .query_pairs()
-            .find(|(k, _)| k == "code")
-            .map(|(_, v)| v.into_owned())
-            .as_deref(),
-        Some("true")
-    );
-    assert_eq!(
-        auth_url
-            .query_pairs()
-            .find(|(k, _)| k == "client_id")
-            .map(|(_, v)| v.into_owned())
-            .as_deref(),
-        Some("9d1c250a-e61b-44d9-88ed-5944d1962f5e")
-    );
-    assert_eq!(
-        auth_url
-            .query_pairs()
-            .find(|(k, _)| k == "response_type")
-            .map(|(_, v)| v.into_owned())
-            .as_deref(),
-        Some("code")
-    );
-    assert_eq!(
-        auth_url
-            .query_pairs()
             .find(|(k, _)| k == "redirect_uri")
             .map(|(_, v)| v.into_owned())
             .as_deref(),
-        Some("https://platform.claude.com/oauth/code/callback")
+        Some("http://localhost:64111/callback")
     );
-    assert_eq!(
-        auth_url
-            .query_pairs()
-            .find(|(k, _)| k == "code_challenge_method")
-            .map(|(_, v)| v.into_owned())
-            .as_deref(),
-        Some("S256")
-    );
-    assert!(auth_url
-        .query_pairs()
-        .any(|(k, v)| k == "scope" && v.contains("user:sessions:claude_code")));
-    assert!(auth_url
-        .query_pairs()
-        .any(|(k, v)| k == "state" && !v.is_empty()));
-    assert!(auth_url
-        .query_pairs()
-        .any(|(k, v)| k == "code_challenge" && !v.is_empty()));
 
     let status_url = format!(
         "{}/api/providers/claude-crp/accounts/login/{}",
@@ -1214,7 +1128,7 @@ async fn claude_login_start_returns_pending_pkce_session() {
 }
 
 #[tokio::test]
-async fn claude_login_start_requires_prepared_runtime_resolution() {
+async fn claude_login_start_requires_usable_configured_login_command() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
@@ -1224,6 +1138,26 @@ async fn claude_login_start_requires_prepared_runtime_resolution() {
         "http://127.0.0.1:0",
     );
     let server = common::spawn_http_server(common::router(state)).await;
+    let missing_path = data_dir.path().join("missing-claude");
+    let mut cfg = AgentServerConfigFile {
+        providers: HashMap::new(),
+        provider_login_commands: HashMap::new(),
+        managed_installs: HashMap::new(),
+        managed_provider_targets: HashMap::new(),
+        managed_install_targets: HashMap::new(),
+    };
+    cfg.provider_login_commands.insert(
+        "claude-cli".to_string(),
+        AgentServerCommand {
+            command: missing_path.to_string_lossy().to_string(),
+            args: vec![],
+            dependencies: vec![],
+            managed: None,
+        },
+    );
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save agent config");
 
     let start_url = format!(
         "{}/api/providers/claude-crp/accounts/login/start",
@@ -1232,7 +1166,7 @@ async fn claude_login_start_requires_prepared_runtime_resolution() {
     let start_resp = server
         .client
         .post(start_url)
-        .json(&json!({ "label": "Claude OAuth" }))
+        .json(&json!({ "label": "Claude setup-token" }))
         .send()
         .await
         .expect("start claude login request");
@@ -1240,11 +1174,11 @@ async fn claude_login_start_requires_prepared_runtime_resolution() {
     let body: ErrorResp = start_resp.json().await.expect("start error body");
     assert!(body
         .error
-        .contains("runtime_command_missing: provider=claude-cli"));
+        .contains("runtime_command_not_found: provider=claude-cli source=login_command"));
 }
 
 #[tokio::test]
-async fn claude_login_builds_hosted_pkce_auth_url() {
+async fn claude_login_start_reconstructs_wrapped_auth_url() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
@@ -1255,8 +1189,17 @@ async fn claude_login_builds_hosted_pkce_auth_url() {
     );
     let server = common::spawn_http_server(common::router(state)).await;
 
-    let script_path =
-        write_mock_claude_runtime(data_dir.path(), "#!/usr/bin/env bash\nexit 0\n").await;
+    let script_path = write_mock_claude_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+printf "Claude setup-token URL: https://claude.ai/oauth/authorize?redirect_uri=http%%3A%%2F%%2Flocalhost%%3A\n"
+printf "64111%%2Fcallback&state=test\n"
+echo "forced failure after auth url"
+exit 5
+"#,
+    )
+    .await;
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
         provider_login_commands: HashMap::new(),
@@ -1264,7 +1207,7 @@ async fn claude_login_builds_hosted_pkce_auth_url() {
         managed_provider_targets: HashMap::new(),
         managed_install_targets: HashMap::new(),
     };
-    cfg.providers.insert(
+    cfg.provider_login_commands.insert(
         "claude-cli".to_string(),
         AgentServerCommand {
             command: script_path.to_string_lossy().to_string(),
@@ -1290,23 +1233,14 @@ async fn claude_login_builds_hosted_pkce_auth_url() {
         .expect("start claude login request");
     assert_eq!(start_resp.status(), StatusCode::OK);
     let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
-    let auth_url = parse_claude_auth_url(&start_body);
     assert_eq!(
-        auth_url
-            .query_pairs()
-            .find(|(key, _)| key == "redirect_uri")
-            .map(|(_, value)| value.into_owned())
-            .as_deref(),
-        Some("https://platform.claude.com/oauth/code/callback")
+        start_body.auth_url.as_deref(),
+        Some("https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fcallback&state=test")
     );
-    assert!(auth_url
-        .query_pairs()
-        .any(|(key, value)| key == "scope" && value.contains("user:mcp_servers")));
 }
 
 #[tokio::test]
-async fn claude_login_callback_code_completion_path_succeeds() {
-    let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
+async fn claude_login_setup_token_path_succeeds_without_callback_submission() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
@@ -1316,19 +1250,21 @@ async fn claude_login_callback_code_completion_path_succeeds() {
         "http://127.0.0.1:0",
     );
     let server = common::spawn_http_server(common::router(state)).await;
-    let (token_url, captured, token_handle) = start_claude_token_exchange_server(
-        StatusCode::OK,
-        json!({
-            "access_token": "access-token",
-            "refresh_token": "refresh-token",
-            "expires_in": 3600,
-            "scope": "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers"
-        }),
+
+    let script_path = write_mock_claude_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+echo "Claude setup-token URL: https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fcallback&state=test"
+echo "Long-lived authentication token created successfully!"
+echo ""
+echo "Your OAuth token (valid for 1 year):"
+echo ""
+echo "sk-ant-oat01-abcDEF1234567890_"
+echo "ZXY987654321"
+"#,
     )
     .await;
-    let _token_url = TestEnvVar::set("CTX_CLAUDE_OAUTH_TOKEN_URL", &token_url);
-    let script_path =
-        write_mock_claude_runtime(data_dir.path(), "#!/usr/bin/env bash\nexit 0\n").await;
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
         provider_login_commands: HashMap::new(),
@@ -1336,7 +1272,7 @@ async fn claude_login_callback_code_completion_path_succeeds() {
         managed_provider_targets: HashMap::new(),
         managed_install_targets: HashMap::new(),
     };
-    cfg.providers.insert(
+    cfg.provider_login_commands.insert(
         "claude-cli".to_string(),
         AgentServerCommand {
             command: script_path.to_string_lossy().to_string(),
@@ -1362,54 +1298,17 @@ async fn claude_login_callback_code_completion_path_succeeds() {
         .expect("start claude login request");
     assert_eq!(start_resp.status(), StatusCode::OK);
     let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
-    let auth_url = parse_claude_auth_url(&start_body);
-    let expected_state = auth_url
-        .query_pairs()
-        .find(|(key, _)| key == "state")
-        .map(|(_, value)| value.into_owned())
-        .expect("claude auth url state");
-
-    let complete_url = format!(
-        "{}/api/providers/claude-crp/accounts/login/{}",
-        server.base_url, start_body.login_id
-    );
-    let complete_resp = server
-        .client
-        .post(&complete_url)
-        .json(&json!({ "callback_code": "ePBMdWetJlSbZ0aR#state" }))
-        .send()
-        .await
-        .expect("complete claude login request");
-    assert_eq!(complete_resp.status(), StatusCode::OK);
-    let complete_body: ClaudeLoginCompleteResponse =
-        complete_resp.json().await.expect("complete body");
-    assert!(complete_body.accepted);
+    assert!(start_body.auth_url.is_some());
 
     let status =
         poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
     assert_eq!(status.status, "success");
     assert!(status.account_id.is_some());
     assert!(status.error.is_none());
-
-    let captured = captured.lock().expect("captured token request");
-    assert_eq!(captured.len(), 1);
-    let request = &captured[0];
-    assert_eq!(request.grant_type, "authorization_code");
-    assert_eq!(request.client_id, "9d1c250a-e61b-44d9-88ed-5944d1962f5e");
-    assert_eq!(request.code, "ePBMdWetJlSbZ0aR");
-    assert_eq!(
-        request.redirect_uri,
-        "https://platform.claude.com/oauth/code/callback"
-    );
-    assert_eq!(request.state, expected_state);
-    assert!(!request.code_verifier.is_empty());
-    drop(captured);
-    token_handle.abort();
 }
 
 #[tokio::test]
-async fn claude_login_token_exchange_failure_reports_actionable_error() {
-    let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
+async fn claude_login_success_without_token_reports_actionable_error() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
@@ -1419,12 +1318,17 @@ async fn claude_login_token_exchange_failure_reports_actionable_error() {
         "http://127.0.0.1:0",
     );
     let server = common::spawn_http_server(common::router(state)).await;
-    let (token_url, _captured, token_handle) =
-        start_claude_token_exchange_server(StatusCode::BAD_REQUEST, json!({ "error": "bad_code" }))
-            .await;
-    let _token_url = TestEnvVar::set("CTX_CLAUDE_OAUTH_TOKEN_URL", &token_url);
-    let script_path =
-        write_mock_claude_runtime(data_dir.path(), "#!/usr/bin/env bash\nexit 0\n").await;
+
+    let script_path = write_mock_claude_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+echo "Claude setup-token URL: https://claude.ai/oauth/authorize?code=test"
+echo "Long-lived authentication token created successfully!"
+echo "Token omitted intentionally for test."
+"#,
+    )
+    .await;
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
         provider_login_commands: HashMap::new(),
@@ -1432,7 +1336,7 @@ async fn claude_login_token_exchange_failure_reports_actionable_error() {
         managed_provider_targets: HashMap::new(),
         managed_install_targets: HashMap::new(),
     };
-    cfg.providers.insert(
+    cfg.provider_login_commands.insert(
         "claude-cli".to_string(),
         AgentServerCommand {
             command: script_path.to_string_lossy().to_string(),
@@ -1458,60 +1362,19 @@ async fn claude_login_token_exchange_failure_reports_actionable_error() {
         .expect("start claude login request");
     assert_eq!(start_resp.status(), StatusCode::OK);
     let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
-    let complete_url = format!(
-        "{}/api/providers/claude-crp/accounts/login/{}",
-        server.base_url, start_body.login_id
-    );
-    let complete_resp = server
-        .client
-        .post(&complete_url)
-        .json(&json!({ "callback_code": "bad-code" }))
-        .send()
-        .await
-        .expect("complete claude login request");
-    assert_eq!(complete_resp.status(), StatusCode::BAD_GATEWAY);
-    let error_body: ErrorResp = complete_resp.json().await.expect("complete error body");
-    assert!(error_body.error.contains("token exchange returned 400"));
 
     let status =
-        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(2)).await;
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
     assert_eq!(status.status, "failed");
     assert!(status.account_id.is_none());
     assert!(status
         .error
         .unwrap_or_default()
-        .contains("token exchange returned 400"));
-    token_handle.abort();
+        .contains("no setup token was detected"));
 }
 
 #[tokio::test]
-async fn claude_login_complete_rejects_unknown_login() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router(state)).await;
-    let complete_url = format!(
-        "{}/api/providers/claude-crp/accounts/login/unknown-login",
-        server.base_url
-    );
-    let complete_resp = server
-        .client
-        .post(&complete_url)
-        .json(&json!({ "callback_code": "missing" }))
-        .send()
-        .await
-        .expect("complete claude login request");
-    assert_eq!(complete_resp.status(), StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn claude_login_without_label_preserves_existing_account_label() {
-    let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
+async fn claude_login_hang_without_auth_url_times_out_and_fails() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
@@ -1522,34 +1385,14 @@ async fn claude_login_without_label_preserves_existing_account_label() {
     );
     let server = common::spawn_http_server(common::router(state)).await;
 
-    let existing_body = ctx_http::provider_accounts::add_claude_oauth_account(
+    let script_path = write_mock_claude_runtime(
         data_dir.path(),
-        Some("Claude Existing Label".to_string()),
-        MOCK_CLAUDE_OAUTH_CREDENTIALS_JSON.to_string(),
-        Some(MOCK_CLAUDE_CONFIG_JSON.to_string()),
-    )
-    .await
-    .expect("create existing claude oauth account");
-    let existing_account = existing_body
-        .accounts
-        .first()
-        .expect("existing account should be present");
-    let existing_id = existing_account.id.clone();
-    assert_eq!(existing_account.label.as_str(), "Claude Existing Label");
-    let (token_url, _captured, token_handle) = start_claude_token_exchange_server(
-        StatusCode::OK,
-        json!({
-            "access_token": "access-token",
-            "refresh_token": "refresh-token",
-            "expires_in": 3600,
-            "scope": "user:inference user:profile"
-        }),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+sleep 30
+"#,
     )
     .await;
-    let _token_url = TestEnvVar::set("CTX_CLAUDE_OAUTH_TOKEN_URL", &token_url);
-    let script_path =
-        write_mock_claude_runtime(data_dir.path(), "#!/usr/bin/env bash\nexit 0\n").await;
-    let accounts_url = format!("{}/api/providers/claude-crp/accounts", server.base_url);
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
         provider_login_commands: HashMap::new(),
@@ -1557,7 +1400,7 @@ async fn claude_login_without_label_preserves_existing_account_label() {
         managed_provider_targets: HashMap::new(),
         managed_install_targets: HashMap::new(),
     };
-    cfg.providers.insert(
+    cfg.provider_login_commands.insert(
         "claude-cli".to_string(),
         AgentServerCommand {
             command: script_path.to_string_lossy().to_string(),
@@ -1583,21 +1426,107 @@ async fn claude_login_without_label_preserves_existing_account_label() {
         .expect("start claude login request");
     assert_eq!(start_resp.status(), StatusCode::OK);
     let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
-    let complete_url = format!(
-        "{}/api/providers/claude-crp/accounts/login/{}",
-        server.base_url, start_body.login_id
-    );
-    let complete_resp = server
-        .client
-        .post(&complete_url)
-        .json(&json!({ "callback_code": "existing-account-code" }))
-        .send()
-        .await
-        .expect("complete claude login request");
-    assert_eq!(complete_resp.status(), StatusCode::OK);
+    assert!(start_body.auth_url.is_none());
 
     let status =
-        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(4)).await;
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(20)).await;
+    assert_eq!(status.status, "failed");
+    assert!(status.account_id.is_none());
+    let error = status.error.unwrap_or_default();
+    assert!(
+        error.contains("did not emit an authentication URL"),
+        "unexpected claude no-auth-url error: {error}"
+    );
+}
+
+#[tokio::test]
+async fn claude_login_without_label_preserves_existing_account_label() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let shared_token = "sk-ant-oat01-abcDEF1234567890_abcdefghijklmnopqrstuvwxyz_0123456789";
+    let accounts_url = format!("{}/api/providers/claude-crp/accounts", server.base_url);
+    let existing_resp = server
+        .client
+        .post(&accounts_url)
+        .json(&json!({
+            "label": "Claude Existing Label",
+            "setup_token": shared_token
+        }))
+        .send()
+        .await
+        .expect("create existing claude account request");
+    assert_eq!(existing_resp.status(), StatusCode::OK);
+    let existing_body: SubscriptionAccountsResponse = existing_resp
+        .json()
+        .await
+        .expect("existing claude account body");
+    let existing_account = existing_body
+        .accounts
+        .first()
+        .expect("existing account should be present");
+    let existing_id = existing_account.id.clone();
+    assert_eq!(
+        existing_account.label.as_deref(),
+        Some("Claude Existing Label")
+    );
+
+    let script_with_token = format!(
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+echo "Claude setup-token URL: https://claude.ai/oauth/authorize?code=test"
+echo "Long-lived authentication token created successfully!"
+echo ""
+echo "Your OAuth token (valid for 1 year):"
+echo ""
+echo "{}"
+"#,
+        shared_token
+    );
+    let script_path = write_mock_claude_runtime(data_dir.path(), &script_with_token).await;
+    let mut cfg = AgentServerConfigFile {
+        providers: HashMap::new(),
+        provider_login_commands: HashMap::new(),
+        managed_installs: HashMap::new(),
+        managed_provider_targets: HashMap::new(),
+        managed_install_targets: HashMap::new(),
+    };
+    cfg.provider_login_commands.insert(
+        "claude-cli".to_string(),
+        AgentServerCommand {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![],
+            dependencies: vec![],
+            managed: None,
+        },
+    );
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save agent config");
+
+    let start_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start claude login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
+
+    let status =
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
     assert_eq!(status.status, "success");
     assert_eq!(status.account_id.as_deref(), Some(existing_id.as_str()));
 
@@ -1616,11 +1545,6 @@ async fn claude_login_without_label_preserves_existing_account_label() {
         listed_body.accounts[0].label.as_deref(),
         Some("Claude Existing Label")
     );
-    assert_eq!(
-        listed_body.accounts[0].label.as_deref(),
-        Some("Claude Existing Label")
-    );
-    token_handle.abort();
 }
 
 #[tokio::test]

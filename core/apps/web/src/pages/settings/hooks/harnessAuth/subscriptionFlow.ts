@@ -36,6 +36,7 @@ import {
   CLAUDE_LOGIN_POLL_INTERVAL_MS,
   GEMINI_LOGIN_POLL_ATTEMPTS,
   GEMINI_LOGIN_POLL_INTERVAL_MS,
+  MANUAL_BROWSER_OPEN_MESSAGE,
   MISTRAL_LOGIN_POLL_ATTEMPTS,
   MISTRAL_LOGIN_POLL_INTERVAL_MS,
   QWEN_LOGIN_POLL_ATTEMPTS,
@@ -44,15 +45,15 @@ import {
   shouldAutoOpenAmpAuthUrl,
   shouldAutoOpenKimiAuthUrl,
   shouldOpenPolledAuthUrlForStatus,
-  shouldOpenPolledClaudeAuthUrl,
   takeNextAuthUrlToOpen,
-  takeNextClaudeAuthUrlToOpen,
 } from "./capabilities";
 import type { HarnessAuthModalOperation } from "./useHarnessAuthModalController";
 
 type RefreshAccountsOptions = {
   silent?: boolean;
 };
+
+type ReservedBrowserWindow = Window | null;
 
 type BrowserLoginOutcome = {
   status: "success" | "failed" | "timeout";
@@ -67,7 +68,7 @@ type BrowserLoginStatus = {
 };
 
 type BrowserLoginDefinition = {
-  providerId: "gemini" | "qwen" | "cursor" | "kimi" | "amp" | "mistral";
+  providerId: "claude-crp" | "gemini" | "qwen" | "cursor" | "kimi" | "amp" | "mistral";
   waitingMessage: string;
   timeoutMessage: string;
   startLogin: (label?: string) => Promise<{ login_id: string; auth_url?: string | null; device_code?: string | null }>;
@@ -75,7 +76,11 @@ type BrowserLoginDefinition = {
   maxAttempts: number;
   pollIntervalMs: number;
   refreshAccounts?: (opts?: RefreshAccountsOptions) => Promise<unknown>;
-  shouldAutoOpenAuthUrl?: (authUrl: string) => boolean;
+  shouldAutoOpenAuthUrl?: (params: {
+    authUrl: string;
+    phase: "initial" | "poll";
+    status?: BrowserLoginStatus;
+  }) => boolean;
   syncBrowserLoginState?: (state: { authUrl: string | null; deviceCode: string | null }) => void;
 };
 
@@ -88,10 +93,6 @@ type SubscriptionFlowDeps = {
     patch: Partial<HarnessAuthModalState>,
   ) => boolean;
   closeHarnessAuthModalForOperation: (operation: HarnessAuthModalOperation) => boolean;
-  setClaudePendingLoginIdForOperation: (
-    operation: HarnessAuthModalOperation,
-    loginId: string | null,
-  ) => boolean;
   setProviderError: Dispatch<SetStateAction<string | null>>;
   refreshBootstrapAfterMutation: (providerId?: string) => Promise<void>;
   selectSubscriptionSourceIfSupported: (providerId: string) => Promise<void>;
@@ -151,6 +152,48 @@ const normalizeOptionalString = (value: string | null | undefined): string | nul
   return normalized.length > 0 ? normalized : null;
 };
 
+const reserveBrowserWindowForFlow = (): ReservedBrowserWindow => {
+  if (typeof window === "undefined") return null;
+  if (typeof navigator !== "undefined" && /\bjsdom\b/i.test(navigator.userAgent)) {
+    return null;
+  }
+  try {
+    const popup = window.open("about:blank", "_blank");
+    if (!popup) return null;
+    try {
+      popup.opener = null;
+    } catch {
+      // ignore browsers that forbid touching opener
+    }
+    return popup;
+  } catch {
+    return null;
+  }
+};
+
+const navigateReservedBrowserWindow = (
+  reservedWindow: ReservedBrowserWindow,
+  authUrl: string,
+): boolean => {
+  if (!reservedWindow || reservedWindow.closed) return false;
+  try {
+    reservedWindow.location.href = authUrl;
+    reservedWindow.focus?.();
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const closeReservedBrowserWindow = (reservedWindow: ReservedBrowserWindow): void => {
+  if (!reservedWindow || reservedWindow.closed) return;
+  try {
+    reservedWindow.close();
+  } catch {
+    // ignore
+  }
+};
+
 const waitForCodexLoginOutcome = async (
   accountId: string,
   flow: HarnessAuthModalOperation,
@@ -171,39 +214,11 @@ const waitForCodexLoginOutcome = async (
   return "timeout";
 };
 
-const waitForClaudeLoginOutcome = async (
-  loginId: string,
-  flow: HarnessAuthModalOperation,
-  onAuthUrl?: (authUrl: string) => Promise<void>,
-  opts?: { openedAuthUrl?: string | null },
-): Promise<"success" | "failed" | "timeout"> => {
-  const openedAuthUrls = new Set<string>();
-  takeNextClaudeAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
-  for (let attempt = 0; attempt < CLAUDE_LOGIN_POLL_ATTEMPTS; attempt += 1) {
-    flow.throwIfCancelled();
-    try {
-      const status = await getClaudeLogin(loginId);
-      flow.throwIfCancelled();
-      const authUrl = takeNextClaudeAuthUrlToOpen(status.auth_url, openedAuthUrls);
-      if (authUrl && onAuthUrl) {
-        await onAuthUrl(authUrl);
-        flow.throwIfCancelled();
-      }
-      if (status.status === "success") return "success";
-      if (status.status === "failed") return "failed";
-    } catch (error) {
-      if (isCancelledOperationError(error)) throw error;
-    }
-    await delayWithAbort(CLAUDE_LOGIN_POLL_INTERVAL_MS, flow.signal);
-  }
-  return "timeout";
-};
-
 const waitForBrowserLoginOutcome = async (params: {
   flow: HarnessAuthModalOperation;
   loginId: string;
   getStatus: (loginId: string) => Promise<BrowserLoginStatus>;
-  onAuthUrl?: (authUrl: string) => Promise<void>;
+  onAuthUrl?: (authUrl: string, status: BrowserLoginStatus) => Promise<void>;
   onStatus?: (status: BrowserLoginStatus) => void;
   openedAuthUrl?: string | null;
   maxAttempts: number;
@@ -223,7 +238,7 @@ const waitForBrowserLoginOutcome = async (params: {
       if (shouldOpenPolledAuthUrlForStatus(status.status)) {
         const authUrl = takeNextAuthUrlToOpen(status.auth_url, openedAuthUrls);
         if (authUrl && params.onAuthUrl) {
-          await params.onAuthUrl(authUrl);
+          await params.onAuthUrl(authUrl, status);
           params.flow.throwIfCancelled();
         }
       }
@@ -238,11 +253,15 @@ const waitForBrowserLoginOutcome = async (params: {
 const openExternalAuthUrlForFlow = async (
   deps: Pick<SubscriptionFlowDeps, "flow" | "patchHarnessAuthModalForOperation">,
   authUrl: string,
+  reservedWindow: ReservedBrowserWindow = null,
 ): Promise<boolean> => {
+  if (navigateReservedBrowserWindow(reservedWindow, authUrl)) {
+    return true;
+  }
   const opened = await openExternalLink(authUrl);
   if (opened) return true;
   deps.patchHarnessAuthModalForOperation(deps.flow, {
-    subscription_status: `Couldn't open browser automatically. Open this URL manually: ${authUrl}`,
+    subscription_status: MANUAL_BROWSER_OPEN_MESSAGE,
   });
   return false;
 };
@@ -252,80 +271,102 @@ const runBrowserSubscriptionFlow = async (
   definition: BrowserLoginDefinition,
 ): Promise<void> => {
   definition.syncBrowserLoginState?.({ authUrl: null, deviceCode: null });
+  const reservedWindow =
+    definition.providerId === "amp" || definition.providerId === "claude-crp"
+      ? null
+      : reserveBrowserWindowForFlow();
   const label = deps.modal.subscription_label.trim();
-  const login = await definition.startLogin(label ? label : undefined);
-  deps.flow.throwIfCancelled();
-
-  const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
-  definition.syncBrowserLoginState?.({
-    authUrl: normalizeOptionalString(login.auth_url),
-    deviceCode: normalizeOptionalString(login.device_code),
-  });
-  let initialAuthOpened = false;
-  let attemptedInitialAuthOpen = false;
-  const shouldAutoOpenInitialAuthUrl = initialAuthUrl
-    ? (definition.shouldAutoOpenAuthUrl?.(initialAuthUrl) ?? true)
-    : false;
-  if (initialAuthUrl && shouldAutoOpenInitialAuthUrl) {
-    attemptedInitialAuthOpen = true;
-    initialAuthOpened = await openExternalAuthUrlForFlow(deps, initialAuthUrl);
+  let reservedWindowUsed = false;
+  try {
+    const login = await definition.startLogin(label ? label : undefined);
     deps.flow.throwIfCancelled();
-  }
 
-  setFlowStatus(
-    deps,
-    attemptedInitialAuthOpen && !initialAuthOpened && initialAuthUrl
-      ? `Couldn't open browser automatically. Open this URL manually: ${initialAuthUrl}`
-      : definition.waitingMessage,
-  );
+    const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
+    definition.syncBrowserLoginState?.({
+      authUrl: normalizeOptionalString(login.auth_url),
+      deviceCode: normalizeOptionalString(login.device_code),
+    });
+    let initialAuthOpened = false;
+    let attemptedInitialAuthOpen = false;
+    const shouldAutoOpenInitialAuthUrl = initialAuthUrl
+      ? (definition.shouldAutoOpenAuthUrl?.({
+        authUrl: initialAuthUrl,
+        phase: "initial",
+      }) ?? true)
+      : false;
+    if (initialAuthUrl && shouldAutoOpenInitialAuthUrl) {
+      attemptedInitialAuthOpen = true;
+      initialAuthOpened = await openExternalAuthUrlForFlow(deps, initialAuthUrl, reservedWindow);
+      reservedWindowUsed = initialAuthOpened;
+      deps.flow.throwIfCancelled();
+    }
 
-  const outcome = await waitForBrowserLoginOutcome({
-    flow: deps.flow,
-    loginId: login.login_id,
-    getStatus: definition.getLogin,
-    onAuthUrl: async (authUrl) => {
-      if (!(definition.shouldAutoOpenAuthUrl?.(authUrl) ?? true)) {
-        return;
-      }
-      await openExternalAuthUrlForFlow(deps, authUrl);
-    },
-    onStatus: (status) => {
-      definition.syncBrowserLoginState?.({
-        authUrl: normalizeOptionalString(status.auth_url),
-        deviceCode: normalizeOptionalString(status.device_code),
-      });
-    },
-    openedAuthUrl: initialAuthUrl,
-    maxAttempts: definition.maxAttempts,
-    intervalMs: definition.pollIntervalMs,
-  });
+    setFlowStatus(
+      deps,
+      attemptedInitialAuthOpen && !initialAuthOpened && initialAuthUrl
+        ? MANUAL_BROWSER_OPEN_MESSAGE
+        : definition.waitingMessage,
+    );
 
-  await refreshAccountsAfterFlow(deps.flow, definition.refreshAccounts);
+    const outcome = await waitForBrowserLoginOutcome({
+      flow: deps.flow,
+      loginId: login.login_id,
+      getStatus: definition.getLogin,
+      onAuthUrl: async (authUrl, status) => {
+        if (!(definition.shouldAutoOpenAuthUrl?.({
+          authUrl,
+          phase: "poll",
+          status,
+        }) ?? true)) {
+          return;
+        }
+        const opened = await openExternalAuthUrlForFlow(deps, authUrl, reservedWindow);
+        if (opened) {
+          reservedWindowUsed = true;
+        }
+      },
+      onStatus: (status) => {
+        definition.syncBrowserLoginState?.({
+          authUrl: normalizeOptionalString(status.auth_url),
+          deviceCode: normalizeOptionalString(status.device_code),
+        });
+      },
+      openedAuthUrl: initialAuthOpened ? initialAuthUrl : null,
+      maxAttempts: definition.maxAttempts,
+      intervalMs: definition.pollIntervalMs,
+    });
 
-  if (!deps.flow.isCurrent()) return;
+    await refreshAccountsAfterFlow(deps.flow, definition.refreshAccounts);
 
-  if (outcome.status === "success") {
-    await deps.refreshBootstrapAfterMutation(definition.providerId);
     if (!deps.flow.isCurrent()) return;
-    await finalizeSuccessfulSubscription(deps, definition.providerId);
-    return;
-  }
 
-  if (outcome.error && outcome.error.trim()) {
-    deps.setProviderError(outcome.error);
-  }
+    if (outcome.status === "success") {
+      await deps.refreshBootstrapAfterMutation(definition.providerId);
+      if (!deps.flow.isCurrent()) return;
+      await finalizeSuccessfulSubscription(deps, definition.providerId);
+      return;
+    }
 
-  if (outcome.status === "failed") {
-    setFlowStatus(deps, outcome.error?.trim() || "Sign-in failed. Retry.");
-    return;
-  }
+    if (outcome.error && outcome.error.trim()) {
+      deps.setProviderError(outcome.error);
+    }
 
-  if (outcome.status === "timeout") {
-    setFlowStatus(deps, outcome.error?.trim() || definition.timeoutMessage);
-    return;
-  }
+    if (outcome.status === "failed") {
+      setFlowStatus(deps, outcome.error?.trim() || "Sign-in failed. Retry.");
+      return;
+    }
 
-  setFlowStatus(deps, "Still waiting for completion. Keep this dialog open or retry.");
+    if (outcome.status === "timeout") {
+      setFlowStatus(deps, outcome.error?.trim() || definition.timeoutMessage);
+      return;
+    }
+
+    setFlowStatus(deps, "Still waiting for completion. Keep this dialog open or retry.");
+  } finally {
+    if (!reservedWindowUsed) {
+      closeReservedBrowserWindow(reservedWindow);
+    }
+  }
 };
 
 const runCodexSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<void> => {
@@ -372,6 +413,9 @@ const runClaudeSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<vo
   const label = deps.modal.subscription_label.trim();
 
   if (token) {
+    if (!token.startsWith("sk-ant-oat")) {
+      throw new Error("Claude setup token must start with sk-ant-oat.");
+    }
     const next = await upsertClaudeAccount(token, label ? label : undefined);
     await deps.refreshBootstrapAfterMutation("claude-crp");
     if (!deps.flow.isCurrent()) return;
@@ -380,57 +424,22 @@ const runClaudeSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<vo
     return;
   }
 
-  const login = await startClaudeLogin(label ? label : undefined);
-  deps.flow.throwIfCancelled();
-  deps.setClaudePendingLoginIdForOperation(deps.flow, login.login_id);
-
-  const loginStartedAtMs = Date.now();
-  const initialAuthUrl = takeNextClaudeAuthUrlToOpen(login.auth_url, new Set<string>());
-  if (initialAuthUrl) {
-    await openExternalLink(initialAuthUrl);
-    deps.flow.throwIfCancelled();
-  }
-
-  setFlowStatus(
-    deps,
-    "Waiting for browser sign-in. If Claude shows a token, paste it here and press Enter.",
-  );
-
-  const outcome = await waitForClaudeLoginOutcome(
-    login.login_id,
-    deps.flow,
-    async (authUrl) => {
-      if (!shouldOpenPolledClaudeAuthUrl({
-        loginStartedAtMs,
-        initialAuthUrl,
-        polledAuthUrl: authUrl,
-        nowMs: Date.now(),
-      })) {
-        return;
-      }
-      await openExternalLink(authUrl);
+  await runBrowserSubscriptionFlow(deps, {
+    providerId: "claude-crp",
+    waitingMessage: "Waiting for Claude setup-token sign-in to complete in your browser...",
+    timeoutMessage: "Timed out waiting for Claude setup-token completion. Retry.",
+    startLogin: startClaudeLogin,
+    getLogin: getClaudeLogin,
+    maxAttempts: CLAUDE_LOGIN_POLL_ATTEMPTS,
+    pollIntervalMs: CLAUDE_LOGIN_POLL_INTERVAL_MS,
+    refreshAccounts: deps.refreshClaudeAccounts,
+    shouldAutoOpenAuthUrl: () => false,
+    syncBrowserLoginState: ({ authUrl }) => {
+      deps.patchHarnessAuthModalForOperation(deps.flow, {
+        subscription_auth_url: authUrl,
+      });
     },
-    { openedAuthUrl: initialAuthUrl },
-  );
-
-  deps.setClaudePendingLoginIdForOperation(deps.flow, null);
-  await refreshAccountsAfterFlow(deps.flow, deps.refreshClaudeAccounts);
-
-  if (!deps.flow.isCurrent()) return;
-
-  if (outcome === "success") {
-    await deps.refreshBootstrapAfterMutation("claude-crp");
-    if (!deps.flow.isCurrent()) return;
-    await finalizeSuccessfulSubscription(deps, "claude-crp");
-    return;
-  }
-
-  if (outcome === "failed") {
-    setFlowStatus(deps, "Sign-in failed. Retry, or paste a token in the field above.");
-    return;
-  }
-
-  setFlowStatus(deps, "Still waiting for completion. Keep this dialog open or retry.");
+  });
 };
 
 const runCopilotSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<void> => {
@@ -520,7 +529,7 @@ export const runHarnessSubscriptionFlow = async (deps: SubscriptionFlowDeps): Pr
           maxAttempts: AMP_LOGIN_POLL_ATTEMPTS,
           pollIntervalMs: AMP_LOGIN_POLL_INTERVAL_MS,
           refreshAccounts: deps.refreshAmpAccounts,
-          shouldAutoOpenAuthUrl: shouldAutoOpenAmpAuthUrl,
+          shouldAutoOpenAuthUrl: () => shouldAutoOpenAmpAuthUrl(),
           syncBrowserLoginState: ({ authUrl, deviceCode }) => {
             deps.patchHarnessAuthModalForOperation(deps.flow, {
               subscription_auth_url: authUrl,
@@ -551,7 +560,7 @@ export const runHarnessSubscriptionFlow = async (deps: SubscriptionFlowDeps): Pr
           maxAttempts: GEMINI_LOGIN_POLL_ATTEMPTS,
           pollIntervalMs: GEMINI_LOGIN_POLL_INTERVAL_MS,
           refreshAccounts: deps.refreshKimiAccounts,
-          shouldAutoOpenAuthUrl: (authUrl) => shouldAutoOpenKimiAuthUrl() && authUrl.length > 0,
+          shouldAutoOpenAuthUrl: ({ authUrl }) => shouldAutoOpenKimiAuthUrl() && authUrl.length > 0,
           syncBrowserLoginState: ({ authUrl, deviceCode }) => {
             deps.patchHarnessAuthModalForOperation(deps.flow, {
               subscription_auth_url: authUrl,

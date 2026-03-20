@@ -14,6 +14,7 @@ import {
   type HarnessEndpointProviderPreset,
   supportsOptionalBaseUrlForHarness,
 } from "../harnessEndpointProviders";
+import { MANUAL_BROWSER_OPEN_MESSAGE } from "../hooks/harnessAuth/capabilities";
 
 export type HarnessAuthenticationModalHarness = {
   label: string;
@@ -34,23 +35,17 @@ type HarnessAuthenticationModalProps = {
   harnessEndpointRequiresBaseUrl: (providerId: string) => boolean;
 };
 
-function claudeSetupTokenProvided(modal: HarnessAuthModalState): boolean {
-  return modal.provider_id === "claude-crp" && modal.subscription_token.trim().length > 0;
-}
-
-function isClaudeSetupTokenValue(value: string): boolean {
-  return value.trim().startsWith("sk-ant-oat");
-}
-
 export function canSubmitSubscriptionModal(modal: HarnessAuthModalState): boolean {
   if (modal.api_key_busy) return false;
-  if (!modal.subscription_busy) return true;
-  return claudeSetupTokenProvided(modal);
+  return !modal.subscription_busy;
 }
 
 export function subscriptionPrimaryActionLabel(modal: HarnessAuthModalState): string {
-  if (modal.provider_id === "claude-crp" && modal.subscription_busy && claudeSetupTokenProvided(modal)) {
-    return isClaudeSetupTokenValue(modal.subscription_token) ? "Save subscription" : "Submit code";
+  if (modal.provider_id === "claude-crp") {
+    if (modal.subscription_busy) {
+      return modal.subscription_token.trim() ? "Saving..." : "Waiting...";
+    }
+    return modal.subscription_token.trim() ? "Save subscription" : "Start sign-in";
   }
   if (modal.subscription_busy && !canSubmitSubscriptionModal(modal)) {
     return "Waiting...";
@@ -64,7 +59,6 @@ export function subscriptionPrimaryActionLabel(modal: HarnessAuthModalState): st
     || modal.provider_id === "kimi"
     || modal.provider_id === "qwen"
     || modal.provider_id === "mistral"
-    || (modal.provider_id === "claude-crp" && !claudeSetupTokenProvided(modal))
   ) {
     return modal.provider_id === "gemini" ? "Sign in with Google" : "Start sign-in";
   }
@@ -77,7 +71,8 @@ export function subscriptionPrimaryActionLabel(modal: HarnessAuthModalState): st
 export function shouldSubmitClaudeFallbackOnEnter(modal: HarnessAuthModalState, key: string): boolean {
   if (key !== "Enter") return false;
   if (modal.provider_id !== "claude-crp") return false;
-  return claudeSetupTokenProvided(modal) && canSubmitSubscriptionModal(modal);
+  if (!modal.subscription_token.trim()) return false;
+  return canSubmitSubscriptionModal(modal);
 }
 
 export function shouldAutoStartSubscriptionFlow(providerId: string): boolean {
@@ -136,6 +131,9 @@ export function HarnessAuthenticationModal({
       : harnessAuthModal.provider_id === "auggie"
         ? "Auggie session token"
         : "sk-...";
+  const showClaudeManualAuthLink = harnessAuthModal.provider_id === "claude-crp"
+    && Boolean(harnessAuthModal.subscription_auth_url)
+    && harnessAuthModal.subscription_status === MANUAL_BROWSER_OPEN_MESSAGE;
 
   const renderEndpointProviderIdentity = (preset: HarnessEndpointProviderPreset) => (
     <span className="settings-endpoint-provider-option">
@@ -257,7 +255,7 @@ export function HarnessAuthenticationModal({
               {harnessAuthModal.provider_id === "codex"
                 ? "Sign in with your Codex subscription in a browser window."
                 : harnessAuthModal.provider_id === "claude-crp"
-                  ? "Sign in with Claude in your browser. We capture the token automatically. If that fails, paste the token below."
+                  ? "Start the managed Claude setup-token flow here, or paste a long-lived setup token if you already have one."
                   : harnessAuthModal.provider_id === "gemini"
                     ? "Sign in with Google to capture managed Gemini OAuth credentials automatically."
                     : harnessAuthModal.provider_id === "qwen"
@@ -287,7 +285,7 @@ export function HarnessAuthenticationModal({
                   />
                 </label>
                 <label className="settings-harness-modal-label">
-                  Token (optional fallback)
+                  Setup token (recommended)
                   <input
                     className="settings-control"
                     value={harnessAuthModal.subscription_token}
@@ -299,8 +297,21 @@ export function HarnessAuthenticationModal({
                     }}
                     placeholder="sk-ant-oat..."
                     type="password"
+                    autoComplete="new-password"
                   />
                 </label>
+                {showClaudeManualAuthLink && harnessAuthModal.subscription_auth_url ? (
+                  <div className="settings-row-desc">
+                    Continue the Claude sign-in flow here:{" "}
+                    <ExternalLink
+                      className="settings-harness-help-link"
+                      href={harnessAuthModal.subscription_auth_url}
+                    >
+                      Open Claude sign-in
+                    </ExternalLink>
+                    .
+                  </div>
+                ) : null}
               </>
             ) : null}
             {harnessAuthModal.provider_id === "kimi" || harnessAuthModal.provider_id === "amp" ? (

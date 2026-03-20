@@ -11,6 +11,7 @@ import type {
 import {
   deleteAmpAccount,
   getAmpLogin,
+  getClaudeLogin,
   getCodexLogin,
   getCursorLogin,
   getGeminiLogin,
@@ -20,6 +21,7 @@ import {
   setAmpActiveAccount,
   setCodexActiveAccount,
   startAmpLogin,
+  startClaudeLogin,
   startCodexLogin,
   startCursorLogin,
   startGeminiLogin,
@@ -38,24 +40,18 @@ import {
 } from "../../../state/providersBootstrapStore";
 import { setDaemonConnection } from "../../../api/daemonConnection";
 import {
-  CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS,
-  CLAUDE_LOGIN_POLL_ATTEMPTS,
-  CLAUDE_LOGIN_POLL_INTERVAL_MS,
   extractGithubDeviceCodeFromAuthUrl,
   resolveUpsertedEndpoint,
   resolveHarnessAuthModalInitialStage,
   shouldSkipDuplicateAmpLoginStart,
   shouldAutoOpenKimiAuthUrl,
-  shouldCompleteClaudeLoginWithCallbackCode,
   shouldOpenPolledAuthUrlForStatus,
-  shouldOpenPolledClaudeAuthUrl,
   shouldAutoOpenCopilotAuthUrl,
   supportsHarnessSubscriptionAuth,
-  takeNextClaudeAuthUrlToOpen,
   toErrorObject,
   useHarnessAuthenticationController,
 } from "./useHarnessAuthenticationController";
-import { supportsHarnessEndpointConfigStatic } from "./harnessAuth/capabilities";
+import { supportsHarnessEndpointConfigStatic, takeNextAuthUrlToOpen } from "./harnessAuth/capabilities";
 import { resetProviderOnboardingCoordinatorForTests } from "../../../state/providerOnboardingCoordinator";
 import { createDesktopLocalDaemonTargetScope } from "../../../state/scopeIdentity";
 import type { HarnessAuthRow } from "../harnessAuthRows";
@@ -163,6 +159,7 @@ vi.mock("../../../api/client", async (importOriginal) => {
     ...original,
     deleteAmpAccount: vi.fn(),
     getAmpLogin: vi.fn(),
+    getClaudeLogin: vi.fn(),
     getCodexLogin: vi.fn(),
     getCursorLogin: vi.fn(),
     getGeminiLogin: vi.fn(),
@@ -172,6 +169,7 @@ vi.mock("../../../api/client", async (importOriginal) => {
     setAmpActiveAccount: vi.fn(),
     setCodexActiveAccount: vi.fn(),
     startAmpLogin: vi.fn(),
+    startClaudeLogin: vi.fn(),
     startCodexLogin: vi.fn(),
     startCursorLogin: vi.fn(),
     startGeminiLogin: vi.fn(),
@@ -429,6 +427,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(deleteAmpAccount).mockReset();
   vi.mocked(getAmpLogin).mockReset();
+  vi.mocked(getClaudeLogin).mockReset();
   vi.mocked(getCodexLogin).mockReset();
   vi.mocked(getCursorLogin).mockReset();
   vi.mocked(getGeminiLogin).mockReset();
@@ -438,6 +437,7 @@ beforeEach(() => {
   vi.mocked(setAmpActiveAccount).mockReset();
   vi.mocked(setCodexActiveAccount).mockReset();
   vi.mocked(startAmpLogin).mockReset();
+  vi.mocked(startClaudeLogin).mockReset();
   vi.mocked(startCodexLogin).mockReset();
   vi.mocked(startCursorLogin).mockReset();
   vi.mocked(startGeminiLogin).mockReset();
@@ -459,6 +459,7 @@ beforeEach(() => {
     consumeHostBootstrapQueue("hostBootstrapLoadQueue", makeBootstrap()));
   vi.mocked(loadProvidersBootstrap).mockImplementation(async (workspaceId: string) =>
     consumeBootstrapQueue(workspaceId, bootstrapMockState.bootstrapLoadQueueByWorkspace, makeBootstrap()));
+  vi.mocked(selectProviderHarnessSource).mockResolvedValue(baseCodexConfig);
   vi.mocked(refreshHostProvidersBootstrap).mockImplementation(async () =>
     consumeHostBootstrapQueue("hostBootstrapRefreshQueue", makeBootstrap()));
   vi.mocked(refreshProvidersBootstrap).mockImplementation(async (workspaceId: string) =>
@@ -475,83 +476,6 @@ beforeEach(() => {
   setDaemonConnection({
     baseUrl: "https://daemon-a.example",
     source: "test",
-  });
-});
-
-describe("Claude polling duration", () => {
-  it("matches the 15-minute backend login completion window", () => {
-    expect(CLAUDE_LOGIN_POLL_ATTEMPTS).toBeGreaterThan(90);
-    expect(CLAUDE_LOGIN_POLL_ATTEMPTS * CLAUDE_LOGIN_POLL_INTERVAL_MS).toBeGreaterThanOrEqual(
-      CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS,
-    );
-    expect(CLAUDE_LOGIN_POLL_ATTEMPTS * CLAUDE_LOGIN_POLL_INTERVAL_MS).toBeLessThan(
-      CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS + CLAUDE_LOGIN_POLL_INTERVAL_MS,
-    );
-  });
-});
-
-describe("takeNextClaudeAuthUrlToOpen", () => {
-  it("normalizes and deduplicates urls", () => {
-    const opened = new Set<string>();
-
-    const first = takeNextClaudeAuthUrlToOpen(" https://claude.ai/oauth/authorize?code=abc ", opened);
-    const duplicate = takeNextClaudeAuthUrlToOpen("https://claude.ai/oauth/authorize?code=abc", opened);
-
-    expect(first).toBe("https://claude.ai/oauth/authorize?code=abc");
-    expect(duplicate).toBeNull();
-  });
-
-  it("ignores empty values", () => {
-    const opened = new Set<string>();
-
-    expect(takeNextClaudeAuthUrlToOpen("", opened)).toBeNull();
-    expect(takeNextClaudeAuthUrlToOpen("   ", opened)).toBeNull();
-    expect(takeNextClaudeAuthUrlToOpen(null, opened)).toBeNull();
-    expect(takeNextClaudeAuthUrlToOpen(undefined, opened)).toBeNull();
-  });
-
-  it("allows distinct urls once each", () => {
-    const opened = new Set<string>();
-
-    const first = takeNextClaudeAuthUrlToOpen("https://claude.ai/oauth/authorize?code=abc", opened);
-    const second = takeNextClaudeAuthUrlToOpen("https://claude.ai/oauth/authorize?code=def", opened);
-    const secondDuplicate = takeNextClaudeAuthUrlToOpen("https://claude.ai/oauth/authorize?code=def", opened);
-
-    expect(first).toBe("https://claude.ai/oauth/authorize?code=abc");
-    expect(second).toBe("https://claude.ai/oauth/authorize?code=def");
-    expect(secondDuplicate).toBeNull();
-  });
-});
-
-describe("shouldCompleteClaudeLoginWithCallbackCode", () => {
-  it("returns true for pending Claude login with non-setup callback code", () => {
-    expect(shouldCompleteClaudeLoginWithCallbackCode({
-      providerId: "claude-crp",
-      subscriptionBusy: true,
-      pendingLoginId: "login-123",
-      token: "ePBMdWetJlSbZ0aR#state",
-    })).toBe(true);
-  });
-
-  it("returns false for setup token, missing login, or non-claude providers", () => {
-    expect(shouldCompleteClaudeLoginWithCallbackCode({
-      providerId: "claude-crp",
-      subscriptionBusy: true,
-      pendingLoginId: "login-123",
-      token: "sk-ant-oat01-abc",
-    })).toBe(false);
-    expect(shouldCompleteClaudeLoginWithCallbackCode({
-      providerId: "claude-crp",
-      subscriptionBusy: true,
-      pendingLoginId: null,
-      token: "ePBMdWetJlSbZ0aR#state",
-    })).toBe(false);
-    expect(shouldCompleteClaudeLoginWithCallbackCode({
-      providerId: "codex",
-      subscriptionBusy: true,
-      pendingLoginId: "login-123",
-      token: "ePBMdWetJlSbZ0aR#state",
-    })).toBe(false);
   });
 });
 
@@ -575,9 +499,30 @@ describe("shouldSkipDuplicateAmpLoginStart", () => {
 describe("shouldOpenPolledAuthUrlForStatus", () => {
   it("opens auth url only while status is pending", () => {
     expect(shouldOpenPolledAuthUrlForStatus("pending")).toBe(true);
+    expect(shouldOpenPolledAuthUrlForStatus("manual_open_required")).toBe(true);
     expect(shouldOpenPolledAuthUrlForStatus("success")).toBe(false);
     expect(shouldOpenPolledAuthUrlForStatus("failed")).toBe(false);
     expect(shouldOpenPolledAuthUrlForStatus("timeout")).toBe(false);
+  });
+});
+
+describe("takeNextAuthUrlToOpen", () => {
+  it("dedupes Claude auth urls by OAuth state instead of raw url", () => {
+    const opened = new Set<string>();
+    const first = "https://claude.ai/oauth/authorize?code=true&state=shared-state&redirect_uri=http%3A%2F%2Flocalhost%3A52731%2Fcallback";
+    const second = "https://claude.ai/oauth/authorize?code=true&state=shared-state&redirect_uri=http%3A%2F%2Flocalhost%3A52732%2Fcallback";
+
+    expect(takeNextAuthUrlToOpen(first, opened)).toBe(first);
+    expect(takeNextAuthUrlToOpen(second, opened)).toBeNull();
+  });
+
+  it("still opens distinct Claude auth sessions", () => {
+    const opened = new Set<string>();
+    const first = "https://claude.ai/oauth/authorize?code=true&state=state-a&redirect_uri=http%3A%2F%2Flocalhost%3A52731%2Fcallback";
+    const second = "https://claude.ai/oauth/authorize?code=true&state=state-b&redirect_uri=http%3A%2F%2Flocalhost%3A52732%2Fcallback";
+
+    expect(takeNextAuthUrlToOpen(first, opened)).toBe(first);
+    expect(takeNextAuthUrlToOpen(second, opened)).toBe(second);
   });
 });
 
@@ -693,41 +638,6 @@ describe("resolveUpsertedEndpoint", () => {
       geminiAuthType: null,
     });
     expect(endpoint?.id).toBe("ep-2");
-  });
-});
-
-describe("shouldOpenPolledClaudeAuthUrl", () => {
-  it("waits for grace window before opening when no initial url exists", () => {
-    expect(shouldOpenPolledClaudeAuthUrl({
-      loginStartedAtMs: 1_000,
-      initialAuthUrl: null,
-      polledAuthUrl: "https://claude.ai/oauth/authorize?code=abc",
-      nowMs: 5_500,
-    })).toBe(false);
-    expect(shouldOpenPolledClaudeAuthUrl({
-      loginStartedAtMs: 1_000,
-      initialAuthUrl: null,
-      polledAuthUrl: "https://claude.ai/oauth/authorize?code=abc",
-      nowMs: 6_000,
-    })).toBe(true);
-  });
-
-  it("opens upgraded polled url immediately when initial url differs", () => {
-    expect(shouldOpenPolledClaudeAuthUrl({
-      loginStartedAtMs: 1_000,
-      initialAuthUrl: "https://claude.ai/oauth/authorize?code=short",
-      polledAuthUrl: "https://claude.ai/oauth/authorize?code=complete",
-      nowMs: 1_001,
-    })).toBe(true);
-  });
-
-  it("does not reopen same initial url", () => {
-    expect(shouldOpenPolledClaudeAuthUrl({
-      loginStartedAtMs: 1_000,
-      initialAuthUrl: "https://claude.ai/oauth/authorize?code=same",
-      polledAuthUrl: "https://claude.ai/oauth/authorize?code=same",
-      nowMs: 9_999,
-    })).toBe(false);
   });
 });
 
@@ -1151,6 +1061,12 @@ describe("useHarnessAuthenticationController", () => {
           health: "ok",
           diagnostics: [],
           details: {},
+          usability: {
+            usable: true,
+            status: "ready",
+            blocking_provider_ids: [],
+            recommended_action: "none",
+          },
         } as never,
       ],
       provider_options: {
@@ -1174,6 +1090,12 @@ describe("useHarnessAuthenticationController", () => {
           health: "ok",
           diagnostics: [],
           details: {},
+          usability: {
+            usable: true,
+            status: "ready",
+            blocking_provider_ids: [],
+            recommended_action: "none",
+          },
         } as never,
       ],
       provider_options: {
@@ -1623,6 +1545,86 @@ describe("useHarnessAuthenticationController", () => {
     expect(requireController(controller).harnessAuthModal).toBeNull();
     expect(requireController(controller).providerError).toBeNull();
     expect(vi.mocked(selectProviderHarnessSource)).toHaveBeenCalledWith("kimi", "subscription", null);
+  });
+
+  it("starts Claude setup-token sign-in without any web-driven browser open", async () => {
+    let controller: Controller | null = null;
+    const authUrl = "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A58215%2Fcallback";
+
+    vi.mocked(startClaudeLogin).mockResolvedValue({
+      login_id: "claude-login-1",
+      auth_url: authUrl,
+    });
+    vi.mocked(getClaudeLogin)
+      .mockResolvedValueOnce({
+        login_id: "claude-login-1",
+        auth_url: authUrl,
+        status: "manual_open_required",
+      } as Awaited<ReturnType<typeof getClaudeLogin>>)
+      .mockResolvedValueOnce({
+        login_id: "claude-login-1",
+        auth_url: authUrl,
+        status: "success",
+      } as Awaited<ReturnType<typeof getClaudeLogin>>);
+    queueBootstrapRefresh(
+      "ws-test",
+      makeBootstrap({
+        claude_accounts: {
+          active_account_id: "claude-acct-1",
+          accounts: [
+            {
+              id: "claude-acct-1",
+              label: "Claude setup token",
+              kind: "setup_token",
+              created_at: "2026-03-11T00:00:00Z",
+            },
+          ],
+        },
+      }),
+    );
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("claude-crp");
+      controller?.patchHarnessAuthModal({
+        stage: "subscription",
+        subscription_label: "Claude Login",
+      });
+    });
+
+    let submitPromise: Promise<void> | undefined;
+    await act(async () => {
+      submitPromise = controller?.submitHarnessSubscriptionModal();
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(startClaudeLogin)).toHaveBeenCalledWith("Claude Login");
+    });
+
+    expect(vi.mocked(openExternalLink)).not.toHaveBeenCalled();
+    expect(requireController(controller).harnessAuthModal?.subscription_status).toBe(
+      "Waiting for Claude setup-token sign-in to complete in your browser...",
+    );
+    expect(requireController(controller).harnessAuthModal?.subscription_auth_url).toBe(authUrl);
+    expect(vi.mocked(openExternalLink)).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await submitPromise;
+    });
+
+    expect(requireController(controller).harnessAuthModal).toBeNull();
+    expect(requireController(controller).providerError).toBeNull();
+    expect(vi.mocked(openExternalLink)).not.toHaveBeenCalled();
+    expect(vi.mocked(selectProviderHarnessSource)).toHaveBeenCalledWith("claude-crp", "subscription", null);
   });
 
   it("starts Amp sign-in without auto-opening the browser and surfaces auth state while polling", async () => {

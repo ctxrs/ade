@@ -39,16 +39,16 @@ function baseModal(overrides: Partial<HarnessAuthModalState> = {}): HarnessAuthM
 }
 
 describe("HarnessAuthenticationSection Claude fallback submit", () => {
-  it("keeps submit disabled while browser flow is busy with no token", () => {
+  it("allows starting Claude sign-in while no token is entered", () => {
     const modal = baseModal({ subscription_busy: true });
 
     expect(canSubmitSubscriptionModal(modal)).toBe(false);
     expect(subscriptionPrimaryActionLabel(modal)).toBe("Waiting...");
   });
 
-  it("allows submit while busy when Claude setup token is provided", () => {
+  it("allows submit for Claude when setup token is provided and idle", () => {
     const modal = baseModal({
-      subscription_busy: true,
+      subscription_busy: false,
       subscription_token: "sk-ant-oat01-token",
     });
 
@@ -57,14 +57,14 @@ describe("HarnessAuthenticationSection Claude fallback submit", () => {
     expect(shouldSubmitClaudeFallbackOnEnter(modal, "Enter")).toBe(true);
   });
 
-  it("shows callback submit label while busy when Claude callback code is provided", () => {
+  it("keeps Claude action as save even when token text is invalid", () => {
     const modal = baseModal({
-      subscription_busy: true,
+      subscription_busy: false,
       subscription_token: "ePBMdWetJlSbZ0aR#state",
     });
 
     expect(canSubmitSubscriptionModal(modal)).toBe(true);
-    expect(subscriptionPrimaryActionLabel(modal)).toBe("Submit code");
+    expect(subscriptionPrimaryActionLabel(modal)).toBe("Save subscription");
   });
 
   it("does not submit Claude fallback for non-enter keys", () => {
@@ -84,6 +84,17 @@ describe("HarnessAuthenticationSection Claude fallback submit", () => {
     });
 
     expect(subscriptionPrimaryActionLabel(modal)).toBe("Start sign-in");
+  });
+
+  it("uses save labeling for Claude when no setup token is entered", () => {
+    const modal = baseModal({
+      provider_id: "claude-crp",
+      subscription_busy: false,
+      subscription_token: "",
+    });
+
+    expect(subscriptionPrimaryActionLabel(modal)).toBe("Start sign-in");
+    expect(canSubmitSubscriptionModal(modal)).toBe(true);
   });
 
   it("shows Kimi subscription action as start sign-in when idle", () => {

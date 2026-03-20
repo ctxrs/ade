@@ -1358,6 +1358,8 @@ async fn workspace_stream_under_load_no_gap_or_reset() {
         .await
         .unwrap();
 
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
     let store = state.store_for_session(session.id).await.unwrap();
     let total_events = 150usize;
     let mut last_seq = 0;

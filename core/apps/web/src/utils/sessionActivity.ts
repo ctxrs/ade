@@ -1,4 +1,11 @@
 import type { SessionActivityState } from "@ctx/types";
+import type { SessionTurn } from "../api/client";
+
+const isActiveTurnStatus = (status: SessionActivityState["last_turn_status"] | null | undefined): boolean =>
+  status === "running" || status === "queued";
+
+const isTerminalTurnStatus = (status: SessionTurn["status"] | null | undefined): boolean =>
+  status === "completed" || status === "failed" || status === "interrupted";
 
 export function isSessionWorkingActivity(
   activity: SessionActivityState | null | undefined,
@@ -8,7 +15,9 @@ export function isSessionWorkingActivity(
 
 export function hasSessionActiveTurn(
   activity: SessionActivityState | null | undefined,
+  latestTurnStatus?: SessionTurn["status"] | null,
 ): boolean {
-  const status = activity?.last_turn_status ?? null;
-  return status === "running" || status === "queued";
+  if (!isActiveTurnStatus(activity?.last_turn_status ?? null)) return false;
+  if (isTerminalTurnStatus(latestTurnStatus)) return false;
+  return true;
 }

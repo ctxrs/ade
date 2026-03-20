@@ -79,13 +79,9 @@ export async function readThreadSurfaceSample(
       };
       const resolveRowId = (row: HTMLElement | undefined): string | null =>
         row?.getAttribute("data-thread-item-id") ??
-        row?.getAttribute("data-anchorstream-item-id") ??
         row
-          ?.querySelector<HTMLElement>("[data-thread-item-id], [data-anchorstream-item-id]")
+          ?.querySelector<HTMLElement>("[data-thread-item-id]")
           ?.getAttribute("data-thread-item-id") ??
-        row
-          ?.querySelector<HTMLElement>("[data-thread-item-id], [data-anchorstream-item-id]")
-          ?.getAttribute("data-anchorstream-item-id") ??
         null;
       const resolveRowWrapper = (scroller: HTMLElement, node: Node): HTMLElement | null => {
         const inner = scroller.firstElementChild;
@@ -98,7 +94,7 @@ export async function readThreadSurfaceSample(
             return current;
           }
         }
-        return current?.closest<HTMLElement>("[data-thread-item-id], [data-anchorstream-item-id], [role='listitem']") ?? null;
+        return current?.closest<HTMLElement>("[data-thread-item-id], [role='listitem']") ?? null;
       };
       const collectVisibleTextLineOverlap = (
         scroller: HTMLElement,

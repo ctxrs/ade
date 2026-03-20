@@ -1065,7 +1065,7 @@ const resolveSuiteContract = (suiteId, options = {}) => {
         optionalRequirements: [],
         metadata: {},
         notes: [
-          "Current mainline browser-auth coverage is Claude-only.",
+          "The Claude setup-token real lane is currently disabled pending follow-up automation work.",
           "The suite defaults to a persistent branded browser plus stealth init script through scripts/providers_e2e.sh.",
         ],
         env,

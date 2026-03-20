@@ -64,8 +64,6 @@ pub struct ProviderRuntime {
     pub usage_cache: Mutex<HashMap<String, provider_usage::ProviderUsageSnapshot>>,
     pub codex_login_sessions: Mutex<HashMap<String, provider_accounts::CodexLoginStatus>>,
     pub claude_login_sessions: Mutex<HashMap<String, provider_accounts::ClaudeLoginStatus>>,
-    pub claude_oauth_login_sessions:
-        Mutex<HashMap<String, provider_accounts::ClaudeOauthLoginSession>>,
     pub gemini_login_sessions: Mutex<HashMap<String, provider_accounts::GeminiLoginStatus>>,
     pub qwen_login_sessions: Mutex<HashMap<String, provider_accounts::QwenLoginStatus>>,
     pub kimi_login_sessions: Mutex<HashMap<String, provider_accounts::KimiLoginStatus>>,

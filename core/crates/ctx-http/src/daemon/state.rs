@@ -219,7 +219,6 @@ impl AppState {
                 usage_cache: Mutex::new(HashMap::new()),
                 codex_login_sessions: Mutex::new(HashMap::new()),
                 claude_login_sessions: Mutex::new(HashMap::new()),
-                claude_oauth_login_sessions: Mutex::new(HashMap::new()),
                 gemini_login_sessions: Mutex::new(HashMap::new()),
                 qwen_login_sessions: Mutex::new(HashMap::new()),
                 kimi_login_sessions: Mutex::new(HashMap::new()),
