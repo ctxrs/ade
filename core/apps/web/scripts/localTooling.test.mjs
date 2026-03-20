@@ -56,15 +56,15 @@ test("requireLocalNodeBin throws a clear install hint when missing", () => {
   assert.throws(
     () => requireLocalNodeBin(packageRoot, "playwright"),
     new RegExp(
-      `cd ${root.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")} && pnpm install --frozen-lockfile --config\\.enable-modules-dir=true --modules-dir=node_modules`,
+      `cd ${packageRoot.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")} && pnpm install --frozen-lockfile`,
     ),
   );
 });
 
-test("lockedInstallHint includes the node_modules materialization flags", () => {
+test("lockedInstallHint uses the normal frozen-lockfile workspace install", () => {
   assert.match(
-    lockedInstallHint("/tmp/ctx-root"),
-    /pnpm install --frozen-lockfile --config\.enable-modules-dir=true --modules-dir=node_modules/,
+    lockedInstallHint("/tmp/ctx-root/apps/web"),
+    /cd \/tmp\/ctx-root\/apps\/web && pnpm install --frozen-lockfile/,
   );
 });
 

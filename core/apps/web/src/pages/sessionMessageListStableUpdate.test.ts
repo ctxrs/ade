@@ -86,7 +86,10 @@ function createFakeMethods(initial: WorkbenchListItem[]) {
   const methods = {
     data: {
       get: () => store,
-      replace: vi.fn(),
+      replace: vi.fn((items: WorkbenchListItem[]) => {
+        calls.push({ method: "replace", args: [items.map((item) => item.id)] });
+        store = [...items];
+      }),
       append: vi.fn((items: WorkbenchListItem[]) => {
         calls.push({ method: "append", args: [items.map((item) => item.id)] });
         store = [...store, ...items];
@@ -126,7 +129,7 @@ function createFakeMethods(initial: WorkbenchListItem[]) {
 }
 
 describe("applyStableListUpdate", () => {
-  it("maps height-changing tool rows with stable ids so render-key remounting can remeasure them", () => {
+  it("replaces same-order height-changing rows so MessageList remeasures them immediately", () => {
     const current = [buildToolItem(), buildTurnStatusItem()];
     const next = [
       buildToolItem({
@@ -142,7 +145,7 @@ describe("applyStableListUpdate", () => {
       current,
       next,
       stickToBottom: false,
-      anchorIndex: 1,
+      anchorIndex: 2,
       appendBehavior: () => false,
     });
 
@@ -150,8 +153,9 @@ describe("applyStableListUpdate", () => {
       mode: "remeasure",
       changedSpans: [{ start: 0, count: 1 }],
     });
-    expect(calls.map((call) => call.method)).toEqual(["batch", "mapWithAnchor"]);
-    expect(calls[1]?.args).toEqual([1]);
+    expect(calls.map((call) => call.method)).toEqual(["replace"]);
+    expect(calls[0]?.args).toEqual([next.map((item) => item.id)]);
+    expect(methods.data.replace).toHaveBeenCalledWith(next);
     expect(readStore()).toEqual(next);
   });
 
@@ -189,42 +193,6 @@ describe("applyStableListUpdate", () => {
     });
     expect(calls.map((call) => call.method)).toEqual(["map"]);
     expect(calls[0]?.args).toEqual(["auto"]);
-    expect(readStore()).toEqual(next);
-  });
-
-  it("remeasures a grown assistant row when the next render uses a freshly snapshotted item", () => {
-    const current = [
-      buildAssistantItem({
-        id: "assistant-turn-2",
-        content: "short",
-        is_complete: true,
-      }),
-    ];
-    const next = [
-      buildAssistantItem({
-        id: "assistant-turn-2",
-        content:
-          "this assistant response became much longer after tool-call expansion and should force a remeasure instead of keeping the stale short-row height",
-        is_complete: true,
-      }),
-    ];
-    const { methods, calls, readStore } = createFakeMethods(current);
-
-    const result = applyStableListUpdate({
-      methods,
-      current,
-      next,
-      stickToBottom: false,
-      anchorIndex: 0,
-      appendBehavior: () => false,
-    });
-
-    expect(result).toEqual({
-      mode: "remeasure",
-      changedSpans: [{ start: 0, count: 1 }],
-    });
-    expect(calls.map((call) => call.method)).toEqual(["batch", "mapWithAnchor"]);
-    expect(calls[1]?.args).toEqual([0]);
     expect(readStore()).toEqual(next);
   });
 
@@ -283,7 +251,7 @@ describe("applyStableListUpdate", () => {
       prefixLen: 1,
       suffixLen: 1,
       stickToBottom: false,
-      anchorIndex: 2,
+      anchorIndex: 1,
       appendBehavior: () => false,
     });
 
@@ -293,7 +261,7 @@ describe("applyStableListUpdate", () => {
     });
     expect(calls.map((call) => call.method)).toEqual(["batch", "insert", "mapWithAnchor"]);
     expect(calls[1]?.args).toEqual([1, ["thought-turn-1-stream-1"]]);
-    expect(calls[2]?.args).toEqual([2]);
+    expect(calls[2]?.args).toEqual([1]);
     expect(readStore()).toEqual(next);
   });
 });

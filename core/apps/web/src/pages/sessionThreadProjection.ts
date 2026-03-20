@@ -18,6 +18,29 @@ export type WorkbenchThreadProjectionOp = {
   remeasureItemIds: string[];
 };
 
+function expandLocalizedRemeasureItemIds(
+  listItems: readonly WorkbenchListItem[],
+  changedItemIds: readonly string[],
+): string[] {
+  if (changedItemIds.length === 0 || listItems.length === 0) {
+    return [];
+  }
+
+  const remeasureIds = new Set<string>();
+  const changedSet = new Set(changedItemIds);
+  for (let index = 0; index < listItems.length; index += 1) {
+    const item = listItems[index];
+    if (!item || !changedSet.has(item.id)) continue;
+    remeasureIds.add(item.id);
+    const previous = listItems[index - 1];
+    const next = listItems[index + 1];
+    if (previous) remeasureIds.add(previous.id);
+    if (next) remeasureIds.add(next.id);
+  }
+
+  return Array.from(remeasureIds);
+}
+
 function dedupeIds(ids: readonly string[]): string[] {
   return Array.from(new Set(ids.filter((id) => id.trim().length > 0)));
 }
@@ -132,22 +155,30 @@ export function classifyWorkbenchThreadProjectionOp(params: {
   const { current, next, projectionRevision, fallbackKind = "reconcile" } = params;
 
   if (current.length === 0) {
-    return createWorkbenchThreadProjectionOp("replace_session", projectionRevision, next.map((item) => item.id));
+    return createWorkbenchThreadProjectionOp(
+      "replace_session",
+      projectionRevision,
+      next.map((item) => item.id),
+    );
   }
 
   if (next.length > current.length && startsWithIds(current, next)) {
+    const changedItemIds = next.slice(current.length).map((item) => item.id);
     return createWorkbenchThreadProjectionOp(
       "append_stream",
       projectionRevision,
-      next.slice(current.length).map((item) => item.id),
+      changedItemIds,
+      expandLocalizedRemeasureItemIds(next, changedItemIds),
     );
   }
 
   if (next.length > current.length && endsWithIds(current, next)) {
+    const changedItemIds = next.slice(0, next.length - current.length).map((item) => item.id);
     return createWorkbenchThreadProjectionOp(
       "prepend_history",
       projectionRevision,
-      next.slice(0, next.length - current.length).map((item) => item.id),
+      changedItemIds,
+      expandLocalizedRemeasureItemIds(next, changedItemIds),
     );
   }
 
@@ -160,18 +191,33 @@ export function classifyWorkbenchThreadProjectionOp(params: {
     for (let index = 0; index < current.length; index += 1) {
       if (current[index]?.id !== next[index]?.id) continue;
       if (turnTerminalized(current[index]!, next[index]!)) {
-        return createWorkbenchThreadProjectionOp("terminalize_turn", projectionRevision, changedItemIds);
+        return createWorkbenchThreadProjectionOp(
+          "terminalize_turn",
+          projectionRevision,
+          changedItemIds,
+          expandLocalizedRemeasureItemIds(next, changedItemIds),
+        );
       }
     }
     for (let index = 0; index < current.length; index += 1) {
       if (current[index]?.id !== next[index]?.id) continue;
       if (toolHydrated(current[index]!, next[index]!)) {
-        return createWorkbenchThreadProjectionOp("hydrate_tools", projectionRevision, changedItemIds);
+        return createWorkbenchThreadProjectionOp(
+          "hydrate_tools",
+          projectionRevision,
+          changedItemIds,
+          expandLocalizedRemeasureItemIds(next, changedItemIds),
+        );
       }
     }
   }
 
-  return createWorkbenchThreadProjectionOp(fallbackKind, projectionRevision, changedItemIds);
+  return createWorkbenchThreadProjectionOp(
+    fallbackKind,
+    projectionRevision,
+    changedItemIds,
+    expandLocalizedRemeasureItemIds(next, changedItemIds),
+  );
 }
 
 function diffTrueKeys(
@@ -255,7 +301,12 @@ export function createWorkbenchLayoutProjectionOp(params: {
     })
     .map((item) => item.id);
 
-  return createWorkbenchThreadProjectionOp("toggle_expansion", projectionRevision, changedItemIds);
+  return createWorkbenchThreadProjectionOp(
+    "toggle_expansion",
+    projectionRevision,
+    changedItemIds,
+    expandLocalizedRemeasureItemIds(listItems, changedItemIds),
+  );
 }
 
 export function mergeWorkbenchThreadProjectionOps(

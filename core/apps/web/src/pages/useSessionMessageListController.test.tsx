@@ -2,6 +2,7 @@ import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useSessionMessageListController } from "./useSessionMessageListController";
 import type { WorkbenchListItem } from "./SessionPage.types";
+import type { WorkbenchThreadProjectionOp } from "./sessionThreadProjection";
 
 let coalescedItems: WorkbenchListItem[] = [];
 
@@ -10,6 +11,26 @@ vi.mock("../components/hooks/useRafCoalesced", () => ({
 }));
 
 const makeSpacer = (id: string): WorkbenchListItem => ({ id, kind: "spacer", created_at: "2026-03-18T00:00:00.000Z" });
+const makeAssistant = (content: string): WorkbenchListItem => ({
+  id: "assistant-turn-1-pending",
+  kind: "assistant",
+  turn_id: "turn-1",
+  created_at: "2026-03-18T00:00:00.000Z",
+  content,
+  thought: "",
+  is_complete: false,
+});
+const makeTurnStatus = (): WorkbenchListItem => ({
+  id: "turn-status-turn-1",
+  kind: "turn_status",
+  turn_id: "turn-1",
+  created_at: "2026-03-18T00:00:01.000Z",
+  started_at: "2026-03-18T00:00:00.000Z",
+  updated_at: "2026-03-18T00:00:01.000Z",
+  status: "running",
+  custom_status: null,
+  assistant_messages_content: "",
+});
 
 function createFakeMethods(initialItems: WorkbenchListItem[] = []) {
   let items = [...initialItems];
@@ -77,6 +98,7 @@ function createFakeMethods(initialItems: WorkbenchListItem[] = []) {
 describe("useSessionMessageListController", () => {
   beforeEach(() => {
     coalescedItems = [];
+    vi.unstubAllGlobals();
   });
 
   it("initializes the keyed message list from the visible coalesced items", () => {
@@ -240,4 +262,60 @@ describe("useSessionMessageListController", () => {
     expect(fake.spies.replace).not.toHaveBeenCalled();
     expect(fake.spies.batch).toHaveBeenCalled();
   });
+
+  it("settles bottom lock immediately for localized remeasure updates", () => {
+    const initialItems = [makeAssistant("short reply"), makeTurnStatus()];
+    const nextItems = [makeAssistant("short reply\nwith another line"), makeTurnStatus()];
+    const threadOp: WorkbenchThreadProjectionOp = {
+      kind: "reconcile",
+      projectionRevision: 2,
+      changedItemIds: ["assistant-turn-1-pending"],
+      remeasureItemIds: ["assistant-turn-1-pending", "turn-status-turn-1"],
+    };
+    const fake = createFakeMethods(initialItems);
+    coalescedItems = initialItems;
+
+    const { result, rerender } = renderHook(
+      ({ listItems, activeThreadOp }: { listItems: WorkbenchListItem[]; activeThreadOp: WorkbenchThreadProjectionOp | null }) =>
+        useSessionMessageListController({
+          sessionId: "session-1",
+          isActive: true,
+          loaded: true,
+          listItems,
+          canLoadOlder: false,
+          loadOlder: async () => {},
+          layoutRevision: "layout-1",
+          itemSizeCacheKey: () => null,
+          threadOp: activeThreadOp,
+          showDebug: false,
+        }),
+      {
+        initialProps: {
+          listItems: initialItems,
+          activeThreadOp: null as WorkbenchThreadProjectionOp | null,
+        },
+      },
+    );
+
+    result.current.methodsRef.current = fake.methods as unknown as typeof result.current.methodsRef.current;
+    rerender({
+      listItems: initialItems,
+      activeThreadOp: null,
+    });
+
+    fake.spies.scrollToItem.mockClear();
+    fake.spies.map.mockClear();
+    fake.spies.replace.mockClear();
+    coalescedItems = nextItems;
+
+    rerender({
+      listItems: nextItems,
+      activeThreadOp: threadOp,
+    });
+
+    expect(fake.spies.replace).toHaveBeenCalledWith(nextItems);
+    expect(fake.spies.map).not.toHaveBeenCalled();
+    expect(fake.spies.scrollToItem).toHaveBeenCalledWith({ index: "LAST", align: "end", behavior: "auto" });
+  });
+
 });

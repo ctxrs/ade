@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { createCtxPlaywrightConfig } from "./playwright.shared";
+import { createCtxPlaywrightConfig, resolvePlaywrightCargoTargetDir } from "./playwright.shared";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -60,5 +60,24 @@ describe("createCtxPlaywrightConfig", () => {
       uploadToArgos: true,
       buildName: "ctx-web-premerge_required",
     });
+  });
+
+  it("defaults e2e cargo builds to a stable cache dir instead of per-run temp dirs", async () => {
+    restoreEnv();
+    delete process.env.CTX_E2E_CARGO_TARGET_DIR;
+    delete process.env.CARGO_TARGET_DIR;
+
+    const resolved = resolvePlaywrightCargoTargetDir(process.env);
+    expect(resolved).toContain(path.join(".cache", "cargo", "ctx-monorepo"));
+    expect(resolved).toContain("e2e-");
+    expect(resolved).not.toContain("ctx-e2e-cargo-");
+  });
+
+  it("threads the resolved cargo target dir into the webServer env", async () => {
+    restoreEnv();
+    const config = await createCtxPlaywrightConfig("all");
+    const webServer = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
+    expect(webServer?.env?.CTX_E2E_CARGO_TARGET_DIR).toBe(resolvePlaywrightCargoTargetDir(process.env));
+    expect(webServer?.env?.CARGO_TARGET_DIR).toBe(resolvePlaywrightCargoTargetDir(process.env));
   });
 });

@@ -176,13 +176,17 @@ export function useSessionMessageListController(params: Params): Result {
           distanceFromMax: Math.max(0, maxScrollTop - scroller.scrollTop),
         };
       };
+      const scroller = methods.scrollerElement?.() ?? null;
       let frame = 0;
       let stableFrames = 0;
       let lastMaxScrollTop = -1;
+      let rafId = 0;
 
       const settle = () => {
         const result = applyBottom();
-        if (!result) return;
+        if (!result) {
+          return;
+        }
         const { maxScrollTop, distanceFromMax } = result;
         if (distanceFromMax <= 1 && maxScrollTop === lastMaxScrollTop) {
           stableFrames += 1;
@@ -191,8 +195,10 @@ export function useSessionMessageListController(params: Params): Result {
         }
         lastMaxScrollTop = maxScrollTop;
         frame += 1;
-        if (stableFrames >= 2 || frame >= 8) return;
-        requestAnimationFrame(settle);
+        if (stableFrames >= 2 || frame >= 8) {
+          return;
+        }
+        rafId = requestAnimationFrame(settle);
       };
 
       settle();
@@ -982,6 +988,9 @@ export function useSessionMessageListController(params: Params): Result {
           anchorIndex,
           appendBehavior,
         });
+        if (stickToBottomRef.current && updateResult.mode === "remeasure") {
+          snapToBottom(methods);
+        }
         recordDebugSnapshot("data:append", {
           suffixLen: suffix.length,
           nextLen: effectiveNextLen,
@@ -1021,6 +1030,9 @@ export function useSessionMessageListController(params: Params): Result {
           appendBehavior,
           forceRemeasureItemIds: hasLocalizedThreadOp ? (threadOp?.remeasureItemIds ?? []) : [],
         });
+        if (stickToBottomRef.current && updateResult.mode === "remeasure") {
+          snapToBottom(methods);
+        }
         const updateLabel = updateResult.mode === "remeasure" ? "data:remeasure" : "data:map";
         if (updateResult.mode === "remeasure") {
           startFlashProbe("data:remeasure", {

@@ -17,6 +17,8 @@ const parseBool = (value?: string) => parseBoolishString(value) === true;
 
 const hasValue = (value?: string) => Boolean(value?.trim());
 
+const repoHash = crypto.createHash("sha1").update(path.resolve(__dirname, "../..")).digest("hex").slice(0, 10);
+
 const resolveWorkers = (defaultWorkers: number | undefined) => {
   const raw = String(process.env.CTX_E2E_WORKERS ?? process.env.PW_WORKERS ?? "").trim();
   if (!raw) return defaultWorkers;
@@ -31,6 +33,16 @@ const resolveWebServerStdio = () => {
   if (raw === "ignore") return { stdout: "ignore" as const, stderr: "ignore" as const };
   if (raw === "pipe") return { stdout: "pipe" as const, stderr: "pipe" as const };
   return {} as const;
+};
+
+export const resolvePlaywrightCargoTargetDir = (env: NodeJS.ProcessEnv) => {
+  const configured = String(env.CTX_E2E_CARGO_TARGET_DIR ?? env.CARGO_TARGET_DIR ?? "").trim();
+  if (configured) {
+    return path.isAbsolute(configured)
+      ? configured
+      : path.resolve(__dirname, "../..", configured);
+  }
+  return path.join(os.homedir(), ".cache", "cargo", "ctx-monorepo", `e2e-${repoHash}`);
 };
 
 const resolvePort = async (reuseExistingServer: boolean): Promise<number> => {
@@ -96,12 +108,7 @@ export async function createCtxPlaywrightConfig(
   }
 
   const docsMirrorBin = path.resolve(__dirname, "e2e/fixtures/ctx-docs-mirror-fixture.sh");
-  const cargoTargetDir =
-    process.env.CTX_E2E_CARGO_TARGET_DIR ??
-    path.join(
-      os.tmpdir(),
-      `ctx-e2e-cargo-${crypto.createHash("sha1").update(path.resolve(__dirname, "../..")).digest("hex").slice(0, 10)}-${process.pid}`,
-    );
+  const cargoTargetDir = resolvePlaywrightCargoTargetDir(process.env);
 
   const outputDir = path.resolve(__dirname, `e2e/test-results/${profileSlug}`);
   const reportDir = path.resolve(__dirname, `e2e/playwright-report/${profileSlug}`);
