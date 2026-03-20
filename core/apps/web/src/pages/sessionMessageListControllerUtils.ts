@@ -1,4 +1,5 @@
 import type { WorkbenchListItem } from "./SessionPage.types";
+import type { WorkbenchThreadProjectionOp } from "./sessionThreadProjection";
 
 export const HISTORY_PREFETCH_MIN_PX = 600;
 export const HISTORY_PREFETCH_VIEWPORT_MULTIPLIER = 2;
@@ -177,6 +178,21 @@ export function shouldReplaceBottomLockedStructuralUpdate(params: {
   if (replacesMostOfVisibleList) return true;
 
   return nextLen >= currentLen * 2;
+}
+
+export function assertWholeListPurgeAllowed(params: {
+  reason: string;
+  threadOp?: WorkbenchThreadProjectionOp | null;
+}): void {
+  const kind = params.threadOp?.kind ?? null;
+  if (!kind || kind === "replace_session") return;
+
+  const message = `[MessageList] full-list purge is reserved for replace_session (reason=${params.reason}, op=${kind})`;
+  if (import.meta.env.DEV || import.meta.env.MODE === "test") {
+    throw new Error(message);
+  }
+  // eslint-disable-next-line no-console
+  console.error(message);
 }
 
 export function computeHistoryPrependTailReconcilePlan(params: {

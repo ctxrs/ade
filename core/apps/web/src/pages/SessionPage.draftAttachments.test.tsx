@@ -1,16 +1,16 @@
 import React from "react";
 import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { MessageAttachment } from "../api/client";
+import { postMessage, type MessageAttachment, type Message, type SessionEvent, type SessionTurn } from "../api/client";
+import { buildSessionThreadProjectionFromSnapshot } from "../state/sessionThreadProjection/applySnapshot";
 import { SessionView } from "./SessionPage";
 
 const paneSpy = vi.hoisted(() => vi.fn());
 const sessionEntries = vi.hoisted(() => ({ map: {} as Record<string, unknown> }));
-const postMessageMock = vi.hoisted(() => vi.fn(async () => ({})));
 
 vi.mock("../api/client", () => ({
   deleteMessage: vi.fn(async () => ({})),
-  postMessage: postMessageMock,
+  postMessage: vi.fn(async () => ({})),
   setSessionModel: vi.fn(async () => ({})),
   authenticateSession: vi.fn(async () => ({})),
   idToString: (id: string | null | undefined) => {
@@ -29,6 +29,12 @@ vi.mock("../state/sessionSupervisor", () => ({
     loadMoreTurns: vi.fn(async () => {}),
     loadTurnTools: vi.fn(async () => {}),
     setSession: vi.fn(),
+    upsertOptimisticThreadMessage: vi.fn(),
+    removeOptimisticThreadMessage: vi.fn(),
+    upsertOptimisticQueuedMessage: vi.fn(),
+    removeOptimisticQueuedMessage: vi.fn(),
+    addOptimisticQueueRemovalId: vi.fn(),
+    removeOptimisticQueueRemovalId: vi.fn(),
   }),
   useSessionEntry: (id: string) => sessionEntries.map[id] ?? null,
   useOpenSession: () => {},
@@ -54,6 +60,15 @@ vi.mock("./useWorkbenchThreadViewModelController", () => ({
   useWorkbenchThreadViewModelController: () => ({
     view: { debugEvents: [] },
     listItems: [],
+    projectionRevision: 0,
+    lastOp: {
+      kind: "noop",
+      projectionRevision: 0,
+      changedItemIds: [],
+      remeasureItemIds: [],
+    },
+    changedItemIds: [],
+    remeasureItemIds: [],
   }),
 }));
 
@@ -144,6 +159,7 @@ vi.mock("../workbench/store", () => ({
 }));
 
 const sessionId = "session-1";
+const postMessageMock = vi.mocked(postMessage);
 
 const buildAttachment = (blobId: string): MessageAttachment => ({
   kind: "image_ref",
@@ -154,8 +170,7 @@ const buildAttachment = (blobId: string): MessageAttachment => ({
 
 beforeEach(() => {
   paneSpy.mockClear();
-  postMessageMock.mockReset();
-  postMessageMock.mockResolvedValue({});
+  postMessageMock.mockClear();
   sessionEntries.map = {
     [sessionId]: {
       sessionId,
@@ -200,6 +215,102 @@ beforeEach(() => {
 });
 
 describe("SessionPage draft attachments", () => {
+  it("renders thread content from the supervisor threadProjection instead of raw entry transcript fields", async () => {
+    const rawMessage: Message = {
+      id: "raw-message",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "raw-turn",
+      role: "user",
+      content: "raw message",
+      attachments: [],
+      delivery: "immediate",
+      created_at: "2026-03-10T00:00:00.000Z",
+    };
+    const projectedMessage: Message = {
+      ...rawMessage,
+      id: "projected-message",
+      turn_id: "projected-turn",
+      content: "projected message",
+    };
+    const rawEvent: SessionEvent = {
+      seq: 1,
+      id: "raw-event",
+      session_id: sessionId,
+      run_id: "run-1",
+      turn_id: "raw-turn",
+      event_type: "assistant_chunk",
+      payload_json: { content_fragment: "raw event" },
+      created_at: "2026-03-10T00:00:00.000Z",
+    };
+    const projectedEvent: SessionEvent = {
+      ...rawEvent,
+      seq: 2,
+      id: "projected-event",
+      turn_id: "projected-turn",
+      payload_json: { content_fragment: "projected event" },
+    };
+    const rawTurn: SessionTurn = {
+      turn_id: "raw-turn",
+      session_id: sessionId,
+      user_message_id: "raw-message",
+      status: "running",
+      started_at: "2026-03-10T00:00:00.000Z",
+      updated_at: "2026-03-10T00:00:00.000Z",
+      tool_total: 0,
+      tool_pending: 0,
+      tool_running: 0,
+      tool_completed: 0,
+      tool_failed: 0,
+    };
+    const projectedTurn: SessionTurn = {
+      ...rawTurn,
+      turn_id: "projected-turn",
+      user_message_id: "projected-message",
+      status: "completed",
+    };
+    const threadProjection = buildSessionThreadProjectionFromSnapshot({
+      stateLoaded: true,
+      turns: [projectedTurn],
+      turnsRev: 7,
+      messages: [projectedMessage],
+      messagesRev: 8,
+      events: [projectedEvent],
+      eventsRev: 9,
+      turnToolsByTurnId: {},
+      toolSummariesReady: true,
+      projectionRev: 11,
+    });
+
+    sessionEntries.map[sessionId] = {
+      ...(sessionEntries.map[sessionId] as Record<string, unknown>),
+      turns: [rawTurn],
+      messages: [rawMessage],
+      events: [rawEvent],
+      turnsRev: 1,
+      messagesRev: 1,
+      eventsRev: 1,
+      threadProjection,
+      projectionRev: 11,
+    };
+
+    render(<SessionView sessionId={sessionId} />);
+
+    await waitFor(() => {
+      expect(paneSpy).toHaveBeenCalled();
+    });
+
+    const props = paneSpy.mock.calls.at(-1)?.[0] as {
+      messages: unknown[];
+      events: unknown[];
+    };
+
+    expect(props.messages).toEqual(threadProjection.messages);
+    expect(props.events).toEqual(threadProjection.events);
+    expect(props.messages).not.toEqual([rawMessage]);
+    expect(props.events).not.toEqual([rawEvent]);
+  });
+
   it("renders persisted draft attachments and routes edits back through the draft callbacks", async () => {
     const firstAttachment = buildAttachment("blob-1");
     const secondAttachment = buildAttachment("blob-2");
@@ -234,38 +345,53 @@ describe("SessionPage draft attachments", () => {
     expect(onDraftAttachmentsChange).toHaveBeenCalledWith([firstAttachment, secondAttachment]);
   });
 
-  it("suppresses stale turn-already-running send errors", async () => {
-    postMessageMock.mockRejectedValueOnce(new Error("A turn is already running. Stop it or wait for it to finish."));
-    const onDraftChange = vi.fn();
-    const onDraftAttachmentsChange = vi.fn();
+  it("clears a controlled draft and still posts the message on send", async () => {
+    const firstAttachment = buildAttachment("blob-1");
 
-    render(
-      <SessionView
-        sessionId={sessionId}
-        draft={{ text: "hello", modeId: "default", attachments: [] }}
-        onDraftChange={onDraftChange}
-        onDraftAttachmentsChange={onDraftAttachmentsChange}
-      />,
-    );
+    function DraftHarness() {
+      const [draft, setDraft] = React.useState<{
+        text: string;
+        modeId: "default";
+        attachments: MessageAttachment[];
+      }>({
+        text: "hello",
+        modeId: "default",
+        attachments: [firstAttachment],
+      });
+
+      return (
+        <SessionView
+          sessionId={sessionId}
+          draft={draft}
+          onDraftChange={(text) => setDraft((prev) => ({ ...prev, text }))}
+          onDraftAttachmentsChange={(attachments) =>
+            setDraft((prev) => ({ ...prev, attachments }))
+          }
+        />
+      );
+    }
+
+    render(<DraftHarness />);
 
     await waitFor(() => {
       expect(paneSpy).toHaveBeenCalled();
     });
 
-    const props = paneSpy.mock.calls.at(-1)?.[0] as
-      | {
-          sendNow: () => Promise<void>;
-          sendError: string | null;
-        }
-      | undefined;
-
     await act(async () => {
-      await props?.sendNow();
+      const props = paneSpy.mock.calls.at(-1)?.[0] as { sendNow: () => Promise<void> };
+      await props.sendNow();
     });
 
     await waitFor(() => {
-      const latest = paneSpy.mock.calls.at(-1)?.[0] as { sendError: string | null } | undefined;
-      expect(latest?.sendError).toBeNull();
+      const latest = paneSpy.mock.calls.at(-1)?.[0] as
+        | { input: string; draftAttachments: MessageAttachment[] }
+        | undefined;
+      expect(latest?.input).toBe("");
+      expect(latest?.draftAttachments).toEqual([]);
     });
+
+    expect(postMessageMock).toHaveBeenCalledTimes(1);
+    expect(postMessageMock.mock.calls[0]?.[0]).toBe(sessionId);
+    expect(postMessageMock.mock.calls[0]?.[1]).toBe("hello");
   });
 });

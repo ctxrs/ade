@@ -14,6 +14,7 @@ import { applyStableListUpdate, applyStructuralStableListUpdate } from "./sessio
 import { useSessionMessageListDiagnostics } from "./useSessionMessageListDiagnostics";
 import type { WorkbenchThreadProjectionOp } from "./sessionThreadProjection";
 import {
+  assertWholeListPurgeAllowed,
   computeHistoryPrependTailReconcilePlan,
   computeHistoryPrefetchThresholdPx,
   findSharedItemSizeCacheKeyChanges,
@@ -596,8 +597,9 @@ export function useSessionMessageListController(params: Params): Result {
           atBottom
             ? INITIAL_LOCATION_BOTTOM
             : purgeAnchorIndex >= 0
-              ? { index: purgeAnchorIndex, align: "start" }
-              : initialLocation;
+            ? { index: purgeAnchorIndex, align: "start" }
+            : initialLocation;
+        assertWholeListPurgeAllowed({ reason: "layoutRevisionChanged", threadOp });
         methods.cancelSmoothScroll();
         suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 1 };
         startFlashProbe("data:replace", {
@@ -648,6 +650,7 @@ export function useSessionMessageListController(params: Params): Result {
           : purgeAnchorIndex >= 0
             ? { index: purgeAnchorIndex, align: "start" }
             : initialLocation;
+      assertWholeListPurgeAllowed({ reason: "sizeCacheKeyChanged", threadOp });
       methods.cancelSmoothScroll();
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 1 };
       startFlashProbe("data:replace", {
@@ -1143,6 +1146,7 @@ export function useSessionMessageListController(params: Params): Result {
       insertCount: insertData.length,
     });
     if (replaceBottomLockedStructuralUpdate && threadOp?.kind === "replace_session") {
+      assertWholeListPurgeAllowed({ reason: "bottomLockedStructuralReconcile", threadOp });
       methods.cancelSmoothScroll();
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 1 };
       startFlashProbe("data:replace", {

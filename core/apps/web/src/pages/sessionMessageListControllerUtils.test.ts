@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertWholeListPurgeAllowed,
   computeHistoryPrependTailReconcilePlan,
   computeHistoryPrefetchThresholdPx,
   countContiguousOverlapFromStart,
@@ -317,5 +318,35 @@ describe("sessionMessageListControllerUtils", () => {
         insertCount: 4,
       }),
     ).toBe(false);
+  });
+});
+
+describe("assertWholeListPurgeAllowed", () => {
+  it("allows a full purge for replace_session", () => {
+    expect(() =>
+      assertWholeListPurgeAllowed({
+        reason: "replace_session",
+        threadOp: {
+          kind: "replace_session",
+          projectionRevision: 1,
+          changedItemIds: ["row-1"],
+          remeasureItemIds: ["row-1"],
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it("throws when a localized op attempts to use a full purge", () => {
+    expect(() =>
+      assertWholeListPurgeAllowed({
+        reason: "terminalize_turn",
+        threadOp: {
+          kind: "terminalize_turn",
+          projectionRevision: 2,
+          changedItemIds: ["row-2"],
+          remeasureItemIds: ["row-2"],
+        },
+      }),
+    ).toThrow(/full-list purge is reserved for replace_session/i);
   });
 });
