@@ -1234,6 +1234,102 @@ async fn successful_workspace_launch_refreshes_prewarm_metadata_when_image_ref_c
     assert!(!startup.needs_prewarm);
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn workspace_override_image_does_not_clobber_startup_prewarm_metadata() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _serial = env_var_test_lock().lock().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let workspace_root = data_dir.path().join("ws");
+    std::fs::create_dir_all(&workspace_root).expect("create workspace root");
+
+    let default_image = crate::harness_runtime::default_container_image();
+    write_prewarm_metadata(
+        data_dir.path(),
+        &StartupPrewarmMetadata {
+            image_ref: default_image.to_string(),
+            bundled_image_fingerprint: Some("existing-fingerprint".to_string()),
+            ready_at: "2026-03-19T00:00:00Z".to_string(),
+        },
+    )
+    .await
+    .expect("write baseline prewarm metadata");
+
+    let workspace = Workspace {
+        id: WorkspaceId::new(),
+        name: "ws".to_string(),
+        root_path: workspace_root.to_string_lossy().to_string(),
+        created_at: Utc::now(),
+        vcs_kind: None,
+    };
+    let container_name = format!("ctx-harness-{}", workspace.id.0);
+    let machine_started = data_dir.path().join("machine-started");
+    let podman_path = data_dir.path().join("podman.sh");
+    let override_image = "ghcr.io/ctxrs/custom-harness:test";
+    std::fs::write(
+        &podman_path,
+        format!(
+            "#!/bin/sh\nSTARTED=\"{started}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ] && [ \"$4\" = \"{override_image}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            started = machine_started.display(),
+            container = container_name,
+            override_image = override_image,
+        ),
+    )
+    .expect("write podman shim");
+    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod podman shim");
+    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    let _test_podman = EnvVarGuard::unset("CTX_TEST_PODMAN_AVAILABLE");
+    let (_cache_guard, _cache_server) =
+        install_test_managed_machine_cache_source(vec![1, 2, 3]).await;
+
+    save_test_execution_settings(
+        data_dir.path(),
+        ExecutionSettings {
+            mode: ExecutionMode::Container,
+            container: crate::settings::ContainerExecutionSettings {
+                network_mode: crate::settings::ContainerNetworkMode::All,
+                ..Default::default()
+            },
+        },
+    )
+    .await;
+
+    let launch_settings = ExecutionSettings {
+        mode: ExecutionMode::Container,
+        container: crate::settings::ContainerExecutionSettings {
+            image: Some(override_image.to_string()),
+            network_mode: crate::settings::ContainerNetworkMode::All,
+            ..Default::default()
+        },
+    };
+
+    let coordinator = test_coordinator(data_dir.path().to_path_buf());
+    let launch = coordinator
+        .start_workspace_launch(
+            workspace,
+            launch_settings,
+            "http://127.0.0.1:4399".to_string(),
+        )
+        .await;
+    let launch_terminal =
+        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(10))
+            .await;
+    assert_eq!(launch_terminal.state, ExecutionLaunchState::Ready);
+
+    let metadata = read_prewarm_metadata(data_dir.path())
+        .await
+        .expect("read prewarm metadata")
+        .expect("expected prewarm metadata");
+    assert_eq!(metadata.image_ref, default_image);
+    assert_eq!(
+        metadata.bundled_image_fingerprint.as_deref(),
+        Some("existing-fingerprint")
+    );
+    assert_eq!(metadata.ready_at, "2026-03-19T00:00:00Z");
+}
+
 #[tokio::test]
 async fn runtime_prewarm_reuses_background_all_job_and_waits_for_builder_tail_when_runtime_joins() {
     let _serial = env_var_test_lock().lock().await;

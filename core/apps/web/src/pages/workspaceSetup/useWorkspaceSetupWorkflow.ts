@@ -67,6 +67,7 @@ export function useWorkspaceSetupWorkflow({
   );
   const handledMachineEffectIdsRef = useRef<Set<number>>(new Set());
   const localAuthWarmupRouteKeyRef = useRef<string | null>(null);
+  const localTitlingWarmupRouteKeyRef = useRef<string | null>(null);
 
   const setters = useMemo<FieldSetters>(() => ({
     targetDraft: makeDraftFieldSetter(dispatchDraft, "targetDraft"),
@@ -350,6 +351,30 @@ export function useWorkspaceSetupWorkflow({
     if (!draft.targetBranch.trim()) return;
     setters.pushBranch(draft.targetBranch);
   }, [draft.pushBranchTouched, draft.targetBranch, setters]);
+
+  useEffect(() => {
+    if (!remote.desktopApp || flow.selections.location !== "local") {
+      localTitlingWarmupRouteKeyRef.current = null;
+      return;
+    }
+    const localTarget = deriveWorkspaceSetupEffectiveTarget("local", draft.targetDraft);
+    if (!localTarget) {
+      localTitlingWarmupRouteKeyRef.current = null;
+      return;
+    }
+    const routeScope = createWorkspaceSetupRouteScope(localTarget, "no-container");
+    const routeKey = serializeWorkspaceSetupRouteScope(routeScope);
+    if (localTitlingWarmupRouteKeyRef.current === routeKey) {
+      return;
+    }
+    localTitlingWarmupRouteKeyRef.current = routeKey;
+    void provisioning.prefetchTitlingForCurrentTarget("local").catch(() => {});
+  }, [
+    draft.targetDraft,
+    flow.selections.location,
+    provisioning.prefetchTitlingForCurrentTarget,
+    remote.desktopApp,
+  ]);
 
   useEffect(() => {
     if (!remote.desktopApp || flow.step.key !== "location" || flow.selections.location) {

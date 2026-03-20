@@ -63,6 +63,26 @@ import {
 } from "./workflowTypes";
 import { useWorkspaceSetupProviderProvisioning } from "./useWorkspaceSetupProviderProvisioning";
 
+const TITLING_PROBE_TIMEOUT_MS = 2_000;
+
+const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(new Error(message));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle !== null) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+};
+
 type UseWorkspaceSetupProvisioningArgs = {
   currentStepKeyRef: MutableRefObject<WizardStepKey>;
   selections: WizardSelections;
@@ -310,12 +330,20 @@ export function useWorkspaceSetupProvisioning({
     setTitlingProbeError(null);
     setTitlingStatusError(null);
     try {
-      await connectDaemonForImport();
+      await withTimeout(
+        connectDaemonForImport(),
+        TITLING_PROBE_TIMEOUT_MS,
+        "Timed out loading daemon settings.",
+      );
       if (!isCurrentProvisioningRequest("titlingProbe", request) || selectedDaemonTargetKeyRef.current !== targetKey) {
         return null;
       }
 
-      const settings = await getSettings();
+      const settings = await withTimeout(
+        getSettings(),
+        TITLING_PROBE_TIMEOUT_MS,
+        "Timed out loading daemon settings.",
+      );
       if (!isCurrentProvisioningRequest("titlingProbe", request) || selectedDaemonTargetKeyRef.current !== targetKey) {
         return null;
       }
@@ -331,7 +359,11 @@ export function useWorkspaceSetupProvisioning({
 
       let localStatus: TitleGenerationLocalStatus | null = null;
       if (!settings.title_generation || settings.title_generation.mode === "local") {
-        localStatus = await refreshTitlingLocalStatus({ silent: true });
+        localStatus = await withTimeout(
+          refreshTitlingLocalStatus({ silent: true }),
+          TITLING_PROBE_TIMEOUT_MS,
+          "Timed out loading daemon settings.",
+        );
         if (!isCurrentProvisioningRequest("titlingProbe", request) || selectedDaemonTargetKeyRef.current !== targetKey) {
           return null;
         }
@@ -583,6 +615,43 @@ export function useWorkspaceSetupProvisioning({
       },
     );
   }, [refreshProvisioningForRouteScope]);
+
+  const prefetchTitlingForCurrentTarget = useCallback(async (
+    locationOverride?: "local" | "remote",
+  ): Promise<void> => {
+    if (!desktopApp) return;
+    const location = locationOverride ?? selections.location;
+    if (location !== "local" && location !== "remote") {
+      return;
+    }
+    if (location === "remote" && (!parsedRemoteHost || remoteStatusRef.current !== "connected")) {
+      return;
+    }
+    await withTimeout(
+      connectDaemonForImport(location),
+      TITLING_PROBE_TIMEOUT_MS,
+      "Timed out loading daemon settings.",
+    );
+    const settings = await withTimeout(
+      getSettings(),
+      TITLING_PROBE_TIMEOUT_MS,
+      "Timed out loading daemon settings.",
+    );
+    if (!settings.title_generation || settings.title_generation.mode === "local") {
+      await withTimeout(
+        refreshTitlingLocalStatus({ silent: true }),
+        TITLING_PROBE_TIMEOUT_MS,
+        "Timed out loading daemon settings.",
+      );
+    }
+  }, [
+    connectDaemonForImport,
+    desktopApp,
+    parsedRemoteHost,
+    refreshTitlingLocalStatus,
+    remoteStatusRef,
+    selections.location,
+  ]);
 
   const ensureTitlingProbeForCurrentTarget = useCallback(async (
     options?: { force?: boolean },
@@ -936,6 +1005,7 @@ export function useWorkspaceSetupProvisioning({
     ensureTitlingPersistedForCurrentTarget,
     ensureOnboardingAfterDaemonConnect,
     refreshAuthImportForRouteScope,
+    prefetchTitlingForCurrentTarget,
     onSelectTitlingLocal,
     ensureRoutePlanForSelection,
     resetRoutePlan,
