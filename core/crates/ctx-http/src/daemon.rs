@@ -367,10 +367,11 @@ async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
     let workspaces = state.global_store().list_workspaces().await?;
     let mut running_turns = Vec::new();
     for workspace in workspaces {
-        let store = state.store_for_workspace(workspace.id).await?;
+        let store = state.core.stores.workspace_uncached(workspace.id).await?;
         let mut turns = store
             .list_session_turns_by_statuses(&[SessionTurnStatus::Running])
             .await?;
+        store.close().await;
         running_turns.append(&mut turns);
     }
 
@@ -393,6 +394,48 @@ async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+async fn prune_archived_session_data_for_all_workspaces(
+    stores: &StoreManager,
+    retention_days: u64,
+) -> Result<()> {
+    let workspaces = stores.global().list_workspaces().await?;
+    for workspace in workspaces {
+        match stores.workspace_uncached(workspace.id).await {
+            Ok(store) => {
+                let prune_result = store
+                    .prune_session_data_older_than_days(retention_days)
+                    .await;
+                store.close().await;
+                match prune_result {
+                    Ok(stats) => {
+                        tracing::info!(
+                            workspace_id = %workspace.id.0,
+                            tool_summaries_deleted = stats.tool_summaries_deleted,
+                            turn_thoughts_cleared = stats.turn_thoughts_cleared,
+                            retention_days,
+                            "pruned archived session data",
+                        );
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            workspace_id = %workspace.id.0,
+                            retention_days,
+                            "failed to prune old session data: {err:#}",
+                        );
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::warn!(
+                    workspace_id = %workspace.id.0,
+                    "failed to open workspace store for pruning: {err:#}",
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -598,50 +641,14 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
                 let today = Utc::now().format("%Y-%m-%d").to_string();
                 if last_cleanup.as_deref() != Some(&today) {
                     let retention_days = tool_summary_retention_days();
-                    match stores.global().list_workspaces().await {
-                        Ok(workspaces) => {
-                            for workspace in workspaces {
-                                match stores.workspace(workspace.id).await {
-                                    Ok(store) => {
-                                        match store
-                                            .prune_session_data_older_than_days(retention_days)
-                                            .await
-                                        {
-                                            Ok(stats) => {
-                                                tracing::info!(
-                                                    workspace_id = %workspace.id.0,
-                                                    tool_summaries_deleted = stats
-                                                        .tool_summaries_deleted,
-                                                    turn_thoughts_cleared = stats
-                                                        .turn_thoughts_cleared,
-                                                    retention_days,
-                                                    "pruned archived session data",
-                                                );
-                                            }
-                                            Err(err) => {
-                                                tracing::warn!(
-                                                    workspace_id = %workspace.id.0,
-                                                    retention_days,
-                                                    "failed to prune old session data: {err:#}",
-                                                );
-                                            }
-                                        }
-                                    }
-                                    Err(err) => {
-                                        tracing::warn!(
-                                            workspace_id = %workspace.id.0,
-                                            "failed to open workspace store for pruning: {err:#}",
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            tracing::warn!(
-                                retention_days,
-                                "failed to list workspaces for pruning: {err:#}",
-                            );
-                        }
+                    if let Err(err) =
+                        prune_archived_session_data_for_all_workspaces(&stores, retention_days)
+                            .await
+                    {
+                        tracing::warn!(
+                            retention_days,
+                            "failed to list workspaces for pruning: {err:#}",
+                        );
                     }
                     last_cleanup = Some(today);
                 }

@@ -113,6 +113,67 @@ async fn sweeper_eviction_keeps_active_entries() {
         .is_some());
 }
 
+#[tokio::test]
+async fn reconcile_running_turns_does_not_cache_historical_workspace_stores() {
+    let temp = tempdir().unwrap();
+    let stores = StoreManager::open(temp.path()).await.unwrap();
+    let state = Arc::new(AppState::new(
+        temp.path().to_path_buf(),
+        stores.clone(),
+        HashMap::new(),
+        "http://localhost".to_string(),
+        None,
+    ));
+
+    for idx in 0..4 {
+        state
+            .global_store()
+            .create_workspace(
+                format!("ws-{idx}"),
+                temp.path()
+                    .join(format!("ws-{idx}"))
+                    .to_string_lossy()
+                    .to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .unwrap();
+    }
+
+    reconcile_running_turns(&state).await.unwrap();
+
+    let stats = stores.stats().await;
+    assert_eq!(stats.workspace_store_count, 0);
+}
+
+#[tokio::test]
+async fn prune_archived_session_data_does_not_cache_historical_workspace_stores() {
+    let temp = tempdir().unwrap();
+    let stores = StoreManager::open(temp.path()).await.unwrap();
+
+    for idx in 0..4 {
+        stores
+            .global()
+            .create_workspace(
+                format!("ws-{idx}"),
+                temp.path()
+                    .join(format!("ws-{idx}"))
+                    .to_string_lossy()
+                    .to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .unwrap();
+    }
+
+    prune_archived_session_data_for_all_workspaces(&stores, 30)
+        .await
+        .unwrap();
+
+    let stats = stores.stats().await;
+    assert_eq!(stats.workspace_store_count, 0);
+}
+
 #[test]
 fn normalizes_qwen_command_with_openai_auth_type() {
     let temp = tempdir().unwrap();

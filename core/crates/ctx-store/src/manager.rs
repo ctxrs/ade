@@ -147,6 +147,15 @@ impl StoreManager {
         Ok(store)
     }
 
+    pub async fn workspace_uncached(&self, workspace_id: WorkspaceId) -> Result<Store> {
+        let workspace = self
+            .global
+            .get_workspace(workspace_id)
+            .await?
+            .with_context(|| format!("workspace {} not found", workspace_id.0))?;
+        self.open_workspace_store(&workspace).await
+    }
+
     pub async fn store_for_task(&self, task_id: TaskId) -> Result<Store> {
         let workspace_id = self
             .global
@@ -343,14 +352,12 @@ mod tests {
         assert_eq!(manager.stats().await.workspace_store_count, 0);
 
         let reopened = manager.workspace(workspace.id).await.unwrap();
-        assert!(
-            reopened
-                .list_workspaces()
-                .await
-                .unwrap()
-                .iter()
-                .any(|candidate| candidate.id == workspace.id)
-        );
+        assert!(reopened
+            .list_workspaces()
+            .await
+            .unwrap()
+            .iter()
+            .any(|candidate| candidate.id == workspace.id));
     }
 
     #[tokio::test]
@@ -614,5 +621,26 @@ mod tests {
                 .is_none(),
             "global task id must not appear in workspace db"
         );
+    }
+
+    #[tokio::test]
+    async fn workspace_uncached_does_not_populate_workspace_cache() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = StoreManager::open(temp.path()).await.unwrap();
+        let workspace = manager
+            .global()
+            .create_workspace(
+                "ws".to_string(),
+                temp.path().to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .unwrap();
+
+        let store = manager.workspace_uncached(workspace.id).await.unwrap();
+        assert_eq!(manager.stats().await.workspace_store_count, 0);
+
+        store.close().await;
+        assert_eq!(manager.stats().await.workspace_store_count, 0);
     }
 }
