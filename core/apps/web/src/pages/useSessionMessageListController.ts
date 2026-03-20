@@ -12,6 +12,7 @@ import { debugItemSummary, debugStableKey, findFirstRenderedItemContractViolatio
 import { logSessionMessageListReconcileDebug } from "./sessionMessageListReconcileDebug";
 import { applyStableListUpdate, applyStructuralStableListUpdate } from "./sessionMessageListStableUpdate";
 import { useSessionMessageListDiagnostics } from "./useSessionMessageListDiagnostics";
+import type { WorkbenchThreadProjectionOp } from "./sessionThreadProjection";
 import {
   computeHistoryPrependTailReconcilePlan,
   computeHistoryPrefetchThresholdPx,
@@ -34,6 +35,8 @@ type Params = {
   loadOlder: () => Promise<void>;
   layoutRevision: string;
   itemSizeCacheKey: (item: WorkbenchListItem) => string | null;
+  renderRevisionByItemId?: Readonly<Record<string, number>>;
+  threadOp?: WorkbenchThreadProjectionOp | null;
   showDebug: boolean;
   onAtBottomChange?: (atBottom: boolean) => void;
 };
@@ -91,6 +94,8 @@ export function useSessionMessageListController(params: Params): Result {
     loadOlder,
     layoutRevision,
     itemSizeCacheKey,
+    renderRevisionByItemId,
+    threadOp,
     showDebug,
     onAtBottomChange,
   } = params;
@@ -130,8 +135,13 @@ export function useSessionMessageListController(params: Params): Result {
   const sessionBoundaryActive = lastSessionIdRef.current !== sessionId;
 
   const context = useMemo(
-    () => ({ loaded, loadingOlder, renderRevision: layoutRevision }),
-    [layoutRevision, loaded, loadingOlder],
+    () => ({
+      loaded,
+      loadingOlder,
+      renderRevision: layoutRevision,
+      renderRevisionByItemId,
+    }),
+    [layoutRevision, loaded, loadingOlder, renderRevisionByItemId],
   );
   const { recordDebugSnapshot, startFlashProbe } = useSessionMessageListDiagnostics({
     sessionId,
@@ -521,6 +531,12 @@ export function useSessionMessageListController(params: Params): Result {
     const nextIds = next.map((it) => it.id);
     const effectiveNextLen = next.length;
     const layoutRevisionChanged = lastLayoutRevisionRef.current !== layoutRevision;
+    const sameIdSequence = haveSameItemIdSequence(current, next);
+    const hasLocalizedThreadOp =
+      Boolean(threadOp) &&
+      threadOp?.kind !== "noop" &&
+      threadOp?.kind !== "replace_session" &&
+      sameIdSequence;
 
     // Initial population: never treat empty->non-empty as prepend/append.
     // Use `replace(..., initialLocation: LAST)` so opening a session lands at bottom deterministically.
@@ -565,56 +581,64 @@ export function useSessionMessageListController(params: Params): Result {
       historyExpectedRef.current = false;
       historyRequestedAtTopRef.current = false;
       historyRequestedAnchorIdRef.current = null;
-      const atBottom = stickToBottomRef.current;
-      const purgeAnchorId = atBottom ? null : renderedTopIdRef.current ?? renderedAnchorIdRef.current;
-      const purgeAnchorIndex = purgeAnchorId ? next.findIndex((item) => item.id === purgeAnchorId) : -1;
-      const replaceLocation: ItemLocation =
-        atBottom
-          ? INITIAL_LOCATION_BOTTOM
-          : purgeAnchorIndex >= 0
-            ? { index: purgeAnchorIndex, align: "start" }
-            : initialLocation;
-      methods.cancelSmoothScroll();
-      suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 1 };
-      startFlashProbe("data:replace", {
-        reason: "layoutRevisionChanged",
-        layoutRevision,
-        nextLen: effectiveNextLen,
-        currentLen,
-        atBottom,
-        purgeAnchorId,
-        purgeAnchorIndex,
-      });
-      methods.data.replace(next, { initialLocation: replaceLocation, purgeItemSizes: true });
-      if (atBottom) {
-        snapToBottom(methods);
+      if (threadOp && threadOp.kind !== "replace_session") {
+        recordDebugSnapshot("data:layout-op", {
+          reason: threadOp?.kind ?? "unknown",
+          nextLen: effectiveNextLen,
+          currentLen,
+          remeasureCount: threadOp?.remeasureItemIds.length ?? 0,
+        });
+      } else {
+        const atBottom = stickToBottomRef.current;
+        const purgeAnchorId = atBottom ? null : renderedTopIdRef.current ?? renderedAnchorIdRef.current;
+        const purgeAnchorIndex = purgeAnchorId ? next.findIndex((item) => item.id === purgeAnchorId) : -1;
+        const replaceLocation: ItemLocation =
+          atBottom
+            ? INITIAL_LOCATION_BOTTOM
+            : purgeAnchorIndex >= 0
+              ? { index: purgeAnchorIndex, align: "start" }
+              : initialLocation;
+        methods.cancelSmoothScroll();
+        suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 1 };
+        startFlashProbe("data:replace", {
+          reason: "layoutRevisionChanged",
+          layoutRevision,
+          nextLen: effectiveNextLen,
+          currentLen,
+          atBottom,
+          purgeAnchorId,
+          purgeAnchorIndex,
+        });
+        methods.data.replace(next, { initialLocation: replaceLocation, purgeItemSizes: true });
+        if (atBottom) {
+          snapToBottom(methods);
+        }
+        recordDebugSnapshot("data:replace", {
+          reason: "layoutRevisionChanged",
+          layoutRevision,
+          nextLen: effectiveNextLen,
+          currentLen,
+          atBottom,
+          purgeAnchorId,
+          purgeAnchorIndex,
+        });
+        logMessageListDebug("data:replace", {
+          reason: "layoutRevisionChanged",
+          layoutRevision,
+          nextLen: effectiveNextLen,
+          currentLen,
+          atBottom,
+          purgeAnchorId,
+          purgeAnchorIndex,
+        });
+        return;
       }
-      recordDebugSnapshot("data:replace", {
-        reason: "layoutRevisionChanged",
-        layoutRevision,
-        nextLen: effectiveNextLen,
-        currentLen,
-        atBottom,
-        purgeAnchorId,
-        purgeAnchorIndex,
-      });
-      logMessageListDebug("data:replace", {
-        reason: "layoutRevisionChanged",
-        layoutRevision,
-        nextLen: effectiveNextLen,
-        currentLen,
-        atBottom,
-        purgeAnchorId,
-        purgeAnchorIndex,
-      });
-      return;
     }
 
-    const sameIdSequence = haveSameItemIdSequence(current, next);
     const sizeCacheKeyChanges = sameIdSequence
       ? findSharedItemSizeCacheKeyChanges(current, next, itemSizeCacheKey)
       : { count: 0, sampleIds: [] as string[] };
-    if (sizeCacheKeyChanges.count > 0) {
+    if (sizeCacheKeyChanges.count > 0 && !threadOp) {
       const atBottom = stickToBottomRef.current;
       const purgeAnchorId = atBottom ? null : renderedTopIdRef.current ?? renderedAnchorIdRef.current;
       const purgeAnchorIndex = purgeAnchorId ? next.findIndex((item) => item.id === purgeAnchorId) : -1;
@@ -992,6 +1016,7 @@ export function useSessionMessageListController(params: Params): Result {
           stickToBottom: stickToBottomRef.current,
           anchorIndex,
           appendBehavior,
+          forceRemeasureItemIds: hasLocalizedThreadOp ? (threadOp?.remeasureItemIds ?? []) : [],
         });
         const updateLabel = updateResult.mode === "remeasure" ? "data:remeasure" : "data:map";
         if (updateResult.mode === "remeasure") {
@@ -1117,7 +1142,7 @@ export function useSessionMessageListController(params: Params): Result {
       deleteCount,
       insertCount: insertData.length,
     });
-    if (replaceBottomLockedStructuralUpdate) {
+    if (replaceBottomLockedStructuralUpdate && threadOp?.kind === "replace_session") {
       methods.cancelSmoothScroll();
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 1 };
       startFlashProbe("data:replace", {
@@ -1218,6 +1243,7 @@ export function useSessionMessageListController(params: Params): Result {
     showDebug,
     snapToBottom,
     startFlashProbe,
+    threadOp,
   ]);
 
   return {

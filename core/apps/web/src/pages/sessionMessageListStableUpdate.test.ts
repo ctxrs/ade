@@ -299,13 +299,13 @@ describe("applyStableListUpdate", () => {
 });
 
 describe("getWorkbenchListItemRenderKey", () => {
-  it("changes when a message row's layout-affecting content changes", () => {
+  it("stays stable when a message row's layout-affecting content changes", () => {
     const current = buildAssistantItem();
     const next = buildAssistantItem({
       content: "this reply is now much longer and wraps across multiple lines",
     });
 
-    expect(getWorkbenchListItemRenderKey(next)).not.toBe(getWorkbenchListItemRenderKey(current));
+    expect(getWorkbenchListItemRenderKey(next)).toBe(getWorkbenchListItemRenderKey(current));
   });
 
   it("stays stable when turn-status updates do not affect layout", () => {
@@ -323,7 +323,7 @@ describe("getWorkbenchListItemRenderKey", () => {
     expect(getWorkbenchListItemRenderKey(next)).toBe(getWorkbenchListItemRenderKey(current));
   });
 
-  it("changes for tool rows when the external render revision changes", () => {
+  it("stays stable for tool rows when the external render revision changes", () => {
     const item = buildToolItem();
     const collapsedContext: WorkbenchMessageListContext = {
       loaded: true,
@@ -336,7 +336,7 @@ describe("getWorkbenchListItemRenderKey", () => {
       expandedToolById: { [item.id]: true },
     };
 
-    expect(getWorkbenchListItemRenderKey(item, expandedContext)).not.toBe(
+    expect(getWorkbenchListItemRenderKey(item, expandedContext)).toBe(
       getWorkbenchListItemRenderKey(item, collapsedContext),
     );
   });
@@ -369,7 +369,7 @@ describe("getWorkbenchListItemRenderKey", () => {
     expect(getWorkbenchListItemRenderKey(next)).toBe(getWorkbenchListItemRenderKey(current));
   });
 
-  it("changes for assistant-role message rows when content grows", () => {
+  it("stays stable for assistant-role message rows when content grows", () => {
     const current = buildMessageItem({
       id: "assistant-msg-1",
       role: "assistant",
@@ -381,6 +381,6 @@ describe("getWorkbenchListItemRenderKey", () => {
       content: "this completed assistant message is now much longer and should remeasure",
     });
 
-    expect(getWorkbenchListItemRenderKey(next)).not.toBe(getWorkbenchListItemRenderKey(current));
+    expect(getWorkbenchListItemRenderKey(next)).toBe(getWorkbenchListItemRenderKey(current));
   });
 });

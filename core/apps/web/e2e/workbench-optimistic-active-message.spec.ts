@@ -5,6 +5,7 @@ import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
+import { readThreadSurfaceSample } from "./utils/anchorstreamAcceptanceProbes";
 
 type OptimisticWindow = Window & {
   __sendClickAt?: number;
@@ -13,6 +14,15 @@ type OptimisticWindow = Window & {
   __optimisticHeaderDuplicated?: boolean;
   __optimisticHeaderItemId?: string | null;
 };
+
+async function collectOverlapSamples(page: Parameters<typeof test>[0]["page"], sampleCount = 18) {
+  const samples = [];
+  for (let index = 0; index < sampleCount; index += 1) {
+    samples.push(await readThreadSurfaceSample(page));
+    if (index < sampleCount - 1) await page.waitForTimeout(80);
+  }
+  return samples;
+}
 
 test("workbench: optimistic active-session message does not flash", async ({ page }) => {
   test.setTimeout(120000);
@@ -124,6 +134,7 @@ test("workbench: optimistic active-session message does not flash", async ({ pag
   expect(headerItemId).not.toContain("client-");
   const headerId = (headerItemId ?? "").replace("turn-header-", "");
   expect(headerId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  const overlapSamples = await collectOverlapSamples(page);
   allowSecondMessagePost?.();
   await page.waitForTimeout(400);
   if (headerItemId) {
@@ -142,6 +153,9 @@ test("workbench: optimistic active-session message does not flash", async ({ pag
     };
   });
 
+  expect(
+    overlapSamples.some((sample) => sample.overlappingVisiblePairs > 0 || sample.overlappingTextLinePairs > 0),
+  ).toBe(false);
   expect(headerDisappeared).toBe(false);
   expect(headerDuplicated).toBe(false);
 });

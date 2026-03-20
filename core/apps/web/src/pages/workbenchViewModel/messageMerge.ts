@@ -1,10 +1,5 @@
 import { idToString, type Message, type SessionTurn } from "../../api/client";
 
-export type PendingMessageEntry = {
-  clientId: string;
-  message: Message;
-};
-
 const compareMessageOrder = (a: Message, b: Message): number => {
   const c = String(a.created_at).localeCompare(String(b.created_at));
   if (c !== 0) return c;
@@ -18,7 +13,7 @@ const compareMessageOrder = (a: Message, b: Message): number => {
 
 export function mergeMessagesForView(
   messages: Message[],
-  pending: PendingMessageEntry[],
+  pending: Message[],
   includeQueuedMessageIds: Set<string> = new Set(),
 ): Message[] {
   const shouldInclude = (message: Message) => {
@@ -27,7 +22,7 @@ export function mergeMessagesForView(
     return !!mid && includeQueuedMessageIds.has(mid);
   };
   const filteredMessages = messages.filter(shouldInclude);
-  const filteredPending = pending.filter((entry) => shouldInclude(entry.message));
+  const filteredPending = pending.filter((entry) => shouldInclude(entry));
   if (filteredPending.length === 0) return filteredMessages;
   const byId = new Map<string, Message>();
   for (const m of filteredMessages) {
@@ -35,16 +30,16 @@ export function mergeMessagesForView(
     if (id) byId.set(id, m);
   }
   for (const entry of filteredPending) {
-    const id = idToString(entry.message.id);
+    const id = idToString(entry.id);
     if (!id || byId.has(id)) continue;
-    byId.set(id, entry.message);
+    byId.set(id, entry);
   }
   return Array.from(byId.values()).sort(compareMessageOrder);
 }
 
 export function mergeQueuedMessagesForPanel(
   queue: Message[],
-  pending: PendingMessageEntry[],
+  pending: Message[],
 ): Message[] {
   if (queue.length === 0 && pending.length === 0) return [];
   if (pending.length === 0) return queue.slice();
@@ -54,8 +49,7 @@ export function mergeQueuedMessagesForPanel(
     const id = idToString(msg.id);
     if (id) byId.set(id, msg);
   }
-  for (const entry of pending) {
-    const msg = entry.message;
+  for (const msg of pending) {
     const id = idToString(msg.id);
     if (!id) {
       pendingNoId.push(msg);

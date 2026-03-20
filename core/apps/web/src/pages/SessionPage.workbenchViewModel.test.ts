@@ -1137,22 +1137,19 @@ describe("buildWorkbenchThreadViewModel", () => {
 
     const pending = [
       {
-        clientId: "m-pending-1",
-        message: {
-          id: "m-pending-1",
-          session_id: "s1",
-          task_id: "t1",
-          role: "user",
-          content: "queued",
-          delivery: "queued",
-          created_at: "2025-12-15T00:00:00.000Z",
-        },
+        id: "m-pending-1",
+        session_id: "s1",
+        task_id: "t1",
+        role: "user",
+        content: "queued",
+        delivery: "queued",
+        created_at: "2025-12-15T00:00:00.000Z",
       },
     ];
 
     const merged = mergeQueuedMessagesForPanel(
       [] as unknown as Message[],
-      pending as Array<{ clientId: string; message: Message }>,
+      pending as Message[],
     );
     expect(merged).toHaveLength(1);
     expect(String(merged[0]?.id)).toBe("m-pending-1");

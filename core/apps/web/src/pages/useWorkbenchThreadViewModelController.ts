@@ -7,9 +7,16 @@ import {
   buildWorkbenchThreadViewModelFromTurns,
   filterThreadItemsForVerbosity,
 } from "./SessionPage.workbenchViewModel";
+import {
+  classifyWorkbenchThreadProjectionOp,
+  createWorkbenchThreadProjectionOp,
+  type WorkbenchThreadProjectionOp,
+  type WorkbenchThreadProjectionOpKind,
+} from "./sessionThreadProjection";
 
 type Params = {
   sessionId: string;
+  projectionRev?: number;
   turnsStamp: string;
   messagesStamp: string;
   eventsStamp: string;
@@ -28,6 +35,10 @@ type InternalState = {
   view: WorkbenchThreadView;
   listItems: WorkbenchListItem[];
   groupRanges: Map<string, { start: number; end: number }>;
+  projectionRevision: number;
+  lastOp: WorkbenchThreadProjectionOp;
+  changedItemIds: string[];
+  remeasureItemIds: string[];
   // Snapshot markers for cheap "append-only" detection.
   turnsLen: number;
   messagesLen: number;
@@ -123,9 +134,18 @@ function buildStateFromInputs(opts: {
  */
 export function useWorkbenchThreadViewModelController(
   params: Params,
-): { view: WorkbenchThreadView; listItems: WorkbenchListItem[]; groupRanges: Map<string, { start: number; end: number }> } {
+): {
+  view: WorkbenchThreadView;
+  listItems: WorkbenchListItem[];
+  groupRanges: Map<string, { start: number; end: number }>;
+  projectionRevision: number;
+  lastOp: WorkbenchThreadProjectionOp;
+  changedItemIds: string[];
+  remeasureItemIds: string[];
+} {
   const {
     sessionId,
+    projectionRev: projectionRevInput,
     turnsStamp,
     messagesStamp,
     eventsStamp,
@@ -138,19 +158,32 @@ export function useWorkbenchThreadViewModelController(
     askUserQuestionAnswers,
     enableDebugEvents,
   } = params;
+  const projectionRev = projectionRevInput ?? 0;
 
   const initialBuildRef = useRef<{ state: InternalState; caches: PerTurnCaches } | null>(null);
   if (initialBuildRef.current === null) {
+    const initialState = buildStateFromInputs({
+      turns,
+      messages,
+      toolsByTurnId,
+      toolSummariesReady,
+      events,
+      askUserQuestionAnswers,
+      verbosity,
+    });
+    const initialOp = createWorkbenchThreadProjectionOp(
+      "replace_session",
+      projectionRev,
+      initialState.listItems.map((item) => item.id),
+    );
     initialBuildRef.current = {
-      state: buildStateFromInputs({
-        turns,
-        messages,
-        toolsByTurnId,
-        toolSummariesReady,
-        events,
-        askUserQuestionAnswers,
-        verbosity,
-      }),
+      state: {
+        ...initialState,
+        projectionRevision: projectionRev,
+        lastOp: initialOp,
+        changedItemIds: initialOp.changedItemIds,
+        remeasureItemIds: initialOp.remeasureItemIds,
+      },
       // Prime the per-turn caches on mount so the first append-only update can
       // rebuild a dirty turn group with the already-rendered transcript context.
       caches: buildPerTurnCaches(messages, events),
@@ -183,9 +216,9 @@ export function useWorkbenchThreadViewModelController(
   const lastToolSummariesReadyRef = useRef(toolSummariesReady);
   const lastToolsByTurnIdRef = useRef(toolsByTurnId);
 
-  const fullRebuild = useRef(() => {});
-  fullRebuild.current = () => {
-    const { view, listItems, groupRanges } = buildStateFromInputs({
+  const fullRebuild = useRef((_preferredKind?: WorkbenchThreadProjectionOpKind) => {});
+  fullRebuild.current = (preferredKind = "reconcile") => {
+    const rebuilt = buildStateFromInputs({
       turns,
       messages,
       toolsByTurnId,
@@ -197,13 +230,20 @@ export function useWorkbenchThreadViewModelController(
 
     perTurnCachesRef.current = buildPerTurnCaches(messages, events);
 
-    setState({
-      view,
-      listItems,
-      groupRanges,
-      turnsLen: turns.length,
-      messagesLen: messages.length,
-      eventsLen: events.length,
+    setState((previous) => {
+      const lastOp = classifyWorkbenchThreadProjectionOp({
+        current: previous.listItems,
+        next: rebuilt.listItems,
+        projectionRevision: projectionRev,
+        fallbackKind: preferredKind,
+      });
+      return {
+        ...rebuilt,
+        projectionRevision: projectionRev,
+        lastOp,
+        changedItemIds: lastOp.changedItemIds,
+        remeasureItemIds: lastOp.remeasureItemIds,
+      };
     });
   };
 
@@ -228,7 +268,7 @@ export function useWorkbenchThreadViewModelController(
         messagesByTurnId: new Map(),
         eventsByTurnId: new Map(),
       };
-      fullRebuild.current();
+      fullRebuild.current("replace_session");
       return;
     }
 
@@ -236,7 +276,7 @@ export function useWorkbenchThreadViewModelController(
     if (debugToggled) {
       syncInvalidationRefs();
       // Debug events are derived in the view-model builder; rebuild once when toggled.
-      fullRebuild.current();
+      fullRebuild.current("reconcile");
       return;
     }
 
@@ -247,7 +287,7 @@ export function useWorkbenchThreadViewModelController(
       lastToolsByTurnIdRef.current !== toolsByTurnId;
     if (verbosityChanged || askUserQuestionAnswersChanged || toolSummariesChanged) {
       syncInvalidationRefs();
-      fullRebuild.current();
+      fullRebuild.current(toolSummariesChanged ? "hydrate_tools" : "reconcile");
       return;
     }
 
@@ -259,21 +299,21 @@ export function useWorkbenchThreadViewModelController(
     const eventsStampChanged = eventsStamp !== lastEventsStampRef.current;
     if (turnsStructural || messagesStructural) {
       syncInvalidationRefs();
-      fullRebuild.current();
+      fullRebuild.current("reconcile");
       return;
     }
 
     // Incremental path: events appended only.
     if (events.length < state.eventsLen) {
       syncInvalidationRefs();
-      fullRebuild.current();
+      fullRebuild.current("reconcile");
       return;
     }
     if (events.length === state.eventsLen) {
       // If the stamp changed but length didn't, we can't assume append-only.
       if (eventsStampChanged) {
         syncInvalidationRefs();
-        fullRebuild.current();
+        fullRebuild.current("reconcile");
       }
       return;
     }
@@ -282,7 +322,7 @@ export function useWorkbenchThreadViewModelController(
     // Rebuild once per event append (no infinite loop).
     if (enableDebugEvents) {
       syncInvalidationRefs();
-      fullRebuild.current();
+      fullRebuild.current("reconcile");
       return;
     }
 
@@ -298,7 +338,7 @@ export function useWorkbenchThreadViewModelController(
     }
     if (!appendOnlyPrefixStable) {
       syncInvalidationRefs();
-      fullRebuild.current();
+      fullRebuild.current("reconcile");
       return;
     }
 
@@ -315,7 +355,14 @@ export function useWorkbenchThreadViewModelController(
     }
     if (dirtyTurnIds.size === 0) {
       syncInvalidationRefs();
-      setState((prev) => ({ ...prev, eventsLen: events.length }));
+      setState((prev) => ({
+        ...prev,
+        projectionRevision: projectionRev,
+        lastOp: createWorkbenchThreadProjectionOp("noop", projectionRev),
+        changedItemIds: [],
+        remeasureItemIds: [],
+        eventsLen: events.length,
+      }));
       return;
     }
 
@@ -334,7 +381,7 @@ export function useWorkbenchThreadViewModelController(
         || !currentTurnGroupKeys.has(groupKey)
       ) {
         syncInvalidationRefs();
-        fullRebuild.current();
+        fullRebuild.current("reconcile");
         return;
       }
     }
@@ -357,7 +404,7 @@ export function useWorkbenchThreadViewModelController(
       const turn = turnsById.get(turnId);
       if (!turn) {
         syncInvalidationRefs();
-        fullRebuild.current();
+        fullRebuild.current("reconcile");
         return;
       }
       const msgs = perTurnCachesRef.current.messagesByTurnId.get(turnId) ?? [];
@@ -368,7 +415,7 @@ export function useWorkbenchThreadViewModelController(
       const nextGroup = rebuilt.groups.find((x) => x.key === key);
       if (!nextGroup) {
         syncInvalidationRefs();
-        fullRebuild.current();
+        fullRebuild.current("reconcile");
         return;
       }
       updatedGroups.push(nextGroup);
@@ -388,7 +435,7 @@ export function useWorkbenchThreadViewModelController(
       const range = nextRanges.get(groupKey);
       if (!range) {
         syncInvalidationRefs();
-        fullRebuild.current();
+        fullRebuild.current("reconcile");
         return;
       }
       const prevLen = range.end - range.start;
@@ -424,13 +471,25 @@ export function useWorkbenchThreadViewModelController(
     }
 
     syncInvalidationRefs();
-    setState((prev) => ({
-      ...prev,
-      view: { groups: updatedGroups, debugEvents: prev.view.debugEvents },
-      listItems: nextList,
-      groupRanges: nextRanges,
-      eventsLen: events.length,
-    }));
+    setState((prev) => {
+      const lastOp = classifyWorkbenchThreadProjectionOp({
+        current: prev.listItems,
+        next: nextList,
+        projectionRevision: projectionRev,
+        fallbackKind: "append_stream",
+      });
+      return {
+        ...prev,
+        view: { groups: updatedGroups, debugEvents: prev.view.debugEvents },
+        listItems: nextList,
+        groupRanges: nextRanges,
+        projectionRevision: projectionRev,
+        lastOp,
+        changedItemIds: lastOp.changedItemIds,
+        remeasureItemIds: lastOp.remeasureItemIds,
+        eventsLen: events.length,
+      };
+    });
   }, [
     askUserQuestionAnswers,
     enableDebugEvents,
@@ -439,6 +498,7 @@ export function useWorkbenchThreadViewModelController(
     fullRebuild,
     messages,
     messagesStamp,
+    projectionRev,
     sessionId,
     verbosity,
     state.eventsLen,
@@ -454,5 +514,13 @@ export function useWorkbenchThreadViewModelController(
     turnsById,
   ]);
 
-  return { view: state.view, listItems: state.listItems, groupRanges: state.groupRanges };
+  return {
+    view: state.view,
+    listItems: state.listItems,
+    groupRanges: state.groupRanges,
+    projectionRevision: state.projectionRevision,
+    lastOp: state.lastOp,
+    changedItemIds: state.changedItemIds,
+    remeasureItemIds: state.remeasureItemIds,
+  };
 }

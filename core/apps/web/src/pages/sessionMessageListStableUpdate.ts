@@ -22,6 +22,7 @@ type StableListUpdateParams = {
   anchorIndex: number;
   appendBehavior: AutoscrollToBottom<WorkbenchListItem, WorkbenchMessageListContext>;
   allowAnchorMap?: boolean;
+  forceRemeasureItemIds?: readonly string[];
 };
 
 export const hashString = (value: string): string => {
@@ -32,52 +33,6 @@ export const hashString = (value: string): string => {
   }
   return (hash >>> 0).toString(36);
 };
-
-const cloneUnknownArray = <T>(value: readonly T[] | undefined): T[] =>
-  value ? value.map((entry) => (entry && typeof entry === "object" ? ({ ...(entry as Record<string, unknown>) } as T) : entry)) : [];
-
-function snapshotWorkbenchListItem(item: WorkbenchListItem): WorkbenchListItem {
-  switch (item.kind) {
-    case "message":
-      return {
-        ...item,
-        attachments: cloneUnknownArray(item.attachments),
-      };
-    case "turn_header":
-      return {
-        ...item,
-        header: {
-          ...item.header,
-          attachments: cloneUnknownArray(item.header.attachments),
-        },
-      };
-    case "tool":
-      return {
-        ...item,
-        locations: cloneUnknownArray(item.locations),
-        input:
-          item.input && typeof item.input === "object"
-            ? { ...(item.input as Record<string, unknown>) }
-            : item.input,
-      };
-    case "tool_group":
-      return {
-        ...item,
-        tools: item.tools.map((tool) => snapshotWorkbenchListItem(tool) as Extract<WorkbenchListItem, { kind: "tool" }>),
-      };
-    case "ask_user_question":
-      return {
-        ...item,
-        input:
-          item.input && typeof item.input === "object"
-            ? { ...(item.input as Record<string, unknown>) }
-            : item.input,
-        answers: { ...item.answers },
-      };
-    default:
-      return { ...item };
-  }
-}
 
 const textLayoutKey = (value: string | null | undefined): string => {
   const text = String(value ?? "");
@@ -164,38 +119,19 @@ export const getWorkbenchListItemLayoutKey = (item: WorkbenchListItem): string =
   }
 };
 
-const getContextLayoutRevisionKey = (
-  item: WorkbenchListItem,
-  context: WorkbenchMessageListContext | undefined,
-): string => {
-  switch (item.kind) {
-    case "tool":
-      return `tool:${context?.expandedToolById?.[item.id] ? 1 : 0}`;
-    case "tool_group":
-      return `tool_group:${context?.expandedTurnDetailsById?.[item.turn_id] ? 1 : 0}`;
-    case "turn_header":
-      return `turn_header:${context?.expandedTurnHeaders?.[item.header.id] ? 1 : 0}`;
-    default:
-      return "";
-  }
-};
-
 export const getWorkbenchListItemRenderKey = (
   item: WorkbenchListItem,
   context?: WorkbenchMessageListContext,
-  index?: number,
+  _index?: number,
 ): string => {
-  const itemLayoutHash = hashString(getWorkbenchListItemLayoutKey(item));
-  const contextLayoutHash = getContextLayoutRevisionKey(item, context);
-  const indexKey = Number.isInteger(index) ? `:${index}` : "";
-  return contextLayoutHash.length > 0
-    ? `${item.id}:${itemLayoutHash}:${contextLayoutHash}${indexKey}`
-    : `${item.id}:${itemLayoutHash}${indexKey}`;
+  const renderRevision = context?.renderRevisionByItemId?.[item.id] ?? 0;
+  return renderRevision > 0 ? `${item.id}:${renderRevision}` : item.id;
 };
 
 export const findStableListRemeasureSpans = (
   current: WorkbenchListItem[],
   next: WorkbenchListItem[],
+  forceRemeasureIds: ReadonlySet<string> = new Set(),
 ): StableListRemeasureSpan[] => {
   const spans: StableListRemeasureSpan[] = [];
   let spanStart = -1;
@@ -204,6 +140,7 @@ export const findStableListRemeasureSpans = (
     const currentItem = current[index];
     const nextItem = next[index];
     const changed =
+      forceRemeasureIds.has(nextItem?.id ?? currentItem?.id ?? "") ||
       currentItem !== nextItem &&
       (currentItem?.id !== nextItem?.id ||
         getWorkbenchListItemLayoutKey(currentItem!) !== getWorkbenchListItemLayoutKey(nextItem!));
@@ -258,17 +195,20 @@ export function applyStableListUpdate({
   anchorIndex,
   appendBehavior,
   allowAnchorMap = true,
+  forceRemeasureItemIds = [],
 }: StableListUpdateParams & {
   prefix?: WorkbenchListItem[];
   suffix?: WorkbenchListItem[];
 }): StableListUpdateResult {
-  const prefixSnapshots = prefix.map(snapshotWorkbenchListItem);
-  const nextSnapshots = next.map(snapshotWorkbenchListItem);
-  const suffixSnapshots = suffix.map(snapshotWorkbenchListItem);
-  const nextById = new Map([...prefixSnapshots, ...nextSnapshots, ...suffixSnapshots].map((item) => [item.id, item] as const));
+  const forceRemeasureIds = new Set(forceRemeasureItemIds);
+  const materializeItem = (item: WorkbenchListItem): WorkbenchListItem =>
+    forceRemeasureIds.has(item.id) ? ({ ...item } as WorkbenchListItem) : item;
+  const nextById = new Map(
+    [...prefix, ...next, ...suffix].map((item) => [item.id, materializeItem(item)] as const),
+  );
 
-  const changedSpans = findStableListRemeasureSpans(current, nextSnapshots);
-  const hasEdgeInserts = prefixSnapshots.length > 0 || suffixSnapshots.length > 0;
+  const changedSpans = findStableListRemeasureSpans(current, next, forceRemeasureIds);
+  const hasEdgeInserts = prefix.length > 0 || suffix.length > 0;
   if (!hasEdgeInserts && changedSpans.length === 0) {
     applyMappedUpdate({
       methods,
@@ -280,10 +220,15 @@ export function applyStableListUpdate({
     return { mode: "map", changedSpans };
   }
 
+  if (!hasEdgeInserts && changedSpans.length > 0) {
+    methods.data.replace(next);
+    return { mode: "remeasure", changedSpans };
+  }
+
   methods.data.batch(
     () => {
-      if (prefixSnapshots.length > 0) methods.data.prepend(prefixSnapshots);
-      if (suffixSnapshots.length > 0) methods.data.append(suffixSnapshots, appendBehavior);
+      if (prefix.length > 0) methods.data.prepend(prefix);
+      if (suffix.length > 0) methods.data.append(suffix, appendBehavior);
       applyMappedUpdate({
         methods,
         nextById,
@@ -313,15 +258,14 @@ export function applyStructuralStableListUpdate({
   suffixLen: number;
 }): StableListUpdateResult {
   const deleteCount = current.length - prefixLen - suffixLen;
-  const insertData = next.slice(prefixLen, next.length - suffixLen).map(snapshotWorkbenchListItem);
-  const nextSnapshots = next.map(snapshotWorkbenchListItem);
+  const insertData = next.slice(prefixLen, next.length - suffixLen);
   const postStructureCurrent = [
     ...current.slice(0, prefixLen),
     ...insertData,
     ...current.slice(current.length - suffixLen),
   ];
-  const changedSpans = findStableListRemeasureSpans(postStructureCurrent, nextSnapshots);
-  const nextById = new Map(nextSnapshots.map((item) => [item.id, item] as const));
+  const changedSpans = findStableListRemeasureSpans(postStructureCurrent, next);
+  const nextById = new Map(next.map((item) => [item.id, item] as const));
 
   methods.data.batch(
     () => {

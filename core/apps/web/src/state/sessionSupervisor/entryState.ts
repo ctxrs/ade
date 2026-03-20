@@ -12,6 +12,7 @@ import type {
   SubagentInvocation,
 } from "../../api/client";
 import type { SessionActivityState } from "@ctx/types";
+import type { SessionThreadProjection } from "../sessionThreadProjection/types";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "idle";
 
@@ -63,11 +64,16 @@ export type SessionCacheEntry = {
   stateRev?: number;
   loadErrors?: SessionSupportLoadErrors;
   queue: Message[];
+  optimisticThreadMessages?: Message[];
+  optimisticQueuedMessages?: Message[];
+  optimisticQueueRemovalIds?: string[];
+  overlayRev?: number;
   diff?: string;
   gitStatusSummary?: GitStatusSummary | null;
   summaryCheckpoint?: SessionSummaryCheckpoint | null;
   headWindow?: SessionHeadWindow | null;
   projectionRev?: number;
+  threadProjection?: SessionThreadProjection;
   diagnosticsByPath?: Record<string, unknown[]>;
   lastEventSeq?: number;
   loading: boolean;
@@ -177,12 +183,17 @@ export function createInternalEntry(
     stateFetchToken: 0,
     loadErrors: {},
     queue: [],
+    optimisticThreadMessages: [],
+    optimisticQueuedMessages: [],
+    optimisticQueueRemovalIds: [],
+    overlayRev: 0,
     diff: undefined,
     gitStatusSummary: null,
-  summaryCheckpoint: null,
-  headWindow: null,
-  projectionRev: undefined,
-  diagnosticsByPath: {},
+    summaryCheckpoint: null,
+    headWindow: null,
+    projectionRev: undefined,
+    threadProjection: undefined,
+    diagnosticsByPath: {},
     lastEventSeq: undefined,
     loading: false,
     error: undefined,

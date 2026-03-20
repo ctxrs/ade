@@ -3003,6 +3003,55 @@ describe("SessionSupervisor", () => {
     expect(sup.getSnapshot().sessions[sessionId]?.turns[0]?.status).toBe("interrupted");
   });
 
+  it("keeps an interrupted turn interrupted when ordered cancel fallout later emits error", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-ordered-interrupt-error-monotonic";
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+
+    entry.session = mkSession(sessionId);
+    entry.turns = [mkTurn({ sessionId, turnId: "turn-1", status: "running", startSeq: 1 })];
+    entry.turnsHydrated = true;
+    entry.freshness = "replica";
+    entry.lastEventSeq = 1;
+
+    internals.handleReplicaPatches([
+      {
+        op: "append",
+        sessionId,
+        data: {
+          events: [
+            {
+              seq: 2,
+              id: "event-turn-interrupted",
+              session_id: sessionId,
+              run_id: "run-1",
+              turn_id: "turn-1",
+              event_type: "turn_interrupted",
+              payload_json: { reason: "user_interrupt" },
+              created_at: new Date(2).toISOString(),
+            },
+            {
+              seq: 3,
+              id: "event-provider-cancel-error",
+              session_id: sessionId,
+              run_id: "run-1",
+              turn_id: "turn-1",
+              event_type: "error",
+              payload_json: { message: "cancelled" },
+              created_at: new Date(3).toISOString(),
+            },
+          ],
+          lastEventSeq: 3,
+        },
+      },
+    ]);
+
+    expect(sup.getSnapshot().sessions[sessionId]?.turns[0]?.status).toBe("interrupted");
+  });
+
   it("refetches session state instead of reusing cache when no revision is known", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 

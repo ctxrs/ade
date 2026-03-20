@@ -137,7 +137,7 @@ describe("useSessionMessageListController", () => {
     expect(result.current.initialData).toEqual(sessionTwoRaw);
   });
 
-  it("replaces bottom-locked mixed structural updates instead of reconciling them", () => {
+  it("reconciles bottom-locked mixed structural updates without a full replace", () => {
     const initialItems = Array.from({ length: 10 }, (_, index) => makeSpacer(`current-${index}`));
     const mixedStructuralNext = [
       initialItems[0]!,
@@ -185,17 +185,11 @@ describe("useSessionMessageListController", () => {
       layoutRevision: "layout-1",
     });
 
-    expect(fake.spies.replace).toHaveBeenCalledTimes(1);
-    expect(fake.spies.replace).toHaveBeenLastCalledWith(mixedStructuralNext, {
-      initialLocation: { index: "LAST", align: "end" },
-      purgeItemSizes: true,
-    });
-    expect(fake.spies.deleteRange).not.toHaveBeenCalled();
-    expect(fake.spies.insert).not.toHaveBeenCalled();
-    expect(fake.spies.batch).not.toHaveBeenCalled();
+    expect(fake.spies.replace).not.toHaveBeenCalled();
+    expect(fake.spies.batch).toHaveBeenCalled();
   });
 
-  it("replaces same-length large middle churn while bottom-locked", () => {
+  it("reconciles same-length large middle churn while bottom-locked", () => {
     const initialItems = Array.from({ length: 231 }, (_, index) => makeSpacer(`current-${index}`));
     const mixedStructuralNext = [
       ...initialItems.slice(0, 92),
@@ -243,13 +237,7 @@ describe("useSessionMessageListController", () => {
       layoutRevision: "layout-1",
     });
 
-    expect(fake.spies.replace).toHaveBeenCalledTimes(1);
-    expect(fake.spies.replace).toHaveBeenLastCalledWith(mixedStructuralNext, {
-      initialLocation: { index: "LAST", align: "end" },
-      purgeItemSizes: true,
-    });
-    expect(fake.spies.deleteRange).not.toHaveBeenCalled();
-    expect(fake.spies.insert).not.toHaveBeenCalled();
-    expect(fake.spies.batch).not.toHaveBeenCalled();
+    expect(fake.spies.replace).not.toHaveBeenCalled();
+    expect(fake.spies.batch).toHaveBeenCalled();
   });
 });

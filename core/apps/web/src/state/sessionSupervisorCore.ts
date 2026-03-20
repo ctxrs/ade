@@ -82,6 +82,15 @@ import {
 } from "./sessionSupervisor/thoughtCache";
 import { dedupeIds, mergeTurn, sameIdList } from "./sessionSupervisor/cachePolicy";
 import {
+  addOptimisticQueueRemovalId,
+  reconcileOptimisticOverlay,
+  removeOptimisticQueuedMessage,
+  removeOptimisticQueueRemovalId,
+  removeOptimisticThreadMessage,
+  upsertOptimisticQueuedMessage,
+  upsertOptimisticThreadMessage,
+} from "./sessionSupervisor/optimisticOverlay";
+import {
   buildSubscribedSessions,
   emitSubscribedSessions,
   markOpenSessionsRecovering,
@@ -477,6 +486,7 @@ export class SessionSupervisor {
       this.bumpMessagesRev(entry);
     }
     this.mergeMessages(entry, messages);
+    reconcileOptimisticOverlay(entry);
     entry.updatedAtMs = Date.now();
     this.publish();
   };
@@ -518,6 +528,54 @@ export class SessionSupervisor {
     }
 
     entry.updatedAtMs = Date.now();
+    this.publish();
+  };
+
+  upsertOptimisticThreadMessage = (sessionId: string, message: Message) => {
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    const entry = this.ensureEntry(id);
+    if (!upsertOptimisticThreadMessage(entry, message)) return;
+    this.publish();
+  };
+
+  removeOptimisticThreadMessage = (sessionId: string, messageId: string) => {
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    const entry = this.ensureEntry(id);
+    if (!removeOptimisticThreadMessage(entry, messageId)) return;
+    this.publish();
+  };
+
+  upsertOptimisticQueuedMessage = (sessionId: string, message: Message) => {
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    const entry = this.ensureEntry(id);
+    if (!upsertOptimisticQueuedMessage(entry, message)) return;
+    this.publish();
+  };
+
+  removeOptimisticQueuedMessage = (sessionId: string, messageId: string) => {
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    const entry = this.ensureEntry(id);
+    if (!removeOptimisticQueuedMessage(entry, messageId)) return;
+    this.publish();
+  };
+
+  addOptimisticQueueRemovalId = (sessionId: string, messageId: string) => {
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    const entry = this.ensureEntry(id);
+    if (!addOptimisticQueueRemovalId(entry, messageId)) return;
+    this.publish();
+  };
+
+  removeOptimisticQueueRemovalId = (sessionId: string, messageId: string) => {
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    const entry = this.ensureEntry(id);
+    if (!removeOptimisticQueueRemovalId(entry, messageId)) return;
     this.publish();
   };
 
@@ -718,6 +776,7 @@ export class SessionSupervisor {
       if (localOnlyMessages.length > 0) {
         this.mergeMessages(entry, localOnlyMessages);
       }
+      reconcileOptimisticOverlay(entry);
       if (shouldReplaceReplay && data.events && data.events.length > 0) {
         this.mergeEvents(entry, data.events, { notify: patch.op !== "replace" });
         this.applyAcpMetaFromEvents(entry, data.events);
@@ -848,6 +907,7 @@ export class SessionSupervisor {
         void this.ensureProviderOptions(entry);
       }
       entry.queue = entry.messages.filter((m) => m.delivery === "queued");
+      reconcileOptimisticOverlay(entry);
       this.syncSupportLoadsForOpenSession(entry);
       entry.updatedAtMs = Date.now();
       changed = true;

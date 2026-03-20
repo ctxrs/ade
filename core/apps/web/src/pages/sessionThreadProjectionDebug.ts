@@ -2,7 +2,7 @@ export type SessionThreadProjectionDebugEntry = {
   seq: number;
   atMs: number;
   sessionId: string;
-  source: "raw";
+  source: "raw" | "supervisor";
   loaded: boolean;
   sessionProjectionReady: boolean;
   freshness: string | null;
@@ -12,6 +12,7 @@ export type SessionThreadProjectionDebugEntry = {
   messagesStamp: string;
   eventsStamp: string;
   projectionRev: number;
+  opKind?: string;
   listItemCount: number;
 };
 

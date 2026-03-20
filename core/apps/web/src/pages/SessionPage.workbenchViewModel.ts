@@ -19,7 +19,6 @@ import {
   filterTurnsForQueuedMessages,
   mergeMessagesForView,
   mergeQueuedMessagesForPanel,
-  type PendingMessageEntry,
 } from "./workbenchViewModel/messageMerge";
 import {
   deriveAuthUi,

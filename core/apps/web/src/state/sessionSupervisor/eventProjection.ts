@@ -77,6 +77,22 @@ type TurnProjectionState = SessionTurn & {
   thought_partial_provider_item_id?: string | null;
 };
 
+function isTerminalTurnStatus(
+  status: SessionTurn["status"] | null | undefined,
+): status is Extract<SessionTurn["status"], "completed" | "failed" | "interrupted"> {
+  return status === "completed" || status === "failed" || status === "interrupted";
+}
+
+function mergeOrderedTurnStatus(
+  previous: SessionTurn["status"] | null | undefined,
+  next: SessionTurn["status"] | null | undefined,
+): SessionTurn["status"] {
+  if (isTerminalTurnStatus(previous)) {
+    return previous;
+  }
+  return mergeTurnStatus(previous, next);
+}
+
 export function mergeTurns(
   this: SessionSupervisorEventProjectionHost,
   entry: SessionSupervisorEventProjectionEntry,
@@ -364,37 +380,37 @@ export function applyEventToTurns(
       break;
     }
     case "turn_queued": {
-      turn.status = mergeTurnStatus(turn.status, "queued");
+      turn.status = mergeOrderedTurnStatus(turn.status, "queued");
       changed = true;
       break;
     }
     case "turn_started": {
-      turn.status = mergeTurnStatus(turn.status, "running");
+      turn.status = mergeOrderedTurnStatus(turn.status, "running");
       changed = true;
       break;
     }
     case "turn_finished": {
       const payloadStatus = readTurnStatusFromPayload(event);
       if (payloadStatus) {
-        turn.status = mergeTurnStatus(turn.status, payloadStatus);
+        turn.status = mergeOrderedTurnStatus(turn.status, payloadStatus);
       } else if (turn.status !== "interrupted" && turn.status !== "failed") {
-        turn.status = mergeTurnStatus(turn.status, "completed");
+        turn.status = mergeOrderedTurnStatus(turn.status, "completed");
       }
       changed = true;
       break;
     }
     case "turn_interrupted": {
-      turn.status = mergeTurnStatus(turn.status, "interrupted");
+      turn.status = mergeOrderedTurnStatus(turn.status, "interrupted");
       changed = true;
       break;
     }
     case "error": {
-      turn.status = mergeTurnStatus(turn.status, "failed");
+      turn.status = mergeOrderedTurnStatus(turn.status, "failed");
       changed = true;
       break;
     }
     case "done": {
-      turn.status = mergeTurnStatus(turn.status, "completed");
+      turn.status = mergeOrderedTurnStatus(turn.status, "completed");
       const contextWindow = readPayloadObject(event.payload_json, "context_window");
       if (contextWindow) {
         turn.metrics_json = contextWindow;
