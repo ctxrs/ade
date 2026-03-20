@@ -11,12 +11,11 @@ import {
 import {
   asRecord,
   ensureProviderInstalledAndHealthy,
-  readString,
-  resolveWorkspaceProviderModelId,
   verifyProviderForWorkspace,
   waitForSessionWorkspaceFileContents,
   waitForTerminalState,
 } from "../src/testing/providerRuntime";
+import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 
 const REQUEST_TIMEOUT_MS = 60_000;
 const INSTALL_TARGET = "host" as const;
@@ -78,13 +77,6 @@ test("workbench: claude subscription browser OAuth can run a real task", async (
     requestTimeoutMs: REQUEST_TIMEOUT_MS,
   });
 
-  const modelId = await resolveWorkspaceProviderModelId(request, workspaceId, "claude-crp", {
-    timeoutMs: 90_000,
-    pollMs: 3_000,
-    requestTimeoutMs: REQUEST_TIMEOUT_MS,
-  });
-
-  const promptMarker = `claude-browser-oauth-${Date.now()}`;
   const prompt = [
     "This is an end to end test, so it is very important that you do exactly what I ask.",
     "Make a new file in the workspace root called hello.md and put exactly this text in it: hi. The file must contain exactly those two characters with no trailing newline or extra whitespace. If you use a shell command to write the file, use printf rather than echo -n, because echo -n is not portable and may write the literal text -n.",
@@ -92,38 +84,25 @@ test("workbench: claude subscription browser OAuth can run a real task", async (
     "That is all. Do it now without further deliberation.",
     "After writing the file, reply with exactly: hi",
   ].join(" ");
+  await selectHarnessBySearch(page, "claude", /claude code/i);
+  await expect(page.locator(".wb-new-composer-card .wb-context-window")).toHaveCount(0);
 
-  const createTaskResp = await request.post(`/api/workspaces/${workspaceId}/tasks`, {
-    data: {
-      title: promptMarker,
-      create_default_session: false,
-    },
-    timeout: REQUEST_TIMEOUT_MS,
-  });
-  expect(createTaskResp.ok(), `task create failed (${createTaskResp.status()})`).toBe(true);
-  const taskId = readString(asRecord(await createTaskResp.json()).id);
-  expect(taskId).not.toBe("");
+  const createSessionResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "POST"
+    && /\/api\/tasks\/[^/]+\/sessions$/.test(response.url()),
+  );
 
-  const createSessionResp = await request.post(`/api/tasks/${taskId}/sessions`, {
-    data: {
-      provider_id: "claude-crp",
-      model_id: modelId,
-      execution_environment: "host",
-    },
-    timeout: REQUEST_TIMEOUT_MS,
-  });
+  await page.locator("textarea.wb-composer-textarea").first().fill(prompt);
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const createSessionResp = await createSessionResponsePromise;
   expect(createSessionResp.ok(), `session create failed (${createSessionResp.status()})`).toBe(true);
-  const sessionId = readString(asRecord(await createSessionResp.json()).id);
+  const sessionId = String(asRecord(await createSessionResp.json()).id ?? "");
   expect(sessionId).not.toBe("");
 
-  const messageResp = await request.post(`/api/sessions/${sessionId}/messages`, {
-    data: {
-      content: prompt,
-      delivery: "immediate",
-    },
-    timeout: REQUEST_TIMEOUT_MS,
-  });
-  expect(messageResp.ok(), `message send failed (${messageResp.status()})`).toBe(true);
+  await expect(page.getByText("Failed to start")).toHaveCount(0);
+  await expect(page.getByText("Session not found in workspace snapshot")).toHaveCount(0);
+  await expect(page.locator(".wb-session-slot textarea.wb-active-textarea")).toBeVisible({ timeout: 30_000 });
 
   const terminal = await waitForTerminalState(request, sessionId, {
     timeoutMs: 180_000,
@@ -132,6 +111,9 @@ test("workbench: claude subscription browser OAuth can run a real task", async (
   });
   expect(terminal.terminalStatus, terminal.errorMessage ?? "claude run did not complete").toBe("completed");
   expect(terminal.assistantMessages).toBeGreaterThan(0);
+  await expect(page.locator(".wb-session-slot .wb-assistant-entry").filter({ hasText: "hi" })).toBeVisible({
+    timeout: 180_000,
+  });
   await waitForSessionWorkspaceFileContents(request, sessionId, "hello.md", "hi", {
     timeoutMs: 30_000,
     pollMs: 1_000,

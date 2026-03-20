@@ -346,7 +346,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     expect(onStartError).toHaveBeenCalledWith(null);
   });
 
-  it("splits a combined draft model id into model_id and reasoning_effort for session creation", async () => {
+  it("preserves a combined draft model id for session creation", async () => {
     let current: FlowValue | null = null;
     mockedCreateTask.mockResolvedValue(makeTask("task-1", "session-1"));
     mockedCreateSession.mockResolvedValue({
@@ -373,10 +373,55 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     await waitFor(() => {
       expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
     });
-    expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "codex", "gpt-5", expect.objectContaining({
+    expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "codex", "gpt-5/xhigh", expect.objectContaining({
       execution_environment: "container_disk_isolated",
-      reasoning_effort: "xhigh",
     }));
+    expect(mockedCreateSession.mock.calls[0]?.[3]).not.toHaveProperty("reasoning_effort");
+    expect(onStartError).toHaveBeenCalledWith(null);
+  });
+
+  it("preserves Claude default aliases as concrete launch ids for session creation", async () => {
+    let current: FlowValue | null = null;
+    mockedCreateTask.mockResolvedValue(makeTask("task-1", "session-1"));
+    mockedCreateSession.mockResolvedValue({
+      ...makeSession("session-1", "task-1"),
+      provider_id: "claude-crp",
+      model_id: "default",
+      reasoning_effort: "medium",
+    });
+    const onStartError = vi.fn();
+
+    render(
+      <Harness
+        draftHarness={{ providerId: "claude-crp", modelId: "default/medium" }}
+        providerOptionsById={{
+          "claude-crp": makeProviderOptions({
+            provider_id: "claude-crp",
+            models: {
+              current_model_id: "default/medium",
+              models: [{ id: "default/medium" }],
+            },
+          }),
+        }}
+        providersByIdProp={{ "claude-crp": makeProviderStatus({ provider_id: "claude-crp" }) }}
+        onChange={(value) => {
+          current = value;
+        }}
+        onStartError={onStartError}
+      />,
+    );
+
+    await act(async () => {
+      await requireValue(current).startNewTask();
+    });
+
+    await waitFor(() => {
+      expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
+    });
+    expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "claude-crp", "default/medium", expect.objectContaining({
+      execution_environment: "container_disk_isolated",
+    }));
+    expect(mockedCreateSession.mock.calls[0]?.[3]).not.toHaveProperty("reasoning_effort");
     expect(onStartError).toHaveBeenCalledWith(null);
   });
 

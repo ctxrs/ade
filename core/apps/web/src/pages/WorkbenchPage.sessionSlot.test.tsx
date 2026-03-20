@@ -1,8 +1,9 @@
 import React from "react";
-import { act, render } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessageAttachment } from "../api/client";
 import { WorkbenchSessionSlot } from "./WorkbenchPage.sessionSlot";
+import { copyTextToClipboard } from "../utils/clipboard";
 
 const sessionViewSpy = vi.hoisted(() => vi.fn());
 const sessionViewMountSpy = vi.hoisted(() => vi.fn());
@@ -95,5 +96,24 @@ describe("WorkbenchSessionSlot", () => {
       modeId: "default",
       attachments: [nextAttachment],
     });
+  });
+
+  it("renders a dedicated failed-start surface instead of mounting SessionView", async () => {
+    render(
+      <WorkbenchSessionSlot
+        sessionId="session-1"
+        optimisticFailure={{ prompt: "hello", error: "model_id must be a concrete model id" }}
+      />,
+    );
+
+    expect(sessionViewSpy).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Failed to start");
+    expect(screen.getByRole("alert")).toHaveTextContent("model_id must be a concrete model id");
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Copy prompt" }).click();
+    });
+
+    expect(vi.mocked(copyTextToClipboard)).toHaveBeenCalledWith("hello");
   });
 });

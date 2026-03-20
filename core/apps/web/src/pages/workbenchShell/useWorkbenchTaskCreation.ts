@@ -156,8 +156,8 @@ export function useWorkbenchTaskCreation({
       return;
     }
     const parsedResolvedModel = parseModelId(resolvedModelId);
-    const sessionModelId = parsedResolvedModel.base || resolvedModelId;
-    const sessionReasoningEffort = parsedResolvedModel.effort;
+    const optimisticSessionModelId = parsedResolvedModel.base || resolvedModelId;
+    const optimisticSessionReasoningEffort = parsedResolvedModel.effort;
     const optimisticTaskId = randomUuid();
     const optimisticSessionId = randomUuid();
     const optimisticMessageId = randomUuid();
@@ -189,8 +189,8 @@ export function useWorkbenchTaskCreation({
       workspace_id: workspaceId,
       worktree_id: "",
       provider_id: primaryTrack.providerId,
-      model_id: sessionModelId,
-      reasoning_effort: sessionReasoningEffort,
+      model_id: optimisticSessionModelId,
+      reasoning_effort: optimisticSessionReasoningEffort,
       title: "Session 1",
       agent_role: "assistant",
       status: "starting",
@@ -320,10 +320,9 @@ export function useWorkbenchTaskCreation({
       const messageId = optimisticMessageId;
       const turnId = optimisticTurnId;
       const shouldSendInitialPrompt = attachmentsToSend.length === 0;
-      const session = await createSession(currentTaskId, primaryTrack.providerId, sessionModelId, {
+      const session = await createSession(currentTaskId, primaryTrack.providerId, resolvedModelId, {
         execution_environment: executionEnvironment,
         id: clientSessionId,
-        reasoning_effort: sessionReasoningEffort,
         initial_message_id: messageId,
         initial_turn_id: turnId,
         ...(shouldSendInitialPrompt ? { initial_prompt: prompt } : {}),

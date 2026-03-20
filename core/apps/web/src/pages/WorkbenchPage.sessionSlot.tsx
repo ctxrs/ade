@@ -14,27 +14,32 @@ export function WorkbenchSessionSlot({
   const workbenchStore = useWorkbenchStore();
   const draft = useWorkbenchDraft(sessionDraftKey(sessionId), { text: "", modeId: "default", attachments: [] });
 
+  if (optimisticFailure) {
+    return (
+      <div className="wb-session-slot" aria-hidden="false">
+        <div className="wb-session-start-failure">
+          <div className="wb-banner" role="alert">
+            <div className="wb-session-start-failure-header">
+              <strong>Failed to start</strong>
+              <button
+                type="button"
+                className="wb-link"
+                onClick={() => void copyTextToClipboard(optimisticFailure.prompt)}
+              >
+                Copy prompt
+              </button>
+            </div>
+            {optimisticFailure.error ? (
+              <div className="error">{optimisticFailure.error}</div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="wb-session-slot" aria-hidden="false">
-      {optimisticFailure ? (
-        <div className="banner" role="alert">
-          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-            <strong>Failed to start</strong>
-            <button
-              type="button"
-              className="wb-link"
-              onClick={() => void copyTextToClipboard(optimisticFailure.prompt)}
-            >
-              Copy prompt
-            </button>
-          </div>
-          {optimisticFailure.error ? (
-            <div className="error" style={{ whiteSpace: "pre-wrap" }}>
-              {optimisticFailure.error}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
       <SessionView
         key={sessionId}
         sessionId={sessionId}

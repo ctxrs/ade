@@ -36,7 +36,6 @@ export function useWorkbenchOptimisticTasks({
   const optimisticSessionIdSet = useMemo(() => {
     const ids = new Set<string>();
     for (const item of optimisticTasks) {
-      if (item.localStatus === "failed") continue;
       const server = tasksById[item.id] ?? null;
       if (item.localStatus === "synced" && hasRenderablePrimaryHeadMessages(server)) continue;
       const sessionId = String(item.primarySessionId ?? "");
