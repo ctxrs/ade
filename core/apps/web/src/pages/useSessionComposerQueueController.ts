@@ -17,8 +17,17 @@ import {
   mergeQueuedMessagesForPanel,
 } from "./SessionPage.workbenchViewModel";
 import { buildOptimisticUserMessage } from "./SessionPage.optimisticMessage";
-import { PendingMessageEntry, shouldDropPendingMessage } from "./sessionView/pendingMessages";
 import { getQueuedAttachments } from "./sessionView/SessionQueuePanel";
+
+export type PendingMessageEntry = {
+  clientId: string;
+  message: Message;
+};
+
+export const shouldDropPendingMessage = (pending: Message, realIds: Set<string>): boolean => {
+  const pendingId = idToString(pending.id);
+  return Boolean(pendingId && realIds.has(pendingId));
+};
 
 type Params = {
   sessionId: string;
@@ -206,7 +215,7 @@ export function useSessionComposerQueueController(params: Params): Result {
     setOptimisticQueueRemovalIds((prev) => prev.filter((id) => id !== messageId));
   };
   const mergedQueueForPanel = useMemo(
-    () => mergeQueuedMessagesForPanel(queue, pendingQueueMessages),
+    () => mergeQueuedMessagesForPanel(queue, pendingQueueMessages.map((entry) => entry.message)),
     [queue, pendingQueueMessages],
   );
   const queueForPanel = useMemo(() => {
@@ -260,7 +269,7 @@ export function useSessionComposerQueueController(params: Params): Result {
     return ids;
   }, [messages, messagesKey, turnStatusByUserMessageId]);
   const displayMessages = useMemo(
-    () => mergeMessagesForView(messages, pendingMessages, queuedMessageIdsToShow),
+    () => mergeMessagesForView(messages, pendingMessages.map((entry) => entry.message), queuedMessageIdsToShow),
     [messages, messagesKey, pendingMessages, queuedMessageIdsToShow],
   );
 

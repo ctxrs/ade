@@ -64,11 +64,27 @@ import { useSharedSessionProviderOptions } from "./sessionView/useSharedSessionP
 import { useStableAskUserQuestionAnswers } from "./sessionView/useStableAskUserQuestionAnswers";
 import { composeModelId, parseModelId } from "../utils/modelEffort";
 import {
+  createWorkbenchThreadProjectionOp,
   createWorkbenchLayoutProjectionOp,
   mergeWorkbenchThreadProjectionOps,
 } from "./sessionThreadProjection";
 
 const SCROLLBACK_INCREASE_VIEWPORT_BY_PX = 240;
+
+function buildModelsFromAcpMeta(models: unknown): Array<{ id: string; name?: string }> {
+  if (!models || typeof models !== "object") return [];
+  const list = "models" in models ? models.models : undefined;
+  if (!Array.isArray(list)) return [];
+  const parsed: Array<{ id: string; name?: string }> = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const id = "id" in item && typeof item.id === "string" ? item.id : "";
+    if (!id) continue;
+    const name = "name" in item && typeof item.name === "string" ? item.name : undefined;
+    parsed.push(name ? { id, name } : { id });
+  }
+  return parsed;
+}
 
 export function SessionView({
   sessionId,
@@ -119,6 +135,8 @@ export function SessionView({
   const [sendError, setSendError] = useState<string | null>(null);
   const [queueActionBusyId, setQueueActionBusyId] = useState<string | null>(null);
   const [fileOpenError, setFileOpenError] = useState<string | null>(null);
+  const [modelSwitchError, setModelSwitchError] = useState<string | null>(null);
+  const [optimisticModelId, setOptimisticModelId] = useState<string | null>(null);
   const [modifierDown, setModifierDown] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const [authMethodId, setAuthMethodId] = useState<string>("");
@@ -148,6 +166,8 @@ export function SessionView({
     setDraftAttachmentsInternal([]);
     setSendError(null);
     setFileOpenError(null);
+    setModelSwitchError(null);
+    setOptimisticModelId(null);
     setOptimisticAskAnswers({});
     setExpandedTurnHeaders({});
     setExpandedTurnDetailsById({});
@@ -404,7 +424,7 @@ export function SessionView({
     view: workbenchThreadView,
     listItems: threadListItems,
     projectionRevision,
-    lastOp: workbenchThreadOp,
+    lastOp: rawWorkbenchThreadOp,
   } = useWorkbenchThreadViewModelController({
     sessionId: id,
     projectionRev: threadProjection.projectionRev,
@@ -420,6 +440,7 @@ export function SessionView({
     askUserQuestionAnswers,
     enableDebugEvents: showDebug,
   });
+  const workbenchThreadOp = rawWorkbenchThreadOp ?? createWorkbenchThreadProjectionOp("noop", projectionRevision);
 
   const debugEvents = workbenchThreadView.debugEvents;
   const wbListItems = threadListItems;
@@ -584,21 +605,23 @@ export function SessionView({
 
   const sharedProviderOptions = useSharedSessionProviderOptions(session);
 
-  const modelOptions = useMemo(() => {
-    const parsed = buildModelsFromProviderOptions(sharedProviderOptions);
-    if (parsed.length > 0) return parsed;
-    const fallbackId = composeModelId(
-      String(session?.model_id ?? ""),
-      session?.reasoning_effort ?? null,
-    );
-    return fallbackId ? [{ id: fallbackId, name: fallbackId }] : [];
-  }, [session?.model_id, session?.reasoning_effort, sharedProviderOptions]);
   const currentModelId = useMemo(() => {
     return composeModelId(
       String(session?.model_id ?? ""),
       session?.reasoning_effort ?? null,
     );
   }, [session?.model_id, session?.reasoning_effort]);
+  const acpModelOptions = useMemo(
+    () => buildModelsFromAcpMeta(entry?.acpModels),
+    [entry?.acpModels],
+  );
+  const modelOptions = useMemo(() => {
+    const parsed = buildModelsFromProviderOptions(sharedProviderOptions);
+    if (parsed.length > 0) return parsed;
+    if (acpModelOptions.length > 0) return acpModelOptions;
+    return currentModelId ? [{ id: currentModelId, name: currentModelId }] : [];
+  }, [acpModelOptions, currentModelId, sharedProviderOptions]);
+  const displayedModelId = optimisticModelId ?? currentModelId;
 
   const setSendBusySafe = (next: boolean) => {
     sendBusyRef.current = next;
@@ -832,9 +855,17 @@ export function SessionView({
   }, [dictationRecording, startDictation, stopDictation]);
 
   const handleSetModelId = useCallback(async (next: string) => {
-    const parsed = parseModelId(next);
-    const updated = await setSessionModel(id, parsed.base || next, parsed.effort);
-    supervisor.setSession(updated);
+    setModelSwitchError(null);
+    setOptimisticModelId(next);
+    try {
+      const parsed = parseModelId(next);
+      const updated = await setSessionModel(id, parsed.base || next, parsed.effort);
+      supervisor.setSession(updated);
+      setOptimisticModelId(null);
+    } catch (error: unknown) {
+      setOptimisticModelId(null);
+      setModelSwitchError(errorMessage(error));
+    }
   }, [id, supervisor]);
 
   return (
@@ -939,8 +970,9 @@ export function SessionView({
       onDisableProviderGuard={disableProviderGuard}
       formatMemoryMb={formatMemoryMb}
       availableModels={modelOptions}
-      currentModelId={currentModelId}
+      currentModelId={displayedModelId}
       onSetModelId={handleSetModelId}
+      modelSwitchError={modelSwitchError}
     />
   );
 }

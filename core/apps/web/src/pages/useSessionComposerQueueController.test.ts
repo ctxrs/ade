@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Message } from "../api/client";
-import type { PendingMessageEntry } from "./sessionView/pendingMessages";
 import {
+  type PendingMessageEntry,
   reassignPendingMessagesToSession,
   shouldCarryPendingMessagesAcrossSessionChange,
 } from "./useSessionComposerQueueController";
