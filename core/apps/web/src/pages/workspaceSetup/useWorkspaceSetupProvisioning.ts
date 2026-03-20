@@ -61,27 +61,10 @@ import {
   sameWorkspaceSetupRouteScope,
   serializeWorkspaceSetupRouteScope,
 } from "./workflowTypes";
+import { withTimeout } from "./promiseTimeout";
 import { useWorkspaceSetupProviderProvisioning } from "./useWorkspaceSetupProviderProvisioning";
 
 const TITLING_PROBE_TIMEOUT_MS = 2_000;
-
-const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
-  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timeoutHandle = setTimeout(() => {
-          reject(new Error(message));
-        }, timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeoutHandle !== null) {
-      clearTimeout(timeoutHandle);
-    }
-  }
-};
 
 type UseWorkspaceSetupProvisioningArgs = {
   currentStepKeyRef: MutableRefObject<WizardStepKey>;
