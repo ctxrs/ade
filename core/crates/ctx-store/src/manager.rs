@@ -228,7 +228,7 @@ impl StoreManager {
         active_workspaces: &HashSet<WorkspaceId>,
     ) -> usize {
         let now = Instant::now();
-        let evicted = {
+        let expired_entries = {
             let mut stores = self.workspace_stores.lock().await;
             let expired: Vec<WorkspaceId> = stores
                 .iter()
@@ -243,11 +243,15 @@ impl StoreManager {
                     }
                 })
                 .collect();
-            for workspace_id in &expired {
-                stores.remove(workspace_id);
-            }
-            expired.len()
+            expired
+                .into_iter()
+                .filter_map(|workspace_id| stores.remove(&workspace_id))
+                .collect::<Vec<_>>()
         };
+        let evicted = expired_entries.len();
+        for entry in expired_entries {
+            entry.store.close().await;
+        }
         evicted
     }
 
@@ -336,6 +340,17 @@ mod tests {
             .evict_idle_workspaces(Duration::from_secs(0), &HashSet::new())
             .await;
         assert_eq!(evicted, 1);
+        assert_eq!(manager.stats().await.workspace_store_count, 0);
+
+        let reopened = manager.workspace(workspace.id).await.unwrap();
+        assert!(
+            reopened
+                .list_workspaces()
+                .await
+                .unwrap()
+                .iter()
+                .any(|candidate| candidate.id == workspace.id)
+        );
     }
 
     #[tokio::test]
