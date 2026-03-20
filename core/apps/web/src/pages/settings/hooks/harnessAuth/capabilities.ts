@@ -51,22 +51,19 @@ const HARNESSES_REQUIRING_CONCRETE_ENDPOINT_MODEL = new Set([
   "openhands",
 ]);
 
-const looksLikeClaudeSetupToken = (value: string): boolean => value.trim().startsWith("sk-ant-oat");
-
-const CLAUDE_POLLED_AUTH_URL_OPEN_GRACE_MS = 5000;
-
+export const GEMINI_LOGIN_POLL_ATTEMPTS = 90;
+export const GEMINI_LOGIN_POLL_INTERVAL_MS = 1600;
 export const CLAUDE_LOGIN_POLL_INTERVAL_MS = 1600;
 export const CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS = 15 * 60 * 1000;
 export const CLAUDE_LOGIN_POLL_ATTEMPTS =
   Math.ceil(CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS / CLAUDE_LOGIN_POLL_INTERVAL_MS);
-export const GEMINI_LOGIN_POLL_ATTEMPTS = 90;
-export const GEMINI_LOGIN_POLL_INTERVAL_MS = 1600;
 export const QWEN_LOGIN_POLL_ATTEMPTS = 90;
 export const QWEN_LOGIN_POLL_INTERVAL_MS = 1600;
 export const AMP_LOGIN_POLL_ATTEMPTS = 90;
 export const AMP_LOGIN_POLL_INTERVAL_MS = 1600;
 export const MISTRAL_LOGIN_POLL_ATTEMPTS = 90;
 export const MISTRAL_LOGIN_POLL_INTERVAL_MS = 1600;
+export const MANUAL_BROWSER_OPEN_MESSAGE = "Couldn't open browser automatically. Use the sign-in link below.";
 
 export const supportsHarnessEndpointConfigStatic = (providerId: string): boolean =>
   HARNESSES_WITH_ENDPOINT_CONFIG.has(providerId);
@@ -167,31 +164,23 @@ export const shouldSkipDuplicateAmpLoginStart = (params: {
   ampLoginInFlight: boolean;
 }): boolean => params.providerId === "amp" && params.ampLoginInFlight;
 
-export const shouldCompleteClaudeLoginWithCallbackCode = (params: {
-  providerId: string;
-  subscriptionBusy: boolean;
-  pendingLoginId: string | null;
-  token: string;
-}): boolean => {
-  if (params.providerId !== "claude-crp") return false;
-  if (!params.subscriptionBusy) return false;
-  if (!params.pendingLoginId) return false;
-  const trimmed = params.token.trim();
-  if (!trimmed) return false;
-  return !looksLikeClaudeSetupToken(trimmed);
-};
-
 export const shouldOpenPolledAuthUrlForStatus = (status: string): boolean =>
-  status === "pending";
+  status === "pending" || status === "manual_open_required";
 
-export const takeNextClaudeAuthUrlToOpen = (
-  authUrl: string | null | undefined,
-  openedAuthUrls: Set<string>,
-): string | null => {
-  const normalized = authUrl?.trim() ?? "";
-  if (!normalized || openedAuthUrls.has(normalized)) return null;
-  openedAuthUrls.add(normalized);
-  return normalized;
+const authUrlOpenDedupKey = (authUrl: string): string => {
+  try {
+    const parsed = new URL(authUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    if (hostname === "claude.ai" && parsed.pathname === "/oauth/authorize") {
+      const state = parsed.searchParams.get("state")?.trim() ?? "";
+      if (state) {
+        return `claude:${state}`;
+      }
+    }
+  } catch {
+    // Fall through to raw URL dedupe.
+  }
+  return authUrl;
 };
 
 export const takeNextAuthUrlToOpen = (
@@ -199,8 +188,10 @@ export const takeNextAuthUrlToOpen = (
   openedAuthUrls: Set<string>,
 ): string | null => {
   const normalized = authUrl?.trim() ?? "";
-  if (!normalized || openedAuthUrls.has(normalized)) return null;
-  openedAuthUrls.add(normalized);
+  if (!normalized) return null;
+  const dedupKey = authUrlOpenDedupKey(normalized);
+  if (openedAuthUrls.has(dedupKey)) return null;
+  openedAuthUrls.add(dedupKey);
   return normalized;
 };
 
@@ -227,20 +218,5 @@ export const shouldAutoOpenCopilotAuthUrl = (authUrl: string): boolean => {
 };
 
 export const shouldAutoOpenAmpAuthUrl = (): boolean => false;
-
-export const shouldOpenPolledClaudeAuthUrl = (params: {
-  loginStartedAtMs: number;
-  initialAuthUrl: string | null | undefined;
-  polledAuthUrl: string;
-  nowMs: number;
-}): boolean => {
-  const polled = params.polledAuthUrl.trim();
-  if (!polled) return false;
-  const initial = params.initialAuthUrl?.trim() ?? "";
-  if (!initial) {
-    return params.nowMs - params.loginStartedAtMs >= CLAUDE_POLLED_AUTH_URL_OPEN_GRACE_MS;
-  }
-  return polled !== initial;
-};
 
 export const shouldAutoOpenKimiAuthUrl = (): boolean => true;

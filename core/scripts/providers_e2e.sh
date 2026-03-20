@@ -669,7 +669,7 @@ case "${suite}" in
     ensure_endpoint_ui_bundles
 
     provider_browser_auth_specs=(
-      e2e/workbench-claude-subscription-oauth-browser-real.spec.ts
+      e2e/workbench-claude-subscription-setup-token-real.spec.ts
     )
     if [[ -n "${CTX_E2E_PROVIDER_BROWSER_AUTH_SPECS:-}" ]]; then
       IFS=',' read -r -a provider_browser_auth_specs <<<"${CTX_E2E_PROVIDER_BROWSER_AUTH_SPECS}"

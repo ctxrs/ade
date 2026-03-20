@@ -6,18 +6,6 @@ import path from "path";
 import { chromium, type APIRequestContext, type BrowserContext, type Locator, type Page } from "playwright/test";
 import { parseBoolishString } from "../../src/utils/boolish";
 
-type ClaudeLoginStartResponse = {
-  login_id?: unknown;
-  auth_url?: unknown;
-};
-
-type ClaudeLoginStatus = {
-  status?: unknown;
-  auth_url?: unknown;
-  account_id?: unknown;
-  error?: unknown;
-};
-
 type VisibleDomState = {
   url: string;
   title: string;
@@ -68,9 +56,8 @@ type GoogleDriveOptions = {
   onState?: (args: DriveStateArgs) => Promise<DriveStateResult>;
 };
 
-export type ClaudeBrowserOauthOptions = {
+export type ClaudeSetupTokenOptions = {
   context: BrowserContext;
-  request: APIRequestContext;
   email: string;
   password: string;
   label?: string;
@@ -78,10 +65,20 @@ export type ClaudeBrowserOauthOptions = {
   pollMs?: number;
 };
 
-export type BrowserAuthSuccess = {
-  loginId: string;
-  accountId: string;
+export type ClaudeSetupTokenSuccess = {
   authUrl: string;
+  setupToken: string;
+};
+
+export type ClaudeManagedSetupTokenOptions = {
+  context: BrowserContext;
+  request: APIRequestContext;
+  loginId: string;
+  authUrl: string;
+  email: string;
+  password: string;
+  timeoutMs?: number;
+  pollMs?: number;
 };
 
 export type BrowserAuthContextHandle = {
@@ -147,6 +144,71 @@ const CLAUDE_LOGIN_ERROR_PATTERNS = Object.freeze([
   /problem persists contact support/i,
 ]);
 
+const CLAUDE_SETUP_TOKEN_PATTERN = /sk-ant-oat[A-Za-z0-9._-]+/;
+const CLAUDE_SETUP_TOKEN_AUTH_URL_PATTERN = /https:\/\/claude\.ai\/oauth\/authorize[^\s\x00-\x1F\x7F]+/i;
+const CLAUDE_SETUP_TOKEN_OSC_AUTH_URL_PATTERN = /\u001B]8;;(https:\/\/claude\.ai\/oauth\/authorize[^\u0007]+)\u0007/i;
+const CLAUDE_SETUP_TOKEN_PTY_BRIDGE = String.raw`
+import fcntl
+import os
+import pty
+import select
+import subprocess
+import struct
+import sys
+import termios
+
+argv = sys.argv[1:]
+if not argv:
+    raise SystemExit("missing claude setup-token command")
+
+master_fd, slave_fd = pty.openpty()
+fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 400, 0, 0))
+proc = subprocess.Popen(argv, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, close_fds=True)
+os.close(slave_fd)
+
+stdin_fd = sys.stdin.fileno()
+stdout_fd = sys.stdout.fileno()
+stdin_open = True
+
+while True:
+    read_fds = [master_fd]
+    if stdin_open:
+        read_fds.append(stdin_fd)
+    ready, _, _ = select.select(read_fds, [], [], 0.1)
+
+    if master_fd in ready:
+        try:
+            data = os.read(master_fd, 4096)
+        except OSError:
+            data = b""
+        if data:
+            os.write(stdout_fd, data)
+
+    if stdin_open and stdin_fd in ready:
+        try:
+            data = os.read(stdin_fd, 4096)
+        except OSError:
+            data = b""
+        if data:
+            os.write(master_fd, data)
+        else:
+            stdin_open = False
+
+    if proc.poll() is not None:
+        while True:
+            try:
+                data = os.read(master_fd, 4096)
+            except OSError:
+                data = b""
+            if not data:
+                break
+            os.write(stdout_fd, data)
+        break
+
+os.close(master_fd)
+raise SystemExit(proc.wait())
+`;
+
 const parseBool = (value?: string): boolean => parseBoolishString(value) === true;
 
 const asRecord = (value: unknown): Record<string, unknown> => {
@@ -177,8 +239,86 @@ const sanitizeAuthUrl = (raw: string): string => {
   }
 };
 
+const parseClaudeSetupTokenRedirectUri = (rawUrl: string): string => {
+  try {
+    return readString(new URL(rawUrl).searchParams.get("redirect_uri"));
+  } catch {
+    return "";
+  }
+};
+
+const extractClaudeSetupPromptCodeFromUrl = (rawUrl: string): string => {
+  try {
+    const parsed = new URL(rawUrl);
+    const directCode = readString(parsed.searchParams.get("code"));
+    const directState = readString(parsed.searchParams.get("state"));
+    if (directCode && directCode.toLowerCase() !== "true" && directState) {
+      return `${directCode}#${directState}`;
+    }
+    const hash = parsed.hash.startsWith("#") ? parsed.hash.slice(1) : parsed.hash;
+    if (!hash) return "";
+    const hashParams = new URLSearchParams(hash);
+    const hashCode = readString(hashParams.get("code"));
+    const hashState = readString(hashParams.get("state"));
+    if (hashCode && hashState) {
+      return `${hashCode}#${hashState}`;
+    }
+  } catch {
+    // fall through
+  }
+  return "";
+};
+
+const extractClaudeSetupPromptCodeFromText = (rawText: string): string => {
+  const compact = readString(rawText).replace(/\s+/g, "");
+  const match = /([A-Za-z0-9._-]{10,}#[A-Za-z0-9._-]{10,})/.exec(compact);
+  return readString(match?.[1] ?? "");
+};
+
+const isValidClaudeSetupTokenRedirectUri = (rawUrl: string): boolean => {
+  const redirectUri = parseClaudeSetupTokenRedirectUri(rawUrl);
+  if (!redirectUri) return false;
+  try {
+    const parsed = new URL(redirectUri);
+    const hostname = parsed.hostname.toLowerCase();
+    if (parsed.protocol !== "http:") return false;
+    if (hostname !== "localhost" && hostname !== "127.0.0.1" && hostname !== "::1" && hostname !== "[::1]") {
+      return false;
+    }
+    if (parsed.pathname !== "/callback") return false;
+    return parsed.port.length > 0;
+  } catch {
+    return false;
+  }
+};
+
+const stripTerminalControlSequences = (raw: string): string =>
+  raw
+    // OSC hyperlinks like ESC ] 8 ;; URL BEL ... ESC ] 8 ;; BEL
+    .replace(/\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g, "")
+    .replace(/\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+
+const redactClaudeSetupTokenOutput = (raw: string): string =>
+  stripTerminalControlSequences(raw)
+    .replace(CLAUDE_SETUP_TOKEN_PATTERN, "<redacted-setup-token>")
+    .replace(/[A-Za-z0-9._-]{20,}#[A-Za-z0-9._-]{20,}/g, "<redacted-authorization-code>")
+    .replace(CLAUDE_SETUP_TOKEN_AUTH_URL_PATTERN, "<redacted-auth-url>")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(-TEXT_LIMIT);
+
 const collectAuthStateText = (state: VisibleDomState): string =>
   [state.title, state.bodyText, ...state.buttons].map((value) => readString(value)).join(" ").toLowerCase();
+
+const findLastMatching = <T>(items: T[], predicate: (item: T) => boolean): T | undefined => {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const candidate = items[index];
+    if (candidate !== undefined && predicate(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+};
 
 const stateMentions = (state: VisibleDomState, pattern: RegExp): boolean => pattern.test(collectAuthStateText(state));
 
@@ -433,7 +573,7 @@ export const createClaudeBrowserAuthContext = async (
     };
   }
 
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "ctx-claude-oauth-profile-"));
+  const userDataDir = mkdtempSync(path.join(tmpdir(), "ctx-claude-browser-auth-profile-"));
   const keepProfile = parseBool(process.env.CTX_E2E_PROVIDER_BROWSER_AUTH_KEEP_PROFILE);
   const preferredChannel = readString(process.env.CTX_E2E_PROVIDER_BROWSER_AUTH_CHANNEL)
     || (process.platform === "darwin" ? "chrome" : "");
@@ -898,159 +1038,116 @@ const classifyClaudeLoginState = ({
   return "";
 };
 
-const startClaudeLogin = async (
-  request: APIRequestContext,
-  label?: string,
-): Promise<{ loginId: string; authUrl: string }> => {
-  const response = await request.post("/api/providers/claude-crp/accounts/login/start", {
-    data: label ? { label } : {},
-    timeout: 60_000,
-  });
-  if (!response.ok()) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`claude login start failed (${response.status()}): ${detail}`);
+export const extractClaudeSetupTokenAuthUrlFromCliOutput = (output: string): string => {
+  const hyperlinkMatches = Array.from(
+    output.matchAll(new RegExp(CLAUDE_SETUP_TOKEN_OSC_AUTH_URL_PATTERN.source, "gi")),
+  )
+    .map((match) => readString(match[1] ?? ""))
+    .filter(Boolean);
+  const validHyperlinkUrl = findLastMatching(hyperlinkMatches, (candidate) => isValidClaudeSetupTokenRedirectUri(candidate));
+  if (validHyperlinkUrl) {
+    return validHyperlinkUrl;
   }
-  const payload = asRecord(await response.json() as ClaudeLoginStartResponse);
-  const loginId = readString(payload.login_id);
-  const authUrl = readString(payload.auth_url);
-  if (!loginId) {
-    throw new Error(`claude login start response missing login_id: ${JSON.stringify(payload)}`);
+
+  const sanitized = stripTerminalControlSequences(output);
+  const start = sanitized.lastIndexOf("https://claude.ai/oauth/authorize");
+  if (start === -1) return "";
+  const tail = sanitized.slice(start);
+  const promptIndex = tail.search(/Paste code here if prompted >/i);
+  const joined = (promptIndex === -1 ? tail : tail.slice(0, promptIndex)).replace(/\s+/g, "");
+  const textMatches = Array.from(
+    joined.matchAll(new RegExp(CLAUDE_SETUP_TOKEN_AUTH_URL_PATTERN.source, "gi")),
+  )
+    .map((match) => readString(match[0] ?? ""))
+    .filter(Boolean);
+  const validTextUrl = findLastMatching(textMatches, (candidate) => isValidClaudeSetupTokenRedirectUri(candidate));
+  if (validTextUrl) {
+    return validTextUrl;
   }
-  return { loginId, authUrl };
+  return textMatches.at(-1)
+    ?? hyperlinkMatches.at(-1)
+    ?? "";
 };
 
-const getClaudeLogin = async (request: APIRequestContext, loginId: string): Promise<ClaudeLoginStatus> => {
-  const response = await request.get(`/api/providers/claude-crp/accounts/login/${encodeURIComponent(loginId)}`, {
-    timeout: 30_000,
-  });
-  if (!response.ok()) {
-    throw new Error(`claude login status failed (${response.status()})`);
-  }
-  return await response.json() as ClaudeLoginStatus;
+const readClaudeSetupToken = (output: string): string => {
+  const sanitized = stripTerminalControlSequences(output);
+  const start = sanitized.lastIndexOf("sk-ant-oat");
+  if (start === -1) return "";
+  const joined = sanitized.slice(start).replace(/\s+/g, "");
+  const match = CLAUDE_SETUP_TOKEN_PATTERN.exec(joined);
+  return readString(match?.[0] ?? "");
 };
 
-const waitForClaudeLoginAuthUrl = async (
-  request: APIRequestContext,
-  loginId: string,
-  timeoutMs: number,
-  pollMs: number,
-): Promise<string> => {
+const waitForClaudeSetupTokenCliValue = async ({
+  child,
+  readOutput,
+  timeoutMs,
+  pollMs,
+  label,
+  extractor,
+}: {
+  child: ChildProcess;
+  readOutput: () => string;
+  timeoutMs: number;
+  pollMs: number;
+  label: string;
+  extractor: (output: string) => string;
+}): Promise<string> => {
   const startedAt = Date.now();
-  let lastDetail = "pending";
   while (Date.now() - startedAt <= timeoutMs) {
-    const status = asRecord(await getClaudeLogin(request, loginId));
-    const authUrl = readString(status.auth_url);
-    if (authUrl) return authUrl;
-    const normalized = readString(status.status).toLowerCase();
-    if (normalized === "failed" || normalized === "timeout") {
-      throw new Error(`claude login ${normalized}: ${readString(status.error) || JSON.stringify(status)}`);
+    const output = readOutput();
+    const value = extractor(output);
+    if (value) {
+      return value;
     }
-    lastDetail = readString(status.error) || normalized || "pending";
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`claude setup-token exited before ${label}: ${redactClaudeSetupTokenOutput(output) || "<no output>"}`);
+    }
     await waitMs(pollMs);
   }
-  throw new Error(`timed out waiting for claude auth url: ${lastDetail}`);
+  throw new Error(`timed out waiting for claude setup-token ${label}: ${redactClaudeSetupTokenOutput(readOutput()) || "<no output>"}`);
 };
 
-const waitForClaudeLoginSuccess = async (
+const submitClaudeSetupTokenPromptCode = async (
   request: APIRequestContext,
   loginId: string,
-  timeoutMs: number,
-  pollMs: number,
-): Promise<string> => {
-  const startedAt = Date.now();
-  let lastDetail = "pending";
-  while (Date.now() - startedAt <= timeoutMs) {
-    const status = asRecord(await getClaudeLogin(request, loginId));
-    const normalized = readString(status.status).toLowerCase();
-    if (normalized === "success") {
-      const accountId = readString(status.account_id);
-      if (!accountId) {
-        throw new Error(`claude login success missing account id: ${JSON.stringify(status)}`);
-      }
-      return accountId;
-    }
-    if (normalized === "failed" || normalized === "timeout") {
-      throw new Error(`claude login ${normalized}: ${readString(status.error) || JSON.stringify(status)}`);
-    }
-    lastDetail = readString(status.error) || normalized || "pending";
-    await waitMs(pollMs);
-  }
-  throw new Error(`timed out waiting for claude login success: ${lastDetail}`);
-};
-
-const completeClaudeLogin = async (
-  request: APIRequestContext,
-  loginId: string,
-  callbackCode: string,
+  loginCode: string,
 ): Promise<void> => {
-  const normalizedCode = readString(callbackCode);
+  const normalizedCode = readString(loginCode);
   if (!normalizedCode) {
-    throw new Error("claude callback code is empty");
+    throw new Error("claude setup-token prompt code is empty");
   }
   const response = await request.post(`/api/providers/claude-crp/accounts/login/${encodeURIComponent(loginId)}`, {
-    data: { callback_code: normalizedCode },
+    data: { login_code: normalizedCode },
     timeout: 30_000,
   });
   if (!response.ok()) {
     const detail = await response.text().catch(() => "");
-    throw new Error(`claude login completion failed (${response.status()}): ${detail}`);
+    throw new Error(`claude setup-token prompt code submission failed (${response.status()}): ${detail}`);
   }
 };
 
-const isClaudeOauthCallbackUrl = (parsedUrl: URL): boolean => {
-  const host = parsedUrl.hostname.toLowerCase();
-  if (host !== "platform.claude.com" && host !== "console.anthropic.com") {
-    return false;
+const submitClaudeSetupTokenPromptCodeToChild = async (
+  child: ChildProcess,
+  loginCode: string,
+): Promise<void> => {
+  const normalizedCode = readString(loginCode);
+  if (!normalizedCode) {
+    throw new Error("claude setup-token prompt code is empty");
   }
-  return /^\/oauth\/code\/(callback|success)\b/i.test(parsedUrl.pathname);
-};
-
-export const extractClaudeCallbackCodeFromUrl = (rawUrl: string): string => {
-  try {
-    const parsed = new URL(rawUrl);
-    if (!isClaudeOauthCallbackUrl(parsed)) {
-      return "";
-    }
-    const directCode = readString(parsed.searchParams.get("code"));
-    if (directCode && directCode.toLowerCase() !== "true") {
-      return directCode;
-    }
-    const hash = parsed.hash.startsWith("#") ? parsed.hash.slice(1) : parsed.hash;
-    if (hash) {
-      const hashParams = new URLSearchParams(hash);
-      const hashCode = readString(hashParams.get("code"));
-      if (hashCode) {
-        return hashCode;
+  const stdin = child.stdin;
+  if (!stdin) {
+    throw new Error("claude setup-token child stdin is unavailable");
+  }
+  await new Promise<void>((resolve, reject) => {
+    stdin.write(`${normalizedCode}\n`, (error) => {
+      if (error) {
+        reject(error);
+        return;
       }
-    }
-  } catch {
-    // fall through to empty result
-  }
-  return "";
-};
-
-const clearMacClipboard = (): void => {
-  if (process.platform !== "darwin") return;
-  execFileSync("pbcopy", { input: "" });
-};
-
-const readMacClipboardText = (): string => {
-  if (process.platform !== "darwin") return "";
-  return readString(execFileSync("pbpaste", { encoding: "utf8" }));
-};
-
-const selectSubscriptionSource = async (request: APIRequestContext, providerId: string): Promise<void> => {
-  const response = await request.post(`/api/providers/${encodeURIComponent(providerId)}/harness_config/select`, {
-    data: {
-      source_kind: "subscription",
-      endpoint_id: null,
-    },
-    timeout: 30_000,
+      resolve();
+    });
   });
-  if (!response.ok()) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`failed to select subscription source for ${providerId} (${response.status()}): ${detail}`);
-  }
 };
 
 const driveGoogleBackedBrowserLoginWithCredentials = async ({
@@ -1305,164 +1402,248 @@ const driveGoogleBackedBrowserLoginWithCredentials = async ({
   }))}`);
 };
 
-export async function completeClaudeOauthWithGoogleBrowserCredentials(
-  opts: ClaudeBrowserOauthOptions,
-): Promise<BrowserAuthSuccess> {
-  const timeoutMs = readBrowserAuthTimeoutMs(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-  const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
+const driveClaudeSetupTokenBrowserFlow = async (opts: {
+  page: Page;
+  authUrl: string;
+  email: string;
+  password: string;
+  timeoutMs: number;
+  pollMs: number;
+  providerLabel: string;
+  readSetupToken?: () => string;
+  submitLoginCode?: (loginCode: string) => Promise<void>;
+}): Promise<void> => {
   const claudePostGoogleSettleMs = readClaudePostGoogleSettleMs();
   let firstPostGoogleClaudePageAt: number | null = null;
-  let callbackCodeSubmitted = false;
-  let callbackSubmittedAt = 0;
-  const page = await opts.context.newPage();
-  try {
-    const login = await startClaudeLogin(opts.request, opts.label);
-    const authUrl = login.authUrl || await waitForClaudeLoginAuthUrl(opts.request, login.loginId, timeoutMs, pollMs);
-
-    await driveGoogleBackedBrowserLoginWithCredentials({
-      page,
-      authUrl,
-      email: opts.email,
-      password: opts.password,
-      providerLabel: "claude",
-      timeoutMs,
-      pollMs,
-      onState: async ({ page: activePage, state, progress }) => {
-        const isClaudeHost = readStateHost(state).includes("claude.ai");
-        const isClaudeLoginShell = isClaudeHost
-          && /\/login\b/i.test(state.url)
-          && stateMentions(state, /continue with google|continue with email|continue with sso/i);
-        const claudeState = classifyClaudeLoginState({
-          state,
-          clickedGoogleEntry: progress.clickedGoogleEntry,
-        });
-        if (claudeState) {
-          throw new Error(`claude browser login blocked by ${claudeState}: ${JSON.stringify(summarizeState(state))}`);
-        }
-        if (progress.grantedConsent && isClaudeLoginShell) {
-          const now = Date.now();
-          firstPostGoogleClaudePageAt ??= now;
-          const elapsedMs = now - firstPostGoogleClaudePageAt;
-          if (elapsedMs < claudePostGoogleSettleMs) {
-            logBrowserAuthDebug("claude", "waiting_for_post_google_session_settle", {
-              elapsedMs,
-              settleMs: claudePostGoogleSettleMs,
-              state: summarizeState(state),
-            });
-            return { handled: true };
-          }
-        } else if (!isClaudeLoginShell) {
-          firstPostGoogleClaudePageAt = null;
-        }
-        if (progress.grantedConsent && isClaudeLoginShell && stateMentions(state, /continue with google/i)) {
-          const nextPage = await clickVisibleTextActionAndObserveNextPage(activePage, [
+  await driveGoogleBackedBrowserLoginWithCredentials({
+    page: opts.page,
+    authUrl: opts.authUrl,
+    email: opts.email,
+    password: opts.password,
+    providerLabel: opts.providerLabel,
+    timeoutMs: opts.timeoutMs,
+    pollMs: opts.pollMs,
+    onState: async ({ page: activePage, state, progress }) => {
+      const isClaudeHost = readStateHost(state).includes("claude.ai");
+      const isClaudeLoginShell = isClaudeHost
+        && /\/login\b/i.test(state.url)
+        && stateMentions(state, /continue with google|continue with email|continue with sso/i);
+      const claudeState = classifyClaudeLoginState({
+        state,
+        clickedGoogleEntry: progress.clickedGoogleEntry,
+      });
+      if (claudeState) {
+        throw new Error(`${opts.providerLabel} browser login blocked by ${claudeState}: ${JSON.stringify(summarizeState(state))}`);
+      }
+      if (!progress.clickedGoogleEntry && isClaudeLoginShell && stateMentions(state, /continue with google/i)) {
+        const nextPage = await clickVisibleTextActionAndObserveNextPage(activePage, [
+          "continue with google",
+          "sign in with google",
+          "continue to google",
+        ]);
+        const submitted = nextPage
+          ? false
+          : await submitVisibleAuthStep(activePage, [
             "continue with google",
             "sign in with google",
             "continue to google",
           ]);
-          const submitted = nextPage
-            ? false
-            : await submitVisibleAuthStep(activePage, [
-              "continue with google",
-              "sign in with google",
-              "continue to google",
-            ]);
-          if (!nextPage && !submitted) {
-            throw new Error(`Claude select-account page did not expose a usable Google continuation: ${JSON.stringify(summarizeState(state))}`);
+        if (!nextPage && !submitted) {
+          throw new Error(`Claude setup-token login shell did not expose a usable Google continuation: ${JSON.stringify(summarizeState(state))}`);
+        }
+        return {
+          handled: true,
+          page: nextPage ?? activePage,
+        };
+      }
+      const emittedSetupToken = readString(opts.readSetupToken?.());
+      if (emittedSetupToken) {
+        return {
+          done: true,
+          result: {
+            finalUrl: sanitizeAuthUrl(state.url),
+            setupToken: emittedSetupToken,
+          },
+        };
+      }
+      if (progress.grantedConsent && isClaudeLoginShell) {
+        const now = Date.now();
+        firstPostGoogleClaudePageAt ??= now;
+        const elapsedMs = now - firstPostGoogleClaudePageAt;
+        if (elapsedMs < claudePostGoogleSettleMs) {
+          logBrowserAuthDebug(opts.providerLabel, "waiting_for_post_google_session_settle", {
+            elapsedMs,
+            settleMs: claudePostGoogleSettleMs,
+            state: summarizeState(state),
+          });
+          return { handled: true };
+        }
+      } else if (!isClaudeLoginShell) {
+        firstPostGoogleClaudePageAt = null;
+      }
+      if (progress.grantedConsent && isClaudeLoginShell && stateMentions(state, /continue with google/i)) {
+        const nextPage = await clickVisibleTextActionAndObserveNextPage(activePage, [
+          "continue with google",
+          "sign in with google",
+          "continue to google",
+        ]);
+        const submitted = nextPage
+          ? false
+          : await submitVisibleAuthStep(activePage, [
+            "continue with google",
+            "sign in with google",
+            "continue to google",
+          ]);
+        if (!nextPage && !submitted) {
+          throw new Error(`Claude setup-token select-account page did not expose a usable Google continuation: ${JSON.stringify(summarizeState(state))}`);
+        }
+        return {
+          handled: true,
+          page: nextPage ?? activePage,
+        };
+      }
+      if (isClaudeHost && /\/oauth\/authorize\b/i.test(state.url) && stateMentions(state, /authorize|decline|switch account/i)) {
+        const approved = await clickVisibleTextAction(activePage, ["authorize", "allow", "continue"]);
+        if (!approved) {
+          return { handled: true };
+        }
+        return { handled: true };
+      }
+      if (stateMentions(state, /copy code|you can close this tab|login successful|connected to claude code/i)) {
+        let promptCode = extractClaudeSetupPromptCodeFromUrl(state.url);
+        if (!promptCode) {
+          promptCode = extractClaudeSetupPromptCodeFromText(state.bodyText);
+        }
+        if (!promptCode && stateMentions(state, /copy code/i) && process.platform === "darwin") {
+          execFileSync("pbcopy", { input: "" });
+          const copied = await clickVisibleTextAction(activePage, ["copy code"]);
+          if (copied) {
+            await waitMs(500);
+            promptCode = readString(execFileSync("pbpaste", { encoding: "utf8" }));
           }
+        }
+        if (promptCode && opts.submitLoginCode) {
+          await opts.submitLoginCode(promptCode);
           return {
-            handled: true,
-            page: nextPage ?? activePage,
+            done: true,
+            result: {
+              finalUrl: sanitizeAuthUrl(state.url),
+              setupToken: emittedSetupToken,
+            },
           };
         }
-        if (isClaudeHost && /\/oauth\/authorize\b/i.test(state.url) && stateMentions(state, /authorize|decline|switch account/i)) {
-          const approved = await clickVisibleTextAction(activePage, ["authorize"]);
-          if (!approved) {
-            throw new Error(`Claude authorize page did not expose a usable approve CTA: ${JSON.stringify(summarizeState(state))}`);
-          }
-          return { handled: true };
-        }
-        if (/\/cli_landing\b/i.test(state.url) || stateMentions(state, /try claude code/i)) {
-          const clicked = await clickVisibleTextAction(activePage, ["try claude code"]);
-          if (!clicked) {
-            throw new Error(`Claude CLI landing page did not expose a usable CTA: ${JSON.stringify(summarizeState(state))}`);
-          }
-          return { handled: true };
-        }
-        if (progress.clickedGoogleEntry && !readStateHost(state).includes("accounts.google.")) {
-          const status = asRecord(await getClaudeLogin(opts.request, login.loginId));
-          const normalizedStatus = readString(status.status).toLowerCase();
-          if (normalizedStatus === "success") {
-            return {
-              done: true,
-              result: {
-                status: "backend_success",
-                finalUrl: sanitizeAuthUrl(state.url),
-              },
-            };
-          }
-          if (normalizedStatus === "failed" || normalizedStatus === "timeout") {
-            throw new Error(`claude login ${normalizedStatus}: ${readString(status.error) || JSON.stringify(status)}`);
-          }
-        }
-        const isClaudeCallbackPage = /\/oauth\/code\/(callback|success)\b/i.test(state.url)
-          || ((readStateHost(state).includes("platform.claude.com")
-              || readStateHost(state).includes("console.anthropic.com"))
-            && stateMentions(state, /copy code|you can close this tab|login successful|connected to claude code/i));
-        if (isClaudeCallbackPage) {
-          if (callbackCodeSubmitted) {
-            const status = asRecord(await getClaudeLogin(opts.request, login.loginId));
-            const normalizedStatus = readString(status.status).toLowerCase();
-            if (normalizedStatus === "success") {
-              return {
-                done: true,
-                result: {
-                  status: "backend_success",
-                  finalUrl: sanitizeAuthUrl(state.url),
-                },
-              };
-            }
-            if (normalizedStatus === "failed" || normalizedStatus === "timeout") {
-              throw new Error(`claude login ${normalizedStatus}: ${readString(status.error) || JSON.stringify(status)}`);
-            }
-            if (callbackSubmittedAt > 0 && Date.now() - callbackSubmittedAt >= 15_000) {
-              throw new Error(`Claude callback code was submitted but login stayed pending: ${JSON.stringify({
-                status: normalizedStatus || "pending",
-                error: readString(status.error),
-                state: summarizeState(state),
-              })}`);
-            }
-            return { handled: true };
-          }
-          let callbackCode = extractClaudeCallbackCodeFromUrl(state.url);
-          if (!callbackCode && stateMentions(state, /copy code/i) && process.platform === "darwin") {
-            clearMacClipboard();
-            const copied = await clickVisibleTextAction(activePage, ["copy code"]);
-            if (copied) {
-              await waitMs(500);
-              callbackCode = readMacClipboardText();
-            }
-          }
-          if (callbackCode) {
-            logBrowserAuthDebug("claude", "captured_callback_code", { length: callbackCode.length });
-            await completeClaudeLogin(opts.request, login.loginId, callbackCode);
-            callbackCodeSubmitted = true;
-            callbackSubmittedAt = Date.now();
-            return { handled: true };
-          }
-          throw new Error(`Claude callback page did not expose an OAuth code: ${JSON.stringify(summarizeState(state))}`);
-        }
-        return null;
-      },
+      }
+      if (stateMentions(state, /you'?re all set up for claude code|you can now close this window/i)) {
+        return {
+          done: true,
+          result: {
+            finalUrl: sanitizeAuthUrl(state.url),
+            setupToken: emittedSetupToken,
+          },
+        };
+      }
+      return null;
+    },
+  });
+};
+
+export async function completeClaudeManagedSetupTokenWithGoogleBrowserCredentials(
+  opts: ClaudeManagedSetupTokenOptions,
+): Promise<void> {
+  const timeoutMs = readBrowserAuthTimeoutMs(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
+  const page = await opts.context.newPage();
+  try {
+    await driveClaudeSetupTokenBrowserFlow({
+      page,
+      authUrl: opts.authUrl,
+      email: opts.email,
+      password: opts.password,
+      timeoutMs,
+      pollMs,
+      providerLabel: "claude-setup-token",
+      submitLoginCode: (loginCode) => submitClaudeSetupTokenPromptCode(opts.request, opts.loginId, loginCode),
     });
-    const accountId = await waitForClaudeLoginSuccess(opts.request, login.loginId, timeoutMs, pollMs);
-    await selectSubscriptionSource(opts.request, "claude-crp");
-    return {
-      loginId: login.loginId,
-      accountId,
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
+export async function completeClaudeSetupTokenWithGoogleBrowserCredentials(
+  opts: ClaudeSetupTokenOptions,
+): Promise<ClaudeSetupTokenSuccess> {
+  const timeoutMs = readBrowserAuthTimeoutMs(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
+  const pythonBinary = readString(process.env.CTX_E2E_PYTHON_BIN) || "python3";
+  try {
+    execFileSync(pythonBinary, ["--version"], { stdio: "ignore" });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`missing usable python3 for claude setup-token PTY bridge: ${detail}`);
+  }
+
+  const claudeCommand = readString(process.env.CTX_E2E_CLAUDE_SETUP_TOKEN_BIN) || "claude";
+  const child = spawn(pythonBinary, ["-u", "-c", CLAUDE_SETUP_TOKEN_PTY_BRIDGE, claudeCommand, "setup-token"], {
+    env: process.env,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  const outputChunks: string[] = [];
+  const appendOutput = (chunk: string | Buffer): void => {
+    const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    if (text) {
+      outputChunks.push(text);
+    }
+  };
+  child.stdout?.setEncoding("utf8");
+  child.stderr?.setEncoding("utf8");
+  child.stdout?.on("data", appendOutput);
+  child.stderr?.on("data", appendOutput);
+
+  const readOutput = () => outputChunks.join("");
+  const page = await opts.context.newPage();
+  try {
+    const authUrl = await waitForClaudeSetupTokenCliValue({
+      child,
+      readOutput,
+      timeoutMs,
+      pollMs,
+      label: "auth url",
+      extractor: extractClaudeSetupTokenAuthUrlFromCliOutput,
+    });
+    logBrowserAuthDebug("claude-setup-token", "auth_url_extracted", {
       authUrl,
+      redirectUri: parseClaudeSetupTokenRedirectUri(authUrl),
+    });
+
+    await driveClaudeSetupTokenBrowserFlow({
+      page,
+      authUrl,
+      email: opts.email,
+      password: opts.password,
+      timeoutMs,
+      pollMs,
+      providerLabel: "claude-setup-token",
+      readSetupToken: () => readClaudeSetupToken(readOutput()),
+      submitLoginCode: (loginCode) => submitClaudeSetupTokenPromptCodeToChild(child, loginCode),
+    });
+    const setupToken = await waitForClaudeSetupTokenCliValue({
+      child,
+      readOutput,
+      timeoutMs,
+      pollMs,
+      label: "setup token",
+      extractor: readClaudeSetupToken,
+    });
+    await waitForChildProcessExit(child, 15_000);
+    return {
+      authUrl,
+      setupToken,
     };
   } finally {
     await page.close().catch(() => {});
+    if (child.exitCode === null && child.signalCode === null) {
+      await terminateChildProcess(child, 5_000);
+    }
   }
 }

@@ -429,6 +429,73 @@ describe("SessionPage reasoning effort", () => {
     expect(postMessageMock.mock.calls[0]?.[2]).toBe("queued");
   });
 
+  it("unblocks retry when the latest turn has already failed even if activity is still marked running", async () => {
+    const existingEntry = (sessionEntries.map[sessionId] ?? {}) as Record<string, unknown>;
+    sessionEntries.map[sessionId] = {
+      ...existingEntry,
+      freshness: "authoritative",
+      activity: { is_working: true, last_turn_status: "running" },
+      turns: [
+        {
+          turn_id: "turn-failed",
+          session_id: sessionId,
+          user_message_id: "message-failed",
+          status: "failed",
+          start_seq: 1,
+          end_seq: 2,
+          started_at: "2026-03-10T00:00:00.000Z",
+          updated_at: "2026-03-10T00:00:02.000Z",
+          assistant_partial: null,
+          thought_partial: null,
+          metrics_json: null,
+          tool_total: 0,
+          tool_pending: 0,
+          tool_running: 0,
+          tool_completed: 0,
+          tool_failed: 0,
+        },
+      ],
+      events: [
+        {
+          seq: 2,
+          id: "event-turn-failed",
+          session_id: sessionId,
+          turn_id: "turn-failed",
+          event_type: "error",
+          payload_json: { message: "OAuth token has expired." },
+          created_at: "2026-03-10T00:00:02.000Z",
+        },
+      ],
+    };
+
+    render(<SessionView sessionId={sessionId} />);
+
+    await waitFor(() => {
+      expect(paneSpy).toHaveBeenCalled();
+    });
+
+    const settledCall = paneSpy.mock.calls.at(-1)?.[0] as {
+      hasActiveTurn?: boolean;
+      setInput: (value: string) => void;
+    };
+    expect(settledCall.hasActiveTurn).toBe(false);
+
+    await act(async () => {
+      settledCall.setInput("retry after failure");
+    });
+
+    await act(async () => {
+      const latestCall = paneSpy.mock.calls.at(-1)?.[0] as {
+        sendNow: () => Promise<void>;
+      };
+      await latestCall.sendNow();
+    });
+
+    expect(postMessageMock).toHaveBeenCalledTimes(1);
+    expect(postMessageMock.mock.calls[0]?.[1]).toBe("retry after failure");
+    expect(postMessageMock.mock.calls[0]?.[2]).toBeUndefined();
+  });
+
   it("optimistically updates the selected model immediately and clears the override after success", async () => {
     const deferred = createDeferred<{
       id: string;

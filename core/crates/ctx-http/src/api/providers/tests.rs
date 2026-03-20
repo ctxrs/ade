@@ -81,6 +81,17 @@ fn extract_auth_url_detects_urls_in_line() {
 }
 
 #[test]
+fn extract_auth_url_detects_urls_in_browser_open_marker_line() {
+    let line = "CTX_CLAUDE_AUTH_URL:https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fcallback&state=abc";
+    assert_eq!(
+        extract_auth_url(line).as_deref(),
+        Some(
+            "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fcallback&state=abc"
+        )
+    );
+}
+
+#[test]
 fn extract_auth_url_reconstructs_wrapped_url_lines() {
     let wrapped =
         "Open this URL: https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A\n64111%2Fauth%2Fcallback&state=abc";
@@ -90,6 +101,21 @@ fn extract_auth_url_reconstructs_wrapped_url_lines() {
             "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fauth%2Fcallback&state=abc"
         )
     );
+}
+
+#[test]
+fn extract_auth_url_stops_before_duplicate_full_url() {
+    let url = "https://claude.ai/oauth/authorize?code=true&client_id=test&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=user%3Ainference&state=abc";
+    let duplicated = format!("{url} {url}");
+    assert_eq!(extract_auth_url(&duplicated).as_deref(), Some(url));
+}
+
+#[test]
+fn normalize_claude_login_line_handles_osc_hyperlink_plus_visible_duplicate_url() {
+    let url = "https://claude.ai/oauth/authorize?code=true&client_id=test&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=user%3Ainference&state=abc";
+    let raw = format!("\u{1b}]8;;{url}\u{7}{url}\u{1b}]8;;\u{7}\r");
+    let normalized = normalize_claude_login_line(&raw);
+    assert_eq!(extract_auth_url(&normalized).as_deref(), Some(url));
 }
 
 #[test]
@@ -136,9 +162,9 @@ fn normalize_claude_login_line_extracts_url_from_osc8_sequence() {
 }
 
 #[test]
-fn auth_url_looks_complete_accepts_hosted_redirect_callback() {
+fn auth_url_looks_complete_rejects_non_loopback_redirect_callback() {
     let url = "https://claude.ai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback";
-    assert!(auth_url_looks_complete(url));
+    assert!(!auth_url_looks_complete(url));
 }
 
 #[test]
@@ -162,19 +188,23 @@ async fn read_trailing_claude_login_lines_waits_for_late_arrival() {
 }
 
 #[tokio::test]
-async fn resolve_claude_login_runtime_requires_prepared_runtime_command() {
+async fn resolve_claude_login_runtime_reads_host_claude_command() {
+    let Some(host_claude) = which::which("claude").ok() else {
+        return;
+    };
     let temp = tempfile::tempdir().expect("tempdir");
     let data_root = temp.path().to_path_buf();
-    let err = resolve_claude_login_runtime_from_config(&data_root)
+
+    let resolved = resolve_claude_login_runtime_from_config(&data_root)
         .await
-        .expect_err("missing runtime should fail");
-    assert!(err
-        .to_string()
-        .contains("runtime_command_missing: provider=claude-cli"));
+        .expect("resolve host claude command");
+    let expected = std::fs::canonicalize(&host_claude).unwrap_or(host_claude);
+    assert_eq!(resolved.command_abs_path, expected.to_string_lossy());
+    assert!(resolved.args.is_empty());
 }
 
 #[tokio::test]
-async fn resolve_claude_login_runtime_reads_prepared_runtime_command() {
+async fn resolve_claude_login_runtime_prefers_configured_login_command() {
     let temp = tempfile::tempdir().expect("tempdir");
     let data_root = temp.path().to_path_buf();
     let runtime_path = data_root.join("claude-cli-mock.sh");
@@ -183,7 +213,7 @@ async fn resolve_claude_login_runtime_reads_prepared_runtime_command() {
     let mut cfg = installer::load_agent_server_config(&data_root)
         .await
         .expect("load config for runtime resolution test");
-    cfg.providers.insert(
+    cfg.provider_login_commands.insert(
         "claude-cli".to_string(),
         installer::AgentServerCommand {
             command: runtime_path_str,
@@ -200,7 +230,7 @@ async fn resolve_claude_login_runtime_reads_prepared_runtime_command() {
         .await
         .expect("resolve runtime from config");
     assert!(resolved.command_abs_path.contains("claude-cli-mock.sh"));
-    assert_eq!(resolved.args, vec!["--shim".to_string()]);
+    assert!(resolved.args.is_empty());
 }
 
 #[test]

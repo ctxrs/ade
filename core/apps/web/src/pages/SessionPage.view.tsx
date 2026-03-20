@@ -354,9 +354,13 @@ export function SessionView({
     );
   }, [computedContextWindow]);
   const contextWindow = computedContextWindow ?? lastContextWindow;
+  const latestTurnStatus = useMemo(
+    () => baseTurns.at(-1)?.status ?? entry?.turns.at(-1)?.status ?? null,
+    [baseTurns, baseTurnsKey, entry?.turns],
+  );
   const hasActiveTurn = useMemo(
-    () => hasSessionActiveTurn(entry?.activity),
-    [entry?.activity],
+    () => hasSessionActiveTurn(entry?.activity, latestTurnStatus),
+    [entry?.activity, latestTurnStatus],
   );
   const sessionIsAuthoritative = entry?.freshness === "authoritative";
   const sessionProjectionReady =

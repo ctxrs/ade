@@ -46,10 +46,10 @@ pub use self::amp::{
 };
 pub(crate) use self::bootstrap_models::pinned_subscription_models_value;
 pub use self::claude::{
-    add_claude_account, add_claude_oauth_account, claude_env_for_account,
+    add_claude_account, claude_env_for_account,
     claude_env_for_active_account, ensure_claude_account_dir, load_claude_registry,
     normalize_claude_label, remove_claude_account, save_claude_registry, set_active_claude_account,
-    ClaudeAccountEntry, ClaudeAccountRegistry, ClaudeLoginStatus, ClaudeOauthLoginSession,
+    ClaudeAccountEntry, ClaudeAccountRegistry, ClaudeLoginStatus,
 };
 pub use self::codex_auth::{
     codex_env_for_active_account, codex_env_for_active_account_with_runtime_root,
@@ -115,7 +115,6 @@ const CODEX_RUNTIME_OWNER_FILE: &str = ".ctx-active-account-id";
 pub const CODEX_CREDENTIAL_KIND_OAUTH: &str = "oauth";
 pub const CODEX_CREDENTIAL_KIND_API_KEY: &str = "api_key";
 pub const CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN: &str = "setup_token";
-pub const CLAUDE_CREDENTIAL_KIND_CLAUDE_AI_OAUTH: &str = "claude-ai-oauth";
 pub const GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL: &str = "oauth-personal";
 pub const QWEN_CREDENTIAL_KIND_OAUTH: &str = "oauth";
 pub const KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON: &str = "credentials-json";

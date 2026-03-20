@@ -17,7 +17,6 @@ export type HarnessAuthModalOperation = OwnedOperation<HarnessAuthModalOperation
 
 type HarnessAuthModalStateController = {
   harnessAuthModal: HarnessAuthModalState | null;
-  claudePendingLoginId: string | null;
   openHarnessAuthModal: (providerId: string) => void;
   closeHarnessAuthModal: () => void;
   patchHarnessAuthModal: (patch: Partial<HarnessAuthModalState>) => void;
@@ -29,10 +28,6 @@ type HarnessAuthModalStateController = {
     patch: Partial<HarnessAuthModalState>,
   ) => boolean;
   closeHarnessAuthModalForOperation: (operation: HarnessAuthModalOperation) => boolean;
-  setClaudePendingLoginIdForOperation: (
-    operation: HarnessAuthModalOperation,
-    loginId: string | null,
-  ) => boolean;
 };
 
 const createInitialHarnessAuthModal = (providerId: string): HarnessAuthModalState => {
@@ -76,7 +71,6 @@ const createInitialHarnessAuthModal = (providerId: string): HarnessAuthModalStat
 
 export function useHarnessAuthModalController(): HarnessAuthModalStateController {
   const [harnessAuthModal, setHarnessAuthModal] = useState<HarnessAuthModalState | null>(null);
-  const [claudePendingLoginId, setClaudePendingLoginIdState] = useState<string | null>(null);
   const operationOwnerRef = useRef(createOperationOwner<HarnessAuthModalOperationKey>());
 
   const cancelAllOperations = useCallback(() => {
@@ -85,14 +79,12 @@ export function useHarnessAuthModalController(): HarnessAuthModalStateController
 
   const openHarnessAuthModal = useCallback((providerId: string) => {
     cancelAllOperations();
-    setClaudePendingLoginIdState(null);
     setHarnessAuthModal(createInitialHarnessAuthModal(providerId));
   }, [cancelAllOperations]);
 
   const closeHarnessAuthModal = useCallback(() => {
     cancelAllOperations();
     setHarnessAuthModal(null);
-    setClaudePendingLoginIdState(null);
   }, [cancelAllOperations]);
 
   const patchHarnessAuthModal = useCallback((patch: Partial<HarnessAuthModalState>) => {
@@ -128,22 +120,12 @@ export function useHarnessAuthModalController(): HarnessAuthModalStateController
     return true;
   }, [closeHarnessAuthModal]);
 
-  const setClaudePendingLoginIdForOperation = useCallback(
-    (operation: HarnessAuthModalOperation, loginId: string | null): boolean => {
-      if (!operation.isCurrent()) return false;
-      setClaudePendingLoginIdState(loginId);
-      return true;
-    },
-    [],
-  );
-
   useEffect(() => () => {
     operationOwnerRef.current.cancelAll();
   }, []);
 
   return {
     harnessAuthModal,
-    claudePendingLoginId,
     openHarnessAuthModal,
     closeHarnessAuthModal,
     patchHarnessAuthModal,
@@ -152,6 +134,5 @@ export function useHarnessAuthModalController(): HarnessAuthModalStateController
     hasActiveOperation,
     patchHarnessAuthModalForOperation,
     closeHarnessAuthModalForOperation,
-    setClaudePendingLoginIdForOperation,
   };
 }

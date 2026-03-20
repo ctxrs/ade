@@ -9,7 +9,6 @@ import {
   type SetStateAction,
 } from "react";
 import {
-  completeClaudeLogin,
   upsertCursorAccount,
   type AmpAccountsResponse,
   type ClaudeAccountsResponse,
@@ -64,7 +63,6 @@ import {
   harnessEndpointRequiresBaseUrl,
   messageFromError,
   preferredModelIdFromEndpointSummary,
-  shouldCompleteClaudeLoginWithCallbackCode,
   supportsHarnessEndpointConfigStatic,
   supportsHarnessSubscriptionAuth,
   toErrorObject,
@@ -75,19 +73,13 @@ import { useHarnessAuthAccountCollections } from "./harnessAuth/useHarnessAuthAc
 import { useHarnessAuthModalController } from "./harnessAuth/useHarnessAuthModalController";
 
 export {
-  CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS,
-  CLAUDE_LOGIN_POLL_ATTEMPTS,
-  CLAUDE_LOGIN_POLL_INTERVAL_MS,
   extractGithubDeviceCodeFromAuthUrl,
   resolveHarnessAuthModalInitialStage,
   shouldAutoOpenCopilotAuthUrl,
   shouldAutoOpenKimiAuthUrl,
-  shouldCompleteClaudeLoginWithCallbackCode,
   shouldOpenPolledAuthUrlForStatus,
-  shouldOpenPolledClaudeAuthUrl,
   shouldSkipDuplicateAmpLoginStart,
   supportsHarnessSubscriptionAuth,
-  takeNextClaudeAuthUrlToOpen,
   toErrorObject,
 } from "./harnessAuth/capabilities";
 export { resolveUpsertedEndpoint } from "../../../state/providerOnboardingActions";
@@ -194,7 +186,6 @@ export function useHarnessAuthenticationController({
   const [providerEndpointUnsupported, setProviderEndpointUnsupported] = useState<Record<string, boolean>>({});
   const {
     harnessAuthModal,
-    claudePendingLoginId,
     openHarnessAuthModal: baseOpenHarnessAuthModal,
     closeHarnessAuthModal: baseCloseHarnessAuthModal,
     patchHarnessAuthModal: basePatchHarnessAuthModal,
@@ -203,7 +194,6 @@ export function useHarnessAuthenticationController({
     hasActiveOperation: hasActiveHarnessAuthModalOperation,
     patchHarnessAuthModalForOperation,
     closeHarnessAuthModalForOperation,
-    setClaudePendingLoginIdForOperation,
   } = useHarnessAuthModalController();
   const [installBusy, setInstallBusy] = useState<string | null>(null);
 
@@ -431,7 +421,7 @@ export function useHarnessAuthenticationController({
             accountId,
             supportsEndpointConfig: supportsHarnessEndpointConfig(providerId),
           });
-          await onboarding.ensureProviderAuthSummary(providerId, { trigger: "explicit" });
+          await onboarding.ensureProviderAuthSummary(providerId, { force: true, trigger: "explicit" });
         },
         setBusy,
         setProviderError,
@@ -710,42 +700,11 @@ export function useHarnessAuthenticationController({
     const modal = harnessAuthModal;
     if (!modal) return;
 
-    const shouldCompleteClaudeCallback = shouldCompleteClaudeLoginWithCallbackCode({
-      providerId: modal.provider_id,
-      subscriptionBusy: modal.subscription_busy,
-      pendingLoginId: claudePendingLoginId,
-      token: modal.subscription_token,
-    });
-
-    if (modal.subscription_busy && !shouldCompleteClaudeCallback) {
+    if (modal.subscription_busy) {
       return;
     }
 
-    if (hasActiveHarnessAuthModalOperation("subscription-flow") && !shouldCompleteClaudeCallback) {
-      return;
-    }
-
-    if (shouldCompleteClaudeCallback) {
-      const operation = startHarnessAuthModalOperation("modal-action");
-      setProviderError(null);
-      try {
-        if (!claudePendingLoginId) {
-          throw new Error("Claude login callback requires an active pending login.");
-        }
-        await completeClaudeLogin(claudePendingLoginId, modal.subscription_token.trim());
-        patchHarnessAuthModalForOperation(operation, {
-          subscription_status: "Submitted callback code. Waiting for Claude setup-token completion...",
-        });
-      } catch (error) {
-        if (operation.isCurrent()) {
-          setProviderError(messageFromError(error));
-          patchHarnessAuthModalForOperation(operation, {
-            subscription_status: "Subscription flow failed. Check error details below.",
-          });
-        }
-      } finally {
-        finishHarnessAuthModalOperation(operation);
-      }
+    if (hasActiveHarnessAuthModalOperation("subscription-flow")) {
       return;
     }
 
@@ -763,7 +722,6 @@ export function useHarnessAuthenticationController({
         flow,
         patchHarnessAuthModalForOperation,
         closeHarnessAuthModalForOperation,
-        setClaudePendingLoginIdForOperation,
         setProviderError,
         refreshBootstrapAfterMutation: refreshProviderSlicesAfterMutation,
         selectSubscriptionSourceIfSupported,
@@ -784,7 +742,6 @@ export function useHarnessAuthenticationController({
       finishHarnessAuthModalOperation(flow);
     }
   }, [
-    claudePendingLoginId,
     harnessAuthModal,
     closeHarnessAuthModalForOperation,
     finishHarnessAuthModalOperation,
@@ -803,7 +760,6 @@ export function useHarnessAuthenticationController({
     setScopedClaudeAccounts,
     setScopedCopilotAccounts,
     selectSubscriptionSourceIfSupported,
-    setClaudePendingLoginIdForOperation,
     startHarnessAuthModalOperation,
     workspaceId,
   ]);

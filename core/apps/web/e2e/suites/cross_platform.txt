@@ -13,7 +13,6 @@ e2e/workbench-diff-pane-no-overflow.spec.ts
 e2e/workbench-dummy-workspace.spec.ts
 e2e/workbench-harness-auth-modal-flow.spec.ts
 e2e/workbench-harness-menu-prod-availability.spec.ts
-e2e/workbench-claude-subscription-oauth-browser-real.spec.ts
 e2e/workbench-codex-provider-endpoint-openai-real.spec.ts
 e2e/workbench-copilot-subscription-token-real.spec.ts
 e2e/workbench-cursor-provider-api-key-real.spec.ts

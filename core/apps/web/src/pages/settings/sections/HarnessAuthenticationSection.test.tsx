@@ -4,6 +4,7 @@ import type { ProviderStatus } from "../../../api/client";
 import { isDesktopApp, openExternalLink } from "../../../utils/desktop";
 import type { HarnessAuthModalState } from "../../SettingsPage.types";
 import type { useHarnessAuthenticationController } from "../hooks/useHarnessAuthenticationController";
+import { MANUAL_BROWSER_OPEN_MESSAGE } from "../hooks/harnessAuth/capabilities";
 import { HarnessAuthenticationSection } from "./HarnessAuthenticationSection";
 
 const mockUseHarnessAuthenticationController = vi.fn();
@@ -193,7 +194,38 @@ function makeEndpointApiKeyModal(): HarnessAuthModalState {
   };
 }
 
-function makeChooseModal(providerId: "amp" | "pi"): HarnessAuthModalState {
+function makeClaudeSubscriptionModal(): HarnessAuthModalState {
+  return {
+    provider_id: "claude-crp",
+    stage: "subscription",
+    endpoint_id: null,
+    endpoint_provider_id: "anthropic",
+    gemini_endpoint_auth_type: "gemini_api_key",
+    endpoint_name: "",
+    base_url: "",
+    api_key: "",
+    service_account_json: "",
+    project_id: "",
+    location: "",
+    manual_model_ids: "",
+    subscription_label: "",
+    subscription_token: "",
+    subscription_email: "",
+    subscription_provider: "",
+    subscription_credentials_json: "",
+    subscription_config_toml: "",
+    subscription_auth_token_json: "",
+    subscription_oauth_creds_json: "",
+    subscription_google_accounts_json: "",
+    subscription_device_code: null,
+    subscription_auth_url: null,
+    subscription_status: null,
+    subscription_busy: false,
+    api_key_busy: false,
+  };
+}
+
+function makeChooseModal(providerId: "amp" | "pi" | "claude-crp"): HarnessAuthModalState {
   return {
     provider_id: providerId,
     stage: "choose",
@@ -318,6 +350,73 @@ describe("HarnessAuthenticationSection Gemini subscription modal", () => {
     expect(screen.queryByText("Leave JSON fields blank to run guided browser sign-in.")).not.toBeInTheDocument();
     expect(screen.queryByText("OAuth Credentials JSON (fallback)")).not.toBeInTheDocument();
     expect(screen.queryByText("Google Accounts JSON (optional)")).not.toBeInTheDocument();
+  });
+
+  it("shows Claude managed setup-token copy", () => {
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({ harnessAuthModal: makeClaudeSubscriptionModal() }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+        modalOnly
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "Start the managed Claude setup-token flow here, or paste a long-lived setup token if you already have one.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Setup token (recommended)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start sign-in" })).toBeEnabled();
+  });
+
+  it("hides the Claude manual sign-in link while browser auto-open is in progress", () => {
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({
+        harnessAuthModal: {
+          ...makeClaudeSubscriptionModal(),
+          subscription_auth_url: "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A58215%2Fcallback",
+          subscription_status: "Waiting for Claude setup-token sign-in to complete in your browser...",
+        },
+      }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+        modalOnly
+      />,
+    );
+
+    expect(screen.queryByRole("link", { name: "Open Claude sign-in" })).not.toBeInTheDocument();
+  });
+
+  it("shows the Claude manual sign-in link only after browser auto-open fails", () => {
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({
+        harnessAuthModal: {
+          ...makeClaudeSubscriptionModal(),
+          subscription_auth_url: "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A58215%2Fcallback",
+          subscription_status: MANUAL_BROWSER_OPEN_MESSAGE,
+        },
+      }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+        modalOnly
+      />,
+    );
+
+    expect(screen.getByText(MANUAL_BROWSER_OPEN_MESSAGE)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Claude sign-in" })).toBeInTheDocument();
   });
 
   it("submits guided sign-in when clicking the subscription action", () => {
@@ -461,6 +560,27 @@ describe("HarnessAuthenticationSection Gemini subscription modal", () => {
     mockUseHarnessAuthenticationController.mockReturnValue(
       makeController({
         harnessAuthModal: makeChooseModal("amp"),
+        submitHarnessSubscriptionModal,
+      }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+        modalOnly
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Subscription" }));
+    expect(submitHarnessSubscriptionModal).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts Claude managed sign-in when selecting Subscription from chooser", () => {
+    const submitHarnessSubscriptionModal = vi.fn(async () => {});
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({
+        harnessAuthModal: makeChooseModal("claude-crp"),
         submitHarnessSubscriptionModal,
       }),
     );
