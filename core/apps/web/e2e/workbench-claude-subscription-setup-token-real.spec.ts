@@ -16,7 +16,6 @@ import {
 } from "../src/testing/providerRuntime";
 import {
   completeClaudeManagedSetupTokenWithGoogleBrowserCredentials,
-  createClaudeBrowserAuthContext,
 } from "./utils/providerBrowserAuth";
 import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 
@@ -36,6 +35,27 @@ const getClaudeLoginStatus = async (
   return asRecord(await response.json());
 };
 
+const claudeAuthUrlLooksComplete = (rawAuthUrl: string): boolean => {
+  try {
+    const authUrl = new URL(rawAuthUrl);
+    const redirectUri = authUrl.searchParams.get("redirect_uri");
+    if (!redirectUri) {
+      return true;
+    }
+    const redirect = new URL(redirectUri);
+    const hostname = redirect.hostname.toLowerCase();
+    if (redirect.protocol !== "http:") {
+      return false;
+    }
+    if (hostname !== "localhost" && hostname !== "127.0.0.1" && hostname !== "::1" && hostname !== "[::1]") {
+      return false;
+    }
+    return redirect.port.length > 0;
+  } catch {
+    return false;
+  }
+};
+
 const waitForClaudeLoginAuthUrl = async (
   request: APIRequestContext,
   loginId: string,
@@ -44,7 +64,7 @@ const waitForClaudeLoginAuthUrl = async (
   while (Date.now() - startedAt <= LOGIN_TIMEOUT_MS) {
     const status = await getClaudeLoginStatus(request, loginId);
     const authUrl = readString(status.auth_url);
-    if (authUrl) {
+    if (authUrl && claudeAuthUrlLooksComplete(authUrl)) {
       return authUrl;
     }
     const normalizedStatus = readString(status.status).toLowerCase();
@@ -97,7 +117,7 @@ const clearClaudeAccounts = async (request: APIRequestContext): Promise<void> =>
   }
 };
 
-test.fixme("workbench: claude setup-token subscription auth can run a real task", async ({ page, request }) => {
+test("workbench: claude setup-token subscription auth can run a real task", async ({ page, request }) => {
   test.setTimeout(20 * 60_000);
 
   if ((process.env.CTX_E2E_TIER ?? "") !== "provider-browser-auth") {
@@ -169,21 +189,16 @@ test.fixme("workbench: claude setup-token subscription auth can run a real task"
   expect(loginId).not.toBe("");
   await expect(modal.getByText("Setup token (recommended)")).toBeVisible({ timeout: 10_000 });
 
-  const authUrl = readString(loginStartPayload.auth_url) || await waitForClaudeLoginAuthUrl(request, loginId);
-  const authContextHandle = await createClaudeBrowserAuthContext(page.context());
-  try {
-    await completeClaudeManagedSetupTokenWithGoogleBrowserCredentials({
-      context: authContextHandle.context,
-      request,
-      loginId,
-      authUrl,
-      email: googleEmail,
-      password: googlePassword,
-      timeoutMs: 10 * 60_000,
-    });
-  } finally {
-    await authContextHandle.dispose();
-  }
+  const authUrl = await waitForClaudeLoginAuthUrl(request, loginId);
+  await completeClaudeManagedSetupTokenWithGoogleBrowserCredentials({
+    context: page.context(),
+    request,
+    loginId,
+    authUrl,
+    email: googleEmail,
+    password: googlePassword,
+    timeoutMs: 10 * 60_000,
+  });
   await waitForClaudeLoginSuccess(request, loginId);
   await expect(modal).toBeHidden({ timeout: 20_000 });
 

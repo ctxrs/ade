@@ -233,6 +233,39 @@ async fn resolve_claude_login_runtime_prefers_configured_login_command() {
     assert!(resolved.args.is_empty());
 }
 
+#[tokio::test]
+async fn resolve_claude_login_runtime_prefers_configured_runtime_command_when_login_command_missing(
+) {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let data_root = temp.path().to_path_buf();
+    let runtime_path = data_root.join("claude-cli-runtime-mock.sh");
+    std::fs::write(&runtime_path, "#!/bin/sh\nexit 0\n").expect("write runtime");
+    let runtime_path_str = runtime_path.to_string_lossy().to_string();
+    let mut cfg = installer::load_agent_server_config(&data_root)
+        .await
+        .expect("load config for runtime resolution test");
+    cfg.providers.insert(
+        "claude-cli".to_string(),
+        installer::AgentServerCommand {
+            command: runtime_path_str,
+            args: vec!["cli.js".to_string()],
+            dependencies: Vec::new(),
+            managed: None,
+        },
+    );
+    installer::save_agent_server_config(&data_root, &cfg)
+        .await
+        .expect("save config for runtime resolution test");
+
+    let resolved = resolve_claude_login_runtime_from_config(&data_root)
+        .await
+        .expect("resolve runtime from provider command");
+    assert!(resolved
+        .command_abs_path
+        .contains("claude-cli-runtime-mock.sh"));
+    assert_eq!(resolved.args, vec!["cli.js".to_string()]);
+}
+
 #[test]
 fn cache_key_provider_matcher_works() {
     assert!(cache_key_matches_provider(
