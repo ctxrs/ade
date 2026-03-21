@@ -1065,7 +1065,8 @@ const resolveSuiteContract = (suiteId, options = {}) => {
         optionalRequirements: [],
         metadata: {},
         notes: [
-          "The Claude setup-token real lane is currently disabled pending follow-up automation work.",
+          "Includes the real Claude setup-token lane against Claude Code's loopback browser flow on macOS.",
+          "This lane is intentionally non-required and brittle because it drives a real Chrome window through OCR/click automation.",
           "The suite defaults to a persistent branded browser plus stealth init script through scripts/providers_e2e.sh.",
         ],
         env,

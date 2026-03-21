@@ -51,6 +51,7 @@ type GoogleDriveOptions = {
   email: string;
   password: string;
   providerLabel: string;
+  skipInitialGoto?: boolean;
   timeoutMs?: number;
   pollMs?: number;
   onState?: (args: DriveStateArgs) => Promise<DriveStateResult>;
@@ -77,13 +78,21 @@ export type ClaudeManagedSetupTokenOptions = {
   authUrl: string;
   email: string;
   password: string;
+  openUrl?: ((authUrl: string) => Promise<Page>) | null;
   timeoutMs?: number;
   pollMs?: number;
 };
 
 export type BrowserAuthContextHandle = {
   context: BrowserContext;
+  openUrl?: (authUrl: string) => Promise<Page>;
   dispose: () => Promise<void>;
+};
+
+type MacOsScreenTextMatch = {
+  text: string;
+  x: number;
+  y: number;
 };
 
 const DEFAULT_TIMEOUT_MS = 5 * 60_000;
@@ -92,6 +101,79 @@ const DEFAULT_CLAUDE_POST_GOOGLE_SETTLE_MS = 90_000;
 const DEFAULT_AUTH_WINDOW_SIZE = { width: 1920, height: 1080 } as const;
 const TEXT_LIMIT = 4_000;
 const BROWSER_AUTH_DEBUG_ENABLED = process.env.CTX_E2E_PROVIDER_BROWSER_AUTH_DEBUG === "1";
+const GOOGLE_CHROME_EXECUTABLE = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const CLAUDE_SETUP_TOKEN_SUCCESS_URL_PATTERN = /^https:\/\/platform\.claude\.com\/oauth\/code\/success\b/i;
+const MACOS_VISION_FIND_TEXT_SWIFT = String.raw`
+import Vision
+import AppKit
+import Foundation
+
+struct Match: Encodable {
+    let text: String
+    let x: Int
+    let y: Int
+}
+
+func normalize(_ raw: String) -> String {
+    raw
+        .lowercased()
+        .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+let args = CommandLine.arguments
+guard args.count >= 3 else {
+    fputs("missing args\n", stderr)
+    exit(1)
+}
+
+let imageUrl = URL(fileURLWithPath: args[1])
+let target = normalize(args[2])
+guard let image = NSImage(contentsOf: imageUrl),
+      let tiff = image.tiffRepresentation,
+      let bitmap = NSBitmapImageRep(data: tiff),
+      let cgImage = bitmap.cgImage else {
+    fputs("failed to load image\n", stderr)
+    exit(1)
+}
+
+let request = VNRecognizeTextRequest()
+request.recognitionLevel = .accurate
+request.usesLanguageCorrection = false
+let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+try handler.perform([request])
+
+let width = Double(cgImage.width)
+let height = Double(cgImage.height)
+let scale = NSScreen.main?.backingScaleFactor ?? 1.0
+var best: Match?
+var bestRank = Int.max
+
+for observation in request.results ?? [] {
+    guard let candidate = observation.topCandidates(1).first?.string else {
+        continue
+    }
+    let normalized = normalize(candidate)
+    let isExact = normalized == target
+    guard isExact else {
+        continue
+    }
+    let rank = 0
+    guard rank <= bestRank else {
+        continue
+    }
+    let box = observation.boundingBox
+    let centerX = ((box.origin.x + box.size.width / 2.0) * width) / scale
+    let centerY = ((1.0 - box.origin.y - box.size.height / 2.0) * height) / scale
+    best = Match(text: candidate, x: Int(centerX.rounded()), y: Int(centerY.rounded()))
+    bestRank = rank
+}
+
+if let best {
+    let data = try JSONEncoder().encode(best)
+    FileHandle.standardOutput.write(data)
+}
+`;
 
 const AUTH_INPUT_SELECTOR_GROUPS = Object.freeze({
   email: [
@@ -226,6 +308,66 @@ const waitMs = async (ms: number): Promise<void> => {
   await new Promise((resolve) => {
     setTimeout(resolve, Math.max(0, ms));
   });
+};
+
+let macOsVisionScriptPath: string | null = null;
+
+const ensureMacOsVisionScriptPath = (): string => {
+  if (macOsVisionScriptPath) {
+    return macOsVisionScriptPath;
+  }
+  const scriptDir = mkdtempSync(path.join(tmpdir(), "ctx-claude-vision-"));
+  const scriptPath = path.join(scriptDir, "findText.swift");
+  writeFileSync(scriptPath, MACOS_VISION_FIND_TEXT_SWIFT);
+  macOsVisionScriptPath = scriptPath;
+  return scriptPath;
+};
+
+const runAppleScript = (...lines: string[]): string =>
+  readString(execFileSync("osascript", lines.flatMap((line) => ["-e", line]), { encoding: "utf8" }));
+
+const openAuthUrlInRealChrome = (authUrl: string): void => {
+  execFileSync("open", ["-a", "Google Chrome", authUrl], { stdio: "ignore" });
+};
+
+const activateRealChrome = (): void => {
+  runAppleScript('tell application "Google Chrome" to activate');
+};
+
+const readFrontChromeUrl = (): string => {
+  try {
+    return runAppleScript('tell application "Google Chrome" to get URL of active tab of front window');
+  } catch {
+    return "";
+  }
+};
+
+const captureScreenToPath = (imagePath: string): void => {
+  execFileSync("screencapture", ["-x", imagePath], { stdio: "ignore" });
+};
+
+const findMacOsScreenTextMatch = (imagePath: string, targetText: string): MacOsScreenTextMatch | null => {
+  const scriptPath = ensureMacOsVisionScriptPath();
+  const raw = readString(execFileSync("swift", [scriptPath, imagePath, targetText], { encoding: "utf8" }));
+  if (!raw) {
+    return null;
+  }
+  const parsed = asRecord(JSON.parse(raw));
+  const text = readString(parsed.text);
+  const x = Number(parsed.x);
+  const y = Number(parsed.y);
+  if (!text || !Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+  return {
+    text,
+    x: Math.round(x),
+    y: Math.round(y),
+  };
+};
+
+const clickMacOsScreenPoint = (x: number, y: number): void => {
+  execFileSync("cliclick", [`c:${Math.round(x)},${Math.round(y)}`], { stdio: "ignore" });
 };
 
 const sanitizeAuthUrl = (raw: string): string => {
@@ -491,10 +633,13 @@ const launchLocalChromeProfileContext = async (
   userDataDir: string,
   profileDirectory: string,
   useStealthishMode: boolean,
-): Promise<{ context: BrowserContext; browserProcess: ChildProcess }> => {
-  const chromeExecutable = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-  if (!existsSync(chromeExecutable)) {
-    throw new Error(`Google Chrome executable not found at ${chromeExecutable}`);
+): Promise<{
+  context: BrowserContext;
+  browserProcess: ChildProcess;
+  openUrl: (authUrl: string) => Promise<Page>;
+}> => {
+  if (!existsSync(GOOGLE_CHROME_EXECUTABLE)) {
+    throw new Error(`Google Chrome executable not found at ${GOOGLE_CHROME_EXECUTABLE}`);
   }
   const devtoolsPort = await reserveTcpPort();
   const args = [
@@ -506,7 +651,7 @@ const launchLocalChromeProfileContext = async (
     ...(useStealthishMode ? ["--disable-blink-features=AutomationControlled"] : []),
     "about:blank",
   ];
-  const browserProcess = spawn(chromeExecutable, args, {
+  const browserProcess = spawn(GOOGLE_CHROME_EXECUTABLE, args, {
     stdio: "ignore",
     detached: false,
   });
@@ -518,7 +663,55 @@ const launchLocalChromeProfileContext = async (
     browserProcess.kill("SIGTERM");
     throw new Error("Chrome CDP connection did not expose a browser context");
   }
-  return { context, browserProcess };
+  const openUrl = async (authUrl: string): Promise<Page> => {
+    const beforePages = new Map(
+      context.pages().map((page) => {
+        try {
+          return [page, page.url()];
+        } catch {
+          return [page, ""];
+        }
+      }),
+    );
+    const opener = spawn(
+      GOOGLE_CHROME_EXECUTABLE,
+      [
+        `--user-data-dir=${userDataDir}`,
+        `--profile-directory=${profileDirectory}`,
+        "--new-window",
+        authUrl,
+      ],
+      {
+        stdio: "ignore",
+        detached: false,
+      },
+    );
+    opener.unref();
+    const startedAt = Date.now();
+    while (Date.now() - startedAt <= 15_000) {
+      for (const page of context.pages()) {
+        if (page.isClosed()) continue;
+        let currentUrl = "";
+        try {
+          currentUrl = page.url();
+        } catch {
+          continue;
+        }
+        if (!currentUrl || currentUrl === "about:blank") continue;
+        const initialUrl = beforePages.get(page) ?? "";
+        if (!beforePages.has(page) || initialUrl === "about:blank" || initialUrl !== currentUrl) {
+          logBrowserAuthDebug("claude-setup-token", "chrome_open_url_page_ready", {
+            pageUrl: currentUrl,
+            redirectUri: parseClaudeSetupTokenRedirectUri(currentUrl),
+          });
+          return page;
+        }
+      }
+      await waitMs(250);
+    }
+    throw new Error(`timed out waiting for Chrome to open auth URL: ${authUrl}`);
+  };
+  return { context, browserProcess, openUrl };
 };
 
 const applyStealthishInitScript = async (context: BrowserContext): Promise<void> => {
@@ -569,6 +762,11 @@ export const createClaudeBrowserAuthContext = async (
     }
     return {
       context: pageContext,
+      openUrl: async (authUrl: string) => {
+        const page = await pageContext.newPage();
+        await page.goto(authUrl, { waitUntil: "domcontentloaded", timeout: DEFAULT_TIMEOUT_MS });
+        return page;
+      },
       dispose: async () => {},
     };
   }
@@ -583,7 +781,7 @@ export const createClaudeBrowserAuthContext = async (
     ? seedLocalChromeProfile(userDataDir, googleEmail)
     : "Default";
   if (useLocalGoogleProfile) {
-    const { context, browserProcess } = await launchLocalChromeProfileContext(
+    const { context, browserProcess, openUrl } = await launchLocalChromeProfileContext(
       userDataDir,
       profileDirectory,
       useStealthishMode,
@@ -593,6 +791,7 @@ export const createClaudeBrowserAuthContext = async (
     }
     return {
       context,
+      openUrl,
       dispose: async () => {
         await context.browser()?.close().catch(() => {});
         await terminateChildProcess(browserProcess, 5_000);
@@ -621,6 +820,11 @@ export const createClaudeBrowserAuthContext = async (
 
   return {
     context: persistentContext,
+    openUrl: async (authUrl: string) => {
+      const page = await persistentContext.newPage();
+      await page.goto(authUrl, { waitUntil: "domcontentloaded", timeout: DEFAULT_TIMEOUT_MS });
+      return page;
+    },
     dispose: async () => {
       await persistentContext.close().catch(() => {});
       if (!keepProfile) {
@@ -712,21 +916,31 @@ const isClosedPageReadError = (error: unknown): boolean => {
 };
 
 const resolveReplacementPage = (page: Page): Page | null => {
-  const candidates = page.context().pages().filter((candidate) => !candidate.isClosed());
+  const candidates = page.context().pages().filter((candidate) => {
+    if (candidate.isClosed()) return false;
+    try {
+      const url = candidate.url();
+      return Boolean(url) && url !== "about:blank";
+    } catch {
+      return false;
+    }
+  });
   if (candidates.length === 0) return null;
   return candidates.at(-1) ?? null;
 };
 
 const resolvePreferredAuthPage = (page: Page): Page | null => {
-  const candidates = page.context().pages().filter((candidate) => !candidate.isClosed());
-  const googlePage = candidates.find((candidate) => {
+  if (!page.isClosed()) {
     try {
-      return candidate !== page && candidate.url().includes("accounts.google.");
+      const currentUrl = page.url();
+      if (currentUrl && currentUrl !== "about:blank") {
+        return page;
+      }
     } catch {
-      return false;
+      // fall through to replacement resolution
     }
-  });
-  return googlePage ?? resolveReplacementPage(page);
+  }
+  return resolveReplacementPage(page);
 };
 
 const typeIntoBrowserAuthFieldLikeHuman = async (locator: Locator, value: string): Promise<void> => {
@@ -1156,6 +1370,7 @@ const driveGoogleBackedBrowserLoginWithCredentials = async ({
   email,
   password,
   providerLabel,
+  skipInitialGoto = false,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   pollMs = DEFAULT_POLL_MS,
   onState,
@@ -1166,7 +1381,15 @@ const driveGoogleBackedBrowserLoginWithCredentials = async ({
   if (!normalizedPassword) throw new Error(`${providerLabel} Google password is required`);
 
   let activePage = page;
-  await activePage.goto(authUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+  if (!skipInitialGoto) {
+    await activePage.goto(authUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+    logBrowserAuthDebug(providerLabel, "post_goto_url", {
+      url: activePage.url(),
+      redirectUri: providerLabel === "claude-setup-token"
+        ? parseClaudeSetupTokenRedirectUri(activePage.url())
+        : "",
+    });
+  }
   const startedAt = Date.now();
   let lastState: VisibleDomState | null = null;
   let lastDebugSnapshot = "";
@@ -1177,6 +1400,13 @@ const driveGoogleBackedBrowserLoginWithCredentials = async ({
     usedPassword: false,
     grantedConsent: false,
   };
+
+  logBrowserAuthDebug(providerLabel, "goto_auth_url", {
+    authUrl,
+    redirectUri: providerLabel === "claude-setup-token"
+      ? parseClaudeSetupTokenRedirectUri(authUrl)
+      : "",
+  });
 
   while (Date.now() - startedAt <= timeoutMs) {
     const preferredPage = resolvePreferredAuthPage(activePage);
@@ -1407,6 +1637,7 @@ const driveClaudeSetupTokenBrowserFlow = async (opts: {
   authUrl: string;
   email: string;
   password: string;
+  skipInitialGoto?: boolean;
   timeoutMs: number;
   pollMs: number;
   providerLabel: string;
@@ -1421,6 +1652,7 @@ const driveClaudeSetupTokenBrowserFlow = async (opts: {
     email: opts.email,
     password: opts.password,
     providerLabel: opts.providerLabel,
+    skipInitialGoto: opts.skipInitialGoto,
     timeoutMs: opts.timeoutMs,
     pollMs: opts.pollMs,
     onState: async ({ page: activePage, state, progress }) => {
@@ -1503,10 +1735,20 @@ const driveClaudeSetupTokenBrowserFlow = async (opts: {
         };
       }
       if (isClaudeHost && /\/oauth\/authorize\b/i.test(state.url) && stateMentions(state, /authorize|decline|switch account/i)) {
+        logBrowserAuthDebug(opts.providerLabel, "authorize_surface", {
+          url: state.url,
+          redirectUri: parseClaudeSetupTokenRedirectUri(state.url),
+          buttons: state.buttons,
+        });
         const approved = await clickVisibleTextAction(activePage, ["authorize", "allow", "continue"]);
         if (!approved) {
           return { handled: true };
         }
+        await waitMs(1_000);
+        logBrowserAuthDebug(opts.providerLabel, "post_authorize_click", {
+          url: activePage.url(),
+          redirectUri: parseClaudeSetupTokenRedirectUri(activePage.url()),
+        });
         return { handled: true };
       }
       if (stateMentions(state, /copy code|you can close this tab|login successful|connected to claude code/i)) {
@@ -1547,18 +1789,111 @@ const driveClaudeSetupTokenBrowserFlow = async (opts: {
   });
 };
 
+const completeClaudeManagedSetupTokenWithRealChromeBrowser = async (
+  opts: ClaudeManagedSetupTokenOptions,
+): Promise<void> => {
+  if (process.platform !== "darwin") {
+    throw new Error("Claude setup-token real-browser automation currently requires macOS");
+  }
+  if (!existsSync(GOOGLE_CHROME_EXECUTABLE)) {
+    throw new Error(`Google Chrome executable not found at ${GOOGLE_CHROME_EXECUTABLE}`);
+  }
+
+  const timeoutMs = readBrowserAuthTimeoutMs(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
+  const deadline = Date.now() + timeoutMs;
+  const screenshotPath = path.join(tmpdir(), `ctx-claude-real-browser-${process.pid}.png`);
+  let clickedAuthorize = false;
+  let clickedGoogleEntry = false;
+  let clickedExistingAccount = false;
+
+  openAuthUrlInRealChrome(opts.authUrl);
+  activateRealChrome();
+
+  while (Date.now() <= deadline) {
+    const frontUrl = readFrontChromeUrl();
+    logBrowserAuthDebug("claude-setup-token", "real_browser_poll", {
+      url: frontUrl,
+      redirectUri: parseClaudeSetupTokenRedirectUri(frontUrl),
+      clickedAuthorize,
+      clickedGoogleEntry,
+      clickedExistingAccount,
+    });
+    if (CLAUDE_SETUP_TOKEN_SUCCESS_URL_PATTERN.test(frontUrl)) {
+      return;
+    }
+
+    captureScreenToPath(screenshotPath);
+    try {
+      if (!clickedGoogleEntry) {
+        const continueWithGoogle = findMacOsScreenTextMatch(screenshotPath, "Continue with Google");
+        if (continueWithGoogle) {
+          activateRealChrome();
+          clickMacOsScreenPoint(continueWithGoogle.x, continueWithGoogle.y);
+          clickedGoogleEntry = true;
+          await waitMs(1_000);
+          continue;
+        }
+      }
+
+      if (!clickedExistingAccount && opts.email) {
+        const existingAccount = findMacOsScreenTextMatch(screenshotPath, opts.email);
+        if (existingAccount) {
+          activateRealChrome();
+          clickMacOsScreenPoint(existingAccount.x, existingAccount.y);
+          clickedExistingAccount = true;
+          await waitMs(1_000);
+          continue;
+        }
+      }
+
+      if (!clickedAuthorize) {
+        const authorize = findMacOsScreenTextMatch(screenshotPath, "Authorize");
+        if (authorize) {
+          logBrowserAuthDebug("claude-setup-token", "real_browser_authorize_hit", authorize);
+          activateRealChrome();
+          clickMacOsScreenPoint(authorize.x, authorize.y);
+          clickedAuthorize = true;
+          await waitMs(1_500);
+          continue;
+        }
+      }
+    } finally {
+      rmSync(screenshotPath, { force: true });
+    }
+
+    await waitMs(pollMs);
+  }
+
+  throw new Error(`timed out completing Claude setup-token in real Chrome; final_url=${readFrontChromeUrl()}`);
+};
+
 export async function completeClaudeManagedSetupTokenWithGoogleBrowserCredentials(
   opts: ClaudeManagedSetupTokenOptions,
 ): Promise<void> {
+  if (process.platform === "darwin") {
+    await completeClaudeManagedSetupTokenWithRealChromeBrowser(opts);
+    return;
+  }
   const timeoutMs = readBrowserAuthTimeoutMs(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
-  const page = await opts.context.newPage();
+  logBrowserAuthDebug("claude-setup-token", "managed_open_url_mode", {
+    hasOpenUrl: typeof opts.openUrl === "function",
+  });
+  const page = typeof opts.openUrl === "function"
+    ? await opts.openUrl(opts.authUrl)
+    : await opts.context.newPage();
+  logBrowserAuthDebug("claude-setup-token", "managed_page_ready", {
+    pageUrl: page.url(),
+    redirectUri: parseClaudeSetupTokenRedirectUri(page.url()),
+  });
   try {
     await driveClaudeSetupTokenBrowserFlow({
       page,
       authUrl: opts.authUrl,
       email: opts.email,
       password: opts.password,
+      skipInitialGoto: typeof opts.openUrl === "function",
       timeoutMs,
       pollMs,
       providerLabel: "claude-setup-token",

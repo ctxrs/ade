@@ -9,6 +9,7 @@ const CLAUDE_LOGIN_URL_SETTLE_WAIT: Duration = Duration::from_millis(500);
 const CLAUDE_LOGIN_COMPLETION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const CLAUDE_LOGIN_EXIT_GRACE_WAIT: Duration = Duration::from_millis(400);
 const CLAUDE_BROWSER_OPEN_MARKER: &str = "CTX_CLAUDE_AUTH_URL:";
+const CLAUDE_BROWSER_AUTH_TIER: &str = "provider-browser-auth";
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ClaudeLoginStartReq {
@@ -38,6 +39,7 @@ struct ClaudeLoginProcess {
     buffered_lines: Vec<String>,
     auth_url: Option<String>,
     manual_open_required: bool,
+    browser_open_capture_path: PathBuf,
     exit_rx: oneshot::Receiver<anyhow::Result<portable_pty::ExitStatus>>,
     killer: Arc<StdMutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
     writer: Arc<StdMutex<Box<dyn Write + Send>>>,
@@ -49,12 +51,93 @@ struct ClaudeLoginSpawn {
     exit_rx: oneshot::Receiver<anyhow::Result<portable_pty::ExitStatus>>,
     killer: Arc<StdMutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
     writer: Arc<StdMutex<Box<dyn Write + Send>>>,
+    browser_open_capture_path: PathBuf,
     browser_open_shim_dir: tempfile::TempDir,
 }
 
 fn claude_login_requires_manual_browser_open(text: &str) -> bool {
     text.to_ascii_lowercase()
         .contains("browser didn't open? use the url below to sign in")
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ClaudeAuthUrlSource {
+    BrowserOpenCapture,
+    BrowserOpenMarker,
+    Transcript,
+}
+
+fn extract_claude_browser_open_marker_url(text: &str) -> Option<String> {
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        let Some(marker_idx) = line.find(CLAUDE_BROWSER_OPEN_MARKER) else {
+            continue;
+        };
+        let candidate = line[marker_idx + CLAUDE_BROWSER_OPEN_MARKER.len()..].trim();
+        if candidate.is_empty() {
+            continue;
+        }
+        if Url::parse(candidate).is_ok() {
+            return Some(candidate.to_string());
+        }
+        if let Some(parsed) = extract_auth_url(candidate) {
+            return Some(parsed);
+        }
+    }
+    None
+}
+
+fn extract_preferred_claude_auth_url(text: &str) -> Option<(String, ClaudeAuthUrlSource)> {
+    if let Some(marker_url) = extract_claude_browser_open_marker_url(text) {
+        return Some((marker_url, ClaudeAuthUrlSource::BrowserOpenMarker));
+    }
+    extract_auth_url(text).map(|value| (value, ClaudeAuthUrlSource::Transcript))
+}
+
+fn should_replace_observed_claude_auth_url(
+    current: Option<&str>,
+    candidate: &str,
+    source: ClaudeAuthUrlSource,
+) -> bool {
+    match source {
+        ClaudeAuthUrlSource::BrowserOpenCapture | ClaudeAuthUrlSource::BrowserOpenMarker => {
+            current != Some(candidate)
+        }
+        ClaudeAuthUrlSource::Transcript => match current {
+            None => true,
+            Some(existing) => {
+                !auth_url_looks_complete(existing) && candidate.len() >= existing.len()
+            }
+        },
+    }
+}
+
+fn read_claude_browser_open_capture_url(path: &std::path::Path) -> Option<String> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let candidate = raw.trim();
+    if candidate.is_empty() {
+        return None;
+    }
+    if Url::parse(candidate).is_ok() {
+        return Some(candidate.to_string());
+    }
+    extract_auth_url(candidate)
+}
+
+fn upgrade_claude_auth_url_from_capture_path(
+    observed_auth_url: &mut Option<String>,
+    capture_path: &std::path::Path,
+) {
+    let Some(candidate) = read_claude_browser_open_capture_url(capture_path) else {
+        return;
+    };
+    if should_replace_observed_claude_auth_url(
+        observed_auth_url.as_deref(),
+        &candidate,
+        ClaudeAuthUrlSource::BrowserOpenCapture,
+    ) {
+        *observed_auth_url = Some(candidate);
+    }
 }
 
 pub(crate) async fn start_claude_login(
@@ -190,6 +273,12 @@ pub(crate) async fn resolve_claude_login_runtime_from_config(
         });
     }
 
+    if let Some(runtime_command) =
+        resolve_runtime_provider_command_from_config(data_root, "claude-cli").await?
+    {
+        return Ok(runtime_command);
+    }
+
     let host_claude = which::which("claude").map_err(|_| {
         anyhow::anyhow!(
             "runtime_command_missing: provider=claude-cli (install `claude` on PATH to enable managed Claude setup-token login)"
@@ -211,19 +300,29 @@ async fn resolve_claude_login_runtime(
     resolve_claude_login_runtime_from_config(&state.core.data_root).await
 }
 
-fn create_claude_browser_open_shim() -> anyhow::Result<(tempfile::TempDir, PathBuf)> {
+fn claude_login_should_skip_browser_open(raw_tier: Option<&str>) -> bool {
+    matches!(
+        raw_tier.map(str::trim),
+        Some(tier) if tier.eq_ignore_ascii_case(CLAUDE_BROWSER_AUTH_TIER)
+    )
+}
+
+fn create_claude_browser_open_shim() -> anyhow::Result<(tempfile::TempDir, PathBuf, PathBuf)> {
     let temp_dir = tempfile::Builder::new()
         .prefix("ctx-claude-browser-open-")
         .tempdir()
         .context("creating Claude browser-open shim tempdir")?;
     let script_path = temp_dir.path().join("open-browser");
-    std::fs::write(
-        &script_path,
-        format!(
-            "#!/bin/sh\nurl=\"${{1:-}}\"\nif [ -n \"$url\" ]; then\n  printf '{CLAUDE_BROWSER_OPEN_MARKER}%s\\n' \"$url\"\nfi\nif [ -z \"$url\" ]; then\n  exit 1\nfi\nif command -v open >/dev/null 2>&1; then\n  exec open \"$url\"\nfi\nif command -v xdg-open >/dev/null 2>&1; then\n  exec xdg-open \"$url\"\nfi\nexit 1\n"
-        ),
-    )
-    .with_context(|| format!("writing Claude browser-open shim {}", script_path.display()))?;
+    let capture_path = temp_dir.path().join("auth-url");
+    let skip_browser_open =
+        claude_login_should_skip_browser_open(std::env::var("CTX_E2E_TIER").ok().as_deref());
+    let script_body = if skip_browser_open {
+        "#!/bin/sh\nurl=\"${{1:-}}\"\ncapture_path=\"${{CTX_CLAUDE_AUTH_URL_CAPTURE_PATH:-}}\"\nif [ -n \"$url\" ] && [ -n \"$capture_path\" ]; then\n  printf '%s\\n' \"$url\" > \"$capture_path\"\nfi\nexit 0\n".to_string()
+    } else {
+        "#!/bin/sh\nurl=\"${{1:-}}\"\ncapture_path=\"${{CTX_CLAUDE_AUTH_URL_CAPTURE_PATH:-}}\"\nif [ -n \"$url\" ] && [ -n \"$capture_path\" ]; then\n  printf '%s\\n' \"$url\" > \"$capture_path\"\nfi\nif [ -z \"$url\" ]; then\n  exit 1\nfi\nif command -v open >/dev/null 2>&1; then\n  exec open \"$url\"\nfi\nif command -v xdg-open >/dev/null 2>&1; then\n  exec xdg-open \"$url\"\nfi\nexit 1\n".to_string()
+    };
+    std::fs::write(&script_path, script_body)
+        .with_context(|| format!("writing Claude browser-open shim {}", script_path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -235,7 +334,7 @@ fn create_claude_browser_open_shim() -> anyhow::Result<(tempfile::TempDir, PathB
                 )
             })?;
     }
-    Ok((temp_dir, script_path))
+    Ok((temp_dir, script_path, capture_path))
 }
 
 fn spawn_claude_setup_token_command(
@@ -252,7 +351,8 @@ fn spawn_claude_setup_token_command(
         .context("opening pty for claude setup-token")?;
 
     let mut cmd = CommandBuilder::new(&runtime.command_abs_path);
-    let (browser_open_shim_dir, browser_open_shim_path) = create_claude_browser_open_shim()?;
+    let (browser_open_shim_dir, browser_open_shim_path, browser_open_capture_path) =
+        create_claude_browser_open_shim()?;
     for arg in &runtime.args {
         cmd.arg(arg);
     }
@@ -260,6 +360,10 @@ fn spawn_claude_setup_token_command(
     cmd.env("NO_COLOR", "1");
     cmd.env("TERM", "xterm-256color");
     cmd.env("BROWSER", browser_open_shim_path);
+    cmd.env(
+        "CTX_CLAUDE_AUTH_URL_CAPTURE_PATH",
+        &browser_open_capture_path,
+    );
 
     let mut child = pair.slave.spawn_command(cmd).with_context(|| {
         format!(
@@ -297,6 +401,7 @@ fn spawn_claude_setup_token_command(
         exit_rx,
         killer,
         writer,
+        browser_open_capture_path,
         browser_open_shim_dir,
     })
 }
@@ -418,6 +523,7 @@ async fn start_claude_login_process(state: &Arc<AppState>) -> anyhow::Result<Cla
         exit_rx,
         killer,
         writer,
+        browser_open_capture_path,
         browser_open_shim_dir,
     } = spawn_claude_setup_token_command(&runtime)?;
 
@@ -428,6 +534,7 @@ async fn start_claude_login_process(state: &Arc<AppState>) -> anyhow::Result<Cla
     let hard_deadline = Instant::now() + CLAUDE_LOGIN_URL_WAIT;
     let mut settle_deadline: Option<Instant> = None;
     loop {
+        upgrade_claude_auth_url_from_capture_path(&mut auth_url, &browser_open_capture_path);
         let now = Instant::now();
         let remaining = if let Some(settle) = settle_deadline {
             std::cmp::min(
@@ -446,8 +553,18 @@ async fn start_claude_login_process(state: &Arc<AppState>) -> anyhow::Result<Cla
                 transcript.push('\n');
                 manual_open_required |= claude_login_requires_manual_browser_open(&line);
                 buffered_lines.push(line);
-                if let Some(candidate) = extract_auth_url(&transcript) {
-                    auth_url = Some(candidate);
+                upgrade_claude_auth_url_from_capture_path(
+                    &mut auth_url,
+                    &browser_open_capture_path,
+                );
+                if let Some((candidate, source)) = extract_preferred_claude_auth_url(&transcript) {
+                    if should_replace_observed_claude_auth_url(
+                        auth_url.as_deref(),
+                        &candidate,
+                        source,
+                    ) {
+                        auth_url = Some(candidate);
+                    }
                     settle_deadline = Some(Instant::now() + CLAUDE_LOGIN_URL_SETTLE_WAIT);
                 }
             }
@@ -455,6 +572,7 @@ async fn start_claude_login_process(state: &Arc<AppState>) -> anyhow::Result<Cla
             Err(_) => break,
         }
     }
+    upgrade_claude_auth_url_from_capture_path(&mut auth_url, &browser_open_capture_path);
 
     let (_tx, input_rx) = mpsc::unbounded_channel();
     Ok(ClaudeLoginProcess {
@@ -463,6 +581,7 @@ async fn start_claude_login_process(state: &Arc<AppState>) -> anyhow::Result<Cla
         buffered_lines,
         auth_url,
         manual_open_required,
+        browser_open_capture_path,
         exit_rx,
         killer,
         writer,
@@ -482,14 +601,12 @@ async fn append_claude_login_line(
         Some(url) => !auth_url_looks_complete(url),
     };
     if needs_auth_url_upgrade {
-        if let Some(candidate) = extract_auth_url(&line) {
-            let should_replace = match observed_auth_url.as_ref() {
-                None => true,
-                Some(current) => {
-                    !auth_url_looks_complete(current) && candidate.len() >= current.len()
-                }
-            };
-            if should_replace {
+        if let Some((candidate, source)) = extract_preferred_claude_auth_url(&line) {
+            if should_replace_observed_claude_auth_url(
+                observed_auth_url.as_deref(),
+                &candidate,
+                source,
+            ) {
                 *observed_auth_url = Some(candidate);
             }
         }
@@ -501,14 +618,12 @@ async fn append_claude_login_line(
         Some(url) => !auth_url_looks_complete(url),
     };
     if needs_auth_url_upgrade {
-        if let Some(candidate) = extract_auth_url(transcript) {
-            let should_replace = match observed_auth_url.as_ref() {
-                None => true,
-                Some(current) => {
-                    !auth_url_looks_complete(current) && candidate.len() >= current.len()
-                }
-            };
-            if should_replace {
+        if let Some((candidate, source)) = extract_preferred_claude_auth_url(transcript) {
+            if should_replace_observed_claude_auth_url(
+                observed_auth_url.as_deref(),
+                &candidate,
+                source,
+            ) {
                 *observed_auth_url = Some(candidate);
             }
         }
@@ -590,6 +705,10 @@ async fn monitor_claude_login(
             line,
         )
         .await;
+        upgrade_claude_auth_url_from_capture_path(
+            &mut observed_auth_url,
+            &login.browser_open_capture_path,
+        );
         if !observed_manual_open_required && claude_login_requires_manual_browser_open(&transcript)
         {
             observed_manual_open_required = true;
@@ -609,6 +728,10 @@ async fn monitor_claude_login(
     let mut timeout_error: Option<String> = None;
 
     loop {
+        upgrade_claude_auth_url_from_capture_path(
+            &mut observed_auth_url,
+            &login.browser_open_capture_path,
+        );
         let deadline = completion_deadline.unwrap_or(auth_url_deadline);
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
@@ -637,6 +760,10 @@ async fn monitor_claude_login(
                             line,
                         )
                         .await;
+                        upgrade_claude_auth_url_from_capture_path(
+                            &mut observed_auth_url,
+                            &login.browser_open_capture_path,
+                        );
                         if line_requires_manual_open && !observed_manual_open_required {
                             observed_manual_open_required = true;
                             let mut map = state.providers.claude_login_sessions.lock().await;
@@ -693,6 +820,10 @@ async fn monitor_claude_login(
                 line,
             )
             .await;
+            upgrade_claude_auth_url_from_capture_path(
+                &mut observed_auth_url,
+                &login.browser_open_capture_path,
+            );
         }
     } else {
         while let Ok(line) = login.line_rx.try_recv() {
@@ -704,6 +835,10 @@ async fn monitor_claude_login(
                 line,
             )
             .await;
+            upgrade_claude_auth_url_from_capture_path(
+                &mut observed_auth_url,
+                &login.browser_open_capture_path,
+            );
         }
     }
 
@@ -795,5 +930,65 @@ async fn monitor_claude_login(
     {
         let mut map = state.providers.claude_login_inputs.lock().await;
         map.remove(&login_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preferred_claude_auth_url_uses_browser_open_marker_over_scraped_url() {
+        let expected = "https://claude.ai/oauth/authorize?code=true&client_id=cid&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A58215%2Fcallback&scope=user%3Ainference&code_challenge=abc&code_challenge_method=S256&state=good-state";
+        let corrupted = "https://claude.ai/oauth/authorize?code=true&client_id=cid&response_type=code&redirect_uri=https:/platform.claude.com/oauth/code/callback&scope=user:inference&code_challenge=abc&code_challenge_method=S256&state=bad-statePastecodehereifprompted%3E";
+        let transcript = format!(
+            "{CLAUDE_BROWSER_OPEN_MARKER}{expected}\nBrowser didn't open? Use the URL below to sign in\n{corrupted}\nPaste code here if prompted >"
+        );
+
+        assert_eq!(
+            extract_preferred_claude_auth_url(&transcript)
+                .map(|(value, _)| value)
+                .as_deref(),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn browser_open_marker_replaces_longer_incomplete_transcript_url() {
+        let current = "https://claude.ai/oauth/authorize?code=true&client_id=cid&response_type=code&redirect_uri=https:/platform.claude.com/oauth/code/callback&scope=user:inference&code_challenge=abc&code_challenge_method=S256&state=bad-state";
+        let candidate = "https://claude.ai/oauth/authorize?code=true&client_id=cid&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A58215%2Fcallback&scope=user%3Ainference&code_challenge=abc&code_challenge_method=S256&state=good-state";
+
+        assert!(should_replace_observed_claude_auth_url(
+            Some(current),
+            candidate,
+            ClaudeAuthUrlSource::BrowserOpenMarker,
+        ));
+    }
+
+    #[test]
+    fn provider_browser_auth_tier_skips_os_browser_launch() {
+        assert!(claude_login_should_skip_browser_open(Some(
+            CLAUDE_BROWSER_AUTH_TIER
+        )));
+        assert!(claude_login_should_skip_browser_open(Some(
+            " Provider-Browser-Auth "
+        )));
+        assert!(!claude_login_should_skip_browser_open(Some(
+            "provider-api-auth"
+        )));
+        assert!(!claude_login_should_skip_browser_open(None));
+    }
+
+    #[test]
+    fn reads_captured_browser_open_url_from_side_channel_file() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let capture_path = temp_dir.path().join("auth-url");
+        let expected = "https://claude.ai/oauth/authorize?code=true&client_id=cid&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A58215%2Fcallback&scope=user%3Ainference&code_challenge=abc&code_challenge_method=S256&state=good-state";
+        std::fs::write(&capture_path, format!("{expected}\n")).expect("write capture file");
+
+        assert_eq!(
+            read_claude_browser_open_capture_url(&capture_path).as_deref(),
+            Some(expected)
+        );
     }
 }
