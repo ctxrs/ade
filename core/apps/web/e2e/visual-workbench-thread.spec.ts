@@ -161,6 +161,18 @@ test.describe.serial("visual: workbench thread", () => {
       await expect(toolRest).toHaveCSS("color", mutedColor);
     });
 
+    test(`assistant rows use updated vertical padding ${theme}`, async ({ page }) => {
+      await openWorkbenchVisualPage(page, transcriptSeed.workspaceId, { theme, viewport: "desktop" });
+      await openFirstTaskSession(page);
+
+      const assistantEntry = page.locator(".wb-assistant-entry").first();
+      await expect(assistantEntry).toBeVisible();
+      await expect(assistantEntry).toHaveCSS("padding-top", "10px");
+      await expect(assistantEntry).toHaveCSS("padding-right", "2px");
+      await expect(assistantEntry).toHaveCSS("padding-bottom", "10px");
+      await expect(assistantEntry).toHaveCSS("padding-left", "2px");
+    });
+
     for (const viewport of TRANSCRIPT_VIEWPORTS) {
       test(`transcript ${theme} ${viewport}`, async ({ page }) => {
         await openWorkbenchVisualPage(page, transcriptSeed.workspaceId, { theme, viewport });

@@ -3396,7 +3396,7 @@
 .wb-assistant-entry {
   display: grid;
   gap: 6px;
-  padding: 0 2px 4px 2px;
+  padding: 10px 2px 10px;
   min-width: 0;
   max-width: 100%;
 }
