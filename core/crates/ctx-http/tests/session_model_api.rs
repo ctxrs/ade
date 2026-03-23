@@ -1,18 +1,50 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::json;
+use tokio::sync::mpsc;
 
 use ctx_core::models::{Session, SessionEventType, SessionHeadSnapshot};
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderProcessInfo,
     ProviderRestartMode, ProviderStatus, RunHandle, TurnInput,
 };
+use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_providers::events::NormalizedEvent;
 
 mod common;
+
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner())
+}
+
+struct EnvGuard {
+    key: &'static str,
+    prev: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let prev = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, prev }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        if let Some(value) = self.prev.take() {
+            std::env::set_var(self.key, value);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
 
 #[derive(Default)]
 struct RecordingSetModelAdapter {
@@ -518,6 +550,198 @@ async fn set_session_model_persists_reasoning_effort_and_forwards_full_model_id(
         init_event.payload_json.get("reasoning_effort"),
         Some(&json!("xhigh"))
     );
+}
+
+async fn assert_live_crp_session_model_switch_case(
+    provider_id: &str,
+    initial_model_id: &str,
+    initial_reasoning_effort: &str,
+    next_model_id: &str,
+    next_reasoning_effort: &str,
+) {
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let fixtures_dir = tempfile::tempdir().expect("fixtures tempdir");
+    let fixture_provider_dir = fixtures_dir.path().join(provider_id);
+    std::fs::create_dir_all(&fixture_provider_dir).expect("create fixture provider dir");
+    std::fs::write(
+        fixture_provider_dir.join("basic.json"),
+        serde_json::to_vec(&json!({
+            "current_model_id": format!("{initial_model_id}/{initial_reasoning_effort}"),
+            "models": [
+                {
+                    "id": format!("{initial_model_id}/{initial_reasoning_effort}"),
+                    "name": format!("{provider_id} initial")
+                },
+                {
+                    "id": format!("{next_model_id}/{next_reasoning_effort}"),
+                    "name": format!("{provider_id} next")
+                }
+            ],
+            "turns": [{}]
+        }))
+        .expect("fixture json"),
+    )
+    .expect("write fixture");
+    let _fixture_root = EnvGuard::set(
+        "CTX_TEST_FIXTURES_DIR",
+        &fixtures_dir.path().to_string_lossy(),
+    );
+    let _fixture_scenario = EnvGuard::set("CTX_TEST_SCENARIO", "basic");
+
+    let python = common::crp_fixture_runtime::python_binary().expect("python available");
+    let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
+    let adapter: Arc<Tier1CrpAdapter> = Arc::new(Tier1CrpAdapter::from_raw(
+        provider_id,
+        python.to_string_lossy().to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    ));
+    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+    providers.insert(provider_id.to_string(), adapter.clone());
+
+    let stores = common::setup_store(data_dir.path()).await;
+    let global_store = stores.global().clone();
+    let workspace = global_store
+        .create_workspace(
+            "ws".to_string(),
+            repo.path().to_string_lossy().to_string(),
+            ctx_core::models::VcsKind::Git,
+        )
+        .await
+        .expect("create workspace");
+    let store = stores
+        .workspace(workspace.id)
+        .await
+        .expect("open workspace store");
+    let worktree = store
+        .create_worktree(
+            workspace.id,
+            repo.path().to_string_lossy().to_string(),
+            "test-base".to_string(),
+            None,
+        )
+        .await
+        .expect("create worktree");
+    global_store
+        .upsert_workspace_worktree_index(worktree.id, workspace.id)
+        .await
+        .expect("index worktree");
+    let task = store
+        .create_task(workspace.id, "session-model".to_string(), None)
+        .await
+        .expect("create task");
+    global_store
+        .upsert_workspace_task_index(task.id, workspace.id)
+        .await
+        .expect("index task");
+    let session = store
+        .create_session_with_reasoning_effort(
+            task.id,
+            workspace.id,
+            worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            provider_id.to_string(),
+            initial_model_id.to_string(),
+            Some(initial_reasoning_effort.to_string()),
+            "assistant".to_string(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("create session");
+    global_store
+        .upsert_workspace_session_index(session.id, workspace.id)
+        .await
+        .expect("index session");
+    store
+        .set_task_primary_session(task.id, session.id, worktree.id)
+        .await
+        .expect("set task primary session");
+
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state);
+    let server = common::spawn_http_server(app).await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let (event_tx, _event_rx) = mpsc::channel::<NormalizedEvent>(8);
+    adapter
+        .authenticate_session(
+            session.id.0.to_string(),
+            repo.path().to_path_buf(),
+            HashMap::new(),
+            None,
+            event_tx,
+        )
+        .await
+        .expect("open live CRP session");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        adapter.has_live_session(&session.id.0.to_string()).await,
+        "expected adapter to track live session after authenticate"
+    );
+
+    let updated: Session = client
+        .post(format!("{base}/api/sessions/{}/model", session.id.0))
+        .json(&json!({
+            "model_id": next_model_id,
+            "reasoning_effort": next_reasoning_effort
+        }))
+        .send()
+        .await
+        .expect("set session model")
+        .json()
+        .await
+        .expect("updated session json");
+
+    assert_eq!(updated.model_id, next_model_id);
+    assert_eq!(
+        updated.reasoning_effort.as_deref(),
+        Some(next_reasoning_effort)
+    );
+
+    let head: SessionHeadSnapshot = client
+        .get(format!(
+            "{base}/api/sessions/{}/head?limit=50&include_events=true",
+            session.id.0
+        ))
+        .send()
+        .await
+        .expect("get session head")
+        .json()
+        .await
+        .expect("session head json");
+
+    let init_event = head
+        .events
+        .iter()
+        .rev()
+        .find(|event| matches!(event.event_type, SessionEventType::Init))
+        .expect("init event appended");
+    assert_eq!(
+        init_event.payload_json.get("current_model_id"),
+        Some(&json!(format!("{next_model_id}/{next_reasoning_effort}")))
+    );
+    assert_eq!(
+        init_event.payload_json.get("reasoning_effort"),
+        Some(&json!(next_reasoning_effort))
+    );
+}
+
+#[tokio::test]
+async fn live_crp_supported_harnesses_session_model_switch_succeeds_end_to_end() {
+    let _env_lock = lock_env();
+
+    assert_live_crp_session_model_switch_case("codex", "gpt-5.4", "medium", "gpt-5.4", "xhigh")
+        .await;
+    assert_live_crp_session_model_switch_case("claude-crp", "default", "medium", "default", "high")
+        .await;
 }
 
 #[tokio::test]

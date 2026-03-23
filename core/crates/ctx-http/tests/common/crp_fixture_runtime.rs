@@ -51,6 +51,28 @@ except Exception as e:
 
 provider_session_id = PROVIDER_ID + "-thread"
 
+def default_models(provider_id):
+    if provider_id == "codex":
+        return [
+            {"id": "gpt-5.4/medium", "name": "GPT-5.4 (Medium)"},
+            {"id": "gpt-5.4/xhigh", "name": "GPT-5.4 (Extra High)"},
+        ]
+    if provider_id == "claude-crp":
+        return [
+            {"id": "default/medium", "name": "Default (Medium)"},
+            {"id": "default/high", "name": "Default (High)"},
+        ]
+    return [{"id": "fake-model", "name": "fake-model"}]
+
+models = scenario.get("models")
+if not isinstance(models, list) or not models:
+    models = default_models(PROVIDER_ID)
+current_model_id = (
+    scenario.get("current_model_id")
+    or (models[0].get("id") if models and isinstance(models[0], dict) else None)
+    or "fake-model"
+)
+
 def send(msg, channel="control"):
     global SEQ
     msg["seq"] = SEQ
@@ -263,8 +285,8 @@ for line in sys.stdin:
     if t == "models.list":
         send({
             "type": "models.list",
-            "models": [{"id": "fake-model"}],
-            "current_model_id": "fake-model",
+            "models": models,
+            "current_model_id": current_model_id,
         })
         continue
 
@@ -274,6 +296,34 @@ for line in sys.stdin:
             "type": "session.opened",
             "session_id": session_id,
             "provider_session_id": provider_session_id,
+            "current_model_id": current_model_id,
+            "models": models,
+        })
+        continue
+
+    if t == "session.set_model":
+        session_id = cmd.get("session_id") or "sess_1"
+        requested_model_id = (cmd.get("model_id") or "").strip()
+        if not requested_model_id:
+            send({
+                "type": "session.notice",
+                "session_id": session_id,
+                "code": "session_model_update_failed",
+                "severity": "error",
+                "message": "missing model_id",
+                "details": {"model_id": requested_model_id},
+                "transient": False,
+            })
+            continue
+        current_model_id = requested_model_id
+        send({
+            "type": "session.notice",
+            "session_id": session_id,
+            "code": "session_model_updated",
+            "severity": "info",
+            "message": "session model updated to " + requested_model_id,
+            "details": {"model_id": requested_model_id},
+            "transient": False,
         })
         continue
 
