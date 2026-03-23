@@ -7,11 +7,8 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use tokio::sync::Mutex;
 
-use ctx_core::ids::{
-    ArtifactId, MergeQueueEntryId, MessageId, SessionId, TaskId, WorkspaceId, WorktreeId,
-};
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::Workspace;
-use tracing::warn;
 
 use crate::Store;
 
@@ -129,12 +126,6 @@ impl StoreManager {
             .await?
             .with_context(|| format!("workspace {} not found", workspace_id.0))?;
         let store = self.open_workspace_store(&workspace).await?;
-        if let Err(err) = self
-            .sync_workspace_global_entity_routing_indexes(workspace_id, &store)
-            .await
-        {
-            warn!(workspace_id = %workspace_id.0, "failed to refresh global routing indexes: {err:#}");
-        }
         let mut stores = self.workspace_stores.lock().await;
         if let Some(existing) = stores.get_mut(&workspace_id) {
             existing.touch();
@@ -180,44 +171,6 @@ impl StoreManager {
             .get_workspace_id_for_worktree(worktree_id)
             .await?
             .with_context(|| format!("workspace missing for worktree {}", worktree_id.0))?;
-        self.workspace(workspace_id).await
-    }
-
-    pub async fn store_for_artifact(&self, artifact_id: ArtifactId) -> Result<Store> {
-        let workspace_id = self
-            .global
-            .get_workspace_id_for_artifact(artifact_id)
-            .await?
-            .with_context(|| format!("workspace missing for artifact {}", artifact_id.0))?;
-        self.workspace(workspace_id).await
-    }
-
-    pub async fn store_for_message(&self, message_id: MessageId) -> Result<Store> {
-        let workspace_id = self
-            .global
-            .get_workspace_id_for_message(message_id)
-            .await?
-            .with_context(|| format!("workspace missing for message {}", message_id.0))?;
-        self.workspace(workspace_id).await
-    }
-
-    pub async fn store_for_subagent_invocation(&self, invocation_id: &str) -> Result<Store> {
-        let workspace_id = self
-            .global
-            .get_workspace_id_for_subagent_invocation(invocation_id)
-            .await?
-            .with_context(|| {
-                format!("workspace missing for subagent invocation {invocation_id}")
-            })?;
-        self.workspace(workspace_id).await
-    }
-
-    pub async fn store_for_merge_queue_entry(&self, entry_id: MergeQueueEntryId) -> Result<Store> {
-        let workspace_id = self
-            .global
-            .get_workspace_id_for_merge_queue_entry(entry_id)
-            .await?
-            .with_context(|| format!("workspace missing for merge queue entry {}", entry_id.0))?;
         self.workspace(workspace_id).await
     }
 
@@ -272,34 +225,6 @@ impl StoreManager {
         let store = Store::open_sqlite(&path, self.config.max_connections).await?;
         store.upsert_workspace(workspace).await?;
         Ok(store)
-    }
-
-    async fn sync_workspace_global_entity_routing_indexes(
-        &self,
-        workspace_id: WorkspaceId,
-        store: &Store,
-    ) -> Result<()> {
-        let artifact_ids = store.list_artifact_ids().await?;
-        self.global
-            .replace_workspace_artifact_index(workspace_id, &artifact_ids)
-            .await?;
-
-        let message_ids = store.list_message_ids().await?;
-        self.global
-            .replace_workspace_message_index(workspace_id, &message_ids)
-            .await?;
-
-        let invocation_ids = store.list_subagent_invocation_ids().await?;
-        self.global
-            .replace_workspace_subagent_invocation_index(workspace_id, &invocation_ids)
-            .await?;
-
-        let merge_queue_entries = store.list_merge_queue_entry_index_records().await?;
-        self.global
-            .replace_workspace_merge_queue_entry_index(workspace_id, &merge_queue_entries)
-            .await?;
-
-        Ok(())
     }
 
     fn workspace_db_path(&self, workspace_id: WorkspaceId) -> PathBuf {
@@ -382,7 +307,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reopening_workspace_store_backfills_global_entity_routes() {
+    async fn reopening_workspace_store_preserves_workspace_owned_records() {
         let temp = tempfile::tempdir().unwrap();
         let manager = StoreManager::open(temp.path()).await.unwrap();
         let workspace = manager
@@ -503,47 +428,31 @@ mod tests {
         store.create_merge_queue_entry(&entry).await.unwrap();
 
         manager.evict_workspace(workspace.id).await;
-        let _store = manager.workspace(workspace.id).await.unwrap();
+        let reopened_store = manager.workspace(workspace.id).await.unwrap();
 
-        let artifact_store = manager.store_for_artifact(artifact.id).await.unwrap();
-        assert!(artifact_store
+        assert!(reopened_store
             .get_artifact(artifact.id)
             .await
             .unwrap()
             .is_some());
 
-        let message_store = manager.store_for_message(message.id).await.unwrap();
-        assert!(message_store
+        assert!(reopened_store
             .get_message(message.id)
             .await
             .unwrap()
             .is_some());
 
-        let invocation_store = manager
-            .store_for_subagent_invocation(&invocation.id)
-            .await
-            .unwrap();
-        assert!(invocation_store
+        assert!(reopened_store
             .get_subagent_invocation(&invocation.id)
             .await
             .unwrap()
             .is_some());
 
-        let entry_store = manager.store_for_merge_queue_entry(entry.id).await.unwrap();
-        assert!(entry_store
+        assert!(reopened_store
             .get_merge_queue_entry(entry.id)
             .await
             .unwrap()
             .is_some());
-
-        let queued = manager
-            .global()
-            .list_queued_merge_queue_entry_routes()
-            .await
-            .unwrap();
-        assert_eq!(queued.len(), 1);
-        assert_eq!(queued[0].entry_id.0, entry.id.0);
-        assert_eq!(queued[0].workspace_id.0, workspace.id.0);
     }
 
     #[tokio::test]

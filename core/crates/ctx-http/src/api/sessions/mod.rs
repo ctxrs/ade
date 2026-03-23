@@ -49,7 +49,7 @@ use tokio::sync::mpsc;
 
 mod subagents;
 pub(super) use subagents::{
-    get_subagent_invocation, list_session_subagent_invocations, list_session_subagents,
+    get_session_subagent_invocation, list_session_subagent_invocations, list_session_subagents,
     mcp_agent_init, mcp_agent_reply, mcp_oracle, mcp_subagent_interrupt, mcp_subagent_list,
     mcp_subagent_wait,
 };
@@ -63,7 +63,7 @@ mod file_completions;
 pub(super) use file_completions::session_file_completions;
 mod messages;
 pub(crate) use messages::ensure_session_turn_for_message;
-pub(super) use messages::{delete_message, post_message};
+pub(super) use messages::{delete_session_message, post_message};
 mod models;
 pub(crate) use models::{
     compose_model_id, deserialize_optional_reasoning_effort, load_provider_model_catalog,

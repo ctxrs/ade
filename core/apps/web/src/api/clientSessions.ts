@@ -244,8 +244,8 @@ export const listSessionSubagentInvocations = (sessionId: string, opts?: { turnI
   return apiAny<SubagentInvocation[]>(`/api/sessions/${sessionId}/subagent_invocations${suffix}`);
 };
 
-export const getSubagentInvocation = (invocationId: string) =>
-  apiAny<SubagentInvocation>(`/api/subagent_invocations/${invocationId}`);
+export const getSubagentInvocation = (sessionId: string, invocationId: string) =>
+  apiAny<SubagentInvocation>(`/api/sessions/${sessionId}/subagent_invocations/${invocationId}`);
 
 export const listWebSessions = () => apiAny<WebSessionInfo[]>("/api/sessions/web");
 
@@ -422,8 +422,8 @@ export const discardEditPlan = (planId: string) =>
     body: JSON.stringify({}),
   });
 
-export const deleteMessage = (messageId: string) =>
-  apiAny(`/api/messages/${messageId}`, { method: "DELETE" });
+export const deleteMessage = (sessionId: string, messageId: string) =>
+  apiAny(`/api/sessions/${sessionId}/messages/${messageId}`, { method: "DELETE" });
 
 export const blobUrl = (blobId: string): string => {
   const token = getDaemonConnection().authToken;
@@ -431,8 +431,12 @@ export const blobUrl = (blobId: string): string => {
   return token ? `${url}?token=${encodeURIComponent(token)}` : url;
 };
 
-export const artifactUrl = (artifactId: string): string => {
+export const artifactUrl = (sessionId: string, artifactId: string): string => {
   const token = getDaemonConnection().authToken;
-  const url = getDaemonHttpUrl(`/api/artifacts/${encodeURIComponent(String(artifactId || ""))}`);
+  const url = getDaemonHttpUrl(
+    `/api/sessions/${encodeURIComponent(String(sessionId || ""))}/artifacts/${encodeURIComponent(
+      String(artifactId || ""),
+    )}`,
+  );
   return token ? `${url}?token=${encodeURIComponent(token)}` : url;
 };

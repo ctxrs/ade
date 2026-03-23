@@ -413,7 +413,7 @@ export function useSessionComposerQueueController(params: Params): Result {
     setQueueActionBusyId(messageId);
     setSendError(null);
     try {
-      await deleteMessage(messageId);
+      await deleteMessage(sessionId, messageId);
       setPendingQueueMessages((prev) =>
         prev.filter((entry) => idToString(entry.message.id) !== messageId),
       );
@@ -439,7 +439,7 @@ export function useSessionComposerQueueController(params: Params): Result {
     setQueueActionBusyId(messageId);
     setSendError(null);
     try {
-      await deleteMessage(messageId);
+      await deleteMessage(sessionId, messageId);
       setPendingQueueMessages((prev) =>
         prev.filter((entry) => idToString(entry.message.id) !== messageId),
       );
@@ -473,7 +473,7 @@ export function useSessionComposerQueueController(params: Params): Result {
       return;
     }
     try {
-      await deleteMessage(messageId);
+      await deleteMessage(sessionId, messageId);
       setPendingQueueMessages((prev) =>
         prev.filter((entry) => idToString(entry.message.id) !== messageId),
       );

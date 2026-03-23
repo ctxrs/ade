@@ -716,18 +716,6 @@ impl Store {
         Ok(Some(invocation))
     }
 
-    pub async fn list_subagent_invocation_ids(&self) -> Result<Vec<String>> {
-        let rows = self
-            .query(r#"SELECT id FROM subagent_invocations ORDER BY created_at ASC"#)
-            .fetch_all(&self.pool)
-            .await?;
-        let mut out = Vec::with_capacity(rows.len());
-        for row in rows {
-            out.push(row.try_get("id")?);
-        }
-        Ok(out)
-    }
-
     pub async fn list_subagent_invocations_for_session(
         &self,
         parent_session_id: SessionId,

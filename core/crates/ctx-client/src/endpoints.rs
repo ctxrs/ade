@@ -424,10 +424,11 @@ impl Client {
 
     pub async fn get_artifact_bytes(
         &self,
+        session_id: SessionId,
         artifact_id: ArtifactId,
         range: Option<(u64, u64)>,
     ) -> Result<Vec<u8>> {
-        let path = format!("/api/artifacts/{}", artifact_id.0);
+        let path = format!("/api/sessions/{}/artifacts/{}", session_id.0, artifact_id.0);
         let url = self.url_for(&path)?;
         let mut req = self.http.request(Method::GET, url);
         if let Some(token) = &self.auth_token {

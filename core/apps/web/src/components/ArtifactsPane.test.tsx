@@ -49,6 +49,7 @@ function extractTransformNumber(transform: string, name: "translate" | "scale", 
 function openImageViewer() {
   render(
     <ArtifactsPane
+      sessionId="session-1"
       artifacts={[
         makeArtifact({
           name: "sample.png",
@@ -88,6 +89,7 @@ describe("ArtifactsPane", () => {
 
     render(
       <ArtifactsPane
+        sessionId="session-1"
         artifacts={[]}
         error="Failed to load artifacts: daemon offline"
         onRetry={onRetry}
@@ -100,13 +102,14 @@ describe("ArtifactsPane", () => {
   });
 
   it("keeps the existing empty state when there is no load error", () => {
-    render(<ArtifactsPane artifacts={[]} />);
+    render(<ArtifactsPane sessionId="session-1" artifacts={[]} />);
     expect(screen.getByText("No artifacts yet.")).toBeInTheDocument();
   });
 
   it("opens the viewer for previewable artifacts", () => {
     render(
       <ArtifactsPane
+        sessionId="session-1"
         artifacts={[
           makeArtifact({
             name: "chart.png",
@@ -125,6 +128,7 @@ describe("ArtifactsPane", () => {
   it("does not open the viewer for unsupported artifacts", () => {
     render(
       <ArtifactsPane
+        sessionId="session-1"
         artifacts={[
           makeArtifact({
             name: "report.csv",
@@ -175,6 +179,7 @@ describe("ArtifactsPane", () => {
 
     render(
       <ArtifactsPane
+        sessionId="session-1"
         artifacts={[
           makeArtifact({
             name: "notes.txt",
@@ -194,6 +199,7 @@ describe("ArtifactsPane", () => {
 
     render(
       <ArtifactsPane
+        sessionId="session-1"
         artifacts={[
           makeArtifact({
             name: "notes.md",
@@ -217,6 +223,7 @@ describe("ArtifactsPane", () => {
 
     render(
       <ArtifactsPane
+        sessionId="session-1"
         artifacts={[
           makeArtifact({
             name: "preview.md",
@@ -237,6 +244,7 @@ describe("ArtifactsPane", () => {
 
     render(
       <ArtifactsPane
+        sessionId="session-1"
         artifacts={[
           makeArtifact({
             name: "report.json",
@@ -258,6 +266,7 @@ describe("ArtifactsPane", () => {
 
     render(
       <ArtifactsPane
+        sessionId="session-1"
         artifacts={[
           makeArtifact({
             name: "broken.txt",

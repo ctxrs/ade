@@ -83,9 +83,9 @@ pub(crate) async fn emit_event(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn persist_assistant_message(
-    state: &AppState,
+    _state: &AppState,
     store: &ctx_store::Store,
-    workspace_id: ctx_core::ids::WorkspaceId,
+    _workspace_id: ctx_core::ids::WorkspaceId,
     message_id: ctx_core::ids::MessageId,
     order_seq: i64,
     session_id: ctx_core::ids::SessionId,
@@ -127,13 +127,7 @@ pub(crate) async fn persist_assistant_message(
             continue;
         }
         match store.insert_message(msg.clone()).await {
-            Ok(saved) => {
-                state
-                    .global_store()
-                    .upsert_workspace_message_index(saved.id, workspace_id)
-                    .await?;
-                return Ok(saved);
-            }
+            Ok(saved) => return Ok(saved),
             Err(err) => {
                 if !is_transient_store_error(&err) || attempt >= STORE_WRITE_RETRY_LIMIT {
                     tracing::warn!("assistant message insert failed: {err:#}");

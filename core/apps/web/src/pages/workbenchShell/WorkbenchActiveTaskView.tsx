@@ -185,6 +185,7 @@ export function WorkbenchActiveTaskView({
             ) : showArtifactsPane ? (
               <div className="wb-right-pane">
                 <ArtifactsPane
+                  sessionId={activeSessionId ?? ""}
                   artifacts={artifacts}
                   loading={artifactsLoading}
                   error={artifactsError}

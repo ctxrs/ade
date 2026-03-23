@@ -389,20 +389,7 @@ async fn insert_system_message(
         created_at: now,
     };
     match store.insert_message(msg).await {
-        Ok(saved) => {
-            if let Err(err) = state
-                .global_store()
-                .upsert_workspace_message_index(saved.id, session.workspace_id)
-                .await
-            {
-                tracing::warn!(
-                    session_id = %session.id.0,
-                    message_id = %saved.id.0,
-                    "provider restart failed to upsert message route: {err:#}"
-                );
-            }
-            Some(saved.id)
-        }
+        Ok(saved) => Some(saved.id),
         Err(err) => {
             tracing::warn!(
                 session_id = %session.id.0,

@@ -73,12 +73,14 @@ pub(crate) async fn list_session_subagent_invocations(
     Ok(Json(invocations))
 }
 
-pub(crate) async fn get_subagent_invocation(
+pub(crate) async fn get_session_subagent_invocation(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
+    Path((session_id, id)): Path<(String, String)>,
 ) -> Result<Json<SubagentInvocation>, StatusCode> {
+    let session_id =
+        SessionId(uuid::Uuid::parse_str(&session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let store = state
-        .store_for_subagent_invocation(&id)
+        .store_for_session(session_id)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let invocation = store
@@ -86,6 +88,9 @@ pub(crate) async fn get_subagent_invocation(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    if invocation.parent_session_id != session_id {
+        return Err(StatusCode::NOT_FOUND);
+    }
     Ok(Json(invocation))
 }
 
@@ -883,19 +888,6 @@ async fn enqueue_subagent_prompt(
             }),
         )
     })?;
-    state
-        .global_store()
-        .upsert_workspace_message_index(saved.id, session.workspace_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-
     let event = store
         .append_session_event(
             session.id,

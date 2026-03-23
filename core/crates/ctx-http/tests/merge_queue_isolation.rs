@@ -104,10 +104,14 @@ async fn git_success(root: &Path, args: &[&str]) -> bool {
     output.status.success()
 }
 
-async fn wait_for_entry(state: &Arc<AppState>, entry_id: MergeQueueEntryId) -> MergeQueueEntry {
+async fn wait_for_entry(
+    state: &Arc<AppState>,
+    workspace_id: ctx_core::ids::WorkspaceId,
+    entry_id: MergeQueueEntryId,
+) -> MergeQueueEntry {
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
-        let entry = merge_queue::get_merge_queue_entry(state, entry_id)
+        let entry = merge_queue::get_workspace_merge_queue_entry(state, workspace_id, entry_id)
             .await
             .unwrap();
         match entry.status {
@@ -206,7 +210,7 @@ async fn merge_queue_accepts_unrebased_changes() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let entry = wait_for_entry(&state, entry.id).await;
+    let entry = wait_for_entry(&state, workspace.id, entry.id).await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Passed);
     let merge_queue_repo = repo.path().join(".ctx/merge-queue/repo");
     let mq_head = git_output(&merge_queue_repo, &["rev-parse", &target_branch]).await;
@@ -296,7 +300,7 @@ async fn merge_queue_conflict_message_and_cleanup() {
         .into_iter()
         .next()
         .expect("expected merge queue entry");
-    let entry = wait_for_entry(&state, entry.id).await;
+    let entry = wait_for_entry(&state, workspace.id, entry.id).await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Conflict);
     assert_eq!(
         entry.error_message.as_deref(),
@@ -398,7 +402,12 @@ async fn merge_queue_verify_failure_keeps_target_branch_and_records_commit() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    let entry = wait_for_entry(&state, latest_entry(&store, workspace.id).await.id).await;
+    let entry = wait_for_entry(
+        &state,
+        workspace.id,
+        latest_entry(&store, workspace.id).await.id,
+    )
+    .await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Failed);
     assert!(entry
         .error_message
@@ -534,7 +543,12 @@ async fn merge_queue_push_failure_does_not_advance_target_branch() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    let entry = wait_for_entry(&state, latest_entry(&store, workspace.id).await.id).await;
+    let entry = wait_for_entry(
+        &state,
+        workspace.id,
+        latest_entry(&store, workspace.id).await.id,
+    )
+    .await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Failed);
     assert!(entry
         .error_message
@@ -649,7 +663,7 @@ async fn merge_queue_push_on_success_updates_remote_after_success() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    let entry = wait_for_entry(&state, entry.id).await;
+    let entry = wait_for_entry(&state, workspace.id, entry.id).await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Passed);
     let result_commit_sha = entry
         .result_commit_sha
@@ -759,7 +773,12 @@ async fn merge_queue_push_on_success_does_not_push_if_target_branch_advanced() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    let entry = wait_for_entry(&state, latest_entry(&store, workspace.id).await.id).await;
+    let entry = wait_for_entry(
+        &state,
+        workspace.id,
+        latest_entry(&store, workspace.id).await.id,
+    )
+    .await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Failed);
     assert!(entry
         .error_message
@@ -852,7 +871,7 @@ async fn merge_queue_isolation_and_canonical_sync() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let entry = wait_for_entry(&state, entry.id).await;
+    let entry = wait_for_entry(&state, workspace.id, entry.id).await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Passed);
 
     let canonical_head = git_output(repo.path(), &["rev-parse", "HEAD"]).await;
@@ -919,7 +938,7 @@ async fn merge_queue_isolation_and_canonical_sync() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let entry = wait_for_entry(&state, entry.id).await;
+    let entry = wait_for_entry(&state, workspace.id, entry.id).await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Passed);
     let canonical_head = git_output(repo.path(), &["rev-parse", "HEAD"]).await;
     let expected = entry.result_commit_sha.clone().unwrap();
@@ -969,7 +988,7 @@ async fn merge_queue_isolation_and_canonical_sync() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let entry = wait_for_entry(&state, entry.id).await;
+    let entry = wait_for_entry(&state, workspace.id, entry.id).await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Passed);
 
     let canonical_dirty = git_status_porcelain(repo.path()).await.unwrap();
@@ -1044,7 +1063,7 @@ async fn merge_queue_submit_uses_worktree_root() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let entry = wait_for_entry(&state, entry.id).await;
+    let entry = wait_for_entry(&state, workspace.id, entry.id).await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Passed);
     assert_eq!(
         entry.head_commit_sha.as_deref(),

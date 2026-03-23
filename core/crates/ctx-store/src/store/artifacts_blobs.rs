@@ -146,19 +146,6 @@ impl Store {
         Ok(row.and_then(|r| build_artifact_from_row(r).ok()))
     }
 
-    pub async fn list_artifact_ids(&self) -> Result<Vec<ArtifactId>> {
-        let rows = self
-            .query(r#"SELECT id FROM artifacts ORDER BY created_at ASC, position ASC"#)
-            .fetch_all(&self.pool)
-            .await?;
-        let mut out = Vec::with_capacity(rows.len());
-        for row in rows {
-            let id: String = row.try_get("id")?;
-            out.push(ArtifactId(uuid::Uuid::parse_str(&id)?));
-        }
-        Ok(out)
-    }
-
     pub async fn replace_session_artifacts(
         &self,
         session_id: SessionId,

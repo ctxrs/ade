@@ -95,14 +95,16 @@ async function copyArtifactImage(artifact: Artifact, url: string) {
 }
 
 function ArtifactInlineTextPreview({
+  sessionId,
   artifact,
   previewKind,
 }: {
+  sessionId: string;
   artifact: Artifact;
   previewKind: Extract<ArtifactPreviewKind, "markdown" | "text">;
 }) {
   const artifactId = idToString(artifact.id);
-  const url = artifactUrl(artifactId);
+  const url = artifactUrl(sessionId, artifactId);
   const missing = Boolean(artifact.missing);
   const [textPreview, setTextPreview] = useState<TextPreviewState>({
     status: "idle",
@@ -156,9 +158,11 @@ function ArtifactInlineTextPreview({
 }
 
 function ArtifactCard({
+  sessionId,
   artifact,
   onOpen,
 }: {
+  sessionId: string;
   artifact: Artifact;
   onOpen: (next: Artifact) => void;
 }) {
@@ -166,7 +170,7 @@ function ArtifactCard({
   const name = displayName(artifact);
   const missing = Boolean(artifact.missing);
   const artifactId = idToString(artifact.id);
-  const url = artifactUrl(artifactId);
+  const url = artifactUrl(sessionId, artifactId);
   const mimeLabel = artifact.mime_type || "application/octet-stream";
   const meta = `${mimeLabel} · ${formatBytes(artifact.bytes)}`;
   const title = artifact.absolute_path || name;
@@ -211,7 +215,13 @@ function ArtifactCard({
   } else if (isImage) {
     preview = <img className="wb-artifact-image" src={url} alt={name} />;
   } else if (isInlineTextPreview) {
-    preview = <ArtifactInlineTextPreview artifact={artifact} previewKind={previewKind} />;
+    preview = (
+      <ArtifactInlineTextPreview
+        sessionId={sessionId}
+        artifact={artifact}
+        previewKind={previewKind}
+      />
+    );
   } else {
     preview = <div className="wb-artifact-file">{name}</div>;
   }
@@ -261,9 +271,11 @@ function ArtifactCard({
 }
 
 function ArtifactViewer({
+  sessionId,
   artifact,
   onClose,
 }: {
+  sessionId: string;
   artifact: Artifact;
   onClose: () => void;
 }) {
@@ -274,7 +286,7 @@ function ArtifactViewer({
   const isTextPreview = previewKind === "markdown" || previewKind === "text";
   const name = displayName(artifact);
   const artifactId = idToString(artifact.id);
-  const url = artifactUrl(artifactId);
+  const url = artifactUrl(sessionId, artifactId);
   const meta = `${artifact.mime_type || "application/octet-stream"} · ${formatBytes(artifact.bytes)}`;
   const missing = Boolean(artifact.missing);
   const [copying, setCopying] = useState(false);
@@ -633,11 +645,13 @@ function ArtifactViewer({
 }
 
 export function ArtifactsPane({
+  sessionId,
   artifacts,
   loading,
   error,
   onRetry,
 }: {
+  sessionId: string;
   artifacts: Artifact[];
   loading?: boolean;
   error?: string | null;
@@ -648,9 +662,16 @@ export function ArtifactsPane({
     return artifacts.map((artifact) => {
       const artifactId = idToString(artifact.id);
       const key = artifactId || artifact.absolute_path || artifact.name || "artifact";
-      return <ArtifactCard key={key} artifact={artifact} onOpen={setViewerArtifact} />;
+      return (
+        <ArtifactCard
+          key={key}
+          sessionId={sessionId}
+          artifact={artifact}
+          onOpen={setViewerArtifact}
+        />
+      );
     });
-  }, [artifacts]);
+  }, [artifacts, sessionId]);
 
   return (
     <div className="wb-artifacts">
@@ -679,7 +700,11 @@ export function ArtifactsPane({
         )}
       </div>
       {viewerArtifact ? (
-        <ArtifactViewer artifact={viewerArtifact} onClose={() => setViewerArtifact(null)} />
+        <ArtifactViewer
+          sessionId={sessionId}
+          artifact={viewerArtifact}
+          onClose={() => setViewerArtifact(null)}
+        />
       ) : null}
     </div>
   );

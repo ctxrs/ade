@@ -584,19 +584,6 @@ impl Store {
         }))
     }
 
-    pub async fn list_message_ids(&self) -> Result<Vec<MessageId>> {
-        let rows = self
-            .query(r#"SELECT id FROM messages ORDER BY created_at ASC"#)
-            .fetch_all(&self.pool)
-            .await?;
-        let mut out = Vec::with_capacity(rows.len());
-        for row in rows {
-            let id: String = row.try_get("id")?;
-            out.push(MessageId(uuid::Uuid::parse_str(&id)?));
-        }
-        Ok(out)
-    }
-
     pub async fn delete_message(&self, id: MessageId) -> Result<()> {
         self.query(r#"DELETE FROM messages WHERE id = ?"#)
             .bind(id.0.to_string())

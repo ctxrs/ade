@@ -270,7 +270,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/telemetry/client", post(post_client_telemetry))
         .route("/api/blobs", post(upload_blob))
         .route("/api/blobs/:id", get(get_blob))
-        .route("/api/artifacts/:id", get(get_artifact))
+        .route(
+            "/api/sessions/:id/artifacts/:artifact_id",
+            get(get_session_artifact),
+        )
         .route("/api/logs/open", post(open_logs_folder))
         .route("/api/desktop/log", post(append_desktop_log))
         .route("/api/updates/check", get(check_updates))
@@ -540,15 +543,15 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(list_merge_queue_entries).post(submit_merge_queue_entry),
         )
         .route(
-            "/api/merge-queue/entries/:id/logs",
+            "/api/workspaces/:id/merge_queue/entries/:entry_id/logs",
             get(get_merge_queue_entry_logs),
         )
         .route(
-            "/api/merge-queue/entries/:id/cancel",
+            "/api/workspaces/:id/merge_queue/entries/:entry_id/cancel",
             post(cancel_merge_queue_entry),
         )
         .route(
-            "/api/merge-queue/entries/:id/retry",
+            "/api/workspaces/:id/merge_queue/entries/:entry_id/retry",
             post(retry_merge_queue_entry),
         )
         .route(
@@ -794,8 +797,8 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(list_session_subagent_invocations),
         )
         .route(
-            "/api/subagent_invocations/:id",
-            get(get_subagent_invocation),
+            "/api/sessions/:id/subagent_invocations/:invocation_id",
+            get(get_session_subagent_invocation),
         )
         .route(
             "/api/sessions/:id/artifacts",
@@ -830,7 +833,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/sessions/:id/completions/files",
             get(session_file_completions),
         )
-        .route("/api/messages/:id", delete(delete_message))
+        .route(
+            "/api/sessions/:id/messages/:message_id",
+            delete(delete_session_message),
+        )
         .route("/api/sessions/:id/cancel", post(cancel_session))
         .route("/api/sessions/:id/interrupt", post(interrupt_session))
         .route("/api/sessions/:id/authenticate", post(authenticate_session))

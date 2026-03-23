@@ -234,18 +234,6 @@ pub(crate) async fn dev_seed_session_transcript(
                     }),
                 )
             })?;
-        state
-            .global_store()
-            .upsert_workspace_message_index(user_message.id, session.workspace_id)
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: "failed to index user message".to_string(),
-                    }),
-                )
-            })?;
         seeded_messages += 1;
 
         let user_event = store
@@ -302,18 +290,6 @@ pub(crate) async fn dev_seed_session_transcript(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(ApiErrorResp {
                         error: "failed to insert assistant message".to_string(),
-                    }),
-                )
-            })?;
-        state
-            .global_store()
-            .upsert_workspace_message_index(assistant_message.id, session.workspace_id)
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: "failed to index assistant message".to_string(),
                     }),
                 )
             })?;

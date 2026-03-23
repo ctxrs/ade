@@ -186,13 +186,15 @@ pub(crate) async fn ensure_session_turn_for_message(
     Ok(())
 }
 
-pub(crate) async fn delete_message(
+pub(crate) async fn delete_session_message(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
+    Path((session_id, id)): Path<(String, String)>,
 ) -> Result<StatusCode, StatusCode> {
+    let session_id =
+        SessionId(uuid::Uuid::parse_str(&session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let msg_id = MessageId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let store = state
-        .store_for_message(msg_id)
+        .store_for_session(session_id)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let msg = store
@@ -200,17 +202,15 @@ pub(crate) async fn delete_message(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    if msg.session_id != session_id {
+        return Err(StatusCode::NOT_FOUND);
+    }
 
     if !matches!(msg.delivery, MessageDelivery::Queued) || msg.delivered_at.is_some() {
         return Err(StatusCode::BAD_REQUEST);
     }
     store
         .delete_message(msg_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    state
-        .global_store()
-        .delete_workspace_message_index(msg_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if let Some(turn_id) = msg.turn_id {
@@ -345,11 +345,6 @@ pub(crate) async fn post_message(
                 && attachments_match(&state, &existing.attachments, &attachments).await?;
             if matches {
                 ensure_session_turn_for_message(&store, session_id, turn_id, &existing).await?;
-                state
-                    .global_store()
-                    .upsert_workspace_message_index(existing.id, session.workspace_id)
-                    .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
                 return Ok(Json(existing));
             }
             return Err(StatusCode::CONFLICT);
@@ -416,12 +411,6 @@ pub(crate) async fn post_message(
         }
         Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
-    state
-        .global_store()
-        .upsert_workspace_message_index(saved.id, session.workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
     let event = store
         .append_session_event(
             session_id,

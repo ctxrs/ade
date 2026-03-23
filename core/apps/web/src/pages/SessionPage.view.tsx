@@ -723,7 +723,7 @@ export function SessionView({
     setQueueActionBusyId(messageId);
     setSendError(null);
     try {
-      await deleteMessage(messageId);
+      await deleteMessage(id, messageId);
       supervisor.removeOptimisticQueuedMessage(id, messageId);
     } catch (e: unknown) {
       if (!shouldKeepQueueRemovalOnError(e)) {
@@ -747,7 +747,7 @@ export function SessionView({
     setQueueActionBusyId(mid);
     setSendError(null);
     try {
-      await deleteMessage(mid);
+      await deleteMessage(id, mid);
       supervisor.removeOptimisticQueuedMessage(id, mid);
     } catch (e: unknown) {
       if (!shouldKeepQueueRemovalOnError(e)) {
@@ -778,7 +778,7 @@ export function SessionView({
       return;
     }
     try {
-      await deleteMessage(mid);
+      await deleteMessage(id, mid);
       supervisor.removeOptimisticQueuedMessage(id, mid);
     } catch (e: unknown) {
       if (!shouldKeepQueueRemovalOnError(e)) {

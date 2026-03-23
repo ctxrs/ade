@@ -66,7 +66,7 @@ const queueMessage = async (page: Page, text: string) => {
 };
 
 const delayDeleteMessage = async (page: Page, delayMs: number) => {
-  await page.route("**/api/messages/*", async (route) => {
+  await page.route("**/api/sessions/*/messages/*", async (route) => {
     const req = route.request();
     if (req.method() !== "DELETE") return route.continue();
     await new Promise((resolve) => setTimeout(resolve, delayMs));

@@ -437,14 +437,18 @@ export const submitMergeQueueEntry = (payload: {
     body: JSON.stringify(payload),
   });
 
-export const cancelMergeQueueEntry = (entryId: string) =>
-  apiAny<MergeQueueEntry>(`/api/merge-queue/entries/${entryId}/cancel`, { method: "POST" });
+export const cancelMergeQueueEntry = (workspaceId: string, entryId: string) =>
+  apiAny<MergeQueueEntry>(`/api/workspaces/${workspaceId}/merge_queue/entries/${entryId}/cancel`, {
+    method: "POST",
+  });
 
-export const retryMergeQueueEntry = (entryId: string) =>
-  apiAny<MergeQueueEntry>(`/api/merge-queue/entries/${entryId}/retry`, { method: "POST" });
+export const retryMergeQueueEntry = (workspaceId: string, entryId: string) =>
+  apiAny<MergeQueueEntry>(`/api/workspaces/${workspaceId}/merge_queue/entries/${entryId}/retry`, {
+    method: "POST",
+  });
 
-export const getMergeQueueEntryLogs = async (entryId: string): Promise<string> => {
-  const resp = await daemonFetchRaw(`/api/merge-queue/entries/${entryId}/logs`);
+export const getMergeQueueEntryLogs = async (workspaceId: string, entryId: string): Promise<string> => {
+  const resp = await daemonFetchRaw(`/api/workspaces/${workspaceId}/merge_queue/entries/${entryId}/logs`);
   if (resp.status >= 400) {
     const msg = String(resp.body || "").trim();
     throw new Error(msg || `Failed to download logs (${resp.status}).`);

@@ -84,7 +84,7 @@ class ArtifactPrefetcher {
       if (!size || size > remaining) continue;
       remaining -= size;
       this.reservedBytes += size;
-      const url = artifactUrl(artifactId);
+      const url = artifactUrl(sessionId, artifactId);
       void this.fetchArtifact(artifactId, url, size, sessionId, run);
     }
   }

@@ -75,8 +75,16 @@ pub(super) async fn list_merge_queue_entries(
 
 pub(super) async fn cancel_merge_queue_entry(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
+    Path((workspace_id, id)): Path<(String, String)>,
 ) -> Result<Json<MergeQueueEntry>, (StatusCode, Json<ApiErrorResp>)> {
+    let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&workspace_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
     let entry_id = MergeQueueEntryId(uuid::Uuid::parse_str(&id).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -85,7 +93,7 @@ pub(super) async fn cancel_merge_queue_entry(
             }),
         )
     })?);
-    let entry = merge_queue::cancel_merge_queue_entry(&state, entry_id)
+    let entry = merge_queue::cancel_merge_queue_entry(&state, workspace_id, entry_id)
         .await
         .map_err(|err| {
             (
@@ -100,8 +108,16 @@ pub(super) async fn cancel_merge_queue_entry(
 
 pub(super) async fn retry_merge_queue_entry(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
+    Path((workspace_id, id)): Path<(String, String)>,
 ) -> Result<Json<MergeQueueEntry>, (StatusCode, Json<ApiErrorResp>)> {
+    let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&workspace_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
     let entry_id = MergeQueueEntryId(uuid::Uuid::parse_str(&id).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -110,7 +126,7 @@ pub(super) async fn retry_merge_queue_entry(
             }),
         )
     })?);
-    let entry = merge_queue::retry_merge_queue_entry(&state, entry_id)
+    let entry = merge_queue::retry_merge_queue_entry(&state, workspace_id, entry_id)
         .await
         .map_err(|err| {
             (
@@ -125,15 +141,17 @@ pub(super) async fn retry_merge_queue_entry(
 
 pub(super) async fn get_merge_queue_entry_logs(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
+    Path((workspace_id, id)): Path<(String, String)>,
 ) -> Result<Response, StatusCode> {
+    let workspace_id =
+        WorkspaceId(uuid::Uuid::parse_str(&workspace_id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let entry_id =
         MergeQueueEntryId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let entry = merge_queue::get_merge_queue_entry(&state, entry_id)
+    merge_queue::get_workspace_merge_queue_entry(&state, workspace_id, entry_id)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let store = state
-        .store_for_workspace(entry.workspace_id)
+        .store_for_workspace(workspace_id)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let run = store

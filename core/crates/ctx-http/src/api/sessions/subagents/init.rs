@@ -358,18 +358,6 @@ pub(crate) async fn mcp_agent_init(
                 }),
             )
         })?;
-    state
-        .global_store()
-        .upsert_workspace_subagent_invocation_index(&invocation_id, parent.workspace_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
     emit_subagent_invocation_notice(
         &state,
         parent.id,

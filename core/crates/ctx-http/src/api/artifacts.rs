@@ -216,21 +216,32 @@ fn parse_range_header(range: Option<&HeaderValue>, size: u64) -> Option<(u64, u6
     Some((start, end))
 }
 
-pub(super) async fn get_artifact(
+pub(super) async fn get_session_artifact(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
+    Path((session_id, artifact_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, StatusCode> {
-    let artifact_id = ArtifactId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let session_id =
+        SessionId(uuid::Uuid::parse_str(&session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let artifact_id =
+        ArtifactId(uuid::Uuid::parse_str(&artifact_id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let store = state
-        .store_for_artifact(artifact_id)
+        .store_for_session(session_id)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
+    let session = store
+        .get_session(session_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
     let artifact = store
         .get_artifact(artifact_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    if artifact.session_id != session.id {
+        return Err(StatusCode::NOT_FOUND);
+    }
 
     let path = PathBuf::from(&artifact.absolute_path);
     let meta = tokio::fs::metadata(&path)
@@ -454,27 +465,6 @@ pub(super) async fn set_session_artifacts(
                 }),
             )
         })?;
-    let artifact_ids = store.list_artifact_ids().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    state
-        .global_store()
-        .replace_workspace_artifact_index(session.workspace_id, &artifact_ids)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-
     let event = store
         .append_session_event(
             session.id,

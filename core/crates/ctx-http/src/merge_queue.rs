@@ -61,42 +61,25 @@ fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<dyn VcsDriver> {
     vcs::driver_for_kind(worktree.vcs_kind.clone())
 }
 
-async fn upsert_merge_queue_entry_route(state: &AppState, entry: &MergeQueueEntry) -> Result<()> {
-    state
-        .global_store()
-        .upsert_workspace_merge_queue_entry_index(
-            entry.id,
-            entry.workspace_id,
-            &entry.status,
-            entry.created_at,
-        )
-        .await
-}
-
-pub async fn get_merge_queue_entry(
+pub async fn get_workspace_merge_queue_entry(
     state: &AppState,
+    workspace_id: WorkspaceId,
     entry_id: MergeQueueEntryId,
 ) -> Result<MergeQueueEntry> {
-    let store = state.store_for_merge_queue_entry(entry_id).await?;
+    let store = state.store_for_workspace(workspace_id).await?;
     store
         .get_merge_queue_entry(entry_id)
         .await?
+        .filter(|entry| entry.workspace_id == workspace_id)
         .ok_or_else(|| anyhow::anyhow!("merge queue entry not found"))
 }
 
 async fn list_queued_entries(state: &AppState) -> Result<Vec<MergeQueueEntry>> {
     let mut out = Vec::new();
-    let routes = state
-        .global_store()
-        .list_queued_merge_queue_entry_routes()
-        .await?;
-    for route in routes {
-        let store = state.store_for_workspace(route.workspace_id).await?;
-        if let Some(entry) = store.get_merge_queue_entry(route.entry_id).await? {
-            if matches!(entry.status, MergeQueueEntryStatus::Queued) {
-                out.push(entry);
-            }
-        }
+    let workspaces = state.global_store().list_workspaces().await?;
+    for workspace in workspaces {
+        let store = state.store_for_workspace(workspace.id).await?;
+        out.extend(store.list_queued_merge_queue_entries().await?);
     }
     out.sort_by_key(|entry| entry.created_at);
     Ok(out)
@@ -232,25 +215,24 @@ pub async fn submit_merge_queue_entry(
         updated_at: now,
     };
     workspace_store.create_merge_queue_entry(&entry).await?;
-    upsert_merge_queue_entry_route(state, &entry).await?;
     state.transport.merge_queue_notify.notify_one();
-    let entry = wait_for_merge_queue_completion(state, entry.id).await?;
+    let entry = wait_for_merge_queue_completion(state, entry.workspace_id, entry.id).await?;
     ensure_merge_queue_success(&entry)?;
     Ok(entry)
 }
 
 pub async fn cancel_merge_queue_entry(
     state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
     entry_id: MergeQueueEntryId,
 ) -> Result<MergeQueueEntry> {
-    let mut entry = get_merge_queue_entry(state, entry_id).await?;
-    let store = state.store_for_workspace(entry.workspace_id).await?;
+    let mut entry = get_workspace_merge_queue_entry(state, workspace_id, entry_id).await?;
+    let store = state.store_for_workspace(workspace_id).await?;
     match entry.status {
         MergeQueueEntryStatus::Queued => {
             entry.status = MergeQueueEntryStatus::Cancelled;
             entry.updated_at = Utc::now();
             store.update_merge_queue_entry(&entry).await?;
-            upsert_merge_queue_entry_route(state, &entry).await?;
             state.transport.merge_queue_notify.notify_waiters();
             Ok(entry)
         }
@@ -263,10 +245,11 @@ pub async fn cancel_merge_queue_entry(
 
 pub async fn retry_merge_queue_entry(
     state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
     entry_id: MergeQueueEntryId,
 ) -> Result<MergeQueueEntry> {
-    let mut entry = get_merge_queue_entry(state, entry_id).await?;
-    let store = state.store_for_workspace(entry.workspace_id).await?;
+    let mut entry = get_workspace_merge_queue_entry(state, workspace_id, entry_id).await?;
+    let store = state.store_for_workspace(workspace_id).await?;
     match entry.status {
         MergeQueueEntryStatus::Failed | MergeQueueEntryStatus::Conflict => {
             entry.status = MergeQueueEntryStatus::Queued;
@@ -274,7 +257,6 @@ pub async fn retry_merge_queue_entry(
             entry.result_commit_sha = None;
             entry.updated_at = Utc::now();
             store.update_merge_queue_entry(&entry).await?;
-            upsert_merge_queue_entry_route(state, &entry).await?;
             state.transport.merge_queue_notify.notify_one();
             state.transport.merge_queue_notify.notify_waiters();
             Ok(entry)
@@ -322,7 +304,6 @@ async fn run_next_entry(state: &Arc<AppState>) -> Result<bool> {
         }
         entry.status = MergeQueueEntryStatus::Running;
         entry.updated_at = now;
-        upsert_merge_queue_entry_route(state, &entry).await?;
         run_entry(state, &workspace, entry, &cfg).await?;
         return Ok(true);
     }
@@ -371,7 +352,6 @@ async fn run_entry(
             run.result_commit_sha = Some(commit_sha.clone());
             run.finished_at = Some(now);
             store.update_merge_queue_entry(&entry).await?;
-            upsert_merge_queue_entry_route(state, &entry).await?;
             store.update_merge_queue_run(&run).await?;
             state.transport.merge_queue_notify.notify_waiters();
             if let Err(err) =
@@ -388,7 +368,6 @@ async fn run_entry(
             run.error_message = Some(message);
             run.finished_at = Some(now);
             store.update_merge_queue_entry(&entry).await?;
-            upsert_merge_queue_entry_route(state, &entry).await?;
             store.update_merge_queue_run(&run).await?;
             state.transport.merge_queue_notify.notify_waiters();
         }
@@ -407,7 +386,6 @@ async fn run_entry(
             run.result_commit_sha = result_commit_sha;
             run.finished_at = Some(now);
             store.update_merge_queue_entry(&entry).await?;
-            upsert_merge_queue_entry_route(state, &entry).await?;
             store.update_merge_queue_run(&run).await?;
             state.transport.merge_queue_notify.notify_waiters();
         }
@@ -418,10 +396,10 @@ async fn run_entry(
 
 async fn wait_for_merge_queue_completion(
     state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
     entry_id: MergeQueueEntryId,
 ) -> Result<MergeQueueEntry> {
-    let entry = get_merge_queue_entry(state, entry_id).await?;
-    let store = state.store_for_workspace(entry.workspace_id).await?;
+    let store = state.store_for_workspace(workspace_id).await?;
     let notify = state.transport.merge_queue_notify.clone();
     loop {
         let entry = store
@@ -651,7 +629,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_queued_entries_and_entry_lookup_route_via_global_index() {
+    async fn list_queued_entries_and_entry_lookup_are_workspace_scoped() {
         let (_data_dir, state) = setup_state().await;
         let workspace_a = state
             .global_store()
@@ -726,19 +704,10 @@ mod tests {
         store_b.create_merge_queue_entry(&passed_b).await.unwrap();
         store_b.create_merge_queue_entry(&queued_b).await.unwrap();
 
-        upsert_merge_queue_entry_route(state.as_ref(), &queued_a)
-            .await
-            .unwrap();
-        upsert_merge_queue_entry_route(state.as_ref(), &passed_b)
-            .await
-            .unwrap();
-        upsert_merge_queue_entry_route(state.as_ref(), &queued_b)
-            .await
-            .unwrap();
-
-        let looked_up = get_merge_queue_entry(state.as_ref(), queued_b.id)
-            .await
-            .unwrap();
+        let looked_up =
+            get_workspace_merge_queue_entry(state.as_ref(), workspace_b.id, queued_b.id)
+                .await
+                .unwrap();
         assert_eq!(looked_up.id.0, queued_b.id.0);
         assert_eq!(looked_up.workspace_id.0, workspace_b.id.0);
 

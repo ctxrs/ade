@@ -15,7 +15,6 @@ use uuid::Uuid;
 mod common;
 
 struct SessionFixture {
-    workspace_id: ctx_core::ids::WorkspaceId,
     session_id: SessionId,
 }
 
@@ -110,13 +109,12 @@ async fn create_workspace_session(
         .unwrap();
 
     SessionFixture {
-        workspace_id: workspace.id,
         session_id: session.id,
     }
 }
 
 #[tokio::test]
-async fn artifact_route_uses_global_routing_index() {
+async fn artifact_route_is_session_scoped() {
     let (_data_dir, state, server) = setup_state().await;
     let repo_a = common::init_git_repo(&[("README.md", "a")]).await;
     let repo_b = common::init_git_repo(&[("README.md", "b")]).await;
@@ -147,18 +145,11 @@ async fn artifact_route_uses_global_routing_index() {
     let artifact_id = artifacts[0]["id"].as_str().unwrap();
     let artifact_id = ArtifactId(Uuid::parse_str(artifact_id).unwrap());
 
-    let routed_workspace = state
-        .global_store()
-        .get_workspace_id_for_artifact(artifact_id)
-        .await
-        .unwrap();
-    assert_eq!(routed_workspace, Some(workspace_b.workspace_id));
-
     let resp = server
         .client
         .get(format!(
-            "{}/api/artifacts/{}",
-            server.base_url, artifact_id.0
+            "{}/api/sessions/{}/artifacts/{}",
+            server.base_url, workspace_b.session_id.0, artifact_id.0
         ))
         .send()
         .await
@@ -168,7 +159,7 @@ async fn artifact_route_uses_global_routing_index() {
 }
 
 #[tokio::test]
-async fn message_delete_route_uses_global_routing_index() {
+async fn message_delete_route_is_session_scoped() {
     let (_data_dir, state, server) = setup_state().await;
     let repo_a = common::init_git_repo(&[("README.md", "a")]).await;
     let repo_b = common::init_git_repo(&[("README.md", "b")]).await;
@@ -201,43 +192,25 @@ async fn message_delete_route_uses_global_routing_index() {
         })
         .await
         .unwrap();
-    state
-        .global_store()
-        .upsert_workspace_message_index(message.id, workspace_b.workspace_id)
-        .await
-        .unwrap();
     let message_id = message.id;
-
-    let routed_workspace = state
-        .global_store()
-        .get_workspace_id_for_message(message_id)
-        .await
-        .unwrap();
-    assert_eq!(routed_workspace, Some(workspace_b.workspace_id));
-    let routed_store = state.store_for_message(message_id).await.unwrap();
-    let routed_message = routed_store.get_message(message_id).await.unwrap().unwrap();
-    assert!(matches!(routed_message.delivery, MessageDelivery::Queued));
-    assert!(routed_message.delivered_at.is_none());
 
     let resp = server
         .client
-        .delete(format!("{}/api/messages/{}", server.base_url, message_id.0))
+        .delete(format!(
+            "{}/api/sessions/{}/messages/{}",
+            server.base_url, workspace_b.session_id.0, message_id.0
+        ))
         .send()
         .await
         .unwrap();
     let status = resp.status();
     let body = resp.text().await.unwrap();
     assert_eq!(status, StatusCode::NO_CONTENT, "unexpected body: {body}");
-    assert!(state
-        .global_store()
-        .get_workspace_id_for_message(message_id)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(store.get_message(message_id).await.unwrap().is_none());
 }
 
 #[tokio::test]
-async fn subagent_invocation_route_uses_global_routing_index() {
+async fn subagent_invocation_route_is_session_scoped() {
     let (_data_dir, state, server) = setup_state().await;
     let repo_a = common::init_git_repo(&[("README.md", "a")]).await;
     let repo_b = common::init_git_repo(&[("README.md", "b")]).await;
@@ -278,18 +251,11 @@ async fn subagent_invocation_route_uses_global_routing_index() {
     let invocations: serde_json::Value = resp.json().await.unwrap();
     let invocation_id = invocations[0]["id"].as_str().unwrap().to_string();
 
-    let routed_workspace = state
-        .global_store()
-        .get_workspace_id_for_subagent_invocation(&invocation_id)
-        .await
-        .unwrap();
-    assert_eq!(routed_workspace, Some(workspace_b.workspace_id));
-
     let resp = server
         .client
         .get(format!(
-            "{}/api/subagent_invocations/{}",
-            server.base_url, invocation_id
+            "{}/api/sessions/{}/subagent_invocations/{}",
+            server.base_url, workspace_b.session_id.0, invocation_id
         ))
         .send()
         .await
