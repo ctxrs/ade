@@ -1,5 +1,4 @@
 import { idToString, type SessionEvent } from "../../api/client";
-import { toolDisplayTitleFromPayload } from "../SessionPage.helpers";
 
 export type AssistantOrderSeqLookup = {
   byProviderId: Map<string, number>;
@@ -17,15 +16,6 @@ type InvariantLogger = (reason: string, details: Record<string, unknown>) => voi
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-
-const readPath = (value: unknown, path: string[]): unknown => {
-  let current: unknown = value;
-  for (const key of path) {
-    const record = asRecord(current);
-    current = record[key];
-  }
-  return current;
-};
 
 const pickFirstString = (...values: unknown[]): string | null => {
   for (const value of values) {
@@ -355,45 +345,11 @@ export function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, s
     return text ? text : null;
   };
 
-  const extractNoticeStatusText = (event: SessionEvent): string | null => {
-    if (event.event_type !== "notice") return null;
-    const payload = asRecord(event.payload_json);
-    const meta = asRecord(payload._meta ?? payload.meta);
-    return normalize(meta.statusText) ?? normalize(meta.status_text) ?? normalize(payload.statusText) ?? normalize(payload.status_text);
-  };
-
   const extractReasoningSummaryText = (event: SessionEvent): string | null => {
     if (event.event_type !== "notice") return null;
     const payload = asRecord(event.payload_json);
     if (payload.kind !== "reasoning_summary") return null;
     return normalize(payload.text) ?? normalize(payload.summary) ?? normalize(payload.content);
-  };
-
-  const toolStatusVerb = (kind: string): string | null => {
-    const normalized = kind.trim().toLowerCase();
-    if (normalized === "search") return "Searching";
-    if (normalized === "read" || normalized === "read_file") return "Reading";
-    if (normalized === "execute" || normalized === "exec") return "Running";
-    if (normalized === "write" || normalized === "edit") return "Writing";
-    return null;
-  };
-
-  const deriveToolStatusText = (update: Record<string, unknown>): string | null => {
-    const kind = String(update.kind ?? update.tool_kind ?? update.toolKind ?? "").trim();
-    const verb = toolStatusVerb(kind);
-    if (!verb) return null;
-    if (verb === "Searching") {
-      const query = normalize(readPath(update, ["input", "query"]) ?? readPath(update, ["input", "q"]));
-      if (query) return `${verb} ${query}`;
-    }
-    const title = normalize(toolDisplayTitleFromPayload(update));
-    if (title) return `${verb} ${title}`;
-    return verb;
-  };
-
-  const isActiveToolStatus = (status: unknown): boolean => {
-    const normalized = String(status ?? "").trim().toLowerCase();
-    return normalized === "pending" || normalized === "queued" || normalized === "running" || normalized === "in_progress" || normalized === "inprogress";
   };
 
   const sorted = events
@@ -408,8 +364,6 @@ export function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, s
     });
 
   const summaryByTurn = new Map<string, { order: number; text: string }>();
-  const noticeByTurn = new Map<string, { order: number; text: string }>();
-  const toolsByTurn = new Map<string, Map<string, { order: number; status: string; text: string | null }>>();
 
   let order = 0;
   for (const event of sorted) {
@@ -420,65 +374,16 @@ export function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, s
     const summaryText = extractReasoningSummaryText(event);
     if (summaryText) {
       summaryByTurn.set(turnId, { order, text: summaryText });
-      continue;
     }
-
-    const noticeText = extractNoticeStatusText(event);
-    if (noticeText) {
-      noticeByTurn.set(turnId, { order, text: noticeText });
-      continue;
-    }
-
-    if (event.event_type !== "tool_call" && event.event_type !== "tool_call_update" && event.event_type !== "tool_result") {
-      continue;
-    }
-
-    const payload = asRecord(event.payload_json);
-    const update = asRecord(payload.update ?? payload);
-    const toolCallId =
-      normalize(
-        payload.tool_call_id ??
-          update.toolCallId ??
-          update.tool_call_id ??
-          readPath(update, ["rawInput", "call_id"]) ??
-          readPath(update, ["raw_input", "call_id"]) ??
-          readPath(update, ["toolCall", "rawInput", "call_id"]) ??
-          "",
-      ) ?? "";
-    if (!toolCallId) continue;
-
-    const status = String(update.status ?? update.tool_status ?? update.toolStatus ?? "").trim();
-    const text = deriveToolStatusText(update);
-    const perTurn = toolsByTurn.get(turnId) ?? new Map<string, { order: number; status: string; text: string | null }>();
-    perTurn.set(toolCallId, { order, status, text });
-    toolsByTurn.set(turnId, perTurn);
   }
 
   const out = new Map<string, string>();
-  const allTurnIds = new Set<string>([...summaryByTurn.keys(), ...noticeByTurn.keys(), ...toolsByTurn.keys()]);
+  const allTurnIds = new Set<string>([...summaryByTurn.keys()]);
   for (const turnId of allTurnIds) {
     const summary = summaryByTurn.get(turnId);
     if (summary?.text) {
       out.set(turnId, summary.text);
-      continue;
     }
-
-    const perTurnTools = toolsByTurn.get(turnId);
-    let bestTool: { order: number; text: string } | null = null;
-    if (perTurnTools) {
-      for (const tool of perTurnTools.values()) {
-        if (!tool.text) continue;
-        if (!isActiveToolStatus(tool.status)) continue;
-        if (!bestTool || tool.order > bestTool.order) bestTool = { order: tool.order, text: tool.text };
-      }
-    }
-    if (bestTool) {
-      out.set(turnId, bestTool.text);
-      continue;
-    }
-
-    const notice = noticeByTurn.get(turnId);
-    if (notice?.text) out.set(turnId, notice.text);
   }
 
   return out;

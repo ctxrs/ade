@@ -731,7 +731,7 @@ describe("buildWorkbenchThreadViewModel", () => {
     expect(tool?.has_details).toBe(false);
   }, 10000);
 
-  it("uses the latest status update text per turn", async () => {
+  it("ignores notice status text for turn status rows", async () => {
     const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
 
     const turns = [
@@ -789,10 +789,10 @@ describe("buildWorkbenchThreadViewModel", () => {
 
     const out = buildWorkbenchThreadViewModel(turns as unknown as SessionTurn[], messages as unknown as Message[], {}, events as unknown as SessionEvent[]);
     const statusItem = out.groups[0]?.items.find(isTurnStatusItem);
-    expect(statusItem?.custom_status).toBe("Preparing specs");
+    expect(statusItem?.custom_status).toBeUndefined();
   }, 10000);
 
-  it("prefers tool harness status updates for turn status rows", async () => {
+  it("ignores notice status text even when tool events are present", async () => {
     const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
 
     const turns = [
@@ -855,10 +855,10 @@ describe("buildWorkbenchThreadViewModel", () => {
 
     const out = buildWorkbenchThreadViewModel(turns as unknown as SessionTurn[], messages as unknown as Message[], {}, events as unknown as SessionEvent[]);
     const statusItem = out.groups[0]?.items.find(isTurnStatusItem);
-    expect(statusItem?.custom_status).toBe("Searching alpha");
+    expect(statusItem?.custom_status).toBeUndefined();
   }, 10000);
 
-  it("uses provider tool names for tool rows and turn status when title is missing", async () => {
+  it("uses provider tool names for tool rows without changing turn status text", async () => {
     const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
 
     const turns = [
@@ -926,7 +926,7 @@ describe("buildWorkbenchThreadViewModel", () => {
     const statusItem = out.groups[0]?.items.find(isTurnStatusItem);
     expect(toolItem?.title).toBe("Bash");
     expect(toolItem?.subtitle).toBe("Print working directory");
-    expect(statusItem?.custom_status).toBe("Running Bash");
+    expect(statusItem?.custom_status).toBeUndefined();
   }, 10000);
 
   it("renders tool summaries as tool rows when per-turn events are absent", async () => {
