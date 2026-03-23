@@ -187,7 +187,6 @@ export function WorkbenchTurnHeaderView({
   };
 
   const hasContent = (header.content ?? "").trim().length > 0;
-  const collapsedPlainText = plainText.replace(/\s+/g, " ").trim();
 
   return (
     <div
@@ -215,14 +214,12 @@ export function WorkbenchTurnHeaderView({
           </button>
         )}
         <div className="wb-turn-header-content">
-          {expanded
-            ? plainText.split("\n").map((line, idx, list) => (
-                <span key={`${header.id}-${idx}`}>
-                  {line}
-                  {idx < list.length - 1 ? <br /> : null}
-                </span>
-              ))
-            : <span>{collapsedPlainText}</span>}
+          {plainText.split("\n").map((line, idx, list) => (
+            <span key={`${header.id}-${idx}`}>
+              {line}
+              {idx < list.length - 1 ? <br /> : null}
+            </span>
+          ))}
         </div>
         {expanded && header.attachments.length > 0 && (
           <div className="wb-turn-header-attachments" aria-label="Attachments">
@@ -503,7 +500,6 @@ export function WorkbenchToolRow({
   const showOutputPreview = verbosity === "verbose";
   const hasOutputText = !!item.output_text?.trim();
   const hasDetails = !!item.input || (showOutputPreview && hasOutputText);
-
   return (
     <div className="wb-tool-row">
       <button

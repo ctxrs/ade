@@ -3169,22 +3169,10 @@
 }
 
 .wb-turn-header-collapsed .wb-turn-header-content {
-  max-height: 1.3em;
-  line-height: 1.3;
-  padding-right: 0;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  max-height: calc(1.45em * 3.5);
   overflow: hidden;
-  -webkit-mask-image: none;
-  mask-image: none;
-}
-
-.wb-turn-header-collapsed {
-  padding: 2px 0 4px 0;
-}
-
-.wb-turn-header-collapsed .wb-turn-header-bubble {
-  padding: 6px 10px;
+  -webkit-mask-image: linear-gradient(var(--surface-contrast) 75%, transparent);
+  mask-image: linear-gradient(var(--surface-contrast) 75%, transparent);
 }
 
 .wb-event-row {

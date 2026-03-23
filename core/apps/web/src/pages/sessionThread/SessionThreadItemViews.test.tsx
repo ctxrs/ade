@@ -86,11 +86,11 @@ describe("WorkbenchTurnHeaderView", () => {
     expect(header).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("renders collapsed multiline headers as a single line summary", () => {
+  it("preserves multiline header structure when collapsed", () => {
     const { container } = render(<TestHeader plainText={"line 1\nline 2\nline 3"} />);
 
     const content = container.querySelector(".wb-turn-header-content");
-    expect(content?.textContent?.replace(/\s+/g, " ").trim()).toBe("line 1 line 2 line 3");
+    expect(content?.querySelectorAll("br")).toHaveLength(2);
   });
 
   it("copies the message when the copy button is clicked without expanding the header", async () => {
