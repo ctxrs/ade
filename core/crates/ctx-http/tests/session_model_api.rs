@@ -665,6 +665,31 @@ async fn assert_live_crp_session_model_switch_case(
         providers,
         "http://127.0.0.1:0",
     );
+    state.providers.options_cache.lock().await.insert(
+        format!("{}/host/{provider_id}", workspace.id.0),
+        ctx_http::daemon::CachedProviderOptions {
+            cached_at: std::time::Instant::now(),
+            value: json!({
+                "models": {
+                    "models": [
+                        {
+                            "id": format!("{initial_model_id}/{initial_reasoning_effort}"),
+                            "name": format!("{provider_id} initial")
+                        },
+                        {
+                            "id": format!("{next_model_id}/{next_reasoning_effort}"),
+                            "name": format!("{provider_id} next")
+                        }
+                    ],
+                    "current_model_id": format!("{initial_model_id}/{initial_reasoning_effort}"),
+                    "meta": {
+                        "source_kind": "subscription",
+                        "refresh_pending": false
+                    }
+                }
+            }),
+        },
+    );
     let app = common::router(state);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
@@ -742,6 +767,22 @@ async fn live_crp_supported_harnesses_session_model_switch_succeeds_end_to_end()
         .await;
     assert_live_crp_session_model_switch_case("claude-crp", "default", "medium", "default", "high")
         .await;
+}
+
+#[tokio::test]
+async fn live_acp_runtime_catalog_harnesses_session_model_switch_succeeds_end_to_end() {
+    let _env_lock = lock_env();
+
+    for provider_id in ["amp", "copilot", "cursor", "gemini", "kimi", "qwen"] {
+        assert_live_crp_session_model_switch_case(
+            provider_id,
+            "test-model",
+            "medium",
+            "test-model",
+            "xhigh",
+        )
+        .await;
+    }
 }
 
 #[tokio::test]
