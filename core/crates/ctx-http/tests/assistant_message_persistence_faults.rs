@@ -154,6 +154,68 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
         );
         let app = common::router(state.clone());
 
+        let ws = common::create_workspace(&app, repo.path(), "ws").await;
+        let task = common::create_task(&app, ws.id.0, "t1").await;
+        let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+        let user_message = post_message(&app, session.id.0, "retry after partial write").await;
+        ctx_store::fault_injection::set_failpoint("ctx_store.insert_message.after_insert", 1);
+        let turn_id = user_message.turn_id.expect("turn id");
+
+        let (turn, events) = wait_for_terminal_turn(&state, session.id, turn_id).await;
+        assert_eq!(turn.status, SessionTurnStatus::Completed);
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event.event_type, SessionEventType::Error)),
+            "post-insert transient persistence failure should recover cleanly: {events:#?}"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event.event_type,
+                    SessionEventType::AssistantMessageInserted
+                ))
+                .count(),
+            1,
+            "expected exactly one inserted assistant message after transactional retry: {events:#?}"
+        );
+
+        let store = state.store_for_session(session.id).await.unwrap();
+        let assistant_messages = store
+            .list_messages_for_session(session.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|message| {
+                message.turn_id == Some(turn_id) && matches!(message.role, MessageRole::Assistant)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            assistant_messages.len(),
+            1,
+            "assistant message should not be duplicated after post-insert retry"
+        );
+        assert_eq!(
+            assistant_messages[0].content,
+            "done: retry after partial write"
+        );
+
+        clear_all_failpoints();
+    }
+
+    {
+        let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+        let data_dir = tempfile::tempdir().unwrap();
+        let stores = common::setup_store(data_dir.path()).await;
+        let state = common::build_state(
+            data_dir.path().to_path_buf(),
+            stores,
+            common::fake_providers(),
+            "http://127.0.0.1:0",
+        );
+        let app = common::router(state.clone());
+
         ctx_http::fault_injection::set_failpoint("ctx_http.persist_assistant_message.fatal", 1);
 
         let ws = common::create_workspace(&app, repo.path(), "ws").await;

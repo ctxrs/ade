@@ -37,7 +37,8 @@ impl Store {
             + bytes_str(delivery)
             + bytes_opt_str(delivered_at.as_deref())
             + bytes_str(&created_at);
-        let result = self.query(
+        let mut tx = self.pool.begin().await?;
+        let message_rows_affected = sqlx::query(
             r#"INSERT INTO messages (id, session_id, task_id, run_id, turn_id, turn_sequence, order_seq, role, content, attachments_json, delivery, delivered_at, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
@@ -54,16 +55,99 @@ impl Store {
         .bind(delivery)
         .bind(delivered_at)
         .bind(&created_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        let is_assistant = matches!(message.role, MessageRole::Assistant);
+        sqlx::query(
+            r#"UPDATE tasks
+               SET last_activity_at = CASE
+                     WHEN last_activity_at IS NULL OR last_activity_at < ? THEN ?
+                     ELSE last_activity_at
+                   END,
+                   last_assistant_message_at = CASE
+                     WHEN ? = 1 AND (last_assistant_message_at IS NULL OR last_assistant_message_at < ?)
+                       THEN ?
+                     ELSE last_assistant_message_at
+                   END
+               WHERE id = ?"#,
+        )
+        .bind(&created_at)
+        .bind(&created_at)
+        .bind(if is_assistant { 1 } else { 0 })
+        .bind(&created_at)
+        .bind(&created_at)
+        .bind(message.task_id.0.to_string())
+        .execute(&mut *tx)
         .await?;
+        let session_snapshot_write_bytes =
+            if matches!(message.role, MessageRole::Assistant | MessageRole::User) {
+                let session_snapshot_id = message.session_id.0.to_string();
+                let session_snapshot_created_at = message.created_at.to_rfc3339();
+                let session_snapshot_content = message.content.clone();
+                let now = Utc::now().to_rfc3339();
+                let ensure_write_bytes =
+                    bytes_str(&session_snapshot_id) + I64_BYTES + (bytes_str(&now) * 2);
+                sqlx::query(
+                    r#"INSERT INTO session_snapshot_summaries (
+                            session_id, running_turn_count, created_at, updated_at
+                       )
+                       VALUES (?, 0, ?, ?)
+                       ON CONFLICT(session_id) DO NOTHING"#,
+                )
+                .bind(&session_snapshot_id)
+                .bind(&now)
+                .bind(&now)
+                .execute(&mut *tx)
+                .await?;
+                let update_write_bytes = bytes_str(&session_snapshot_created_at) * 2
+                    + bytes_str(&session_snapshot_content);
+                sqlx::query(
+                    r#"UPDATE session_snapshot_summaries
+                       SET last_message_at = CASE
+                             WHEN last_message_at IS NULL OR last_message_at < ? THEN ?
+                             ELSE last_message_at
+                           END,
+                           last_message_preview = CASE
+                             WHEN last_message_at IS NULL OR last_message_at < ? THEN ?
+                             ELSE last_message_preview
+                           END,
+                           projection_rev = projection_rev + 1,
+                           updated_at = ?
+                       WHERE session_id = ?"#,
+                )
+                .bind(&session_snapshot_created_at)
+                .bind(&session_snapshot_created_at)
+                .bind(&session_snapshot_created_at)
+                .bind(&session_snapshot_content)
+                .bind(&session_snapshot_created_at)
+                .bind(&session_snapshot_id)
+                .execute(&mut *tx)
+                .await?;
+                ensure_write_bytes + update_write_bytes
+            } else {
+                0
+            };
+        if let Err(err) =
+            crate::fault_injection::maybe_fail("ctx_store.insert_message.after_insert")
+        {
+            return Err(anyhow::anyhow!(
+                "database is locked (fault injection): {err}"
+            ));
+        }
+        tx.commit().await?;
+
         record_write(
             WriteMetricTable::Messages,
-            result.rows_affected(),
+            message_rows_affected,
             write_bytes,
         );
-        self.update_task_activity_from_message(&message).await?;
-        if matches!(message.role, MessageRole::Assistant | MessageRole::User) {
-            self.update_session_snapshot_last_message(&message).await?;
+        if session_snapshot_write_bytes > 0 {
+            record_write(
+                WriteMetricTable::SessionSnapshotSummaries,
+                1,
+                session_snapshot_write_bytes,
+            );
         }
         self.refresh_active_snapshot_head(message.session_id, None)
             .await?;
@@ -88,74 +172,6 @@ impl Store {
             .bind(&session_id)
             .bind(&now)
             .bind(&now)
-            .execute(&self.pool)
-            .await?;
-        record_write(
-            WriteMetricTable::SessionSnapshotSummaries,
-            result.rows_affected(),
-            write_bytes,
-        );
-        Ok(())
-    }
-
-    pub(super) async fn update_task_activity_from_message(&self, message: &Message) -> Result<()> {
-        let created_at = message.created_at.to_rfc3339();
-        let is_assistant = matches!(message.role, MessageRole::Assistant);
-        self.query(
-            r#"UPDATE tasks
-               SET last_activity_at = CASE
-                     WHEN last_activity_at IS NULL OR last_activity_at < ? THEN ?
-                     ELSE last_activity_at
-                   END,
-                   last_assistant_message_at = CASE
-                     WHEN ? = 1 AND (last_assistant_message_at IS NULL OR last_assistant_message_at < ?)
-                       THEN ?
-                     ELSE last_assistant_message_at
-                   END
-               WHERE id = ?"#,
-        )
-        .bind(&created_at)
-        .bind(&created_at)
-        .bind(if is_assistant { 1 } else { 0 })
-        .bind(&created_at)
-        .bind(&created_at)
-        .bind(message.task_id.0.to_string())
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    pub(super) async fn update_session_snapshot_last_message(
-        &self,
-        message: &Message,
-    ) -> Result<()> {
-        self.ensure_session_snapshot_summary(message.session_id)
-            .await?;
-        let created_at = message.created_at.to_rfc3339();
-        let content = message.content.clone();
-        let session_id = message.session_id.0.to_string();
-        let write_bytes = bytes_str(&created_at) * 2 + bytes_str(&content);
-        let result = self
-            .query(
-                r#"UPDATE session_snapshot_summaries
-               SET last_message_at = CASE
-                     WHEN last_message_at IS NULL OR last_message_at < ? THEN ?
-                     ELSE last_message_at
-                   END,
-                   last_message_preview = CASE
-                     WHEN last_message_at IS NULL OR last_message_at < ? THEN ?
-                     ELSE last_message_preview
-                   END,
-                   projection_rev = projection_rev + 1,
-                   updated_at = ?
-               WHERE session_id = ?"#,
-            )
-            .bind(&created_at)
-            .bind(&created_at)
-            .bind(&created_at)
-            .bind(&content)
-            .bind(&created_at)
-            .bind(&session_id)
             .execute(&self.pool)
             .await?;
         record_write(
