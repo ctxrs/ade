@@ -138,6 +138,29 @@ test.describe.serial("visual: workbench thread", () => {
   });
 
   for (const theme of THEMES) {
+    test(`tool rows use muted thread color ${theme}`, async ({ page }) => {
+      await openWorkbenchVisualPage(page, denseSeed.workspaceId, { theme, viewport: "narrow" });
+      await openFirstTaskSession(page);
+      await ensureToolRows(page, denseSeed.sessionId);
+
+      const toolVerb = page.locator(".wb-tool-row .wb-tool-verb").first();
+      const toolRest = page.locator(".wb-tool-row .wb-tool-rest").first();
+      await expect(toolVerb).toBeVisible();
+      await expect(toolRest).toBeVisible();
+
+      const mutedColor = await page.evaluate(() => {
+        const probe = document.createElement("div");
+        probe.style.color = "var(--muted)";
+        document.body.appendChild(probe);
+        const color = window.getComputedStyle(probe).color;
+        probe.remove();
+        return color;
+      });
+
+      await expect(toolVerb).toHaveCSS("color", mutedColor);
+      await expect(toolRest).toHaveCSS("color", mutedColor);
+    });
+
     for (const viewport of TRANSCRIPT_VIEWPORTS) {
       test(`transcript ${theme} ${viewport}`, async ({ page }) => {
         await openWorkbenchVisualPage(page, transcriptSeed.workspaceId, { theme, viewport });
