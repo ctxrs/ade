@@ -91,10 +91,80 @@ describe("WorkbenchSessionSlot", () => {
       props?.onDraftAttachmentsChange([nextAttachment]);
     });
 
-    expect(setValueSpy).toHaveBeenCalledWith({
+    expect(setValueSpy).toHaveBeenCalledWith(expect.any(Function));
+    const update = setValueSpy.mock.calls.at(-1)?.[0] as
+      | ((prev: { text: string; modeId: string; attachments: MessageAttachment[] }) => {
+          text: string;
+          modeId: string;
+          attachments: MessageAttachment[];
+        })
+      | undefined;
+    expect(update?.({
+      text: "draft text",
+      modeId: "default",
+      attachments: [initialAttachment],
+    })).toEqual({
       text: "draft text",
       modeId: "default",
       attachments: [nextAttachment],
+    });
+  });
+
+  it("uses functional draft updates so send-time clears cannot restore stale text", async () => {
+    render(<WorkbenchSessionSlot sessionId="session-1" />);
+
+    const props = sessionViewSpy.mock.calls.at(-1)?.[0] as
+      | {
+          onDraftChange: (text: string) => void;
+          onDraftAttachmentsChange: (attachments: MessageAttachment[]) => void;
+        }
+      | undefined;
+
+    await act(async () => {
+      props?.onDraftChange("");
+      props?.onDraftAttachmentsChange([]);
+    });
+
+    expect(setValueSpy).toHaveBeenNthCalledWith(1, expect.any(Function));
+    expect(setValueSpy).toHaveBeenNthCalledWith(2, expect.any(Function));
+
+    const firstUpdate = setValueSpy.mock.calls[0]?.[0] as
+      | ((prev: { text: string; modeId: string; attachments: MessageAttachment[] }) => {
+          text: string;
+          modeId: string;
+          attachments: MessageAttachment[];
+        })
+      | undefined;
+    const secondUpdate = setValueSpy.mock.calls[1]?.[0] as
+      | ((prev: { text: string; modeId: string; attachments: MessageAttachment[] }) => {
+          text: string;
+          modeId: string;
+          attachments: MessageAttachment[];
+        })
+      | undefined;
+
+    const afterTextClear = firstUpdate?.({
+      text: "draft text",
+      modeId: "default",
+      attachments: [initialAttachment],
+    });
+    const afterAttachmentClear = secondUpdate?.(
+      afterTextClear ?? {
+        text: "draft text",
+        modeId: "default",
+        attachments: [initialAttachment],
+      },
+    );
+
+    expect(afterTextClear).toEqual({
+      text: "",
+      modeId: "default",
+      attachments: [initialAttachment],
+    });
+    expect(afterAttachmentClear).toEqual({
+      text: "",
+      modeId: "default",
+      attachments: [],
     });
   });
 
