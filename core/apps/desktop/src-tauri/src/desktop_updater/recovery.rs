@@ -78,7 +78,7 @@ pub(super) async fn resolve_desktop_update_state(
         .and_then(attempts::last_failed_stage_message)
         .map(|value| value.to_string());
     let message = if config.pubkey.is_none() {
-        Some("Native updater is not configured (missing CTX_DESKTOP_UPDATER_PUBKEY).".to_string())
+        Some(support::MISSING_EMBEDDED_UPDATER_PUBKEY_MESSAGE_SENTENCE.to_string())
     } else {
         None
     };

@@ -4,12 +4,16 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
+
 mod dev_instance_identity {
     include!("../../../build-support/dev_instance_identity.rs");
 }
 
 fn main() {
     emit_build_identity();
+    emit_embedded_updater_pubkey();
     if env::var_os("CARGO_FEATURE_STT").is_some() {
         ensure_vosk_runtime();
     }
@@ -40,6 +44,40 @@ fn emit_build_identity() {
     let build_id = git_head_build_id(&manifest_dir)
         .unwrap_or_else(|| env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "unknown".to_string()));
     println!("cargo:rustc-env=CTX_BUILD_ID={build_id}");
+}
+
+fn emit_embedded_updater_pubkey() {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let pubkey_path = manifest_dir.join("config").join("updater_pubkey.txt");
+    println!("cargo:rerun-if-changed={}", pubkey_path.display());
+    let raw = fs::read_to_string(&pubkey_path).unwrap_or_else(|err| {
+        panic!(
+            "failed to read embedded updater pubkey '{}': {err}",
+            pubkey_path.display()
+        )
+    });
+    let normalized = normalize_minisign_pubkey_text(&raw).unwrap_or_else(|| {
+        panic!(
+            "embedded updater pubkey '{}' is invalid; expected normalized minisign public key text",
+            pubkey_path.display()
+        )
+    });
+    let encoded = BASE64_STANDARD.encode(normalized.as_bytes());
+    println!("cargo:rustc-env=CTX_DESKTOP_EMBEDDED_UPDATER_PUBKEY_B64={encoded}");
+}
+
+fn normalize_minisign_pubkey_text(raw: &str) -> Option<String> {
+    let normalized = raw.replace("\r\n", "\n");
+    let mut lines = normalized.lines().map(str::trim).filter(|line| !line.is_empty());
+    let header = lines.next()?;
+    if !header.starts_with("untrusted comment: minisign public key:") {
+        return None;
+    }
+    let key_line = lines.next()?;
+    if key_line.is_empty() || lines.next().is_some() {
+        return None;
+    }
+    Some(format!("{header}\n{key_line}\n"))
 }
 
 fn git_head_build_id(cwd: &Path) -> Option<String> {

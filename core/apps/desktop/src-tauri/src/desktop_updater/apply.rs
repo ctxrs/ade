@@ -24,7 +24,7 @@ pub(super) async fn apply_app_update(
     let mut attempt = attempts::begin_update_attempt(&channel, &pre_state.current_version);
     let config = support::resolve_native_updater_config(&channel)?;
     let pubkey = config.pubkey.as_deref().ok_or_else(|| {
-        "native updater is not configured (missing CTX_DESKTOP_UPDATER_PUBKEY)".to_string()
+        support::MISSING_EMBEDDED_UPDATER_PUBKEY_MESSAGE.to_string()
     })?;
     let endpoint_url =
         support::endpoint_with_download_id(&config.endpoint, download_id.as_deref())?;

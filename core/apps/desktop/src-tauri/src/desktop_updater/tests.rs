@@ -61,6 +61,10 @@ fn resolve_native_updater_config_uses_base_defaults() {
         "unexpected endpoint: {}",
         cfg.endpoint
     );
+    assert!(
+        cfg.pubkey.is_some(),
+        "desktop updater config should embed the production updater pubkey"
+    );
 }
 
 #[test]
@@ -549,8 +553,8 @@ fn apply_short_circuit_rejects_unconfigured_updater() {
 
     let err = transaction::short_circuit_apply(&state).expect_err("unconfigured apply should fail");
     assert!(
-        err.contains("CTX_DESKTOP_UPDATER_PUBKEY"),
-        "expected missing pubkey guidance: {err}"
+        err.contains("missing embedded updater public key"),
+        "expected embedded pubkey guidance: {err}"
     );
 }
 
