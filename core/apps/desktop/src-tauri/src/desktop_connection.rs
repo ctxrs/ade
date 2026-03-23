@@ -87,8 +87,10 @@ pub(super) fn desktop_set_demo_connection(
     #[cfg(feature = "automation")]
     {
         if !demo_commands_enabled() {
-            return Err("desktop_set_demo_connection requires CTX_DESKTOP_ALLOW_DEMO_COMMANDS=1"
-                .to_string());
+            return Err(
+                "desktop_set_demo_connection requires CTX_DESKTOP_ALLOW_DEMO_COMMANDS=1"
+                    .to_string(),
+            );
         }
         let base_url = req.base_url.trim().to_string();
         if base_url.is_empty() {
@@ -226,21 +228,38 @@ fn stop_owned_local_daemon_pid(base_url: &str, pid: u32) -> Result<()> {
     );
 }
 
+fn stop_owned_local_daemon_child(
+    base_url: &str,
+    mut child: Child,
+    systemd_scope: bool,
+) -> Result<()> {
+    if systemd_scope {
+        stop_systemd_scope("ctx-daemon");
+        if let Some(scope) = systemd_scope_for_local_daemon_url(base_url) {
+            stop_systemd_scope(&scope);
+        }
+    }
+
+    let pid = child.id();
+    let graceful_err = terminate_pid(pid, false).err();
+    if wait_for_daemon_reclaim(base_url, pid, Duration::from_secs(3)).is_ok() {
+        let _ = child.wait();
+        return Ok(());
+    }
+    if let Some(err) = graceful_err {
+        eprintln!("failed to gracefully terminate local daemon child {pid}: {err:#}");
+    }
+
+    try_kill_child(child)
+}
+
 fn cleanup_active_connection_result(active: ActiveConnection) -> Result<()> {
     match active {
         ActiveConnection::Local(c) => match c.ownership {
             LocalConnectionOwnership::OwnedChild {
                 child,
                 systemd_scope,
-            } => {
-                if systemd_scope {
-                    stop_systemd_scope("ctx-daemon");
-                    if let Some(scope) = systemd_scope_for_local_daemon_url(&c.base_url) {
-                        stop_systemd_scope(&scope);
-                    }
-                }
-                try_kill_child(child)
-            }
+            } => stop_owned_local_daemon_child(&c.base_url, child, systemd_scope),
             LocalConnectionOwnership::OwnedPid { pid } => {
                 stop_owned_local_daemon_pid(&c.base_url, pid)
             }

@@ -47,7 +47,10 @@ fn spawn_detached_sleep_pid() -> u32 {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout.trim().parse::<u32>().expect("parse detached sleep pid")
+    stdout
+        .trim()
+        .parse::<u32>()
+        .expect("parse detached sleep pid")
 }
 
 #[cfg(unix)]
@@ -226,7 +229,10 @@ fn replacing_local_connection_stops_previous_child() {
 
     let next = spawn_tokio_sleep_child();
     let next_pid = next.id();
-    assert!(pid_is_alive(next_pid), "next local child should start alive");
+    assert!(
+        pid_is_alive(next_pid),
+        "next local child should start alive"
+    );
 
     let manager = ConnectionManager::default();
     manager.set_local(
@@ -256,6 +262,39 @@ fn replacing_local_connection_stops_previous_child() {
         wait_for_pid_exit(next_pid, Duration::from_secs(3)),
         "active replacement local child {next_pid} should be terminated on disconnect"
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn disconnect_owned_child_local_daemon_prefers_graceful_shutdown() {
+    let term_marker = std::env::temp_dir().join(format!(
+        "ctx-owned-child-term-marker-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let child = spawn_term_trap_child(&term_marker);
+    let pid = child.id();
+    assert!(
+        pid_is_alive(pid),
+        "owned child term trap should be alive before disconnect"
+    );
+
+    let manager = ConnectionManager::default();
+    manager.set_local(
+        "http://127.0.0.1:65523".to_string(),
+        "token".to_string(),
+        child,
+        false,
+    );
+    manager.disconnect();
+
+    assert!(
+        wait_for_pid_exit(pid, Duration::from_secs(3)),
+        "owned child local daemon pid {pid} should exit after disconnect"
+    );
+    let marker = std::fs::read_to_string(&term_marker)
+        .expect("owned child term marker should be written by graceful TERM handler");
+    assert_eq!(marker, "term");
+    std::fs::remove_file(&term_marker).ok();
 }
 
 #[test]

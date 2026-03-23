@@ -13,7 +13,7 @@ use serde_json::json;
 use ctx_core::models::SessionTurnStatus;
 use ctx_lsp::LspManagerConfig;
 use ctx_providers::adapters::{
-    ProviderAdapter, ProviderHealth, ProviderStatus, RunHandle, TurnInput,
+    ProviderAdapter, ProviderHealth, ProviderRestartMode, ProviderStatus, RunHandle, TurnInput,
 };
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
@@ -592,6 +592,79 @@ fn cache_key_matches_provider(cache_key: &str, provider_id: &str) -> bool {
         .is_some_and(|(_, key_provider)| key_provider == provider_id)
 }
 
+async fn collect_provider_adapters_for_shutdown(
+    state: &Arc<AppState>,
+) -> Vec<(String, Arc<dyn ProviderAdapter>)> {
+    let mut adapters = {
+        let map = state.providers.adapters.lock().await;
+        map.iter()
+            .map(|(id, adapter)| (id.clone(), Arc::clone(adapter)))
+            .collect::<Vec<_>>()
+    };
+    let target_adapters = {
+        let map = state.providers.target_adapters.lock().await;
+        map.iter()
+            .map(|(id, adapter)| (id.clone(), Arc::clone(adapter)))
+            .collect::<Vec<_>>()
+    };
+    adapters.extend(target_adapters);
+    adapters
+}
+
+async fn shutdown_provider_adapters(state: &Arc<AppState>, reason: &str) {
+    for (id, adapter) in collect_provider_adapters_for_shutdown(state).await {
+        if let Err(err) = adapter
+            .restart(reason, ProviderRestartMode::Immediate)
+            .await
+        {
+            tracing::debug!("failed to stop provider adapter {id} during daemon shutdown: {err:#}");
+        }
+    }
+}
+
+async fn trigger_daemon_shutdown(state: Arc<AppState>, reason: &str) {
+    tracing::info!("daemon shutdown requested: {reason}");
+    shutdown_provider_adapters(&state, reason).await;
+    let _ = state.core.shutdown_tx.send(());
+}
+
+fn spawn_process_shutdown_listener(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        #[cfg(unix)]
+        {
+            let mut sigterm =
+                match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                    Ok(signal) => signal,
+                    Err(err) => {
+                        tracing::warn!("failed to register SIGTERM handler: {err:#}");
+                        return;
+                    }
+                };
+            tokio::select! {
+                result = tokio::signal::ctrl_c() => {
+                    if let Err(err) = result {
+                        tracing::warn!("failed to listen for ctrl_c: {err:#}");
+                        return;
+                    }
+                    trigger_daemon_shutdown(state, "ctrl_c").await;
+                }
+                _ = sigterm.recv() => {
+                    trigger_daemon_shutdown(state, "sigterm").await;
+                }
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            if let Err(err) = tokio::signal::ctrl_c().await {
+                tracing::warn!("failed to listen for ctrl_c: {err:#}");
+                return;
+            }
+            trigger_daemon_shutdown(state, "ctrl_c").await;
+        }
+    });
+}
+
 pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     let data_root = match data_dir {
         Some(p) => PathBuf::from(p),
@@ -822,6 +895,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     provider_child_reclassifier::spawn_provider_child_reclassifier(state.clone());
     crate::merge_queue::spawn_merge_queue_runner(state.clone());
     provider_usage::spawn_provider_usage_poller(state.clone());
+    spawn_process_shutdown_listener(state.clone());
 
     // Reconnect managed mobile access tunnel on daemon start when enabled.
     {

@@ -1,6 +1,84 @@
 use super::*;
 use ctx_core::models::VcsKind;
+use ctx_providers::adapters::{
+    ProviderCapabilities, ProviderProcessInfo, ProviderRestartMode, ProviderUsability,
+};
+use std::sync::Mutex as StdMutex;
 use tempfile::tempdir;
+
+#[derive(Default)]
+struct RecordingProviderAdapter {
+    restart_calls: StdMutex<Vec<(String, ProviderRestartMode)>>,
+}
+
+impl RecordingProviderAdapter {
+    fn restart_calls(&self) -> Vec<(String, ProviderRestartMode)> {
+        self.restart_calls
+            .lock()
+            .expect("recording adapter restart lock")
+            .clone()
+    }
+}
+
+#[async_trait]
+impl ProviderAdapter for RecordingProviderAdapter {
+    async fn inspect(&self) -> Result<ProviderStatus> {
+        Ok(ProviderStatus {
+            provider_id: "recording".into(),
+            installed: true,
+            detected_path: None,
+            version: Some("test".into()),
+            capabilities: Some(ProviderCapabilities {
+                stream_events: false,
+                stream_format: "jsonl".into(),
+                has_turn_boundaries: true,
+                has_tool_call_ids: false,
+                has_file_change_events: false,
+                has_command_events: false,
+                supports_resume: false,
+                supports_stable_session_id: false,
+                supports_fork_or_rewind: false,
+                supports_headless: true,
+                supports_server_mode: false,
+                supports_interactive_tui: false,
+                supports_private_state_dir: false,
+                supports_sandbox_flags: false,
+                supports_approval_flags: false,
+                notes: Vec::new(),
+            }),
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+            usability: ProviderUsability::default(),
+        })
+    }
+
+    async fn run(
+        &self,
+        _input: TurnInput,
+        _workdir: PathBuf,
+        _env: HashMap<String, String>,
+        _event_sink: tokio::sync::mpsc::Sender<ctx_providers::events::NormalizedEvent>,
+    ) -> Result<RunHandle> {
+        anyhow::bail!("not used in test");
+    }
+
+    async fn cancel(&self, _handle: RunHandle) -> Result<()> {
+        Ok(())
+    }
+
+    async fn list_processes(&self) -> Vec<ProviderProcessInfo> {
+        Vec::new()
+    }
+
+    async fn restart(&self, reason: &str, mode: ProviderRestartMode) -> Result<()> {
+        self.restart_calls
+            .lock()
+            .expect("recording adapter restart lock")
+            .push((reason.to_string(), mode));
+        Ok(())
+    }
+}
 
 #[tokio::test]
 async fn sweeper_eviction_keeps_active_entries() {
@@ -267,6 +345,69 @@ fn runtime_probe_command_wraps_acp_provider_with_bridge() {
     assert_eq!(
         resolved.dependencies,
         vec!["bridge-dep".to_string(), "cursor-dep".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn collect_provider_adapters_for_shutdown_includes_root_and_target_adapters() {
+    let temp = tempdir().unwrap();
+    let stores = StoreManager::open(temp.path()).await.unwrap();
+    let root_adapter = Arc::new(RecordingProviderAdapter::default());
+    let target_adapter = Arc::new(RecordingProviderAdapter::default());
+    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+    providers.insert("root".into(), root_adapter.clone());
+    let state = Arc::new(AppState::new(
+        temp.path().to_path_buf(),
+        stores,
+        providers,
+        "http://localhost".to_string(),
+        None,
+    ));
+    state
+        .providers
+        .target_adapters
+        .lock()
+        .await
+        .insert("root@host".into(), target_adapter.clone());
+
+    let adapters = collect_provider_adapters_for_shutdown(&state).await;
+    let mut ids = adapters.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+    ids.sort();
+
+    assert_eq!(ids, vec!["root".to_string(), "root@host".to_string()]);
+}
+
+#[tokio::test]
+async fn shutdown_provider_adapters_requests_immediate_restart_for_all_adapters() {
+    let temp = tempdir().unwrap();
+    let stores = StoreManager::open(temp.path()).await.unwrap();
+    let root_adapter = Arc::new(RecordingProviderAdapter::default());
+    let target_adapter = Arc::new(RecordingProviderAdapter::default());
+    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+    providers.insert("root".into(), root_adapter.clone());
+    let state = Arc::new(AppState::new(
+        temp.path().to_path_buf(),
+        stores,
+        providers,
+        "http://localhost".to_string(),
+        None,
+    ));
+    state
+        .providers
+        .target_adapters
+        .lock()
+        .await
+        .insert("root@host".into(), target_adapter.clone());
+
+    shutdown_provider_adapters(&state, "test shutdown").await;
+
+    assert_eq!(
+        root_adapter.restart_calls(),
+        vec![("test shutdown".to_string(), ProviderRestartMode::Immediate)]
+    );
+    assert_eq!(
+        target_adapter.restart_calls(),
+        vec![("test shutdown".to_string(), ProviderRestartMode::Immediate)]
     );
 }
 
