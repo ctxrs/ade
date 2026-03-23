@@ -3196,9 +3196,13 @@
   cursor: pointer;
 }
 
-.wb-event-row:hover {
+.wb-event-row[aria-expanded]:hover {
   background: var(--surface-ghost);
   border-radius: 8px;
+}
+
+.wb-event-row-static {
+  cursor: text;
 }
 
 .wb-event-text {
@@ -3252,6 +3256,12 @@
   font-size: 11px;
 }
 
+.wb-event-chev {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .wb-tool-group {
   display: grid;
   gap: 6px;
@@ -3260,12 +3270,8 @@
 }
 
 .wb-tool-group-body {
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--surface-ghost);
-  padding: 8px 10px;
   display: grid;
-  gap: 10px;
+  gap: 6px;
   min-width: 0;
   max-width: 100%;
 }

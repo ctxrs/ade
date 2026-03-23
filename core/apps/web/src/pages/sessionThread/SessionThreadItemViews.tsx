@@ -333,6 +333,9 @@ export function WorkbenchToolRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  void verbosity;
+  void expanded;
+  void onToggle;
   const kind = String(item.tool_kind ?? "").toLowerCase();
   const pathFromLoc = item.locations?.[0]?.path;
   const title = String(item.title ?? "").trim();
@@ -497,18 +500,9 @@ export function WorkbenchToolRow({
   })();
   const inlineTail = [rest, description].filter((part) => String(part).trim().length > 0).join(" · ");
   const fullLabel = inlineTail ? `${verb} · ${inlineTail}` : verb;
-  const showOutputPreview = verbosity === "verbose";
-  const hasOutputText = !!item.output_text?.trim();
-  const hasDetails = !!item.input || (showOutputPreview && hasOutputText);
   return (
     <div className="wb-tool-row">
-      <button
-        type="button"
-        className={`wb-event-row ${expanded ? "wb-event-row-expanded" : ""}`}
-        onClick={hasDetails ? onToggle : undefined}
-        aria-expanded={hasDetails ? expanded : undefined}
-        title={fullLabel}
-      >
+      <div className="wb-event-row wb-event-row-static">
         <span className="wb-event-text wb-tool-text">
           <span className="wb-tool-mainline">
             <span className="wb-tool-verb">{verb}</span>
@@ -522,29 +516,7 @@ export function WorkbenchToolRow({
             ) : null}
           </span>
         </span>
-      </button>
-      {hasDetails && expanded && (
-        <div className="wb-tool-details">
-          {Boolean(item.input) && (
-            <div className="wb-tool-section">
-              <div className="wb-tool-section-title">Input</div>
-              <pre className="wb-tool-pre">{formatToolInput(item.tool_kind, item.input)}</pre>
-            </div>
-          )}
-          {showOutputPreview && !!item.output_text?.trim() && (
-            <div className="wb-tool-section">
-              <div className="wb-tool-section-title">Output</div>
-              {looksLikeMarkdown(item.output_text) ? (
-                <div className="wb-tool-markdown">
-                  <MemoMarkdown content={item.output_text} />
-                </div>
-              ) : (
-                <pre className="wb-tool-pre">{item.output_text}</pre>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -644,6 +616,8 @@ export const WorkbenchToolGroupRow = memo(function WorkbenchToolGroupRow({
   onToggleTool: (id: string) => void;
   expandedToolById: Record<string, boolean>;
 }) {
+  void expanded;
+  void onToggle;
   const total = Math.max(item.tool_total ?? 0, item.tools.length);
   const parts: string[] = [];
   if (total > 0) {
@@ -662,26 +636,18 @@ export const WorkbenchToolGroupRow = memo(function WorkbenchToolGroupRow({
   const hasDetails = total > 0 || item.thought.trim().length > 0;
 
   useEffect(() => {
-    if (!expanded) return;
     if (total > 0 && item.tools.length === 0 && !toolsLoading) {
       onRequestTools();
     }
-  }, [expanded, total, item.tools.length, toolsLoading, onRequestTools]);
+  }, [total, item.tools.length, toolsLoading, onRequestTools]);
 
   return (
     <div className="wb-tool-group">
-      <button
-        type="button"
-        className={`wb-event-row ${expanded ? "wb-event-row-expanded" : ""}`}
-        onClick={hasDetails ? onToggle : undefined}
-        aria-expanded={hasDetails ? expanded : undefined}
-        title={label}
-      >
+      <div className="wb-event-row wb-event-row-static">
         <span className="wb-event-text">{label}</span>
-        {hasDetails && <span className="wb-event-chev">{expanded ? "▴" : "▾"}</span>}
-      </button>
+      </div>
 
-      {hasDetails && expanded && (
+      {hasDetails && (
         <div className="wb-tool-group-body">
           {total > 0 && item.tools.length === 0 && toolsLoading && <div className="wb-tool-loading">Loading tools...</div>}
           {item.tools.map((tool) => (

@@ -207,11 +207,45 @@ describe("WorkbenchToolRow", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: /bash/i })).toBeInTheDocument();
     const mainline = container.querySelector(".wb-tool-mainline");
     expect(mainline?.textContent).toContain("Bash");
     expect(mainline?.textContent).toContain("Get current working directory");
     expect(container.querySelector(".wb-tool-description")).toBeNull();
+    expect(container.querySelector("button")).toBeNull();
+  });
+
+  it("does not render tool input or output details even when expanded", () => {
+    const onToggle = vi.fn();
+
+    const { container } = render(
+      <WorkbenchToolRow
+        item={{
+          kind: "tool",
+          id: "tool-1",
+          tool_call_id: "tool-call-1",
+          created_at: "2025-01-01T00:00:00.000Z",
+          updated_at: "2025-01-01T00:00:01.000Z",
+          tool_kind: "execute",
+          provider_tool_name: "Bash",
+          title: "Ran",
+          subtitle: "pwd",
+          status: "completed",
+          locations: [],
+          input: { command: "pwd" },
+          output_text: "output",
+          raw: null,
+          updates_seen: 1,
+          has_details: true,
+        }}
+        verbosity="verbose"
+        expanded={true}
+        onToggle={onToggle}
+      />,
+    );
+
+    expect(container.textContent).not.toContain("Input");
+    expect(container.textContent).not.toContain("Output");
+    expect(container.querySelector(".wb-tool-details")).toBeNull();
   });
 });
 
