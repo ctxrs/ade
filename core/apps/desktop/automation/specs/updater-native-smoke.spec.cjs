@@ -125,7 +125,7 @@ describe("desktop updater native state smoke", () => {
     }
     if (state.configured === false) {
       throw new Error(
-        `native updater not configured: ${state.message || "missing CTX_DESKTOP_UPDATER_PUBKEY"}`,
+        `native updater not configured: ${state.message || "missing embedded updater public key"}`,
       );
     }
     const phase = normalizePhase(state.phase);

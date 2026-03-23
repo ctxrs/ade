@@ -1132,7 +1132,7 @@ const resolveSuiteContract = (suiteId, options = {}) => {
         optionalRequirements: [],
         metadata: {},
         notes: [
-          "This auth contract intentionally excludes CTX_DESKTOP_UPDATER_PUBKEY because it is required config, not a secret.",
+          "This auth contract intentionally excludes the updater public key because it is embedded from core/apps/desktop/src-tauri/config/updater_pubkey.txt.",
         ],
         env,
         platform,

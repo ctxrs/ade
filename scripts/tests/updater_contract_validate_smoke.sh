@@ -110,8 +110,8 @@ mkdir -p "$tampered_dir"
 tampered_artifact="$tampered_dir/$artifact_name"
 printf 'tampered artifact bytes\n' >"$tampered_artifact"
 
-expect_fail "missing-pubkey" env -u CTX_DESKTOP_UPDATER_PUBKEY node "$SCRIPT" "$manifest_path" "macos-arm64" "$artifact_path"
+expect_fail "missing-pubkey" env -u CTX_DESKTOP_UPDATER_PUBKEY CTX_DESKTOP_UPDATER_PUBKEY_FILE="$tmp/missing.pub" node "$SCRIPT" "$manifest_path" "macos-arm64" "$artifact_path"
 expect_fail "tampered-artifact" env CTX_DESKTOP_UPDATER_PUBKEY="$pubkey_b64" node "$SCRIPT" "$manifest_path" "macos-arm64" "$tampered_artifact"
-expect_fail "bad-pubkey" env CTX_DESKTOP_UPDATER_PUBKEY="not-a-valid-minisign-key" node "$SCRIPT" "$manifest_path" "macos-arm64" "$artifact_path"
+expect_fail "bad-pubkey" env CTX_DESKTOP_UPDATER_PUBKEY="not-a-valid-minisign-key" CTX_DESKTOP_UPDATER_PUBKEY_FILE="$tmp/missing.pub" node "$SCRIPT" "$manifest_path" "macos-arm64" "$artifact_path"
 
 echo "ok: updater contract validator smoke passed"

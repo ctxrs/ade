@@ -9,6 +9,16 @@ const MANIFEST_PATH = String(process.argv[2] || "").trim();
 const PLATFORM = String(process.argv[3] || "").trim();
 const ARTIFACT_PATH = String(process.argv[4] || "").trim();
 const ENV_PUBKEY = String(process.env.CTX_DESKTOP_UPDATER_PUBKEY || "").trim();
+const DEFAULT_PUBKEY_PATH = path.resolve(
+  __dirname,
+  "..",
+  "apps",
+  "desktop",
+  "src-tauri",
+  "config",
+  "updater_pubkey.txt",
+);
+const ENV_PUBKEY_FILE = String(process.env.CTX_DESKTOP_UPDATER_PUBKEY_FILE || "").trim();
 
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const TRUSTED_COMMENT_PREFIX = "trusted comment: ";
@@ -63,20 +73,38 @@ const normalizeMinisignPubkeyText = (raw) => {
   return `${header}\n${keyLine}\n`;
 };
 
-const resolveUpdaterPubkeyText = (raw) => {
+const normalizeUpdaterPubkeyText = (raw, label) => {
   const value = String(raw || "").trim();
-  if (!value) {
-    fail("CTX_DESKTOP_UPDATER_PUBKEY is required for updater artifact verification");
-  }
+  if (!value) return null;
   const plain = normalizeMinisignPubkeyText(value);
   if (plain) return plain;
   const compact = value.replace(/\s+/g, "");
-  const decoded = decodeBase64Utf8Strict("CTX_DESKTOP_UPDATER_PUBKEY", compact);
+  const decoded = decodeBase64Utf8Strict(label, compact);
   const normalizedDecoded = normalizeMinisignPubkeyText(decoded);
   if (!normalizedDecoded) {
-    fail("CTX_DESKTOP_UPDATER_PUBKEY is not a valid minisign public key (plain or base64)");
+    fail(`${label} is not a valid minisign public key (plain or base64)`);
   }
   return normalizedDecoded;
+};
+
+const resolveUpdaterPubkeyText = () => {
+  const envValue = normalizeUpdaterPubkeyText(ENV_PUBKEY, "CTX_DESKTOP_UPDATER_PUBKEY");
+  if (envValue) return envValue;
+
+  const pubkeyPath = ENV_PUBKEY_FILE || DEFAULT_PUBKEY_PATH;
+  let fileRaw = "";
+  try {
+    fileRaw = fs.readFileSync(pubkeyPath, "utf8");
+  } catch (err) {
+    fail(
+      `failed to read updater pubkey file '${pubkeyPath}': ${String(err)}`
+    );
+  }
+  const fileValue = normalizeUpdaterPubkeyText(fileRaw, `updater pubkey file '${pubkeyPath}'`);
+  if (!fileValue) {
+    fail(`updater pubkey file '${pubkeyPath}' is empty`);
+  }
+  return fileValue;
 };
 
 const splitMeaningfulLines = (raw) =>
@@ -191,7 +219,7 @@ if (!MANIFEST_PATH || !PLATFORM || !ARTIFACT_PATH) {
   );
 }
 
-const pubkeyText = resolveUpdaterPubkeyText(ENV_PUBKEY);
+const pubkeyText = resolveUpdaterPubkeyText();
 
 let manifestRaw = "";
 try {

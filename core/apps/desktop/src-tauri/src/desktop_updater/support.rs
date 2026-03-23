@@ -4,6 +4,11 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use url::Url;
 
+pub(super) const MISSING_EMBEDDED_UPDATER_PUBKEY_MESSAGE: &str =
+    "native updater is not configured (missing embedded updater public key)";
+pub(super) const MISSING_EMBEDDED_UPDATER_PUBKEY_MESSAGE_SENTENCE: &str =
+    "Native updater is not configured (missing embedded updater public key).";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedVersion {
     major: u64,
@@ -159,9 +164,14 @@ pub(super) fn resolve_native_updater_config(
         .ok()
         .and_then(|raw| expand_updater_endpoint_template(&raw, channel))
         .unwrap_or(endpoint_default);
+    let runtime_override = if cfg!(debug_assertions) {
+        std::env::var("CTX_DESKTOP_UPDATER_PUBKEY").ok()
+    } else {
+        None
+    };
     let pubkey = resolve_updater_pubkey(
-        std::env::var("CTX_DESKTOP_UPDATER_PUBKEY").ok(),
-        option_env!("CTX_DESKTOP_UPDATER_PUBKEY"),
+        runtime_override,
+        option_env!("CTX_DESKTOP_EMBEDDED_UPDATER_PUBKEY_B64"),
     );
     Ok(DesktopNativeUpdaterConfig {
         target: target.to_string(),

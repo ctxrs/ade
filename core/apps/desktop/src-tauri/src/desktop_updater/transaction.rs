@@ -154,9 +154,7 @@ pub(super) fn short_circuit_apply(
     }
 
     if !pre_state.configured {
-        return Err(
-            "native updater is not configured (missing CTX_DESKTOP_UPDATER_PUBKEY)".to_string(),
-        );
+        return Err(support::MISSING_EMBEDDED_UPDATER_PUBKEY_MESSAGE.to_string());
     }
 
     Ok(None)
