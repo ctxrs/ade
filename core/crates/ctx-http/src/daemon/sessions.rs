@@ -120,6 +120,15 @@ fn event_context_window(event: &SessionEvent) -> Option<serde_json::Value> {
     event.payload_json.get("context_window").cloned()
 }
 
+fn is_session_gap_notice(event: &SessionEvent) -> bool {
+    matches!(event.event_type, SessionEventType::Notice)
+        && event
+            .payload_json
+            .get("kind")
+            .and_then(|value| value.as_str())
+            .is_some_and(|kind| kind == "session_gap")
+}
+
 fn turn_status_from_finished_event(event: &SessionEvent) -> SessionTurnStatus {
     event
         .payload_json
@@ -370,7 +379,8 @@ impl SessionRuntime {
         if !matches!(
             event.event_type,
             SessionEventType::AssistantChunk | SessionEventType::ThoughtChunk
-        ) {
+        ) && !is_session_gap_notice(&event)
+        {
             self.queue_active_head_projection(state, event.session_id, event.seq)
                 .await;
         }
@@ -383,6 +393,9 @@ impl SessionRuntime {
         state: &Arc<AppState>,
         event: &SessionEvent,
     ) {
+        if is_session_gap_notice(event) {
+            return;
+        }
         let session = {
             let mut cache = self.session_meta_cache.lock().await;
             cache.get_mut(&event.session_id).map(|entry| {
@@ -952,3 +965,5 @@ impl AppState {
 
 #[cfg(test)]
 mod cache_sweep_tests;
+#[cfg(test)]
+mod event_filter_tests;

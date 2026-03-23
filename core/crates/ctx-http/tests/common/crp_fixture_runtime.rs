@@ -29,6 +29,9 @@ import sys
 import uuid
 
 SEQ = 1
+TOOL_OUTPUT_EMIT_MAX_BYTES = 64 * 1024
+TOOL_OUTPUT_EMIT_MAX_CHUNKS = 64
+TOOL_OUTPUT_COMPLETION_MAX_BYTES = 8 * 1024
 PROVIDER_ID = os.environ.get("CTX_PROVIDER_ID")
 FIXTURE_ROOT = os.environ.get("CTX_TEST_FIXTURES_DIR")
 SCENARIO = os.environ.get("CTX_TEST_SCENARIO") or "basic"
@@ -61,7 +64,27 @@ def send_tool(session_id, turn_id, tool):
     tool_call_id = str(uuid.uuid4())
     tool_name = tool.get("tool_name") or "exec_command"
     tool_input = tool.get("input")
-    tool_output = tool.get("output") or "ok"
+    output_chunks = tool.get("output_chunks")
+    if output_chunks is None:
+        repeated_chunk = tool.get("output_chunk")
+        repeat_count = int(tool.get("output_repeat") or 0)
+        if repeated_chunk is not None and repeat_count > 0:
+            output_chunks = [repeated_chunk] * repeat_count
+    if output_chunks is not None:
+        tool_output = "".join(str(chunk) for chunk in output_chunks)
+    else:
+        tool_output = tool.get("output") or "ok"
+    tool_output = str(tool_output)[:TOOL_OUTPUT_COMPLETION_MAX_BYTES]
+    completed_output = tool.get("completed_output")
+    if completed_output is None:
+        if tool_name == "exec_command":
+            completed_output = {
+                "rawOutput": {
+                    "aggregated_output": tool_output,
+                }
+            }
+        else:
+            completed_output = {"text": tool_output}
     send({
         "type": "tool.started",
         "session_id": session_id,
@@ -70,13 +93,36 @@ def send_tool(session_id, turn_id, tool):
         "tool_name": tool_name,
         "input": tool_input,
     }, channel="data")
-    send({
-        "type": "tool.output.delta",
-        "session_id": session_id,
-        "turn_id": turn_id,
-        "tool_call_id": tool_call_id,
-        "chunk": tool_output,
-    }, channel="data")
+    if output_chunks is not None:
+        emitted_bytes = 0
+        emitted_chunks = 0
+        for chunk in output_chunks:
+            if emitted_bytes >= TOOL_OUTPUT_EMIT_MAX_BYTES or emitted_chunks >= TOOL_OUTPUT_EMIT_MAX_CHUNKS:
+                break
+            chunk = str(chunk)
+            remaining = TOOL_OUTPUT_EMIT_MAX_BYTES - emitted_bytes
+            if remaining <= 0:
+                break
+            chunk = chunk[:remaining]
+            if not chunk:
+                break
+            send({
+                "type": "tool.output.delta",
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "tool_call_id": tool_call_id,
+                "chunk": chunk,
+            }, channel="data")
+            emitted_bytes += len(chunk.encode("utf-8"))
+            emitted_chunks += 1
+    else:
+        send({
+            "type": "tool.output.delta",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "tool_call_id": tool_call_id,
+            "chunk": tool_output,
+        }, channel="data")
     send({
         "type": "tool.completed",
         "session_id": session_id,
@@ -84,7 +130,7 @@ def send_tool(session_id, turn_id, tool):
         "tool_call_id": tool_call_id,
         "tool_name": tool_name,
         "status": "success",
-        "output": {"text": tool_output},
+        "output": completed_output,
     }, channel="data")
 
 def send_turn(session_id, turn_id, turn):
