@@ -13,6 +13,7 @@ import {
   buildDemoDesktopConnectionPayload,
   buildDemoWorkbenchWindowPayload,
   buildPlaybackAppEnv,
+  captureArtifactsPaneState,
   captureDiffPaneState,
   captureBrowserState,
   createCliAlias,
@@ -21,16 +22,20 @@ import {
   findBundledProviderRuntime,
   killProcesses,
   navigateBrowserToWorkspace,
+  openArtifactsPane,
   openDiffPane,
   parseArgs,
   primeDemoDesktopConnection,
+  primeDemoDesktopConnectionToWorkspace,
   resolveBackendPort,
+  resolveDaemonBinaryPath,
   playbackBuildEnv,
   prepareAutomationAppForLaunch,
   requireWorkspacePackage,
   seedProviderRuntimeConfig,
   submitComposerPrompt,
   waitForProcessReady,
+  waitForArtifactsPane,
   waitForSessionTurnCompletion,
   waitForTcpPort,
 } from "./demo_ping_pong_playback.mjs";
@@ -132,6 +137,11 @@ test("playbackBuildEnv keeps bundle sync disabled for demo builds", () => {
   const env = playbackBuildEnv("/tmp/demo-target");
   assert.equal(env.CARGO_TARGET_DIR, "/tmp/demo-target");
   assert.equal(env.CTX_DESKTOP_SYNC_BUNDLES, "0");
+});
+
+test("resolveDaemonBinaryPath points at the bundled desktop daemon binary", () => {
+  const expectedName = process.platform === "win32" ? "ctx-daemon.exe" : "ctx-daemon";
+  assert.match(resolveDaemonBinaryPath("/tmp/demo-target"), new RegExp(`core/apps/desktop/src-tauri/bin/${expectedName}$`));
 });
 
 test("parseArgs derives appPath from an overridden tauriTargetDir", () => {
@@ -364,13 +374,13 @@ test("primeDemoDesktopConnection seeds desktop and workbench state before target
     nextToken: "token-123",
     nextPath: "/workspaces/ws-123?ctxE2E=1",
     storage: buildDemoDesktopConnectionPayload("http://127.0.0.1:4416", "token-123"),
-    workbench: buildDemoWorkbenchWindowPayload("ws-123", "task-456", "session-789"),
   });
-  assert.deepEqual(payloadCalls[1], {
+  assert.deepEqual(payloadCalls[1], buildDemoWorkbenchWindowPayload("ws-123", "task-456", "session-789"));
+  assert.deepEqual(payloadCalls[2], {
     taskId: "task-456",
     sessionId: "session-789",
   });
-  assert.deepEqual(payloadCalls[2], {
+  assert.deepEqual(payloadCalls[3], {
     taskId: "task-456",
     sessionId: "session-789",
   });
@@ -470,6 +480,37 @@ test("openDiffPane invokes the ctxE2E bridge", async () => {
   });
 });
 
+test("openArtifactsPane invokes the ctxE2E bridge", async () => {
+  let bridgeChecked = false;
+  let executeCount = 0;
+  const browser = {
+    waitUntil: async (predicate) => {
+      bridgeChecked = await predicate();
+      if (!bridgeChecked) {
+        throw new Error("bridge unavailable");
+      }
+    },
+    execute: async () => {
+      executeCount += 1;
+      if (executeCount === 1) {
+        return true;
+      }
+      return {
+        invoked: true,
+        before: { artifact_card_count: 0, video_count: 0 },
+        after: { artifact_card_count: 1, video_count: 1 },
+      };
+    },
+  };
+  const result = await openArtifactsPane(browser);
+  assert.equal(bridgeChecked, true);
+  assert.deepEqual(result, {
+    invoked: true,
+    before: { artifact_card_count: 0, video_count: 0 },
+    after: { artifact_card_count: 1, video_count: 1 },
+  });
+});
+
 test("captureDiffPaneState reads the diff pane markers", async () => {
   const browser = {
     execute: async () => ({
@@ -486,6 +527,57 @@ test("captureDiffPaneState reads the diff pane markers", async () => {
     rightPaneCount: 1,
     togglePressed: true,
   });
+});
+
+test("captureArtifactsPaneState reads the artifact pane markers", async () => {
+  const browser = {
+    execute: async () => ({
+      hasArtifactCard: true,
+      artifactCardCount: 1,
+      hasVideoPreview: true,
+      videoCount: 1,
+      playingVideoCount: 1,
+      firstVideoCurrentTime: 1.25,
+      hasEmptyState: false,
+      rightPaneCount: 1,
+    }),
+  };
+  const result = await captureArtifactsPaneState(browser);
+  assert.deepEqual(result, {
+    hasArtifactCard: true,
+    artifactCardCount: 1,
+    hasVideoPreview: true,
+    videoCount: 1,
+    playingVideoCount: 1,
+    firstVideoCurrentTime: 1.25,
+    hasEmptyState: false,
+    rightPaneCount: 1,
+  });
+});
+
+test("waitForArtifactsPane resolves when the artifact pane is ready", async () => {
+  let attempts = 0;
+  const browser = {
+    waitUntil: async (predicate) => {
+      for (let i = 0; i < 3; i += 1) {
+        attempts += 1;
+        if (await predicate()) {
+          return true;
+        }
+      }
+      throw new Error("artifacts pane never opened");
+    },
+    execute: async () => ({
+      hasArtifactCard: attempts >= 2,
+      artifactCardCount: attempts >= 2 ? 1 : 0,
+      hasVideoPreview: false,
+      videoCount: 0,
+      hasEmptyState: false,
+      rightPaneCount: 1,
+    }),
+  };
+  await waitForArtifactsPane(browser);
+  assert.ok(attempts >= 2);
 });
 
 test("ensureWorkbenchVisible writes a browser-state artifact when selector wait fails", async () => {

@@ -43,8 +43,24 @@ describe("harnessSelection", () => {
     const providersById: Record<string, ProviderStatus> = {
       codex: provider("codex"),
       hidden: provider("hidden", { details: { ui_hidden: "true" } }),
-      missing: provider("missing", { installed: false }),
-      unhealthy: provider("unhealthy", { health: "error" }),
+      missing: provider("missing", {
+        installed: false,
+        usability: {
+          usable: false,
+          status: "install_required",
+          blocking_provider_ids: [],
+          recommended_action: "install",
+        },
+      }),
+      unhealthy: provider("unhealthy", {
+        health: "error",
+        usability: {
+          usable: false,
+          status: "error",
+          blocking_provider_ids: [],
+          recommended_action: "none",
+        },
+      }),
     };
     expect(collectSelectableHarnessProviderIds(providersById)).toEqual(["codex"]);
   });
@@ -161,6 +177,18 @@ describe("harnessSelection", () => {
       mruProviderId: null,
     });
     expect(multipleAuthed).toBeNull();
+  });
+
+  it("returns null when manual demo selection disables autoselect", () => {
+    const selected = resolveInitialHarnessSelection({
+      providerIds: ["codex"],
+      providerOptions: {
+        codex: { ...baseOptions("codex"), has_active_auth: true },
+      },
+      mruProviderId: "codex",
+      disableAutoselect: true,
+    });
+    expect(selected).toBeNull();
   });
 
   it("finalizes initial resolver only after a provider is actually selected", () => {

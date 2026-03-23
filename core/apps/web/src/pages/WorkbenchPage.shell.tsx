@@ -68,6 +68,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const draftMode = newTaskDraft.modeId;
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [daemonDataRoot, setDaemonDataRoot] = useState<string | null>(null);
+  const manualDemoHarnessSelection = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("ctxDemoManualHarness") === "1";
+  }, []);
 
   useEffect(() => {
     if (!optimisticFocus) return;
@@ -104,6 +108,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const focusNewTask = useCallback(() => {
     workbenchStore.focusNewTask();
   }, [workbenchStore]);
+
+  const clearDraftHarness = useCallback(() => {
+    setDraftHarness(null);
+  }, []);
 
   const focusTask = useCallback(
     (taskId: string, sessionId?: string | null) => {
@@ -320,6 +328,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       providerIds: selectableHarnessProviderIds,
       providerOptions,
       mruProviderId,
+      disableAutoselect: manualDemoHarnessSelection,
     });
     if (!shouldFinalizeInitialHarnessSelection(selectedProviderId)) return;
     initialHarnessSelectionResolvedRef.current = true;
@@ -327,6 +336,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [
     activeTaskId,
     draftHarness,
+    manualDemoHarnessSelection,
     providerOptions,
     selectableHarnessProviderIds,
     setSingleDraftHarness,
@@ -486,8 +496,11 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   });
 
   useWorkbenchE2EBridge({
+    focusNewTask,
+    clearDraftHarness,
     focusTask,
     toggleDiffPane: () => activeTaskController.toggleDiffPane("unknown"),
+    toggleArtifactsPane: () => activeTaskController.toggleArtifactsPane("unknown"),
   });
 
   const showDebugIds = useMemo(() => {

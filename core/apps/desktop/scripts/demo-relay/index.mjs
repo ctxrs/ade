@@ -196,6 +196,7 @@ function loadScenario(scenarioPath) {
     provider: raw.provider,
     rewriteRules: Array.isArray(raw.rewrite_rules) ? raw.rewrite_rules : [],
     responseDelayMs: Number(raw.response_delay_ms || 0),
+    forceResponseDelayMs: raw.force_response_delay_ms === true,
     steps,
   };
 }
@@ -284,7 +285,11 @@ async function replayScenario({ scenario, state, pathname, bodyText, requestHead
   ];
   for (const event of step.sseEvents) {
     const baseChunk = typeof event === "string" ? event : event.chunk;
-    const delayMs = typeof event === "string" ? scenario.responseDelayMs : Number(event.delay_ms ?? scenario.responseDelayMs);
+    const delayMs = typeof event === "string"
+      ? scenario.responseDelayMs
+      : scenario.forceResponseDelayMs
+        ? scenario.responseDelayMs
+        : Number(event.delay_ms ?? scenario.responseDelayMs);
     const rewritten = rewriteText(baseChunk, rewriteRules);
     appendJsonl(responsesLog, {
       kind: "sse-chunk",
@@ -334,7 +339,15 @@ export async function startDemoRelay(cliOptions) {
 
       if (url.pathname === "/v1/models") {
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ object: "list", data: [{ id: "openai/gpt-5.4", object: "model" }] }));
+        res.end(JSON.stringify({
+          object: "list",
+          data: [
+            { id: "gpt-5.4/low", name: "GPT 5.4 (Low)", object: "model" },
+            { id: "gpt-5.4/medium", name: "GPT 5.4 (Medium)", object: "model" },
+            { id: "gpt-5.4/high", name: "GPT 5.4 (High)", object: "model" },
+            { id: "gpt-5.4/xhigh", name: "GPT 5.4 (Extra High)", object: "model" },
+          ],
+        }));
         return;
       }
 

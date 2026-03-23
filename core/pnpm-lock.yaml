@@ -20,6 +20,9 @@ importers:
       pixelmatch:
         specifier: ^7.1.0
         version: 7.1.0
+      playwright-core:
+        specifier: ^1.57.0
+        version: 1.57.0
       pngjs:
         specifier: ^7.0.0
         version: 7.0.0

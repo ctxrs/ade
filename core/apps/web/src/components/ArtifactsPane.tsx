@@ -204,7 +204,7 @@ function ArtifactCard({
     preview = <div className="wb-artifact-missing">Missing on disk</div>;
   } else if (isVideo) {
     preview = (
-      <video className="wb-artifact-video" controls preload="metadata">
+      <video className="wb-artifact-video" autoPlay controls loop muted playsInline preload="metadata">
         <source src={url} type={artifact.mime_type || "video/mp4"} />
       </video>
     );
@@ -596,7 +596,7 @@ function ArtifactViewer({
           {missing ? (
             <div className="wb-artifact-missing">Missing on disk</div>
           ) : isVideo ? (
-            <video className="wb-artifact-modal-video" controls preload="metadata">
+            <video className="wb-artifact-modal-video" autoPlay controls loop muted playsInline preload="metadata">
               <source src={url} type={artifact.mime_type || "video/mp4"} />
             </video>
           ) : isImage ? (

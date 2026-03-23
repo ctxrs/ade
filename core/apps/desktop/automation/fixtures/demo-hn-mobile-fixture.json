@@ -1,0 +1,95 @@
+{
+  "id": "hn-mobile",
+  "workspace_name": "hn-mobile",
+  "workspace_template_dir": "demo-workspaces/hn-mobile-baseline",
+  "workspace_commit_message": "Create hn-mobile demo baseline",
+  "execution_environment": "host",
+  "bootstrap_mode": "workspace_only",
+  "provider_id": "codex",
+  "model_id": "gpt-5.4/medium",
+  "next_prompt": "Add saved pages and attach a short recording.",
+  "capture_prompt": "Add saved pages and attach a short recording.",
+  "session_artifact_path": "demo-artifacts/hn-mobile-saved-stories.mp4",
+  "active_tasks": [
+    {
+      "title": "Fix Android keyboard overlap",
+      "session_title": "Android keyboard overlap",
+      "provider_id": "cursor",
+      "model_id": "cursor/auto",
+      "minutes_ago": 2,
+      "status": "working"
+    },
+    {
+      "title": "Tune iOS saved-page animation",
+      "session_title": "iOS saved animation",
+      "provider_id": "claude-crp",
+      "model_id": "claude-sonnet-4",
+      "minutes_ago": 5,
+      "status": "new_message"
+    },
+    {
+      "title": "Add domain badges to story rows",
+      "session_title": "Domain badges",
+      "provider_id": "gemini",
+      "model_id": "gemini-2.5-pro",
+      "minutes_ago": 8,
+      "status": "idle"
+    },
+    {
+      "title": "Investigate stale HN cache invalidation",
+      "session_title": "HN cache invalidation",
+      "provider_id": "codex",
+      "model_id": "gpt-5.4/medium",
+      "minutes_ago": 12,
+      "status": "working"
+    },
+    {
+      "title": "Improve offline error copy",
+      "session_title": "Offline error copy",
+      "provider_id": "cursor",
+      "model_id": "cursor/auto",
+      "minutes_ago": 16,
+      "status": "new_message"
+    },
+    {
+      "title": "Collapse long comment threads",
+      "session_title": "Comment collapse",
+      "provider_id": "gemini",
+      "model_id": "gemini-2.5-flash",
+      "minutes_ago": 21,
+      "status": "idle"
+    },
+    {
+      "title": "Audit dark mode contrast",
+      "session_title": "Dark mode contrast",
+      "provider_id": "claude-crp",
+      "model_id": "claude-sonnet-4",
+      "minutes_ago": 27,
+      "status": "working"
+    },
+    {
+      "title": "Profile launch time on Pixel 9",
+      "session_title": "Pixel 9 launch time",
+      "provider_id": "copilot",
+      "model_id": "gpt-4.1",
+      "minutes_ago": 34,
+      "status": "idle"
+    },
+    {
+      "title": "Refine iPad split view layout",
+      "session_title": "iPad split view",
+      "provider_id": "goose",
+      "model_id": "goose/default",
+      "minutes_ago": 41,
+      "status": "new_message"
+    },
+    {
+      "title": "Clean up article reader spacing",
+      "session_title": "Reader spacing",
+      "provider_id": "codex",
+      "model_id": "gpt-5.4/medium",
+      "minutes_ago": 52,
+      "status": "idle"
+    }
+  ]
+}

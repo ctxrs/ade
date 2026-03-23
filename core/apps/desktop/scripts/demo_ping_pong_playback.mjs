@@ -224,6 +224,14 @@ function playbackBuildEnv(tauriTargetDir) {
   };
 }
 
+function resolveDaemonBinaryPath(tauriTargetDir = null) {
+  void tauriTargetDir;
+  return repoPath(
+    "core/apps/desktop/src-tauri/bin",
+    process.platform === "win32" ? "ctx-daemon.exe" : "ctx-daemon",
+  );
+}
+
 function buildPlaybackAppEnv(setupManifest, workspaceRoot, authToken, tauriTargetDir = null) {
   const resolvedTargetDir = tauriTargetDir ? path.resolve(tauriTargetDir) : null;
   return {
@@ -781,12 +789,11 @@ async function navigateBrowserToWorkspace(browser, workspaceId) {
   );
 }
 
-async function primeDemoDesktopConnection(browser, daemonUrl, authToken, workspaceId, taskId, sessionId) {
+async function primeDemoDesktopConnectionToWorkspace(browser, daemonUrl, authToken, workspaceId) {
   const workspacePath = `/workspaces/${encodeURIComponent(workspaceId)}?ctxE2E=1`;
   const storagePayload = buildDemoDesktopConnectionPayload(daemonUrl, authToken);
-  const workbenchPayload = buildDemoWorkbenchWindowPayload(workspaceId, taskId, sessionId);
   await browser.execute(
-    async ({ nextBaseUrl, nextToken, nextPath, storage, workbench }) => {
+    async ({ nextBaseUrl, nextToken, nextPath, storage }) => {
       const invoke = globalThis.__TAURI__?.core?.invoke || globalThis.__TAURI_INTERNALS__?.invoke;
       if (typeof invoke !== "function") {
         throw new Error("Tauri invoke bridge unavailable in automation app");
@@ -800,11 +807,6 @@ async function primeDemoDesktopConnection(browser, daemonUrl, authToken, workspa
       sessionStorage.setItem("ctxE2E", "1");
       sessionStorage.setItem("ctxDaemonConnectionV1", storage.sessionConnection);
       localStorage.setItem("ctxDaemonConnectionBaseV1", storage.persistedBase);
-      sessionStorage.setItem("contextUiWindowId.v1", workbench.windowId);
-      sessionStorage.setItem(workbench.sessionWindowKey, workbench.sessionWindow);
-      if (typeof window.name === "string" && (!window.name || window.name.startsWith("ctx-ui-window-id:"))) {
-        window.name = workbench.windowName;
-      }
       const next = new URL(nextPath, window.location.origin);
       if (`${window.location.pathname}${window.location.search}` !== `${next.pathname}${next.search}`) {
         window.history.replaceState({}, "", `${next.pathname}${next.search}`);
@@ -816,8 +818,33 @@ async function primeDemoDesktopConnection(browser, daemonUrl, authToken, workspa
       nextToken: authToken,
       nextPath: workspacePath,
       storage: storagePayload,
-      workbench: workbenchPayload,
     },
+  );
+  await browser.waitUntil(
+    async () => {
+      const state = await captureBrowserState(browser);
+      return state.pathname === `/workspaces/${encodeURIComponent(workspaceId)}`;
+    },
+    {
+      timeout: 30_000,
+      timeoutMsg: `browser did not navigate to ${workspacePath} after demo connection priming`,
+    },
+  );
+}
+
+async function primeDemoDesktopConnection(browser, daemonUrl, authToken, workspaceId, taskId, sessionId) {
+  const workspacePath = `/workspaces/${encodeURIComponent(workspaceId)}?ctxE2E=1`;
+  await primeDemoDesktopConnectionToWorkspace(browser, daemonUrl, authToken, workspaceId);
+  const workbenchPayload = buildDemoWorkbenchWindowPayload(workspaceId, taskId, sessionId);
+  await browser.execute(
+    (workbench) => {
+      sessionStorage.setItem("contextUiWindowId.v1", workbench.windowId);
+      sessionStorage.setItem(workbench.sessionWindowKey, workbench.sessionWindow);
+      if (typeof window.name === "string" && (!window.name || window.name.startsWith("ctx-ui-window-id:"))) {
+        window.name = workbench.windowName;
+      }
+    },
+    workbenchPayload,
   );
   await browser.waitUntil(
     async () =>
@@ -926,9 +953,11 @@ async function readSessionEventSeq(baseUrl, token, sessionId, options = {}) {
 
 async function submitComposerPrompt(browser, promptText) {
   return browser.execute((text) => {
-    const textarea = document.querySelector(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
+    const textarea = document.querySelector(
+      ".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea, textarea.wb-new-composer-textarea",
+    );
     if (!(textarea instanceof HTMLTextAreaElement)) {
-      throw new Error("active composer textarea not found");
+      throw new Error("composer textarea not found");
     }
     const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
     if (typeof setter !== "function") {
@@ -954,12 +983,26 @@ async function submitComposerPrompt(browser, promptText) {
 
 function runConductor(scenarioPath) {
   process.stderr.write(`[demo-playback] running conductor for ${scenarioPath}\n`);
-  runChecked("swift", [repoPath("core/apps/desktop/scripts/macos_demo_conductor.swift"), "--scenario", scenarioPath], {
-    cwd: REPO_ROOT,
-    env: { ...process.env },
-    timeout: 30_000,
+  return new Promise((resolve, reject) => {
+    const proc = spawn("swift", [repoPath("core/apps/desktop/scripts/macos_demo_conductor.swift"), "--scenario", scenarioPath], {
+      cwd: REPO_ROOT,
+      env: { ...process.env },
+      stdio: "inherit",
+    });
+    proc.once("error", reject);
+    proc.once("exit", (status, signal) => {
+      if (status === 0) {
+        process.stderr.write(`[demo-playback] conductor completed for ${scenarioPath}\n`);
+        resolve();
+        return;
+      }
+      reject(new Error(
+        signal
+          ? `swift conductor exited from signal ${signal}`
+          : `swift conductor exited with status ${status}`,
+      ));
+    });
   });
-  process.stderr.write(`[demo-playback] conductor completed for ${scenarioPath}\n`);
 }
 
 function writeScenario(pathname, scenario) {
@@ -1008,7 +1051,10 @@ async function startSetupProcess(options) {
     seedProviderRuntimeConfig(daemonDataDir, "codex", bundledCodexRuntime);
   }
 
-  const daemon = await startDaemon(daemonDataDir, `127.0.0.1:${options.daemonPort}`);
+  const daemon = await startDaemon(daemonDataDir, `127.0.0.1:${options.daemonPort}`, {
+    tauriTargetDir: options.tauriTargetDir,
+    skipBuild: options.skipBuild,
+  });
   const auth = readDaemonAuth({
     daemonUrl: daemon.daemonUrl,
     dataDir: daemon.dataDir,
@@ -1066,19 +1112,25 @@ async function startSetupProcess(options) {
   return { relay, daemon, manifest };
 }
 
-async function startDaemon(dataDir, bind) {
+async function startDaemon(dataDir, bind, { tauriTargetDir = null, skipBuild = false } = {}) {
   mkdirSync(dataDir, { recursive: true });
   const [host, port] = bind.split(":");
   const logPath = path.join(dataDir, "daemon.log");
   const logStream = createWriteStream(logPath, { flags: "a" });
-  const daemonBin = repoPath("core/target/debug/ctx");
-  if (!existsSync(daemonBin)) {
+  const daemonBin = resolveDaemonBinaryPath(tauriTargetDir);
+  if (!skipBuild || !existsSync(daemonBin)) {
     runChecked("cargo", ["build", "-p", "ctx-http", "--bin", "ctx"], {
       cwd: repoPath("core"),
       env: {
         ...process.env,
         CTX_DEV_MODE: "1",
+        ...(tauriTargetDir ? { CARGO_TARGET_DIR: path.resolve(tauriTargetDir) } : {}),
       },
+    });
+    const [syncCommand, syncArgs] = desktopSyncCommand("debug");
+    runChecked(syncCommand, syncArgs, {
+      cwd: REPO_ROOT,
+      env: playbackBuildEnv(tauriTargetDir ? path.resolve(tauriTargetDir) : repoPath("core/target")),
     });
   }
   const proc = spawn(
@@ -1166,6 +1218,63 @@ async function captureDiffPaneState(browser) {
   });
 }
 
+async function waitForArtifactsPane(browser) {
+  await browser.waitUntil(async () => {
+    const state = await captureArtifactsPaneState(browser);
+    return state.hasArtifactCard || state.hasVideoPreview || state.hasEmptyState;
+  }, { timeout: 30_000, timeoutMsg: "artifacts pane did not open in time" });
+}
+
+async function openArtifactsPane(browser) {
+  await browser.waitUntil(
+    async () =>
+      await browser.execute(
+        () => Boolean(globalThis.__ctxE2E && typeof globalThis.__ctxE2E.toggleArtifactsPane === "function"),
+      ),
+    {
+      timeout: 30_000,
+      timeoutMsg: "ctxE2E toggleArtifactsPane bridge did not become available",
+    },
+  );
+  return browser.execute(() => {
+    const toggleArtifactsPane = globalThis.__ctxE2E?.toggleArtifactsPane;
+    if (typeof toggleArtifactsPane !== "function") {
+      throw new Error("ctxE2E toggleArtifactsPane bridge unavailable");
+    }
+    const before = {
+      artifact_card_count: document.querySelectorAll(".wb-artifact-card").length,
+      video_count: document.querySelectorAll(".wb-artifact-video").length,
+    };
+    const invoked = toggleArtifactsPane();
+    const after = {
+      artifact_card_count: document.querySelectorAll(".wb-artifact-card").length,
+      video_count: document.querySelectorAll(".wb-artifact-video").length,
+    };
+    return { invoked, before, after };
+  });
+}
+
+async function captureArtifactsPaneState(browser) {
+  return browser.execute(() => {
+    const artifactCards = document.querySelectorAll(".wb-artifact-card");
+    const videos = Array.from(document.querySelectorAll(".wb-artifact-video")).filter(
+      (element) => element instanceof HTMLVideoElement,
+    );
+    const empty = document.querySelector(".wb-artifact-empty, .wb-artifact-inline-status, .wb-artifact-missing");
+    const playingVideos = videos.filter((element) => !element.paused && !element.ended);
+    return {
+      hasArtifactCard: artifactCards.length > 0,
+      artifactCardCount: artifactCards.length,
+      hasVideoPreview: videos.length > 0,
+      videoCount: videos.length,
+      playingVideoCount: playingVideos.length,
+      firstVideoCurrentTime: videos[0]?.currentTime ?? 0,
+      hasEmptyState: Boolean(empty),
+      rightPaneCount: document.querySelectorAll(".wb-right-pane").length,
+    };
+  });
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (process.platform !== "darwin") {
@@ -1240,7 +1349,7 @@ async function main() {
     writeScenario(promptScenarioPath, buildPromptScenario(composerPoint, options.promptText));
     writeJsonArtifact(path.join(options.artifactDir, "prompt-measurement.json"), promptMeasurement);
     appendPlaybackStep(options.artifactDir, "conductor_prompt_start");
-    runConductor(promptScenarioPath);
+    await runConductor(promptScenarioPath);
     appendPlaybackStep(options.artifactDir, "conductor_prompt_complete");
     const sessionEventBaseline = await readSessionEventSeq(
       setupManifest.daemon.url,
@@ -1331,13 +1440,16 @@ function readTokenFromManifest(setup) {
 
 export {
   bundleExecutablePaths,
+  buildAutomationAppIfNeeded,
   buildCnBackendEnv,
   buildCnDriverEnv,
   buildDemoDesktopConnectionPayload,
   buildDemoWorkbenchWindowPayload,
   buildPlaybackAppEnv,
+  connectBrowser,
   captureBrowserState,
   createCliAlias,
+  readTokenFromManifest,
   desktopSyncCommand,
   ensureWorkbenchVisible,
   findBundledProviderRuntime,
@@ -1346,16 +1458,27 @@ export {
   listeningPidsForPort,
   navigateBrowserToWorkspace,
   playbackBuildEnv,
+  resolveDaemonBinaryPath,
+  primeDemoDesktopConnectionToWorkspace,
   primeDemoDesktopConnection,
   resolveBackendPort,
   requireWorkspacePackage,
+  runConductor,
   seedProviderRuntimeConfig,
+  startCrabNebulaStack,
+  startSetupProcess,
   openDiffPane,
+  openArtifactsPane,
   parseArgs,
+  measureTargets,
   captureDiffPaneState,
+  captureArtifactsPaneState,
   prepareAutomationAppForLaunch,
   submitComposerPrompt,
+  terminateAutomationAppProcesses,
   terminateListeningPort,
+  waitForDiffPane,
+  waitForArtifactsPane,
   waitForProcessReady,
   waitForSessionTurnCompletion,
   waitForTcpPort,

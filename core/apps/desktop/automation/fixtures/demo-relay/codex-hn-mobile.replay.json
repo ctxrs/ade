@@ -1,0 +1,263 @@
+{
+  "id": "codex-hn-mobile",
+  "provider": "codex",
+  "response_delay_ms": 2,
+  "force_response_delay_ms": true,
+  "rewrite_rules": [],
+  "steps": [
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": [
+          "Add saved pages and attach a short recording."
+        ]
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-1.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-2.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-3.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-4.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-5.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-6.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-7.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-8.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-9.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-10.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-11.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-12.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-13.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-14.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-15.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-16.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-17.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-18.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-19.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-20.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/hn-demo-workspace"
+      },
+      "responses": {
+        "sse_events_path": "codex-hn-mobile.replay.step-21.sse.json"
+      }
+    }
+  ]
+}

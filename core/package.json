@@ -48,6 +48,10 @@
     "testing:scorecard": "bash -lc 'scripts/testing_scorecard.sh --daemon-lcov coverage/daemon.lcov --web-summary coverage/web/coverage-summary.json --out-json coverage/testing-scorecard.json --out-pretty coverage/testing-scorecard.txt'",
     "desktop:prep": "node scripts/desktop_check_versions.cjs && CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename \"$(git rev-parse --git-dir)\")} cargo build -p ctx-http -p ctx-mcp && VITE_CTX_APP_VERSION=$(node scripts/desktop_version.cjs) pnpm -C apps/web build && CTX_DESKTOP_SYNC_BUNDLES=${CTX_DESKTOP_SYNC_BUNDLES:-0} CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename \"$(git rev-parse --git-dir)\")} node scripts/desktop_sync_resources.cjs --profile debug",
     "desktop:demo:ping-pong": "node apps/desktop/scripts/demo_ping_pong_playback.mjs",
+    "desktop:demo:hn-mobile": "node apps/desktop/scripts/demo_hn_mobile_playback.mjs",
+    "desktop:demo:hn-mobile:record": "node apps/desktop/scripts/demo_hn_mobile_playback.mjs --record-video-out /tmp/ctx-demo-hn-mobile-recording.mp4 --record-fps 12",
+    "desktop:demo:hn-mobile:capture": "node apps/desktop/scripts/demo_hn_mobile_capture.mjs",
+    "desktop:demo:hn-mobile:record-artifact": "pnpm exec node apps/desktop/scripts/demo_hn_mobile_record_artifact.mjs",
     "desktop:prep:dev": "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename \"$(git rev-parse --git-dir)\")} cargo build -p ctx-http -p ctx-mcp && CTX_DESKTOP_SYNC_BUNDLES=${CTX_DESKTOP_SYNC_BUNDLES:-0} CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename \"$(git rev-parse --git-dir)\")} node scripts/desktop_sync_resources.cjs --profile debug",
     "desktop:runtime:prepare": "CTX_RUNTIME_PROFILE=${CTX_RUNTIME_PROFILE:-parity} node scripts/desktop_runtime_prepare.cjs",
     "desktop:runtime:prepare:source-all": "CTX_RUNTIME_PROFILE=source-all node scripts/desktop_runtime_prepare.cjs",
@@ -137,6 +141,7 @@
   },
   "devDependencies": {
     "@supabase/supabase-js": "2.49.1",
+    "playwright-core": "^1.57.0",
     "pixelmatch": "^7.1.0",
     "pngjs": "^7.0.0",
     "turbo": "^2.3.0",

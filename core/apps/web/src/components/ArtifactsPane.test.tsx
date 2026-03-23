@@ -140,6 +140,36 @@ describe("ArtifactsPane", () => {
     expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
   });
 
+  it("autoplays previewable video artifacts inline and in the viewer", () => {
+    render(
+      <ArtifactsPane
+        artifacts={[
+          makeArtifact({
+            name: "demo.mp4",
+            mime_type: "video/mp4",
+            absolute_path: "/tmp/demo.mp4",
+          }),
+        ]}
+      />,
+    );
+
+    const inlineVideo = document.querySelector(".wb-artifact-video") as HTMLVideoElement;
+    expect(inlineVideo).toBeTruthy();
+    expect(inlineVideo.autoplay).toBe(true);
+    expect(inlineVideo.loop).toBe(true);
+    expect(inlineVideo.muted).toBe(true);
+    expect(inlineVideo.playsInline).toBe(true);
+
+    fireEvent.click(screen.getByTitle("/tmp/demo.mp4"));
+
+    const modalVideo = document.querySelector(".wb-artifact-modal-video") as HTMLVideoElement;
+    expect(modalVideo).toBeTruthy();
+    expect(modalVideo.autoplay).toBe(true);
+    expect(modalVideo.loop).toBe(true);
+    expect(modalVideo.muted).toBe(true);
+    expect(modalVideo.playsInline).toBe(true);
+  });
+
   it("renders an inline text preview for previewable text artifacts", async () => {
     mockTextFetch({ text: "line 1\nline 2\nline 3" });
 

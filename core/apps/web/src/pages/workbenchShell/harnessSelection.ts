@@ -78,6 +78,7 @@ type ResolveInitialHarnessSelectionArgs = {
   providerIds: string[];
   providerOptions: Record<string, ProviderOptions | undefined>;
   mruProviderId?: string | null;
+  disableAutoselect?: boolean;
 };
 
 const NON_AUTOSELECTABLE_PROVIDER_IDS = new Set(["fake"]);
@@ -86,7 +87,11 @@ export function resolveInitialHarnessSelection({
   providerIds,
   providerOptions,
   mruProviderId,
+  disableAutoselect,
 }: ResolveInitialHarnessSelectionArgs): string | null {
+  if (disableAutoselect) {
+    return null;
+  }
   const authedProviderIds = providerIds.filter((providerId) =>
     hasConfiguredHarnessAuth(providerId, providerOptions[providerId]),
   );

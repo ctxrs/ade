@@ -16,14 +16,17 @@ export function screenPointFromProbe(metrics, rect) {
 }
 
 export function buildPromptScenario(point, promptText, opts = {}) {
+  const actions = [
+    { kind: "move", x: point.x, y: point.y, duration_ms: opts.moveDurationMs ?? 550 },
+    { kind: "click", button: "left" },
+    { kind: "type", text: promptText, cps: opts.cps ?? 14 },
+  ];
+  if (opts.submitViaKey !== false) {
+    actions.push({ kind: "key", name: opts.submitKeyName ?? "return" });
+  }
+  actions.push({ kind: "wait", duration_ms: opts.waitDurationMs ?? 300 });
   return {
-    actions: [
-      { kind: "move", x: point.x, y: point.y, duration_ms: opts.moveDurationMs ?? 550 },
-      { kind: "click", button: "left" },
-      { kind: "type", text: promptText, cps: opts.cps ?? 14 },
-      { kind: "key", name: "return" },
-      { kind: "wait", duration_ms: opts.waitDurationMs ?? 300 },
-    ],
+    actions,
   };
 }
 
