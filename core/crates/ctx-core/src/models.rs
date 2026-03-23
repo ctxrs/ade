@@ -663,6 +663,7 @@ pub struct SessionTurnTool {
     pub status: Option<String>,
     pub input_json: Option<serde_json::Value>,
     pub output_text: Option<String>,
+    pub order_seq: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_event_seq: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -693,6 +694,7 @@ pub struct SessionTurnToolSummary {
     pub input_preview: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_preview: Option<String>,
+    pub order_seq: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_event_seq: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -412,6 +412,7 @@ mod tests {
             status: Some("running".to_string()),
             input_preview: None,
             output_preview: None,
+            order_seq: 1,
             first_event_seq: None,
             input_truncated: None,
             input_original_bytes: None,

@@ -1911,6 +1911,7 @@ describe("SessionSupervisor", () => {
           subtitle: "pwd",
           status: "completed",
           input_preview: { command: "pwd" },
+          order_seq: 2,
           first_event_seq: 2,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -1932,7 +1933,7 @@ describe("SessionSupervisor", () => {
 
     const entry = sup.getSnapshot().sessions[sessionId];
     expect(entry?.turnToolsByTurnId[turnId]?.length).toBe(1);
-    expect((entry?.turnToolsByTurnId[turnId]?.[0] as { first_event_seq?: number | null } | undefined)?.first_event_seq).toBe(2);
+    expect(entry?.turnToolsByTurnId[turnId]?.[0]?.order_seq).toBe(2);
     expect(entry?.turnToolsByTurnId[turnId]?.[0]?.provider_tool_name).toBe("Bash");
     expect(entry?.turnToolsByTurnId[turnId]?.[0]?.subtitle).toBe("pwd");
 

@@ -235,6 +235,7 @@ pub(super) fn cwd_outside_worktree(
 #[derive(Clone, Debug)]
 pub(super) struct TurnToolUpdate {
     pub(super) tool_call_id: String,
+    order_seq: Option<i64>,
     tool_kind: Option<String>,
     provider_tool_name: Option<String>,
     title: Option<String>,
@@ -254,6 +255,14 @@ pub(super) fn build_turn_tool_update_from_payload(
 ) -> Option<TurnToolUpdate> {
     let update = extract_tool_update(payload_json);
     let tool_call_id = tool_call_id_from_payload(payload_json)?;
+    let order_seq = payload_json
+        .get("order_seq")
+        .and_then(|value| value.as_i64())
+        .or_else(|| {
+            payload_json
+                .get("orderSeq")
+                .and_then(|value| value.as_i64())
+        });
     let tool_kind = tool_kind_from_update(update);
     let provider_tool_name = tool_name_from_update(update);
     let title = tool_title_from_update(update);
@@ -293,6 +302,7 @@ pub(super) fn build_turn_tool_update_from_payload(
 
     Some(TurnToolUpdate {
         tool_call_id,
+        order_seq,
         tool_kind,
         provider_tool_name,
         title,
@@ -318,8 +328,22 @@ pub(super) fn merge_tool_update(
     turn_id: ctx_core::ids::TurnId,
     event_seq: i64,
     now: chrono::DateTime<chrono::Utc>,
-) -> SessionTurnTool {
+) -> Option<SessionTurnTool> {
     let created_at = prev.map(|t| t.created_at).unwrap_or(now);
+    let order_seq = match (prev.map(|t| t.order_seq), update.order_seq) {
+        (Some(prev_seq), Some(event_seq)) => prev_seq.min(event_seq),
+        (Some(prev_seq), None) => prev_seq,
+        (None, Some(event_seq)) => event_seq,
+        (None, None) => {
+            tracing::error!(
+                tool_call_id = %update.tool_call_id,
+                session_id = %session_id.0,
+                turn_id = %turn_id.0,
+                "tool update missing canonical order_seq"
+            );
+            return None;
+        }
+    };
     let first_event_seq = match prev.and_then(|t| t.first_event_seq) {
         Some(prev_seq) => Some(prev_seq.min(event_seq)),
         None => Some(event_seq),
@@ -371,7 +395,7 @@ pub(super) fn merge_tool_update(
         (None, Some(prev)) => Some(prev),
         (None, None) => None,
     };
-    SessionTurnTool {
+    Some(SessionTurnTool {
         session_id,
         tool_call_id: update.tool_call_id,
         turn_id,
@@ -382,6 +406,7 @@ pub(super) fn merge_tool_update(
         status,
         input_json,
         output_text,
+        order_seq,
         first_event_seq,
         input_truncated,
         input_original_bytes,
@@ -389,7 +414,7 @@ pub(super) fn merge_tool_update(
         output_original_bytes,
         created_at,
         updated_at: now,
-    }
+    })
 }
 
 pub(super) fn tool_count_deltas(

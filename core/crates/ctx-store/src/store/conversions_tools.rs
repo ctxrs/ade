@@ -12,6 +12,7 @@ pub(super) fn summarize_session_turn_tool(tool: &SessionTurnTool) -> SessionTurn
         status: tool.status.clone(),
         input_preview: tool_input_preview_from_value(tool.input_json.as_ref()),
         output_preview: tool.output_text.clone(),
+        order_seq: tool.order_seq,
         first_event_seq: tool.first_event_seq,
         input_truncated: tool.input_truncated,
         input_original_bytes: tool.input_original_bytes,
@@ -22,25 +23,28 @@ pub(super) fn summarize_session_turn_tool(tool: &SessionTurnTool) -> SessionTurn
     }
 }
 
-pub(super) fn tool_seq_sort_key(seq: Option<i64>) -> i64 {
-    seq.unwrap_or(i64::MAX)
-}
-
 pub(super) fn compare_tool_summary_order(
     a: &SessionTurnToolSummary,
     b: &SessionTurnToolSummary,
 ) -> std::cmp::Ordering {
-    tool_seq_sort_key(a.first_event_seq)
-        .cmp(&tool_seq_sort_key(b.first_event_seq))
+    a.order_seq
+        .cmp(&b.order_seq)
         .then_with(|| a.created_at.cmp(&b.created_at))
         .then_with(|| a.tool_call_id.cmp(&b.tool_call_id))
 }
 
 pub(super) fn compare_tool_order(a: &SessionTurnTool, b: &SessionTurnTool) -> std::cmp::Ordering {
-    tool_seq_sort_key(a.first_event_seq)
-        .cmp(&tool_seq_sort_key(b.first_event_seq))
+    a.order_seq
+        .cmp(&b.order_seq)
         .then_with(|| a.created_at.cmp(&b.created_at))
         .then_with(|| a.tool_call_id.cmp(&b.tool_call_id))
+}
+
+fn read_event_order_seq(payload: &Value) -> Option<i64> {
+    payload
+        .get("order_seq")
+        .and_then(Value::as_i64)
+        .or_else(|| payload.get("orderSeq").and_then(Value::as_i64))
 }
 
 pub(super) const TOOL_PREVIEW_MAX_LINES: usize = 5;
@@ -646,6 +650,7 @@ pub(super) fn build_turn_tool_from_event(
         status,
         input_json: input_meta.preview,
         output_text: output_meta.as_ref().map(|preview| preview.preview.clone()),
+        order_seq: read_event_order_seq(&event.payload_json)?,
         first_event_seq: Some(event.seq),
         input_truncated,
         input_original_bytes,
@@ -758,6 +763,7 @@ pub(super) fn build_turn_tools_from_events(
 ) -> Vec<SessionTurnTool> {
     #[derive(Default)]
     struct ToolAgg {
+        order_seq: Option<i64>,
         tool_kind: Option<String>,
         provider_tool_name: Option<String>,
         title: Option<String>,
@@ -796,6 +802,7 @@ pub(super) fn build_turn_tools_from_events(
             entry.created_at = ev.created_at;
             entry.updated_at = ev.created_at;
             entry.first_event_seq = Some(ev.seq);
+            entry.order_seq = read_event_order_seq(&ev.payload_json);
             entry.initialized = true;
         } else {
             entry.updated_at = ev.created_at;
@@ -805,6 +812,12 @@ pub(super) fn build_turn_tools_from_events(
             {
                 entry.first_event_seq = Some(ev.seq);
                 entry.created_at = ev.created_at;
+            }
+            if let Some(order_seq) = read_event_order_seq(&ev.payload_json) {
+                entry.order_seq = Some(match entry.order_seq {
+                    Some(existing) => existing.min(order_seq),
+                    None => order_seq,
+                });
             }
         }
 
@@ -897,6 +910,10 @@ pub(super) fn build_turn_tools_from_events(
             status: agg.status,
             input_json: agg.input_json,
             output_text: agg.output_text,
+            order_seq: match agg.order_seq {
+                Some(order_seq) => order_seq,
+                None => continue,
+            },
             first_event_seq: agg.first_event_seq,
             input_truncated: agg.input_truncated,
             input_original_bytes: agg.input_original_bytes,

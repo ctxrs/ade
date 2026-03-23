@@ -516,6 +516,7 @@ async fn tool_projection_normalizes_mixed_payloads_and_rebuilds_from_event_log()
             SessionEventType::ToolResult,
             serde_json::json!({
                 "tool_call_id": "tool-42",
+                "order_seq": 1,
                 "status": "ok",
                 "result": "cwd=/tmp/project"
             }),
@@ -531,6 +532,7 @@ async fn tool_projection_normalizes_mixed_payloads_and_rebuilds_from_event_log()
             SessionEventType::ToolCall,
             serde_json::json!({
                 "toolCallId": "tool-42",
+                "order_seq": 2,
                 "kind": "shell",
                 "tool_label": "Run shell",
                 "rawInput": { "command": "pwd" }
@@ -561,6 +563,7 @@ async fn tool_projection_normalizes_mixed_payloads_and_rebuilds_from_event_log()
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(persisted.order_seq, 1);
     assert_eq!(persisted.first_event_seq, Some(result_event.seq));
     assert_eq!(persisted.tool_kind.as_deref(), Some("shell"));
     assert_eq!(persisted.title.as_deref(), Some("Run shell"));
@@ -585,6 +588,7 @@ async fn tool_projection_normalizes_mixed_payloads_and_rebuilds_from_event_log()
     assert_eq!(rebuilt.len(), 1);
     let rebuilt = &rebuilt[0];
     assert_eq!(rebuilt.tool_call_id, "tool-42");
+    assert_eq!(rebuilt.order_seq, 1);
     assert_eq!(rebuilt.first_event_seq, Some(result_event.seq));
     assert_eq!(rebuilt.tool_kind.as_deref(), Some("shell"));
     assert_eq!(rebuilt.title.as_deref(), Some("Run shell"));
@@ -620,6 +624,7 @@ async fn tool_projection_uses_provider_tool_name_when_title_is_missing() {
             SessionEventType::ToolCall,
             serde_json::json!({
                 "toolCallId": "tool-43",
+                "order_seq": 1,
                 "kind": "execute",
                 "toolCall": {
                     "name": "Bash",
@@ -642,6 +647,7 @@ async fn tool_projection_uses_provider_tool_name_when_title_is_missing() {
             SessionEventType::ToolResult,
             serde_json::json!({
                 "tool_call_id": "tool-43",
+                "order_seq": 1,
                 "status": "completed",
                 "toolCall": {
                     "name": "Bash",
@@ -666,6 +672,7 @@ async fn tool_projection_uses_provider_tool_name_when_title_is_missing() {
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(persisted.order_seq, 1);
     assert_eq!(persisted.first_event_seq, Some(call_event.seq));
     assert_eq!(persisted.tool_kind.as_deref(), Some("execute"));
     assert_eq!(persisted.provider_tool_name.as_deref(), Some("Bash"));
@@ -686,6 +693,7 @@ async fn tool_projection_uses_provider_tool_name_when_title_is_missing() {
     assert_eq!(rebuilt.len(), 1);
     let rebuilt = &rebuilt[0];
     assert_eq!(rebuilt.tool_call_id, "tool-43");
+    assert_eq!(rebuilt.order_seq, 1);
     assert_eq!(rebuilt.first_event_seq, Some(call_event.seq));
     assert_eq!(rebuilt.tool_kind.as_deref(), Some("execute"));
     assert_eq!(rebuilt.provider_tool_name.as_deref(), Some("Bash"));
@@ -851,6 +859,7 @@ async fn active_snapshot_materialization_keeps_tool_projection_without_transient
             SessionEventType::ToolCall,
             serde_json::json!({
                 "toolCallId": "tool-7",
+                "order_seq": 2,
                 "kind": "shell",
                 "tool_label": "List directory",
                 "rawInput": { "command": "ls -la" }
@@ -867,6 +876,7 @@ async fn active_snapshot_materialization_keeps_tool_projection_without_transient
             SessionEventType::ToolCallUpdate,
             serde_json::json!({
                 "tool_call_id": "tool-7",
+                "order_seq": 2,
                 "status": "running",
                 "output_text": "streaming output"
             }),
@@ -882,6 +892,7 @@ async fn active_snapshot_materialization_keeps_tool_projection_without_transient
             SessionEventType::ToolResult,
             serde_json::json!({
                 "tool_call_id": "tool-7",
+                "order_seq": 2,
                 "status": "completed",
                 "result": "done"
             }),
@@ -919,6 +930,7 @@ async fn active_snapshot_materialization_keeps_tool_projection_without_transient
     assert_eq!(active_head.tool_summaries.len(), 1);
     let tool = &active_head.tool_summaries[0];
     assert_eq!(tool.tool_call_id, "tool-7");
+    assert_eq!(tool.order_seq, 2);
     assert_eq!(tool.first_event_seq, Some(call.seq));
     assert_eq!(tool.tool_kind.as_deref(), Some("shell"));
     assert_eq!(tool.title.as_deref(), Some("List directory"));
@@ -943,6 +955,7 @@ async fn active_snapshot_materialization_keeps_tool_projection_without_transient
     assert_eq!(reopened_head.session.worktree_id, fixture.worktree_id);
     assert_eq!(reopened_head.tool_summaries.len(), 1);
     assert_eq!(reopened_head.tool_summaries[0].tool_call_id, "tool-7");
+    assert_eq!(reopened_head.tool_summaries[0].order_seq, 2);
     assert_eq!(
         reopened_head.tool_summaries[0].status.as_deref(),
         Some("completed")

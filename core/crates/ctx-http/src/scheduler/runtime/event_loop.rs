@@ -460,14 +460,16 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                             .ok()
                             .flatten()
                     };
-                    let merged = merge_tool_update(
+                    let Some(merged) = merge_tool_update(
                         prev.as_ref(),
                         update,
                         session_id,
                         turn_id,
                         event.seq,
                         event.created_at,
-                    );
+                    ) else {
+                        continue;
+                    };
                     if matches!(event.event_type, SessionEventType::ToolCallUpdate) {
                         tool_cache.insert(merged.tool_call_id.clone(), merged);
                     } else {

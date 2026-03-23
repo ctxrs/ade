@@ -509,6 +509,105 @@ describe("buildWorkbenchThreadViewModel", () => {
     ]);
   }, 10000);
 
+  it("keeps summary-backed tools ahead of a later final assistant using tool order_seq", async () => {
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+
+    const turns = [
+      {
+        turn_id: "t1",
+        session_id: "s1",
+        user_message_id: "m1",
+        status: "completed",
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:04.000Z",
+        tool_total: 2,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 2,
+        tool_failed: 0,
+      },
+    ];
+
+    const messages = [
+      {
+        id: "m1",
+        session_id: "s1",
+        role: "user",
+        content: "hello",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        turn_id: "t1",
+        order_seq: 1,
+      },
+      {
+        id: "m2",
+        session_id: "s1",
+        role: "assistant",
+        content: "final answer",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:03.000Z",
+        turn_id: "t1",
+        turn_sequence: 1,
+        order_seq: 3,
+      },
+    ];
+
+    const toolsByTurnId = {
+      t1: [
+        {
+          session_id: "s1",
+          turn_id: "t1",
+          tool_call_id: "tool-1",
+          tool_kind: "exec",
+          provider_tool_name: "exec_command",
+          title: "Ran",
+          subtitle: "pwd",
+          status: "completed",
+          input_json: { cmd: "pwd" },
+          output_text: "",
+          order_seq: 2,
+          first_event_seq: null,
+          created_at: "2025-12-15T00:00:01.000Z",
+          updated_at: "2025-12-15T00:00:01.100Z",
+          summary_only: true,
+        },
+        {
+          session_id: "s1",
+          turn_id: "t1",
+          tool_call_id: "tool-2",
+          tool_kind: "exec",
+          provider_tool_name: "exec_command",
+          title: "Ran",
+          subtitle: "ls",
+          status: "completed",
+          input_json: { cmd: "ls" },
+          output_text: "",
+          order_seq: 3,
+          first_event_seq: null,
+          created_at: "2025-12-15T00:00:02.000Z",
+          updated_at: "2025-12-15T00:00:02.100Z",
+          summary_only: true,
+        },
+      ],
+    };
+
+    const out = buildWorkbenchThreadViewModel(
+      turns as unknown as SessionTurn[],
+      messages as unknown as Message[],
+      toolsByTurnId as unknown as Record<string, SessionTurnTool[]>,
+      [] as unknown as SessionEvent[],
+    );
+
+    expect(out.groups[0]?.items.map((item) => item.kind)).toEqual([
+      "tool",
+      "tool",
+      "assistant",
+      "turn_status",
+    ]);
+  }, 10000);
+
   it("keeps thought ordering stable when final chunks arrive", async () => {
     const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
 
@@ -695,12 +794,15 @@ describe("buildWorkbenchThreadViewModel", () => {
     const toolsByTurnId = {
       t1: [
         {
+          session_id: "s1",
+          turn_id: "t1",
           tool_call_id: "tool-1",
           tool_kind: "search",
           title: "search",
           status: "pending",
           created_at: "2025-12-15T00:00:01.000Z",
           updated_at: "2025-12-15T00:00:01.000Z",
+          order_seq: 2,
           input_json: null,
           output_text: "",
         },
@@ -837,6 +939,7 @@ describe("buildWorkbenchThreadViewModel", () => {
           tool_call_id: "tool-1",
           kind: "search",
           status: "running",
+          order_seq: 2,
           input: { query: "alpha" },
         },
         created_at: "2025-12-15T00:00:01.000Z",
@@ -988,6 +1091,7 @@ describe("buildWorkbenchThreadViewModel", () => {
           status: "completed",
           input_json: { pattern: "SessionPage" },
           output_text: "Found 29 files",
+          order_seq: 2,
           first_event_seq: 2,
           created_at: "2025-12-15T00:00:01.000Z",
           updated_at: "2025-12-15T00:00:02.000Z",

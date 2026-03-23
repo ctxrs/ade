@@ -751,6 +751,7 @@ export type SessionTurnTool = {
   status?: string | null;
   input_json?: Record<string, unknown> | null;
   output_text?: string | null;
+  order_seq: number;
   input_truncated?: boolean | null;
   input_original_bytes?: number | null;
   output_truncated?: boolean | null;
@@ -771,6 +772,7 @@ export type SessionTurnToolSummary = {
   status?: string | null;
   input_preview?: Record<string, unknown> | null;
   output_preview?: string | null;
+  order_seq: number;
   input_truncated?: boolean | null;
   input_original_bytes?: number | null;
   output_truncated?: boolean | null;

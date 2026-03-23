@@ -341,6 +341,7 @@ async fn seed_active_projection_case(
             status: Some("completed".to_string()),
             input_json: Some(fixture.tool_input.clone()),
             output_text: Some(fixture.tool_output.clone()),
+            order_seq: 3,
             first_event_seq: Some(2),
             input_truncated: None,
             input_original_bytes: None,

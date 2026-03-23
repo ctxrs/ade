@@ -90,6 +90,7 @@ mod compact_head_tests {
                 status: Some("completed".to_string()),
                 input_preview: None,
                 output_preview: None,
+                order_seq: i,
                 first_event_seq: Some(i),
                 input_truncated: None,
                 input_original_bytes: None,

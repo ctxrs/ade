@@ -392,6 +392,25 @@ async fn backfill_session(pool: &sqlx::Pool<sqlx::Sqlite>, session_id: &str) -> 
             .await?;
     }
 
+    for (key, order_seq) in &order_seq_by_key {
+        let Some(tool_call_id) = key.strip_prefix("tool:") else {
+            continue;
+        };
+        sqlx::query(
+            r#"UPDATE session_turn_tools
+               SET order_seq = ?
+               WHERE session_id = ?
+                 AND tool_call_id = ?
+                 AND (order_seq IS NULL OR order_seq != ?)"#,
+        )
+        .bind(order_seq)
+        .bind(session_id)
+        .bind(tool_call_id)
+        .bind(order_seq)
+        .execute(&mut *conn)
+        .await?;
+    }
+
     sqlx::query("COMMIT").execute(&mut *conn).await?;
     Ok(())
 }

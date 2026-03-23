@@ -656,6 +656,7 @@ pub(super) fn build_session_turn_tool_from_row(r: SqliteRow) -> Result<SessionTu
     let input_json = input_json
         .as_deref()
         .and_then(|s| serde_json::from_str::<Value>(s).ok());
+    let order_seq: i64 = r.try_get("order_seq")?;
     let first_event_seq: Option<i64> = r.try_get("first_event_seq")?;
     let input_truncated: Option<i64> = r.try_get("input_truncated")?;
     let input_original_bytes: Option<i64> = r.try_get("input_original_bytes")?;
@@ -673,6 +674,7 @@ pub(super) fn build_session_turn_tool_from_row(r: SqliteRow) -> Result<SessionTu
         status: r.try_get("status")?,
         input_json,
         output_text: r.try_get("output_text")?,
+        order_seq,
         first_event_seq,
         input_truncated: input_truncated.map(|value| value != 0),
         input_original_bytes,
@@ -696,6 +698,7 @@ pub(super) fn build_session_turn_tool_summary_from_row(
         .as_deref()
         .and_then(|s| serde_json::from_str::<Value>(s).ok());
     let output_text: Option<String> = r.try_get("output_text")?;
+    let order_seq: i64 = r.try_get("order_seq")?;
     let first_event_seq: Option<i64> = r.try_get("first_event_seq")?;
     let input_truncated: Option<i64> = r.try_get("input_truncated")?;
     let input_original_bytes: Option<i64> = r.try_get("input_original_bytes")?;
@@ -714,6 +717,7 @@ pub(super) fn build_session_turn_tool_summary_from_row(
         status: r.try_get("status")?,
         input_preview,
         output_preview: output_text,
+        order_seq,
         first_event_seq,
         input_truncated: input_truncated.map(|value| value != 0),
         input_original_bytes,

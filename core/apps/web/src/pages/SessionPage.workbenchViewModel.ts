@@ -394,13 +394,13 @@ function buildTurnActivityTimeline(opts: {
   for (const tool of toolById.values()) {
     if (toolInserted.has(tool.tool_call_id)) continue;
     const raw = asRecord(tool.raw);
-    const firstEventSeq = Number(raw.first_event_seq ?? Number.NaN);
-    if (!Number.isFinite(firstEventSeq)) continue;
+    const orderSeq = Number(raw.order_seq ?? Number.NaN);
+    if (!Number.isFinite(orderSeq)) continue;
     activity.push({
       item: tool,
       created_at: tool.created_at,
       kind: "tool",
-      order_seq: firstEventSeq as number,
+      order_seq: orderSeq as number,
     });
     toolInserted.add(tool.tool_call_id);
   }

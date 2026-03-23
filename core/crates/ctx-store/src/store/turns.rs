@@ -502,7 +502,7 @@ impl Store {
         let rows = self
             .query(
                 r#"SELECT session_id, tool_call_id, turn_id, tool_kind, provider_tool_name, title, subtitle, status, input_json,
-                      output_text, first_event_seq, input_truncated, input_original_bytes,
+                      output_text, order_seq, first_event_seq, input_truncated, input_original_bytes,
                       output_truncated, output_original_bytes, created_at, updated_at
                FROM session_turn_tools
                WHERE session_id = ? AND turn_id = ?
@@ -543,7 +543,7 @@ impl Store {
         }
         let mut sql = String::from(
             r#"SELECT session_id, tool_call_id, turn_id, tool_kind, provider_tool_name, title, subtitle, status, input_json,
-                      output_text, first_event_seq, input_truncated, input_original_bytes,
+                      output_text, order_seq, first_event_seq, input_truncated, input_original_bytes,
                       output_truncated, output_original_bytes, created_at, updated_at
                FROM session_turn_tools
                WHERE session_id = ? AND turn_id IN ("#,
@@ -579,7 +579,7 @@ impl Store {
         let row = self
             .query(
                 r#"SELECT session_id, tool_call_id, turn_id, tool_kind, provider_tool_name, title, subtitle, status, input_json,
-                      output_text, first_event_seq, input_truncated, input_original_bytes,
+                      output_text, order_seq, first_event_seq, input_truncated, input_original_bytes,
                       output_truncated, output_original_bytes, created_at, updated_at
                FROM session_turn_tools
                WHERE session_id = ? AND tool_call_id = ?"#,
@@ -617,6 +617,7 @@ impl Store {
             + bytes_opt_str(tool.status.as_deref())
             + bytes_opt_str(input_json.as_deref())
             + bytes_opt_str(tool.output_text.as_deref())
+            + I64_BYTES
             + bytes_opt_i64(tool.first_event_seq)
             + if input_truncated.is_some() {
                 BOOL_BYTES
@@ -635,9 +636,9 @@ impl Store {
         let result = self.query(
             r#"INSERT INTO session_turn_tools (
                     session_id, tool_call_id, turn_id, tool_kind, provider_tool_name, title, subtitle, status, input_json,
-                    output_text, first_event_seq, input_truncated, input_original_bytes, output_truncated,
+                    output_text, order_seq, first_event_seq, input_truncated, input_original_bytes, output_truncated,
                     output_original_bytes, created_at, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(session_id, tool_call_id) DO UPDATE SET
                    turn_id = excluded.turn_id,
                    tool_kind = COALESCE(excluded.tool_kind, session_turn_tools.tool_kind),
@@ -650,6 +651,7 @@ impl Store {
                        ELSE excluded.status END,
                    input_json = COALESCE(excluded.input_json, session_turn_tools.input_json),
                    output_text = COALESCE(excluded.output_text, session_turn_tools.output_text),
+                   order_seq = COALESCE(MIN(session_turn_tools.order_seq, excluded.order_seq), excluded.order_seq),
                    first_event_seq = COALESCE(session_turn_tools.first_event_seq, excluded.first_event_seq),
                    input_truncated = COALESCE(excluded.input_truncated, session_turn_tools.input_truncated), input_original_bytes = COALESCE(excluded.input_original_bytes, session_turn_tools.input_original_bytes),
                    output_truncated = COALESCE(excluded.output_truncated, session_turn_tools.output_truncated), output_original_bytes = COALESCE(excluded.output_original_bytes, session_turn_tools.output_original_bytes),
@@ -665,6 +667,7 @@ impl Store {
         .bind(tool.status.as_deref())
         .bind(input_json)
         .bind(tool.output_text.as_deref())
+        .bind(tool.order_seq)
         .bind(tool.first_event_seq)
         .bind(input_truncated)
         .bind(tool.input_original_bytes)
