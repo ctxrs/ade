@@ -1,19 +1,15 @@
 use super::*;
 
 use std::collections::HashMap;
+use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex as StdMutex};
 
-use tokio::sync::Notify;
+use anyhow::{anyhow, Result};
+use tokio::sync::{mpsc as tokio_mpsc, Notify};
 
-#[cfg(test)]
-use std::sync::atomic::{AtomicBool, Ordering};
-
-#[cfg(test)]
-static FORCE_CLOSE_THREAD_SPAWN_FAILURE: AtomicBool = AtomicBool::new(false);
-
-#[derive(Default)]
 pub(super) struct WorkspaceStoreLeaseRegistry {
     state: StdMutex<WorkspaceStoreLeaseState>,
+    close_executor: StoreCloseExecutor,
 }
 
 #[derive(Default)]
@@ -45,7 +41,89 @@ pub(super) struct ReactivatedWorkspaceStore {
     pub(super) notify: Arc<Notify>,
 }
 
+struct StoreCloseJob {
+    store: Store,
+    registry: Arc<WorkspaceStoreLeaseRegistry>,
+    workspace_id: WorkspaceId,
+    notify: Arc<Notify>,
+}
+
+struct StoreCloseExecutor {
+    tx: tokio_mpsc::UnboundedSender<StoreCloseJob>,
+}
+
+impl StoreCloseExecutor {
+    fn new() -> Result<Self> {
+        let (tx, mut rx) = tokio_mpsc::unbounded_channel::<StoreCloseJob>();
+        let (ready_tx, ready_rx) = sync_channel::<Result<()>>(1);
+        std::thread::Builder::new()
+            .name("ctx-store-close-executor".to_string())
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|err| anyhow!("failed to build store close runtime: {err}"));
+                match runtime {
+                    Ok(runtime) => {
+                        let _ = ready_tx.send(Ok(()));
+                        runtime.block_on(async move {
+                            let mut closes = tokio::task::JoinSet::new();
+                            loop {
+                                tokio::select! {
+                                    maybe_job = rx.recv() => {
+                                        match maybe_job {
+                                            Some(job) => {
+                                                closes.spawn(close_store_and_finish(
+                                                    job.store,
+                                                    Arc::clone(&job.registry),
+                                                    job.workspace_id,
+                                                    Arc::clone(&job.notify),
+                                                ));
+                                            }
+                                            None => break,
+                                        }
+                                    }
+                                    result = closes.join_next(), if !closes.is_empty() => {
+                                        if let Some(Err(err)) = result {
+                                            tracing::warn!("store close task failed: {err:#}");
+                                        }
+                                    }
+                                }
+                            }
+                            while let Some(result) = closes.join_next().await {
+                                if let Err(err) = result {
+                                    tracing::warn!("store close task failed: {err:#}");
+                                }
+                            }
+                        });
+                    }
+                    Err(err) => {
+                        let _ = ready_tx.send(Err(err));
+                    }
+                }
+            })
+            .map_err(|err| anyhow!("failed to spawn store close executor thread: {err}"))?;
+        ready_rx
+            .recv()
+            .map_err(|err| anyhow!("store close executor startup failed: {err}"))??;
+        Ok(Self { tx })
+    }
+
+    fn submit(&self, job: StoreCloseJob) -> Result<()> {
+        self.tx
+            .send(job)
+            .map_err(|_| anyhow!("store close executor is not available"))
+    }
+}
+
 impl WorkspaceStoreLeaseRegistry {
+    pub(super) fn new() -> Result<Self> {
+        Ok(Self {
+            state: StdMutex::new(WorkspaceStoreLeaseState::default()),
+            close_executor: StoreCloseExecutor::new()?,
+        })
+    }
+
     pub(super) fn acquire(
         self: &Arc<Self>,
         workspace_id: WorkspaceId,
@@ -292,30 +370,15 @@ fn spawn_store_close(
         return;
     }
 
-    #[cfg(test)]
-    if FORCE_CLOSE_THREAD_SPAWN_FAILURE.load(Ordering::Relaxed) {
-        store.close_blocking();
-        registry.finish_close(workspace_id, &notify);
-        return;
-    }
-
-    let thread_registry = Arc::clone(&registry);
-    let thread_notify = Arc::clone(&notify);
-    let thread_store = store.clone();
-    if let Err(err) = std::thread::Builder::new()
-        .name(format!("ctx-store-close-{}", workspace_id.0))
-        .spawn(move || {
-            close_store_blocking_and_finish(
-                thread_store,
-                Arc::clone(&thread_registry),
-                workspace_id,
-                Arc::clone(&thread_notify),
-            );
-        })
-    {
+    if let Err(err) = registry.close_executor.submit(StoreCloseJob {
+        store: store.clone(),
+        registry: Arc::clone(&registry),
+        workspace_id,
+        notify: Arc::clone(&notify),
+    }) {
         tracing::warn!(
             workspace_id = %workspace_id.0,
-            "failed to spawn workspace close thread: {err}"
+            "failed to submit workspace close to executor: {err:#}"
         );
         store.close_blocking();
         registry.finish_close(workspace_id, &notify);
@@ -329,16 +392,6 @@ async fn close_store_and_finish(
     notify: Arc<Notify>,
 ) {
     store.close().await;
-    registry.finish_close(workspace_id, &notify);
-}
-
-fn close_store_blocking_and_finish(
-    store: Store,
-    registry: Arc<WorkspaceStoreLeaseRegistry>,
-    workspace_id: WorkspaceId,
-    notify: Arc<Notify>,
-) {
-    store.close_blocking();
     registry.finish_close(workspace_id, &notify);
 }
 
@@ -356,7 +409,7 @@ mod tests {
     #[tokio::test]
     async fn immediate_close_registers_workspace_as_closing() {
         let temp = tempfile::tempdir().unwrap();
-        let registry = Arc::new(WorkspaceStoreLeaseRegistry::default());
+        let registry = Arc::new(WorkspaceStoreLeaseRegistry::new().unwrap());
         let workspace_id = WorkspaceId::new();
         let store = open_test_store(&temp, "immediate-close.sqlite").await;
 
@@ -390,7 +443,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
 
         for idx in 0..64 {
-            let registry = Arc::new(WorkspaceStoreLeaseRegistry::default());
+            let registry = Arc::new(WorkspaceStoreLeaseRegistry::new().unwrap());
             let workspace_id = WorkspaceId::new();
             let store = open_test_store(&temp, &format!("close-race-{idx}.sqlite")).await;
             let close = registry
@@ -419,7 +472,7 @@ mod tests {
     #[tokio::test]
     async fn pending_close_marks_workspace_as_closing_before_last_lease_drops() {
         let temp = tempfile::tempdir().unwrap();
-        let registry = Arc::new(WorkspaceStoreLeaseRegistry::default());
+        let registry = Arc::new(WorkspaceStoreLeaseRegistry::new().unwrap());
         let workspace_id = WorkspaceId::new();
         let lease = registry.acquire(workspace_id, 7);
         let store = open_test_store(&temp, "pending-close.sqlite").await;
@@ -452,7 +505,7 @@ mod tests {
     #[tokio::test]
     async fn pending_close_store_can_be_reacquired_without_deadlock() {
         let temp = tempfile::tempdir().unwrap();
-        let registry = Arc::new(WorkspaceStoreLeaseRegistry::default());
+        let registry = Arc::new(WorkspaceStoreLeaseRegistry::new().unwrap());
         let workspace_id = WorkspaceId::new();
         let lease = registry.acquire(workspace_id, 9);
         let store = open_test_store(&temp, "pending-reacquire.sqlite").await;
@@ -486,7 +539,7 @@ mod tests {
         let store = runtime.block_on(open_test_store(&temp, "inline-close.sqlite"));
         drop(runtime);
 
-        let registry = Arc::new(WorkspaceStoreLeaseRegistry::default());
+        let registry = Arc::new(WorkspaceStoreLeaseRegistry::new().unwrap());
         let workspace_id = WorkspaceId::new();
         let close = registry
             .queue_close(workspace_id, 11, store)
@@ -516,19 +569,18 @@ mod tests {
     }
 
     #[test]
-    fn close_without_runtime_spawn_failure_still_clears_closing_marker() {
+    fn close_without_runtime_executor_path_clears_closing_marker() {
         let temp = tempfile::tempdir().unwrap();
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        let store = runtime.block_on(open_test_store(&temp, "inline-close-build-fail.sqlite"));
+        let store = runtime.block_on(open_test_store(&temp, "inline-close-executor.sqlite"));
         drop(runtime);
 
-        let registry = Arc::new(WorkspaceStoreLeaseRegistry::default());
+        let registry = Arc::new(WorkspaceStoreLeaseRegistry::new().unwrap());
         let workspace_id = WorkspaceId::new();
         let close = registry
             .queue_close(workspace_id, 12, store)
             .expect("close without leases should start immediately");
 
-        FORCE_CLOSE_THREAD_SPAWN_FAILURE.store(true, Ordering::Relaxed);
         spawn_store_close(
             close.store,
             Arc::clone(&registry),
@@ -543,13 +595,12 @@ mod tests {
                 registry.wait_for_workspace_close(workspace_id),
             )
             .await
-            .expect("degraded close should still release the closing marker");
+            .expect("executor-backed close should still release the closing marker");
         });
-        FORCE_CLOSE_THREAD_SPAWN_FAILURE.store(false, Ordering::Relaxed);
 
         assert!(
             !registry.is_workspace_closing(workspace_id),
-            "degraded close should clear the closing marker after dropping the final store handle"
+            "executor-backed close should clear the closing marker after dropping the final store handle"
         );
     }
 }

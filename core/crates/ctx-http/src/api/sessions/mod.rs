@@ -91,19 +91,13 @@ async fn store_for_existing_session_status(
     state: &Arc<AppState>,
     session_id: SessionId,
 ) -> Result<ctx_store::Store, StatusCode> {
-    let workspace_id = match state
-        .global_store()
-        .get_workspace_id_for_session(session_id)
-        .await
-    {
-        Ok(Some(workspace_id)) => workspace_id,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
-        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
-    };
-    state
-        .store_for_workspace(workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    match state.lookup_session_store(session_id).await {
+        crate::daemon::StoreLookup::Found(store) => Ok(store),
+        crate::daemon::StoreLookup::Missing | crate::daemon::StoreLookup::Deleting => {
+            Err(StatusCode::NOT_FOUND)
+        }
+        crate::daemon::StoreLookup::Unavailable(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
 const STORE_OPEN_RETRY_LIMIT: usize = 3;
@@ -124,37 +118,19 @@ async fn store_for_existing_session_status_with_retry(
 ) -> Result<ctx_store::Store, StatusCode> {
     let mut attempt = 0usize;
     loop {
-        let workspace_id = match state
-            .global_store()
-            .get_workspace_id_for_session(session_id)
-            .await
-        {
-            Ok(Some(workspace_id)) => workspace_id,
-            Ok(None) => return Err(StatusCode::NOT_FOUND),
-            Err(err) => {
-                if is_transient_store_open_error(&err) && attempt < retry_limit {
-                    attempt += 1;
-                    let backoff_ms = retry_base_ms.saturating_mul(attempt as u64);
-                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
-                    continue;
-                }
-                tracing::warn!(
-                    session_id = %session_id.0,
-                    "get_workspace_id_for_session failed: {err:#}"
-                );
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        match state.lookup_session_store(session_id).await {
+            crate::daemon::StoreLookup::Found(store) => return Ok(store),
+            crate::daemon::StoreLookup::Missing | crate::daemon::StoreLookup::Deleting => {
+                return Err(StatusCode::NOT_FOUND);
             }
-        };
-        match state.store_for_workspace(workspace_id).await {
-            Ok(store) => return Ok(store),
-            Err(err) => {
+            crate::daemon::StoreLookup::Unavailable(err) => {
                 if is_transient_store_open_error(&err) && attempt < retry_limit {
                     attempt += 1;
                     let backoff_ms = retry_base_ms.saturating_mul(attempt as u64);
                     tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
                     continue;
                 }
-                tracing::warn!(session_id = %session_id.0, "store_for_workspace failed: {err:#}");
+                tracing::warn!(session_id = %session_id.0, "session store lookup failed: {err:#}");
                 return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
         }
@@ -178,40 +154,21 @@ async fn store_for_existing_session_api_error(
     state: &Arc<AppState>,
     session_id: SessionId,
 ) -> Result<ctx_store::Store, (StatusCode, Json<ApiErrorResp>)> {
-    let workspace_id = match state
-        .global_store()
-        .get_workspace_id_for_session(session_id)
-        .await
-    {
-        Ok(Some(workspace_id)) => workspace_id,
-        Ok(None) => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "session not found".to_string(),
-                }),
-            ));
-        }
-        Err(err) => {
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&err.to_string()),
-                }),
-            ));
-        }
-    };
-    state
-        .store_for_workspace(workspace_id)
-        .await
-        .map_err(|err| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&err.to_string()),
-                }),
-            )
-        })
+    match state.lookup_session_store(session_id).await {
+        crate::daemon::StoreLookup::Found(store) => Ok(store),
+        crate::daemon::StoreLookup::Missing | crate::daemon::StoreLookup::Deleting => Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "session not found".to_string(),
+            }),
+        )),
+        crate::daemon::StoreLookup::Unavailable(err) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&err.to_string()),
+            }),
+        )),
+    }
 }
 
 async fn store_for_existing_session_api_error_for_write(
@@ -478,6 +435,52 @@ mod tests {
                 assert!(!body.0.error.is_empty());
             }
         }
+    }
+
+    #[tokio::test]
+    async fn existing_session_store_helpers_return_404_while_workspace_is_deleting() {
+        let (_data_dir, state, session) = setup_state().await;
+        state
+            .core
+            .stores
+            .begin_workspace_delete(session.workspace_id)
+            .await;
+
+        let result = store_for_existing_session_status(&state, session.id).await;
+        match result {
+            Ok(_) => panic!("expected delete-in-progress session to look missing"),
+            Err(status) => assert_eq!(status, StatusCode::NOT_FOUND),
+        }
+
+        let result = store_for_existing_session_api_error(&state, session.id).await;
+        match result {
+            Ok(_) => panic!("expected delete-in-progress session to look missing"),
+            Err((status, body)) => {
+                assert_eq!(status, StatusCode::NOT_FOUND);
+                assert_eq!(body.0.error, "session not found");
+            }
+        }
+
+        let result = store_for_existing_session_status_for_write(&state, session.id).await;
+        match result {
+            Ok(_) => panic!("expected delete-in-progress session to look missing"),
+            Err(status) => assert_eq!(status, StatusCode::NOT_FOUND),
+        }
+
+        let result = store_for_existing_session_api_error_for_write(&state, session.id).await;
+        match result {
+            Ok(_) => panic!("expected delete-in-progress session to look missing"),
+            Err((status, body)) => {
+                assert_eq!(status, StatusCode::NOT_FOUND);
+                assert_eq!(body.0.error, "session not found");
+            }
+        }
+
+        state
+            .core
+            .stores
+            .finish_workspace_delete(session.workspace_id)
+            .await;
     }
 
     fn result_with_status(status: &str) -> AgentInitResult {

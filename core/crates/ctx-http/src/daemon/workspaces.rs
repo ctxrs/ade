@@ -254,9 +254,12 @@ impl WorkspaceRuntime {
         if !workspace_exists {
             return Err(WorkspaceHydrationError::NotFound);
         }
-        let store = match state.store_for_workspace(workspace_id).await {
-            Ok(store) => store,
-            Err(err) => {
+        let store = match state.lookup_workspace_store(workspace_id).await {
+            crate::daemon::StoreLookup::Found(store) => store,
+            crate::daemon::StoreLookup::Missing | crate::daemon::StoreLookup::Deleting => {
+                return Err(WorkspaceHydrationError::NotFound);
+            }
+            crate::daemon::StoreLookup::Unavailable(err) => {
                 tracing::warn!(
                     workspace_id = ?workspace_id,
                     err = %err,

@@ -115,6 +115,13 @@ pub struct AppState {
     pub execution: ExecutionRuntime,
 }
 
+pub enum StoreLookup {
+    Found(Store),
+    Missing,
+    Deleting,
+    Unavailable(anyhow::Error),
+}
+
 pub(crate) struct WorktreeBootstrapGate {
     pub(crate) wait_for_completion: bool,
     pub(crate) done_tx: watch::Sender<bool>,

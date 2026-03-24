@@ -996,7 +996,7 @@ async fn property_replay_is_idempotent_for_same_after_seq() {
 }
 
 #[tokio::test]
-async fn property_replay_after_seq_zero_rehydrates_with_seed_instead_of_gap() {
+async fn property_replay_after_seq_zero_avoids_gap_without_compact_seed_replay() {
     let fixture = setup_replay_fixture(8).await;
     let mut socket = connect_workspace_stream(
         &fixture.harness.server.base_url,
@@ -1024,7 +1024,10 @@ async fn property_replay_after_seq_zero_rehydrates_with_seed_instead_of_gap() {
         observed.gap_reason.is_none(),
         "after_seq=0 should not emit session_gap"
     );
-    assert_eq!(observed.seed_last_event_seq, fixture.seqs.last().copied());
+    assert!(
+        observed.seed_last_event_seq.is_none(),
+        "compact-only hydration should not be treated as a replay-capable seed"
+    );
 }
 
 #[tokio::test]

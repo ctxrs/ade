@@ -115,7 +115,7 @@ async fn tool_events_publish_after_tool_state_persists() {
     state
         .workspaces
         .workspace_active_snapshot
-        .update_session_head(seeded)
+        .update_compact_session_head(seeded)
         .await;
 
     let (ev_tx, ev_rx) = mpsc::channel(8);

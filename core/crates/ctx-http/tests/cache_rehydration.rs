@@ -194,7 +194,7 @@ async fn include_events_session_heads_bypass_compact_cache() {
     state
         .workspaces
         .workspace_active_snapshot
-        .update_session_head(compact_head)
+        .update_compact_session_head(compact_head)
         .await;
 
     let app = common::router(state.clone());
@@ -283,14 +283,23 @@ async fn non_primary_store_backed_head_is_purged_on_workspace_cleanup() {
     state
         .workspaces
         .workspace_active_snapshot
-        .update_session_head(head)
+        .update_compact_session_head(head)
         .await;
     assert!(state
         .workspaces
         .workspace_active_snapshot
-        .get_session_head(session.id)
+        .get_cached_session_head_for_read(session.id)
         .await
         .is_some());
+    assert!(
+        state
+            .workspaces
+            .workspace_active_snapshot
+            .get_session_head(session.id)
+            .await
+            .is_none(),
+        "event-stripped reads should not populate the replay-capable session-head cache"
+    );
 
     drop(store);
     state.cleanup_workspace(workspace.id).await;
@@ -308,7 +317,7 @@ async fn non_primary_store_backed_head_is_purged_on_workspace_cleanup() {
     assert!(state
         .workspaces
         .workspace_active_snapshot
-        .get_session_head(session.id)
+        .get_cached_session_head_for_read(session.id)
         .await
         .is_none());
 
@@ -456,6 +465,91 @@ async fn session_read_routes_return_500_when_workspace_store_cannot_open() {
         .unwrap();
     let (status, _body) = common::oneshot_bytes(&app, req).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn delete_in_progress_workspace_and_session_reads_return_404() {
+    let temp = tempdir().unwrap();
+    let stores = common::setup_store(temp.path()).await;
+    let state = common::build_state(
+        temp.path(),
+        stores.clone(),
+        common::fake_providers(),
+        "http://localhost",
+    );
+
+    let workspace_root = temp.path().join("workspace");
+    tokio::fs::create_dir_all(&workspace_root).await.unwrap();
+
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            "ws".to_string(),
+            workspace_root.to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .unwrap();
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let worktree = store
+        .create_worktree(
+            workspace.id,
+            workspace_root.to_string_lossy().to_string(),
+            "deadbeef".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+    let task = store
+        .create_task(workspace.id, "task".to_string(), None)
+        .await
+        .unwrap();
+    let session = store
+        .create_session(
+            task.id,
+            workspace.id,
+            worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            "fake".to_string(),
+            "model".to_string(),
+            "implementer".to_string(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    state
+        .global_store()
+        .upsert_workspace_session_index(session.id, workspace.id)
+        .await
+        .unwrap();
+
+    state.core.stores.begin_workspace_delete(workspace.id).await;
+
+    let app = common::router(state.clone());
+    for route in [
+        format!(
+            "/api/sessions/{}/head?include_events=false&limit=60",
+            session.id.0
+        ),
+        format!("/api/workspaces/{}/attachments", workspace.id.0),
+        format!("/api/workspaces/{}/active_heads", workspace.id.0),
+    ] {
+        let req = Request::builder()
+            .method("GET")
+            .uri(route)
+            .body(Body::empty())
+            .unwrap();
+        let (status, _body) = common::oneshot_bytes(&app, req).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    state
+        .core
+        .stores
+        .finish_workspace_delete(workspace.id)
+        .await;
 }
 
 #[tokio::test]
@@ -802,10 +896,19 @@ async fn include_events_false_primary_heads_fall_back_to_store_after_cold_delta(
     let cached = state
         .workspaces
         .workspace_active_snapshot
-        .get_session_head(primary.id)
+        .get_cached_session_head_for_read(primary.id)
         .await
-        .expect("store-backed read should hydrate the per-session head cache");
+        .expect("store-backed read should hydrate the compact per-session head cache");
     assert_eq!(cached.last_event_seq, event.seq);
     assert_eq!(cached.messages.len(), 1);
     assert_eq!(cached.messages[0].content, "primary answer");
+    assert!(
+        state
+            .workspaces
+            .workspace_active_snapshot
+            .get_session_head(primary.id)
+            .await
+            .is_none(),
+        "include_events=false reads must not seed replay history from an event-stripped head"
+    );
 }

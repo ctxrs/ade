@@ -19,10 +19,12 @@ use tracing::info;
 use conversions::*;
 use conversions_tools::*;
 use head_kind::*;
+pub(crate) use head_projection::*;
 pub(crate) use lease::StoreLeaseGuard;
 use metrics_and_runtime::*;
 
 mod head_kind;
+mod head_projection;
 mod lease;
 #[cfg(test)]
 mod tests_runtime_shutdown;
@@ -82,142 +84,6 @@ static STORE_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 
 fn next_stream_only_event_seq() -> i64 {
     STREAM_ONLY_EVENT_SEQ.fetch_add(1, Ordering::Relaxed)
-}
-
-#[derive(Clone, Copy, Debug)]
-struct SessionHeadLimits {
-    turn_limit: usize,
-    message_limit: usize,
-    event_limit: usize,
-    byte_limit: usize,
-}
-
-#[derive(Debug, Clone)]
-struct SessionHeadMaterialization {
-    head_rev: i64,
-    last_event_seq: i64,
-    turns: Vec<SessionTurn>,
-    tool_summaries: Vec<SessionTurnToolSummary>,
-    events: Vec<SessionEvent>,
-    messages: Vec<Message>,
-    has_more_turns: bool,
-    head_window: SessionHeadWindow,
-}
-
-impl SessionHeadMaterialization {
-    fn from_head(head: &SessionHead) -> Self {
-        Self {
-            head_rev: head.projection_rev,
-            last_event_seq: head.last_event_seq,
-            turns: head.turns.clone(),
-            tool_summaries: head.tool_summaries.clone(),
-            events: head.events.clone(),
-            messages: head.messages.clone(),
-            has_more_turns: head.has_more_turns,
-            head_window: head.head_window.clone(),
-        }
-    }
-
-    fn into_session_head(
-        self,
-        session: Session,
-        projection_rev: i64,
-        summary_checkpoint: Option<SessionSummaryCheckpoint>,
-    ) -> SessionHead {
-        let last_status = self.turns.last().map(|t| t.status.clone());
-        let has_running_turn = self
-            .turns
-            .iter()
-            .any(|turn| matches!(turn.status, SessionTurnStatus::Running));
-        let activity = derive_activity_from_status(last_status, has_running_turn);
-        SessionHead {
-            session,
-            turns: self.turns,
-            tool_summaries: self.tool_summaries,
-            events: self.events,
-            messages: self.messages,
-            last_event_seq: self.last_event_seq,
-            projection_rev,
-            activity,
-            has_more_turns: self.has_more_turns,
-            summary_checkpoint,
-            head_window: self.head_window,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct ActiveSnapshotHeadProjection {
-    head_rev: i64,
-    last_event_seq: i64,
-    turns: Vec<SessionTurn>,
-    tool_summaries: Vec<SessionTurnToolSummary>,
-    messages: Vec<Message>,
-    has_more_turns: bool,
-    head_window: SessionHeadWindow,
-    summary_checkpoint: Option<SessionSummaryCheckpoint>,
-}
-
-impl ActiveSnapshotHeadProjection {
-    fn from_head(head: &SessionHead) -> Self {
-        Self {
-            head_rev: head.projection_rev,
-            last_event_seq: head.last_event_seq,
-            turns: head.turns.clone(),
-            tool_summaries: head.tool_summaries.clone(),
-            messages: head.messages.clone(),
-            has_more_turns: head.has_more_turns,
-            head_window: head.head_window.clone(),
-            summary_checkpoint: head.summary_checkpoint.clone(),
-        }
-    }
-
-    fn into_session_head(self, session: Session, projection_rev: i64) -> SessionHead {
-        let last_status = self.turns.last().map(|t| t.status.clone());
-        let has_running_turn = self
-            .turns
-            .iter()
-            .any(|turn| matches!(turn.status, SessionTurnStatus::Running));
-        let activity = derive_activity_from_status(last_status, has_running_turn);
-        SessionHead {
-            session,
-            turns: self.turns,
-            tool_summaries: self.tool_summaries,
-            events: Vec::new(),
-            messages: self.messages,
-            last_event_seq: self.last_event_seq,
-            projection_rev,
-            activity,
-            has_more_turns: self.has_more_turns,
-            summary_checkpoint: self.summary_checkpoint,
-            head_window: self.head_window,
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct SessionHeadWindowPayload<'a> {
-    turns: &'a [SessionTurn],
-    tool_summaries: &'a [SessionTurnToolSummary],
-    events: &'a [SessionEvent],
-    messages: &'a [Message],
-}
-
-fn head_window_bytes(
-    turns: &[SessionTurn],
-    tool_summaries: &[SessionTurnToolSummary],
-    events: &[SessionEvent],
-    messages: &[Message],
-) -> usize {
-    let payload = SessionHeadWindowPayload {
-        turns,
-        tool_summaries,
-        events,
-        messages,
-    };
-    serde_json::to_vec(&payload)
-        .map(|bytes| bytes.len())
-        .unwrap_or(0)
 }
 
 fn retain_messages_for_turns(messages: &mut Vec<Message>, turns: &[SessionTurn]) {
@@ -562,8 +428,19 @@ impl Store {
         if let Err(err) = self.active_head_projection.shutdown_blocking() {
             tracing::warn!("active head projection shutdown failed during blocking close: {err:#}");
         }
-        let close = self.pool.close();
-        drop(close);
+        match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime.block_on(async {
+                self.pool.close().await;
+            }),
+            Err(err) => {
+                tracing::warn!("failed to build runtime for blocking pool close: {err:#}");
+                let close = self.pool.close();
+                drop(close);
+            }
+        }
     }
 
     fn sql(&self, sql: &'static str) -> &'static str {

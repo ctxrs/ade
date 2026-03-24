@@ -1,0 +1,15 @@
+use ctx_core::ids::WorkspaceId;
+use ctx_core::models::SessionHeadSnapshot;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SessionHeadCompleteness {
+    Hydrated,
+    DeltaOnly,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct CachedSessionHead {
+    pub workspace_id: WorkspaceId,
+    pub head: SessionHeadSnapshot,
+    pub completeness: SessionHeadCompleteness,
+}

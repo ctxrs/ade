@@ -709,7 +709,7 @@ impl SessionRuntime {
         state
             .workspaces
             .workspace_active_snapshot
-            .update_session_head(head)
+            .update_compact_session_head(head)
             .await;
     }
 

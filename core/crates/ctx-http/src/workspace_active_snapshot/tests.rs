@@ -330,6 +330,68 @@ mod delta_tests {
         assert_eq!(cached.last_event_seq, hydrated.last_event_seq);
         assert_eq!(cached.projection_rev, hydrated.projection_rev);
     }
+
+    #[tokio::test]
+    async fn compact_session_head_cache_does_not_seed_replay_head_cache() {
+        let hub = WorkspaceActiveSnapshotHub::new();
+        let primary = test_session(None);
+        let mut compact = new_head_snapshot(&primary);
+        compact.last_event_seq = 7;
+        compact.projection_rev = 7;
+
+        hub.update_compact_session_head(compact.clone()).await;
+
+        assert!(
+            hub.get_session_head(primary.id).await.is_none(),
+            "compact heads must not be treated as replay-capable cache seeds"
+        );
+        let cached = hub
+            .get_cached_session_head_for_read(primary.id)
+            .await
+            .expect("compact head should still satisfy ordinary read caching");
+        assert_eq!(cached.last_event_seq, compact.last_event_seq);
+        assert_eq!(cached.projection_rev, compact.projection_rev);
+
+        match hub
+            .replay_session_stream(primary.workspace_id, primary.id, 3, 0, 50)
+            .await
+        {
+            WorkspaceSessionReplay::Replay { items, last_sent } => {
+                assert_eq!(
+                    last_sent,
+                    SessionReplayCursor {
+                        last_event_seq: 7,
+                        projection_rev: 7,
+                    }
+                );
+                assert_eq!(
+                    items.len(),
+                    2,
+                    "gap replay should emit gap then compact seed"
+                );
+                match &items[0] {
+                    WorkspaceSessionReplayItem::Gap {
+                        session_id,
+                        after_seq,
+                        reason,
+                    } => {
+                        assert_eq!(*session_id, primary.id);
+                        assert_eq!(*after_seq, 3);
+                        assert_eq!(reason.as_deref(), Some("missing_replay_events"));
+                    }
+                    other => panic!("expected leading gap, got {other:?}"),
+                }
+                match &items[1] {
+                    WorkspaceSessionReplayItem::Seed(head) => {
+                        assert_eq!(head.session.id, primary.id);
+                        assert_eq!(head.last_event_seq, 7);
+                    }
+                    other => panic!("expected compact seed after gap, got {other:?}"),
+                }
+            }
+            other => panic!("expected replay response, got {other:?}"),
+        }
+    }
 }
 
 mod replay_tests {
@@ -632,11 +694,12 @@ mod replay_tests {
                     other => panic!("expected gap, got {other:?}"),
                 }
                 match &items[1] {
-                    WorkspaceSessionReplayItem::Seed(seed) => {
-                        assert_eq!(seed.session.id, session.id);
-                        assert_eq!(seed.last_event_seq, 7);
+                    WorkspaceSessionReplayItem::Seed(head) => {
+                        assert_eq!(head.session.id, session.id);
+                        assert_eq!(head.last_event_seq, 7);
+                        assert_eq!(head.projection_rev, 9);
                     }
-                    other => panic!("expected seed, got {other:?}"),
+                    other => panic!("expected seed after gap, got {other:?}"),
                 }
             }
             other => panic!("expected replay, got {other:?}"),
@@ -671,15 +734,10 @@ mod replay_tests {
                         projection_rev: 17,
                     }
                 );
-                assert_eq!(items.len(), 1);
-                match &items[0] {
-                    WorkspaceSessionReplayItem::Seed(seed) => {
-                        assert_eq!(seed.session.id, session.id);
-                        assert_eq!(seed.last_event_seq, 11);
-                        assert_eq!(seed.projection_rev, 17);
-                    }
-                    other => panic!("expected seed, got {other:?}"),
-                }
+                assert!(
+                    items.is_empty(),
+                    "compact hydration alone should not seed replay"
+                );
             }
             other => panic!("expected replay, got {other:?}"),
         }

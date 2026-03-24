@@ -1,4 +1,5 @@
 use super::*;
+use serde::Serialize;
 
 pub(super) const ACTIVE_HEAD_TURN_LIMIT: usize = 5;
 pub(super) const ACTIVE_HEAD_MESSAGE_LIMIT: usize = 200;

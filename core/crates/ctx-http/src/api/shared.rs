@@ -23,13 +23,12 @@ pub(super) async fn store_for_existing_workspace_status(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
 ) -> Result<ctx_store::Store, StatusCode> {
-    match state.store_for_workspace(workspace_id).await {
-        Ok(store) => Ok(store),
-        Err(_) => match state.global_store().get_workspace(workspace_id).await {
-            Ok(Some(_)) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-            Ok(None) => Err(StatusCode::NOT_FOUND),
-            Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        },
+    match state.lookup_workspace_store(workspace_id).await {
+        crate::daemon::StoreLookup::Found(store) => Ok(store),
+        crate::daemon::StoreLookup::Missing | crate::daemon::StoreLookup::Deleting => {
+            Err(StatusCode::NOT_FOUND)
+        }
+        crate::daemon::StoreLookup::Unavailable(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
 }
 

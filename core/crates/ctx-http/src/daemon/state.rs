@@ -53,8 +53,8 @@ pub(crate) use types::{
 pub use types::{
     AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions, CachedProviderOptions,
     CachedProviderVerify, CoreState, ExecutionRuntime, GitStatusSnapshotCacheEntry,
-    ProviderRuntime, SessionHeadCacheKey, SessionRuntime, TelemetryRuntime, TimedEntry,
-    TransportRuntime, WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
+    ProviderRuntime, SessionHeadCacheKey, SessionRuntime, StoreLookup, TelemetryRuntime,
+    TimedEntry, TransportRuntime, WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
     WorkspaceRuntime, WorktreeVcsSnapshotCacheEntry,
 };
 
@@ -320,17 +320,55 @@ impl AppState {
     }
 
     pub async fn store_for_workspace(&self, workspace_id: WorkspaceId) -> Result<Store> {
-        let access = self.core.stores.workspace_access(workspace_id).await?;
-        if access.kind.triggers_open_side_effects() {
-            let mut protected_workspaces = self.protected_workspace_store_ids().await;
-            protected_workspaces.insert(workspace_id);
-            self.core
-                .stores
-                .evict_workspaces_to_cap(&protected_workspaces)
-                .await;
-            let _ = self.transport.merge_queue_schedule_tx.send(workspace_id);
+        match self.lookup_workspace_store(workspace_id).await {
+            StoreLookup::Found(store) => Ok(store),
+            StoreLookup::Missing | StoreLookup::Deleting => {
+                anyhow::bail!("workspace {} not found", workspace_id.0)
+            }
+            StoreLookup::Unavailable(err) => Err(err),
         }
-        Ok(access.store)
+    }
+
+    pub async fn lookup_workspace_store(&self, workspace_id: WorkspaceId) -> StoreLookup {
+        match self
+            .core
+            .stores
+            .workspace_access_outcome(workspace_id)
+            .await
+        {
+            Ok(ctx_store::manager::WorkspaceStoreAccessOutcome::Access(access)) => {
+                if access.kind.triggers_open_side_effects() {
+                    let mut protected_workspaces = self.protected_workspace_store_ids().await;
+                    protected_workspaces.insert(workspace_id);
+                    self.core
+                        .stores
+                        .evict_workspaces_to_cap(&protected_workspaces)
+                        .await;
+                    let _ = self.transport.merge_queue_schedule_tx.send(workspace_id);
+                }
+                StoreLookup::Found(access.store)
+            }
+            Ok(ctx_store::manager::WorkspaceStoreAccessOutcome::Missing) => StoreLookup::Missing,
+            Ok(ctx_store::manager::WorkspaceStoreAccessOutcome::Deleting) => StoreLookup::Deleting,
+            Err(err) => StoreLookup::Unavailable(err),
+        }
+    }
+
+    pub async fn lookup_session_store(&self, session_id: SessionId) -> StoreLookup {
+        let workspace_id = match self
+            .global_store()
+            .get_workspace_id_for_session(session_id)
+            .await
+        {
+            Ok(Some(workspace_id)) => workspace_id,
+            Ok(None) => return StoreLookup::Missing,
+            Err(err) => return StoreLookup::Unavailable(err.into()),
+        };
+        match self.lookup_workspace_store(workspace_id).await {
+            StoreLookup::Found(store) => StoreLookup::Found(store),
+            StoreLookup::Missing | StoreLookup::Deleting => StoreLookup::Deleting,
+            StoreLookup::Unavailable(err) => StoreLookup::Unavailable(err),
+        }
     }
 
     pub async fn store_for_task(&self, task_id: TaskId) -> Result<Store> {
@@ -343,12 +381,13 @@ impl AppState {
     }
 
     pub async fn store_for_session(&self, session_id: SessionId) -> Result<Store> {
-        let workspace_id = self
-            .global_store()
-            .get_workspace_id_for_session(session_id)
-            .await?
-            .with_context(|| format!("workspace missing for session {}", session_id.0))?;
-        self.store_for_workspace(workspace_id).await
+        match self.lookup_session_store(session_id).await {
+            StoreLookup::Found(store) => Ok(store),
+            StoreLookup::Missing | StoreLookup::Deleting => {
+                anyhow::bail!("workspace missing for session {}", session_id.0)
+            }
+            StoreLookup::Unavailable(err) => Err(err),
+        }
     }
 
     pub async fn store_for_worktree(&self, worktree_id: WorktreeId) -> Result<Store> {

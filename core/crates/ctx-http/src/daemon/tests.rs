@@ -1,9 +1,13 @@
 use super::*;
+use async_trait::async_trait;
 use ctx_core::models::VcsKind;
 use ctx_providers::adapters::{
-    ProviderCapabilities, ProviderProcessInfo, ProviderRestartMode, ProviderUsability,
+    ProviderCapabilities, ProviderHealth, ProviderProcessInfo, ProviderRestartMode, ProviderStatus,
+    ProviderUsability, RunHandle, TurnInput,
 };
 use ctx_store::manager::WorkspaceStoreAccessKind;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex as StdMutex;
 use tempfile::tempdir;
 

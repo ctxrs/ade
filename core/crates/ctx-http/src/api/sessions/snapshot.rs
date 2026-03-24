@@ -59,7 +59,7 @@ pub(crate) async fn get_session_head(
         if let Some(mut head) = state
             .workspaces
             .workspace_active_snapshot
-            .get_session_head(session_id)
+            .get_cached_session_head_for_read(session_id)
             .await
         {
             // The in-memory head cache is a performance optimization and may be populated with a
@@ -84,11 +84,19 @@ pub(crate) async fn get_session_head(
     {
         Ok(Some(head)) => {
             state.emit_cache_rehydrate("session_head", true).await;
-            state
-                .workspaces
-                .workspace_active_snapshot
-                .update_session_head(head.clone())
-                .await;
+            if include_events {
+                state
+                    .workspaces
+                    .workspace_active_snapshot
+                    .update_session_head(head.clone())
+                    .await;
+            } else {
+                state
+                    .workspaces
+                    .workspace_active_snapshot
+                    .update_compact_session_head(head.clone())
+                    .await;
+            }
             Ok(Json(head))
         }
         Ok(None) => {
