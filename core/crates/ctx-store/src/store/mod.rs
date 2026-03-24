@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use ctx_core::ids::*;
 use ctx_core::models::*;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use sqlx::sqlite::{SqliteArguments, SqlitePoolOptions, SqliteRow};
 use sqlx::{Pool, Row, Sqlite};
@@ -24,6 +24,7 @@ use metrics_and_runtime::*;
 pub struct Store {
     pool: Pool<Sqlite>,
     event_log: Arc<EventLogRuntime>,
+    active_head_projection: Arc<ActiveHeadProjectionRuntime>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -64,6 +65,8 @@ const SESSION_HEAD_ARCHIVED_TURN_LIMIT: u32 = 50;
 const SESSION_REASONING_EFFORT_MIGRATION_VERSION: i64 = 46;
 const TOOL_DISPLAY_FIELDS_MIGRATION_VERSION: i64 = 47;
 const TOOL_DISPLAY_FIELDS_MIGRATION_DESCRIPTION: &str = "tool display fields";
+const WORKSPACE_MESSAGE_INDEX_MIGRATION_VERSION: i64 = 51;
+const WORKSPACE_MESSAGE_INDEX_MIGRATION_DESCRIPTION: &str = "drop workspace message index";
 // Keep stream-only seq values within JS safe integer range.
 const STREAM_ONLY_EVENT_SEQ_START: i64 = -(1_i64 << 52);
 static STREAM_ONLY_EVENT_SEQ: AtomicI64 = AtomicI64::new(STREAM_ONLY_EVENT_SEQ_START);
@@ -80,10 +83,7 @@ enum SessionHeadKind {
 }
 
 fn disable_head_materialization_writes_for(kind: SessionHeadKind) -> bool {
-    if matches!(kind, SessionHeadKind::Active) {
-        return true;
-    }
-    disable_head_materialization_writes()
+    matches!(kind, SessionHeadKind::Active)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -148,13 +148,53 @@ impl SessionHeadMaterialization {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct WorkspaceActiveTaskSummaryReadModel {
-    task: Task,
-    primary_session: SessionSnapshotSummary,
-    #[serde(default)]
-    sessions: Vec<SessionSnapshotSummary>,
-    sort_at: DateTime<Utc>,
+#[derive(Debug, Clone)]
+struct ActiveSnapshotHeadProjection {
+    head_rev: i64,
+    last_event_seq: i64,
+    turns: Vec<SessionTurn>,
+    tool_summaries: Vec<SessionTurnToolSummary>,
+    messages: Vec<Message>,
+    has_more_turns: bool,
+    head_window: SessionHeadWindow,
+    summary_checkpoint: Option<SessionSummaryCheckpoint>,
+}
+
+impl ActiveSnapshotHeadProjection {
+    fn from_head(head: &SessionHead) -> Self {
+        Self {
+            head_rev: head.projection_rev,
+            last_event_seq: head.last_event_seq,
+            turns: head.turns.clone(),
+            tool_summaries: head.tool_summaries.clone(),
+            messages: head.messages.clone(),
+            has_more_turns: head.has_more_turns,
+            head_window: head.head_window.clone(),
+            summary_checkpoint: head.summary_checkpoint.clone(),
+        }
+    }
+
+    fn into_session_head(self, session: Session, projection_rev: i64) -> SessionHead {
+        let last_status = self.turns.last().map(|t| t.status.clone());
+        let has_running_turn = self
+            .turns
+            .iter()
+            .any(|turn| matches!(turn.status, SessionTurnStatus::Running));
+        let activity = derive_activity_from_status(last_status, has_running_turn);
+        SessionHead {
+            session,
+            turns: self.turns,
+            tool_summaries: self.tool_summaries,
+            events: Vec::new(),
+            messages: self.messages,
+            last_event_seq: self.last_event_seq,
+            projection_rev,
+            activity,
+            has_more_turns: self.has_more_turns,
+            summary_checkpoint: self.summary_checkpoint,
+            head_window: self.head_window,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -465,16 +505,13 @@ impl Store {
             .max_connections(max_connections.unwrap_or(5))
             .after_connect(|conn, _meta| {
                 Box::pin(async move {
-                    sqlx::query("PRAGMA journal_mode = WAL")
-                        .execute(&mut *conn)
-                        .await?;
-                    sqlx::query("PRAGMA synchronous = NORMAL")
-                        .execute(&mut *conn)
-                        .await?;
                     sqlx::query("PRAGMA busy_timeout = 5000")
                         .execute(&mut *conn)
                         .await?;
                     sqlx::query("PRAGMA foreign_keys = ON")
+                        .execute(&mut *conn)
+                        .await?;
+                    sqlx::query("PRAGMA synchronous = NORMAL")
                         .execute(&mut *conn)
                         .await?;
                     Ok(())
@@ -482,11 +519,19 @@ impl Store {
             })
             .connect(&sqlite_url)
             .await?;
+        ensure_sqlite_journal_mode_wal(&pool).await?;
         repair_duplicate_tool_display_migration_version(&pool).await?;
+        repair_workspace_message_index_migration_versions(&pool).await?;
         STORE_MIGRATOR.run(&pool).await?;
         let event_log = Arc::new(EventLogRuntime::load(&pool).await?);
-        let store = Self { pool, event_log };
+        let active_head_projection = Arc::new(ActiveHeadProjectionRuntime::new());
+        let store = Self {
+            pool,
+            event_log,
+            active_head_projection,
+        };
         store.event_log.start_persister(store.clone());
+        store.active_head_projection.start_projector(store.clone());
         Ok(store)
     }
 
@@ -504,6 +549,9 @@ impl Store {
     pub async fn close(&self) {
         if let Err(err) = self.event_log.flush().await {
             tracing::warn!("event log flush failed during close: {err:#}");
+        }
+        if let Err(err) = self.active_head_projection.flush().await {
+            tracing::warn!("active head projection flush failed during close: {err:#}");
         }
         self.pool.close().await;
     }
@@ -642,6 +690,70 @@ async fn repair_duplicate_tool_display_migration_version(pool: &Pool<Sqlite>) ->
     Ok(())
 }
 
+async fn ensure_sqlite_journal_mode_wal(pool: &Pool<Sqlite>) -> Result<()> {
+    let current_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+        .fetch_one(pool)
+        .await?;
+    if current_mode.eq_ignore_ascii_case("wal") {
+        return Ok(());
+    }
+
+    let _: String = sqlx::query_scalar("PRAGMA journal_mode = WAL")
+        .fetch_one(pool)
+        .await?;
+    Ok(())
+}
+
+async fn repair_workspace_message_index_migration_versions(pool: &Pool<Sqlite>) -> Result<()> {
+    let migrations_table_exists = sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations')",
+    )
+    .fetch_one(pool)
+    .await?;
+    if migrations_table_exists == 0 {
+        return Ok(());
+    }
+
+    let rows =
+        sqlx::query("SELECT version FROM _sqlx_migrations WHERE description = ? ORDER BY version")
+            .bind(WORKSPACE_MESSAGE_INDEX_MIGRATION_DESCRIPTION)
+            .fetch_all(pool)
+            .await?;
+
+    for row in rows {
+        let version: i64 = row.try_get("version")?;
+        if version == WORKSPACE_MESSAGE_INDEX_MIGRATION_VERSION {
+            continue;
+        }
+
+        let repaired_version_exists = sqlx::query_scalar::<_, i64>(
+            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version = ?)",
+        )
+        .bind(WORKSPACE_MESSAGE_INDEX_MIGRATION_VERSION)
+        .fetch_one(pool)
+        .await?;
+
+        if repaired_version_exists == 0 {
+            sqlx::query(
+                "UPDATE _sqlx_migrations SET version = ? WHERE version = ? AND description = ?",
+            )
+            .bind(WORKSPACE_MESSAGE_INDEX_MIGRATION_VERSION)
+            .bind(version)
+            .bind(WORKSPACE_MESSAGE_INDEX_MIGRATION_DESCRIPTION)
+            .execute(pool)
+            .await?;
+        } else {
+            sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ? AND description = ?")
+                .bind(version)
+                .bind(WORKSPACE_MESSAGE_INDEX_MIGRATION_DESCRIPTION)
+                .execute(pool)
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
 mod artifacts_blobs;
 mod attachments;
 mod conversions;
@@ -699,6 +811,10 @@ mod tests {
                 None,
                 None,
             )
+            .await
+            .unwrap();
+        store
+            .set_task_primary_session(task.id, session.id, worktree.id)
             .await
             .unwrap();
 
@@ -784,9 +900,13 @@ mod tests {
         let (_dir, store) = setup_store().await;
         let (session, _turn_id) =
             create_session_with_turn(&store, Some("partial".to_string())).await;
+        store
+            .flush_active_snapshot_head_projection_queue()
+            .await
+            .unwrap();
 
         let row = sqlx::query(
-            r#"SELECT turns_json
+            r#"SELECT head_rev, turns_json
                FROM session_active_snapshot_heads
                WHERE session_id = ?"#,
         )
@@ -794,7 +914,16 @@ mod tests {
         .fetch_optional(&store.pool)
         .await
         .unwrap();
-        assert!(row.is_none());
+        let row = row.expect("expected durable active snapshot head projection");
+        let head_rev: i64 = row.try_get("head_rev").unwrap();
+        assert_eq!(
+            head_rev,
+            store.get_session_projection_rev(session.id).await.unwrap()
+        );
+        let turns_json: String = row.try_get("turns_json").unwrap();
+        let turns: Vec<SessionTurn> = serde_json::from_str(&turns_json).unwrap();
+        assert_eq!(turns.len(), 1);
+        assert!(turns[0].assistant_partial.is_none());
     }
 
     #[tokio::test]

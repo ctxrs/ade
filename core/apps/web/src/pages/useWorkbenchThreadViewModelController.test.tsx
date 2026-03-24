@@ -93,6 +93,7 @@ const toolsByTurnId: Record<string, SessionTurnTool[]> = {
       status: "completed",
       input_json: { command: "pnpm test" },
       output_text: "ok",
+      order_seq: 2,
       input_truncated: false,
       input_original_bytes: 9,
       output_truncated: false,

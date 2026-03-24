@@ -47,7 +47,7 @@ describe("harnessSelection", () => {
         installed: false,
         usability: {
           usable: false,
-          status: "install_required",
+          status: "installable",
           blocking_provider_ids: [],
           recommended_action: "install",
         },
@@ -56,7 +56,7 @@ describe("harnessSelection", () => {
         health: "error",
         usability: {
           usable: false,
-          status: "error",
+          status: "blocked",
           blocking_provider_ids: [],
           recommended_action: "none",
         },

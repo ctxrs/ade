@@ -283,7 +283,8 @@ async fn handle_mobile_secure_ws(
                             );
                             state
                                 .ensure_workspace_active_snapshot_hydrated(workspace_id)
-                                .await;
+                                .await
+                                .map_err(|err| anyhow::anyhow!("workspace hydration failed: {err:?}"))?;
                             let resolved = match resolve_workspace_active_snapshot_subscriptions(
                                 &state,
                                 workspace_id,

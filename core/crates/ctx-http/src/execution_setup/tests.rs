@@ -99,6 +99,23 @@ async fn init_settings_store(data_root: &Path) {
     store.close().await;
 }
 
+async fn wait_for_startup_prewarm_terminal(
+    coordinator: &Arc<ExecutionSetupCoordinator>,
+    timeout: Duration,
+) -> StartupPrewarmSnapshot {
+    tokio::time::timeout(timeout, async {
+        loop {
+            let latest = coordinator.startup_status().await;
+            if latest.last_attempt_at.is_some() && latest.state != StartupPrewarmState::Running {
+                break latest;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("timed out waiting for startup prewarm terminal state")
+}
+
 fn bundle_tar_fingerprint(tar_path: &Path) -> String {
     let metadata = std::fs::metadata(tar_path).expect("stat bundled image tar");
     let len = metadata.len();
@@ -734,6 +751,34 @@ async fn startup_prewarm_runs_runtime_warmup_for_cold_container_settings() {
     assert!(ready.needs_prewarm);
     assert!(!ready.machine_ready);
     assert!(!ready.image_present);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn spawned_startup_prewarm_respects_podman_env_test_lock() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let coordinator = test_coordinator(data_dir.path().to_path_buf());
+    let serial = env_var_test_lock().lock().await;
+
+    coordinator.spawn_startup_prewarm();
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let startup = coordinator.startup_status().await;
+    assert!(
+        startup.last_attempt_at.is_none(),
+        "startup prewarm should not begin while the podman env test lock is held: {startup:?}"
+    );
+
+    drop(serial);
+
+    let terminal = wait_for_startup_prewarm_terminal(&coordinator, Duration::from_secs(5)).await;
+    assert!(
+        terminal.last_attempt_at.is_some(),
+        "startup prewarm should begin once the env lock is released: {terminal:?}"
+    );
 }
 
 #[tokio::test]

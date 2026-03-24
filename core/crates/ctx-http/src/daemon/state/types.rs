@@ -23,7 +23,6 @@ pub struct SessionRuntime {
     pub broadcasters: Mutex<HashMap<SessionId, TimedEntry<broadcast::Sender<SessionEvent>>>>,
     pub session_event_heads: Mutex<HashMap<SessionId, TimedEntry<watch::Sender<i64>>>>,
     pub order_seq_states: Mutex<HashMap<SessionId, TimedEntry<Arc<Mutex<OrderSeqState>>>>>,
-    pub(crate) active_head_projections: Mutex<HashMap<SessionId, ActiveHeadProjectionEntry>>,
     pub(crate) active_task_refreshes: Mutex<HashMap<TaskId, ActiveTaskRefreshEntry>>,
     pub running_sessions: Arc<Mutex<HashSet<SessionId>>>,
     pub session_meta_cache: Mutex<HashMap<SessionId, TimedEntry<Session>>>,
@@ -160,14 +159,6 @@ pub struct SessionHeadCacheKey {
 #[derive(Clone, Debug)]
 pub struct WorkspaceActiveHeadCacheEntry {
     pub batch: WorkspaceActiveHeadBatch,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct ActiveHeadProjectionEntry {
-    pub(crate) last_event_seq: i64,
-    pub(crate) last_event_at: Instant,
-    pub(crate) last_flushed_seq: i64,
-    pub(crate) last_flush_at: Instant,
 }
 
 pub(crate) struct ActiveTaskRefreshEntry {

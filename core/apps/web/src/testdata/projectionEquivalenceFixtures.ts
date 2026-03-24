@@ -19,6 +19,7 @@ type ReplayExpectation = {
   afterSeq: number;
   expectedSeqs: number[];
   expectGap: boolean;
+  expectedSeedLastEventSeq?: number;
 };
 
 type ActiveProjectionFixtureSpec = {
@@ -218,7 +219,10 @@ const buildAssistantMessage = (
 const buildToolSummary = (
   sessionId: string,
   turnId: string,
-  spec: Pick<ActiveProjectionFixtureSpec, "toolCallId" | "toolKind" | "toolInput" | "toolOutput" | "toolTitle">,
+  spec: Pick<
+    ActiveProjectionFixtureSpec,
+    "toolCallId" | "toolKind" | "toolInput" | "toolOutput" | "toolTitle" | "orderSeqs"
+  >,
 ): SessionTurnToolSummary => ({
   session_id: sessionId,
   tool_call_id: spec.toolCallId,
@@ -228,6 +232,7 @@ const buildToolSummary = (
   status: "completed",
   input_preview: spec.toolInput,
   output_preview: spec.toolOutput,
+  order_seq: spec.orderSeqs.tool,
   input_truncated: null,
   input_original_bytes: null,
   output_truncated: null,
@@ -239,7 +244,10 @@ const buildToolSummary = (
 const buildToolByTurnId = (
   sessionId: string,
   turnId: string,
-  spec: Pick<ActiveProjectionFixtureSpec, "toolCallId" | "toolKind" | "toolInput" | "toolOutput" | "toolTitle">,
+  spec: Pick<
+    ActiveProjectionFixtureSpec,
+    "toolCallId" | "toolKind" | "toolInput" | "toolOutput" | "toolTitle" | "orderSeqs"
+  >,
 ): Record<string, SessionTurnTool[]> => ({
   [turnId]: [
     {
@@ -251,6 +259,7 @@ const buildToolByTurnId = (
       status: "completed",
       input_json: spec.toolInput,
       output_text: spec.toolOutput,
+      order_seq: spec.orderSeqs.tool,
       input_truncated: null,
       input_original_bytes: null,
       output_truncated: null,

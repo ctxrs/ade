@@ -358,6 +358,8 @@ mod tests {
             last_event_seq: 5,
             projection_rev: 7,
             state_rev: 0,
+            session: None,
+            activity: None,
             event: Some(SessionEvent {
                 seq: -1,
                 id: SessionEventId::new(),

@@ -116,7 +116,10 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
     }
 
     // Hydrate active snapshot so update_session_head knows which sessions are primary.
-    state.ensure_workspace_active_snapshot_hydrated(ws.id).await;
+    state
+        .ensure_workspace_active_snapshot_hydrated(ws.id)
+        .await
+        .unwrap();
 
     let content = big_content(message_bytes);
 
@@ -238,6 +241,8 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
                 last_event_seq: seq,
                 projection_rev: seq,
                 state_rev: 0,
+                session: None,
+                activity: None,
                 event: Some(SessionEvent {
                     seq,
                     id: SessionEventId::new(),

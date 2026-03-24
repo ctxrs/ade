@@ -147,6 +147,7 @@ describe("ArtifactsPane", () => {
   it("autoplays previewable video artifacts inline and in the viewer", () => {
     render(
       <ArtifactsPane
+        sessionId="session-1"
         artifacts={[
           makeArtifact({
             name: "demo.mp4",

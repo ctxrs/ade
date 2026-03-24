@@ -1,7 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use async_trait::async_trait;
 use serde::Serialize;
 use tokio::sync::{broadcast, Mutex};
 
@@ -13,7 +12,6 @@ use ctx_core::models::{
     WorkspaceActivePage, WorkspaceActiveSnapshot, WorkspaceActiveSnapshotEvent,
     WorkspaceActiveTaskSummary, WorkspaceTaskSummary, WorktreeBootstrapNotice, WorktreeVcsSnapshot,
 };
-use ctx_store::ActiveSnapshotObserver;
 use delta::{apply_head_delta, apply_session_summary_delta};
 use entry::WorkspaceActiveSnapshotEntry;
 use replay_state::{SessionReplayResult, SessionReplayState};
@@ -28,6 +26,7 @@ pub use replay_state::{
     is_transient_session_delta, SessionReplayCursor, WorkspaceSessionReplay,
     WorkspaceSessionReplayItem,
 };
+pub(crate) use trim::session_metadata_from_session;
 
 pub struct WorkspaceActiveSnapshotHub {
     inner: Mutex<HashMap<WorkspaceId, WorkspaceActiveSnapshotEntry>>,
@@ -240,7 +239,7 @@ impl WorkspaceActiveSnapshotHub {
             SessionReplayResult::Replay { deltas, last_sent } => WorkspaceSessionReplay::Replay {
                 items: deltas
                     .into_iter()
-                    .map(WorkspaceSessionReplayItem::Delta)
+                    .map(|delta| WorkspaceSessionReplayItem::Delta(Box::new(delta)))
                     .collect(),
                 last_sent,
             },
@@ -252,7 +251,7 @@ impl WorkspaceActiveSnapshotHub {
                     if let Some(head) = self.get_session_head(session_id).await {
                         let last_sent = SessionReplayCursor::from_head(&head);
                         return WorkspaceSessionReplay::Replay {
-                            items: vec![WorkspaceSessionReplayItem::Seed(head)],
+                            items: vec![WorkspaceSessionReplayItem::Seed(Box::new(head))],
                             last_sent,
                         };
                     }
@@ -280,7 +279,7 @@ impl WorkspaceActiveSnapshotHub {
                 };
                 if let Some(head) = self.get_session_head(session_id).await {
                     last_sent = SessionReplayCursor::from_head(&head);
-                    items.push(WorkspaceSessionReplayItem::Seed(head));
+                    items.push(WorkspaceSessionReplayItem::Seed(Box::new(head)));
                 }
                 WorkspaceSessionReplay::Replay { items, last_sent }
             }
@@ -737,7 +736,7 @@ impl WorkspaceActiveSnapshotHub {
             let mut heads = self.session_heads.lock().await;
             if let Some(head) = heads.get_mut(&delta.session_id) {
                 apply_head_delta(head, &delta);
-            } else if session.parent_session_id.is_none() {
+            } else {
                 let mut head = new_head_snapshot(session);
                 apply_head_delta(&mut head, &delta);
                 heads.insert(delta.session_id, head);
@@ -863,49 +862,6 @@ impl WorkspaceActiveSnapshotHub {
             archived_rev,
             task_id,
         });
-    }
-}
-
-#[async_trait]
-impl ActiveSnapshotObserver for WorkspaceActiveSnapshotHub {
-    async fn on_active_head_snapshot(&self, head: SessionHeadSnapshot) {
-        let workspace_id = head.session.workspace_id;
-        let session_id = head.session.id;
-        let cursor = SessionReplayCursor::from_head(&head);
-        let compact = compact_active_head_snapshot(&head);
-        {
-            let mut guard = self.inner.lock().await;
-            let entry = guard
-                .entry(workspace_id)
-                .or_insert_with(WorkspaceActiveSnapshotEntry::new);
-            entry.active_heads.insert(session_id, compact);
-            entry.seed_session_replay(session_id, cursor);
-        }
-        let mut index = self.active_head_index.lock().await;
-        index.insert(session_id, workspace_id);
-    }
-
-    async fn on_active_head_removed(&self, session_id: SessionId) {
-        let workspace_id = {
-            let mut index = self.active_head_index.lock().await;
-            index.remove(&session_id)
-        };
-        match workspace_id {
-            Some(workspace_id) => {
-                let mut guard = self.inner.lock().await;
-                if let Some(entry) = guard.get_mut(&workspace_id) {
-                    entry.active_heads.remove(&session_id);
-                }
-            }
-            None => {
-                let mut guard = self.inner.lock().await;
-                for entry in guard.values_mut() {
-                    if entry.active_heads.remove(&session_id).is_some() {
-                        break;
-                    }
-                }
-            }
-        }
     }
 }
 

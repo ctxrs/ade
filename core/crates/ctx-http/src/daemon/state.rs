@@ -47,8 +47,7 @@ mod types;
 
 use super::edit_plans;
 pub(crate) use types::{
-    ActiveHeadProjectionEntry, ActiveTaskRefreshEntry, AttachmentMaterializationTask,
-    WorktreeBootstrapGate,
+    ActiveTaskRefreshEntry, AttachmentMaterializationTask, WorktreeBootstrapGate,
 };
 pub use types::{
     AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions, CachedProviderOptions,
@@ -183,7 +182,6 @@ impl AppState {
                 broadcasters: Mutex::new(HashMap::new()),
                 session_event_heads: Mutex::new(HashMap::new()),
                 order_seq_states: Mutex::new(HashMap::new()),
-                active_head_projections: Mutex::new(HashMap::new()),
                 active_task_refreshes: Mutex::new(HashMap::new()),
                 running_sessions,
                 session_meta_cache: Mutex::new(HashMap::new()),

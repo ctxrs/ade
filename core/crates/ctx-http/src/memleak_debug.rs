@@ -58,7 +58,6 @@ struct SessionCacheStats {
     broadcast_receivers_total: usize,
     broadcast_receivers_max: usize,
     running_sessions: usize,
-    active_head_projections: usize,
     active_task_refreshes: usize,
 }
 
@@ -184,7 +183,6 @@ async fn sample_once(state: &Arc<AppState>) -> Result<()> {
         }
         drop(broadcasters_guard);
         let running_sessions = state.sessions.running_sessions.lock().await.len();
-        let active_head_projections = state.sessions.active_head_projections.lock().await.len();
         let active_task_refreshes = state.sessions.active_task_refreshes.lock().await.len();
 
         SessionCacheStats {
@@ -202,7 +200,6 @@ async fn sample_once(state: &Arc<AppState>) -> Result<()> {
             broadcast_receivers_total,
             broadcast_receivers_max,
             running_sessions,
-            active_head_projections,
             active_task_refreshes,
         }
     };

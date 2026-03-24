@@ -17,6 +17,9 @@ const LOCK_CHILD_ENV: &str = "CTX_STORE_LOCK_CHILD";
 const LOCK_DB_PATH_ENV: &str = "CTX_STORE_LOCK_DB_PATH";
 const LOCK_READY_PATH_ENV: &str = "CTX_STORE_LOCK_READY_PATH";
 const LOCK_RELEASE_PATH_ENV: &str = "CTX_STORE_LOCK_RELEASE_PATH";
+const LEGACY_DROP_WORKSPACE_MESSAGE_INDEX_SQL: &str = "\
+DROP INDEX IF EXISTS workspace_message_index_workspace_id_idx;\n\
+DROP TABLE IF EXISTS workspace_message_index;\n";
 
 #[test]
 fn migration_versions_are_unique() -> Result<()> {
@@ -180,6 +183,77 @@ async fn open_repairs_partially_applied_duplicate_tool_display_migration() -> Re
     assert!(applied
         .iter()
         .any(|(version, description)| *version == 47 && description == "tool display fields"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn open_repairs_workspace_message_index_migration_version_conflict() -> Result<()> {
+    let tempdir = tempfile::tempdir().context("creating tempdir for workspace message repair")?;
+    let subset_dir = tempdir.path().join("subset-migrations");
+    fs::create_dir_all(&subset_dir).context("creating subset migration dir")?;
+
+    let migrations = migration_files()?;
+    for migration in &migrations {
+        let version = migration_version(migration)?;
+        if version <= 48
+            || migration
+                .file_name()
+                .is_some_and(|name| name == "0050_drop_workspace_owned_routing_indexes.sql")
+        {
+            let filename = migration
+                .file_name()
+                .context("migration file missing name")?;
+            fs::copy(migration, subset_dir.join(filename)).with_context(|| {
+                format!(
+                    "copying {} into workspace-message repair subset",
+                    migration.display()
+                )
+            })?;
+        }
+    }
+
+    fs::write(
+        subset_dir.join("0049_drop_workspace_message_index.sql"),
+        LEGACY_DROP_WORKSPACE_MESSAGE_INDEX_SQL,
+    )
+    .context("writing legacy workspace message index migration")?;
+
+    let db_path = tempdir.path().join("db.sqlite");
+    fs::File::create(&db_path).context("creating sqlite file")?;
+    let sqlite_url = sqlite_url(&db_path);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&sqlite_url)
+        .await
+        .context("connecting partial-migration pool for workspace message repair")?;
+    let subset_migrator = Migrator::new(subset_dir.clone())
+        .await
+        .context("loading subset migrator for workspace message repair")?;
+    subset_migrator
+        .run(&pool)
+        .await
+        .context("running subset migrator for workspace message repair")?;
+    pool.close().await;
+
+    let store = Store::open(&db_path)
+        .await
+        .context("opening store after workspace message version repair")?;
+    store.close().await;
+
+    assert_store_integrity(&db_path).await?;
+    assert!(column_exists(&db_path, "session_turn_tools", "order_seq").await?);
+
+    let applied = applied_migrations(&db_path).await?;
+    assert!(applied
+        .iter()
+        .any(|(version, description)| *version == 49 && description == "tool order seq"));
+    assert!(applied.iter().any(|(version, description)| {
+        *version == 50 && description == "drop workspace owned routing indexes"
+    }));
+    assert!(applied.iter().any(|(version, description)| {
+        *version == 51 && description == "drop workspace message index"
+    }));
 
     Ok(())
 }

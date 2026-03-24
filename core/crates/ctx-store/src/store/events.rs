@@ -195,7 +195,7 @@ impl Store {
         for session_id in refresh_sessions {
             let last_seq = max_seq_by_session.get(&session_id).copied();
             if let Err(err) = self
-                .refresh_active_snapshot_head(session_id, last_seq)
+                .schedule_active_snapshot_head_refresh(session_id, last_seq)
                 .await
             {
                 tracing::warn!(

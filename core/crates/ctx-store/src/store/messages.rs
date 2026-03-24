@@ -149,7 +149,7 @@ impl Store {
                 session_snapshot_write_bytes,
             );
         }
-        self.refresh_active_snapshot_head(message.session_id, None)
+        self.schedule_active_snapshot_head_refresh(message.session_id, None)
             .await?;
         Ok(message)
     }

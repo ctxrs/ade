@@ -22,6 +22,22 @@ use super::state::{
     WorkspaceRuntime, WorktreeBootstrapGate,
 };
 
+#[derive(Debug)]
+pub enum WorkspaceHydrationError {
+    NotFound,
+    Load(anyhow::Error),
+}
+
+impl WorkspaceHydrationError {
+    pub fn status_code(&self) -> axum::http::StatusCode {
+        match self {
+            WorkspaceHydrationError::NotFound => axum::http::StatusCode::NOT_FOUND,
+            WorkspaceHydrationError::Load(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+#[derive(Debug)]
 struct WorkspaceSnapshotHydrationPayload {
     snapshot_rev: i64,
     archived_rev: i64,
@@ -37,14 +53,10 @@ trait WorkspaceSnapshotHydrationStore {
         workspace_id: WorkspaceId,
         limit: i64,
     ) -> Result<(Vec<WorkspaceActiveTaskSummary>, i64)>;
-    async fn list_active_session_ids(
+    async fn list_active_heads(
         &self,
         workspace_id: WorkspaceId,
-    ) -> Result<Vec<ctx_core::ids::SessionId>>;
-    async fn get_active_head(
-        &self,
-        session_id: ctx_core::ids::SessionId,
-    ) -> Result<Option<SessionHeadSnapshot>>;
+    ) -> Result<Vec<SessionHeadSnapshot>>;
 }
 
 #[async_trait]
@@ -61,18 +73,12 @@ impl WorkspaceSnapshotHydrationStore for Store {
         self.list_workspace_active_page(workspace_id, limit).await
     }
 
-    async fn list_active_session_ids(
+    async fn list_active_heads(
         &self,
         workspace_id: WorkspaceId,
-    ) -> Result<Vec<ctx_core::ids::SessionId>> {
-        self.list_workspace_active_session_ids(workspace_id).await
-    }
-
-    async fn get_active_head(
-        &self,
-        session_id: ctx_core::ids::SessionId,
-    ) -> Result<Option<SessionHeadSnapshot>> {
-        self.get_active_snapshot_head(session_id).await
+    ) -> Result<Vec<SessionHeadSnapshot>> {
+        self.list_workspace_active_head_snapshots(workspace_id)
+            .await
     }
 }
 
@@ -82,23 +88,7 @@ async fn load_workspace_snapshot_hydration_payload<S: WorkspaceSnapshotHydration
 ) -> Result<WorkspaceSnapshotHydrationPayload> {
     let (snapshot_rev, archived_rev) = store.get_snapshot_state(workspace_id).await?;
     let (tasks, _) = store.list_active_page(workspace_id, i64::MAX).await?;
-    let session_ids = store.list_active_session_ids(workspace_id).await?;
-    let mut heads = Vec::new();
-    for session_id in session_ids {
-        match store.get_active_head(session_id).await {
-            Ok(Some(head)) => heads.push(head),
-            Ok(None) => {}
-            Err(err) => {
-                tracing::warn!(
-                    target: "ctx_http.workspace_active_snapshot",
-                    workspace_id = %workspace_id.0,
-                    session_id = %session_id.0,
-                    error = ?err,
-                    "skipping active head during workspace hydration",
-                );
-            }
-        }
-    }
+    let heads = store.list_active_heads(workspace_id).await?;
     Ok(WorkspaceSnapshotHydrationPayload {
         snapshot_rev,
         archived_rev,
@@ -242,13 +232,13 @@ impl WorkspaceRuntime {
         &self,
         state: &AppState,
         workspace_id: WorkspaceId,
-    ) {
+    ) -> std::result::Result<(), WorkspaceHydrationError> {
         if !self
             .workspace_active_snapshot
             .needs_hydration(workspace_id)
             .await
         {
-            return;
+            return Ok(());
         }
         let store = match state.store_for_workspace(workspace_id).await {
             Ok(store) => store,
@@ -258,7 +248,7 @@ impl WorkspaceRuntime {
                     err = %err,
                     "failed to hydrate workspace snapshot (store lookup)"
                 );
-                return;
+                return Err(WorkspaceHydrationError::NotFound);
             }
         };
         let payload = match load_workspace_snapshot_hydration_payload(&store, workspace_id).await {
@@ -268,7 +258,7 @@ impl WorkspaceRuntime {
                     workspace_id = ?workspace_id,
                     "failed to load workspace snapshot hydration payload: {err:#}"
                 );
-                return;
+                return Err(WorkspaceHydrationError::Load(err));
             }
         };
         apply_workspace_snapshot_hydration_payload(
@@ -277,6 +267,7 @@ impl WorkspaceRuntime {
             payload,
         )
         .await;
+        Ok(())
     }
 
     pub async fn register_worktree_bootstrap(
@@ -549,10 +540,13 @@ impl AppState {
         self.workspaces.is_worktree_vcs_active(worktree_id).await
     }
 
-    pub async fn ensure_workspace_active_snapshot_hydrated(&self, workspace_id: WorkspaceId) {
+    pub async fn ensure_workspace_active_snapshot_hydrated(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> std::result::Result<(), WorkspaceHydrationError> {
         self.workspaces
             .ensure_workspace_active_snapshot_hydrated(self, workspace_id)
-            .await;
+            .await
     }
 
     pub async fn register_worktree_bootstrap(
@@ -711,7 +705,6 @@ mod hydration_tests {
         SessionMetadata, SessionSnapshotSummary, SessionStatus, SessionTurnStatus, Task,
         TaskStatus, WorkspaceActiveTaskSummary,
     };
-    use std::collections::HashMap;
     use std::sync::Mutex;
 
     use crate::workspace_active_snapshot::WorkspaceActiveSnapshotHub;
@@ -719,9 +712,8 @@ mod hydration_tests {
     struct FakeHydrationStore {
         snapshot_state: (i64, i64),
         tasks: Vec<WorkspaceActiveTaskSummary>,
-        session_ids: Vec<SessionId>,
-        heads_by_session: HashMap<SessionId, SessionHeadSnapshot>,
-        failing_heads: HashMap<SessionId, &'static str>,
+        heads: Vec<SessionHeadSnapshot>,
+        heads_error: Option<&'static str>,
         calls: Mutex<Vec<&'static str>>,
     }
 
@@ -742,23 +734,15 @@ mod hydration_tests {
             Ok((self.tasks.clone(), self.tasks.len() as i64))
         }
 
-        async fn list_active_session_ids(
+        async fn list_active_heads(
             &self,
             _workspace_id: WorkspaceId,
-        ) -> Result<Vec<SessionId>> {
-            self.calls.lock().unwrap().push("active_session_ids");
-            Ok(self.session_ids.clone())
-        }
-
-        async fn get_active_head(
-            &self,
-            session_id: SessionId,
-        ) -> Result<Option<SessionHeadSnapshot>> {
-            self.calls.lock().unwrap().push("active_head");
-            if let Some(message) = self.failing_heads.get(&session_id) {
-                return Err(anyhow!(*message));
+        ) -> Result<Vec<SessionHeadSnapshot>> {
+            self.calls.lock().unwrap().push("active_heads");
+            if let Some(message) = self.heads_error {
+                return Err(anyhow!(message));
             }
-            Ok(self.heads_by_session.get(&session_id).cloned())
+            Ok(self.heads.clone())
         }
     }
 
@@ -871,9 +855,8 @@ mod hydration_tests {
         let store = FakeHydrationStore {
             snapshot_state: (17, 4),
             tasks: vec![summary],
-            session_ids: vec![session_id],
-            heads_by_session: HashMap::from([(session_id, head.clone())]),
-            failing_heads: HashMap::new(),
+            heads: vec![head.clone()],
+            heads_error: None,
             calls: Mutex::new(Vec::new()),
         };
 
@@ -881,15 +864,7 @@ mod hydration_tests {
             .await
             .expect("expected hydration payload");
         let calls = store.calls.lock().unwrap().clone();
-        assert_eq!(
-            calls,
-            vec![
-                "snapshot_state",
-                "active_page",
-                "active_session_ids",
-                "active_head"
-            ]
-        );
+        assert_eq!(calls, vec!["snapshot_state", "active_page", "active_heads"]);
         assert_eq!(payload.snapshot_rev, 17);
         assert_eq!(payload.archived_rev, 4);
         assert_eq!(payload.tasks.len(), 1);
@@ -907,30 +882,21 @@ mod hydration_tests {
     }
 
     #[tokio::test]
-    async fn workspace_hydration_payload_skips_bad_active_heads() {
+    async fn workspace_hydration_payload_propagates_active_head_batch_errors() {
         let workspace_id = WorkspaceId::new();
         let task_id = TaskId::new();
-        let healthy_session_id = SessionId::new();
-        let failing_session_id = SessionId::new();
-        let healthy_head = test_head(workspace_id, task_id, healthy_session_id);
         let store = FakeHydrationStore {
             snapshot_state: (19, 5),
-            tasks: vec![test_summary(workspace_id, task_id, healthy_session_id)],
-            session_ids: vec![healthy_session_id, failing_session_id],
-            heads_by_session: HashMap::from([(healthy_session_id, healthy_head.clone())]),
-            failing_heads: HashMap::from([(failing_session_id, "head decode failed")]),
+            tasks: vec![test_summary(workspace_id, task_id, SessionId::new())],
+            heads: Vec::new(),
+            heads_error: Some("head decode failed"),
             calls: Mutex::new(Vec::new()),
         };
 
-        let payload = load_workspace_snapshot_hydration_payload(&store, workspace_id)
+        let err = load_workspace_snapshot_hydration_payload(&store, workspace_id)
             .await
-            .expect("expected hydration payload");
-
-        assert_eq!(payload.snapshot_rev, 19);
-        assert_eq!(payload.archived_rev, 5);
-        assert_eq!(payload.tasks.len(), 1);
-        assert_eq!(payload.heads.len(), 1);
-        assert_eq!(payload.heads[0].session.id, healthy_head.session.id);
+            .expect_err("expected hydration to fail");
+        assert!(err.to_string().contains("head decode failed"));
     }
 
     #[tokio::test]

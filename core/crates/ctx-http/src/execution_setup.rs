@@ -221,6 +221,10 @@ impl ExecutionSetupCoordinator {
     pub fn spawn_startup_prewarm(self: &Arc<Self>) {
         let coordinator = Arc::clone(self);
         tokio::spawn(async move {
+            #[cfg(test)]
+            // Tests temporarily rebind podman process env vars, so startup prewarm
+            // must serialize with the shared test lock before it can observe them.
+            let _podman_env_test_lock = crate::test_support::podman_env_test_lock().lock().await;
             coordinator.run_startup_prewarm().await;
         });
     }

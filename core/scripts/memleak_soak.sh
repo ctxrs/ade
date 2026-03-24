@@ -43,9 +43,10 @@ git -C "${REPO_DIR}" commit -m "seed" -q
 
 (
   cd "${ROOT_DIR}"
+  CTX_SHOW_FAKE_PROVIDER=1 \
   CTX_MEMLEAK_DEBUG=1 \
   CTX_MEMLEAK_DEBUG_INTERVAL_MS=5000 \
-  cargo run -p ctx-http -- serve --bind "127.0.0.1:${PORT}" --data-dir "${DATA_DIR}" \
+  cargo run -p ctx-http --bin ctx -- serve --bind "127.0.0.1:${PORT}" --data-dir "${DATA_DIR}" \
     >"${DAEMON_LOG}" 2>&1 &
   DAEMON_PID=$!
   echo "${DAEMON_PID}" > "${DATA_DIR}/daemon.pid"
@@ -67,19 +68,50 @@ if [[ "${READY}" -ne 1 ]]; then
   exit 1
 fi
 
+AUTH_FILE="${DATA_DIR}/daemon_auth.json"
+if [[ ! -f "${AUTH_FILE}" ]]; then
+  echo "missing auth file at ${AUTH_FILE}" >&2
+  exit 1
+fi
+
+AUTH_TOKEN="$(
+  python3 - <<'PY' "${AUTH_FILE}"
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+
+print(data.get("token", ""))
+PY
+)"
+
+if [[ -z "${AUTH_TOKEN}" ]]; then
+  echo "failed to read daemon auth token" >&2
+  exit 1
+fi
+
 read -r WORKSPACE_ID TASK_ID SESSION_ID WORKTREE_ID <<EOF
-$(PORT="${PORT}" REPO_DIR="${REPO_DIR}" python3 - <<'PY'
+$(PORT="${PORT}" REPO_DIR="${REPO_DIR}" AUTH_TOKEN="${AUTH_TOKEN}" python3 - <<'PY'
 import json
 import os
 import urllib.request
 
 port = os.environ["PORT"]
 repo_dir = os.environ["REPO_DIR"]
+auth_token = os.environ["AUTH_TOKEN"]
 base = f"http://127.0.0.1:{port}"
 
 def post(url, payload):
     body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {auth_token}",
+        },
+    )
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -95,7 +127,7 @@ PY
 )
 EOF
 
-export PORT WORKSPACE_ID SESSION_ID DURATION_SECS
+export PORT WORKSPACE_ID SESSION_ID DURATION_SECS AUTH_TOKEN
 export LOG_PATH SLOPE_MB_PER_MIN
 
 python3 - <<'PY' &
@@ -110,12 +142,14 @@ port = int(os.environ["PORT"])
 workspace_id = os.environ["WORKSPACE_ID"]
 session_id = os.environ["SESSION_ID"]
 duration = int(os.environ["DURATION_SECS"])
+auth_token = os.environ["AUTH_TOKEN"]
 
 path = f"/api/workspaces/{workspace_id}/stream"
 key = base64.b64encode(os.urandom(16)).decode("ascii")
 req = (
     f"GET {path} HTTP/1.1\r\n"
     f"Host: {host}:{port}\r\n"
+    f"Authorization: Bearer {auth_token}\r\n"
     "Upgrade: websocket\r\n"
     "Connection: Upgrade\r\n"
     f"Sec-WebSocket-Key: {key}\r\n"

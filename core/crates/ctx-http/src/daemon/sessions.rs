@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tokio::sync::{broadcast, mpsc, watch, Mutex};
 
@@ -14,37 +14,13 @@ use ctx_store::Store;
 
 use crate::order_seq::OrderSeqState;
 use crate::scheduler::session_worker;
+use crate::workspace_active_snapshot::session_metadata_from_session;
 
 use super::state::{
-    ActiveHeadProjectionEntry, ActiveTaskRefreshEntry, AppState, SessionHeadCacheKey,
-    SessionRuntime, TimedEntry,
+    ActiveTaskRefreshEntry, AppState, SessionHeadCacheKey, SessionRuntime, TimedEntry,
 };
 
-const ACTIVE_HEAD_PROJECTION_DEBOUNCE_MS: u64 = 200;
-const ACTIVE_HEAD_PROJECTION_MAX_FLUSH_MS: u64 = 1500;
 const ACTIVE_TASK_REFRESH_DEBOUNCE_MS: u64 = 250;
-
-fn active_head_projection_wait_duration(
-    now: Instant,
-    last_event_at: Instant,
-    last_flush_at: Instant,
-    debounce: Duration,
-    max_flush: Duration,
-) -> Duration {
-    let wait_for_debounce = debounce.saturating_sub(now.duration_since(last_event_at));
-    let wait_for_max = max_flush.saturating_sub(now.duration_since(last_flush_at));
-    wait_for_debounce.min(wait_for_max)
-}
-
-fn active_head_projection_should_flush(
-    now: Instant,
-    last_event_at: Instant,
-    last_flush_at: Instant,
-    debounce: Duration,
-    max_flush: Duration,
-) -> bool {
-    now.duration_since(last_event_at) >= debounce || now.duration_since(last_flush_at) >= max_flush
-}
 
 fn message_from_event(event: &SessionEvent, session: &Session) -> Option<Message> {
     let message_id = event
@@ -193,6 +169,63 @@ fn derive_summary_activity(event_type: &SessionEventType) -> Option<SessionActiv
         }),
         _ => None,
     }
+}
+
+fn activity_from_turn(turn: &SessionTurn) -> SessionActivityState {
+    match turn.status {
+        SessionTurnStatus::Queued => SessionActivityState {
+            is_working: false,
+            last_turn_status: Some(SessionTurnStatus::Queued),
+        },
+        SessionTurnStatus::Running => SessionActivityState {
+            is_working: true,
+            last_turn_status: Some(SessionTurnStatus::Running),
+        },
+        SessionTurnStatus::Completed => SessionActivityState {
+            is_working: false,
+            last_turn_status: Some(SessionTurnStatus::Completed),
+        },
+        SessionTurnStatus::Interrupted => SessionActivityState {
+            is_working: false,
+            last_turn_status: Some(SessionTurnStatus::Interrupted),
+        },
+        SessionTurnStatus::Failed => SessionActivityState {
+            is_working: false,
+            last_turn_status: Some(SessionTurnStatus::Failed),
+        },
+    }
+}
+
+fn should_include_session_metadata_in_head_delta(event_type: &SessionEventType) -> bool {
+    matches!(
+        event_type,
+        SessionEventType::Init | SessionEventType::Notice
+    )
+}
+
+fn recompute_turn_tool_counts(turn: &mut SessionTurn, tool_summaries: &[SessionTurnToolSummary]) {
+    let mut total = 0_i64;
+    let mut pending = 0_i64;
+    let mut running = 0_i64;
+    let mut completed = 0_i64;
+    let mut failed = 0_i64;
+    for summary in tool_summaries
+        .iter()
+        .filter(|summary| summary.turn_id == turn.turn_id)
+    {
+        total += 1;
+        match summary.status.as_deref() {
+            Some("running") | Some("in_progress") => running += 1,
+            Some("completed") | Some("complete") | Some("ok") | Some("succeeded") => completed += 1,
+            Some("failed") | Some("error") => failed += 1,
+            _ => pending += 1,
+        }
+    }
+    turn.tool_total = total;
+    turn.tool_pending = pending;
+    turn.tool_running = running;
+    turn.tool_completed = completed;
+    turn.tool_failed = failed;
 }
 
 fn build_session_summary_delta(
@@ -376,14 +409,6 @@ impl SessionRuntime {
         });
         sender.touch();
         let _ = sender.value.send(event.seq);
-        if !matches!(
-            event.event_type,
-            SessionEventType::AssistantChunk | SessionEventType::ThoughtChunk
-        ) && !is_session_gap_notice(&event)
-        {
-            self.queue_active_head_projection(state, event.session_id, event.seq)
-                .await;
-        }
         self.update_workspace_active_snapshot_for_event(state, &event)
             .await;
     }
@@ -454,28 +479,14 @@ impl SessionRuntime {
         } else {
             None
         };
-        let mut turn = turn_from_event(event, message.as_ref());
-        if turn.is_none() && should_refresh_turn_from_store(&event.event_type) {
-            if let Some(turn_id) = event.turn_id {
-                if let Ok(store) = state.store_for_session(event.session_id).await {
-                    if let Ok(Some(fetched)) =
-                        store.get_session_turn(event.session_id, turn_id).await
-                    {
-                        turn = Some(fetched);
-                    }
-                }
-            }
-        }
-        if let Some(turn) = turn.as_mut() {
-            patch_turn_from_event(turn, event);
-        }
         let mut tool_summaries: Vec<SessionTurnToolSummary> = Vec::new();
-        if matches!(
+        let tool_event = matches!(
             event.event_type,
             SessionEventType::ToolCall
                 | SessionEventType::ToolCallUpdate
                 | SessionEventType::ToolResult
-        ) {
+        );
+        if tool_event {
             if let Some(turn_id) = event.turn_id {
                 if let Ok(store) = state.store_for_session(event.session_id).await {
                     if let Ok(list) = store
@@ -488,6 +499,34 @@ impl SessionRuntime {
                         tool_summaries = list;
                     }
                 }
+            }
+        }
+        let mut turn = turn_from_event(event, message.as_ref());
+        if turn.is_none() && tool_event {
+            if let Some(turn_id) = event.turn_id {
+                turn = state
+                    .workspaces
+                    .workspace_active_snapshot
+                    .get_session_head(event.session_id)
+                    .await
+                    .and_then(|head| head.turns.into_iter().find(|turn| turn.turn_id == turn_id));
+            }
+        }
+        if turn.is_none() && (should_refresh_turn_from_store(&event.event_type) || tool_event) {
+            if let Some(turn_id) = event.turn_id {
+                if let Ok(store) = state.store_for_session(event.session_id).await {
+                    if let Ok(Some(fetched)) =
+                        store.get_session_turn(event.session_id, turn_id).await
+                    {
+                        turn = Some(fetched);
+                    }
+                }
+            }
+        }
+        if let Some(turn) = turn.as_mut() {
+            patch_turn_from_event(turn, event);
+            if !tool_summaries.is_empty() {
+                recompute_turn_tool_counts(turn, &tool_summaries);
             }
         }
 
@@ -522,7 +561,8 @@ impl SessionRuntime {
         .await;
         let state_rev = last_event_seq;
 
-        let activity = derive_summary_activity(&event.event_type);
+        let activity = derive_summary_activity(&event.event_type)
+            .or_else(|| turn.as_ref().map(activity_from_turn));
 
         let mut last_message_at = None;
         let mut last_message_preview = None;
@@ -533,7 +573,7 @@ impl SessionRuntime {
 
         let summary_delta = build_session_summary_delta(
             &session,
-            activity,
+            activity.clone(),
             last_message_at,
             last_message_preview,
             last_event_seq,
@@ -546,6 +586,9 @@ impl SessionRuntime {
             last_event_seq,
             projection_rev,
             state_rev,
+            session: should_include_session_metadata_in_head_delta(&event.event_type)
+                .then(|| session_metadata_from_session(&session)),
+            activity,
             event: Some(event.clone()),
             turn,
             message,
@@ -563,47 +606,6 @@ impl SessionRuntime {
                 .workspace_active_snapshot
                 .publish_session_summary_delta(session.workspace_id, summary_delta)
                 .await;
-        }
-    }
-
-    async fn queue_active_head_projection(
-        &self,
-        state: &Arc<AppState>,
-        session_id: SessionId,
-        last_event_seq: i64,
-    ) {
-        let now = Instant::now();
-        let should_spawn = {
-            let mut map = self.active_head_projections.lock().await;
-            if let Some(entry) = map.get_mut(&session_id) {
-                entry.last_event_seq = entry.last_event_seq.max(last_event_seq);
-                entry.last_event_at = now;
-                false
-            } else {
-                map.insert(
-                    session_id,
-                    ActiveHeadProjectionEntry {
-                        last_event_seq,
-                        last_event_at: now,
-                        last_flushed_seq: 0,
-                        last_flush_at: now,
-                    },
-                );
-                true
-            }
-        };
-        if should_spawn {
-            let state = Arc::downgrade(state);
-            tokio::spawn(async move {
-                let Some(state) = state.upgrade() else {
-                    return;
-                };
-                let state_clone = state.clone();
-                state
-                    .sessions
-                    .run_active_head_projection(state_clone, session_id)
-                    .await;
-            });
         }
     }
 
@@ -630,82 +632,6 @@ impl SessionRuntime {
                     .run_workspace_task_refresh(state_clone, task_id)
                     .await;
             });
-        }
-    }
-
-    async fn run_active_head_projection(&self, state: Arc<AppState>, session_id: SessionId) {
-        let debounce = Duration::from_millis(ACTIVE_HEAD_PROJECTION_DEBOUNCE_MS.max(1));
-        let max_flush = Duration::from_millis(ACTIVE_HEAD_PROJECTION_MAX_FLUSH_MS.max(1));
-        loop {
-            let entry = {
-                let map = self.active_head_projections.lock().await;
-                map.get(&session_id).cloned()
-            };
-            let Some(entry) = entry else {
-                return;
-            };
-            if entry.last_event_seq == entry.last_flushed_seq {
-                tokio::time::sleep(debounce).await;
-                let mut map = self.active_head_projections.lock().await;
-                if let Some(entry) = map.get(&session_id) {
-                    if entry.last_event_seq == entry.last_flushed_seq {
-                        map.remove(&session_id);
-                        return;
-                    }
-                } else {
-                    return;
-                }
-                continue;
-            }
-
-            let wait_for = active_head_projection_wait_duration(
-                Instant::now(),
-                entry.last_event_at,
-                entry.last_flush_at,
-                debounce,
-                max_flush,
-            );
-            if !wait_for.is_zero() {
-                tokio::time::sleep(wait_for).await;
-            }
-
-            let entry = {
-                let map = self.active_head_projections.lock().await;
-                map.get(&session_id).cloned()
-            };
-            let Some(entry) = entry else {
-                return;
-            };
-            if entry.last_event_seq == entry.last_flushed_seq {
-                continue;
-            }
-            let now = Instant::now();
-            if !active_head_projection_should_flush(
-                now,
-                entry.last_event_at,
-                entry.last_flush_at,
-                debounce,
-                max_flush,
-            ) {
-                continue;
-            }
-            let target_seq = entry.last_event_seq;
-
-            self.refresh_session_head_cache(&state, session_id).await;
-
-            let flushed_at = Instant::now();
-            let mut map = self.active_head_projections.lock().await;
-            match map.get_mut(&session_id) {
-                Some(entry) => {
-                    entry.last_flushed_seq = entry.last_flushed_seq.max(target_seq);
-                    entry.last_flush_at = flushed_at;
-                    if entry.last_event_seq == entry.last_flushed_seq {
-                        map.remove(&session_id);
-                        return;
-                    }
-                }
-                None => return,
-            }
         }
     }
 
@@ -762,27 +688,20 @@ impl SessionRuntime {
             Ok(store) => store,
             Err(_) => return,
         };
-        // Avoid unbounded head refresh: extremely large conversations can turn the
-        // workspace active heads snapshot into multi-megabyte payloads, which then
-        // backpressure the workspace WS stream.
-        const SESSION_HEAD_REFRESH_TURN_LIMIT: u32 = 200;
-        let head = match store
-            .get_session_head_snapshot(session_id, SESSION_HEAD_REFRESH_TURN_LIMIT, true)
-            .await
-        {
+        let head = match store.get_active_snapshot_head(session_id).await {
             Ok(Some(head)) => head,
             Ok(None) => {
                 state
                     .workspaces
                     .workspace_active_snapshot
-                    .remove_session_head(session_id)
+                    .remove_session(session_id)
                     .await;
                 return;
             }
             Err(err) => {
                 tracing::warn!(
                     session_id = %session_id.0,
-                    "session head cache refresh failed: {err:#}"
+                    "active session head cache refresh failed: {err:#}"
                 );
                 return;
             }
@@ -866,10 +785,6 @@ impl SessionRuntime {
         }
         {
             let mut map = self.session_event_heads.lock().await;
-            map.remove(&session_id);
-        }
-        {
-            let mut map = self.active_head_projections.lock().await;
             map.remove(&session_id);
         }
         {

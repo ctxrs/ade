@@ -1,8 +1,6 @@
-mod active_snapshot_observer;
 pub mod manager;
 pub mod store;
 
-pub use active_snapshot_observer::{register_active_snapshot_observer, ActiveSnapshotObserver};
 pub use manager::{StoreManager, StoreManagerConfig, StoreManagerStats};
 pub use store::{is_unique_constraint_violation, Store, StoreStats, WorktreeBootstrapResultUpdate};
 

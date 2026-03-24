@@ -138,13 +138,13 @@ pub enum SessionReplayResult {
 
 #[derive(Debug, Clone)]
 pub enum WorkspaceSessionReplayItem {
-    Delta(SessionHeadDelta),
+    Delta(Box<SessionHeadDelta>),
     Gap {
         session_id: SessionId,
         after_seq: i64,
         reason: Option<String>,
     },
-    Seed(SessionHeadSnapshot),
+    Seed(Box<SessionHeadSnapshot>),
 }
 
 #[derive(Debug, Clone)]

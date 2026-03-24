@@ -19,6 +19,7 @@
       {
         "afterSeq": 2,
         "expectedSeqs": [
+          2,
           3
         ],
         "expectGap": false
@@ -26,7 +27,8 @@
       {
         "afterSeq": 4,
         "expectedSeqs": [],
-        "expectGap": false
+        "expectGap": true,
+        "expectedSeedLastEventSeq": 4
       }
     ],
     "expected": {

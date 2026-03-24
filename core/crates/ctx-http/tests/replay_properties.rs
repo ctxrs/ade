@@ -25,6 +25,8 @@ struct ReplayExpectation {
     after_seq: i64,
     expected_seqs: Vec<i64>,
     expect_gap: bool,
+    #[serde(default)]
+    expected_seed_last_event_seq: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -356,7 +358,8 @@ async fn seed_active_projection_case(
     harness
         .state
         .ensure_workspace_active_snapshot_hydrated(harness.workspace.id)
-        .await;
+        .await
+        .unwrap();
     harness
         .state
         .refresh_session_head_cache(harness.session.id)
@@ -493,7 +496,8 @@ async fn seed_gap_case(harness: &ProjectionHarness, fixture: &SessionGapSeedRehy
     harness
         .state
         .ensure_workspace_active_snapshot_hydrated(harness.workspace.id)
-        .await;
+        .await
+        .unwrap();
 }
 
 async fn setup_replay_fixture(event_count: usize) -> ReplayFixture {
@@ -519,6 +523,16 @@ async fn setup_replay_fixture(event_count: usize) -> ReplayFixture {
         harness.state.publish_event(event.clone()).await;
         seqs.push(event.seq);
     }
+
+    harness
+        .state
+        .refresh_session_head_cache(harness.session.id)
+        .await;
+    harness
+        .state
+        .ensure_workspace_active_snapshot_hydrated(harness.workspace.id)
+        .await
+        .unwrap();
 
     ReplayFixture { harness, seqs }
 }
@@ -817,7 +831,7 @@ async fn fixture_projection_equivalence_aligns_snapshot_heads_and_replay() {
         .await;
         assert_eq!(
             observed.seqs, replay.expected_seqs,
-            "after_seq={} should replay the exact durable suffix",
+            "after_seq={} should replay the expected projection-cursor suffix",
             replay.after_seq
         );
         assert_eq!(
@@ -826,7 +840,11 @@ async fn fixture_projection_equivalence_aligns_snapshot_heads_and_replay() {
             "after_seq={} gap expectation mismatch",
             replay.after_seq
         );
-        assert!(observed.seed_last_event_seq.is_none());
+        assert_eq!(
+            observed.seed_last_event_seq, replay.expected_seed_last_event_seq,
+            "after_seq={} seed expectation mismatch",
+            replay.after_seq
+        );
     }
 }
 
@@ -978,7 +996,7 @@ async fn property_replay_is_idempotent_for_same_after_seq() {
 }
 
 #[tokio::test]
-async fn property_replay_after_seq_zero_does_not_emit_gap() {
+async fn property_replay_after_seq_zero_rehydrates_with_seed_instead_of_gap() {
     let fixture = setup_replay_fixture(8).await;
     let mut socket = connect_workspace_stream(
         &fixture.harness.server.base_url,
@@ -1006,7 +1024,7 @@ async fn property_replay_after_seq_zero_does_not_emit_gap() {
         observed.gap_reason.is_none(),
         "after_seq=0 should not emit session_gap"
     );
-    assert!(observed.seed_last_event_seq.is_none());
+    assert_eq!(observed.seed_last_event_seq, fixture.seqs.last().copied());
 }
 
 #[tokio::test]

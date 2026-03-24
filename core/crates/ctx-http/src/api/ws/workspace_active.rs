@@ -573,7 +573,14 @@ async fn handle_subscribe_message(
     );
     state
         .ensure_workspace_active_snapshot_hydrated(workspace_id)
-        .await;
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                target: "ctx_http.ws_active_snapshot",
+                workspace_id = %workspace_id.0,
+                "workspace stream hydration failed: {err:?}"
+            );
+        })?;
     let resolved = match resolve_workspace_active_snapshot_subscriptions(
         state,
         workspace_id,

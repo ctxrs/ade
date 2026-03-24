@@ -217,7 +217,8 @@ impl Store {
         }
 
         self.ensure_session_snapshot_summary(session.id).await?;
-        self.refresh_active_snapshot_head(session.id, None).await?;
+        self.schedule_active_snapshot_head_refresh(session.id, None)
+            .await?;
         Ok(session)
     }
 
@@ -583,7 +584,7 @@ impl Store {
         .execute(&self.pool)
         .await?;
 
-        self.refresh_active_snapshot_head(checkpoint.session_id, None)
+        self.schedule_active_snapshot_head_refresh(checkpoint.session_id, None)
             .await?;
         Ok(checkpoint)
     }

@@ -248,7 +248,10 @@ async fn fault_matrix_replay_errors_become_gaps() {
 #[tokio::test]
 async fn fault_matrix_snapshot_send_failure_reconnects_cleanly() {
     let (state, server, addr, ws, _session, _last_seq) = setup_server().await;
-    state.ensure_workspace_active_snapshot_hydrated(ws.id).await;
+    state
+        .ensure_workspace_active_snapshot_hydrated(ws.id)
+        .await
+        .unwrap();
 
     let ws_url = format!("ws://{}/api/workspaces/{}/stream", addr, ws.id.0);
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();

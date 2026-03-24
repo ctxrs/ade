@@ -442,6 +442,8 @@ export type SessionHeadDelta = {
   last_event_seq: number;
   projection_rev?: number;
   state_rev?: number;
+  session?: Session | null;
+  activity?: SessionActivityState | null;
   event?: SessionEvent | null;
   turn?: SessionTurn | null;
   message?: Message | null;

@@ -116,6 +116,135 @@ mod compact_head_tests {
     }
 }
 
+mod delta_tests {
+    use super::super::delta::apply_head_delta;
+    use super::super::trim::{new_head_snapshot, session_metadata_from_session};
+    use super::super::*;
+    use chrono::{TimeZone, Utc};
+    use ctx_core::ids::TurnId;
+    use ctx_core::models::SessionTurnStatus;
+
+    fn test_session(parent_session_id: Option<SessionId>) -> Session {
+        let now = Utc.timestamp_opt(0, 0).unwrap();
+        Session {
+            id: SessionId::new(),
+            task_id: TaskId::new(),
+            workspace_id: WorkspaceId::new(),
+            worktree_id: WorktreeId::new(),
+            execution_environment: ctx_core::models::ExecutionEnvironment::Host,
+            parent_session_id,
+            relationship: parent_session_id.map(|_| "sub_agent".to_string()),
+            provider_id: "fake".to_string(),
+            model_id: "model-a".to_string(),
+            reasoning_effort: Some("medium".to_string()),
+            title: "session".to_string(),
+            agent_role: "assistant".to_string(),
+            status: ctx_core::models::SessionStatus::Active,
+            provider_session_ref: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn apply_head_delta_updates_session_activity_and_turn_shape() {
+        let session = test_session(None);
+        let mut head = new_head_snapshot(&session);
+        let mut updated_session = session_metadata_from_session(&session);
+        updated_session.model_id = "model-b".to_string();
+        updated_session.reasoning_effort = Some("high".to_string());
+
+        let delta = SessionHeadDelta {
+            session_id: session.id,
+            last_event_seq: 11,
+            projection_rev: 11,
+            state_rev: 11,
+            session: Some(updated_session.clone()),
+            activity: Some(SessionActivityState {
+                is_working: true,
+                last_turn_status: Some(SessionTurnStatus::Running),
+            }),
+            event: None,
+            turn: Some(SessionTurn {
+                turn_id: TurnId::new(),
+                session_id: session.id,
+                run_id: None,
+                user_message_id: None,
+                status: SessionTurnStatus::Running,
+                start_seq: Some(11),
+                end_seq: None,
+                started_at: Utc.timestamp_opt(0, 0).unwrap(),
+                updated_at: Utc.timestamp_opt(11, 0).unwrap(),
+                assistant_partial: None,
+                thought_partial: None,
+                metrics_json: None,
+                tool_total: 3,
+                tool_pending: 1,
+                tool_running: 1,
+                tool_completed: 1,
+                tool_failed: 0,
+            }),
+            message: None,
+            tool_summaries: Vec::new(),
+        };
+
+        apply_head_delta(&mut head, &delta);
+
+        assert_eq!(head.session.model_id, updated_session.model_id);
+        assert_eq!(
+            head.session.reasoning_effort,
+            updated_session.reasoning_effort
+        );
+        assert_eq!(
+            head.activity.last_turn_status,
+            Some(SessionTurnStatus::Running)
+        );
+        assert!(head.activity.is_working);
+        assert_eq!(head.turns.len(), 1);
+        assert_eq!(head.turns[0].tool_total, 3);
+        assert_eq!(head.turns[0].tool_pending, 1);
+        assert_eq!(head.turns[0].tool_running, 1);
+        assert_eq!(head.turns[0].tool_completed, 1);
+    }
+
+    #[tokio::test]
+    async fn publish_session_head_delta_keeps_live_subagent_session_heads_hot() {
+        let hub = WorkspaceActiveSnapshotHub::new();
+        let parent = test_session(None);
+        let subagent = test_session(Some(parent.id));
+        let delta = SessionHeadDelta {
+            session_id: subagent.id,
+            last_event_seq: 7,
+            projection_rev: 7,
+            state_rev: 7,
+            session: Some(session_metadata_from_session(&subagent)),
+            activity: Some(SessionActivityState {
+                is_working: true,
+                last_turn_status: Some(SessionTurnStatus::Running),
+            }),
+            event: None,
+            turn: None,
+            message: None,
+            tool_summaries: Vec::new(),
+        };
+
+        hub.publish_session_head_delta(subagent.workspace_id, &subagent, delta, true)
+            .await;
+
+        let cached = hub.get_session_head(subagent.id).await;
+        assert!(
+            cached.is_some(),
+            "subagent session head should be seeded in memory"
+        );
+
+        let active_heads = hub.active_heads(subagent.workspace_id).await;
+        assert!(
+            active_heads.heads.is_empty(),
+            "subagent heads should not inflate the workspace active-head batch"
+        );
+    }
+}
+
 mod replay_tests {
     use super::super::trim::session_metadata_from_session;
     use super::super::*;
@@ -199,6 +328,8 @@ mod replay_tests {
             last_event_seq: 5,
             projection_rev: 5,
             state_rev: 0,
+            session: None,
+            activity: None,
             event: None,
             turn: None,
             message: None,
@@ -209,6 +340,8 @@ mod replay_tests {
             last_event_seq: 6,
             projection_rev: 6,
             state_rev: 0,
+            session: None,
+            activity: None,
             event: None,
             turn: None,
             message: None,
@@ -248,6 +381,8 @@ mod replay_tests {
             last_event_seq: 5,
             projection_rev: 5,
             state_rev: 0,
+            session: None,
+            activity: None,
             event: None,
             turn: None,
             message: None,
@@ -258,6 +393,8 @@ mod replay_tests {
             last_event_seq: 5,
             projection_rev: 6,
             state_rev: 0,
+            session: None,
+            activity: None,
             event: None,
             turn: None,
             message: None,
@@ -297,6 +434,8 @@ mod replay_tests {
             last_event_seq: 5,
             projection_rev: 5,
             state_rev: 0,
+            session: None,
+            activity: None,
             event: None,
             turn: None,
             message: None,
@@ -307,6 +446,8 @@ mod replay_tests {
             last_event_seq: 5,
             projection_rev: 5,
             state_rev: 0,
+            session: None,
+            activity: None,
             event: Some(SessionEvent {
                 seq: -1,
                 id: SessionEventId::new(),
@@ -327,6 +468,8 @@ mod replay_tests {
             last_event_seq: 6,
             projection_rev: 6,
             state_rev: 0,
+            session: None,
+            activity: None,
             event: None,
             turn: None,
             message: None,

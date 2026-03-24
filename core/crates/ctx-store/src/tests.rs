@@ -1107,6 +1107,113 @@ async fn workspace_active_page_includes_primary_and_subagent_sessions() {
 }
 
 #[tokio::test]
+async fn subagent_active_snapshot_head_is_built_on_demand_without_durable_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let ws = store
+        .create_workspace("ws".into(), "/tmp/ws".into(), VcsKind::Git)
+        .await
+        .unwrap();
+    let task = store
+        .create_task(ws.id, "active".into(), None)
+        .await
+        .unwrap();
+    let worktree = store
+        .create_worktree(ws.id, "/tmp/ws".into(), "abc123".into(), None)
+        .await
+        .unwrap();
+    let primary = store
+        .create_session(
+            task.id,
+            ws.id,
+            worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            "fake".into(),
+            "fake".into(),
+            "implementer".into(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .set_task_primary_session(task.id, primary.id, worktree.id)
+        .await
+        .unwrap();
+    let subagent = store
+        .create_session(
+            task.id,
+            ws.id,
+            worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            "fake".into(),
+            "fake".into(),
+            "reviewer".into(),
+            Some(primary.id),
+            Some("sub_agent".into()),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    store
+        .insert_session_turn(make_turn(subagent.id, run_id, turn_id))
+        .await
+        .unwrap();
+    let notice = store
+        .append_session_event(
+            subagent.id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "checkpoint", "message": "stable" }),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_message(make_assistant_message(
+            subagent.id,
+            task.id,
+            run_id,
+            turn_id,
+            "subagent answer",
+        ))
+        .await
+        .unwrap();
+
+    let persisted: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM session_active_snapshot_heads WHERE session_id = ?)",
+    )
+    .bind(subagent.id.0.to_string())
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(persisted, 0);
+
+    let head = store
+        .get_active_snapshot_head(subagent.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(head.last_event_seq, notice.seq);
+    assert_eq!(head.messages.len(), 1);
+    assert_eq!(head.messages[0].content, "subagent answer");
+
+    let persisted_after_read: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM session_active_snapshot_heads WHERE session_id = ?)",
+    )
+    .bind(subagent.id.0.to_string())
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(persisted_after_read, 0);
+}
+
+#[tokio::test]
 async fn projection_rev_is_consistent_across_head_and_workspace_summary_reads() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("db.sqlite");
@@ -1203,6 +1310,484 @@ async fn projection_rev_is_consistent_across_head_and_workspace_summary_reads() 
         summary.primary_session.last_event_seq,
         Some(head.last_event_seq)
     );
+}
+
+#[tokio::test]
+async fn workspace_active_head_batch_rebuilds_malformed_projection_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let ws = store
+        .create_workspace("ws".into(), "/tmp/ws".into(), VcsKind::Git)
+        .await
+        .unwrap();
+    let task = store
+        .create_task(ws.id, "active".into(), None)
+        .await
+        .unwrap();
+    let worktree = store
+        .create_worktree(ws.id, "/tmp/ws".into(), "abc123".into(), None)
+        .await
+        .unwrap();
+    let session = store
+        .create_session(
+            task.id,
+            ws.id,
+            worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            "fake".into(),
+            "fake".into(),
+            "implementer".into(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .set_task_primary_session(task.id, session.id, worktree.id)
+        .await
+        .unwrap();
+
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    store
+        .insert_session_turn(make_turn(session.id, run_id, turn_id))
+        .await
+        .unwrap();
+    store
+        .append_session_event(
+            session.id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "checkpoint", "message": "stable" }),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_message(make_assistant_message(
+            session.id,
+            task.id,
+            run_id,
+            turn_id,
+            "first answer",
+        ))
+        .await
+        .unwrap();
+
+    let _ = store
+        .get_active_snapshot_head(session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query(
+        r#"UPDATE session_snapshot_summaries
+           SET projection_rev = projection_rev + 1,
+               updated_at = ?
+           WHERE session_id = ?"#,
+    )
+    .bind(Utc::now().to_rfc3339())
+    .bind(session.id.0.to_string())
+    .execute(store.pool())
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"UPDATE session_active_snapshot_heads
+           SET turns_json = '{broken'
+           WHERE session_id = ?"#,
+    )
+    .bind(session.id.0.to_string())
+    .execute(store.pool())
+    .await
+    .unwrap();
+
+    let expected_rev = store.get_session_projection_rev(session.id).await.unwrap();
+    let heads = store
+        .list_workspace_active_head_snapshots(ws.id)
+        .await
+        .unwrap();
+    assert_eq!(heads.len(), 1);
+    let head = &heads[0];
+    assert_eq!(head.session.id, session.id);
+    assert_eq!(head.projection_rev, expected_rev);
+    assert_eq!(head.messages.len(), 1);
+    assert_eq!(head.messages[0].content, "first answer");
+}
+
+#[tokio::test]
+async fn partial_turn_updates_do_not_advance_projection_rev() {
+    let fixture = setup_session_fixture().await;
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    fixture
+        .store
+        .insert_session_turn(make_turn(fixture.session_id, run_id, turn_id))
+        .await
+        .unwrap();
+    let initial_rev = fixture
+        .store
+        .get_session_projection_rev(fixture.session_id)
+        .await
+        .unwrap();
+
+    fixture
+        .store
+        .update_session_turn_partial(
+            fixture.session_id,
+            turn_id,
+            Some("partial assistant"),
+            Some("partial thought"),
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+
+    let refreshed_rev = fixture
+        .store
+        .get_session_projection_rev(fixture.session_id)
+        .await
+        .unwrap();
+    assert_eq!(refreshed_rev, initial_rev);
+
+    let active_head = fixture
+        .store
+        .get_active_snapshot_head(fixture.session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(active_head.projection_rev, initial_rev);
+}
+
+#[tokio::test]
+async fn active_snapshot_projection_refreshes_when_projection_rev_changes_without_new_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let ws = store
+        .create_workspace("ws".into(), "/tmp/ws".into(), VcsKind::Git)
+        .await
+        .unwrap();
+    let task = store
+        .create_task(ws.id, "active".into(), None)
+        .await
+        .unwrap();
+    let worktree = store
+        .create_worktree(ws.id, "/tmp/ws".into(), "abc123".into(), None)
+        .await
+        .unwrap();
+    let session = store
+        .create_session(
+            task.id,
+            ws.id,
+            worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            "fake".into(),
+            "fake".into(),
+            "implementer".into(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .set_task_primary_session(task.id, session.id, worktree.id)
+        .await
+        .unwrap();
+
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    store
+        .insert_session_turn(make_turn(session.id, run_id, turn_id))
+        .await
+        .unwrap();
+    let notice = store
+        .append_session_event(
+            session.id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "checkpoint", "message": "stable" }),
+        )
+        .await
+        .unwrap();
+
+    let initial = store
+        .get_active_snapshot_head(session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(initial.last_event_seq, notice.seq);
+    assert!(initial.messages.is_empty());
+
+    store
+        .insert_message(make_assistant_message(
+            session.id,
+            task.id,
+            run_id,
+            turn_id,
+            "final answer",
+        ))
+        .await
+        .unwrap();
+
+    let refreshed = store
+        .get_active_snapshot_head(session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refreshed.last_event_seq, notice.seq);
+    assert!(refreshed.projection_rev > initial.projection_rev);
+    assert_eq!(refreshed.messages.len(), 1);
+    assert_eq!(refreshed.messages[0].content, "final answer");
+
+    let pool = SqlitePool::connect(&sqlite_url(&db_path)).await.unwrap();
+    let materialized_head_rev: i64 = sqlx::query_scalar(
+        "SELECT head_rev FROM session_active_snapshot_heads WHERE session_id = ?",
+    )
+    .bind(session.id.0.to_string())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    assert_eq!(materialized_head_rev, refreshed.projection_rev);
+}
+
+#[tokio::test]
+async fn flush_active_snapshot_head_projection_queue_materializes_current_primary_head() {
+    let fixture = setup_session_fixture().await;
+    fixture
+        .store
+        .set_task_primary_session(fixture.task_id, fixture.session_id, fixture.worktree_id)
+        .await
+        .unwrap();
+
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    fixture
+        .store
+        .insert_session_turn(make_turn(fixture.session_id, run_id, turn_id))
+        .await
+        .unwrap();
+    let notice = fixture
+        .store
+        .append_session_event(
+            fixture.session_id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "checkpoint", "message": "stable" }),
+        )
+        .await
+        .unwrap();
+    fixture
+        .store
+        .insert_message(make_assistant_message(
+            fixture.session_id,
+            fixture.task_id,
+            run_id,
+            turn_id,
+            "coalesced answer",
+        ))
+        .await
+        .unwrap();
+
+    fixture
+        .store
+        .flush_active_snapshot_head_projection_queue()
+        .await
+        .unwrap();
+
+    let head = fixture
+        .store
+        .get_active_snapshot_head(fixture.session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(head.last_event_seq, notice.seq);
+    assert_eq!(head.messages.len(), 1);
+    assert_eq!(head.messages[0].content, "coalesced answer");
+
+    let materialized_head_rev: i64 = sqlx::query_scalar(
+        "SELECT head_rev FROM session_active_snapshot_heads WHERE session_id = ?",
+    )
+    .bind(fixture.session_id.0.to_string())
+    .fetch_one(fixture.store.pool())
+    .await
+    .unwrap();
+    assert_eq!(materialized_head_rev, head.projection_rev);
+}
+
+#[tokio::test]
+async fn flush_active_snapshot_head_projection_queue_applies_latest_state_after_multiple_writes() {
+    let fixture = setup_session_fixture().await;
+    fixture
+        .store
+        .set_task_primary_session(fixture.task_id, fixture.session_id, fixture.worktree_id)
+        .await
+        .unwrap();
+
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    fixture
+        .store
+        .insert_session_turn(make_turn(fixture.session_id, run_id, turn_id))
+        .await
+        .unwrap();
+    fixture
+        .store
+        .append_session_event(
+            fixture.session_id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "checkpoint", "message": "first" }),
+        )
+        .await
+        .unwrap();
+    fixture
+        .store
+        .insert_message(make_assistant_message(
+            fixture.session_id,
+            fixture.task_id,
+            run_id,
+            turn_id,
+            "first answer",
+        ))
+        .await
+        .unwrap();
+    let latest_notice = fixture
+        .store
+        .append_session_event(
+            fixture.session_id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "checkpoint", "message": "latest" }),
+        )
+        .await
+        .unwrap();
+    fixture
+        .store
+        .insert_message(make_assistant_message(
+            fixture.session_id,
+            fixture.task_id,
+            run_id,
+            turn_id,
+            "final answer",
+        ))
+        .await
+        .unwrap();
+
+    fixture
+        .store
+        .flush_active_snapshot_head_projection_queue()
+        .await
+        .unwrap();
+
+    let head = fixture
+        .store
+        .get_active_snapshot_head(fixture.session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(head.last_event_seq, latest_notice.seq);
+    assert_eq!(head.messages.len(), 2);
+    assert_eq!(head.messages[0].content, "first answer");
+    assert_eq!(head.messages[1].content, "final answer");
+}
+
+#[tokio::test]
+async fn store_open_repairs_missing_active_snapshot_head_projection() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let ws = store
+        .create_workspace("ws".into(), "/tmp/ws".into(), VcsKind::Git)
+        .await
+        .unwrap();
+    let task = store
+        .create_task(ws.id, "active".into(), None)
+        .await
+        .unwrap();
+    let worktree = store
+        .create_worktree(ws.id, "/tmp/ws".into(), "abc123".into(), None)
+        .await
+        .unwrap();
+    let session = store
+        .create_session(
+            task.id,
+            ws.id,
+            worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            "fake".into(),
+            "fake".into(),
+            "implementer".into(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .set_task_primary_session(task.id, session.id, worktree.id)
+        .await
+        .unwrap();
+
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    store
+        .insert_session_turn(make_turn(session.id, run_id, turn_id))
+        .await
+        .unwrap();
+    let notice = store
+        .append_session_event(
+            session.id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "checkpoint", "message": "stable" }),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_message(make_assistant_message(
+            session.id,
+            task.id,
+            run_id,
+            turn_id,
+            "final answer",
+        ))
+        .await
+        .unwrap();
+
+    sqlx::query("DELETE FROM session_active_snapshot_heads WHERE session_id = ?")
+        .bind(session.id.0.to_string())
+        .execute(store.pool())
+        .await
+        .unwrap();
+    store.close().await;
+
+    let reopened = Store::open(&db_path).await.unwrap();
+    let repaired = reopened
+        .get_active_snapshot_head(session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let repaired_row_exists: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM session_active_snapshot_heads WHERE session_id = ?)",
+    )
+    .bind(session.id.0.to_string())
+    .fetch_one(reopened.pool())
+    .await
+    .unwrap();
+    assert_eq!(repaired_row_exists, 1);
+    assert_eq!(repaired.last_event_seq, notice.seq);
+    assert_eq!(repaired.messages.len(), 1);
+    assert_eq!(repaired.messages[0].content, "final answer");
 }
 
 #[tokio::test]

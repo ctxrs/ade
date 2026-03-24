@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::json;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex as AsyncMutex};
 
 use ctx_core::models::{Session, SessionEventType, SessionHeadSnapshot};
 use ctx_providers::adapters::{
@@ -17,10 +17,10 @@ use ctx_providers::events::NormalizedEvent;
 
 mod common;
 
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static ENV_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 
-fn lock_env() -> std::sync::MutexGuard<'static, ()> {
-    ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner())
+async fn lock_env() -> tokio::sync::MutexGuard<'static, ()> {
+    ENV_LOCK.lock().await
 }
 
 struct EnvGuard {
@@ -44,6 +44,62 @@ impl Drop for EnvGuard {
             std::env::remove_var(self.key);
         }
     }
+}
+
+async fn wait_for_live_session_ready(
+    event_rx: &mut mpsc::Receiver<NormalizedEvent>,
+    timeout: Duration,
+) {
+    tokio::time::timeout(timeout, async {
+        while let Some(event) = event_rx.recv().await {
+            match event.event_type {
+                SessionEventType::Init => return,
+                SessionEventType::Notice => {
+                    let kind = event
+                        .payload_json
+                        .get("kind")
+                        .and_then(|value| value.as_str());
+                    if matches!(
+                        kind,
+                        Some("authenticated")
+                            | Some("auth_complete")
+                            | Some("auth_completed")
+                            | Some("auth_success")
+                    ) {
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("event stream closed before session became ready");
+    })
+    .await
+    .expect("timed out waiting for live session readiness");
+}
+
+async fn wait_for_notice_kind(
+    event_rx: &mut mpsc::Receiver<NormalizedEvent>,
+    expected_kind: &str,
+    timeout: Duration,
+) {
+    tokio::time::timeout(timeout, async {
+        while let Some(event) = event_rx.recv().await {
+            if !matches!(event.event_type, SessionEventType::Notice) {
+                continue;
+            }
+            let kind = event
+                .payload_json
+                .get("kind")
+                .and_then(|value| value.as_str());
+            if kind == Some(expected_kind) {
+                return;
+            }
+        }
+        panic!("event stream closed before notice {expected_kind} arrived");
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for notice {expected_kind}"));
 }
 
 #[derive(Default)]
@@ -230,6 +286,69 @@ async fn set_session_model_updates_session_and_appends_init_event() {
         init_event.payload_json.get("current_model_id"),
         Some(&json!("next-model"))
     );
+}
+
+#[tokio::test]
+async fn live_crp_fixture_authenticate_session_emits_ready_signals_and_stays_live() {
+    let _env_lock = lock_env().await;
+
+    let provider_id = "codex";
+    let workdir = tempfile::tempdir().expect("workdir tempdir");
+    let fixtures_dir = tempfile::tempdir().expect("fixtures tempdir");
+    let fixture_provider_dir = fixtures_dir.path().join(provider_id);
+    std::fs::create_dir_all(&fixture_provider_dir).expect("create fixture provider dir");
+    std::fs::write(
+        fixture_provider_dir.join("basic.json"),
+        serde_json::to_vec(&json!({
+            "current_model_id": "gpt-5.4/medium",
+            "models": [
+                {"id": "gpt-5.4/medium", "name": "codex medium"},
+                {"id": "gpt-5.4/xhigh", "name": "codex xhigh"}
+            ],
+            "turns": [{}]
+        }))
+        .expect("fixture json"),
+    )
+    .expect("write fixture");
+    let _fixture_root = EnvGuard::set(
+        "CTX_TEST_FIXTURES_DIR",
+        &fixtures_dir.path().to_string_lossy(),
+    );
+    let _fixture_scenario = EnvGuard::set("CTX_TEST_SCENARIO", "basic");
+
+    let python = common::crp_fixture_runtime::python_binary().expect("python available");
+    let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(workdir.path());
+    let adapter = Tier1CrpAdapter::from_raw(
+        provider_id,
+        python.to_string_lossy().to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "fixture-auth-live-session".to_string();
+    let auth_env = HashMap::from([("CTX_PROVIDER_ID".to_string(), provider_id.to_string())]);
+    let (event_tx, mut event_rx) = mpsc::channel::<NormalizedEvent>(16);
+
+    adapter
+        .authenticate_session(
+            session_key.clone(),
+            workdir.path().to_path_buf(),
+            auth_env,
+            None,
+            event_tx,
+        )
+        .await
+        .expect("authenticate live session");
+
+    wait_for_live_session_ready(&mut event_rx, Duration::from_secs(5)).await;
+    wait_for_notice_kind(&mut event_rx, "authenticated", Duration::from_secs(5)).await;
+    assert!(
+        adapter.has_live_session(&session_key).await,
+        "fixture-backed CRP adapter should remain live after authenticate"
+    );
+
+    adapter
+        .restart("test complete", ProviderRestartMode::Immediate)
+        .await
+        .expect("restart adapter");
 }
 
 #[tokio::test]
@@ -695,18 +814,36 @@ async fn assert_live_crp_session_model_switch_case(
     let base = &server.base_url;
     let client = &server.client;
 
-    let (event_tx, _event_rx) = mpsc::channel::<NormalizedEvent>(8);
+    let seeded_head: SessionHeadSnapshot = client
+        .get(format!(
+            "{base}/api/sessions/{}/head?limit=50&include_events=false",
+            session.id.0
+        ))
+        .send()
+        .await
+        .expect("seed compact session head")
+        .json()
+        .await
+        .expect("seeded session head json");
+    assert_eq!(seeded_head.session.model_id, initial_model_id);
+    assert_eq!(
+        seeded_head.session.reasoning_effort.as_deref(),
+        Some(initial_reasoning_effort)
+    );
+
+    let (event_tx, mut event_rx) = mpsc::channel::<NormalizedEvent>(8);
+    let auth_env = HashMap::from([("CTX_PROVIDER_ID".to_string(), provider_id.to_string())]);
     adapter
         .authenticate_session(
             session.id.0.to_string(),
             repo.path().to_path_buf(),
-            HashMap::new(),
+            auth_env,
             None,
             event_tx,
         )
         .await
         .expect("open live CRP session");
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    wait_for_live_session_ready(&mut event_rx, Duration::from_secs(5)).await;
     assert!(
         adapter.has_live_session(&session.id.0.to_string()).await,
         "expected adapter to track live session after authenticate"
@@ -728,6 +865,23 @@ async fn assert_live_crp_session_model_switch_case(
     assert_eq!(updated.model_id, next_model_id);
     assert_eq!(
         updated.reasoning_effort.as_deref(),
+        Some(next_reasoning_effort)
+    );
+
+    let compact_head: SessionHeadSnapshot = client
+        .get(format!(
+            "{base}/api/sessions/{}/head?limit=50&include_events=false",
+            session.id.0
+        ))
+        .send()
+        .await
+        .expect("get compact session head")
+        .json()
+        .await
+        .expect("compact session head json");
+    assert_eq!(compact_head.session.model_id, next_model_id);
+    assert_eq!(
+        compact_head.session.reasoning_effort.as_deref(),
         Some(next_reasoning_effort)
     );
 
@@ -761,7 +915,7 @@ async fn assert_live_crp_session_model_switch_case(
 
 #[tokio::test]
 async fn live_crp_supported_harnesses_session_model_switch_succeeds_end_to_end() {
-    let _env_lock = lock_env();
+    let _env_lock = lock_env().await;
 
     assert_live_crp_session_model_switch_case("codex", "gpt-5.4", "medium", "gpt-5.4", "xhigh")
         .await;
@@ -771,7 +925,7 @@ async fn live_crp_supported_harnesses_session_model_switch_succeeds_end_to_end()
 
 #[tokio::test]
 async fn live_acp_runtime_catalog_harnesses_session_model_switch_succeeds_end_to_end() {
-    let _env_lock = lock_env();
+    let _env_lock = lock_env().await;
 
     for provider_id in ["amp", "copilot", "cursor", "gemini", "kimi", "qwen"] {
         assert_live_crp_session_model_switch_case(

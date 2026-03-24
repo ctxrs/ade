@@ -301,6 +301,19 @@ for line in sys.stdin:
         })
         continue
 
+    if t == "session.authenticate":
+        session_id = cmd.get("session_id") or "sess_1"
+        send({
+            "type": "session.notice",
+            "session_id": session_id,
+            "code": "authenticated",
+            "severity": "info",
+            "message": "fixture authentication complete",
+            "details": {"provider_id": PROVIDER_ID},
+            "transient": False,
+        })
+        continue
+
     if t == "session.set_model":
         session_id = cmd.get("session_id") or "sess_1"
         requested_model_id = (cmd.get("model_id") or "").strip()

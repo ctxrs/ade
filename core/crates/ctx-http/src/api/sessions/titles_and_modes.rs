@@ -353,6 +353,18 @@ pub(crate) async fn set_session_model(
             )
         })?;
 
+    let updated = store
+        .get_session(session_id)
+        .await
+        .map_err(|err| {
+            session_model_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                logs::redact_sensitive(&err.to_string()),
+            )
+        })?
+        .ok_or_else(|| session_model_error(StatusCode::NOT_FOUND, "session not found"))?;
+    state.remember_session_meta(&updated).await;
+
     let event = store
         .append_session_event(
             session_id,
@@ -373,17 +385,6 @@ pub(crate) async fn set_session_model(
         })?;
     state.publish_event(event).await;
 
-    let updated = store
-        .get_session(session_id)
-        .await
-        .map_err(|err| {
-            session_model_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                logs::redact_sensitive(&err.to_string()),
-            )
-        })?
-        .ok_or_else(|| session_model_error(StatusCode::NOT_FOUND, "session not found"))?;
-    state.remember_session_meta(&updated).await;
     if let Err(e) = state.emit_workspace_task_upsert(updated.task_id).await {
         tracing::warn!(
             task_id = %updated.task_id.0,

@@ -1,5 +1,4 @@
 use super::{
-    active_head_projection_should_flush, active_head_projection_wait_duration,
     build_session_summary_delta, derive_summary_activity, resolve_projection_rev_for_stream_delta,
 };
 use chrono::Utc;
@@ -9,7 +8,6 @@ use ctx_core::models::{
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 fn test_session() -> Session {
     Session {
@@ -30,60 +28,6 @@ fn test_session() -> Session {
         created_at: Utc::now(),
         updated_at: Utc::now(),
     }
-}
-
-#[test]
-fn active_head_projection_waits_for_debounce_or_max_flush() {
-    let debounce = Duration::from_millis(200);
-    let max_flush = Duration::from_millis(1500);
-    let now = Instant::now();
-
-    let wait = active_head_projection_wait_duration(
-        now,
-        now - Duration::from_millis(100),
-        now - Duration::from_millis(100),
-        debounce,
-        max_flush,
-    );
-    assert_eq!(wait, Duration::from_millis(100));
-
-    let wait = active_head_projection_wait_duration(
-        now,
-        now - Duration::from_millis(50),
-        now - Duration::from_millis(1490),
-        debounce,
-        max_flush,
-    );
-    assert_eq!(wait, Duration::from_millis(10));
-}
-
-#[test]
-fn active_head_projection_flushes_on_idle_or_max() {
-    let debounce = Duration::from_millis(200);
-    let max_flush = Duration::from_millis(1500);
-    let now = Instant::now();
-
-    assert!(active_head_projection_should_flush(
-        now,
-        now - Duration::from_millis(250),
-        now - Duration::from_millis(500),
-        debounce,
-        max_flush
-    ));
-    assert!(active_head_projection_should_flush(
-        now,
-        now - Duration::from_millis(50),
-        now - Duration::from_millis(1600),
-        debounce,
-        max_flush
-    ));
-    assert!(!active_head_projection_should_flush(
-        now,
-        now - Duration::from_millis(50),
-        now - Duration::from_millis(500),
-        debounce,
-        max_flush
-    ));
 }
 
 #[test]

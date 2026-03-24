@@ -77,7 +77,7 @@ impl Store {
             write_bytes,
         );
         self.refresh_session_turn_summary(turn.session_id).await?;
-        self.refresh_active_snapshot_head(turn.session_id, None)
+        self.schedule_active_snapshot_head_refresh(turn.session_id, None)
             .await?;
         Ok(turn)
     }
@@ -190,7 +190,8 @@ impl Store {
             .execute(&self.pool)
             .await?;
         self.refresh_session_turn_summary(session_id).await?;
-        self.refresh_active_snapshot_head(session_id, None).await?;
+        self.schedule_active_snapshot_head_refresh(session_id, None)
+            .await?;
         Ok(())
     }
 
@@ -229,8 +230,6 @@ impl Store {
             result.rows_affected(),
             write_bytes,
         );
-        self.refresh_session_turn_summary(session_id).await?;
-        self.refresh_active_snapshot_head(session_id, None).await?;
         Ok(())
     }
 
@@ -276,7 +275,8 @@ impl Store {
             write_bytes,
         );
         self.refresh_session_turn_summary(session_id).await?;
-        self.refresh_active_snapshot_head(session_id, None).await?;
+        self.schedule_active_snapshot_head_refresh(session_id, None)
+            .await?;
         Ok(())
     }
 
@@ -315,7 +315,8 @@ impl Store {
             result.rows_affected(),
             write_bytes,
         );
-        self.refresh_active_snapshot_head(session_id, None).await?;
+        self.schedule_active_snapshot_head_refresh(session_id, None)
+            .await?;
         Ok(())
     }
 

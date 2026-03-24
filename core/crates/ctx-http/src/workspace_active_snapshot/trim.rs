@@ -14,7 +14,7 @@ struct SessionHeadWindowPayload<'a> {
     messages: &'a [Message],
 }
 
-pub(super) fn session_metadata_from_session(session: &Session) -> SessionMetadata {
+pub(crate) fn session_metadata_from_session(session: &Session) -> SessionMetadata {
     SessionMetadata {
         id: session.id,
         task_id: session.task_id,

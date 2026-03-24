@@ -306,7 +306,8 @@ pub(super) async fn get_workspace_active_snapshot(
         WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     state
         .ensure_workspace_active_snapshot_hydrated(workspace_id)
-        .await;
+        .await
+        .map_err(|err| err.status_code())?;
     let snapshot = state
         .workspaces
         .workspace_active_snapshot
@@ -326,7 +327,8 @@ pub(super) async fn get_workspace_active_heads(
         WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     state
         .ensure_workspace_active_snapshot_hydrated(workspace_id)
-        .await;
+        .await
+        .map_err(|err| err.status_code())?;
     let heads = state
         .workspaces
         .workspace_active_snapshot

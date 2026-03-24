@@ -682,16 +682,18 @@ export class WorkspaceActiveSnapshotStoreState {
       toolSummaries = mergeSessionToolSummaries(toolSummaries, incomingToolSummaries, turns);
       changed = true;
     }
-      const next: SessionHeadSnapshot = sanitizeSessionHeadSnapshot({
-        ...existing,
-        turns,
-        tool_summaries: toolSummaries,
-        messages,
-        events,
-        ...(typeof delta.last_event_seq === "number" ? { last_event_seq: delta.last_event_seq } : {}),
-        ...(typeof delta.projection_rev === "number" ? { projection_rev: delta.projection_rev } : {}),
-        ...(typeof delta.state_rev === "number" ? { state_rev: delta.state_rev } : {}),
-      });
+    const next: SessionHeadSnapshot = sanitizeSessionHeadSnapshot({
+      ...existing,
+      turns,
+      tool_summaries: toolSummaries,
+      messages,
+      events,
+      ...(delta.session ? { session: delta.session } : {}),
+      ...("activity" in delta ? { activity: delta.activity ?? undefined } : {}),
+      ...(typeof delta.last_event_seq === "number" ? { last_event_seq: delta.last_event_seq } : {}),
+      ...(typeof delta.projection_rev === "number" ? { projection_rev: delta.projection_rev } : {}),
+      ...(typeof delta.state_rev === "number" ? { state_rev: delta.state_rev } : {}),
+    });
 
     if (
       !changed &&

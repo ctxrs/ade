@@ -58,24 +58,25 @@ pub(crate) async fn get_session_head(
     let limit = q.limit.unwrap_or(60);
     let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    if let Some(mut head) = state
-        .workspaces
-        .workspace_active_snapshot
-        .get_session_head(session_id)
-        .await
-    {
-        // The in-memory head cache is a performance optimization and may be populated with a
-        // smaller turn window than callers request (e.g., refresh paths cap to 200 turns). Only
-        // serve from cache if it can satisfy the requested limit, otherwise fall back to store.
-        let requested = limit as usize;
-        if head.has_more_turns && head.turns.len() < requested {
-            // cache head is known-truncated and does not satisfy the request
-        } else {
-            if !include_events {
+    if !include_events {
+        if let Some(mut head) = state
+            .workspaces
+            .workspace_active_snapshot
+            .get_session_head(session_id)
+            .await
+        {
+            // The in-memory head cache is a performance optimization and may be populated with a
+            // smaller turn window than callers request (e.g., refresh paths cap to 200 turns).
+            // Only serve from cache if it can satisfy the requested limit, otherwise fall back to
+            // store.
+            let requested = limit as usize;
+            if head.has_more_turns && head.turns.len() < requested {
+                // cache head is known-truncated and does not satisfy the request
+            } else {
                 head.events.clear();
                 head.head_window.event_count = 0;
+                return Ok(Json(head));
             }
-            return Ok(Json(head));
         }
     }
     state.emit_cache_miss("session_head").await;

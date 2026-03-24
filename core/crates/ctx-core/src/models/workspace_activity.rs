@@ -250,6 +250,10 @@ pub struct SessionHeadDelta {
     #[serde(default)]
     pub state_rev: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<SessionMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<SessionActivityState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event: Option<SessionEvent>,
     pub turn: Option<SessionTurn>,
     pub message: Option<Message>,

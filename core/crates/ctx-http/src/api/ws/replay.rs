@@ -71,7 +71,14 @@ pub(super) async fn queue_snapshot_payload(
     let build_start = Instant::now();
     state
         .ensure_workspace_active_snapshot_hydrated(workspace_id)
-        .await;
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                target: "ctx_http.ws_active_snapshot",
+                workspace_id = %workspace_id.0,
+                "workspace snapshot hydration failed before snapshot payload: {err:?}"
+            );
+        })?;
     let mut active_snapshot = state
         .workspaces
         .workspace_active_snapshot
@@ -177,7 +184,7 @@ where
                         WorkspaceActiveSnapshotEvent::SessionHeadDelta {
                             workspace_id,
                             snapshot_rev,
-                            delta: Box::new(delta),
+                            delta,
                         }
                     }
                     WorkspaceSessionReplayItem::Gap {
@@ -195,7 +202,7 @@ where
                         WorkspaceActiveSnapshotEvent::SessionHeadSeed {
                             workspace_id,
                             snapshot_rev,
-                            head: Box::new(head),
+                            head,
                         }
                     }
                 };

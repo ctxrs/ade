@@ -76,6 +76,12 @@ pub(super) fn apply_head_delta(head: &mut SessionHeadSnapshot, delta: &SessionHe
     if delta.state_rev > head.state_rev {
         head.state_rev = delta.state_rev;
     }
+    if let Some(session) = delta.session.as_ref() {
+        head.session = session.clone();
+    }
+    if let Some(activity) = delta.activity.as_ref() {
+        head.activity = activity.clone();
+    }
 
     let mut changed = false;
     if let Some(turn) = delta.turn.as_ref() {

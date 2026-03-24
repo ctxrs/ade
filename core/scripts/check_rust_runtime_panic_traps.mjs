@@ -43,7 +43,6 @@ const SCOPE_FILES = [
   "crates/ctx-http/src/attachments.rs",
   "crates/ctx-http/src/provider_restart.rs",
   "crates/ctx-http/src/provider_usage.rs",
-  "crates/ctx-store/src/active_snapshot_observer.rs",
   "crates/ctx-worker-gateway/src/drivers/azure.rs",
 ];
 

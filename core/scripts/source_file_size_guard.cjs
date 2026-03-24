@@ -107,6 +107,7 @@ const collectSourceFileStats = (rootDir = repoRoot) => {
   for (const absolutePath of files) {
     const relativePath = toPosix(path.relative(rootDir, absolutePath));
     if (!isTrackedSourceFile(relativePath)) continue;
+    if (!fs.existsSync(absolutePath)) continue;
     const raw = fs.readFileSync(absolutePath, "utf8");
     stats.push({
       path: relativePath,

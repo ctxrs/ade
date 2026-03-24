@@ -793,6 +793,24 @@ export class SessionReplicaCore {
       entry.stateRev =
         typeof entry.stateRev === "number" ? Math.max(entry.stateRev, delta.state_rev) : delta.state_rev;
     }
+    if (delta.session) {
+      entry.session = delta.session;
+    }
+    if ("activity" in delta) {
+      entry.activity = delta.activity ?? null;
+      if (typeof delta.last_event_seq === "number") {
+        entry.activityLastEventSeq =
+          typeof entry.activityLastEventSeq === "number"
+            ? Math.max(entry.activityLastEventSeq, delta.last_event_seq)
+            : delta.last_event_seq;
+      }
+      if (typeof delta.projection_rev === "number") {
+        entry.activityProjectionRev =
+          typeof entry.activityProjectionRev === "number"
+            ? Math.max(entry.activityProjectionRev, delta.projection_rev)
+            : delta.projection_rev;
+      }
+    }
     const data: SessionReplicaData = {
       lastEventSeq: entry.lastEventSeq,
       projectionRev: entry.projectionRev,
@@ -804,6 +822,7 @@ export class SessionReplicaCore {
     if (events.length) data.events = events;
     if (toolSummaries.length) data.toolSummaries = toolSummaries;
     if (entry.session) data.session = entry.session;
+    if ("activity" in delta) data.activity = entry.activity ?? null;
     if (entry.summaryCheckpoint !== undefined) data.summaryCheckpoint = entry.summaryCheckpoint ?? null;
     if (entry.headWindow !== undefined) data.headWindow = entry.headWindow ?? null;
     this.emitPatch("append", sessionId, data);
