@@ -10,13 +10,6 @@ pub(super) fn apply_session_summary_delta(
 ) -> bool {
     let mut changed = false;
     let incoming_projection_rev = delta.projection_rev.unwrap_or(summary.projection_rev);
-    let activity_is_stale = incoming_projection_rev < summary.projection_rev;
-    if let Some(activity) = delta.activity.clone() {
-        if !activity_is_stale && summary.activity != activity {
-            summary.activity = activity;
-            changed = true;
-        }
-    }
     if let Some(last_message_at) = delta.last_message_at {
         let should_update = match summary.last_message_at {
             Some(current) => last_message_at > current,

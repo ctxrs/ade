@@ -1,7 +1,7 @@
 import React from "react";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Session, SessionSnapshotSummary, SessionTurn } from "../../api/client";
+import type { Session, SessionHeadSnapshot, SessionSnapshotSummary, SessionTurn } from "../../api/client";
 import { SessionSupervisorProvider, type SessionCacheEntry, type SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem, WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
 import { WORKBENCH_TASK_IDLE_EVENT, type WorkbenchTaskIdleDetail } from "../../utils/updaterEvents";
@@ -59,12 +59,14 @@ const makeTaskSummary = ({
   taskId,
   sessions,
   primarySessionId,
+  primarySessionHead = null,
   assistantSeenAt = null,
   lastAssistantMessageAt = now,
 }: {
   taskId: string;
   sessions: SessionSnapshotSummary[];
   primarySessionId: string;
+  primarySessionHead?: SessionHeadSnapshot | null;
   assistantSeenAt?: string | null;
   lastAssistantMessageAt?: string | null;
 }): WorkspaceActiveSnapshotItem => ({
@@ -84,6 +86,7 @@ const makeTaskSummary = ({
   },
   sessions,
   primarySessionId,
+  primarySessionHead,
   sort_at: now,
   sortAtMs: Date.parse(now),
 });
@@ -533,6 +536,40 @@ describe("useWorkbenchTaskActivity helpers", () => {
         primarySessionSummary: undefined,
       }),
     ).toBe(false);
+  });
+
+  it("prefers canonical head activity over stale summary activity for task working state", () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById: {
+        "task-1": makeTaskSummary({
+          taskId: "task-1",
+          primarySessionId: primarySession.id,
+          sessions: [
+            makeSessionSummary(primarySession, {
+              activity: { is_working: false, last_turn_status: "completed" },
+            }),
+          ],
+          primarySessionHead: {
+            session: primarySession,
+            turns: [],
+            tool_summaries: [],
+            messages: [],
+            events: [],
+            last_event_seq: 8,
+            projection_rev: 8,
+            state_rev: 8,
+            activity: { is_working: true, last_turn_status: "running" },
+            has_more_turns: false,
+            has_more_history: false,
+          },
+        }),
+      },
+      optimisticTasks: [],
+      sessions: {},
+    });
+
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
   });
 
   it("does not let live primary turns override a non-working canonical summary", () => {

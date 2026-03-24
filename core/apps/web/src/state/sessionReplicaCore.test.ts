@@ -466,7 +466,7 @@ describe("SessionReplicaCore", () => {
     );
   });
 
-  it("does not overwrite newer summary activity on later session_head_deltas", async () => {
+  it("ignores summary activity deltas and advances canonical activity from session_head_deltas only", () => {
     const sessionId = "session-activity";
     const patches: SessionReplicaPatch[] = [];
     const core = new SessionReplicaCore({
@@ -495,14 +495,14 @@ describe("SessionReplicaCore", () => {
       },
     });
 
-    await waitForCondition(() =>
+    expect(
       patches.some(
         (patch) =>
           patch.sessionId === sessionId &&
           patch.op === "append" &&
           patch.data?.activity?.last_turn_status === "completed",
       ),
-    );
+    ).toBe(false);
 
     const now = new Date().toISOString();
     const deltaMessage: Message = {
@@ -524,7 +524,9 @@ describe("SessionReplicaCore", () => {
         delta: {
           session_id: sessionId,
           last_event_seq: 3,
+          projection_rev: 3,
           state_rev: 3,
+          activity: { is_working: true, last_turn_status: "running" },
           message: deltaMessage,
         },
       },
@@ -540,6 +542,6 @@ describe("SessionReplicaCore", () => {
       throw new Error("expected appended head-delta patch");
     }
     expect(latest.data.messages[0]?.content).toBe("post-summary-delta");
-    expect(latest.data.activity).toBeUndefined();
+    expect(latest.data.activity).toEqual({ is_working: true, last_turn_status: "running" });
   });
 });

@@ -507,16 +507,10 @@ export class WorkspaceActiveSnapshotStoreState {
       const current = nextSessions[sessionIdx];
       const nextSummary: SessionSnapshotSummary = { ...current };
       let changed = false;
-      const currentLastEventSeq =
-        typeof current.last_event_seq === "number" ? current.last_event_seq : null;
       const currentProjectionRev =
         typeof current.projection_rev === "number" ? current.projection_rev : null;
-      const currentStateRev = typeof current.state_rev === "number" ? current.state_rev : null;
       const incomingLastEventSeq =
         typeof delta.last_event_seq === "number" ? delta.last_event_seq : null;
-      const incomingProjectionRev =
-        typeof delta.projection_rev === "number" ? delta.projection_rev : null;
-      const incomingStateRev = typeof delta.state_rev === "number" ? delta.state_rev : null;
 
       if (hasOwnProperty(delta, "last_message_at")) {
         const incoming = delta.last_message_at;
@@ -567,42 +561,6 @@ export class WorkspaceActiveSnapshotStoreState {
         const nextCurrentStateRev = nextSummary.state_rev ?? 0;
         if (delta.state_rev > nextCurrentStateRev) {
           nextSummary.state_rev = delta.state_rev;
-          changed = true;
-        }
-      }
-      if (hasOwnProperty(delta, "activity") && delta.activity) {
-        const hasIncomingVersion =
-          incomingProjectionRev !== null || incomingStateRev !== null || incomingLastEventSeq !== null;
-        const activityVersionIsStale =
-          (incomingProjectionRev !== null &&
-            currentProjectionRev !== null &&
-            incomingProjectionRev < currentProjectionRev) ||
-          (incomingStateRev !== null &&
-            currentStateRev !== null &&
-            incomingStateRev < currentStateRev) ||
-          (incomingLastEventSeq !== null &&
-            currentLastEventSeq !== null &&
-            incomingLastEventSeq < currentLastEventSeq) ||
-          (!hasIncomingVersion &&
-            (currentProjectionRev !== null ||
-              currentStateRev !== null ||
-              currentLastEventSeq !== null));
-        if (activityVersionIsStale) {
-          return changed;
-        }
-        const prevActivity = nextSummary.activity ?? { is_working: false, last_turn_status: null };
-        const nextActivity = { ...prevActivity };
-        if (typeof delta.activity.is_working === "boolean") {
-          nextActivity.is_working = delta.activity.is_working;
-        }
-        if (hasOwnProperty(delta.activity, "last_turn_status")) {
-          nextActivity.last_turn_status = delta.activity.last_turn_status ?? null;
-        }
-        if (
-          nextSummary.activity?.is_working !== nextActivity.is_working ||
-          (nextSummary.activity?.last_turn_status ?? null) !== (nextActivity.last_turn_status ?? null)
-        ) {
-          nextSummary.activity = nextActivity;
           changed = true;
         }
       }

@@ -152,9 +152,9 @@ const deriveTaskLiveInfoFromSources = (
     const primaryEntry = primarySessionId ? entryBySessionId.get(primarySessionId) : undefined;
     const primaryHead = summary.primarySessionHead ?? null;
     const primaryActivity =
-      primarySessionSummary?.activity ?? primaryEntry?.activity ?? primaryHead?.activity ?? null;
+      primaryEntry?.activity ?? primaryHead?.activity ?? primarySessionSummary?.activity ?? null;
     const primaryStatus =
-      primaryEntry?.session?.status ?? primarySessionSummary?.session.status ?? primaryHead?.session.status;
+      primaryEntry?.session?.status ?? primaryHead?.session.status ?? primarySessionSummary?.session.status;
     if (!primarySessionSummary && !primaryEntry && !primaryHead) continue;
 
     if (isSessionWorkingActivity(primaryActivity)) {

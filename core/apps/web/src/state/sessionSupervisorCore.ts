@@ -14,7 +14,6 @@ import {
 import type { WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
 import {
   collectWorkspaceActivePrimarySessionIds,
-  findWorkspaceSessionHead,
 } from "./workspaceActiveSnapshot/projection";
 import {
   type PersistedTaskThoughtsV1,
@@ -84,6 +83,10 @@ import {
   upsertOptimisticQueuedMessage,
   upsertOptimisticThreadMessage,
 } from "./sessionSupervisor/optimisticOverlay";
+import {
+  canSeedReplicaFromActiveSnapshot,
+  seedReplicaFromActiveSnapshot,
+} from "./sessionSupervisor/activeSnapshotSeed";
 import {
   buildSubscribedSessions,
   emitSubscribedSessions,
@@ -381,36 +384,6 @@ export class SessionSupervisor {
 
   private buildSubscribedSessions(): SessionSubscriptionCursor[] {
     return buildSubscribedSessions(this.subscribedSessionIds, this.entries, this.workspaceSessionHeadsById);
-  }
-
-  private canSeedReplicaFromActiveSnapshot(
-    entry: InternalEntry,
-    opts?: { allowRecoveringRefresh?: boolean },
-  ): boolean {
-    if (opts?.allowRecoveringRefresh && entry.freshness === "recovering") {
-      return true;
-    }
-    return (
-      !isReplicaAuthority(entry.freshness) &&
-      !entry.turnsHydrated &&
-      entry.messages.length === 0 &&
-      entry.events.length === 0
-    );
-  }
-
-  private seedReplicaFromActiveSnapshot(sessionId: string, entry: InternalEntry): boolean {
-    if (!this.canSeedReplicaFromActiveSnapshot(entry)) return false;
-    const head = findWorkspaceSessionHead(
-      this.workspaceSnapshotState,
-      this.workspaceSessionHeadsById,
-      sessionId,
-    );
-    if (!head) return false;
-    if (shouldSkipBoundedActiveSnapshotSeed(entry, head)) {
-      return false;
-    }
-    this.replica.dispatch({ type: "seed_head", sessionId, head });
-    return true;
   }
 
   setActiveTaskSessionIds = (sessionIds: string[]) => {
@@ -847,7 +820,18 @@ export class SessionSupervisor {
     opts?: OpenOptions,
   ) {
     entry.mode = mode;
-    const seededHead = mode === "active" ? this.seedReplicaFromActiveSnapshot(sessionId, entry) : false;
+    const seededHead =
+      mode === "active"
+        ? seedReplicaFromActiveSnapshot(
+            {
+              workspaceSnapshotState: this.workspaceSnapshotState,
+              workspaceSessionHeadsById: this.workspaceSessionHeadsById,
+              dispatchSeedHead: (cmd) => this.replica.dispatch(cmd),
+            },
+            sessionId,
+            entry,
+          )
+        : false;
     const shouldSkipCache =
       (entry.turnsHydrated ||
         entry.messages.length > 0 ||
@@ -992,7 +976,7 @@ export class SessionSupervisor {
       const sessionId = idToString(head.session?.id);
       if (!sessionId) continue;
       const entry = this.ensureEntry(sessionId);
-      if (!this.canSeedReplicaFromActiveSnapshot(entry, { allowRecoveringRefresh: true })) continue;
+      if (!canSeedReplicaFromActiveSnapshot(entry, { allowRecoveringRefresh: true })) continue;
       if (shouldSkipBoundedActiveSnapshotSeed(entry, head)) continue;
       this.replica.dispatch({ type: "seed_head", sessionId, head });
     }

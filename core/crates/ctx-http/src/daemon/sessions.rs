@@ -230,21 +230,20 @@ fn recompute_turn_tool_counts(turn: &mut SessionTurn, tool_summaries: &[SessionT
 
 fn build_session_summary_delta(
     session: &Session,
-    activity: Option<SessionActivityState>,
     last_message_at: Option<chrono::DateTime<chrono::Utc>>,
     last_message_preview: Option<String>,
     last_event_seq: i64,
     projection_rev: i64,
     state_rev: i64,
 ) -> Option<SessionSummaryDelta> {
-    if activity.is_none() && last_message_at.is_none() && last_message_preview.is_none() {
+    if last_message_at.is_none() && last_message_preview.is_none() {
         return None;
     }
 
     Some(SessionSummaryDelta {
         session_id: session.id,
         task_id: session.task_id,
-        activity,
+        activity: None,
         last_message_at,
         last_message_preview,
         last_event_seq: Some(last_event_seq),
@@ -573,7 +572,6 @@ impl SessionRuntime {
 
         let summary_delta = build_session_summary_delta(
             &session,
-            activity.clone(),
             last_message_at,
             last_message_preview,
             last_event_seq,

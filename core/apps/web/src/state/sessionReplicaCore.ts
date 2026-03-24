@@ -684,68 +684,6 @@ export class SessionReplicaCore {
       }).catch(() => {});
       return;
     }
-    if (evtType === "session_summary_delta") {
-      const delta = (evt as Extract<WorkspaceActiveSnapshotEvent, { type: "session_summary_delta" }>).delta;
-      this.applyActivityEvent(
-        normalizeId(delta?.session_id ?? ""),
-        delta?.activity,
-        typeof delta?.last_event_seq === "number" ? delta.last_event_seq : null,
-        typeof delta?.projection_rev === "number" ? delta.projection_rev : null,
-      );
-      return;
-    }
-    if (evtType === "session_summary") {
-      const summary = (evt as Extract<WorkspaceActiveSnapshotEvent, { type: "session_summary" }>).summary;
-      this.applyActivityEvent(
-        normalizeId(summary?.session?.id ?? ""),
-        summary?.activity,
-        typeof summary?.last_event_seq === "number" ? summary.last_event_seq : null,
-        typeof summary?.projection_rev === "number" ? summary.projection_rev : null,
-      );
-      return;
-    }
-  }
-
-  private applyActivityEvent(
-    sessionId: string,
-    activity: SessionActivityState | null | undefined,
-    lastEventSeq: number | null,
-    projectionRev: number | null,
-  ) {
-    if (!sessionId) return;
-    const entry = this.ensureEntry(sessionId);
-    const existingActivitySeq =
-      typeof entry.activityLastEventSeq === "number" ? entry.activityLastEventSeq : null;
-    const existingActivityProjectionRev =
-      typeof entry.activityProjectionRev === "number" ? entry.activityProjectionRev : null;
-    const incomingIsOlder = isOlderVersion(
-      lastEventSeq,
-      projectionRev,
-      existingActivitySeq,
-      existingActivityProjectionRev,
-    );
-    if (incomingIsOlder) return;
-    const normalizedActivity = activity ?? null;
-    const sameActivity =
-      (entry.activity?.is_working ?? false) === (normalizedActivity?.is_working ?? false) &&
-      (entry.activity?.last_turn_status ?? null) ===
-        (normalizedActivity?.last_turn_status ?? null);
-    entry.activity = normalizedActivity;
-    entry.activityLastEventSeq = lastEventSeq ?? entry.activityLastEventSeq;
-    entry.activityProjectionRev = projectionRev ?? entry.activityProjectionRev;
-    if (projectionRev !== null) {
-      entry.projectionRev =
-        typeof entry.projectionRev === "number"
-          ? Math.max(entry.projectionRev, projectionRev)
-          : projectionRev;
-    }
-    if (sameActivity) return;
-    this.emitPatch("append", sessionId, {
-      activity: normalizedActivity,
-      freshness: entry.freshness,
-      projectionRev: entry.projectionRev,
-    });
-    void this.persistHead(entry);
   }
 
   private applyHeadDelta(delta: SessionHeadDelta) {

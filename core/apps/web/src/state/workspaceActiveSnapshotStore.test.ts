@@ -840,7 +840,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(updated?.tool_summaries?.[0]?.tool_call_id).toBe("call-1");
   });
 
-  it("applies session_summary_delta to update activity and previews", async () => {
+  it("applies session_summary_delta preview metadata without changing canonical activity", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 
     const now = "2024-01-01T00:00:00.000Z";
@@ -894,8 +894,8 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     const snapshot = store.getSnapshot();
     const updated = snapshot.tasksById["task-1"].sessions[0];
-    expect(updated.activity?.is_working).toBe(true);
-    expect(updated.activity?.last_turn_status).toBe("running");
+    expect(updated.activity?.is_working).toBe(false);
+    expect(updated.activity?.last_turn_status ?? null).toBe(null);
     expect(updated.last_message_at).toBe(later);
     expect(updated.last_message_preview).toBe("updated preview");
     expect(updated.last_event_seq).toBe(5);
@@ -954,10 +954,11 @@ describe("WorkspaceActiveSnapshotStore", () => {
     );
 
     const updated = store.getSnapshot().tasksById["task-1"].sessions[0];
-    expect(updated.activity?.is_working).toBe(false);
     expect(updated.last_message_at).toBe(later);
     expect(updated.last_event_seq).toBe(10);
     expect(updated.state_rev).toBe(5);
+    expect(updated.activity?.is_working).toBe(false);
+    expect(updated.activity?.last_turn_status ?? null).toBe(null);
   });
 
   it("treats no-op session_summary_delta as no change", async () => {
@@ -1010,7 +1011,6 @@ describe("WorkspaceActiveSnapshotStore", () => {
         last_message_preview: "hello",
         last_event_seq: 1,
         state_rev: 2,
-        activity: { is_working: false, last_turn_status: "completed" },
       },
     });
     expect(changed).toBe(false);
