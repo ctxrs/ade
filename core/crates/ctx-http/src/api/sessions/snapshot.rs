@@ -26,25 +26,6 @@ pub(crate) struct SessionHistoryQuery {
     pub(crate) limit: Option<u32>,
 }
 
-async fn store_for_existing_session(
-    state: &Arc<AppState>,
-    session_id: SessionId,
-) -> Result<ctx_store::Store, StatusCode> {
-    let workspace_id = match state
-        .global_store()
-        .get_workspace_id_for_session(session_id)
-        .await
-    {
-        Ok(Some(workspace_id)) => workspace_id,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
-        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
-    };
-    state
-        .store_for_workspace(workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-}
-
 pub(crate) async fn get_session_snapshot(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -54,7 +35,7 @@ pub(crate) async fn get_session_snapshot(
     let limit = q.limit.unwrap_or(60);
     let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let store = store_for_existing_session(&state, session_id).await?;
+    let store = store_for_existing_session_status(&state, session_id).await?;
     match store
         .get_session_snapshot(session_id, limit, include_events)
         .await
@@ -96,7 +77,7 @@ pub(crate) async fn get_session_head(
         }
     }
     state.emit_cache_miss("session_head").await;
-    let store = store_for_existing_session(&state, session_id).await?;
+    let store = store_for_existing_session_status(&state, session_id).await?;
     match store
         .get_session_head_snapshot(session_id, limit, include_events)
         .await
@@ -126,7 +107,7 @@ pub(crate) async fn get_session_state(
     Path(id): Path<String>,
 ) -> Result<Json<SessionState>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = store_for_existing_session(&state, session_id).await?;
+    let store = store_for_existing_session_status(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await
@@ -158,10 +139,7 @@ pub(crate) async fn get_session_events(
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let include_transient = parse_boolish_flag(q.include_transient.as_deref(), "include_transient")
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_session_status(&state, session_id).await?;
 
     let (events, has_more, next_cursor) = if let Some(tail) = q.tail {
         let tail = tail.clamp(1, MAX_LIMIT);
@@ -208,10 +186,7 @@ pub(crate) async fn get_session_history(
 ) -> Result<Json<SessionHistoryPage>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let limit = q.limit.unwrap_or(60);
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_session_status(&state, session_id).await?;
     match store
         .get_session_history_page(session_id, q.before_seq, limit)
         .await
@@ -228,10 +203,7 @@ pub(crate) async fn list_session_turn_tools(
 ) -> Result<Json<Vec<SessionTurnTool>>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let turn_id = TurnId(uuid::Uuid::parse_str(&turn_id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_session_status(&state, session_id).await?;
     store
         .list_turn_tools(session_id, turn_id)
         .await
@@ -264,14 +236,7 @@ pub(crate) async fn get_session_diff(
             }),
         )
     })?);
-    let store = state.store_for_session(session_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
+    let store = store_for_existing_session_api_error(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await
@@ -380,14 +345,7 @@ pub(crate) async fn get_session_diff_summary(
             }),
         )
     })?);
-    let store = state.store_for_session(session_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
+    let store = store_for_existing_session_api_error(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await
@@ -542,14 +500,7 @@ pub(crate) async fn get_session_git_status(
             }),
         )
     })?);
-    let store = state.store_for_session(session_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
+    let store = store_for_existing_session_api_error(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await
@@ -808,14 +759,7 @@ pub(crate) async fn apply_session_diff_patch(
         }
     };
 
-    let store = state.store_for_session(session_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
+    let store = store_for_existing_session_api_error(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await

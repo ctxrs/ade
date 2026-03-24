@@ -8,10 +8,7 @@ pub(crate) async fn cancel_session(
 ) -> Result<StatusCode, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
 
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_session_status(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await
@@ -29,10 +26,7 @@ pub(crate) async fn interrupt_session(
     let request_started = std::time::Instant::now();
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
 
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_session_status(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await
@@ -103,14 +97,7 @@ pub(crate) async fn authenticate_session(
         )
     })?);
 
-    let store = state.store_for_session(session_id).await.map_err(|_| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        )
-    })?;
+    let store = store_for_existing_session_api_error(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await
@@ -379,14 +366,7 @@ pub(crate) async fn submit_ask_user_question(
     let session_id = SessionId(session_uuid);
 
     // Validate the session exists (prevents accidentally fulfilling a prompt for a deleted session).
-    let store = state.store_for_session(session_id).await.map_err(|_| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        )
-    })?;
+    let store = store_for_existing_session_api_error(&state, session_id).await?;
     let exists = store
         .get_session(session_id)
         .await

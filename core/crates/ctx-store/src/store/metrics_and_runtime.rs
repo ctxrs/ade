@@ -89,6 +89,13 @@ impl ActiveHeadProjectionRuntime {
             None => Ok(()),
         }
     }
+
+    pub(super) async fn shutdown(&self) -> Result<()> {
+        match self.projector.get() {
+            Some(projector) => projector.shutdown().await,
+            None => Ok(()),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -102,6 +109,7 @@ pub(super) enum ActiveHeadProjectionCommand {
         last_event_seq: Option<i64>,
     },
     Flush(oneshot::Sender<Result<()>>),
+    Shutdown(oneshot::Sender<Result<()>>),
 }
 
 impl ActiveHeadProjectionProjector {
@@ -138,6 +146,16 @@ impl ActiveHeadProjectionProjector {
                                     };
                                     let _ = waiter.send(send_result);
                                 }
+                            }
+                            Some(ActiveHeadProjectionCommand::Shutdown(tx)) => {
+                                let result = flush_active_head_projection_batch(&store, &mut dirty).await;
+                                set_active_head_projection_pending_sessions(0);
+                                let send_result = match &result {
+                                    Ok(()) => Ok(()),
+                                    Err(err) => Err(anyhow::anyhow!("{err:#}")),
+                                };
+                                let _ = tx.send(send_result);
+                                return;
                             }
                             None => {
                                 let _ = flush_active_head_projection_batch(&store, &mut dirty).await;
@@ -178,6 +196,20 @@ impl ActiveHeadProjectionProjector {
             .context("requesting active head projection flush")?;
         rx.await
             .context("waiting for active head projection flush")?
+    }
+
+    async fn shutdown(&self) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        if self
+            .tx
+            .send(ActiveHeadProjectionCommand::Shutdown(tx))
+            .await
+            .is_err()
+        {
+            return Ok(());
+        }
+        rx.await
+            .context("waiting for active head projection shutdown")?
     }
 }
 
@@ -394,6 +426,13 @@ impl EventLogRuntime {
             None => Ok(()),
         }
     }
+
+    pub(super) async fn shutdown(&self) -> Result<()> {
+        match self.persister.get() {
+            Some(persister) => persister.shutdown().await,
+            None => Ok(()),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -404,6 +443,7 @@ pub(super) struct EventLogPersister {
 pub(super) enum EventLogCommand {
     Event(SessionEvent),
     Flush(oneshot::Sender<Result<()>>),
+    Shutdown(oneshot::Sender<Result<()>>),
 }
 
 impl EventLogPersister {
@@ -444,6 +484,28 @@ impl EventLogPersister {
                                     };
                                     let _ = waiter.send(send_result);
                                 }
+                            }
+                            Some(EventLogCommand::Shutdown(tx)) => {
+                                let result = if buffer.is_empty() {
+                                    Ok(())
+                                } else {
+                                    flush_event_batch(&store, &mut buffer).await
+                                };
+                                let checkpoint_result = if result.is_ok() && last_applied_seq > last_checkpoint_seq {
+                                    store
+                                        .upsert_event_log_checkpoint(last_applied_seq, None)
+                                        .await
+                                        .map(|_| ())
+                                } else {
+                                    Ok(())
+                                };
+                                let final_result = result.and(checkpoint_result);
+                                let send_result = match &final_result {
+                                    Ok(()) => Ok(()),
+                                    Err(err) => Err(anyhow::anyhow!("{err:#}")),
+                                };
+                                let _ = tx.send(send_result);
+                                return;
                             }
                             None => {
                                 let _ = flush_event_batch(&store, &mut buffer).await;
@@ -490,6 +552,14 @@ impl EventLogPersister {
             .await
             .context("requesting event log flush")?;
         rx.await.context("waiting for event log flush")?
+    }
+
+    async fn shutdown(&self) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        if self.tx.send(EventLogCommand::Shutdown(tx)).await.is_err() {
+            return Ok(());
+        }
+        rx.await.context("waiting for event log shutdown")?
     }
 }
 

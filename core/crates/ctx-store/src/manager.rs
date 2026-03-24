@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -11,6 +12,11 @@ use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::Workspace;
 
 use crate::Store;
+
+mod leases;
+use leases::WorkspaceStoreLeaseRegistry;
+#[cfg(test)]
+mod tests_eviction;
 
 const DEFAULT_WORKSPACE_MAX_CONNECTIONS: u32 = 2;
 const DEFAULT_MAX_CACHED_WORKSPACES: usize = 12;
@@ -37,6 +43,8 @@ pub struct StoreManager {
     global: Store,
     data_root: PathBuf,
     workspace_stores: Arc<Mutex<HashMap<WorkspaceId, TimedStoreEntry>>>,
+    store_leases: Arc<WorkspaceStoreLeaseRegistry>,
+    next_store_instance_id: Arc<AtomicU64>,
     config: StoreManagerConfig,
 }
 
@@ -53,8 +61,10 @@ pub struct StoreManagerStats {
 
 #[derive(Clone)]
 struct TimedStoreEntry {
+    workspace_id: WorkspaceId,
     store: Store,
     last_access: Instant,
+    instance_id: u64,
 }
 
 pub struct WorkspaceStoreAccess {
@@ -63,10 +73,12 @@ pub struct WorkspaceStoreAccess {
 }
 
 impl TimedStoreEntry {
-    fn new(store: Store) -> Self {
+    fn new(workspace_id: WorkspaceId, store: Store, instance_id: u64) -> Self {
         Self {
+            workspace_id,
             store,
             last_access: Instant::now(),
+            instance_id,
         }
     }
 
@@ -95,6 +107,8 @@ impl StoreManager {
             global,
             data_root,
             workspace_stores: Arc::new(Mutex::new(HashMap::new())),
+            store_leases: Arc::new(WorkspaceStoreLeaseRegistry::default()),
+            next_store_instance_id: Arc::new(AtomicU64::new(1)),
             config,
         })
     }
@@ -141,45 +155,81 @@ impl StoreManager {
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<WorkspaceStoreAccess> {
-        {
+        loop {
+            loop {
+                {
+                    let mut stores = self.workspace_stores.lock().await;
+                    if let Some(entry) = stores.get_mut(&workspace_id) {
+                        entry.touch();
+                        return Ok(WorkspaceStoreAccess {
+                            store: entry.store.with_lease_guard(
+                                self.store_leases.acquire(workspace_id, entry.instance_id),
+                            ),
+                            opened_now: false,
+                        });
+                    }
+                }
+                if let Some(store) = self.store_leases.acquire_pending_close_store(workspace_id) {
+                    return Ok(WorkspaceStoreAccess {
+                        store,
+                        opened_now: false,
+                    });
+                }
+                let is_closing = self.store_leases.is_workspace_closing(workspace_id);
+                if !is_closing {
+                    break;
+                }
+                self.store_leases
+                    .wait_for_workspace_close(workspace_id)
+                    .await;
+            }
+            let workspace = self
+                .global
+                .get_workspace(workspace_id)
+                .await?
+                .with_context(|| format!("workspace {} not found", workspace_id.0))?;
+            let store = self.open_workspace_store(&workspace).await?;
+            let instance_id = self.next_store_instance_id.fetch_add(1, Ordering::Relaxed);
             let mut stores = self.workspace_stores.lock().await;
-            if let Some(entry) = stores.get_mut(&workspace_id) {
-                entry.touch();
+            if self.store_leases.is_workspace_closing(workspace_id) {
+                drop(stores);
+                store.close().await;
+                self.store_leases
+                    .wait_for_workspace_close(workspace_id)
+                    .await;
+                continue;
+            }
+            if let Some(existing) = stores.get_mut(&workspace_id) {
+                existing.touch();
+                let existing = existing.store.with_lease_guard(
+                    self.store_leases
+                        .acquire(workspace_id, existing.instance_id),
+                );
+                drop(stores);
+                store.close().await;
                 return Ok(WorkspaceStoreAccess {
-                    store: entry.store.clone(),
+                    store: existing,
                     opened_now: false,
                 });
             }
-        }
-        let workspace = self
-            .global
-            .get_workspace(workspace_id)
-            .await?
-            .with_context(|| format!("workspace {} not found", workspace_id.0))?;
-        let store = self.open_workspace_store(&workspace).await?;
-        let mut stores = self.workspace_stores.lock().await;
-        if let Some(existing) = stores.get_mut(&workspace_id) {
-            existing.touch();
-            let existing = existing.store.clone();
+            stores.insert(
+                workspace_id,
+                TimedStoreEntry::new(workspace_id, store.clone(), instance_id),
+            );
             drop(stores);
-            // Do not force-close the duplicate pool here. Other request-scoped clones may already
-            // exist, and explicit pool shutdown would invalidate them. Dropping the uncached
-            // handle lets the pool close naturally once no clones remain.
-            drop(store);
             return Ok(WorkspaceStoreAccess {
-                store: existing,
-                opened_now: false,
+                store: store.with_lease_guard(self.store_leases.acquire(workspace_id, instance_id)),
+                opened_now: true,
             });
         }
-        stores.insert(workspace_id, TimedStoreEntry::new(store.clone()));
-        drop(stores);
-        Ok(WorkspaceStoreAccess {
-            store,
-            opened_now: true,
-        })
     }
 
     pub async fn workspace_uncached(&self, workspace_id: WorkspaceId) -> Result<Store> {
+        if self.store_leases.is_workspace_closing(workspace_id) {
+            self.store_leases
+                .wait_for_workspace_close(workspace_id)
+                .await;
+        }
         let workspace = self
             .global
             .get_workspace(workspace_id)
@@ -218,12 +268,18 @@ impl StoreManager {
     pub async fn evict_workspace(&self, workspace_id: WorkspaceId) {
         let store = {
             let mut stores = self.workspace_stores.lock().await;
-            stores.remove(&workspace_id)
+            let close = stores.get(&workspace_id).and_then(|entry| {
+                self.store_leases.queue_close(
+                    entry.workspace_id,
+                    entry.instance_id,
+                    entry.store.clone(),
+                )
+            });
+            stores.remove(&workspace_id);
+            close
         };
-        // Do not explicitly close evicted workspace stores. Request-scoped clones share the same
-        // SQLx pool, so forcing pool shutdown here can fail in-flight handlers. Removing the
-        // manager-owned cache entry is sufficient; the pool will drop once no clones remain.
-        drop(store);
+        self.close_pending_entries(store.into_iter().collect())
+            .await;
     }
 
     pub async fn evict_idle_workspaces(
@@ -232,7 +288,7 @@ impl StoreManager {
         active_workspaces: &HashSet<WorkspaceId>,
     ) -> usize {
         let now = Instant::now();
-        let expired_entries = {
+        let (evicted, expired_entries) = {
             let mut stores = self.workspace_stores.lock().await;
             let expired: Vec<WorkspaceId> = stores
                 .iter()
@@ -247,13 +303,24 @@ impl StoreManager {
                     }
                 })
                 .collect();
-            expired
+            let evicted = expired.len();
+            let closes = expired
                 .into_iter()
-                .filter_map(|workspace_id| stores.remove(&workspace_id))
-                .collect::<Vec<_>>()
+                .filter_map(|workspace_id| {
+                    let close = stores.get(&workspace_id).and_then(|entry| {
+                        self.store_leases.queue_close(
+                            entry.workspace_id,
+                            entry.instance_id,
+                            entry.store.clone(),
+                        )
+                    });
+                    stores.remove(&workspace_id);
+                    close
+                })
+                .collect::<Vec<_>>();
+            (evicted, closes)
         };
-        let evicted = expired_entries.len();
-        drop(expired_entries);
+        self.close_pending_entries(expired_entries).await;
         evicted
     }
 
@@ -262,11 +329,11 @@ impl StoreManager {
         protected_workspaces: &HashSet<WorkspaceId>,
     ) -> usize {
         let max_cached = self.config.max_cached_workspaces.max(1);
-        let expired_entries = {
+        let (evicted, expired_entries) = {
             let mut stores = self.workspace_stores.lock().await;
             let overflow = stores.len().saturating_sub(max_cached);
             if overflow == 0 {
-                Vec::new()
+                (0, Vec::new())
             } else {
                 let mut victims = stores
                     .iter()
@@ -274,16 +341,35 @@ impl StoreManager {
                     .map(|(workspace_id, entry)| (*workspace_id, entry.last_access))
                     .collect::<Vec<_>>();
                 victims.sort_by_key(|(_, last_access)| *last_access);
-                victims
+                let victims = victims.into_iter().take(overflow).collect::<Vec<_>>();
+                let evicted = victims.len();
+                let closes = victims
                     .into_iter()
-                    .take(overflow)
-                    .filter_map(|(workspace_id, _)| stores.remove(&workspace_id))
-                    .collect::<Vec<_>>()
+                    .filter_map(|(workspace_id, _)| {
+                        let close = stores.get(&workspace_id).and_then(|entry| {
+                            self.store_leases.queue_close(
+                                entry.workspace_id,
+                                entry.instance_id,
+                                entry.store.clone(),
+                            )
+                        });
+                        stores.remove(&workspace_id);
+                        close
+                    })
+                    .collect::<Vec<_>>();
+                (evicted, closes)
             }
         };
-        let evicted = expired_entries.len();
-        drop(expired_entries);
+        self.close_pending_entries(expired_entries).await;
         evicted
+    }
+
+    async fn close_pending_entries(&self, entries: Vec<leases::PendingWorkspaceStoreClose>) {
+        for close in entries {
+            close.store.close().await;
+            self.store_leases
+                .finish_close(close.workspace_id, &close.notify);
+        }
     }
 
     async fn open_workspace_store(&self, workspace: &Workspace) -> Result<Store> {
@@ -775,62 +861,6 @@ mod tests {
         assert!(
             manager
                 .workspace_access(workspace_b.id)
-                .await
-                .unwrap()
-                .opened_now
-        );
-    }
-
-    #[tokio::test]
-    async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() {
-        let temp = tempfile::tempdir().unwrap();
-        let manager = StoreManager::open_with_config(
-            temp.path(),
-            StoreManagerConfig {
-                max_cached_workspaces: 1,
-                ..StoreManagerConfig::default()
-            },
-        )
-        .await
-        .unwrap();
-        let workspace_a = manager
-            .global()
-            .create_workspace(
-                "a".to_string(),
-                temp.path().join("a").to_string_lossy().to_string(),
-                VcsKind::Git,
-            )
-            .await
-            .unwrap();
-        let workspace_b = manager
-            .global()
-            .create_workspace(
-                "b".to_string(),
-                temp.path().join("b").to_string_lossy().to_string(),
-                VcsKind::Git,
-            )
-            .await
-            .unwrap();
-
-        let store_a = manager.workspace(workspace_a.id).await.unwrap();
-        let _ = manager.workspace(workspace_b.id).await.unwrap();
-        let evicted = manager
-            .evict_workspaces_to_cap(&HashSet::from([workspace_b.id]))
-            .await;
-        assert_eq!(evicted, 1);
-        assert_eq!(manager.stats().await.workspace_store_count, 1);
-
-        let task = store_a
-            .create_task(workspace_a.id, "still-live".to_string(), None)
-            .await
-            .unwrap();
-        assert_eq!(task.workspace_id, workspace_a.id);
-
-        drop(store_a);
-
-        assert!(
-            manager
-                .workspace_access(workspace_a.id)
                 .await
                 .unwrap()
                 .opened_now

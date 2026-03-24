@@ -210,6 +210,7 @@ async fn disabled_workspace_with_queued_rows_stays_dormant_after_activation() {
     let store = state.core.stores.workspace(workspace.id).await.unwrap();
     let entry = queued_entry(workspace.id, "disabled-queued");
     store.create_merge_queue_entry(&entry).await.unwrap();
+    drop(store);
     state.core.stores.evict_workspace(workspace.id).await;
 
     spawn_merge_queue_runner(state.clone());
@@ -269,6 +270,7 @@ async fn enabled_workspace_queued_rows_resume_only_after_open() {
     .unwrap();
     let entry = queued_entry(workspace.id, "enabled-queued");
     store.create_merge_queue_entry(&entry).await.unwrap();
+    drop(store);
     state.core.stores.evict_workspace(workspace.id).await;
 
     spawn_merge_queue_runner(state.clone());
@@ -281,6 +283,7 @@ async fn enabled_workspace_queued_rows_resume_only_after_open() {
         .unwrap()
         .unwrap();
     assert_eq!(queued.status, MergeQueueEntryStatus::Queued);
+    drop(cold_store);
     state.core.stores.evict_workspace(workspace.id).await;
     assert_eq!(state.core.stores.stats().await.workspace_store_count, 0);
 
@@ -361,4 +364,34 @@ async fn workspace_drain_ownership_allows_only_one_runner() {
     assert!(!begin_workspace_drain(state.as_ref(), workspace_id).await);
     finish_workspace_drain(state.as_ref(), workspace_id).await;
     assert!(begin_workspace_drain(state.as_ref(), workspace_id).await);
+}
+
+#[tokio::test]
+async fn disabled_drain_stays_dormant_without_reopening_workspace() {
+    let (data_dir, state) = setup_state().await;
+    let workspace = create_workspace(&state, &data_dir, "disabled-recheck").await;
+    let store = state.core.stores.workspace(workspace.id).await.unwrap();
+    update_merge_queue_config(
+        &store,
+        MergeQueueConfigUpdate {
+            enabled: true,
+            target_branch: Some("main".to_string()),
+            verify_commands: Vec::new(),
+            push_on_success: None,
+            push_remote: None,
+            push_branch: None,
+            canonical_sync: None,
+        },
+    )
+    .await
+    .unwrap();
+    let entry = queued_entry(workspace.id, "disabled-recheck-entry");
+    store.create_merge_queue_entry(&entry).await.unwrap();
+    drop(store);
+    state.core.stores.evict_workspace(workspace.id).await;
+
+    assert!(
+        !reschedule_workspace_after_drain(&state, workspace.id, WorkspaceDrainStop::Disabled).await
+    );
+    assert_eq!(state.core.stores.stats().await.workspace_store_count, 0);
 }

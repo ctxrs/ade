@@ -11,10 +11,7 @@ pub(crate) async fn session_file_completions(
 
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
 
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_session_status(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await

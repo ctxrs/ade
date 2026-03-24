@@ -14,10 +14,7 @@ pub(crate) async fn list_session_subagents(
     Path(id): Path<String>,
 ) -> Result<Json<Vec<SessionSummary>>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_session_status(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await
@@ -42,10 +39,7 @@ pub(crate) async fn list_session_subagent_invocations(
     Query(q): Query<SessionSubagentInvocationsQuery>,
 ) -> Result<Json<Vec<SubagentInvocation>>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_session_status(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await
@@ -79,10 +73,7 @@ pub(crate) async fn get_session_subagent_invocation(
 ) -> Result<Json<SubagentInvocation>, StatusCode> {
     let session_id =
         SessionId(uuid::Uuid::parse_str(&session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_session_status(&state, session_id).await?;
     let invocation = store
         .get_subagent_invocation(&id)
         .await
@@ -351,17 +342,7 @@ async fn emit_subagent_invocation_notice(
     parent_turn_id: Option<TurnId>,
     payload: serde_json::Value,
 ) -> Result<(), (StatusCode, Json<ApiErrorResp>)> {
-    let store = state
-        .store_for_session(parent_session_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
+    let store = store_for_existing_session_api_error(state, parent_session_id).await?;
     let event = store
         .append_session_event(
             parent_session_id,

@@ -18,13 +18,21 @@ use tracing::info;
 
 use conversions::*;
 use conversions_tools::*;
+use head_kind::*;
+pub(crate) use lease::StoreLeaseGuard;
 use metrics_and_runtime::*;
+
+mod head_kind;
+mod lease;
+#[cfg(test)]
+mod tests_runtime_shutdown;
 
 #[derive(Clone)]
 pub struct Store {
     pool: Pool<Sqlite>,
     event_log: Arc<EventLogRuntime>,
     active_head_projection: Arc<ActiveHeadProjectionRuntime>,
+    _lease_guard: Option<Arc<dyn StoreLeaseGuard>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -74,16 +82,6 @@ static STORE_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 
 fn next_stream_only_event_seq() -> i64 {
     STREAM_ONLY_EVENT_SEQ.fetch_add(1, Ordering::Relaxed)
-}
-
-#[derive(Clone, Copy, Debug)]
-enum SessionHeadKind {
-    Active,
-    Archived,
-}
-
-fn disable_head_materialization_writes_for(kind: SessionHeadKind) -> bool {
-    matches!(kind, SessionHeadKind::Active)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -529,6 +527,7 @@ impl Store {
             pool,
             event_log,
             active_head_projection,
+            _lease_guard: None,
         };
         store.event_log.start_persister(store.clone());
         store.active_head_projection.start_projector(store.clone());
@@ -547,11 +546,11 @@ impl Store {
     }
 
     pub async fn close(&self) {
-        if let Err(err) = self.event_log.flush().await {
-            tracing::warn!("event log flush failed during close: {err:#}");
+        if let Err(err) = self.event_log.shutdown().await {
+            tracing::warn!("event log shutdown failed during close: {err:#}");
         }
-        if let Err(err) = self.active_head_projection.flush().await {
-            tracing::warn!("active head projection flush failed during close: {err:#}");
+        if let Err(err) = self.active_head_projection.shutdown().await {
+            tracing::warn!("active head projection shutdown failed during close: {err:#}");
         }
         self.pool.close().await;
     }
@@ -778,14 +777,14 @@ mod tests {
 
     use serde_json::json;
 
-    async fn setup_store() -> (tempfile::TempDir, Store) {
+    pub(crate) async fn setup_store() -> (tempfile::TempDir, Store) {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("db.sqlite");
         let store = Store::open(&db_path).await.unwrap();
         (dir, store)
     }
 
-    async fn create_session_with_turn(
+    pub(crate) async fn create_session_with_turn(
         store: &Store,
         assistant_partial: Option<String>,
     ) -> (Session, TurnId) {

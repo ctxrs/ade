@@ -342,27 +342,36 @@ async fn schedule_workspace_drain(state: &Arc<AppState>, workspace_id: Workspace
 
         finish_workspace_drain(state.as_ref(), workspace_id).await;
 
-        if stop == WorkspaceDrainStop::Disabled {
-            tracing::debug!(
-                workspace_id = %workspace_id.0,
-                "merge queue drain dormant because workspace queue is disabled"
-            );
-            return;
-        }
-
-        match workspace_has_queued_entries(&state, workspace_id).await {
-            Ok(true) => {
-                let _ = state.transport.merge_queue_schedule_tx.send(workspace_id);
-            }
-            Ok(false) => {}
-            Err(err) => {
-                tracing::warn!(
-                    workspace_id = %workspace_id.0,
-                    "failed to re-check queued merge queue entries after drain: {err:#}"
-                );
-            }
-        }
+        let _ = reschedule_workspace_after_drain(&state, workspace_id, stop).await;
     });
+}
+
+async fn reschedule_workspace_after_drain(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    stop: WorkspaceDrainStop,
+) -> bool {
+    if stop == WorkspaceDrainStop::MissingWorkspace {
+        return false;
+    }
+    if stop == WorkspaceDrainStop::Disabled {
+        tracing::debug!(
+            workspace_id = %workspace_id.0,
+            "merge queue drain dormant because workspace queue is disabled"
+        );
+        return false;
+    }
+    match schedule_workspace_if_enabled_and_queued(state, workspace_id).await {
+        Ok(true) => true,
+        Ok(false) => false,
+        Err(err) => {
+            tracing::warn!(
+                workspace_id = %workspace_id.0,
+                "failed to re-check queued merge queue entries after drain: {err:#}"
+            );
+            false
+        }
+    }
 }
 
 async fn run_next_entry_for_workspace(
@@ -396,12 +405,6 @@ async fn run_next_entry_for_workspace(
     entry.updated_at = now;
     run_entry(state, &workspace, entry, &cfg).await?;
     Ok(WorkspaceDrainStep::Continue)
-}
-
-async fn workspace_has_queued_entries(state: &AppState, workspace_id: WorkspaceId) -> Result<bool> {
-    Ok(!list_queued_entries_for_workspace(state, workspace_id)
-        .await?
-        .is_empty())
 }
 
 async fn run_entry(

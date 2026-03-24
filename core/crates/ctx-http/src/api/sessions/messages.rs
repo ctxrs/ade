@@ -193,10 +193,7 @@ pub(crate) async fn delete_session_message(
     let session_id =
         SessionId(uuid::Uuid::parse_str(&session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let msg_id = MessageId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_session_status(&state, session_id).await?;
     let msg = store
         .get_message(msg_id)
         .await
@@ -256,33 +253,15 @@ pub(crate) async fn post_message(
     Json(req): Json<PostMessageReq>,
 ) -> Result<Json<Message>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = {
-        const STORE_OPEN_RETRY_LIMIT: usize = 3;
-        const STORE_OPEN_RETRY_BASE_MS: u64 = 40;
-        let mut attempt = 0usize;
-        loop {
-            match state.store_for_session(session_id).await {
-                Ok(store) => break store,
-                Err(err) => {
-                    let msg = err.to_string().to_lowercase();
-                    let transient = msg.contains("database is locked")
-                        || msg.contains("sqlite_busy")
-                        || msg.contains("database is busy");
-                    if transient && attempt < STORE_OPEN_RETRY_LIMIT {
-                        attempt += 1;
-                        let backoff_ms = STORE_OPEN_RETRY_BASE_MS.saturating_mul(attempt as u64);
-                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
-                        continue;
-                    }
-                    if msg.contains("workspace missing for session") {
-                        return Err(StatusCode::NOT_FOUND);
-                    }
-                    tracing::warn!(session_id = %session_id.0, "store_for_session failed: {err:#}");
-                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                }
-            }
-        }
-    };
+    const STORE_OPEN_RETRY_LIMIT: usize = 3;
+    const STORE_OPEN_RETRY_BASE_MS: u64 = 40;
+    let store = store_for_existing_session_status_with_retry(
+        &state,
+        session_id,
+        STORE_OPEN_RETRY_LIMIT,
+        STORE_OPEN_RETRY_BASE_MS,
+    )
+    .await?;
     let run_id_header = headers
         .get("x-ctx-run-id")
         .and_then(|v| v.to_str().ok())

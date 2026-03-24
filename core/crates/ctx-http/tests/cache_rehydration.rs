@@ -326,7 +326,7 @@ async fn non_primary_store_backed_head_is_purged_on_workspace_cleanup() {
 }
 
 #[tokio::test]
-async fn session_head_returns_500_when_workspace_store_cannot_open() {
+async fn session_read_routes_return_500_when_workspace_store_cannot_open() {
     let temp = tempdir().unwrap();
     let stores = common::setup_store(temp.path()).await;
     let state = common::build_state(
@@ -383,6 +383,7 @@ async fn session_head_returns_500_when_workspace_store_cannot_open() {
         .await
         .unwrap();
 
+    drop(store);
     state.cleanup_session(session.id).await;
     state.core.stores.evict_workspace(workspace.id).await;
 
@@ -410,13 +411,38 @@ async fn session_head_returns_500_when_workspace_store_cannot_open() {
         .unwrap();
 
     let app = common::router(state.clone());
-    let req = Request::builder()
-        .method("GET")
-        .uri(format!(
+    let turn_id = ctx_core::ids::TurnId::new();
+    let routes = [
+        format!(
             "/api/sessions/{}/head?include_events=false&limit=60",
             session.id.0
+        ),
+        format!(
+            "/api/sessions/{}/snapshot?include_events=false&limit=60",
+            session.id.0
+        ),
+        format!("/api/sessions/{}/state", session.id.0),
+        format!("/api/sessions/{}/events?tail=1", session.id.0),
+        format!("/api/sessions/{}/history?limit=60", session.id.0),
+        format!("/api/sessions/{}/turns/{}/tools", session.id.0, turn_id.0),
+    ];
+    for route in routes {
+        let req = Request::builder()
+            .method("GET")
+            .uri(route)
+            .body(Body::empty())
+            .unwrap();
+        let (status, _body) = common::oneshot_bytes(&app, req).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/sessions/{}/messages", session.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"content":"hello from blocked workspace store"}"#,
         ))
-        .body(Body::empty())
         .unwrap();
     let (status, _body) = common::oneshot_bytes(&app, req).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);

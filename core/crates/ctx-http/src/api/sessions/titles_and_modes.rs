@@ -8,7 +8,10 @@ use axum::Json;
 use serde::Deserialize;
 
 use super::super::errors::ApiErrorResp;
-use super::{compose_model_id, load_provider_model_catalog, normalize_effort_id, resolve_model_id};
+use super::{
+    compose_model_id, load_provider_model_catalog, normalize_effort_id, resolve_model_id,
+    store_for_existing_session_api_error, store_for_existing_session_status,
+};
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::logs;
@@ -222,12 +225,9 @@ pub(crate) async fn set_session_model(
             .map_err(|_| session_model_error(StatusCode::BAD_REQUEST, "invalid session id"))?,
     );
 
-    let store = state.store_for_session(session_id).await.map_err(|err| {
-        session_model_error(
-            StatusCode::NOT_FOUND,
-            logs::redact_sensitive(&err.to_string()),
-        )
-    })?;
+    let store = store_for_existing_session_api_error(&state, session_id)
+        .await
+        .map_err(|(status, resp)| session_model_error(status, resp.0.error))?;
     let session = store
         .get_session(session_id)
         .await
@@ -407,10 +407,7 @@ pub(crate) async fn set_session_mode(
 ) -> Result<StatusCode, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
 
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_session_status(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await
@@ -484,14 +481,7 @@ pub(crate) async fn generate_session_title(
         )
     })?);
 
-    let store = state.store_for_session(session_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
+    let store = store_for_existing_session_api_error(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await
@@ -557,14 +547,7 @@ pub(crate) async fn generate_session_title(
             }),
         ))?;
 
-    let store = state.store_for_session(session_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
+    let store = store_for_existing_session_api_error(&state, session_id).await?;
     let updated = store
         .get_session(session_id)
         .await

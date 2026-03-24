@@ -87,6 +87,117 @@ pub(super) use titles_and_modes::{
 #[cfg(test)]
 use titles_and_modes::{generate_title_for_prompt, TitleGenerationSource};
 
+async fn store_for_existing_session_status(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+) -> Result<ctx_store::Store, StatusCode> {
+    let workspace_id = match state
+        .global_store()
+        .get_workspace_id_for_session(session_id)
+        .await
+    {
+        Ok(Some(workspace_id)) => workspace_id,
+        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
+    state
+        .store_for_workspace(workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+fn is_transient_store_open_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string().to_lowercase();
+    msg.contains("database is locked")
+        || msg.contains("sqlite_busy")
+        || msg.contains("database is busy")
+}
+
+async fn store_for_existing_session_status_with_retry(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+    retry_limit: usize,
+    retry_base_ms: u64,
+) -> Result<ctx_store::Store, StatusCode> {
+    let mut attempt = 0usize;
+    loop {
+        let workspace_id = match state
+            .global_store()
+            .get_workspace_id_for_session(session_id)
+            .await
+        {
+            Ok(Some(workspace_id)) => workspace_id,
+            Ok(None) => return Err(StatusCode::NOT_FOUND),
+            Err(err) => {
+                if is_transient_store_open_error(&err) && attempt < retry_limit {
+                    attempt += 1;
+                    let backoff_ms = retry_base_ms.saturating_mul(attempt as u64);
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                    continue;
+                }
+                tracing::warn!(
+                    session_id = %session_id.0,
+                    "get_workspace_id_for_session failed: {err:#}"
+                );
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        };
+        match state.store_for_workspace(workspace_id).await {
+            Ok(store) => return Ok(store),
+            Err(err) => {
+                if is_transient_store_open_error(&err) && attempt < retry_limit {
+                    attempt += 1;
+                    let backoff_ms = retry_base_ms.saturating_mul(attempt as u64);
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                    continue;
+                }
+                tracing::warn!(session_id = %session_id.0, "store_for_workspace failed: {err:#}");
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        }
+    }
+}
+
+async fn store_for_existing_session_api_error(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+) -> Result<ctx_store::Store, (StatusCode, Json<ApiErrorResp>)> {
+    let workspace_id = match state
+        .global_store()
+        .get_workspace_id_for_session(session_id)
+        .await
+    {
+        Ok(Some(workspace_id)) => workspace_id,
+        Ok(None) => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "session not found".to_string(),
+                }),
+            ));
+        }
+        Err(err) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&err.to_string()),
+                }),
+            ));
+        }
+    };
+    state
+        .store_for_workspace(workspace_id)
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&err.to_string()),
+                }),
+            )
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::subagents::{
@@ -177,6 +288,42 @@ mod tests {
         (data_dir, state, session)
     }
 
+    async fn block_workspace_store_for_session(
+        data_dir: &tempfile::TempDir,
+        state: &Arc<AppState>,
+        session: &Session,
+    ) {
+        state.cleanup_session(session.id).await;
+        state
+            .core
+            .stores
+            .evict_workspace(session.workspace_id)
+            .await;
+
+        let blocked_workspace_store_dir = data_dir
+            .path()
+            .join("db")
+            .join("workspaces")
+            .join(session.workspace_id.0.to_string());
+        if let Ok(metadata) = tokio::fs::metadata(&blocked_workspace_store_dir).await {
+            if metadata.is_dir() {
+                tokio::fs::remove_dir_all(&blocked_workspace_store_dir)
+                    .await
+                    .unwrap();
+            } else {
+                tokio::fs::remove_file(&blocked_workspace_store_dir)
+                    .await
+                    .unwrap();
+            }
+        }
+        tokio::fs::create_dir_all(blocked_workspace_store_dir.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&blocked_workspace_store_dir, b"blocked workspace store")
+            .await
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn schedule_title_generation_falls_back_without_config() {
         let (_data_dir, state, session) = setup_state().await;
@@ -225,6 +372,34 @@ mod tests {
             outcome.title,
             title_generation::fallback_title_from_prompt(prompt)
         );
+    }
+
+    #[tokio::test]
+    async fn existing_session_store_helper_returns_500_when_workspace_store_cannot_open() {
+        let (data_dir, state, session) = setup_state().await;
+        block_workspace_store_for_session(&data_dir, &state, &session).await;
+
+        let result = store_for_existing_session_status(&state, session.id).await;
+        match result {
+            Ok(_) => panic!("expected store open failure"),
+            Err(status) => assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR),
+        }
+    }
+
+    #[tokio::test]
+    async fn existing_session_store_api_error_helper_returns_500_when_workspace_store_cannot_open()
+    {
+        let (data_dir, state, session) = setup_state().await;
+        block_workspace_store_for_session(&data_dir, &state, &session).await;
+
+        let result = store_for_existing_session_api_error(&state, session.id).await;
+        match result {
+            Ok(_) => panic!("expected store open failure"),
+            Err((status, body)) => {
+                assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+                assert!(!body.0.error.is_empty());
+            }
+        }
     }
 
     fn result_with_status(status: &str) -> AgentInitResult {
