@@ -581,6 +581,7 @@ async fn handle_subscribe_message(
                 "workspace stream hydration failed: {err:?}"
             );
         })?;
+    crate::merge_queue::activate_workspace_merge_queue(state, workspace_id).await;
     let resolved = match resolve_workspace_active_snapshot_subscriptions(
         state,
         workspace_id,

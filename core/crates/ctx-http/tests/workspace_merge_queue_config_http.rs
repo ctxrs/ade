@@ -109,6 +109,11 @@ async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
 
     let resumed = wait_for_non_queued_status(&state, &workspace, entry.id).await;
     assert_ne!(resumed.status, MergeQueueEntryStatus::Queued);
+    assert_ne!(resumed.status, MergeQueueEntryStatus::Cancelled);
+    assert_ne!(
+        resumed.error_message.as_deref(),
+        Some("merge queue disabled while entry was queued")
+    );
 }
 
 #[tokio::test]

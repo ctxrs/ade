@@ -309,6 +309,7 @@ pub(super) async fn get_workspace_active_snapshot(
         .ensure_workspace_active_snapshot_hydrated(workspace_id)
         .await
         .map_err(|err| err.status_code())?;
+    crate::merge_queue::activate_workspace_merge_queue(&state, workspace_id).await;
     let snapshot = state
         .workspaces
         .workspace_active_snapshot
@@ -330,6 +331,7 @@ pub(super) async fn get_workspace_active_heads(
         .ensure_workspace_active_snapshot_hydrated(workspace_id)
         .await
         .map_err(|err| err.status_code())?;
+    crate::merge_queue::activate_workspace_merge_queue(&state, workspace_id).await;
     let heads = state
         .workspaces
         .workspace_active_snapshot

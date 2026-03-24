@@ -194,7 +194,7 @@ async fn workspace_activation_only_schedules_the_opened_workspace() {
     assert_eq!(state.core.stores.stats().await.workspace_store_count, 0);
 
     spawn_merge_queue_runner(state.clone());
-    let _ = state.store_for_workspace(workspace_a.id).await.unwrap();
+    activate_workspace_merge_queue(&state, workspace_a.id).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let stats = state.core.stores.stats().await;
@@ -217,7 +217,7 @@ async fn disabled_workspace_with_queued_rows_are_cancelled_after_activation() {
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(state.core.stores.stats().await.workspace_store_count, 0);
 
-    let _ = state.store_for_workspace(workspace.id).await.unwrap();
+    activate_workspace_merge_queue(&state, workspace.id).await;
     let stored = wait_for_entry_status(
         &state,
         workspace.id,
@@ -278,7 +278,7 @@ async fn enabled_workspace_queued_rows_resume_only_after_open() {
     state.core.stores.evict_workspace(workspace.id).await;
     assert_eq!(state.core.stores.stats().await.workspace_store_count, 0);
 
-    let _ = state.store_for_workspace(workspace.id).await.unwrap();
+    activate_workspace_merge_queue(&state, workspace.id).await;
     let resumed = wait_for_entry_status(
         &state,
         workspace.id,
@@ -317,6 +317,7 @@ async fn enabled_workspace_queued_rows_resume_when_reopened_from_draining_store(
     assert_eq!(state.core.stores.stats().await.workspace_store_count, 0);
 
     let reopened = state.store_for_workspace(workspace.id).await.unwrap();
+    activate_workspace_merge_queue(&state, workspace.id).await;
     let resumed = wait_for_entry_status(
         &state,
         workspace.id,

@@ -4,7 +4,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use ctx_core::models::{
     SessionActivityState, SessionEventType, SessionHeadDelta, SessionHeadSnapshot,
-    SessionTurnStatus, VcsKind,
+    SessionTurnStatus, VcsKind, WorkspaceActiveHeadBatch,
 };
 use tempfile::tempdir;
 
@@ -58,6 +58,25 @@ async fn session_head_rehydrates_after_cache_eviction() {
             None,
             None,
         )
+        .await
+        .unwrap();
+    store
+        .set_task_primary_session(task.id, session.id, worktree.id)
+        .await
+        .unwrap();
+    state
+        .global_store()
+        .upsert_workspace_task_index(task.id, workspace.id)
+        .await
+        .unwrap();
+    state
+        .global_store()
+        .upsert_workspace_task_index(task.id, workspace.id)
+        .await
+        .unwrap();
+    state
+        .global_store()
+        .upsert_workspace_task_index(task.id, workspace.id)
         .await
         .unwrap();
     state
@@ -919,6 +938,176 @@ async fn include_events_false_subagent_heads_fall_back_to_store_after_cold_delta
     assert_eq!(head.last_event_seq, event.seq);
     assert_eq!(head.messages.len(), 1);
     assert_eq!(head.messages[0].content, "subagent answer");
+}
+
+#[tokio::test]
+async fn unarchive_repopulates_active_heads_for_hydrated_workspace() {
+    let temp = tempdir().unwrap();
+    let stores = common::setup_store(temp.path()).await;
+    let state = common::build_state(
+        temp.path(),
+        stores.clone(),
+        common::fake_providers(),
+        "http://localhost",
+    );
+
+    let workspace_root = temp.path().join("workspace");
+    tokio::fs::create_dir_all(&workspace_root).await.unwrap();
+
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            "ws".to_string(),
+            workspace_root.to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .unwrap();
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let worktree = store
+        .create_worktree(
+            workspace.id,
+            workspace_root.to_string_lossy().to_string(),
+            "deadbeef".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+    let task = store
+        .create_task(workspace.id, "task".to_string(), None)
+        .await
+        .unwrap();
+    let session = store
+        .create_session(
+            task.id,
+            workspace.id,
+            worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            "fake".to_string(),
+            "model".to_string(),
+            "implementer".to_string(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    state
+        .global_store()
+        .upsert_workspace_task_index(task.id, workspace.id)
+        .await
+        .unwrap();
+    state
+        .global_store()
+        .upsert_workspace_session_index(session.id, workspace.id)
+        .await
+        .unwrap();
+    let run_id = ctx_core::ids::RunId::new();
+    let turn_id = ctx_core::ids::TurnId::new();
+    let now = chrono::Utc::now();
+    store
+        .insert_session_turn(ctx_core::models::SessionTurn {
+            turn_id,
+            session_id: session.id,
+            run_id: Some(run_id),
+            user_message_id: None,
+            status: SessionTurnStatus::Completed,
+            start_seq: Some(1),
+            end_seq: Some(1),
+            started_at: now,
+            updated_at: now,
+            assistant_partial: None,
+            thought_partial: None,
+            metrics_json: None,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+        })
+        .await
+        .unwrap();
+    store
+        .append_session_event(
+            session.id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Notice,
+            serde_json::json!({"note": "seed"}),
+        )
+        .await
+        .unwrap();
+    let active_summary = store
+        .get_workspace_active_task_summary(task.id)
+        .await
+        .unwrap()
+        .expect("active task summary");
+    let head = store
+        .get_session_head_snapshot(session.id, 60, true)
+        .await
+        .unwrap()
+        .expect("session head snapshot");
+    state
+        .workspaces
+        .workspace_active_snapshot
+        .hydrate_snapshot(workspace.id, 1, 0, vec![active_summary], vec![head])
+        .await;
+
+    let app = common::router(state.clone());
+
+    let heads_req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/workspaces/{}/active_heads", workspace.id.0))
+        .body(Body::empty())
+        .unwrap();
+    let (heads_status, heads): (StatusCode, WorkspaceActiveHeadBatch) =
+        common::oneshot_json(&app, heads_req).await;
+    assert_eq!(heads_status, StatusCode::OK);
+    assert_eq!(heads.heads.len(), 1);
+    assert_eq!(heads.heads[0].session.id, session.id);
+
+    let archive_req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/tasks/{}/archive", task.id.0))
+        .body(Body::empty())
+        .unwrap();
+    let (archive_status, _): (StatusCode, serde_json::Value) =
+        common::oneshot_json(&app, archive_req).await;
+    assert_eq!(archive_status, StatusCode::OK);
+
+    let unarchive_req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/tasks/{}/unarchive", task.id.0))
+        .body(Body::empty())
+        .unwrap();
+    let (unarchive_status, _): (StatusCode, serde_json::Value) =
+        common::oneshot_json(&app, unarchive_req).await;
+    assert_eq!(unarchive_status, StatusCode::OK);
+    let durable_head = state
+        .store_for_session(session.id)
+        .await
+        .unwrap()
+        .get_active_snapshot_head(session.id)
+        .await
+        .unwrap();
+    assert!(durable_head.is_some());
+    let active_task = state
+        .workspaces
+        .workspace_active_snapshot
+        .active_task_summary(workspace.id, task.id)
+        .await;
+    assert!(active_task.is_some());
+
+    let heads_req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/workspaces/{}/active_heads", workspace.id.0))
+        .body(Body::empty())
+        .unwrap();
+    let (heads_status, heads): (StatusCode, WorkspaceActiveHeadBatch) =
+        common::oneshot_json(&app, heads_req).await;
+    assert_eq!(heads_status, StatusCode::OK);
+    assert_eq!(heads.heads.len(), 1);
+    assert_eq!(heads.heads[0].session.id, session.id);
 }
 
 #[tokio::test]

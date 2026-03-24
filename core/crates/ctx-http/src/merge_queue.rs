@@ -291,6 +291,62 @@ pub(crate) async fn schedule_workspace_if_enabled_and_queued(
     Ok(true)
 }
 
+pub(crate) async fn activate_workspace_merge_queue(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+) {
+    let store = match state.core.stores.workspace(workspace_id).await {
+        Ok(store) => store,
+        Err(err) => {
+            tracing::warn!(
+                workspace_id = %workspace_id.0,
+                "failed to activate merge queue for opened workspace: {err:#}"
+            );
+            return;
+        }
+    };
+    let cfg = match load_merge_queue_config(&store).await {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            tracing::warn!(
+                workspace_id = %workspace_id.0,
+                "failed to load merge queue config for opened workspace: {err:#}"
+            );
+            return;
+        }
+    };
+    let queued = match store.list_queued_merge_queue_entries().await {
+        Ok(entries) => entries,
+        Err(err) => {
+            tracing::warn!(
+                workspace_id = %workspace_id.0,
+                "failed to list queued merge queue entries for opened workspace: {err:#}"
+            );
+            return;
+        }
+    };
+    if queued.is_empty() {
+        return;
+    }
+    if !cfg.enabled {
+        if let Err(err) =
+            cancel_queued_entries_for_disabled_workspace(state, &store, workspace_id).await
+        {
+            tracing::warn!(
+                workspace_id = %workspace_id.0,
+                "failed to cancel queued merge queue entries for disabled opened workspace: {err:#}"
+            );
+        }
+        return;
+    }
+    if let Err(err) = schedule_workspace_if_enabled_and_queued(state, workspace_id).await {
+        tracing::warn!(
+            workspace_id = %workspace_id.0,
+            "failed to activate merge queue for opened workspace: {err:#}"
+        );
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WorkspaceDrainStep {
     Continue,

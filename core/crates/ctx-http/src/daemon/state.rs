@@ -344,7 +344,6 @@ impl AppState {
                         .stores
                         .evict_workspaces_to_cap(&protected_workspaces)
                         .await;
-                    let _ = self.transport.merge_queue_schedule_tx.send(workspace_id);
                 }
                 StoreLookup::Found(access.store)
             }

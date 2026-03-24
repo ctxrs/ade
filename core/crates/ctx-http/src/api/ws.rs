@@ -285,6 +285,7 @@ async fn handle_mobile_secure_ws(
                                 .ensure_workspace_active_snapshot_hydrated(workspace_id)
                                 .await
                                 .map_err(|err| anyhow::anyhow!("workspace hydration failed: {err:?}"))?;
+                            crate::merge_queue::activate_workspace_merge_queue(&state, workspace_id).await;
                             let resolved = match resolve_workspace_active_snapshot_subscriptions(
                                 &state,
                                 workspace_id,

@@ -322,6 +322,11 @@ pub(in crate::api) async fn unarchive_task(
     if !updated {
         return Err(StatusCode::NOT_FOUND);
     }
+    let workspace_hydrated = !state
+        .workspaces
+        .workspace_active_snapshot
+        .needs_hydration(task.workspace_id)
+        .await;
     let task = match store
         .get_task_with_activity(task_id)
         .await
@@ -339,12 +344,10 @@ pub(in crate::api) async fn unarchive_task(
     state
         .emit_workspace_archived_task_delete(task.workspace_id, task_id)
         .await;
-    for session_id in session_ids {
-        state
-            .workspaces
-            .workspace_active_snapshot
-            .remove_session(session_id)
-            .await;
+    if workspace_hydrated {
+        for session_id in session_ids {
+            state.refresh_session_head_cache(session_id).await;
+        }
     }
     Ok(Json(task))
 }
