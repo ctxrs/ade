@@ -479,6 +479,16 @@ pub(crate) async fn cancel_queued_entries_for_disabled_workspace(
     store: &ctx_store::Store,
     workspace_id: WorkspaceId,
 ) -> Result<()> {
+    let cfg = load_merge_queue_config(store).await?;
+    if cfg.enabled {
+        tracing::debug!(
+            workspace_id = %workspace_id.0,
+            cancelled = false,
+            "skipped queued merge queue cancellation because the workspace queue was re-enabled"
+        );
+        return Ok(());
+    }
+
     let queued = store.list_queued_merge_queue_entries().await?;
     if queued.is_empty() {
         return Ok(());

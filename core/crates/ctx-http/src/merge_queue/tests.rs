@@ -241,6 +241,41 @@ async fn disabled_workspace_with_queued_rows_are_cancelled_after_activation() {
 }
 
 #[tokio::test]
+async fn cancel_for_disabled_workspace_noops_if_queue_was_reenabled() {
+    let (data_dir, state) = setup_state().await;
+    let workspace = create_workspace(&state, &data_dir, "reenabled").await;
+    let store = state.core.stores.workspace(workspace.id).await.unwrap();
+    let entry = queued_entry(workspace.id, "queued-before-reenable");
+    store.create_merge_queue_entry(&entry).await.unwrap();
+
+    update_merge_queue_config(
+        &store,
+        MergeQueueConfigUpdate {
+            enabled: true,
+            target_branch: Some("main".to_string()),
+            verify_commands: Vec::new(),
+            push_on_success: None,
+            push_remote: None,
+            push_branch: None,
+            canonical_sync: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    cancel_queued_entries_for_disabled_workspace(&state, &store, workspace.id)
+        .await
+        .unwrap();
+
+    let stored = store
+        .get_merge_queue_entry(entry.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.status, MergeQueueEntryStatus::Queued);
+}
+
+#[tokio::test]
 async fn enabled_workspace_queued_rows_resume_only_after_open() {
     let (data_dir, state) = setup_state().await;
     let workspace = create_workspace(&state, &data_dir, "enabled").await;
