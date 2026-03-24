@@ -309,29 +309,29 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.0.0-ctx.5",
+        "version": "0.114.0-ctx.1",
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.5/codex-crp-0.0.0-ctx.5-aarch64-apple-darwin.tar.gz",
+            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.1/codex-crp-0.114.0-ctx.1-aarch64-apple-darwin.tar.gz",
             "sha256": "eb9329adab62e54430032d5eb075dd8fc2ede49e0ee5de0c16085e46839a85b1",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           },
           "darwin-x86_64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.5/codex-crp-0.0.0-ctx.5-x86_64-apple-darwin.tar.gz",
+            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.1/codex-crp-0.114.0-ctx.1-x86_64-apple-darwin.tar.gz",
             "sha256": "38828ff8317923d1f0516d9a98933ee824e2b5a2e63d4721ca2ff726b8444cc5",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           },
           "linux-aarch64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.5/codex-crp-0.0.0-ctx.5-aarch64-unknown-linux-gnu.tar.gz",
+            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.1/codex-crp-0.114.0-ctx.1-aarch64-unknown-linux-gnu.tar.gz",
             "sha256": "366cce0f042c23e3cbbf981cfcc3ff048781d591786a1de53c94c6c1d917e93c",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           },
           "linux-x86_64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.5/codex-crp-0.0.0-ctx.5-x86_64-unknown-linux-gnu.tar.gz",
+            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.1/codex-crp-0.114.0-ctx.1-x86_64-unknown-linux-gnu.tar.gz",
             "sha256": "3197299d045bf2c1f8e5fb9195fe1f500281ccf51d2306c7dc591c222c69ff4a",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
@@ -346,14 +346,14 @@
       },
       "releases": [
         {
-          "version": "0.0.0-ctx.5",
+          "version": "0.114.0-ctx.1",
           "upstream_version": "0.114.0",
           "provenance": {
             "upstream_repo": "openai/codex",
             "upstream_release_tag": "rust-v0.114.0",
             "upstream_commit_sha": "b9904c0ae4ecb773549efd6ea3fb05229402fdb9",
             "ctx_repo": "ctxrs/codex-crp",
-            "ctx_release_tag": "v0.0.0-ctx.5"
+            "ctx_release_tag": "v0.114.0-ctx.1"
           },
           "status": "supported",
           "context_min": "0.1.0",

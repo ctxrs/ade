@@ -62,6 +62,7 @@ fn bundled_only_mode_errors_when_bundled_command_missing() {
             managed: Some(ManagedInstallMetadata {
                 package: Some("qwen-managed".to_string()),
                 version: Some("1.0.0".to_string()),
+                sha256: None,
                 target: None,
                 install_dir_rel: None,
                 bin_dir_rel: None,
@@ -135,6 +136,7 @@ fn resolve_runtime_provider_command_preserves_raw_bundle_symlink_paths() {
             managed: Some(ManagedInstallMetadata {
                 package: Some("@openai/codex".to_string()),
                 version: Some("1.0.0".to_string()),
+                sha256: None,
                 target: Some(InstallTarget::Container),
                 install_dir_rel: None,
                 bin_dir_rel: None,
@@ -169,6 +171,7 @@ fn migration_moves_legacy_managed_provider_entries_into_target_buckets() {
             managed: Some(ManagedInstallMetadata {
                 package: Some("@openai/codex".to_string()),
                 version: Some("0.2.54".to_string()),
+                sha256: None,
                 target: None,
                 install_dir_rel: Some("providers/agent-servers/codex/0.2.54".to_string()),
                 bin_dir_rel: Some("providers/agent-servers/codex/0.2.54/bin".to_string()),
@@ -205,6 +208,7 @@ fn migration_preserves_runtime_dependency_entries_and_infers_target_from_id() {
         ManagedInstallMetadata {
             package: Some("node-runtime".to_string()),
             version: Some("24.14.0".to_string()),
+            sha256: None,
             target: None,
             install_dir_rel: Some("providers/runtimes/node/container".to_string()),
             bin_dir_rel: Some("providers/runtimes/node/container/bin".to_string()),
@@ -239,6 +243,7 @@ fn migration_rewrites_stale_kimi_managed_args_in_target_buckets() {
                 managed: Some(ManagedInstallMetadata {
                     package: Some("kimi".to_string()),
                     version: Some("1.17.0".to_string()),
+                    sha256: None,
                     target: Some(InstallTarget::Host),
                     install_dir_rel: Some("providers/agent-servers/kimi/1.17.0".to_string()),
                     bin_dir_rel: Some("providers/agent-servers/kimi/1.17.0/bin".to_string()),
@@ -261,6 +266,10 @@ fn migration_rewrites_stale_kimi_managed_args_in_target_buckets() {
 
 #[test]
 fn resolve_runtime_provider_command_for_target_prefers_target_bucket() {
+    let _guard = env_lock().lock().expect("lock env");
+    let _bundle_dir = EnvVarGuard::unset("CTX_BUNDLE_DIR");
+    let _strict = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY");
+    let _providers = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY_PROVIDERS");
     let temp = tempdir().expect("tempdir");
     let host = temp.path().join("codex-host");
     let container = temp.path().join("codex-container");
@@ -280,6 +289,7 @@ fn resolve_runtime_provider_command_for_target_prefers_target_bucket() {
                     managed: Some(ManagedInstallMetadata {
                         package: Some("@openai/codex".to_string()),
                         version: Some("1.0.0".to_string()),
+                        sha256: None,
                         target: Some(InstallTarget::Host),
                         install_dir_rel: None,
                         bin_dir_rel: None,
@@ -297,6 +307,7 @@ fn resolve_runtime_provider_command_for_target_prefers_target_bucket() {
                     managed: Some(ManagedInstallMetadata {
                         package: Some("@openai/codex".to_string()),
                         version: Some("1.0.0".to_string()),
+                        sha256: None,
                         target: Some(InstallTarget::Container),
                         install_dir_rel: None,
                         bin_dir_rel: None,
@@ -443,6 +454,7 @@ fn migration_drops_legacy_bundled_provider_commands() {
                 managed: Some(ManagedInstallMetadata {
                     package: Some("@openai/codex".to_string()),
                     version: Some("0.2.54".to_string()),
+                    sha256: None,
                     target: None,
                     install_dir_rel: Some("bundles/providers/codex/macos/aarch64".to_string()),
                     bin_dir_rel: None,
@@ -456,6 +468,7 @@ fn migration_drops_legacy_bundled_provider_commands() {
         ManagedInstallMetadata {
             package: Some("@openai/codex".to_string()),
             version: Some("0.2.54".to_string()),
+            sha256: None,
             target: None,
             install_dir_rel: Some("bundles/providers/codex/macos/aarch64".to_string()),
             bin_dir_rel: None,
@@ -467,4 +480,44 @@ fn migration_drops_legacy_bundled_provider_commands() {
     assert!(migrate_agent_server_config(&mut cfg));
     assert!(!cfg.providers.contains_key("codex"));
     assert!(!cfg.managed_installs.contains_key("codex"));
+}
+
+#[test]
+fn apply_managed_install_details_includes_sha256() {
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.managed_install_targets.insert(
+        "codex".to_string(),
+        HashMap::from([(
+            "linux-x86_64".to_string(),
+            ManagedInstallMetadata {
+                package: Some("@openai/codex".to_string()),
+                version: Some("0.114.0-ctx.1".to_string()),
+                sha256: Some("deadbeef".to_string()),
+                target: Some(InstallTarget::LinuxX8664),
+                install_dir_rel: Some("providers/agent-servers/codex/0.114.0-ctx.1".to_string()),
+                bin_dir_rel: None,
+                last_success_at: None,
+                last_error: None,
+            },
+        )]),
+    );
+
+    let mut status = ctx_providers::adapters::ProviderStatus {
+        provider_id: "codex".to_string(),
+        installed: true,
+        detected_path: None,
+        version: None,
+        capabilities: None,
+        health: ctx_providers::adapters::ProviderHealth::Ok,
+        diagnostics: Vec::new(),
+        details: HashMap::new(),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
+    };
+
+    apply_managed_install_details_for_target(&mut status, &cfg, Some(InstallTarget::LinuxX8664));
+
+    assert_eq!(
+        status.details.get("managed_sha256").map(String::as_str),
+        Some("deadbeef")
+    );
 }

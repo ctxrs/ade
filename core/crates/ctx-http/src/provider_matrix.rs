@@ -381,6 +381,32 @@ pub async fn apply_matrix_to_status(
     }
 
     let mut diagnostics = Vec::new();
+    if let Some((expected_sha256, detected_sha256)) =
+        detect_managed_archive_checksum_mismatch(cfg, entry, status, detected_version.as_deref())
+            .await
+    {
+        status
+            .details
+            .insert("managed_checksum_mismatch".to_string(), "true".to_string());
+        status.details.insert(
+            "managed_expected_sha256".to_string(),
+            expected_sha256.clone(),
+        );
+        status.details.insert(
+            "managed_detected_sha256".to_string(),
+            detected_sha256.clone(),
+        );
+        status
+            .details
+            .insert("matrix_update_available".to_string(), "true".to_string());
+        status.installed = false;
+        status.capabilities = None;
+        status.health = ctx_providers::adapters::ProviderHealth::Error;
+        diagnostics.push(format!(
+            "Managed provider artifact checksum mismatch; expected {expected_sha256}, found {detected_sha256}. Reinstall {} to restore the pinned release.",
+            status.provider_id
+        ));
+    }
 
     if status.installed {
         if let Some(version) = detected_version.as_deref() {
@@ -506,6 +532,61 @@ fn install_target_from_status(
         .get("install_target")
         .or_else(|| status.details.get("managed_target"))
         .and_then(|value| crate::installer::parse_install_target(Some(value.as_str())).ok())
+}
+
+async fn detect_managed_archive_checksum_mismatch(
+    cfg: &AgentServerConfigFile,
+    entry: &ProviderMatrixEntry,
+    status: &ctx_providers::adapters::ProviderStatus,
+    detected_version: Option<&str>,
+) -> Option<(String, String)> {
+    if !status.installed {
+        return None;
+    }
+    let requested_target = install_target_from_status(status)?;
+    let meta = crate::installer::managed_install_metadata_for_target(
+        cfg,
+        &status.provider_id,
+        Some(requested_target),
+    )?;
+    let version = detected_version.or(meta.version.as_deref())?;
+    let release = release_for_version(entry, version)?;
+    let expected_target = managed_archive_target_for_release(entry, release, requested_target)?;
+    let expected_sha256 = expected_target.sha256.as_deref()?.trim();
+    let command = crate::installer::managed_provider_command_for_target(
+        cfg,
+        &status.provider_id,
+        Some(requested_target),
+    )?;
+    let command_path = Path::new(&command.command);
+    if !command_path.is_absolute() || !command_path.exists() {
+        return None;
+    }
+    let detected_sha256 = crate::installer::sha256_file_for_path(command_path)
+        .await
+        .ok()?;
+    if detected_sha256.eq_ignore_ascii_case(expected_sha256) {
+        return None;
+    }
+    Some((expected_sha256.to_string(), detected_sha256))
+}
+
+fn managed_archive_target_for_release<'a>(
+    entry: &'a ProviderMatrixEntry,
+    release: &ProviderRelease,
+    requested_target: crate::installs::InstallTarget,
+) -> Option<&'a ProviderArchiveTarget> {
+    let ProviderInstall::Archive {
+        version, targets, ..
+    } = entry.managed_install.as_ref()?
+    else {
+        return None;
+    };
+    if normalize_version(version) != normalize_version(&release.version) {
+        return None;
+    }
+    let target_key = crate::installer::resolve_matrix_target_key(requested_target).ok()?;
+    targets.get(target_key)
 }
 
 async fn detect_provider_version(

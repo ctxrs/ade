@@ -165,6 +165,7 @@ async fn seed_container_only_install(data_root: &Path, provider_id: &str) -> std
     let meta = ManagedInstallMetadata {
         package: Some(format!("{provider_id}-pkg")),
         version: Some("1.0.0".to_string()),
+        sha256: None,
         target: Some(InstallTarget::Container),
         install_dir_rel: Some(format!(
             "providers/agent-servers/{provider_id}/fixture/container"

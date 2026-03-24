@@ -292,6 +292,7 @@ async fn seed_runtime_and_status(
         ManagedInstallMetadata {
             package: Some("node-runtime".to_string()),
             version: Some("fixture".to_string()),
+            sha256: None,
             target: None,
             install_dir_rel: None,
             bin_dir_rel: Some(dep_bin_rel),

@@ -348,6 +348,10 @@ pub fn resolve_matrix_target_key(target: InstallTarget) -> Result<&'static str> 
     }
 }
 
+pub(crate) async fn sha256_file_for_path(path: &Path) -> Result<String> {
+    artifacts::sha256_file(path).await
+}
+
 pub fn is_supported_managed_provider_for_target(
     matrix: &provider_matrix::ProviderMatrix,
     provider_id: &str,
@@ -656,6 +660,7 @@ async fn install_managed_npm_provider(
     let meta = ManagedInstallMetadata {
         package: Some(package.to_string()),
         version: Some(version.to_string()),
+        sha256: None,
         target: Some(target),
         install_dir_rel: Some(install_dir_rel),
         bin_dir_rel: None,
@@ -704,6 +709,7 @@ async fn install_managed_archive_provider(
     let meta = ManagedInstallMetadata {
         package: Some(url.to_string()),
         version: Some(version.to_string()),
+        sha256: expected_sha256.map(str::to_string),
         target: Some(target),
         install_dir_rel: Some(install_dir_rel(&state.core.data_root, &install_dir)),
         bin_dir_rel: None,
@@ -935,6 +941,7 @@ async fn install_managed_python_provider(
     let meta = ManagedInstallMetadata {
         package: Some(package.to_string()),
         version: Some(version.to_string()),
+        sha256: None,
         target: Some(target),
         install_dir_rel: Some(install_dir_rel),
         bin_dir_rel: None,

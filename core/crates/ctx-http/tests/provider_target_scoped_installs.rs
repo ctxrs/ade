@@ -145,6 +145,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                     managed: Some(ManagedInstallMetadata {
                         package: Some("@openai/codex".to_string()),
                         version: Some("1.0.0-host".to_string()),
+                        sha256: None,
                         target: Some(ctx_http::installs::InstallTarget::Host),
                         install_dir_rel: Some(
                             "providers/agent-servers/codex/host-fixture".to_string(),
@@ -166,6 +167,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                     managed: Some(ManagedInstallMetadata {
                         package: Some("@openai/codex".to_string()),
                         version: Some("1.0.0-container".to_string()),
+                        sha256: None,
                         target: Some(ctx_http::installs::InstallTarget::Container),
                         install_dir_rel: Some(
                             "providers/agent-servers/codex/container-fixture".to_string(),
@@ -188,6 +190,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                 ManagedInstallMetadata {
                     package: Some("@openai/codex".to_string()),
                     version: Some("1.0.0-host".to_string()),
+                    sha256: None,
                     target: Some(ctx_http::installs::InstallTarget::Host),
                     install_dir_rel: Some("providers/agent-servers/codex/host-fixture".to_string()),
                     bin_dir_rel: Some("providers/agent-servers/codex/host-fixture/bin".to_string()),
@@ -200,6 +203,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                 ManagedInstallMetadata {
                     package: Some("@openai/codex".to_string()),
                     version: Some("1.0.0-container".to_string()),
+                    sha256: None,
                     target: Some(ctx_http::installs::InstallTarget::Container),
                     install_dir_rel: Some(
                         "providers/agent-servers/codex/container-fixture".to_string(),
@@ -218,6 +222,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
         ManagedInstallMetadata {
             package: Some("node-runtime".to_string()),
             version: Some("24.14.0".to_string()),
+            sha256: None,
             target: Some(ctx_http::installs::InstallTarget::Host),
             install_dir_rel: Some("providers/runtimes/runtime-node-host".to_string()),
             bin_dir_rel: Some(host_bin_rel.to_string()),
@@ -230,6 +235,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
         ManagedInstallMetadata {
             package: Some("node-runtime".to_string()),
             version: Some("24.14.0".to_string()),
+            sha256: None,
             target: Some(ctx_http::installs::InstallTarget::Container),
             install_dir_rel: Some("providers/runtimes/runtime-node-container".to_string()),
             bin_dir_rel: Some(container_bin_rel.to_string()),
@@ -691,6 +697,7 @@ async fn save_invalid_container_bridge_runtime(data_root: &Path) {
                 managed: Some(ManagedInstallMetadata {
                     package: Some("acp-crp-bridge".to_string()),
                     version: Some("1.0.0".to_string()),
+                    sha256: None,
                     target: Some(ctx_http::installs::InstallTarget::Container),
                     install_dir_rel: Some(
                         "providers/agent-servers/acp-crp-bridge/invalid".to_string(),

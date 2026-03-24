@@ -98,6 +98,7 @@ async fn install_lsp_catalog_server_impl(
             let meta = ManagedInstallMetadata {
                 package: Some("system".to_string()),
                 version: None,
+                sha256: None,
                 target: None,
                 install_dir_rel: None,
                 bin_dir_rel: None,
@@ -168,6 +169,7 @@ async fn install_lsp_catalog_server_impl(
             let meta = ManagedInstallMetadata {
                 package: Some(module),
                 version: Some(version.clone()),
+                sha256: None,
                 target: None,
                 install_dir_rel: Some(install_dir_rel(&data_root, &install_dir)),
                 bin_dir_rel: None,
@@ -216,6 +218,7 @@ async fn install_lsp_catalog_server_impl(
             let meta = ManagedInstallMetadata {
                 package: Some(t.url.clone()),
                 version: Some(version.clone()),
+                sha256: None,
                 target: None,
                 install_dir_rel: Some(install_dir_rel(&data_root, bin.parent().unwrap_or(&bin))),
                 bin_dir_rel: None,
@@ -337,6 +340,7 @@ async fn install_lsp_server_impl(
             let meta = ManagedInstallMetadata {
                 package: Some(package.to_string()),
                 version: Some(version.to_string()),
+                sha256: None,
                 target: None,
                 install_dir_rel: Some(install_dir_rel),
                 bin_dir_rel: None,
@@ -724,6 +728,7 @@ async fn install_lsp_server_impl(
             ManagedInstallMetadata {
                 package: None,
                 version: None,
+                sha256: None,
                 target: None,
                 install_dir_rel: None,
                 bin_dir_rel: None,

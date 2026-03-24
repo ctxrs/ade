@@ -1,5 +1,7 @@
 use super::*;
 use crate::installer::{AgentServerCommand, ManagedInstallMetadata};
+use crate::installs::InstallTarget;
+use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 #[test]
@@ -405,6 +407,7 @@ fn managed_dependency_update_available_when_runtime_dependency_version_mismatche
         ManagedInstallMetadata {
             package: Some("node-runtime".to_string()),
             version: Some("0.0.1".to_string()),
+            sha256: None,
             target: None,
             install_dir_rel: None,
             bin_dir_rel: None,
@@ -445,6 +448,7 @@ fn managed_dependency_update_unavailable_when_runtime_dependency_matches_expecte
         ManagedInstallMetadata {
             package: Some("node-runtime".to_string()),
             version: Some(expected.to_string()),
+            sha256: None,
             target: None,
             install_dir_rel: None,
             bin_dir_rel: None,
@@ -464,4 +468,192 @@ fn managed_dependency_update_unavailable_when_runtime_dependency_matches_expecte
         usability: ctx_providers::adapters::ProviderUsability::default(),
     };
     assert!(!managed_dependency_update_available(&cfg, &status));
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
+
+fn codex_archive_test_entry(version: &str, sha256: &str) -> ProviderMatrixEntry {
+    ProviderMatrixEntry {
+        id: "codex".to_string(),
+        kind: ProviderMatrixEntryKind::Harness,
+        display_name: Some("Codex".to_string()),
+        tier: Some("tier1".to_string()),
+        command: None,
+        managed_install: Some(ProviderInstall::Archive {
+            version: version.to_string(),
+            args: Vec::new(),
+            targets: HashMap::from([(
+                "linux-x86_64".to_string(),
+                ProviderArchiveTarget {
+                    url: "https://example.com/codex.tar.gz".to_string(),
+                    sha256: Some(sha256.to_string()),
+                    size_bytes: None,
+                    archive: ProviderArchiveKind::TarGz,
+                    bin_path: "codex-crp".to_string(),
+                },
+            )]),
+        }),
+        provider_dependencies: Vec::new(),
+        dependencies: Vec::new(),
+        version_probe: None,
+        releases: vec![ProviderRelease {
+            version: version.to_string(),
+            status: ProviderReleaseStatus::Supported,
+            upstream_version: Some("0.114.0".to_string()),
+            context_min: None,
+            context_max: None,
+            notes: None,
+            provenance: None,
+        }],
+    }
+}
+
+fn managed_archive_cfg(
+    command_path: &Path,
+    version: &str,
+    installed_sha256: &str,
+) -> AgentServerConfigFile {
+    let meta = ManagedInstallMetadata {
+        package: Some("https://example.com/codex.tar.gz".to_string()),
+        version: Some(version.to_string()),
+        sha256: Some(installed_sha256.to_string()),
+        target: Some(InstallTarget::LinuxX8664),
+        install_dir_rel: Some(format!("providers/agent-servers/codex/{version}")),
+        bin_dir_rel: None,
+        last_success_at: None,
+        last_error: None,
+    };
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.managed_install_targets.insert(
+        "codex".to_string(),
+        HashMap::from([("linux-x86_64".to_string(), meta.clone())]),
+    );
+    cfg.managed_provider_targets.insert(
+        "codex".to_string(),
+        HashMap::from([(
+            "linux-x86_64".to_string(),
+            AgentServerCommand {
+                command: command_path.to_string_lossy().to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: Some(meta),
+            },
+        )]),
+    );
+    cfg
+}
+
+#[tokio::test]
+async fn apply_matrix_to_status_flags_managed_archive_checksum_mismatch() {
+    let temp = tempdir().expect("tempdir");
+    let runtime = temp.path().join("codex-crp");
+    let actual_bytes = b"old-codex-runtime";
+    std::fs::write(&runtime, actual_bytes).expect("write runtime");
+
+    let expected_sha256 = sha256_hex(b"new-codex-runtime");
+    let actual_sha256 = sha256_hex(actual_bytes);
+    let entry = codex_archive_test_entry("0.114.0-ctx.1", &expected_sha256);
+    let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.1", &actual_sha256);
+    let mut status = ctx_providers::adapters::ProviderStatus {
+        provider_id: "codex".to_string(),
+        installed: true,
+        detected_path: Some(runtime.to_string_lossy().to_string()),
+        version: None,
+        capabilities: Some(ctx_providers::adapters::ProviderCapabilities {
+            stream_events: true,
+            stream_format: "jsonl".to_string(),
+            has_turn_boundaries: true,
+            has_tool_call_ids: true,
+            has_file_change_events: true,
+            has_command_events: true,
+            supports_resume: true,
+            supports_stable_session_id: true,
+            supports_fork_or_rewind: true,
+            supports_headless: true,
+            supports_server_mode: true,
+            supports_interactive_tui: false,
+            supports_private_state_dir: true,
+            supports_sandbox_flags: true,
+            supports_approval_flags: true,
+            notes: Vec::new(),
+        }),
+        health: ctx_providers::adapters::ProviderHealth::Ok,
+        diagnostics: Vec::new(),
+        details: HashMap::from([(
+            "install_target".to_string(),
+            InstallTarget::LinuxX8664.as_str().to_string(),
+        )]),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
+    };
+
+    apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status).await;
+
+    assert!(!status.installed);
+    assert!(status.capabilities.is_none());
+    assert!(matches!(
+        status.health,
+        ctx_providers::adapters::ProviderHealth::Error
+    ));
+    assert_eq!(
+        status
+            .details
+            .get("managed_checksum_mismatch")
+            .map(String::as_str),
+        Some("true")
+    );
+    assert_eq!(
+        status
+            .details
+            .get("managed_expected_sha256")
+            .map(String::as_str),
+        Some(expected_sha256.as_str())
+    );
+    assert_eq!(
+        status
+            .details
+            .get("managed_detected_sha256")
+            .map(String::as_str),
+        Some(actual_sha256.as_str())
+    );
+    assert!(status
+        .diagnostics
+        .iter()
+        .any(|msg| msg.contains("checksum mismatch")));
+}
+
+#[tokio::test]
+async fn apply_matrix_to_status_accepts_matching_managed_archive_checksum() {
+    let temp = tempdir().expect("tempdir");
+    let runtime = temp.path().join("codex-crp");
+    let bytes = b"matching-codex-runtime";
+    std::fs::write(&runtime, bytes).expect("write runtime");
+
+    let sha256 = sha256_hex(bytes);
+    let entry = codex_archive_test_entry("0.114.0-ctx.1", &sha256);
+    let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.1", &sha256);
+    let mut status = ctx_providers::adapters::ProviderStatus {
+        provider_id: "codex".to_string(),
+        installed: true,
+        detected_path: Some(runtime.to_string_lossy().to_string()),
+        version: None,
+        capabilities: None,
+        health: ctx_providers::adapters::ProviderHealth::Ok,
+        diagnostics: Vec::new(),
+        details: HashMap::from([(
+            "install_target".to_string(),
+            InstallTarget::LinuxX8664.as_str().to_string(),
+        )]),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
+    };
+
+    apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status).await;
+
+    assert!(status.installed);
+    assert!(!status.details.contains_key("managed_checksum_mismatch"));
+    assert!(status
+        .diagnostics
+        .iter()
+        .all(|msg| !msg.contains("checksum mismatch")));
 }
