@@ -18,7 +18,12 @@ async fn ensure_container_for_worktree(
     state
         .execution
         .harness
-        .ensure_workspace_container(&workspace, &effective, &state.core.daemon_url)
+        .ensure_workspace_container_for_worktree(
+            &workspace,
+            worktree,
+            &effective,
+            &state.core.daemon_url,
+        )
         .await?;
     if matches!(
         effective.container.runtime,

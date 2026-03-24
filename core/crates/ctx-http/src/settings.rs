@@ -329,11 +329,31 @@ pub(crate) fn default_container_runtime_kind() -> ContainerRuntimeKind {
     }
 }
 
+pub(crate) fn default_container_mount_mode_for_runtime(
+    runtime: ContainerRuntimeKind,
+) -> ContainerMountMode {
+    match runtime {
+        ContainerRuntimeKind::AvfLinuxVm => ContainerMountMode::DiskIsolated,
+        ContainerRuntimeKind::Podman => ContainerMountMode::HostMounted,
+    }
+}
+
+pub(crate) fn normalize_container_execution_settings(settings: &mut ContainerExecutionSettings) {
+    if matches!(settings.runtime, ContainerRuntimeKind::AvfLinuxVm)
+        && matches!(settings.mount_mode, ContainerMountMode::HostMounted)
+    {
+        settings.mount_mode = ContainerMountMode::DiskIsolated;
+    }
+    normalize_container_machine_settings(&mut settings.machine);
+}
+
 impl Default for ContainerExecutionSettings {
     fn default() -> Self {
+        let runtime = default_container_runtime_kind();
+        let mount_mode = default_container_mount_mode_for_runtime(runtime.clone());
         Self {
-            runtime: default_container_runtime_kind(),
-            mount_mode: ContainerMountMode::HostMounted,
+            runtime,
+            mount_mode,
             network_mode: ContainerNetworkMode::LlmOnly,
             allowlist: Vec::new(),
             image: None,
@@ -716,6 +736,9 @@ pub async fn load_settings(store: &Store) -> anyhow::Result<Settings> {
     }
     if settings.network_profiles.is_none() {
         settings.network_profiles = Some(NetworkProfilesSettings::default());
+    }
+    if let Some(execution) = settings.execution.as_mut() {
+        normalize_container_execution_settings(&mut execution.container);
     }
 
     // Environment overrides (optional) for easy local bring-up.

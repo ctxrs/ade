@@ -130,7 +130,12 @@ async fn list_container_worktree_files(
     state
         .execution
         .harness
-        .ensure_workspace_container(&workspace, &settings, &state.core.daemon_url)
+        .ensure_workspace_container_for_worktree(
+            &workspace,
+            worktree,
+            &settings,
+            &state.core.daemon_url,
+        )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

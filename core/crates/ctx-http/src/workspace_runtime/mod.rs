@@ -153,6 +153,17 @@ pub(crate) async fn selected_runtime_state(
     }
 }
 
+fn avf_linux_branch_name_for_worktree(workspace: &Workspace, worktree: &Worktree) -> String {
+    worktree
+        .git_branch
+        .as_deref()
+        .or(worktree.vcs_ref.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("ctx/{}/{}", workspace.id.0, worktree.id.0))
+}
+
 pub(crate) async fn prewarm_selected_runtime_with_observer(
     data_root: &Path,
     settings: &ContainerExecutionSettings,
@@ -710,51 +721,11 @@ impl HarnessRuntimeManager {
         }
         if matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm) {
             let _activity = self.begin_runtime_operation();
-            if !matches!(
-                settings.container.mount_mode,
-                ContainerMountMode::DiskIsolated
-            ) {
-                anyhow::bail!(
-                    "AVF Linux VM host-mounted workspaces are not implemented yet; use disk-isolated mode"
-                );
-            }
-            let workspace_vm = ensure_avf_linux_workspace_vm_ready_with_observer(
-                &self.data_root,
-                workspace.id,
-                &settings.container,
-                None,
-            )
-            .await?;
-            let branch_name = worktree
-                .git_branch
-                .as_deref()
-                .or(worktree.vcs_ref.as_deref())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| format!("ctx/{}/{}", workspace.id.0, worktree.id.0));
-            let guest_worktree_root = ensure_avf_linux_guest_worktree_from_host_copy(
-                &self.data_root,
-                workspace.id,
-                worktree.id,
-                Path::new(&workspace.root_path),
-                &worktree.base_commit_sha,
-                &branch_name,
-                None,
-            )
-            .await?;
-            let daemon_port = daemon_port_from_url(daemon_url).unwrap_or(4399);
-            let egress_guard = apply_avf_linux_network_policy(
-                &self.data_root,
-                workspace.id,
-                worktree.id,
-                &guest_worktree_root,
-                &settings.container,
-                "192.168.64.1",
-                daemon_port,
-            )
-            .await?
-            .egress_guard;
+            let (workspace_vm, guest_worktree_root, egress_guard) = self
+                .ensure_avf_linux_workspace_worktree_ready_with_observer(
+                    workspace, worktree, settings, daemon_url, None,
+                )
+                .await?;
             let avf_data_root = container_data_root(&self.data_root, workspace.id);
             tokio::fs::create_dir_all(&avf_data_root).await.ok();
             env_overrides.insert(
@@ -897,6 +868,41 @@ impl HarnessRuntimeManager {
             .await
     }
 
+    pub async fn ensure_workspace_container_for_worktree(
+        &self,
+        workspace: &Workspace,
+        worktree: &Worktree,
+        settings: &ExecutionSettings,
+        daemon_url: &str,
+    ) -> Result<()> {
+        self.ensure_workspace_container_for_worktree_with_observer(
+            workspace, worktree, settings, daemon_url, None,
+        )
+        .await
+    }
+
+    pub async fn ensure_workspace_container_for_worktree_with_observer(
+        &self,
+        workspace: &Workspace,
+        worktree: &Worktree,
+        settings: &ExecutionSettings,
+        daemon_url: &str,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()> {
+        if matches!(settings.mode, ExecutionMode::Host) {
+            return Ok(());
+        }
+        if matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm) {
+            self.ensure_avf_linux_workspace_worktree_ready_with_observer(
+                workspace, worktree, settings, daemon_url, observer,
+            )
+            .await?;
+            return Ok(());
+        }
+        self.ensure_workspace_container_with_observer(workspace, settings, daemon_url, observer)
+            .await
+    }
+
     pub async fn ensure_workspace_container_with_observer(
         &self,
         workspace: &Workspace,
@@ -957,6 +963,14 @@ impl HarnessRuntimeManager {
             return Ok(());
         }
         if matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm) {
+            ensure_avf_linux_workspace_vm_ready_with_observer(
+                &self.data_root,
+                workspace.id,
+                &settings.container,
+                observer,
+            )
+            .await
+            .context("AVF Linux workspace VM is unavailable")?;
             return Ok(());
         }
         let proxy_host = "host.containers.internal";
@@ -973,6 +987,56 @@ impl HarnessRuntimeManager {
             })
             .await?;
         Ok(())
+    }
+
+    async fn ensure_avf_linux_workspace_worktree_ready_with_observer(
+        &self,
+        workspace: &Workspace,
+        worktree: &Worktree,
+        settings: &ExecutionSettings,
+        daemon_url: &str,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<(self::avf_linux_vm::AvfLinuxSharedVmState, PathBuf, bool)> {
+        self.ensure_workspace_container_with_observer(workspace, settings, daemon_url, observer)
+            .await?;
+        if !matches!(
+            settings.container.mount_mode,
+            ContainerMountMode::DiskIsolated
+        ) {
+            anyhow::bail!(
+                "AVF Linux VM host-mounted workspaces are not implemented yet; use disk-isolated mode"
+            );
+        }
+        let workspace_vm = ensure_avf_linux_workspace_vm_ready_with_observer(
+            &self.data_root,
+            workspace.id,
+            &settings.container,
+            observer,
+        )
+        .await?;
+        let guest_worktree_root = ensure_avf_linux_guest_worktree_from_host_copy(
+            &self.data_root,
+            workspace.id,
+            worktree.id,
+            Path::new(&workspace.root_path),
+            &worktree.base_commit_sha,
+            &avf_linux_branch_name_for_worktree(workspace, worktree),
+            observer,
+        )
+        .await?;
+        let daemon_port = daemon_port_from_url(daemon_url).unwrap_or(4399);
+        let egress_guard = apply_avf_linux_network_policy(
+            &self.data_root,
+            workspace.id,
+            worktree.id,
+            &guest_worktree_root,
+            &settings.container,
+            AVF_GUEST_HOST_GATEWAY,
+            daemon_port,
+        )
+        .await?
+        .egress_guard;
+        Ok((workspace_vm, guest_worktree_root, egress_guard))
     }
 
     pub async fn ensure_workspace_container_after_runtime_ready_with_observer(

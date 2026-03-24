@@ -2122,6 +2122,100 @@ async fn ensure_workspace_container_starts_avf_workspace_vm() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn ensure_workspace_container_for_worktree_prepares_avf_guest_worktree() {
+    let _serial = env_var_test_lock().lock().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = runtime_manager(&temp).await;
+    let helper_path = write_avf_linux_lifecycle_helper(temp.path());
+    let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
+    let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
+    let workspace = sample_workspace(&temp);
+    let worktree = sample_worktree(&temp, workspace.id);
+    let settings = ExecutionSettings {
+        mode: ExecutionMode::Container,
+        container: ContainerExecutionSettings {
+            runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
+            mount_mode: ContainerMountMode::DiskIsolated,
+            ..ContainerExecutionSettings::default()
+        },
+    };
+
+    manager
+        .ensure_workspace_container_for_worktree(
+            &workspace,
+            &worktree,
+            &settings,
+            "http://192.168.64.1:4399",
+        )
+        .await
+        .expect("AVF worktree ensure should prepare the guest worktree");
+
+    let prepared = super::avf_linux_vm::prepare_guest_worktree(
+        temp.path(),
+        workspace.id,
+        worktree.id,
+        Path::new(&workspace.root_path),
+        &worktree.base_commit_sha,
+        &format!("ctx/{}/{}", workspace.id.0, worktree.id.0),
+    )
+    .expect("AVF guest worktree metadata should already exist");
+    assert_eq!(
+        prepared.status,
+        super::avf_linux_vm::AvfLinuxGuestWorktreeStatus::AlreadyPresent
+    );
+
+    for server in servers {
+        server.abort();
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn ensure_workspace_container_after_runtime_ready_starts_avf_workspace_vm() {
+    let _serial = env_var_test_lock().lock().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = runtime_manager(&temp).await;
+    let helper_path = write_avf_linux_lifecycle_helper(temp.path());
+    let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
+    let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
+    let workspace = sample_workspace(&temp);
+    let settings = ExecutionSettings {
+        mode: ExecutionMode::Container,
+        container: ContainerExecutionSettings {
+            runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
+            mount_mode: ContainerMountMode::DiskIsolated,
+            ..ContainerExecutionSettings::default()
+        },
+    };
+
+    manager
+        .ensure_container_machine_ready(&settings.container, None)
+        .await
+        .expect("AVF runtime artifacts should prewarm");
+    manager
+        .ensure_workspace_container_after_runtime_ready_with_observer(
+            &workspace,
+            &settings,
+            "http://192.168.64.1:4399",
+            None,
+        )
+        .await
+        .expect("AVF workspace VM should start from runtime-ready path");
+
+    let state = super::avf_linux_vm::workspace_vm_state(temp.path(), workspace.id)
+        .expect("workspace VM state");
+    assert_eq!(
+        state.state,
+        super::avf_linux_vm::AvfLinuxSharedVmLifecycleState::Running
+    );
+
+    for server in servers {
+        server.abort();
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn stop_container_stops_avf_workspace_vm() {
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");

@@ -65,12 +65,22 @@ impl ContainerFs {
             .get_workspace(workspace_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
+        let worktree = state
+            .global_store()
+            .get_worktree(worktree_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("worktree not found"))?;
         let effective =
             execution_effective::effective_execution_settings(state, workspace_id).await?;
         state
             .execution
             .harness
-            .ensure_workspace_container(&workspace, &effective, &state.core.daemon_url)
+            .ensure_workspace_container_for_worktree(
+                &workspace,
+                &worktree,
+                &effective,
+                &state.core.daemon_url,
+            )
             .await?;
         Ok(match effective.container.runtime {
             ContainerRuntimeKind::Podman => Self::new(

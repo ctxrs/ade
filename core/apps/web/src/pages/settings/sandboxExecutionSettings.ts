@@ -10,14 +10,21 @@ export function defaultContainerRuntimeKind(
   return daemonDefaultRuntime ?? "podman";
 }
 
+export function defaultContainerMountMode(
+  runtime: ApiExecutionSettings["container"]["runtime"],
+): ApiExecutionSettings["container"]["mount_mode"] {
+  return runtime === "avf_linux_vm" ? "disk_isolated" : "host_mounted";
+}
+
 export function defaultExecutionSettings(
   daemonDefaultRuntime?: ApiExecutionSettings["container"]["runtime"] | null,
 ): ApiExecutionSettings {
+  const runtime = defaultContainerRuntimeKind(daemonDefaultRuntime);
   return {
     mode: "host",
     container: {
-      runtime: defaultContainerRuntimeKind(daemonDefaultRuntime),
-      mount_mode: "host_mounted",
+      runtime,
+      mount_mode: defaultContainerMountMode(runtime),
       network_mode: "llm_only",
       allowlist: [],
       image: null,
@@ -36,11 +43,13 @@ export function normalizeExecutionSettings(
   daemonDefaultRuntime?: ApiExecutionSettings["container"]["runtime"] | null,
 ): ApiExecutionSettings {
   const fallback = defaultExecutionSettings(daemonDefaultRuntime);
+  const runtime = value?.container?.runtime ?? fallback.container.runtime;
+  const mountMode = value?.container?.mount_mode ?? fallback.container.mount_mode;
   return {
     mode: value?.mode ?? fallback.mode,
     container: {
-      runtime: value?.container?.runtime ?? fallback.container.runtime,
-      mount_mode: value?.container?.mount_mode ?? fallback.container.mount_mode,
+      runtime,
+      mount_mode: runtime === "avf_linux_vm" ? "disk_isolated" : mountMode,
       network_mode: value?.container?.network_mode ?? fallback.container.network_mode,
       allowlist: value?.container?.allowlist ?? fallback.container.allowlist,
       image: value?.container?.image ?? fallback.container.image,

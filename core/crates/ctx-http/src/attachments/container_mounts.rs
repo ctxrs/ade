@@ -16,12 +16,18 @@ enum AttachmentRuntime {
 async fn ensure_workspace_container_for_attachments(
     state: &AppState,
     workspace: &Workspace,
+    worktree: &Worktree,
 ) -> Result<ContainerRuntimeKind> {
     let effective = execution_effective::effective_execution_settings(state, workspace.id).await?;
     state
         .execution
         .harness
-        .ensure_workspace_container(workspace, &effective, &state.core.daemon_url)
+        .ensure_workspace_container_for_worktree(
+            workspace,
+            worktree,
+            &effective,
+            &state.core.daemon_url,
+        )
         .await?;
     Ok(effective.container.runtime)
 }
@@ -32,7 +38,12 @@ async fn attachment_runtime_for_worktree(
     worktree_id: WorktreeId,
     worktree_root: &Path,
 ) -> Result<AttachmentRuntime> {
-    let runtime = ensure_workspace_container_for_attachments(state, workspace).await?;
+    let worktree = state
+        .global_store()
+        .get_worktree(worktree_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("worktree not found for attachment mount"))?;
+    let runtime = ensure_workspace_container_for_attachments(state, workspace, &worktree).await?;
     Ok(match runtime {
         ContainerRuntimeKind::Podman => AttachmentRuntime::Podman {
             container_id: workspace_container_name(workspace.id),

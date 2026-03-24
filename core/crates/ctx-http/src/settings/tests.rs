@@ -20,9 +20,15 @@ fn network_profiles_defaults_are_safe_for_system_tasks() {
 fn container_machine_defaults_are_stable() {
     let settings = ContainerExecutionSettings::default();
     #[cfg(target_os = "macos")]
-    assert_eq!(settings.runtime, ContainerRuntimeKind::AvfLinuxVm);
+    {
+        assert_eq!(settings.runtime, ContainerRuntimeKind::AvfLinuxVm);
+        assert_eq!(settings.mount_mode, ContainerMountMode::DiskIsolated);
+    }
     #[cfg(not(target_os = "macos"))]
-    assert_eq!(settings.runtime, ContainerRuntimeKind::Podman);
+    {
+        assert_eq!(settings.runtime, ContainerRuntimeKind::Podman);
+        assert_eq!(settings.mount_mode, ContainerMountMode::HostMounted);
+    }
     assert_eq!(
         settings.machine.memory_profile,
         ContainerMachineMemoryProfile::Economy
@@ -37,6 +43,19 @@ fn container_machine_defaults_are_stable() {
         settings.machine.host_pressure_swap_threshold_mb,
         default_container_machine_host_pressure_swap_threshold_mb()
     );
+}
+
+#[test]
+fn normalize_container_execution_settings_coerces_avf_to_disk_isolated() {
+    let mut settings = ContainerExecutionSettings {
+        runtime: ContainerRuntimeKind::AvfLinuxVm,
+        mount_mode: ContainerMountMode::HostMounted,
+        ..ContainerExecutionSettings::default()
+    };
+
+    normalize_container_execution_settings(&mut settings);
+
+    assert_eq!(settings.mount_mode, ContainerMountMode::DiskIsolated);
 }
 
 #[test]

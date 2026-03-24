@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   MIN_MACHINE_IDLE_SHUTDOWN_SECONDS,
   canSaveSandboxMachineSettings,
+  defaultContainerMountMode,
   defaultContainerRuntimeKind,
   defaultExecutionSettings,
+  normalizeExecutionSettings,
 } from "./settings/sandboxExecutionSettings";
 import {
   desktopEditorSettingsEqual,
@@ -156,12 +158,37 @@ describe("defaultExecutionSettings", () => {
   it("uses the daemon-reported runtime default when present", () => {
     expect(defaultContainerRuntimeKind("avf_linux_vm")).toBe("avf_linux_vm");
     expect(defaultExecutionSettings("avf_linux_vm").container.runtime).toBe("avf_linux_vm");
+    expect(defaultContainerMountMode("avf_linux_vm")).toBe("disk_isolated");
+    expect(defaultExecutionSettings("avf_linux_vm").container.mount_mode).toBe("disk_isolated");
   });
 
   it("keeps podman as the fallback when the daemon has not reported a preferred runtime", () => {
     expect(defaultContainerRuntimeKind()).toBe("podman");
     expect(defaultContainerRuntimeKind(null)).toBe("podman");
     expect(defaultExecutionSettings().container.runtime).toBe("podman");
+    expect(defaultContainerMountMode("podman")).toBe("host_mounted");
+    expect(defaultExecutionSettings().container.mount_mode).toBe("host_mounted");
+  });
+
+  it("coerces avf execution settings to disk-isolated mounts", () => {
+    expect(
+      normalizeExecutionSettings({
+        mode: "container",
+        container: {
+          runtime: "avf_linux_vm",
+          mount_mode: "host_mounted",
+          network_mode: "llm_only",
+          allowlist: [],
+          image: null,
+          machine: {
+            memory_profile: "economy",
+            custom_memory_mb: null,
+            idle_shutdown_seconds: 3600,
+            host_pressure_swap_threshold_mb: 1024,
+          },
+        },
+      }).container.mount_mode,
+    ).toBe("disk_isolated");
   });
 });
 

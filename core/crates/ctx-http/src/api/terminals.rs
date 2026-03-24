@@ -146,7 +146,7 @@ pub(super) async fn create_workspace_terminal(
             )
         })?;
 
-    let worktree_root = if let Some(wt_id) = worktree_id {
+    let worktree = if let Some(wt_id) = worktree_id {
         let store = state.store_for_worktree(wt_id).await.map_err(|_| {
             (
                 StatusCode::NOT_FOUND,
@@ -172,6 +172,12 @@ pub(super) async fn create_workspace_terminal(
                     error: "worktree not found".to_string(),
                 }),
             ))?;
+        Some(wt)
+    } else {
+        None
+    };
+
+    let worktree_root = if let Some(wt) = worktree.as_ref() {
         let root = PathBuf::from(&wt.root_path);
         if is_container_path(&root) {
             Some(root)
@@ -284,21 +290,21 @@ pub(super) async fn create_workspace_terminal(
     };
 
     let (podman, avf_linux_vm) = if container_mode {
-        state
-            .execution
-            .harness
-            .ensure_workspace_container(&workspace, &effective, &state.core.daemon_url)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: format!("failed to ensure harness container: {e}"),
-                    }),
-                )
-            })?;
         match effective.container.runtime {
             ContainerRuntimeKind::Podman => {
+                state
+                    .execution
+                    .harness
+                    .ensure_workspace_container(&workspace, &effective, &state.core.daemon_url)
+                    .await
+                    .map_err(|e| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiErrorResp {
+                                error: format!("failed to ensure harness container: {e}"),
+                            }),
+                        )
+                    })?;
                 let inv =
                     harness_runtime::podman_invocation(&state.core.data_root).map_err(|e| {
                         (
@@ -319,13 +325,31 @@ pub(super) async fn create_workspace_terminal(
                 )
             }
             ContainerRuntimeKind::AvfLinuxVm => {
-                let worktree_id = worktree_id.ok_or((
+                let worktree = worktree.as_ref().ok_or((
                     StatusCode::BAD_REQUEST,
                     Json(ApiErrorResp {
                         error: "sandbox terminals require a worktree for the AVF runtime"
                             .to_string(),
                     }),
                 ))?;
+                state
+                    .execution
+                    .harness
+                    .ensure_workspace_container_for_worktree(
+                        &workspace,
+                        worktree,
+                        &effective,
+                        &state.core.daemon_url,
+                    )
+                    .await
+                    .map_err(|e| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiErrorResp {
+                                error: format!("failed to ensure AVF workspace VM: {e}"),
+                            }),
+                        )
+                    })?;
                 let helper_path = harness_runtime::avf_linux_helper_path().map_err(|e| {
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -340,7 +364,7 @@ pub(super) async fn create_workspace_terminal(
                         helper_path,
                         data_root: state.core.data_root.clone(),
                         workspace_id,
-                        worktree_id,
+                        worktree_id: worktree.id,
                         workdir: cwd.to_string_lossy().to_string(),
                     }),
                 )

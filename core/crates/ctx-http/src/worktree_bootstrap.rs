@@ -17,6 +17,7 @@ use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::harness_runtime;
 use crate::logs;
+use crate::settings::ContainerRuntimeKind;
 use crate::workspace_config;
 
 const DEFAULT_TIMEOUT_SEC: u64 = 60;
@@ -427,53 +428,80 @@ async fn run_bootstrap_step_in_container(
     state
         .execution
         .harness
-        .ensure_workspace_container(workspace, &settings, &state.core.daemon_url)
+        .ensure_workspace_container_for_worktree(
+            workspace,
+            worktree,
+            &settings,
+            &state.core.daemon_url,
+        )
         .await?;
+    let mut env = std::collections::HashMap::new();
+    env.insert(
+        "CTX_WORKSPACE_ROOT".to_string(),
+        worktree.root_path.trim().to_string(),
+    );
+    env.insert(
+        "CTX_WORKTREE_ROOT".to_string(),
+        worktree.root_path.trim().to_string(),
+    );
+    env.insert("CTX_WORKTREE_ID".to_string(), worktree.id.0.to_string());
+    env.insert(
+        "CTX_BRANCH_NAME".to_string(),
+        worktree
+            .vcs_ref
+            .clone()
+            .or_else(|| worktree.git_branch.clone())
+            .unwrap_or_default(),
+    );
+    env.insert(
+        "CTX_BASE_REVISION".to_string(),
+        worktree
+            .base_revision
+            .as_deref()
+            .unwrap_or(&worktree.base_commit_sha)
+            .to_string(),
+    );
+    env.insert(
+        "CTX_BASE_COMMIT_SHA".to_string(),
+        worktree
+            .base_revision
+            .as_deref()
+            .unwrap_or(&worktree.base_commit_sha)
+            .to_string(),
+    );
 
-    let container_name = harness_runtime::workspace_container_name(workspace.id);
-    let mut cmd = harness_runtime::podman_command(&state.core.data_root)?;
-    cmd.arg("exec")
-        .arg("--workdir")
-        .arg(&worktree.root_path)
-        .arg("--env")
-        // v1: treat the worktree root as the effective workspace root for container-only worktrees.
-        .arg(format!("CTX_WORKSPACE_ROOT={}", worktree.root_path.trim()))
-        .arg("--env")
-        .arg(format!("CTX_WORKTREE_ROOT={}", worktree.root_path.trim()))
-        .arg("--env")
-        .arg(format!("CTX_WORKTREE_ID={}", worktree.id.0))
-        .arg("--env")
-        .arg(format!(
-            "CTX_BRANCH_NAME={}",
-            worktree
-                .vcs_ref
-                .clone()
-                .or_else(|| worktree.git_branch.clone())
-                .unwrap_or_default()
-        ))
-        .arg("--env")
-        .arg(format!(
-            "CTX_BASE_REVISION={}",
-            worktree
-                .base_revision
-                .as_deref()
-                .unwrap_or(&worktree.base_commit_sha)
-        ))
-        .arg("--env")
-        .arg(format!(
-            "CTX_BASE_COMMIT_SHA={}",
-            worktree
-                .base_revision
-                .as_deref()
-                .unwrap_or(&worktree.base_commit_sha)
-        ))
-        .arg(container_name);
-
-    match &step.kind {
-        BootstrapStepKind::Command { command } => {
-            cmd.arg("sh").arg("-lc").arg(command);
+    let mut cmd = match settings.container.runtime {
+        ContainerRuntimeKind::Podman => {
+            let container_name = harness_runtime::workspace_container_name(workspace.id);
+            let mut cmd = harness_runtime::podman_command(&state.core.data_root)?;
+            cmd.arg("exec").arg("--workdir").arg(&worktree.root_path);
+            for (key, value) in &env {
+                cmd.arg("--env").arg(format!("{key}={value}"));
+            }
+            cmd.arg(container_name);
+            match &step.kind {
+                BootstrapStepKind::Command { command } => {
+                    cmd.arg("sh").arg("-lc").arg(command);
+                }
+            }
+            cmd
         }
-    }
+        ContainerRuntimeKind::AvfLinuxVm => match &step.kind {
+            BootstrapStepKind::Command { command } => {
+                crate::workspace_runtime::build_avf_linux_guest_exec_command(
+                    &state.core.data_root,
+                    workspace.id,
+                    worktree.id,
+                    Path::new(&worktree.root_path),
+                    "sh",
+                    &["-lc".to_string(), command.clone()],
+                    &env,
+                    None,
+                    false,
+                )?
+            }
+        },
+    };
 
     let mut child = cmd
         .stdin(Stdio::null())
