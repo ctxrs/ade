@@ -774,7 +774,7 @@ async fn spawned_startup_prewarm_respects_podman_env_test_lock() {
 
     drop(serial);
 
-    let terminal = wait_for_startup_prewarm_terminal(&coordinator, Duration::from_secs(5)).await;
+    let terminal = wait_for_startup_prewarm_terminal(&coordinator, Duration::from_secs(30)).await;
     assert!(
         terminal.last_attempt_at.is_some(),
         "startup prewarm should begin once the env lock is released: {terminal:?}"

@@ -36,6 +36,7 @@ enum SessionHeadCompleteness {
 
 #[derive(Debug, Clone)]
 struct CachedSessionHead {
+    workspace_id: WorkspaceId,
     head: SessionHeadSnapshot,
     completeness: SessionHeadCompleteness,
 }
@@ -455,6 +456,7 @@ impl WorkspaceActiveSnapshotHub {
                 session_heads.insert(
                     head.session.id,
                     CachedSessionHead {
+                        workspace_id,
                         head: head.clone(),
                         completeness: SessionHeadCompleteness::Hydrated,
                     },
@@ -472,6 +474,7 @@ impl WorkspaceActiveSnapshotHub {
         heads.insert(
             session_id,
             CachedSessionHead {
+                workspace_id,
                 head: head.clone(),
                 completeness: SessionHeadCompleteness::Hydrated,
             },
@@ -497,16 +500,16 @@ impl WorkspaceActiveSnapshotHub {
     }
 
     pub async fn remove_session(&self, session_id: SessionId) {
-        let workspace_id = {
+        let cached_workspace_id = {
+            let mut heads = self.session_heads.lock().await;
+            heads.remove(&session_id).map(|cached| cached.workspace_id)
+        };
+        let indexed_workspace_id = {
             let mut index = self.active_head_index.lock().await;
             index.remove(&session_id)
         };
-        {
-            let mut heads = self.session_heads.lock().await;
-            heads.remove(&session_id);
-        }
         let mut guard = self.inner.lock().await;
-        if let Some(workspace_id) = workspace_id {
+        if let Some(workspace_id) = cached_workspace_id.or(indexed_workspace_id) {
             if let Some(entry) = guard.get_mut(&workspace_id) {
                 entry.active_heads.remove(&session_id);
                 entry.session_replay.remove(&session_id);
@@ -524,25 +527,39 @@ impl WorkspaceActiveSnapshotHub {
             let mut guard = self.inner.lock().await;
             guard.remove(&workspace_id)
         };
-        let Some(entry) = entry else {
-            return;
-        };
-        let session_ids: HashSet<SessionId> = entry
-            .active_heads
-            .keys()
-            .copied()
-            .chain(entry.session_replay.keys().copied())
-            .collect();
+        let mut session_ids: HashSet<SessionId> = entry
+            .map(|entry| {
+                entry
+                    .active_heads
+                    .keys()
+                    .copied()
+                    .chain(entry.session_replay.keys().copied())
+                    .collect()
+            })
+            .unwrap_or_default();
         {
             let mut heads = self.session_heads.lock().await;
+            for session_id in heads
+                .iter()
+                .filter_map(|(session_id, cached)| {
+                    (cached.workspace_id == workspace_id).then_some(*session_id)
+                })
+                .collect::<Vec<_>>()
+            {
+                session_ids.insert(session_id);
+            }
             for session_id in &session_ids {
                 heads.remove(session_id);
             }
         }
         let mut index = self.active_head_index.lock().await;
-        for session_id in &session_ids {
-            index.remove(session_id);
-        }
+        index.retain(|session_id, owner_workspace_id| {
+            if *owner_workspace_id == workspace_id {
+                session_ids.insert(*session_id);
+                return false;
+            }
+            true
+        });
     }
 
     pub async fn get_session_head(&self, session_id: SessionId) -> Option<SessionHeadSnapshot> {
@@ -771,6 +788,7 @@ impl WorkspaceActiveSnapshotHub {
                 heads.insert(
                     delta.session_id,
                     CachedSessionHead {
+                        workspace_id,
                         head,
                         completeness: SessionHeadCompleteness::DeltaOnly,
                     },

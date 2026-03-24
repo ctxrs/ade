@@ -26,6 +26,25 @@ pub(crate) struct SessionHistoryQuery {
     pub(crate) limit: Option<u32>,
 }
 
+async fn store_for_existing_session(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+) -> Result<ctx_store::Store, StatusCode> {
+    let workspace_id = match state
+        .global_store()
+        .get_workspace_id_for_session(session_id)
+        .await
+    {
+        Ok(Some(workspace_id)) => workspace_id,
+        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
+    state
+        .store_for_workspace(workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 pub(crate) async fn get_session_snapshot(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -35,10 +54,7 @@ pub(crate) async fn get_session_snapshot(
     let limit = q.limit.unwrap_or(60);
     let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_session(&state, session_id).await?;
     match store
         .get_session_snapshot(session_id, limit, include_events)
         .await
@@ -80,10 +96,7 @@ pub(crate) async fn get_session_head(
         }
     }
     state.emit_cache_miss("session_head").await;
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_session(&state, session_id).await?;
     match store
         .get_session_head_snapshot(session_id, limit, include_events)
         .await
@@ -113,10 +126,7 @@ pub(crate) async fn get_session_state(
     Path(id): Path<String>,
 ) -> Result<Json<SessionState>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_session(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await
