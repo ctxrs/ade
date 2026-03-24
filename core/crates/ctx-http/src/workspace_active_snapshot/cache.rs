@@ -7,9 +7,16 @@ pub(super) enum SessionHeadCompleteness {
     DeltaOnly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SessionHeadCapability {
+    ReplayCapable,
+    CompactOnly,
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct CachedSessionHead {
     pub workspace_id: WorkspaceId,
     pub head: SessionHeadSnapshot,
     pub completeness: SessionHeadCompleteness,
+    pub capability: SessionHeadCapability,
 }

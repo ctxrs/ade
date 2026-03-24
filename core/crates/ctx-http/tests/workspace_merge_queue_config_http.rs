@@ -71,7 +71,12 @@ async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
 
     ctx_http::merge_queue::spawn_merge_queue_runner(state.clone());
 
-    let store = state.core.stores.workspace_uncached(workspace.id).await.unwrap();
+    let store = state
+        .core
+        .stores
+        .workspace_uncached(workspace.id)
+        .await
+        .unwrap();
     let entry = queued_entry(workspace.id, "queued-before-enable");
     store.create_merge_queue_entry(&entry).await.unwrap();
     store.close().await;
@@ -104,4 +109,63 @@ async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
 
     let resumed = wait_for_non_queued_status(&state, &workspace, entry.id).await;
     assert_ne!(resumed.status, MergeQueueEntryStatus::Queued);
+}
+
+#[tokio::test]
+async fn disabling_merge_queue_cancels_existing_queued_rows() {
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+    let workspace = common::create_workspace(&app, repo.path(), "ws").await;
+
+    ctx_http::merge_queue::spawn_merge_queue_runner(state.clone());
+
+    let (enable_status, _enable_resp): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/workspaces/{}/merge_queue_config", workspace.id.0),
+        Some(serde_json::json!({
+            "enabled": true,
+            "target_branch": "main"
+        })),
+    )
+    .await;
+    assert_eq!(enable_status, StatusCode::OK);
+
+    let store = state
+        .core
+        .stores
+        .workspace_uncached(workspace.id)
+        .await
+        .unwrap();
+    let entry = queued_entry(workspace.id, "queued-before-disable");
+    store.create_merge_queue_entry(&entry).await.unwrap();
+    store.close().await;
+
+    let (disable_status, disable_resp): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/workspaces/{}/merge_queue_config", workspace.id.0),
+        Some(serde_json::json!({
+            "enabled": false,
+            "target_branch": "main"
+        })),
+    )
+    .await;
+    assert_eq!(disable_status, StatusCode::OK);
+    assert_eq!(disable_resp.get("ok").and_then(Value::as_bool), Some(true));
+
+    let disabled = wait_for_non_queued_status(&state, &workspace, entry.id).await;
+    assert_eq!(disabled.status, MergeQueueEntryStatus::Cancelled);
+    assert_eq!(
+        disabled.error_message.as_deref(),
+        Some("merge queue disabled while entry was queued")
+    );
 }

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use tokio::sync::{broadcast, Mutex};
 
-use cache::{CachedSessionHead, SessionHeadCompleteness};
+use cache::{CachedSessionHead, SessionHeadCapability, SessionHeadCompleteness};
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Message, Session, SessionActivityState, SessionEvent, SessionEventType, SessionHeadDelta,
@@ -33,8 +33,7 @@ pub use stats::WorkspaceActiveSnapshotStats;
 
 pub struct WorkspaceActiveSnapshotHub {
     inner: Mutex<HashMap<WorkspaceId, WorkspaceActiveSnapshotEntry>>,
-    replay_session_heads: Mutex<HashMap<SessionId, CachedSessionHead>>,
-    compact_session_heads: Mutex<HashMap<SessionId, CachedSessionHead>>,
+    session_heads: Mutex<HashMap<SessionId, CachedSessionHead>>,
     active_head_index: Mutex<HashMap<SessionId, WorkspaceId>>,
 }
 
@@ -42,8 +41,7 @@ impl WorkspaceActiveSnapshotHub {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(HashMap::new()),
-            replay_session_heads: Mutex::new(HashMap::new()),
-            compact_session_heads: Mutex::new(HashMap::new()),
+            session_heads: Mutex::new(HashMap::new()),
             active_head_index: Mutex::new(HashMap::new()),
         }
     }
@@ -101,15 +99,11 @@ impl WorkspaceActiveSnapshotHub {
         let workspace_count = inner.len();
         drop(inner);
 
-        let replay_session_heads = self.replay_session_heads.lock().await;
-        let compact_session_heads = self.compact_session_heads.lock().await;
-        let session_heads_count = replay_session_heads.len() + compact_session_heads.len();
+        let session_heads = self.session_heads.lock().await;
+        let session_heads_count = session_heads.len();
         let mut session_heads_bytes = 0;
         let mut session_heads_max_bytes = 0;
-        for cached in replay_session_heads
-            .values()
-            .chain(compact_session_heads.values())
-        {
+        for cached in session_heads.values() {
             let bytes = serde_json::to_vec(&cached.head)
                 .map(|buf| buf.len())
                 .unwrap_or(0);
@@ -118,8 +112,7 @@ impl WorkspaceActiveSnapshotHub {
                 session_heads_max_bytes = bytes;
             }
         }
-        drop(replay_session_heads);
-        drop(compact_session_heads);
+        drop(session_heads);
         let active_head_index_count = self.active_head_index.lock().await.len();
 
         WorkspaceActiveSnapshotStats {
@@ -264,15 +257,12 @@ impl WorkspaceActiveSnapshotHub {
                     after_seq,
                     reason,
                 }];
+                let cursor = self.session_replay_cursor(workspace_id, session_id).await;
                 let mut last_sent = SessionReplayCursor {
-                    last_event_seq: last_known_seq.max(after_seq),
-                    projection_rev: after_projection_rev.max(0),
+                    last_event_seq: cursor.last_event_seq.max(last_known_seq.max(after_seq)),
+                    projection_rev: cursor.projection_rev.max(after_projection_rev.max(0)),
                 };
-                let seed_head = match self.get_session_head(session_id).await {
-                    Some(head) => Some(head),
-                    None => self.get_cached_session_head_for_read(session_id).await,
-                };
-                if let Some(head) = seed_head {
+                if let Some(head) = self.get_session_head(session_id).await {
                     last_sent = SessionReplayCursor::from_head(&head);
                     items.push(WorkspaceSessionReplayItem::Seed(Box::new(head)));
                 }
@@ -430,17 +420,24 @@ impl WorkspaceActiveSnapshotHub {
         }
 
         if !heads.is_empty() {
-            let mut compact_session_heads = self.compact_session_heads.lock().await;
+            let mut session_heads = self.session_heads.lock().await;
             let mut index = self.active_head_index.lock().await;
             for head in heads {
-                compact_session_heads.insert(
-                    head.session.id,
-                    CachedSessionHead {
-                        workspace_id,
-                        head: head.clone(),
-                        completeness: SessionHeadCompleteness::Hydrated,
-                    },
-                );
+                match session_heads.get(&head.session.id) {
+                    Some(existing)
+                        if existing.capability == SessionHeadCapability::ReplayCapable => {}
+                    _ => {
+                        session_heads.insert(
+                            head.session.id,
+                            CachedSessionHead {
+                                workspace_id,
+                                head: head.clone(),
+                                completeness: SessionHeadCompleteness::Hydrated,
+                                capability: SessionHeadCapability::CompactOnly,
+                            },
+                        );
+                    }
+                }
                 index.insert(head.session.id, workspace_id);
             }
         }
@@ -450,26 +447,17 @@ impl WorkspaceActiveSnapshotHub {
         let session_id = head.session.id;
         let workspace_id = head.session.workspace_id;
         let cursor = SessionReplayCursor::from_head(&head);
-        let mut replay_heads = self.replay_session_heads.lock().await;
-        replay_heads.insert(
+        let mut session_heads = self.session_heads.lock().await;
+        session_heads.insert(
             session_id,
             CachedSessionHead {
                 workspace_id,
                 head: head.clone(),
                 completeness: SessionHeadCompleteness::Hydrated,
+                capability: SessionHeadCapability::ReplayCapable,
             },
         );
-        drop(replay_heads);
-        let mut compact_heads = self.compact_session_heads.lock().await;
-        compact_heads.insert(
-            session_id,
-            CachedSessionHead {
-                workspace_id,
-                head: head.clone(),
-                completeness: SessionHeadCompleteness::Hydrated,
-            },
-        );
-        drop(compact_heads);
+        drop(session_heads);
         let mut guard = self.inner.lock().await;
         let entry = guard
             .entry(workspace_id)
@@ -488,15 +476,22 @@ impl WorkspaceActiveSnapshotHub {
         let session_id = head.session.id;
         let workspace_id = head.session.workspace_id;
         let cursor = SessionReplayCursor::from_head(&head);
-        let mut heads = self.compact_session_heads.lock().await;
-        heads.insert(
-            session_id,
-            CachedSessionHead {
-                workspace_id,
-                head: head.clone(),
-                completeness: SessionHeadCompleteness::Hydrated,
-            },
+        let mut heads = self.session_heads.lock().await;
+        let should_replace = !matches!(
+            heads.get(&session_id),
+            Some(existing) if existing.capability == SessionHeadCapability::ReplayCapable
         );
+        if should_replace {
+            heads.insert(
+                session_id,
+                CachedSessionHead {
+                    workspace_id,
+                    head: head.clone(),
+                    completeness: SessionHeadCompleteness::Hydrated,
+                    capability: SessionHeadCapability::CompactOnly,
+                },
+            );
+        }
         drop(heads);
         let mut guard = self.inner.lock().await;
         let entry = guard
@@ -513,25 +508,16 @@ impl WorkspaceActiveSnapshotHub {
     }
 
     pub async fn remove_session_head(&self, session_id: SessionId) {
-        let mut replay_heads = self.replay_session_heads.lock().await;
-        replay_heads.remove(&session_id);
-        drop(replay_heads);
-        let mut compact_heads = self.compact_session_heads.lock().await;
-        compact_heads.remove(&session_id);
+        let mut session_heads = self.session_heads.lock().await;
+        session_heads.remove(&session_id);
     }
 
     pub async fn remove_session(&self, session_id: SessionId) {
         let cached_workspace_id = {
-            let mut replay_heads = self.replay_session_heads.lock().await;
-            let replay_workspace_id = replay_heads
+            let mut session_heads = self.session_heads.lock().await;
+            session_heads
                 .remove(&session_id)
-                .map(|cached| cached.workspace_id);
-            drop(replay_heads);
-            let mut compact_heads = self.compact_session_heads.lock().await;
-            let compact_workspace_id = compact_heads
-                .remove(&session_id)
-                .map(|cached| cached.workspace_id);
-            replay_workspace_id.or(compact_workspace_id)
+                .map(|cached| cached.workspace_id)
         };
         let indexed_workspace_id = {
             let mut index = self.active_head_index.lock().await;
@@ -567,8 +553,8 @@ impl WorkspaceActiveSnapshotHub {
             })
             .unwrap_or_default();
         {
-            let mut replay_heads = self.replay_session_heads.lock().await;
-            for session_id in replay_heads
+            let mut session_heads = self.session_heads.lock().await;
+            for session_id in session_heads
                 .iter()
                 .filter_map(|(session_id, cached)| {
                     (cached.workspace_id == workspace_id).then_some(*session_id)
@@ -578,22 +564,7 @@ impl WorkspaceActiveSnapshotHub {
                 session_ids.insert(session_id);
             }
             for session_id in &session_ids {
-                replay_heads.remove(session_id);
-            }
-        }
-        {
-            let mut compact_heads = self.compact_session_heads.lock().await;
-            for session_id in compact_heads
-                .iter()
-                .filter_map(|(session_id, cached)| {
-                    (cached.workspace_id == workspace_id).then_some(*session_id)
-                })
-                .collect::<Vec<_>>()
-            {
-                session_ids.insert(session_id);
-            }
-            for session_id in &session_ids {
-                compact_heads.remove(session_id);
+                session_heads.remove(session_id);
             }
         }
         let mut index = self.active_head_index.lock().await;
@@ -607,22 +578,64 @@ impl WorkspaceActiveSnapshotHub {
     }
 
     pub async fn get_session_head(&self, session_id: SessionId) -> Option<SessionHeadSnapshot> {
-        let heads = self.replay_session_heads.lock().await;
+        let heads = self.session_heads.lock().await;
         heads
             .get(&session_id)
-            .filter(|cached| cached.completeness == SessionHeadCompleteness::Hydrated)
+            .filter(|cached| {
+                cached.completeness == SessionHeadCompleteness::Hydrated
+                    && cached.capability == SessionHeadCapability::ReplayCapable
+            })
             .map(|cached| cached.head.clone())
+    }
+
+    pub async fn get_cached_session_head_for_request(
+        &self,
+        session_id: SessionId,
+        include_events: bool,
+        limit: u32,
+    ) -> Option<SessionHeadSnapshot> {
+        let requested = limit as usize;
+        let mut head = {
+            let heads = self.session_heads.lock().await;
+            let cached = heads.get(&session_id)?;
+            if cached.completeness != SessionHeadCompleteness::Hydrated {
+                return None;
+            }
+            if include_events && cached.capability != SessionHeadCapability::ReplayCapable {
+                return None;
+            }
+            let head = &cached.head;
+            if head.turns.len() > requested {
+                return None;
+            }
+            if head.has_more_turns && head.turns.len() < requested {
+                return None;
+            }
+            head.clone()
+        };
+        if !include_events {
+            head.events.clear();
+            head.head_window.event_count = 0;
+        }
+        Some(head)
     }
 
     pub async fn get_cached_session_head_for_read(
         &self,
         session_id: SessionId,
     ) -> Option<SessionHeadSnapshot> {
-        let heads = self.compact_session_heads.lock().await;
+        let heads = self.session_heads.lock().await;
         heads
             .get(&session_id)
             .filter(|cached| cached.completeness == SessionHeadCompleteness::Hydrated)
-            .map(|cached| cached.head.clone())
+            .map(|cached| {
+                let mut head = cached.head.clone();
+                if cached.capability == SessionHeadCapability::CompactOnly {
+                    head.events.clear();
+                    head.head_window.event_count = 0;
+                }
+                head
+            })
     }
 
     pub async fn publish_active_task_upsert(
@@ -834,24 +847,19 @@ impl WorkspaceActiveSnapshotHub {
             (entry.tx.clone(), entry.snapshot_rev)
         };
         {
-            let mut replay_heads = self.replay_session_heads.lock().await;
-            if let Some(cached) = replay_heads.get_mut(&delta.session_id) {
-                apply_head_delta(&mut cached.head, &delta);
-            }
-        }
-        {
-            let mut compact_heads = self.compact_session_heads.lock().await;
-            if let Some(cached) = compact_heads.get_mut(&delta.session_id) {
+            let mut session_heads = self.session_heads.lock().await;
+            if let Some(cached) = session_heads.get_mut(&delta.session_id) {
                 apply_head_delta(&mut cached.head, &delta);
             } else if session.parent_session_id.is_none() {
                 let mut head = new_head_snapshot(session);
                 apply_head_delta(&mut head, &delta);
-                compact_heads.insert(
+                session_heads.insert(
                     delta.session_id,
                     CachedSessionHead {
                         workspace_id,
                         head,
                         completeness: SessionHeadCompleteness::DeltaOnly,
+                        capability: SessionHeadCapability::CompactOnly,
                     },
                 );
             }

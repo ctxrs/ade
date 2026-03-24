@@ -418,7 +418,7 @@ async fn run_next_entry_for_workspace(
     Ok(WorkspaceDrainStep::Continue)
 }
 
-async fn cancel_queued_entries_for_disabled_workspace(
+pub(crate) async fn cancel_queued_entries_for_disabled_workspace(
     state: &Arc<AppState>,
     store: &ctx_store::Store,
     workspace_id: WorkspaceId,

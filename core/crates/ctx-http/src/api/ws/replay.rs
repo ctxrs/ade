@@ -172,7 +172,29 @@ where
         )
         .await;
     match replay {
-        WorkspaceSessionReplay::Replay { items, last_sent } => {
+        WorkspaceSessionReplay::Replay {
+            mut items,
+            mut last_sent,
+        } => {
+            let saw_gap = items
+                .iter()
+                .any(|item| matches!(item, WorkspaceSessionReplayItem::Gap { .. }));
+            let saw_seed = items
+                .iter()
+                .any(|item| matches!(item, WorkspaceSessionReplayItem::Seed(_)));
+            if saw_gap && !saw_seed {
+                let store = state.store_for_session(session_id).await.map_err(|_| ())?;
+                if let Ok(Some(head)) = store.get_session_head_snapshot(session_id, 60, true).await
+                {
+                    state
+                        .workspaces
+                        .workspace_active_snapshot
+                        .update_session_head(head.clone())
+                        .await;
+                    last_sent = SessionReplayCursor::from_head(&head);
+                    items.push(WorkspaceSessionReplayItem::Seed(Box::new(head)));
+                }
+            }
             for item in items {
                 if matches!(item, WorkspaceSessionReplayItem::Delta(_)) {
                     if let Some(label) = send_failpoint {

@@ -366,8 +366,8 @@ mod delta_tests {
                 );
                 assert_eq!(
                     items.len(),
-                    2,
-                    "gap replay should emit gap then compact seed"
+                    1,
+                    "gap replay should not seed from compact-only cache"
                 );
                 match &items[0] {
                     WorkspaceSessionReplayItem::Gap {
@@ -380,13 +380,6 @@ mod delta_tests {
                         assert_eq!(reason.as_deref(), Some("missing_replay_events"));
                     }
                     other => panic!("expected leading gap, got {other:?}"),
-                }
-                match &items[1] {
-                    WorkspaceSessionReplayItem::Seed(head) => {
-                        assert_eq!(head.session.id, primary.id);
-                        assert_eq!(head.last_event_seq, 7);
-                    }
-                    other => panic!("expected compact seed after gap, got {other:?}"),
                 }
             }
             other => panic!("expected replay response, got {other:?}"),
@@ -680,7 +673,7 @@ mod replay_tests {
                         projection_rev: 9,
                     }
                 );
-                assert_eq!(items.len(), 2);
+                assert_eq!(items.len(), 1);
                 match &items[0] {
                     WorkspaceSessionReplayItem::Gap {
                         session_id,
@@ -692,14 +685,6 @@ mod replay_tests {
                         assert_eq!(reason.as_deref(), Some("missing_replay_events"));
                     }
                     other => panic!("expected gap, got {other:?}"),
-                }
-                match &items[1] {
-                    WorkspaceSessionReplayItem::Seed(head) => {
-                        assert_eq!(head.session.id, session.id);
-                        assert_eq!(head.last_event_seq, 7);
-                        assert_eq!(head.projection_rev, 9);
-                    }
-                    other => panic!("expected seed after gap, got {other:?}"),
                 }
             }
             other => panic!("expected replay, got {other:?}"),

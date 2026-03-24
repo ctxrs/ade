@@ -34,14 +34,26 @@ pub(in crate::api) async fn get_workspace_primary_branch(
                 error: "workspace not found".to_string(),
             }),
         ))?;
-    let store = state.store_for_workspace(ws_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
+    let store = match state.core.stores.workspace_access_outcome(ws_id).await {
+        Ok(ctx_store::manager::WorkspaceStoreAccessOutcome::Access(access)) => access.store,
+        Ok(ctx_store::manager::WorkspaceStoreAccessOutcome::Missing)
+        | Ok(ctx_store::manager::WorkspaceStoreAccessOutcome::Deleting) => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "workspace not found".to_string(),
+                }),
+            ));
+        }
+        Err(e) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            ));
+        }
+    };
     let primary_branch = workspace_config::load_primary_branch(&store)
         .await
         .map_err(|e| {
@@ -229,6 +241,17 @@ pub(in crate::api) async fn update_merge_queue_config(
 
     if !was_enabled && req.enabled {
         crate::merge_queue::schedule_workspace_if_enabled_and_queued(&state, ws_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
+    } else if was_enabled && !req.enabled {
+        crate::merge_queue::cancel_queued_entries_for_disabled_workspace(&state, &store, ws_id)
             .await
             .map_err(|e| {
                 (

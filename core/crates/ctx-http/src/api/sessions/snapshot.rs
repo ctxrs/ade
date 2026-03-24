@@ -51,45 +51,29 @@ pub(crate) async fn get_session_head(
     Path(id): Path<String>,
     Query(q): Query<SessionHeadQuery>,
 ) -> Result<Json<SessionHeadSnapshot>, StatusCode> {
-    fn cached_head_satisfies_limit(head: &SessionHeadSnapshot, limit: u32) -> bool {
-        let requested = limit as usize;
-        !(head.has_more_turns && head.turns.len() < requested)
-    }
-
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let limit = q.limit.unwrap_or(60);
     let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    if include_events {
-        if let Some(head) = state
-            .workspaces
-            .workspace_active_snapshot
-            .get_session_head(session_id)
-            .await
-        {
-            if cached_head_satisfies_limit(&head, limit) {
-                return Ok(Json(head));
-            }
-        }
-    } else {
-        if let Some(mut head) = state
-            .workspaces
-            .workspace_active_snapshot
-            .get_cached_session_head_for_read(session_id)
-            .await
-        {
-            // The in-memory head cache is a performance optimization and may be populated with a
-            // smaller turn window than callers request (e.g., refresh paths cap to 200 turns).
-            // Only serve from cache if it can satisfy the requested limit, otherwise fall back to
-            // store.
-            if !cached_head_satisfies_limit(&head, limit) {
-                // cache head is known-truncated and does not satisfy the request
-            } else {
-                head.events.clear();
-                head.head_window.event_count = 0;
-                return Ok(Json(head));
-            }
-        }
+    let workspace_id = match state
+        .global_store()
+        .get_workspace_id_for_session(session_id)
+        .await
+    {
+        Ok(Some(workspace_id)) => workspace_id,
+        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
+    if state.core.stores.is_workspace_deleting(workspace_id).await {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    if let Some(head) = state
+        .workspaces
+        .workspace_active_snapshot
+        .get_cached_session_head_for_request(session_id, include_events, limit)
+        .await
+    {
+        return Ok(Json(head));
     }
     state.emit_cache_miss("session_head").await;
     let store = store_for_existing_session_status(&state, session_id).await?;

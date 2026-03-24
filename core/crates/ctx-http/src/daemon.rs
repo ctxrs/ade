@@ -197,7 +197,7 @@ async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
     let workspaces = state.global_store().list_workspaces().await?;
     let mut running_turns = Vec::new();
     for workspace in workspaces {
-        let store = state.core.stores.workspace_uncached(workspace.id).await?;
+        let store = state.core.stores.workspace_transient(workspace.id).await?;
         let mut turns = store
             .list_session_turns_by_statuses(&[SessionTurnStatus::Running])
             .await?;
@@ -233,7 +233,7 @@ async fn prune_archived_session_data_for_all_workspaces(
 ) -> Result<()> {
     let workspaces = stores.global().list_workspaces().await?;
     for workspace in workspaces {
-        match stores.workspace_uncached(workspace.id).await {
+        match stores.workspace_transient(workspace.id).await {
             Ok(store) => {
                 let prune_result = store
                     .prune_session_data_older_than_days(retention_days)

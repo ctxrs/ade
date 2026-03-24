@@ -143,6 +143,11 @@ async fn include_events_session_heads_bypass_compact_cache() {
         .create_task(workspace.id, "task".to_string(), None)
         .await
         .unwrap();
+    state
+        .global_store()
+        .upsert_workspace_task_index(task.id, workspace.id)
+        .await
+        .unwrap();
     let session = store
         .create_session(
             task.id,
@@ -341,6 +346,59 @@ async fn include_events_session_heads_use_hydrated_replay_cache_when_store_canno
     assert_eq!(head.session.id, session.id);
     assert_eq!(head.last_event_seq, full_head.last_event_seq);
     assert_eq!(head.events.len(), full_head.events.len());
+}
+
+#[tokio::test]
+async fn archiving_task_invalidates_cached_replay_session_head() {
+    let temp = tempdir().unwrap();
+    let stores = common::setup_store(temp.path()).await;
+    let state = common::build_state(
+        temp.path(),
+        stores.clone(),
+        common::fake_providers(),
+        "http://localhost",
+    );
+
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let app = common::router(state.clone());
+    let workspace = common::create_workspace(&app, repo.path(), "ws").await;
+    let task = common::create_task(&app, workspace.id.0, "task").await;
+    let session = common::create_session(&app, task.id.0, "fake", "model").await;
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+
+    let full_head = store
+        .get_session_head_snapshot(session.id, 60, true)
+        .await
+        .unwrap()
+        .expect("full replay-capable session head");
+    state
+        .workspaces
+        .workspace_active_snapshot
+        .update_session_head(full_head)
+        .await;
+    assert!(state
+        .workspaces
+        .workspace_active_snapshot
+        .get_session_head(session.id)
+        .await
+        .is_some());
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/tasks/{}/archive", task.id.0))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _body) = common::oneshot_bytes(&app, req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        state
+            .workspaces
+            .workspace_active_snapshot
+            .get_session_head(session.id)
+            .await
+            .is_none(),
+        "task archive should invalidate replay-capable cached heads for the task's sessions"
+    );
 }
 
 #[tokio::test]
@@ -657,6 +715,10 @@ async fn delete_in_progress_workspace_and_session_reads_return_404() {
     for route in [
         format!(
             "/api/sessions/{}/head?include_events=false&limit=60",
+            session.id.0
+        ),
+        format!(
+            "/api/sessions/{}/head?include_events=true&limit=60",
             session.id.0
         ),
         format!("/api/workspaces/{}/attachments", workspace.id.0),

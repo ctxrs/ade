@@ -1586,6 +1586,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "ctx-core",
+ "futures",
  "serde",
  "serde_json",
  "sqlx",

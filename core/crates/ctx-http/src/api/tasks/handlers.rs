@@ -22,6 +22,13 @@ pub(in crate::api) async fn archive_task(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    let session_ids: Vec<SessionId> = store
+        .list_sessions_for_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .into_iter()
+        .map(|session| session.id)
+        .collect();
     let workspace = state
         .global_store()
         .get_workspace(task.workspace_id)
@@ -195,6 +202,13 @@ pub(in crate::api) async fn archive_task(
     if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
         tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
     }
+    for session_id in session_ids {
+        state
+            .workspaces
+            .workspace_active_snapshot
+            .remove_session(session_id)
+            .await;
+    }
     Ok(Json(ArchiveTaskResponse {
         task,
         cleanup_failed,
@@ -228,6 +242,7 @@ pub(in crate::api) async fn unarchive_task(
         .list_sessions_for_task(task_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let session_ids: Vec<SessionId> = sessions.iter().map(|session| session.id).collect();
     let mut worktree_ids: HashSet<WorktreeId> = sessions.iter().map(|s| s.worktree_id).collect();
     if let Some(primary) = task.primary_worktree_id {
         worktree_ids.insert(primary);
@@ -324,6 +339,13 @@ pub(in crate::api) async fn unarchive_task(
     state
         .emit_workspace_archived_task_delete(task.workspace_id, task_id)
         .await;
+    for session_id in session_ids {
+        state
+            .workspaces
+            .workspace_active_snapshot
+            .remove_session(session_id)
+            .await;
+    }
     Ok(Json(task))
 }
 

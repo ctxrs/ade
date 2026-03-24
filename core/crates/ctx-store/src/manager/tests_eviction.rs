@@ -313,6 +313,53 @@ async fn delete_barrier_blocks_pending_close_reactivation() -> Result<()> {
 }
 
 #[tokio::test]
+async fn transient_workspace_access_uses_tracked_delete_lifecycle() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let manager = StoreManager::open_with_config(
+        temp.path(),
+        StoreManagerConfig {
+            max_cached_workspaces: 1,
+            ..StoreManagerConfig::default()
+        },
+    )
+    .await?;
+    let workspace = manager
+        .global()
+        .create_workspace(
+            "transient".to_string(),
+            temp.path().join("transient").to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await?;
+
+    let store = manager.workspace_transient(workspace.id).await?;
+    assert_eq!(
+        manager.stats().await.workspace_store_count,
+        0,
+        "transient access should not leave a cached workspace entry behind"
+    );
+
+    manager.begin_workspace_delete(workspace.id).await;
+    let err = manager
+        .workspace_access(workspace.id)
+        .await
+        .err()
+        .context("delete barrier should reject tracked access while transient handle is live")?
+        .to_string();
+    assert!(err.contains("not found"));
+
+    drop(store);
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        manager.store_leases.wait_for_workspace_close(workspace.id),
+    )
+    .await
+    .context("transient tracked handle should finish closing once dropped")?;
+    manager.finish_workspace_delete(workspace.id).await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn concurrent_reactivation_does_not_cold_open_duplicate_store() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let manager = StoreManager::open_with_config(
