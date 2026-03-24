@@ -193,7 +193,7 @@ pub(crate) async fn delete_session_message(
     let session_id =
         SessionId(uuid::Uuid::parse_str(&session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let msg_id = MessageId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = store_for_existing_session_status(&state, session_id).await?;
+    let store = store_for_existing_session_status_for_write(&state, session_id).await?;
     let msg = store
         .get_message(msg_id)
         .await
@@ -253,15 +253,7 @@ pub(crate) async fn post_message(
     Json(req): Json<PostMessageReq>,
 ) -> Result<Json<Message>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    const STORE_OPEN_RETRY_LIMIT: usize = 3;
-    const STORE_OPEN_RETRY_BASE_MS: u64 = 40;
-    let store = store_for_existing_session_status_with_retry(
-        &state,
-        session_id,
-        STORE_OPEN_RETRY_LIMIT,
-        STORE_OPEN_RETRY_BASE_MS,
-    )
-    .await?;
+    let store = store_for_existing_session_status_for_write(&state, session_id).await?;
     let run_id_header = headers
         .get("x-ctx-run-id")
         .and_then(|v| v.to_str().ok())

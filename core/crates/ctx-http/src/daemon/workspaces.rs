@@ -360,6 +360,7 @@ impl WorkspaceRuntime {
         self.workspace_active_snapshot
             .remove_workspace(workspace_id)
             .await;
+        state.core.stores.evict_workspace(workspace_id).await;
     }
 
     pub async fn emit_workspace_task_upsert(

@@ -170,10 +170,18 @@ impl StoreManager {
                     }
                 }
                 if let Some(store) = self.store_leases.acquire_pending_close_store(workspace_id) {
-                    return Ok(WorkspaceStoreAccess {
-                        store,
-                        opened_now: false,
-                    });
+                    let workspace_exists = self.global.get_workspace(workspace_id).await?.is_some();
+                    if workspace_exists {
+                        return Ok(WorkspaceStoreAccess {
+                            store,
+                            opened_now: true,
+                        });
+                    }
+                    drop(store);
+                    self.store_leases
+                        .wait_for_workspace_close(workspace_id)
+                        .await;
+                    continue;
                 }
                 let is_closing = self.store_leases.is_workspace_closing(workspace_id);
                 if !is_closing {
@@ -212,13 +220,15 @@ impl StoreManager {
                     opened_now: false,
                 });
             }
+            let leased_store =
+                store.with_lease_guard(self.store_leases.acquire(workspace_id, instance_id));
             stores.insert(
                 workspace_id,
                 TimedStoreEntry::new(workspace_id, store.clone(), instance_id),
             );
             drop(stores);
             return Ok(WorkspaceStoreAccess {
-                store: store.with_lease_guard(self.store_leases.acquire(workspace_id, instance_id)),
+                store: leased_store,
                 opened_now: true,
             });
         }

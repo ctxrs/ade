@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::shared::store_for_existing_workspace_status;
 
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct ArchiveTaskResponse {
@@ -398,10 +399,7 @@ pub(in crate::api) async fn list_workspace_tasks(
 ) -> Result<Json<Vec<Task>>, StatusCode> {
     let workspace_id =
         WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_workspace(workspace_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_workspace_status(&state, workspace_id).await?;
     let tasks = store
         .list_tasks(workspace_id)
         .await
@@ -440,10 +438,7 @@ pub(in crate::api) async fn list_workspace_archived_task_summaries(
         _ => return Err(StatusCode::BAD_REQUEST),
     };
 
-    let store = state
-        .store_for_workspace(workspace_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_workspace_status(&state, workspace_id).await?;
     let (tasks, next_cursor) = store
         .list_workspace_archived_page(workspace_id, cursor, limit)
         .await

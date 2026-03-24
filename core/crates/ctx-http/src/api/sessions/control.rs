@@ -8,7 +8,7 @@ pub(crate) async fn cancel_session(
 ) -> Result<StatusCode, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
 
-    let store = store_for_existing_session_status(&state, session_id).await?;
+    let store = store_for_existing_session_status_for_write(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await
@@ -26,7 +26,7 @@ pub(crate) async fn interrupt_session(
     let request_started = std::time::Instant::now();
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
 
-    let store = store_for_existing_session_status(&state, session_id).await?;
+    let store = store_for_existing_session_status_for_write(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await
@@ -97,7 +97,7 @@ pub(crate) async fn authenticate_session(
         )
     })?);
 
-    let store = store_for_existing_session_api_error(&state, session_id).await?;
+    let store = store_for_existing_session_api_error_for_write(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await

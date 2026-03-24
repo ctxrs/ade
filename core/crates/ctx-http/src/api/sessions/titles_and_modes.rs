@@ -10,7 +10,8 @@ use serde::Deserialize;
 use super::super::errors::ApiErrorResp;
 use super::{
     compose_model_id, load_provider_model_catalog, normalize_effort_id, resolve_model_id,
-    store_for_existing_session_api_error, store_for_existing_session_status,
+    store_for_existing_session_api_error, store_for_existing_session_api_error_for_write,
+    store_for_existing_session_status_for_write,
 };
 use crate::daemon::AppState;
 use crate::execution_effective;
@@ -225,7 +226,7 @@ pub(crate) async fn set_session_model(
             .map_err(|_| session_model_error(StatusCode::BAD_REQUEST, "invalid session id"))?,
     );
 
-    let store = store_for_existing_session_api_error(&state, session_id)
+    let store = store_for_existing_session_api_error_for_write(&state, session_id)
         .await
         .map_err(|(status, resp)| session_model_error(status, resp.0.error))?;
     let session = store
@@ -407,7 +408,7 @@ pub(crate) async fn set_session_mode(
 ) -> Result<StatusCode, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
 
-    let store = store_for_existing_session_status(&state, session_id).await?;
+    let store = store_for_existing_session_status_for_write(&state, session_id).await?;
     let session = store
         .get_session(session_id)
         .await

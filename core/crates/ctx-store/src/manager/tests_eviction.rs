@@ -119,7 +119,7 @@ async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() {
     .await
     .expect("reopen should reuse the draining store, not deadlock")
     .unwrap();
-    assert!(!reopened_before_drop.opened_now);
+    assert!(reopened_before_drop.opened_now);
     assert!(reopened_before_drop
         .store
         .get_task(task_a.id)
@@ -142,5 +142,56 @@ async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() {
             .await
             .unwrap()
             .opened_now
+    );
+}
+
+#[tokio::test]
+async fn deleted_workspace_is_not_rehydrated_from_pending_close_store() {
+    let temp = tempfile::tempdir().unwrap();
+    let manager = StoreManager::open_with_config(
+        temp.path(),
+        StoreManagerConfig {
+            max_cached_workspaces: 1,
+            ..StoreManagerConfig::default()
+        },
+    )
+    .await
+    .unwrap();
+    let workspace = manager
+        .global()
+        .create_workspace(
+            "a".to_string(),
+            temp.path().join("a").to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .unwrap();
+    let store = manager.workspace(workspace.id).await.unwrap();
+
+    manager.evict_workspace(workspace.id).await;
+    manager
+        .global()
+        .delete_workspace(workspace.id)
+        .await
+        .unwrap();
+
+    let manager_for_reopen = manager.clone();
+    let reopen =
+        tokio::spawn(async move { manager_for_reopen.workspace_access(workspace.id).await });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(
+        !reopen.is_finished(),
+        "reopen should wait for the draining store to finish closing"
+    );
+
+    drop(store);
+
+    let err = match reopen.await.unwrap() {
+        Ok(_) => panic!("deleted workspace should not reopen from a draining store"),
+        Err(err) => err.to_string(),
+    };
+    assert!(
+        err.contains("not found"),
+        "expected missing workspace error after delete, got: {err}"
     );
 }

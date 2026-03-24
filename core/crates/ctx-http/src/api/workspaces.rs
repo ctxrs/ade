@@ -16,7 +16,8 @@ pub(in crate::api) use management::*;
 
 use super::errors::ApiErrorResp;
 use super::shared::{
-    load_and_cache_workspace_files, map_effective_execution_settings_error, FileCompletionsQuery,
+    load_and_cache_workspace_files, map_effective_execution_settings_error,
+    store_for_existing_workspace_status, FileCompletionsQuery,
 };
 use crate::attachments;
 use crate::completions;
@@ -520,10 +521,7 @@ pub(super) async fn list_workspace_attachments(
     Path(id): Path<String>,
 ) -> Result<Json<Vec<WorkspaceAttachment>>, StatusCode> {
     let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_workspace(ws_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_workspace_status(&state, ws_id).await?;
     store
         .list_workspace_attachments(ws_id)
         .await

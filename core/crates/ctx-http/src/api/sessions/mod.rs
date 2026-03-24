@@ -106,6 +106,9 @@ async fn store_for_existing_session_status(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+const STORE_OPEN_RETRY_LIMIT: usize = 3;
+const STORE_OPEN_RETRY_BASE_MS: u64 = 40;
+
 fn is_transient_store_open_error(err: &anyhow::Error) -> bool {
     let msg = err.to_string().to_lowercase();
     msg.contains("database is locked")
@@ -158,6 +161,19 @@ async fn store_for_existing_session_status_with_retry(
     }
 }
 
+async fn store_for_existing_session_status_for_write(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+) -> Result<ctx_store::Store, StatusCode> {
+    store_for_existing_session_status_with_retry(
+        state,
+        session_id,
+        STORE_OPEN_RETRY_LIMIT,
+        STORE_OPEN_RETRY_BASE_MS,
+    )
+    .await
+}
+
 async fn store_for_existing_session_api_error(
     state: &Arc<AppState>,
     session_id: SessionId,
@@ -196,6 +212,40 @@ async fn store_for_existing_session_api_error(
                 }),
             )
         })
+}
+
+async fn store_for_existing_session_api_error_for_write(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+) -> Result<ctx_store::Store, (StatusCode, Json<ApiErrorResp>)> {
+    match store_for_existing_session_status_with_retry(
+        state,
+        session_id,
+        STORE_OPEN_RETRY_LIMIT,
+        STORE_OPEN_RETRY_BASE_MS,
+    )
+    .await
+    {
+        Ok(store) => Ok(store),
+        Err(StatusCode::NOT_FOUND) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "session not found".to_string(),
+            }),
+        )),
+        Err(StatusCode::INTERNAL_SERVER_ERROR) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: "workspace store unavailable".to_string(),
+            }),
+        )),
+        Err(status) => Err((
+            status,
+            Json(ApiErrorResp {
+                error: status.to_string(),
+            }),
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -393,6 +443,34 @@ mod tests {
         block_workspace_store_for_session(&data_dir, &state, &session).await;
 
         let result = store_for_existing_session_api_error(&state, session.id).await;
+        match result {
+            Ok(_) => panic!("expected store open failure"),
+            Err((status, body)) => {
+                assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+                assert!(!body.0.error.is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn existing_session_write_store_helper_returns_500_when_workspace_store_cannot_open() {
+        let (data_dir, state, session) = setup_state().await;
+        block_workspace_store_for_session(&data_dir, &state, &session).await;
+
+        let result = store_for_existing_session_status_for_write(&state, session.id).await;
+        match result {
+            Ok(_) => panic!("expected store open failure"),
+            Err(status) => assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR),
+        }
+    }
+
+    #[tokio::test]
+    async fn existing_session_write_store_api_error_helper_returns_500_when_workspace_store_cannot_open(
+    ) {
+        let (data_dir, state, session) = setup_state().await;
+        block_workspace_store_for_session(&data_dir, &state, &session).await;
+
+        let result = store_for_existing_session_api_error_for_write(&state, session.id).await;
         match result {
             Ok(_) => panic!("expected store open failure"),
             Err((status, body)) => {

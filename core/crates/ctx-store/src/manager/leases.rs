@@ -232,23 +232,17 @@ fn spawn_store_close(
         handle.spawn(close_task);
         return;
     }
-    let thread_registry = Arc::clone(&registry);
-    let thread_notify = Arc::clone(&notify);
-    if let Err(err) = std::thread::Builder::new()
-        .name("ctx-store-close".to_string())
-        .spawn(move || {
-            if let Ok(runtime) = tokio::runtime::Runtime::new() {
-                runtime.block_on(close_task);
-            } else {
-                thread_registry.finish_close(workspace_id, &thread_notify);
-            }
-        })
+    match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
     {
-        tracing::warn!(
-            workspace_id = %workspace_id.0,
-            "failed to spawn workspace close thread: {err}"
-        );
-        registry.finish_close(workspace_id, &notify);
+        Ok(runtime) => runtime.block_on(close_task),
+        Err(err) => {
+            tracing::warn!(
+                workspace_id = %workspace_id.0,
+                "failed to build runtime for workspace close: {err}"
+            );
+        }
     }
 }
 
@@ -384,5 +378,41 @@ mod tests {
         )
         .await
         .expect("deferred close should eventually complete");
+    }
+
+    #[test]
+    fn close_without_runtime_completes_inline() {
+        let temp = tempfile::tempdir().unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let store = runtime.block_on(open_test_store(&temp, "inline-close.sqlite"));
+        drop(runtime);
+
+        let registry = Arc::new(WorkspaceStoreLeaseRegistry::default());
+        let workspace_id = WorkspaceId::new();
+        let close = registry
+            .queue_close(workspace_id, 11, store)
+            .expect("close without leases should start immediately");
+
+        spawn_store_close(
+            close.store,
+            Arc::clone(&registry),
+            close.workspace_id,
+            Arc::clone(&close.notify),
+        );
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                registry.wait_for_workspace_close(workspace_id),
+            )
+            .await
+            .expect("inline close should finish without a background runtime");
+        });
+
+        assert!(
+            !registry.is_workspace_closing(workspace_id),
+            "inline close should clear the closing marker once shutdown completes"
+        );
     }
 }

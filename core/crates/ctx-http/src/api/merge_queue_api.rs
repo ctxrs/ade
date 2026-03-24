@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::shared::store_for_existing_workspace_status;
 
 pub(super) async fn submit_merge_queue_entry(
     State(state): State<Arc<AppState>>,
@@ -62,10 +63,7 @@ pub(super) async fn list_merge_queue_entries(
     let workspace_id = WorkspaceId(
         uuid::Uuid::parse_str(&params.workspace_id).map_err(|_| StatusCode::BAD_REQUEST)?,
     );
-    let store = state
-        .store_for_workspace(workspace_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_workspace_status(&state, workspace_id).await?;
     let entries = store
         .list_merge_queue_entries(workspace_id, params.limit)
         .await
@@ -150,10 +148,7 @@ pub(super) async fn get_merge_queue_entry_logs(
     merge_queue::get_workspace_merge_queue_entry(&state, workspace_id, entry_id)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
-    let store = state
-        .store_for_workspace(workspace_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_workspace_status(&state, workspace_id).await?;
     let run = store
         .get_latest_merge_queue_run(entry_id)
         .await

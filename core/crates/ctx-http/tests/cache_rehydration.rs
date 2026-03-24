@@ -292,6 +292,7 @@ async fn non_primary_store_backed_head_is_purged_on_workspace_cleanup() {
         .await
         .is_some());
 
+    drop(store);
     state.cleanup_workspace(workspace.id).await;
     state
         .global_store()
@@ -303,7 +304,6 @@ async fn non_primary_store_backed_head_is_purged_on_workspace_cleanup() {
         .delete_workspace(workspace.id)
         .await
         .unwrap();
-    state.core.stores.evict_workspace(workspace.id).await;
 
     assert!(state
         .workspaces
@@ -319,6 +319,14 @@ async fn non_primary_store_backed_head_is_purged_on_workspace_cleanup() {
             "/api/sessions/{}/head?include_events=false&limit=60",
             session.id.0
         ))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _body) = common::oneshot_bytes(&app, req).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/workspaces/{}/attachments", workspace.id.0))
         .body(Body::empty())
         .unwrap();
     let (status, _body) = common::oneshot_bytes(&app, req).await;
@@ -425,6 +433,8 @@ async fn session_read_routes_return_500_when_workspace_store_cannot_open() {
         format!("/api/sessions/{}/events?tail=1", session.id.0),
         format!("/api/sessions/{}/history?limit=60", session.id.0),
         format!("/api/sessions/{}/turns/{}/tools", session.id.0, turn_id.0),
+        format!("/api/workspaces/{}/attachments", workspace.id.0),
+        format!("/api/workspaces/{}/tasks", workspace.id.0),
     ];
     for route in routes {
         let req = Request::builder()

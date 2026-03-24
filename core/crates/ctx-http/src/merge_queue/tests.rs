@@ -300,6 +300,47 @@ async fn enabled_workspace_queued_rows_resume_only_after_open() {
 }
 
 #[tokio::test]
+async fn enabled_workspace_queued_rows_resume_when_reopened_from_draining_store() {
+    let (data_dir, state) = setup_state().await;
+    let workspace = create_workspace(&state, &data_dir, "draining").await;
+    let store = state.core.stores.workspace(workspace.id).await.unwrap();
+    update_merge_queue_config(
+        &store,
+        MergeQueueConfigUpdate {
+            enabled: true,
+            target_branch: Some("main".to_string()),
+            verify_commands: Vec::new(),
+            push_on_success: None,
+            push_remote: None,
+            push_branch: None,
+            canonical_sync: None,
+        },
+    )
+    .await
+    .unwrap();
+    let entry = queued_entry(workspace.id, "draining-queued");
+    store.create_merge_queue_entry(&entry).await.unwrap();
+
+    spawn_merge_queue_runner(state.clone());
+    state.core.stores.evict_workspace(workspace.id).await;
+    assert_eq!(state.core.stores.stats().await.workspace_store_count, 0);
+
+    let reopened = state.store_for_workspace(workspace.id).await.unwrap();
+    let resumed = wait_for_entry_status(
+        &state,
+        workspace.id,
+        entry.id,
+        |status| status != MergeQueueEntryStatus::Queued,
+        Duration::from_secs(2),
+    )
+    .await;
+    assert_ne!(resumed.status, MergeQueueEntryStatus::Queued);
+
+    drop(reopened);
+    drop(store);
+}
+
+#[tokio::test]
 async fn reenable_explicitly_reschedules_dormant_queued_workspace() {
     let (data_dir, state) = setup_state().await;
     let workspace = create_workspace(&state, &data_dir, "reenable").await;

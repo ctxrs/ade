@@ -19,6 +19,20 @@ use crate::logs;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::settings::ContainerRuntimeKind;
 
+pub(super) async fn store_for_existing_workspace_status(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+) -> Result<ctx_store::Store, StatusCode> {
+    match state.store_for_workspace(workspace_id).await {
+        Ok(store) => Ok(store),
+        Err(_) => match state.global_store().get_workspace(workspace_id).await {
+            Ok(Some(_)) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+            Ok(None) => Err(StatusCode::NOT_FOUND),
+            Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        },
+    }
+}
+
 pub(super) fn session_root_kind_for_worktree(wt: Option<&Worktree>) -> &'static str {
     match wt.and_then(|w| w.git_branch.as_ref()) {
         Some(_) => "worktree",

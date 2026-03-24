@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::shared::store_for_existing_workspace_status;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct MergeQueueSubmitReq {
@@ -240,10 +241,7 @@ pub(in crate::api) async fn resource_utilization(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let store = state
-        .store_for_workspace(workspace_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let store = store_for_existing_workspace_status(&state, workspace_id).await?;
     let worktrees = store
         .list_worktrees(workspace_id)
         .await
