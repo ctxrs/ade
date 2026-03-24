@@ -12,9 +12,24 @@ use ctx_core::models::Workspace;
 
 use crate::Store;
 
-#[derive(Clone, Debug, Default)]
+const DEFAULT_WORKSPACE_MAX_CONNECTIONS: u32 = 2;
+const DEFAULT_MAX_CACHED_WORKSPACES: usize = 12;
+
+#[derive(Clone, Debug)]
 pub struct StoreManagerConfig {
     pub max_connections: Option<u32>,
+    pub workspace_max_connections: Option<u32>,
+    pub max_cached_workspaces: usize,
+}
+
+impl Default for StoreManagerConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: None,
+            workspace_max_connections: None,
+            max_cached_workspaces: DEFAULT_MAX_CACHED_WORKSPACES,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -42,6 +57,11 @@ struct TimedStoreEntry {
     last_access: Instant,
 }
 
+pub struct WorkspaceStoreAccess {
+    pub store: Store,
+    pub opened_now: bool,
+}
+
 impl TimedStoreEntry {
     fn new(store: Store) -> Self {
         Self {
@@ -62,12 +82,13 @@ impl StoreManager {
 
     pub async fn open_with_config(
         data_root: impl AsRef<Path>,
-        config: StoreManagerConfig,
+        mut config: StoreManagerConfig,
     ) -> Result<Self> {
         let data_root = data_root.as_ref().to_path_buf();
         let db_dir = data_root.join("db");
         tokio::fs::create_dir_all(&db_dir).await?;
         let global_db_path = db_dir.join("db.sqlite");
+        config.max_cached_workspaces = config.max_cached_workspaces.max(1);
         let global = Store::open_sqlite(&global_db_path, config.max_connections).await?;
 
         Ok(Self {
@@ -113,11 +134,21 @@ impl StoreManager {
     }
 
     pub async fn workspace(&self, workspace_id: WorkspaceId) -> Result<Store> {
+        Ok(self.workspace_access(workspace_id).await?.store)
+    }
+
+    pub async fn workspace_access(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<WorkspaceStoreAccess> {
         {
             let mut stores = self.workspace_stores.lock().await;
             if let Some(entry) = stores.get_mut(&workspace_id) {
                 entry.touch();
-                return Ok(entry.store.clone());
+                return Ok(WorkspaceStoreAccess {
+                    store: entry.store.clone(),
+                    opened_now: false,
+                });
             }
         }
         let workspace = self
@@ -132,10 +163,17 @@ impl StoreManager {
             let existing = existing.store.clone();
             drop(stores);
             store.close().await;
-            return Ok(existing);
+            return Ok(WorkspaceStoreAccess {
+                store: existing,
+                opened_now: false,
+            });
         }
         stores.insert(workspace_id, TimedStoreEntry::new(store.clone()));
-        Ok(store)
+        drop(stores);
+        Ok(WorkspaceStoreAccess {
+            store,
+            opened_now: true,
+        })
     }
 
     pub async fn workspace_uncached(&self, workspace_id: WorkspaceId) -> Result<Store> {
@@ -217,12 +255,48 @@ impl StoreManager {
         evicted
     }
 
+    pub async fn evict_workspaces_to_cap(
+        &self,
+        protected_workspaces: &HashSet<WorkspaceId>,
+    ) -> usize {
+        let max_cached = self.config.max_cached_workspaces.max(1);
+        let expired_entries = {
+            let mut stores = self.workspace_stores.lock().await;
+            let overflow = stores.len().saturating_sub(max_cached);
+            if overflow == 0 {
+                Vec::new()
+            } else {
+                let mut victims = stores
+                    .iter()
+                    .filter(|(workspace_id, _)| !protected_workspaces.contains(workspace_id))
+                    .map(|(workspace_id, entry)| (*workspace_id, entry.last_access))
+                    .collect::<Vec<_>>();
+                victims.sort_by_key(|(_, last_access)| *last_access);
+                victims
+                    .into_iter()
+                    .take(overflow)
+                    .filter_map(|(workspace_id, _)| stores.remove(&workspace_id))
+                    .collect::<Vec<_>>()
+            }
+        };
+        let evicted = expired_entries.len();
+        for entry in expired_entries {
+            entry.store.close().await;
+        }
+        evicted
+    }
+
     async fn open_workspace_store(&self, workspace: &Workspace) -> Result<Store> {
         let path = self.workspace_db_path(workspace.id);
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        let store = Store::open_sqlite(&path, self.config.max_connections).await?;
+        let workspace_max_connections = self
+            .config
+            .workspace_max_connections
+            .or(self.config.max_connections)
+            .or(Some(DEFAULT_WORKSPACE_MAX_CONNECTIONS));
+        let store = Store::open_sqlite(&path, workspace_max_connections).await?;
         store.upsert_workspace(workspace).await?;
         Ok(store)
     }
@@ -551,5 +625,159 @@ mod tests {
 
         store.close().await;
         assert_eq!(manager.stats().await.workspace_store_count, 0);
+    }
+
+    #[tokio::test]
+    async fn workspace_access_reports_open_state_and_enforces_cache_cap() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = StoreManager::open_with_config(
+            temp.path(),
+            StoreManagerConfig {
+                max_cached_workspaces: 2,
+                ..StoreManagerConfig::default()
+            },
+        )
+        .await
+        .unwrap();
+        let workspace_a = manager
+            .global()
+            .create_workspace(
+                "a".to_string(),
+                temp.path().join("a").to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .unwrap();
+        let workspace_b = manager
+            .global()
+            .create_workspace(
+                "b".to_string(),
+                temp.path().join("b").to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .unwrap();
+        let workspace_c = manager
+            .global()
+            .create_workspace(
+                "c".to_string(),
+                temp.path().join("c").to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            manager
+                .workspace_access(workspace_a.id)
+                .await
+                .unwrap()
+                .opened_now
+        );
+        assert!(
+            !manager
+                .workspace_access(workspace_a.id)
+                .await
+                .unwrap()
+                .opened_now
+        );
+        assert!(
+            manager
+                .workspace_access(workspace_b.id)
+                .await
+                .unwrap()
+                .opened_now
+        );
+        assert_eq!(manager.stats().await.workspace_store_count, 2);
+
+        assert!(
+            manager
+                .workspace_access(workspace_c.id)
+                .await
+                .unwrap()
+                .opened_now
+        );
+        assert_eq!(manager.stats().await.workspace_store_count, 3);
+
+        let evicted = manager
+            .evict_workspaces_to_cap(&HashSet::from([workspace_c.id]))
+            .await;
+        assert_eq!(evicted, 1);
+        assert_eq!(manager.stats().await.workspace_store_count, 2);
+
+        assert!(
+            manager
+                .workspace_access(workspace_a.id)
+                .await
+                .unwrap()
+                .opened_now
+        );
+        assert_eq!(manager.stats().await.workspace_store_count, 3);
+    }
+
+    #[tokio::test]
+    async fn evict_workspaces_to_cap_preserves_protected_workspaces() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = StoreManager::open_with_config(
+            temp.path(),
+            StoreManagerConfig {
+                max_cached_workspaces: 2,
+                ..StoreManagerConfig::default()
+            },
+        )
+        .await
+        .unwrap();
+        let workspace_a = manager
+            .global()
+            .create_workspace(
+                "a".to_string(),
+                temp.path().join("a").to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .unwrap();
+        let workspace_b = manager
+            .global()
+            .create_workspace(
+                "b".to_string(),
+                temp.path().join("b").to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .unwrap();
+        let workspace_c = manager
+            .global()
+            .create_workspace(
+                "c".to_string(),
+                temp.path().join("c").to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .unwrap();
+
+        let _ = manager.workspace_access(workspace_a.id).await.unwrap();
+        let _ = manager.workspace_access(workspace_b.id).await.unwrap();
+        let _ = manager.workspace_access(workspace_c.id).await.unwrap();
+        assert_eq!(manager.stats().await.workspace_store_count, 3);
+
+        let evicted = manager
+            .evict_workspaces_to_cap(&HashSet::from([workspace_a.id]))
+            .await;
+        assert_eq!(evicted, 1);
+        assert_eq!(manager.stats().await.workspace_store_count, 2);
+        assert!(
+            !manager
+                .workspace_access(workspace_a.id)
+                .await
+                .unwrap()
+                .opened_now
+        );
+        assert!(
+            manager
+                .workspace_access(workspace_b.id)
+                .await
+                .unwrap()
+                .opened_now
+        );
     }
 }

@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio::sync::{broadcast, mpsc, watch, Mutex, Notify};
 use tokio::task::JoinHandle;
 
@@ -159,6 +159,7 @@ impl AppState {
         let workspace_active_snapshot = Arc::new(WorkspaceActiveSnapshotHub::new());
         let web_sessions = Arc::new(WebSessionManager::new());
         let merge_queue_notify = Arc::new(Notify::new());
+        let (merge_queue_schedule_tx, merge_queue_schedule_rx) = mpsc::unbounded_channel();
 
         Self {
             core: CoreState {
@@ -236,6 +237,9 @@ impl AppState {
                 mobile_tunnel: MobileTunnelManager::default(),
                 web_sessions,
                 merge_queue_notify,
+                merge_queue_schedule_tx,
+                merge_queue_schedule_rx: Mutex::new(Some(merge_queue_schedule_rx)),
+                merge_queue_running: Mutex::new(HashSet::new()),
                 lsp_diag_broadcaster,
                 lsp_diag_forwarders: Mutex::new(HashSet::new()),
             },
@@ -266,20 +270,93 @@ impl AppState {
         self.core.stores.global()
     }
 
+    async fn protected_workspace_store_ids(&self) -> HashSet<WorkspaceId> {
+        let mut active_sessions: HashSet<SessionId> = HashSet::new();
+        {
+            let set = self.sessions.running_sessions.lock().await;
+            active_sessions.extend(set.iter().copied());
+        }
+        {
+            let map = self.sessions.schedulers.lock().await;
+            active_sessions.extend(map.keys().copied());
+        }
+        {
+            let map = self.sessions.broadcasters.lock().await;
+            active_sessions.extend(map.keys().copied());
+        }
+        {
+            let map = self.sessions.session_event_heads.lock().await;
+            active_sessions.extend(map.keys().copied());
+        }
+
+        let mut active_workspaces: HashSet<WorkspaceId> = HashSet::new();
+        let mut missing = Vec::new();
+        {
+            let cache = self.sessions.session_meta_cache.lock().await;
+            for session_id in &active_sessions {
+                if let Some(entry) = cache.get(session_id) {
+                    active_workspaces.insert(entry.value.workspace_id);
+                } else {
+                    missing.push(*session_id);
+                }
+            }
+        }
+        for session_id in missing {
+            if let Ok(Some(workspace_id)) = self
+                .global_store()
+                .get_workspace_id_for_session(session_id)
+                .await
+            {
+                active_workspaces.insert(workspace_id);
+            }
+        }
+        {
+            let running = self.transport.merge_queue_running.lock().await;
+            active_workspaces.extend(running.iter().copied());
+        }
+
+        active_workspaces
+    }
+
     pub async fn store_for_workspace(&self, workspace_id: WorkspaceId) -> Result<Store> {
-        self.core.stores.workspace(workspace_id).await
+        let access = self.core.stores.workspace_access(workspace_id).await?;
+        if access.opened_now {
+            let mut protected_workspaces = self.protected_workspace_store_ids().await;
+            protected_workspaces.insert(workspace_id);
+            self.core
+                .stores
+                .evict_workspaces_to_cap(&protected_workspaces)
+                .await;
+            let _ = self.transport.merge_queue_schedule_tx.send(workspace_id);
+        }
+        Ok(access.store)
     }
 
     pub async fn store_for_task(&self, task_id: TaskId) -> Result<Store> {
-        self.core.stores.store_for_task(task_id).await
+        let workspace_id = self
+            .global_store()
+            .get_workspace_id_for_task(task_id)
+            .await?
+            .with_context(|| format!("workspace missing for task {}", task_id.0))?;
+        self.store_for_workspace(workspace_id).await
     }
 
     pub async fn store_for_session(&self, session_id: SessionId) -> Result<Store> {
-        self.core.stores.store_for_session(session_id).await
+        let workspace_id = self
+            .global_store()
+            .get_workspace_id_for_session(session_id)
+            .await?
+            .with_context(|| format!("workspace missing for session {}", session_id.0))?;
+        self.store_for_workspace(workspace_id).await
     }
 
     pub async fn store_for_worktree(&self, worktree_id: WorktreeId) -> Result<Store> {
-        self.core.stores.store_for_worktree(worktree_id).await
+        let workspace_id = self
+            .global_store()
+            .get_workspace_id_for_worktree(worktree_id)
+            .await?
+            .with_context(|| format!("workspace missing for worktree {}", worktree_id.0))?;
+        self.store_for_workspace(workspace_id).await
     }
 
     pub async fn sweep_idle_caches(
@@ -517,45 +594,7 @@ impl AppState {
             }
             stats.worktree_bootstrap_evicted += expired.len();
         }
-        let mut active_sessions: HashSet<SessionId> = HashSet::new();
-        {
-            let set = self.sessions.running_sessions.lock().await;
-            active_sessions.extend(set.iter().copied());
-        }
-        {
-            let map = self.sessions.schedulers.lock().await;
-            active_sessions.extend(map.keys().copied());
-        }
-        {
-            let map = self.sessions.broadcasters.lock().await;
-            active_sessions.extend(map.keys().copied());
-        }
-        {
-            let map = self.sessions.session_event_heads.lock().await;
-            active_sessions.extend(map.keys().copied());
-        }
-
-        let mut active_workspaces: HashSet<WorkspaceId> = HashSet::new();
-        let mut missing = Vec::new();
-        {
-            let cache = self.sessions.session_meta_cache.lock().await;
-            for session_id in &active_sessions {
-                if let Some(entry) = cache.get(session_id) {
-                    active_workspaces.insert(entry.value.workspace_id);
-                } else {
-                    missing.push(*session_id);
-                }
-            }
-        }
-        for session_id in missing {
-            if let Ok(Some(workspace_id)) = self
-                .global_store()
-                .get_workspace_id_for_session(session_id)
-                .await
-            {
-                active_workspaces.insert(workspace_id);
-            }
-        }
+        let active_workspaces = self.protected_workspace_store_ids().await;
 
         stats.workspace_stores_evicted = self
             .core

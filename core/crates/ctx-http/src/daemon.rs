@@ -692,6 +692,8 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         .as_ref()
         .map(|storage| StoreManagerConfig {
             max_connections: storage.max_connections,
+            workspace_max_connections: storage.max_connections,
+            ..StoreManagerConfig::default()
         })
         .unwrap_or_default();
     let stores = StoreManager::open_with_config(&data_root, store_config).await?;

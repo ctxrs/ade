@@ -87,6 +87,9 @@ pub struct TransportRuntime {
     pub mobile_tunnel: MobileTunnelManager,
     pub web_sessions: Arc<WebSessionManager>,
     pub merge_queue_notify: Arc<Notify>,
+    pub merge_queue_schedule_tx: mpsc::UnboundedSender<WorkspaceId>,
+    pub merge_queue_schedule_rx: Mutex<Option<mpsc::UnboundedReceiver<WorkspaceId>>>,
+    pub merge_queue_running: Mutex<HashSet<WorkspaceId>>,
     pub lsp_diag_broadcaster: broadcast::Sender<serde_json::Value>,
     pub lsp_diag_forwarders: Mutex<HashSet<String>>,
 }
@@ -166,8 +169,8 @@ pub(crate) struct ActiveTaskRefreshEntry {
 }
 
 const DEFAULT_SESSION_CACHE_TTL_HOURS: u64 = 24;
-const DEFAULT_WORKSPACE_CACHE_TTL_DAYS: u64 = 7;
-const DEFAULT_CACHE_SWEEP_INTERVAL_SECS: u64 = 60 * 60;
+const DEFAULT_WORKSPACE_CACHE_TTL_DAYS: u64 = 1;
+const DEFAULT_CACHE_SWEEP_INTERVAL_SECS: u64 = 5 * 60;
 
 #[derive(Clone, Copy, Debug)]
 pub struct CacheSweepConfig {

@@ -74,15 +74,14 @@ pub async fn get_workspace_merge_queue_entry(
         .ok_or_else(|| anyhow::anyhow!("merge queue entry not found"))
 }
 
-async fn list_queued_entries(state: &AppState) -> Result<Vec<MergeQueueEntry>> {
-    let mut out = Vec::new();
-    let workspaces = state.global_store().list_workspaces().await?;
-    for workspace in workspaces {
-        let store = state.store_for_workspace(workspace.id).await?;
-        out.extend(store.list_queued_merge_queue_entries().await?);
-    }
-    out.sort_by_key(|entry| entry.created_at);
-    Ok(out)
+async fn list_queued_entries_for_workspace(
+    state: &AppState,
+    workspace_id: WorkspaceId,
+) -> Result<Vec<MergeQueueEntry>> {
+    let store = state.core.stores.workspace(workspace_id).await?;
+    let mut entries = store.list_queued_merge_queue_entries().await?;
+    entries.sort_by_key(|entry| entry.created_at);
+    Ok(entries)
 }
 
 pub async fn submit_merge_queue_entry(
@@ -215,6 +214,7 @@ pub async fn submit_merge_queue_entry(
         updated_at: now,
     };
     workspace_store.create_merge_queue_entry(&entry).await?;
+    let _ = state.transport.merge_queue_schedule_tx.send(workspace.id);
     state.transport.merge_queue_notify.notify_one();
     let entry = wait_for_merge_queue_completion(state, entry.workspace_id, entry.id).await?;
     ensure_merge_queue_success(&entry)?;
@@ -257,6 +257,7 @@ pub async fn retry_merge_queue_entry(
             entry.result_commit_sha = None;
             entry.updated_at = Utc::now();
             store.update_merge_queue_entry(&entry).await?;
+            let _ = state.transport.merge_queue_schedule_tx.send(workspace_id);
             state.transport.merge_queue_notify.notify_one();
             state.transport.merge_queue_notify.notify_waiters();
             Ok(entry)
@@ -266,48 +267,95 @@ pub async fn retry_merge_queue_entry(
 }
 
 pub fn spawn_merge_queue_runner(state: Arc<AppState>) {
-    let notify = state.transport.merge_queue_notify.clone();
     tokio::spawn(async move {
-        loop {
-            match run_next_entry(&state).await {
-                Ok(true) => continue,
-                Ok(false) => {}
-                Err(err) => {
-                    tracing::warn!("merge queue runner error: {err:#}");
-                }
-            }
-            notify.notified().await;
+        let Some(mut rx) = state.transport.merge_queue_schedule_rx.lock().await.take() else {
+            tracing::warn!("merge queue runner already started");
+            return;
+        };
+        while let Some(workspace_id) = rx.recv().await {
+            schedule_workspace_drain(&state, workspace_id).await;
         }
     });
 }
 
-async fn run_next_entry(state: &Arc<AppState>) -> Result<bool> {
-    let entries = list_queued_entries(state).await?;
-    for mut entry in entries {
-        let workspace = match state
-            .global_store()
-            .get_workspace(entry.workspace_id)
-            .await?
+async fn schedule_workspace_drain(state: &Arc<AppState>, workspace_id: WorkspaceId) {
+    let should_spawn = {
+        let mut running = state.transport.merge_queue_running.lock().await;
+        running.insert(workspace_id)
+    };
+    if !should_spawn {
+        return;
+    }
+    let state = Arc::clone(state);
+    tokio::spawn(async move {
+        loop {
+            match run_next_entry_for_workspace(&state, workspace_id).await {
+                Ok(true) => continue,
+                Ok(false) => break,
+                Err(err) => {
+                    tracing::warn!(workspace_id = %workspace_id.0, "merge queue runner error: {err:#}");
+                    break;
+                }
+            }
+        }
+
         {
-            Some(ws) => ws,
-            None => continue,
-        };
-        let store = state.store_for_workspace(workspace.id).await?;
-        let cfg = load_merge_queue_config(&store).await?;
-        if !cfg.enabled {
-            continue;
+            let mut running = state.transport.merge_queue_running.lock().await;
+            running.remove(&workspace_id);
         }
-        let now = Utc::now();
-        let claimed = store.claim_merge_queue_entry(entry.id, now).await?;
-        if !claimed {
-            continue;
+
+        match workspace_has_queued_entries(&state, workspace_id).await {
+            Ok(true) => {
+                let _ = state.transport.merge_queue_schedule_tx.send(workspace_id);
+            }
+            Ok(false) => {}
+            Err(err) => {
+                tracing::warn!(
+                    workspace_id = %workspace_id.0,
+                    "failed to re-check queued merge queue entries after drain: {err:#}"
+                );
+            }
         }
-        entry.status = MergeQueueEntryStatus::Running;
-        entry.updated_at = now;
-        run_entry(state, &workspace, entry, &cfg).await?;
+    });
+}
+
+async fn run_next_entry_for_workspace(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+) -> Result<bool> {
+    let workspace = match state.global_store().get_workspace(workspace_id).await? {
+        Some(workspace) => workspace,
+        None => return Ok(false),
+    };
+    let store = state.core.stores.workspace(workspace.id).await?;
+    let cfg = load_merge_queue_config(&store).await?;
+    if !cfg.enabled {
+        return Ok(false);
+    }
+
+    let Some(mut entry) = list_queued_entries_for_workspace(state, workspace_id)
+        .await?
+        .into_iter()
+        .next()
+    else {
+        return Ok(false);
+    };
+
+    let now = Utc::now();
+    let claimed = store.claim_merge_queue_entry(entry.id, now).await?;
+    if !claimed {
         return Ok(true);
     }
-    Ok(false)
+    entry.status = MergeQueueEntryStatus::Running;
+    entry.updated_at = now;
+    run_entry(state, &workspace, entry, &cfg).await?;
+    Ok(true)
+}
+
+async fn workspace_has_queued_entries(state: &AppState, workspace_id: WorkspaceId) -> Result<bool> {
+    Ok(!list_queued_entries_for_workspace(state, workspace_id)
+        .await?
+        .is_empty())
 }
 
 async fn run_entry(
@@ -711,9 +759,46 @@ mod tests {
         assert_eq!(looked_up.id.0, queued_b.id.0);
         assert_eq!(looked_up.workspace_id.0, workspace_b.id.0);
 
-        let queued = list_queued_entries(state.as_ref()).await.unwrap();
-        assert_eq!(queued.len(), 2);
-        assert_eq!(queued[0].id.0, queued_a.id.0);
-        assert_eq!(queued[1].id.0, queued_b.id.0);
+        let queued_a_entries = list_queued_entries_for_workspace(state.as_ref(), workspace_a.id)
+            .await
+            .unwrap();
+        assert_eq!(queued_a_entries.len(), 1);
+        assert_eq!(queued_a_entries[0].id.0, queued_a.id.0);
+
+        let queued_b_entries = list_queued_entries_for_workspace(state.as_ref(), workspace_b.id)
+            .await
+            .unwrap();
+        assert_eq!(queued_b_entries.len(), 1);
+        assert_eq!(queued_b_entries[0].id.0, queued_b.id.0);
+    }
+
+    #[tokio::test]
+    async fn workspace_activation_only_schedules_the_opened_workspace() {
+        let (_data_dir, state) = setup_state().await;
+        let workspace_a = state
+            .global_store()
+            .create_workspace("a".to_string(), "/tmp/a".to_string(), VcsKind::Git)
+            .await
+            .unwrap();
+        let workspace_b = state
+            .global_store()
+            .create_workspace("b".to_string(), "/tmp/b".to_string(), VcsKind::Git)
+            .await
+            .unwrap();
+
+        let _ = state.core.stores.workspace(workspace_a.id).await.unwrap();
+        let _ = state.core.stores.workspace(workspace_b.id).await.unwrap();
+        state.core.stores.evict_workspace(workspace_a.id).await;
+        state.core.stores.evict_workspace(workspace_b.id).await;
+        assert_eq!(state.core.stores.stats().await.workspace_store_count, 0);
+
+        spawn_merge_queue_runner(state.clone());
+        let _ = state.store_for_workspace(workspace_a.id).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let stats = state.core.stores.stats().await;
+        assert_eq!(stats.workspace_store_count, 1);
+        assert!(state.core.stores.workspace(workspace_a.id).await.is_ok());
+        assert_eq!(state.core.stores.stats().await.workspace_store_count, 1);
     }
 }
