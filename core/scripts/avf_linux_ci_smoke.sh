@@ -205,7 +205,9 @@ cleanup() {
 trap cleanup EXIT
 
 echo "==> Building ctx-avf-linux-helper"
-CTX_DESKTOP_SKIP_TAURI_BUILD=1 cargo build --locked --manifest-path "$helper_manifest" --bin ctx-avf-linux-helper
+# `apps/desktop/src-tauri` is an intentionally standalone Cargo package and does not keep its own
+# checked-in Cargo.lock. Match the normal `desktop:prep` path instead of forcing `--locked` here.
+CTX_DESKTOP_SKIP_TAURI_BUILD=1 cargo build --manifest-path "$helper_manifest" --bin ctx-avf-linux-helper
 /usr/bin/codesign --force --sign - --entitlements "$helper_entitlements" "$helper_bin"
 
 echo "==> Probing helper"

@@ -59,6 +59,43 @@ fn normalize_container_execution_settings_coerces_avf_to_disk_isolated() {
 }
 
 #[test]
+fn apply_update_coerces_avf_to_disk_isolated() {
+    let next = apply_update(
+        Settings::default(),
+        UpdateSettingsReq {
+            dictation: None,
+            title_generation: None,
+            oracle: None,
+            telemetry: None,
+            resource_governance: None,
+            provider_guard: None,
+            tool_limits: None,
+            provider_restart: None,
+            subagents: None,
+            sandboxing: None,
+            execution: Some(update::UpdateExecutionSettingsReq {
+                mode: ExecutionMode::Container,
+                container: ContainerExecutionSettings {
+                    runtime: ContainerRuntimeKind::AvfLinuxVm,
+                    mount_mode: ContainerMountMode::HostMounted,
+                    ..ContainerExecutionSettings::default()
+                },
+            }),
+            network_profiles: None,
+        },
+    );
+
+    assert_eq!(
+        next.execution
+            .as_ref()
+            .expect("execution settings")
+            .container
+            .mount_mode,
+        ContainerMountMode::DiskIsolated
+    );
+}
+
+#[test]
 fn to_public_redacts_secret_values() {
     let settings = Settings {
         dictation: Some(DictationSettings {

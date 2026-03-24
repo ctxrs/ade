@@ -14,7 +14,9 @@ pub(crate) fn to_public(settings: &Settings) -> PublicSettings {
 }
 
 pub(crate) fn apply_update(current: Settings, req: UpdateSettingsReq) -> Settings {
-    update::apply_update(current, req)
+    let mut next = update::apply_update(current, req);
+    normalize_settings_in_place(&mut next);
+    next
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -345,6 +347,12 @@ pub(crate) fn normalize_container_execution_settings(settings: &mut ContainerExe
         settings.mount_mode = ContainerMountMode::DiskIsolated;
     }
     normalize_container_machine_settings(&mut settings.machine);
+}
+
+pub(crate) fn normalize_settings_in_place(settings: &mut Settings) {
+    if let Some(execution) = settings.execution.as_mut() {
+        normalize_container_execution_settings(&mut execution.container);
+    }
 }
 
 impl Default for ContainerExecutionSettings {
@@ -737,9 +745,7 @@ pub async fn load_settings(store: &Store) -> anyhow::Result<Settings> {
     if settings.network_profiles.is_none() {
         settings.network_profiles = Some(NetworkProfilesSettings::default());
     }
-    if let Some(execution) = settings.execution.as_mut() {
-        normalize_container_execution_settings(&mut execution.container);
-    }
+    normalize_settings_in_place(&mut settings);
 
     // Environment overrides (optional) for easy local bring-up.
     // These are intentionally "best-effort" and do not persist.
@@ -927,7 +933,9 @@ pub async fn load_settings(store: &Store) -> anyhow::Result<Settings> {
 }
 
 pub async fn save_settings(store: &Store, settings: &Settings) -> anyhow::Result<()> {
-    let settings_json = serde_json::to_string_pretty(settings)?;
+    let mut normalized = settings.clone();
+    normalize_settings_in_place(&mut normalized);
+    let settings_json = serde_json::to_string_pretty(&normalized)?;
     store
         .upsert_runtime_settings_document(SETTINGS_SCHEMA_VERSION, &settings_json)
         .await?;
