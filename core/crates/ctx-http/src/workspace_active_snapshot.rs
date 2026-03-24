@@ -28,9 +28,21 @@ pub use replay_state::{
 };
 pub(crate) use trim::session_metadata_from_session;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionHeadCompleteness {
+    Hydrated,
+    DeltaOnly,
+}
+
+#[derive(Debug, Clone)]
+struct CachedSessionHead {
+    head: SessionHeadSnapshot,
+    completeness: SessionHeadCompleteness,
+}
+
 pub struct WorkspaceActiveSnapshotHub {
     inner: Mutex<HashMap<WorkspaceId, WorkspaceActiveSnapshotEntry>>,
-    session_heads: Mutex<HashMap<SessionId, SessionHeadSnapshot>>,
+    session_heads: Mutex<HashMap<SessionId, CachedSessionHead>>,
     active_head_index: Mutex<HashMap<SessionId, WorkspaceId>>,
 }
 
@@ -121,8 +133,10 @@ impl WorkspaceActiveSnapshotHub {
         let session_heads_count = session_heads.len();
         let mut session_heads_bytes = 0;
         let mut session_heads_max_bytes = 0;
-        for head in session_heads.values() {
-            let bytes = serde_json::to_vec(head).map(|buf| buf.len()).unwrap_or(0);
+        for cached in session_heads.values() {
+            let bytes = serde_json::to_vec(&cached.head)
+                .map(|buf| buf.len())
+                .unwrap_or(0);
             session_heads_bytes += bytes;
             if bytes > session_heads_max_bytes {
                 session_heads_max_bytes = bytes;
@@ -438,7 +452,13 @@ impl WorkspaceActiveSnapshotHub {
             let mut session_heads = self.session_heads.lock().await;
             let mut index = self.active_head_index.lock().await;
             for head in heads {
-                session_heads.insert(head.session.id, head.clone());
+                session_heads.insert(
+                    head.session.id,
+                    CachedSessionHead {
+                        head: head.clone(),
+                        completeness: SessionHeadCompleteness::Hydrated,
+                    },
+                );
                 index.insert(head.session.id, workspace_id);
             }
         }
@@ -449,7 +469,13 @@ impl WorkspaceActiveSnapshotHub {
         let workspace_id = head.session.workspace_id;
         let cursor = SessionReplayCursor::from_head(&head);
         let mut heads = self.session_heads.lock().await;
-        heads.insert(session_id, head.clone());
+        heads.insert(
+            session_id,
+            CachedSessionHead {
+                head: head.clone(),
+                completeness: SessionHeadCompleteness::Hydrated,
+            },
+        );
         drop(heads);
         let mut guard = self.inner.lock().await;
         let entry = guard
@@ -521,7 +547,10 @@ impl WorkspaceActiveSnapshotHub {
 
     pub async fn get_session_head(&self, session_id: SessionId) -> Option<SessionHeadSnapshot> {
         let heads = self.session_heads.lock().await;
-        heads.get(&session_id).cloned()
+        heads
+            .get(&session_id)
+            .filter(|cached| cached.completeness == SessionHeadCompleteness::Hydrated)
+            .map(|cached| cached.head.clone())
     }
 
     pub async fn publish_active_task_upsert(
@@ -734,12 +763,18 @@ impl WorkspaceActiveSnapshotHub {
         };
         {
             let mut heads = self.session_heads.lock().await;
-            if let Some(head) = heads.get_mut(&delta.session_id) {
-                apply_head_delta(head, &delta);
+            if let Some(cached) = heads.get_mut(&delta.session_id) {
+                apply_head_delta(&mut cached.head, &delta);
             } else if session.parent_session_id.is_none() {
                 let mut head = new_head_snapshot(session);
                 apply_head_delta(&mut head, &delta);
-                heads.insert(delta.session_id, head);
+                heads.insert(
+                    delta.session_id,
+                    CachedSessionHead {
+                        head,
+                        completeness: SessionHeadCompleteness::DeltaOnly,
+                    },
+                );
             }
         }
         let _ = tx.send(WorkspaceActiveSnapshotEvent::SessionHeadDelta {

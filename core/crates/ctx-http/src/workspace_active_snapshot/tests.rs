@@ -285,6 +285,51 @@ mod delta_tests {
             "subagent heads should not inflate the workspace active-head batch"
         );
     }
+
+    #[tokio::test]
+    async fn publish_session_head_delta_marks_cold_primary_head_unservable_until_hydrated() {
+        let hub = WorkspaceActiveSnapshotHub::new();
+        let primary = test_session(None);
+        let delta = SessionHeadDelta {
+            session_id: primary.id,
+            last_event_seq: 7,
+            projection_rev: 7,
+            state_rev: 7,
+            session: Some(session_metadata_from_session(&primary)),
+            activity: Some(SessionActivityState {
+                is_working: true,
+                last_turn_status: Some(SessionTurnStatus::Running),
+            }),
+            event: None,
+            turn: None,
+            message: None,
+            tool_summaries: Vec::new(),
+        };
+
+        hub.publish_session_head_delta(primary.workspace_id, &primary, delta, true)
+            .await;
+
+        assert!(
+            hub.get_session_head(primary.id).await.is_none(),
+            "cold primary misses should stay store-backed until a hydrated head is loaded"
+        );
+
+        let active_heads = hub.active_heads(primary.workspace_id).await;
+        assert_eq!(active_heads.heads.len(), 1);
+        assert_eq!(active_heads.heads[0].session.id, primary.id);
+
+        let mut hydrated = new_head_snapshot(&primary);
+        hydrated.last_event_seq = 7;
+        hydrated.projection_rev = 7;
+        hub.update_session_head(hydrated.clone()).await;
+
+        let cached = hub
+            .get_session_head(primary.id)
+            .await
+            .expect("hydrated head should become serveable");
+        assert_eq!(cached.last_event_seq, hydrated.last_event_seq);
+        assert_eq!(cached.projection_rev, hydrated.projection_rev);
+    }
 }
 
 mod replay_tests {

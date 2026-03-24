@@ -90,13 +90,11 @@ pub(crate) async fn get_session_head(
     {
         Ok(Some(head)) => {
             state.emit_cache_rehydrate("session_head", true).await;
-            if include_events {
-                state
-                    .workspaces
-                    .workspace_active_snapshot
-                    .update_session_head(head.clone())
-                    .await;
-            }
+            state
+                .workspaces
+                .workspace_active_snapshot
+                .update_session_head(head.clone())
+                .await;
             Ok(Json(head))
         }
         Ok(None) => {
