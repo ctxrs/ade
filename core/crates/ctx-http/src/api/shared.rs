@@ -17,6 +17,7 @@ use crate::execution_effective;
 use crate::harness_runtime;
 use crate::logs;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
+use crate::settings::ContainerRuntimeKind;
 
 pub(super) fn session_root_kind_for_worktree(wt: Option<&Worktree>) -> &'static str {
     match wt.and_then(|w| w.git_branch.as_ref()) {
@@ -133,14 +134,20 @@ async fn list_container_worktree_files(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let container_name = harness_runtime::workspace_container_name(workspace_id);
     let workdir = worktree.root_path.trim();
 
-    let tracked =
-        container_git_ls_files(state, &container_name, workdir, &["ls-files", "-z"]).await?;
+    let tracked = container_git_ls_files(
+        state,
+        worktree,
+        settings.container.runtime.clone(),
+        workdir,
+        &["ls-files", "-z"],
+    )
+    .await?;
     let untracked = container_git_ls_files(
         state,
-        &container_name,
+        worktree,
+        settings.container.runtime,
         workdir,
         &["ls-files", "--others", "--exclude-standard", "-z"],
     )
@@ -161,26 +168,57 @@ async fn list_container_worktree_files(
 
 async fn container_git_ls_files(
     state: &Arc<AppState>,
-    container_name: &str,
+    worktree: &Worktree,
+    runtime: ContainerRuntimeKind,
     workdir: &str,
     git_args: &[&str],
 ) -> Result<Vec<String>, StatusCode> {
-    // This runs on user keystrokes (completions). Bound it so a wedged Podman connection doesn't
+    // This runs on user keystrokes (completions). Bound it so a wedged sandbox connection doesn't
     // hang request handling indefinitely.
-    const PODMAN_GIT_LS_FILES_TIMEOUT: Duration = Duration::from_secs(30);
-    let mut cmd = harness_runtime::podman_command(&state.core.data_root)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    cmd.arg("exec")
-        .arg("--workdir")
-        .arg(workdir)
-        .arg(container_name)
-        .arg("git");
-    for arg in git_args {
-        cmd.arg(arg);
-    }
-    let out = harness_runtime::command_output_with_timeout(cmd, PODMAN_GIT_LS_FILES_TIMEOUT)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    const SANDBOX_GIT_LS_FILES_TIMEOUT: Duration = Duration::from_secs(30);
+    let out = match runtime {
+        ContainerRuntimeKind::Podman => {
+            let mut cmd = harness_runtime::podman_command(&state.core.data_root)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            cmd.arg("exec")
+                .arg("--workdir")
+                .arg(workdir)
+                .arg(harness_runtime::workspace_container_name(
+                    worktree.workspace_id,
+                ))
+                .arg("git");
+            for arg in git_args {
+                cmd.arg(arg);
+            }
+            harness_runtime::command_output_with_timeout(cmd, SANDBOX_GIT_LS_FILES_TIMEOUT)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        }
+        ContainerRuntimeKind::AvfLinuxVm => {
+            let args = git_args
+                .iter()
+                .map(|arg| (*arg).to_string())
+                .collect::<Vec<_>>();
+            let guest_cwd = PathBuf::from(workdir);
+            tokio::time::timeout(
+                SANDBOX_GIT_LS_FILES_TIMEOUT,
+                crate::workspace_runtime::run_avf_linux_guest_exec_capture(
+                    &state.core.data_root,
+                    worktree.workspace_id,
+                    worktree.id,
+                    &guest_cwd,
+                    "git",
+                    &args,
+                    &HashMap::new(),
+                    None,
+                    false,
+                ),
+            )
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        }
+    };
     if !out.status.success() {
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }

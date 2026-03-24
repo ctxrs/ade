@@ -1305,6 +1305,74 @@
       ]
     },
     {
+      "kind": "runtime",
+      "id": "avf-linux-guest",
+      "os": "macos",
+      "arch": "aarch64",
+      "variant": "default",
+      "version": "locked",
+      "bin": "rootfs.raw",
+      "helpers": {
+        "kernel": {
+          "uri": "locked://runtimes/avf-linux-guest/macos/aarch64/kernel",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "initrd": {
+          "uri": "locked://runtimes/avf-linux-guest/macos/aarch64/initrd",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "guest-agent": {
+          "uri": "locked://runtimes/avf-linux-guest/macos/aarch64/guest-agent",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "sources": [
+        {
+          "source_type": "local",
+          "build": "desktop:prep"
+        },
+        {
+          "source_type": "ci",
+          "uri": "locked://runtimes/avf-linux-guest/macos/aarch64/rootfs.raw.zst",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ]
+    },
+    {
+      "kind": "runtime",
+      "id": "avf-linux-guest",
+      "os": "macos",
+      "arch": "x86_64",
+      "variant": "default",
+      "version": "locked",
+      "bin": "rootfs.raw",
+      "helpers": {
+        "kernel": {
+          "uri": "locked://runtimes/avf-linux-guest/macos/x86_64/kernel",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "initrd": {
+          "uri": "locked://runtimes/avf-linux-guest/macos/x86_64/initrd",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "guest-agent": {
+          "uri": "locked://runtimes/avf-linux-guest/macos/x86_64/guest-agent",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "sources": [
+        {
+          "source_type": "local",
+          "build": "desktop:prep"
+        },
+        {
+          "source_type": "ci",
+          "uri": "locked://runtimes/avf-linux-guest/macos/x86_64/rootfs.raw.zst",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ]
+    },
+    {
       "kind": "machine_cache",
       "id": "podman-machine",
       "os": "macos",

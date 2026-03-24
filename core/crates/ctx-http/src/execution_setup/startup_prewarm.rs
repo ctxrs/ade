@@ -54,16 +54,16 @@ impl ExecutionSetupCoordinator {
             }
         };
         let exec = settings.execution.unwrap_or_default();
-        let image = harness_runtime::resolve_container_image(&exec.container);
+        let target = harness_runtime::runtime_prewarm_target(&exec.container);
         let (initial_machine_ready, initial_image_present) = self
-            .startup_runtime_state(&image)
+            .startup_runtime_state(&exec.container)
             .await
             .unwrap_or((false, false));
 
-        if !harness_runtime::container_runtime_available(&self.data_root) {
+        if !harness_runtime::local_runtime_available(&self.data_root, &exec.container.runtime) {
             let snapshot = StartupPrewarmSnapshot {
                 state: StartupPrewarmState::Skipped,
-                target_image: image,
+                target_image: target,
                 needs_prewarm: false,
                 machine_ready: false,
                 image_present: false,
@@ -71,7 +71,7 @@ impl ExecutionSetupCoordinator {
                 bundled_image_digest_changed: false,
                 last_attempt_at: Some(attempted_at),
                 last_success_at: None,
-                error: Some("container runtime unavailable".to_string()),
+                error: Some("local sandbox runtime unavailable".to_string()),
             };
             self.set_startup_snapshot(snapshot).await;
             return;
@@ -81,7 +81,7 @@ impl ExecutionSetupCoordinator {
             let mut inner = self.inner.lock().await;
             inner.startup = StartupPrewarmSnapshot {
                 state: StartupPrewarmState::Running,
-                target_image: image.clone(),
+                target_image: target.clone(),
                 needs_prewarm: false,
                 machine_ready: initial_machine_ready,
                 image_present: initial_image_present,
@@ -93,13 +93,13 @@ impl ExecutionSetupCoordinator {
             };
         }
 
-        let gate = match self.compute_prewarm_gate(&image).await {
+        let gate = match self.compute_prewarm_gate(&exec.container).await {
             Ok(gate) => gate,
             Err(err) => {
                 let message = format_error_chain(&err);
                 let snapshot = StartupPrewarmSnapshot {
                     state: StartupPrewarmState::Error,
-                    target_image: image.clone(),
+                    target_image: target.clone(),
                     needs_prewarm: true,
                     machine_ready: initial_machine_ready,
                     image_present: initial_image_present,
@@ -120,7 +120,7 @@ impl ExecutionSetupCoordinator {
         if !gate.needs_prewarm {
             let snapshot = StartupPrewarmSnapshot {
                 state: StartupPrewarmState::Ready,
-                target_image: image,
+                target_image: target,
                 needs_prewarm: false,
                 machine_ready: gate.machine_ready,
                 image_present: gate.image_present,
@@ -136,38 +136,39 @@ impl ExecutionSetupCoordinator {
 
         match self.startup_prewarm_runtime(&exec).await {
             Ok(()) => {
-                let (machine_ready, image_present) = match self.startup_runtime_state(&image).await
-                {
-                    Ok(state) => state,
-                    Err(err) => {
-                        let message = format_error_chain(&err);
-                        let snapshot = StartupPrewarmSnapshot {
-                            state: StartupPrewarmState::Error,
-                            target_image: image.clone(),
-                            needs_prewarm: true,
-                            machine_ready: gate.machine_ready,
-                            image_present: gate.image_present,
-                            image_ref_changed: gate.image_ref_changed,
-                            bundled_image_digest_changed: gate.bundled_image_digest_changed,
-                            last_attempt_at: Some(attempted_at),
-                            last_success_at: None,
-                            error: Some(message.clone()),
-                        };
-                        self.set_startup_snapshot(snapshot).await;
-                        let mut event = OpsEvent::new("warn", "execution.startup_prewarm_error");
-                        event.meta = Some(json!({"image": image, "error": message}));
-                        self.ops_events.emit(event);
-                        return;
-                    }
-                };
+                let (machine_ready, image_present) =
+                    match self.startup_runtime_state(&exec.container).await {
+                        Ok(state) => state,
+                        Err(err) => {
+                            let message = format_error_chain(&err);
+                            let snapshot = StartupPrewarmSnapshot {
+                                state: StartupPrewarmState::Error,
+                                target_image: target.clone(),
+                                needs_prewarm: true,
+                                machine_ready: gate.machine_ready,
+                                image_present: gate.image_present,
+                                image_ref_changed: gate.image_ref_changed,
+                                bundled_image_digest_changed: gate.bundled_image_digest_changed,
+                                last_attempt_at: Some(attempted_at),
+                                last_success_at: None,
+                                error: Some(message.clone()),
+                            };
+                            self.set_startup_snapshot(snapshot).await;
+                            let mut event =
+                                OpsEvent::new("warn", "execution.startup_prewarm_error");
+                            event.meta = Some(json!({"image": target, "error": message}));
+                            self.ops_events.emit(event);
+                            return;
+                        }
+                    };
 
                 if machine_ready && !image_present {
                     let message = format!(
-                        "startup prewarm completed but harness image '{image}' is still unavailable in the local sandbox runtime"
+                        "startup prewarm completed but runtime target '{target}' is still unavailable in the local sandbox runtime"
                     );
                     let snapshot = StartupPrewarmSnapshot {
                         state: StartupPrewarmState::Error,
-                        target_image: image.clone(),
+                        target_image: target.clone(),
                         needs_prewarm: true,
                         machine_ready,
                         image_present,
@@ -179,7 +180,7 @@ impl ExecutionSetupCoordinator {
                     };
                     self.set_startup_snapshot(snapshot).await;
                     let mut event = OpsEvent::new("warn", "execution.startup_prewarm_error");
-                    event.meta = Some(json!({"image": image, "error": message}));
+                    event.meta = Some(json!({"image": target, "error": message}));
                     self.ops_events.emit(event);
                     return;
                 }
@@ -190,7 +191,7 @@ impl ExecutionSetupCoordinator {
                             .to_string();
                     let snapshot = StartupPrewarmSnapshot {
                         state: StartupPrewarmState::Skipped,
-                        target_image: image.clone(),
+                        target_image: target.clone(),
                         needs_prewarm: true,
                         machine_ready,
                         image_present,
@@ -202,14 +203,14 @@ impl ExecutionSetupCoordinator {
                     };
                     self.set_startup_snapshot(snapshot).await;
                     let mut event = OpsEvent::new("warn", "execution.startup_prewarm_deferred");
-                    event.meta = Some(json!({"image": image, "reason": message}));
+                    event.meta = Some(json!({"image": target, "reason": message}));
                     self.ops_events.emit(event);
                     return;
                 }
                 let needs_prewarm = !machine_ready || !image_present;
                 let last_success_at = if machine_ready && image_present {
                     let metadata = StartupPrewarmMetadata {
-                        image_ref: image.clone(),
+                        image_ref: target.clone(),
                         bundled_image_fingerprint: gate.bundled_image_fingerprint,
                         ready_at: format_ts(Utc::now()),
                     };
@@ -220,7 +221,7 @@ impl ExecutionSetupCoordinator {
                 };
                 let snapshot = StartupPrewarmSnapshot {
                     state: StartupPrewarmState::Ready,
-                    target_image: image,
+                    target_image: target,
                     needs_prewarm,
                     machine_ready,
                     image_present,
@@ -244,12 +245,12 @@ impl ExecutionSetupCoordinator {
                 let message = format_error_chain(&err);
                 tracing::warn!("startup prewarm failed: {message}");
                 let mut event = OpsEvent::new("warn", "execution.startup_prewarm_error");
-                event.meta = Some(json!({"image": image, "error": message}));
+                event.meta = Some(json!({"image": target, "error": message}));
                 self.ops_events.emit(event);
 
                 let snapshot = StartupPrewarmSnapshot {
                     state: StartupPrewarmState::Error,
-                    target_image: image,
+                    target_image: target,
                     needs_prewarm: true,
                     machine_ready: gate.machine_ready,
                     image_present: gate.image_present,
@@ -264,14 +265,23 @@ impl ExecutionSetupCoordinator {
         }
     }
 
-    async fn compute_prewarm_gate(&self, image: &str) -> Result<PrewarmGate> {
+    pub(super) async fn compute_prewarm_gate(
+        &self,
+        settings: &crate::settings::ContainerExecutionSettings,
+    ) -> Result<PrewarmGate> {
+        let target = harness_runtime::runtime_prewarm_target(settings);
         let metadata = read_prewarm_metadata(&self.data_root).await?;
-        let (machine_ready, image_present) = self.startup_runtime_state(image).await?;
-        let bundled_image_fingerprint = bundled_image_fingerprint(image).await?;
+        let (machine_ready, image_present) = self.startup_runtime_state(settings).await?;
+        let bundled_image_fingerprint = match settings.runtime {
+            crate::settings::ContainerRuntimeKind::Podman => {
+                bundled_image_fingerprint(&target).await?
+            }
+            crate::settings::ContainerRuntimeKind::AvfLinuxVm => None,
+        };
 
         let image_ref_changed = metadata
             .as_ref()
-            .map(|meta| meta.image_ref != image)
+            .map(|meta| meta.image_ref != target)
             .unwrap_or(false);
         let bundled_image_digest_changed = metadata
             .as_ref()
@@ -295,16 +305,27 @@ impl ExecutionSetupCoordinator {
         })
     }
 
-    pub(crate) async fn startup_runtime_state(&self, image: &str) -> Result<(bool, bool)> {
-        let machine_ready = normalize_podman_engine_ready_for_gate(
-            harness_runtime::podman_engine_ready(&self.data_root).await,
-        )?;
-        let image_present = if machine_ready {
-            harness_runtime::container_image_present(&self.data_root, image).await?
-        } else {
-            false
-        };
-        Ok((machine_ready, image_present))
+    pub(crate) async fn startup_runtime_state(
+        &self,
+        settings: &crate::settings::ContainerExecutionSettings,
+    ) -> Result<(bool, bool)> {
+        match settings.runtime {
+            crate::settings::ContainerRuntimeKind::Podman => {
+                let target = harness_runtime::resolve_container_image(settings);
+                let machine_ready = normalize_podman_engine_ready_for_gate(
+                    harness_runtime::podman_engine_ready(&self.data_root).await,
+                )?;
+                let image_present = if machine_ready {
+                    harness_runtime::container_image_present(&self.data_root, &target).await?
+                } else {
+                    false
+                };
+                Ok((machine_ready, image_present))
+            }
+            crate::settings::ContainerRuntimeKind::AvfLinuxVm => {
+                harness_runtime::selected_runtime_state(&self.data_root, settings).await
+            }
+        }
     }
 
     async fn startup_prewarm_runtime(&self, exec: &ExecutionSettings) -> Result<()> {
@@ -314,7 +335,7 @@ impl ExecutionSetupCoordinator {
             .await
     }
 
-    async fn configured_startup_image(&self) -> Result<String> {
+    async fn configured_startup_target(&self) -> Result<String> {
         let db_path = self.data_root.join("db").join("db.sqlite");
         let store = Store::open_sqlite(&db_path, None)
             .await
@@ -324,25 +345,26 @@ impl ExecutionSetupCoordinator {
             .context("load execution settings")?;
         store.close().await;
         let exec = loaded.execution.unwrap_or_default();
-        Ok(harness_runtime::resolve_container_image(&exec.container))
+        Ok(harness_runtime::runtime_prewarm_target(&exec.container))
     }
 
     pub(crate) async fn refresh_startup_prewarm_metadata_after_successful_container_launch(
         &self,
-        image: &str,
+        settings: &crate::settings::ContainerExecutionSettings,
     ) {
-        let startup_image = match self.configured_startup_image().await {
-            Ok(startup_image) => startup_image,
+        let target = harness_runtime::runtime_prewarm_target(settings);
+        let startup_target = match self.configured_startup_target().await {
+            Ok(startup_target) => startup_target,
             Err(err) => {
                 tracing::warn!(
-                    image,
+                    target,
                     error = %format_error_chain(&err),
-                    "failed to resolve configured startup image after successful launch; leaving startup prewarm metadata unchanged"
+                    "failed to resolve configured startup target after successful launch; leaving startup prewarm metadata unchanged"
                 );
                 return;
             }
         };
-        if startup_image != image {
+        if startup_target != target {
             return;
         }
 
@@ -354,12 +376,12 @@ impl ExecutionSetupCoordinator {
             Ok(metadata) => {
                 let image_ref_changed = metadata
                     .as_ref()
-                    .is_some_and(|metadata| metadata.image_ref != image);
+                    .is_some_and(|metadata| metadata.image_ref != target);
                 (metadata.is_none(), image_ref_changed)
             }
             Err(err) => {
                 tracing::warn!(
-                    image,
+                    target,
                     error = %format_error_chain(&err),
                     "failed to read startup prewarm metadata after successful launch; leaving metadata unchanged"
                 );
@@ -377,27 +399,32 @@ impl ExecutionSetupCoordinator {
             return;
         }
 
-        let bundled_image_fingerprint = match bundled_image_fingerprint(image).await {
-            Ok(fingerprint) => fingerprint,
-            Err(err) => {
-                tracing::warn!(
-                    image,
-                    error = %format_error_chain(&err),
-                    "failed to compute bundled image fingerprint after successful launch; leaving startup prewarm metadata unchanged"
-                );
-                return;
+        let bundled_image_fingerprint = match settings.runtime {
+            crate::settings::ContainerRuntimeKind::Podman => {
+                match bundled_image_fingerprint(&target).await {
+                    Ok(fingerprint) => fingerprint,
+                    Err(err) => {
+                        tracing::warn!(
+                            target,
+                            error = %format_error_chain(&err),
+                            "failed to compute bundled image fingerprint after successful launch; leaving startup prewarm metadata unchanged"
+                        );
+                        return;
+                    }
+                }
             }
+            crate::settings::ContainerRuntimeKind::AvfLinuxVm => None,
         };
 
         let ready_at = format_ts(Utc::now());
         let metadata = StartupPrewarmMetadata {
-            image_ref: image.to_string(),
+            image_ref: target.clone(),
             bundled_image_fingerprint,
             ready_at: ready_at.clone(),
         };
         if let Err(err) = write_prewarm_metadata(&self.data_root, &metadata).await {
             tracing::warn!(
-                image,
+                target,
                 error = %format_error_chain(&err),
                 "failed to persist refreshed startup prewarm metadata after successful launch"
             );
@@ -405,7 +432,7 @@ impl ExecutionSetupCoordinator {
         }
 
         let mut inner = self.inner.lock().await;
-        inner.startup.target_image = image.to_string();
+        inner.startup.target_image = target;
         if inner.startup.state == StartupPrewarmState::Running {
             return;
         }

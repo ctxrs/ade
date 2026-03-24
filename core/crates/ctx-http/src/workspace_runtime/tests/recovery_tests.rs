@@ -76,6 +76,7 @@ async fn prepare_starts_existing_workspace_container_when_not_cached() {
     match plan.runtime {
         HarnessRuntimeKind::Container { name } => assert_eq!(name, container_name),
         HarnessRuntimeKind::Host => panic!("expected container runtime"),
+        HarnessRuntimeKind::AvfLinuxVm => panic!("expected podman container runtime"),
     }
 
     let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");

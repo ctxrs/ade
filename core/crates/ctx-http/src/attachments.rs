@@ -327,7 +327,7 @@ pub async fn ensure_worktree_attachment_mounts_for_attachments(
     let store = state.store_for_workspace(workspace.id).await?;
 
     let worktree_root = PathBuf::from(&worktree.root_path);
-    ensure_git_exclude(state, workspace, &worktree_root).await?;
+    ensure_git_exclude(state, workspace, worktree.id, &worktree_root).await?;
 
     let mut mounts = Vec::with_capacity(attachments.len());
     for attachment in attachments {
@@ -678,10 +678,11 @@ async fn run_doc_mirror_cli(
 async fn ensure_git_exclude(
     state: &AppState,
     workspace: &Workspace,
+    worktree_id: WorktreeId,
     worktree_root: &Path,
 ) -> Result<()> {
     if is_container_path(worktree_root) {
-        return container_ensure_git_exclude(state, workspace, worktree_root).await;
+        return container_ensure_git_exclude(state, workspace, worktree_id, worktree_root).await;
     }
     let git_dir = resolve_git_dir(worktree_root).await?;
     let git_info = git_dir.join("info");

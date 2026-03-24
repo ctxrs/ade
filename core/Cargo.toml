@@ -11,6 +11,7 @@ members = [
   "crates/ctx-mcp",
   "crates/ctx-http",
   "crates/ctx-egress-proxy",
+  "crates/ctx-avf-linux-guest-agent",
   "crates/ctx-worker-protocol",
   "crates/ctx-worker-gateway",
   "crates/ctx-worker-shim",

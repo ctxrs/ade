@@ -1,5 +1,6 @@
 use super::*;
 use crate::api::sessions;
+use crate::settings::ContainerRuntimeKind;
 
 pub(in crate::api) async fn create_task(
     State(state): State<Arc<AppState>>,
@@ -234,26 +235,53 @@ pub(in crate::api) async fn create_task(
                 }),
             ));
         }
-        crate::disk_isolated::ensure_worktree_from_host_copy(
-            &state.core.data_root,
-            ws_id,
-            worktree_id,
-            ws_root,
-            &base_commit_sha,
-            &branch_name,
-        )
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: format!(
-                        "disk-isolated worktree provisioning failed: {}. retry after checking container runtime health.",
-                        logs::redact_sensitive(&e.to_string())
-                    ),
-                }),
+        if matches!(
+            effective.container.runtime,
+            ContainerRuntimeKind::AvfLinuxVm
+        ) {
+            crate::workspace_runtime::ensure_avf_linux_guest_worktree_from_host_copy(
+                &state.core.data_root,
+                ws_id,
+                worktree_id,
+                ws_root,
+                &base_commit_sha,
+                &branch_name,
+                None,
             )
-        })?
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: format!(
+                            "AVF disk-isolated worktree provisioning failed: {}. retry after checking the shared VM health.",
+                            logs::redact_sensitive(&e.to_string())
+                        ),
+                    }),
+                )
+            })?
+        } else {
+            crate::disk_isolated::ensure_worktree_from_host_copy(
+                &state.core.data_root,
+                ws_id,
+                worktree_id,
+                ws_root,
+                &base_commit_sha,
+                &branch_name,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: format!(
+                            "disk-isolated worktree provisioning failed: {}. retry after checking container runtime health.",
+                            logs::redact_sensitive(&e.to_string())
+                        ),
+                    }),
+                )
+            })?
+        }
     } else {
         let wt_path = managed_worktree_path(&state.core.data_root, ws_id, worktree_id);
         if let Some(parent) = wt_path.parent() {
@@ -570,23 +598,47 @@ pub(in crate::api) async fn create_session_for_task(
                 .ensure_workspace_container(&workspace, &effective, &state.core.daemon_url)
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            crate::disk_isolated::ensure_worktree_from_host_copy(
-                &state.core.data_root,
-                task.workspace_id,
-                worktree_id,
-                workspace_root,
-                &base_commit_sha,
-                &branch_name,
-            )
-            .await
-            .map_err(|e| {
-                tracing::warn!(
-                    task_id = %task.id.0,
-                    worktree_id = %worktree_id.0,
-                    "disk-isolated worktree provisioning failed: {e:#}"
-                );
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?
+            if matches!(
+                effective.container.runtime,
+                ContainerRuntimeKind::AvfLinuxVm
+            ) {
+                crate::workspace_runtime::ensure_avf_linux_guest_worktree_from_host_copy(
+                    &state.core.data_root,
+                    task.workspace_id,
+                    worktree_id,
+                    workspace_root,
+                    &base_commit_sha,
+                    &branch_name,
+                    None,
+                )
+                .await
+                .map_err(|e| {
+                    tracing::warn!(
+                        task_id = %task.id.0,
+                        worktree_id = %worktree_id.0,
+                        "AVF disk-isolated worktree provisioning failed: {e:#}"
+                    );
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?
+            } else {
+                crate::disk_isolated::ensure_worktree_from_host_copy(
+                    &state.core.data_root,
+                    task.workspace_id,
+                    worktree_id,
+                    workspace_root,
+                    &base_commit_sha,
+                    &branch_name,
+                )
+                .await
+                .map_err(|e| {
+                    tracing::warn!(
+                        task_id = %task.id.0,
+                        worktree_id = %worktree_id.0,
+                        "disk-isolated worktree provisioning failed: {e:#}"
+                    );
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?
+            }
         } else {
             let wt_path =
                 managed_worktree_path(&state.core.data_root, task.workspace_id, worktree_id);

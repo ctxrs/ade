@@ -215,6 +215,7 @@ pub enum ExecutionMode {
 pub enum ContainerRuntimeKind {
     #[default]
     Podman,
+    AvfLinuxVm,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

@@ -84,6 +84,7 @@ pub struct TerminalCreateRequest {
     pub rows: Option<u16>,
     pub env: HashMap<String, String>,
     pub podman: Option<PodmanTerminalSpec>,
+    pub avf_linux_vm: Option<AvfLinuxTerminalSpec>,
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +92,15 @@ pub struct PodmanTerminalSpec {
     pub podman_bin: PathBuf,
     pub podman_env: HashMap<String, String>,
     pub container_name: String,
+    pub workdir: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AvfLinuxTerminalSpec {
+    pub helper_path: PathBuf,
+    pub data_root: PathBuf,
+    pub workspace_id: WorkspaceId,
+    pub worktree_id: WorktreeId,
     pub workdir: String,
 }
 
@@ -376,6 +386,28 @@ impl TerminalManager {
             cmd.arg(podman.container_name.clone());
             cmd.arg(req.shell.clone());
             cmd
+        } else if let Some(avf) = &req.avf_linux_vm {
+            let mut cmd = CommandBuilder::new(avf.helper_path.clone());
+            cmd.arg("guest-exec");
+            cmd.arg("--data-root");
+            cmd.arg(avf.data_root.clone());
+            cmd.arg("--workspace-id");
+            cmd.arg(avf.workspace_id.0.to_string());
+            cmd.arg("--worktree-id");
+            cmd.arg(avf.worktree_id.0.to_string());
+            cmd.arg("--cwd");
+            cmd.arg(avf.workdir.clone());
+            cmd.arg("--command");
+            cmd.arg(req.shell.clone());
+            cmd.arg("--pty");
+            cmd.arg("--env");
+            cmd.arg("TERM=xterm-256color");
+            for (key, value) in &req.env {
+                cmd.arg("--env");
+                cmd.arg(format!("{key}={value}"));
+            }
+            cmd.arg("--");
+            cmd
         } else {
             let mut cmd = CommandBuilder::new(req.shell.clone());
             cmd.cwd(req.cwd.clone());
@@ -487,7 +519,7 @@ impl TerminalManager {
 
         let session = Arc::new(TerminalSessionHandle {
             info,
-            container_backed: req.podman.is_some(),
+            container_backed: req.podman.is_some() || req.avf_linux_vm.is_some(),
             runtime,
             output_tx,
             status_tx,

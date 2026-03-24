@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -21,6 +21,7 @@ use crate::container_fs::is_container_path;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::harness_runtime::{podman_command, workspace_container_name};
+use crate::settings::ContainerRuntimeKind;
 mod parse;
 use parse::{parse_git_status_entries, parse_git_status_short};
 
@@ -61,10 +62,15 @@ fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<dyn VcsDriver> {
     vcs::driver_for_kind(worktree.vcs_kind.clone())
 }
 
+enum SandboxGitTarget {
+    Podman { container_name: String },
+    AvfLinuxVm,
+}
+
 async fn ensure_container_for_worktree(
     state: &Arc<AppState>,
     worktree: &Worktree,
-) -> Result<String> {
+) -> Result<SandboxGitTarget> {
     let workspace = state
         .global_store()
         .get_workspace(worktree.workspace_id)
@@ -76,7 +82,16 @@ async fn ensure_container_for_worktree(
         .harness
         .ensure_workspace_container(&workspace, &effective, &state.core.daemon_url)
         .await?;
-    Ok(workspace_container_name(worktree.workspace_id))
+    if matches!(
+        effective.container.runtime,
+        ContainerRuntimeKind::AvfLinuxVm
+    ) {
+        Ok(SandboxGitTarget::AvfLinuxVm)
+    } else {
+        Ok(SandboxGitTarget::Podman {
+            container_name: workspace_container_name(worktree.workspace_id),
+        })
+    }
 }
 
 async fn container_git_output(
@@ -84,18 +99,44 @@ async fn container_git_output(
     worktree: &Worktree,
     args: &[&str],
 ) -> Result<std::process::Output> {
-    const PODMAN_GIT_TIMEOUT: Duration = Duration::from_secs(30);
-    let container = ensure_container_for_worktree(state, worktree).await?;
-    let mut cmd = podman_command(&state.core.data_root)?;
-    cmd.arg("exec")
-        .arg("--workdir")
-        .arg(&worktree.root_path)
-        .arg(&container)
-        .arg("git")
-        .args(args);
-    crate::harness_runtime::command_output_with_timeout(cmd, PODMAN_GIT_TIMEOUT)
-        .await
-        .context("podman exec git timed out")
+    const SANDBOX_GIT_TIMEOUT: Duration = Duration::from_secs(30);
+    let target = ensure_container_for_worktree(state, worktree).await?;
+    match target {
+        SandboxGitTarget::Podman { container_name } => {
+            let mut cmd = podman_command(&state.core.data_root)?;
+            cmd.arg("exec")
+                .arg("--workdir")
+                .arg(&worktree.root_path)
+                .arg(&container_name)
+                .arg("git")
+                .args(args);
+            crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_GIT_TIMEOUT)
+                .await
+                .context("podman exec git timed out")
+        }
+        SandboxGitTarget::AvfLinuxVm => {
+            let guest_args = args
+                .iter()
+                .map(|arg| (*arg).to_string())
+                .collect::<Vec<_>>();
+            tokio::time::timeout(
+                SANDBOX_GIT_TIMEOUT,
+                crate::workspace_runtime::run_avf_linux_guest_exec_capture(
+                    &state.core.data_root,
+                    worktree.workspace_id,
+                    worktree.id,
+                    Path::new(&worktree.root_path),
+                    "git",
+                    &guest_args,
+                    &HashMap::new(),
+                    None,
+                    false,
+                ),
+            )
+            .await
+            .context("AVF guest exec git timed out")?
+        }
+    }
 }
 
 async fn container_git_stdout(
@@ -214,7 +255,6 @@ async fn container_untracked_summary(
     // Match host semantics in `ctx_fs::worktrees::diff_worktree_summary`:
     // - count untracked files as changed files
     // - include a best-effort line count for "small" untracked files
-    let container = ensure_container_for_worktree(state, worktree).await?;
     let script = r#"
 set -e
 max_bytes=$((512 * 1024))
@@ -240,18 +280,39 @@ while IFS= read -r f; do
 done < <(git ls-files --others --exclude-standard)
 printf '%s %s\n' "$count" "$adds"
 "#;
-    let mut cmd = podman_command(&state.core.data_root)?;
-    cmd.arg("exec")
-        .arg("--interactive")
-        .arg("--workdir")
-        .arg(&worktree.root_path)
-        .arg(&container)
-        .arg("bash")
-        .arg("-lc")
-        .arg(script);
-    let out = tokio::time::timeout(Duration::from_secs(30), cmd.output())
+    let target = ensure_container_for_worktree(state, worktree).await?;
+    let out = match target {
+        SandboxGitTarget::Podman { container_name } => {
+            let mut cmd = podman_command(&state.core.data_root)?;
+            cmd.arg("exec")
+                .arg("--interactive")
+                .arg("--workdir")
+                .arg(&worktree.root_path)
+                .arg(&container_name)
+                .arg("bash")
+                .arg("-lc")
+                .arg(script);
+            tokio::time::timeout(Duration::from_secs(30), cmd.output())
+                .await
+                .context("podman exec timed out")??
+        }
+        SandboxGitTarget::AvfLinuxVm => tokio::time::timeout(
+            Duration::from_secs(30),
+            crate::workspace_runtime::run_avf_linux_guest_exec_capture(
+                &state.core.data_root,
+                worktree.workspace_id,
+                worktree.id,
+                Path::new(&worktree.root_path),
+                "bash",
+                &["-lc".to_string(), script.to_string()],
+                &HashMap::new(),
+                None,
+                false,
+            ),
+        )
         .await
-        .context("podman exec timed out")??;
+        .context("AVF guest exec timed out")??,
+    };
     if !out.status.success() {
         anyhow::bail!(
             "untracked summary failed (status {}): {}",

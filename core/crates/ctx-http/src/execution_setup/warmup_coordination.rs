@@ -13,9 +13,8 @@ use crate::harness_runtime::{
 use crate::settings::ExecutionSettings;
 
 use super::{
-    normalize_podman_engine_ready_for_gate, seed_runtime_prewarm_initial_state,
-    ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionSetupJobKind, LaunchJob,
-    LaunchTerminalMutation, RuntimePrewarmScope,
+    seed_runtime_prewarm_initial_state, ExecutionLaunchSnapshot, ExecutionLaunchState,
+    ExecutionSetupJobKind, LaunchJob, LaunchTerminalMutation, RuntimePrewarmScope,
 };
 
 const SHARED_WARMUP_EVENT_CAP: usize = 256;
@@ -50,25 +49,12 @@ impl SharedWarmupOperations for DefaultWarmupOperations {
         settings: ExecutionSettings,
         observer: Arc<dyn HarnessSetupObserver>,
     ) -> Result<()> {
-        let image = harness_runtime::resolve_container_image(&settings.container);
-        let machine_ready = normalize_podman_engine_ready_for_gate(
-            harness_runtime::podman_engine_ready(&self.data_root).await,
-        )?;
-        if machine_ready {
-            harness_runtime::prefetch_container_image_with_observer(
-                &self.data_root,
-                &image,
-                Some(observer.as_ref()),
-            )
-            .await
-        } else {
-            harness_runtime::prefetch_container_startup_artifacts_with_observer(
-                &self.data_root,
-                &image,
-                Some(observer.as_ref()),
-            )
-            .await
-        }
+        harness_runtime::prewarm_selected_runtime_with_observer(
+            &self.data_root,
+            &settings.container,
+            Some(observer.as_ref()),
+        )
+        .await
     }
 
     async fn warm_builder(&self, observer: Arc<dyn HarnessSetupObserver>) -> Result<()> {

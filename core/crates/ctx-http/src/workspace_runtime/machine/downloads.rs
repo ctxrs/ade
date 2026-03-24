@@ -29,7 +29,7 @@ fn managed_artifact_retry_backoff(attempt: u32) -> Duration {
     }
 }
 
-pub(super) fn managed_artifact_partial_path(final_path: &Path) -> PathBuf {
+pub(crate) fn managed_artifact_partial_path(final_path: &Path) -> PathBuf {
     let file_name = final_path
         .file_name()
         .and_then(|name| name.to_str())
@@ -41,7 +41,7 @@ pub(super) fn managed_artifact_partial_path(final_path: &Path) -> PathBuf {
         .join(format!(".{file_name}.partial"))
 }
 
-pub(super) fn managed_artifact_lock_path(final_path: &Path) -> PathBuf {
+pub(crate) fn managed_artifact_lock_path(final_path: &Path) -> PathBuf {
     let file_name = final_path
         .file_name()
         .and_then(|name| name.to_str())
@@ -53,11 +53,11 @@ pub(super) fn managed_artifact_lock_path(final_path: &Path) -> PathBuf {
         .join(format!(".{file_name}.lock"))
 }
 
-pub(super) struct ManagedArtifactFileLockGuard {
+pub(crate) struct ManagedArtifactFileLockGuard {
     _file: std::fs::File,
 }
 
-pub(super) async fn acquire_managed_artifact_file_lock(
+pub(crate) async fn acquire_managed_artifact_file_lock(
     lock_path: &Path,
     artifact_label: &str,
     observer: Option<&dyn HarnessSetupObserver>,
@@ -140,7 +140,7 @@ async fn verify_managed_artifact_checksum(path: &Path, expected_sha256: &str) ->
     Ok(digest.eq_ignore_ascii_case(expected_sha256.trim()))
 }
 
-pub(super) async fn finalize_managed_artifact_download(
+pub(crate) async fn finalize_managed_artifact_download(
     tmp_path: &Path,
     final_path: &Path,
     expected_sha256: &str,

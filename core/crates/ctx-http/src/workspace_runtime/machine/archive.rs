@@ -64,7 +64,7 @@ fn extract_zip_to_dir(zip_path: &Path, out_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn extract_archive_to_dir(
+pub(crate) fn extract_archive_to_dir(
     archive_path: &Path,
     source_uri: &str,
     out_dir: &Path,
@@ -89,7 +89,7 @@ pub(super) fn extract_archive_to_dir(
     }
 }
 
-pub(super) fn resolve_single_extracted_root(extract_dir: &Path) -> Result<PathBuf> {
+pub(crate) fn resolve_single_extracted_root(extract_dir: &Path) -> Result<PathBuf> {
     let mut dirs = Vec::new();
     let mut has_files = false;
     for entry in std::fs::read_dir(extract_dir)

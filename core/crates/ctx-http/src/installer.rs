@@ -232,6 +232,13 @@ fn dependency_target_compatible_with_context(
     }
 }
 
+fn provider_env_targets_linux_sandbox(provider_env: &HashMap<String, String>) -> bool {
+    provider_env
+        .get(crate::harness_runtime::CTX_HARNESS_LINUX_SANDBOX_ENV)
+        .is_some_and(|value| value == "1")
+        || provider_env.contains_key("CTX_HARNESS_CONTAINER_ID")
+}
+
 fn prepend_bundled_seed_node_bin_dir(
     bin_dirs: &mut Vec<PathBuf>,
     runtime_cmd: &ProviderRuntimeCommand,
@@ -264,7 +271,7 @@ pub(crate) fn prepend_runtime_bin_dirs_to_provider_path_for_target(
     requested_target: Option<InstallTarget>,
 ) {
     let mut bin_dirs: Vec<PathBuf> = Vec::new();
-    let container_exec = provider_env.contains_key("CTX_HARNESS_CONTAINER_ID");
+    let container_exec = provider_env_targets_linux_sandbox(provider_env);
     if let Ok(Some(runtime_cmd)) =
         resolve_runtime_provider_command_for_target(cfg, runtime_provider_id, requested_target)
     {

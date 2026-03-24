@@ -1335,6 +1335,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctx-avf-linux-guest-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "portable-pty",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ctx-client"
 version = "0.1.0"
 dependencies = [

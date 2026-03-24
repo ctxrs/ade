@@ -364,17 +364,14 @@ impl ExecutionSetupCoordinator {
             job: Arc::clone(&job),
         };
         let is_host_mode = matches!(settings.mode, ExecutionMode::Host);
-        let image = harness_runtime::resolve_container_image(&settings.container);
         let run_result = if is_host_mode {
             Ok(())
         } else {
             async {
                 let runtime_prewarm_running = self.prewarm.runtime_is_running(&settings).await;
                 let shared_runtime_can_make_runtime_ready = if runtime_prewarm_running {
-                    match normalize_podman_engine_ready_for_gate(
-                        harness_runtime::podman_engine_ready(&self.data_root).await,
-                    ) {
-                        Ok(machine_ready) => machine_ready,
+                    match self.startup_runtime_state(&settings.container).await {
+                        Ok((machine_ready, _)) => machine_ready,
                         Err(err) => {
                             observer.on_log(
                                 HarnessSetupPhase::MachineCheck,
@@ -449,7 +446,7 @@ impl ExecutionSetupCoordinator {
 
                     if joined_shared_runtime {
                         let (machine_ready, image_present) = self
-                            .startup_runtime_state(&image)
+                            .startup_runtime_state(&settings.container)
                             .await
                             .context("failed to inspect container runtime after shared warmup")?;
                         if machine_ready && image_present {
@@ -493,8 +490,10 @@ impl ExecutionSetupCoordinator {
         match run_result {
             Ok(()) => {
                 if !matches!(settings.mode, ExecutionMode::Host) {
-                    self.refresh_startup_prewarm_metadata_after_successful_container_launch(&image)
-                        .await;
+                    self.refresh_startup_prewarm_metadata_after_successful_container_launch(
+                        &settings.container,
+                    )
+                    .await;
                     self.emit_phase(&job, HarnessSetupPhase::Ready, "workspace runtime is ready");
                 }
                 let terminal = job.mark_terminal(ExecutionLaunchState::Ready, None);
@@ -548,12 +547,15 @@ impl ExecutionSetupCoordinator {
             job: Arc::clone(&job),
         };
         let is_host_mode = matches!(settings.mode, ExecutionMode::Host);
-        let image = harness_runtime::resolve_container_image(&settings.container);
+        let runtime_target = harness_runtime::runtime_prewarm_target(&settings.container);
         let run_result = if is_host_mode {
             Ok(())
         } else if shared_job.runtime_requested() {
-            if !harness_runtime::container_runtime_available(&self.data_root) {
-                Err(anyhow::anyhow!("container runtime unavailable"))
+            if !harness_runtime::local_runtime_available(
+                &self.data_root,
+                &settings.container.runtime,
+            ) {
+                Err(anyhow::anyhow!("local sandbox runtime unavailable"))
             } else {
                 let _artifact_warmup = self.harness.begin_prewarm_artifact_activity();
                 match self
@@ -591,16 +593,16 @@ impl ExecutionSetupCoordinator {
         match run_result {
             Ok(()) => {
                 if shared_job.runtime_requested() {
-                    match self.startup_runtime_state(&image).await {
+                    match self.startup_runtime_state(&settings.container).await {
                         Ok((machine_ready, image_present)) => {
                             if !machine_ready || !image_present {
                                 let message = if machine_ready {
                                     format!(
-                                        "runtime prewarm completed but harness image '{image}' is still unavailable in the local sandbox runtime"
+                                        "runtime prewarm completed but runtime target '{runtime_target}' is still unavailable in the local sandbox runtime"
                                     )
                                 } else {
                                     format!(
-                                        "runtime prewarm downloaded startup artifacts for '{image}', but the local sandbox runtime still needs machine and image startup on first workspace launch"
+                                        "runtime prewarm downloaded startup artifacts for '{runtime_target}', but the local sandbox runtime still needs first-launch startup"
                                     )
                                 };
                                 self.finish_runtime_prewarm_error(

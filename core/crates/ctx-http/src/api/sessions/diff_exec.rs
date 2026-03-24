@@ -1,9 +1,14 @@
 use super::*;
 
+enum SandboxExecTarget {
+    Podman { container_name: String },
+    AvfLinuxVm,
+}
+
 async fn ensure_container_for_worktree(
     state: &Arc<AppState>,
     worktree: &Worktree,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<SandboxExecTarget> {
     let workspace = state
         .global_store()
         .get_workspace(worktree.workspace_id)
@@ -15,7 +20,16 @@ async fn ensure_container_for_worktree(
         .harness
         .ensure_workspace_container(&workspace, &effective, &state.core.daemon_url)
         .await?;
-    Ok(workspace_container_name(worktree.workspace_id))
+    if matches!(
+        effective.container.runtime,
+        crate::settings::ContainerRuntimeKind::AvfLinuxVm
+    ) {
+        Ok(SandboxExecTarget::AvfLinuxVm)
+    } else {
+        Ok(SandboxExecTarget::Podman {
+            container_name: workspace_container_name(worktree.workspace_id),
+        })
+    }
 }
 
 async fn container_exec_stdout(
@@ -24,27 +38,54 @@ async fn container_exec_stdout(
     program: &str,
     args: &[&str],
 ) -> anyhow::Result<Vec<u8>> {
-    const PODMAN_EXEC_TIMEOUT: Duration = Duration::from_secs(30);
-    let container = ensure_container_for_worktree(state, worktree).await?;
-    let mut cmd = podman_command(&state.core.data_root)?;
-    cmd.arg("exec")
-        .arg("--workdir")
-        .arg(&worktree.root_path)
-        .arg(&container)
-        .arg(program)
-        .args(args);
-    let out = command_output_with_timeout(cmd, PODMAN_EXEC_TIMEOUT)
-        .await
-        .context("podman exec command timed out")?;
+    const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(30);
+    let target = ensure_container_for_worktree(state, worktree).await?;
+    let out = match target {
+        SandboxExecTarget::Podman { container_name } => {
+            let mut cmd = podman_command(&state.core.data_root)?;
+            cmd.arg("exec")
+                .arg("--workdir")
+                .arg(&worktree.root_path)
+                .arg(&container_name)
+                .arg(program)
+                .args(args);
+            command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
+                .await
+                .context("podman exec command timed out")?
+        }
+        SandboxExecTarget::AvfLinuxVm => {
+            crate::workspace_runtime::run_avf_linux_guest_exec_capture(
+                &state.core.data_root,
+                worktree.workspace_id,
+                worktree.id,
+                StdPath::new(&worktree.root_path),
+                program,
+                &args
+                    .iter()
+                    .map(|arg| (*arg).to_string())
+                    .collect::<Vec<_>>(),
+                &std::collections::HashMap::new(),
+                None,
+                false,
+            )
+            .await
+            .context("AVF guest exec command failed")?
+        }
+    };
     if out.status.success() {
         Ok(out.stdout)
     } else {
-        anyhow::bail!(
-            "{} {:?} failed: {}",
-            program,
-            args,
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
+        anyhow::bail!("{} {:?} failed: {}", program, args, {
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !stderr.is_empty() {
+                stderr
+            } else if !stdout.is_empty() {
+                stdout
+            } else {
+                "unknown sandbox exec failure".to_string()
+            }
+        });
     }
 }
 

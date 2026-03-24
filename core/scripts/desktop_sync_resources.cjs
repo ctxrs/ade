@@ -34,6 +34,11 @@ const parityImageTargets = [
   { os: "linux", arch: "aarch64" },
   { os: "linux", arch: "x86_64" },
 ];
+const AVF_LINUX_GUEST_RUNTIME_ID = "avf-linux-guest";
+const AVF_LINUX_GUEST_ROOTFS_NAME = "rootfs.raw";
+const AVF_LINUX_GUEST_KERNEL_REL = path.join("helpers", "kernel");
+const AVF_LINUX_GUEST_INITRD_REL = path.join("helpers", "initrd");
+const AVF_LINUX_GUEST_AGENT_REL = path.join("helpers", "guest-agent");
 
 const isWindows = process.platform === "win32";
 const binExt = isWindows ? ".exe" : "";
@@ -85,6 +90,24 @@ const readBundleManifest = (bundleDir) => {
   } catch (e) {
     throw new Error(`failed to parse bundle manifest ${manifestPath}: ${e?.message ?? e}`);
   }
+};
+
+const upsertManifestRuntimes = (bundleDir, runtimeEntries) => {
+  const manifestPath = path.join(bundleDir, "manifest.json");
+  const manifest = readBundleManifest(bundleDir);
+  const existing = Array.isArray(manifest?.runtimes) ? manifest.runtimes : [];
+  const keep = existing.filter(
+    (entry) =>
+      !runtimeEntries.some(
+        (next) =>
+          next.id === entry?.id && next.os === entry?.os && next.arch === entry?.arch,
+      ),
+  );
+  const merged = [...keep, ...runtimeEntries].sort((a, b) =>
+    `${a.id}::${a.os}::${a.arch}`.localeCompare(`${b.id}::${b.os}::${b.arch}`),
+  );
+  manifest.runtimes = merged;
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 };
 
 const assertBundledProviderTargets = (bundleDir, providerId, targets) => {
@@ -385,6 +408,88 @@ const upsertManifestDaemons = (bundleDir, daemonEntries) => {
   );
   manifest.daemons = merged;
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+};
+
+const stageAvfLinuxGuestRuntime = (bundleDir) => {
+  const rawSourceDir = String(process.env.CTX_AVF_LINUX_GUEST_RUNTIME_DIR || "").trim();
+  if (!rawSourceDir) {
+    return null;
+  }
+
+  const sourceDir = path.resolve(rawSourceDir);
+  if (!fs.existsSync(sourceDir) || !fs.statSync(sourceDir).isDirectory()) {
+    throw new Error(
+      `CTX_AVF_LINUX_GUEST_RUNTIME_DIR must point to a directory: ${sourceDir}`,
+    );
+  }
+
+  const rootfsPath = path.join(sourceDir, AVF_LINUX_GUEST_ROOTFS_NAME);
+  const kernelPath = path.join(sourceDir, AVF_LINUX_GUEST_KERNEL_REL);
+  const initrdPath = path.join(sourceDir, AVF_LINUX_GUEST_INITRD_REL);
+  for (const requiredPath of [rootfsPath, kernelPath, initrdPath]) {
+    if (!fs.existsSync(requiredPath) || !fs.statSync(requiredPath).isFile()) {
+      throw new Error(
+        `AVF Linux guest runtime is incomplete; missing required file: ${requiredPath}`,
+      );
+    }
+  }
+
+  const explicitVersion = String(process.env.CTX_AVF_LINUX_GUEST_RUNTIME_VERSION || "").trim();
+  const versionFile = path.join(sourceDir, "version.txt");
+  const fileVersion = fs.existsSync(versionFile)
+    ? String(fs.readFileSync(versionFile, "utf8")).trim()
+    : "";
+  const version = explicitVersion || fileVersion || "local";
+
+  const runtimeParentRel = path.join(
+    "runtimes",
+    AVF_LINUX_GUEST_RUNTIME_ID,
+    hostManifestOs,
+    hostManifestArch,
+  );
+  const runtimeParentDir = path.join(bundleDir, runtimeParentRel);
+  fs.rmSync(runtimeParentDir, { recursive: true, force: true });
+
+  const runtimeRootRel = path.join(runtimeParentRel, version);
+  const runtimeRootDir = path.join(bundleDir, runtimeRootRel);
+  copyDirRecursive(sourceDir, runtimeRootDir);
+
+  const bundledRootfsPath = path.join(runtimeRootDir, AVF_LINUX_GUEST_ROOTFS_NAME);
+  const bundledKernelPath = path.join(runtimeRootDir, AVF_LINUX_GUEST_KERNEL_REL);
+  const bundledInitrdPath = path.join(runtimeRootDir, AVF_LINUX_GUEST_INITRD_REL);
+  const bundledGuestAgentPath = path.join(runtimeRootDir, AVF_LINUX_GUEST_AGENT_REL);
+  for (const requiredPath of [bundledRootfsPath, bundledKernelPath, bundledInitrdPath]) {
+    if (!fs.existsSync(requiredPath) || !fs.statSync(requiredPath).isFile()) {
+      throw new Error(
+        `staged AVF Linux guest runtime is incomplete; missing required file: ${requiredPath}`,
+      );
+    }
+  }
+
+  upsertManifestRuntimes(bundleDir, [
+    {
+      id: AVF_LINUX_GUEST_RUNTIME_ID,
+      version,
+      os: hostManifestOs,
+      arch: hostManifestArch,
+      sha256: sha256File(bundledRootfsPath),
+      root: runtimeRootRel,
+      bin: AVF_LINUX_GUEST_ROOTFS_NAME,
+    },
+  ]);
+
+  return {
+    sourceDir,
+    version,
+    runtimeRootDir,
+    rootfsPath: bundledRootfsPath,
+    kernelPath: bundledKernelPath,
+    initrdPath: bundledInitrdPath,
+    guestAgentPath:
+      fs.existsSync(bundledGuestAgentPath) && fs.statSync(bundledGuestAgentPath).isFile()
+        ? bundledGuestAgentPath
+        : null,
+  };
 };
 
 const bundleRemoteDaemons = (bundleDir) => {
@@ -767,6 +872,10 @@ const main = () => {
     webDist: copyWebDist(),
     bundles: syncBundlesEnabled ? syncBundles() : verifyExistingBundles(),
   };
+  const stagedAvfGuestRuntime = stageAvfLinuxGuestRuntime(copied.bundles);
+  if (stagedAvfGuestRuntime) {
+    copied.avfLinuxGuestRuntime = stagedAvfGuestRuntime.runtimeRootDir;
+  }
 
   console.log("desktop_sync_resources:", copied);
 };
@@ -776,5 +885,6 @@ if (require.main === module) {
 } else {
   module.exports = {
     copySidecarBinary,
+    stageAvfLinuxGuestRuntime,
   };
 }

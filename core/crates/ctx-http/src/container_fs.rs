@@ -1,8 +1,15 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use ctx_core::ids::{WorkspaceId, WorktreeId};
 use tokio::process::Command;
+
+use crate::daemon::AppState;
+use crate::execution_effective;
+use crate::settings::ContainerRuntimeKind;
 
 // Minimal container filesystem mediation for disk-isolated worktrees.
 //
@@ -10,58 +17,167 @@ use tokio::process::Command;
 // dependencies. This can be optimized later (tar streaming / podman cp).
 
 #[derive(Debug, Clone)]
+enum ContainerFsBackend {
+    Podman {
+        container_id: String,
+    },
+    AvfLinuxVm {
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct ContainerFs {
     data_root: PathBuf,
-    container_id: String,
+    backend: ContainerFsBackend,
 }
 
 impl ContainerFs {
     pub(crate) fn new(data_root: PathBuf, container_id: String) -> Self {
         Self {
             data_root,
-            container_id,
+            backend: ContainerFsBackend::Podman { container_id },
+        }
+    }
+
+    pub(crate) fn avf_linux_vm(
+        data_root: PathBuf,
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+    ) -> Self {
+        Self {
+            data_root,
+            backend: ContainerFsBackend::AvfLinuxVm {
+                workspace_id,
+                worktree_id,
+            },
+        }
+    }
+
+    pub(crate) async fn for_worktree(
+        state: &Arc<AppState>,
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+    ) -> Result<Self> {
+        let workspace = state
+            .global_store()
+            .get_workspace(workspace_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
+        let effective =
+            execution_effective::effective_execution_settings(state, workspace_id).await?;
+        state
+            .execution
+            .harness
+            .ensure_workspace_container(&workspace, &effective, &state.core.daemon_url)
+            .await?;
+        Ok(match effective.container.runtime {
+            ContainerRuntimeKind::Podman => Self::new(
+                state.core.data_root.clone(),
+                crate::harness_runtime::workspace_container_name(workspace_id),
+            ),
+            ContainerRuntimeKind::AvfLinuxVm => {
+                Self::avf_linux_vm(state.core.data_root.clone(), workspace_id, worktree_id)
+            }
+        })
+    }
+
+    fn command_failure_detail(output: &std::process::Output) -> String {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            "unknown sandbox filesystem failure".to_string()
         }
     }
 
     pub(crate) async fn read_to_string(&self, path: &Path) -> Result<String> {
-        const PODMAN_FS_TIMEOUT: Duration = Duration::from_secs(60);
-        let mut cmd = self.base_exec().await?;
-        cmd.arg("cat").arg("--").arg(path);
-        let out = crate::harness_runtime::command_output_with_timeout(cmd, PODMAN_FS_TIMEOUT)
+        const SANDBOX_FS_TIMEOUT: Duration = Duration::from_secs(60);
+        let out = match &self.backend {
+            ContainerFsBackend::Podman { .. } => {
+                let mut cmd = self.base_exec().await?;
+                cmd.arg("cat").arg("--").arg(path);
+                crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_FS_TIMEOUT)
+                    .await
+                    .context("podman exec cat")?
+            }
+            ContainerFsBackend::AvfLinuxVm {
+                workspace_id,
+                worktree_id,
+            } => crate::workspace_runtime::run_avf_linux_guest_exec_capture(
+                &self.data_root,
+                *workspace_id,
+                *worktree_id,
+                path.parent().unwrap_or(path),
+                "cat",
+                &["--".to_string(), path.to_string_lossy().to_string()],
+                &HashMap::new(),
+                None,
+                false,
+            )
             .await
-            .context("podman exec cat")?;
+            .context("AVF guest exec cat")?,
+        };
         if !out.status.success() {
             anyhow::bail!(
-                "podman exec cat failed (status {}): {}",
+                "sandbox read failed (status {}): {}",
                 out.status,
-                String::from_utf8_lossy(&out.stderr).trim()
+                Self::command_failure_detail(&out)
             );
         }
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
     }
 
     pub(crate) async fn write_string(&self, path: &Path, contents: &str) -> Result<()> {
-        const PODMAN_FS_TIMEOUT: Duration = Duration::from_secs(60);
+        const SANDBOX_FS_TIMEOUT: Duration = Duration::from_secs(60);
         // Use a tiny shell wrapper so we can safely redirect stdin to the target path.
         // Note: `/bin/sh` is typically `dash` in Ubuntu images, so avoid `pipefail`.
         let script = "set -eu; cat > \"$1\"";
-        let mut cmd = self.base_exec().await?;
-        cmd.arg("sh").arg("-lc").arg(script).arg("--").arg(path);
+        let mut cmd = match &self.backend {
+            ContainerFsBackend::Podman { .. } => {
+                let mut cmd = self.base_exec().await?;
+                cmd.arg("sh").arg("-lc").arg(script).arg("--").arg(path);
+                cmd
+            }
+            ContainerFsBackend::AvfLinuxVm {
+                workspace_id,
+                worktree_id,
+            } => crate::workspace_runtime::build_avf_linux_guest_exec_command(
+                &self.data_root,
+                *workspace_id,
+                *worktree_id,
+                path.parent().unwrap_or(path),
+                "sh",
+                &[
+                    "-lc".to_string(),
+                    script.to_string(),
+                    "--".to_string(),
+                    path.to_string_lossy().to_string(),
+                ],
+                &HashMap::new(),
+                None,
+                false,
+            )?,
+        };
         cmd.stdin(std::process::Stdio::piped());
         cmd.kill_on_drop(true);
-        let mut child = cmd.spawn().context("spawning podman exec write")?;
+        let mut child = cmd.spawn().context("spawning sandbox write")?;
         if let Some(mut stdin) = child.stdin.take() {
             use tokio::io::AsyncWriteExt;
             stdin.write_all(contents.as_bytes()).await?;
         }
-        let out = tokio::time::timeout(PODMAN_FS_TIMEOUT, child.wait_with_output())
+        let out = tokio::time::timeout(SANDBOX_FS_TIMEOUT, child.wait_with_output())
             .await
-            .context("podman exec write timed out")??;
+            .context("sandbox write timed out")??;
         if !out.status.success() {
             anyhow::bail!(
-                "podman exec write failed (status {}): {}",
+                "sandbox write failed (status {}): {}",
                 out.status,
-                String::from_utf8_lossy(&out.stderr).trim()
+                Self::command_failure_detail(&out)
             );
         }
         Ok(())
@@ -69,7 +185,10 @@ impl ContainerFs {
 
     async fn base_exec(&self) -> Result<Command> {
         let mut cmd = crate::harness_runtime::podman_command(&self.data_root)?;
-        cmd.arg("exec").arg("--interactive").arg(&self.container_id);
+        let ContainerFsBackend::Podman { container_id } = &self.backend else {
+            anyhow::bail!("podman exec requested for non-podman container filesystem backend");
+        };
+        cmd.arg("exec").arg("--interactive").arg(container_id);
         Ok(cmd)
     }
 }

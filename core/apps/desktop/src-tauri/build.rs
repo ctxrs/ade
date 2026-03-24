@@ -18,6 +18,15 @@ fn main() {
         ensure_vosk_runtime();
     }
 
+    println!("cargo:rerun-if-env-changed=CTX_DESKTOP_SKIP_TAURI_BUILD");
+    let skip_tauri_build = env::var_os("CTX_DESKTOP_SKIP_TAURI_BUILD")
+        .map(|value| value != "0")
+        .unwrap_or(false);
+    if skip_tauri_build {
+        println!("cargo:warning=skipping tauri-build because CTX_DESKTOP_SKIP_TAURI_BUILD is set");
+        return;
+    }
+
     tauri_build::build()
 }
 
@@ -68,7 +77,10 @@ fn emit_embedded_updater_pubkey() {
 
 fn normalize_minisign_pubkey_text(raw: &str) -> Option<String> {
     let normalized = raw.replace("\r\n", "\n");
-    let mut lines = normalized.lines().map(str::trim).filter(|line| !line.is_empty());
+    let mut lines = normalized
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
     let header = lines.next()?;
     if !header.starts_with("untrusted comment: minisign public key:") {
         return None;

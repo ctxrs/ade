@@ -346,4 +346,81 @@ mod tests {
         assert!(msg.contains("bridge missing"));
         assert!(msg.contains("exit status: 17"));
     }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_crp_runtime_launch_routes_avf_linux_vm_through_helper() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let log_path = tmp.path().join("helper.log");
+        let helper = write_probe_script(
+            &tmp,
+            &format!(
+                "printf '%s\\n' \"$*\" >> '{}'\nsleep 10",
+                log_path.display()
+            ),
+        );
+
+        let mut env = HashMap::new();
+        env.insert(
+            "CTX_HARNESS_RUNTIME_KIND".to_string(),
+            "avf_linux_vm".to_string(),
+        );
+        env.insert(
+            "CTX_AVF_LINUX_HELPER_PATH".to_string(),
+            helper.to_string_lossy().to_string(),
+        );
+        env.insert(
+            "CTX_AVF_HOST_DATA_ROOT".to_string(),
+            tmp.path()
+                .join("ctx-data-root")
+                .to_string_lossy()
+                .to_string(),
+        );
+        env.insert("CTX_AVF_WORKSPACE_ID".to_string(), "ws-123".to_string());
+        env.insert("CTX_AVF_WORKTREE_ID".to_string(), "wt-456".to_string());
+        env.insert(
+            "CTX_AVF_HOST_WORKTREE_ROOT".to_string(),
+            tmp.path().join("repo").to_string_lossy().to_string(),
+        );
+        env.insert(
+            "CTX_AVF_GUEST_WORKTREE_ROOT".to_string(),
+            "/ctx/ws/worktrees/wt-456".to_string(),
+        );
+        env.insert(
+            "CTX_HARNESS_GUEST_WORKSPACE_ROOT".to_string(),
+            "/ctx/ws".to_string(),
+        );
+
+        let host_workdir = tmp.path().join("repo").join("src");
+        fs::create_dir_all(&host_workdir).expect("create host workdir");
+
+        probe_crp_runtime_launch(
+            "codex",
+            "/bin/sh".to_string(),
+            vec!["-c".to_string(), "cat >/dev/null".to_string()],
+            host_workdir,
+            env,
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .await
+        .expect("AVF guest-exec launch probe should succeed");
+
+        let started = tokio::time::Instant::now();
+        let logged = loop {
+            match fs::read_to_string(&log_path) {
+                Ok(contents) if !contents.trim().is_empty() => break contents,
+                Ok(_) | Err(_) if started.elapsed() < Duration::from_secs(2) => {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Err(err) => panic!("read helper log: {err}"),
+                Ok(_) => panic!("helper log stayed empty"),
+            }
+        };
+        assert!(logged.contains("guest-exec"));
+        assert!(logged.contains("--workspace-id ws-123"));
+        assert!(logged.contains("--worktree-id wt-456"));
+        assert!(logged.contains("--cwd /ctx/ws/worktrees/wt-456/src"));
+        assert!(logged.contains("--command /bin/sh"));
+    }
 }

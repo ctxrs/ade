@@ -8,21 +8,62 @@ use tokio::process::Command;
 
 use crate::crp::rewrite_bundled_path_for_linux;
 
+const CTX_HARNESS_RUNTIME_KIND_ENV: &str = "CTX_HARNESS_RUNTIME_KIND";
+const CTX_HARNESS_CONTAINER_ID_ENV: &str = "CTX_HARNESS_CONTAINER_ID";
+const CTX_HARNESS_CONTAINER_USER_ENV: &str = "CTX_HARNESS_CONTAINER_USER";
+const CTX_PODMAN_PATH_ENV: &str = "CTX_PODMAN_PATH";
+const CTX_AVF_LINUX_HELPER_PATH_ENV: &str = "CTX_AVF_LINUX_HELPER_PATH";
+const CTX_AVF_HOST_DATA_ROOT_ENV: &str = "CTX_AVF_HOST_DATA_ROOT";
+const CTX_AVF_WORKSPACE_ID_ENV: &str = "CTX_AVF_WORKSPACE_ID";
+const CTX_AVF_WORKTREE_ID_ENV: &str = "CTX_AVF_WORKTREE_ID";
+const CTX_AVF_HOST_WORKTREE_ROOT_ENV: &str = "CTX_AVF_HOST_WORKTREE_ROOT";
+const CTX_AVF_GUEST_WORKTREE_ROOT_ENV: &str = "CTX_AVF_GUEST_WORKTREE_ROOT";
+const CTX_HARNESS_GUEST_WORKSPACE_ROOT_ENV: &str = "CTX_HARNESS_GUEST_WORKSPACE_ROOT";
+
 #[derive(Debug, Clone)]
-pub struct ContainerExecSpec {
-    pub container_id: String,
-    pub user: Option<String>,
-    pub podman_path: Option<String>,
+pub enum ContainerExecSpec {
+    Podman {
+        container_id: String,
+        user: Option<String>,
+        podman_path: Option<String>,
+    },
+    AvfLinuxVm {
+        helper_path: String,
+        data_root: PathBuf,
+        workspace_id: String,
+        worktree_id: String,
+        host_worktree_root: PathBuf,
+        guest_worktree_root: PathBuf,
+        guest_workspace_root: PathBuf,
+        user: Option<String>,
+    },
 }
 
 pub fn container_exec_spec(env: &HashMap<String, String>) -> Option<ContainerExecSpec> {
-    let container_id = env.get("CTX_HARNESS_CONTAINER_ID")?.to_string();
-    let user = env.get("CTX_HARNESS_CONTAINER_USER").cloned();
-    let podman_path = env.get("CTX_PODMAN_PATH").cloned();
-    Some(ContainerExecSpec {
-        container_id,
-        user,
-        podman_path,
+    if env
+        .get(CTX_HARNESS_CONTAINER_ID_ENV)
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return Some(ContainerExecSpec::Podman {
+            container_id: env.get(CTX_HARNESS_CONTAINER_ID_ENV)?.to_string(),
+            user: env.get(CTX_HARNESS_CONTAINER_USER_ENV).cloned(),
+            podman_path: env.get(CTX_PODMAN_PATH_ENV).cloned(),
+        });
+    }
+
+    if env.get(CTX_HARNESS_RUNTIME_KIND_ENV).map(String::as_str) != Some("avf_linux_vm") {
+        return None;
+    }
+
+    Some(ContainerExecSpec::AvfLinuxVm {
+        helper_path: env.get(CTX_AVF_LINUX_HELPER_PATH_ENV)?.to_string(),
+        data_root: PathBuf::from(env.get(CTX_AVF_HOST_DATA_ROOT_ENV)?),
+        workspace_id: env.get(CTX_AVF_WORKSPACE_ID_ENV)?.to_string(),
+        worktree_id: env.get(CTX_AVF_WORKTREE_ID_ENV)?.to_string(),
+        host_worktree_root: PathBuf::from(env.get(CTX_AVF_HOST_WORKTREE_ROOT_ENV)?),
+        guest_worktree_root: PathBuf::from(env.get(CTX_AVF_GUEST_WORKTREE_ROOT_ENV)?),
+        guest_workspace_root: PathBuf::from(env.get(CTX_HARNESS_GUEST_WORKSPACE_ROOT_ENV)?),
+        user: env.get(CTX_HARNESS_CONTAINER_USER_ENV).cloned(),
     })
 }
 
@@ -33,32 +74,135 @@ pub fn build_container_exec_command(
     command: &str,
     args: &[String],
 ) -> Result<Command> {
-    let mut cmd = Command::new(spec.podman_path.as_deref().unwrap_or("podman"));
-    // Keep Podman state deterministic and tied to the daemon data root when available.
-    // Without this, `podman exec` may try to use a different connection/machine and fail.
-    if let Some(root) = env
-        .get("CTX_DATA_ROOT_HOST")
-        .or_else(|| env.get("CTX_DATA_ROOT"))
-    {
-        apply_podman_env(&mut cmd, root);
-    }
-    cmd.arg("exec").arg("--interactive");
-    if let Some(user) = spec.user.as_deref() {
-        cmd.arg("--user").arg(user);
-    }
-    cmd.arg("--workdir").arg(workdir);
-    for (k, v) in env {
-        if k.starts_with("CTX_HARNESS_CONTAINER_") || k == "CTX_PODMAN_PATH" {
-            continue;
+    match spec {
+        ContainerExecSpec::Podman {
+            container_id,
+            user,
+            podman_path,
+        } => {
+            let mut cmd = Command::new(podman_path.as_deref().unwrap_or("podman"));
+            // Keep Podman state deterministic and tied to the daemon data root when available.
+            // Without this, `podman exec` may try to use a different connection/machine and fail.
+            if let Some(root) = env
+                .get("CTX_DATA_ROOT_HOST")
+                .or_else(|| env.get("CTX_DATA_ROOT"))
+            {
+                apply_podman_env(&mut cmd, root);
+            }
+            cmd.arg("exec").arg("--interactive");
+            if let Some(user) = user.as_deref() {
+                cmd.arg("--user").arg(user);
+            }
+            cmd.arg("--workdir").arg(workdir);
+            for (k, v) in env {
+                if should_skip_linux_exec_env_key(spec, k) {
+                    continue;
+                }
+                let rewritten = rewrite_container_env_value_for_linux(k, v)
+                    .with_context(|| format!("rewriting container env {k} for linux execution"))?;
+                cmd.arg("--env").arg(format!("{k}={rewritten}"));
+            }
+            cmd.arg(container_id);
+            cmd.arg(command);
+            cmd.args(args);
+            Ok(cmd)
         }
-        let rewritten = rewrite_container_env_value_for_linux(k, v)
-            .with_context(|| format!("rewriting container env {k} for linux execution"))?;
-        cmd.arg("--env").arg(format!("{k}={rewritten}"));
+        ContainerExecSpec::AvfLinuxVm {
+            helper_path,
+            data_root,
+            workspace_id,
+            worktree_id,
+            host_worktree_root,
+            guest_worktree_root,
+            guest_workspace_root,
+            user,
+        } => {
+            let guest_cwd = resolve_avf_guest_cwd(
+                workdir,
+                host_worktree_root,
+                guest_worktree_root,
+                guest_workspace_root,
+            )?;
+            let mut cmd = Command::new(helper_path);
+            cmd.arg("guest-exec")
+                .arg("--data-root")
+                .arg(data_root)
+                .arg("--workspace-id")
+                .arg(workspace_id)
+                .arg("--worktree-id")
+                .arg(worktree_id)
+                .arg("--cwd")
+                .arg(&guest_cwd)
+                .arg("--command")
+                .arg(command);
+            if let Some(user) = user.as_deref() {
+                cmd.arg("--user").arg(user);
+            }
+            for (k, v) in env {
+                if should_skip_linux_exec_env_key(spec, k) {
+                    continue;
+                }
+                let rewritten = rewrite_container_env_value_for_linux(k, v)
+                    .with_context(|| format!("rewriting container env {k} for linux execution"))?;
+                cmd.arg("--env").arg(format!("{k}={rewritten}"));
+            }
+            cmd.arg("--");
+            cmd.args(args);
+            Ok(cmd)
+        }
     }
-    cmd.arg(&spec.container_id);
-    cmd.arg(command);
-    cmd.args(args);
-    Ok(cmd)
+}
+
+fn should_skip_linux_exec_env_key(spec: &ContainerExecSpec, key: &str) -> bool {
+    match spec {
+        ContainerExecSpec::Podman { .. } => {
+            key.starts_with("CTX_HARNESS_CONTAINER_") || key == CTX_PODMAN_PATH_ENV
+        }
+        ContainerExecSpec::AvfLinuxVm { .. } => key.starts_with("CTX_AVF_"),
+    }
+}
+
+fn resolve_avf_guest_cwd(
+    workdir: &Path,
+    host_worktree_root: &Path,
+    guest_worktree_root: &Path,
+    guest_workspace_root: &Path,
+) -> Result<PathBuf> {
+    if workdir == guest_workspace_root {
+        return Ok(guest_worktree_root.to_path_buf());
+    }
+    if workdir.starts_with(guest_workspace_root) {
+        let relative = workdir
+            .strip_prefix(guest_workspace_root)
+            .context("mapping guest workspace cwd for AVF execution")?;
+        return Ok(join_guest_relative(guest_worktree_root, relative));
+    }
+    if workdir == host_worktree_root {
+        return Ok(guest_worktree_root.to_path_buf());
+    }
+    if workdir.starts_with(host_worktree_root) {
+        let relative = workdir
+            .strip_prefix(host_worktree_root)
+            .context("mapping host worktree cwd for AVF execution")?;
+        return Ok(join_guest_relative(guest_worktree_root, relative));
+    }
+    if workdir.starts_with(guest_worktree_root) {
+        return Ok(workdir.to_path_buf());
+    }
+    anyhow::bail!(
+        "AVF guest cwd mapping failed: workdir {} is outside host root {} and guest root {}",
+        workdir.display(),
+        host_worktree_root.display(),
+        guest_worktree_root.display()
+    );
+}
+
+fn join_guest_relative(root: &Path, relative: &Path) -> PathBuf {
+    let mut out = root.to_path_buf();
+    if relative != Path::new("") {
+        out.push(relative);
+    }
+    out
 }
 
 fn rewrite_container_env_value_for_linux(key: &str, value: &str) -> Result<String> {
@@ -227,7 +371,7 @@ mod tests {
                 .to_string(),
         );
 
-        let spec = ContainerExecSpec {
+        let spec = ContainerExecSpec::Podman {
             container_id: "ctx-harness-1".to_string(),
             user: Some("1000:1000".to_string()),
             podman_path: None,
@@ -286,7 +430,7 @@ mod tests {
             host_provider_dir.to_string_lossy().to_string(),
         );
 
-        let spec = ContainerExecSpec {
+        let spec = ContainerExecSpec::Podman {
             container_id: "ctx-harness-1".to_string(),
             user: None,
             podman_path: None,
@@ -300,6 +444,179 @@ mod tests {
         assert!(
             err_text.contains("missing linux bundled path"),
             "unexpected error: {err_text}"
+        );
+    }
+
+    #[test]
+    fn container_exec_spec_detects_avf_linux_vm_env_contract() {
+        let mut env = HashMap::new();
+        env.insert(
+            CTX_HARNESS_RUNTIME_KIND_ENV.to_string(),
+            "avf_linux_vm".to_string(),
+        );
+        env.insert(
+            CTX_AVF_LINUX_HELPER_PATH_ENV.to_string(),
+            "/tmp/ctx-avf-linux-helper".to_string(),
+        );
+        env.insert(
+            CTX_AVF_HOST_DATA_ROOT_ENV.to_string(),
+            "/tmp/ctx-data-root".to_string(),
+        );
+        env.insert(CTX_AVF_WORKSPACE_ID_ENV.to_string(), "ws-123".to_string());
+        env.insert(CTX_AVF_WORKTREE_ID_ENV.to_string(), "wt-456".to_string());
+        env.insert(
+            CTX_AVF_HOST_WORKTREE_ROOT_ENV.to_string(),
+            "/Users/example-user/code/repo".to_string(),
+        );
+        env.insert(
+            CTX_AVF_GUEST_WORKTREE_ROOT_ENV.to_string(),
+            "/ctx/ws/worktrees/wt-456".to_string(),
+        );
+        env.insert(
+            CTX_HARNESS_GUEST_WORKSPACE_ROOT_ENV.to_string(),
+            "/ctx/ws".to_string(),
+        );
+
+        let spec = container_exec_spec(&env).expect("AVF exec spec");
+        match spec {
+            ContainerExecSpec::AvfLinuxVm {
+                helper_path,
+                data_root,
+                workspace_id,
+                worktree_id,
+                host_worktree_root,
+                guest_worktree_root,
+                guest_workspace_root,
+                user,
+            } => {
+                assert_eq!(helper_path, "/tmp/ctx-avf-linux-helper");
+                assert_eq!(data_root, PathBuf::from("/tmp/ctx-data-root"));
+                assert_eq!(workspace_id, "ws-123");
+                assert_eq!(worktree_id, "wt-456");
+                assert_eq!(host_worktree_root, PathBuf::from("/Users/example-user/code/repo"));
+                assert_eq!(
+                    guest_worktree_root,
+                    PathBuf::from("/ctx/ws/worktrees/wt-456")
+                );
+                assert_eq!(guest_workspace_root, PathBuf::from("/ctx/ws"));
+                assert_eq!(user, None);
+            }
+            other => panic!("expected AVF Linux VM spec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_container_exec_command_maps_host_workdir_to_avf_guest_exec() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let host_provider_dir = tmp.path().join("bundles/providers/droid/macos/aarch64");
+        let linux_provider_dir = tmp.path().join("bundles/providers/droid/linux/aarch64");
+        fs::create_dir_all(&host_provider_dir).expect("mkdir host provider dir");
+        fs::create_dir_all(&linux_provider_dir).expect("mkdir linux provider dir");
+        fs::write(host_provider_dir.join("droid"), b"host").expect("write host droid");
+        fs::write(linux_provider_dir.join("droid"), b"linux").expect("write linux droid");
+
+        let host_worktree_root = tmp.path().join("repo");
+        fs::create_dir_all(host_worktree_root.join("src")).expect("mkdir worktree");
+        let helper_path = tmp.path().join("ctx-avf-linux-helper");
+        fs::write(&helper_path, b"#!/bin/sh\nexit 0\n").expect("write helper");
+
+        let mut env = HashMap::new();
+        env.insert(
+            "PATH".to_string(),
+            std::env::join_paths([host_provider_dir.as_path(), Path::new("/usr/bin")])
+                .expect("join path")
+                .to_string_lossy()
+                .to_string(),
+        );
+        env.insert(
+            "DROID_PATH".to_string(),
+            host_provider_dir
+                .join("droid")
+                .to_string_lossy()
+                .to_string(),
+        );
+
+        let spec = ContainerExecSpec::AvfLinuxVm {
+            helper_path: helper_path.to_string_lossy().to_string(),
+            data_root: tmp.path().join("ctx-data-root"),
+            workspace_id: "ws-123".to_string(),
+            worktree_id: "wt-456".to_string(),
+            host_worktree_root: host_worktree_root.clone(),
+            guest_worktree_root: PathBuf::from("/ctx/ws/worktrees/wt-456"),
+            guest_workspace_root: PathBuf::from("/ctx/ws"),
+            user: Some("ctx-ws-123".to_string()),
+        };
+
+        let cmd = build_container_exec_command(
+            &spec,
+            &host_worktree_root.join("src"),
+            &env,
+            "/usr/bin/env",
+            &["--version".to_string()],
+        )
+        .expect("build AVF guest-exec command");
+
+        let args = cmd
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(args.first().map(String::as_str), Some("guest-exec"));
+        assert!(
+            args.windows(2).any(|window| window[0] == "--data-root"
+                && window[1] == tmp.path().join("ctx-data-root").to_string_lossy()),
+            "missing --data-root in args: {args:?}"
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window[0] == "--workspace-id" && window[1] == "ws-123"),
+            "missing --workspace-id in args: {args:?}"
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window[0] == "--worktree-id" && window[1] == "wt-456"),
+            "missing --worktree-id in args: {args:?}"
+        );
+        assert!(
+            args.windows(2).any(|window| {
+                window[0] == "--cwd" && window[1] == "/ctx/ws/worktrees/wt-456/src"
+            }),
+            "missing translated --cwd in args: {args:?}"
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window[0] == "--command" && window[1] == "/usr/bin/env"),
+            "missing --command in args: {args:?}"
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window[0] == "--user" && window[1] == "ctx-ws-123"),
+            "missing --user in args: {args:?}"
+        );
+        assert!(
+            args.windows(2).any(|window| {
+                if window[0] != "--env" || !window[1].starts_with("PATH=") {
+                    return false;
+                }
+                let value = window[1].trim_start_matches("PATH=");
+                let parts = std::env::split_paths(OsStr::new(value)).collect::<Vec<PathBuf>>();
+                parts.first() == Some(&linux_provider_dir)
+                    && parts.get(1) == Some(&PathBuf::from("/usr/bin"))
+            }),
+            "missing rewritten PATH env in args: {args:?}"
+        );
+        assert!(
+            args.windows(2).any(|window| {
+                window[0] == "--env"
+                    && window[1]
+                        == format!("DROID_PATH={}", linux_provider_dir.join("droid").display())
+            }),
+            "missing rewritten DROID_PATH env in args: {args:?}"
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window[0] == "--" && window[1] == "--version"),
+            "missing passthrough argument boundary in args: {args:?}"
         );
     }
 }

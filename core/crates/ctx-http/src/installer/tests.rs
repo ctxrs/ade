@@ -410,6 +410,18 @@ fn dependency_target_compatibility_allows_linux_bins_for_container_exec() {
 }
 
 #[test]
+fn provider_env_linux_sandbox_marker_enables_container_targeting() {
+    let mut env = HashMap::new();
+    assert!(!provider_env_targets_linux_sandbox(&env));
+
+    env.insert(
+        crate::harness_runtime::CTX_HARNESS_LINUX_SANDBOX_ENV.to_string(),
+        "1".to_string(),
+    );
+    assert!(provider_env_targets_linux_sandbox(&env));
+}
+
+#[test]
 fn managed_provider_target_support_matches_install_kind() {
     let matrix = provider_matrix::builtin_matrix();
     let harness_provider_ids = [

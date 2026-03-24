@@ -8,6 +8,10 @@ build = "build.rs"
 name = "ctx"
 path = "src/main.rs"
 
+[[bin]]
+name = "ctx-avf-linux-helper"
+path = "src/avf_linux_helper.rs"
+
 [build-dependencies]
 base64 = "0.22"
 tauri-build = { version = "2.5.3", features = [] }
@@ -20,6 +24,9 @@ anyhow = "1"
 base64 = "0.22"
 ctx-fs = { path = "../../../crates/ctx-fs" }
 directories = "5"
+flate2 = "1"
+hex = "0.4"
+libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -37,11 +44,14 @@ tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"] }
 tauri-plugin-stt = { version = "0.1", optional = true }
 tauri-plugin-updater = "2.10.0"
 tokio = { version = "1", features = ["sync", "rt", "macros"] }
+portable-pty = "0.9.0"
 url = "2"
 urlencoding = "2"
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6.2"
+dispatch2 = "0.3.1"
 objc2 = "0.6.3"
 objc2-app-kit = { version = "0.3.2", features = [
     "NSApplication",
@@ -59,7 +69,38 @@ objc2-app-kit = { version = "0.3.2", features = [
     "NSWindow",
 ] }
 objc2-core-foundation = "0.3.2"
-objc2-foundation = { version = "0.3.2", features = ["NSString"] }
+objc2-foundation = { version = "0.3.2", features = ["NSArray", "NSError", "NSString", "NSURL"] }
+objc2-virtualization = { version = "0.3.2", default-features = false, features = [
+    "block2",
+    "dispatch2",
+    "std",
+    "VZBootLoader",
+    "VZDiskImageStorageDeviceAttachment",
+    "VZFileSerialPortAttachment",
+    "VZGenericMachineIdentifier",
+    "VZGenericPlatformConfiguration",
+    "VZLinuxBootLoader",
+    "VZMemoryBalloonDeviceConfiguration",
+    "VZNATNetworkDeviceAttachment",
+    "VZNetworkDeviceAttachment",
+    "VZNetworkDeviceConfiguration",
+    "VZPlatformConfiguration",
+    "VZSerialPortAttachment",
+    "VZSerialPortConfiguration",
+    "VZSocketDeviceConfiguration",
+    "VZStorageDeviceAttachment",
+    "VZStorageDeviceConfiguration",
+    "VZSocketDevice",
+    "VZVirtioBlockDeviceConfiguration",
+    "VZVirtioConsoleDeviceSerialPortConfiguration",
+    "VZVirtioNetworkDeviceConfiguration",
+    "VZVirtioSocketConnection",
+    "VZVirtioSocketDevice",
+    "VZVirtioSocketDeviceConfiguration",
+    "VZVirtioTraditionalMemoryBalloonDeviceConfiguration",
+    "VZVirtualMachine",
+    "VZVirtualMachineConfiguration",
+] }
 
 [features]
 default = ["custom-protocol"]

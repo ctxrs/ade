@@ -408,28 +408,6 @@ pub(super) async fn resolve_session_root_and_file(
     }
 }
 
-pub(super) async fn ensure_harness_container_for_workspace(
-    state: &Arc<AppState>,
-    workspace_id: WorkspaceId,
-) -> Result<(), StatusCode> {
-    let workspace = state
-        .global_store()
-        .get_workspace(workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let settings = crate::execution_effective::effective_execution_settings(state, workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    state
-        .execution
-        .harness
-        .ensure_workspace_container(&workspace, &settings, &state.core.daemon_url)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(())
-}
-
 pub(super) async fn open_buffer(
     State(state): State<Arc<AppState>>,
     Json(req): Json<BufferOpenReq>,
@@ -437,9 +415,9 @@ pub(super) async fn open_buffer(
     let (sid, workspace_id, worktree_id, root, file) =
         resolve_session_root_and_file(&state, &req.session_id, &req.path).await?;
     let text = if crate::container_fs::is_container_path(&file) {
-        ensure_harness_container_for_workspace(&state, workspace_id).await?;
-        let container_id = format!("ctx-harness-{}", workspace_id.0);
-        let fs = crate::container_fs::ContainerFs::new(state.core.data_root.clone(), container_id);
+        let fs = crate::container_fs::ContainerFs::for_worktree(&state, workspace_id, worktree_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         fs.read_to_string(&file)
             .await
             .map_err(|_| StatusCode::BAD_REQUEST)?
@@ -547,21 +525,18 @@ pub(super) async fn update_buffer(
                         disk_text: "".to_string(),
                     }),
                 ))?;
-            ensure_harness_container_for_workspace(&state, wt.workspace_id)
+            let fs = crate::container_fs::ContainerFs::for_worktree(&state, wt.workspace_id, wt.id)
                 .await
-                .map_err(|code| {
+                .map_err(|_| {
                     (
-                        code,
+                        StatusCode::INTERNAL_SERVER_ERROR,
                         Json(BufferConflictResp {
-                            error: "failed to ensure harness container".to_string(),
+                            error: "failed to ensure sandbox filesystem".to_string(),
                             disk_sha256: "".to_string(),
                             disk_text: "".to_string(),
                         }),
                     )
                 })?;
-            let container_id = format!("ctx-harness-{}", wt.workspace_id.0);
-            let fs =
-                crate::container_fs::ContainerFs::new(state.core.data_root.clone(), container_id);
             fs.read_to_string(&current.path).await.map_err(|_| {
                 (
                     StatusCode::BAD_REQUEST,
@@ -634,21 +609,18 @@ pub(super) async fn update_buffer(
                         disk_text: "".to_string(),
                     }),
                 ))?;
-            ensure_harness_container_for_workspace(&state, wt.workspace_id)
+            let fs = crate::container_fs::ContainerFs::for_worktree(&state, wt.workspace_id, wt.id)
                 .await
-                .map_err(|code| {
+                .map_err(|_| {
                     (
-                        code,
+                        StatusCode::INTERNAL_SERVER_ERROR,
                         Json(BufferConflictResp {
-                            error: "failed to ensure harness container".to_string(),
+                            error: "failed to ensure sandbox filesystem".to_string(),
                             disk_sha256: "".to_string(),
                             disk_text: "".to_string(),
                         }),
                     )
                 })?;
-            let container_id = format!("ctx-harness-{}", wt.workspace_id.0);
-            let fs =
-                crate::container_fs::ContainerFs::new(state.core.data_root.clone(), container_id);
             fs.write_string(&current.path, &req.text)
                 .await
                 .map_err(|e| {

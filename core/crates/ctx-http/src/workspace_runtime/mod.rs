@@ -27,13 +27,14 @@ use crate::network_allowlist;
 use crate::resource_utilization::{ResourceSampler, SystemSnapshot};
 use crate::settings::{
     normalize_container_machine_idle_shutdown_seconds, ContainerExecutionSettings,
-    ContainerMachineMemoryProfile, ContainerMountMode, ContainerNetworkMode, ExecutionMode,
-    ExecutionSettings,
+    ContainerMachineMemoryProfile, ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind,
+    ExecutionMode, ExecutionSettings,
 };
 use crate::terminals::TerminalManager;
 use crate::updates;
 use url::Url;
 
+mod avf_linux_vm;
 mod container;
 mod image;
 mod machine;
@@ -44,6 +45,19 @@ mod podman_recovery;
 #[cfg(test)]
 mod reclaim_unit_tests;
 
+pub(crate) use self::avf_linux_vm::build_guest_exec_command as build_avf_linux_guest_exec_command;
+pub(crate) use self::avf_linux_vm::ensure_guest_worktree_from_host_copy as ensure_avf_linux_guest_worktree_from_host_copy;
+pub(crate) use self::avf_linux_vm::helper_path as avf_linux_helper_path;
+#[cfg(test)]
+pub(crate) use self::avf_linux_vm::override_managed_avf_linux_runtime_source_for_test;
+pub(crate) use self::avf_linux_vm::run_guest_exec_capture as run_avf_linux_guest_exec_capture;
+#[cfg(test)]
+pub(crate) use self::avf_linux_vm::AVF_LINUX_HELPER_PATH_ENV;
+use self::avf_linux_vm::{
+    ensure_shared_vm_ready_with_observer as ensure_avf_linux_shared_vm_ready_with_observer,
+    runtime_available as avf_linux_runtime_available, runtime_state as avf_linux_runtime_state,
+    runtime_target_label as avf_linux_runtime_target_label,
+};
 #[cfg(test)]
 use self::container::{bind_mount, should_mount_bundle_dir_in_container};
 use self::container::{
@@ -95,6 +109,80 @@ use self::podman_recovery::{
     podman_machine_singleflight_lock, run_podman_machine_init,
 };
 
+pub(crate) fn local_runtime_available(data_root: &Path, runtime: &ContainerRuntimeKind) -> bool {
+    match runtime {
+        ContainerRuntimeKind::Podman => container_runtime_available(data_root),
+        ContainerRuntimeKind::AvfLinuxVm => avf_linux_runtime_available(),
+    }
+}
+
+pub(crate) fn runtime_prewarm_target(settings: &ContainerExecutionSettings) -> String {
+    match settings.runtime {
+        ContainerRuntimeKind::Podman => resolve_container_image(settings),
+        ContainerRuntimeKind::AvfLinuxVm => avf_linux_runtime_target_label(),
+    }
+}
+
+pub(crate) async fn selected_runtime_state(
+    data_root: &Path,
+    settings: &ContainerExecutionSettings,
+) -> Result<(bool, bool)> {
+    match settings.runtime {
+        ContainerRuntimeKind::Podman => {
+            let machine_ready =
+                normalize_podman_engine_ready_for_runtime(podman_engine_ready(data_root).await)?;
+            let image_present = if machine_ready {
+                container_image_present(data_root, &resolve_container_image(settings)).await?
+            } else {
+                false
+            };
+            Ok((machine_ready, image_present))
+        }
+        ContainerRuntimeKind::AvfLinuxVm => avf_linux_runtime_state(data_root),
+    }
+}
+
+pub(crate) async fn prewarm_selected_runtime_with_observer(
+    data_root: &Path,
+    settings: &ContainerExecutionSettings,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<()> {
+    match settings.runtime {
+        ContainerRuntimeKind::Podman => {
+            let image = resolve_container_image(settings);
+            let machine_ready =
+                normalize_podman_engine_ready_for_runtime(podman_engine_ready(data_root).await)?;
+            if machine_ready {
+                prefetch_container_image_with_observer(data_root, &image, observer).await
+            } else {
+                prefetch_container_startup_artifacts_with_observer(data_root, &image, observer)
+                    .await
+            }
+        }
+        ContainerRuntimeKind::AvfLinuxVm => {
+            ensure_avf_linux_shared_vm_ready_with_observer(data_root, settings, observer)
+                .await
+                .map(|_| ())
+        }
+    }
+}
+
+fn normalize_podman_engine_ready_for_runtime(result: Result<bool>) -> Result<bool> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            if err
+                .to_string()
+                .to_ascii_lowercase()
+                .contains("podman binary unavailable")
+            {
+                return Ok(false);
+            }
+            Err(err)
+        }
+    }
+}
+
 // Default container image for ctx-managed execution.
 //
 // This must include:
@@ -115,6 +203,12 @@ const EGRESS_PROXY_CONTAINER_PATH: &str = "/usr/local/bin/ctx-egress-proxy";
 const CTX_PODMAN_MACHINE_PREFIX: &str = "ctx";
 // In-container root for disk-isolated workspaces (Podman volume mounted here).
 pub(crate) const CTX_CONTAINER_WORKSPACE_ROOT: &str = "/ctx/ws";
+pub(crate) const CTX_HARNESS_RUNTIME_KIND_ENV: &str = "CTX_HARNESS_RUNTIME_KIND";
+pub(crate) const CTX_HARNESS_LINUX_SANDBOX_ENV: &str = "CTX_HARNESS_LINUX_SANDBOX";
+pub(crate) const CTX_AVF_HOST_DATA_ROOT_ENV: &str = "CTX_AVF_HOST_DATA_ROOT";
+pub(crate) const CTX_AVF_WORKSPACE_ID_ENV: &str = "CTX_AVF_WORKSPACE_ID";
+pub(crate) const CTX_AVF_WORKTREE_ID_ENV: &str = "CTX_AVF_WORKTREE_ID";
+pub(crate) const CTX_AVF_HOST_WORKTREE_ROOT_ENV: &str = "CTX_AVF_HOST_WORKTREE_ROOT";
 const PODMAN_INFO_TIMEOUT: Duration = Duration::from_secs(5);
 const PODMAN_MACHINE_START_TIMEOUT: Duration = Duration::from_secs(180);
 // Bound machine init so wedged podman subprocesses cannot stall launch indefinitely.
@@ -331,12 +425,33 @@ pub(crate) fn workspace_container_name(workspace_id: WorkspaceId) -> String {
 pub enum HarnessRuntimeKind {
     Host,
     Container { name: String },
+    AvfLinuxVm,
+}
+
+impl HarnessRuntimeKind {
+    pub fn is_linux_sandbox(&self) -> bool {
+        !matches!(self, Self::Host)
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct HarnessExecutionPlan {
     pub runtime: HarnessRuntimeKind,
     pub env_overrides: HashMap<String, String>,
+}
+
+impl HarnessExecutionPlan {
+    pub fn is_linux_sandbox(&self) -> bool {
+        self.runtime.is_linux_sandbox()
+            || self
+                .env_overrides
+                .get(CTX_HARNESS_LINUX_SANDBOX_ENV)
+                .is_some_and(|value| value == "1")
+    }
+
+    pub fn runtime_data_root(&self) -> Option<&Path> {
+        self.env_overrides.get("CTX_DATA_ROOT").map(Path::new)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -438,9 +553,98 @@ impl HarnessRuntimeManager {
             "CTX_DATA_ROOT_HOST".to_string(),
             self.data_root.to_string_lossy().to_string(),
         );
+        env_overrides.insert(CTX_HARNESS_RUNTIME_KIND_ENV.to_string(), "host".to_string());
         if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(HarnessExecutionPlan {
                 runtime: HarnessRuntimeKind::Host,
+                env_overrides,
+            });
+        }
+        if matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm) {
+            let _activity = self.begin_runtime_operation();
+            if !matches!(
+                settings.container.mount_mode,
+                ContainerMountMode::DiskIsolated
+            ) {
+                anyhow::bail!(
+                    "AVF Linux VM host-mounted workspaces are not implemented yet; use disk-isolated mode"
+                );
+            }
+            let shared_vm = ensure_avf_linux_shared_vm_ready_with_observer(
+                &self.data_root,
+                &settings.container,
+                None,
+            )
+            .await?;
+            let branch_name = worktree
+                .git_branch
+                .as_deref()
+                .or(worktree.vcs_ref.as_deref())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| format!("ctx/{}/{}", workspace.id.0, worktree.id.0));
+            let guest_worktree_root = ensure_avf_linux_guest_worktree_from_host_copy(
+                &self.data_root,
+                workspace.id,
+                worktree.id,
+                Path::new(&workspace.root_path),
+                &worktree.base_commit_sha,
+                &branch_name,
+                None,
+            )
+            .await?;
+            let avf_data_root = container_data_root(&self.data_root, workspace.id);
+            tokio::fs::create_dir_all(&avf_data_root).await.ok();
+            env_overrides.insert(
+                "CTX_DATA_ROOT".to_string(),
+                avf_data_root.to_string_lossy().to_string(),
+            );
+            env_overrides.insert(
+                CTX_HARNESS_RUNTIME_KIND_ENV.to_string(),
+                "avf_linux_vm".to_string(),
+            );
+            env_overrides.insert(CTX_HARNESS_LINUX_SANDBOX_ENV.to_string(), "1".to_string());
+            env_overrides.insert(
+                "CTX_HARNESS_GUEST_WORKSPACE_ROOT".to_string(),
+                CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+            );
+            env_overrides.insert(
+                "CTX_AVF_SHARED_VM_ROOT".to_string(),
+                shared_vm.vm_root.to_string_lossy().to_string(),
+            );
+            env_overrides.insert(
+                avf_linux_vm::AVF_LINUX_HELPER_PATH_ENV.to_string(),
+                avf_linux_helper_path()?.to_string_lossy().to_string(),
+            );
+            env_overrides.insert(
+                CTX_AVF_HOST_DATA_ROOT_ENV.to_string(),
+                self.data_root.to_string_lossy().to_string(),
+            );
+            env_overrides.insert(
+                CTX_AVF_WORKSPACE_ID_ENV.to_string(),
+                workspace.id.0.to_string(),
+            );
+            env_overrides.insert(
+                CTX_AVF_WORKTREE_ID_ENV.to_string(),
+                worktree.id.0.to_string(),
+            );
+            env_overrides.insert(
+                CTX_AVF_HOST_WORKTREE_ROOT_ENV.to_string(),
+                worktree.root_path.clone(),
+            );
+            env_overrides.insert(
+                "CTX_AVF_GUEST_WORKTREE_ROOT".to_string(),
+                guest_worktree_root.to_string_lossy().to_string(),
+            );
+            if let Some(log_path) = shared_vm.log_path.as_ref() {
+                env_overrides.insert(
+                    "CTX_AVF_SHARED_VM_LOG".to_string(),
+                    log_path.to_string_lossy().to_string(),
+                );
+            }
+            return Ok(HarnessExecutionPlan {
+                runtime: HarnessRuntimeKind::AvfLinuxVm,
                 env_overrides,
             });
         }
@@ -473,6 +677,11 @@ impl HarnessRuntimeManager {
             "CTX_DATA_ROOT".to_string(),
             container_data_root.to_string_lossy().to_string(),
         );
+        env_overrides.insert(
+            CTX_HARNESS_RUNTIME_KIND_ENV.to_string(),
+            "podman_container".to_string(),
+        );
+        env_overrides.insert(CTX_HARNESS_LINUX_SANDBOX_ENV.to_string(), "1".to_string());
 
         let daemon_url = rewrite_daemon_url_for_container(daemon_url, proxy_host);
         env_overrides.insert("CTX_DAEMON_URL".to_string(), daemon_url);
@@ -516,7 +725,10 @@ impl HarnessRuntimeManager {
         let _activity = self.begin_runtime_operation();
         self.ensure_container_machine_ready(&settings.container, observer)
             .await
-            .context("podman unavailable and execution mode is container")?;
+            .context("local sandbox runtime is unavailable")?;
+        if matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm) {
+            return Ok(());
+        }
         self.ensure_workspace_container_after_machine_ready_with_observer(
             workspace, settings, daemon_url, observer,
         )
@@ -549,6 +761,9 @@ impl HarnessRuntimeManager {
         readiness: ContainerReadinessState,
     ) -> Result<()> {
         if matches!(settings.mode, ExecutionMode::Host) {
+            return Ok(());
+        }
+        if matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm) {
             return Ok(());
         }
         let proxy_host = "host.containers.internal";
@@ -593,6 +808,11 @@ impl HarnessRuntimeManager {
         settings: &ContainerExecutionSettings,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<()> {
+        if matches!(settings.runtime, ContainerRuntimeKind::AvfLinuxVm) {
+            ensure_avf_linux_shared_vm_ready_with_observer(&self.data_root, settings, observer)
+                .await?;
+            return Ok(());
+        }
         observe_phase(
             observer,
             HarnessSetupPhase::MachineCheck,

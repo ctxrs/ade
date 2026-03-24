@@ -6,6 +6,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 use tokio::sync::{Barrier, Notify};
 use tokio::task::JoinHandle;
 
@@ -13,7 +15,7 @@ use crate::execution_setup::warmup_coordination::SharedWarmupOperations;
 use crate::harness_runtime::HarnessRuntimeManager;
 use crate::ops_events::OpsEvents;
 use crate::perf_telemetry::PerfTelemetry;
-use crate::settings::{ExecutionMode, ExecutionSettings, Settings};
+use crate::settings::{ContainerRuntimeKind, ExecutionMode, ExecutionSettings, Settings};
 use crate::test_support::{
     wait_for_execution_launch_terminal, write_running_container_podman_shim, TrackedExecutionLaunch,
 };
@@ -90,7 +92,7 @@ async fn init_settings_store(data_root: &Path) {
             .await
             .expect("create db directory");
     }
-    let store = Store::open_sqlite(&db_path, None)
+    let store = Store::open_sqlite(&db_path, Some(1))
         .await
         .expect("open sqlite store");
     crate::settings::save_settings(&store, &crate::settings::Settings::default())
@@ -174,7 +176,10 @@ fn write_ready_runtime_podman_shim(dir: &Path) -> PathBuf {
 
 async fn save_test_execution_settings(data_root: &Path, execution: ExecutionSettings) {
     let db_path = data_root.join("db").join("db.sqlite");
-    let store = Store::open_sqlite(&db_path, None)
+    if !db_path.exists() {
+        init_settings_store(data_root).await;
+    }
+    let store = Store::open_sqlite(&db_path, Some(1))
         .await
         .expect("open settings store");
     let settings = Settings {
@@ -187,8 +192,11 @@ async fn save_test_execution_settings(data_root: &Path, execution: ExecutionSett
     store.close().await;
 }
 
-async fn spawn_static_http_server(body: Vec<u8>) -> (String, JoinHandle<()>) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+async fn spawn_static_http_server_with_suffix(
+    body: Vec<u8>,
+    suffix: &'static str,
+) -> (String, JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind static http server");
     let addr = listener.local_addr().expect("static http local addr");
@@ -201,18 +209,22 @@ async fn spawn_static_http_server(body: Vec<u8>) -> (String, JoinHandle<()>) {
             let body = body.clone();
             tokio::spawn(async move {
                 let mut buf = [0_u8; 1024];
-                let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await;
+                let _ = stream.read(&mut buf).await;
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     body.len()
                 );
-                let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, response.as_bytes()).await;
-                let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, &body).await;
-                let _ = tokio::io::AsyncWriteExt::shutdown(&mut stream).await;
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.write_all(&body).await;
+                let _ = stream.shutdown().await;
             });
         }
     });
-    (format!("http://{addr}/machine.raw"), task)
+    (format!("http://{addr}/{suffix}"), task)
+}
+
+async fn spawn_static_http_server(body: Vec<u8>) -> (String, JoinHandle<()>) {
+    spawn_static_http_server_with_suffix(body, "machine.raw").await
 }
 
 async fn install_test_managed_machine_cache_source(
@@ -255,6 +267,96 @@ async fn install_test_managed_harness_image_source(
         },
     );
     (guard, server)
+}
+
+fn write_avf_linux_helper_shim(dir: &Path) -> PathBuf {
+    let path = dir.join(if cfg!(windows) {
+        "ctx-avf-linux-helper-test.cmd"
+    } else {
+        "ctx-avf-linux-helper-test.sh"
+    });
+    let script = if cfg!(windows) {
+        "@echo off\r\nif \"%1\"==\"probe\" (\r\n  echo {\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"helper_version\":\"0.0.0-test\",\"host_os\":\"macos\",\"host_arch\":\"aarch64\",\"supported\":true,\"save_restore_supported\":true,\"rosetta_supported\":true,\"notes\":[\"test helper\"]}\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"prepare-runtime-layout\" (\r\n  set \"DATA_ROOT=%2\"\r\n  set \"VM_ROOT=%DATA_ROOT%/managed/vms/avf-linux/macos/aarch64/shared\"\r\n  set \"LOGS_ROOT=%VM_ROOT%/logs\"\r\n  if not exist \"%LOGS_ROOT%\" mkdir \"%LOGS_ROOT%\"\r\n  echo {\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"vm_root\":\"%VM_ROOT%\",\"logs_root\":\"%LOGS_ROOT%\",\"state_path\":\"%VM_ROOT%/shared-vm-state.json\",\"layout_status\":\"prepared\",\"notes\":[\"layout ready\"]}\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"shared-vm-state\" (\r\n  set \"DATA_ROOT=%2\"\r\n  set \"VM_ROOT=%DATA_ROOT%/managed/vms/avf-linux/macos/aarch64/shared\"\r\n  set \"LOGS_ROOT=%VM_ROOT%/logs\"\r\n  set \"STATUS=stopped\"\r\n  if exist \"%VM_ROOT%/helper-status.txt\" set /p STATUS=<\"%VM_ROOT%/helper-status.txt\"\r\n  if \"%STATUS%\"==\"running\" (\r\n    set \"RUNTIME_VERSION=\"\r\n    if exist \"%VM_ROOT%/runtime-version.txt\" set /p RUNTIME_VERSION=<\"%VM_ROOT%/runtime-version.txt\"\r\n    echo {\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"running\",\"vm_root\":\"%VM_ROOT%\",\"logs_root\":\"%LOGS_ROOT%\",\"state_path\":\"%VM_ROOT%/shared-vm-state.json\",\"log_path\":\"%LOGS_ROOT%/shared-vm.log\",\"runtime_version\":\"%RUNTIME_VERSION%\",\"transition_status\":\"scaffolded\",\"simulated\":true,\"notes\":[\"state ready\"]}\r\n    exit /b 0\r\n  )\r\n  echo {\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"%STATUS%\",\"vm_root\":\"%VM_ROOT%\",\"logs_root\":\"%LOGS_ROOT%\",\"state_path\":\"%VM_ROOT%/shared-vm-state.json\",\"log_path\":\"%LOGS_ROOT%/shared-vm.log\",\"simulated\":true,\"notes\":[\"state ready\"]}\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"start-shared-vm\" (\r\n  set \"DATA_ROOT=%2\"\r\n  set \"VM_ROOT=%DATA_ROOT%/managed/vms/avf-linux/macos/aarch64/shared\"\r\n  set \"LOGS_ROOT=%VM_ROOT%/logs\"\r\n  if not exist \"%LOGS_ROOT%\" mkdir \"%LOGS_ROOT%\"\r\n  >\"%VM_ROOT%/helper-status.txt\" echo running\r\n  >\"%VM_ROOT%/runtime-version.txt\" echo %7\r\n  echo {\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"running\",\"vm_root\":\"%VM_ROOT%\",\"logs_root\":\"%LOGS_ROOT%\",\"state_path\":\"%VM_ROOT%/shared-vm-state.json\",\"log_path\":\"%LOGS_ROOT%/shared-vm.log\",\"runtime_root\":\"%3\",\"rootfs_image\":\"%4\",\"kernel_path\":\"%5\",\"initrd_path\":\"%6\",\"runtime_version\":\"%7\",\"transition_status\":\"scaffolded\",\"simulated\":true,\"notes\":[\"scaffolded\"]}\r\n  exit /b 0\r\n)\r\n>&2 echo unexpected helper invocation: %*\r\nexit /b 1\r\n".to_string()
+    } else {
+        format!(
+            "#!/bin/sh\ncmd=\"$1\"\ncase \"$cmd\" in\nprobe)\n  printf '%s\\n' '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"helper_version\":\"0.0.0-test\",\"host_os\":\"macos\",\"host_arch\":\"aarch64\",\"supported\":true,\"save_restore_supported\":true,\"rosetta_supported\":true,\"notes\":[\"test helper\"]}}'\n  exit 0\n  ;;\nprepare-runtime-layout)\n  data_root=\"$2\"\n  vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n  logs_root=\"$vm_root/logs\"\n  state_path=\"$vm_root/shared-vm-state.json\"\n  mkdir -p \"$logs_root\"\n  printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"layout_status\":\"prepared\",\"notes\":[\"layout ready\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\"\n  exit 0\n  ;;\nshared-vm-state)\n  data_root=\"$2\"\n  vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n  logs_root=\"$vm_root/logs\"\n  state_path=\"$vm_root/shared-vm-state.json\"\n  log_path=\"$logs_root/shared-vm.log\"\n  status_file=\"$vm_root/helper-status.txt\"\n  version_file=\"$vm_root/runtime-version.txt\"\n  state=$(cat \"$status_file\" 2>/dev/null || printf 'stopped')\n  runtime_version=$(cat \"$version_file\" 2>/dev/null || true)\n  if [ \"$state\" = \"running\" ]; then\n    printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"running\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"runtime_version\":\"%s\",\"transition_status\":\"scaffolded\",\"simulated\":true,\"notes\":[\"state ready\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\" \"$runtime_version\"\n  else\n    printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"%s\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"simulated\":true,\"notes\":[\"state ready\"]}}\\n' \"$state\" \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\"\n  fi\n  exit 0\n  ;;\nstart-shared-vm)\n  data_root=\"$2\"\n  runtime_root=\"$3\"\n  rootfs_image=\"$4\"\n  kernel_path=\"$5\"\n  initrd_path=\"$6\"\n  runtime_version=\"$7\"\n  vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n  logs_root=\"$vm_root/logs\"\n  state_path=\"$vm_root/shared-vm-state.json\"\n  log_path=\"$logs_root/shared-vm.log\"\n  mkdir -p \"$logs_root\"\n  printf 'running' > \"$vm_root/helper-status.txt\"\n  printf '%s' \"$runtime_version\" > \"$vm_root/runtime-version.txt\"\n  printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"running\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"runtime_root\":\"%s\",\"rootfs_image\":\"%s\",\"kernel_path\":\"%s\",\"initrd_path\":\"%s\",\"runtime_version\":\"%s\",\"transition_status\":\"scaffolded\",\"simulated\":true,\"notes\":[\"scaffolded\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\" \"$runtime_root\" \"$rootfs_image\" \"$kernel_path\" \"$initrd_path\" \"$runtime_version\"\n  exit 0\n  ;;\nesac\necho \"unexpected helper invocation: $*\" >&2\nexit 1\n",
+            host_os = std::env::consts::OS,
+            host_arch = std::env::consts::ARCH,
+        )
+    };
+    std::fs::write(&path, script).expect("write AVF Linux helper shim");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod AVF Linux helper shim");
+    }
+    path
+}
+
+fn avf_runtime_archive_bytes() -> Vec<u8> {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    {
+        let mut tar = tar::Builder::new(&mut encoder);
+        let payload = b"rootfs";
+        let mut header = tar::Header::new_gnu();
+        header.set_path("runtime/rootfs.img").expect("set tar path");
+        header.set_size(payload.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        tar.append(&header, &payload[..])
+            .expect("append rootfs image");
+        tar.finish().expect("finish tar");
+    }
+    encoder.finish().expect("finish gzip encoder")
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
+}
+
+async fn make_test_managed_avf_linux_runtime_source() -> (
+    crate::bundled_assets::ManagedRuntimeSource,
+    Vec<JoinHandle<()>>,
+) {
+    let archive_bytes = avf_runtime_archive_bytes();
+    let kernel_bytes = b"kernel".to_vec();
+    let initrd_bytes = b"initrd".to_vec();
+    let (archive_url, archive_server) =
+        spawn_static_http_server_with_suffix(archive_bytes.clone(), "guest-runtime.tar.gz").await;
+    let (kernel_url, kernel_server) =
+        spawn_static_http_server_with_suffix(kernel_bytes.clone(), "vmlinuz").await;
+    let (initrd_url, initrd_server) =
+        spawn_static_http_server_with_suffix(initrd_bytes.clone(), "initrd.img").await;
+
+    let source = crate::bundled_assets::ManagedRuntimeSource {
+        uri: archive_url,
+        sha256: sha256_hex(&archive_bytes),
+        version: "ubuntu-minimal-test".to_string(),
+        bin: "rootfs.img".to_string(),
+        helpers: [
+            (
+                "kernel".to_string(),
+                crate::bundled_assets::ManagedArtifactSource {
+                    uri: kernel_url,
+                    sha256: sha256_hex(&kernel_bytes),
+                },
+            ),
+            (
+                "initrd".to_string(),
+                crate::bundled_assets::ManagedArtifactSource {
+                    uri: initrd_url,
+                    sha256: sha256_hex(&initrd_bytes),
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    };
+    (source, vec![archive_server, kernel_server, initrd_server])
 }
 
 #[derive(Default)]
@@ -1464,6 +1566,96 @@ async fn runtime_prewarm_errors_when_only_startup_artifacts_were_warmed() {
         .as_deref()
         .unwrap_or_default()
         .contains("still needs machine and image startup"));
+}
+
+#[tokio::test]
+async fn compute_prewarm_gate_marks_avf_linux_runtime_ready() {
+    let _serial = env_var_test_lock().lock().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let helper_path = write_avf_linux_helper_shim(data_dir.path());
+    let _helper = EnvVarGuard::set(
+        crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
+        &helper_path.to_string_lossy(),
+    );
+    let (runtime_source, servers) = make_test_managed_avf_linux_runtime_source().await;
+    let _runtime =
+        crate::harness_runtime::override_managed_avf_linux_runtime_source_for_test(runtime_source);
+    let settings = ExecutionSettings {
+        mode: ExecutionMode::Container,
+        container: crate::settings::ContainerExecutionSettings {
+            runtime: ContainerRuntimeKind::AvfLinuxVm,
+            ..Default::default()
+        },
+    };
+    let coordinator = test_coordinator(data_dir.path().to_path_buf());
+    crate::harness_runtime::prewarm_selected_runtime_with_observer(
+        data_dir.path(),
+        &settings.container,
+        None,
+    )
+    .await
+    .expect("prewarm AVF runtime");
+
+    let gate = coordinator
+        .compute_prewarm_gate(&settings.container)
+        .await
+        .expect("compute AVF prewarm gate");
+    assert!(gate.machine_ready);
+    assert!(gate.image_present);
+    assert!(!gate.image_ref_changed);
+    assert!(!gate.bundled_image_digest_changed);
+    assert!(!gate.needs_prewarm);
+    assert_eq!(gate.bundled_image_fingerprint, None);
+
+    let runtime_state = coordinator
+        .startup_runtime_state(&settings.container)
+        .await
+        .expect("read AVF runtime state");
+    assert_eq!(runtime_state, (true, true));
+
+    for server in servers {
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn runtime_prewarm_succeeds_for_avf_linux_runtime() {
+    let _serial = env_var_test_lock().lock().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let helper_path = write_avf_linux_helper_shim(data_dir.path());
+    let _helper = EnvVarGuard::set(
+        crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
+        &helper_path.to_string_lossy(),
+    );
+    let (runtime_source, servers) = make_test_managed_avf_linux_runtime_source().await;
+    let _runtime =
+        crate::harness_runtime::override_managed_avf_linux_runtime_source_for_test(runtime_source);
+    let coordinator = test_coordinator(data_dir.path().to_path_buf());
+    let settings = ExecutionSettings {
+        mode: ExecutionMode::Container,
+        container: crate::settings::ContainerExecutionSettings {
+            runtime: ContainerRuntimeKind::AvfLinuxVm,
+            ..Default::default()
+        },
+    };
+
+    let launch = coordinator
+        .start_runtime_prewarm(settings.clone(), RuntimePrewarmScope::Runtime)
+        .await;
+    let terminal =
+        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(10))
+            .await;
+
+    assert_eq!(terminal.state, ExecutionLaunchState::Ready);
+    let runtime_state = coordinator
+        .startup_runtime_state(&settings.container)
+        .await
+        .expect("read AVF runtime state");
+    assert_eq!(runtime_state, (true, true));
+
+    for server in servers {
+        server.abort();
+    }
 }
 
 #[cfg(unix)]

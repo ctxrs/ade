@@ -12,8 +12,8 @@ use crate::container_fs::is_container_path;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::harness_runtime;
-use crate::settings::{ContainerMountMode, ExecutionMode};
-use crate::terminals::{PodmanTerminalSpec, TerminalCreateRequest};
+use crate::settings::{ContainerMountMode, ContainerRuntimeKind, ExecutionMode};
+use crate::terminals::{AvfLinuxTerminalSpec, PodmanTerminalSpec, TerminalCreateRequest};
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::TerminalSession;
 
@@ -283,7 +283,7 @@ pub(super) async fn create_workspace_terminal(
             .unwrap_or_else(default_shell)
     };
 
-    let podman = if container_mode {
+    let (podman, avf_linux_vm) = if container_mode {
         state
             .execution
             .harness
@@ -297,22 +297,57 @@ pub(super) async fn create_workspace_terminal(
                     }),
                 )
             })?;
-        let inv = harness_runtime::podman_invocation(&state.core.data_root).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: format!("podman unavailable: {e}"),
-                }),
-            )
-        })?;
-        Some(PodmanTerminalSpec {
-            podman_bin: inv.bin,
-            podman_env: inv.env,
-            container_name: harness_runtime::workspace_container_name(workspace_id),
-            workdir: cwd.to_string_lossy().to_string(),
-        })
+        match effective.container.runtime {
+            ContainerRuntimeKind::Podman => {
+                let inv =
+                    harness_runtime::podman_invocation(&state.core.data_root).map_err(|e| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiErrorResp {
+                                error: format!("podman unavailable: {e}"),
+                            }),
+                        )
+                    })?;
+                (
+                    Some(PodmanTerminalSpec {
+                        podman_bin: inv.bin,
+                        podman_env: inv.env,
+                        container_name: harness_runtime::workspace_container_name(workspace_id),
+                        workdir: cwd.to_string_lossy().to_string(),
+                    }),
+                    None,
+                )
+            }
+            ContainerRuntimeKind::AvfLinuxVm => {
+                let worktree_id = worktree_id.ok_or((
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: "sandbox terminals require a worktree for the AVF runtime"
+                            .to_string(),
+                    }),
+                ))?;
+                let helper_path = harness_runtime::avf_linux_helper_path().map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: format!("AVF helper unavailable: {e}"),
+                        }),
+                    )
+                })?;
+                (
+                    None,
+                    Some(AvfLinuxTerminalSpec {
+                        helper_path,
+                        data_root: state.core.data_root.clone(),
+                        workspace_id,
+                        worktree_id,
+                        workdir: cwd.to_string_lossy().to_string(),
+                    }),
+                )
+            }
+        }
     } else {
-        None
+        (None, None)
     };
     let session = state
         .transport
@@ -328,6 +363,7 @@ pub(super) async fn create_workspace_terminal(
             rows: None,
             env: std::collections::HashMap::new(),
             podman,
+            avf_linux_vm,
         })
         .await
         .map_err(|e| {

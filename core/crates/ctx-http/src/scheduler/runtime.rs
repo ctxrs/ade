@@ -19,7 +19,6 @@ use ctx_store::store::SessionTurnToolCountDeltas;
 use crate::api::sessions::compose_model_id;
 use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
 use crate::execution_effective;
-use crate::harness_runtime::HarnessRuntimeKind;
 use crate::harness_sources::{self, HarnessSourceKind};
 use crate::installer;
 use crate::installs::InstallTarget;
@@ -306,18 +305,11 @@ pub(crate) async fn start_turn(
             return Err(err);
         }
     };
-    let is_container = matches!(runtime_plan.runtime, HarnessRuntimeKind::Container { .. });
+    let is_linux_sandbox = runtime_plan.is_linux_sandbox();
     for (key, value) in runtime_plan.env_overrides.iter() {
         provider_env.insert(key.clone(), value.clone());
     }
-    let runtime_data_root = if is_container {
-        runtime_plan
-            .env_overrides
-            .get("CTX_DATA_ROOT")
-            .map(Path::new)
-    } else {
-        None
-    };
+    let runtime_data_root = runtime_plan.runtime_data_root();
     let resolved_source = match harness_sources::resolve_provider_source_for_run_with_runtime_root(
         &state.core.data_root,
         &session.provider_id,
@@ -363,7 +355,7 @@ pub(crate) async fn start_turn(
             runtime_provider_id.to_string(),
         );
     }
-    let install_target = if is_container {
+    let install_target = if is_linux_sandbox {
         InstallTarget::Container
     } else {
         InstallTarget::Host
@@ -379,7 +371,7 @@ pub(crate) async fn start_turn(
     )
     .await;
 
-    if runtime_provider_id == "codex" && is_container && using_endpoint_source {
+    if runtime_provider_id == "codex" && is_linux_sandbox && using_endpoint_source {
         if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
             provider_accounts::ensure_codex_endpoint_runtime_home_from_env(
                 std::path::Path::new(root),
@@ -393,7 +385,7 @@ pub(crate) async fn start_turn(
         && !provider_env.contains_key("CODEX_HOME")
         && !using_endpoint_source
     {
-        if is_container {
+        if is_linux_sandbox {
             if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
                 let codex_home = provider_accounts::codex_runtime_home(std::path::Path::new(root));
                 tokio::fs::create_dir_all(&codex_home).await.ok();
@@ -412,7 +404,7 @@ pub(crate) async fn start_turn(
         }
     }
     if runtime_provider_id != "codex" && !using_endpoint_source {
-        let env = if is_container {
+        let env = if is_linux_sandbox {
             if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
                 provider_accounts::subscription_env_for_active_account_with_runtime_root(
                     &state.core.data_root,
@@ -456,7 +448,7 @@ pub(crate) async fn start_turn(
                     )
                 }
             })?;
-        if is_container && using_endpoint_source {
+        if is_linux_sandbox && using_endpoint_source {
             let openai_api_key_present = provider_env
                 .get("OPENAI_API_KEY")
                 .is_some_and(|value| !value.trim().is_empty());
@@ -478,7 +470,7 @@ pub(crate) async fn start_turn(
         }
     }
 
-    if is_container {
+    if is_linux_sandbox {
         if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
             provider_accounts::ensure_provider_runtime_home_env(
                 Path::new(root),
@@ -512,7 +504,12 @@ pub(crate) async fn start_turn(
         "session_root_kind": session_root_kind,
         "runtime_provider_id": runtime_provider_id,
         "source_kind": if using_endpoint_source { "endpoint" } else { "subscription" },
-        "is_container": is_container,
+        "is_container": is_linux_sandbox,
+        "runtime_kind": runtime_plan
+            .env_overrides
+            .get(crate::harness_runtime::CTX_HARNESS_RUNTIME_KIND_ENV)
+            .cloned()
+            .unwrap_or_else(|| "host".to_string()),
         "has_openai_api_key": provider_env
             .get("OPENAI_API_KEY")
             .is_some_and(|value| !value.trim().is_empty()),

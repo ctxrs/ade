@@ -2,8 +2,8 @@ use super::*;
 
 const PODMAN_MACHINE_CACHE_ID: &str = "podman-machine";
 
-mod archive;
-mod downloads;
+pub(super) mod archive;
+pub(super) mod downloads;
 
 use self::archive::{
     extract_archive_to_dir, managed_podman_archive_path, resolve_single_extracted_root,

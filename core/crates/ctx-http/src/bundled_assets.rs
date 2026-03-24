@@ -146,6 +146,15 @@ struct RuntimeLockV2 {
 }
 
 fn bundle_dir() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some((root, _)) = test_manifest_override()
+        .lock()
+        .expect("test bundled assets manifest override lock poisoned")
+        .clone()
+    {
+        return Some(root);
+    }
+
     let raw = std::env::var(BUNDLE_ENV_DIR).ok()?;
     let path = PathBuf::from(raw.trim());
     if path.as_os_str().is_empty() || !path.exists() {
@@ -230,6 +239,15 @@ fn resolve_bundle_args(root: &Path, args: &[String]) -> Vec<String> {
 }
 
 fn load_manifest() -> Option<BundledAssetsManifest> {
+    #[cfg(test)]
+    if let Some((_, manifest)) = test_manifest_override()
+        .lock()
+        .expect("test bundled assets manifest override lock poisoned")
+        .clone()
+    {
+        return Some(manifest);
+    }
+
     static MANIFEST: OnceLock<Option<BundledAssetsManifest>> = OnceLock::new();
     let res = MANIFEST.get_or_init(|| {
         let root = bundle_dir()?;
@@ -467,6 +485,10 @@ pub fn bundled_podman_runtime() -> Option<BundledRuntimePaths> {
     bundled_runtime("podman")
 }
 
+pub fn bundled_avf_linux_guest_runtime() -> Option<BundledRuntimePaths> {
+    bundled_runtime("avf-linux-guest")
+}
+
 pub fn bundled_image_tar(id: &str, os: &str, arch: &str) -> Option<PathBuf> {
     let root = bundle_dir()?;
     let manifest = load_manifest()?;
@@ -600,6 +622,14 @@ fn test_managed_ctx_harness_image_source_override(
 }
 
 #[cfg(test)]
+fn test_manifest_override() -> &'static std::sync::Mutex<Option<(PathBuf, BundledAssetsManifest)>> {
+    static OVERRIDE: std::sync::OnceLock<
+        std::sync::Mutex<Option<(PathBuf, BundledAssetsManifest)>>,
+    > = std::sync::OnceLock::new();
+    OVERRIDE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+#[cfg(test)]
 pub(crate) struct TestManagedPodmanMachineCacheSourceGuard {
     previous: Option<ManagedArtifactSource>,
 }
@@ -630,6 +660,21 @@ impl Drop for TestManagedCtxHarnessImageSourceGuard {
 }
 
 #[cfg(test)]
+pub(crate) struct TestBundledAssetsManifestGuard {
+    previous: Option<(PathBuf, BundledAssetsManifest)>,
+}
+
+#[cfg(test)]
+impl Drop for TestBundledAssetsManifestGuard {
+    fn drop(&mut self) {
+        let mut guard = test_manifest_override()
+            .lock()
+            .expect("test bundled assets manifest override lock poisoned");
+        *guard = self.previous.take();
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn override_managed_podman_machine_cache_source_for_test(
     source: ManagedArtifactSource,
 ) -> TestManagedPodmanMachineCacheSourceGuard {
@@ -651,6 +696,19 @@ pub(crate) fn override_managed_ctx_harness_image_source_for_test(
     let previous = guard.clone();
     *guard = Some(source);
     TestManagedCtxHarnessImageSourceGuard { previous }
+}
+
+#[cfg(test)]
+pub(crate) fn override_bundled_assets_manifest_for_test(
+    root: PathBuf,
+    manifest: BundledAssetsManifest,
+) -> TestBundledAssetsManifestGuard {
+    let mut guard = test_manifest_override()
+        .lock()
+        .expect("test bundled assets manifest override lock poisoned");
+    let previous = guard.clone();
+    *guard = Some((root, manifest));
+    TestBundledAssetsManifestGuard { previous }
 }
 
 #[cfg(test)]
@@ -831,6 +889,61 @@ mod tests {
             .expect("gvproxy helper should be present");
         assert_eq!(helper.uri, "https://example.test/gvproxy");
         assert_eq!(helper.sha256, "1234");
+    }
+
+    #[test]
+    fn select_managed_runtime_source_supports_avf_guest_helper_payloads() {
+        let component = RuntimeLockComponent {
+            kind: "runtime".to_string(),
+            id: "avf-linux-guest".to_string(),
+            os: "macos".to_string(),
+            arch: "aarch64".to_string(),
+            variant: Some("default".to_string()),
+            version: Some("locked".to_string()),
+            bin: Some("rootfs.raw".to_string()),
+            helpers: HashMap::from([
+                (
+                    "kernel".to_string(),
+                    RuntimeLockHelperSource {
+                        uri: Some("https://example.test/kernel".to_string()),
+                        sha256: Some("1111".to_string()),
+                    },
+                ),
+                (
+                    "initrd".to_string(),
+                    RuntimeLockHelperSource {
+                        uri: Some("https://example.test/initrd".to_string()),
+                        sha256: Some("2222".to_string()),
+                    },
+                ),
+            ]),
+            sources: vec![RuntimeLockSource {
+                source_type: "ci".to_string(),
+                uri: Some("https://example.test/rootfs.raw.zst".to_string()),
+                sha256: Some("abcd".to_string()),
+            }],
+        };
+        let mut allowed = HashSet::new();
+        allowed.insert("ci".to_string());
+        let source = select_managed_runtime_source(&component, &allowed).expect("runtime source");
+        assert_eq!(source.uri, "https://example.test/rootfs.raw.zst");
+        assert_eq!(source.sha256, "abcd");
+        assert_eq!(source.version, "locked");
+        assert_eq!(source.bin, "rootfs.raw");
+        assert_eq!(
+            source
+                .helpers
+                .get("kernel")
+                .map(|helper| helper.uri.as_str()),
+            Some("https://example.test/kernel")
+        );
+        assert_eq!(
+            source
+                .helpers
+                .get("initrd")
+                .map(|helper| helper.uri.as_str()),
+            Some("https://example.test/initrd")
+        );
     }
 
     #[test]

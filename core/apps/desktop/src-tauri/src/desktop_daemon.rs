@@ -23,6 +23,7 @@ use login_relay::is_loopback_host_name;
 use path_env::{resolve_daemon_path_env, resolve_local_daemon_path_env};
 
 const SSH_CONFIG_OVERRIDE_ENV: &str = "CTX_DESKTOP_SSH_CONFIG_PATH";
+const AVF_LINUX_HELPER_PATH_ENV: &str = "CTX_AVF_LINUX_HELPER_PATH";
 const DESKTOP_DAEMON_BIN_NAME: &str = "ctx-daemon";
 
 fn normalized_ssh_config_override(value: &str) -> Option<String> {
@@ -616,6 +617,7 @@ fn spawn_daemon_with_mode(
     wait_for_health: bool,
 ) -> Result<(String, Child, bool)> {
     let ctx_bin = resolve_daemon_bin(app)?;
+    let avf_linux_helper_bin = resolve_optional_bin(app, "ctx-avf-linux-helper");
     let mcp_bin = resolve_optional_bin(app, "ctx-mcp");
     let daemon_path_env = resolve_daemon_path_env();
 
@@ -676,6 +678,12 @@ fn spawn_daemon_with_mode(
             cmd.arg("--setenv")
                 .arg(format!("CTX_MCP_COMMAND={}", mcp.to_string_lossy()));
         }
+        if let Some(helper) = avf_linux_helper_bin.as_ref() {
+            cmd.arg("--setenv").arg(format!(
+                "{AVF_LINUX_HELPER_PATH_ENV}={}",
+                helper.to_string_lossy()
+            ));
+        }
         if let Some(bundle) = bundle_dir.as_ref() {
             cmd.arg("--setenv")
                 .arg(format!("CTX_BUNDLE_DIR={}", bundle.to_string_lossy()));
@@ -708,6 +716,12 @@ fn spawn_daemon_with_mode(
         }
         if let Some(mcp) = mcp_bin.as_ref() {
             cmd.env("CTX_MCP_COMMAND", mcp.to_string_lossy().to_string());
+        }
+        if let Some(helper) = avf_linux_helper_bin.as_ref() {
+            cmd.env(
+                AVF_LINUX_HELPER_PATH_ENV,
+                helper.to_string_lossy().to_string(),
+            );
         }
         if let Some(bundle) = bundle_dir.as_ref() {
             cmd.env("CTX_BUNDLE_DIR", bundle.to_string_lossy().to_string());
