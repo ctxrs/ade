@@ -909,12 +909,12 @@ async fn startup_prewarm_runs_runtime_warmup_for_cold_container_settings() {
 #[tokio::test]
 async fn spawned_startup_prewarm_respects_podman_env_test_lock() {
     let data_dir = tempfile::tempdir().expect("tempdir");
+    let serial = env_var_test_lock().lock().await;
     let podman_path = write_ready_runtime_podman_shim(data_dir.path());
     let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
     let _podman_path = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
     save_test_execution_settings(data_dir.path(), podman_execution_settings()).await;
     let coordinator = test_coordinator(data_dir.path().to_path_buf());
-    let serial = env_var_test_lock().lock().await;
 
     coordinator.spawn_startup_prewarm();
     for _ in 0..8 {
