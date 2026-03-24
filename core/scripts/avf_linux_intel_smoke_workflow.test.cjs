@@ -10,6 +10,9 @@ test("AVF Linux Intel smoke workflow stays manual and pinned to macos-15-intel",
   const text = fs.readFileSync(workflowPath, "utf8");
   assert.match(text, /workflow_dispatch:/);
   assert.match(text, /require_real_smoke:[\s\S]*type: boolean/);
-  assert.match(text, /runs-on:\s*macos-15-intel/);
+  assert.match(
+    text,
+    /runs-on:\s*\$\{\{\s*vars\.RELEASE_RUNNER_MACOS_X64\s*\|\|\s*'macos-15-intel'\s*\}\}/,
+  );
   assert.match(text, /core\/scripts\/avf_linux_ci_smoke\.sh/);
 });
