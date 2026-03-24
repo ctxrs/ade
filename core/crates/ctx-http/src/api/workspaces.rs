@@ -468,7 +468,7 @@ pub(super) async fn delete_workspace(
     state.core.stores.begin_workspace_delete(id).await;
     let delete_result = async {
         state.cleanup_workspace(id).await;
-        state.core.stores.evict_workspace(id).await;
+        state.core.stores.evict_workspace_and_wait_closed(id).await;
         state
             .global_store()
             .delete_workspace_indexes(id)

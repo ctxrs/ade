@@ -220,6 +220,50 @@ async fn delete_barrier_blocks_cached_workspace_access() -> Result<()> {
 }
 
 #[tokio::test]
+async fn evict_workspace_and_wait_closed_blocks_until_last_handle_drops() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let manager = StoreManager::open_with_config(
+        temp.path(),
+        StoreManagerConfig {
+            max_cached_workspaces: 1,
+            ..StoreManagerConfig::default()
+        },
+    )
+    .await?;
+    let workspace = manager
+        .global()
+        .create_workspace(
+            "wait-close".to_string(),
+            temp.path().join("wait-close").to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await?;
+    let store = manager.workspace(workspace.id).await?;
+
+    let manager_for_wait = manager.clone();
+    let wait = tokio::spawn(async move {
+        manager_for_wait
+            .evict_workspace_and_wait_closed(workspace.id)
+            .await;
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !wait.is_finished(),
+        "eviction should wait while a leased workspace store is still in use"
+    );
+
+    drop(store);
+
+    tokio::time::timeout(Duration::from_secs(2), wait)
+        .await
+        .context("eviction should finish once the last store handle is dropped")?
+        .context("eviction task should join")?;
+    assert_eq!(manager.stats().await.workspace_store_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn delete_barrier_blocks_pending_close_reactivation() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let manager = StoreManager::open_with_config(

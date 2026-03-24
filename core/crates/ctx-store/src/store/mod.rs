@@ -437,8 +437,9 @@ impl Store {
             }),
             Err(err) => {
                 tracing::warn!("failed to build runtime for blocking pool close: {err:#}");
-                let close = self.pool.close();
-                drop(close);
+                futures::executor::block_on(async {
+                    self.pool.close().await;
+                });
             }
         }
     }

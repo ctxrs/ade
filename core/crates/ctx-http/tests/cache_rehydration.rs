@@ -218,6 +218,132 @@ async fn include_events_session_heads_bypass_compact_cache() {
 }
 
 #[tokio::test]
+async fn include_events_session_heads_use_hydrated_replay_cache_when_store_cannot_open() {
+    let temp = tempdir().unwrap();
+    let stores = common::setup_store(temp.path()).await;
+    let state = common::build_state(
+        temp.path(),
+        stores.clone(),
+        common::fake_providers(),
+        "http://localhost",
+    );
+
+    let workspace_root = temp.path().join("workspace");
+    tokio::fs::create_dir_all(&workspace_root).await.unwrap();
+
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            "ws".to_string(),
+            workspace_root.to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .unwrap();
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let worktree = store
+        .create_worktree(
+            workspace.id,
+            workspace_root.to_string_lossy().to_string(),
+            "deadbeef".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+    let task = store
+        .create_task(workspace.id, "task".to_string(), None)
+        .await
+        .unwrap();
+    let session = store
+        .create_session(
+            task.id,
+            workspace.id,
+            worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            "fake".to_string(),
+            "model".to_string(),
+            "implementer".to_string(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    state
+        .global_store()
+        .upsert_workspace_session_index(session.id, workspace.id)
+        .await
+        .unwrap();
+
+    store
+        .append_session_event(
+            session.id,
+            None,
+            None,
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "hydrated_cache", "message": "persist me" }),
+        )
+        .await
+        .unwrap();
+
+    let full_head = store
+        .get_session_head_snapshot(session.id, 60, true)
+        .await
+        .unwrap()
+        .expect("full replay-capable session head");
+    assert!(
+        !full_head.events.is_empty(),
+        "full head should include persisted events for replay-capable caching"
+    );
+    state
+        .workspaces
+        .workspace_active_snapshot
+        .update_session_head(full_head.clone())
+        .await;
+
+    drop(store);
+    state.core.stores.evict_workspace(workspace.id).await;
+
+    let blocked_workspace_store_dir = temp
+        .path()
+        .join("db")
+        .join("workspaces")
+        .join(workspace.id.0.to_string());
+    if let Ok(metadata) = tokio::fs::metadata(&blocked_workspace_store_dir).await {
+        if metadata.is_dir() {
+            tokio::fs::remove_dir_all(&blocked_workspace_store_dir)
+                .await
+                .unwrap();
+        } else {
+            tokio::fs::remove_file(&blocked_workspace_store_dir)
+                .await
+                .unwrap();
+        }
+    }
+    tokio::fs::create_dir_all(blocked_workspace_store_dir.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&blocked_workspace_store_dir, b"blocked workspace store")
+        .await
+        .unwrap();
+
+    let app = common::router(state.clone());
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/api/sessions/{}/head?include_events=true&limit=60",
+            session.id.0
+        ))
+        .body(Body::empty())
+        .unwrap();
+    let (status, head): (StatusCode, SessionHeadSnapshot) = common::oneshot_json(&app, req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(head.session.id, session.id);
+    assert_eq!(head.last_event_seq, full_head.last_event_seq);
+    assert_eq!(head.events.len(), full_head.events.len());
+}
+
+#[tokio::test]
 async fn non_primary_store_backed_head_is_purged_on_workspace_cleanup() {
     let temp = tempdir().unwrap();
     let stores = common::setup_store(temp.path()).await;

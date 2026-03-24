@@ -422,6 +422,15 @@ impl StoreManager {
             .await;
     }
 
+    pub async fn evict_workspace_and_wait_closed(&self, workspace_id: WorkspaceId) {
+        self.evict_workspace(workspace_id).await;
+        if self.store_leases.is_workspace_closing(workspace_id) {
+            self.store_leases
+                .wait_for_workspace_close(workspace_id)
+                .await;
+        }
+    }
+
     pub async fn evict_idle_workspaces(
         &self,
         max_idle: Duration,

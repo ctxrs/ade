@@ -395,6 +395,7 @@ async fn run_next_entry_for_workspace(
     let store = state.core.stores.workspace(workspace.id).await?;
     let cfg = load_merge_queue_config(&store).await?;
     if !cfg.enabled {
+        cancel_queued_entries_for_disabled_workspace(state, &store, workspace.id).await?;
         return Ok(WorkspaceDrainStep::Disabled);
     }
 
@@ -415,6 +416,33 @@ async fn run_next_entry_for_workspace(
     entry.updated_at = now;
     run_entry(state, &workspace, entry, &cfg).await?;
     Ok(WorkspaceDrainStep::Continue)
+}
+
+async fn cancel_queued_entries_for_disabled_workspace(
+    state: &Arc<AppState>,
+    store: &ctx_store::Store,
+    workspace_id: WorkspaceId,
+) -> Result<()> {
+    let queued = store.list_queued_merge_queue_entries().await?;
+    if queued.is_empty() {
+        return Ok(());
+    }
+
+    let now = Utc::now();
+    for mut entry in queued {
+        entry.status = MergeQueueEntryStatus::Cancelled;
+        entry.error_message = Some("merge queue disabled while entry was queued".to_string());
+        entry.updated_at = now;
+        store.update_merge_queue_entry(&entry).await?;
+    }
+
+    tracing::debug!(
+        workspace_id = %workspace_id.0,
+        cancelled = true,
+        "cancelled queued merge queue entries because the workspace queue is disabled"
+    );
+    state.transport.merge_queue_notify.notify_waiters();
+    Ok(())
 }
 
 async fn run_entry(

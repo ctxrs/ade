@@ -71,15 +71,16 @@ async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
 
     ctx_http::merge_queue::spawn_merge_queue_runner(state.clone());
 
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let store = state.core.stores.workspace_uncached(workspace.id).await.unwrap();
     let entry = queued_entry(workspace.id, "queued-before-enable");
     store.create_merge_queue_entry(&entry).await.unwrap();
+    store.close().await;
 
     tokio::time::sleep(Duration::from_millis(100)).await;
     let queued = state
         .core
         .stores
-        .workspace(workspace.id)
+        .workspace_uncached(workspace.id)
         .await
         .unwrap()
         .get_merge_queue_entry(entry.id)

@@ -51,11 +51,27 @@ pub(crate) async fn get_session_head(
     Path(id): Path<String>,
     Query(q): Query<SessionHeadQuery>,
 ) -> Result<Json<SessionHeadSnapshot>, StatusCode> {
+    fn cached_head_satisfies_limit(head: &SessionHeadSnapshot, limit: u32) -> bool {
+        let requested = limit as usize;
+        !(head.has_more_turns && head.turns.len() < requested)
+    }
+
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let limit = q.limit.unwrap_or(60);
     let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    if !include_events {
+    if include_events {
+        if let Some(head) = state
+            .workspaces
+            .workspace_active_snapshot
+            .get_session_head(session_id)
+            .await
+        {
+            if cached_head_satisfies_limit(&head, limit) {
+                return Ok(Json(head));
+            }
+        }
+    } else {
         if let Some(mut head) = state
             .workspaces
             .workspace_active_snapshot
@@ -66,8 +82,7 @@ pub(crate) async fn get_session_head(
             // smaller turn window than callers request (e.g., refresh paths cap to 200 turns).
             // Only serve from cache if it can satisfy the requested limit, otherwise fall back to
             // store.
-            let requested = limit as usize;
-            if head.has_more_turns && head.turns.len() < requested {
+            if !cached_head_satisfies_limit(&head, limit) {
                 // cache head is known-truncated and does not satisfy the request
             } else {
                 head.events.clear();
