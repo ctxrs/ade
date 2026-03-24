@@ -220,11 +220,6 @@ export function applyStableListUpdate({
     return { mode: "map", changedSpans };
   }
 
-  if (!hasEdgeInserts && changedSpans.length > 0) {
-    methods.data.replace(next);
-    return { mode: "remeasure", changedSpans };
-  }
-
   methods.data.batch(
     () => {
       if (prefix.length > 0) methods.data.prepend(prefix);

@@ -159,6 +159,56 @@ describe("useSessionMessageListController", () => {
     expect(result.current.initialData).toEqual(sessionTwoRaw);
   });
 
+  it("replaces the list immediately when the session boundary changes", () => {
+    const sessionOneItems = [makeSpacer("session-1-a"), makeSpacer("session-1-b")];
+    const sessionTwoItems = [makeSpacer("session-2-a"), makeSpacer("session-2-b")];
+    const fake = createFakeMethods(sessionOneItems);
+    coalescedItems = sessionOneItems;
+
+    const { result, rerender } = renderHook(
+      ({ sessionId, listItems }: { sessionId: string; listItems: WorkbenchListItem[] }) =>
+        useSessionMessageListController({
+          sessionId,
+          isActive: true,
+          loaded: true,
+          listItems,
+          canLoadOlder: false,
+          loadOlder: async () => {},
+          layoutRevision: "layout-1",
+          itemSizeCacheKey: () => null,
+          showDebug: false,
+        }),
+      {
+        initialProps: {
+          sessionId: "session-1",
+          listItems: sessionOneItems,
+        },
+      },
+    );
+
+    result.current.methodsRef.current = fake.methods as unknown as typeof result.current.methodsRef.current;
+    rerender({
+      sessionId: "session-1",
+      listItems: sessionOneItems,
+    });
+
+    fake.spies.replace.mockClear();
+    fake.spies.batch.mockClear();
+    fake.spies.map.mockClear();
+    fake.spies.mapWithAnchor.mockClear();
+    coalescedItems = [makeSpacer("stale-session-1-visible")];
+
+    rerender({
+      sessionId: "session-2",
+      listItems: sessionTwoItems,
+    });
+
+    expect(fake.spies.replace).toHaveBeenCalledWith(sessionTwoItems);
+    expect(fake.spies.batch).not.toHaveBeenCalled();
+    expect(fake.spies.map).not.toHaveBeenCalled();
+    expect(fake.spies.mapWithAnchor).not.toHaveBeenCalled();
+  });
+
   it("reconciles bottom-locked mixed structural updates without a full replace", () => {
     const initialItems = Array.from({ length: 10 }, (_, index) => makeSpacer(`current-${index}`));
     const mixedStructuralNext = [
@@ -313,8 +363,9 @@ describe("useSessionMessageListController", () => {
       activeThreadOp: threadOp,
     });
 
-    expect(fake.spies.replace).toHaveBeenCalledWith(nextItems);
-    expect(fake.spies.map).not.toHaveBeenCalled();
+    expect(fake.spies.replace).not.toHaveBeenCalled();
+    expect(fake.spies.batch).toHaveBeenCalled();
+    expect(fake.spies.map).toHaveBeenCalled();
     expect(fake.spies.scrollToItem).toHaveBeenCalledWith({ index: "LAST", align: "end", behavior: "auto" });
   });
 

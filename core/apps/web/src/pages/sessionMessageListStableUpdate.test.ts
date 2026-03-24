@@ -129,7 +129,7 @@ function createFakeMethods(initial: WorkbenchListItem[]) {
 }
 
 describe("applyStableListUpdate", () => {
-  it("replaces same-order height-changing rows so MessageList remeasures them immediately", () => {
+  it("maps height-changing tool rows with stable ids so render-key remounting can remeasure them", () => {
     const current = [buildToolItem(), buildTurnStatusItem()];
     const next = [
       buildToolItem({
@@ -153,9 +153,8 @@ describe("applyStableListUpdate", () => {
       mode: "remeasure",
       changedSpans: [{ start: 0, count: 1 }],
     });
-    expect(calls.map((call) => call.method)).toEqual(["replace"]);
-    expect(calls[0]?.args).toEqual([next.map((item) => item.id)]);
-    expect(methods.data.replace).toHaveBeenCalledWith(next);
+    expect(calls.map((call) => call.method)).toEqual(["batch", "mapWithAnchor"]);
+    expect(calls[1]?.args).toEqual([2]);
     expect(readStore()).toEqual(next);
   });
 
