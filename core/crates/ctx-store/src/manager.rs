@@ -261,7 +261,7 @@ impl StoreManager {
                                     reactivated.store,
                                 );
                                 drop(leased_store);
-                                return Err(err.into());
+                                return Err(err);
                             }
                         }
                         if self.is_workspace_delete_blocked(workspace_id).await {

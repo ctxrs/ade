@@ -4,7 +4,7 @@ mod common;
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -18,8 +18,66 @@ use ctx_providers::adapters::{
 };
 use ctx_providers::events::NormalizedEvent;
 
+struct EnvGuard {
+    key: &'static str,
+    prev: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let prev = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, prev }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        if let Some(value) = self.prev.take() {
+            std::env::set_var(self.key, value);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
+
+fn helper_env_test_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 fn write_runtime_fixture(path: &Path) {
     std::fs::write(path, "#!/bin/sh\nexit 0\n").expect("write runtime fixture");
+}
+
+fn write_avf_probe_helper(path: &Path) {
+    std::fs::write(
+        path,
+        r#"#!/bin/sh
+set -eu
+case "${1:-}" in
+  probe)
+    cat <<'JSON'
+{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","helper_version":"test-helper","host_os":"macos","host_arch":"aarch64","supported":true,"save_restore_supported":true,"rosetta_supported":true,"notes":["ready"]}
+JSON
+    ;;
+  *)
+    echo "unsupported" >&2
+    exit 1
+    ;;
+esac
+"#,
+    )
+    .expect("write avf probe helper");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)
+            .expect("avf probe helper metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).expect("chmod avf probe helper");
+    }
 }
 
 #[derive(Clone)]
@@ -288,7 +346,18 @@ async fn acp_provider_reports_missing_bridge_as_blocking_dependency() {
 
 #[tokio::test]
 async fn workspace_options_use_workspace_target_status_for_acp_provider() {
+    #[cfg(target_os = "macos")]
+    let _helper_env_lock = helper_env_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
+    #[cfg(target_os = "macos")]
+    let _helper_env = {
+        let helper = data_dir.path().join("ctx-avf-linux-helper");
+        write_avf_probe_helper(&helper);
+        EnvGuard::set(
+            "CTX_AVF_LINUX_HELPER_PATH",
+            helper.to_string_lossy().as_ref(),
+        )
+    };
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
@@ -345,7 +414,7 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
         axum::http::Method::POST,
         format!("/api/workspaces/{}/execution_config", ws.id.0),
         Some(serde_json::json!({
-            "environment": "container_host_mounted",
+            "environment": if cfg!(target_os = "macos") { "container_disk_isolated" } else { "container_host_mounted" },
             "network_mode": "all",
         })),
     )

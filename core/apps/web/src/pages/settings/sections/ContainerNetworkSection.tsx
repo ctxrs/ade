@@ -61,7 +61,6 @@ export function ContainerNetworkSection({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="host">Host</SelectItem>
-                  <SelectItem value="container_host_mounted">Container (Host-mounted)</SelectItem>
                   <SelectItem value="container_disk_isolated">Container (Disk-isolated)</SelectItem>
                 </SelectContent>
               </Select>

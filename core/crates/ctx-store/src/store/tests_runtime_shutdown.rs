@@ -1,10 +1,11 @@
 use super::tests::{create_session_with_turn, setup_store};
 use super::*;
 
+use anyhow::Result;
 use serde_json::json;
 
 #[tokio::test]
-async fn store_close_stops_background_runtimes() {
+async fn store_close_stops_background_runtimes() -> Result<()> {
     let (_dir, store) = setup_store().await;
     let (session, turn_id) = create_session_with_turn(&store, None).await;
     let _ = store
@@ -15,8 +16,7 @@ async fn store_close_stops_background_runtimes() {
             SessionEventType::Notice,
             json!({"msg":"before close"}),
         )
-        .await
-        .unwrap();
+        .await?;
 
     store.close().await;
 
@@ -41,4 +41,5 @@ async fn store_close_stops_background_runtimes() {
         .enqueue(session.id, Some(999))
         .await;
     assert!(projection_after_close.is_err());
+    Ok(())
 }

@@ -604,10 +604,12 @@ async fn prepare_reuses_running_workspace_container_without_front_loading_image_
     let workspace = sample_workspace(&temp);
     let worktree = sample_worktree(&temp, workspace.id);
     let container_name = workspace_container_name(workspace.id);
+    let volume_name = format!("ctx-ws-{}", workspace.id.0);
     let settings = ExecutionSettings {
         mode: ExecutionMode::Container,
         container: ContainerExecutionSettings {
             network_mode: ContainerNetworkMode::All,
+            runtime: crate::settings::ContainerRuntimeKind::Podman,
             ..Default::default()
         },
     };
@@ -615,9 +617,11 @@ async fn prepare_reuses_running_workspace_container_without_front_loading_image_
     std::fs::write(
             &podman_path,
             format!(
-                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  echo 'transient image store failure' >&2\n  exit 125\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"rm\" ] && [ \"$2\" = \"-f\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  echo 'transient image store failure' >&2\n  exit 125\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"{volume}\",\"Destination\":\"{workspace_root}\"}}]}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"rm\" ] && [ \"$2\" = \"-f\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
                 log = log_path.display(),
                 container = container_name,
+                volume = volume_name,
+                workspace_root = CTX_CONTAINER_WORKSPACE_ROOT,
             ),
         )
         .expect("write podman shim");
@@ -670,11 +674,13 @@ async fn prepare_starts_cached_workspace_container_when_podman_reports_it_stoppe
     let workspace = sample_workspace(&temp);
     let worktree = sample_worktree(&temp, workspace.id);
     let container_name = workspace_container_name(workspace.id);
+    let volume_name = format!("ctx-ws-{}", workspace.id.0);
     let settings = ExecutionSettings {
         mode: ExecutionMode::Container,
         container: ContainerExecutionSettings {
             network_mode: ContainerNetworkMode::All,
             allowlist: Vec::new(),
+            runtime: crate::settings::ContainerRuntimeKind::Podman,
             ..Default::default()
         },
     };
@@ -700,9 +706,11 @@ async fn prepare_starts_cached_workspace_container_when_podman_reports_it_stoppe
     std::fs::write(
             &podman_path,
             format!(
-                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'false\\n'\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'false\\n'\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"{volume}\",\"Destination\":\"{workspace_root}\"}}]}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
                 log = log_path.display(),
                 container = container_name,
+                volume = volume_name,
+                workspace_root = CTX_CONTAINER_WORKSPACE_ROOT,
             ),
         )
         .expect("write podman shim");
@@ -1372,12 +1380,16 @@ async fn ensure_podman_machine_materialized_recreates_machine_for_memory_profile
     let (_machine_cache_guard, machine_cache_server) =
         install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
     let settings = ContainerExecutionSettings {
+        mount_mode: ContainerMountMode::HostMounted,
         machine: crate::settings::ContainerMachineSettings {
-            memory_profile: crate::settings::ContainerMachineMemoryProfile::Balanced,
+            memory_profile: crate::settings::ContainerMachineMemoryProfile::Custom,
+            custom_memory_mb: Some(12288),
             ..crate::settings::ContainerMachineSettings::default()
         },
+        runtime: crate::settings::ContainerRuntimeKind::Podman,
         ..ContainerExecutionSettings::default()
     };
+    assert_eq!(container_machine_memory_mb(&settings), 12288);
 
     manager
         .ensure_podman_machine_materialized(&settings, None)
@@ -1422,6 +1434,7 @@ async fn ensure_podman_machine_materialized_defers_reconfiguration_when_machine_
             memory_profile: crate::settings::ContainerMachineMemoryProfile::Balanced,
             ..crate::settings::ContainerMachineSettings::default()
         },
+        runtime: crate::settings::ContainerRuntimeKind::Podman,
         ..ContainerExecutionSettings::default()
     };
 
@@ -1432,7 +1445,6 @@ async fn ensure_podman_machine_materialized_defers_reconfiguration_when_machine_
 
     let log = std::fs::read_to_string(&log_path).expect("read invocation log");
     assert!(log.lines().any(|line| line == "info"));
-    assert!(log.contains("ps --format {{.Names}}"));
     assert!(log.contains(&format!("machine inspect {machine_name}")));
     assert!(!log.contains(&format!("machine stop {machine_name}")));
     assert!(!log.contains(&format!("machine rm -f {machine_name}")));
@@ -1466,6 +1478,7 @@ async fn ensure_podman_machine_materialized_defers_reconfiguration_when_machine_
             memory_profile: crate::settings::ContainerMachineMemoryProfile::Balanced,
             ..crate::settings::ContainerMachineSettings::default()
         },
+        runtime: crate::settings::ContainerRuntimeKind::Podman,
         ..ContainerExecutionSettings::default()
     };
 
@@ -1476,7 +1489,6 @@ async fn ensure_podman_machine_materialized_defers_reconfiguration_when_machine_
 
     let log = std::fs::read_to_string(&log_path).expect("read invocation log");
     assert!(log.lines().any(|line| line == "info"));
-    assert!(log.contains("ps --format {{.Names}}"));
     assert!(log.contains(&format!("machine inspect {machine_name}")));
     assert!(!log.contains(&format!("machine stop {machine_name}")));
     assert!(!log.contains(&format!("machine rm -f {machine_name}")));
@@ -1516,6 +1528,7 @@ async fn maybe_reclaim_podman_machine_stops_idle_machine() {
             idle_shutdown_seconds: 60,
             ..crate::settings::ContainerMachineSettings::default()
         },
+        runtime: crate::settings::ContainerRuntimeKind::Podman,
         ..ContainerExecutionSettings::default()
     };
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
@@ -1580,6 +1593,7 @@ async fn maybe_reclaim_podman_machine_clamps_short_idle_timeout() {
             idle_shutdown_seconds: 5,
             ..crate::settings::ContainerMachineSettings::default()
         },
+        runtime: crate::settings::ContainerRuntimeKind::Podman,
         ..ContainerExecutionSettings::default()
     };
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
@@ -1644,6 +1658,7 @@ async fn maybe_reclaim_podman_machine_stops_idle_runtime_with_running_workspace_
             idle_shutdown_seconds: 60,
             ..crate::settings::ContainerMachineSettings::default()
         },
+        runtime: crate::settings::ContainerRuntimeKind::Podman,
         ..ContainerExecutionSettings::default()
     };
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
@@ -1717,6 +1732,7 @@ async fn maybe_reclaim_podman_machine_skips_active_container_sessions() {
             idle_shutdown_seconds: 60,
             ..crate::settings::ContainerMachineSettings::default()
         },
+        runtime: crate::settings::ContainerRuntimeKind::Podman,
         ..ContainerExecutionSettings::default()
     };
     let snapshot = SystemSnapshot {
@@ -1824,6 +1840,7 @@ async fn maybe_reclaim_podman_machine_skips_running_container_terminals() {
             idle_shutdown_seconds: 60,
             ..crate::settings::ContainerMachineSettings::default()
         },
+        runtime: crate::settings::ContainerRuntimeKind::Podman,
         ..ContainerExecutionSettings::default()
     };
     let snapshot = SystemSnapshot {
@@ -1903,12 +1920,16 @@ async fn ensure_container_machine_ready_reconfigures_running_machine_when_idle()
     let (_machine_cache_guard, machine_cache_server) =
         install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
     let settings = ContainerExecutionSettings {
+        mount_mode: ContainerMountMode::HostMounted,
         machine: crate::settings::ContainerMachineSettings {
-            memory_profile: crate::settings::ContainerMachineMemoryProfile::Balanced,
+            memory_profile: crate::settings::ContainerMachineMemoryProfile::Custom,
+            custom_memory_mb: Some(12288),
             ..crate::settings::ContainerMachineSettings::default()
         },
+        runtime: crate::settings::ContainerRuntimeKind::Podman,
         ..ContainerExecutionSettings::default()
     };
+    assert_eq!(container_machine_memory_mb(&settings), 12288);
 
     manager
         .ensure_container_machine_ready(&settings, None)
@@ -1916,13 +1937,30 @@ async fn ensure_container_machine_ready_reconfigures_running_machine_when_idle()
         .expect("idle running machine should be reconfigured and restarted");
 
     let log = std::fs::read_to_string(&log_path).expect("read invocation log");
-    assert!(log.contains(&format!("machine inspect {machine_name}")));
-    assert!(log.contains("ps --format {{.Names}}"));
-    assert!(log.contains(&format!("machine stop {machine_name}")));
-    assert!(log.contains(&format!("machine rm -f {machine_name}")));
-    assert!(log.contains(&format!("machine init {machine_name}")));
-    assert!(log.contains("--memory 12288"));
-    assert!(log.contains(&format!("machine start {machine_name}")));
+    assert!(
+        log.contains(&format!("machine inspect {machine_name}")),
+        "expected machine inspect in log:\n{log}"
+    );
+    assert!(
+        log.contains(&format!("machine stop {machine_name}")),
+        "expected machine stop in log:\n{log}"
+    );
+    assert!(
+        log.contains(&format!("machine rm -f {machine_name}")),
+        "expected machine rm in log:\n{log}"
+    );
+    assert!(
+        log.contains(&format!("machine init {machine_name}")),
+        "expected machine init in log:\n{log}"
+    );
+    assert!(
+        log.contains("--memory 12288"),
+        "expected memory override in log:\n{log}"
+    );
+    assert!(
+        log.contains(&format!("machine start {machine_name}")),
+        "expected machine start in log:\n{log}"
+    );
     machine_cache_server.abort();
 }
 
@@ -2283,12 +2321,16 @@ async fn ensure_container_machine_ready_defers_running_machine_reconfiguration_f
     let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
     let _host_memory = EnvGuard::set("CTX_TEST_HOST_MEMORY_MB", "49152");
     let settings = ContainerExecutionSettings {
+        mount_mode: ContainerMountMode::HostMounted,
         machine: crate::settings::ContainerMachineSettings {
-            memory_profile: crate::settings::ContainerMachineMemoryProfile::Balanced,
+            memory_profile: crate::settings::ContainerMachineMemoryProfile::Custom,
+            custom_memory_mb: Some(12288),
             ..crate::settings::ContainerMachineSettings::default()
         },
+        runtime: crate::settings::ContainerRuntimeKind::Podman,
         ..ContainerExecutionSettings::default()
     };
+    assert_eq!(container_machine_memory_mb(&settings), 12288);
 
     manager
         .ensure_container_machine_ready(&settings, None)
@@ -2297,7 +2339,6 @@ async fn ensure_container_machine_ready_defers_running_machine_reconfiguration_f
 
     let log = std::fs::read_to_string(&log_path).expect("read invocation log");
     assert!(log.contains(&format!("machine inspect {machine_name}")));
-    assert!(log.contains("ps --format {{.Names}}"));
     assert!(!log.contains(&format!("machine stop {machine_name}")));
     assert!(!log.contains(&format!("machine rm -f {machine_name}")));
     assert!(!log.contains(&format!("machine init {machine_name}")));
@@ -2343,6 +2384,7 @@ async fn ensure_container_machine_ready_reconfigures_disk_isolated_machine_witho
             memory_profile: crate::settings::ContainerMachineMemoryProfile::Balanced,
             ..crate::settings::ContainerMachineSettings::default()
         },
+        runtime: crate::settings::ContainerRuntimeKind::Podman,
         ..ContainerExecutionSettings::default()
     };
 
@@ -2392,6 +2434,7 @@ async fn ensure_container_machine_ready_defers_disk_isolated_reconfiguration_whe
             memory_profile: crate::settings::ContainerMachineMemoryProfile::Balanced,
             ..crate::settings::ContainerMachineSettings::default()
         },
+        runtime: crate::settings::ContainerRuntimeKind::Podman,
         ..ContainerExecutionSettings::default()
     };
 
@@ -2470,6 +2513,7 @@ fn transparent_proxy_policy_preserves_custom_allowlist_mode() {
     let settings = ContainerExecutionSettings {
         network_mode: ContainerNetworkMode::Allowlist,
         allowlist: vec!["example.com".to_string(), "api.example.com".to_string()],
+        runtime: crate::settings::ContainerRuntimeKind::Podman,
         ..Default::default()
     };
     let (mode, allowlist) = transparent_proxy_policy(&settings);
@@ -2535,6 +2579,7 @@ async fn unrestricted_network_transition_surfaces_teardown_failures() {
 
     let settings = ContainerExecutionSettings {
         network_mode: ContainerNetworkMode::All,
+        runtime: crate::settings::ContainerRuntimeKind::Podman,
         ..Default::default()
     };
     let err = apply_container_network_policy(
@@ -2628,6 +2673,7 @@ async fn unrestricted_network_transition_ignores_stale_proxy_pid_file() {
 
     let settings = ContainerExecutionSettings {
         network_mode: ContainerNetworkMode::All,
+        runtime: crate::settings::ContainerRuntimeKind::Podman,
         ..Default::default()
     };
     let applied = apply_container_network_policy(

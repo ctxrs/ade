@@ -52,6 +52,49 @@ fn default_shell() -> String {
     }
 }
 
+async fn infer_avf_terminal_worktree(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    session_id: Option<SessionId>,
+    task_id: Option<TaskId>,
+) -> Option<ctx_core::models::Worktree> {
+    if let Some(session_id) = session_id {
+        if let Ok(store) = state.store_for_session(session_id).await {
+            if let Ok(Some(session)) = store.get_session(session_id).await {
+                if let Ok(Some(worktree)) = store.get_worktree(session.worktree_id).await {
+                    return Some(worktree);
+                }
+            }
+        }
+    }
+
+    if let Some(task_id) = task_id {
+        if let Ok(store) = state.store_for_task(task_id).await {
+            if let Ok(Some(task)) = store.get_task(task_id).await {
+                if let Some(primary_worktree_id) = task.primary_worktree_id {
+                    if let Ok(Some(worktree)) = store.get_worktree(primary_worktree_id).await {
+                        return Some(worktree);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Ok(store) = state.store_for_workspace(workspace_id).await {
+        if let Ok(worktrees) = store.list_worktrees(workspace_id).await {
+            return worktrees.into_iter().last();
+        }
+    }
+
+    None
+}
+
+fn avf_guest_worktree_root(worktree_id: WorktreeId) -> PathBuf {
+    PathBuf::from(harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT)
+        .join("worktrees")
+        .join(worktree_id.0.to_string())
+}
+
 pub(super) async fn create_workspace_terminal(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -146,6 +189,7 @@ pub(super) async fn create_workspace_terminal(
             )
         })?;
 
+    let container_mode = matches!(effective.mode, ExecutionMode::Container);
     let worktree = if let Some(wt_id) = worktree_id {
         let store = state.store_for_worktree(wt_id).await.map_err(|_| {
             (
@@ -173,6 +217,13 @@ pub(super) async fn create_workspace_terminal(
                 }),
             ))?;
         Some(wt)
+    } else if container_mode
+        && matches!(
+            effective.container.runtime,
+            ContainerRuntimeKind::AvfLinuxVm
+        )
+    {
+        infer_avf_terminal_worktree(&state, workspace_id, session_id, task_id).await
     } else {
         None
     };
@@ -203,11 +254,20 @@ pub(super) async fn create_workspace_terminal(
             Some(PathBuf::from(trimmed))
         }
     });
-    let container_mode = matches!(effective.mode, ExecutionMode::Container)
+    let container_mode = container_mode
         || worktree_root
             .as_ref()
             .map(|root| is_container_path(root))
             .unwrap_or(false);
+    let avf_guest_worktree_root = if container_mode
+        && matches!(
+            effective.container.runtime,
+            ContainerRuntimeKind::AvfLinuxVm
+        ) {
+        worktree.as_ref().map(|wt| avf_guest_worktree_root(wt.id))
+    } else {
+        None
+    };
     let container_workspace_root = match effective.container.mount_mode {
         ContainerMountMode::DiskIsolated => {
             PathBuf::from(harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT)
@@ -217,26 +277,47 @@ pub(super) async fn create_workspace_terminal(
     };
 
     let cwd = if container_mode {
-        let fallback = worktree_root
+        let fallback = avf_guest_worktree_root
             .clone()
+            .or_else(|| worktree_root.clone())
             .unwrap_or_else(|| container_workspace_root.clone());
         if let Some(requested) = requested_cwd.as_ref() {
             let requested_str = requested.to_string_lossy().to_string();
-            // Allow cwd within either the worktree root or the container workspace root.
-            let resolved = worktree_root
-                .as_ref()
-                .and_then(|root| BufferStore::resolve_path_lexical(root, &requested_str).ok())
-                .or_else(|| {
-                    BufferStore::resolve_path_lexical(&container_workspace_root, &requested_str)
-                        .ok()
-                })
-                .ok_or((
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: "cwd must be within the container worktree/workspace root"
-                            .to_string(),
-                    }),
-                ))?;
+            let resolved = if let (Some(host_root), Some(guest_root)) =
+                (worktree_root.as_ref(), avf_guest_worktree_root.as_ref())
+            {
+                BufferStore::resolve_path_lexical(host_root, &requested_str)
+                    .ok()
+                    .and_then(|resolved_host| {
+                        resolved_host.strip_prefix(host_root).ok().map(|suffix| {
+                            if suffix.as_os_str().is_empty() {
+                                guest_root.clone()
+                            } else {
+                                guest_root.join(suffix)
+                            }
+                        })
+                    })
+                    .or_else(|| BufferStore::resolve_path_lexical(guest_root, &requested_str).ok())
+                    .or_else(|| {
+                        BufferStore::resolve_path_lexical(&container_workspace_root, &requested_str)
+                            .ok()
+                    })
+            } else {
+                // Allow cwd within either the worktree root or the container workspace root.
+                worktree_root
+                    .as_ref()
+                    .and_then(|root| BufferStore::resolve_path_lexical(root, &requested_str).ok())
+                    .or_else(|| {
+                        BufferStore::resolve_path_lexical(&container_workspace_root, &requested_str)
+                            .ok()
+                    })
+            }
+            .ok_or((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "cwd must be within the container worktree/workspace root".to_string(),
+                }),
+            ))?;
             resolved
         } else {
             fallback

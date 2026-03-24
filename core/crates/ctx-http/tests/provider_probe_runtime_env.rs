@@ -73,6 +73,27 @@ exit 1
 }
 
 #[cfg(unix)]
+fn write_avf_probe_helper(path: &Path) {
+    write_executable(
+        path,
+        r#"#!/bin/sh
+set -eu
+case "${1:-}" in
+  probe)
+    cat <<'JSON'
+{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","helper_version":"test-helper","host_os":"macos","host_arch":"aarch64","supported":true,"save_restore_supported":true,"rosetta_supported":true,"notes":["ready"]}
+JSON
+    ;;
+  *)
+    echo "unsupported" >&2
+    exit 1
+    ;;
+esac
+"#,
+    );
+}
+
+#[cfg(unix)]
 fn setup_runtime_command_with_managed_interpreter_response(
     data_root: &Path,
     provider_id: &str,
@@ -1079,7 +1100,17 @@ async fn provider_verify_probe_uses_managed_dependency_path() {
 #[cfg(unix)]
 #[tokio::test]
 async fn provider_options_probe_uses_workspace_runtime_context_for_container_mode() {
+    let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
+    #[cfg(target_os = "macos")]
+    let _helper_env = {
+        let helper = data_dir.path().join("ctx-avf-linux-helper");
+        write_avf_probe_helper(&helper);
+        EnvVarGuard::set(
+            "CTX_AVF_LINUX_HELPER_PATH",
+            helper.to_str().expect("helper path should be utf-8"),
+        )
+    };
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
     let app = api::router(state.clone());

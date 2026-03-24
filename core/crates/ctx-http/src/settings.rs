@@ -331,6 +331,21 @@ pub(crate) fn default_container_runtime_kind() -> ContainerRuntimeKind {
     }
 }
 
+pub(crate) fn default_public_container_runtime_kind() -> Option<ContainerRuntimeKind> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::workspace_runtime::local_runtime_available(
+            std::path::Path::new("."),
+            &ContainerRuntimeKind::AvfLinuxVm,
+        )
+        .then_some(ContainerRuntimeKind::AvfLinuxVm)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Some(ContainerRuntimeKind::Podman)
+    }
+}
+
 pub(crate) fn default_container_mount_mode_for_runtime(
     runtime: ContainerRuntimeKind,
 ) -> ContainerMountMode {

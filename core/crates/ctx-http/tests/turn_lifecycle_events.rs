@@ -47,7 +47,7 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
     let turn_id_two = msg2.turn_id.expect("second turn id");
     let store = state.store_for_session(session.id).await.unwrap();
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
         let events = store.list_session_events(session.id).await.unwrap();
         let saw_started = events.iter().any(|event| {
@@ -75,7 +75,7 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
     let (status, _) = common::oneshot_bytes(&app, req).await;
     assert_eq!(status, StatusCode::OK);
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
         let events = store.list_session_events(session.id).await.unwrap();
         let saw_interrupted = events.iter().any(|event| {

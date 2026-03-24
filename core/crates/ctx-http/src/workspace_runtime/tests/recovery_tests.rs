@@ -46,11 +46,13 @@ async fn prepare_starts_existing_workspace_container_when_not_cached() {
     let workspace = sample_workspace(&temp);
     let worktree = sample_worktree(&temp, workspace.id);
     let container_name = workspace_container_name(workspace.id);
+    let volume_name = format!("ctx-ws-{}", workspace.id.0);
     let settings = ExecutionSettings {
         mode: ExecutionMode::Container,
         container: ContainerExecutionSettings {
             network_mode: ContainerNetworkMode::All,
             allowlist: Vec::new(),
+            runtime: crate::settings::ContainerRuntimeKind::Podman,
             ..Default::default()
         },
     };
@@ -58,9 +60,11 @@ async fn prepare_starts_existing_workspace_container_when_not_cached() {
     std::fs::write(
         &podman_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  echo 'unexpected image check' >&2\n  exit 125\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'false\\n'\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  echo 'unexpected image check' >&2\n  exit 125\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'false\\n'\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"{volume}\",\"Destination\":\"{workspace_root}\"}}]}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             container = container_name,
+            volume = volume_name,
+            workspace_root = CTX_CONTAINER_WORKSPACE_ROOT,
         ),
     )
     .expect("write podman shim");
@@ -256,6 +260,7 @@ async fn ensure_podman_machine_running_missing_machine_recovery_uses_configured_
                     custom_memory_mb: Some(6144),
                     ..crate::settings::ContainerMachineSettings::default()
                 },
+                runtime: crate::settings::ContainerRuntimeKind::Podman,
                 ..ContainerExecutionSettings::default()
             },
         },
@@ -314,6 +319,7 @@ async fn ensure_podman_machine_running_recreate_recovery_uses_configured_memory(
                     custom_memory_mb: Some(7168),
                     ..crate::settings::ContainerMachineSettings::default()
                 },
+                runtime: crate::settings::ContainerRuntimeKind::Podman,
                 ..ContainerExecutionSettings::default()
             },
         },

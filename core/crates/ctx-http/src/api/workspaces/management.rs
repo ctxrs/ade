@@ -583,9 +583,35 @@ pub(in crate::api) async fn update_execution_config(
     let environment = match req.environment.trim() {
         "host" => crate::workspace_config::ExecutionEnvironment::Host,
         "container_host_mounted" => {
-            crate::workspace_config::ExecutionEnvironment::ContainerHostMounted
+            #[cfg(target_os = "macos")]
+            {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: "container_host_mounted is not available in the macOS beta; use container_disk_isolated or host".to_string(),
+                    }),
+                ));
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                crate::workspace_config::ExecutionEnvironment::ContainerHostMounted
+            }
         }
         "container_disk_isolated" => {
+            #[cfg(target_os = "macos")]
+            {
+                if !crate::workspace_runtime::local_runtime_available(
+                    &state.core.data_root,
+                    &crate::settings::ContainerRuntimeKind::AvfLinuxVm,
+                ) {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(ApiErrorResp {
+                            error: "AVF sandbox is unavailable on this macOS host. Install or launch through the desktop app so the AVF helper/runtime is present, then try again.".to_string(),
+                        }),
+                    ));
+                }
+            }
             crate::workspace_config::ExecutionEnvironment::ContainerDiskIsolated
         }
         _ => {

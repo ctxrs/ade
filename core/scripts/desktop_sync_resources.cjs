@@ -88,6 +88,22 @@ const parseAvfLinuxGuestRuntimeVersion = (raw) => {
   return bareVersion || "";
 };
 
+const resolveBundledRuntimeIds = (runtimeIds, platform = process.platform) => {
+  const ids = Array.isArray(runtimeIds)
+    ? runtimeIds
+        .map((entry) => String(entry || "").trim())
+        .filter((entry) => entry.length > 0)
+    : [];
+  const uniqueIds = [...new Set(ids)].sort();
+  if (platform !== "darwin") {
+    return uniqueIds;
+  }
+  return uniqueIds.filter((id) => id !== "podman");
+};
+
+const resolveMacOsBundlePodman = (env) =>
+  resolveBoolishFlag(env.CTX_BUNDLE_PODMAN, false, "CTX_BUNDLE_PODMAN");
+
 const readRustStringConst = (filePath, constName) => {
   if (!fs.existsSync(filePath)) {
     throw new Error(`missing source file for const ${constName}: ${filePath}`);
@@ -689,6 +705,7 @@ const syncBundles = () => {
   };
   const requiredProviderIds = readRuntimeLockRequiredIds("provider");
   const requiredRuntimeIds = readRuntimeLockRequiredIds("runtime");
+  const bundledRuntimeIds = resolveBundledRuntimeIds(requiredRuntimeIds);
   const requiredImageIds = readRuntimeLockRequiredIds("image");
   const requiredProviderTargets = readRuntimeLockRequiredTargets("provider", parityProviderTargets);
   const requiredRuntimeTargets = readRuntimeLockRequiredTargets("runtime", parityRuntimeTargets);
@@ -698,7 +715,7 @@ const syncBundles = () => {
   delete env.CARGO_TARGET_DIR;
   env.CTX_BUNDLE_ONLY_PROVIDERS = env.CTX_BUNDLE_ONLY_PROVIDERS
     || (requiredProviderIds.length > 0 ? requiredProviderIds.join(",") : "__none__");
-  if (requiredRuntimeIds.length === 0) {
+  if (bundledRuntimeIds.length === 0) {
     env.CTX_BUNDLE_SKIP_RUNTIMES = env.CTX_BUNDLE_SKIP_RUNTIMES || "1";
   }
   const requiresHarnessImage = requiredImageIds.includes("ctx-harness");
@@ -712,14 +729,10 @@ const syncBundles = () => {
   if (requiredImageIds.length === 0 || !bundleHarnessImages) {
     env.CTX_BUNDLE_SKIP_IMAGES = env.CTX_BUNDLE_SKIP_IMAGES || "1";
   }
-  // Podman bundling is opt-in for minimal startup bundles. If runtime lock explicitly
-  // requires podman, keep bundling by default; otherwise default to lazy/system path.
+  // Shipped macOS desktop prep follows the AVF guest-runtime path. Bundled Podman is
+  // legacy opt-in only and must be requested explicitly with CTX_BUNDLE_PODMAN=1.
   if (process.platform === "darwin") {
-    const bundlePodman = resolveBoolishFlag(
-      env.CTX_BUNDLE_PODMAN ?? (requiredRuntimeIds.includes("podman") ? "1" : "0"),
-      false,
-      "CTX_BUNDLE_PODMAN",
-    );
+    const bundlePodman = resolveMacOsBundlePodman(env);
     env.CTX_BUNDLE_PODMAN = bundlePodman ? "1" : "0";
     if (bundlePodman) {
       // Podman is represented as a runtime artifact; force runtime lane on when explicitly bundling it.
@@ -752,14 +765,14 @@ const syncBundles = () => {
     const linuxImageTargets = requiredImageTargets.filter((target) => target.os === "linux");
     const linuxArchSet = new Set([
       ...(requiredProviderIds.length > 0 ? linuxProviderTargets.map((target) => target.arch) : []),
-      ...(requiredRuntimeIds.length > 0 ? linuxRuntimeTargets.map((target) => target.arch) : []),
+      ...(bundledRuntimeIds.length > 0 ? linuxRuntimeTargets.map((target) => target.arch) : []),
       ...(requiredImageIds.length > 0 ? linuxImageTargets.map((target) => target.arch) : []),
     ]);
     const linuxArchTargets = [...linuxArchSet].map((arch) => ({ arch }));
     const linuxProviders = requiredProviderIds.length > 0 ? requiredProviderIds.join(",") : "__none__";
 
     for (const target of linuxArchTargets) {
-      const needsLinuxRuntime = requiredRuntimeIds.length > 0
+      const needsLinuxRuntime = bundledRuntimeIds.length > 0
         && linuxRuntimeTargets.some((entry) => entry.arch === target.arch);
       const needsLinuxImage = requiredImageIds.length > 0
         && linuxImageTargets.some((entry) => entry.arch === target.arch);
@@ -791,7 +804,7 @@ const syncBundles = () => {
     for (const providerId of requiredProviderIds) {
       assertBundledProviderTargets(destBundleDir, providerId, requiredProviderTargets);
     }
-    for (const runtimeId of requiredRuntimeIds) {
+    for (const runtimeId of bundledRuntimeIds) {
       assertBundledRuntimeTargets(destBundleDir, runtimeId, requiredRuntimeTargets);
     }
     if (parseBoolish(env.CTX_BUNDLE_PODMAN) === true) {
@@ -954,6 +967,8 @@ if (require.main === module) {
   module.exports = {
     copySidecarBinary,
     parseAvfLinuxGuestRuntimeVersion,
+    resolveBundledRuntimeIds,
+    resolveMacOsBundlePodman,
     stageAvfLinuxGuestRuntime,
   };
 }

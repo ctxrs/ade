@@ -660,6 +660,7 @@ impl Drop for TestManagedCtxHarnessImageSourceGuard {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) struct TestBundledAssetsManifestGuard {
     previous: Option<(PathBuf, BundledAssetsManifest)>,
 }
@@ -699,6 +700,7 @@ pub(crate) fn override_managed_ctx_harness_image_source_for_test(
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn override_bundled_assets_manifest_for_test(
     root: PathBuf,
     manifest: BundledAssetsManifest,

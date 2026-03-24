@@ -172,9 +172,9 @@ async fn tool_events_publish_after_tool_state_persists() {
     let head = state
         .workspaces
         .workspace_active_snapshot
-        .get_session_head(session.id)
+        .get_cached_session_head_for_read(session.id)
         .await
-        .expect("hydrated session head should stay serveable");
+        .expect("hydrated session head should stay readable from the compact cache");
     let turn = head
         .turns
         .into_iter()

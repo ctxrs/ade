@@ -362,7 +362,7 @@ impl AppState {
         {
             Ok(Some(workspace_id)) => workspace_id,
             Ok(None) => return StoreLookup::Missing,
-            Err(err) => return StoreLookup::Unavailable(err.into()),
+            Err(err) => return StoreLookup::Unavailable(err),
         };
         match self.lookup_workspace_store(workspace_id).await {
             StoreLookup::Found(store) => StoreLookup::Found(store),

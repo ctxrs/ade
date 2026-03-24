@@ -1,5 +1,6 @@
 use super::*;
 
+use anyhow::{Context, Result};
 use chrono::Utc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -10,8 +11,8 @@ use ctx_core::models::{
 };
 
 #[tokio::test]
-async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() {
-    let temp = tempfile::tempdir().unwrap();
+async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() -> Result<()> {
+    let temp = tempfile::tempdir()?;
     let manager = StoreManager::open_with_config(
         temp.path(),
         StoreManagerConfig {
@@ -19,8 +20,7 @@ async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() {
             ..StoreManagerConfig::default()
         },
     )
-    .await
-    .unwrap();
+    .await?;
     let workspace_a = manager
         .global()
         .create_workspace(
@@ -28,8 +28,7 @@ async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() {
             temp.path().join("a").to_string_lossy().to_string(),
             VcsKind::Git,
         )
-        .await
-        .unwrap();
+        .await?;
     let workspace_b = manager
         .global()
         .create_workspace(
@@ -37,10 +36,9 @@ async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() {
             temp.path().join("b").to_string_lossy().to_string(),
             VcsKind::Git,
         )
-        .await
-        .unwrap();
+        .await?;
 
-    let store_a = manager.workspace(workspace_a.id).await.unwrap();
+    let store_a = manager.workspace(workspace_a.id).await?;
     let worktree_a = store_a
         .create_worktree(
             workspace_a.id,
@@ -48,12 +46,10 @@ async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() {
             "base".to_string(),
             None,
         )
-        .await
-        .unwrap();
+        .await?;
     let task_a = store_a
         .create_task(workspace_a.id, "task".to_string(), None)
-        .await
-        .unwrap();
+        .await?;
     let session_a = store_a
         .create_session(
             task_a.id,
@@ -67,12 +63,10 @@ async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() {
             None,
             None,
         )
-        .await
-        .unwrap();
+        .await?;
     store_a
         .set_task_primary_session(task_a.id, session_a.id, worktree_a.id)
-        .await
-        .unwrap();
+        .await?;
     let turn_id = TurnId::new();
     let now = Utc::now();
     store_a
@@ -95,8 +89,7 @@ async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() {
             tool_completed: 0,
             tool_failed: 0,
         })
-        .await
-        .unwrap();
+        .await?;
     let _ = store_a
         .append_session_event(
             session_a.id,
@@ -105,9 +98,8 @@ async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() {
             SessionEventType::Notice,
             serde_json::json!({"msg":"before evict"}),
         )
-        .await
-        .unwrap();
-    let _ = manager.workspace(workspace_b.id).await.unwrap();
+        .await?;
+    let _ = manager.workspace(workspace_b.id).await?;
     let evicted = manager
         .evict_workspaces_to_cap(&HashSet::from([workspace_b.id]))
         .await;
@@ -119,8 +111,7 @@ async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() {
         manager.workspace_access(workspace_a.id),
     )
     .await
-    .expect("reopen should reuse the draining store, not deadlock")
-    .unwrap();
+    .context("reopen should reuse the draining store, not deadlock")??;
     assert_eq!(
         reopened_before_drop.kind,
         WorkspaceStoreAccessKind::Reactivated
@@ -128,28 +119,27 @@ async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() {
     assert!(reopened_before_drop
         .store
         .get_task(task_a.id)
-        .await
-        .unwrap()
+        .await?
         .is_some());
     drop(reopened_before_drop);
 
     let task = store_a
         .create_task(workspace_a.id, "still-live".to_string(), None)
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(task.workspace_id, workspace_a.id);
 
     drop(store_a);
 
     assert!(matches!(
-        manager.workspace_access(workspace_a.id).await.unwrap().kind,
+        manager.workspace_access(workspace_a.id).await?.kind,
         WorkspaceStoreAccessKind::Cached
     ));
+    Ok(())
 }
 
 #[tokio::test]
-async fn deleted_workspace_is_not_rehydrated_from_pending_close_store() {
-    let temp = tempfile::tempdir().unwrap();
+async fn deleted_workspace_is_not_rehydrated_from_pending_close_store() -> Result<()> {
+    let temp = tempfile::tempdir()?;
     let manager = StoreManager::open_with_config(
         temp.path(),
         StoreManagerConfig {
@@ -157,8 +147,7 @@ async fn deleted_workspace_is_not_rehydrated_from_pending_close_store() {
             ..StoreManagerConfig::default()
         },
     )
-    .await
-    .unwrap();
+    .await?;
     let workspace = manager
         .global()
         .create_workspace(
@@ -166,16 +155,11 @@ async fn deleted_workspace_is_not_rehydrated_from_pending_close_store() {
             temp.path().join("a").to_string_lossy().to_string(),
             VcsKind::Git,
         )
-        .await
-        .unwrap();
-    let store = manager.workspace(workspace.id).await.unwrap();
+        .await?;
+    let store = manager.workspace(workspace.id).await?;
 
     manager.evict_workspace(workspace.id).await;
-    manager
-        .global()
-        .delete_workspace(workspace.id)
-        .await
-        .unwrap();
+    manager.global().delete_workspace(workspace.id).await?;
 
     let manager_for_reopen = manager.clone();
     let reopen =
@@ -188,7 +172,7 @@ async fn deleted_workspace_is_not_rehydrated_from_pending_close_store() {
 
     drop(store);
 
-    let err = match reopen.await.unwrap() {
+    let err = match reopen.await.context("reopen task should join")? {
         Ok(_) => panic!("deleted workspace should not reopen from a draining store"),
         Err(err) => err.to_string(),
     };
@@ -196,11 +180,12 @@ async fn deleted_workspace_is_not_rehydrated_from_pending_close_store() {
         err.contains("not found"),
         "expected missing workspace error after delete, got: {err}"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn delete_barrier_blocks_cached_workspace_access() {
-    let temp = tempfile::tempdir().unwrap();
+async fn delete_barrier_blocks_cached_workspace_access() -> Result<()> {
+    let temp = tempfile::tempdir()?;
     let manager = StoreManager::open_with_config(
         temp.path(),
         StoreManagerConfig {
@@ -208,8 +193,7 @@ async fn delete_barrier_blocks_cached_workspace_access() {
             ..StoreManagerConfig::default()
         },
     )
-    .await
-    .unwrap();
+    .await?;
     let workspace = manager
         .global()
         .create_workspace(
@@ -217,9 +201,8 @@ async fn delete_barrier_blocks_cached_workspace_access() {
             temp.path().join("a").to_string_lossy().to_string(),
             VcsKind::Git,
         )
-        .await
-        .unwrap();
-    let store = manager.workspace(workspace.id).await.unwrap();
+        .await?;
+    let store = manager.workspace(workspace.id).await?;
 
     manager.begin_workspace_delete(workspace.id).await;
     let err = match manager.workspace_access(workspace.id).await {
@@ -233,11 +216,12 @@ async fn delete_barrier_blocks_cached_workspace_access() {
 
     manager.finish_workspace_delete(workspace.id).await;
     drop(store);
+    Ok(())
 }
 
 #[tokio::test]
-async fn delete_barrier_blocks_pending_close_reactivation() {
-    let temp = tempfile::tempdir().unwrap();
+async fn delete_barrier_blocks_pending_close_reactivation() -> Result<()> {
+    let temp = tempfile::tempdir()?;
     let manager = StoreManager::open_with_config(
         temp.path(),
         StoreManagerConfig {
@@ -245,8 +229,7 @@ async fn delete_barrier_blocks_pending_close_reactivation() {
             ..StoreManagerConfig::default()
         },
     )
-    .await
-    .unwrap();
+    .await?;
     let workspace = manager
         .global()
         .create_workspace(
@@ -254,9 +237,8 @@ async fn delete_barrier_blocks_pending_close_reactivation() {
             temp.path().join("a").to_string_lossy().to_string(),
             VcsKind::Git,
         )
-        .await
-        .unwrap();
-    let store = manager.workspace(workspace.id).await.unwrap();
+        .await?;
+    let store = manager.workspace(workspace.id).await?;
 
     manager.evict_workspace(workspace.id).await;
     manager.begin_workspace_delete(workspace.id).await;
@@ -266,9 +248,9 @@ async fn delete_barrier_blocks_pending_close_reactivation() {
         manager.workspace_access(workspace.id),
     )
     .await
-    .expect("delete barrier should reject reactivation promptly")
+    .context("delete barrier should reject reactivation promptly")?
     .err()
-    .expect("delete barrier should reject pending-close reactivation")
+    .context("delete barrier should reject pending-close reactivation")?
     .to_string();
     assert!(
         err.contains("not found"),
@@ -282,12 +264,13 @@ async fn delete_barrier_blocks_pending_close_reactivation() {
         manager.store_leases.wait_for_workspace_close(workspace.id),
     )
     .await
-    .expect("draining store should still finish closing after barrier rejection");
+    .context("draining store should still finish closing after barrier rejection")?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn concurrent_reactivation_does_not_cold_open_duplicate_store() {
-    let temp = tempfile::tempdir().unwrap();
+async fn concurrent_reactivation_does_not_cold_open_duplicate_store() -> Result<()> {
+    let temp = tempfile::tempdir()?;
     let manager = StoreManager::open_with_config(
         temp.path(),
         StoreManagerConfig {
@@ -295,8 +278,7 @@ async fn concurrent_reactivation_does_not_cold_open_duplicate_store() {
             ..StoreManagerConfig::default()
         },
     )
-    .await
-    .unwrap();
+    .await?;
     let workspace_a = manager
         .global()
         .create_workspace(
@@ -304,8 +286,7 @@ async fn concurrent_reactivation_does_not_cold_open_duplicate_store() {
             temp.path().join("a").to_string_lossy().to_string(),
             VcsKind::Git,
         )
-        .await
-        .unwrap();
+        .await?;
     let workspace_b = manager
         .global()
         .create_workspace(
@@ -313,11 +294,10 @@ async fn concurrent_reactivation_does_not_cold_open_duplicate_store() {
             temp.path().join("b").to_string_lossy().to_string(),
             VcsKind::Git,
         )
-        .await
-        .unwrap();
+        .await?;
 
-    let store_a = manager.workspace(workspace_a.id).await.unwrap();
-    let _ = manager.workspace(workspace_b.id).await.unwrap();
+    let store_a = manager.workspace(workspace_a.id).await?;
+    let _ = manager.workspace(workspace_b.id).await?;
     let next_before = manager.next_store_instance_id.load(Ordering::Relaxed);
 
     let evicted = manager
@@ -334,14 +314,10 @@ async fn concurrent_reactivation_does_not_cold_open_duplicate_store() {
 
     let first = tokio::time::timeout(Duration::from_secs(1), first)
         .await
-        .expect("first reactivation should not deadlock")
-        .unwrap()
-        .unwrap();
+        .context("first reactivation should not deadlock")???;
     let second = tokio::time::timeout(Duration::from_secs(1), second)
         .await
-        .expect("second reactivation should not deadlock")
-        .unwrap()
-        .unwrap();
+        .context("second reactivation should not deadlock")???;
 
     assert!(matches!(
         first.kind,
@@ -360,4 +336,5 @@ async fn concurrent_reactivation_does_not_cold_open_duplicate_store() {
     drop(first);
     drop(second);
     drop(store_a);
+    Ok(())
 }

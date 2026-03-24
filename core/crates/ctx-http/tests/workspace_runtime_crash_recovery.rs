@@ -10,7 +10,8 @@ use ctx_core::ids::WorkspaceId;
 use ctx_core::models::Workspace;
 use ctx_http::harness_runtime::HarnessRuntimeManager;
 use ctx_http::settings::{
-    ContainerExecutionSettings, ContainerNetworkMode, ExecutionMode, ExecutionSettings,
+    ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind,
+    ExecutionMode, ExecutionSettings,
 };
 
 struct EnvGuard {
@@ -69,6 +70,8 @@ async fn runtime_ready_container_creation_skips_front_loaded_image_checks() {
     let settings = ExecutionSettings {
         mode: ExecutionMode::Container,
         container: ContainerExecutionSettings {
+            runtime: ContainerRuntimeKind::Podman,
+            mount_mode: ContainerMountMode::HostMounted,
             network_mode: ContainerNetworkMode::All,
             allowlist: Vec::new(),
             ..Default::default()

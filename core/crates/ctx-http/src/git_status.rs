@@ -4,16 +4,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
-use tokio::sync::mpsc;
 
 use ctx_core::models::{
     Worktree, WorktreeVcsBaseResolution, WorktreeVcsComputeState, WorktreeVcsFreshness,
     WorktreeVcsGitStatusSummary, WorktreeVcsSnapshot, WorktreeVcsSummary, WorktreeVcsTouchedFile,
     WorktreeVcsTouchedFiles,
 };
-use ctx_fs::patch::should_ignore_path;
 use ctx_fs::vcs::{self, VcsDriver};
 
 use crate::api::sessions::{resolve_diff_base_with_meta, SessionDiffQuery};
@@ -23,12 +20,12 @@ use crate::execution_effective;
 use crate::harness_runtime::{podman_command, workspace_container_name};
 use crate::settings::ContainerRuntimeKind;
 mod parse;
+#[path = "git_status_watch.rs"]
+mod watch;
 use parse::{parse_git_status_entries, parse_git_status_short};
 
 const GIT_STATUS_DEBOUNCE_MS: u64 = 500;
 const GIT_STATUS_MAX_INTERVAL_MS: u64 = 2000;
-const GIT_STATUS_WATCH_DEBOUNCE_MS: u64 = 500;
-const GIT_STATUS_POLL_INTERVAL_MS: u64 = 60_000;
 const WORKTREE_VCS_SUMMARY_DEBOUNCE_MS: u64 = 750;
 const WORKTREE_VCS_TOUCHED_FILES_CAP: usize = 200;
 
@@ -963,78 +960,5 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
 }
 
 pub async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
-    let root = Path::new(&worktree.root_path);
-    if is_container_path(root) {
-        // Disk-isolated worktrees live inside the harness container; host filesystem watchers
-        // cannot observe changes. Polling keeps VCS snapshots up to date.
-        let _ = container_git_stdout(&state, &worktree, &["rev-parse", "--is-inside-work-tree"])
-            .await?;
-        return run_git_status_poller(state, worktree).await;
-    }
-    let vcs = vcs_driver_for_worktree(&worktree);
-    vcs.assert_repo(root).await?;
-
-    let (tx, mut rx) = mpsc::channel::<()>(1);
-    let mut watcher = watcher(tx)?;
-    if let Err(err) = watcher.watch(root, RecursiveMode::Recursive) {
-        // On hosts with low watch limits (or many concurrent watchers), file watching can fail with
-        // ENOSPC/too-many-watches. Falling back to polling keeps git status updates flowing and
-        // avoids flaking tests that rely on live status changes.
-        tracing::warn!(
-            worktree_id = %worktree.id.0,
-            "git status watcher unavailable; falling back to polling: {err:#}"
-        );
-        return run_git_status_poller(state, worktree).await;
-    }
-
-    let debounce = Duration::from_millis(GIT_STATUS_WATCH_DEBOUNCE_MS);
-    let mut pending = false;
-    let timer = tokio::time::sleep(debounce);
-    tokio::pin!(timer);
-
-    loop {
-        tokio::select! {
-            signal = rx.recv() => {
-                let Some(()) = signal else {
-                    break;
-                };
-                pending = true;
-                timer.as_mut().reset(tokio::time::Instant::now() + debounce);
-            }
-            _ = &mut timer, if pending => {
-                pending = false;
-                if let Err(err) = emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, false).await {
-                    tracing::warn!(worktree_id = %worktree.id.0, "git status snapshot failed: {err:#}");
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn run_git_status_poller(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
-    let mut interval = tokio::time::interval(Duration::from_millis(GIT_STATUS_POLL_INTERVAL_MS));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
-        interval.tick().await;
-        if let Err(err) = emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, false).await {
-            tracing::warn!(worktree_id = %worktree.id.0, "git status snapshot failed: {err:#}");
-        }
-    }
-}
-
-fn should_ignore_event(event: &Event) -> bool {
-    event.paths.iter().all(|path| should_ignore_path(path))
-}
-
-fn watcher(tx: mpsc::Sender<()>) -> Result<RecommendedWatcher> {
-    let watcher = notify::recommended_watcher(move |res| {
-        if let Ok(event) = res {
-            if should_ignore_event(&event) {
-                return;
-            }
-            let _ = tx.try_send(());
-        }
-    })?;
-    Ok(watcher)
+    watch::run_git_status_watcher(state, worktree).await
 }

@@ -156,7 +156,7 @@ fn to_public_redacts_secret_values() {
     );
     assert_eq!(
         public.default_container_runtime,
-        default_container_runtime_kind()
+        default_public_container_runtime_kind()
     );
 
     let oracle = public.oracle.as_ref().expect("oracle");

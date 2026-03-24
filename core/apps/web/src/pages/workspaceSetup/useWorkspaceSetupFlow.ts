@@ -44,12 +44,6 @@ const buildSteps = (stepKeys: WizardStepKey[]): WizardStep[] => {
           title: "No container",
           desc: "Run directly on the host. Useful if this machine is already agent-safe (e.g. a dedicated dev box).",
         },
-        {
-          id: "host-mounted",
-          title: "Host-mounted container",
-          desc: "Agents run in a container but write directly to your project folder on the host.",
-          advanced: true,
-        },
       ],
     },
     "harness-downloads": {
