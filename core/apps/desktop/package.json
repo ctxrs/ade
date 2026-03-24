@@ -1,7 +1,7 @@
 {
   "name": "ctx-desktop",
   "private": true,
-  "version": "0.20.0",
+  "version": "0.21.0",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
