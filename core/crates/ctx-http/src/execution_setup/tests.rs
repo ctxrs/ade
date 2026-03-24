@@ -63,6 +63,21 @@ fn test_workspace(id: WorkspaceId) -> Workspace {
     }
 }
 
+fn podman_container_settings() -> crate::settings::ContainerExecutionSettings {
+    crate::settings::ContainerExecutionSettings {
+        runtime: ContainerRuntimeKind::Podman,
+        mount_mode: crate::settings::ContainerMountMode::HostMounted,
+        ..Default::default()
+    }
+}
+
+fn podman_execution_settings() -> ExecutionSettings {
+    ExecutionSettings {
+        mode: ExecutionMode::Container,
+        container: podman_container_settings(),
+    }
+}
+
 fn test_coordinator(data_root: PathBuf) -> Arc<ExecutionSetupCoordinator> {
     Arc::new(ExecutionSetupCoordinator::new(
         data_root.clone(),
@@ -773,7 +788,7 @@ async fn concurrent_launch_start_is_deduplicated() {
         mode: ExecutionMode::Container,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..Default::default()
+            ..podman_container_settings()
         },
     };
     let barrier = Arc::new(Barrier::new(3));
@@ -861,7 +876,7 @@ async fn startup_prewarm_runs_runtime_warmup_for_cold_container_settings() {
     let ops = Arc::new(BlockingWarmupOperations::default());
     let settings = ExecutionSettings {
         mode: ExecutionMode::Container,
-        ..ExecutionSettings::default()
+        container: podman_container_settings(),
     };
     save_test_execution_settings(data_dir.path(), settings).await;
 
@@ -935,10 +950,7 @@ async fn startup_prewarm_keeps_existing_metadata_when_machine_stays_down() {
     .await
     .expect("write existing prewarm metadata");
 
-    let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
-        ..ExecutionSettings::default()
-    };
+    let settings = podman_execution_settings();
     save_test_execution_settings(data_dir.path(), settings).await;
 
     let ops = Arc::new(RecordingStartupWarmupOperations::default());
@@ -1025,10 +1037,7 @@ async fn startup_prewarm_does_not_record_success_for_stale_loaded_default_image(
     .await
     .expect("write stale prewarm metadata");
 
-    let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
-        ..ExecutionSettings::default()
-    };
+    let settings = podman_execution_settings();
     save_test_execution_settings(data_dir.path(), settings).await;
 
     let ops = Arc::new(RecordingStartupWarmupOperations::default());
@@ -1135,9 +1144,10 @@ async fn successful_workspace_launch_writes_missing_prewarm_metadata() {
         mode: ExecutionMode::Container,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..Default::default()
+            ..podman_container_settings()
         },
     };
+    save_test_execution_settings(data_dir.path(), settings.clone()).await;
 
     let coordinator = test_coordinator(data_dir.path().to_path_buf());
     let launch = coordinator
@@ -1255,7 +1265,7 @@ async fn successful_workspace_launch_refresh_clears_stale_prewarm_metadata() {
         mode: ExecutionMode::Container,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..Default::default()
+            ..podman_container_settings()
         },
     };
     save_test_execution_settings(data_dir.path(), settings.clone()).await;
@@ -1382,9 +1392,10 @@ async fn successful_workspace_launch_refreshes_prewarm_metadata_when_image_ref_c
         mode: ExecutionMode::Container,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..Default::default()
+            ..podman_container_settings()
         },
     };
+    save_test_execution_settings(data_dir.path(), settings.clone()).await;
 
     let coordinator = test_coordinator(data_dir.path().to_path_buf());
     let launch = coordinator
@@ -1469,7 +1480,7 @@ async fn workspace_override_image_does_not_clobber_startup_prewarm_metadata() {
             mode: ExecutionMode::Container,
             container: crate::settings::ContainerExecutionSettings {
                 network_mode: crate::settings::ContainerNetworkMode::All,
-                ..Default::default()
+                ..podman_container_settings()
             },
         },
     )
@@ -1480,7 +1491,7 @@ async fn workspace_override_image_does_not_clobber_startup_prewarm_metadata() {
         container: crate::settings::ContainerExecutionSettings {
             image: Some(override_image.to_string()),
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..Default::default()
+            ..podman_container_settings()
         },
     };
 
@@ -1518,10 +1529,7 @@ async fn runtime_prewarm_reuses_background_all_job_and_waits_for_builder_tail_wh
     let _podman_path = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
     let ops = Arc::new(BlockingWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
-        ..ExecutionSettings::default()
-    };
+    let settings = podman_execution_settings();
 
     let background = coordinator
         .start_runtime_prewarm(settings.clone(), RuntimePrewarmScope::All)
@@ -1579,10 +1587,7 @@ async fn runtime_prewarm_errors_when_only_startup_artifacts_were_warmed() {
 
     let ops = Arc::new(RecordingStartupWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
-        ..ExecutionSettings::default()
-    };
+    let settings = podman_execution_settings();
 
     let snapshot = coordinator
         .start_runtime_prewarm(settings, RuntimePrewarmScope::Runtime)
@@ -1597,7 +1602,7 @@ async fn runtime_prewarm_errors_when_only_startup_artifacts_were_warmed() {
         .error
         .as_deref()
         .unwrap_or_default()
-        .contains("still needs machine and image startup"));
+        .contains("still needs first-launch startup"));
 }
 
 #[tokio::test]
@@ -1731,7 +1736,7 @@ async fn workspace_launch_waits_for_running_startup_prewarm_without_duplicate_ru
         mode: ExecutionMode::Container,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..Default::default()
+            ..podman_container_settings()
         },
     };
     save_test_execution_settings(data_dir.path(), settings.clone()).await;
@@ -1842,7 +1847,7 @@ async fn workspace_launch_reuses_active_runtime_prewarm_without_second_image_loa
         mode: ExecutionMode::Container,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..Default::default()
+            ..podman_container_settings()
         },
     };
 
@@ -1940,7 +1945,7 @@ async fn workspace_launch_reuses_startup_prewarm_without_second_image_load_when_
         mode: ExecutionMode::Container,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..Default::default()
+            ..podman_container_settings()
         },
     };
     save_test_execution_settings(data_dir.path(), settings.clone()).await;
@@ -2049,7 +2054,7 @@ async fn workspace_launch_joining_startup_prewarm_starts_machine_before_creating
         mode: ExecutionMode::Container,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..Default::default()
+            ..podman_container_settings()
         },
     };
     save_test_execution_settings(data_dir.path(), settings.clone()).await;
@@ -2115,10 +2120,7 @@ async fn builder_prewarm_reuses_background_all_job() {
     let _podman_path = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
     let ops = Arc::new(BlockingWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
-        ..ExecutionSettings::default()
-    };
+    let settings = podman_execution_settings();
 
     let background = coordinator
         .start_runtime_prewarm(settings.clone(), RuntimePrewarmScope::All)
@@ -2248,10 +2250,7 @@ async fn runtime_prewarm_emits_initial_log_before_runtime_work_completes() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let coordinator = test_coordinator(data_dir.path().to_path_buf());
-    let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
-        ..ExecutionSettings::default()
-    };
+    let settings = podman_execution_settings();
 
     let snapshot = coordinator
         .start_runtime_prewarm(settings, RuntimePrewarmScope::Runtime)
@@ -2302,10 +2301,7 @@ async fn builder_only_prewarm_skips_runtime_warmup_and_runtime_availability() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let ops = Arc::new(BlockingWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
-        ..ExecutionSettings::default()
-    };
+    let settings = podman_execution_settings();
 
     let snapshot = coordinator
         .start_runtime_prewarm(settings, RuntimePrewarmScope::Builder)
@@ -2354,7 +2350,7 @@ async fn startup_prewarm_enters_shared_runtime_warmup_when_machine_is_not_ready(
     let podman_path = write_startup_prewarm_podman_shim(data_dir.path());
     let _test_podman = EnvVarGuard::unset("CTX_TEST_PODMAN_AVAILABLE");
     let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    init_settings_store(data_dir.path()).await;
+    save_test_execution_settings(data_dir.path(), podman_execution_settings()).await;
 
     let ops = Arc::new(RecordingStartupWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
@@ -2382,10 +2378,7 @@ async fn workspace_launch_is_not_blocked_by_background_runtime_prewarm_job() {
     let _podman_path = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
     let ops = Arc::new(BlockingWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    let prewarm_settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
-        ..ExecutionSettings::default()
-    };
+    let prewarm_settings = podman_execution_settings();
     let workspace = test_workspace(WorkspaceId::new());
     let host_settings = ExecutionSettings {
         mode: ExecutionMode::Host,
@@ -2488,7 +2481,7 @@ async fn workspace_launch_does_not_wait_for_downloads_only_runtime_prewarm_when_
         mode: ExecutionMode::Container,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..Default::default()
+            ..podman_container_settings()
         },
     };
 
@@ -2574,7 +2567,7 @@ async fn workspace_launch_reuses_existing_container_without_waiting_for_startup_
         mode: ExecutionMode::Container,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..Default::default()
+            ..podman_container_settings()
         },
     };
     save_test_execution_settings(data_dir.path(), settings.clone()).await;
@@ -2652,7 +2645,7 @@ async fn workspace_launch_reuses_running_container_without_runtime_prewarm_or_im
         mode: ExecutionMode::Container,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..Default::default()
+            ..podman_container_settings()
         },
     };
 
@@ -2752,7 +2745,7 @@ async fn workspace_launch_falls_back_when_downloads_only_startup_prewarm_fails()
         mode: ExecutionMode::Container,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..Default::default()
+            ..podman_container_settings()
         },
     };
     save_test_execution_settings(data_dir.path(), settings.clone()).await;
@@ -2816,10 +2809,7 @@ async fn workspace_launch_emits_initial_log_before_runtime_work_completes() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let coordinator = test_coordinator(data_dir.path().to_path_buf());
     let workspace = test_workspace(WorkspaceId::new());
-    let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
-        ..ExecutionSettings::default()
-    };
+    let settings = podman_execution_settings();
 
     let snapshot = coordinator
         .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
