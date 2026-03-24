@@ -265,20 +265,14 @@ impl Store {
     ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         let session_id_str = session_id.0.to_string();
-        let write_bytes = I64_BYTES + I64_BYTES + bytes_str(&now);
+        let write_bytes = I64_BYTES + bytes_str(&now);
         let res = self
             .query(
                 r#"UPDATE session_active_snapshot_heads
-               SET head_rev = COALESCE(
-                       (SELECT projection_rev FROM session_snapshot_summaries WHERE session_id = ?),
-                       ?
-                   ),
-                   last_event_seq = ?,
+               SET last_event_seq = ?,
                    updated_at = ?
                WHERE session_id = ?"#,
             )
-            .bind(&session_id_str)
-            .bind(last_event_seq)
             .bind(last_event_seq)
             .bind(&now)
             .bind(&session_id_str)

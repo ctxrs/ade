@@ -16,6 +16,7 @@ struct SessionFixture {
     db_path: std::path::PathBuf,
     store: Store,
     task_id: TaskId,
+    workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
     session_id: SessionId,
 }
@@ -72,6 +73,7 @@ async fn setup_session_fixture() -> SessionFixture {
         db_path,
         store,
         task_id: task.id,
+        workspace_id: ws.id,
         worktree_id: worktree.id,
         session_id: session.id,
     }
@@ -1698,6 +1700,165 @@ async fn flush_active_snapshot_head_projection_queue_applies_latest_state_after_
     assert_eq!(head.messages.len(), 2);
     assert_eq!(head.messages[0].content, "first answer");
     assert_eq!(head.messages[1].content, "final answer");
+}
+
+#[tokio::test]
+async fn queued_active_head_refresh_does_not_mark_stale_row_fresh_before_single_read() {
+    let fixture = setup_session_fixture().await;
+    fixture
+        .store
+        .set_task_primary_session(fixture.task_id, fixture.session_id, fixture.worktree_id)
+        .await
+        .unwrap();
+
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    fixture
+        .store
+        .insert_session_turn(make_turn(fixture.session_id, run_id, turn_id))
+        .await
+        .unwrap();
+    fixture
+        .store
+        .append_session_event(
+            fixture.session_id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "checkpoint", "message": "initial" }),
+        )
+        .await
+        .unwrap();
+    fixture
+        .store
+        .flush_active_snapshot_head_projection_queue()
+        .await
+        .unwrap();
+
+    let initial = fixture
+        .store
+        .get_active_snapshot_head(fixture.session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(initial.messages.is_empty());
+    let initial_projection_rev = initial.projection_rev;
+
+    fixture
+        .store
+        .insert_message(make_assistant_message(
+            fixture.session_id,
+            fixture.task_id,
+            run_id,
+            turn_id,
+            "fresh answer",
+        ))
+        .await
+        .unwrap();
+    let latest_notice = fixture
+        .store
+        .append_session_event(
+            fixture.session_id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "checkpoint", "message": "after message" }),
+        )
+        .await
+        .unwrap();
+
+    let row = sqlx::query(
+        "SELECT head_rev, last_event_seq, messages_json FROM session_active_snapshot_heads WHERE session_id = ?",
+    )
+    .bind(fixture.session_id.0.to_string())
+    .fetch_one(fixture.store.pool())
+    .await
+    .unwrap();
+    let materialized_head_rev: i64 = row.try_get("head_rev").unwrap();
+    let materialized_last_event_seq: i64 = row.try_get("last_event_seq").unwrap();
+    let materialized_messages_json: String = row.try_get("messages_json").unwrap();
+    assert_eq!(materialized_head_rev, initial_projection_rev);
+    assert!(materialized_last_event_seq < latest_notice.seq);
+    assert!(!materialized_messages_json.contains("fresh answer"));
+
+    let refreshed = fixture
+        .store
+        .get_active_snapshot_head(fixture.session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(refreshed.projection_rev > initial_projection_rev);
+    assert_eq!(refreshed.last_event_seq, latest_notice.seq);
+    assert_eq!(refreshed.messages.len(), 1);
+    assert_eq!(refreshed.messages[0].content, "fresh answer");
+}
+
+#[tokio::test]
+async fn queued_active_head_refresh_does_not_blank_workspace_batch_read() {
+    let fixture = setup_session_fixture().await;
+    fixture
+        .store
+        .set_task_primary_session(fixture.task_id, fixture.session_id, fixture.worktree_id)
+        .await
+        .unwrap();
+
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    fixture
+        .store
+        .insert_session_turn(make_turn(fixture.session_id, run_id, turn_id))
+        .await
+        .unwrap();
+    fixture
+        .store
+        .append_session_event(
+            fixture.session_id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "checkpoint", "message": "initial" }),
+        )
+        .await
+        .unwrap();
+    fixture
+        .store
+        .flush_active_snapshot_head_projection_queue()
+        .await
+        .unwrap();
+
+    fixture
+        .store
+        .insert_message(make_assistant_message(
+            fixture.session_id,
+            fixture.task_id,
+            run_id,
+            turn_id,
+            "workspace fresh answer",
+        ))
+        .await
+        .unwrap();
+    let latest_notice = fixture
+        .store
+        .append_session_event(
+            fixture.session_id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "checkpoint", "message": "after message" }),
+        )
+        .await
+        .unwrap();
+
+    let snapshots = fixture
+        .store
+        .list_workspace_active_head_snapshots(fixture.workspace_id)
+        .await
+        .unwrap();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].session.id, fixture.session_id);
+    assert_eq!(snapshots[0].last_event_seq, latest_notice.seq);
+    assert_eq!(snapshots[0].messages.len(), 1);
+    assert_eq!(snapshots[0].messages[0].content, "workspace fresh answer");
 }
 
 #[tokio::test]
