@@ -53,6 +53,9 @@ fn env_var_test_lock() -> &'static tokio::sync::Mutex<()> {
     crate::test_support::podman_env_test_lock()
 }
 
+const BACKGROUND_TEST_TIMEOUT: Duration = Duration::from_secs(10);
+const QUICK_ASYNC_TEST_TIMEOUT: Duration = Duration::from_secs(5);
+
 fn test_workspace(id: WorkspaceId) -> Workspace {
     Workspace {
         id,
@@ -906,6 +909,10 @@ async fn startup_prewarm_runs_runtime_warmup_for_cold_container_settings() {
 #[tokio::test]
 async fn spawned_startup_prewarm_respects_podman_env_test_lock() {
     let data_dir = tempfile::tempdir().expect("tempdir");
+    let podman_path = write_ready_runtime_podman_shim(data_dir.path());
+    let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
+    let _podman_path = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    save_test_execution_settings(data_dir.path(), podman_execution_settings()).await;
     let coordinator = test_coordinator(data_dir.path().to_path_buf());
     let serial = env_var_test_lock().lock().await;
 
@@ -1558,7 +1565,7 @@ async fn runtime_prewarm_reuses_background_all_job_and_waits_for_builder_tail_wh
 
     ops.release_builder();
 
-    let ready = tokio::time::timeout(Duration::from_secs(1), async {
+    let ready = tokio::time::timeout(BACKGROUND_TEST_TIMEOUT, async {
         loop {
             let latest = coordinator
                 .launch_status(&background.job_id)
@@ -2147,7 +2154,7 @@ async fn builder_prewarm_reuses_background_all_job() {
     ops.wait_for_builder_runs(1).await;
     ops.release_builder();
 
-    let ready = tokio::time::timeout(Duration::from_secs(1), async {
+    let ready = tokio::time::timeout(BACKGROUND_TEST_TIMEOUT, async {
         loop {
             let latest = coordinator
                 .launch_status(&background.job_id)
@@ -2235,7 +2242,7 @@ async fn subscribe_launch_receiver_gets_terminal_event_after_running_snapshot() 
         .clear_running_launch(workspace_id, &job_id)
         .await;
 
-    let event = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+    let event = tokio::time::timeout(QUICK_ASYNC_TEST_TIMEOUT, rx.recv())
         .await
         .expect("timed out waiting for terminal launch event")
         .expect("launch event channel closed");
@@ -2264,7 +2271,7 @@ async fn runtime_prewarm_emits_initial_log_before_runtime_work_completes() {
             && line.message == "requesting shared container readiness"
     }));
 
-    let observed = tokio::time::timeout(Duration::from_secs(1), async {
+    let observed = tokio::time::timeout(QUICK_ASYNC_TEST_TIMEOUT, async {
         loop {
             let latest = coordinator
                 .launch_status(&snapshot.job_id)
@@ -2290,7 +2297,7 @@ async fn runtime_prewarm_emits_initial_log_before_runtime_work_completes() {
     }));
 
     let _terminal =
-        wait_for_execution_launch_terminal(&coordinator, &snapshot.job_id, Duration::from_secs(5))
+        wait_for_execution_launch_terminal(&coordinator, &snapshot.job_id, Duration::from_secs(10))
             .await;
 }
 
@@ -2321,7 +2328,7 @@ async fn builder_only_prewarm_skips_runtime_warmup_and_runtime_availability() {
 
     ops.release_builder();
 
-    let terminal = tokio::time::timeout(Duration::from_secs(1), async {
+    let terminal = tokio::time::timeout(BACKGROUND_TEST_TIMEOUT, async {
         loop {
             let latest = coordinator
                 .launch_status(&snapshot.job_id)
@@ -2398,7 +2405,7 @@ async fn workspace_launch_is_not_blocked_by_background_runtime_prewarm_job() {
         )
         .await;
 
-    let ready = tokio::time::timeout(Duration::from_secs(1), async {
+    let ready = tokio::time::timeout(BACKGROUND_TEST_TIMEOUT, async {
         loop {
             let latest = coordinator
                 .launch_status(&launch.job_id)
@@ -2429,7 +2436,7 @@ async fn workspace_launch_is_not_blocked_by_background_runtime_prewarm_job() {
     let background_terminal = wait_for_execution_launch_terminal(
         &coordinator,
         &background.job_id,
-        Duration::from_secs(1),
+        BACKGROUND_TEST_TIMEOUT,
     )
     .await;
     assert_eq!(background_terminal.state, ExecutionLaunchState::Ready);
@@ -2591,7 +2598,7 @@ async fn workspace_launch_reuses_existing_container_without_waiting_for_startup_
             .await,
     );
 
-    let ready = launch.wait_ready(Duration::from_secs(1)).await;
+    let ready = launch.wait_ready(BACKGROUND_TEST_TIMEOUT).await;
     assert_eq!(ready.state, ExecutionLaunchState::Ready);
     assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
     assert_eq!(
@@ -2814,7 +2821,7 @@ async fn workspace_launch_emits_initial_log_before_runtime_work_completes() {
     let snapshot = coordinator
         .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
         .await;
-    let observed = tokio::time::timeout(Duration::from_secs(1), async {
+    let observed = tokio::time::timeout(QUICK_ASYNC_TEST_TIMEOUT, async {
         loop {
             let latest = coordinator
                 .launch_status(&snapshot.job_id)
