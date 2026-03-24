@@ -297,6 +297,62 @@ async fn enabled_workspace_queued_rows_resume_only_after_open() {
 }
 
 #[tokio::test]
+async fn reenable_explicitly_reschedules_dormant_queued_workspace() {
+    let (data_dir, state) = setup_state().await;
+    let workspace = create_workspace(&state, &data_dir, "reenable").await;
+    let store = state.core.stores.workspace(workspace.id).await.unwrap();
+    let entry = queued_entry(workspace.id, "reenable-queued");
+    store.create_merge_queue_entry(&entry).await.unwrap();
+
+    spawn_merge_queue_runner(state.clone());
+    let _ = state.store_for_workspace(workspace.id).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let queued = store
+        .get_merge_queue_entry(entry.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(queued.status, MergeQueueEntryStatus::Queued);
+    assert!(!state
+        .transport
+        .merge_queue_running
+        .lock()
+        .await
+        .contains(&workspace.id));
+
+    update_merge_queue_config(
+        &store,
+        MergeQueueConfigUpdate {
+            enabled: true,
+            target_branch: Some("main".to_string()),
+            verify_commands: Vec::new(),
+            push_on_success: None,
+            push_remote: None,
+            push_branch: None,
+            canonical_sync: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        schedule_workspace_if_enabled_and_queued(&state, workspace.id)
+            .await
+            .unwrap()
+    );
+
+    let resumed = wait_for_entry_status(
+        &state,
+        workspace.id,
+        entry.id,
+        |status| status != MergeQueueEntryStatus::Queued,
+        Duration::from_secs(2),
+    )
+    .await;
+    assert_ne!(resumed.status, MergeQueueEntryStatus::Queued);
+}
+
+#[tokio::test]
 async fn workspace_drain_ownership_allows_only_one_runner() {
     let (_data_dir, state) = setup_state().await;
     let workspace_id = WorkspaceId::new();

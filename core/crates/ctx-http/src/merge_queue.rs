@@ -278,6 +278,19 @@ pub fn spawn_merge_queue_runner(state: Arc<AppState>) {
     });
 }
 
+pub(crate) async fn schedule_workspace_if_enabled_and_queued(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+) -> Result<bool> {
+    let store = state.core.stores.workspace(workspace_id).await?;
+    let cfg = load_merge_queue_config(&store).await?;
+    if !cfg.enabled || store.list_queued_merge_queue_entries().await?.is_empty() {
+        return Ok(false);
+    }
+    let _ = state.transport.merge_queue_schedule_tx.send(workspace_id);
+    Ok(true)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WorkspaceDrainStep {
     Continue,

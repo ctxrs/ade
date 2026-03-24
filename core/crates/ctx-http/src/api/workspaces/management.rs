@@ -194,6 +194,17 @@ pub(in crate::api) async fn update_merge_queue_config(
             }),
         )
     })?;
+    let was_enabled = workspace_config::load_merge_queue_config(&store)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .enabled;
     workspace_config::update_merge_queue_config(
         &store,
         workspace_config::MergeQueueConfigUpdate {
@@ -215,6 +226,19 @@ pub(in crate::api) async fn update_merge_queue_config(
             }),
         )
     })?;
+
+    if !was_enabled && req.enabled {
+        crate::merge_queue::schedule_workspace_if_enabled_and_queued(&state, ws_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
+    }
 
     Ok(Json(UpdateWorkspaceConfigResp { ok: true }))
 }

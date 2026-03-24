@@ -162,7 +162,10 @@ impl StoreManager {
             existing.touch();
             let existing = existing.store.clone();
             drop(stores);
-            store.close().await;
+            // Do not force-close the duplicate pool here. Other request-scoped clones may already
+            // exist, and explicit pool shutdown would invalidate them. Dropping the uncached
+            // handle lets the pool close naturally once no clones remain.
+            drop(store);
             return Ok(WorkspaceStoreAccess {
                 store: existing,
                 opened_now: false,
@@ -217,9 +220,10 @@ impl StoreManager {
             let mut stores = self.workspace_stores.lock().await;
             stores.remove(&workspace_id)
         };
-        if let Some(store) = store {
-            store.store.close().await;
-        }
+        // Do not explicitly close evicted workspace stores. Request-scoped clones share the same
+        // SQLx pool, so forcing pool shutdown here can fail in-flight handlers. Removing the
+        // manager-owned cache entry is sufficient; the pool will drop once no clones remain.
+        drop(store);
     }
 
     pub async fn evict_idle_workspaces(
@@ -249,9 +253,7 @@ impl StoreManager {
                 .collect::<Vec<_>>()
         };
         let evicted = expired_entries.len();
-        for entry in expired_entries {
-            entry.store.close().await;
-        }
+        drop(expired_entries);
         evicted
     }
 
@@ -280,9 +282,7 @@ impl StoreManager {
             }
         };
         let evicted = expired_entries.len();
-        for entry in expired_entries {
-            entry.store.close().await;
-        }
+        drop(expired_entries);
         evicted
     }
 
@@ -775,6 +775,62 @@ mod tests {
         assert!(
             manager
                 .workspace_access(workspace_b.id)
+                .await
+                .unwrap()
+                .opened_now
+        );
+    }
+
+    #[tokio::test]
+    async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = StoreManager::open_with_config(
+            temp.path(),
+            StoreManagerConfig {
+                max_cached_workspaces: 1,
+                ..StoreManagerConfig::default()
+            },
+        )
+        .await
+        .unwrap();
+        let workspace_a = manager
+            .global()
+            .create_workspace(
+                "a".to_string(),
+                temp.path().join("a").to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .unwrap();
+        let workspace_b = manager
+            .global()
+            .create_workspace(
+                "b".to_string(),
+                temp.path().join("b").to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .unwrap();
+
+        let store_a = manager.workspace(workspace_a.id).await.unwrap();
+        let _ = manager.workspace(workspace_b.id).await.unwrap();
+        let evicted = manager
+            .evict_workspaces_to_cap(&HashSet::from([workspace_b.id]))
+            .await;
+        assert_eq!(evicted, 1);
+        assert_eq!(manager.stats().await.workspace_store_count, 1);
+
+        let task = store_a
+            .create_task(workspace_a.id, "still-live".to_string(), None)
+            .await
+            .unwrap();
+        assert_eq!(task.workspace_id, workspace_a.id);
+
+        drop(store_a);
+
+        assert!(
+            manager
+                .workspace_access(workspace_a.id)
                 .await
                 .unwrap()
                 .opened_now
