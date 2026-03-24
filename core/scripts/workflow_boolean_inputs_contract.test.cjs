@@ -40,3 +40,13 @@ test("release supabase uses typed updater drill booleans", () => {
   assert.ok(!text.includes("inputs.run_updater_e2e_drill == 'true'"));
   assert.match(text, /CTX_UPDATER_E2E_EXPECT_VERSION_CHANGE:\s*\$\{\{\s*github\.event_name == 'workflow_dispatch'/);
 });
+
+test("release supabase uses repo-configurable Linux runner labels", () => {
+  const text = workflowText("release-supabase.yml");
+  assert.match(text, /runs-on:\s*\$\{\{\s*vars\.RELEASE_RUNNER_LINUX_X64 \|\| 'linux-x64-8core'\s*\}\}/);
+  assert.match(text, /runs-on:\s*\$\{\{\s*vars\.RELEASE_RUNNER_LINUX_ARM64 \|\| 'linux-arm-8core'\s*\}\}/);
+  assert.match(text, /RELEASE_RUNNER_LINUX_X64:\s*\$\{\{\s*vars\.RELEASE_RUNNER_LINUX_X64 \|\| 'linux-x64-8core'\s*\}\}/);
+  assert.match(text, /RELEASE_RUNNER_LINUX_ARM64:\s*\$\{\{\s*vars\.RELEASE_RUNNER_LINUX_ARM64 \|\| 'linux-arm-8core'\s*\}\}/);
+  assert.match(text, /const linuxX64Runner = String\(process\.env\.RELEASE_RUNNER_LINUX_X64 \|\| ""\)\.trim\(\);/);
+  assert.match(text, /const linuxArm64Runner = String\(process\.env\.RELEASE_RUNNER_LINUX_ARM64 \|\| ""\)\.trim\(\);/);
+});
