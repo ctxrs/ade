@@ -240,6 +240,20 @@ impl WorkspaceRuntime {
         {
             return Ok(());
         }
+        let workspace_exists = match state.global_store().get_workspace(workspace_id).await {
+            Ok(Some(_)) => true,
+            Ok(None) => false,
+            Err(err) => {
+                tracing::warn!(
+                    workspace_id = ?workspace_id,
+                    "failed to check workspace existence before hydration: {err:#}"
+                );
+                return Err(WorkspaceHydrationError::Load(err));
+            }
+        };
+        if !workspace_exists {
+            return Err(WorkspaceHydrationError::NotFound);
+        }
         let store = match state.store_for_workspace(workspace_id).await {
             Ok(store) => store,
             Err(err) => {
@@ -248,7 +262,7 @@ impl WorkspaceRuntime {
                     err = %err,
                     "failed to hydrate workspace snapshot (store lookup)"
                 );
-                return Err(WorkspaceHydrationError::NotFound);
+                return Err(WorkspaceHydrationError::Load(err));
             }
         };
         let payload = match load_workspace_snapshot_hydration_payload(&store, workspace_id).await {

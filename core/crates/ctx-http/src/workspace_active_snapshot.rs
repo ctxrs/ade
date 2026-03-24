@@ -736,7 +736,7 @@ impl WorkspaceActiveSnapshotHub {
             let mut heads = self.session_heads.lock().await;
             if let Some(head) = heads.get_mut(&delta.session_id) {
                 apply_head_delta(head, &delta);
-            } else {
+            } else if session.parent_session_id.is_none() {
                 let mut head = new_head_snapshot(session);
                 apply_head_delta(&mut head, &delta);
                 heads.insert(delta.session_id, head);

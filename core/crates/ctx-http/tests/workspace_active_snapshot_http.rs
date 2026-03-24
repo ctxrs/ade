@@ -165,6 +165,78 @@ async fn setup_git() -> (
     setup().await
 }
 
+#[tokio::test]
+async fn workspace_active_hydration_returns_500_for_store_open_failures_and_404_for_missing_workspaces(
+) {
+    let (repo, data_dir, state, server) = setup().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let missing = client
+        .get(format!(
+            "{base}/api/workspaces/{}/active_snapshot",
+            uuid::Uuid::new_v4()
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), reqwest::StatusCode::NOT_FOUND);
+
+    let blocked_workspace_store_dir = data_dir
+        .path()
+        .join("db")
+        .join("workspaces")
+        .join(ws.id.0.to_string());
+    state.core.stores.evict_workspace(ws.id).await;
+    if let Ok(metadata) = tokio::fs::metadata(&blocked_workspace_store_dir).await {
+        if metadata.is_dir() {
+            tokio::fs::remove_dir_all(&blocked_workspace_store_dir)
+                .await
+                .unwrap();
+        } else {
+            tokio::fs::remove_file(&blocked_workspace_store_dir)
+                .await
+                .unwrap();
+        }
+    }
+    tokio::fs::create_dir_all(blocked_workspace_store_dir.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&blocked_workspace_store_dir, b"blocked workspace store")
+        .await
+        .unwrap();
+
+    let broken_snapshot = client
+        .get(format!("{base}/api/workspaces/{}/active_snapshot", ws.id.0))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        broken_snapshot.status(),
+        reqwest::StatusCode::INTERNAL_SERVER_ERROR
+    );
+
+    let broken_heads = client
+        .get(format!("{base}/api/workspaces/{}/active_heads", ws.id.0))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        broken_heads.status(),
+        reqwest::StatusCode::INTERNAL_SERVER_ERROR
+    );
+}
+
 async fn decode_json_response<T: DeserializeOwned>(response: reqwest::Response) -> T {
     let status = response.status();
     let body = response.text().await.unwrap();

@@ -212,6 +212,10 @@ mod delta_tests {
         let hub = WorkspaceActiveSnapshotHub::new();
         let parent = test_session(None);
         let subagent = test_session(Some(parent.id));
+        let mut seeded = new_head_snapshot(&subagent);
+        seeded.last_event_seq = 5;
+        seeded.projection_rev = 5;
+        hub.update_session_head(seeded).await;
         let delta = SessionHeadDelta {
             session_id: subagent.id,
             last_event_seq: 7,
@@ -231,10 +235,48 @@ mod delta_tests {
         hub.publish_session_head_delta(subagent.workspace_id, &subagent, delta, true)
             .await;
 
-        let cached = hub.get_session_head(subagent.id).await;
+        let cached = hub
+            .get_session_head(subagent.id)
+            .await
+            .expect("seeded subagent head should stay hot");
+        assert_eq!(cached.last_event_seq, 7);
+        assert_eq!(cached.projection_rev, 7);
+        assert!(cached.activity.is_working);
+
+        let active_heads = hub.active_heads(subagent.workspace_id).await;
         assert!(
-            cached.is_some(),
-            "subagent session head should be seeded in memory"
+            active_heads.heads.is_empty(),
+            "subagent heads should not inflate the workspace active-head batch"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_session_head_delta_does_not_seed_cold_subagent_from_single_delta() {
+        let hub = WorkspaceActiveSnapshotHub::new();
+        let parent = test_session(None);
+        let subagent = test_session(Some(parent.id));
+        let delta = SessionHeadDelta {
+            session_id: subagent.id,
+            last_event_seq: 7,
+            projection_rev: 7,
+            state_rev: 7,
+            session: Some(session_metadata_from_session(&subagent)),
+            activity: Some(SessionActivityState {
+                is_working: true,
+                last_turn_status: Some(SessionTurnStatus::Running),
+            }),
+            event: None,
+            turn: None,
+            message: None,
+            tool_summaries: Vec::new(),
+        };
+
+        hub.publish_session_head_delta(subagent.workspace_id, &subagent, delta, true)
+            .await;
+
+        assert!(
+            hub.get_session_head(subagent.id).await.is_none(),
+            "cold subagent misses should not be synthesized from a single live delta"
         );
 
         let active_heads = hub.active_heads(subagent.workspace_id).await;

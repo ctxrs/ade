@@ -1559,6 +1559,121 @@ async fn active_snapshot_projection_refreshes_when_projection_rev_changes_withou
 }
 
 #[tokio::test]
+async fn active_snapshot_projection_refreshes_when_summary_checkpoint_updates_without_new_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let ws = store
+        .create_workspace("ws".into(), "/tmp/ws".into(), VcsKind::Git)
+        .await
+        .unwrap();
+    let task = store
+        .create_task(ws.id, "active".into(), None)
+        .await
+        .unwrap();
+    let worktree = store
+        .create_worktree(ws.id, "/tmp/ws".into(), "abc123".into(), None)
+        .await
+        .unwrap();
+    let session = store
+        .create_session(
+            task.id,
+            ws.id,
+            worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            "fake".into(),
+            "fake".into(),
+            "implementer".into(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .set_task_primary_session(task.id, session.id, worktree.id)
+        .await
+        .unwrap();
+
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    store
+        .insert_session_turn(make_turn(session.id, run_id, turn_id))
+        .await
+        .unwrap();
+    let notice = store
+        .append_session_event(
+            session.id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "checkpoint", "message": "stable" }),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_message(make_assistant_message(
+            session.id,
+            task.id,
+            run_id,
+            turn_id,
+            "final answer",
+        ))
+        .await
+        .unwrap();
+
+    let initial = store
+        .get_active_snapshot_head(session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(initial.summary_checkpoint.is_none());
+
+    let checkpoint = ctx_core::models::SessionSummaryCheckpoint {
+        session_id: session.id,
+        checkpoint_id: "cp-1".to_string(),
+        summary: "compacted summary".to_string(),
+        last_turn_id: Some(turn_id),
+        last_event_seq: Some(notice.seq),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    store
+        .upsert_session_summary_checkpoint(checkpoint.clone())
+        .await
+        .unwrap();
+
+    let projection_rev = store.get_session_projection_rev(session.id).await.unwrap();
+    assert!(
+        projection_rev > initial.projection_rev,
+        "summary checkpoint writes should advance projection_rev even without new events"
+    );
+
+    let refreshed = store
+        .get_active_snapshot_head(session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let summary_checkpoint = refreshed
+        .summary_checkpoint
+        .expect("active head should include the refreshed summary checkpoint");
+    assert_eq!(summary_checkpoint.checkpoint_id, checkpoint.checkpoint_id);
+    assert_eq!(summary_checkpoint.summary, checkpoint.summary);
+    assert_eq!(summary_checkpoint.last_event_seq, Some(notice.seq));
+    assert_eq!(refreshed.last_event_seq, notice.seq);
+    assert_eq!(refreshed.projection_rev, projection_rev);
+
+    let durable_head_rev: i64 = sqlx::query_scalar(
+        "SELECT head_rev FROM session_active_snapshot_heads WHERE session_id = ?",
+    )
+    .bind(session.id.0.to_string())
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(durable_head_rev, projection_rev);
+}
+
+#[tokio::test]
 async fn flush_active_snapshot_head_projection_queue_materializes_current_primary_head() {
     let fixture = setup_session_fixture().await;
     fixture
@@ -1949,6 +2064,132 @@ async fn store_open_repairs_missing_active_snapshot_head_projection() {
     assert_eq!(repaired.last_event_seq, notice.seq);
     assert_eq!(repaired.messages.len(), 1);
     assert_eq!(repaired.messages[0].content, "final answer");
+}
+
+#[tokio::test]
+async fn store_open_invalidates_legacy_0052_active_snapshot_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let ws = store
+        .create_workspace("ws".into(), "/tmp/ws".into(), VcsKind::Git)
+        .await
+        .unwrap();
+    let task = store
+        .create_task(ws.id, "active".into(), None)
+        .await
+        .unwrap();
+    let worktree = store
+        .create_worktree(ws.id, "/tmp/ws".into(), "abc123".into(), None)
+        .await
+        .unwrap();
+    let session = store
+        .create_session(
+            task.id,
+            ws.id,
+            worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            "fake".into(),
+            "fake".into(),
+            "implementer".into(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .set_task_primary_session(task.id, session.id, worktree.id)
+        .await
+        .unwrap();
+
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    store
+        .insert_session_turn(make_turn(session.id, run_id, turn_id))
+        .await
+        .unwrap();
+    let notice = store
+        .append_session_event(
+            session.id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "checkpoint", "message": "stable" }),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_message(make_assistant_message(
+            session.id,
+            task.id,
+            run_id,
+            turn_id,
+            "fresh answer",
+        ))
+        .await
+        .unwrap();
+    store
+        .flush_active_snapshot_head_projection_queue()
+        .await
+        .unwrap();
+
+    let initial = store
+        .get_active_snapshot_head(session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query(
+        r#"UPDATE session_active_snapshot_heads
+           SET head_rev = ?,
+               messages_json = ?,
+               updated_at = ?
+           WHERE session_id = ?"#,
+    )
+    .bind(initial.projection_rev)
+    .bind(serde_json::to_string(&Vec::<Message>::new()).unwrap())
+    .bind(Utc::now().to_rfc3339())
+    .bind(session.id.0.to_string())
+    .execute(store.pool())
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ?")
+        .bind(54_i64)
+        .execute(store.pool())
+        .await
+        .unwrap();
+    store.close().await;
+
+    let reopened = Store::open(&db_path).await.unwrap();
+    let repaired_row_exists_before_read: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM session_active_snapshot_heads WHERE session_id = ?)",
+    )
+    .bind(session.id.0.to_string())
+    .fetch_one(reopened.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        repaired_row_exists_before_read, 0,
+        "legacy 0052 repair should invalidate durable active-head rows before any read trusts them"
+    );
+
+    let repaired = reopened
+        .get_active_snapshot_head(session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(repaired.last_event_seq, notice.seq);
+    assert_eq!(repaired.messages.len(), 1);
+    assert_eq!(repaired.messages[0].content, "fresh answer");
+
+    let durable_head_rev: i64 = sqlx::query_scalar(
+        "SELECT head_rev FROM session_active_snapshot_heads WHERE session_id = ?",
+    )
+    .bind(session.id.0.to_string())
+    .fetch_one(reopened.pool())
+    .await
+    .unwrap();
+    assert_eq!(durable_head_rev, repaired.projection_rev);
 }
 
 #[tokio::test]

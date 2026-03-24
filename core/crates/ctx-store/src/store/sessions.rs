@@ -562,7 +562,12 @@ impl Store {
         &self,
         checkpoint: SessionSummaryCheckpoint,
     ) -> Result<SessionSummaryCheckpoint> {
-        self.query(
+        let mut tx = self.pool.begin().await?;
+        let session_id = checkpoint.session_id.0.to_string();
+        let checkpoint_updated_at = checkpoint.updated_at.to_rfc3339();
+        let projection_updated_at = Utc::now().to_rfc3339();
+
+        sqlx::query(
             r#"INSERT INTO session_summary_checkpoints (
                    session_id, checkpoint_id, summary, last_turn_id, last_event_seq, created_at, updated_at
                )
@@ -574,15 +579,40 @@ impl Store {
                    last_event_seq = excluded.last_event_seq,
                    updated_at = excluded.updated_at"#,
         )
-        .bind(checkpoint.session_id.0.to_string())
+        .bind(&session_id)
         .bind(&checkpoint.checkpoint_id)
         .bind(&checkpoint.summary)
         .bind(checkpoint.last_turn_id.map(|id| id.0.to_string()))
         .bind(checkpoint.last_event_seq)
         .bind(checkpoint.created_at.to_rfc3339())
-        .bind(checkpoint.updated_at.to_rfc3339())
-        .execute(&self.pool)
+        .bind(&checkpoint_updated_at)
+        .execute(&mut *tx)
         .await?;
+
+        sqlx::query(
+            r#"INSERT INTO session_snapshot_summaries (
+                   session_id, running_turn_count, created_at, updated_at
+               )
+               VALUES (?, 0, ?, ?)
+               ON CONFLICT(session_id) DO NOTHING"#,
+        )
+        .bind(&session_id)
+        .bind(&projection_updated_at)
+        .bind(&projection_updated_at)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r#"UPDATE session_snapshot_summaries
+               SET projection_rev = projection_rev + 1,
+                   updated_at = ?
+               WHERE session_id = ?"#,
+        )
+        .bind(&projection_updated_at)
+        .bind(&session_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
 
         self.schedule_active_snapshot_head_refresh(checkpoint.session_id, None)
             .await?;
