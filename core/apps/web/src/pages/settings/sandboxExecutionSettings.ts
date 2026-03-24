@@ -11,9 +11,9 @@ export function defaultContainerRuntimeKind(
 }
 
 export function defaultContainerMountMode(
-  runtime: ApiExecutionSettings["container"]["runtime"],
+  _runtime: ApiExecutionSettings["container"]["runtime"],
 ): ApiExecutionSettings["container"]["mount_mode"] {
-  return runtime === "avf_linux_vm" ? "disk_isolated" : "host_mounted";
+  return "disk_isolated";
 }
 
 export function defaultExecutionSettings(
@@ -49,7 +49,7 @@ export function normalizeExecutionSettings(
     mode: value?.mode ?? fallback.mode,
     container: {
       runtime,
-      mount_mode: runtime === "avf_linux_vm" ? "disk_isolated" : mountMode,
+      mount_mode: mountMode,
       network_mode: value?.container?.network_mode ?? fallback.container.network_mode,
       allowlist: value?.container?.allowlist ?? fallback.container.allowlist,
       image: value?.container?.image ?? fallback.container.image,

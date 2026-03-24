@@ -76,11 +76,7 @@ pub fn apply_execution_environment(
         SessionExecutionEnvironment::Host => {
             settings.mode = crate::settings::ExecutionMode::Host;
         }
-        SessionExecutionEnvironment::ContainerHostMounted => {
-            settings.mode = crate::settings::ExecutionMode::Container;
-            settings.container.mount_mode = crate::settings::ContainerMountMode::HostMounted;
-        }
-        SessionExecutionEnvironment::ContainerDiskIsolated => {
+        SessionExecutionEnvironment::Sandbox => {
             settings.mode = crate::settings::ExecutionMode::Container;
             settings.container.mount_mode = crate::settings::ContainerMountMode::DiskIsolated;
         }

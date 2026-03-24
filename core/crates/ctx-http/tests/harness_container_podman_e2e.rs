@@ -350,7 +350,7 @@ async fn harness_container_podman_fake_acp() {
     configure_fake_provider(data_dir.path(), &script_path).await;
     configure_container_settings(
         data_dir.path(),
-        ContainerMountMode::HostMounted,
+        ContainerMountMode::DiskIsolated,
         "python:3.11",
     )
     .await;
@@ -411,7 +411,7 @@ async fn harness_container_podman_egress_allowlist() {
     configure_fake_provider(data_dir.path(), &script_path).await;
     configure_container_network_settings(
         data_dir.path(),
-        ContainerMountMode::HostMounted,
+        ContainerMountMode::DiskIsolated,
         &image,
         ContainerNetworkMode::Allowlist,
         vec![allow_host.to_string()],
@@ -562,7 +562,7 @@ async fn harness_container_podman_egress_allow_all() {
     configure_fake_provider(data_dir.path(), &script_path).await;
     configure_container_network_settings(
         data_dir.path(),
-        ContainerMountMode::HostMounted,
+        ContainerMountMode::DiskIsolated,
         &image,
         ContainerNetworkMode::All,
         Vec::new(),
@@ -691,7 +691,7 @@ async fn harness_container_podman_egress_deny_all() {
     configure_fake_provider(data_dir.path(), &script_path).await;
     configure_container_network_settings(
         data_dir.path(),
-        ContainerMountMode::HostMounted,
+        ContainerMountMode::DiskIsolated,
         &image,
         ContainerNetworkMode::Allowlist,
         Vec::new(),

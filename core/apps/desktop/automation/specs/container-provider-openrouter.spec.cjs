@@ -143,7 +143,7 @@ describe("container provider OpenRouter (desktop e2e)", () => {
 
   it("creates container workspace, installs codex, resolves models, and runs first real turn", async function () {
     this.timeout(20 * 60_000);
-    if (!scenarioEnabled("local-codex-smoke", ["local", "container", "provider"])) this.skip();
+    if (!scenarioEnabled("local-codex-smoke", ["local", "host", "provider"])) this.skip();
 
     const { apiKey, baseUrl, modelOverride } = requiredOpenRouterEnv(DEFAULT_PROVIDER_ID);
     if (!apiKey) {
@@ -160,14 +160,14 @@ describe("container provider OpenRouter (desktop e2e)", () => {
     const workspaceId = await createAndLaunchContainerWorkspace({
       dest,
       name: "openrouter-codex",
-      environment: "container_host_mounted",
+      environment: "sandbox",
       networkMode: "llm_only",
       log: stageLog,
     });
     stageLog("workspace.create.done", `workspaceId=${workspaceId}`);
 
     await assertLocalWorkspaceConfig(workspaceId, {
-      environment: "container_host_mounted",
+      environment: "sandbox",
       networkMode: "llm_only",
     });
 

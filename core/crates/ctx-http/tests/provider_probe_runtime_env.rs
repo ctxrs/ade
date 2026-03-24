@@ -1135,7 +1135,7 @@ async fn provider_options_probe_uses_workspace_runtime_context_for_container_mod
         axum::http::Method::POST,
         format!("/api/workspaces/{}/execution_config", ws.id.0),
         Some(serde_json::json!({
-            "environment": "container_disk_isolated",
+            "environment": "sandbox",
             "network_mode": "all",
         })),
     )

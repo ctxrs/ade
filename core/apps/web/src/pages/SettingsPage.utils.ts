@@ -4,7 +4,7 @@ import { desktopSaveTextFile, isDesktopApp, type DesktopEditorSettings } from ".
 import { SECTIONS } from "./SettingsPage.constants";
 import type { SectionId } from "./SettingsPage.types";
 
-export type WorkspaceExecutionEnvironment = "host" | "container_host_mounted" | "container_disk_isolated";
+export type WorkspaceExecutionEnvironment = "host" | "sandbox";
 export type PromptAutosaveStatus = "idle" | "pending" | "saving" | "saved" | "error";
 export type WorktreeBootstrapConfigLike = {
   setup_command?: string | null;
@@ -18,7 +18,7 @@ export type WorktreeBootstrapFormState = {
 };
 
 export function isContainerizedEnvironment(environment?: WorkspaceExecutionEnvironment | null): boolean {
-  return environment === "container_host_mounted" || environment === "container_disk_isolated";
+  return environment === "sandbox";
 }
 
 export function promptAutosaveStatusLabel(status: PromptAutosaveStatus): string {

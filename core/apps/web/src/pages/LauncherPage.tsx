@@ -332,14 +332,14 @@ function isDaemonManagedLocalContainerPath(path: string): boolean {
 }
 
 function normalizeExecutionEnvironment(value: unknown): LauncherExecutionEnvironment | undefined {
-  if (value === "host" || value === "container_host_mounted" || value === "container_disk_isolated") {
+  if (value === "host" || value === "sandbox") {
     return value;
   }
   return undefined;
 }
 
 function inferLocalExecutionEnvironment(path: string): LauncherExecutionEnvironment {
-  return isDaemonManagedLocalContainerPath(path) ? "container_disk_isolated" : "host";
+  return isDaemonManagedLocalContainerPath(path) ? "sandbox" : "host";
 }
 
 function pathForDisplay(path: string): string {
@@ -362,19 +362,13 @@ function pathForDisplay(path: string): string {
 function recentLocationDisplay(recent: LauncherRecentEntry): { label: string; title: string } {
   if (recent.kind === "local") {
     const env = normalizeExecutionEnvironment(recent.execution_environment) ?? inferLocalExecutionEnvironment(recent.root_path);
-    if (env === "container_disk_isolated") {
+    if (env === "sandbox") {
       return {
-        label: "Local container",
+        label: "Local sandbox",
         title: recent.root_path,
       };
     }
     const displayPath = pathForDisplay(recent.root_path);
-    if (env === "container_host_mounted") {
-      return {
-        label: `${displayPath} (Container)`,
-        title: `${recent.root_path} (Container)`,
-      };
-    }
     return {
       label: `${displayPath} (Host)`,
       title: `${recent.root_path} (Host)`,
@@ -383,22 +377,16 @@ function recentLocationDisplay(recent: LauncherRecentEntry): { label: string; ti
 
   const target = sshTarget(recent);
   const env = normalizeExecutionEnvironment(recent.execution_environment);
-  if (env === "container_disk_isolated") {
+  if (env === "sandbox") {
     return {
-      label: `${target} (Remote container)`,
-      title: `Remote container on ${target}`,
+      label: `${target} (Remote sandbox)`,
+      title: `Remote sandbox on ${target}`,
     };
   }
 
   const workspaceRootPath = String(recent.workspace_root_path ?? "").trim();
   if (workspaceRootPath) {
     const displayPath = pathForDisplay(workspaceRootPath);
-    if (env === "container_host_mounted") {
-      return {
-        label: `${target}:${displayPath} (Container)`,
-        title: `${target}:${workspaceRootPath} (Container)`,
-      };
-    }
     return {
       label: `${target}:${displayPath} (Host)`,
       title: `${target}:${workspaceRootPath} (Host)`,

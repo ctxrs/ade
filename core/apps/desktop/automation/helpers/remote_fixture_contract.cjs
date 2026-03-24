@@ -54,7 +54,7 @@ const LANE_ENV_NAMES = {
     sshConfigPath: ["CTX_AUTOMATION_REMOTE_FIXTURE_SSH_CONFIG"],
     sshPort: ["CTX_AUTOMATION_REMOTE_SSH_PORT"],
   },
-  container: {
+  sandbox: {
     host: ["CTX_AUTOMATION_REMOTE_CONTAINER_HOST", "CTX_AUTOMATION_REMOTE_HOST"],
     user: ["CTX_AUTOMATION_REMOTE_CONTAINER_USER", "CTX_AUTOMATION_REMOTE_USER"],
     port: ["CTX_AUTOMATION_REMOTE_CONTAINER_PORT", "CTX_AUTOMATION_REMOTE_PORT"],
@@ -107,7 +107,7 @@ const resolveRemoteFixtureEnv = ({
   env = process.env,
   defaultPort = 44099,
 } = {}) => {
-  const laneKey = lane === "container" ? "container" : "host";
+  const laneKey = lane === "host" ? "host" : "sandbox";
   const names = LANE_ENV_NAMES[laneKey];
   const hostMatch = firstPresentEnv(env, names.host);
   const userMatch = firstPresentEnv(env, names.user);

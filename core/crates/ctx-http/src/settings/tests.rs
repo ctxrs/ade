@@ -22,13 +22,12 @@ fn container_machine_defaults_are_stable() {
     #[cfg(target_os = "macos")]
     {
         assert_eq!(settings.runtime, ContainerRuntimeKind::AvfLinuxVm);
-        assert_eq!(settings.mount_mode, ContainerMountMode::DiskIsolated);
     }
     #[cfg(not(target_os = "macos"))]
     {
         assert_eq!(settings.runtime, ContainerRuntimeKind::Podman);
-        assert_eq!(settings.mount_mode, ContainerMountMode::HostMounted);
     }
+    assert_eq!(settings.mount_mode, ContainerMountMode::DiskIsolated);
     assert_eq!(
         settings.machine.memory_profile,
         ContainerMachineMemoryProfile::Economy
@@ -46,10 +45,10 @@ fn container_machine_defaults_are_stable() {
 }
 
 #[test]
-fn normalize_container_execution_settings_coerces_avf_to_disk_isolated() {
+fn normalize_container_execution_settings_coerces_legacy_mount_mode_to_disk_isolated() {
     let mut settings = ContainerExecutionSettings {
         runtime: ContainerRuntimeKind::AvfLinuxVm,
-        mount_mode: ContainerMountMode::HostMounted,
+        mount_mode: ContainerMountMode::Legacy,
         ..ContainerExecutionSettings::default()
     };
 
@@ -59,7 +58,7 @@ fn normalize_container_execution_settings_coerces_avf_to_disk_isolated() {
 }
 
 #[test]
-fn apply_update_coerces_avf_to_disk_isolated() {
+fn apply_update_coerces_legacy_mount_mode_to_disk_isolated() {
     let next = apply_update(
         Settings::default(),
         UpdateSettingsReq {
@@ -77,7 +76,7 @@ fn apply_update_coerces_avf_to_disk_isolated() {
                 mode: ExecutionMode::Container,
                 container: ContainerExecutionSettings {
                     runtime: ContainerRuntimeKind::AvfLinuxVm,
-                    mount_mode: ContainerMountMode::HostMounted,
+                    mount_mode: ContainerMountMode::Legacy,
                     ..ContainerExecutionSettings::default()
                 },
             }),

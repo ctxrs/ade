@@ -220,7 +220,7 @@ async fn disk_isolated_smoke_podman_volume_buffers_terminal() {
             ws.id.0
         ))
         .json(&json!({
-            "environment": "container_disk_isolated",
+            "environment": "sandbox",
             "network_mode": "all",
         }))
         .send()

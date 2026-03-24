@@ -69,7 +69,7 @@ fn test_workspace(id: WorkspaceId) -> Workspace {
 fn podman_container_settings() -> crate::settings::ContainerExecutionSettings {
     crate::settings::ContainerExecutionSettings {
         runtime: ContainerRuntimeKind::Podman,
-        mount_mode: crate::settings::ContainerMountMode::HostMounted,
+        mount_mode: crate::settings::ContainerMountMode::DiskIsolated,
         ..Default::default()
     }
 }
@@ -190,6 +190,13 @@ fn write_ready_runtime_podman_shim(dir: &Path) -> PathBuf {
             .expect("chmod ready runtime podman shim");
     }
     path
+}
+
+fn with_workspace_volume_support(script: String) -> String {
+    script.replace(
+        "if [ \"$1\" = \"container\" ]",
+        "if [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ]; then\n  suffix=${2#ctx-harness-}\n  printf '[{\"Mounts\":[{\"Type\":\"volume\",\"Name\":\"ctx-ws-%s\",\"Destination\":\"/ctx/ws\"}]}]\\n' \"$suffix\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ]",
+    )
 }
 
 async fn save_test_execution_settings(data_root: &Path, execution: ExecutionSettings) {
@@ -1130,12 +1137,12 @@ async fn successful_workspace_launch_writes_missing_prewarm_metadata() {
     let podman_path = data_dir.path().join("podman.sh");
     std::fs::write(
         &podman_path,
-        format!(
+        with_workspace_volume_support(format!(
             "#!/bin/sh\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
             started = machine_started.display(),
             image_present = image_present.display(),
             container = container_name,
-        ),
+        )),
     )
     .expect("write podman shim");
     std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
@@ -1250,13 +1257,13 @@ async fn successful_workspace_launch_refresh_clears_stale_prewarm_metadata() {
     let podman_path = data_dir.path().join("podman.sh");
     std::fs::write(
         &podman_path,
-        format!(
+        with_workspace_volume_support(format!(
             "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             started = machine_started.display(),
             image_present = image_present.display(),
             container = container_name,
-        ),
+        )),
     )
     .expect("write podman shim");
     std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
@@ -1378,12 +1385,12 @@ async fn successful_workspace_launch_refreshes_prewarm_metadata_when_image_ref_c
     let podman_path = data_dir.path().join("podman.sh");
     std::fs::write(
         &podman_path,
-        format!(
+        with_workspace_volume_support(format!(
             "#!/bin/sh\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
             started = machine_started.display(),
             image_present = image_present.display(),
             container = container_name,
-        ),
+        )),
     )
     .expect("write podman shim");
     std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
@@ -1466,12 +1473,12 @@ async fn workspace_override_image_does_not_clobber_startup_prewarm_metadata() {
     let override_image = "ghcr.io/ctxrs/custom-harness:test";
     std::fs::write(
         &podman_path,
-        format!(
+        with_workspace_volume_support(format!(
             "#!/bin/sh\nSTARTED=\"{started}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ] && [ \"$4\" = \"{override_image}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
             started = machine_started.display(),
             container = container_name,
             override_image = override_image,
-        ),
+        )),
     )
     .expect("write podman shim");
     std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
@@ -1726,12 +1733,12 @@ async fn workspace_launch_waits_for_running_startup_prewarm_without_duplicate_ru
         install_test_managed_machine_cache_source(vec![1, 2, 3]).await;
     std::fs::write(
             &podman_path,
-            format!(
+            with_workspace_volume_support(format!(
                 "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
                 log = log_path.display(),
                 started = machine_started.display(),
                 container = container_name,
-            ),
+            )),
         )
         .expect("write podman shim");
     std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
@@ -1829,13 +1836,13 @@ async fn workspace_launch_reuses_active_runtime_prewarm_without_second_image_loa
     let podman_path = data_dir.path().join("podman.sh");
     std::fs::write(
         &podman_path,
-        format!(
+        with_workspace_volume_support(format!(
             "#!/bin/sh\nLOG=\"{log}\"\nLOAD_RELEASE=\"{load_release}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  while [ ! -f \"$LOAD_RELEASE\" ]; do\n    sleep 0.05\n  done\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             load_release = load_release.display(),
             image_present = image_present.display(),
             container = container_name,
-        ),
+        )),
     )
     .expect("write podman shim");
     std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
@@ -1934,13 +1941,13 @@ async fn workspace_launch_reuses_startup_prewarm_without_second_image_load_when_
     let podman_path = data_dir.path().join("podman.sh");
     std::fs::write(
         &podman_path,
-        format!(
+        with_workspace_volume_support(format!(
             "#!/bin/sh\nLOG=\"{log}\"\nLOAD_RELEASE=\"{load_release}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  while [ ! -f \"$LOAD_RELEASE\" ]; do\n    sleep 0.05\n  done\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             load_release = load_release.display(),
             image_present = image_present.display(),
             container = container_name,
-        ),
+        )),
     )
     .expect("write podman shim");
     std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
@@ -2044,12 +2051,12 @@ async fn workspace_launch_joining_startup_prewarm_starts_machine_before_creating
         install_test_managed_machine_cache_source(vec![1, 2, 3]).await;
     std::fs::write(
         &podman_path,
-        format!(
+        with_workspace_volume_support(format!(
             "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             started = machine_started.display(),
             container = container_name,
-        ),
+        )),
     )
     .expect("write podman shim");
     std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
@@ -2466,13 +2473,13 @@ async fn workspace_launch_does_not_wait_for_downloads_only_runtime_prewarm_when_
     let podman_path = data_dir.path().join("podman.sh");
     std::fs::write(
         &podman_path,
-        format!(
+        with_workspace_volume_support(format!(
             "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             started = machine_started.display(),
             image_present = image_present.display(),
             container = container_name,
-        ),
+        )),
     )
     .expect("write podman shim");
     std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
@@ -2557,11 +2564,11 @@ async fn workspace_launch_reuses_existing_container_without_waiting_for_startup_
     let container_name = format!("ctx-harness-{}", workspace.id.0);
     std::fs::write(
         &podman_path,
-        format!(
+        with_workspace_volume_support(format!(
             "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             container = container_name,
-        ),
+        )),
     )
     .expect("write podman shim");
     std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
@@ -2735,12 +2742,12 @@ async fn workspace_launch_falls_back_when_downloads_only_startup_prewarm_fails()
         install_test_managed_machine_cache_source(vec![1, 2, 3]).await;
     std::fs::write(
         &podman_path,
-        format!(
+        with_workspace_volume_support(format!(
             "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             started = machine_started.display(),
             container = container_name,
-        ),
+        )),
     )
     .expect("write podman shim");
     std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))

@@ -375,7 +375,7 @@ describe("recent workspace open automation", () => {
     const updateConfigResp = await daemonJson(
       "POST",
       `/api/workspaces/${workspaceId}/execution_config`,
-      { environment: "container_disk_isolated" },
+      { environment: "sandbox" },
     );
     if (updateConfigResp.status !== 200) {
       throw new Error(`execution config update failed: ${JSON.stringify(updateConfigResp)}`);
@@ -386,7 +386,7 @@ describe("recent workspace open automation", () => {
         kind: "local",
         label: "Recent Container Workspace",
         root_path: repo.root,
-        execution_environment: "container_disk_isolated",
+        execution_environment: "sandbox",
         updated_at_ms: Date.now(),
       },
     ]);

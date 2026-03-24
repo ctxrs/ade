@@ -12,7 +12,7 @@ use crate::container_fs::is_container_path;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::harness_runtime;
-use crate::settings::{ContainerMountMode, ContainerRuntimeKind, ExecutionMode};
+use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::terminals::{AvfLinuxTerminalSpec, PodmanTerminalSpec, TerminalCreateRequest};
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::TerminalSession;
@@ -87,12 +87,6 @@ async fn infer_avf_terminal_worktree(
     }
 
     None
-}
-
-fn avf_guest_worktree_root(worktree_id: WorktreeId) -> PathBuf {
-    PathBuf::from(harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT)
-        .join("worktrees")
-        .join(worktree_id.0.to_string())
 }
 
 pub(super) async fn create_workspace_terminal(
@@ -259,65 +253,28 @@ pub(super) async fn create_workspace_terminal(
             .as_ref()
             .map(|root| is_container_path(root))
             .unwrap_or(false);
-    let avf_guest_worktree_root = if container_mode
-        && matches!(
-            effective.container.runtime,
-            ContainerRuntimeKind::AvfLinuxVm
-        ) {
-        worktree.as_ref().map(|wt| avf_guest_worktree_root(wt.id))
-    } else {
-        None
-    };
-    let container_workspace_root = match effective.container.mount_mode {
-        ContainerMountMode::DiskIsolated => {
-            PathBuf::from(harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT)
-        }
-        // Host-mounted uses host paths directly inside the container.
-        ContainerMountMode::HostMounted => workspace_root.clone(),
-    };
+    let container_workspace_root = PathBuf::from(harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT);
 
     let cwd = if container_mode {
-        let fallback = avf_guest_worktree_root
+        let fallback = worktree_root
             .clone()
-            .or_else(|| worktree_root.clone())
             .unwrap_or_else(|| container_workspace_root.clone());
         if let Some(requested) = requested_cwd.as_ref() {
             let requested_str = requested.to_string_lossy().to_string();
-            let resolved = if let (Some(host_root), Some(guest_root)) =
-                (worktree_root.as_ref(), avf_guest_worktree_root.as_ref())
-            {
-                BufferStore::resolve_path_lexical(host_root, &requested_str)
-                    .ok()
-                    .and_then(|resolved_host| {
-                        resolved_host.strip_prefix(host_root).ok().map(|suffix| {
-                            if suffix.as_os_str().is_empty() {
-                                guest_root.clone()
-                            } else {
-                                guest_root.join(suffix)
-                            }
-                        })
-                    })
-                    .or_else(|| BufferStore::resolve_path_lexical(guest_root, &requested_str).ok())
-                    .or_else(|| {
-                        BufferStore::resolve_path_lexical(&container_workspace_root, &requested_str)
-                            .ok()
-                    })
-            } else {
-                // Allow cwd within either the worktree root or the container workspace root.
-                worktree_root
-                    .as_ref()
-                    .and_then(|root| BufferStore::resolve_path_lexical(root, &requested_str).ok())
-                    .or_else(|| {
-                        BufferStore::resolve_path_lexical(&container_workspace_root, &requested_str)
-                            .ok()
-                    })
-            }
-            .ok_or((
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "cwd must be within the container worktree/workspace root".to_string(),
-                }),
-            ))?;
+            let resolved = worktree_root
+                .as_ref()
+                .and_then(|root| BufferStore::resolve_path_lexical(root, &requested_str).ok())
+                .or_else(|| {
+                    BufferStore::resolve_path_lexical(&container_workspace_root, &requested_str)
+                        .ok()
+                })
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: "cwd must be within the container worktree/workspace root"
+                            .to_string(),
+                    }),
+                ))?;
             resolved
         } else {
             fallback
@@ -406,31 +363,40 @@ pub(super) async fn create_workspace_terminal(
                 )
             }
             ContainerRuntimeKind::AvfLinuxVm => {
-                let worktree = worktree.as_ref().ok_or((
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: "sandbox terminals require a worktree for the AVF runtime"
-                            .to_string(),
-                    }),
-                ))?;
-                state
-                    .execution
-                    .harness
-                    .ensure_workspace_container_for_worktree(
-                        &workspace,
-                        worktree,
-                        &effective,
-                        &state.core.daemon_url,
-                    )
-                    .await
-                    .map_err(|e| {
-                        (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(ApiErrorResp {
-                                error: format!("failed to ensure AVF workspace VM: {e}"),
-                            }),
+                if let Some(worktree) = worktree.as_ref() {
+                    state
+                        .execution
+                        .harness
+                        .ensure_workspace_container_for_worktree(
+                            &workspace,
+                            worktree,
+                            &effective,
+                            &state.core.daemon_url,
                         )
-                    })?;
+                        .await
+                        .map_err(|e| {
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(ApiErrorResp {
+                                    error: format!("failed to ensure sandbox container: {e}"),
+                                }),
+                            )
+                        })?;
+                } else {
+                    state
+                        .execution
+                        .harness
+                        .ensure_workspace_container(&workspace, &effective, &state.core.daemon_url)
+                        .await
+                        .map_err(|e| {
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(ApiErrorResp {
+                                    error: format!("failed to ensure sandbox container: {e}"),
+                                }),
+                            )
+                        })?;
+                }
                 let helper_path = harness_runtime::avf_linux_helper_path().map_err(|e| {
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -445,7 +411,6 @@ pub(super) async fn create_workspace_terminal(
                         helper_path,
                         data_root: state.core.data_root.clone(),
                         workspace_id,
-                        worktree_id: worktree.id,
                         workdir: cwd.to_string_lossy().to_string(),
                     }),
                 )

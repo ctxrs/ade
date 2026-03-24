@@ -48,6 +48,18 @@ const parsePositiveInt = (raw, fallback) => {
   return n;
 };
 const normalizeText = (value) => String(value || "").trim();
+const normalizeExecutionEnvironment = (value) => {
+  const text = normalizeText(value).toLowerCase();
+  if (text === "container_host_mounted" || text === "host-mounted") return "host";
+  if (text === "container_disk_isolated" || text === "disk-isolated") return "sandbox";
+  return text;
+};
+const containerOptionIdForEnvironment = (value) => {
+  const normalized = normalizeExecutionEnvironment(value);
+  if (normalized === "host") return "host-mounted";
+  if (normalized === "sandbox") return "disk-isolated";
+  return normalizeText(value);
+};
 const REMOTE_PORT = parsePort(process.env.CTX_AUTOMATION_REMOTE_PORT || "44099", 44099);
 const REMOTE_DATA_DIR_RAW = process.env.CTX_AUTOMATION_REMOTE_DATA_DIR || "";
 const CONTAINER_LAUNCH_TIMEOUT_MS = parsePositiveInt(
@@ -298,7 +310,10 @@ const waitForSourceExitOrWorkspaceRoute = async (timeoutMs = 30000) => {
 };
 
 const clickOption = async (stepKey, optionId) => {
-  const id = `wizard-option-${stepKey}-${optionId}`;
+  const resolvedOptionId = stepKey === "container"
+    ? containerOptionIdForEnvironment(optionId)
+    : normalizeText(optionId);
+  const id = `wizard-option-${stepKey}-${resolvedOptionId}`;
   const sel = selectorForTestId(id);
 
   const readState = async () => {
@@ -387,7 +402,7 @@ const clickOption = async (stepKey, optionId) => {
 };
 
 const ensureContainerOptionVisible = async (optionId, timeoutMs = 15000) => {
-  const optionSelector = `[data-testid="wizard-option-container-${optionId}"]`;
+  const optionSelector = `[data-testid="wizard-option-container-${containerOptionIdForEnvironment(optionId)}"]`;
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const state = await browser.execute((selector) => {
@@ -1052,11 +1067,8 @@ const runProviderFirstTurnApiSmoke = async (
     }
     sessionExecutionEnvironment = normalizeText(executionConfigResp.payload?.environment);
   }
-  if (
-    sessionExecutionEnvironment !== "host"
-    && sessionExecutionEnvironment !== "container_host_mounted"
-    && sessionExecutionEnvironment !== "container_disk_isolated"
-  ) {
+  sessionExecutionEnvironment = normalizeExecutionEnvironment(sessionExecutionEnvironment);
+  if (sessionExecutionEnvironment !== "host" && sessionExecutionEnvironment !== "sandbox") {
     throw new Error(`unsupported execution environment for session create: ${sessionExecutionEnvironment || "<missing>"}`);
   }
 
@@ -1894,8 +1906,12 @@ const assertLocalWorkspaceConfig = async (workspaceId, expectations) => {
   }
   const cfg = resp.payload || {};
 
-  if (expectations.environment && cfg.environment !== expectations.environment) {
-    throw new Error(`expected execution.environment=${expectations.environment}, got ${cfg.environment || "<missing>"}`);
+  if (expectations.environment) {
+    const expectedEnvironment = normalizeExecutionEnvironment(expectations.environment);
+    const actualEnvironment = normalizeExecutionEnvironment(cfg.environment);
+    if (actualEnvironment !== expectedEnvironment) {
+      throw new Error(`expected execution.environment=${expectedEnvironment}, got ${actualEnvironment || "<missing>"}`);
+    }
   }
 
   if (expectations.networkMode) {
@@ -2363,6 +2379,7 @@ module.exports = {
   waitForLaunchLogsOrWorkspaceRoute,
   finalizeWizardSuccess,
   assertLocalWorkspaceConfig,
+  normalizeExecutionEnvironment,
   shSingleQuote,
   sshArgs,
   ssh,

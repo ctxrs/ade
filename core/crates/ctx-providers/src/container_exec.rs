@@ -111,7 +111,7 @@ pub fn build_container_exec_command(
             helper_path,
             data_root,
             workspace_id,
-            worktree_id,
+            worktree_id: _,
             host_worktree_root,
             guest_worktree_root,
             guest_workspace_root,
@@ -124,20 +124,24 @@ pub fn build_container_exec_command(
                 guest_workspace_root,
             )?;
             let mut cmd = Command::new(helper_path);
-            cmd.arg("guest-exec")
+            cmd.arg("shared-vm-exec")
                 .arg("--data-root")
                 .arg(data_root)
-                .arg("--workspace-id")
-                .arg(workspace_id)
-                .arg("--worktree-id")
-                .arg(worktree_id)
                 .arg("--cwd")
-                .arg(&guest_cwd)
+                .arg("/")
                 .arg("--command")
-                .arg(command);
+                .arg("podman")
+                .arg("--user")
+                .arg("root");
+            for (key, value) in podman_env_for_data_root(&data_root.to_string_lossy()) {
+                cmd.arg("--env").arg(format!("{key}={value}"));
+            }
+            cmd.arg("--");
+            cmd.arg("exec").arg("--interactive");
             if let Some(user) = user.as_deref() {
                 cmd.arg("--user").arg(user);
             }
+            cmd.arg("--workdir").arg(&guest_cwd);
             for (k, v) in env {
                 if should_skip_linux_exec_env_key(spec, k) {
                     continue;
@@ -146,7 +150,8 @@ pub fn build_container_exec_command(
                     .with_context(|| format!("rewriting container env {k} for linux execution"))?;
                 cmd.arg("--env").arg(format!("{k}={rewritten}"));
             }
-            cmd.arg("--");
+            cmd.arg(format!("ctx-harness-{workspace_id}"));
+            cmd.arg(command);
             cmd.args(args);
             Ok(cmd)
         }
@@ -168,14 +173,8 @@ fn resolve_avf_guest_cwd(
     guest_worktree_root: &Path,
     guest_workspace_root: &Path,
 ) -> Result<PathBuf> {
-    if workdir == guest_workspace_root {
-        return Ok(guest_worktree_root.to_path_buf());
-    }
     if workdir.starts_with(guest_workspace_root) {
-        let relative = workdir
-            .strip_prefix(guest_workspace_root)
-            .context("mapping guest workspace cwd for AVF execution")?;
-        return Ok(join_guest_relative(guest_worktree_root, relative));
+        return Ok(workdir.to_path_buf());
     }
     if workdir == host_worktree_root {
         return Ok(guest_worktree_root.to_path_buf());
@@ -554,14 +553,14 @@ mod tests {
             "/usr/bin/env",
             &["--version".to_string()],
         )
-        .expect("build AVF guest-exec command");
+        .expect("build AVF shared-vm container exec command");
 
         let args = cmd
             .as_std()
             .get_args()
             .map(|arg| arg.to_string_lossy().to_string())
             .collect::<Vec<_>>();
-        assert_eq!(args.first().map(String::as_str), Some("guest-exec"));
+        assert_eq!(args.first().map(String::as_str), Some("shared-vm-exec"));
         assert!(
             args.windows(2).any(|window| window[0] == "--data-root"
                 && window[1] == tmp.path().join("ctx-data-root").to_string_lossy()),
@@ -569,29 +568,34 @@ mod tests {
         );
         assert!(
             args.windows(2)
-                .any(|window| window[0] == "--workspace-id" && window[1] == "ws-123"),
-            "missing --workspace-id in args: {args:?}"
+                .any(|window| { window[0] == "--command" && window[1] == "podman" }),
+            "missing shared-vm podman command in args: {args:?}"
         );
         assert!(
             args.windows(2)
-                .any(|window| window[0] == "--worktree-id" && window[1] == "wt-456"),
-            "missing --worktree-id in args: {args:?}"
-        );
-        assert!(
-            args.windows(2).any(|window| {
-                window[0] == "--cwd" && window[1] == "/ctx/ws/worktrees/wt-456/src"
-            }),
-            "missing translated --cwd in args: {args:?}"
-        );
-        assert!(
-            args.windows(2)
-                .any(|window| window[0] == "--command" && window[1] == "/usr/bin/env"),
-            "missing --command in args: {args:?}"
+                .any(|window| window[0] == "--cwd" && window[1] == "/"),
+            "missing shared-vm cwd in args: {args:?}"
         );
         assert!(
             args.windows(2)
                 .any(|window| window[0] == "--user" && window[1] == "ctx-ws-123"),
-            "missing --user in args: {args:?}"
+            "missing container user in args: {args:?}"
+        );
+        assert!(
+            args.windows(2).any(|window| {
+                window[0] == "--workdir" && window[1] == "/ctx/ws/worktrees/wt-456/src"
+            }),
+            "missing translated --workdir in args: {args:?}"
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window[0] == "--" && window[1] == "exec"),
+            "missing podman exec boundary in args: {args:?}"
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window[0] == "ctx-harness-ws-123" && window[1] == "/usr/bin/env"),
+            "missing container name and command in args: {args:?}"
         );
         assert!(
             args.windows(2).any(|window| {
@@ -614,9 +618,8 @@ mod tests {
             "missing rewritten DROID_PATH env in args: {args:?}"
         );
         assert!(
-            args.windows(2)
-                .any(|window| window[0] == "--" && window[1] == "--version"),
-            "missing passthrough argument boundary in args: {args:?}"
+            args.iter().any(|arg| arg == "--version"),
+            "missing passthrough argument in args: {args:?}"
         );
     }
 }

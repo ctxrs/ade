@@ -495,7 +495,7 @@ pub(in crate::api) struct UpdateExecutionConfigReq {
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct WorkspaceExecutionConfigResp {
     source: String,               // "workspace" | "daemon_default"
-    environment: String,          // "host" | "container_host_mounted" | "container_disk_isolated"
+    environment: String,          // "host" | "sandbox"
     network_mode: Option<String>, // "llm_only" | "allowlist" | "all"
     allowlist: Option<Vec<String>>,
 }
@@ -562,16 +562,9 @@ pub(in crate::api) async fn get_execution_config(
         }
     }
 
-    let environment = match (&effective.mode, &effective.container.mount_mode) {
-        (crate::settings::ExecutionMode::Host, _) => "host",
-        (
-            crate::settings::ExecutionMode::Container,
-            crate::settings::ContainerMountMode::HostMounted,
-        ) => "container_host_mounted",
-        (
-            crate::settings::ExecutionMode::Container,
-            crate::settings::ContainerMountMode::DiskIsolated,
-        ) => "container_disk_isolated",
+    let environment = match effective.mode {
+        crate::settings::ExecutionMode::Host => "host",
+        crate::settings::ExecutionMode::Container => "sandbox",
     }
     .to_string();
     let network_mode = match effective.container.network_mode {
@@ -623,22 +616,7 @@ pub(in crate::api) async fn update_execution_config(
 
     let environment = match req.environment.trim() {
         "host" => crate::workspace_config::ExecutionEnvironment::Host,
-        "container_host_mounted" => {
-            #[cfg(target_os = "macos")]
-            {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: "container_host_mounted is not available in the macOS beta; use container_disk_isolated or host".to_string(),
-                    }),
-                ));
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                crate::workspace_config::ExecutionEnvironment::ContainerHostMounted
-            }
-        }
-        "container_disk_isolated" => {
+        "sandbox" => {
             #[cfg(target_os = "macos")]
             {
                 if !crate::workspace_runtime::local_runtime_available(
@@ -653,14 +631,13 @@ pub(in crate::api) async fn update_execution_config(
                     ));
                 }
             }
-            crate::workspace_config::ExecutionEnvironment::ContainerDiskIsolated
+            crate::workspace_config::ExecutionEnvironment::Sandbox
         }
         _ => {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(ApiErrorResp {
-                    error: "invalid environment (expected host|container_host_mounted|container_disk_isolated)"
-                        .to_string(),
+                    error: "invalid environment (expected host|sandbox)".to_string(),
                 }),
             ));
         }

@@ -31,24 +31,69 @@ impl HarnessRuntimeManager {
                 env_overrides,
             });
         }
-        if matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm) {
-            let _activity = self.begin_runtime_operation();
-            let (workspace_vm, guest_worktree_root, egress_guard) = self
-                .ensure_avf_linux_workspace_worktree_ready_with_observer(
-                    workspace, worktree, settings, daemon_url, None,
-                )
-                .await?;
-            let avf_data_root = container_data_root(&self.data_root, workspace.id);
-            tokio::fs::create_dir_all(&avf_data_root).await.ok();
+        let _activity = self.begin_runtime_operation();
+        if !matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm) {
+            let podman_bin = ensure_managed_podman_runtime(&self.data_root, None, None)
+                .await
+                .context("podman unavailable and execution mode is container")?;
             env_overrides.insert(
-                "CTX_DATA_ROOT".to_string(),
-                avf_data_root.to_string_lossy().to_string(),
+                PODMAN_PATH_ENV.to_string(),
+                podman_bin.to_string_lossy().to_string(),
             );
-            env_overrides.insert(
-                CTX_HARNESS_RUNTIME_KIND_ENV.to_string(),
-                "avf_linux_vm".to_string(),
-            );
-            env_overrides.insert(CTX_HARNESS_LINUX_SANDBOX_ENV.to_string(), "1".to_string());
+        }
+
+        let avf = matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm);
+        let proxy_host = if avf {
+            AVF_GUEST_HOST_GATEWAY
+        } else {
+            "host.containers.internal"
+        };
+        let daemon_port = daemon_port_from_url(daemon_url).unwrap_or(4399);
+        let container = self
+            .ensure_container(
+                workspace,
+                Some(worktree),
+                &settings.container,
+                proxy_host,
+                daemon_port,
+                None,
+            )
+            .await
+            .map_err(|err| anyhow::anyhow!("container runtime failed: {err:#}"))?;
+
+        let container_data_root = container_data_root(&self.data_root, workspace.id);
+        tokio::fs::create_dir_all(&container_data_root).await.ok();
+        env_overrides.insert(
+            "CTX_DATA_ROOT".to_string(),
+            container_data_root.to_string_lossy().to_string(),
+        );
+        env_overrides.insert(
+            CTX_HARNESS_RUNTIME_KIND_ENV.to_string(),
+            if avf {
+                "avf_linux_vm".to_string()
+            } else {
+                "podman_container".to_string()
+            },
+        );
+        env_overrides.insert(CTX_HARNESS_LINUX_SANDBOX_ENV.to_string(), "1".to_string());
+
+        let daemon_url = if avf {
+            resolve_daemon_url_for_avf_guest(daemon_url).await?
+        } else {
+            rewrite_daemon_url_for_container(daemon_url, proxy_host)
+        };
+        env_overrides.insert("CTX_DAEMON_URL".to_string(), daemon_url);
+
+        env_overrides.insert(
+            "CTX_HARNESS_CONTAINER_ID".to_string(),
+            container.name.clone(),
+        );
+        if let Some(user) = container_user() {
+            env_overrides.insert("CTX_HARNESS_CONTAINER_USER".to_string(), user);
+        }
+
+        if avf {
+            let workspace_vm = avf_linux_workspace_vm_state(&self.data_root, workspace.id)?;
             env_overrides.insert(
                 "CTX_HARNESS_GUEST_WORKSPACE_ROOT".to_string(),
                 CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
@@ -85,11 +130,7 @@ impl HarnessRuntimeManager {
             );
             env_overrides.insert(
                 "CTX_AVF_GUEST_WORKTREE_ROOT".to_string(),
-                guest_worktree_root.to_string_lossy().to_string(),
-            );
-            env_overrides.insert(
-                "CTX_DAEMON_URL".to_string(),
-                resolve_daemon_url_for_avf_guest(daemon_url).await?,
+                worktree.root_path.clone(),
             );
             if let Some(log_path) = workspace_vm.log_path.as_ref() {
                 env_overrides.insert(
@@ -97,74 +138,15 @@ impl HarnessRuntimeManager {
                     log_path.to_string_lossy().to_string(),
                 );
             }
-            {
-                let mut containers = self.containers.lock().await;
-                containers.insert(
-                    workspace.id,
-                    HarnessContainer {
-                        name: format!("ctx-avf-linux-vm-{}", workspace.id.0),
-                        mount_mode: settings.container.mount_mode.clone(),
-                        network_mode: settings.container.network_mode.clone(),
-                        allowlist: settings.container.allowlist.clone(),
-                        external_mounts: HashSet::new(),
-                        egress_guard,
-                    },
-                );
-            }
-            return Ok(HarnessExecutionPlan {
-                runtime: HarnessRuntimeKind::AvfLinuxVm,
-                env_overrides,
-            });
-        }
-        let _activity = self.begin_runtime_operation();
-        let podman_bin = ensure_managed_podman_runtime(&self.data_root, None, None)
-            .await
-            .context("podman unavailable and execution mode is container")?;
-        env_overrides.insert(
-            PODMAN_PATH_ENV.to_string(),
-            podman_bin.to_string_lossy().to_string(),
-        );
-
-        let proxy_host = "host.containers.internal";
-        let daemon_port = daemon_port_from_url(daemon_url).unwrap_or(4399);
-        let container = self
-            .ensure_container(
-                workspace,
-                Some(worktree),
-                &settings.container,
-                proxy_host,
-                daemon_port,
-                None,
-            )
-            .await
-            .map_err(|err| anyhow::anyhow!("container runtime failed: {err:#}"))?;
-
-        let container_data_root = container_data_root(&self.data_root, workspace.id);
-        tokio::fs::create_dir_all(&container_data_root).await.ok();
-        env_overrides.insert(
-            "CTX_DATA_ROOT".to_string(),
-            container_data_root.to_string_lossy().to_string(),
-        );
-        env_overrides.insert(
-            CTX_HARNESS_RUNTIME_KIND_ENV.to_string(),
-            "podman_container".to_string(),
-        );
-        env_overrides.insert(CTX_HARNESS_LINUX_SANDBOX_ENV.to_string(), "1".to_string());
-
-        let daemon_url = rewrite_daemon_url_for_container(daemon_url, proxy_host);
-        env_overrides.insert("CTX_DAEMON_URL".to_string(), daemon_url);
-
-        env_overrides.insert(
-            "CTX_HARNESS_CONTAINER_ID".to_string(),
-            container.name.clone(),
-        );
-        if let Some(user) = container_user() {
-            env_overrides.insert("CTX_HARNESS_CONTAINER_USER".to_string(), user);
         }
 
         Ok(HarnessExecutionPlan {
-            runtime: HarnessRuntimeKind::Container {
-                name: container.name,
+            runtime: if avf {
+                HarnessRuntimeKind::AvfLinuxVm
+            } else {
+                HarnessRuntimeKind::Container {
+                    name: container.name,
+                }
             },
             env_overrides,
         })
@@ -196,19 +178,12 @@ impl HarnessRuntimeManager {
     pub async fn ensure_workspace_container_for_worktree_with_observer(
         &self,
         workspace: &Workspace,
-        worktree: &Worktree,
+        _worktree: &Worktree,
         settings: &ExecutionSettings,
         daemon_url: &str,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<()> {
         if matches!(settings.mode, ExecutionMode::Host) {
-            return Ok(());
-        }
-        if matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm) {
-            self.ensure_avf_linux_workspace_worktree_ready_with_observer(
-                workspace, worktree, settings, daemon_url, observer,
-            )
-            .await?;
             return Ok(());
         }
         self.ensure_workspace_container_with_observer(workspace, settings, daemon_url, observer)
@@ -229,17 +204,6 @@ impl HarnessRuntimeManager {
         self.ensure_container_machine_ready(&settings.container, observer)
             .await
             .context("local sandbox runtime is unavailable")?;
-        if matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm) {
-            ensure_avf_linux_workspace_vm_ready_with_observer(
-                &self.data_root,
-                workspace.id,
-                &settings.container,
-                observer,
-            )
-            .await
-            .context("AVF Linux workspace VM is unavailable")?;
-            return Ok(());
-        }
         self.ensure_workspace_container_after_machine_ready_with_observer(
             workspace, settings, daemon_url, observer,
         )
@@ -274,7 +238,7 @@ impl HarnessRuntimeManager {
         if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(());
         }
-        if matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm) {
+        let proxy_host = if matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm) {
             ensure_avf_linux_workspace_vm_ready_with_observer(
                 &self.data_root,
                 workspace.id,
@@ -283,9 +247,10 @@ impl HarnessRuntimeManager {
             )
             .await
             .context("AVF Linux workspace VM is unavailable")?;
-            return Ok(());
-        }
-        let proxy_host = "host.containers.internal";
+            AVF_GUEST_HOST_GATEWAY
+        } else {
+            "host.containers.internal"
+        };
         let daemon_port = daemon_port_from_url(daemon_url).unwrap_or(4399);
         let _ = self
             .ensure_container_after_machine_ready(EnsureContainerRequest {
@@ -299,56 +264,6 @@ impl HarnessRuntimeManager {
             })
             .await?;
         Ok(())
-    }
-
-    async fn ensure_avf_linux_workspace_worktree_ready_with_observer(
-        &self,
-        workspace: &Workspace,
-        worktree: &Worktree,
-        settings: &ExecutionSettings,
-        daemon_url: &str,
-        observer: Option<&dyn HarnessSetupObserver>,
-    ) -> Result<(self::avf_linux_vm::AvfLinuxSharedVmState, PathBuf, bool)> {
-        self.ensure_workspace_container_with_observer(workspace, settings, daemon_url, observer)
-            .await?;
-        if !matches!(
-            settings.container.mount_mode,
-            ContainerMountMode::DiskIsolated
-        ) {
-            anyhow::bail!(
-                "AVF Linux VM host-mounted workspaces are not implemented yet; use disk-isolated mode"
-            );
-        }
-        let workspace_vm = ensure_avf_linux_workspace_vm_ready_with_observer(
-            &self.data_root,
-            workspace.id,
-            &settings.container,
-            observer,
-        )
-        .await?;
-        let guest_worktree = ensure_avf_linux_guest_worktree_from_host_copy(
-            &self.data_root,
-            workspace.id,
-            worktree.id,
-            Path::new(&workspace.root_path),
-            &worktree.base_commit_sha,
-            &avf_linux_branch_name_for_worktree(workspace, worktree),
-            observer,
-        )
-        .await?;
-        let daemon_port = daemon_port_from_url(daemon_url).unwrap_or(4399);
-        let egress_guard = apply_avf_linux_network_policy(
-            &self.data_root,
-            workspace.id,
-            worktree.id,
-            &guest_worktree.guest_root,
-            &settings.container,
-            AVF_GUEST_HOST_GATEWAY,
-            daemon_port,
-        )
-        .await?
-        .egress_guard;
-        Ok((workspace_vm, guest_worktree.guest_root, egress_guard))
     }
 
     pub async fn ensure_workspace_container_after_runtime_ready_with_observer(
@@ -504,39 +419,7 @@ impl HarnessRuntimeManager {
                 egress_guard,
             }));
         }
-
-        let state = match avf_linux_workspace_vm_state(&self.data_root, workspace_id) {
-            Ok(state) => state,
-            Err(_) => return Ok(None),
-        };
-        if matches!(
-            state.state,
-            avf_linux_vm::AvfLinuxSharedVmLifecycleState::Missing
-        ) {
-            return Ok(None);
-        }
-        let container = {
-            let containers = self.containers.lock().await;
-            containers.get(&workspace_id).cloned()
-        };
-        Ok(Some(HarnessContainerStatus {
-            name: format!("ctx-avf-linux-vm-{}", workspace_id.0),
-            running: matches!(
-                state.state,
-                avf_linux_vm::AvfLinuxSharedVmLifecycleState::Running
-            ),
-            known: true,
-            mount_mode: container
-                .as_ref()
-                .map(|value| value.mount_mode.clone())
-                .or(Some(ContainerMountMode::DiskIsolated)),
-            network_mode: container.as_ref().map(|value| value.network_mode.clone()),
-            allowlist: container
-                .as_ref()
-                .map(|value| value.allowlist.clone())
-                .unwrap_or_default(),
-            egress_guard: container.as_ref().map(|value| value.egress_guard),
-        }))
+        Ok(None)
     }
 
     pub async fn stop_container(&self, workspace_id: WorkspaceId) -> Result<bool> {
@@ -575,23 +458,9 @@ impl HarnessRuntimeManager {
             }
         }
 
-        let state = match avf_linux_workspace_vm_state(&self.data_root, workspace_id) {
-            Ok(state) => state,
-            Err(_) => return Ok(false),
-        };
-        if matches!(
-            state.state,
-            avf_linux_vm::AvfLinuxSharedVmLifecycleState::Missing
-        ) {
-            return Ok(false);
-        }
-        let stopped = stop_avf_linux_workspace_vm(&self.data_root, workspace_id)?;
         let mut containers = self.containers.lock().await;
         containers.remove(&workspace_id);
-        Ok(!matches!(
-            stopped.state,
-            avf_linux_vm::AvfLinuxSharedVmLifecycleState::Missing
-        ))
+        Ok(false)
     }
 
     pub async fn remove_workspace_volume(&self, workspace_id: WorkspaceId) -> Result<bool> {
@@ -635,6 +504,15 @@ impl HarnessRuntimeManager {
     ) -> Result<HarnessContainer> {
         self.ensure_container_machine_ready(settings, observer)
             .await?;
+        if matches!(settings.runtime, ContainerRuntimeKind::AvfLinuxVm) {
+            ensure_avf_linux_workspace_vm_ready_with_observer(
+                &self.data_root,
+                workspace.id,
+                settings,
+                observer,
+            )
+            .await?;
+        }
         self.ensure_container_after_machine_ready(EnsureContainerRequest {
             workspace,
             worktree,

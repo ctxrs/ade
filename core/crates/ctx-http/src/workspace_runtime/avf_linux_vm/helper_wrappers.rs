@@ -49,11 +49,8 @@ pub(crate) fn prepare_runtime_layout(data_root: &Path) -> Result<AvfLinuxRuntime
     invoke_helper_json(&["prepare-runtime-layout", &data_root.to_string_lossy()])
 }
 
-pub(crate) fn workspace_vm_data_root(data_root: &Path, workspace_id: WorkspaceId) -> PathBuf {
-    data_root
-        .join("workspace-vms")
-        .join(AVF_LINUX_GUEST_RUNTIME_ID)
-        .join(workspace_id.0.to_string())
+pub(crate) fn workspace_vm_data_root(data_root: &Path, _workspace_id: WorkspaceId) -> PathBuf {
+    data_root.to_path_buf()
 }
 
 pub(crate) fn shared_vm_state(data_root: &Path) -> Result<AvfLinuxSharedVmState> {
@@ -92,7 +89,7 @@ pub(crate) fn prepare_guest_worktree(
 pub(crate) fn build_guest_exec_command(
     data_root: &Path,
     workspace_id: WorkspaceId,
-    worktree_id: WorktreeId,
+    _worktree_id: WorktreeId,
     cwd: &Path,
     command: &str,
     args: &[String],
@@ -100,33 +97,24 @@ pub(crate) fn build_guest_exec_command(
     user: Option<&str>,
     pty: bool,
 ) -> Result<tokio::process::Command> {
-    let helper = helper_path()?;
-    let vm_data_root = workspace_vm_data_root(data_root, workspace_id);
-    let mut child = tokio::process::Command::new(&helper);
-    child
-        .arg("guest-exec")
-        .arg("--data-root")
-        .arg(vm_data_root)
-        .arg("--workspace-id")
-        .arg(workspace_id.0.to_string())
-        .arg("--worktree-id")
-        .arg(worktree_id.0.to_string())
-        .arg("--cwd")
-        .arg(cwd)
-        .arg("--command")
-        .arg(command);
+    let mut child = super::super::podman_command(data_root)?;
+    child.arg("exec").arg("--interactive");
+    if pty {
+        child.arg("--tty");
+    }
     if let Some(user) = user.map(str::trim).filter(|value| !value.is_empty()) {
         child.arg("--user").arg(user);
     }
-    if pty {
-        child.arg("--pty");
-    }
+    child
+        .arg("--workdir")
+        .arg(cwd)
+        .arg(format!("ctx-harness-{}", workspace_id.0));
     let mut env_pairs = env.iter().collect::<Vec<_>>();
     env_pairs.sort_by(|(left, _), (right, _)| left.cmp(right));
     for (key, value) in env_pairs {
         child.arg("--env").arg(format!("{key}={value}"));
     }
-    child.arg("--");
+    child.arg(command);
     child.args(args);
     Ok(child)
 }
@@ -187,10 +175,14 @@ pub(crate) fn start_workspace_vm(
     start_shared_vm(&vm_data_root, runtime)
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn stop_shared_vm(data_root: &Path) -> Result<AvfLinuxSharedVmState> {
     invoke_helper_json(&["stop-workspace-vm", &data_root.to_string_lossy()])
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn stop_workspace_vm(
     data_root: &Path,
     workspace_id: WorkspaceId,

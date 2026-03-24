@@ -1,4 +1,5 @@
 use super::*;
+use super::helper_wrappers::stop_shared_vm;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;

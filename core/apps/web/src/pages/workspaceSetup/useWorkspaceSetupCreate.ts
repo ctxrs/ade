@@ -507,12 +507,7 @@ export function useWorkspaceSetupCreate({
 
       const environment = selections.container === "no-container"
         ? "host"
-        : selections.container === "host-mounted"
-          ? "container_host_mounted"
-          : "container_disk_isolated";
-      if (selections.container === "host-mounted") {
-        throw new Error("Container (host-mounted) is not available in the macOS beta. Use Container (disk-isolated) or Host.");
-      }
+        : "sandbox";
       const allowlist = parseNetworkAllowlist(networkAllowlist);
       const netMode = selections.network === "allowlist"
         ? "allowlist"

@@ -123,7 +123,7 @@ export type MergeQueueRun = {
   result_commit_sha?: string | null;
 };
 
-export type ExecutionEnvironment = "host" | "container_host_mounted" | "container_disk_isolated";
+export type ExecutionEnvironment = "host" | "sandbox";
 
 export type Session = {
   id: string;

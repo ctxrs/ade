@@ -291,7 +291,7 @@ async fn configure_container_image_defaults(data_root: &Path) {
         execution: Some(ExecutionSettings {
             mode: ExecutionMode::Host,
             container: ContainerExecutionSettings {
-                mount_mode: ContainerMountMode::HostMounted,
+                mount_mode: ContainerMountMode::DiskIsolated,
                 network_mode: ContainerNetworkMode::All,
                 allowlist: Vec::new(),
                 image: Some("python:3.11".to_string()),
@@ -2198,7 +2198,7 @@ async fn provider_target_scoped_installs_work_for_host_and_container_workspaces(
 
     let host_ws = common::create_workspace(&app, host_repo.path(), "host-ws").await;
     let container_ws = common::create_workspace(&app, container_repo.path(), "container-ws").await;
-    set_workspace_container_execution(&app, container_ws.id.0, "container_host_mounted").await;
+    set_workspace_container_execution(&app, container_ws.id.0, "sandbox").await;
 
     let (host_options_status, host_options): (StatusCode, serde_json::Value) =
         common::json_request(

@@ -40,19 +40,19 @@ describe("createSession analytics", () => {
 
   it("posts canonical execution_environment and split analytics fields", async () => {
     await createSession("task-1", "codex", "gpt-5-codex", {
-      execution_environment: "container_disk_isolated",
+      execution_environment: "sandbox",
     });
 
     const [, options] = apiAnyMock.mock.calls[0] ?? [];
     expect(JSON.parse(String(options?.body ?? "{}"))).toEqual({
       provider_id: "codex",
       model_id: "gpt-5-codex",
-      execution_environment: "container_disk_isolated",
+      execution_environment: "sandbox",
     });
     expect(trackSessionCreatedMock).toHaveBeenCalledWith({
       providerId: "codex",
       modelId: "gpt-5-codex",
-      executionEnvironment: "container_disk_isolated",
+      executionEnvironment: "sandbox",
       sessionRootKind: "worktree",
       sessionLocation: "local",
     });

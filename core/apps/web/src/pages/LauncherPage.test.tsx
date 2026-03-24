@@ -149,7 +149,7 @@ describe("LauncherPage recents", () => {
     expect(screen.getByText("user@devbox.example.invalid:~/code/ctx-monorepo (Host)")).toBeInTheDocument();
   });
 
-  it("renders remote disk-isolated recents as remote containers", async () => {
+  it("renders remote sandbox recents as remote sandboxes", async () => {
     vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
       {
         kind: "ssh",
@@ -157,7 +157,7 @@ describe("LauncherPage recents", () => {
         host: "sealed.example.invalid",
         user: "user",
         remote_port: 4399,
-        execution_environment: "container_disk_isolated",
+        execution_environment: "sandbox",
         updated_at_ms: 1000,
       },
     ]);
@@ -165,7 +165,7 @@ describe("LauncherPage recents", () => {
     render(<LauncherPage />);
 
     expect(await screen.findByText("sealed-box")).toBeInTheDocument();
-    expect(screen.getByText("user@sealed.example.invalid (Remote container)")).toBeInTheDocument();
+    expect(screen.getByText("user@sealed.example.invalid (Remote sandbox)")).toBeInTheDocument();
   });
 
   it("upserts recents when opening a local recent workspace", async () => {
@@ -236,13 +236,13 @@ describe("LauncherPage recents", () => {
     });
   });
 
-  it("opens local container recents directly into the workspace", async () => {
+  it("opens local sandbox recents directly into the workspace", async () => {
     vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
       {
         kind: "local",
         label: "sealed-local",
         root_path: "/Users/example-user/.ctx/workspaces/staging/workspace-abc",
-        execution_environment: "container_disk_isolated",
+        execution_environment: "sandbox",
         updated_at_ms: 25,
       },
     ]);
@@ -268,7 +268,7 @@ describe("LauncherPage recents", () => {
         kind: "local",
         label: "Sealed Local",
         root_path: "/Users/example-user/.ctx/workspaces/staging/workspace-abc",
-        execution_environment: "container_disk_isolated",
+        execution_environment: "sandbox",
         updated_at_ms: expect.any(Number),
       }));
       expect(navigateMock).toHaveBeenCalledWith("/workspaces/ws-container", { replace: true });
@@ -316,7 +316,7 @@ describe("LauncherPage recents", () => {
     });
   });
 
-  it("opens remote container recents directly into the workspace after SSH connect", async () => {
+  it("opens remote sandbox recents directly into the workspace after SSH connect", async () => {
     vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
       {
         kind: "ssh",
@@ -326,7 +326,7 @@ describe("LauncherPage recents", () => {
         remote_port: 44099,
         remote_data_dir: "/tmp/ctx-remote",
         workspace_root_path: "/srv/ctx/remote-container",
-        execution_environment: "container_disk_isolated",
+        execution_environment: "sandbox",
         updated_at_ms: 30,
       },
     ]);
@@ -351,7 +351,7 @@ describe("LauncherPage recents", () => {
         kind: "ssh",
         label: "Sealed Remote",
         workspace_root_path: "/srv/ctx/remote-container",
-        execution_environment: "container_disk_isolated",
+        execution_environment: "sandbox",
         updated_at_ms: expect.any(Number),
       }));
       expect(navigateMock).toHaveBeenCalledWith("/workspaces/ws-remote-container", { replace: true });

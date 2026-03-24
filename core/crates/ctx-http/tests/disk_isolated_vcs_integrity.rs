@@ -167,7 +167,7 @@ async fn disk_isolated_task_creation_produces_valid_git_worktree() {
         ))
         .json(&json!({
             "enabled": true,
-            "environment": "container_disk_isolated",
+            "environment": "sandbox",
             "mount_mode": "disk_isolated"
         }))
         .send()

@@ -60,12 +60,15 @@ use objc2::{AnyThread, ClassType};
 use objc2_foundation::{NSArray, NSData, NSError, NSString, NSURL};
 #[cfg(target_os = "macos")]
 use objc2_virtualization::{
+    VZDirectorySharingDeviceConfiguration,
     VZDiskImageCachingMode, VZDiskImageStorageDeviceAttachment, VZDiskImageSynchronizationMode,
     VZFileSerialPortAttachment, VZGenericMachineIdentifier, VZGenericPlatformConfiguration,
     VZLinuxBootLoader, VZMACAddress, VZMemoryBalloonDeviceConfiguration,
     VZNATNetworkDeviceAttachment, VZNetworkDeviceConfiguration, VZSerialPortConfiguration,
-    VZSocketDeviceConfiguration, VZStorageDeviceConfiguration, VZVirtioBlockDeviceConfiguration,
-    VZVirtioConsoleDeviceSerialPortConfiguration, VZVirtioNetworkDeviceConfiguration,
+    VZSharedDirectory, VZSingleDirectoryShare, VZSocketDeviceConfiguration,
+    VZStorageDeviceConfiguration, VZVirtioBlockDeviceConfiguration,
+    VZVirtioConsoleDeviceSerialPortConfiguration, VZVirtioFileSystemDeviceConfiguration,
+    VZVirtioNetworkDeviceConfiguration,
     VZVirtioSocketConnection, VZVirtioSocketDevice, VZVirtioSocketDeviceConfiguration,
     VZVirtioTraditionalMemoryBalloonDeviceConfiguration, VZVirtualMachine,
     VZVirtualMachineConfiguration, VZVirtualMachineState,
@@ -124,6 +127,8 @@ const SHARED_VM_ROOTFS_FILE: &str = "rootfs.raw";
 const SHARED_VM_MACHINE_IDENTIFIER_FILE: &str = "machine-identifier.bin";
 const SHARED_VM_MAC_ADDRESS_FILE: &str = "mac-address.txt";
 const SHARED_VM_GUEST_CONSOLE_LOG_FILE: &str = "guest-console.log";
+const SHARED_VM_DATA_ROOT_SHARE_TAG: &str = "ctx-data-root";
+const SHARED_VM_HOST_DATA_SERVICE_NAME: &str = "ctx-avf-host-data.service";
 #[cfg(target_os = "macos")]
 const SHARED_VM_GUEST_CONTROL_VSOCK_PORT: u32 = 47001;
 #[cfg(target_os = "macos")]
@@ -422,9 +427,49 @@ fn run() -> Result<()> {
             }
             Ok(())
         }
+        Some("shared-vm-exec") => {
+            let mut data_root = None;
+            let mut cwd = None;
+            let mut command = None;
+            let mut guest_env = Vec::new();
+            let mut user = None;
+            let mut pty = false;
+            let mut passthrough_args = Vec::new();
+            while let Some(flag) = args.next() {
+                match flag.as_str() {
+                    "--data-root" => data_root = args.next().map(PathBuf::from),
+                    "--cwd" => cwd = args.next().map(PathBuf::from),
+                    "--command" => command = args.next(),
+                    "--env" => guest_env.push(required_string_arg(args.next(), "env")?),
+                    "--user" => user = args.next(),
+                    "--pty" => pty = true,
+                    "--" => {
+                        passthrough_args.extend(args);
+                        break;
+                    }
+                    other => bail!("unknown shared-vm-exec argument `{other}`"),
+                }
+            }
+            let exit_code = shared_vm_exec(
+                &required_path_arg(
+                    data_root.map(|path| path.to_string_lossy().to_string()),
+                    "data_root",
+                )?,
+                &required_path_arg(cwd.map(|path| path.to_string_lossy().to_string()), "cwd")?,
+                &required_string_arg(command, "command")?,
+                &guest_env,
+                user.as_deref(),
+                pty,
+                &passthrough_args,
+            )?;
+            if exit_code != 0 {
+                std::process::exit(exit_code);
+            }
+            Ok(())
+        }
         Some(other) => bail!("unsupported ctx-avf-linux-helper command: {other}"),
         None => bail!(
-            "usage: ctx-avf-linux-helper <probe|prepare-runtime-layout|workspace-vm-state|start-workspace-vm|stop-workspace-vm|prepare-guest-worktree|serve-workspace-vm|serve-guest-agent|run-workspace-vm|guest-exec> ..."
+            "usage: ctx-avf-linux-helper <probe|prepare-runtime-layout|workspace-vm-state|start-workspace-vm|stop-workspace-vm|prepare-guest-worktree|serve-workspace-vm|serve-guest-agent|run-workspace-vm|guest-exec|shared-vm-exec> ..."
         ),
     }
 }

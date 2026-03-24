@@ -561,7 +561,7 @@ mod tests {
             "task_id": "33333333-3333-3333-3333-333333333333",
             "workspace_id": "44444444-4444-4444-4444-444444444444",
             "worktree_id": "55555555-5555-5555-5555-555555555555",
-            "execution_environment": "container_host_mounted",
+            "execution_environment": "sandbox",
             "provider_id": "codex",
             "model_id": "gpt-4",
             "title": "Main session",
@@ -573,10 +573,7 @@ mod tests {
         });
 
         let parsed: ctx_core::models::Session = serde_json::from_value(payload).unwrap();
-        assert_eq!(
-            parsed.execution_environment,
-            ExecutionEnvironment::ContainerHostMounted
-        );
+        assert_eq!(parsed.execution_environment, ExecutionEnvironment::Sandbox);
         assert_eq!(parsed.provider_id, "codex");
     }
 

@@ -21,7 +21,7 @@ type TerminalState = {
   modelId: string | null;
 };
 
-type ExecutionEnvironment = "host" | "container_host_mounted" | "container_disk_isolated";
+type ExecutionEnvironment = "host" | "sandbox";
 type InstallTarget = "host" | "container";
 type NetworkMode = "llm_only" | "allowlist" | "all";
 type ResultOutcome = "pass" | "fail";

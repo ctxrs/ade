@@ -19,11 +19,11 @@ const createFixture = (tmpDir) => {
       {
         cells: [
           {
-            id: "codex.endpoint_api_key.local.container_host_mounted",
+            id: "codex.endpoint_api_key.local.sandbox",
             provider_id: "codex",
             auth_mode: "endpoint_api_key",
             daemon_location: "local",
-            execution_environment: "container_host_mounted",
+            execution_environment: "sandbox",
             support: "supported",
             lane: "required",
             prerequisites: ["OPENROUTER_API_KEY"],
@@ -159,7 +159,7 @@ const runMatrixScript = ({
   smokeOut,
   artifactsDir,
   lane = "required",
-  cellId = "codex.endpoint_api_key.local.container_host_mounted",
+  cellId = "codex.endpoint_api_key.local.sandbox",
   extraArgs = [],
   extraEnv = {},
 }) =>
@@ -217,7 +217,7 @@ test("run_provider_auth_matrix hydrates preflight and runner through infisical w
   assert.equal(fs.readFileSync(preflightOut, "utf8").trim(), "set");
   assert.equal(fs.readFileSync(smokeOut, "utf8").trim(), "set");
   const summary = fs.readFileSync(path.join(artifactsDir, "summary.tsv"), "utf8");
-  assert.match(summary, /codex\.endpoint_api_key\.local\.container_host_mounted\tpass\t0\t/);
+  assert.match(summary, /codex\.endpoint_api_key\.local\.sandbox\tpass\t0\t/);
 });
 
 test("run_provider_auth_matrix leaves preflight strict when infisical auto-hydration is disabled", () => {

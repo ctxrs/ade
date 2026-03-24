@@ -404,7 +404,7 @@ mod tests {
             Duration::from_secs(1),
         )
         .await
-        .expect("AVF guest-exec launch probe should succeed");
+        .expect("AVF shared-vm launch probe should succeed");
 
         let started = tokio::time::Instant::now();
         let logged = loop {
@@ -417,10 +417,10 @@ mod tests {
                 Ok(_) => panic!("helper log stayed empty"),
             }
         };
-        assert!(logged.contains("guest-exec"));
-        assert!(logged.contains("--workspace-id ws-123"));
-        assert!(logged.contains("--worktree-id wt-456"));
-        assert!(logged.contains("--cwd /ctx/ws/worktrees/wt-456/src"));
-        assert!(logged.contains("--command /bin/sh"));
+        assert!(logged.contains("shared-vm-exec"));
+        assert!(logged.contains("--command podman"));
+        assert!(logged.contains("--workdir /ctx/ws/worktrees/wt-456/src"));
+        assert!(logged.contains("ctx-harness-ws-123"));
+        assert!(logged.contains("/bin/sh"));
     }
 }

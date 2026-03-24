@@ -100,7 +100,6 @@ pub struct AvfLinuxTerminalSpec {
     pub helper_path: PathBuf,
     pub data_root: PathBuf,
     pub workspace_id: WorkspaceId,
-    pub worktree_id: WorktreeId,
     pub workdir: String,
 }
 
@@ -388,25 +387,40 @@ impl TerminalManager {
             cmd
         } else if let Some(avf) = &req.avf_linux_vm {
             let mut cmd = CommandBuilder::new(avf.helper_path.clone());
-            cmd.arg("guest-exec");
+            cmd.arg("shared-vm-exec");
             cmd.arg("--data-root");
             cmd.arg(avf.data_root.clone());
-            cmd.arg("--workspace-id");
-            cmd.arg(avf.workspace_id.0.to_string());
-            cmd.arg("--worktree-id");
-            cmd.arg(avf.worktree_id.0.to_string());
             cmd.arg("--cwd");
-            cmd.arg(avf.workdir.clone());
+            cmd.arg("/");
             cmd.arg("--command");
-            cmd.arg(req.shell.clone());
+            cmd.arg("podman");
+            cmd.arg("--user");
+            cmd.arg("root");
+            if let Ok(podman_env) =
+                crate::workspace_runtime::podman_env_for_data_root(&avf.data_root)
+            {
+                let mut env_pairs = podman_env.into_iter().collect::<Vec<_>>();
+                env_pairs.sort_by(|(left, _), (right, _)| left.cmp(right));
+                for (key, value) in env_pairs {
+                    cmd.arg("--env");
+                    cmd.arg(format!("{key}={value}"));
+                }
+            }
             cmd.arg("--pty");
+            cmd.arg("--");
+            cmd.arg("exec");
+            cmd.arg("-i");
+            cmd.arg("-t");
+            cmd.arg("--workdir");
+            cmd.arg(avf.workdir.clone());
             cmd.arg("--env");
             cmd.arg("TERM=xterm-256color");
             for (key, value) in &req.env {
                 cmd.arg("--env");
                 cmd.arg(format!("{key}={value}"));
             }
-            cmd.arg("--");
+            cmd.arg(format!("ctx-harness-{}", avf.workspace_id.0));
+            cmd.arg(req.shell.clone());
             cmd
         } else {
             let mut cmd = CommandBuilder::new(req.shell.clone());

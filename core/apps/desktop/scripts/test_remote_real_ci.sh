@@ -95,7 +95,7 @@ const runContainer = process.argv[3] === "1";
 const { resolveRemoteFixtureEnv } = require(path.join(root, "core/apps/desktop/automation/helpers/remote_fixture_contract.cjs"));
 
 const host = resolveRemoteFixtureEnv({ lane: "host" });
-const container = runContainer ? resolveRemoteFixtureEnv({ lane: "container" }) : null;
+const container = runContainer ? resolveRemoteFixtureEnv({ lane: "sandbox" }) : null;
 const payload = {
   strict_required: host.strictRequired || Boolean(container && container.strictRequired),
   allow_skip: host.allowSkip || Boolean(container && container.allowSkip),
@@ -258,7 +258,7 @@ if [[ "${RUN_CONTAINER}" == "1" ]]; then
     env \
     "CTX_AUTOMATION_REMOTE_STRICT=${STRICT_REQUIRED}" \
     "CTX_AUTOMATION_REMOTE_ALLOW_SKIP=${ALLOW_SKIP}" \
-    "CTX_AUTOMATION_SCENARIOS=${CTX_AUTOMATION_SCENARIOS:-remote-new-disk-isolated}" \
+    "CTX_AUTOMATION_SCENARIOS=${CTX_AUTOMATION_SCENARIOS:-remote-new-sandbox}" \
     "CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS=${REQUIRE_FIRST_TURN_SUCCESS}" \
     "CTX_REMOTE_CONTAINER_CONTRACT_REPORT=${container_report}" \
     pnpm -C "${ROOT}/core/apps/desktop" test:automation:remote-container-contract

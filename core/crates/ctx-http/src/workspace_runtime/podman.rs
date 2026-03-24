@@ -7,6 +7,10 @@ fn podman_available(data_root: &Path) -> bool {
             return matches!(value.as_str(), "1" | "true" | "yes" | "y");
         }
     }
+    #[cfg(target_os = "macos")]
+    if super::avf_linux_runtime_available() && super::avf_linux_vm::helper_path().is_ok() {
+        return true;
+    }
     podman_binary_path(data_root).is_some()
 }
 
@@ -38,7 +42,11 @@ pub(crate) struct PodmanInvocation {
 pub(crate) fn podman_invocation(data_root: &Path) -> Result<PodmanInvocation> {
     let bin = podman_binary_path(data_root)
         .ok_or_else(|| anyhow::anyhow!("podman binary unavailable"))?;
+    let env = podman_env_for_data_root(data_root)?;
+    Ok(PodmanInvocation { bin, env })
+}
 
+pub(crate) fn podman_env_for_data_root(data_root: &Path) -> Result<HashMap<String, String>> {
     let xdg_root = data_root.join("podman").join("xdg");
     let xdg_config = xdg_root.join("config");
     let xdg_data = xdg_root.join("data");
@@ -79,11 +87,32 @@ pub(crate) fn podman_invocation(data_root: &Path) -> Result<PodmanInvocation> {
     env.insert("TMPDIR".to_string(), tmp.clone());
     env.insert("TMP".to_string(), tmp.clone());
     env.insert("TEMP".to_string(), tmp);
-
-    Ok(PodmanInvocation { bin, env })
+    Ok(env)
 }
 
 pub(crate) fn podman_command(data_root: &Path) -> Result<Command> {
+    #[cfg(target_os = "macos")]
+    if super::avf_linux_runtime_available() && super::avf_linux_vm::helper_path().is_ok() {
+        let helper = super::avf_linux_vm::helper_path()?;
+        let env = podman_env_for_data_root(data_root)?;
+        let mut cmd = Command::new(helper);
+        cmd.arg("shared-vm-exec")
+            .arg("--data-root")
+            .arg(data_root)
+            .arg("--cwd")
+            .arg("/")
+            .arg("--command")
+            .arg("podman")
+            .arg("--user")
+            .arg("root");
+        let mut env_pairs = env.into_iter().collect::<Vec<_>>();
+        env_pairs.sort_by(|(left, _), (right, _)| left.cmp(right));
+        for (key, value) in env_pairs {
+            cmd.arg("--env").arg(format!("{key}={value}"));
+        }
+        cmd.arg("--");
+        return Ok(cmd);
+    }
     let inv = podman_invocation(data_root)?;
     let mut cmd = Command::new(inv.bin);
     for (key, value) in inv.env {

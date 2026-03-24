@@ -483,10 +483,10 @@ const prepareSubscriptionAuth = async ({ providerId, daemonLocation, executionEn
       artifacts,
     };
   }
-  if (executionEnvironment !== "host" && executionEnvironment !== "container_host_mounted") {
+  if (executionEnvironment !== "host" && executionEnvironment !== "sandbox") {
     return {
       status: "skip",
-      reason: `subscription auth matrix automation currently supports host or host-mounted container execution only (got ${executionEnvironment})`,
+      reason: `subscription auth matrix automation currently supports host or sandbox execution only (got ${executionEnvironment})`,
       artifacts,
     };
   }

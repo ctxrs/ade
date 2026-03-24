@@ -23,7 +23,7 @@ const reportPath = String(
   process.env.CTX_REMOTE_CONTAINER_CONTRACT_REPORT || path.join("/tmp", "ctx-remote-container-contract.json"),
 ).trim();
 const REQUIRE_FIRST_TURN_SUCCESS = parseBoolean(process.env.CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS || "0");
-const fixture = resolveRemoteFixtureEnv({ lane: "container" });
+const fixture = resolveRemoteFixtureEnv({ lane: "sandbox" });
 const scenarioFilter = new Set(
   String(process.env.CTX_AUTOMATION_SCENARIOS || "")
     .split(",")
@@ -154,7 +154,7 @@ const collectFailureArtifacts = async (stage) => {
   }
 };
 
-describe("remote container contract (env-gated desktop e2e)", () => {
+describe("remote sandbox contract (env-gated desktop e2e)", () => {
   const runId = `${Date.now()}`;
   const localBase = mkTempDir(`ctx-remote-container-contract-${runId}-`);
   const remoteBase = `/tmp/ctx-remote-contract-${runId}`;
@@ -179,13 +179,13 @@ describe("remote container contract (env-gated desktop e2e)", () => {
     }
   });
 
-  it("creates remote disk-isolated container workspace when remote env is present", async function () {
+  it("creates remote sandbox workspace when remote env is present", async function () {
     this.timeout(12 * 60_000);
 
     contractRecorder = createRemoteContractRecorder({
       outputPath: reportPath,
       suite: "remote container contract",
-      lane: "container",
+      lane: "sandbox",
       fixture,
       secretValues: [fixture.password, fixture.passwordActual, process.env.OPENROUTER_API_KEY],
     });
@@ -212,8 +212,8 @@ describe("remote container contract (env-gated desktop e2e)", () => {
       fixture,
     });
 
-    if (!scenarioEnabled("remote-new-disk-isolated", ["remote", "remote-container", "disk-isolated"])) {
-      const detail = "scenario filter excluded remote-new-disk-isolated";
+    if (!scenarioEnabled("remote-new-sandbox", ["remote", "sandbox"])) {
+      const detail = "scenario filter excluded remote-new-sandbox";
       contractRecorder.recordAssertion("scenario_filter", "skip", detail);
       finalizeReport({ result: "skipped", reason: detail });
       this.skip();
@@ -261,13 +261,13 @@ describe("remote container contract (env-gated desktop e2e)", () => {
         },
       );
 
-      const remoteDest = `${remoteBase}/new-disk-isolated`;
+      const remoteDest = `${remoteBase}/new-sandbox`;
       workspaceId = await runWizardScenario({
         location: "remote",
         remoteHost: fixture.wizardHostInput,
         remotePort: fixture.port,
         remoteDataDir,
-        container: "disk-isolated",
+        container: "sandbox",
         network: "full",
         harnessDownloads: "skip",
         source: { kind: "new", destPath: remoteDest, workspaceName: "remote-contract" },

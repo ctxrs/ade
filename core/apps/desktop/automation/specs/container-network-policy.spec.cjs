@@ -137,12 +137,12 @@ describe("container network policy (desktop e2e)", function () {
 
   it("enforces allowlist contract for workspace egress policy", async function () {
     this.timeout(12 * 60_000);
-    if (!scenarioEnabled("local-new-disk-isolated", ["local", "container", "disk-isolated"])) this.skip();
+    if (!scenarioEnabled("local-new-sandbox", ["local", "sandbox"])) this.skip();
 
     const dest = path.join(localBase, "network-policy");
     const workspaceId = await runWizardScenario({
       location: "local",
-      container: "disk-isolated",
+      container: "sandbox",
       network: "allowlist",
       networkAllowlist: "github.com\nopenrouter.ai",
       harnessDownloads: "skip",
@@ -153,13 +153,13 @@ describe("container network policy (desktop e2e)", function () {
 
     await assertConnectedLocalAndListening();
     await assertLocalWorkspaceConfig(workspaceId, {
-      environment: "container_disk_isolated",
+      environment: "sandbox",
       networkMode: "allowlist",
       allowlist: ["github.com", "openrouter.ai"],
     });
     const container = await getWorkspaceHarnessContainer(workspaceId);
-    if (!container || !container.running || container.mount_mode !== "disk_isolated") {
-      throw new Error(`expected running disk-isolated harness container, got ${JSON.stringify(container)}`);
+    if (!container || !container.running) {
+      throw new Error(`expected running sandbox harness, got ${JSON.stringify(container)}`);
     }
     await ensureWorkspaceContainer(workspaceId);
     await waitForContainerPolicy({
@@ -174,7 +174,7 @@ describe("container network policy (desktop e2e)", function () {
     });
 
     const update = await daemonJson("POST", `/api/workspaces/${workspaceId}/execution_config`, {
-      environment: "container_disk_isolated",
+      environment: "sandbox",
       network_mode: "allowlist",
       allowlist: ["github.com"],
     });
@@ -183,7 +183,7 @@ describe("container network policy (desktop e2e)", function () {
     }
 
     await assertLocalWorkspaceConfig(workspaceId, {
-      environment: "container_disk_isolated",
+      environment: "sandbox",
       networkMode: "allowlist",
       allowlist: ["github.com"],
     });

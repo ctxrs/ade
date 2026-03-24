@@ -185,14 +185,13 @@ const SCENARIO_FILTER = String(process.env.CTX_AUTOMATION_SCENARIOS || "")
   .filter(Boolean);
 const CONTAINER_SCENARIO_TOKENS = new Set([
   "local",
-  "container",
-  "host-mounted",
-  "disk-isolated",
+  "sandbox",
+  "host",
   "provider",
   "remote-container",
-  "local-clone-disk-isolated",
-  "local-new-host-mounted",
-  "local-new-disk-isolated",
+  "local-clone-sandbox",
+  "local-new-host",
+  "local-new-sandbox",
   "local-codex-smoke",
   "remote-container-import",
 ]);

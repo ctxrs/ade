@@ -759,8 +759,8 @@ export function useWorkbenchActiveTaskController({
     const worktreePath = worktreeRoot;
     const worktreeLabel = worktreePath
       ? formatWorktreeLabel(worktreePath)
-      : executionEnvironment === "container_host_mounted" || executionEnvironment === "container_disk_isolated"
-        ? "Container worktree"
+      : executionEnvironment === "sandbox"
+        ? "Sandbox worktree"
         : executionEnvironment === "host"
           ? "Session worktree"
           : "";

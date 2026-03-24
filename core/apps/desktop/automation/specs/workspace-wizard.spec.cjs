@@ -1155,9 +1155,9 @@ const ensureReadyForSourceSelection = async (
     }
     if (key === "container") {
       if (!container) throw new Error("container step reached but scenario.container is missing");
-      if (container === "host-mounted") {
-        const hostMountedVisible = await ensureContainerOptionVisible("host-mounted");
-        if (!hostMountedVisible) {
+      if (container === "host") {
+        const hostVisible = await ensureContainerOptionVisible("host");
+        if (!hostVisible) {
           await browser.pause(100);
           continue;
         }
@@ -1689,7 +1689,7 @@ const runWizardScenario = async (scenario) => {
     () => Boolean(document.querySelector('[data-testid="wizard-source-path"]')),
   );
   const expectsManagedStagingSource = (
-    scenario.container === "disk-isolated"
+    scenario.container === "sandbox"
     && (scenario.source.kind === "clone" || scenario.source.kind === "new")
   );
 
@@ -1995,7 +1995,7 @@ describe("launcher workspace wizard (e2e)", () => {
   });
 
   it("local clone works end-to-end (merge queue enabled)", async function () {
-    if (!scenarioEnabled("local-clone-disk-isolated", ["local", "container", "disk-isolated"])) this.skip();
+    if (!scenarioEnabled("local-clone-sandbox", ["local", "sandbox"])) this.skip();
     this.timeout(600000);
     const destParent = path.join(localBase, "clone-dest");
     fs.mkdirSync(destParent, { recursive: true });
@@ -2003,7 +2003,7 @@ describe("launcher workspace wizard (e2e)", () => {
 
     const id = await runWizardScenario({
       location: "local",
-      container: "disk-isolated",
+      container: "sandbox",
       network: "providers",
       source: { kind: "clone", repoUrl: localCloneSrc, branch: "", destPath },
       setupHook: "pnpm install",
@@ -2013,32 +2013,32 @@ describe("launcher workspace wizard (e2e)", () => {
     await assertConnectedLocalAndListening();
     const ws = await getWorkspace(id);
     await assertLocalWorkspaceConfig(id, {
-      environment: "container_disk_isolated",
+      environment: "sandbox",
       networkMode: "llm_only",
       mergeQueueEnabled: true,
       targetBranch: "main",
       setupHook: "pnpm install",
     });
     const container = await getWorkspaceHarnessContainer(id);
-    if (!container || !container.running || container.mount_mode !== "disk_isolated") {
-      throw new Error(`expected running disk-isolated container, got: ${JSON.stringify(container)}`);
+    if (!container || !container.running) {
+      throw new Error(`expected running sandbox container, got: ${JSON.stringify(container)}`);
     }
     const cloneCwd = await getWorkspaceTerminalCwd(id);
     if (!cloneCwd.startsWith("/ctx/ws")) {
-      throw new Error(`expected disk-isolated terminal cwd under /ctx/ws, got: ${cloneCwd}`);
+      throw new Error(`expected sandbox terminal cwd under /ctx/ws, got: ${cloneCwd}`);
     }
   });
 
-  it("local new empty works end-to-end", async function () {
-    if (!scenarioEnabled("local-new-host-mounted", ["local", "container", "host-mounted"])) this.skip();
+  it("local new host works end-to-end", async function () {
+    if (!scenarioEnabled("local-new-host", ["local", "host"])) this.skip();
     this.timeout(600000);
-    const dest = path.join(localBase, "new-host-mounted");
+    const dest = path.join(localBase, "new-host");
     const id = await runWizardScenario({
       location: "local",
-      container: "host-mounted",
+      container: "host",
       network: "allowlist",
       networkAllowlist: "github.com\nregistry.npmjs.org",
-      source: { kind: "new", destPath: dest, workspaceName: "host-mounted-ws" },
+      source: { kind: "new", destPath: dest, workspaceName: "host-ws" },
       setupHook: "",
       mergeQueue: { kind: "enabled", targetBranch: "main", verifyCommand: "" },
     });
@@ -2046,31 +2046,31 @@ describe("launcher workspace wizard (e2e)", () => {
     await assertConnectedLocalAndListening();
     const ws = await getWorkspace(id);
     await assertLocalWorkspaceConfig(id, {
-      environment: "container_host_mounted",
+      environment: "host",
       networkMode: "allowlist",
       allowlist: ["github.com", "registry.npmjs.org"],
       mergeQueueEnabled: true,
       targetBranch: "main",
     });
     const container = await getWorkspaceHarnessContainer(id);
-    if (!container || !container.running || container.mount_mode !== "host_mounted") {
-      throw new Error(`expected running host-mounted container, got: ${JSON.stringify(container)}`);
+    if (!container || !container.running) {
+      throw new Error(`expected running host container, got: ${JSON.stringify(container)}`);
     }
     await assertWorkspaceTerminalCwdPrefix(id, ws.root_path);
   });
 
-  it("local disk-isolated container works end-to-end", async function () {
-    if (!scenarioEnabled("local-new-disk-isolated", ["local", "container", "disk-isolated"])) this.skip();
+  it("local sandbox container works end-to-end", async function () {
+    if (!scenarioEnabled("local-new-sandbox", ["local", "sandbox"])) this.skip();
     this.timeout(780000);
-    const dest = path.join(localBase, "new-disk-isolated");
+    const dest = path.join(localBase, "new-sandbox");
     const id = await runWizardScenario({
       location: "local",
-      container: "disk-isolated",
+      container: "sandbox",
       network: "full",
       downloadHarnesses: true,
       selectedHarnessProviderIds: ["cursor"],
       requireSelectedHarnessInstallsNonBlocking: true,
-      source: { kind: "new", destPath: dest, workspaceName: "disk-isolated-ws" },
+      source: { kind: "new", destPath: dest, workspaceName: "sandbox-ws" },
       setupHook: "",
       mergeQueue: { kind: "skip" },
     });
@@ -2078,7 +2078,7 @@ describe("launcher workspace wizard (e2e)", () => {
     await assertConnectedLocalAndListening();
     const ws = await getWorkspace(id);
     await assertLocalWorkspaceConfig(id, {
-      environment: "container_disk_isolated",
+      environment: "sandbox",
       networkMode: "all",
       mergeQueueEnabled: false,
     });
@@ -2087,25 +2087,25 @@ describe("launcher workspace wizard (e2e)", () => {
       pollMs: 2_000,
     });
     const container = await getWorkspaceHarnessContainer(id);
-    if (!container || !container.running || container.mount_mode !== "disk_isolated") {
-      throw new Error(`expected running disk-isolated container, got: ${JSON.stringify(container)}`);
+    if (!container || !container.running) {
+      throw new Error(`expected running sandbox container, got: ${JSON.stringify(container)}`);
     }
     await assertWorkspaceTerminalCwdPrefix(id, "/ctx/ws");
   });
 
-  it("local container can start Codex and respond", async function () {
-    if (!scenarioEnabled("local-codex-smoke", ["local", "container", "provider"])) this.skip();
+  it("local host can start Codex and respond", async function () {
+    if (!scenarioEnabled("local-codex-smoke", ["local", "host", "provider"])) this.skip();
     // Container start + provider spin-up can take a while on a fresh machine (Podman VM, image load, etc).
     this.timeout(420000);
 
-    const dest = path.join(localBase, "codex-host-mounted");
+    const dest = path.join(localBase, "codex-host");
     const id = await runWizardScenario({
       location: "local",
-      container: "host-mounted",
+      container: "host",
       network: "providers",
       downloadHarnesses: true,
       selectedHarnessProviderIds: ["codex"],
-      source: { kind: "new", destPath: dest, workspaceName: "codex-smoke" },
+      source: { kind: "new", destPath: dest, workspaceName: "codex-host-smoke" },
       setupHook: "",
       mergeQueue: { kind: "skip" },
     });
@@ -2114,7 +2114,7 @@ describe("launcher workspace wizard (e2e)", () => {
     await waitForProviderInstallCompletion("codex", "container", { timeoutMs: 10 * 60_000, pollMs: 2_000 });
     const provider = await ensureCodexOpenRouterWorkspaceReady(id, {
       installTarget: "container",
-      endpointName: `host-mounted-codex-openrouter-${Date.now()}`,
+      endpointName: `host-codex-openrouter-${Date.now()}`,
       allowInstall: false,
     });
     await runCodexFirstTurnApiSmoke(id, {
@@ -2125,7 +2125,7 @@ describe("launcher workspace wizard (e2e)", () => {
 
     // Sanity: ensure we stayed in the same workspace route.
     const ws = await getWorkspace(id);
-    await assertLocalWorkspaceConfig(id, { environment: "container_host_mounted" });
+    await assertLocalWorkspaceConfig(id, { environment: "host" });
   });
 
   it("local host can start Codex and respond", async function () {
@@ -2172,7 +2172,7 @@ describe("launcher workspace wizard (e2e)", () => {
   });
 
   it("remote clone works end-to-end", async function () {
-    if (!scenarioEnabled("remote-clone-host-mounted", ["remote", "remote-container", "host-mounted"])) this.skip();
+    if (!scenarioEnabled("remote-clone-host", ["remote", "host"])) this.skip();
     if (!remoteTarget) this.skip();
     if (!remoteHasPodman) this.skip();
     if (!remoteSupportsContainerStep) this.skip();
@@ -2186,7 +2186,7 @@ describe("launcher workspace wizard (e2e)", () => {
       remoteHost: remoteHostForWizard,
       remotePort: REMOTE_PORT,
       remoteDataDir,
-      container: "host-mounted",
+      container: "host",
       network: "allowlist",
       networkAllowlist: "github.com",
       source: { kind: "clone", repoUrl: src, branch: "", destPath },
@@ -2203,11 +2203,11 @@ describe("launcher workspace wizard (e2e)", () => {
   });
 
   it("remote new empty works end-to-end", async function () {
-    if (!scenarioEnabled("remote-new-disk-isolated", ["remote", "remote-container", "disk-isolated"])) this.skip();
+    if (!scenarioEnabled("remote-new-sandbox", ["remote", "sandbox"])) this.skip();
     if (!remoteTarget) this.skip();
     if (!remoteHasPodman) this.skip();
     if (!remoteSupportsContainerStep) this.skip();
-    const dest = `${remoteBase}/new-disk-isolated`;
+    const dest = `${remoteBase}/new-sandbox`;
     ssh(remoteTarget, `rm -rf ${JSON.stringify(dest)}`);
 
     const id = await runWizardScenario({
@@ -2215,9 +2215,9 @@ describe("launcher workspace wizard (e2e)", () => {
       remoteHost: remoteHostForWizard,
       remotePort: REMOTE_PORT,
       remoteDataDir,
-      container: "disk-isolated",
+      container: "sandbox",
       network: "full",
-      source: { kind: "new", destPath: dest, workspaceName: "disk-isolated-remote" },
+      source: { kind: "new", destPath: dest, workspaceName: "sandbox-remote" },
       setupHook: "",
       mergeQueue: { kind: "skip" },
     });

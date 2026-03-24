@@ -96,7 +96,7 @@ describe("routePlanner", () => {
     const plan = buildWizardRoutePlan(snapshot({
       routeScope: {
         provisioningScope: createProvisioningScope(createDesktopLocalDaemonTargetScope(), "container"),
-        containerSelection: "host-mounted",
+        containerSelection: "no-container",
       },
       authImportCandidateCount: 1,
       missingHarnessCount: 1,

@@ -224,8 +224,9 @@ pub enum ContainerRuntimeKind {
 #[serde(rename_all = "snake_case")]
 pub enum ContainerMountMode {
     #[default]
-    HostMounted,
     DiskIsolated,
+    #[serde(other)]
+    Legacy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -351,14 +352,12 @@ pub(crate) fn default_container_mount_mode_for_runtime(
 ) -> ContainerMountMode {
     match runtime {
         ContainerRuntimeKind::AvfLinuxVm => ContainerMountMode::DiskIsolated,
-        ContainerRuntimeKind::Podman => ContainerMountMode::HostMounted,
+        ContainerRuntimeKind::Podman => ContainerMountMode::DiskIsolated,
     }
 }
 
 pub(crate) fn normalize_container_execution_settings(settings: &mut ContainerExecutionSettings) {
-    if matches!(settings.runtime, ContainerRuntimeKind::AvfLinuxVm)
-        && matches!(settings.mount_mode, ContainerMountMode::HostMounted)
-    {
+    if !matches!(settings.mount_mode, ContainerMountMode::DiskIsolated) {
         settings.mount_mode = ContainerMountMode::DiskIsolated;
     }
     normalize_container_machine_settings(&mut settings.machine);

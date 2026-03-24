@@ -1,5 +1,5 @@
 use super::*;
-use crate::settings::ContainerRuntimeKind;
+use crate::settings::{ContainerMountMode, ContainerRuntimeKind};
 
 pub(in crate::api) async fn create_task(
     State(state): State<Arc<AppState>>,
@@ -238,7 +238,7 @@ pub(in crate::api) async fn create_task(
             effective.container.runtime,
             ContainerRuntimeKind::AvfLinuxVm
         ) {
-            crate::workspace_runtime::ensure_avf_linux_guest_worktree_from_host_copy(
+            let guest_worktree = crate::workspace_runtime::ensure_avf_linux_guest_worktree_from_host_copy(
                 &state.core.data_root,
                 ws_id,
                 worktree_id,
@@ -258,8 +258,27 @@ pub(in crate::api) async fn create_task(
                         ),
                     }),
                 )
+            })?;
+            crate::disk_isolated::ensure_worktree_from_host_copy(
+                &state.core.data_root,
+                ws_id,
+                worktree_id,
+                &guest_worktree.host_shadow_root,
+                &base_commit_sha,
+                &branch_name,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: format!(
+                            "AVF disk-isolated worktree provisioning failed: {}. retry after checking the shared VM and sandbox container health.",
+                            logs::redact_sensitive(&e.to_string())
+                        ),
+                    }),
+                )
             })?
-            .host_shadow_root
         } else {
             crate::disk_isolated::ensure_worktree_from_host_copy(
                 &state.core.data_root,

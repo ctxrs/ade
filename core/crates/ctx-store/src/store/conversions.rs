@@ -195,8 +195,8 @@ pub(super) fn execution_environment_to_str(
 
 pub(super) fn parse_execution_environment(value: &str) -> ExecutionEnvironment {
     match value {
-        "container_host_mounted" => ExecutionEnvironment::ContainerHostMounted,
-        "container_disk_isolated" => ExecutionEnvironment::ContainerDiskIsolated,
+        "sandbox" => ExecutionEnvironment::Sandbox,
+        value if value.starts_with("container_") => ExecutionEnvironment::Sandbox,
         _ => ExecutionEnvironment::Host,
     }
 }

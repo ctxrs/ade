@@ -27,7 +27,7 @@ use crate::execution_effective;
 use crate::logs;
 use crate::ops_events::OpsEvent;
 use crate::scheduler::SchedulerCommand;
-use crate::settings::{ContainerMountMode, ExecutionMode, ExecutionSettings};
+use crate::settings::{ExecutionMode, ExecutionSettings};
 use crate::telemetry::TelemetryEvent;
 use crate::vcs_hooks;
 use crate::worktree_bootstrap;
@@ -48,10 +48,7 @@ const GLOBAL_INDEX_WRITE_RETRY_BASE_MS: u64 = 40;
 fn execution_environment_from_settings(settings: &ExecutionSettings) -> ExecutionEnvironment {
     match settings.mode {
         ExecutionMode::Host => ExecutionEnvironment::Host,
-        ExecutionMode::Container => match settings.container.mount_mode {
-            ContainerMountMode::HostMounted => ExecutionEnvironment::ContainerHostMounted,
-            ContainerMountMode::DiskIsolated => ExecutionEnvironment::ContainerDiskIsolated,
-        },
+        ExecutionMode::Container => ExecutionEnvironment::Sandbox,
     }
 }
 

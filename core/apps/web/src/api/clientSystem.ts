@@ -232,7 +232,7 @@ export type UpdateSettingsRequest = {
 
 export type ExecutionMode = "host" | "container";
 export type ContainerRuntimeKind = "podman" | "avf_linux_vm";
-export type ContainerMountMode = "host_mounted" | "disk_isolated";
+export type ContainerMountMode = "disk_isolated";
 export type ContainerNetworkMode = "llm_only" | "allowlist" | "all";
 export type ContainerMachineMemoryProfile = "economy" | "balanced" | "performance" | "custom";
 

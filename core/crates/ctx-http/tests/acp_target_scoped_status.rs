@@ -415,7 +415,7 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
         axum::http::Method::POST,
         format!("/api/workspaces/{}/execution_config", ws.id.0),
         Some(serde_json::json!({
-            "environment": if cfg!(target_os = "macos") { "container_disk_isolated" } else { "container_host_mounted" },
+            "environment": "sandbox",
             "network_mode": "all",
         })),
     )

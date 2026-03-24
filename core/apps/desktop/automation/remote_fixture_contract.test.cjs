@@ -30,9 +30,9 @@ test("host fixture resolution derives user from user@host and enforces the share
   assert.deepEqual(fixture.missingRequirements, []);
 });
 
-test("container fixture resolution falls back to base env and allow-skip disables strict failures", () => {
+test("sandbox fixture resolution falls back to base env and allow-skip disables strict failures", () => {
   const fixture = resolveRemoteFixtureEnv({
-    lane: "container",
+    lane: "sandbox",
     env: {
       CTX_AUTOMATION_REMOTE_HOST: "builder.example",
       CTX_AUTOMATION_REMOTE_USER: "builder",

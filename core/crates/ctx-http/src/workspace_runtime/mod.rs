@@ -63,7 +63,6 @@ use self::avf_linux_vm::{
     prefetch_runtime_with_observer as prefetch_avf_linux_runtime_with_observer,
     runtime_available as avf_linux_runtime_available, runtime_state as avf_linux_runtime_state,
     runtime_target_label as avf_linux_runtime_target_label,
-    stop_workspace_vm as stop_avf_linux_workspace_vm,
     workspace_vm_data_root as avf_linux_workspace_vm_data_root,
     workspace_vm_state as avf_linux_workspace_vm_state,
 };
@@ -100,9 +99,7 @@ use self::machine::{
     persist_podman_machine_cache_to_shared, podman_machine_cache_root,
     seed_shared_podman_machine_cache,
 };
-use self::network_policy_transition::{
-    apply_avf_linux_network_policy, apply_container_network_policy,
-};
+use self::network_policy_transition::apply_container_network_policy;
 #[cfg(test)]
 use self::podman::podman_binary_path;
 use self::podman::{
@@ -110,7 +107,7 @@ use self::podman::{
 };
 pub(crate) use self::podman::{
     command_output_with_timeout, container_runtime_available, podman_command, podman_engine_ready,
-    podman_invocation,
+    podman_env_for_data_root, podman_invocation,
 };
 #[allow(unused_imports)]
 pub(crate) use self::podman_machine_lifecycle::{
@@ -152,17 +149,6 @@ pub(crate) async fn selected_runtime_state(
         }
         ContainerRuntimeKind::AvfLinuxVm => avf_linux_runtime_state(data_root),
     }
-}
-
-fn avf_linux_branch_name_for_worktree(workspace: &Workspace, worktree: &Worktree) -> String {
-    worktree
-        .git_branch
-        .as_deref()
-        .or(worktree.vcs_ref.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("ctx/{}/{}", workspace.id.0, worktree.id.0))
 }
 
 pub(crate) async fn prewarm_selected_runtime_with_observer(

@@ -31,17 +31,17 @@ const buildSteps = (stepKeys: WizardStepKey[]): WizardStep[] => {
     "container": {
       key: "container",
       title: "Agent Sandbox Isolation",
-      note: "Choose the containerization strategy for your agents in this workspace.",
+      note: "Choose whether agents run directly on the host or in a sandbox for this workspace.",
       options: [
         {
           id: "disk-isolated",
-          title: "Disk-isolated container",
-          desc: "Worktrees live on the container/VM disk. The daemon mediates shells, files, and git for a fully isolated workspace.",
+          title: "Sandbox",
+          desc: "Run agents in the standard isolated workspace sandbox. ctx mediates shells, files, git, and network policy.",
           badge: "Recommended",
         },
         {
           id: "no-container",
-          title: "No container",
+          title: "Host",
           desc: "Run directly on the host. Useful if this machine is already agent-safe (e.g. a dedicated dev box).",
         },
       ],

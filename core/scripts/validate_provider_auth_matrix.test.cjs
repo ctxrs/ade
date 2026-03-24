@@ -24,7 +24,7 @@ const baseManifest = () => ({
   providers: [{ id: "codex", owner: "provider-codex" }],
   auth_modes: [{ id: "endpoint_api_key", description: "api key auth" }],
   daemon_locations: [{ id: "local", description: "local daemon" }],
-  execution_environments: [{ id: "container_host_mounted", description: "host-mounted container" }],
+  execution_environments: [{ id: "sandbox", description: "sandbox" }],
   assertion_definitions: {
     install_success: "install ok",
     probe_success: "probe ok",
@@ -34,11 +34,11 @@ const baseManifest = () => ({
   },
   cells: [
     {
-      id: "codex.endpoint_api_key.local.container_host_mounted",
+      id: "codex.endpoint_api_key.local.sandbox",
       provider_id: "codex",
       auth_mode: "endpoint_api_key",
       daemon_location: "local",
-      execution_environment: "container_host_mounted",
+      execution_environment: "sandbox",
       support: "supported",
       lane: "required",
       required_assertions: [
@@ -133,5 +133,5 @@ test("validate script fails when a required Codex container cell loses the conta
 
   const result = run(["--manifest", manifestPath]);
   assert.notEqual(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
-  assert.match(result.stderr, /local container_host_mounted Codex required coverage must include local-codex-smoke/i);
+  assert.match(result.stderr, /local sandbox Codex required coverage must include local-codex-smoke/i);
 });

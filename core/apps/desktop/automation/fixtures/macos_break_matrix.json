@@ -3,14 +3,14 @@
   "cases": [
     {
       "id": "BRK-001",
-      "title": "local container runtime unavailable at prepare",
+      "title": "local sandbox runtime unavailable at prepare",
       "spec": "automation/specs/container-daemon-liveness.spec.cjs",
-      "scenarios": "local-new-host-mounted",
+      "scenarios": "local-new-host",
       "preconditions": [
         "macOS desktop automation environment",
         "managed podman runtime path enabled"
       ],
-      "trigger": "attempt local host-mounted container create with unavailable runtime precondition",
+      "trigger": "attempt local host create with unavailable runtime precondition",
       "expected_failure_signal": "workspace launch snapshot contains `container runtime unavailable` in machine/image phase",
       "required_logs": [
         "wdio.log",
@@ -21,14 +21,14 @@
     },
     {
       "id": "BRK-002",
-      "title": "local container start/create runtime failure",
+      "title": "local sandbox start/create runtime failure",
       "spec": "automation/specs/container-daemon-liveness.spec.cjs",
-      "scenarios": "local-new-disk-isolated",
+      "scenarios": "local-new-sandbox",
       "preconditions": [
         "macOS desktop automation environment",
         "podman machine reachable"
       ],
-      "trigger": "attempt disk-isolated create and force container create failure path",
+      "trigger": "attempt sandbox create and force container create failure path",
       "expected_failure_signal": "workspace launch snapshot fails in `container_start_or_create` with non-generic diagnostics",
       "required_logs": [
         "wdio.log",
@@ -41,7 +41,7 @@
       "id": "BRK-003",
       "title": "daemon unavailable overlay during container lifecycle",
       "spec": "automation/specs/container-daemon-liveness.spec.cjs",
-      "scenarios": "local-new-disk-isolated",
+      "scenarios": "local-new-sandbox",
       "preconditions": [
         "workspace creation enters active transition",
         "daemon process liveness probes enabled"
@@ -145,9 +145,9 @@
     },
     {
       "id": "BRK-009",
-      "title": "remote container contract (env-gated)",
+      "title": "remote sandbox contract (env-gated)",
       "spec": "automation/specs/remote-container-contract.spec.cjs",
-      "scenarios": "remote-new-disk-isolated",
+      "scenarios": "remote-new-sandbox",
       "preconditions": [
         "remote automation env vars set",
         "remote podman available"

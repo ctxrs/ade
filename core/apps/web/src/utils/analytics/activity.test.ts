@@ -102,7 +102,7 @@ describe("analytics events", () => {
     trackSessionCreated({
       providerId: "codex",
       modelId: "gpt-5-codex",
-      executionEnvironment: "container_host_mounted",
+      executionEnvironment: "sandbox",
       sessionRootKind: "worktree",
       sessionLocation: "remote",
     });
@@ -113,7 +113,7 @@ describe("analytics events", () => {
       {
         provider_id: "codex",
         model_id: "gpt-5-codex",
-        execution_environment: "container_host_mounted",
+        execution_environment: "sandbox",
         session_root_kind: "worktree",
         session_location: "remote",
       },

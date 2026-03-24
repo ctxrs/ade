@@ -63,7 +63,7 @@ describe("harness install/probe matrix (desktop e2e)", () => {
 
   it("covers install failure signal, probe failure signal, and successful recovery", async function () {
     this.timeout(14 * 60_000);
-    if (!scenarioEnabled("local-codex-smoke", ["local", "container", "provider"])) this.skip();
+    if (!scenarioEnabled("local-codex-smoke", ["local", "host", "provider"])) this.skip();
 
     const apiKey = String(process.env.OPENROUTER_API_KEY || "").trim();
     if (!apiKey) {
@@ -81,7 +81,7 @@ describe("harness install/probe matrix (desktop e2e)", () => {
     const dest = path.join(localBase, "matrix");
     const workspaceId = await runWizardScenario({
       location: "local",
-      container: "host-mounted",
+      container: "sandbox",
       network: "providers",
       harnessDownloads: "skip",
       source: { kind: "new", destPath: dest, workspaceName: "harness-install-probe-matrix" },
@@ -92,7 +92,7 @@ describe("harness install/probe matrix (desktop e2e)", () => {
 
     await assertConnectedLocalAndListening();
     await assertLocalWorkspaceConfig(workspaceId, {
-      environment: "container_host_mounted",
+      environment: "sandbox",
       networkMode: "llm_only",
     });
 

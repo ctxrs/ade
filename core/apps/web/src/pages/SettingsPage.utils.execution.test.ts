@@ -18,9 +18,8 @@ import {
 } from "./SettingsPage.utils";
 
 describe("isContainerizedEnvironment", () => {
-  it("returns true for container environments", () => {
-    expect(isContainerizedEnvironment("container_host_mounted")).toBe(true);
-    expect(isContainerizedEnvironment("container_disk_isolated")).toBe(true);
+  it("returns true for sandbox environments", () => {
+    expect(isContainerizedEnvironment("sandbox")).toBe(true);
   });
 
   it("returns false for host and empty environments", () => {
@@ -82,7 +81,7 @@ describe("executionSettingsStableKey", () => {
         mode: "host",
         container: {
           runtime: "podman",
-          mount_mode: "host_mounted",
+          mount_mode: "disk_isolated",
           network_mode: "llm_only",
           allowlist: [],
           image: null,
@@ -99,7 +98,7 @@ describe("executionSettingsStableKey", () => {
         mode: "host",
         container: {
           runtime: "podman",
-          mount_mode: "host_mounted",
+          mount_mode: "disk_isolated",
           network_mode: "llm_only",
           allowlist: [],
           image: null,
@@ -119,7 +118,7 @@ describe("executionSettingsStableKey", () => {
       mode: "host" as const,
       container: {
         runtime: "podman" as const,
-        mount_mode: "host_mounted" as const,
+        mount_mode: "disk_isolated" as const,
         network_mode: "llm_only" as const,
         allowlist: [],
         image: null,
@@ -166,17 +165,17 @@ describe("defaultExecutionSettings", () => {
     expect(defaultContainerRuntimeKind()).toBe("podman");
     expect(defaultContainerRuntimeKind(null)).toBe("podman");
     expect(defaultExecutionSettings().container.runtime).toBe("podman");
-    expect(defaultContainerMountMode("podman")).toBe("host_mounted");
-    expect(defaultExecutionSettings().container.mount_mode).toBe("host_mounted");
+    expect(defaultContainerMountMode("podman")).toBe("disk_isolated");
+    expect(defaultExecutionSettings().container.mount_mode).toBe("disk_isolated");
   });
 
-  it("coerces avf execution settings to disk-isolated mounts", () => {
+  it("keeps sandbox execution settings disk-isolated", () => {
     expect(
       normalizeExecutionSettings({
         mode: "container",
         container: {
           runtime: "avf_linux_vm",
-          mount_mode: "host_mounted",
+          mount_mode: "disk_isolated",
           network_mode: "llm_only",
           allowlist: [],
           image: null,

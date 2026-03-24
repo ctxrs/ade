@@ -52,23 +52,23 @@ export function ContainerNetworkSection({
       <div className="settings-preferences-flat">
         <div className="settings-preferences-group settings-preferences-group-center-controls">
           <Row
-            title="Container Environment"
-            description="Container environment is set during workspace creation. To use a different container environment, launch your project in a new workspace."
+            title="Sandbox Mode"
+            description="Sandbox mode is set during workspace creation. To use a different mode, launch your project in a new workspace."
             control={
               <Select value={exec?.environment ?? "host"} disabled>
-                <SelectTrigger className="settings-control settings-select tw-min-w-[16rem]" aria-label="Container environment">
+                <SelectTrigger className="settings-control settings-select tw-min-w-[16rem]" aria-label="Sandbox mode">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="host">Host</SelectItem>
-                  <SelectItem value="container_disk_isolated">Container (Disk-isolated)</SelectItem>
+                  <SelectItem value="sandbox">Sandbox</SelectItem>
                 </SelectContent>
               </Select>
             }
           />
           <Row
             title="Network Policy"
-            description="Network policy allows you to restrict what outbound network access your agents have, such as blocking all access or only allowing certain hostnames. Network policy is only available for containerized workspaces."
+            description="Network policy allows you to restrict what outbound network access your agents have, such as blocking all access or only allowing certain hostnames. Network policy is only available for sandboxed workspaces."
             control={
               isContainerizedEnvironment(exec?.environment) ? (
                 <Select
@@ -107,7 +107,7 @@ export function ContainerNetworkSection({
               <div className="settings-row-left">
                 <div className="settings-row-title">Network allowlist</div>
                 <div className="settings-row-desc">
-                  Edit allowlist entries (one per line). Changes apply to future container runs for this workspace.
+                  Edit allowlist entries (one per line). Changes apply to future sandbox runs for this workspace.
                 </div>
               </div>
               <div

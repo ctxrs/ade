@@ -45,7 +45,7 @@ const providerAuthMatrixScenarioTags = ({
   ) {
     if (
       normalizedDaemonLocation === "local"
-      && normalizedExecutionEnvironment === "container_host_mounted"
+      && normalizedExecutionEnvironment === "sandbox"
     ) {
       tags.add("local-codex-smoke");
     }

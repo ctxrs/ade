@@ -782,11 +782,7 @@ impl HarnessRuntimeManager {
                     return true;
                 }
             };
-            if matches!(
-                session.execution_environment,
-                ExecutionEnvironment::ContainerHostMounted
-                    | ExecutionEnvironment::ContainerDiskIsolated
-            ) {
+            if matches!(session.execution_environment, ExecutionEnvironment::Sandbox) {
                 return true;
             }
         }

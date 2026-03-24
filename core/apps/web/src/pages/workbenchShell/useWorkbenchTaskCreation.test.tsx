@@ -99,7 +99,7 @@ function makeSession(sessionId: string, taskId: string): Session {
     title: "Session 1",
     agent_role: "assistant",
     status: "starting",
-    execution_environment: "container_disk_isolated",
+    execution_environment: "sandbox",
     created_at: now,
     updated_at: now,
   };
@@ -228,7 +228,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   mockedGetWorkspaceExecutionConfig.mockResolvedValue({
     source: "workspace",
-    environment: "container_disk_isolated",
+    environment: "sandbox",
   });
   const { randomUuid } = await import("../../utils/randomUuid");
   vi.mocked(randomUuid).mockImplementationOnce(() => "task-1");
@@ -277,7 +277,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     });
     expect(mockedGetWorkspaceExecutionConfig).toHaveBeenCalledWith("workspace-1");
     expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "codex", "gpt-5", expect.objectContaining({
-      execution_environment: "container_disk_isolated",
+      execution_environment: "sandbox",
     }));
     expect(mockedPostMessage).not.toHaveBeenCalled();
     expect(onStartError).toHaveBeenCalledWith(null);
@@ -334,7 +334,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
       expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
     });
     expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "codex", "gpt-5", expect.objectContaining({
-      execution_environment: "container_disk_isolated",
+      execution_environment: "sandbox",
       initial_message_id: "message-1",
       initial_turn_id: "turn-1",
     }));
@@ -374,7 +374,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
       expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
     });
     expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "codex", "gpt-5/xhigh", expect.objectContaining({
-      execution_environment: "container_disk_isolated",
+      execution_environment: "sandbox",
     }));
     expect(mockedCreateSession.mock.calls[0]?.[3]).not.toHaveProperty("reasoning_effort");
     expect(onStartError).toHaveBeenCalledWith(null);
@@ -419,7 +419,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
       expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
     });
     expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "claude-crp", "default/medium", expect.objectContaining({
-      execution_environment: "container_disk_isolated",
+      execution_environment: "sandbox",
     }));
     expect(mockedCreateSession.mock.calls[0]?.[3]).not.toHaveProperty("reasoning_effort");
     expect(onStartError).toHaveBeenCalledWith(null);
@@ -528,7 +528,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
       "fake",
       "fake-model",
       expect.objectContaining({
-        execution_environment: "container_disk_isolated",
+        execution_environment: "sandbox",
       }),
     );
     expect(onStartError).toHaveBeenCalledWith(null);

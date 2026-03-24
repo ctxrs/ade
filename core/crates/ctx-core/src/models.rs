@@ -411,21 +411,38 @@ pub enum SessionStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionEnvironment {
     #[default]
     Host,
-    ContainerHostMounted,
-    ContainerDiskIsolated,
+    Sandbox,
+}
+
+impl<'de> Deserialize<'de> for ExecutionEnvironment {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        let trimmed = raw.trim();
+        if trimmed.eq_ignore_ascii_case("host") {
+            return Ok(Self::Host);
+        }
+        if trimmed.eq_ignore_ascii_case("sandbox") || trimmed.starts_with("container_") {
+            return Ok(Self::Sandbox);
+        }
+        Err(serde::de::Error::custom(format!(
+            "unknown execution environment: {trimmed}"
+        )))
+    }
 }
 
 impl ExecutionEnvironment {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Host => "host",
-            Self::ContainerHostMounted => "container_host_mounted",
-            Self::ContainerDiskIsolated => "container_disk_isolated",
+            Self::Sandbox => "sandbox",
         }
     }
 }

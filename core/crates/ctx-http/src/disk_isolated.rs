@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use tempfile::TempDir;
 
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 
@@ -47,6 +48,114 @@ async fn verify_container_git_repo(
     Ok(())
 }
 
+async fn resolve_git_dir(worktree_root: &Path) -> Result<PathBuf> {
+    let dotgit = worktree_root.join(".git");
+    let meta = tokio::fs::symlink_metadata(&dotgit)
+        .await
+        .with_context(|| format!("reading {}", dotgit.display()))?;
+    if meta.is_dir() {
+        return Ok(dotgit);
+    }
+    let txt = tokio::fs::read_to_string(&dotgit)
+        .await
+        .with_context(|| format!("reading {}", dotgit.display()))?;
+    let line = txt
+        .lines()
+        .find(|value| value.trim_start().starts_with("gitdir:"))
+        .ok_or_else(|| anyhow::anyhow!("invalid .git file: missing gitdir"))?;
+    let raw = line.trim_start().trim_start_matches("gitdir:").trim();
+    let path = PathBuf::from(raw);
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(worktree_root.join(path))
+    }
+}
+
+#[cfg(unix)]
+fn symlink_path(target: &Path, dest: &Path, _is_dir: bool) -> Result<()> {
+    std::os::unix::fs::symlink(target, dest)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn symlink_path(target: &Path, dest: &Path, is_dir: bool) -> Result<()> {
+    if is_dir {
+        std::os::windows::fs::symlink_dir(target, dest)?;
+    } else {
+        std::os::windows::fs::symlink_file(target, dest)?;
+    }
+    Ok(())
+}
+
+fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
+    std::fs::create_dir_all(target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let entry_path = entry.path();
+        let dest = target.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_recursive(&entry_path, &dest)?;
+        } else if file_type.is_symlink() {
+            if dest.exists() {
+                let _ = std::fs::remove_file(&dest);
+                let _ = std::fs::remove_dir_all(&dest);
+            }
+            let link_target = std::fs::read_link(&entry_path)?;
+            let is_dir = std::fs::metadata(&entry_path)
+                .map(|meta| meta.is_dir())
+                .unwrap_or(false);
+            symlink_path(&link_target, &dest, is_dir)?;
+        } else if file_type.is_file() {
+            std::fs::copy(&entry_path, &dest)?;
+        }
+    }
+    Ok(())
+}
+
+async fn prepare_self_contained_copy_root(
+    data_root: &Path,
+    source_root: &Path,
+) -> Result<(PathBuf, Option<TempDir>)> {
+    let dotgit = source_root.join(".git");
+    let dotgit_meta = match tokio::fs::symlink_metadata(&dotgit).await {
+        Ok(meta) => meta,
+        Err(_) => return Ok((source_root.to_path_buf(), None)),
+    };
+    if dotgit_meta.is_dir() {
+        return Ok((source_root.to_path_buf(), None));
+    }
+
+    let git_dir = resolve_git_dir(source_root).await?;
+    let staging_parent = data_root.join("disk-isolated").join("staging");
+    tokio::fs::create_dir_all(&staging_parent)
+        .await
+        .with_context(|| format!("creating {}", staging_parent.display()))?;
+    let staging = TempDir::new_in(&staging_parent)
+        .with_context(|| format!("creating temp dir in {}", staging_parent.display()))?;
+    let staging_root = staging.path().join("worktree");
+    let source = source_root.to_path_buf();
+    let git_dir_copy = git_dir.clone();
+    let staging_copy = staging_root.clone();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        copy_dir_recursive(&source, &staging_copy)?;
+        let staged_dotgit = staging_copy.join(".git");
+        if staged_dotgit.exists() {
+            if staged_dotgit.is_dir() {
+                std::fs::remove_dir_all(&staged_dotgit)?;
+            } else {
+                std::fs::remove_file(&staged_dotgit)?;
+            }
+        }
+        copy_dir_recursive(&git_dir_copy, &staged_dotgit)?;
+        Ok(())
+    })
+    .await??;
+
+    Ok((staging_root, Some(staging)))
+}
+
 pub async fn ensure_worktree_from_host_copy(
     data_root: &Path,
     workspace_id: WorkspaceId,
@@ -66,6 +175,15 @@ pub async fn ensure_worktree_from_host_copy(
         dest_root = %dest_root.display(),
         "provisioning disk-isolated worktree from host copy"
     );
+    let (copy_root, _staging_guard) =
+        prepare_self_contained_copy_root(data_root, host_workspace_root)
+            .await
+            .with_context(|| {
+                format!(
+                    "preparing self-contained sandbox copy root from {}",
+                    host_workspace_root.display()
+                )
+            })?;
 
     // 1) Create destination directory.
     {
@@ -98,7 +216,7 @@ pub async fn ensure_worktree_from_host_copy(
         // (notably on some Windows setups).
         // `podman cp` copies directory contents when the source path ends in `/.` (or `\\.` on
         // Windows). Use `Path::join` to avoid hard-coding separators.
-        let host_src = host_workspace_root.join(".").to_string_lossy().to_string();
+        let host_src = copy_root.join(".").to_string_lossy().to_string();
         let container_dst = format!("{}:{}", container_id, dest_root.to_string_lossy());
         let mut cmd = crate::harness_runtime::podman_command(data_root)?;
         cmd.arg("cp").arg(host_src).arg(container_dst);

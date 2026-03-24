@@ -90,6 +90,29 @@ pub(super) fn guest_exec(
     })
 }
 
+pub(super) fn shared_vm_exec(
+    data_root: &Path,
+    cwd: &Path,
+    command: &str,
+    env: &[String],
+    user: Option<&str>,
+    pty: bool,
+    args: &[String],
+) -> Result<i32> {
+    let shared_vm = shared_vm_state(data_root)?;
+    if !matches!(shared_vm.state, AvfLinuxSharedVmLifecycleState::Running) {
+        bail!(
+            "shared AVF Linux VM must be running before shared-vm-exec (state={:?})",
+            shared_vm.state
+        );
+    }
+
+    let control_socket = shared_vm_control_socket_path(data_root);
+    let guest_env = parse_guest_exec_env(env)?;
+    run_guest_exec_process(&control_socket, cwd, command, args, user, guest_env, pty)
+        .with_context(|| format!("running shared AVF Linux guest exec `{command}`"))
+}
+
 pub(super) fn parse_guest_exec_env(env: &[String]) -> Result<HashMap<String, String>> {
     let mut parsed = HashMap::new();
     for entry in env {

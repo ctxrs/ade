@@ -154,6 +154,7 @@ pub(super) fn start_shared_vm(
     } else {
         Some(
             validate_real_avf_linux_vm_configuration(
+                data_root,
                 &staged_rootfs_image,
                 &boot_kernel_path,
                 initrd_path,

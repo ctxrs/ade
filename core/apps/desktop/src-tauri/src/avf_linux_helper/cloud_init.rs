@@ -28,6 +28,23 @@ pub(super) fn render_shared_vm_guest_agent_service() -> String {
     )
 }
 
+pub(super) fn render_shared_vm_host_data_mount_service(host_data_root: &Path) -> String {
+    let mount_root = host_data_root.display().to_string();
+    let escaped_mount_root = shell_escape_single_quotes(&mount_root);
+    let escaped_tag = shell_escape_single_quotes(SHARED_VM_DATA_ROOT_SHARE_TAG);
+    format!(
+        "[Unit]\nDescription=ctx AVF Host Data Mount\nDefaultDependencies=no\nAfter=local-fs.target\nBefore={guest_agent_service}\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -lc 'mkdir -p '\\''{mount_root}'\\'' && mountpoint -q '\\''{mount_root}'\\'' || mount -t virtiofs '\\''{tag}'\\'' '\\''{mount_root}'\\''' \nExecStop=/bin/sh -lc 'mountpoint -q '\\''{mount_root}'\\'' && umount '\\''{mount_root}'\\'' || true'\n\n[Install]\nWantedBy=multi-user.target\n# {service_name}\n",
+        guest_agent_service = SHARED_VM_GUEST_AGENT_SERVICE_NAME,
+        mount_root = escaped_mount_root,
+        tag = escaped_tag,
+        service_name = SHARED_VM_HOST_DATA_SERVICE_NAME,
+    )
+}
+
+pub(super) fn shell_escape_single_quotes(value: &str) -> String {
+    value.replace('\'', "'\"'\"'")
+}
+
 pub(super) fn hash_shared_vm_seed_component(bytes: &[u8]) -> String {
     let mut hash = 0xcbf29ce484222325_u64;
     for byte in bytes {
@@ -52,11 +69,16 @@ pub(super) fn render_shared_vm_cloud_init_meta_data(
 }
 
 pub(super) fn render_shared_vm_cloud_init_user_data(
+    data_root: &Path,
     guest_agent_bytes: &[u8],
     egress_proxy_bytes: Option<&[u8]>,
 ) -> String {
     let guest_agent_b64 = indent_cloud_init_block(&wrap_cloud_init_base64(guest_agent_bytes), 6);
     let service = indent_cloud_init_block(&render_shared_vm_guest_agent_service(), 6);
+    let host_data_service = indent_cloud_init_block(
+        &render_shared_vm_host_data_mount_service(data_root),
+        6,
+    );
     let egress_proxy_block = egress_proxy_bytes.map(|bytes| {
         let egress_proxy_b64 = indent_cloud_init_block(&wrap_cloud_init_base64(bytes), 6);
         format!(
@@ -64,8 +86,10 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
         )
     });
     format!(
-        "#cloud-config\nwrite_files:\n  - path: /usr/local/bin/ctx-avf-linux-guest-agent\n    permissions: '0755'\n    encoding: b64\n    content: |\n{guest_agent_b64}\n{egress_proxy_block}  - path: /etc/systemd/system/{service_name}\n    permissions: '0644'\n    content: |\n{service}\nruncmd:\n  - [ sh, -lc, 'echo \"[ctx-avf-linux] preparing {service_name}\" >/dev/hvc0; ls -l /usr/local/bin/ctx-avf-linux-guest-agent >/dev/hvc0 2>&1; ls -l /etc/systemd/system/{service_name} >/dev/hvc0 2>&1' ]\n  - [ systemctl, daemon-reload ]\n  - [ sh, -lc, 'systemctl enable --now {service_name} >/dev/hvc0 2>&1 || (systemctl status {service_name} --no-pager >/dev/hvc0 2>&1; exit 1)' ]\n",
+        "#cloud-config\npackages:\n  - podman\n  - uidmap\n  - slirp4netns\n  - fuse-overlayfs\nwrite_files:\n  - path: /usr/local/bin/ctx-avf-linux-guest-agent\n    permissions: '0755'\n    encoding: b64\n    content: |\n{guest_agent_b64}\n{egress_proxy_block}  - path: /etc/systemd/system/{host_data_service_name}\n    permissions: '0644'\n    content: |\n{host_data_service}\n  - path: /etc/systemd/system/{service_name}\n    permissions: '0644'\n    content: |\n{service}\nruncmd:\n  - [ sh, -lc, 'echo \"[ctx-avf-linux] preparing {service_name}\" >/dev/hvc0; ls -l /usr/local/bin/ctx-avf-linux-guest-agent >/dev/hvc0 2>&1; ls -l /etc/systemd/system/{service_name} >/dev/hvc0 2>&1' ]\n  - [ systemctl, daemon-reload ]\n  - [ sh, -lc, 'systemctl enable --now {host_data_service_name} >/dev/hvc0 2>&1 || (systemctl status {host_data_service_name} --no-pager >/dev/hvc0 2>&1; exit 1)' ]\n  - [ sh, -lc, 'systemctl enable --now {service_name} >/dev/hvc0 2>&1 || (systemctl status {service_name} --no-pager >/dev/hvc0 2>&1; exit 1)' ]\n",
         service_name = SHARED_VM_GUEST_AGENT_SERVICE_NAME,
+        host_data_service_name = SHARED_VM_HOST_DATA_SERVICE_NAME,
+        host_data_service = host_data_service,
         egress_proxy_block = egress_proxy_block.unwrap_or_default(),
     )
 }
@@ -114,7 +138,11 @@ pub(super) fn stage_shared_vm_cloud_init_seed(
     })?;
     fs::write(
         shared_vm_cloud_init_user_data_path(data_root),
-        render_shared_vm_cloud_init_user_data(&guest_agent_bytes, egress_proxy_bytes.as_deref()),
+        render_shared_vm_cloud_init_user_data(
+            data_root,
+            &guest_agent_bytes,
+            egress_proxy_bytes.as_deref(),
+        ),
     )
     .with_context(|| {
         format!(

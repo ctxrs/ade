@@ -199,7 +199,7 @@ fn sample_cached_container() -> HarnessContainer {
     external_mounts.insert("/tmp/external".to_string());
     HarnessContainer {
         name: "ctx-harness-sample".to_string(),
-        mount_mode: ContainerMountMode::HostMounted,
+        mount_mode: ContainerMountMode::DiskIsolated,
         network_mode: ContainerNetworkMode::Allowlist,
         allowlist: vec!["github.com".to_string()],
         external_mounts,
@@ -210,7 +210,7 @@ fn sample_cached_container() -> HarnessContainer {
 fn sample_container_settings() -> ContainerExecutionSettings {
     ContainerExecutionSettings {
         runtime: crate::settings::ContainerRuntimeKind::Podman,
-        mount_mode: ContainerMountMode::HostMounted,
+        mount_mode: ContainerMountMode::DiskIsolated,
         network_mode: ContainerNetworkMode::Allowlist,
         allowlist: vec!["github.com".to_string()],
         image: None,
@@ -373,8 +373,312 @@ fn write_avf_linux_lifecycle_helper(dir: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
     let path = dir.join("ctx-avf-linux-helper-runtime-manager-test.sh");
+    let podman_path = dir.join("ctx-avf-linux-podman-runtime-manager-test.sh");
     let host_os = std::env::consts::OS;
     let host_arch = std::env::consts::ARCH;
+    let podman_script = format!(
+        r#"#!/bin/sh
+data_root="$1"
+shift
+vm_root="$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared"
+containers_root="$vm_root/test-containers"
+volumes_root="$vm_root/test-volumes"
+images_root="$vm_root/test-images"
+log_path="$vm_root/podman-invocations.log"
+mkdir -p "$containers_root" "$volumes_root" "$images_root" "$(dirname "$log_path")"
+printf '%s\n' "$*" >> "$log_path"
+
+container_dir() {{
+  printf '%s' "$containers_root/$1"
+}}
+
+container_rootfs() {{
+  printf '%s' "$(container_dir "$1")/rootfs"
+}}
+
+container_mounts_file() {{
+  printf '%s' "$(container_dir "$1")/mounts"
+}}
+
+container_state_file() {{
+  printf '%s' "$(container_dir "$1")/state"
+}}
+
+ensure_container_dir() {{
+  mkdir -p "$(container_dir "$1")"
+  mkdir -p "$(container_rootfs "$1")"
+}}
+
+map_container_path() {{
+  container_name="$1"
+  guest_path="$2"
+  mounts_file="$(container_mounts_file "$container_name")"
+  if [ ! -f "$mounts_file" ]; then
+    printf '%s\n' "$guest_path"
+    return 0
+  fi
+  while IFS='|' read -r mount_type mount_src mount_dst mount_mode; do
+    [ -n "$mount_type" ] || continue
+    host_src="$mount_src"
+    if [ "$mount_type" = "volume" ]; then
+      host_src="$volumes_root/$mount_src"
+    fi
+    case "$guest_path" in
+      "$mount_dst")
+        printf '%s\n' "$host_src"
+        return 0
+        ;;
+      "$mount_dst"/*)
+        rel=$(printf '%s' "$guest_path" | sed "s#^$mount_dst/##")
+        printf '%s\n' "$host_src/$rel"
+        return 0
+        ;;
+    esac
+  done < "$mounts_file"
+  printf '%s\n' "$guest_path"
+}}
+
+map_non_shell_args() {{
+  container_name="$1"
+  shift
+  for arg in "$@"; do
+    mapped="$arg"
+    case "$arg" in
+      /*) mapped="$(map_container_path "$container_name" "$arg")" ;;
+    esac
+    printf '%s\n' "$mapped"
+  done
+}}
+
+run_exec() {{
+  pty=0
+  workdir="/"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --interactive|--tty) shift ;;
+      --user) shift 2 ;;
+      --env)
+        kv="$2"
+        key=$(printf '%s' "$kv" | sed 's/=.*//')
+        value=$(printf '%s' "$kv" | sed 's/^[^=]*=//')
+        export "$key=$value"
+        shift 2
+        ;;
+      --workdir) workdir="$2"; shift 2 ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  container_name="$1"
+  shift
+  command_name="$1"
+  shift
+  host_cwd="$(map_container_path "$container_name" "$workdir")"
+  mkdir -p "$host_cwd"
+  case "$command_name" in
+    sh|/bin/sh|bash|/bin/bash)
+      (cd "$host_cwd" && exec "$command_name" "$@")
+      ;;
+    *)
+      mapped_lines="$(map_non_shell_args "$container_name" "$@")"
+      set --
+      while IFS= read -r arg; do
+        set -- "$@" "$arg"
+      done <<EOF
+$mapped_lines
+EOF
+      (cd "$host_cwd" && exec "$command_name" "$@")
+      ;;
+  esac
+}}
+
+run_cp() {{
+  src="$1"
+  dest_spec="$2"
+  container_name=$(printf '%s' "$dest_spec" | sed 's/:.*$//')
+  guest_dest=$(printf '%s' "$dest_spec" | sed 's/^[^:]*://')
+  host_dest="$(map_container_path "$container_name" "$guest_dest")"
+  mkdir -p "$host_dest"
+  case "$src" in
+    */.)
+      src_dir=$(dirname "$src")
+      cp -R "$src_dir"/. "$host_dest"
+      ;;
+    *)
+      cp -R "$src" "$host_dest"
+      ;;
+  esac
+}}
+
+subcmd="$1"
+shift
+case "$subcmd" in
+  info)
+    printf '{{}}\n'
+    ;;
+  image)
+    image_cmd="$1"
+    shift
+    case "$image_cmd" in
+      exists)
+        exit 0
+        ;;
+      *)
+        echo "unexpected podman image command: $image_cmd $*" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  load)
+    if [ "$1" = "-i" ]; then
+      shift 2
+    fi
+    image_key="default-image"
+    : > "$images_root/$image_key"
+    printf 'Loaded image: ctx-harness\n'
+    ;;
+  volume)
+    volume_cmd="$1"
+    shift
+    case "$volume_cmd" in
+      inspect)
+        volume_name="$1"
+        [ -d "$volumes_root/$volume_name" ] || exit 1
+        printf '[]\n'
+        ;;
+      create)
+        volume_name="$1"
+        mkdir -p "$volumes_root/$volume_name"
+        printf '%s\n' "$volume_name"
+        ;;
+      rm)
+        [ "$1" = "-f" ] && shift
+        volume_name="$1"
+        rm -rf "$volumes_root/$volume_name"
+        ;;
+      *)
+        echo "unexpected podman volume command: $volume_cmd $*" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  container)
+    container_cmd="$1"
+    shift
+    case "$container_cmd" in
+      exists)
+        container_name="$1"
+        [ -d "$(container_dir "$container_name")" ]
+        ;;
+      inspect)
+        if [ "$1" = "--format" ] && [ "$2" = "{{{{.State.Running}}}}" ]; then
+          container_name="$3"
+          [ -d "$(container_dir "$container_name")" ] || exit 1
+          state=$(cat "$(container_state_file "$container_name")" 2>/dev/null || printf 'false')
+          printf '%s\n' "$state"
+        else
+          echo "unexpected podman container inspect command: $*" >&2
+          exit 1
+        fi
+        ;;
+      *)
+        echo "unexpected podman container command: $container_cmd $*" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  inspect)
+    container_name="$1"
+    mounts_file="$(container_mounts_file "$container_name")"
+    [ -f "$mounts_file" ] || exit 1
+    printf '['
+    printf '{{"Mounts":['
+    first=1
+    while IFS='|' read -r mount_type mount_src mount_dst mount_mode; do
+      [ -n "$mount_type" ] || continue
+      if [ "$first" -eq 0 ]; then
+        printf ','
+      fi
+      if [ "$mount_type" = "volume" ]; then
+        printf '{{"Type":"volume","Name":"%s","Destination":"%s"}}' "$mount_src" "$mount_dst"
+      else
+        printf '{{"Type":"bind","Destination":"%s"}}' "$mount_dst"
+      fi
+      first=0
+    done < "$mounts_file"
+    printf ']}}]\n'
+    ;;
+  start)
+    container_name="$1"
+    ensure_container_dir "$container_name"
+    printf 'true' > "$(container_state_file "$container_name")"
+    ;;
+  rm)
+    [ "$1" = "-f" ] && shift
+    container_name="$1"
+    rm -rf "$(container_dir "$container_name")"
+    ;;
+  run)
+    container_name=""
+    mounts_file_tmp="$vm_root/run-mounts.$$"
+    : > "$mounts_file_tmp"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -d) shift ;;
+        --name) container_name="$2"; shift 2 ;;
+        --userns=*) shift ;;
+        --user) shift 2 ;;
+        --network) shift 2 ;;
+        --cap-add) shift 2 ;;
+        --add-host) shift 2 ;;
+        --mount)
+          printf '%s\n' "$2" >> "$mounts_file_tmp"
+          shift 2
+          ;;
+        *)
+          break
+          ;;
+      esac
+    done
+    [ -n "$container_name" ] || exit 1
+    ensure_container_dir "$container_name"
+    mounts_file="$(container_mounts_file "$container_name")"
+    : > "$mounts_file"
+    while IFS= read -r mount_entry; do
+      [ -n "$mount_entry" ] || continue
+      mount_type=$(printf '%s' "$mount_entry" | tr ',' '\n' | awk -F= '$1=="type"{{print $2}}')
+      mount_src=$(printf '%s' "$mount_entry" | tr ',' '\n' | awk -F= '$1=="src"{{print $2}}')
+      mount_dst=$(printf '%s' "$mount_entry" | tr ',' '\n' | awk -F= '$1=="dst"{{print $2}}')
+      mount_mode=$(printf '%s' "$mount_entry" | tr ',' '\n' | awk 'NF==1{{print $1}}')
+      [ -n "$mount_type" ] || continue
+      printf '%s|%s|%s|%s\n' "$mount_type" "$mount_src" "$mount_dst" "$mount_mode" >> "$mounts_file"
+      if [ "$mount_type" = "volume" ]; then
+        mkdir -p "$volumes_root/$mount_src"
+      elif [ "$mount_type" = "bind" ]; then
+        mkdir -p "$mount_src"
+      fi
+    done < "$mounts_file_tmp"
+    rm -f "$mounts_file_tmp"
+    printf 'true' > "$(container_state_file "$container_name")"
+    printf '%s\n' "$container_name"
+    ;;
+  exec)
+    run_exec "$@"
+    ;;
+  cp)
+    run_cp "$1" "$2"
+    ;;
+  *)
+    echo "unexpected podman command: $subcmd $*" >&2
+    exit 1
+    ;;
+esac
+"#
+    );
+    std::fs::write(&podman_path, podman_script).expect("write AVF podman helper shim");
+    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod AVF podman helper shim");
     let script = format!(
         r#"#!/bin/sh
 cmd="$1"
@@ -495,12 +799,39 @@ case "$cmd" in
     mkdir -p "$host_cwd"
     (cd "$host_cwd" && exec "$guest_command" "$@")
     ;;
+  shared-vm-exec)
+    data_root=""
+    shared_command=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --data-root) data_root="$2"; shift 2 ;;
+        --cwd) shift 2 ;;
+        --command) shared_command="$2"; shift 2 ;;
+        --user) shift 2 ;;
+        --pty) shift ;;
+        --env)
+          kv="$2"
+          key=$(printf '%s' "$kv" | sed 's/=.*//')
+          value=$(printf '%s' "$kv" | sed 's/^[^=]*=//')
+          export "$key=$value"
+          shift 2
+          ;;
+        --) shift; break ;;
+        *) echo "unexpected shared-vm-exec arg: $1" >&2; exit 1 ;;
+      esac
+    done
+    if [ "$shared_command" = "podman" ]; then
+      exec "{podman_shim}" "$data_root" "$@"
+    fi
+    exec "$shared_command" "$@"
+    ;;
   *)
     echo "unexpected helper invocation: $cmd $*" >&2
     exit 1
     ;;
 esac
-"#
+"#,
+        podman_shim = podman_path.display()
     );
     std::fs::write(&path, script).expect("write AVF lifecycle helper shim");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
@@ -1369,7 +1700,7 @@ async fn ensure_podman_machine_materialized_recreates_machine_for_memory_profile
     std::fs::write(
         &podman_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  echo 'podman machine is stopped' >&2\n  exit 125\nfi\nif [ \"$1\" = \"ps\" ]; then\n  echo 'podman machine is stopped' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[{{\"State\":\"stopped\",\"Resources\":{{\"Memory\":2048}}}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ] && [ \"$3\" = \"-f\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"ls\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[{{\"State\":\"stopped\",\"Resources\":{{\"Memory\":2048}}}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ] && [ \"$3\" = \"-f\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
         ),
     )
@@ -1380,7 +1711,7 @@ async fn ensure_podman_machine_materialized_recreates_machine_for_memory_profile
     let (_machine_cache_guard, machine_cache_server) =
         install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
     let settings = ContainerExecutionSettings {
-        mount_mode: ContainerMountMode::HostMounted,
+        mount_mode: ContainerMountMode::DiskIsolated,
         machine: crate::settings::ContainerMachineSettings {
             memory_profile: crate::settings::ContainerMachineMemoryProfile::Custom,
             custom_memory_mb: Some(12288),
@@ -1398,7 +1729,7 @@ async fn ensure_podman_machine_materialized_recreates_machine_for_memory_profile
 
     let log = std::fs::read_to_string(&log_path).expect("read invocation log");
     assert!(log.lines().any(|line| line == "info"));
-    assert!(log.contains("ps --format {{.Names}}"));
+    assert!(log.contains("volume ls --format {{.Name}}"));
     assert!(log.contains(&format!("machine inspect {machine_name}")));
     assert!(log.contains(&format!("machine stop {machine_name}")));
     assert!(log.contains(&format!("machine rm -f {machine_name}")));
@@ -1719,12 +2050,8 @@ async fn maybe_reclaim_podman_machine_skips_active_container_sessions() {
     }
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
     let running_sessions = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
-    let session_id = create_session_with_environment(
-        &stores,
-        temp.path(),
-        ExecutionEnvironment::ContainerHostMounted,
-    )
-    .await;
+    let session_id =
+        create_session_with_environment(&stores, temp.path(), ExecutionEnvironment::Sandbox).await;
     running_sessions.lock().await.insert(session_id);
     let terminals = crate::terminals::TerminalManager::default();
     let settings = ContainerExecutionSettings {
@@ -1907,7 +2234,7 @@ async fn ensure_container_machine_ready_reconfigures_running_machine_when_idle()
     std::fs::write(
         &podman_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nstate=$(cat \"$STATE\" 2>/dev/null || true)\nif [ \"$1\" = \"info\" ]; then\n  [ \"$state\" = \"running\" ] && exit 0\n  exit 1\nfi\nif [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[{{\"Resources\":{{\"Memory\":2048}}}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  printf 'stopped\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ] && [ \"$3\" = \"-f\" ]; then\n  printf 'absent\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  printf 'initialized\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  printf 'running\\n' > \"$STATE\"\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nstate=$(cat \"$STATE\" 2>/dev/null || true)\nif [ \"$1\" = \"info\" ]; then\n  [ \"$state\" = \"running\" ] && exit 0\n  exit 1\nfi\nif [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"ls\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[{{\"Resources\":{{\"Memory\":2048}}}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  printf 'stopped\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ] && [ \"$3\" = \"-f\" ]; then\n  printf 'absent\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  printf 'initialized\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  printf 'running\\n' > \"$STATE\"\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             state = state_path.display(),
         ),
@@ -1920,7 +2247,7 @@ async fn ensure_container_machine_ready_reconfigures_running_machine_when_idle()
     let (_machine_cache_guard, machine_cache_server) =
         install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
     let settings = ContainerExecutionSettings {
-        mount_mode: ContainerMountMode::HostMounted,
+        mount_mode: ContainerMountMode::DiskIsolated,
         machine: crate::settings::ContainerMachineSettings {
             memory_profile: crate::settings::ContainerMachineMemoryProfile::Custom,
             custom_memory_mb: Some(12288),
@@ -1995,7 +2322,7 @@ async fn ensure_container_machine_ready_prefetches_avf_runtime_without_starting_
 
 #[cfg(unix)]
 #[tokio::test]
-async fn prepare_returns_avf_linux_vm_plan_after_workspace_vm_and_guest_worktree_ready() {
+async fn prepare_returns_avf_linux_vm_plan_after_workspace_vm_and_container_ready() {
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = runtime_manager(&temp).await;
@@ -2009,6 +2336,7 @@ async fn prepare_returns_avf_linux_vm_plan_after_workspace_vm_and_guest_worktree
         container: ContainerExecutionSettings {
             runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
             mount_mode: ContainerMountMode::DiskIsolated,
+            network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
         },
     };
@@ -2016,7 +2344,7 @@ async fn prepare_returns_avf_linux_vm_plan_after_workspace_vm_and_guest_worktree
     let plan = manager
         .prepare(&workspace, &worktree, &settings, "http://192.168.64.1:4399")
         .await
-        .expect("AVF prepare should now return a guest-exec plan");
+        .expect("AVF prepare should now return a container-backed AVF plan");
     match &plan.runtime {
         HarnessRuntimeKind::AvfLinuxVm => {}
         HarnessRuntimeKind::Host => panic!("expected AVF Linux VM runtime"),
@@ -2062,20 +2390,6 @@ async fn prepare_returns_avf_linux_vm_plan_after_workspace_vm_and_guest_worktree
         state.state,
         super::avf_linux_vm::AvfLinuxSharedVmLifecycleState::Running
     );
-    let guest_worktree = super::avf_linux_vm::prepare_guest_worktree(
-        temp.path(),
-        workspace.id,
-        worktree.id,
-        Path::new(&workspace.root_path),
-        &worktree.base_commit_sha,
-        worktree.git_branch.as_deref().expect("git branch"),
-    )
-    .expect("guest worktree state");
-    assert_eq!(
-        guest_worktree.status,
-        super::avf_linux_vm::AvfLinuxGuestWorktreeStatus::AlreadyPresent
-    );
-    assert!(guest_worktree.host_shadow_root.exists());
 
     for server in servers {
         server.abort();
@@ -2084,7 +2398,7 @@ async fn prepare_returns_avf_linux_vm_plan_after_workspace_vm_and_guest_worktree
 
 #[cfg(unix)]
 #[tokio::test]
-async fn container_status_reports_running_avf_workspace_vm() {
+async fn container_status_reports_running_avf_workspace_container() {
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = runtime_manager(&temp).await;
@@ -2098,6 +2412,7 @@ async fn container_status_reports_running_avf_workspace_vm() {
         container: ContainerExecutionSettings {
             runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
             mount_mode: ContainerMountMode::DiskIsolated,
+            network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
         },
     };
@@ -2111,8 +2426,8 @@ async fn container_status_reports_running_avf_workspace_vm() {
         .container_status(workspace.id)
         .await
         .expect("AVF workspace status")
-        .expect("AVF workspace VM status should exist");
-    assert_eq!(status.name, format!("ctx-avf-linux-vm-{}", workspace.id.0));
+        .expect("AVF workspace container status should exist");
+    assert_eq!(status.name, format!("ctx-harness-{}", workspace.id.0));
     assert!(status.running);
     assert!(status.known);
     assert_eq!(status.mount_mode, Some(ContainerMountMode::DiskIsolated));
@@ -2137,6 +2452,7 @@ async fn ensure_workspace_container_starts_avf_workspace_vm() {
         container: ContainerExecutionSettings {
             runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
             mount_mode: ContainerMountMode::DiskIsolated,
+            network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
         },
     };
@@ -2160,7 +2476,7 @@ async fn ensure_workspace_container_starts_avf_workspace_vm() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn ensure_workspace_container_for_worktree_prepares_avf_guest_worktree() {
+async fn ensure_workspace_container_for_worktree_keeps_avf_workspace_container_ready() {
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = runtime_manager(&temp).await;
@@ -2174,6 +2490,7 @@ async fn ensure_workspace_container_for_worktree_prepares_avf_guest_worktree() {
         container: ContainerExecutionSettings {
             runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
             mount_mode: ContainerMountMode::DiskIsolated,
+            network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
         },
     };
@@ -2186,21 +2503,14 @@ async fn ensure_workspace_container_for_worktree_prepares_avf_guest_worktree() {
             "http://192.168.64.1:4399",
         )
         .await
-        .expect("AVF worktree ensure should prepare the guest worktree");
+        .expect("AVF worktree ensure should keep the workspace sandbox ready");
 
-    let prepared = super::avf_linux_vm::prepare_guest_worktree(
-        temp.path(),
-        workspace.id,
-        worktree.id,
-        Path::new(&workspace.root_path),
-        &worktree.base_commit_sha,
-        &format!("ctx/{}/{}", workspace.id.0, worktree.id.0),
-    )
-    .expect("AVF guest worktree metadata should already exist");
-    assert_eq!(
-        prepared.status,
-        super::avf_linux_vm::AvfLinuxGuestWorktreeStatus::AlreadyPresent
-    );
+    let status = manager
+        .container_status(workspace.id)
+        .await
+        .expect("AVF workspace status")
+        .expect("AVF workspace container state should exist");
+    assert!(status.running);
 
     for server in servers {
         server.abort();
@@ -2222,6 +2532,7 @@ async fn ensure_workspace_container_after_runtime_ready_starts_avf_workspace_vm(
         container: ContainerExecutionSettings {
             runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
             mount_mode: ContainerMountMode::DiskIsolated,
+            network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
         },
     };
@@ -2254,7 +2565,7 @@ async fn ensure_workspace_container_after_runtime_ready_starts_avf_workspace_vm(
 
 #[cfg(unix)]
 #[tokio::test]
-async fn stop_container_stops_avf_workspace_vm() {
+async fn stop_container_removes_avf_workspace_container() {
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = runtime_manager(&temp).await;
@@ -2268,6 +2579,7 @@ async fn stop_container_stops_avf_workspace_vm() {
         container: ContainerExecutionSettings {
             runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
             mount_mode: ContainerMountMode::DiskIsolated,
+            network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
         },
     };
@@ -2275,19 +2587,21 @@ async fn stop_container_stops_avf_workspace_vm() {
     manager
         .prepare(&workspace, &worktree, &settings, "http://192.168.64.1:4399")
         .await
-        .expect("AVF prepare should start the workspace VM");
+        .expect("AVF prepare should start the workspace sandbox");
 
     assert!(manager
         .stop_container(workspace.id)
         .await
-        .expect("stop AVF workspace VM"));
+        .expect("stop AVF workspace container"));
 
     let status = manager
         .container_status(workspace.id)
         .await
-        .expect("read stopped AVF workspace VM status")
-        .expect("AVF workspace VM status should still exist after stop");
-    assert!(!status.running);
+        .expect("read stopped AVF workspace container status");
+    assert!(
+        status.as_ref().map(|value| !value.running).unwrap_or(true),
+        "expected stopped or absent sandbox container status, got {status:?}"
+    );
 
     for server in servers {
         server.abort();
@@ -2321,7 +2635,7 @@ async fn ensure_container_machine_ready_defers_running_machine_reconfiguration_f
     let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
     let _host_memory = EnvGuard::set("CTX_TEST_HOST_MEMORY_MB", "49152");
     let settings = ContainerExecutionSettings {
-        mount_mode: ContainerMountMode::HostMounted,
+        mount_mode: ContainerMountMode::DiskIsolated,
         machine: crate::settings::ContainerMachineSettings {
             memory_profile: crate::settings::ContainerMachineMemoryProfile::Custom,
             custom_memory_mb: Some(12288),
@@ -2957,7 +3271,7 @@ fn cached_container_action_reuses_when_mounts_and_network_match() {
 fn cached_container_action_recreates_when_mount_mode_changes() {
     let cached = sample_cached_container();
     let mut settings = sample_container_settings();
-    settings.mount_mode = ContainerMountMode::DiskIsolated;
+    settings.mount_mode = ContainerMountMode::Legacy;
     let action = cached_container_action(&cached, &settings, &cached.external_mounts);
     assert_eq!(action, CachedContainerAction::Recreate);
 }

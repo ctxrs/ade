@@ -115,8 +115,7 @@ const createTaskWithSession = async (workspaceId, title) => {
   const executionEnvironment = String(executionConfigResp.payload?.environment || "").trim();
   if (
     executionEnvironment !== "host"
-    && executionEnvironment !== "container_host_mounted"
-    && executionEnvironment !== "container_disk_isolated"
+    && executionEnvironment !== "sandbox"
   ) {
     throw new Error(`unsupported execution environment: ${executionEnvironment || "<missing>"}`);
   }

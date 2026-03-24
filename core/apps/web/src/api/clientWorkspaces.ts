@@ -121,14 +121,14 @@ export const getWorkspaceMergeQueueConfig = (workspaceId: string) =>
   apiAny<WorkspaceMergeQueueConfig>(`/api/workspaces/${workspaceId}/merge_queue_config`);
 
 export type UpdateExecutionConfigRequest = {
-  environment: "host" | "container_host_mounted" | "container_disk_isolated";
+  environment: "host" | "sandbox";
   network_mode?: "llm_only" | "allowlist" | "all" | null;
   allowlist?: string[] | null;
 };
 
 export type WorkspaceExecutionConfig = {
   source: "workspace" | "daemon_default";
-  environment: "host" | "container_host_mounted" | "container_disk_isolated";
+  environment: "host" | "sandbox";
   network_mode?: "llm_only" | "allowlist" | "all" | null;
   allowlist?: string[] | null;
 };

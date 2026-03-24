@@ -612,7 +612,7 @@ export function WorkspaceSetupPageView({
                     </label>
                     {selections.container !== "no-container" && (
                       <div className="wizard-note">
-                        This is the project folder on the host. In disk-isolated mode, ctx will copy the workspace into a container-managed filesystem for execution.
+                        This is the project folder on the host. In sandbox mode, ctx will copy the workspace into an isolated managed filesystem for execution.
                       </div>
                     )}
                     {selections.source === "import" && importRepoStatus !== "idle" && importRepoNote && (
@@ -850,7 +850,7 @@ export function WorkspaceSetupPageView({
                         <div className="wizard-summary-row">
                           <div className="wizard-summary-k">Destination</div>
                           <div className="wizard-summary-v">
-                            {useDiskIsolatedStaging ? "Managed staging (container)" : sourcePath.trim()}
+                            {useDiskIsolatedStaging ? "Managed staging (sandbox)" : sourcePath.trim()}
                           </div>
                         </div>
                       )}
@@ -878,10 +878,8 @@ export function WorkspaceSetupPageView({
                         <div className="wizard-summary-k">Sandbox</div>
                         <div className="wizard-summary-v">
                           {selections.container === "no-container"
-                            ? "Host (no container)"
-                            : selections.container === "host-mounted"
-                              ? "Container (host-mounted)"
-                              : "Container (disk-isolated)"}
+                            ? "Host"
+                            : "Sandbox"}
                         </div>
                       </div>
                       {selections.container !== "no-container" && (

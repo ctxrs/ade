@@ -116,7 +116,7 @@ export function WorkspaceSetupPageController() {
   }, [wizardKey, workflow.flow.step.key, workflow.flow.stepIndex]);
 
   useEffect(() => {
-    if (workflow.flow.selections.container === "host-mounted") {
+    if (workflow.flow.selections.container !== "no-container") {
       setContainerAdvancedOpen(true);
     }
   }, [workflow.flow.selections.container]);

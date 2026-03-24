@@ -668,23 +668,6 @@ mod tests {
         assert_eq!(cwd, disk_isolated::container_worktree_root(worktree_id));
     }
 
-    #[test]
-    fn probe_cwd_keeps_host_path_for_host_mounted_container_mode() {
-        let data_root = tempfile::tempdir().expect("tempdir");
-        let workspace = sample_workspace("/host/workspace");
-        let worktree = sample_worktree(workspace.id, "/host/workspace");
-
-        let cwd = probe_cwd_for_workspace_runtime(
-            data_root.path(),
-            &workspace,
-            &worktree,
-            ExecutionMode::Container,
-            ContainerMountMode::HostMounted,
-        );
-
-        assert_eq!(cwd, PathBuf::from("/host/workspace"));
-    }
-
     #[tokio::test]
     async fn finalize_workspace_probe_env_sets_home_and_xdg_dirs_for_container_probe() {
         let runtime_root = tempfile::tempdir().expect("tempdir");

@@ -32,7 +32,7 @@ const DEFERRED_RUNNER_SKIP_REASONS = new Set([
 const REQUIRED_PROVIDER_IDS = new Set(["codex"]);
 const REQUIRED_AUTH_MODES = new Set(["endpoint_api_key", "configure_later_then_connect"]);
 const REQUIRED_DAEMON_LOCATIONS = new Set(["local"]);
-const REQUIRED_EXECUTION_ENVIRONMENTS = new Set(["host", "container_host_mounted"]);
+const REQUIRED_EXECUTION_ENVIRONMENTS = new Set(["host", "sandbox"]);
 const REQUIRED_ALLOWED_PREREQUISITES = new Set(["OPENROUTER_API_KEY"]);
 
 const resolveInputPath = (raw, { fallbackPath = "", mustExist = false } = {}) => {
@@ -269,11 +269,11 @@ const validateManifest = (manifest) => {
       providerId === "codex"
       && REQUIRED_AUTH_MODES.has(authMode)
       && daemonLocation === "local"
-      && executionEnvironment === "container_host_mounted"
+      && executionEnvironment === "sandbox"
       && runnerKind === "desktop_wdio"
       && !readString(runner.scenarios).split(",").map((entry) => entry.trim()).includes("local-codex-smoke")
     ) {
-      errors.push(`cell ${id} local container_host_mounted Codex required coverage must include local-codex-smoke`);
+      errors.push(`cell ${id} local sandbox Codex required coverage must include local-codex-smoke`);
     }
     if (runnerKind === "web_playwright" && !readString(runner.spec).trim()) {
       errors.push(`cell ${id} web_playwright runner requires spec`);

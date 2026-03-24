@@ -1,7 +1,35 @@
 use super::*;
 
 #[cfg(target_os = "macos")]
+fn build_shared_data_root_device(
+    data_root: &Path,
+) -> Result<Retained<VZVirtioFileSystemDeviceConfiguration>> {
+    let shared_dir_url = file_url_for_path(data_root);
+    let shared_dir = unsafe {
+        VZSharedDirectory::initWithURL_readOnly(
+            VZSharedDirectory::alloc(),
+            &shared_dir_url,
+            false,
+        )
+    };
+    let share = unsafe {
+        VZSingleDirectoryShare::initWithDirectory(VZSingleDirectoryShare::alloc(), &shared_dir)
+    };
+    let device = unsafe {
+        VZVirtioFileSystemDeviceConfiguration::initWithTag(
+            VZVirtioFileSystemDeviceConfiguration::alloc(),
+            &NSString::from_str(SHARED_VM_DATA_ROOT_SHARE_TAG),
+        )
+    };
+    unsafe {
+        device.setShare(Some(share.as_super()));
+    }
+    Ok(device)
+}
+
+#[cfg(target_os = "macos")]
 pub(super) fn validate_real_avf_linux_vm_configuration(
+    data_root: &Path,
     rootfs_image: &Path,
     kernel_path: &Path,
     initrd_path: &Path,
@@ -55,6 +83,9 @@ pub(super) fn validate_real_avf_linux_vm_configuration(
     let balloon_device = unsafe { VZVirtioTraditionalMemoryBalloonDeviceConfiguration::new() };
     let balloon_devices: Retained<NSArray<VZMemoryBalloonDeviceConfiguration>> =
         NSArray::from_slice(&[balloon_device.as_super()]);
+    let shared_data_root_device = build_shared_data_root_device(data_root)?;
+    let directory_sharing_devices: Retained<NSArray<VZDirectorySharingDeviceConfiguration>> =
+        NSArray::from_slice(&[shared_data_root_device.as_super()]);
 
     let configuration = unsafe { VZVirtualMachineConfiguration::new() };
     let platform = unsafe { VZGenericPlatformConfiguration::new() };
@@ -73,6 +104,7 @@ pub(super) fn validate_real_avf_linux_vm_configuration(
         configuration.setNetworkDevices(&network_devices);
         configuration.setSocketDevices(&socket_devices);
         configuration.setMemoryBalloonDevices(&balloon_devices);
+        configuration.setDirectorySharingDevices(&directory_sharing_devices);
         configuration
             .validateWithError()
             .map_err(|err| anyhow::anyhow!(format_nserror(&err)))?;
@@ -234,6 +266,9 @@ pub(super) fn build_real_avf_linux_vm_configuration(
     let balloon_device = unsafe { VZVirtioTraditionalMemoryBalloonDeviceConfiguration::new() };
     let balloon_devices: Retained<NSArray<VZMemoryBalloonDeviceConfiguration>> =
         NSArray::from_slice(&[balloon_device.as_super()]);
+    let shared_data_root_device = build_shared_data_root_device(data_root)?;
+    let directory_sharing_devices: Retained<NSArray<VZDirectorySharingDeviceConfiguration>> =
+        NSArray::from_slice(&[shared_data_root_device.as_super()]);
     let guest_console_log_path = shared_vm_guest_console_log_path(data_root);
     if let Some(parent) = guest_console_log_path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
@@ -276,6 +311,7 @@ pub(super) fn build_real_avf_linux_vm_configuration(
         configuration.setSerialPorts(&serial_ports);
         configuration.setSocketDevices(&socket_devices);
         configuration.setMemoryBalloonDevices(&balloon_devices);
+        configuration.setDirectorySharingDevices(&directory_sharing_devices);
         configuration
             .validateWithError()
             .map_err(|err| anyhow::anyhow!(format_nserror(&err)))?;
@@ -527,6 +563,7 @@ pub(super) fn restore_virtual_machine_state_on_queue(
 
 #[cfg(not(target_os = "macos"))]
 pub(super) fn validate_real_avf_linux_vm_configuration(
+    _data_root: &Path,
     _rootfs_image: &Path,
     _kernel_path: &Path,
     _initrd_path: &Path,

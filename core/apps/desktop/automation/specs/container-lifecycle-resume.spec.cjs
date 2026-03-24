@@ -109,7 +109,7 @@ const prepareWorkspaceContext = async (caseReport, label) => {
   const launch = await createAndLaunchContainerWorkspace({
     dest,
     name: label,
-    environment: "container_host_mounted",
+    environment: "sandbox",
     networkMode: "llm_only",
     log: (phase, details) => stageLog(caseReport.id, phase, details),
   });
@@ -122,7 +122,7 @@ const prepareWorkspaceContext = async (caseReport, label) => {
 
   await assertConnectedLocalAndListening();
   await assertLocalWorkspaceConfig(launch.workspaceId, {
-    environment: "container_host_mounted",
+    environment: "sandbox",
     networkMode: "llm_only",
   });
 
@@ -143,12 +143,12 @@ const prepareWorkspaceContext = async (caseReport, label) => {
   upsertCaseReport(caseReport);
 
   stageLog(caseReport.id, "workspace.route.open");
-  await openWorkspaceRouteAndWait(launch.workspaceId);
-  await assertNoDaemonOverlayFor(10_000);
-  const container = await getWorkspaceHarnessContainer(launch.workspaceId);
-  if (!container || !container.running || container.mount_mode !== "host_mounted") {
-    throw new Error(`expected running host-mounted harness container, got ${JSON.stringify(container)}`);
-  }
+    await openWorkspaceRouteAndWait(launch.workspaceId);
+    await assertNoDaemonOverlayFor(10_000);
+    const container = await getWorkspaceHarnessContainer(launch.workspaceId);
+    if (!container || !container.running) {
+      throw new Error(`expected running sandbox harness container, got ${JSON.stringify(container)}`);
+    }
   caseReport.container = {
     initial: container,
   };

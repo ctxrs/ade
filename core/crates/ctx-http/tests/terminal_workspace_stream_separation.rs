@@ -35,7 +35,7 @@ async fn read_terminal_status(socket: &mut WsStream) -> (TerminalStatus, Option<
 
 async fn read_terminal_until_marker(socket: &mut WsStream, marker: &str) -> String {
     let mut buffer = Vec::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         let wait = remaining.min(Duration::from_millis(250));

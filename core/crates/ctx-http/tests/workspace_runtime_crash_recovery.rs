@@ -71,7 +71,7 @@ async fn runtime_ready_container_creation_skips_front_loaded_image_checks() {
         mode: ExecutionMode::Container,
         container: ContainerExecutionSettings {
             runtime: ContainerRuntimeKind::Podman,
-            mount_mode: ContainerMountMode::HostMounted,
+            mount_mode: ContainerMountMode::DiskIsolated,
             network_mode: ContainerNetworkMode::All,
             allowlist: Vec::new(),
             ..Default::default()
@@ -81,7 +81,7 @@ async fn runtime_ready_container_creation_skips_front_loaded_image_checks() {
     std::fs::write(
         &podman_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  if [ -f \"$STATE\" ]; then exit 0; fi\n  exit 1\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  if [ -f \"$STATE\" ]; then printf 'true\\n'; exit 0; fi\n  exit 1\nfi\nif [ \"$1\" = \"run\" ]; then\n  : > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  if [ -f \"$STATE\" ]; then exit 0; fi\n  exit 1\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  if [ -f \"$STATE\" ]; then printf 'true\\n'; exit 0; fi\n  exit 1\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  suffix=${{2#ctx-harness-}}\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"ctx-ws-%s\",\"Destination\":\"/ctx/ws\"}}]}}]\\n' \"$suffix\"\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  : > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             state = state_path.display(),
             container = container_name,

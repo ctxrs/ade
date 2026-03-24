@@ -120,7 +120,7 @@ const ensureExecutionMachineReady = async ({
 const startBackgroundContainerLaunchJob = async ({
   dest,
   name,
-  environment = "container_host_mounted",
+  environment = "host",
   networkMode = "all",
 }) => {
   initGitRepo(dest, name);
@@ -349,8 +349,8 @@ describe("container daemon liveness", () => {
 
   it("surfaces startup prewarm contention through the desktop create flow", async function () {
     if (
-      !scenarioEnabled("local-new-host-mounted", ["local", "container", "host-mounted"])
-      && !scenarioEnabled("local-new-disk-isolated", ["local", "container", "disk-isolated"])
+      !scenarioEnabled("local-new-host", ["local", "host"])
+      && !scenarioEnabled("local-new-sandbox", ["local", "sandbox"])
       && !scenarioEnabled("local-mixed-mode", ["local", "mixed-mode"])
     ) {
       this.skip();
@@ -362,7 +362,7 @@ describe("container daemon liveness", () => {
     let launch = null;
     const workspaceId = await runWizardScenario({
       location: "local",
-      container: "host-mounted",
+      container: "host",
       network: "allowlist",
       networkAllowlist: "github.com\nregistry.npmjs.org",
       harnessDownloads: "skip",
@@ -400,27 +400,27 @@ describe("container daemon liveness", () => {
     }
 
     await assertLocalWorkspaceConfig(workspaceId, {
-      environment: "container_host_mounted",
+      environment: "host",
       networkMode: "allowlist",
       allowlist: ["github.com", "registry.npmjs.org"],
     });
     const container = await getWorkspaceHarnessContainer(workspaceId);
-    if (!container || !container.running || container.mount_mode !== "host_mounted") {
-      throw new Error(`expected running host-mounted harness container after contention create, got ${JSON.stringify(container)}`);
+    if (!container || !container.running) {
+      throw new Error(`expected running host harness after contention create, got ${JSON.stringify(container)}`);
     }
   }).timeout(CASE_TIMEOUT_MS);
 
-  it("local host-mounted container create keeps daemon healthy", async function () {
+  it("local host workspace create keeps daemon healthy", async function () {
     if (
-      !scenarioEnabled("local-new-host-mounted", ["local", "container", "host-mounted"])
-      && !scenarioEnabled("local-codex-smoke", ["local", "container", "provider"])
+      !scenarioEnabled("local-new-host", ["local", "host"])
+      && !scenarioEnabled("local-codex-smoke", ["local", "host", "provider"])
     ) {
       this.skip();
     }
 
-    const dest = path.join(localBase, "host-mounted");
+    const dest = path.join(localBase, "host");
     const workspaceId = await runLocalContainerCreate({
-      container: "host-mounted",
+      container: "host",
       workspaceName: "container-daemon-host",
       destPath: dest,
       network: "allowlist",
@@ -428,41 +428,41 @@ describe("container daemon liveness", () => {
 
     await assertConnectedLocalAndListening();
     await assertLocalWorkspaceConfig(workspaceId, {
-      environment: "container_host_mounted",
+      environment: "host",
       networkMode: "allowlist",
       allowlist: ["github.com", "registry.npmjs.org"],
     });
     const container = await getWorkspaceHarnessContainer(workspaceId);
-    if (!container || !container.running || container.mount_mode !== "host_mounted") {
-      throw new Error(`expected running host-mounted harness container, got ${JSON.stringify(container)}`);
+    if (!container || !container.running) {
+      throw new Error(`expected running host harness, got ${JSON.stringify(container)}`);
     }
     await assertNoDaemonOverlayFor(20_000);
     const health = await sampleDaemonHealth({ durationMs: 20_000, intervalMs: 2_000 });
     if (!health.ok) {
-      throw new Error(`daemon health degraded after host-mounted create: ${JSON.stringify(health.failures)}`);
+      throw new Error(`daemon health degraded after host create: ${JSON.stringify(health.failures)}`);
     }
   }).timeout(CASE_TIMEOUT_MS);
 
-  it("local disk-isolated container create keeps daemon healthy", async function () {
-    if (!scenarioEnabled("local-new-disk-isolated", ["local", "container", "disk-isolated"])) this.skip();
+  it("local sandbox workspace create keeps daemon healthy", async function () {
+    if (!scenarioEnabled("local-new-sandbox", ["local", "sandbox"])) this.skip();
 
-    const dest = path.join(localBase, "disk-isolated");
+    const dest = path.join(localBase, "sandbox");
     const workspaceId = await runWizardScenario({
       location: "local",
-      container: "disk-isolated",
+      container: "sandbox",
       network: "full",
       harnessDownloads: true,
       selectedHarnessProviderIds: ["cursor"],
       requireSelectedHarnessInstallsNonBlocking: true,
       requireExactSelectedHarnessInstallProof: true,
-      source: { kind: "new", destPath: dest, workspaceName: "container-daemon-disk" },
+      source: { kind: "new", destPath: dest, workspaceName: "container-daemon-sandbox" },
       setupHook: "",
       mergeQueue: { kind: "skip" },
     });
 
     await assertConnectedLocalAndListening();
     await assertLocalWorkspaceConfig(workspaceId, {
-      environment: "container_disk_isolated",
+      environment: "sandbox",
       networkMode: "all",
     });
     await waitForProviderInstallOrAcpBridgeObservation("cursor", "container", {
@@ -470,8 +470,8 @@ describe("container daemon liveness", () => {
       pollMs: 2_000,
     });
     const container = await getWorkspaceHarnessContainer(workspaceId);
-    if (!container || !container.running || container.mount_mode !== "disk_isolated") {
-      throw new Error(`expected running disk-isolated harness container, got ${JSON.stringify(container)}`);
+    if (!container || !container.running) {
+      throw new Error(`expected running sandbox harness, got ${JSON.stringify(container)}`);
     }
 
     const tasksResp = await daemonJson("GET", `/api/workspaces/${workspaceId}/tasks`);
@@ -482,11 +482,11 @@ describe("container daemon liveness", () => {
     await assertNoDaemonOverlayFor(30_000);
     const health = await sampleDaemonHealth({ durationMs: 30_000, intervalMs: 2_000 });
     if (!health.ok) {
-      throw new Error(`daemon health degraded after disk-isolated create: ${JSON.stringify(health.failures)}`);
+      throw new Error(`daemon health degraded after sandbox create: ${JSON.stringify(health.failures)}`);
     }
   }).timeout(CASE_TIMEOUT_MS);
 
-  it("same-daemon host and disk-isolated workspaces both stay routable", async function () {
+  it("same-daemon host and sandbox workspaces both stay routable", async function () {
     if (!scenarioEnabled("local-mixed-mode", ["local", "mixed-mode"])) this.skip();
 
     const hostDest = path.join(localBase, "mixed-host");
@@ -505,22 +505,22 @@ describe("container daemon liveness", () => {
     });
     await assertWorkspaceTerminalCwdPrefix(hostWorkspaceId, hostWorkspace.root_path);
 
-    const diskDest = path.join(localBase, "mixed-disk-isolated");
+    const diskDest = path.join(localBase, "mixed-sandbox");
     const diskWorkspaceId = await runLocalContainerCreate({
-      container: "disk-isolated",
-      workspaceName: "mixed-disk",
+      container: "sandbox",
+      workspaceName: "mixed-sandbox",
       destPath: diskDest,
       network: "full",
     });
 
     await assertConnectedLocalAndListening();
     await assertLocalWorkspaceConfig(diskWorkspaceId, {
-      environment: "container_disk_isolated",
+      environment: "sandbox",
       networkMode: "all",
     });
     const diskContainer = await getWorkspaceHarnessContainer(diskWorkspaceId);
-    if (!diskContainer || !diskContainer.running || diskContainer.mount_mode !== "disk_isolated") {
-      throw new Error(`expected running disk-isolated harness container, got ${JSON.stringify(diskContainer)}`);
+    if (!diskContainer || !diskContainer.running) {
+      throw new Error(`expected running sandbox harness, got ${JSON.stringify(diskContainer)}`);
     }
     await assertWorkspaceTerminalCwdPrefix(diskWorkspaceId, "/ctx/ws");
 

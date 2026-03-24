@@ -59,8 +59,11 @@ function asFiniteNumber(value: unknown): number | null {
 }
 
 function asExecutionEnvironment(value: unknown): LauncherExecutionEnvironment | undefined {
-  if (value === "host" || value === "container_host_mounted" || value === "container_disk_isolated") {
+  if (value === "host" || value === "sandbox") {
     return value;
+  }
+  if (typeof value === "string" && value.startsWith("container_")) {
+    return "sandbox";
   }
   return undefined;
 }

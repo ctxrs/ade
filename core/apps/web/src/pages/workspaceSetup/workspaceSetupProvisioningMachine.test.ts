@@ -52,7 +52,7 @@ const authImportCandidate = (
 describe("workspaceSetupProvisioningMachine", () => {
   it("drops stale completions after the route scope changes", () => {
     const scopeA = routeScopeFixture();
-    const scopeB = routeScopeFixture({ containerSelection: "host-mounted" });
+    const scopeB = routeScopeFixture({ containerSelection: "no-container" });
 
     const startedA = beginWorkspaceSetupProvisioningRefresh(
       createInitialWorkspaceSetupProvisioningMachineState(),
@@ -106,7 +106,7 @@ describe("workspaceSetupProvisioningMachine", () => {
 
     expect(withTitling.routePlan).toEqual({
       targetKey: serializeWorkspaceSetupRouteScope(scopeB),
-      containerSelection: "host-mounted",
+      containerSelection: "no-container",
       includeHarnessDownloads: false,
       includeAuthImport: false,
       includeTitling: false,

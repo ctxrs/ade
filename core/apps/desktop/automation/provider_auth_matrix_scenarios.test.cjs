@@ -7,16 +7,16 @@ const {
 
 test("codex local container endpoint cells include the local codex smoke alias", () => {
   const tags = providerAuthMatrixScenarioTags({
-    cellId: "codex.endpoint_api_key.local.container_host_mounted",
+    cellId: "codex.endpoint_api_key.local.sandbox",
     providerId: "codex",
     authMode: "endpoint_api_key",
     daemonLocation: "local",
-    executionEnvironment: "container_host_mounted",
+    executionEnvironment: "sandbox",
   });
 
   assert(tags.includes("provider-auth-matrix"));
   assert(tags.includes("local-codex-smoke"));
-  assert(tags.includes("local_container_host_mounted"));
+  assert(tags.includes("local_sandbox"));
   assert.equal(tags.includes("local-codex-host-smoke"), false);
   assert(tags.includes("endpoint_api_key"));
 });
@@ -38,11 +38,11 @@ test("codex local host required cells use the host-only codex smoke alias", () =
 
 test("auth import cells include the provider auth import alias", () => {
   const tags = providerAuthMatrixScenarioTags({
-    cellId: "codex.auth_import.local.container_host_mounted",
+    cellId: "codex.auth_import.local.sandbox",
     providerId: "codex",
     authMode: "auth_import",
     daemonLocation: "local",
-    executionEnvironment: "container_host_mounted",
+    executionEnvironment: "sandbox",
   });
 
   assert(tags.includes("provider-auth-matrix"));
@@ -53,11 +53,11 @@ test("auth import cells include the provider auth import alias", () => {
 
 test("non-codex cells do not inherit codex-only smoke aliases", () => {
   const tags = providerAuthMatrixScenarioTags({
-    cellId: "gemini.endpoint_api_key.local.container_host_mounted",
+    cellId: "gemini.endpoint_api_key.local.sandbox",
     providerId: "gemini",
     authMode: "endpoint_api_key",
     daemonLocation: "local",
-    executionEnvironment: "container_host_mounted",
+    executionEnvironment: "sandbox",
   });
 
   assert(tags.includes("provider-auth-matrix"));

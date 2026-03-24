@@ -214,11 +214,7 @@ pub async fn load_execution_settings_override(
             ExecutionEnvironment::Host => {
                 ov.mode = Some(ExecutionMode::Host);
             }
-            ExecutionEnvironment::ContainerHostMounted => {
-                ov.mode = Some(ExecutionMode::Container);
-                ov.container.mount_mode = Some(ContainerMountMode::HostMounted);
-            }
-            ExecutionEnvironment::ContainerDiskIsolated => {
+            ExecutionEnvironment::Sandbox => {
                 ov.mode = Some(ExecutionMode::Container);
                 ov.container.mount_mode = Some(ContainerMountMode::DiskIsolated);
             }
@@ -558,10 +554,7 @@ pub struct ExecutionConfigUpdate {
 pub async fn update_execution_config(store: &Store, update: ExecutionConfigUpdate) -> Result<()> {
     let mut cfg = load_workspace_settings_doc(store).await?;
 
-    let container = if matches!(
-        update.environment,
-        ExecutionEnvironment::ContainerHostMounted | ExecutionEnvironment::ContainerDiskIsolated
-    ) {
+    let container = if matches!(update.environment, ExecutionEnvironment::Sandbox) {
         Some(WorkspaceContainerExecutionConfig {
             runtime: update.runtime,
             network_mode: update.network_mode,
@@ -670,7 +663,7 @@ mod tests {
         update_execution_config(
             &store,
             ExecutionConfigUpdate {
-                environment: ExecutionEnvironment::ContainerDiskIsolated,
+                environment: ExecutionEnvironment::Sandbox,
                 runtime: None,
                 network_mode: Some(ContainerNetworkMode::LlmOnly),
                 allowlist: Some(vec![" api.openai.com ".to_string(), "".to_string()]),

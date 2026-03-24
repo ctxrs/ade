@@ -5,8 +5,9 @@ UPDATE sessions
 SET execution_environment = COALESCE(
     (
         SELECT CASE json_extract(settings_json, '$.execution.environment')
-            WHEN 'container_host_mounted' THEN 'container_host_mounted'
-            WHEN 'container_disk_isolated' THEN 'container_disk_isolated'
+            WHEN 'sandbox' THEN 'sandbox'
+            WHEN 'container_host_mounted' THEN 'sandbox'
+            WHEN 'container_disk_isolated' THEN 'sandbox'
             WHEN 'host' THEN 'host'
             ELSE NULL
         END

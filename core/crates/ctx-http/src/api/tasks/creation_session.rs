@@ -1,6 +1,6 @@
 use super::*;
 use crate::api::sessions;
-use crate::settings::ContainerRuntimeKind;
+use crate::settings::{ContainerMountMode, ContainerRuntimeKind};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -194,25 +194,42 @@ pub(in crate::api) async fn create_session_for_task(
                 effective.container.runtime,
                 ContainerRuntimeKind::AvfLinuxVm
             ) {
-                crate::workspace_runtime::ensure_avf_linux_guest_worktree_from_host_copy(
+                let guest_worktree =
+                    crate::workspace_runtime::ensure_avf_linux_guest_worktree_from_host_copy(
+                        &state.core.data_root,
+                        task.workspace_id,
+                        worktree_id,
+                        workspace_root,
+                        &base_commit_sha,
+                        &branch_name,
+                        None,
+                    )
+                    .await
+                    .map_err(|e| {
+                        tracing::warn!(
+                            task_id = %task.id.0,
+                            worktree_id = %worktree_id.0,
+                            "AVF disk-isolated worktree provisioning failed: {e:#}"
+                        );
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    })?;
+                crate::disk_isolated::ensure_worktree_from_host_copy(
                     &state.core.data_root,
                     task.workspace_id,
                     worktree_id,
-                    workspace_root,
+                    &guest_worktree.host_shadow_root,
                     &base_commit_sha,
                     &branch_name,
-                    None,
                 )
                 .await
                 .map_err(|e| {
                     tracing::warn!(
                         task_id = %task.id.0,
                         worktree_id = %worktree_id.0,
-                        "AVF disk-isolated worktree provisioning failed: {e:#}"
+                        "AVF disk-isolated container provisioning failed: {e:#}"
                     );
                     StatusCode::INTERNAL_SERVER_ERROR
                 })?
-                .host_shadow_root
             } else {
                 crate::disk_isolated::ensure_worktree_from_host_copy(
                     &state.core.data_root,

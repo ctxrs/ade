@@ -1,5 +1,9 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalPassThroughEnv": [
+    "CARGO_TARGET_DIR",
+    "CTX_VERIFY_CARGO_TARGET_DIR"
+  ],
   "globalDependencies": [
     "Cargo.lock",
     "rust-toolchain.toml",

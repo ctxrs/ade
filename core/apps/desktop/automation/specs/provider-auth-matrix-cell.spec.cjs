@@ -35,7 +35,7 @@ const {
 const DEFAULT_PROVIDER_ID = "codex";
 const DEFAULT_AUTH_MODE = "endpoint_api_key";
 const DEFAULT_DAEMON_LOCATION = "local";
-const DEFAULT_EXECUTION_ENVIRONMENT = "container_host_mounted";
+const DEFAULT_EXECUTION_ENVIRONMENT = "sandbox";
 
 const parsePositiveInt = (raw, fallback) => {
   const parsed = Number.parseInt(String(raw || ""), 10);
@@ -69,12 +69,12 @@ const createWorkspaceAndLaunchExecution = async ({
   if (daemonLocation === "remote") {
     throw new Error(`remote daemon location is not supported by this spec: ${daemonLocation}`);
   }
-  if (executionEnvironment !== "host" && executionEnvironment !== "container_host_mounted") {
+  if (executionEnvironment !== "host" && executionEnvironment !== "sandbox") {
     throw new Error(`unsupported execution environment for this spec: ${executionEnvironment}`);
   }
 
   const environment = executionEnvironment;
-  const networkMode = executionEnvironment === "container_host_mounted" ? "llm_only" : "all";
+  const networkMode = executionEnvironment === "sandbox" ? "llm_only" : "all";
 
   const setExec = await daemonJson("POST", `/api/workspaces/${workspaceId}/execution_config`, {
     environment,
@@ -211,15 +211,15 @@ describe("provider auth matrix cell (desktop e2e)", () => {
       recorder.recordArtifact("workspace", workspace);
       recorder.recordAssertion("workspace_launch_success", "pass", "workspace launch reached ready state");
 
-      if (executionEnvironment === "container_host_mounted") {
+      if (executionEnvironment === "sandbox") {
         await assertLocalWorkspaceConfig(workspace.workspaceId, {
-          environment: "container_host_mounted",
+          environment: "sandbox",
           networkMode: "llm_only",
         });
       }
 
       currentAssertion = "install_success";
-      const installTarget = executionEnvironment === "container_host_mounted" ? "container" : "host";
+      const installTarget = executionEnvironment === "sandbox" ? "container" : "host";
       await installProviderAndWait(providerId, installTarget);
       const providerStatus = await getProviderStatus(providerId, installTarget);
       recorder.recordArtifact("provider_status_after_install", providerStatus);
