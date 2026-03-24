@@ -382,8 +382,9 @@ pub(crate) async fn post_message(
     let saved = match store.insert_message(msg).await {
         Ok(saved) => saved,
         Err(err) if idempotency_payload.is_some() && is_unique_constraint_violation(&err) => {
-            let (content, attachments, requested_delivery) =
-                idempotency_payload.expect("checked is_some");
+            let Some((content, attachments, requested_delivery)) = idempotency_payload else {
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            };
             let Some(existing) = store
                 .get_message(message_id)
                 .await

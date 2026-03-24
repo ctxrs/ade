@@ -51,8 +51,8 @@
         "Cargo.toml",
         "Cargo.lock",
         "crates/**",
-        "apps/desktop/src-tauri/src/main.rs",
-        "apps/tauri-mobile/src-tauri/src/lib.rs",
+        "apps/desktop/src-tauri/src/**",
+        "apps/tauri-mobile/src-tauri/src/**",
         "scripts/check_rust_runtime_panic_traps.mjs"
       ],
       "outputs": []

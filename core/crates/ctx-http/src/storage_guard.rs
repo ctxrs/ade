@@ -97,7 +97,7 @@ impl StorageGuardRuntime {
     pub fn snapshot(&self) -> StorageGuardStatus {
         self.snapshot
             .read()
-            .expect("storage guard snapshot lock poisoned")
+            .expect("storage guard snapshot lock poisoned") // EXCEPTION: panic-trap — critical section is a trivial clone; poisoning means a prior panic already occurred
             .clone()
     }
 
@@ -105,7 +105,7 @@ impl StorageGuardRuntime {
         *self
             .snapshot
             .write()
-            .expect("storage guard snapshot lock poisoned") = snapshot;
+            .expect("storage guard snapshot lock poisoned") = snapshot; // EXCEPTION: panic-trap — critical section is a trivial assignment; poisoning means a prior panic already occurred
     }
 }
 

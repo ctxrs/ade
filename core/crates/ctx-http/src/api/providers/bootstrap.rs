@@ -29,15 +29,14 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                 })),
             )
         })?;
-    if workspace.is_none() {
+    let Some(workspace) = workspace else {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
                 "error": "workspace not found",
             })),
         ));
-    }
-    let workspace = workspace.expect("checked workspace exists");
+    };
 
     let install_target = status::install_target_for_workspace(&state, ws_id)
         .await

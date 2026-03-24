@@ -511,7 +511,9 @@ fn migrate_agent_server_config(cfg: &mut AgentServerConfigFile) -> bool {
             }
             changed = true;
         }
-        let managed = command.managed.clone().expect("managed metadata");
+        let Some(managed) = command.managed.clone() else {
+            continue;
+        };
         let has_legacy_rel = managed
             .install_dir_rel
             .as_deref()
