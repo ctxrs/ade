@@ -5,6 +5,12 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use tokio::sync::Notify;
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[cfg(test)]
+static FORCE_CLOSE_THREAD_SPAWN_FAILURE: AtomicBool = AtomicBool::new(false);
+
 #[derive(Default)]
 pub(super) struct WorkspaceStoreLeaseRegistry {
     state: StdMutex<WorkspaceStoreLeaseState>,
@@ -30,6 +36,12 @@ struct WorkspaceStoreLease {
 pub(super) struct PendingWorkspaceStoreClose {
     pub(super) workspace_id: WorkspaceId,
     pub(super) store: Store,
+    pub(super) notify: Arc<Notify>,
+}
+
+pub(super) struct ReactivatedWorkspaceStore {
+    pub(super) store: Store,
+    pub(super) instance_id: u64,
     pub(super) notify: Arc<Notify>,
 }
 
@@ -87,31 +99,71 @@ impl WorkspaceStoreLeaseRegistry {
         state.closing_workspaces.contains_key(&workspace_id)
     }
 
-    pub(super) fn acquire_pending_close_store(
-        self: &Arc<Self>,
+    pub(super) fn has_pending_close_store(&self, workspace_id: WorkspaceId) -> bool {
+        let state = match self.state.lock() {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        state
+            .entries
+            .values()
+            .any(|entry| entry.workspace_id == workspace_id && entry.pending_close.is_some())
+    }
+
+    pub(super) fn reactivate_pending_close_store(
+        &self,
         workspace_id: WorkspaceId,
-    ) -> Option<Store> {
+    ) -> Option<ReactivatedWorkspaceStore> {
         let mut state = match self.state.lock() {
             Ok(state) => state,
             Err(poisoned) => poisoned.into_inner(),
         };
-        let (instance_id, store) = state.entries.iter().find_map(|(instance_id, entry)| {
-            (entry.workspace_id == workspace_id)
-                .then(|| {
-                    entry
-                        .pending_close
-                        .as_ref()
-                        .cloned()
-                        .map(|store| (*instance_id, store))
-                })
-                .flatten()
+        let instance_id = state.entries.iter().find_map(|(instance_id, entry)| {
+            (entry.workspace_id == workspace_id && entry.pending_close.is_some())
+                .then_some(*instance_id)
         })?;
-        let entry = state.entries.get_mut(&instance_id)?;
-        entry.in_use += 1;
-        Some(store.with_lease_guard(Arc::new(WorkspaceStoreLease {
+        let store = state.entries.get_mut(&instance_id)?.pending_close.take()?;
+        let notify = state.closing_workspaces.get(&workspace_id)?.clone();
+        Some(ReactivatedWorkspaceStore {
+            store,
             instance_id,
-            registry: Arc::clone(self),
-        })))
+            notify,
+        })
+    }
+
+    pub(super) fn publish_reactivated_store(
+        &self,
+        workspace_id: WorkspaceId,
+        notify: &Arc<Notify>,
+    ) {
+        let mut state = match self.state.lock() {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        clear_closing_marker(&mut state, workspace_id, notify);
+    }
+
+    pub(super) fn restore_pending_close_store(
+        &self,
+        workspace_id: WorkspaceId,
+        instance_id: u64,
+        store: Store,
+    ) {
+        let mut state = match self.state.lock() {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let entry = state
+            .entries
+            .entry(instance_id)
+            .or_insert_with(|| WorkspaceStoreLeaseEntry {
+                workspace_id,
+                in_use: 0,
+                pending_close: None,
+            });
+        entry.workspace_id = workspace_id;
+        entry.pending_close = Some(store);
+        let _ = closing_notify(&mut state, workspace_id);
     }
 
     pub(super) fn queue_close(
@@ -184,14 +236,7 @@ impl WorkspaceStoreLeaseRegistry {
             Ok(state) => state,
             Err(poisoned) => poisoned.into_inner(),
         };
-        if state
-            .closing_workspaces
-            .get(&workspace_id)
-            .is_some_and(|current| Arc::ptr_eq(current, notify))
-        {
-            state.closing_workspaces.remove(&workspace_id);
-        }
-        notify.notify_waiters();
+        clear_closing_marker(&mut state, workspace_id, notify);
     }
 }
 
@@ -201,6 +246,21 @@ fn closing_notify(state: &mut WorkspaceStoreLeaseState, workspace_id: WorkspaceI
         .entry(workspace_id)
         .or_insert_with(|| Arc::new(Notify::new()))
         .clone()
+}
+
+fn clear_closing_marker(
+    state: &mut WorkspaceStoreLeaseState,
+    workspace_id: WorkspaceId,
+    notify: &Arc<Notify>,
+) {
+    if state
+        .closing_workspaces
+        .get(&workspace_id)
+        .is_some_and(|current| Arc::ptr_eq(current, notify))
+    {
+        state.closing_workspaces.remove(&workspace_id);
+    }
+    notify.notify_waiters();
 }
 
 impl Drop for WorkspaceStoreLease {
@@ -222,28 +282,64 @@ fn spawn_store_close(
     workspace_id: WorkspaceId,
     notify: Arc<Notify>,
 ) {
-    let close_registry = Arc::clone(&registry);
-    let close_notify = Arc::clone(&notify);
-    let close_task = async move {
-        store.close().await;
-        close_registry.finish_close(workspace_id, &close_notify);
-    };
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        handle.spawn(close_task);
+        handle.spawn(close_store_and_finish(
+            store,
+            Arc::clone(&registry),
+            workspace_id,
+            Arc::clone(&notify),
+        ));
         return;
     }
-    match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(runtime) => runtime.block_on(close_task),
-        Err(err) => {
-            tracing::warn!(
-                workspace_id = %workspace_id.0,
-                "failed to build runtime for workspace close: {err}"
-            );
-        }
+
+    #[cfg(test)]
+    if FORCE_CLOSE_THREAD_SPAWN_FAILURE.load(Ordering::Relaxed) {
+        store.close_blocking();
+        registry.finish_close(workspace_id, &notify);
+        return;
     }
+
+    let thread_registry = Arc::clone(&registry);
+    let thread_notify = Arc::clone(&notify);
+    let thread_store = store.clone();
+    if let Err(err) = std::thread::Builder::new()
+        .name(format!("ctx-store-close-{}", workspace_id.0))
+        .spawn(move || {
+            close_store_blocking_and_finish(
+                thread_store,
+                Arc::clone(&thread_registry),
+                workspace_id,
+                Arc::clone(&thread_notify),
+            );
+        })
+    {
+        tracing::warn!(
+            workspace_id = %workspace_id.0,
+            "failed to spawn workspace close thread: {err}"
+        );
+        store.close_blocking();
+        registry.finish_close(workspace_id, &notify);
+    }
+}
+
+async fn close_store_and_finish(
+    store: Store,
+    registry: Arc<WorkspaceStoreLeaseRegistry>,
+    workspace_id: WorkspaceId,
+    notify: Arc<Notify>,
+) {
+    store.close().await;
+    registry.finish_close(workspace_id, &notify);
+}
+
+fn close_store_blocking_and_finish(
+    store: Store,
+    registry: Arc<WorkspaceStoreLeaseRegistry>,
+    workspace_id: WorkspaceId,
+    notify: Arc<Notify>,
+) {
+    store.close_blocking();
+    registry.finish_close(workspace_id, &notify);
 }
 
 #[cfg(test)]
@@ -367,17 +463,20 @@ mod tests {
         );
 
         let reopened = registry
-            .acquire_pending_close_store(workspace_id)
-            .expect("deferred closes should lend the draining store");
-        drop(reopened);
+            .reactivate_pending_close_store(workspace_id)
+            .expect("deferred close should reactivate the draining store");
+        assert!(
+            registry.is_workspace_closing(workspace_id),
+            "reactivation should keep the closing marker until publication"
+        );
+        registry.publish_reactivated_store(workspace_id, &reopened.notify);
+        drop(reopened.store);
         drop(lease);
 
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            registry.wait_for_workspace_close(workspace_id),
-        )
-        .await
-        .expect("deferred close should eventually complete");
+        assert!(
+            !registry.is_workspace_closing(workspace_id),
+            "publishing the reactivated store should cancel the deferred close"
+        );
     }
 
     #[test]
@@ -413,6 +512,44 @@ mod tests {
         assert!(
             !registry.is_workspace_closing(workspace_id),
             "inline close should clear the closing marker once shutdown completes"
+        );
+    }
+
+    #[test]
+    fn close_without_runtime_spawn_failure_still_clears_closing_marker() {
+        let temp = tempfile::tempdir().unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let store = runtime.block_on(open_test_store(&temp, "inline-close-build-fail.sqlite"));
+        drop(runtime);
+
+        let registry = Arc::new(WorkspaceStoreLeaseRegistry::default());
+        let workspace_id = WorkspaceId::new();
+        let close = registry
+            .queue_close(workspace_id, 12, store)
+            .expect("close without leases should start immediately");
+
+        FORCE_CLOSE_THREAD_SPAWN_FAILURE.store(true, Ordering::Relaxed);
+        spawn_store_close(
+            close.store,
+            Arc::clone(&registry),
+            close.workspace_id,
+            Arc::clone(&close.notify),
+        );
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                registry.wait_for_workspace_close(workspace_id),
+            )
+            .await
+            .expect("degraded close should still release the closing marker");
+        });
+        FORCE_CLOSE_THREAD_SPAWN_FAILURE.store(false, Ordering::Relaxed);
+
+        assert!(
+            !registry.is_workspace_closing(workspace_id),
+            "degraded close should clear the closing marker after dropping the final store handle"
         );
     }
 }

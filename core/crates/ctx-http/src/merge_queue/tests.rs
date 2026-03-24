@@ -229,9 +229,10 @@ async fn disabled_workspace_with_queued_rows_stays_dormant_after_activation() {
     assert_eq!(stored.status, MergeQueueEntryStatus::Queued);
     assert!(!state
         .transport
-        .merge_queue_running
+        .merge_queue_state
         .lock()
         .await
+        .running
         .contains(&workspace.id));
 
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -243,9 +244,10 @@ async fn disabled_workspace_with_queued_rows_stays_dormant_after_activation() {
     assert_eq!(stored.status, MergeQueueEntryStatus::Queued);
     assert!(!state
         .transport
-        .merge_queue_running
+        .merge_queue_state
         .lock()
         .await
+        .running
         .contains(&workspace.id));
 }
 
@@ -360,9 +362,10 @@ async fn reenable_explicitly_reschedules_dormant_queued_workspace() {
     assert_eq!(queued.status, MergeQueueEntryStatus::Queued);
     assert!(!state
         .transport
-        .merge_queue_running
+        .merge_queue_state
         .lock()
         .await
+        .running
         .contains(&workspace.id));
 
     update_merge_queue_config(
@@ -384,6 +387,62 @@ async fn reenable_explicitly_reschedules_dormant_queued_workspace() {
             .await
             .unwrap()
     );
+
+    let resumed = wait_for_entry_status(
+        &state,
+        workspace.id,
+        entry.id,
+        |status| status != MergeQueueEntryStatus::Queued,
+        Duration::from_secs(2),
+    )
+    .await;
+    assert_ne!(resumed.status, MergeQueueEntryStatus::Queued);
+}
+
+#[tokio::test]
+async fn pending_wakeup_restarts_disabled_drain_after_reenable() {
+    let (data_dir, state) = setup_state().await;
+    let workspace = create_workspace(&state, &data_dir, "reenable-race").await;
+    let store = state.core.stores.workspace(workspace.id).await.unwrap();
+    let entry = queued_entry(workspace.id, "reenable-race-entry");
+    store.create_merge_queue_entry(&entry).await.unwrap();
+    spawn_merge_queue_runner(state.clone());
+
+    assert!(
+        begin_workspace_drain(state.as_ref(), workspace.id).await,
+        "test should start with a simulated disabled drain already running"
+    );
+
+    update_merge_queue_config(
+        &store,
+        MergeQueueConfigUpdate {
+            enabled: true,
+            target_branch: Some("main".to_string()),
+            verify_commands: Vec::new(),
+            push_on_success: None,
+            push_remote: None,
+            push_branch: None,
+            canonical_sync: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    schedule_workspace_drain(&state, workspace.id).await;
+    assert!(
+        state
+            .transport
+            .merge_queue_state
+            .lock()
+            .await
+            .pending
+            .contains(&workspace.id),
+        "wakeups that land during an in-flight drain should be preserved"
+    );
+
+    if finish_workspace_drain(state.as_ref(), workspace.id).await {
+        let _ = state.transport.merge_queue_schedule_tx.send(workspace.id);
+    }
 
     let resumed = wait_for_entry_status(
         &state,

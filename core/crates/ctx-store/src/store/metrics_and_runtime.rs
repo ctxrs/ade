@@ -96,6 +96,13 @@ impl ActiveHeadProjectionRuntime {
             None => Ok(()),
         }
     }
+
+    pub(super) fn shutdown_blocking(&self) -> Result<()> {
+        match self.projector.get() {
+            Some(projector) => projector.shutdown_blocking(),
+            None => Ok(()),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -209,6 +216,19 @@ impl ActiveHeadProjectionProjector {
             return Ok(());
         }
         rx.await
+            .context("waiting for active head projection shutdown")?
+    }
+
+    fn shutdown_blocking(&self) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        if self
+            .tx
+            .blocking_send(ActiveHeadProjectionCommand::Shutdown(tx))
+            .is_err()
+        {
+            return Ok(());
+        }
+        rx.blocking_recv()
             .context("waiting for active head projection shutdown")?
     }
 }
@@ -433,6 +453,13 @@ impl EventLogRuntime {
             None => Ok(()),
         }
     }
+
+    pub(super) fn shutdown_blocking(&self) -> Result<()> {
+        match self.persister.get() {
+            Some(persister) => persister.shutdown_blocking(),
+            None => Ok(()),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -560,6 +587,19 @@ impl EventLogPersister {
             return Ok(());
         }
         rx.await.context("waiting for event log shutdown")?
+    }
+
+    fn shutdown_blocking(&self) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        if self
+            .tx
+            .blocking_send(EventLogCommand::Shutdown(tx))
+            .is_err()
+        {
+            return Ok(());
+        }
+        rx.blocking_recv()
+            .context("waiting for event log shutdown")?
     }
 }
 

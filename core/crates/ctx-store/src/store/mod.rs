@@ -555,6 +555,17 @@ impl Store {
         self.pool.close().await;
     }
 
+    pub fn close_blocking(&self) {
+        if let Err(err) = self.event_log.shutdown_blocking() {
+            tracing::warn!("event log shutdown failed during blocking close: {err:#}");
+        }
+        if let Err(err) = self.active_head_projection.shutdown_blocking() {
+            tracing::warn!("active head projection shutdown failed during blocking close: {err:#}");
+        }
+        let close = self.pool.close();
+        drop(close);
+    }
+
     fn sql(&self, sql: &'static str) -> &'static str {
         sql
     }

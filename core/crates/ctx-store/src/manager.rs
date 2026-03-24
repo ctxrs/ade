@@ -43,6 +43,7 @@ pub struct StoreManager {
     global: Store,
     data_root: PathBuf,
     workspace_stores: Arc<Mutex<HashMap<WorkspaceId, TimedStoreEntry>>>,
+    workspace_delete_barriers: Arc<Mutex<HashSet<WorkspaceId>>>,
     store_leases: Arc<WorkspaceStoreLeaseRegistry>,
     next_store_instance_id: Arc<AtomicU64>,
     config: StoreManagerConfig,
@@ -69,7 +70,20 @@ struct TimedStoreEntry {
 
 pub struct WorkspaceStoreAccess {
     pub store: Store,
-    pub opened_now: bool,
+    pub kind: WorkspaceStoreAccessKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkspaceStoreAccessKind {
+    Cached,
+    ColdOpen,
+    Reactivated,
+}
+
+impl WorkspaceStoreAccessKind {
+    pub fn triggers_open_side_effects(self) -> bool {
+        matches!(self, Self::ColdOpen | Self::Reactivated)
+    }
 }
 
 impl TimedStoreEntry {
@@ -107,10 +121,39 @@ impl StoreManager {
             global,
             data_root,
             workspace_stores: Arc::new(Mutex::new(HashMap::new())),
+            workspace_delete_barriers: Arc::new(Mutex::new(HashSet::new())),
             store_leases: Arc::new(WorkspaceStoreLeaseRegistry::default()),
             next_store_instance_id: Arc::new(AtomicU64::new(1)),
             config,
         })
+    }
+
+    async fn is_workspace_delete_blocked(&self, workspace_id: WorkspaceId) -> bool {
+        self.workspace_delete_barriers
+            .lock()
+            .await
+            .contains(&workspace_id)
+    }
+
+    async fn ensure_workspace_not_deleting(&self, workspace_id: WorkspaceId) -> Result<()> {
+        if self.is_workspace_delete_blocked(workspace_id).await {
+            anyhow::bail!("workspace {} not found", workspace_id.0);
+        }
+        Ok(())
+    }
+
+    pub async fn begin_workspace_delete(&self, workspace_id: WorkspaceId) {
+        self.workspace_delete_barriers
+            .lock()
+            .await
+            .insert(workspace_id);
+    }
+
+    pub async fn finish_workspace_delete(&self, workspace_id: WorkspaceId) {
+        self.workspace_delete_barriers
+            .lock()
+            .await
+            .remove(&workspace_id);
     }
 
     pub fn global(&self) -> &Store {
@@ -156,6 +199,7 @@ impl StoreManager {
         workspace_id: WorkspaceId,
     ) -> Result<WorkspaceStoreAccess> {
         loop {
+            self.ensure_workspace_not_deleting(workspace_id).await?;
             loop {
                 {
                     let mut stores = self.workspace_stores.lock().await;
@@ -165,19 +209,82 @@ impl StoreManager {
                             store: entry.store.with_lease_guard(
                                 self.store_leases.acquire(workspace_id, entry.instance_id),
                             ),
-                            opened_now: false,
+                            kind: WorkspaceStoreAccessKind::Cached,
                         });
                     }
                 }
-                if let Some(store) = self.store_leases.acquire_pending_close_store(workspace_id) {
-                    let workspace_exists = self.global.get_workspace(workspace_id).await?.is_some();
-                    if workspace_exists {
+                if self.store_leases.has_pending_close_store(workspace_id) {
+                    if let Some(reactivated) = self
+                        .store_leases
+                        .reactivate_pending_close_store(workspace_id)
+                    {
+                        let leased_store = reactivated.store.with_lease_guard(
+                            self.store_leases
+                                .acquire(workspace_id, reactivated.instance_id),
+                        );
+                        match self.global.get_workspace(workspace_id).await {
+                            Ok(Some(_)) => {}
+                            Ok(None) => {
+                                self.store_leases.restore_pending_close_store(
+                                    workspace_id,
+                                    reactivated.instance_id,
+                                    reactivated.store,
+                                );
+                                drop(leased_store);
+                                self.store_leases
+                                    .wait_for_workspace_close(workspace_id)
+                                    .await;
+                                continue;
+                            }
+                            Err(err) => {
+                                self.store_leases.restore_pending_close_store(
+                                    workspace_id,
+                                    reactivated.instance_id,
+                                    reactivated.store,
+                                );
+                                drop(leased_store);
+                                return Err(err.into());
+                            }
+                        }
+                        if self.is_workspace_delete_blocked(workspace_id).await {
+                            self.store_leases.restore_pending_close_store(
+                                workspace_id,
+                                reactivated.instance_id,
+                                reactivated.store,
+                            );
+                            drop(leased_store);
+                            anyhow::bail!("workspace {} not found", workspace_id.0);
+                        }
+                        let mut stores = self.workspace_stores.lock().await;
+                        if let Some(existing) = stores.get_mut(&workspace_id) {
+                            existing.touch();
+                            self.store_leases
+                                .publish_reactivated_store(workspace_id, &reactivated.notify);
+                            drop(leased_store);
+                            return Ok(WorkspaceStoreAccess {
+                                store: existing.store.with_lease_guard(
+                                    self.store_leases
+                                        .acquire(workspace_id, existing.instance_id),
+                                ),
+                                kind: WorkspaceStoreAccessKind::Cached,
+                            });
+                        }
+                        stores.insert(
+                            workspace_id,
+                            TimedStoreEntry::new(
+                                workspace_id,
+                                reactivated.store.clone(),
+                                reactivated.instance_id,
+                            ),
+                        );
+                        self.store_leases
+                            .publish_reactivated_store(workspace_id, &reactivated.notify);
+                        drop(stores);
                         return Ok(WorkspaceStoreAccess {
-                            store,
-                            opened_now: true,
+                            store: leased_store,
+                            kind: WorkspaceStoreAccessKind::Reactivated,
                         });
                     }
-                    drop(store);
                     self.store_leases
                         .wait_for_workspace_close(workspace_id)
                         .await;
@@ -217,7 +324,7 @@ impl StoreManager {
                 store.close().await;
                 return Ok(WorkspaceStoreAccess {
                     store: existing,
-                    opened_now: false,
+                    kind: WorkspaceStoreAccessKind::Cached,
                 });
             }
             let leased_store =
@@ -229,12 +336,13 @@ impl StoreManager {
             drop(stores);
             return Ok(WorkspaceStoreAccess {
                 store: leased_store,
-                opened_now: true,
+                kind: WorkspaceStoreAccessKind::ColdOpen,
             });
         }
     }
 
     pub async fn workspace_uncached(&self, workspace_id: WorkspaceId) -> Result<Store> {
+        self.ensure_workspace_not_deleting(workspace_id).await?;
         if self.store_leases.is_workspace_closing(workspace_id) {
             self.store_leases
                 .wait_for_workspace_close(workspace_id)
@@ -763,36 +871,24 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(
-            manager
-                .workspace_access(workspace_a.id)
-                .await
-                .unwrap()
-                .opened_now
-        );
-        assert!(
-            !manager
-                .workspace_access(workspace_a.id)
-                .await
-                .unwrap()
-                .opened_now
-        );
-        assert!(
-            manager
-                .workspace_access(workspace_b.id)
-                .await
-                .unwrap()
-                .opened_now
-        );
+        assert!(matches!(
+            manager.workspace_access(workspace_a.id).await.unwrap().kind,
+            WorkspaceStoreAccessKind::ColdOpen
+        ));
+        assert!(matches!(
+            manager.workspace_access(workspace_a.id).await.unwrap().kind,
+            WorkspaceStoreAccessKind::Cached
+        ));
+        assert!(matches!(
+            manager.workspace_access(workspace_b.id).await.unwrap().kind,
+            WorkspaceStoreAccessKind::ColdOpen
+        ));
         assert_eq!(manager.stats().await.workspace_store_count, 2);
 
-        assert!(
-            manager
-                .workspace_access(workspace_c.id)
-                .await
-                .unwrap()
-                .opened_now
-        );
+        assert!(matches!(
+            manager.workspace_access(workspace_c.id).await.unwrap().kind,
+            WorkspaceStoreAccessKind::ColdOpen
+        ));
         assert_eq!(manager.stats().await.workspace_store_count, 3);
 
         let evicted = manager
@@ -801,13 +897,10 @@ mod tests {
         assert_eq!(evicted, 1);
         assert_eq!(manager.stats().await.workspace_store_count, 2);
 
-        assert!(
-            manager
-                .workspace_access(workspace_a.id)
-                .await
-                .unwrap()
-                .opened_now
-        );
+        assert!(matches!(
+            manager.workspace_access(workspace_a.id).await.unwrap().kind,
+            WorkspaceStoreAccessKind::ColdOpen
+        ));
         assert_eq!(manager.stats().await.workspace_store_count, 3);
     }
 
@@ -861,19 +954,13 @@ mod tests {
             .await;
         assert_eq!(evicted, 1);
         assert_eq!(manager.stats().await.workspace_store_count, 2);
-        assert!(
-            !manager
-                .workspace_access(workspace_a.id)
-                .await
-                .unwrap()
-                .opened_now
-        );
-        assert!(
-            manager
-                .workspace_access(workspace_b.id)
-                .await
-                .unwrap()
-                .opened_now
-        );
+        assert!(matches!(
+            manager.workspace_access(workspace_a.id).await.unwrap().kind,
+            WorkspaceStoreAccessKind::Cached
+        ));
+        assert!(matches!(
+            manager.workspace_access(workspace_b.id).await.unwrap().kind,
+            WorkspaceStoreAccessKind::ColdOpen
+        ));
     }
 }

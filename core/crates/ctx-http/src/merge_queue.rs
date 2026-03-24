@@ -308,13 +308,20 @@ enum WorkspaceDrainStop {
 }
 
 async fn begin_workspace_drain(state: &AppState, workspace_id: WorkspaceId) -> bool {
-    let mut running = state.transport.merge_queue_running.lock().await;
-    running.insert(workspace_id)
+    let mut schedule_state = state.transport.merge_queue_state.lock().await;
+    let inserted = schedule_state.running.insert(workspace_id);
+    if inserted {
+        schedule_state.pending.remove(&workspace_id);
+    } else {
+        schedule_state.pending.insert(workspace_id);
+    }
+    inserted
 }
 
-async fn finish_workspace_drain(state: &AppState, workspace_id: WorkspaceId) {
-    let mut running = state.transport.merge_queue_running.lock().await;
-    running.remove(&workspace_id);
+async fn finish_workspace_drain(state: &AppState, workspace_id: WorkspaceId) -> bool {
+    let mut schedule_state = state.transport.merge_queue_state.lock().await;
+    schedule_state.running.remove(&workspace_id);
+    schedule_state.pending.remove(&workspace_id)
 }
 
 async fn schedule_workspace_drain(state: &Arc<AppState>, workspace_id: WorkspaceId) {
@@ -340,7 +347,10 @@ async fn schedule_workspace_drain(state: &Arc<AppState>, workspace_id: Workspace
             }
         };
 
-        finish_workspace_drain(state.as_ref(), workspace_id).await;
+        if finish_workspace_drain(state.as_ref(), workspace_id).await {
+            let _ = state.transport.merge_queue_schedule_tx.send(workspace_id);
+            return;
+        }
 
         let _ = reschedule_workspace_after_drain(&state, workspace_id, stop).await;
     });

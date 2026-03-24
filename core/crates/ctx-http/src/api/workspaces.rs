@@ -465,18 +465,25 @@ pub(super) async fn delete_workspace(
         Ok(store) => store.list_worktrees(id).await.unwrap_or_default(),
         Err(_) => Vec::new(),
     };
-    state.cleanup_workspace(id).await;
-    state
-        .global_store()
-        .delete_workspace_indexes(id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    state
-        .global_store()
-        .delete_workspace(id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    state.core.stores.evict_workspace(id).await;
+    state.core.stores.begin_workspace_delete(id).await;
+    let delete_result = async {
+        state.cleanup_workspace(id).await;
+        state.core.stores.evict_workspace(id).await;
+        state
+            .global_store()
+            .delete_workspace_indexes(id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        state
+            .global_store()
+            .delete_workspace(id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        Ok::<(), StatusCode>(())
+    }
+    .await;
+    state.core.stores.finish_workspace_delete(id).await;
+    delete_result?;
     for worktree in &worktrees {
         if let Err(err) = vcs_hooks::cleanup_worktree_hooks(
             &state.core.data_root,

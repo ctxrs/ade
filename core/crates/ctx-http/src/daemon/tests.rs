@@ -3,6 +3,7 @@ use ctx_core::models::VcsKind;
 use ctx_providers::adapters::{
     ProviderCapabilities, ProviderProcessInfo, ProviderRestartMode, ProviderUsability,
 };
+use ctx_store::manager::WorkspaceStoreAccessKind;
 use std::sync::Mutex as StdMutex;
 use tempfile::tempdir;
 
@@ -216,8 +217,8 @@ async fn sweeper_keeps_merge_queue_running_workspaces_resident() {
     assert_eq!(stores.stats().await.workspace_store_count, 1);
 
     {
-        let mut running = state.transport.merge_queue_running.lock().await;
-        running.insert(workspace.id);
+        let mut schedule_state = state.transport.merge_queue_state.lock().await;
+        schedule_state.running.insert(workspace.id);
     }
 
     let config = CacheSweepConfig {
@@ -229,8 +230,8 @@ async fn sweeper_keeps_merge_queue_running_workspaces_resident() {
     assert_eq!(stores.stats().await.workspace_store_count, 1);
 
     {
-        let mut running = state.transport.merge_queue_running.lock().await;
-        running.remove(&workspace.id);
+        let mut schedule_state = state.transport.merge_queue_state.lock().await;
+        schedule_state.running.remove(&workspace.id);
     }
 
     let _ = state.sweep_idle_caches(Instant::now(), config).await;
@@ -331,7 +332,7 @@ async fn opening_workspace_does_not_evict_active_workspace_store() {
         .await
         .unwrap();
     assert!(
-        !workspace_a_cached.opened_now,
+        matches!(workspace_a_cached.kind, WorkspaceStoreAccessKind::Cached),
         "active workspace store should stay cached under the cap"
     );
     let workspace_b_reopened = state
@@ -341,7 +342,10 @@ async fn opening_workspace_does_not_evict_active_workspace_store() {
         .await
         .unwrap();
     assert!(
-        workspace_b_reopened.opened_now,
+        matches!(
+            workspace_b_reopened.kind,
+            WorkspaceStoreAccessKind::ColdOpen | WorkspaceStoreAccessKind::Reactivated
+        ),
         "inactive workspace store should be the one evicted under the cap"
     );
 }

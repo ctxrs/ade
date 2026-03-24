@@ -1,6 +1,8 @@
 use super::*;
 
 use chrono::Utc;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use ctx_core::ids::TurnId;
 use ctx_core::models::{
@@ -119,7 +121,10 @@ async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() {
     .await
     .expect("reopen should reuse the draining store, not deadlock")
     .unwrap();
-    assert!(reopened_before_drop.opened_now);
+    assert_eq!(
+        reopened_before_drop.kind,
+        WorkspaceStoreAccessKind::Reactivated
+    );
     assert!(reopened_before_drop
         .store
         .get_task(task_a.id)
@@ -136,13 +141,10 @@ async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() {
 
     drop(store_a);
 
-    assert!(
-        manager
-            .workspace_access(workspace_a.id)
-            .await
-            .unwrap()
-            .opened_now
-    );
+    assert!(matches!(
+        manager.workspace_access(workspace_a.id).await.unwrap().kind,
+        WorkspaceStoreAccessKind::Cached
+    ));
 }
 
 #[tokio::test]
@@ -194,4 +196,168 @@ async fn deleted_workspace_is_not_rehydrated_from_pending_close_store() {
         err.contains("not found"),
         "expected missing workspace error after delete, got: {err}"
     );
+}
+
+#[tokio::test]
+async fn delete_barrier_blocks_cached_workspace_access() {
+    let temp = tempfile::tempdir().unwrap();
+    let manager = StoreManager::open_with_config(
+        temp.path(),
+        StoreManagerConfig {
+            max_cached_workspaces: 1,
+            ..StoreManagerConfig::default()
+        },
+    )
+    .await
+    .unwrap();
+    let workspace = manager
+        .global()
+        .create_workspace(
+            "a".to_string(),
+            temp.path().join("a").to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .unwrap();
+    let store = manager.workspace(workspace.id).await.unwrap();
+
+    manager.begin_workspace_delete(workspace.id).await;
+    let err = match manager.workspace_access(workspace.id).await {
+        Ok(_) => panic!("delete barrier should block cached workspace access"),
+        Err(err) => err.to_string(),
+    };
+    assert!(
+        err.contains("not found"),
+        "delete barrier should block cached workspace access, got: {err}"
+    );
+
+    manager.finish_workspace_delete(workspace.id).await;
+    drop(store);
+}
+
+#[tokio::test]
+async fn delete_barrier_blocks_pending_close_reactivation() {
+    let temp = tempfile::tempdir().unwrap();
+    let manager = StoreManager::open_with_config(
+        temp.path(),
+        StoreManagerConfig {
+            max_cached_workspaces: 1,
+            ..StoreManagerConfig::default()
+        },
+    )
+    .await
+    .unwrap();
+    let workspace = manager
+        .global()
+        .create_workspace(
+            "a".to_string(),
+            temp.path().join("a").to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .unwrap();
+    let store = manager.workspace(workspace.id).await.unwrap();
+
+    manager.evict_workspace(workspace.id).await;
+    manager.begin_workspace_delete(workspace.id).await;
+
+    let err = tokio::time::timeout(
+        Duration::from_secs(1),
+        manager.workspace_access(workspace.id),
+    )
+    .await
+    .expect("delete barrier should reject reactivation promptly")
+    .err()
+    .expect("delete barrier should reject pending-close reactivation")
+    .to_string();
+    assert!(
+        err.contains("not found"),
+        "delete barrier should block pending-close reactivation, got: {err}"
+    );
+
+    manager.finish_workspace_delete(workspace.id).await;
+    drop(store);
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        manager.store_leases.wait_for_workspace_close(workspace.id),
+    )
+    .await
+    .expect("draining store should still finish closing after barrier rejection");
+}
+
+#[tokio::test]
+async fn concurrent_reactivation_does_not_cold_open_duplicate_store() {
+    let temp = tempfile::tempdir().unwrap();
+    let manager = StoreManager::open_with_config(
+        temp.path(),
+        StoreManagerConfig {
+            max_cached_workspaces: 1,
+            ..StoreManagerConfig::default()
+        },
+    )
+    .await
+    .unwrap();
+    let workspace_a = manager
+        .global()
+        .create_workspace(
+            "a".to_string(),
+            temp.path().join("a").to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .unwrap();
+    let workspace_b = manager
+        .global()
+        .create_workspace(
+            "b".to_string(),
+            temp.path().join("b").to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .unwrap();
+
+    let store_a = manager.workspace(workspace_a.id).await.unwrap();
+    let _ = manager.workspace(workspace_b.id).await.unwrap();
+    let next_before = manager.next_store_instance_id.load(Ordering::Relaxed);
+
+    let evicted = manager
+        .evict_workspaces_to_cap(&HashSet::from([workspace_b.id]))
+        .await;
+    assert_eq!(evicted, 1);
+
+    let manager_for_first = manager.clone();
+    let manager_for_second = manager.clone();
+    let first =
+        tokio::spawn(async move { manager_for_first.workspace_access(workspace_a.id).await });
+    let second =
+        tokio::spawn(async move { manager_for_second.workspace_access(workspace_a.id).await });
+
+    let first = tokio::time::timeout(Duration::from_secs(1), first)
+        .await
+        .expect("first reactivation should not deadlock")
+        .unwrap()
+        .unwrap();
+    let second = tokio::time::timeout(Duration::from_secs(1), second)
+        .await
+        .expect("second reactivation should not deadlock")
+        .unwrap()
+        .unwrap();
+
+    assert!(matches!(
+        first.kind,
+        WorkspaceStoreAccessKind::Reactivated | WorkspaceStoreAccessKind::Cached
+    ));
+    assert!(matches!(
+        second.kind,
+        WorkspaceStoreAccessKind::Reactivated | WorkspaceStoreAccessKind::Cached
+    ));
+    assert_eq!(
+        manager.next_store_instance_id.load(Ordering::Relaxed),
+        next_before,
+        "reactivation should not cold-open a duplicate store instance",
+    );
+
+    drop(first);
+    drop(second);
+    drop(store_a);
 }

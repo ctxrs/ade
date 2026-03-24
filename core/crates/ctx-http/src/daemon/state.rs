@@ -47,7 +47,8 @@ mod types;
 
 use super::edit_plans;
 pub(crate) use types::{
-    ActiveTaskRefreshEntry, AttachmentMaterializationTask, WorktreeBootstrapGate,
+    ActiveTaskRefreshEntry, AttachmentMaterializationTask, MergeQueueScheduleState,
+    WorktreeBootstrapGate,
 };
 pub use types::{
     AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions, CachedProviderOptions,
@@ -239,7 +240,7 @@ impl AppState {
                 merge_queue_notify,
                 merge_queue_schedule_tx,
                 merge_queue_schedule_rx: Mutex::new(Some(merge_queue_schedule_rx)),
-                merge_queue_running: Mutex::new(HashSet::new()),
+                merge_queue_state: Mutex::new(MergeQueueScheduleState::default()),
                 lsp_diag_broadcaster,
                 lsp_diag_forwarders: Mutex::new(HashSet::new()),
             },
@@ -311,8 +312,8 @@ impl AppState {
             }
         }
         {
-            let running = self.transport.merge_queue_running.lock().await;
-            active_workspaces.extend(running.iter().copied());
+            let merge_queue_state = self.transport.merge_queue_state.lock().await;
+            active_workspaces.extend(merge_queue_state.running.iter().copied());
         }
 
         active_workspaces
@@ -320,7 +321,7 @@ impl AppState {
 
     pub async fn store_for_workspace(&self, workspace_id: WorkspaceId) -> Result<Store> {
         let access = self.core.stores.workspace_access(workspace_id).await?;
-        if access.opened_now {
+        if access.kind.triggers_open_side_effects() {
             let mut protected_workspaces = self.protected_workspace_store_ids().await;
             protected_workspaces.insert(workspace_id);
             self.core
