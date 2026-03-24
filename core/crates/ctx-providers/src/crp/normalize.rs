@@ -7,6 +7,10 @@ use ctx_core::models::SessionEventType;
 use crate::events::NormalizedEvent;
 
 use super::protocol::{CrpChannel, CrpEvent, CrpToolStatus, CrpTurnStatus};
+use super::unknown_event::{
+    bound_unknown_crp_payload, extract_unknown_crp_tool_name, extract_unknown_crp_tool_preview,
+    summarize_unknown_crp_event,
+};
 
 pub(super) struct MappedCrpEvent {
     pub(super) events: Vec<NormalizedEvent>,
@@ -418,6 +422,45 @@ pub(super) fn map_crp_event(
             }],
             done: false,
         },
+        CrpEvent::Unknown {
+            event_type,
+            parse_error,
+            raw,
+            ..
+        } => {
+            let summary = summarize_unknown_crp_event(&raw)
+                .unwrap_or_else(|| format!("Unknown runtime event: {event_type}"));
+            let tool_name = extract_unknown_crp_tool_name(&raw);
+            let tool_preview = extract_unknown_crp_tool_preview(&raw);
+            let mut payload = serde_json::Map::new();
+            payload.insert("kind".to_string(), json!("crp_unknown_event"));
+            payload.insert("original_type".to_string(), json!(event_type));
+            payload.insert("message".to_string(), json!(summary));
+            payload.insert("parse_error".to_string(), json!(parse_error));
+            payload.insert("display_in_timeline".to_string(), json!(true));
+            if let Some(tool_name) = tool_name {
+                payload.insert("tool_name".to_string(), json!(tool_name));
+            }
+            if let Some(tool_preview) = tool_preview {
+                payload.insert("tool_preview".to_string(), json!(tool_preview));
+            }
+            let (bounded_raw, raw_truncated) = bound_unknown_crp_payload(raw);
+            payload.insert("raw".to_string(), bounded_raw);
+            if raw_truncated {
+                payload.insert("raw_truncated".to_string(), json!(true));
+            }
+            payload.insert("crp_seq".to_string(), json!(seq));
+            if let Some(channel) = crp_channel {
+                payload.insert("crp_channel".to_string(), json!(channel));
+            }
+            MappedCrpEvent {
+                events: vec![NormalizedEvent {
+                    event_type: SessionEventType::Notice,
+                    payload_json: Value::Object(payload),
+                }],
+                done: false,
+            }
+        }
     }
 }
 
@@ -544,6 +587,7 @@ pub(super) fn event_turn_id(event: &CrpEvent) -> Option<&str> {
     match event {
         CrpEvent::SessionGap { turn_id, .. } => turn_id.as_deref(),
         CrpEvent::SessionNotice { turn_id, .. } => turn_id.as_deref(),
+        CrpEvent::Unknown { turn_id, .. } => turn_id.as_deref(),
         CrpEvent::TurnStarted { turn_id, .. }
         | CrpEvent::MessageDelta { turn_id, .. }
         | CrpEvent::MessageFinal { turn_id, .. }
@@ -573,6 +617,7 @@ pub(super) fn event_matches_session(event: &CrpEvent, session_id: &str) -> bool 
         | CrpEvent::TurnCompleted { session_id: id, .. }
         | CrpEvent::SessionGap { session_id: id, .. }
         | CrpEvent::SessionNotice { session_id: id, .. } => id == session_id,
+        CrpEvent::Unknown { session_id: id, .. } => id.as_deref() == Some(session_id),
         CrpEvent::ModelsList { .. } => false,
     }
 }

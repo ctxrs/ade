@@ -11,6 +11,9 @@ const isTurnStatusItem = (item: ThreadItem): item is Extract<ThreadItem, { kind:
 const isToolItem = (item: ThreadItem): item is Extract<ThreadItem, { kind: "tool" }> =>
   item.kind === "tool";
 
+const isMessageItem = (item: ThreadItem): item is Extract<ThreadItem, { kind: "message" }> =>
+  item.kind === "message";
+
 describe("buildWorkbenchThreadViewModel", () => {
   it("does not synthesize a thread from raw events when turns are missing", async () => {
     const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
@@ -292,6 +295,137 @@ describe("buildWorkbenchThreadViewModel", () => {
 
     const statusItem = items.find(isTurnStatusItem);
     expect(statusItem?.custom_status).toBe("Reading foo");
+  }, 10000);
+
+  it("renders timeline notices for unknown runtime events marked for display", async () => {
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+
+    const turns = [
+      {
+        turn_id: "t1",
+        session_id: "s1",
+        user_message_id: "m1",
+        status: "running",
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:05.000Z",
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ];
+
+    const messages = [
+      {
+        id: "m1",
+        session_id: "s1",
+        role: "user",
+        content: "hello",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        turn_id: "t1",
+        order_seq: 1,
+      },
+    ];
+
+    const events = [
+      {
+        seq: 1,
+        id: "e1",
+        session_id: "s1",
+        run_id: "r1",
+        turn_id: "t1",
+        event_type: "notice",
+        payload_json: {
+          kind: "crp_unknown_event",
+          original_type: "tool.progress",
+          message: "Unknown runtime event: Scanning files",
+          display_in_timeline: true,
+          order_seq: 2,
+        },
+        created_at: "2025-12-15T00:00:01.000Z",
+      },
+    ];
+
+    const out = buildWorkbenchThreadViewModel(
+      turns as unknown as SessionTurn[],
+      messages as unknown as Message[],
+      {},
+      events as unknown as SessionEvent[],
+    );
+    const items = out.groups[0]?.items ?? [];
+    const noticeItem = items.find(isMessageItem);
+    expect(noticeItem?.role).toBe("system");
+    expect(noticeItem?.content).toContain("Unknown runtime event: Scanning files");
+  }, 10000);
+
+  it("prefers tool names when rendering unknown runtime tool notices", async () => {
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+
+    const turns = [
+      {
+        turn_id: "t1",
+        session_id: "s1",
+        user_message_id: "m1",
+        status: "running",
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:05.000Z",
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ];
+
+    const messages = [
+      {
+        id: "m1",
+        session_id: "s1",
+        role: "user",
+        content: "hello",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        turn_id: "t1",
+        order_seq: 1,
+      },
+    ];
+
+    const events = [
+      {
+        seq: 1,
+        id: "e1",
+        session_id: "s1",
+        run_id: "r1",
+        turn_id: "t1",
+        event_type: "notice",
+        payload_json: {
+          kind: "crp_unknown_event",
+          original_type: "tool.progress",
+          display_in_timeline: true,
+          raw: {
+            tool_name: "Agent",
+            description: "Read agent basics context",
+          },
+          order_seq: 2,
+        },
+        created_at: "2025-12-15T00:00:01.000Z",
+      },
+    ];
+
+    const out = buildWorkbenchThreadViewModel(
+      turns as unknown as SessionTurn[],
+      messages as unknown as Message[],
+      {},
+      events as unknown as SessionEvent[],
+    );
+    const items = out.groups[0]?.items ?? [];
+    const noticeItem = items.find(isMessageItem);
+    expect(noticeItem?.role).toBe("system");
+    expect(noticeItem?.content).toContain("Unknown tool event: Subagent · Read agent basics context");
   }, 10000);
 
   it("splits CRP thought chunks into blocks between control events", async () => {

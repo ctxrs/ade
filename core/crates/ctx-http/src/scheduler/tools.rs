@@ -15,6 +15,120 @@ fn string_from_value(value: Option<&Value>) -> Option<String> {
     value.and_then(Value::as_str).map(str::to_owned)
 }
 
+fn normalize_placeholder_tool_label(value: &str) -> String {
+    value
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter(|c| !matches!(c, ' ' | '.' | '_' | '-'))
+        .collect()
+}
+
+fn is_placeholder_tool_label(value: Option<&str>) -> bool {
+    let normalized = normalize_placeholder_tool_label(value.unwrap_or_default());
+    normalized.is_empty()
+        || normalized == "unknown"
+        || normalized == "tool"
+        || normalized == "unknowntool"
+}
+
+#[derive(Clone, Copy)]
+struct InferredToolIdentity {
+    kind: &'static str,
+    name: &'static str,
+}
+
+fn non_placeholder_tool_field(raw: Option<String>) -> Option<String> {
+    raw.filter(|value| !is_placeholder_tool_label(Some(value.as_str())))
+}
+
+fn direct_input_preview(update: &Value) -> Option<Value> {
+    update.get("input_preview").and_then(|value| {
+        if value.is_null() {
+            None
+        } else {
+            Some(value.clone())
+        }
+    })
+}
+
+fn inferred_tool_identity(
+    tool_call_id: &str,
+    input_preview: Option<&Value>,
+    output_preview: Option<&str>,
+) -> Option<InferredToolIdentity> {
+    let input = input_preview.and_then(Value::as_object);
+    if let Some(input) = input {
+        if input.contains_key("command") || input.contains_key("parsed_cmd") {
+            return Some(InferredToolIdentity {
+                kind: "execute",
+                name: "Bash",
+            });
+        }
+        if input.contains_key("query")
+            || input.contains_key("pattern")
+            || input.contains_key("regex")
+        {
+            return Some(InferredToolIdentity {
+                kind: "search",
+                name: "Grep",
+            });
+        }
+        if input.contains_key("file_path")
+            || input.contains_key("filePath")
+            || input.contains_key("filepath")
+            || input.contains_key("filename")
+            || input.contains_key("file")
+            || input.contains_key("path")
+        {
+            let is_edit = input.contains_key("changes")
+                || input.contains_key("edits")
+                || input.contains_key("new_string")
+                || input.contains_key("newText")
+                || input.contains_key("replacement")
+                || input.contains_key("diff_stats");
+            return Some(if is_edit {
+                InferredToolIdentity {
+                    kind: "edit",
+                    name: "Edit",
+                }
+            } else {
+                InferredToolIdentity {
+                    kind: "read",
+                    name: "Read",
+                }
+            });
+        }
+    }
+
+    let output = output_preview
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let read_like = output.lines().take(3).any(|line| {
+        let trimmed = line.trim_start();
+        let mut chars = trimmed.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        first.is_ascii_digit() && chars.as_str().starts_with('→')
+    });
+    if read_like {
+        return Some(InferredToolIdentity {
+            kind: "read",
+            name: "Read",
+        });
+    }
+
+    if tool_call_id.starts_with("toolu_") {
+        return Some(InferredToolIdentity {
+            kind: "execute",
+            name: "Bash",
+        });
+    }
+
+    None
+}
+
 fn tool_label_from_update(update: &Value) -> Option<String> {
     string_from_value(update.get("tool_label"))
         .or_else(|| string_from_value(update.get("toolLabel")))
@@ -52,11 +166,10 @@ pub(super) fn sanitize_tool_event_payload(
     let update = extract_tool_update(raw_payload);
     let tool_call_id = tool_call_id_from_payload(raw_payload).unwrap_or_default();
 
-    let tool_kind = tool_kind_from_update(update);
-    let provider_tool_name = tool_name_from_update(update);
+    let raw_tool_kind = tool_kind_from_update(update);
+    let raw_provider_tool_name = tool_name_from_update(update);
     let tool_label = tool_label_from_update(update);
-    let tool_name = provider_tool_name.clone();
-    let title = tool_title_from_update(update);
+    let raw_title = tool_title_from_update(update);
 
     let raw_status = update
         .get("status")
@@ -71,19 +184,17 @@ pub(super) fn sanitize_tool_event_payload(
     };
 
     let input = extract_tool_input(update);
-    // Treat explicit JSON null as "missing" so we still derive a useful preview from rawInput.
-    let input_preview = update
-        .get("input_preview")
-        .and_then(|v| if v.is_null() { None } else { Some(v.clone()) })
-        .or_else(|| tool_input_preview(input, update, tool_kind.as_deref(), title.as_deref()));
+    let input_preview = direct_input_preview(update).or_else(|| {
+        tool_input_preview(
+            input,
+            update,
+            raw_tool_kind.as_deref(),
+            raw_title.as_deref(),
+        )
+    });
     let input_meta = build_json_preview(input, input_preview);
-    let subtitle = tool_subtitle_from_preview(
-        tool_kind.as_deref(),
-        provider_tool_name.as_deref(),
-        input_meta.preview.as_ref(),
-    );
 
-    let patch_preview = if is_edit_tool(tool_kind.as_deref(), title.as_deref()) {
+    let patch_preview = if is_edit_tool(raw_tool_kind.as_deref(), raw_title.as_deref()) {
         extract_patch_text_owned(input, update).map(|t| build_output_preview(&t))
     } else {
         None
@@ -93,6 +204,27 @@ pub(super) fn sanitize_tool_event_payload(
         .map(|t| build_output_preview(&t))
         .or(patch_preview)
         .filter(|preview| !preview.preview.trim().is_empty());
+
+    let inferred = inferred_tool_identity(
+        &tool_call_id,
+        input_meta.preview.as_ref(),
+        output_preview
+            .as_ref()
+            .map(|preview| preview.preview.as_str()),
+    );
+    let tool_kind = non_placeholder_tool_field(raw_tool_kind)
+        .or_else(|| inferred.map(|identity| identity.kind.to_string()));
+    let provider_tool_name = non_placeholder_tool_field(raw_provider_tool_name)
+        .or_else(|| inferred.map(|identity| identity.name.to_string()));
+    let tool_name = provider_tool_name.clone();
+    let title = non_placeholder_tool_field(raw_title)
+        .or_else(|| tool_label.clone())
+        .or_else(|| inferred.map(|identity| identity.name.to_string()));
+    let subtitle = tool_subtitle_from_preview(
+        tool_kind.as_deref(),
+        provider_tool_name.as_deref(),
+        input_meta.preview.as_ref(),
+    );
 
     let mut obj = serde_json::Map::new();
     if !tool_call_id.trim().is_empty() {
@@ -193,7 +325,8 @@ pub(super) fn build_tool_ops_meta(
         Some("pending".to_string())
     };
     let input = extract_tool_input(update);
-    let input_preview = tool_input_preview(input, update, tool_kind.as_deref(), title.as_deref());
+    let input_preview = direct_input_preview(update)
+        .or_else(|| tool_input_preview(input, update, tool_kind.as_deref(), title.as_deref()));
     let cwd = input_preview
         .as_ref()
         .and_then(|preview| preview.get("cwd"))
@@ -263,9 +396,9 @@ pub(super) fn build_turn_tool_update_from_payload(
                 .get("orderSeq")
                 .and_then(|value| value.as_i64())
         });
-    let tool_kind = tool_kind_from_update(update);
-    let provider_tool_name = tool_name_from_update(update);
-    let title = tool_title_from_update(update);
+    let raw_tool_kind = tool_kind_from_update(update);
+    let raw_provider_tool_name = tool_name_from_update(update);
+    let raw_title = tool_title_from_update(update);
     let raw_status = update
         .get("status")
         .and_then(|v| v.as_str())
@@ -281,8 +414,31 @@ pub(super) fn build_turn_tool_update_from_payload(
     };
 
     let input = extract_tool_input(update);
-    let input_json = tool_input_preview(input, update, tool_kind.as_deref(), title.as_deref());
+    let input_json = direct_input_preview(update).or_else(|| {
+        tool_input_preview(
+            input,
+            update,
+            raw_tool_kind.as_deref(),
+            raw_title.as_deref(),
+        )
+    });
     let input_meta = build_json_preview(input, input_json);
+    let output_preview = extract_tool_output_text(update)
+        .map(|t| build_output_preview(&t))
+        .filter(|preview| !preview.preview.trim().is_empty());
+    let inferred = inferred_tool_identity(
+        &tool_call_id,
+        input_meta.preview.as_ref(),
+        output_preview
+            .as_ref()
+            .map(|preview| preview.preview.as_str()),
+    );
+    let tool_kind = non_placeholder_tool_field(raw_tool_kind)
+        .or_else(|| inferred.map(|identity| identity.kind.to_string()));
+    let provider_tool_name = non_placeholder_tool_field(raw_provider_tool_name)
+        .or_else(|| inferred.map(|identity| identity.name.to_string()));
+    let title = non_placeholder_tool_field(raw_title)
+        .or_else(|| inferred.map(|identity| identity.name.to_string()));
     let subtitle = tool_subtitle_from_preview(
         tool_kind.as_deref(),
         provider_tool_name.as_deref(),
@@ -598,6 +754,7 @@ fn extract_tool_output_text(update: &Value) -> Option<String> {
         .get("outputText")
         .and_then(|v| v.as_str())
         .or_else(|| update.get("output_text").and_then(|v| v.as_str()))
+        .or_else(|| update.get("output_preview").and_then(|v| v.as_str()))
         .or_else(|| {
             update
                 .pointer("/toolCall/outputText")
@@ -816,5 +973,64 @@ mod tool_preview_tests {
             .expect("tool update");
         assert_eq!(update.title.as_deref(), Some("Run shell"));
         assert_eq!(update.subtitle.as_deref(), Some("Run shell command"));
+    }
+
+    #[test]
+    fn sanitize_tool_payload_infers_claude_read_from_numbered_output_preview() {
+        let raw = json!({
+            "tool_call_id": "toolu_read_1",
+            "kind": "unknown",
+            "tool_name": "unknown",
+            "title": "unknown",
+            "status": "completed",
+            "output_preview": "1→# agent instructions\n2→follow the rules"
+        });
+
+        let sanitized = sanitize_tool_event_payload(&SessionEventType::ToolResult, &raw, None);
+        assert_eq!(sanitized.get("kind").and_then(|v| v.as_str()), Some("read"));
+        assert_eq!(
+            sanitized.get("tool_name").and_then(|v| v.as_str()),
+            Some("Read")
+        );
+        assert_eq!(
+            sanitized.get("title").and_then(|v| v.as_str()),
+            Some("Read")
+        );
+
+        let update = build_turn_tool_update_from_payload(&SessionEventType::ToolResult, &sanitized)
+            .expect("tool update");
+        assert_eq!(update.tool_kind.as_deref(), Some("read"));
+        assert_eq!(update.provider_tool_name.as_deref(), Some("Read"));
+        assert_eq!(update.title.as_deref(), Some("Read"));
+        assert_eq!(
+            update.output_text.as_deref(),
+            Some("1→# agent instructions\n2→follow the rules")
+        );
+    }
+
+    #[test]
+    fn sanitize_tool_payload_infers_claude_bash_from_scalar_output_preview() {
+        let raw = json!({
+            "tool_call_id": "toolu_exec_1",
+            "kind": "unknown",
+            "tool_name": "unknown",
+            "title": "unknown",
+            "status": "completed",
+            "output_preview": "1"
+        });
+
+        let sanitized = sanitize_tool_event_payload(&SessionEventType::ToolResult, &raw, None);
+        assert_eq!(
+            sanitized.get("kind").and_then(|v| v.as_str()),
+            Some("execute")
+        );
+        assert_eq!(
+            sanitized.get("tool_name").and_then(|v| v.as_str()),
+            Some("Bash")
+        );
+        assert_eq!(
+            sanitized.get("title").and_then(|v| v.as_str()),
+            Some("Bash")
+        );
     }
 }

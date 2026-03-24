@@ -25,7 +25,9 @@ import {
   humanToolStatus,
   humanTurnStatus,
   imageAttachmentSrc,
+  isPlaceholderToolLabel,
   looksLikeMarkdown,
+  normalizeDisplayToolLabel,
   parseIsoMs,
   toolKindIcon,
   toolSummaryLine,
@@ -405,7 +407,12 @@ export function WorkbenchToolRow({
 
   const labelParts = (() => {
     const normalizedTitle = normalizeWorktreePath(title);
-    const titlePrefixed = parsePrefixed(normalizedTitle, [
+    const displayTitle = isPlaceholderToolLabel(normalizedTitle) ? "" : normalizeDisplayToolLabel(normalizedTitle);
+    const providerToolName = normalizeWorktreePath(String(item.provider_tool_name ?? "").trim());
+    const displayProviderToolName = isPlaceholderToolLabel(providerToolName)
+      ? ""
+      : normalizeDisplayToolLabel(providerToolName);
+    const titlePrefixed = parsePrefixed(displayTitle, [
       "Read",
       "Explored",
       "Searched",
@@ -417,15 +424,35 @@ export function WorkbenchToolRow({
       "List",
       "Write",
       "Edit",
+      "Subagent",
     ]);
     const titleRest = titlePrefixed?.rest ?? "";
 
-    if (normalizedTitle && normalizedTitle !== "Tool") {
-      if (summary && isInlineSummaryVerb(normalizedTitle)) {
-        return makeParts(normalizedTitle, summary);
+    if (displayTitle && displayTitle !== "Tool") {
+      if (summary && isInlineSummaryVerb(displayTitle)) {
+        return makeParts(displayTitle, summary);
       }
       if (titlePrefixed) return titlePrefixed;
-      return makeParts(normalizedTitle);
+      return makeParts(displayTitle);
+    }
+
+    const providerPrefixed = parsePrefixed(displayProviderToolName, [
+      "Read",
+      "Explored",
+      "Searched",
+      "Wrote",
+      "Edited",
+      "Run",
+      "Fetch",
+      "Search",
+      "List",
+      "Write",
+      "Edit",
+      "Subagent",
+    ]);
+    if (displayProviderToolName) {
+      if (providerPrefixed) return providerPrefixed;
+      return makeParts(displayProviderToolName);
     }
 
     const inputRecord = asRecord(item.input);
@@ -481,10 +508,13 @@ export function WorkbenchToolRow({
     }
     if (kind === "error") return makeParts("Error");
 
-    const fallbackLabel = normalizeWorktreePath(title) || humanToolKind(item.tool_kind);
+    const fallbackVerb = humanToolKind(item.tool_kind);
+    if (summary && fallbackVerb === "Tool") {
+      return makeParts("Tool", summary);
+    }
+    const fallbackLabel = displayTitle || displayProviderToolName || fallbackVerb;
     const parsedLabel = parsePrefixed(fallbackLabel, ["Read", "Explored", "Searched", "Wrote", "Edited", "Run"]);
     if (parsedLabel) return parsedLabel;
-    const fallbackVerb = humanToolKind(item.tool_kind);
     if (fallbackLabel && fallbackLabel !== fallbackVerb) {
       return makeParts(fallbackVerb, fallbackLabel);
     }

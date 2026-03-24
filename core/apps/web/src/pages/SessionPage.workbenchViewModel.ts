@@ -12,7 +12,7 @@ import type {
   WorkbenchThreadView,
   WorkbenchTurnHeader,
 } from "./SessionPage.types";
-import { humanToolKind, toolDisplayTitleFromPayload } from "./SessionPage.helpers";
+import { humanToolKind, isPlaceholderToolLabel, normalizeDisplayToolLabel, toolDisplayTitleFromPayload } from "./SessionPage.helpers";
 import {
   buildPendingTurns,
   filterQueuedMessagesForPanel,
@@ -278,10 +278,24 @@ function buildNoticeMessageItem(
   if (ev.event_type !== "notice") return null;
   const payload = ev.payload_json ?? {};
   const code = String(payload?.kind ?? payload?.code ?? "").trim().toLowerCase();
-  if (code !== "context.compacted" && code !== "context_compacted") return null;
-  const message =
-    pickFirstString(payload?.message, payload?.text, payload?.summary, payload?.content) ??
-    "Context compacted. Earlier turns were summarized.";
+  const explicitTimelineMessage = payload?.display_in_timeline === true;
+  if (!explicitTimelineMessage && code !== "context.compacted" && code !== "context_compacted") {
+    return null;
+  }
+  const unknownToolNotice = code === "crp_unknown_event" ? buildUnknownToolNoticeMessage(payload) : null;
+  const message = explicitTimelineMessage
+    ? (
+      unknownToolNotice ??
+      pickFirstString(payload?.message, payload?.text, payload?.summary, payload?.content) ??
+      (() => {
+        const originalType = pickFirstString(payload?.original_type, payload?.originalType);
+        return originalType ? `Unknown runtime event: ${originalType}` : "Unknown runtime event.";
+      })()
+    )
+    : (
+      pickFirstString(payload?.message, payload?.text, payload?.summary, payload?.content) ??
+      "Context compacted. Earlier turns were summarized."
+    );
   const eventId = idToString(ev.id);
   if (!eventId) {
     if (import.meta.env.DEV) {
@@ -302,6 +316,34 @@ function buildNoticeMessageItem(
     attachments: [],
     created_at: ev.created_at,
   };
+}
+
+function buildUnknownToolNoticeMessage(payload: Record<string, unknown>): string | null {
+  const raw = asRecord(payload.raw);
+  const toolName = normalizeDisplayToolLabel(
+    toolDisplayTitleFromPayload(payload) || toolDisplayTitleFromPayload(raw),
+  );
+  if (!toolName || isPlaceholderToolLabel(toolName)) return null;
+  const preview = pickFirstString(
+    payload.tool_preview,
+    payload.toolPreview,
+    raw.command,
+    raw.description,
+    raw.file_path,
+    raw.filePath,
+    raw.path,
+    raw.query,
+    raw.pattern,
+    raw.regex,
+    raw.message,
+    raw.text,
+    raw.summary,
+    raw.title,
+  );
+  if (preview && preview !== toolName) {
+    return `Unknown tool event: ${toolName} · ${preview}`;
+  }
+  return `Unknown tool event: ${toolName}`;
 }
 
 function buildTurnActivityTimeline(opts: {
@@ -335,6 +377,15 @@ function buildTurnActivityTimeline(opts: {
           order_seq: orderSeq as number,
         });
         askInserted.add(askItem.tool_call_id);
+      }
+      const noticeItem = buildNoticeMessageItem(ev, opts.turnId);
+      if (noticeItem) {
+        activity.push({
+          item: noticeItem,
+          created_at: noticeItem.created_at,
+          kind: "message",
+          order_seq: orderSeq as number,
+        });
       }
     }
 
@@ -670,7 +721,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
       status: turn.status,
       started_at: turn.started_at,
       updated_at: turn.updated_at ?? turn.started_at,
-      custom_status: statusText,
+      custom_status: statusText ?? undefined,
       assistant_messages_content: assistantMessagesContent,
     });
 

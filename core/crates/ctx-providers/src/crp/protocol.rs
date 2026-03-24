@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -124,16 +125,78 @@ pub struct CrpModelsProbe {
     pub catalog_source: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone)]
 pub(super) struct CrpEventEnvelope {
     #[allow(dead_code)]
-    #[serde(default)]
     pub(super) v: Option<u32>,
     pub(super) seq: u64,
     #[allow(dead_code)]
     pub(super) channel: CrpChannel,
-    #[serde(flatten)]
     pub(super) event: CrpEvent,
+}
+
+impl<'de> Deserialize<'de> for CrpEventEnvelope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| D::Error::custom("CRP event envelope must be a JSON object"))?;
+
+        let v =
+            match object.get("v") {
+                Some(raw) => Some(serde_json::from_value::<u32>(raw.clone()).map_err(|err| {
+                    D::Error::custom(format!("invalid CRP envelope version: {err}"))
+                })?),
+                None => None,
+            };
+        let seq = serde_json::from_value::<u64>(
+            object
+                .get("seq")
+                .cloned()
+                .ok_or_else(|| D::Error::custom("CRP event envelope missing seq"))?,
+        )
+        .map_err(|err| D::Error::custom(format!("invalid CRP event seq: {err}")))?;
+        let channel = serde_json::from_value::<CrpChannel>(
+            object
+                .get("channel")
+                .cloned()
+                .ok_or_else(|| D::Error::custom("CRP event envelope missing channel"))?,
+        )
+        .map_err(|err| D::Error::custom(format!("invalid CRP event channel: {err}")))?;
+
+        let event = match serde_json::from_value::<CrpEvent>(value.clone()) {
+            Ok(event) => event,
+            Err(err) => {
+                let event_type = object
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| D::Error::custom(format!("failed to parse CRP event: {err}")))?;
+                CrpEvent::Unknown {
+                    event_type: event_type.to_string(),
+                    session_id: object
+                        .get("session_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    turn_id: object
+                        .get("turn_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    parse_error: err.to_string(),
+                    raw: strip_envelope_fields(object),
+                }
+            }
+        };
+
+        Ok(Self {
+            v,
+            seq,
+            channel,
+            event,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
@@ -309,6 +372,13 @@ pub(super) enum CrpEvent {
         #[serde(default)]
         transient: Option<bool>,
     },
+    Unknown {
+        event_type: String,
+        session_id: Option<String>,
+        turn_id: Option<String>,
+        parse_error: String,
+        raw: Value,
+    },
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -334,4 +404,93 @@ pub(super) struct CrpTurnError {
 pub(super) enum CrpToolStatus {
     Success,
     Error,
+}
+
+fn strip_envelope_fields(object: &serde_json::Map<String, Value>) -> Value {
+    let mut raw = serde_json::Map::with_capacity(object.len());
+    for (key, value) in object {
+        if matches!(key.as_str(), "v" | "seq" | "channel") {
+            continue;
+        }
+        raw.insert(key.clone(), value.clone());
+    }
+    Value::Object(raw)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_known_crp_envelope() {
+        let parsed: CrpEventEnvelope = serde_json::from_str(
+            r#"{
+                "v": 1,
+                "seq": 7,
+                "channel": "control",
+                "type": "message.delta",
+                "session_id": "session-1",
+                "turn_id": "turn-1",
+                "message_id": "message-1",
+                "delta": "hello"
+            }"#,
+        )
+        .expect("known envelope should parse");
+
+        assert_eq!(parsed.seq, 7);
+        assert!(matches!(parsed.channel, CrpChannel::Control));
+        assert!(matches!(
+            parsed.event,
+            CrpEvent::MessageDelta {
+                session_id,
+                turn_id,
+                message_id,
+                delta,
+            } if session_id == "session-1"
+                && turn_id == "turn-1"
+                && message_id == "message-1"
+                && delta == "hello"
+        ));
+    }
+
+    #[test]
+    fn preserves_unknown_crp_event_type_as_unknown_variant() {
+        let parsed: CrpEventEnvelope = serde_json::from_str(
+            r#"{
+                "v": 1,
+                "seq": 8,
+                "channel": "data",
+                "type": "tool.progress",
+                "session_id": "session-1",
+                "turn_id": "turn-1",
+                "message": "progress update",
+                "percent": 50,
+                "nested": { "step": "scan" }
+            }"#,
+        )
+        .expect("unknown envelope should still parse");
+
+        assert_eq!(parsed.seq, 8);
+        assert!(matches!(parsed.channel, CrpChannel::Data));
+        match parsed.event {
+            CrpEvent::Unknown {
+                event_type,
+                session_id,
+                turn_id,
+                parse_error,
+                raw,
+            } => {
+                assert_eq!(event_type, "tool.progress");
+                assert_eq!(session_id.as_deref(), Some("session-1"));
+                assert_eq!(turn_id.as_deref(), Some("turn-1"));
+                assert!(!parse_error.is_empty());
+                assert_eq!(
+                    raw.get("type"),
+                    Some(&Value::String("tool.progress".to_string()))
+                );
+                assert_eq!(raw.get("percent"), Some(&Value::Number(50.into())));
+            }
+            other => panic!("expected unknown CRP event, got {other:?}"),
+        }
+    }
 }

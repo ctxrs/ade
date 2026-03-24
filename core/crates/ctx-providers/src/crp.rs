@@ -27,6 +27,7 @@ mod protocol;
 mod runtime;
 #[cfg(test)]
 mod tests;
+mod unknown_event;
 
 use self::config::{
     build_crp_session_config, build_prompt_items, flatten_prompt_items_as_text,

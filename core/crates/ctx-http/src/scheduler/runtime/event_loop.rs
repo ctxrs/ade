@@ -455,7 +455,8 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
             SessionEventType::ToolCall
             | SessionEventType::ToolCallUpdate
             | SessionEventType::ToolResult => {
-                if let Some(update) = build_turn_tool_update_from_payload(&event_type, &raw_payload)
+                if let Some(update) =
+                    build_turn_tool_update_from_payload(&event_type, &event.payload_json)
                 {
                     let prev = if matches!(event.event_type, SessionEventType::ToolCallUpdate) {
                         tool_cache.get(&update.tool_call_id).cloned()

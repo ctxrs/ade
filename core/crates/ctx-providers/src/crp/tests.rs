@@ -75,6 +75,84 @@ async fn set_session_model_writes_crp_command_for_live_session() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn unknown_crp_event_maps_to_timeline_notice() {
+    let mut tool_output_cache: HashMap<String, String> = HashMap::new();
+    let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
+
+    let mapped = map_crp_event(
+        CrpEvent::Unknown {
+            event_type: "tool.progress".to_string(),
+            session_id: Some("session-1".to_string()),
+            turn_id: Some("turn-1".to_string()),
+            parse_error: "unknown variant `tool.progress`".to_string(),
+            raw: json!({
+                "type": "tool.progress",
+                "session_id": "session-1",
+                "turn_id": "turn-1",
+                "message": "Scanning files",
+                "percent": 50
+            }),
+        },
+        protocol::CrpChannel::Data,
+        11,
+        &mut tool_output_cache,
+        &mut tool_input_cache,
+    );
+
+    assert_eq!(mapped.events.len(), 1);
+    assert!(matches!(
+        mapped.events[0].event_type,
+        SessionEventType::Notice
+    ));
+    let payload = &mapped.events[0].payload_json;
+    assert_eq!(payload.get("kind"), Some(&json!("crp_unknown_event")));
+    assert_eq!(payload.get("original_type"), Some(&json!("tool.progress")));
+    assert_eq!(payload.get("display_in_timeline"), Some(&json!(true)));
+    assert_eq!(payload.get("crp_seq"), Some(&json!(11)));
+    assert_eq!(payload.get("crp_channel"), Some(&json!("data")));
+    assert_eq!(payload.pointer("/raw/percent"), Some(&json!(50)));
+}
+
+#[test]
+fn unknown_crp_tool_event_preserves_tool_name_and_preview() {
+    let mut tool_output_cache: HashMap<String, String> = HashMap::new();
+    let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
+
+    let mapped = map_crp_event(
+        CrpEvent::Unknown {
+            event_type: "tool.progress".to_string(),
+            session_id: Some("session-1".to_string()),
+            turn_id: Some("turn-1".to_string()),
+            parse_error: "unknown variant `tool.progress`".to_string(),
+            raw: json!({
+                "type": "tool.progress",
+                "session_id": "session-1",
+                "turn_id": "turn-1",
+                "tool_name": "Bash",
+                "command": ["find", ".ctx/ctx-pack/agent-basics", "-type", "f"]
+            }),
+        },
+        protocol::CrpChannel::Data,
+        12,
+        &mut tool_output_cache,
+        &mut tool_input_cache,
+    );
+
+    let payload = &mapped.events[0].payload_json;
+    assert_eq!(payload.get("tool_name"), Some(&json!("Bash")));
+    assert_eq!(
+        payload.get("tool_preview"),
+        Some(&json!("find .ctx/ctx-pack/agent-basics -type f"))
+    );
+    assert_eq!(
+        payload.get("message"),
+        Some(&json!(
+            "Unknown tool event: Bash · find .ctx/ctx-pack/agent-basics -type f"
+        ))
+    );
+}
+
 #[tokio::test]
 async fn set_session_model_rejects_missing_live_session() {
     let adapter = Tier1CrpAdapter::from_raw(

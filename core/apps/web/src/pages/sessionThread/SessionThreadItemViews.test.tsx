@@ -247,6 +247,112 @@ describe("WorkbenchToolRow", () => {
     expect(container.textContent).not.toContain("Output");
     expect(container.querySelector(".wb-tool-details")).toBeNull();
   });
+
+  it("renders Claude Agent tool labels as Subagent when a provider label is available", () => {
+    const onToggle = vi.fn();
+
+    const { container } = render(
+      <WorkbenchToolRow
+        item={{
+          kind: "tool",
+          id: "tool-unknown-agent",
+          tool_call_id: "tool-call-unknown-agent",
+          created_at: "2025-01-01T00:00:00.000Z",
+          updated_at: "2025-01-01T00:00:01.000Z",
+          tool_kind: "unknown",
+          provider_tool_name: "Agent",
+          title: "unknown",
+          subtitle: "Read agent basics context",
+          status: "running",
+          locations: [],
+          input: { description: "Read agent basics context" },
+          output_text: "",
+          raw: null,
+          updates_seen: 1,
+          has_details: true,
+        }}
+        verbosity="default"
+        expanded={false}
+        onToggle={onToggle}
+      />,
+    );
+
+    const mainline = container.querySelector(".wb-tool-mainline");
+    expect(mainline?.textContent).toContain("Subagent");
+    expect(mainline?.textContent).toContain("Read agent basics context");
+    expect(mainline?.textContent).not.toContain("Agent");
+    expect(mainline?.textContent?.toLowerCase()).not.toContain("unknown");
+  });
+
+  it("renders top-level Agent tool titles as Subagent with a single short preview", () => {
+    const onToggle = vi.fn();
+
+    const { container } = render(
+      <WorkbenchToolRow
+        item={{
+          kind: "tool",
+          id: "tool-agent-title",
+          tool_call_id: "tool-call-agent-title",
+          created_at: "2025-01-01T00:00:00.000Z",
+          updated_at: "2025-01-01T00:00:01.000Z",
+          tool_kind: "Agent",
+          provider_tool_name: "Agent",
+          title: "Agent",
+          subtitle: "Explore repo structure",
+          status: "running",
+          locations: [],
+          input: { description: "Explore repo structure" },
+          output_text: "",
+          raw: null,
+          updates_seen: 1,
+          has_details: true,
+        }}
+        verbosity="default"
+        expanded={false}
+        onToggle={onToggle}
+      />,
+    );
+
+    const mainline = container.querySelector(".wb-tool-mainline");
+    expect(mainline?.textContent).toContain("Subagent");
+    expect(mainline?.textContent).toContain("Explore repo structure");
+    expect(mainline?.textContent).not.toContain("Agent");
+  });
+
+  it("falls back to a generic tool label instead of rendering bare unknown", () => {
+    const onToggle = vi.fn();
+
+    const { container } = render(
+      <WorkbenchToolRow
+        item={{
+          kind: "tool",
+          id: "tool-generic-unknown",
+          tool_call_id: "tool-call-generic-unknown",
+          created_at: "2025-01-01T00:00:00.000Z",
+          updated_at: "2025-01-01T00:00:01.000Z",
+          tool_kind: "unknown",
+          provider_tool_name: "unknown",
+          title: "unknown",
+          subtitle: "Read specs context",
+          status: "running",
+          locations: [],
+          input: { description: "Read specs context" },
+          output_text: "",
+          raw: null,
+          updates_seen: 1,
+          has_details: true,
+        }}
+        verbosity="default"
+        expanded={false}
+        onToggle={onToggle}
+      />,
+    );
+
+    const mainline = container.querySelector(".wb-tool-mainline");
+    expect(mainline?.textContent).toContain("Tool");
+    expect(mainline?.textContent).toContain("Read specs context");
+    expect(mainline?.textContent?.toLowerCase()).not.toContain("unknown");
+  });
 });
 
 describe("AssistantEntry", () => {

@@ -14,6 +14,39 @@ const readTrimmedString = (value: unknown): string => {
   return value.trim();
 };
 
+const normalizePlaceholderToolLabel = (value: string): string =>
+  value.trim().toLowerCase().replace(/[\s._-]+/g, "");
+
+export function isPlaceholderToolLabel(value?: string | null): boolean {
+  const normalized = normalizePlaceholderToolLabel(String(value ?? ""));
+  return normalized === "" || normalized === "unknown" || normalized === "tool" || normalized === "unknowntool";
+}
+
+export function normalizeDisplayToolLabel(value?: string | null): string {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return "";
+  return trimmed.toLowerCase() === "agent" ? "Subagent" : trimmed;
+}
+
+function humanizeToolIdentifier(value: string): string {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return "";
+  const spaced = trimmed
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!spaced) return "";
+  return spaced
+    .split(" ")
+    .map((part) => {
+      if (!part) return part;
+      if (part.length <= 4 && part.toUpperCase() === part) return part;
+      return part[0]!.toUpperCase() + part.slice(1);
+    })
+    .join(" ");
+}
+
 export function imageAttachmentSrc(a: MessageAttachment): string {
   return a.kind === "image_ref" ? blobUrl(a.blob_id) : `data:${a.mime_type};base64,${a.data_base64}`;
 }
@@ -145,18 +178,21 @@ export function formatSubagentChildMeta(child: SubagentInvocationChild): string 
 export function toolDisplayTitleFromPayload(payload: unknown): string {
   const update = asRecord(payload);
   const toolCall = asRecord(update.toolCall);
-  return (
-    readTrimmedString(update.title) ||
-    readTrimmedString(update.tool_label) ||
-    readTrimmedString(update.toolLabel) ||
-    readTrimmedString(toolCall.title) ||
-    readTrimmedString(toolCall.tool_label) ||
-    readTrimmedString(toolCall.toolLabel) ||
-    readTrimmedString(update.tool_name) ||
-    readTrimmedString(update.toolName) ||
-    readTrimmedString(update.name) ||
-    readTrimmedString(toolCall.name)
-  );
+  for (const candidate of [
+    normalizeDisplayToolLabel(readTrimmedString(update.title)),
+    normalizeDisplayToolLabel(readTrimmedString(update.tool_label)),
+    normalizeDisplayToolLabel(readTrimmedString(update.toolLabel)),
+    normalizeDisplayToolLabel(readTrimmedString(toolCall.title)),
+    normalizeDisplayToolLabel(readTrimmedString(toolCall.tool_label)),
+    normalizeDisplayToolLabel(readTrimmedString(toolCall.toolLabel)),
+    normalizeDisplayToolLabel(readTrimmedString(update.tool_name)),
+    normalizeDisplayToolLabel(readTrimmedString(update.toolName)),
+    normalizeDisplayToolLabel(readTrimmedString(update.name)),
+    normalizeDisplayToolLabel(readTrimmedString(toolCall.name)),
+  ]) {
+    if (candidate && !isPlaceholderToolLabel(candidate)) return candidate;
+  }
+  return "";
 }
 
 export function toolKindIcon(kind: string): string {
@@ -169,7 +205,8 @@ export function toolKindIcon(kind: string): string {
 }
 
 export function humanToolKind(kind: string): string {
-  const k = (kind || "").toLowerCase();
+  const raw = String(kind ?? "").trim();
+  const k = raw.toLowerCase();
   if (k === "execute" || k === "exec") return "Run Command";
   if (k === "search") return "Search";
   if (k === "read" || k === "read_file") return "Read File";
@@ -177,8 +214,10 @@ export function humanToolKind(kind: string): string {
   if (k === "list" || k === "list_files") return "List Files";
   if (k === "fetch" || k === "http" || k === "curl") return "Fetch";
   if (k === "think") return "Think";
+  if (k === "agent") return "Subagent";
   if (k === "error") return "Error";
-  return kind || "Tool";
+  if (isPlaceholderToolLabel(raw)) return "Tool";
+  return normalizeDisplayToolLabel(humanizeToolIdentifier(raw)) || "Tool";
 }
 
 export function formatToolInput(toolKind: string, input: unknown): string {
