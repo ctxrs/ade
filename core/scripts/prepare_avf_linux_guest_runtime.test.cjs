@@ -11,11 +11,24 @@ test("prepare_avf_linux_guest_runtime.sh resolves official Ubuntu inputs in dry-
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-avf-runtime-"));
   const runtimeDir = path.join(tmpRoot, "runtime");
   const guestAgent = path.join(tmpRoot, "ctx-avf-linux-guest-agent");
+  const egressProxy = path.join(tmpRoot, "ctx-egress-proxy");
   fs.writeFileSync(guestAgent, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  fs.writeFileSync(egressProxy, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 
   const output = execFileSync(
     "bash",
-    [scriptPath, "--dry-run", "--output-dir", runtimeDir, "--arch", "arm64", "--guest-agent", guestAgent],
+    [
+      scriptPath,
+      "--dry-run",
+      "--output-dir",
+      runtimeDir,
+      "--arch",
+      "arm64",
+      "--guest-agent",
+      guestAgent,
+      "--egress-proxy",
+      egressProxy,
+    ],
     {
       encoding: "utf8",
       env: {
@@ -36,6 +49,7 @@ test("prepare_avf_linux_guest_runtime.sh resolves official Ubuntu inputs in dry-
   assert.match(output, /helpers\/kernel-cmdline/);
   assert.match(output, /cloudimg-rootfs/);
   assert.match(output, /helpers\/guest-agent/);
+  assert.match(output, /helpers\/egress-proxy/);
   assert.match(output, /rootfs_sha256_url=.*\/SHA256SUMS/);
   assert.match(output, /unpacked_sha256_url=.*\/unpacked\/SHA256SUMS/);
 

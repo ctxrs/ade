@@ -15,9 +15,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Context;
 use anyhow::{bail, Result};
 #[cfg(target_os = "linux")]
-use portable_pty::{
-    CommandBuilder as PtyCommandBuilder, NativePtySystem, PtySize, PtySystem,
-};
+use portable_pty::{CommandBuilder as PtyCommandBuilder, NativePtySystem, PtySize, PtySystem};
 
 #[cfg(target_os = "linux")]
 use crate::protocol::{
@@ -160,10 +158,7 @@ fn is_transient_vsock_accept_error(err: &anyhow::Error) -> bool {
         .is_some_and(|code| {
             matches!(
                 code,
-                libc::EINTR
-                    | libc::EAGAIN
-                    | libc::ECONNABORTED
-                    | libc::ECONNRESET
+                libc::EINTR | libc::EAGAIN | libc::ECONNABORTED | libc::ECONNRESET
             )
         })
 }
@@ -188,35 +183,25 @@ fn handle_connection(conn: OwnedFd) -> Result<()> {
         }
         None => return Ok(()),
     };
+    let writer = Arc::new(Mutex::new(
+        reader
+            .try_clone()
+            .context("cloning connection for response stream")?,
+    ));
 
     let prepared = match prepare_exec_request(&request) {
         Ok(prepared) => prepared,
         Err(err) => {
-            let writer = Arc::new(Mutex::new(
-                reader
-                    .try_clone()
-                    .context("cloning connection for error reply")?,
-            ));
             let _ = write_error_frame(&writer, "prepare_failed", &err.to_string());
             return Ok(());
         }
     };
 
     if prepared.pty {
-        if prepared.user.is_some() {
-            let writer = Arc::new(Mutex::new(
-                reader
-                    .try_clone()
-                    .context("cloning connection for PTY error reply")?,
-            ));
-            let _ = write_error_frame(
-                &writer,
-                "pty_user_not_supported",
-                "PTY exec with a custom guest user is not implemented yet",
-            );
-            return Ok(());
+        if let Err(err) = handle_pty_connection(reader, prepared) {
+            let _ = write_error_frame(&writer, "pty_failed", &err.to_string());
         }
-        return handle_pty_connection(reader, prepared);
+        return Ok(());
     }
 
     let mut command = Command::new(&prepared.command);
@@ -226,7 +211,10 @@ fn handle_connection(conn: OwnedFd) -> Result<()> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    configure_command_process_group(&mut command)?;
+    if let Err(err) = configure_command_process_group(&mut command) {
+        let _ = write_error_frame(&writer, "spawn_setup_failed", &err.to_string());
+        return Ok(());
+    }
     command.env_clear();
     for (key, value) in &prepared.env {
         command.env(key, value);
@@ -235,7 +223,13 @@ fn handle_connection(conn: OwnedFd) -> Result<()> {
         command.env("PATH", DEFAULT_PATH);
     }
     if let Some(user) = prepared.user.as_deref() {
-        let account = lookup_user(user)?;
+        let account = match lookup_user(user) {
+            Ok(account) => account,
+            Err(err) => {
+                let _ = write_error_frame(&writer, "user_lookup_failed", &err.to_string());
+                return Ok(());
+            }
+        };
         if !prepared.env.contains_key("HOME") {
             command.env("HOME", &account.home);
         }
@@ -245,35 +239,39 @@ fn handle_connection(conn: OwnedFd) -> Result<()> {
         if !prepared.env.contains_key("LOGNAME") {
             command.env("LOGNAME", &account.user);
         }
-        configure_command_user(&mut command, &account)?;
+        if let Err(err) = configure_command_user(&mut command, &account) {
+            let _ = write_error_frame(&writer, "spawn_setup_failed", &err.to_string());
+            return Ok(());
+        }
     }
 
-    let mut child = command.spawn().with_context(|| {
+    let mut child = match command.spawn().with_context(|| {
         format!(
             "spawning guest command `{}` in {}",
             prepared.command,
             prepared.cwd.display()
         )
-    })?;
+    }) {
+        Ok(child) => child,
+        Err(err) => {
+            let _ = write_error_frame(&writer, "spawn_failed", &err.to_string());
+            return Ok(());
+        }
+    };
     let child_pid = child.id();
-    let mut child_stdin = child
-        .stdin
-        .take()
-        .context("guest command stdin unavailable")?;
-    let mut child_stdout = child
-        .stdout
-        .take()
-        .context("guest command stdout unavailable")?;
-    let mut child_stderr = child
-        .stderr
-        .take()
-        .context("guest command stderr unavailable")?;
+    let Some(mut child_stdin) = child.stdin.take() else {
+        let _ = write_error_frame(&writer, "spawn_failed", "guest command stdin unavailable");
+        return Ok(());
+    };
+    let Some(mut child_stdout) = child.stdout.take() else {
+        let _ = write_error_frame(&writer, "spawn_failed", "guest command stdout unavailable");
+        return Ok(());
+    };
+    let Some(mut child_stderr) = child.stderr.take() else {
+        let _ = write_error_frame(&writer, "spawn_failed", "guest command stderr unavailable");
+        return Ok(());
+    };
 
-    let writer = Arc::new(Mutex::new(
-        reader
-            .try_clone()
-            .context("cloning connection for response stream")?,
-    ));
     let stdout_writer = Arc::clone(&writer);
     let stdout_thread = std::thread::spawn(move || -> Result<()> {
         relay_stream_output(&mut child_stdout, &stdout_writer, true)
@@ -315,9 +313,48 @@ fn handle_connection(conn: OwnedFd) -> Result<()> {
 
     let status = child.wait().context("waiting for guest command")?;
     let exit_code = status.code().unwrap_or(1);
-    let _ = input_thread.join();
-    let _ = stdout_thread.join();
-    let _ = stderr_thread.join();
+    let input_result = input_thread
+        .join()
+        .map_err(|_| anyhow::anyhow!("guest exec stdin relay thread panicked"))?;
+    let stdout_result = stdout_thread
+        .join()
+        .map_err(|_| anyhow::anyhow!("guest exec stdout relay thread panicked"))?;
+    let stderr_result = stderr_thread
+        .join()
+        .map_err(|_| anyhow::anyhow!("guest exec stderr relay thread panicked"))?;
+    if let Err(err) = &input_result {
+        eprintln!(
+            "guest-agent stdin relay failed for {:?} in {} as {:?}: {err:#}",
+            prepared.command,
+            prepared.cwd.display(),
+            prepared.user
+        );
+    }
+    if let Err(err) = &stdout_result {
+        eprintln!(
+            "guest-agent stdout relay failed for {:?} in {} as {:?}: {err:#}",
+            prepared.command,
+            prepared.cwd.display(),
+            prepared.user
+        );
+    }
+    if let Err(err) = &stderr_result {
+        eprintln!(
+            "guest-agent stderr relay failed for {:?} in {} as {:?}: {err:#}",
+            prepared.command,
+            prepared.cwd.display(),
+            prepared.user
+        );
+    }
+    if exit_code != 0 {
+        eprintln!(
+            "guest-agent command {:?} in {} as {:?} exited with {}",
+            prepared.command,
+            prepared.cwd.display(),
+            prepared.user,
+            exit_code
+        );
+    }
 
     write_stream_frame(
         &writer,
@@ -371,17 +408,7 @@ fn handle_pty_connection(stream: File, prepared: PreparedExec) -> Result<()> {
             pixel_height: 0,
         })
         .context("opening guest PTY")?;
-    let mut cmd = PtyCommandBuilder::new(prepared.command.clone());
-    for arg in &prepared.args {
-        cmd.arg(arg);
-    }
-    cmd.cwd(prepared.cwd.clone());
-    for (key, value) in &prepared.env {
-        cmd.env(key, value);
-    }
-    if !prepared.env.contains_key("PATH") {
-        cmd.env("PATH", DEFAULT_PATH);
-    }
+    let cmd = build_pty_command(&prepared)?;
     let mut child = pair.slave.spawn_command(cmd).with_context(|| {
         format!(
             "spawning guest PTY command `{}` in {}",
@@ -401,11 +428,14 @@ fn handle_pty_connection(stream: File, prepared: PreparedExec) -> Result<()> {
         .context("taking guest PTY writer")?;
     let resize_master = Arc::new(Mutex::new(pair.master));
     let writer = Arc::new(Mutex::new(
-        stream.try_clone().context("cloning connection for PTY output")?,
+        stream
+            .try_clone()
+            .context("cloning connection for PTY output")?,
     ));
     let output_writer = Arc::clone(&writer);
-    let output_thread =
-        std::thread::spawn(move || -> Result<()> { relay_pty_output(&mut pty_reader, &output_writer) });
+    let output_thread = std::thread::spawn(move || -> Result<()> {
+        relay_pty_output(&mut pty_reader, &output_writer)
+    });
     let mut stdin_reader = stream;
     let input_thread = std::thread::spawn(move || -> Result<()> {
         loop {
@@ -538,6 +568,69 @@ fn lookup_user(user: &str) -> Result<ResolvedUserAccount> {
         home,
         user: user.to_string(),
     })
+}
+
+#[cfg(target_os = "linux")]
+fn build_pty_command(prepared: &PreparedExec) -> Result<PtyCommandBuilder> {
+    if let Some(user) = prepared.user.as_deref() {
+        let account = lookup_user(user)?;
+        let mut env_pairs = prepared.env.clone();
+        if !env_pairs.contains_key("PATH") {
+            env_pairs.insert("PATH".to_string(), DEFAULT_PATH.to_string());
+        }
+        if !env_pairs.contains_key("HOME") {
+            env_pairs.insert("HOME".to_string(), account.home.clone());
+        }
+        if !env_pairs.contains_key("USER") {
+            env_pairs.insert("USER".to_string(), account.user.clone());
+        }
+        if !env_pairs.contains_key("LOGNAME") {
+            env_pairs.insert("LOGNAME".to_string(), account.user.clone());
+        }
+
+        let mut script = format!(
+            "cd {} && exec /usr/bin/env -i",
+            shell_words::quote(prepared.cwd.to_string_lossy().as_ref())
+        );
+        let mut env_entries = env_pairs.into_iter().collect::<Vec<_>>();
+        env_entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+        for (key, value) in env_entries {
+            script.push(' ');
+            script.push_str(&shell_words::quote(&format!("{key}={value}")));
+        }
+        script.push(' ');
+        script.push_str(&shell_words::quote(&prepared.command));
+        for arg in &prepared.args {
+            script.push(' ');
+            script.push_str(&shell_words::quote(arg));
+        }
+
+        let su_path = if std::path::Path::new("/usr/bin/su").exists() {
+            "/usr/bin/su"
+        } else {
+            "/bin/su"
+        };
+        let mut cmd = PtyCommandBuilder::new(su_path);
+        cmd.arg("-s");
+        cmd.arg("/bin/sh");
+        cmd.arg("-c");
+        cmd.arg(script);
+        cmd.arg(account.user);
+        return Ok(cmd);
+    }
+
+    let mut cmd = PtyCommandBuilder::new(prepared.command.clone());
+    for arg in &prepared.args {
+        cmd.arg(arg);
+    }
+    cmd.cwd(prepared.cwd.clone());
+    for (key, value) in &prepared.env {
+        cmd.env(key, value);
+    }
+    if !prepared.env.contains_key("PATH") {
+        cmd.env("PATH", DEFAULT_PATH);
+    }
+    Ok(cmd)
 }
 
 #[cfg(target_os = "linux")]

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   MIN_MACHINE_IDLE_SHUTDOWN_SECONDS,
   canSaveSandboxMachineSettings,
+  defaultContainerRuntimeKind,
+  defaultExecutionSettings,
 } from "./settings/sandboxExecutionSettings";
 import {
   desktopEditorSettingsEqual,
@@ -147,6 +149,18 @@ describe("executionSettingsStableKey", () => {
     expect(executionSettingsStableKey(publicSettingsWithDisplayOnlyFields)).toBe(
       executionSettingsStableKey(baseSettings),
     );
+  });
+});
+
+describe("defaultExecutionSettings", () => {
+  it("chooses AVF as the default container runtime on mac platforms", () => {
+    expect(defaultContainerRuntimeKind({ platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" })).toBe("avf_linux_vm");
+    expect(defaultExecutionSettings().container.runtime).toBe(defaultContainerRuntimeKind());
+  });
+
+  it("keeps podman as the fallback default off macOS", () => {
+    expect(defaultContainerRuntimeKind({ platform: "Linux x86_64", userAgent: "Mozilla/5.0 (X11; Linux x86_64)" })).toBe("podman");
+    expect(defaultContainerRuntimeKind({ platform: "Win32", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" })).toBe("podman");
   });
 });
 

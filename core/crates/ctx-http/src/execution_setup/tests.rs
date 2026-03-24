@@ -325,12 +325,21 @@ async fn make_test_managed_avf_linux_runtime_source() -> (
     let archive_bytes = avf_runtime_archive_bytes();
     let kernel_bytes = b"kernel".to_vec();
     let initrd_bytes = b"initrd".to_vec();
+    let guest_agent_bytes = b"guest-agent".to_vec();
+    let egress_proxy_bytes = b"egress-proxy".to_vec();
     let (archive_url, archive_server) =
         spawn_static_http_server_with_suffix(archive_bytes.clone(), "guest-runtime.tar.gz").await;
     let (kernel_url, kernel_server) =
         spawn_static_http_server_with_suffix(kernel_bytes.clone(), "vmlinuz").await;
     let (initrd_url, initrd_server) =
         spawn_static_http_server_with_suffix(initrd_bytes.clone(), "initrd.img").await;
+    let (guest_agent_url, guest_agent_server) = spawn_static_http_server_with_suffix(
+        guest_agent_bytes.clone(),
+        "ctx-avf-linux-guest-agent",
+    )
+    .await;
+    let (egress_proxy_url, egress_proxy_server) =
+        spawn_static_http_server_with_suffix(egress_proxy_bytes.clone(), "ctx-egress-proxy").await;
 
     let source = crate::bundled_assets::ManagedRuntimeSource {
         uri: archive_url,
@@ -352,11 +361,34 @@ async fn make_test_managed_avf_linux_runtime_source() -> (
                     sha256: sha256_hex(&initrd_bytes),
                 },
             ),
+            (
+                "guest-agent".to_string(),
+                crate::bundled_assets::ManagedArtifactSource {
+                    uri: guest_agent_url,
+                    sha256: sha256_hex(&guest_agent_bytes),
+                },
+            ),
+            (
+                "egress-proxy".to_string(),
+                crate::bundled_assets::ManagedArtifactSource {
+                    uri: egress_proxy_url,
+                    sha256: sha256_hex(&egress_proxy_bytes),
+                },
+            ),
         ]
         .into_iter()
         .collect(),
     };
-    (source, vec![archive_server, kernel_server, initrd_server])
+    (
+        source,
+        vec![
+            archive_server,
+            kernel_server,
+            initrd_server,
+            guest_agent_server,
+            egress_proxy_server,
+        ],
+    )
 }
 
 #[derive(Default)]

@@ -4,11 +4,26 @@ export const DEFAULT_MACHINE_IDLE_SHUTDOWN_SECONDS = 60 * 60;
 export const DEFAULT_MACHINE_HOST_PRESSURE_SWAP_THRESHOLD_MB = 1024;
 export const MIN_MACHINE_IDLE_SHUTDOWN_SECONDS = 60;
 
+export function defaultContainerRuntimeKind({
+  platform,
+  userAgent,
+}: {
+  platform?: string | null;
+  userAgent?: string | null;
+} = {}): ApiExecutionSettings["container"]["runtime"] {
+  const resolvedPlatform = (platform ?? (typeof navigator !== "undefined" ? navigator.platform : "") ?? "").toLowerCase();
+  const resolvedAgent = (userAgent ?? (typeof navigator !== "undefined" ? navigator.userAgent : "") ?? "").toLowerCase();
+  if (resolvedPlatform.includes("mac") || resolvedAgent.includes("mac os")) {
+    return "avf_linux_vm";
+  }
+  return "podman";
+}
+
 export function defaultExecutionSettings(): ApiExecutionSettings {
   return {
     mode: "host",
     container: {
-      runtime: "podman",
+      runtime: defaultContainerRuntimeKind(),
       mount_mode: "host_mounted",
       network_mode: "llm_only",
       allowlist: [],

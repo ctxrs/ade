@@ -25,6 +25,7 @@ use path_env::{resolve_daemon_path_env, resolve_local_daemon_path_env};
 const SSH_CONFIG_OVERRIDE_ENV: &str = "CTX_DESKTOP_SSH_CONFIG_PATH";
 const AVF_LINUX_HELPER_PATH_ENV: &str = "CTX_AVF_LINUX_HELPER_PATH";
 const DESKTOP_DAEMON_BIN_NAME: &str = "ctx-daemon";
+const AVF_GUEST_GATEWAY_HOST: &str = "192.168.64.1";
 
 fn normalized_ssh_config_override(value: &str) -> Option<String> {
     let trimmed = value.trim();
@@ -47,6 +48,20 @@ fn new_ssh_command() -> Command {
         cmd.arg("-F").arg(path);
     }
     cmd
+}
+
+fn avf_guest_gateway_bind(local_port: u16) -> Option<String> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let bind_addr = format!("{AVF_GUEST_GATEWAY_HOST}:{local_port}");
+    match std::net::TcpListener::bind(&bind_addr) {
+        Ok(listener) => {
+            drop(listener);
+            Some(bind_addr)
+        }
+        Err(_) => None,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -745,8 +760,13 @@ fn spawn_daemon_with_mode(
 
     cmd.arg("serve")
         .arg("--bind")
-        .arg(format!("127.0.0.1:{local_port}"))
-        .arg("--data-dir")
+        .arg(format!("127.0.0.1:{local_port}"));
+    if avf_linux_helper_bin.is_some() {
+        if let Some(avf_bind) = avf_guest_gateway_bind(local_port) {
+            cmd.arg("--bind").arg(avf_bind);
+        }
+    }
+    cmd.arg("--data-dir")
         .arg(data_dir.to_string_lossy().to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::null());

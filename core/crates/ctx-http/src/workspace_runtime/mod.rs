@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::io::ErrorKind;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -45,6 +46,9 @@ mod podman_recovery;
 #[cfg(test)]
 mod reclaim_unit_tests;
 
+static AVF_DAEMON_GATEWAY_PROXIES: OnceLock<StdMutex<HashMap<u16, tokio::task::JoinHandle<()>>>> =
+    OnceLock::new();
+
 pub(crate) use self::avf_linux_vm::build_guest_exec_command as build_avf_linux_guest_exec_command;
 pub(crate) use self::avf_linux_vm::ensure_guest_worktree_from_host_copy as ensure_avf_linux_guest_worktree_from_host_copy;
 pub(crate) use self::avf_linux_vm::helper_path as avf_linux_helper_path;
@@ -54,16 +58,21 @@ pub(crate) use self::avf_linux_vm::run_guest_exec_capture as run_avf_linux_guest
 #[cfg(test)]
 pub(crate) use self::avf_linux_vm::AVF_LINUX_HELPER_PATH_ENV;
 use self::avf_linux_vm::{
-    ensure_shared_vm_ready_with_observer as ensure_avf_linux_shared_vm_ready_with_observer,
+    ensure_workspace_vm_ready_with_observer as ensure_avf_linux_workspace_vm_ready_with_observer,
+    prefetch_runtime_with_observer as prefetch_avf_linux_runtime_with_observer,
     runtime_available as avf_linux_runtime_available, runtime_state as avf_linux_runtime_state,
     runtime_target_label as avf_linux_runtime_target_label,
+    stop_workspace_vm as stop_avf_linux_workspace_vm,
+    workspace_vm_data_root as avf_linux_workspace_vm_data_root,
+    workspace_vm_state as avf_linux_workspace_vm_state,
 };
+pub(crate) use self::container::AVF_GUEST_HOST_GATEWAY;
 #[cfg(test)]
 use self::container::{bind_mount, should_mount_bundle_dir_in_container};
 use self::container::{
     build_mounts, container_data_root, container_user, daemon_port_from_url,
     podman_machine_required, proxy_runtime_path, proxy_runtime_root,
-    rewrite_daemon_url_for_container, should_use_keep_id_userns,
+    rewrite_daemon_url_for_avf_guest, rewrite_daemon_url_for_container, should_use_keep_id_userns,
     verify_disk_isolated_container_mounts,
 };
 use self::image::ensure_container_image_available;
@@ -90,7 +99,9 @@ use self::machine::{
     persist_podman_machine_cache_to_shared, podman_machine_cache_root,
     seed_shared_podman_machine_cache,
 };
-use self::network_policy_transition::apply_container_network_policy;
+use self::network_policy_transition::{
+    apply_avf_linux_network_policy, apply_container_network_policy,
+};
 #[cfg(test)]
 use self::podman::podman_binary_path;
 use self::podman::{
@@ -160,9 +171,7 @@ pub(crate) async fn prewarm_selected_runtime_with_observer(
             }
         }
         ContainerRuntimeKind::AvfLinuxVm => {
-            ensure_avf_linux_shared_vm_ready_with_observer(data_root, settings, observer)
-                .await
-                .map(|_| ())
+            prefetch_avf_linux_runtime_with_observer(data_root, settings, observer).await
         }
     }
 }
@@ -224,6 +233,145 @@ const PODMAN_MACHINE_MEMORY_ECONOMY_CAP_MB: u32 = 8192;
 const PODMAN_MACHINE_MEMORY_BALANCED_CAP_MB: u32 = 16 * 1024;
 const PODMAN_MACHINE_MEMORY_PERFORMANCE_CAP_MB: u32 = 32 * 1024;
 const MI_B: u64 = 1024 * 1024;
+
+fn avf_daemon_gateway_proxies() -> &'static StdMutex<HashMap<u16, tokio::task::JoinHandle<()>>> {
+    AVF_DAEMON_GATEWAY_PROXIES.get_or_init(|| StdMutex::new(HashMap::new()))
+}
+
+async fn ensure_avf_guest_gateway_proxy(
+    gateway_addr: &str,
+    backend_addr: &str,
+    port: u16,
+) -> Result<()> {
+    {
+        let mut proxies = avf_daemon_gateway_proxies()
+            .lock()
+            .expect("AVF daemon gateway proxy mutex poisoned");
+        proxies.retain(|_, handle| !handle.is_finished());
+        if proxies.contains_key(&port) {
+            return Ok(());
+        }
+    }
+
+    match tokio::net::TcpListener::bind(gateway_addr).await {
+        Ok(listener) => {
+            let gateway_addr = gateway_addr.to_string();
+            let backend_addr = backend_addr.to_string();
+            let gateway_addr_for_task = gateway_addr.clone();
+            let backend_addr_for_task = backend_addr.clone();
+            let handle = tokio::spawn(async move {
+                loop {
+                    let (mut inbound, peer_addr) = match listener.accept().await {
+                        Ok(parts) => parts,
+                        Err(err) => {
+                            tracing::warn!(
+                                gateway_addr = gateway_addr_for_task,
+                                backend_addr = backend_addr_for_task,
+                                "AVF daemon gateway proxy accept failed: {err}"
+                            );
+                            break;
+                        }
+                    };
+                    let backend_addr = backend_addr_for_task.clone();
+                    let gateway_addr = gateway_addr_for_task.clone();
+                    tokio::spawn(async move {
+                        match tokio::net::TcpStream::connect(&backend_addr).await {
+                            Ok(mut outbound) => {
+                                if let Err(err) =
+                                    tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await
+                                {
+                                    tracing::debug!(
+                                        gateway_addr,
+                                        backend_addr,
+                                        %peer_addr,
+                                        "AVF daemon gateway proxy relay closed with error: {err}"
+                                    );
+                                }
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    gateway_addr,
+                                    backend_addr,
+                                    %peer_addr,
+                                    "AVF daemon gateway proxy could not connect to backend: {err}"
+                                );
+                            }
+                        }
+                    });
+                }
+            });
+            let mut proxies = avf_daemon_gateway_proxies()
+                .lock()
+                .expect("AVF daemon gateway proxy mutex poisoned");
+            if let Some(existing) = proxies.get(&port) {
+                if !existing.is_finished() {
+                    handle.abort();
+                    return Ok(());
+                }
+            }
+            proxies.insert(port, handle);
+            tracing::info!(
+                gateway_addr,
+                backend_addr,
+                "started AVF daemon gateway proxy"
+            );
+            Ok(())
+        }
+        Err(err) if err.kind() == ErrorKind::AddrInUse => {
+            tracing::debug!(
+                gateway_addr,
+                backend_addr,
+                "AVF daemon gateway proxy port already in use; assuming a guest-reachable listener already exists"
+            );
+            Ok(())
+        }
+        Err(err) => Err(err).with_context(|| {
+            format!("binding AVF guest gateway proxy at {gateway_addr} for {backend_addr}")
+        }),
+    }
+}
+
+async fn resolve_daemon_url_for_avf_guest(daemon_url: &str) -> Result<String> {
+    let Ok(url) = Url::parse(daemon_url) else {
+        return Ok(daemon_url.to_string());
+    };
+    let Some(host) = url.host_str() else {
+        return Ok(daemon_url.to_string());
+    };
+    if !matches!(host, "127.0.0.1" | "localhost" | "::1") {
+        return Ok(daemon_url.to_string());
+    }
+    let Some(port) = url.port_or_known_default() else {
+        return Ok(daemon_url.to_string());
+    };
+    let gateway_addr = format!("{AVF_GUEST_HOST_GATEWAY}:{port}");
+    match tokio::time::timeout(
+        Duration::from_millis(500),
+        tokio::net::TcpStream::connect(&gateway_addr),
+    )
+    .await
+    {
+        Ok(Ok(_)) => Ok(rewrite_daemon_url_for_avf_guest(daemon_url)),
+        Ok(Err(_)) | Err(_) => {
+            let backend_host = match host {
+                "localhost" | "::1" => "127.0.0.1",
+                other => other,
+            };
+            let backend_addr = format!("{backend_host}:{port}");
+            ensure_avf_guest_gateway_proxy(&gateway_addr, &backend_addr, port).await?;
+            Ok(rewrite_daemon_url_for_avf_guest(daemon_url))
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) async fn ensure_avf_guest_gateway_proxy_for_test(
+    gateway_addr: &str,
+    backend_addr: &str,
+    port: u16,
+) -> Result<()> {
+    ensure_avf_guest_gateway_proxy(gateway_addr, backend_addr, port).await
+}
 
 fn podman_machine_reclaim_poll_interval() -> Duration {
     if cfg!(test) {
@@ -570,8 +718,9 @@ impl HarnessRuntimeManager {
                     "AVF Linux VM host-mounted workspaces are not implemented yet; use disk-isolated mode"
                 );
             }
-            let shared_vm = ensure_avf_linux_shared_vm_ready_with_observer(
+            let workspace_vm = ensure_avf_linux_workspace_vm_ready_with_observer(
                 &self.data_root,
+                workspace.id,
                 &settings.container,
                 None,
             )
@@ -594,6 +743,18 @@ impl HarnessRuntimeManager {
                 None,
             )
             .await?;
+            let daemon_port = daemon_port_from_url(daemon_url).unwrap_or(4399);
+            let egress_guard = apply_avf_linux_network_policy(
+                &self.data_root,
+                workspace.id,
+                worktree.id,
+                &guest_worktree_root,
+                &settings.container,
+                "192.168.64.1",
+                daemon_port,
+            )
+            .await?
+            .egress_guard;
             let avf_data_root = container_data_root(&self.data_root, workspace.id);
             tokio::fs::create_dir_all(&avf_data_root).await.ok();
             env_overrides.insert(
@@ -610,8 +771,8 @@ impl HarnessRuntimeManager {
                 CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
             );
             env_overrides.insert(
-                "CTX_AVF_SHARED_VM_ROOT".to_string(),
-                shared_vm.vm_root.to_string_lossy().to_string(),
+                "CTX_AVF_WORKSPACE_VM_ROOT".to_string(),
+                workspace_vm.vm_root.to_string_lossy().to_string(),
             );
             env_overrides.insert(
                 avf_linux_vm::AVF_LINUX_HELPER_PATH_ENV.to_string(),
@@ -620,6 +781,12 @@ impl HarnessRuntimeManager {
             env_overrides.insert(
                 CTX_AVF_HOST_DATA_ROOT_ENV.to_string(),
                 self.data_root.to_string_lossy().to_string(),
+            );
+            env_overrides.insert(
+                "CTX_AVF_WORKSPACE_VM_DATA_ROOT".to_string(),
+                avf_linux_workspace_vm_data_root(&self.data_root, workspace.id)
+                    .to_string_lossy()
+                    .to_string(),
             );
             env_overrides.insert(
                 CTX_AVF_WORKSPACE_ID_ENV.to_string(),
@@ -637,10 +804,28 @@ impl HarnessRuntimeManager {
                 "CTX_AVF_GUEST_WORKTREE_ROOT".to_string(),
                 guest_worktree_root.to_string_lossy().to_string(),
             );
-            if let Some(log_path) = shared_vm.log_path.as_ref() {
+            env_overrides.insert(
+                "CTX_DAEMON_URL".to_string(),
+                resolve_daemon_url_for_avf_guest(daemon_url).await?,
+            );
+            if let Some(log_path) = workspace_vm.log_path.as_ref() {
                 env_overrides.insert(
-                    "CTX_AVF_SHARED_VM_LOG".to_string(),
+                    "CTX_AVF_WORKSPACE_VM_LOG".to_string(),
                     log_path.to_string_lossy().to_string(),
+                );
+            }
+            {
+                let mut containers = self.containers.lock().await;
+                containers.insert(
+                    workspace.id,
+                    HarnessContainer {
+                        name: format!("ctx-avf-linux-vm-{}", workspace.id.0),
+                        mount_mode: settings.container.mount_mode.clone(),
+                        network_mode: settings.container.network_mode.clone(),
+                        allowlist: settings.container.allowlist.clone(),
+                        external_mounts: HashSet::new(),
+                        egress_guard,
+                    },
                 );
             }
             return Ok(HarnessExecutionPlan {
@@ -809,8 +994,7 @@ impl HarnessRuntimeManager {
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<()> {
         if matches!(settings.runtime, ContainerRuntimeKind::AvfLinuxVm) {
-            ensure_avf_linux_shared_vm_ready_with_observer(&self.data_root, settings, observer)
-                .await?;
+            prefetch_avf_linux_runtime_with_observer(&self.data_root, settings, observer).await?;
             return Ok(());
         }
         observe_phase(
@@ -892,61 +1076,138 @@ impl HarnessRuntimeManager {
         workspace_id: WorkspaceId,
     ) -> Result<Option<HarnessContainerStatus>> {
         let name = format!("ctx-harness-{}", workspace_id.0);
-        if !container_exists(&self.data_root, &name).await? {
+        let podman_exists = match container_exists(&self.data_root, &name).await {
+            Ok(exists) => exists,
+            Err(err) => {
+                if err
+                    .to_string()
+                    .to_ascii_lowercase()
+                    .contains("podman binary unavailable")
+                {
+                    false
+                } else {
+                    return Err(err);
+                }
+            }
+        };
+        if podman_exists {
+            let running = container_running(&self.data_root, &name)
+                .await?
+                .unwrap_or(false);
+            let container = {
+                let containers = self.containers.lock().await;
+                containers.get(&workspace_id).cloned()
+            };
+            let (known, mount_mode, network_mode, allowlist, egress_guard) =
+                if let Some(container) = container {
+                    (
+                        true,
+                        Some(container.mount_mode),
+                        Some(container.network_mode),
+                        container.allowlist,
+                        Some(container.egress_guard),
+                    )
+                } else {
+                    (false, None, None, Vec::new(), None)
+                };
+            return Ok(Some(HarnessContainerStatus {
+                name,
+                running,
+                known,
+                mount_mode,
+                network_mode,
+                allowlist,
+                egress_guard,
+            }));
+        }
+
+        let state = match avf_linux_workspace_vm_state(&self.data_root, workspace_id) {
+            Ok(state) => state,
+            Err(_) => return Ok(None),
+        };
+        if matches!(
+            state.state,
+            avf_linux_vm::AvfLinuxSharedVmLifecycleState::Missing
+        ) {
             return Ok(None);
         }
-        let running = container_running(&self.data_root, &name)
-            .await?
-            .unwrap_or(false);
         let container = {
             let containers = self.containers.lock().await;
             containers.get(&workspace_id).cloned()
         };
-        let (known, mount_mode, network_mode, allowlist, egress_guard) =
-            if let Some(container) = container {
-                (
-                    true,
-                    Some(container.mount_mode),
-                    Some(container.network_mode),
-                    container.allowlist,
-                    Some(container.egress_guard),
-                )
-            } else {
-                (false, None, None, Vec::new(), None)
-            };
         Ok(Some(HarnessContainerStatus {
-            name,
-            running,
-            known,
-            mount_mode,
-            network_mode,
-            allowlist,
-            egress_guard,
+            name: format!("ctx-avf-linux-vm-{}", workspace_id.0),
+            running: matches!(
+                state.state,
+                avf_linux_vm::AvfLinuxSharedVmLifecycleState::Running
+            ),
+            known: true,
+            mount_mode: container
+                .as_ref()
+                .map(|value| value.mount_mode.clone())
+                .or(Some(ContainerMountMode::DiskIsolated)),
+            network_mode: container.as_ref().map(|value| value.network_mode.clone()),
+            allowlist: container
+                .as_ref()
+                .map(|value| value.allowlist.clone())
+                .unwrap_or_default(),
+            egress_guard: container.as_ref().map(|value| value.egress_guard),
         }))
     }
 
     pub async fn stop_container(&self, workspace_id: WorkspaceId) -> Result<bool> {
         let _activity = self.begin_runtime_operation();
         let name = format!("ctx-harness-{}", workspace_id.0);
-        if !container_exists(&self.data_root, &name).await? {
+        let podman_exists = match container_exists(&self.data_root, &name).await {
+            Ok(exists) => exists,
+            Err(err) => {
+                if err
+                    .to_string()
+                    .to_ascii_lowercase()
+                    .contains("podman binary unavailable")
+                {
+                    false
+                } else {
+                    return Err(err);
+                }
+            }
+        };
+        if podman_exists {
+            let mut containers = self.containers.lock().await;
+            containers.remove(&workspace_id);
+            let mut cmd = podman_command(&self.data_root)?;
+            cmd.arg("rm").arg("-f").arg(&name);
+            let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+            if output.status.success() {
+                return Ok(true);
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let combined = format!("{stderr}\n{stdout}").trim().to_string();
+                if combined.is_empty() {
+                    anyhow::bail!("podman rm failed for {name} (status: {})", output.status);
+                }
+                anyhow::bail!("podman rm failed for {name}: {combined}");
+            }
+        }
+
+        let state = match avf_linux_workspace_vm_state(&self.data_root, workspace_id) {
+            Ok(state) => state,
+            Err(_) => return Ok(false),
+        };
+        if matches!(
+            state.state,
+            avf_linux_vm::AvfLinuxSharedVmLifecycleState::Missing
+        ) {
             return Ok(false);
         }
+        let stopped = stop_avf_linux_workspace_vm(&self.data_root, workspace_id)?;
         let mut containers = self.containers.lock().await;
         containers.remove(&workspace_id);
-        let mut cmd = podman_command(&self.data_root)?;
-        cmd.arg("rm").arg("-f").arg(&name);
-        let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
-        if output.status.success() {
-            Ok(true)
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let combined = format!("{stderr}\n{stdout}").trim().to_string();
-            if combined.is_empty() {
-                anyhow::bail!("podman rm failed for {name} (status: {})", output.status);
-            }
-            anyhow::bail!("podman rm failed for {name}: {combined}");
-        }
+        Ok(!matches!(
+            stopped.state,
+            avf_linux_vm::AvfLinuxSharedVmLifecycleState::Missing
+        ))
     }
 
     pub async fn remove_workspace_volume(&self, workspace_id: WorkspaceId) -> Result<bool> {

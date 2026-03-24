@@ -301,12 +301,21 @@ async fn install_test_managed_avf_linux_runtime_source() -> (
     let archive_bytes = avf_runtime_archive_bytes();
     let kernel_bytes = b"kernel".to_vec();
     let initrd_bytes = b"initrd".to_vec();
+    let guest_agent_bytes = b"guest-agent".to_vec();
+    let egress_proxy_bytes = b"egress-proxy".to_vec();
     let (archive_url, archive_server) =
         spawn_static_http_server_with_suffix(archive_bytes.clone(), "guest-runtime.tar.gz").await;
     let (kernel_url, kernel_server) =
         spawn_static_http_server_with_suffix(kernel_bytes.clone(), "vmlinuz").await;
     let (initrd_url, initrd_server) =
         spawn_static_http_server_with_suffix(initrd_bytes.clone(), "initrd.img").await;
+    let (guest_agent_url, guest_agent_server) = spawn_static_http_server_with_suffix(
+        guest_agent_bytes.clone(),
+        "ctx-avf-linux-guest-agent",
+    )
+    .await;
+    let (egress_proxy_url, egress_proxy_server) =
+        spawn_static_http_server_with_suffix(egress_proxy_bytes.clone(), "ctx-egress-proxy").await;
     let source = bundled_assets::ManagedRuntimeSource {
         uri: archive_url,
         sha256: hex::encode(Sha256::digest(&archive_bytes)),
@@ -327,13 +336,36 @@ async fn install_test_managed_avf_linux_runtime_source() -> (
                     sha256: hex::encode(Sha256::digest(&initrd_bytes)),
                 },
             ),
+            (
+                "guest-agent".to_string(),
+                bundled_assets::ManagedArtifactSource {
+                    uri: guest_agent_url,
+                    sha256: hex::encode(Sha256::digest(&guest_agent_bytes)),
+                },
+            ),
+            (
+                "egress-proxy".to_string(),
+                bundled_assets::ManagedArtifactSource {
+                    uri: egress_proxy_url,
+                    sha256: hex::encode(Sha256::digest(&egress_proxy_bytes)),
+                },
+            ),
         ]
         .into_iter()
         .collect(),
     };
     let guard =
         crate::workspace_runtime::override_managed_avf_linux_runtime_source_for_test(source);
-    (guard, vec![archive_server, kernel_server, initrd_server])
+    (
+        guard,
+        vec![
+            archive_server,
+            kernel_server,
+            initrd_server,
+            guest_agent_server,
+            egress_proxy_server,
+        ],
+    )
 }
 
 #[cfg(unix)]
@@ -344,7 +376,131 @@ fn write_avf_linux_lifecycle_helper(dir: &Path) -> PathBuf {
     let host_os = std::env::consts::OS;
     let host_arch = std::env::consts::ARCH;
     let script = format!(
-        "#!/bin/sh\ncmd=\"$1\"\nshift\ncase \"$cmd\" in\n  probe)\n    printf '%s\\n' '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"helper_version\":\"0.0.0-test\",\"host_os\":\"{host_os}\",\"host_arch\":\"{host_arch}\",\"supported\":true,\"save_restore_supported\":true,\"rosetta_supported\":true,\"notes\":[\"test helper\"]}}'\n    ;;\n  prepare-runtime-layout)\n    data_root=\"$1\"\n    vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n    logs_root=\"$vm_root/logs\"\n    state_path=\"$vm_root/shared-vm-state.json\"\n    mkdir -p \"$logs_root\"\n    status_file=\"$vm_root/helper-status.txt\"\n    if [ ! -f \"$status_file\" ]; then\n      printf 'stopped' > \"$status_file\"\n    fi\n    printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"layout_status\":\"prepared\",\"notes\":[\"layout ready\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\"\n    ;;\n  shared-vm-state)\n    data_root=\"$1\"\n    vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n    logs_root=\"$vm_root/logs\"\n    state_path=\"$vm_root/shared-vm-state.json\"\n    log_path=\"$logs_root/shared-vm.log\"\n    status_file=\"$vm_root/helper-status.txt\"\n    version_file=\"$vm_root/runtime-version.txt\"\n    state=$(cat \"$status_file\" 2>/dev/null || printf 'missing')\n    runtime_version=$(cat \"$version_file\" 2>/dev/null || true)\n    if [ \"$state\" = \"running\" ]; then\n      printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"running\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"runtime_version\":\"%s\",\"transition_status\":\"scaffolded\",\"simulated\":true,\"notes\":[\"state ready\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\" \"$runtime_version\"\n    else\n      printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"%s\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"simulated\":true,\"notes\":[\"state ready\"]}}\\n' \"$state\" \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\"\n    fi\n    ;;\n  start-shared-vm)\n    data_root=\"$1\"\n    runtime_root=\"$2\"\n    rootfs_image=\"$3\"\n    kernel_path=\"$4\"\n    initrd_path=\"$5\"\n    runtime_version=\"$6\"\n    vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n    logs_root=\"$vm_root/logs\"\n    state_path=\"$vm_root/shared-vm-state.json\"\n    log_path=\"$logs_root/shared-vm.log\"\n    mkdir -p \"$logs_root\"\n    printf 'running' > \"$vm_root/helper-status.txt\"\n    printf '%s' \"$runtime_version\" > \"$vm_root/runtime-version.txt\"\n    printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"running\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"runtime_root\":\"%s\",\"rootfs_image\":\"%s\",\"kernel_path\":\"%s\",\"initrd_path\":\"%s\",\"runtime_version\":\"%s\",\"transition_status\":\"scaffolded\",\"simulated\":true,\"notes\":[\"scaffolded\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\" \"$runtime_root\" \"$rootfs_image\" \"$kernel_path\" \"$initrd_path\" \"$runtime_version\"\n    ;;\n  stop-shared-vm)\n    data_root=\"$1\"\n    vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n    logs_root=\"$vm_root/logs\"\n    state_path=\"$vm_root/shared-vm-state.json\"\n    log_path=\"$logs_root/shared-vm.log\"\n    mkdir -p \"$logs_root\"\n    printf 'stopped' > \"$vm_root/helper-status.txt\"\n    rm -f \"$vm_root/runtime-version.txt\"\n    printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"stopped\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"transition_status\":\"stopped\",\"simulated\":true,\"notes\":[\"stopped\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\"\n    ;;\n  prepare-guest-worktree)\n    data_root=\"$1\"\n    workspace_id=\"$2\"\n    worktree_id=\"$3\"\n    vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n    host_shadow_root=\"$vm_root/worktrees/$workspace_id/$worktree_id/shadow-root\"\n    metadata_path=\"$vm_root/worktrees/$workspace_id/$worktree_id/worktree.json\"\n    guest_root=\"/ctx/ws/worktrees/$worktree_id\"\n    mkdir -p \"$host_shadow_root\"\n    if [ ! -f \"$metadata_path\" ]; then\n      mkdir -p \"$(dirname \"$metadata_path\")\"\n      printf '{{\"workspace_id\":\"%s\",\"worktree_id\":\"%s\"}}\\n' \"$workspace_id\" \"$worktree_id\" > \"$metadata_path\"\n      status=\"prepared\"\n      note=\"prepared guest worktree\"\n    else\n      status=\"already_present\"\n      note=\"existing guest worktree\"\n    fi\n    printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"workspace_id\":\"%s\",\"worktree_id\":\"%s\",\"guest_root\":\"%s\",\"host_shadow_root\":\"%s\",\"metadata_path\":\"%s\",\"status\":\"%s\",\"simulated\":true,\"notes\":[\"%s\"]}}\\n' \"$workspace_id\" \"$worktree_id\" \"$guest_root\" \"$host_shadow_root\" \"$metadata_path\" \"$status\" \"$note\"\n    ;;\n  guest-exec)\n    data_root=\"\"\n    workspace_id=\"\"\n    worktree_id=\"\"\n    cwd=\"\"\n    guest_command=\"\"\n    while [ $# -gt 0 ]; do\n      case \"$1\" in\n        --data-root) data_root=\"$2\"; shift 2 ;;\n        --workspace-id) workspace_id=\"$2\"; shift 2 ;;\n        --worktree-id) worktree_id=\"$2\"; shift 2 ;;\n        --cwd) cwd=\"$2\"; shift 2 ;;\n        --command) guest_command=\"$2\"; shift 2 ;;\n        --user) shift 2 ;;\n        --pty) shift ;;\n        --env)\n          kv=\"$2\"\n          key=${{kv%%=*}}\n          value=${{kv#*=}}\n          export \"$key=$value\"\n          shift 2\n          ;;\n        --) shift; break ;;\n        *) echo \"unexpected guest-exec arg: $1\" >&2; exit 1 ;;\n      esac\n    done\n    vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n    host_shadow_root=\"$vm_root/worktrees/$workspace_id/$worktree_id/shadow-root\"\n    guest_root=\"/ctx/ws/worktrees/$worktree_id\"\n    case \"$cwd\" in\n      \"$guest_root\") host_cwd=\"$host_shadow_root\" ;;\n      \"$guest_root\"/*) host_cwd=\"$host_shadow_root/${{cwd#\"$guest_root\"/}}\" ;;\n      *) echo \"invalid guest cwd: $cwd\" >&2; exit 1 ;;\n    esac\n    mkdir -p \"$host_cwd\"\n    (cd \"$host_cwd\" && exec \"$guest_command\" \"$@\")\n    ;;\n  *)\n    echo \"unexpected helper invocation: $cmd $*\" >&2\n    exit 1\n    ;;\nesac\n"
+        r#"#!/bin/sh
+cmd="$1"
+shift
+case "$cmd" in
+  probe)
+    printf '%s\n' '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","helper_version":"0.0.0-test","host_os":"{host_os}","host_arch":"{host_arch}","supported":true,"save_restore_supported":true,"rosetta_supported":true,"notes":["test helper"]}}'
+    ;;
+  prepare-runtime-layout)
+    data_root="$1"
+    vm_root="$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared"
+    logs_root="$vm_root/logs"
+    state_path="$vm_root/shared-vm-state.json"
+    mkdir -p "$logs_root"
+    status_file="$vm_root/helper-status.txt"
+    if [ ! -f "$status_file" ]; then
+      printf 'stopped' > "$status_file"
+    fi
+    printf '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","vm_root":"%s","logs_root":"%s","state_path":"%s","layout_status":"prepared","notes":["layout ready"]}}\n' "$vm_root" "$logs_root" "$state_path"
+    ;;
+  workspace-vm-state|shared-vm-state)
+    data_root="$1"
+    vm_root="$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared"
+    logs_root="$vm_root/logs"
+    state_path="$vm_root/shared-vm-state.json"
+    log_path="$logs_root/shared-vm.log"
+    status_file="$vm_root/helper-status.txt"
+    version_file="$vm_root/runtime-version.txt"
+    state=$(cat "$status_file" 2>/dev/null || printf 'missing')
+    runtime_version=$(cat "$version_file" 2>/dev/null || true)
+    if [ "$state" = "running" ]; then
+      printf '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","state":"running","vm_root":"%s","logs_root":"%s","state_path":"%s","log_path":"%s","runtime_version":"%s","transition_status":"scaffolded","simulated":true,"notes":["state ready"]}}\n' "$vm_root" "$logs_root" "$state_path" "$log_path" "$runtime_version"
+    else
+      printf '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","state":"%s","vm_root":"%s","logs_root":"%s","state_path":"%s","log_path":"%s","simulated":true,"notes":["state ready"]}}\n' "$state" "$vm_root" "$logs_root" "$state_path" "$log_path"
+    fi
+    ;;
+  start-workspace-vm|start-shared-vm)
+    data_root="$1"
+    runtime_root="$2"
+    rootfs_image="$3"
+    kernel_path="$4"
+    initrd_path="$5"
+    runtime_version="$6"
+    vm_root="$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared"
+    logs_root="$vm_root/logs"
+    state_path="$vm_root/shared-vm-state.json"
+    log_path="$logs_root/shared-vm.log"
+    mkdir -p "$logs_root"
+    printf 'running' > "$vm_root/helper-status.txt"
+    printf '%s' "$runtime_version" > "$vm_root/runtime-version.txt"
+    printf '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","state":"running","vm_root":"%s","logs_root":"%s","state_path":"%s","log_path":"%s","runtime_root":"%s","rootfs_image":"%s","kernel_path":"%s","initrd_path":"%s","runtime_version":"%s","transition_status":"scaffolded","simulated":true,"notes":["scaffolded"]}}\n' "$vm_root" "$logs_root" "$state_path" "$log_path" "$runtime_root" "$rootfs_image" "$kernel_path" "$initrd_path" "$runtime_version"
+    ;;
+  stop-workspace-vm|stop-shared-vm)
+    data_root="$1"
+    vm_root="$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared"
+    logs_root="$vm_root/logs"
+    state_path="$vm_root/shared-vm-state.json"
+    log_path="$logs_root/shared-vm.log"
+    mkdir -p "$logs_root"
+    printf 'stopped' > "$vm_root/helper-status.txt"
+    rm -f "$vm_root/runtime-version.txt"
+    printf '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","state":"stopped","vm_root":"%s","logs_root":"%s","state_path":"%s","log_path":"%s","transition_status":"stopped","simulated":true,"notes":["stopped"]}}\n' "$vm_root" "$logs_root" "$state_path" "$log_path"
+    ;;
+  prepare-guest-worktree)
+    data_root="$1"
+    workspace_id="$2"
+    worktree_id="$3"
+    vm_root="$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared"
+    host_shadow_root="$vm_root/worktrees/$workspace_id/$worktree_id/shadow-root"
+    metadata_path="$vm_root/worktrees/$workspace_id/$worktree_id/worktree.json"
+    guest_root="/ctx/ws/worktrees/$worktree_id"
+    mkdir -p "$host_shadow_root"
+    if [ ! -f "$metadata_path" ]; then
+      mkdir -p "$(dirname "$metadata_path")"
+      printf '{{"workspace_id":"%s","worktree_id":"%s"}}\n' "$workspace_id" "$worktree_id" > "$metadata_path"
+      status="prepared"
+      note="prepared guest worktree"
+    else
+      status="already_present"
+      note="existing guest worktree"
+    fi
+    printf '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","workspace_id":"%s","worktree_id":"%s","guest_root":"%s","host_shadow_root":"%s","metadata_path":"%s","status":"%s","simulated":true,"notes":["%s"]}}\n' "$workspace_id" "$worktree_id" "$guest_root" "$host_shadow_root" "$metadata_path" "$status" "$note"
+    ;;
+  guest-exec)
+    data_root=""
+    workspace_id=""
+    worktree_id=""
+    cwd=""
+    guest_command=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --data-root) data_root="$2"; shift 2 ;;
+        --workspace-id) workspace_id="$2"; shift 2 ;;
+        --worktree-id) worktree_id="$2"; shift 2 ;;
+        --cwd) cwd="$2"; shift 2 ;;
+        --command) guest_command="$2"; shift 2 ;;
+        --user) shift 2 ;;
+        --pty) shift ;;
+        --env)
+          kv="$2"
+          key=${{kv%%=*}}
+          value=${{kv#*=}}
+          export "$key=$value"
+          shift 2
+          ;;
+        --) shift; break ;;
+        *) echo "unexpected guest-exec arg: $1" >&2; exit 1 ;;
+      esac
+    done
+    vm_root="$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared"
+    host_shadow_root="$vm_root/worktrees/$workspace_id/$worktree_id/shadow-root"
+    guest_root="/ctx/ws/worktrees/$worktree_id"
+    case "$cwd" in
+      "$guest_root") host_cwd="$host_shadow_root" ;;
+      "$guest_root"/*) host_cwd="$host_shadow_root/${{cwd#"$guest_root"/}}" ;;
+      *) echo "invalid guest cwd: $cwd" >&2; exit 1 ;;
+    esac
+    mkdir -p "$host_cwd"
+    (cd "$host_cwd" && exec "$guest_command" "$@")
+    ;;
+  *)
+    echo "unexpected helper invocation: $cmd $*" >&2
+    exit 1
+    ;;
+esac
+"#
     );
     std::fs::write(&path, script).expect("write AVF lifecycle helper shim");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
@@ -362,7 +518,10 @@ async fn container_mode_errors_when_podman_unavailable() {
     let worktree = sample_worktree(&tmp, workspace.id);
     let settings = ExecutionSettings {
         mode: ExecutionMode::Container,
-        container: ContainerExecutionSettings::default(),
+        container: ContainerExecutionSettings {
+            runtime: crate::settings::ContainerRuntimeKind::Podman,
+            ..ContainerExecutionSettings::default()
+        },
     };
 
     let err = manager
@@ -622,6 +781,56 @@ fn podman_invocation_sets_paths_under_short_runtime_root() {
 #[test]
 fn keep_id_userns_is_only_enabled_on_linux() {
     assert_eq!(should_use_keep_id_userns(), cfg!(target_os = "linux"));
+}
+
+#[test]
+fn rewrite_daemon_url_for_avf_guest_uses_guest_gateway_host() {
+    let rewritten = super::container::rewrite_daemon_url_for_avf_guest("http://127.0.0.1:4399");
+    assert_eq!(rewritten, "http://192.168.64.1:4399/");
+}
+
+#[tokio::test]
+async fn ensure_avf_guest_gateway_proxy_forwards_to_loopback_backend() {
+    let backend = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind backend listener");
+    let backend_addr = backend.local_addr().expect("backend local addr");
+    let proxy_port = {
+        let temp = std::net::TcpListener::bind("127.0.0.1:0").expect("bind proxy port probe");
+        temp.local_addr().expect("proxy port local addr").port()
+    };
+    let proxy_addr = format!("127.0.0.1:{proxy_port}");
+    let backend_addr_str = backend_addr.to_string();
+
+    let backend_task = tokio::spawn(async move {
+        let (mut socket, _) = backend.accept().await.expect("accept backend connection");
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut buf = [0u8; 4];
+        socket
+            .read_exact(&mut buf)
+            .await
+            .expect("read backend bytes");
+        assert_eq!(&buf, b"ping");
+        socket
+            .write_all(b"pong")
+            .await
+            .expect("write backend reply");
+    });
+
+    super::ensure_avf_guest_gateway_proxy_for_test(&proxy_addr, &backend_addr_str, proxy_port)
+        .await
+        .expect("start gateway proxy");
+
+    let mut client = tokio::net::TcpStream::connect(&proxy_addr)
+        .await
+        .expect("connect proxy");
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    client.write_all(b"ping").await.expect("write proxy bytes");
+    let mut buf = [0u8; 4];
+    client.read_exact(&mut buf).await.expect("read proxy bytes");
+    assert_eq!(&buf, b"pong");
+
+    backend_task.await.expect("backend task");
 }
 
 #[tokio::test]
@@ -1719,7 +1928,7 @@ async fn ensure_container_machine_ready_reconfigures_running_machine_when_idle()
 
 #[cfg(unix)]
 #[tokio::test]
-async fn ensure_container_machine_ready_starts_avf_shared_vm() {
+async fn ensure_container_machine_ready_prefetches_avf_runtime_without_starting_a_global_vm() {
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = runtime_manager(&temp).await;
@@ -1734,21 +1943,12 @@ async fn ensure_container_machine_ready_starts_avf_shared_vm() {
     manager
         .ensure_container_machine_ready(&settings, None)
         .await
-        .expect("AVF shared VM readiness should succeed");
+        .expect("AVF runtime prefetch should succeed");
 
-    let state = super::avf_linux_vm::shared_vm_state(temp.path()).expect("shared VM state");
-    assert_eq!(
-        state.state,
-        super::avf_linux_vm::AvfLinuxSharedVmLifecycleState::Running
-    );
-    assert_eq!(
-        state.transition_status,
-        Some(super::avf_linux_vm::AvfLinuxSharedVmTransitionStatus::Scaffolded)
-    );
-    assert_eq!(
-        state.runtime_version.as_deref(),
-        Some("ubuntu-minimal-test")
-    );
+    let runtime_state = super::selected_runtime_state(temp.path(), &settings)
+        .await
+        .expect("read AVF runtime state");
+    assert_eq!(runtime_state, (true, true));
 
     for server in servers {
         server.abort();
@@ -1757,7 +1957,7 @@ async fn ensure_container_machine_ready_starts_avf_shared_vm() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn prepare_returns_avf_linux_vm_plan_after_shared_vm_and_guest_worktree_ready() {
+async fn prepare_returns_avf_linux_vm_plan_after_workspace_vm_and_guest_worktree_ready() {
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = runtime_manager(&temp).await;
@@ -1776,7 +1976,7 @@ async fn prepare_returns_avf_linux_vm_plan_after_shared_vm_and_guest_worktree_re
     };
 
     let plan = manager
-        .prepare(&workspace, &worktree, &settings, "http://127.0.0.1:4399")
+        .prepare(&workspace, &worktree, &settings, "http://192.168.64.1:4399")
         .await
         .expect("AVF prepare should now return a guest-exec plan");
     match &plan.runtime {
@@ -1810,11 +2010,16 @@ async fn prepare_returns_avf_linux_vm_plan_after_shared_vm_and_guest_worktree_re
             .map(String::as_str),
         Some(worktree.root_path.as_str())
     );
+    assert_eq!(
+        plan.env_overrides.get("CTX_DAEMON_URL").map(String::as_str),
+        Some("http://192.168.64.1:4399")
+    );
     assert!(plan
         .env_overrides
         .contains_key(super::avf_linux_vm::AVF_LINUX_HELPER_PATH_ENV));
 
-    let state = super::avf_linux_vm::shared_vm_state(temp.path()).expect("shared VM state");
+    let state = super::avf_linux_vm::workspace_vm_state(temp.path(), workspace.id)
+        .expect("workspace VM state");
     assert_eq!(
         state.state,
         super::avf_linux_vm::AvfLinuxSharedVmLifecycleState::Running
@@ -1833,6 +2038,88 @@ async fn prepare_returns_avf_linux_vm_plan_after_shared_vm_and_guest_worktree_re
         super::avf_linux_vm::AvfLinuxGuestWorktreeStatus::AlreadyPresent
     );
     assert!(guest_worktree.host_shadow_root.exists());
+
+    for server in servers {
+        server.abort();
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn container_status_reports_running_avf_workspace_vm() {
+    let _serial = env_var_test_lock().lock().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = runtime_manager(&temp).await;
+    let helper_path = write_avf_linux_lifecycle_helper(temp.path());
+    let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
+    let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
+    let workspace = sample_workspace(&temp);
+    let worktree = sample_worktree(&temp, workspace.id);
+    let settings = ExecutionSettings {
+        mode: ExecutionMode::Container,
+        container: ContainerExecutionSettings {
+            runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
+            mount_mode: ContainerMountMode::DiskIsolated,
+            ..ContainerExecutionSettings::default()
+        },
+    };
+
+    manager
+        .prepare(&workspace, &worktree, &settings, "http://192.168.64.1:4399")
+        .await
+        .expect("AVF prepare should start the workspace VM");
+
+    let status = manager
+        .container_status(workspace.id)
+        .await
+        .expect("AVF workspace status")
+        .expect("AVF workspace VM status should exist");
+    assert_eq!(status.name, format!("ctx-avf-linux-vm-{}", workspace.id.0));
+    assert!(status.running);
+    assert!(status.known);
+    assert_eq!(status.mount_mode, Some(ContainerMountMode::DiskIsolated));
+
+    for server in servers {
+        server.abort();
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn stop_container_stops_avf_workspace_vm() {
+    let _serial = env_var_test_lock().lock().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = runtime_manager(&temp).await;
+    let helper_path = write_avf_linux_lifecycle_helper(temp.path());
+    let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
+    let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
+    let workspace = sample_workspace(&temp);
+    let worktree = sample_worktree(&temp, workspace.id);
+    let settings = ExecutionSettings {
+        mode: ExecutionMode::Container,
+        container: ContainerExecutionSettings {
+            runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
+            mount_mode: ContainerMountMode::DiskIsolated,
+            ..ContainerExecutionSettings::default()
+        },
+    };
+
+    manager
+        .prepare(&workspace, &worktree, &settings, "http://192.168.64.1:4399")
+        .await
+        .expect("AVF prepare should start the workspace VM");
+
+    assert!(manager
+        .stop_container(workspace.id)
+        .await
+        .expect("stop AVF workspace VM"));
+
+    let status = manager
+        .container_status(workspace.id)
+        .await
+        .expect("read stopped AVF workspace VM status")
+        .expect("AVF workspace VM status should still exist after stop");
+    assert!(!status.running);
 
     for server in servers {
         server.abort();

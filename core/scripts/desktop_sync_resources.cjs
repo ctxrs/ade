@@ -39,6 +39,7 @@ const AVF_LINUX_GUEST_ROOTFS_NAME = "rootfs.raw";
 const AVF_LINUX_GUEST_KERNEL_REL = path.join("helpers", "kernel");
 const AVF_LINUX_GUEST_INITRD_REL = path.join("helpers", "initrd");
 const AVF_LINUX_GUEST_AGENT_REL = path.join("helpers", "guest-agent");
+const AVF_LINUX_EGRESS_PROXY_REL = path.join("helpers", "egress-proxy");
 
 const isWindows = process.platform === "win32";
 const binExt = isWindows ? ".exe" : "";
@@ -65,6 +66,26 @@ const copyDirRecursive = (srcDir, destDir) => {
     }
     fs.copyFileSync(srcPath, destPath);
   }
+};
+
+const parseAvfLinuxGuestRuntimeVersion = (raw) => {
+  const text = String(raw || "");
+  if (!text.trim()) return "";
+
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (lines.length === 0) return "";
+
+  const versionEntry = lines.find((line) => line.startsWith("version="));
+  if (versionEntry) {
+    return versionEntry.slice("version=".length).trim();
+  }
+
+  const bareVersion = lines.find((line) => !line.includes("="));
+  return bareVersion || "";
 };
 
 const readRustStringConst = (filePath, constName) => {
@@ -318,9 +339,22 @@ const ensureExecutable = (filePath) => {
   }
 };
 
+const SHA256_CHUNK_SIZE = 8 * 1024 * 1024;
+
 const sha256File = (filePath) => {
-  const data = fs.readFileSync(filePath);
-  return crypto.createHash("sha256").update(data).digest("hex");
+  const hash = crypto.createHash("sha256");
+  const fd = fs.openSync(filePath, "r");
+  const buffer = Buffer.allocUnsafe(SHA256_CHUNK_SIZE);
+  try {
+    while (true) {
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      hash.update(bytesRead === buffer.length ? buffer : buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return hash.digest("hex");
 };
 
 const commandExists = (name) => {
@@ -437,7 +471,7 @@ const stageAvfLinuxGuestRuntime = (bundleDir) => {
   const explicitVersion = String(process.env.CTX_AVF_LINUX_GUEST_RUNTIME_VERSION || "").trim();
   const versionFile = path.join(sourceDir, "version.txt");
   const fileVersion = fs.existsSync(versionFile)
-    ? String(fs.readFileSync(versionFile, "utf8")).trim()
+    ? parseAvfLinuxGuestRuntimeVersion(fs.readFileSync(versionFile, "utf8"))
     : "";
   const version = explicitVersion || fileVersion || "local";
 
@@ -458,6 +492,7 @@ const stageAvfLinuxGuestRuntime = (bundleDir) => {
   const bundledKernelPath = path.join(runtimeRootDir, AVF_LINUX_GUEST_KERNEL_REL);
   const bundledInitrdPath = path.join(runtimeRootDir, AVF_LINUX_GUEST_INITRD_REL);
   const bundledGuestAgentPath = path.join(runtimeRootDir, AVF_LINUX_GUEST_AGENT_REL);
+  const bundledEgressProxyPath = path.join(runtimeRootDir, AVF_LINUX_EGRESS_PROXY_REL);
   for (const requiredPath of [bundledRootfsPath, bundledKernelPath, bundledInitrdPath]) {
     if (!fs.existsSync(requiredPath) || !fs.statSync(requiredPath).isFile()) {
       throw new Error(
@@ -488,6 +523,10 @@ const stageAvfLinuxGuestRuntime = (bundleDir) => {
     guestAgentPath:
       fs.existsSync(bundledGuestAgentPath) && fs.statSync(bundledGuestAgentPath).isFile()
         ? bundledGuestAgentPath
+        : null,
+    egressProxyPath:
+      fs.existsSync(bundledEgressProxyPath) && fs.statSync(bundledEgressProxyPath).isFile()
+        ? bundledEgressProxyPath
         : null,
   };
 };
@@ -885,6 +924,7 @@ if (require.main === module) {
 } else {
   module.exports = {
     copySidecarBinary,
+    parseAvfLinuxGuestRuntimeVersion,
     stageAvfLinuxGuestRuntime,
   };
 }

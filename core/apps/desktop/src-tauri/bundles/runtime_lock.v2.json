@@ -1324,6 +1324,10 @@
         "guest-agent": {
           "uri": "locked://runtimes/avf-linux-guest/macos/aarch64/guest-agent",
           "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "egress-proxy": {
+          "uri": "locked://runtimes/avf-linux-guest/macos/aarch64/egress-proxy",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
         }
       },
       "sources": [
@@ -1357,6 +1361,10 @@
         },
         "guest-agent": {
           "uri": "locked://runtimes/avf-linux-guest/macos/x86_64/guest-agent",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "egress-proxy": {
+          "uri": "locked://runtimes/avf-linux-guest/macos/x86_64/egress-proxy",
           "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
         }
       },

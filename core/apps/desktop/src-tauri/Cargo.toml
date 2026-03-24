@@ -80,6 +80,7 @@ objc2-virtualization = { version = "0.3.2", default-features = false, features =
     "VZGenericMachineIdentifier",
     "VZGenericPlatformConfiguration",
     "VZLinuxBootLoader",
+    "VZMACAddress",
     "VZMemoryBalloonDeviceConfiguration",
     "VZNATNetworkDeviceAttachment",
     "VZNetworkDeviceAttachment",

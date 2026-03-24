@@ -31,6 +31,7 @@ const AVF_LINUX_ROOTFS_LABEL: &str = "Ubuntu guest runtime";
 const AVF_LINUX_KERNEL_HELPER: &str = "kernel";
 const AVF_LINUX_INITRD_HELPER: &str = "initrd";
 const AVF_LINUX_GUEST_AGENT_HELPER: &str = "guest-agent";
+const AVF_LINUX_EGRESS_PROXY_HELPER: &str = "egress-proxy";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct AvfLinuxHelperProbe {
@@ -95,6 +96,10 @@ pub(crate) struct AvfLinuxSharedVmState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_state_path: Option<PathBuf>,
+    #[serde(default)]
+    pub saved_state_exists: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_root: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rootfs_image: Option<PathBuf>,
@@ -108,6 +113,8 @@ pub(crate) struct AvfLinuxSharedVmState {
     pub updated_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_saved_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_stopped_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -148,6 +155,7 @@ pub(crate) struct AvfLinuxGuestRuntime {
     pub kernel_path: PathBuf,
     pub initrd_path: PathBuf,
     pub guest_agent_path: Option<PathBuf>,
+    pub egress_proxy_path: Option<PathBuf>,
     pub version: String,
     pub managed: bool,
 }
@@ -169,12 +177,15 @@ impl AvfLinuxGuestRuntime {
             })?;
         let guest_agent_path =
             managed_avf_linux_helper_path(&runtime_root, AVF_LINUX_GUEST_AGENT_HELPER);
+        let egress_proxy_path =
+            managed_avf_linux_helper_path(&runtime_root, AVF_LINUX_EGRESS_PROXY_HELPER);
         Ok(Self {
             runtime_root,
             rootfs_image,
             kernel_path,
             initrd_path,
             guest_agent_path,
+            egress_proxy_path,
             version: source.version.trim().to_string(),
             managed: true,
         })
@@ -189,6 +200,13 @@ impl AvfLinuxGuestRuntime {
                     .root
                     .join("helpers")
                     .join(AVF_LINUX_GUEST_AGENT_HELPER);
+                path.exists().then_some(path)
+            },
+            egress_proxy_path: {
+                let path = paths
+                    .root
+                    .join("helpers")
+                    .join(AVF_LINUX_EGRESS_PROXY_HELPER);
                 path.exists().then_some(path)
             },
             runtime_root: paths.root,
@@ -257,8 +275,23 @@ pub(crate) fn prepare_runtime_layout(data_root: &Path) -> Result<AvfLinuxRuntime
     invoke_helper_json(&["prepare-runtime-layout", &data_root.to_string_lossy()])
 }
 
+pub(crate) fn workspace_vm_data_root(data_root: &Path, workspace_id: WorkspaceId) -> PathBuf {
+    data_root
+        .join("workspace-vms")
+        .join(AVF_LINUX_GUEST_RUNTIME_ID)
+        .join(workspace_id.0.to_string())
+}
+
 pub(crate) fn shared_vm_state(data_root: &Path) -> Result<AvfLinuxSharedVmState> {
-    invoke_helper_json(&["shared-vm-state", &data_root.to_string_lossy()])
+    invoke_helper_json(&["workspace-vm-state", &data_root.to_string_lossy()])
+}
+
+pub(crate) fn workspace_vm_state(
+    data_root: &Path,
+    workspace_id: WorkspaceId,
+) -> Result<AvfLinuxSharedVmState> {
+    let vm_data_root = workspace_vm_data_root(data_root, workspace_id);
+    shared_vm_state(&vm_data_root)
 }
 
 pub(crate) fn prepare_guest_worktree(
@@ -269,9 +302,10 @@ pub(crate) fn prepare_guest_worktree(
     base_commit_sha: &str,
     branch_name: &str,
 ) -> Result<AvfLinuxGuestWorktree> {
+    let vm_data_root = workspace_vm_data_root(data_root, workspace_id);
     invoke_helper_json(&[
         "prepare-guest-worktree",
-        &data_root.to_string_lossy(),
+        &vm_data_root.to_string_lossy(),
         &workspace_id.0.to_string(),
         &worktree_id.0.to_string(),
         &host_workspace_root.to_string_lossy(),
@@ -292,11 +326,12 @@ pub(crate) fn build_guest_exec_command(
     pty: bool,
 ) -> Result<tokio::process::Command> {
     let helper = helper_path()?;
+    let vm_data_root = workspace_vm_data_root(data_root, workspace_id);
     let mut child = tokio::process::Command::new(&helper);
     child
         .arg("guest-exec")
         .arg("--data-root")
-        .arg(data_root)
+        .arg(vm_data_root)
         .arg("--workspace-id")
         .arg(workspace_id.0.to_string())
         .arg("--worktree-id")
@@ -358,7 +393,7 @@ pub(crate) fn start_shared_vm(
     runtime: &AvfLinuxGuestRuntime,
 ) -> Result<AvfLinuxSharedVmState> {
     invoke_helper_json(&[
-        "start-shared-vm",
+        "start-workspace-vm",
         &data_root.to_string_lossy(),
         &runtime.runtime_root.to_string_lossy(),
         &runtime.rootfs_image.to_string_lossy(),
@@ -368,9 +403,27 @@ pub(crate) fn start_shared_vm(
     ])
 }
 
+pub(crate) fn start_workspace_vm(
+    data_root: &Path,
+    workspace_id: WorkspaceId,
+    runtime: &AvfLinuxGuestRuntime,
+) -> Result<AvfLinuxSharedVmState> {
+    let vm_data_root = workspace_vm_data_root(data_root, workspace_id);
+    start_shared_vm(&vm_data_root, runtime)
+}
+
 #[allow(dead_code)]
 pub(crate) fn stop_shared_vm(data_root: &Path) -> Result<AvfLinuxSharedVmState> {
-    invoke_helper_json(&["stop-shared-vm", &data_root.to_string_lossy()])
+    invoke_helper_json(&["stop-workspace-vm", &data_root.to_string_lossy()])
+}
+
+#[allow(dead_code)]
+pub(crate) fn stop_workspace_vm(
+    data_root: &Path,
+    workspace_id: WorkspaceId,
+) -> Result<AvfLinuxSharedVmState> {
+    let vm_data_root = workspace_vm_data_root(data_root, workspace_id);
+    stop_shared_vm(&vm_data_root)
 }
 
 pub(crate) fn runtime_available() -> bool {
@@ -390,13 +443,14 @@ pub(crate) fn runtime_state(data_root: &Path) -> Result<(bool, bool)> {
     if !helper_ready || !runtime_ready {
         return Ok((false, runtime_ready));
     }
-    let state = shared_vm_state(data_root)?;
-    let machine_ready = matches!(state.state, AvfLinuxSharedVmLifecycleState::Running);
-    Ok((machine_ready, runtime_ready))
+    // AVF now uses one VM per active workspace rather than a daemon-global machine.
+    // For startup/runtime gates, "machine ready" means the backend/runtime is available.
+    Ok((true, runtime_ready))
 }
 
-pub(crate) async fn ensure_shared_vm_ready_with_observer(
+pub(crate) async fn ensure_workspace_vm_ready_with_observer(
     data_root: &Path,
+    workspace_id: WorkspaceId,
     _settings: &ContainerExecutionSettings,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<AvfLinuxSharedVmState> {
@@ -433,7 +487,7 @@ pub(crate) async fn ensure_shared_vm_ready_with_observer(
         HarnessSetupPhase::ArtifactDownload,
         HarnessSetupLogLevel::Info,
         &format!(
-            "AVF Linux guest runtime {} is ready (rootfs={}, kernel={}, initrd={}, guest_agent={})",
+            "AVF Linux guest runtime {} is ready (rootfs={}, kernel={}, initrd={}, guest_agent={}, egress_proxy={})",
             runtime.version,
             runtime.rootfs_image.display(),
             runtime.kernel_path.display(),
@@ -442,18 +496,25 @@ pub(crate) async fn ensure_shared_vm_ready_with_observer(
                 .guest_agent_path
                 .as_ref()
                 .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            runtime
+                .egress_proxy_path
+                .as_ref()
+                .map(|path| path.display().to_string())
                 .unwrap_or_else(|| "none".to_string())
         ),
     );
 
-    let layout = prepare_runtime_layout(data_root)?;
-    let state = shared_vm_state(data_root)?;
+    let vm_data_root = workspace_vm_data_root(data_root, workspace_id);
+    let layout = prepare_runtime_layout(&vm_data_root)?;
+    let state = workspace_vm_state(data_root, workspace_id)?;
     observe_log(
         observer,
         HarnessSetupPhase::MachineCheck,
         HarnessSetupLogLevel::Info,
         &format!(
-            "AVF Linux shared VM layout is ready at {} (logs={}, state={:?})",
+            "AVF Linux workspace VM layout is ready for workspace {} at {} (logs={}, state={:?})",
+            workspace_id.0,
             layout.vm_root.display(),
             layout.logs_root.display(),
             state.state
@@ -464,7 +525,10 @@ pub(crate) async fn ensure_shared_vm_ready_with_observer(
             observer,
             HarnessSetupPhase::MachineCheck,
             HarnessSetupLogLevel::Info,
-            "AVF Linux shared VM is already running",
+            &format!(
+                "AVF Linux workspace VM is already running for workspace {}",
+                workspace_id.0
+            ),
         );
         return Ok(state);
     }
@@ -472,16 +536,16 @@ pub(crate) async fn ensure_shared_vm_ready_with_observer(
     observe_phase(
         observer,
         HarnessSetupPhase::MachineStartOrInit,
-        "starting AVF Linux shared VM",
+        "starting AVF Linux workspace VM",
     );
-    let started = start_shared_vm(data_root, &runtime)?;
+    let started = start_workspace_vm(data_root, workspace_id, &runtime)?;
     observe_log(
         observer,
         HarnessSetupPhase::MachineStartOrInit,
         HarnessSetupLogLevel::Info,
         &format!(
-            "AVF Linux shared VM start completed with state {:?} (simulated={})",
-            started.state, started.simulated
+            "AVF Linux workspace VM start completed for workspace {} with state {:?} (simulated={})",
+            workspace_id.0, started.state, started.simulated
         ),
     );
     for note in &started.notes {
@@ -494,8 +558,9 @@ pub(crate) async fn ensure_shared_vm_ready_with_observer(
     }
     if !matches!(started.state, AvfLinuxSharedVmLifecycleState::Running) {
         bail!(
-            "AVF Linux shared VM did not reach a running state after start (state={:?})",
-            started.state
+            "AVF Linux workspace VM for workspace {} did not reach a running state after start (state={:?})",
+            workspace_id.0,
+            started.state,
         );
     }
     Ok(started)
@@ -587,7 +652,7 @@ pub(crate) async fn prefetch_runtime_with_observer(
         HarnessSetupPhase::ArtifactDownload,
         HarnessSetupLogLevel::Info,
         &format!(
-            "AVF Linux guest runtime {} is ready (rootfs={}, kernel={}, initrd={}, guest_agent={})",
+            "AVF Linux guest runtime {} is ready (rootfs={}, kernel={}, initrd={}, guest_agent={}, egress_proxy={})",
             runtime.version,
             runtime.rootfs_image.display(),
             runtime.kernel_path.display(),
@@ -596,19 +661,21 @@ pub(crate) async fn prefetch_runtime_with_observer(
                 .guest_agent_path
                 .as_ref()
                 .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            runtime
+                .egress_proxy_path
+                .as_ref()
+                .map(|path| path.display().to_string())
                 .unwrap_or_else(|| "none".to_string())
         ),
     );
-    let layout = prepare_runtime_layout(data_root)?;
     observe_log(
         observer,
         HarnessSetupPhase::MachineCheck,
         HarnessSetupLogLevel::Info,
         &format!(
-            "AVF Linux shared VM layout is ready at {} (logs={}, state={:?})",
-            layout.vm_root.display(),
-            layout.logs_root.display(),
-            shared_vm_state(data_root)?.state
+            "AVF Linux runtime is ready; workspace VM instances will materialize lazily from {}",
+            runtime.runtime_root.display(),
         ),
     );
     Ok(())
@@ -693,9 +760,19 @@ fn managed_avf_linux_runtime_ready_marker_path(runtime_root: &Path) -> PathBuf {
 }
 
 fn avf_linux_runtime_is_ready(runtime: &AvfLinuxGuestRuntime) -> bool {
+    let guest_agent_ready = runtime
+        .guest_agent_path
+        .as_ref()
+        .is_some_and(|path| path.exists());
+    let egress_proxy_ready = runtime
+        .egress_proxy_path
+        .as_ref()
+        .is_some_and(|path| path.exists());
     runtime.rootfs_image.exists()
         && runtime.kernel_path.exists()
         && runtime.initrd_path.exists()
+        && guest_agent_ready
+        && egress_proxy_ready
         && (!runtime.managed
             || managed_avf_linux_runtime_ready_marker_path(&runtime.runtime_root).exists())
 }
@@ -889,6 +966,8 @@ pub(crate) async fn ensure_managed_avf_linux_guest_runtime_with_override(
     for (helper_name, label) in [
         (AVF_LINUX_KERNEL_HELPER, "Linux kernel"),
         (AVF_LINUX_INITRD_HELPER, "Linux initrd"),
+        (AVF_LINUX_GUEST_AGENT_HELPER, "Guest agent"),
+        (AVF_LINUX_EGRESS_PROXY_HELPER, "Egress proxy"),
     ] {
         let helper_source = source.helpers.get(helper_name).cloned().ok_or_else(|| {
             anyhow::anyhow!("managed AVF Linux runtime is missing helper '{helper_name}'")
@@ -961,6 +1040,24 @@ pub(crate) async fn ensure_managed_avf_linux_guest_runtime_with_override(
                     .with_context(|| format!("metadata {}", path.display()))?
                     .permissions();
                 perms.set_mode(0o644);
+                fs::set_permissions(path, perms)
+                    .await
+                    .with_context(|| format!("chmod {}", path.display()))?;
+            }
+        }
+        for path in [
+            runtime.guest_agent_path.as_ref(),
+            runtime.egress_proxy_path.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if path.exists() {
+                let mut perms = fs::metadata(path)
+                    .await
+                    .with_context(|| format!("metadata {}", path.display()))?
+                    .permissions();
+                perms.set_mode(0o755);
                 fs::set_permissions(path, perms)
                     .await
                     .with_context(|| format!("chmod {}", path.display()))?;
@@ -1068,7 +1165,75 @@ mod tests {
         let host_os = std::env::consts::OS;
         let host_arch = std::env::consts::ARCH;
         let script = format!(
-            "#!/bin/sh\ncmd=\"$1\"\nshift\ncase \"$cmd\" in\n  probe)\n    printf '%s\\n' '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"helper_version\":\"0.0.0-test\",\"host_os\":\"{host_os}\",\"host_arch\":\"{host_arch}\",\"supported\":true,\"save_restore_supported\":true,\"rosetta_supported\":true,\"notes\":[\"test helper\"]}}'\n    ;;\n  prepare-runtime-layout)\n    data_root=\"$1\"\n    vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n    logs_root=\"$vm_root/logs\"\n    state_path=\"$vm_root/shared-vm-state.json\"\n    printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"layout_status\":\"prepared\",\"notes\":[\"layout ready\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\"\n    ;;\n  shared-vm-state)\n    data_root=\"$1\"\n    vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n    logs_root=\"$vm_root/logs\"\n    state_path=\"$vm_root/shared-vm-state.json\"\n    log_path=\"$logs_root/shared-vm.log\"\n    printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"stopped\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"simulated\":true,\"notes\":[\"state ready\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\"\n    ;;\n  start-shared-vm)\n    data_root=\"$1\"\n    runtime_root=\"$2\"\n    rootfs_image=\"$3\"\n    kernel_path=\"$4\"\n    initrd_path=\"$5\"\n    runtime_version=\"$6\"\n    vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n    logs_root=\"$vm_root/logs\"\n    state_path=\"$vm_root/shared-vm-state.json\"\n    log_path=\"$logs_root/shared-vm.log\"\n    printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"running\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"runtime_root\":\"%s\",\"rootfs_image\":\"%s\",\"kernel_path\":\"%s\",\"initrd_path\":\"%s\",\"runtime_version\":\"%s\",\"transition_status\":\"scaffolded\",\"simulated\":true,\"notes\":[\"scaffolded\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\" \"$runtime_root\" \"$rootfs_image\" \"$kernel_path\" \"$initrd_path\" \"$runtime_version\"\n    ;;\n  stop-shared-vm)\n    data_root=\"$1\"\n    vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n    logs_root=\"$vm_root/logs\"\n    state_path=\"$vm_root/shared-vm-state.json\"\n    log_path=\"$logs_root/shared-vm.log\"\n    printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"stopped\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"transition_status\":\"stopped\",\"simulated\":true,\"notes\":[\"stopped\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\"\n    ;;\n  prepare-guest-worktree)\n    data_root=\"$1\"\n    workspace_id=\"$2\"\n    worktree_id=\"$3\"\n    vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n    host_shadow_root=\"$vm_root/worktrees/$workspace_id/$worktree_id/shadow-root\"\n    metadata_path=\"$vm_root/worktrees/$workspace_id/$worktree_id/worktree.json\"\n    guest_root=\"/ctx/ws/worktrees/$worktree_id\"\n    mkdir -p \"$host_shadow_root\"\n    if [ ! -f \"$metadata_path\" ]; then\n      mkdir -p \"$(dirname \"$metadata_path\")\"\n      printf '{{\"workspace_id\":\"%s\",\"worktree_id\":\"%s\"}}\\n' \"$workspace_id\" \"$worktree_id\" > \"$metadata_path\"\n      status=\"prepared\"\n      note=\"prepared guest worktree\"\n    else\n      status=\"already_present\"\n      note=\"existing guest worktree\"\n    fi\n    printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"workspace_id\":\"%s\",\"worktree_id\":\"%s\",\"guest_root\":\"%s\",\"host_shadow_root\":\"%s\",\"metadata_path\":\"%s\",\"status\":\"%s\",\"simulated\":true,\"notes\":[\"%s\"]}}\\n' \"$workspace_id\" \"$worktree_id\" \"$guest_root\" \"$host_shadow_root\" \"$metadata_path\" \"$status\" \"$note\"\n    ;;\n  *)\n    echo \"unexpected helper invocation: $cmd $*\" >&2\n    exit 1\n    ;;\nesac\n"
+            r#"#!/bin/sh
+cmd="$1"
+shift
+case "$cmd" in
+  probe)
+    printf '%s\n' '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","helper_version":"0.0.0-test","host_os":"{host_os}","host_arch":"{host_arch}","supported":true,"save_restore_supported":true,"rosetta_supported":true,"notes":["test helper"]}}'
+    ;;
+  prepare-runtime-layout)
+    data_root="$1"
+    vm_root="$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared"
+    logs_root="$vm_root/logs"
+    state_path="$vm_root/shared-vm-state.json"
+    printf '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","vm_root":"%s","logs_root":"%s","state_path":"%s","layout_status":"prepared","notes":["layout ready"]}}\n' "$vm_root" "$logs_root" "$state_path"
+    ;;
+  workspace-vm-state|shared-vm-state)
+    data_root="$1"
+    vm_root="$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared"
+    logs_root="$vm_root/logs"
+    state_path="$vm_root/shared-vm-state.json"
+    log_path="$logs_root/shared-vm.log"
+    printf '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","state":"stopped","vm_root":"%s","logs_root":"%s","state_path":"%s","log_path":"%s","simulated":true,"notes":["state ready"]}}\n' "$vm_root" "$logs_root" "$state_path" "$log_path"
+    ;;
+  start-workspace-vm|start-shared-vm)
+    data_root="$1"
+    runtime_root="$2"
+    rootfs_image="$3"
+    kernel_path="$4"
+    initrd_path="$5"
+    runtime_version="$6"
+    vm_root="$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared"
+    logs_root="$vm_root/logs"
+    state_path="$vm_root/shared-vm-state.json"
+    log_path="$logs_root/shared-vm.log"
+    printf '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","state":"running","vm_root":"%s","logs_root":"%s","state_path":"%s","log_path":"%s","runtime_root":"%s","rootfs_image":"%s","kernel_path":"%s","initrd_path":"%s","runtime_version":"%s","transition_status":"scaffolded","simulated":true,"notes":["scaffolded"]}}\n' "$vm_root" "$logs_root" "$state_path" "$log_path" "$runtime_root" "$rootfs_image" "$kernel_path" "$initrd_path" "$runtime_version"
+    ;;
+  stop-workspace-vm|stop-shared-vm)
+    data_root="$1"
+    vm_root="$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared"
+    logs_root="$vm_root/logs"
+    state_path="$vm_root/shared-vm-state.json"
+    log_path="$logs_root/shared-vm.log"
+    printf '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","state":"stopped","vm_root":"%s","logs_root":"%s","state_path":"%s","log_path":"%s","transition_status":"stopped","simulated":true,"notes":["stopped"]}}\n' "$vm_root" "$logs_root" "$state_path" "$log_path"
+    ;;
+  prepare-guest-worktree)
+    data_root="$1"
+    workspace_id="$2"
+    worktree_id="$3"
+    vm_root="$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared"
+    host_shadow_root="$vm_root/worktrees/$workspace_id/$worktree_id/shadow-root"
+    metadata_path="$vm_root/worktrees/$workspace_id/$worktree_id/worktree.json"
+    guest_root="/ctx/ws/worktrees/$worktree_id"
+    mkdir -p "$host_shadow_root"
+    if [ ! -f "$metadata_path" ]; then
+      mkdir -p "$(dirname "$metadata_path")"
+      printf '{{"workspace_id":"%s","worktree_id":"%s"}}\n' "$workspace_id" "$worktree_id" > "$metadata_path"
+      status="prepared"
+      note="prepared guest worktree"
+    else
+      status="already_present"
+      note="existing guest worktree"
+    fi
+    printf '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","workspace_id":"%s","worktree_id":"%s","guest_root":"%s","host_shadow_root":"%s","metadata_path":"%s","status":"%s","simulated":true,"notes":["%s"]}}\n' "$workspace_id" "$worktree_id" "$guest_root" "$host_shadow_root" "$metadata_path" "$status" "$note"
+    ;;
+  *)
+    echo "unexpected helper invocation: $cmd $*" >&2
+    exit 1
+    ;;
+esac
+"#
         );
         std::fs::write(&path, script).expect("write AVF Linux lifecycle helper shim");
         use std::os::unix::fs::PermissionsExt;
@@ -1165,12 +1330,18 @@ mod tests {
         let archive_bytes = runtime_archive_bytes();
         let kernel_bytes = b"kernel".to_vec();
         let initrd_bytes = b"initrd".to_vec();
+        let guest_agent_bytes = b"guest-agent".to_vec();
+        let egress_proxy_bytes = b"egress-proxy".to_vec();
         let (archive_url, archive_server) =
             spawn_static_http_server(archive_bytes.clone(), "guest-runtime.tar.gz").await;
         let (kernel_url, kernel_server) =
             spawn_static_http_server(kernel_bytes.clone(), "vmlinuz").await;
         let (initrd_url, initrd_server) =
             spawn_static_http_server(initrd_bytes.clone(), "initrd.img").await;
+        let (guest_agent_url, guest_agent_server) =
+            spawn_static_http_server(guest_agent_bytes.clone(), "ctx-avf-linux-guest-agent").await;
+        let (egress_proxy_url, egress_proxy_server) =
+            spawn_static_http_server(egress_proxy_bytes.clone(), "ctx-egress-proxy").await;
 
         let source = bundled_assets::ManagedRuntimeSource {
             uri: archive_url,
@@ -1192,6 +1363,20 @@ mod tests {
                         sha256: sha256_hex(&initrd_bytes),
                     },
                 ),
+                (
+                    AVF_LINUX_GUEST_AGENT_HELPER.to_string(),
+                    bundled_assets::ManagedArtifactSource {
+                        uri: guest_agent_url,
+                        sha256: sha256_hex(&guest_agent_bytes),
+                    },
+                ),
+                (
+                    AVF_LINUX_EGRESS_PROXY_HELPER.to_string(),
+                    bundled_assets::ManagedArtifactSource {
+                        uri: egress_proxy_url,
+                        sha256: sha256_hex(&egress_proxy_bytes),
+                    },
+                ),
             ]
             .into_iter()
             .collect(),
@@ -1206,14 +1391,26 @@ mod tests {
         .await
         .expect("managed AVF Linux runtime should install");
 
+        let expected_egress_proxy = runtime
+            .runtime_root
+            .join("helpers")
+            .join(AVF_LINUX_EGRESS_PROXY_HELPER);
+        let expected_guest_agent = runtime
+            .runtime_root
+            .join("helpers")
+            .join(AVF_LINUX_GUEST_AGENT_HELPER);
         assert!(runtime.rootfs_image.exists());
         assert!(runtime.kernel_path.exists());
         assert!(runtime.initrd_path.exists());
+        assert_eq!(runtime.guest_agent_path, Some(expected_guest_agent));
+        assert_eq!(runtime.egress_proxy_path, Some(expected_egress_proxy));
         assert!(avf_linux_runtime_is_ready(&runtime));
 
         archive_server.abort();
         kernel_server.abort();
         initrd_server.abort();
+        guest_agent_server.abort();
+        egress_proxy_server.abort();
     }
 
     #[tokio::test]
@@ -1233,6 +1430,20 @@ mod tests {
             .expect("write bundled kernel");
         std::fs::write(runtime_root.join("helpers").join("initrd"), b"initrd")
             .expect("write bundled initrd");
+        std::fs::write(
+            runtime_root
+                .join("helpers")
+                .join(AVF_LINUX_GUEST_AGENT_HELPER),
+            b"guest-agent",
+        )
+        .expect("write bundled guest agent");
+        std::fs::write(
+            runtime_root
+                .join("helpers")
+                .join(AVF_LINUX_EGRESS_PROXY_HELPER),
+            b"egress-proxy",
+        )
+        .expect("write bundled egress proxy");
 
         let manifest = bundled_assets::BundledAssetsManifest {
             version: 1,
@@ -1279,6 +1490,22 @@ mod tests {
             runtime_root.join("helpers").join("initrd")
         );
         assert_eq!(
+            runtime.guest_agent_path,
+            Some(
+                runtime_root
+                    .join("helpers")
+                    .join(AVF_LINUX_GUEST_AGENT_HELPER)
+            )
+        );
+        assert_eq!(
+            runtime.egress_proxy_path,
+            Some(
+                runtime_root
+                    .join("helpers")
+                    .join(AVF_LINUX_EGRESS_PROXY_HELPER)
+            )
+        );
+        assert_eq!(
             runtime_target_label(),
             format!("{AVF_LINUX_GUEST_RUNTIME_ID}:bundled:bundled-test")
         );
@@ -1316,6 +1543,7 @@ mod tests {
             kernel_path,
             initrd_path,
             guest_agent_path: None,
+            egress_proxy_path: None,
             version: "ubuntu-minimal-test".to_string(),
             managed: false,
         };
@@ -1363,6 +1591,7 @@ mod tests {
             kernel_path,
             initrd_path,
             guest_agent_path: None,
+            egress_proxy_path: None,
             version: "ubuntu-minimal-test".to_string(),
             managed: false,
         };

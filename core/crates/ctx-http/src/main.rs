@@ -30,8 +30,8 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Serve {
-        #[arg(long, default_value = "127.0.0.1:4399")]
-        bind: String,
+        #[arg(long, action = clap::ArgAction::Append)]
+        bind: Vec<String>,
         #[arg(long)]
         data_dir: Option<String>,
     },

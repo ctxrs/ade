@@ -654,3 +654,51 @@ fn trimmed_nonempty(value: &str) -> Option<String> {
         Some(trimmed.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn update_execution_config_can_leave_runtime_unspecified() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db_path = temp.path().join("db.sqlite");
+        let store = Store::open_sqlite(&db_path, None)
+            .await
+            .expect("open sqlite store");
+
+        update_execution_config(
+            &store,
+            ExecutionConfigUpdate {
+                environment: ExecutionEnvironment::ContainerDiskIsolated,
+                runtime: None,
+                network_mode: Some(ContainerNetworkMode::LlmOnly),
+                allowlist: Some(vec![" api.openai.com ".to_string(), "".to_string()]),
+                image: None,
+            },
+        )
+        .await
+        .expect("update execution config");
+
+        let loaded = load_execution_settings_override(&store)
+            .await
+            .expect("load override")
+            .expect("execution override");
+        assert_eq!(loaded.mode, Some(ExecutionMode::Container));
+        assert_eq!(
+            loaded.container.mount_mode,
+            Some(ContainerMountMode::DiskIsolated)
+        );
+        assert_eq!(loaded.container.runtime, None);
+        assert_eq!(
+            loaded.container.network_mode,
+            Some(ContainerNetworkMode::LlmOnly)
+        );
+        assert_eq!(
+            loaded.container.allowlist,
+            Some(vec!["api.openai.com".to_string()])
+        );
+
+        store.close().await;
+    }
+}

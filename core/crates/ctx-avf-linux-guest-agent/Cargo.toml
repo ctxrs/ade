@@ -9,3 +9,4 @@ libc = "0.2"
 portable-pty = "0.9"
 serde.workspace = true
 serde_json.workspace = true
+shell-words = "1.1.1"

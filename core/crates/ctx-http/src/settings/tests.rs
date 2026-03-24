@@ -19,6 +19,10 @@ fn network_profiles_defaults_are_safe_for_system_tasks() {
 #[test]
 fn container_machine_defaults_are_stable() {
     let settings = ContainerExecutionSettings::default();
+    #[cfg(target_os = "macos")]
+    assert_eq!(settings.runtime, ContainerRuntimeKind::AvfLinuxVm);
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(settings.runtime, ContainerRuntimeKind::Podman);
     assert_eq!(
         settings.machine.memory_profile,
         ContainerMachineMemoryProfile::Economy

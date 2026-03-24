@@ -15,7 +15,7 @@ use std::process::{Command, Stdio};
 #[cfg(target_os = "macos")]
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -30,17 +30,18 @@ use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
 use objc2::{AnyThread, ClassType};
 #[cfg(target_os = "macos")]
-use objc2_foundation::{NSArray, NSError, NSString, NSURL};
+use objc2_foundation::{NSArray, NSData, NSError, NSString, NSURL};
 #[cfg(target_os = "macos")]
 use objc2_virtualization::{
     VZDiskImageCachingMode, VZDiskImageStorageDeviceAttachment, VZDiskImageSynchronizationMode,
-    VZFileSerialPortAttachment, VZGenericPlatformConfiguration, VZLinuxBootLoader,
-    VZMemoryBalloonDeviceConfiguration, VZNATNetworkDeviceAttachment, VZNetworkDeviceConfiguration,
-    VZSerialPortConfiguration, VZSocketDeviceConfiguration, VZStorageDeviceConfiguration,
-    VZVirtioBlockDeviceConfiguration, VZVirtioConsoleDeviceSerialPortConfiguration,
-    VZVirtioNetworkDeviceConfiguration, VZVirtioSocketConnection, VZVirtioSocketDevice,
-    VZVirtioSocketDeviceConfiguration, VZVirtioTraditionalMemoryBalloonDeviceConfiguration,
-    VZVirtualMachine, VZVirtualMachineConfiguration, VZVirtualMachineState,
+    VZFileSerialPortAttachment, VZGenericMachineIdentifier, VZGenericPlatformConfiguration,
+    VZLinuxBootLoader, VZMACAddress, VZMemoryBalloonDeviceConfiguration,
+    VZNATNetworkDeviceAttachment, VZNetworkDeviceConfiguration, VZSerialPortConfiguration,
+    VZSocketDeviceConfiguration, VZStorageDeviceConfiguration, VZVirtioBlockDeviceConfiguration,
+    VZVirtioConsoleDeviceSerialPortConfiguration, VZVirtioNetworkDeviceConfiguration,
+    VZVirtioSocketConnection, VZVirtioSocketDevice, VZVirtioSocketDeviceConfiguration,
+    VZVirtioTraditionalMemoryBalloonDeviceConfiguration, VZVirtualMachine,
+    VZVirtualMachineConfiguration, VZVirtualMachineState,
 };
 use portable_pty::{CommandBuilder as PtyCommandBuilder, NativePtySystem, PtySize, PtySystem};
 use serde::{Deserialize, Serialize};
@@ -58,6 +59,8 @@ const SHARED_VM_LOG_FILE: &str = "shared-vm.log";
 const SHARED_VM_CONTROL_SOCKET_FILE: &str = "shared-vm-control.sock";
 const SHARED_VM_GUEST_AGENT_SOCKET_FILE: &str = "shared-vm-guest-agent.sock";
 const SHARED_VM_KERNEL_CMDLINE_FILE: &str = "kernel-cmdline";
+const SHARED_VM_SAVED_STATE_FILE: &str = "saved-machine-state.vzvmsave";
+const SHARED_VM_SHUTDOWN_REQUEST_FILE: &str = "shutdown-request";
 const GUEST_WORKTREES_DIR: &str = "worktrees";
 const GUEST_WORKTREE_METADATA_FILE: &str = "worktree.json";
 const GUEST_WORKTREE_SHADOW_DIR: &str = "shadow-root";
@@ -67,6 +70,7 @@ const GUEST_WORKSPACE_CACHE_ROOT: &str = "/ctx/cache";
 const GUEST_WORKSPACE_TMP_ROOT: &str = "/ctx/tmp";
 const GUEST_WORKSPACE_USER_PREFIX: &str = "ctx-ws-";
 const AVF_LINUX_GUEST_AGENT_HELPER: &str = "guest-agent";
+const AVF_LINUX_EGRESS_PROXY_HELPER: &str = "egress-proxy";
 const SHARED_VM_CLOUD_INIT_DIR: &str = "cloud-init";
 const SHARED_VM_CLOUD_INIT_META_DATA_FILE: &str = "meta-data";
 const SHARED_VM_CLOUD_INIT_USER_DATA_FILE: &str = "user-data";
@@ -78,6 +82,8 @@ const SHARED_VM_BOOT_DIR: &str = "boot";
 const SHARED_VM_BOOT_KERNEL_FILE: &str = "kernel";
 const SHARED_VM_DISK_DIR: &str = "disk";
 const SHARED_VM_ROOTFS_FILE: &str = "rootfs.raw";
+const SHARED_VM_MACHINE_IDENTIFIER_FILE: &str = "machine-identifier.bin";
+const SHARED_VM_MAC_ADDRESS_FILE: &str = "mac-address.txt";
 const SHARED_VM_GUEST_CONSOLE_LOG_FILE: &str = "guest-console.log";
 #[cfg(target_os = "macos")]
 const SHARED_VM_GUEST_CONTROL_VSOCK_PORT: u32 = 47001;
@@ -88,6 +94,7 @@ const GUEST_EXEC_CONNECT_RETRY_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(100);
 const GUEST_EXEC_TTY_RESIZE_POLL_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(100);
+const SHARED_VM_SHUTDOWN_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
 const DEFAULT_PTY_COLS: u16 = 80;
 const DEFAULT_PTY_ROWS: u16 = 24;
 const REQUIRED_SHARED_VM_KERNEL_CMDLINE_TOKENS: &[&str] =
@@ -161,6 +168,9 @@ struct AvfLinuxSharedVmStateResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     log_path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    saved_state_path: Option<PathBuf>,
+    saved_state_exists: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     runtime_root: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     rootfs_image: Option<PathBuf>,
@@ -174,6 +184,8 @@ struct AvfLinuxSharedVmStateResponse {
     updated_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_saved_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_stopped_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -203,6 +215,8 @@ struct PersistedSharedVmState {
     updated_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_saved_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_stopped_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -264,12 +278,12 @@ fn run() -> Result<()> {
             ensure_no_extra_args(args)?;
             write_json(&prepare_runtime_layout(&data_root)?)
         }
-        Some("shared-vm-state") => {
+        Some("shared-vm-state") | Some("workspace-vm-state") => {
             let data_root = required_path_arg(args.next(), "data_root")?;
             ensure_no_extra_args(args)?;
             write_json(&shared_vm_state(&data_root)?)
         }
-        Some("start-shared-vm") => {
+        Some("start-shared-vm") | Some("start-workspace-vm") => {
             let data_root = required_path_arg(args.next(), "data_root")?;
             let runtime_root = required_path_arg(args.next(), "runtime_root")?;
             let rootfs_image = required_path_arg(args.next(), "rootfs_image")?;
@@ -286,7 +300,7 @@ fn run() -> Result<()> {
                 runtime_version,
             )?)
         }
-        Some("stop-shared-vm") => {
+        Some("stop-shared-vm") | Some("stop-workspace-vm") => {
             let data_root = required_path_arg(args.next(), "data_root")?;
             ensure_no_extra_args(args)?;
             write_json(&stop_shared_vm(&data_root)?)
@@ -308,7 +322,7 @@ fn run() -> Result<()> {
                 &branch_name,
             )?)
         }
-        Some("serve-shared-vm") => {
+        Some("serve-shared-vm") | Some("serve-workspace-vm") => {
             let data_root = required_path_arg(args.next(), "data_root")?;
             ensure_no_extra_args(args)?;
             serve_shared_vm(&data_root)
@@ -318,7 +332,7 @@ fn run() -> Result<()> {
             ensure_no_extra_args(args)?;
             serve_guest_agent(&data_root)
         }
-        Some("run-shared-vm") => {
+        Some("run-shared-vm") | Some("run-workspace-vm") => {
             let data_root = required_path_arg(args.next(), "data_root")?;
             ensure_no_extra_args(args)?;
             run_shared_vm(&data_root)
@@ -371,7 +385,7 @@ fn run() -> Result<()> {
         }
         Some(other) => bail!("unsupported ctx-avf-linux-helper command: {other}"),
         None => bail!(
-            "usage: ctx-avf-linux-helper <probe|prepare-runtime-layout|shared-vm-state|start-shared-vm|stop-shared-vm|prepare-guest-worktree|serve-shared-vm|serve-guest-agent|run-shared-vm|guest-exec> ..."
+            "usage: ctx-avf-linux-helper <probe|prepare-runtime-layout|workspace-vm-state|start-workspace-vm|stop-workspace-vm|prepare-guest-worktree|serve-workspace-vm|serve-guest-agent|run-workspace-vm|guest-exec> ..."
         ),
     }
 }
@@ -390,7 +404,9 @@ fn build_probe() -> AvfLinuxHelperProbe {
         notes.push("AVF Linux helper is only usable on macOS hosts".to_string());
     }
     if cfg!(target_arch = "aarch64") {
-        notes.push("Apple silicon host detected; save/restore and Rosetta-backed Linux guests can be enabled later".to_string());
+        notes.push(
+            "Apple silicon host detected; save/restore and Rosetta-backed Linux guests are available when the runtime and VM configuration support them".to_string(),
+        );
     } else {
         notes.push(
             "Intel Mac host detected; save/restore is expected to remain unavailable".to_string(),
@@ -404,10 +420,28 @@ fn build_probe() -> AvfLinuxHelperProbe {
         host_os: std::env::consts::OS,
         host_arch: std::env::consts::ARCH,
         supported: cfg!(target_os = "macos"),
-        save_restore_supported: cfg!(all(target_os = "macos", target_arch = "aarch64")),
+        save_restore_supported: shared_vm_save_restore_supported(),
         rosetta_supported: cfg!(all(target_os = "macos", target_arch = "aarch64")),
         notes,
     }
+}
+
+fn shared_vm_save_restore_supported() -> bool {
+    cfg!(all(target_os = "macos", target_arch = "aarch64")) && macos_major_version_at_least(14)
+}
+
+fn macos_major_version_at_least(required_major: u64) -> bool {
+    let Some(version) = macos_product_version() else {
+        return false;
+    };
+    let Some(major) = version
+        .split('.')
+        .next()
+        .and_then(|segment| segment.parse::<u64>().ok())
+    else {
+        return false;
+    };
+    major >= required_major
 }
 
 #[cfg(target_os = "macos")]
@@ -637,7 +671,9 @@ fn validate_real_avf_linux_vm_configuration(
 
     let nat_attachment = unsafe { VZNATNetworkDeviceAttachment::new() };
     let network_device = unsafe { VZVirtioNetworkDeviceConfiguration::new() };
-    unsafe { network_device.setAttachment(Some(nat_attachment.as_super())) };
+    unsafe {
+        network_device.setAttachment(Some(nat_attachment.as_super()));
+    }
     let network_devices: Retained<NSArray<VZNetworkDeviceConfiguration>> =
         NSArray::from_slice(&[network_device.as_super()]);
 
@@ -670,11 +706,74 @@ fn validate_real_avf_linux_vm_configuration(
             .map_err(|err| anyhow::anyhow!(format_nserror(&err)))?;
     }
 
+    let save_restore_note = if shared_vm_save_restore_supported() {
+        #[cfg(target_arch = "aarch64")]
+        {
+            match unsafe { configuration.validateSaveRestoreSupportWithError() } {
+                Ok(()) => "save/restore supported".to_string(),
+                Err(err) => format!(
+                    "save/restore unavailable for this VM configuration: {}",
+                    format_nserror(&err)
+                ),
+            }
+        }
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            "save/restore unavailable on this host".to_string()
+        }
+    } else {
+        "save/restore unavailable on this host".to_string()
+    };
+
     Ok(format!(
-        "native AVF configuration validated (cpu={}, memory={} MiB)",
+        "native AVF configuration validated (cpu={}, memory={} MiB; {})",
         cpu_count,
-        target_memory / (1024 * 1024)
+        target_memory / (1024 * 1024),
+        save_restore_note,
     ))
+}
+
+#[cfg(target_os = "macos")]
+fn load_or_create_shared_vm_machine_identifier(
+    data_root: &Path,
+) -> Result<Retained<VZGenericMachineIdentifier>> {
+    let path = shared_vm_machine_identifier_path(data_root);
+    if path.is_file() {
+        let bytes = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+        let data = NSData::from_vec(bytes);
+        return unsafe {
+            VZGenericMachineIdentifier::initWithDataRepresentation(
+                VZGenericMachineIdentifier::alloc(),
+                &data,
+            )
+        }
+        .ok_or_else(|| anyhow::anyhow!("invalid AVF machine identifier at {}", path.display()));
+    }
+
+    let identifier = unsafe { VZGenericMachineIdentifier::new() };
+    let data = unsafe { identifier.dataRepresentation() };
+    fs::write(&path, data.to_vec()).with_context(|| format!("writing {}", path.display()))?;
+    Ok(identifier)
+}
+
+#[cfg(target_os = "macos")]
+fn load_or_create_shared_vm_mac_address(data_root: &Path) -> Result<Retained<VZMACAddress>> {
+    let path = shared_vm_mac_address_path(data_root);
+    if path.is_file() {
+        let raw =
+            fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let value = raw.trim();
+        let ns_value = NSString::from_str(value);
+        return unsafe { VZMACAddress::initWithString(VZMACAddress::alloc(), &ns_value) }
+            .ok_or_else(|| {
+                anyhow::anyhow!("invalid AVF MAC address `{value}` at {}", path.display())
+            });
+    }
+
+    let address = unsafe { VZMACAddress::randomLocallyAdministeredAddress() };
+    let address_string = unsafe { address.string() }.to_string();
+    fs::write(&path, address_string).with_context(|| format!("writing {}", path.display()))?;
+    Ok(address)
 }
 
 #[cfg(target_os = "macos")]
@@ -747,7 +846,11 @@ fn build_real_avf_linux_vm_configuration(
 
     let nat_attachment = unsafe { VZNATNetworkDeviceAttachment::new() };
     let network_device = unsafe { VZVirtioNetworkDeviceConfiguration::new() };
-    unsafe { network_device.setAttachment(Some(nat_attachment.as_super())) };
+    let mac_address = load_or_create_shared_vm_mac_address(data_root)?;
+    unsafe {
+        network_device.setAttachment(Some(nat_attachment.as_super()));
+        network_device.setMACAddress(&mac_address);
+    }
     let network_devices: Retained<NSArray<VZNetworkDeviceConfiguration>> =
         NSArray::from_slice(&[network_device.as_super()]);
 
@@ -781,6 +884,7 @@ fn build_real_avf_linux_vm_configuration(
 
     let configuration = unsafe { VZVirtualMachineConfiguration::new() };
     let platform = unsafe { VZGenericPlatformConfiguration::new() };
+    let machine_identifier = load_or_create_shared_vm_machine_identifier(data_root)?;
     let min_cpu = unsafe { VZVirtualMachineConfiguration::minimumAllowedCPUCount() };
     let max_cpu = unsafe { VZVirtualMachineConfiguration::maximumAllowedCPUCount() };
     let cpu_count = min_cpu.max(2).min(max_cpu);
@@ -789,6 +893,7 @@ fn build_real_avf_linux_vm_configuration(
     let target_memory = (4 * 1024 * 1024 * 1024_u64).max(min_memory).min(max_memory);
     unsafe {
         configuration.setBootLoader(Some(boot_loader.as_super()));
+        platform.setMachineIdentifier(&machine_identifier);
         configuration.setPlatform(platform.as_super());
         configuration.setCPUCount(cpu_count);
         configuration.setMemorySize(target_memory);
@@ -829,34 +934,6 @@ fn build_real_avf_linux_virtual_machine(
             queue,
         )
     })
-}
-
-#[cfg(target_os = "macos")]
-fn run_vm_completion_handler<F>(label: &str, invoke: F) -> Result<()>
-where
-    F: FnOnce(&RcBlock<dyn Fn(*mut NSError)>),
-{
-    let (sender, receiver) = mpsc::sync_channel(1);
-    let completion = RcBlock::new(move |error: *mut NSError| {
-        let result = if error.is_null() {
-            Ok(())
-        } else {
-            let error = unsafe { &*error };
-            Err(anyhow::anyhow!(format_nserror(error)))
-        };
-        let _ = sender.send(result);
-    });
-    invoke(&completion);
-    match receiver.recv_timeout(GUEST_EXEC_CONNECT_TIMEOUT) {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(err)) => Err(err).with_context(|| label.to_string()),
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            bail!("{label} timed out waiting for completion")
-        }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            bail!("{label} completion handler disconnected unexpectedly")
-        }
-    }
 }
 
 #[cfg(target_os = "macos")]
@@ -914,6 +991,162 @@ fn start_virtual_machine_on_queue(
     }
 }
 
+#[cfg(target_os = "macos")]
+fn run_vm_completion_on_queue<F>(queue: &DispatchQueue, label: &str, invoke: F) -> Result<()>
+where
+    F: Send + FnOnce(&RcBlock<dyn Fn(*mut NSError)>) + 'static,
+{
+    let (sender, receiver) = mpsc::sync_channel(1);
+    queue.exec_async(move || {
+        let completion = RcBlock::new(move |error: *mut NSError| {
+            let result = if error.is_null() {
+                Ok(())
+            } else {
+                let error = unsafe { &*error };
+                Err(anyhow::anyhow!(format_nserror(error)))
+            };
+            let _ = sender.send(result);
+        });
+        invoke(&completion);
+    });
+    match receiver.recv_timeout(GUEST_EXEC_CONNECT_TIMEOUT) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(err)) => Err(err).context(label.to_string()),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            bail!("{label} timed out waiting for completion")
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            bail!("{label} completion handler disconnected unexpectedly")
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn pause_virtual_machine_on_queue(
+    queue: &DispatchQueue,
+    virtual_machine: *const VZVirtualMachine,
+) -> Result<()> {
+    let virtual_machine_addr = virtual_machine as usize;
+    run_vm_completion_on_queue(queue, "shared AVF Linux VM pause", move |completion| {
+        let virtual_machine = unsafe { &*(virtual_machine_addr as *const VZVirtualMachine) };
+        unsafe {
+            virtual_machine.pauseWithCompletionHandler(completion);
+        }
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn resume_virtual_machine_on_queue(
+    queue: &DispatchQueue,
+    virtual_machine: *const VZVirtualMachine,
+) -> Result<()> {
+    let virtual_machine_addr = virtual_machine as usize;
+    run_vm_completion_on_queue(queue, "shared AVF Linux VM resume", move |completion| {
+        let virtual_machine = unsafe { &*(virtual_machine_addr as *const VZVirtualMachine) };
+        unsafe {
+            virtual_machine.resumeWithCompletionHandler(completion);
+        }
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn stop_virtual_machine_on_queue(
+    queue: &DispatchQueue,
+    virtual_machine: *const VZVirtualMachine,
+) -> Result<()> {
+    let virtual_machine_addr = virtual_machine as usize;
+    run_vm_completion_on_queue(queue, "shared AVF Linux VM stop", move |completion| {
+        let virtual_machine = unsafe { &*(virtual_machine_addr as *const VZVirtualMachine) };
+        unsafe {
+            virtual_machine.stopWithCompletionHandler(completion);
+        }
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn virtual_machine_state_on_queue(
+    queue: &DispatchQueue,
+    virtual_machine: *const VZVirtualMachine,
+) -> Result<VZVirtualMachineState> {
+    let virtual_machine_addr = virtual_machine as usize;
+    exec_on_dispatch_queue(
+        queue,
+        "shared AVF Linux VM state dispatch",
+        move || unsafe {
+            let virtual_machine = &*(virtual_machine_addr as *const VZVirtualMachine);
+            virtual_machine.state()
+        },
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn virtual_machine_can_stop_on_queue(
+    queue: &DispatchQueue,
+    virtual_machine: *const VZVirtualMachine,
+) -> Result<bool> {
+    let virtual_machine_addr = virtual_machine as usize;
+    exec_on_dispatch_queue(
+        queue,
+        "shared AVF Linux VM canStop dispatch",
+        move || unsafe {
+            let virtual_machine = &*(virtual_machine_addr as *const VZVirtualMachine);
+            virtual_machine.canStop()
+        },
+    )
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn save_virtual_machine_state_on_queue(
+    queue: &DispatchQueue,
+    virtual_machine: *const VZVirtualMachine,
+    save_path: &Path,
+) -> Result<()> {
+    let virtual_machine_addr = virtual_machine as usize;
+    let save_path = save_path.to_path_buf();
+    run_vm_completion_on_queue(queue, "shared AVF Linux VM save", move |completion| {
+        let virtual_machine = unsafe { &*(virtual_machine_addr as *const VZVirtualMachine) };
+        let save_url = file_url_for_path(&save_path);
+        unsafe {
+            virtual_machine.saveMachineStateToURL_completionHandler(&save_url, completion);
+        }
+    })
+}
+
+#[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
+fn save_virtual_machine_state_on_queue(
+    _queue: &DispatchQueue,
+    _virtual_machine: *const VZVirtualMachine,
+    _save_path: &Path,
+) -> Result<()> {
+    bail!("AVF Linux VM save/restore requires an Apple silicon macOS host");
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn restore_virtual_machine_state_on_queue(
+    queue: &DispatchQueue,
+    virtual_machine: *const VZVirtualMachine,
+    save_path: &Path,
+) -> Result<()> {
+    let virtual_machine_addr = virtual_machine as usize;
+    let save_path = save_path.to_path_buf();
+    run_vm_completion_on_queue(queue, "shared AVF Linux VM restore", move |completion| {
+        let virtual_machine = unsafe { &*(virtual_machine_addr as *const VZVirtualMachine) };
+        let save_url = file_url_for_path(&save_path);
+        unsafe {
+            virtual_machine.restoreMachineStateFromURL_completionHandler(&save_url, completion);
+        }
+    })
+}
+
+#[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
+fn restore_virtual_machine_state_on_queue(
+    _queue: &DispatchQueue,
+    _virtual_machine: *const VZVirtualMachine,
+    _save_path: &Path,
+) -> Result<()> {
+    bail!("AVF Linux VM save/restore requires an Apple silicon macOS host");
+}
+
 #[cfg(not(target_os = "macos"))]
 fn validate_real_avf_linux_vm_configuration(
     _rootfs_image: &Path,
@@ -955,6 +1188,7 @@ fn prepare_runtime_layout(data_root: &Path) -> Result<AvfLinuxRuntimeLayout> {
             runtime_version: None,
             updated_at: Some(now_timestamp_string()),
             last_started_at: None,
+            last_saved_at: None,
             last_stopped_at: None,
             transition_status: None,
             relay_pid: None,
@@ -1035,6 +1269,12 @@ fn shared_vm_guest_agent_helper_path(runtime_root: &Path) -> PathBuf {
         .join(AVF_LINUX_GUEST_AGENT_HELPER)
 }
 
+fn shared_vm_egress_proxy_helper_path(runtime_root: &Path) -> PathBuf {
+    runtime_root
+        .join("helpers")
+        .join(AVF_LINUX_EGRESS_PROXY_HELPER)
+}
+
 fn shared_vm_runtime_supports_real_guest_exec(runtime_root: &Path) -> (bool, String) {
     let guest_agent_path = shared_vm_guest_agent_helper_path(runtime_root);
     if guest_agent_path.is_file() {
@@ -1111,8 +1351,27 @@ fn start_shared_vm(
     };
 
     let _ = prepare_runtime_layout(data_root)?;
+    clear_shared_vm_shutdown_request(data_root);
     let state_path = shared_vm_state_path(data_root);
     let mut state = load_state(&state_path)?.unwrap_or_else(default_stopped_state);
+    let saved_state_path = shared_vm_saved_state_path(data_root);
+    let runtime_shape_changed = state.runtime_version.as_deref() != Some(runtime_version.as_str())
+        || state.rootfs_image.as_ref() != Some(&staged_rootfs_image)
+        || state.kernel_path.as_ref() != Some(&boot_kernel_path)
+        || state.initrd_path.as_ref().map(PathBuf::as_path) != Some(initrd_path);
+    let mut stale_saved_state_note = None;
+    if runtime_shape_changed && saved_state_path.exists() {
+        fs::remove_file(&saved_state_path).with_context(|| {
+            format!(
+                "removing stale saved AVF Linux VM state {}",
+                saved_state_path.display()
+            )
+        })?;
+        stale_saved_state_note = Some(format!(
+            "discarded saved workspace VM state at {} because the staged runtime changed",
+            saved_state_path.display()
+        ));
+    }
     let owner_alive = state.relay_pid.is_some_and(shared_vm_server_process_alive);
     let guest_alive = state
         .guest_agent_pid
@@ -1131,6 +1390,9 @@ fn start_shared_vm(
         state.runtime_version = Some(runtime_version);
         state.updated_at = Some(now_timestamp_string());
         state.last_started_at = state.updated_at.clone();
+        if stale_saved_state_note.is_some() {
+            state.last_saved_at = None;
+        }
         state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Scaffolded);
         state.notes = vec![if state.simulated {
             "shared VM relay and guest-agent processes were already alive; reusing the simulated shared VM"
@@ -1146,6 +1408,9 @@ fn start_shared_vm(
         }
         state.notes.push(real_vm_support_note.clone());
         if let Some(note) = native_validation_note.clone() {
+            state.notes.push(note);
+        }
+        if let Some(note) = stale_saved_state_note.clone() {
             state.notes.push(note);
         }
         persist_state(&state_path, &state)?;
@@ -1164,6 +1429,9 @@ fn start_shared_vm(
     state.runtime_version = Some(runtime_version.clone());
     state.updated_at = Some(now_timestamp_string());
     state.last_started_at = None;
+    if stale_saved_state_note.is_some() {
+        state.last_saved_at = None;
+    }
     state.transition_status = None;
     state.relay_pid = None;
     state.guest_agent_pid = None;
@@ -1230,6 +1498,9 @@ fn start_shared_vm(
     if let Some(note) = native_validation_note {
         notes.push(note);
     }
+    if let Some(note) = stale_saved_state_note {
+        notes.push(note);
+    }
     state.notes = notes;
     persist_state(&state_path, &state)?;
     shared_vm_state(data_root)
@@ -1246,6 +1517,8 @@ fn stop_shared_vm(data_root: &Path) -> Result<AvfLinuxSharedVmStateResponse> {
             logs_root: shared_vm_logs_root(data_root),
             state_path,
             log_path: Some(shared_vm_log_path(data_root)),
+            saved_state_path: Some(shared_vm_saved_state_path(data_root)),
+            saved_state_exists: shared_vm_saved_state_path(data_root).exists(),
             runtime_root: None,
             rootfs_image: None,
             kernel_path: None,
@@ -1253,6 +1526,7 @@ fn stop_shared_vm(data_root: &Path) -> Result<AvfLinuxSharedVmStateResponse> {
             runtime_version: None,
             updated_at: Some(now_timestamp_string()),
             last_started_at: None,
+            last_saved_at: None,
             last_stopped_at: None,
             transition_status: Some(AvfLinuxSharedVmTransitionStatus::Missing),
             relay_pid: None,
@@ -1261,12 +1535,33 @@ fn stop_shared_vm(data_root: &Path) -> Result<AvfLinuxSharedVmStateResponse> {
             notes: vec!["shared VM layout is missing; nothing to stop".to_string()],
         });
     };
+    if !state.simulated {
+        if let Some(owner_pid) = state.relay_pid {
+            request_shared_vm_shutdown(data_root)?;
+            if wait_for_process_exit(owner_pid, SHARED_VM_SHUTDOWN_WAIT_TIMEOUT) {
+                clear_shared_vm_shutdown_request(data_root);
+                let control_socket = shared_vm_control_socket_path(data_root);
+                if control_socket.exists() {
+                    let _ = fs::remove_file(&control_socket);
+                }
+                let guest_agent_socket = shared_vm_guest_agent_socket_path(data_root);
+                if guest_agent_socket.exists() {
+                    let _ = fs::remove_file(&guest_agent_socket);
+                }
+                let response = shared_vm_state(data_root)?;
+                if matches!(response.state, AvfLinuxSharedVmLifecycleState::Stopped) {
+                    return Ok(response);
+                }
+            }
+        }
+    }
     if let Some(pid) = state.relay_pid.take() {
         stop_shared_vm_server(pid);
     }
     if let Some(pid) = state.guest_agent_pid.take() {
         stop_shared_vm_server(pid);
     }
+    clear_shared_vm_shutdown_request(data_root);
     let control_socket = shared_vm_control_socket_path(data_root);
     if control_socket.exists() {
         let _ = fs::remove_file(&control_socket);
@@ -2109,6 +2404,96 @@ fn service_real_shared_vm_control_clients(
     }
 }
 
+#[cfg(target_os = "macos")]
+fn shutdown_real_shared_vm_for_exit(
+    queue: &DispatchQueue,
+    virtual_machine: &Retained<VZVirtualMachine>,
+    data_root: &Path,
+) -> String {
+    let virtual_machine_ptr = &**virtual_machine as *const VZVirtualMachine;
+    let mut notes = Vec::new();
+    let mut saved_state_written = false;
+    let initial_state = match virtual_machine_state_on_queue(queue, virtual_machine_ptr) {
+        Ok(state) => state,
+        Err(err) => return format!("failed to query workspace VM state before shutdown: {err:#}"),
+    };
+
+    if shared_vm_save_restore_supported() {
+        if matches!(
+            initial_state,
+            VZVirtualMachineState::Running | VZVirtualMachineState::Paused
+        ) {
+            if initial_state == VZVirtualMachineState::Running {
+                match pause_virtual_machine_on_queue(queue, virtual_machine_ptr) {
+                    Ok(()) => notes.push("paused workspace VM before save".to_string()),
+                    Err(err) => notes.push(format!("pause before save failed: {err:#}")),
+                }
+            }
+
+            match virtual_machine_state_on_queue(queue, virtual_machine_ptr) {
+                Ok(VZVirtualMachineState::Paused) => {
+                    let save_path = shared_vm_saved_state_path(data_root);
+                    if let Some(parent) = save_path.parent() {
+                        if let Err(err) = fs::create_dir_all(parent) {
+                            notes.push(format!(
+                                "failed to prepare saved-state directory {}: {err:#}",
+                                parent.display()
+                            ));
+                        }
+                    }
+                    let _ = fs::remove_file(&save_path);
+                    match save_virtual_machine_state_on_queue(
+                        queue,
+                        virtual_machine_ptr,
+                        &save_path,
+                    ) {
+                        Ok(()) => {
+                            saved_state_written = true;
+                            notes.push(format!(
+                                "saved workspace VM state to {}",
+                                save_path.display()
+                            ));
+                        }
+                        Err(err) => {
+                            notes.push(format!("saving workspace VM state failed: {err:#}"))
+                        }
+                    }
+                }
+                Ok(other) => notes.push(format!(
+                    "skipped save because workspace VM remained in state {other:?}"
+                )),
+                Err(err) => notes.push(format!(
+                    "failed to re-check workspace VM state before save: {err:#}"
+                )),
+            }
+        } else {
+            notes.push(format!(
+                "skipped save because workspace VM was in state {initial_state:?}"
+            ));
+        }
+    } else {
+        notes.push("save/restore unavailable on this host; stopping workspace VM cold".to_string());
+    }
+
+    if saved_state_written {
+        notes.push("workspace VM owner exited after save without an additional stop".to_string());
+        return notes.join("; ");
+    }
+
+    match virtual_machine_can_stop_on_queue(queue, virtual_machine_ptr) {
+        Ok(true) => match stop_virtual_machine_on_queue(queue, virtual_machine_ptr) {
+            Ok(()) => notes.push("stopped workspace VM owner cleanly".to_string()),
+            Err(err) => notes.push(format!("workspace VM stop failed: {err:#}")),
+        },
+        Ok(false) => notes.push("workspace VM owner could not issue a clean stop".to_string()),
+        Err(err) => notes.push(format!(
+            "failed to check whether workspace VM could stop: {err:#}"
+        )),
+    }
+
+    notes.join("; ")
+}
+
 fn wrap_cloud_init_base64(bytes: &[u8]) -> String {
     let encoded = BASE64_STANDARD.encode(bytes);
     let mut wrapped = String::new();
@@ -2146,20 +2531,36 @@ fn hash_shared_vm_seed_component(bytes: &[u8]) -> String {
     format!("{hash:016x}")
 }
 
-fn render_shared_vm_cloud_init_meta_data(guest_agent_bytes: &[u8]) -> String {
+fn render_shared_vm_cloud_init_meta_data(
+    guest_agent_bytes: &[u8],
+    egress_proxy_bytes: Option<&[u8]>,
+) -> String {
     let mut seed_material = Vec::with_capacity(guest_agent_bytes.len() + 256);
     seed_material.extend_from_slice(guest_agent_bytes);
+    if let Some(egress_proxy_bytes) = egress_proxy_bytes {
+        seed_material.extend_from_slice(egress_proxy_bytes);
+    }
     seed_material.extend_from_slice(render_shared_vm_guest_agent_service().as_bytes());
     let seed_hash = hash_shared_vm_seed_component(&seed_material);
     format!("instance-id: ctx-avf-linux-{seed_hash}\nlocal-hostname: ctx-avf-linux\n")
 }
 
-fn render_shared_vm_cloud_init_user_data(guest_agent_bytes: &[u8]) -> String {
+fn render_shared_vm_cloud_init_user_data(
+    guest_agent_bytes: &[u8],
+    egress_proxy_bytes: Option<&[u8]>,
+) -> String {
     let guest_agent_b64 = indent_cloud_init_block(&wrap_cloud_init_base64(guest_agent_bytes), 6);
     let service = indent_cloud_init_block(&render_shared_vm_guest_agent_service(), 6);
+    let egress_proxy_block = egress_proxy_bytes.map(|bytes| {
+        let egress_proxy_b64 = indent_cloud_init_block(&wrap_cloud_init_base64(bytes), 6);
+        format!(
+            "  - path: /usr/local/bin/ctx-egress-proxy\n    permissions: '0755'\n    encoding: b64\n    content: |\n{egress_proxy_b64}\n"
+        )
+    });
     format!(
-        "#cloud-config\nwrite_files:\n  - path: /usr/local/bin/ctx-avf-linux-guest-agent\n    permissions: '0755'\n    encoding: b64\n    content: |\n{guest_agent_b64}\n  - path: /etc/systemd/system/{service_name}\n    permissions: '0644'\n    content: |\n{service}\nruncmd:\n  - [ sh, -lc, 'echo \"[ctx-avf-linux] preparing {service_name}\" >/dev/hvc0; ls -l /usr/local/bin/ctx-avf-linux-guest-agent >/dev/hvc0 2>&1; ls -l /etc/systemd/system/{service_name} >/dev/hvc0 2>&1' ]\n  - [ systemctl, daemon-reload ]\n  - [ sh, -lc, 'systemctl enable --now {service_name} >/dev/hvc0 2>&1 || (systemctl status {service_name} --no-pager >/dev/hvc0 2>&1; exit 1)' ]\n",
+        "#cloud-config\nwrite_files:\n  - path: /usr/local/bin/ctx-avf-linux-guest-agent\n    permissions: '0755'\n    encoding: b64\n    content: |\n{guest_agent_b64}\n{egress_proxy_block}  - path: /etc/systemd/system/{service_name}\n    permissions: '0644'\n    content: |\n{service}\nruncmd:\n  - [ sh, -lc, 'echo \"[ctx-avf-linux] preparing {service_name}\" >/dev/hvc0; ls -l /usr/local/bin/ctx-avf-linux-guest-agent >/dev/hvc0 2>&1; ls -l /etc/systemd/system/{service_name} >/dev/hvc0 2>&1' ]\n  - [ systemctl, daemon-reload ]\n  - [ sh, -lc, 'systemctl enable --now {service_name} >/dev/hvc0 2>&1 || (systemctl status {service_name} --no-pager >/dev/hvc0 2>&1; exit 1)' ]\n",
         service_name = SHARED_VM_GUEST_AGENT_SERVICE_NAME,
+        egress_proxy_block = egress_proxy_block.unwrap_or_default(),
     )
 }
 
@@ -2170,10 +2571,16 @@ fn render_shared_vm_cloud_init_network_config() -> &'static str {
 fn stage_shared_vm_cloud_init_seed(
     data_root: &Path,
     runtime_root: &Path,
+    preserve_existing_image: bool,
 ) -> Result<Option<PathBuf>> {
     let guest_agent_path = shared_vm_guest_agent_helper_path(runtime_root);
     if !guest_agent_path.is_file() {
         return Ok(None);
+    }
+    let egress_proxy_path = shared_vm_egress_proxy_helper_path(runtime_root);
+    let image_path = shared_vm_cloud_init_image_path(data_root);
+    if preserve_existing_image && image_path.is_file() {
+        return Ok(Some(image_path));
     }
 
     let seed_root = shared_vm_cloud_init_root(data_root);
@@ -2181,9 +2588,17 @@ fn stage_shared_vm_cloud_init_seed(
     fs::create_dir_all(&seed_root).with_context(|| format!("creating {}", seed_root.display()))?;
     let guest_agent_bytes = fs::read(&guest_agent_path)
         .with_context(|| format!("reading {}", guest_agent_path.display()))?;
+    let egress_proxy_bytes = if egress_proxy_path.is_file() {
+        Some(
+            fs::read(&egress_proxy_path)
+                .with_context(|| format!("reading {}", egress_proxy_path.display()))?,
+        )
+    } else {
+        None
+    };
     fs::write(
         shared_vm_cloud_init_meta_data_path(data_root),
-        render_shared_vm_cloud_init_meta_data(&guest_agent_bytes),
+        render_shared_vm_cloud_init_meta_data(&guest_agent_bytes, egress_proxy_bytes.as_deref()),
     )
     .with_context(|| {
         format!(
@@ -2193,7 +2608,7 @@ fn stage_shared_vm_cloud_init_seed(
     })?;
     fs::write(
         shared_vm_cloud_init_user_data_path(data_root),
-        render_shared_vm_cloud_init_user_data(&guest_agent_bytes),
+        render_shared_vm_cloud_init_user_data(&guest_agent_bytes, egress_proxy_bytes.as_deref()),
     )
     .with_context(|| {
         format!(
@@ -2212,7 +2627,6 @@ fn stage_shared_vm_cloud_init_seed(
         )
     })?;
 
-    let image_path = shared_vm_cloud_init_image_path(data_root);
     fs::remove_file(&image_path).ok();
     let image = std::fs::OpenOptions::new()
         .create(true)
@@ -2362,25 +2776,32 @@ fn detach_disk_image_device(device: &str) -> Result<()> {
 #[cfg(target_os = "macos")]
 fn run_shared_vm(data_root: &Path) -> Result<()> {
     let state_path = shared_vm_state_path(data_root);
-    let state = load_state(&state_path)?
+    let mut state = load_state(&state_path)?
         .ok_or_else(|| anyhow::anyhow!("shared VM state is missing at {}", state_path.display()))?;
     let rootfs_image = state
         .rootfs_image
+        .clone()
         .ok_or_else(|| anyhow::anyhow!("shared VM state is missing rootfs_image"))?;
     let kernel_path = state
         .kernel_path
+        .clone()
         .ok_or_else(|| anyhow::anyhow!("shared VM state is missing kernel_path"))?;
     let initrd_path = state
         .initrd_path
+        .clone()
         .ok_or_else(|| anyhow::anyhow!("shared VM state is missing initrd_path"))?;
     let runtime_root = state
         .runtime_root
+        .clone()
         .ok_or_else(|| anyhow::anyhow!("shared VM state is missing runtime_root"))?;
 
     let listener = bind_shared_vm_control_listener(data_root)?;
     listener
         .set_nonblocking(true)
         .context("setting shared VM control listener nonblocking")?;
+    let saved_state_path = shared_vm_saved_state_path(data_root);
+    let preserving_seed_for_restore =
+        shared_vm_save_restore_supported() && saved_state_path.is_file();
     append_shared_vm_log_line(
         data_root,
         &format!(
@@ -2390,12 +2811,18 @@ fn run_shared_vm(data_root: &Path) -> Result<()> {
             initrd_path.display()
         ),
     )?;
-    let seed_image = stage_shared_vm_cloud_init_seed(data_root, &runtime_root)?;
+    let seed_image =
+        stage_shared_vm_cloud_init_seed(data_root, &runtime_root, preserving_seed_for_restore)?;
     if let Some(seed_image) = seed_image.as_ref() {
+        let action = if preserving_seed_for_restore {
+            "reusing"
+        } else {
+            "staged"
+        };
         append_shared_vm_log_line(
             data_root,
             &format!(
-                "staged AVF cloud-init seed image at {}",
+                "{action} AVF cloud-init seed image at {}",
                 seed_image.display()
             ),
         )?;
@@ -2406,43 +2833,116 @@ fn run_shared_vm(data_root: &Path) -> Result<()> {
         "rs.ctx.desktop.avf-linux.shared-vm",
         DispatchQueueAttr::SERIAL,
     );
-    let virtual_machine = build_real_avf_linux_virtual_machine(
-        data_root,
-        &rootfs_image,
-        &kernel_path,
-        &initrd_path,
-        seed_image.as_deref(),
-        &kernel_cmdline,
-        &queue,
-    )?;
-    let virtual_machine_ptr = &*virtual_machine as *const VZVirtualMachine;
-    let virtual_machine_addr = virtual_machine_ptr as usize;
-    let can_start =
-        exec_on_dispatch_queue(&queue, "shared AVF Linux VM canStart", move || unsafe {
-            let virtual_machine_ptr = virtual_machine_addr as *const VZVirtualMachine;
-            (&*virtual_machine_ptr).canStart()
-        })?;
-    if !can_start {
-        bail!("shared AVF Linux VM cannot be started from its current state");
+    let build_virtual_machine = || {
+        build_real_avf_linux_virtual_machine(
+            data_root,
+            &rootfs_image,
+            &kernel_path,
+            &initrd_path,
+            seed_image.as_deref(),
+            &kernel_cmdline,
+            &queue,
+        )
+    };
+    let mut virtual_machine = build_virtual_machine()?;
+    let mut virtual_machine_ptr = &*virtual_machine as *const VZVirtualMachine;
+    let restored_from_saved_state = if shared_vm_save_restore_supported()
+        && saved_state_path.is_file()
+    {
+        append_shared_vm_log_line(
+            data_root,
+            &format!(
+                "attempting to restore saved workspace VM state from {}",
+                saved_state_path.display()
+            ),
+        )?;
+        match restore_virtual_machine_state_on_queue(&queue, virtual_machine_ptr, &saved_state_path)
+            .and_then(|_| resume_virtual_machine_on_queue(&queue, virtual_machine_ptr))
+        {
+            Ok(()) => {
+                append_shared_vm_log_line(
+                    data_root,
+                    &format!(
+                        "restored workspace VM state from {} and resumed the guest",
+                        saved_state_path.display()
+                    ),
+                )?;
+                true
+            }
+            Err(err) => {
+                append_shared_vm_log_line(
+                    data_root,
+                    &format!(
+                        "restoring saved workspace VM state from {} failed; falling back to a cold boot: {err:#}",
+                        saved_state_path.display()
+                    ),
+                )?;
+                let _ = fs::remove_file(&saved_state_path);
+                virtual_machine = build_virtual_machine()?;
+                virtual_machine_ptr = &*virtual_machine as *const VZVirtualMachine;
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    if !restored_from_saved_state {
+        let virtual_machine_addr = virtual_machine_ptr as usize;
+        let can_start =
+            exec_on_dispatch_queue(&queue, "shared AVF Linux VM canStart", move || unsafe {
+                let virtual_machine_ptr = virtual_machine_addr as *const VZVirtualMachine;
+                (&*virtual_machine_ptr).canStart()
+            })?;
+        if !can_start {
+            bail!("shared AVF Linux VM cannot be started from its current state");
+        }
+        start_virtual_machine_on_queue(&queue, virtual_machine_ptr)?;
+        append_shared_vm_log_line(
+            data_root,
+            &format!(
+                "real AVF Linux VM started successfully; forwarding host control socket {} to guest vsock port {}",
+                shared_vm_control_socket_path(data_root).display(),
+                SHARED_VM_GUEST_CONTROL_VSOCK_PORT
+            ),
+        )?;
+    } else {
+        append_shared_vm_log_line(
+            data_root,
+            &format!(
+                "real AVF Linux VM restored successfully; forwarding host control socket {} to guest vsock port {}",
+                shared_vm_control_socket_path(data_root).display(),
+                SHARED_VM_GUEST_CONTROL_VSOCK_PORT
+            ),
+        )?;
     }
-    start_virtual_machine_on_queue(&queue, virtual_machine_ptr)?;
-    append_shared_vm_log_line(
-        data_root,
-        &format!(
-            "real AVF Linux VM started successfully; forwarding host control socket {} to guest vsock port {}",
-            shared_vm_control_socket_path(data_root).display(),
-            SHARED_VM_GUEST_CONTROL_VSOCK_PORT
-        ),
-    )?;
 
     loop {
         service_real_shared_vm_control_clients(&queue, &virtual_machine, &listener, data_root)?;
-        let state_vm_addr = virtual_machine_addr;
-        let vm_state =
-            exec_on_dispatch_queue(&queue, "shared AVF Linux VM state poll", move || unsafe {
-                let state_vm_ptr = state_vm_addr as *const VZVirtualMachine;
-                (&*state_vm_ptr).state()
-            })?;
+        if shared_vm_shutdown_requested(data_root) {
+            let shutdown_note =
+                shutdown_real_shared_vm_for_exit(&queue, &virtual_machine, data_root);
+            clear_shared_vm_shutdown_request(data_root);
+            state.state = AvfLinuxSharedVmLifecycleState::Stopped;
+            state.simulated = false;
+            state.updated_at = Some(now_timestamp_string());
+            state.last_saved_at = shared_vm_saved_state_path(data_root)
+                .exists()
+                .then(|| state.updated_at.clone())
+                .flatten();
+            state.last_stopped_at = state.updated_at.clone();
+            state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Stopped);
+            state.relay_pid = None;
+            state.guest_agent_pid = None;
+            state.notes = vec![shutdown_note];
+            persist_state(&state_path, &state)?;
+            append_shared_vm_log_line(
+                data_root,
+                "shared AVF Linux VM owner honored a shutdown request and exited cleanly",
+            )?;
+            return Ok(());
+        }
+        let vm_state = virtual_machine_state_on_queue(&queue, virtual_machine_ptr)?;
         if matches!(
             vm_state,
             VZVirtualMachineState::Running
@@ -2463,6 +2963,21 @@ fn run_shared_vm(data_root: &Path) -> Result<()> {
             data_root,
             &format!("shared AVF Linux VM exited control loop with state {vm_state:?}"),
         )?;
+        state.state = AvfLinuxSharedVmLifecycleState::Stopped;
+        state.simulated = false;
+        state.updated_at = Some(now_timestamp_string());
+        state.last_saved_at = shared_vm_saved_state_path(data_root)
+            .exists()
+            .then(|| state.last_saved_at.clone())
+            .flatten();
+        state.last_stopped_at = state.updated_at.clone();
+        state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Stopped);
+        state.relay_pid = None;
+        state.guest_agent_pid = None;
+        state.notes = vec![format!(
+            "workspace VM owner exited its control loop with state {vm_state:?}"
+        )];
+        persist_state(&state_path, &state)?;
         return Ok(());
     }
 }
@@ -2487,14 +3002,18 @@ fn spawn_real_shared_vm_owner(data_root: &Path) -> Result<u32> {
         .try_clone()
         .with_context(|| format!("cloning {}", log_path.display()))?;
     let child = Command::new(current_exe)
-        .arg("run-shared-vm")
+        .arg("run-workspace-vm")
         .arg(data_root)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(log_file_err))
         .spawn()
-        .context("spawning shared AVF VM owner process")?;
+        .context("spawning workspace AVF VM owner process")?;
     wait_for_control_socket(data_root)?;
+    if let Err(err) = wait_for_real_guest_exec_ready(data_root) {
+        stop_shared_vm_server(child.id());
+        return Err(err);
+    }
     Ok(child.id())
 }
 
@@ -2513,13 +3032,13 @@ fn spawn_shared_vm_server(data_root: &Path) -> Result<u32> {
         .try_clone()
         .with_context(|| format!("cloning {}", log_path.display()))?;
     let child = Command::new(current_exe)
-        .arg("serve-shared-vm")
+        .arg("serve-workspace-vm")
         .arg(data_root)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(log_file_err))
         .spawn()
-        .context("spawning shared VM relay process")?;
+        .context("spawning workspace VM relay process")?;
     wait_for_control_socket(data_root)?;
     Ok(child.id())
 }
@@ -2580,6 +3099,92 @@ fn wait_for_guest_agent_socket(data_root: &Path) -> Result<()> {
     )
 }
 
+#[cfg(unix)]
+fn wait_for_real_guest_exec_ready(data_root: &Path) -> Result<()> {
+    let control_socket = shared_vm_control_socket_path(data_root);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut last_err: Option<anyhow::Error> = None;
+    while std::time::Instant::now() < deadline {
+        match run_guest_exec_capture(
+            &control_socket,
+            Path::new("/"),
+            "/bin/true",
+            &[],
+            None,
+            HashMap::new(),
+            None,
+        ) {
+            Ok(result) if result.exit_code == 0 => return Ok(()),
+            Ok(result) => {
+                let stderr = String::from_utf8_lossy(&result.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&result.stdout).trim().to_string();
+                last_err = Some(anyhow::anyhow!(
+                    "guest exec readiness probe exited {} (stdout='{}', stderr='{}')",
+                    result.exit_code,
+                    stdout,
+                    stderr
+                ));
+            }
+            Err(err) => {
+                last_err = Some(err);
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    Err(last_err.unwrap_or_else(|| {
+        anyhow::anyhow!(
+            "timed out waiting for real AVF guest exec readiness via {}",
+            control_socket.display()
+        )
+    }))
+}
+
+#[cfg(not(unix))]
+fn wait_for_real_guest_exec_ready(_data_root: &Path) -> Result<()> {
+    Ok(())
+}
+
+fn request_shared_vm_shutdown(data_root: &Path) -> Result<()> {
+    let path = shared_vm_shutdown_request_path(data_root);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    fs::write(&path, now_timestamp_string()).with_context(|| format!("writing {}", path.display()))
+}
+
+fn clear_shared_vm_shutdown_request(data_root: &Path) {
+    let path = shared_vm_shutdown_request_path(data_root);
+    if path.exists() {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn shared_vm_shutdown_requested(data_root: &Path) -> bool {
+    shared_vm_shutdown_request_path(data_root).exists()
+}
+
+fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if !shared_vm_server_process_alive(pid) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    !shared_vm_server_process_alive(pid)
+}
+
+#[cfg(unix)]
+fn shared_vm_server_process_alive(pid: u32) -> bool {
+    let result = unsafe { libc::kill(pid as i32, 0) };
+    if result == 0 {
+        return true;
+    }
+    let err = std::io::Error::last_os_error();
+    err.raw_os_error() != Some(libc::ESRCH)
+}
+
+#[cfg(not(unix))]
 fn shared_vm_server_process_alive(pid: u32) -> bool {
     Command::new("kill")
         .arg("-0")
@@ -2589,6 +3194,14 @@ fn shared_vm_server_process_alive(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(unix)]
+fn stop_shared_vm_server(pid: u32) {
+    unsafe {
+        libc::kill(pid as i32, libc::SIGTERM);
+    }
+}
+
+#[cfg(not(unix))]
 fn stop_shared_vm_server(pid: u32) {
     let _ = Command::new("kill")
         .arg("-TERM")
@@ -2655,11 +3268,63 @@ fn prepare_guest_worktree(
         if matches_request {
             if !shared_vm.simulated {
                 ensure_guest_workspace_user(data_root, &existing_guest_user)?;
-                finalize_guest_worktree_permissions(
+                if guest_directory_exists(data_root, &guest_root)? {
+                    finalize_guest_worktree_permissions(
+                        data_root,
+                        &guest_root,
+                        &existing_guest_user,
+                    )?;
+                    return Ok(map_guest_worktree_response(
+                        workspace_id,
+                        worktree_id,
+                        guest_root,
+                        existing_guest_user,
+                        host_shadow_root,
+                        metadata_path,
+                        AvfLinuxGuestWorktreeStatus::AlreadyPresent,
+                        existing.simulated,
+                        existing.notes,
+                    ));
+                }
+
+                materialize_guest_worktree_from_shadow_root(
                     data_root,
+                    &host_shadow_root,
                     &guest_root,
-                    &existing_guest_user,
                 )?;
+                finalize_guest_worktree_permissions(data_root, &guest_root, &existing_guest_user)?;
+
+                let mut notes = existing.notes;
+                notes.push(format!(
+                    "guest worktree was rematerialized at {} because the prior guest path was missing after VM restart",
+                    guest_root.display()
+                ));
+                let persisted = PersistedGuestWorktreeState {
+                    workspace_id: workspace_id.to_string(),
+                    worktree_id: worktree_id.to_string(),
+                    host_workspace_root: host_workspace_root.to_path_buf(),
+                    guest_root: guest_root.clone(),
+                    guest_user: existing_guest_user.clone(),
+                    host_shadow_root: host_shadow_root.clone(),
+                    base_commit_sha: base_commit_sha.to_string(),
+                    branch_name: branch_name.to_string(),
+                    updated_at: now_timestamp_string(),
+                    simulated: false,
+                    notes: notes.clone(),
+                };
+                persist_guest_worktree_state(&metadata_path, &persisted)?;
+
+                return Ok(map_guest_worktree_response(
+                    workspace_id,
+                    worktree_id,
+                    guest_root,
+                    existing_guest_user,
+                    host_shadow_root,
+                    metadata_path,
+                    AvfLinuxGuestWorktreeStatus::Prepared,
+                    false,
+                    notes,
+                ));
             }
             return Ok(map_guest_worktree_response(
                 workspace_id,
@@ -2741,6 +3406,25 @@ fn prepare_guest_worktree(
         simulated,
         notes,
     ))
+}
+
+fn guest_directory_exists(data_root: &Path, guest_path: &Path) -> Result<bool> {
+    let result = run_guest_exec_capture(
+        &shared_vm_control_socket_path(data_root),
+        Path::new("/"),
+        "/usr/bin/test",
+        &[String::from("-d"), guest_path.display().to_string()],
+        Some("root"),
+        HashMap::new(),
+        None,
+    )
+    .with_context(|| {
+        format!(
+            "checking whether guest path {} exists",
+            guest_path.display()
+        )
+    })?;
+    Ok(result.exit_code == 0)
 }
 
 fn guest_exec(
@@ -2928,7 +3612,10 @@ fn finalize_guest_worktree_permissions(
 ) -> Result<()> {
     let control_socket = shared_vm_control_socket_path(data_root);
     ensure_guest_exec_success(
-        &format!("setting guest worktree ownership on {}", guest_root.display()),
+        &format!(
+            "setting guest worktree ownership on {}",
+            guest_root.display()
+        ),
         run_guest_exec_capture(
             &control_socket,
             Path::new("/"),
@@ -3147,6 +3834,12 @@ fn materialize_guest_worktree_from_shadow_root(
             None,
         )?,
     )?;
+    if !guest_directory_exists(data_root, guest_root)? {
+        bail!(
+            "guest worktree root {} is still missing immediately after creation",
+            guest_root.display()
+        );
+    }
 
     let archive_path = stage_guest_worktree_archive_path(
         guest_root
@@ -3202,7 +3895,15 @@ fn materialize_guest_worktree_from_shadow_root(
             guest_root.display()
         ),
         import_result?,
-    )
+    )?;
+    if !guest_directory_exists(data_root, guest_root)? {
+        bail!(
+            "guest worktree root {} disappeared after importing staged worktree {}",
+            guest_root.display(),
+            host_shadow_root.display()
+        );
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -3448,6 +4149,7 @@ fn map_state_response(
     let state = persisted
         .map(|state| state.state)
         .unwrap_or(AvfLinuxSharedVmLifecycleState::Missing);
+    let saved_state_path = vm_root.join(SHARED_VM_SAVED_STATE_FILE);
     AvfLinuxSharedVmStateResponse {
         protocol_version: HELPER_PROTOCOL_VERSION,
         protocol_schema: HELPER_PROTOCOL_SCHEMA,
@@ -3456,6 +4158,8 @@ fn map_state_response(
         logs_root,
         state_path,
         log_path: Some(log_path),
+        saved_state_path: Some(saved_state_path.clone()),
+        saved_state_exists: saved_state_path.exists(),
         runtime_root: persisted.and_then(|state| state.runtime_root.clone()),
         rootfs_image: persisted.and_then(|state| state.rootfs_image.clone()),
         kernel_path: persisted.and_then(|state| state.kernel_path.clone()),
@@ -3463,6 +4167,7 @@ fn map_state_response(
         runtime_version: persisted.and_then(|state| state.runtime_version.clone()),
         updated_at: persisted.and_then(|state| state.updated_at.clone()),
         last_started_at: persisted.and_then(|state| state.last_started_at.clone()),
+        last_saved_at: persisted.and_then(|state| state.last_saved_at.clone()),
         last_stopped_at: persisted.and_then(|state| state.last_stopped_at.clone()),
         transition_status: persisted.and_then(|state| state.transition_status),
         relay_pid: persisted.and_then(|state| state.relay_pid),
@@ -3484,6 +4189,7 @@ fn default_stopped_state() -> PersistedSharedVmState {
         runtime_version: None,
         updated_at: Some(now_timestamp_string()),
         last_started_at: None,
+        last_saved_at: None,
         last_stopped_at: None,
         transition_status: None,
         relay_pid: None,
@@ -3551,6 +4257,22 @@ fn shared_vm_state_path(data_root: &Path) -> PathBuf {
 
 fn shared_vm_log_path(data_root: &Path) -> PathBuf {
     shared_vm_logs_root(data_root).join(SHARED_VM_LOG_FILE)
+}
+
+fn shared_vm_saved_state_path(data_root: &Path) -> PathBuf {
+    shared_vm_root(data_root).join(SHARED_VM_SAVED_STATE_FILE)
+}
+
+fn shared_vm_machine_identifier_path(data_root: &Path) -> PathBuf {
+    shared_vm_root(data_root).join(SHARED_VM_MACHINE_IDENTIFIER_FILE)
+}
+
+fn shared_vm_mac_address_path(data_root: &Path) -> PathBuf {
+    shared_vm_root(data_root).join(SHARED_VM_MAC_ADDRESS_FILE)
+}
+
+fn shared_vm_shutdown_request_path(data_root: &Path) -> PathBuf {
+    shared_vm_root(data_root).join(SHARED_VM_SHUTDOWN_REQUEST_FILE)
 }
 
 fn shared_vm_guest_console_log_path(data_root: &Path) -> PathBuf {
@@ -3833,9 +4555,11 @@ mod tests {
 
     #[test]
     fn cloud_init_user_data_embeds_guest_agent_and_service() {
-        let user_data = render_shared_vm_cloud_init_user_data(b"guest-agent");
+        let user_data =
+            render_shared_vm_cloud_init_user_data(b"guest-agent", Some(b"egress-proxy"));
         assert!(user_data.contains("#cloud-config"));
         assert!(user_data.contains("/usr/local/bin/ctx-avf-linux-guest-agent"));
+        assert!(user_data.contains("/usr/local/bin/ctx-egress-proxy"));
         assert!(user_data.contains(SHARED_VM_GUEST_AGENT_SERVICE_NAME));
         assert!(user_data.contains("systemctl enable --now ctx-avf-linux-guest-agent.service"));
         assert!(user_data.contains("StandardOutput=journal+console"));
@@ -3846,7 +4570,7 @@ mod tests {
             .lines()
             .skip_while(|line| *line != "    content: |")
             .skip(1)
-            .take_while(|line| !line.starts_with("  - path: /etc/systemd/system/"))
+            .take_while(|line| !line.starts_with("  - path: "))
             .collect::<Vec<_>>();
         assert!(!content_lines.is_empty());
         assert!(content_lines.iter().all(|line| line.starts_with("      ")));
@@ -3854,8 +4578,10 @@ mod tests {
 
     #[test]
     fn cloud_init_meta_data_changes_when_guest_payload_changes() {
-        let first = render_shared_vm_cloud_init_meta_data(b"guest-agent-a");
-        let second = render_shared_vm_cloud_init_meta_data(b"guest-agent-b");
+        let first =
+            render_shared_vm_cloud_init_meta_data(b"guest-agent-a", Some(b"egress-proxy-a"));
+        let second =
+            render_shared_vm_cloud_init_meta_data(b"guest-agent-b", Some(b"egress-proxy-b"));
         assert!(first.contains("instance-id: ctx-avf-linux-"));
         assert_ne!(first, second);
     }

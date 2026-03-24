@@ -110,6 +110,12 @@ pub(super) fn rewrite_daemon_url_for_container(daemon_url: &str, host: &str) -> 
     daemon_url.to_string()
 }
 
+pub(crate) const AVF_GUEST_HOST_GATEWAY: &str = "192.168.64.1";
+
+pub(super) fn rewrite_daemon_url_for_avf_guest(daemon_url: &str) -> String {
+    rewrite_daemon_url_for_container(daemon_url, AVF_GUEST_HOST_GATEWAY)
+}
+
 pub(super) fn daemon_port_from_url(daemon_url: &str) -> Option<u16> {
     Url::parse(daemon_url).ok()?.port_or_known_default()
 }

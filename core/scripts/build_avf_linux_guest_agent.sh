@@ -22,6 +22,8 @@ if ! command -v rustup >/dev/null 2>&1; then
   exit 1
 fi
 
+rustup_bin="$(command -v rustup)"
+
 if ! command -v zig >/dev/null 2>&1; then
   echo "error: zig not found; install zig first" >&2
   exit 1
@@ -37,20 +39,27 @@ targets=(
   "x86_64-unknown-linux-gnu"
 )
 
+packages=(
+  "ctx-avf-linux-guest-agent"
+  "ctx-egress-proxy"
+)
+
 extra_args=("$@")
 
 for target in "${targets[@]}"; do
   rustup target add --toolchain "${toolchain}" "${target}" >/dev/null
-  cargo_cmd=(
-    cargo +"${toolchain}" zigbuild
-    -p ctx-avf-linux-guest-agent
-    --manifest-path "${repo_root}/Cargo.toml"
-    --target "${target}"
-  )
-  if ((${#extra_args[@]} > 0)); then
-    cargo_cmd+=("${extra_args[@]}")
-  fi
-  "${cargo_cmd[@]}"
+  for package in "${packages[@]}"; do
+    cargo_cmd=(
+      "${rustup_bin}" run "${toolchain}" cargo zigbuild
+      -p "${package}"
+      --manifest-path "${repo_root}/Cargo.toml"
+      --target "${target}"
+    )
+    if ((${#extra_args[@]} > 0)); then
+      cargo_cmd+=("${extra_args[@]}")
+    fi
+    "${cargo_cmd[@]}"
+  done
 done
 
 profile_dir="debug"
@@ -63,10 +72,12 @@ if ((${#extra_args[@]} > 0)); then
   done
 fi
 
-echo "ctx-avf-linux-guest-agent build complete:"
+echo "AVF Linux guest helper build complete:"
 for target in "${targets[@]}"; do
-  binary_path="${repo_root}/target/${target}/${profile_dir}/ctx-avf-linux-guest-agent"
-  if [[ -f "${binary_path}" ]]; then
-    printf '  %s\n' "${binary_path}"
-  fi
+  for package in "${packages[@]}"; do
+    binary_path="${repo_root}/target/${target}/${profile_dir}/${package}"
+    if [[ -f "${binary_path}" ]]; then
+      printf '  %s\n' "${binary_path}"
+    fi
+  done
 done

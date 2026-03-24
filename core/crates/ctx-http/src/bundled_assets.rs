@@ -916,6 +916,13 @@ mod tests {
                         sha256: Some("2222".to_string()),
                     },
                 ),
+                (
+                    "egress-proxy".to_string(),
+                    RuntimeLockHelperSource {
+                        uri: Some("https://example.test/egress-proxy".to_string()),
+                        sha256: Some("3333".to_string()),
+                    },
+                ),
             ]),
             sources: vec![RuntimeLockSource {
                 source_type: "ci".to_string(),
@@ -943,6 +950,13 @@ mod tests {
                 .get("initrd")
                 .map(|helper| helper.uri.as_str()),
             Some("https://example.test/initrd")
+        );
+        assert_eq!(
+            source
+                .helpers
+                .get("egress-proxy")
+                .map(|helper| helper.uri.as_str()),
+            Some("https://example.test/egress-proxy")
         );
     }
 

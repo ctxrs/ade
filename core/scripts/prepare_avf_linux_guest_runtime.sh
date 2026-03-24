@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 runtime_dir=""
 guest_agent_path=""
+egress_proxy_path=""
 arch=""
 release_dir="https://cloud-images.ubuntu.com/releases/noble/release"
 kernel_cmdline="console=hvc0 root=LABEL=cloudimg-rootfs rootwait rw"
@@ -22,6 +23,7 @@ Required:
 Options:
   --arch ARCH            Guest arch: arm64 or x86_64 (default: host arch)
   --guest-agent PATH     Guest-agent binary to stage (default: auto-discover)
+  --egress-proxy PATH    ctx-egress-proxy Linux binary to stage (default: auto-discover)
   --release-dir URL      Ubuntu release directory (default: noble release feed)
   --force                Replace an existing output directory
   --dry-run              Print the resolved inputs and exit without downloading
@@ -102,6 +104,21 @@ discover_guest_agent() {
   return 1
 }
 
+discover_egress_proxy() {
+  local target="$1"
+  local candidates=(
+    "${repo_root}/target/${target}/release/ctx-egress-proxy"
+    "${repo_root}/target/${target}/debug/ctx-egress-proxy"
+  )
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 download_file() {
   local url="$1"
   local dest="$2"
@@ -140,6 +157,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --guest-agent)
       guest_agent_path="${2:-}"
+      shift 2
+      ;;
+    --egress-proxy)
+      egress_proxy_path="${2:-}"
       shift 2
       ;;
     --arch)
@@ -187,6 +208,14 @@ fi
 
 [[ -f "$guest_agent_path" ]] || die "guest-agent binary does not exist: $guest_agent_path"
 
+if [[ -z "$egress_proxy_path" ]]; then
+  if ! egress_proxy_path="$(discover_egress_proxy "$target")"; then
+    die "could not find ctx-egress-proxy for target ${target}; build it first or pass --egress-proxy"
+  fi
+fi
+
+[[ -f "$egress_proxy_path" ]] || die "egress proxy binary does not exist: $egress_proxy_path"
+
 runtime_dir="$(cd "$(dirname "$runtime_dir")" && pwd)/$(basename "$runtime_dir")"
 if [[ -e "$runtime_dir" ]]; then
   if [[ -d "$runtime_dir" ]] && [[ -n "$(find "$runtime_dir" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || true)" ]]; then
@@ -222,6 +251,7 @@ initrd_path=$runtime_dir/helpers/initrd
 kernel_cmdline_path=$runtime_dir/helpers/kernel-cmdline
 kernel_cmdline=$kernel_cmdline
 guest_agent_runtime_path=$runtime_dir/helpers/guest-agent
+egress_proxy_runtime_path=$runtime_dir/helpers/egress-proxy
 rootfs_url=$rootfs_url
 kernel_url=$kernel_url
 initrd_url=$initrd_url
@@ -275,19 +305,30 @@ done
 rootfs_image="$tmp_root/rootfs.raw"
 "$qemu_img_bin" convert -f qcow2 -O raw "$rootfs_qcow" "$rootfs_image"
 
+rootfs_raw_sha256="$(sha256_file "$rootfs_image")"
+kernel_sha256="$(sha256_file "$kernel_path")"
+initrd_sha256="$(sha256_file "$initrd_path")"
+runtime_version="ubuntu-noble-${ubuntu_arch}-${rootfs_raw_sha256:0:12}"
+
 install -m 0644 "$kernel_path" "$runtime_dir/helpers/kernel"
 install -m 0644 "$initrd_path" "$runtime_dir/helpers/initrd"
 printf '%s\n' "$kernel_cmdline" > "$runtime_dir/helpers/kernel-cmdline"
 install -m 0755 "$guest_agent_path" "$runtime_dir/helpers/guest-agent"
+install -m 0755 "$egress_proxy_path" "$runtime_dir/helpers/egress-proxy"
 cp -c "$rootfs_image" "$runtime_dir/rootfs.raw" 2>/dev/null || cp -p "$rootfs_image" "$runtime_dir/rootfs.raw"
 
 cat > "$runtime_dir/version.txt" <<EOF
+version=$runtime_version
 ubuntu-release=noble
 ubuntu-arch=$ubuntu_arch
 guest-agent-target=$target
+egress-proxy-target=$target
 source-rootfs=$rootfs_url
 source-kernel=$kernel_url
 source-initrd=$initrd_url
+rootfs-sha256=$rootfs_raw_sha256
+kernel-sha256=$kernel_sha256
+initrd-sha256=$initrd_sha256
 kernel-cmdline=$kernel_cmdline
 rootfs-format=raw
 guest-agent-preinstalled=false
@@ -300,4 +341,5 @@ prepared AVF Linux guest runtime at $runtime_dir
   initrd: $runtime_dir/helpers/initrd
   kernel-cmdline: $runtime_dir/helpers/kernel-cmdline
   guest-agent: $runtime_dir/helpers/guest-agent
+  egress-proxy: $runtime_dir/helpers/egress-proxy
 EOF

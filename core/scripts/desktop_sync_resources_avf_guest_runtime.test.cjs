@@ -4,7 +4,10 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const { stageAvfLinuxGuestRuntime } = require("./desktop_sync_resources.cjs");
+const {
+  parseAvfLinuxGuestRuntimeVersion,
+  stageAvfLinuxGuestRuntime,
+} = require("./desktop_sync_resources.cjs");
 
 const hostManifestOs = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
 const hostManifestArch = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch;
@@ -42,7 +45,12 @@ test("stageAvfLinuxGuestRuntime copies local guest runtime into bundle manifest"
   fs.writeFileSync(path.join(sourceDir, "helpers", "kernel"), "kernel\n", "utf8");
   fs.writeFileSync(path.join(sourceDir, "helpers", "initrd"), "initrd\n", "utf8");
   fs.writeFileSync(path.join(sourceDir, "helpers", "guest-agent"), "guest-agent\n", "utf8");
-  fs.writeFileSync(path.join(sourceDir, "version.txt"), "dev-runtime\n", "utf8");
+  fs.writeFileSync(path.join(sourceDir, "helpers", "egress-proxy"), "egress-proxy\n", "utf8");
+  fs.writeFileSync(
+    path.join(sourceDir, "version.txt"),
+    "version=dev-runtime\nubuntu-release=noble\nubuntu-arch=arm64\n",
+    "utf8",
+  );
 
   fs.mkdirSync(bundleDir, { recursive: true });
   fs.writeFileSync(
@@ -66,6 +74,8 @@ test("stageAvfLinuxGuestRuntime copies local guest runtime into bundle manifest"
   assert.ok(fs.existsSync(staged.initrdPath));
   assert.ok(staged.guestAgentPath, "expected optional guest agent to be surfaced");
   assert.ok(fs.existsSync(staged.guestAgentPath));
+  assert.ok(staged.egressProxyPath, "expected optional egress proxy to be surfaced");
+  assert.ok(fs.existsSync(staged.egressProxyPath));
 
   const manifest = JSON.parse(fs.readFileSync(path.join(bundleDir, "manifest.json"), "utf8"));
   const runtime = manifest.runtimes.find(
@@ -80,4 +90,67 @@ test("stageAvfLinuxGuestRuntime copies local guest runtime into bundle manifest"
   assert.match(runtime.root, new RegExp(`runtimes[/\\\\]avf-linux-guest[/\\\\]${hostManifestOs}[/\\\\]${hostManifestArch}`));
 
   fs.rmSync(tmpRoot, { recursive: true, force: true });
+});
+
+test("stageAvfLinuxGuestRuntime hashes large staged rootfs without readFileSync", () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-avf-guest-runtime-large-"));
+  const sourceDir = path.join(tmpRoot, "source");
+  const bundleDir = path.join(tmpRoot, "bundle");
+
+  fs.mkdirSync(path.join(sourceDir, "helpers"), { recursive: true });
+  fs.writeFileSync(path.join(sourceDir, "rootfs.raw"), "rootfs\n", "utf8");
+  fs.writeFileSync(path.join(sourceDir, "helpers", "kernel"), "kernel\n", "utf8");
+  fs.writeFileSync(path.join(sourceDir, "helpers", "initrd"), "initrd\n", "utf8");
+  fs.writeFileSync(path.join(sourceDir, "helpers", "guest-agent"), "guest-agent\n", "utf8");
+  fs.writeFileSync(path.join(sourceDir, "helpers", "egress-proxy"), "egress-proxy\n", "utf8");
+  fs.writeFileSync(
+    path.join(sourceDir, "version.txt"),
+    "version=dev-runtime\nubuntu-release=noble\nubuntu-arch=arm64\n",
+    "utf8",
+  );
+
+  fs.mkdirSync(bundleDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(bundleDir, "manifest.json"),
+    JSON.stringify({ version: 1, providers: [], runtimes: [], images: [], daemons: [] }, null, 2),
+    "utf8",
+  );
+
+  const originalReadFileSync = fs.readFileSync;
+  let blockedRootfsReads = 0;
+  fs.readFileSync = (...args) => {
+    const [filePath] = args;
+    if (typeof filePath === "string" && filePath.endsWith(`${path.sep}rootfs.raw`) && filePath.includes(`${path.sep}bundle${path.sep}`)) {
+      blockedRootfsReads += 1;
+      throw new Error(`unexpected buffered read of staged rootfs: ${filePath}`);
+    }
+    return originalReadFileSync.apply(fs, args);
+  };
+
+  try {
+    const staged = withEnv(
+      {
+        CTX_AVF_LINUX_GUEST_RUNTIME_DIR: sourceDir,
+        CTX_AVF_LINUX_GUEST_RUNTIME_VERSION: "",
+      },
+      () => stageAvfLinuxGuestRuntime(bundleDir),
+    );
+    assert.ok(staged);
+    assert.equal(blockedRootfsReads, 0);
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("parseAvfLinuxGuestRuntimeVersion handles metadata-style version files", () => {
+  assert.equal(
+    parseAvfLinuxGuestRuntimeVersion("version=ubuntu-noble-arm64-deadbeef\nubuntu-release=noble\n"),
+    "ubuntu-noble-arm64-deadbeef",
+  );
+  assert.equal(
+    parseAvfLinuxGuestRuntimeVersion("dev-runtime\nubuntu-release=noble\n"),
+    "dev-runtime",
+  );
+  assert.equal(parseAvfLinuxGuestRuntimeVersion("ubuntu-release=noble\n"), "");
 });

@@ -634,7 +634,7 @@ pub(in crate::api) async fn update_execution_config(
         &store,
         workspace_config::ExecutionConfigUpdate {
             environment,
-            runtime: Some(crate::settings::ContainerRuntimeKind::Podman),
+            runtime: None,
             network_mode,
             allowlist,
             image: None,

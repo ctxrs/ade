@@ -665,7 +665,7 @@ fn spawn_process_shutdown_listener(state: Arc<AppState>) {
     });
 }
 
-pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
+pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
     let data_root = match data_dir {
         Some(p) => PathBuf::from(p),
         None => {
@@ -823,14 +823,85 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
     }
 
-    let listener = tokio::net::TcpListener::bind(&bind).await?;
-    let local_addr = listener.local_addr()?;
-    let host = match local_addr.ip() {
+    let default_binds = {
+        let mut binds = vec!["127.0.0.1:4399".to_string()];
+        #[cfg(target_os = "macos")]
+        binds.push(format!(
+            "{}:4399",
+            crate::workspace_runtime::AVF_GUEST_HOST_GATEWAY
+        ));
+        binds
+    };
+    let optional_default_bind = {
+        #[cfg(target_os = "macos")]
+        {
+            Some(format!(
+                "{}:4399",
+                crate::workspace_runtime::AVF_GUEST_HOST_GATEWAY
+            ))
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Option::<String>::None
+        }
+    };
+
+    let requested_binds = if bind.is_empty() {
+        default_binds
+    } else {
+        let mut values = Vec::new();
+        let mut seen = HashSet::new();
+        for entry in bind {
+            let trimmed = entry.trim();
+            if trimmed.is_empty() || !seen.insert(trimmed.to_string()) {
+                continue;
+            }
+            values.push(trimmed.to_string());
+        }
+        if values.is_empty() {
+            default_binds
+        } else {
+            values
+        }
+    };
+
+    let mut listeners = Vec::with_capacity(requested_binds.len());
+    for bind in &requested_binds {
+        match tokio::net::TcpListener::bind(bind).await {
+            Ok(listener) => listeners.push(listener),
+            Err(err) if optional_default_bind.as_deref() == Some(bind.as_str()) => {
+                tracing::warn!(
+                    "failed to bind optional AVF guest gateway listener at {bind}: {err}"
+                );
+            }
+            Err(err) => {
+                return Err(err).with_context(|| format!("binding daemon listener at {bind}"));
+            }
+        }
+    }
+    if listeners.is_empty() {
+        anyhow::bail!("failed to bind any daemon listeners");
+    }
+    let primary_addr = listeners
+        .iter()
+        .find_map(|listener| {
+            listener
+                .local_addr()
+                .ok()
+                .filter(|addr| addr.ip().is_loopback())
+        })
+        .or_else(|| {
+            listeners
+                .first()
+                .and_then(|listener| listener.local_addr().ok())
+        })
+        .context("daemon started without any bound listeners")?;
+    let host = match primary_addr.ip() {
         std::net::IpAddr::V4(ip) if ip.octets() == [0, 0, 0, 0] => "127.0.0.1".to_string(),
         std::net::IpAddr::V6(ip) if ip.is_unspecified() => "::1".to_string(),
         ip => ip.to_string(),
     };
-    let daemon_url = format!("http://{}:{}", host, local_addr.port());
+    let daemon_url = format!("http://{}:{}", host, primary_addr.port());
 
     let mut auth = auth::load_or_init_daemon_auth(&data_root)?;
     let auth_token = Some(auth.token.clone());
@@ -934,16 +1005,30 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     }
 
     installer::refresh_provider_statuses(&state).await?;
-    let mut shutdown_rx = state.core.shutdown_tx.subscribe();
-    let app: Router = api::router(state);
+    let app: Router = api::router(state.clone());
 
-    tracing::info!("ctx daemon listening on {daemon_url}");
+    let bound_addrs = listeners
+        .iter()
+        .filter_map(|listener| listener.local_addr().ok())
+        .map(|addr| addr.to_string())
+        .collect::<Vec<_>>();
+    tracing::info!("ctx daemon listening on {daemon_url} (binds={bound_addrs:?})");
     println!("{}", json!({"event":"listening","url": daemon_url}));
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            let _ = shutdown_rx.recv().await;
-        })
-        .await?;
+    let mut servers = tokio::task::JoinSet::new();
+    for listener in listeners {
+        let app = app.clone();
+        let mut shutdown_rx = state.core.shutdown_tx.subscribe();
+        servers.spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.recv().await;
+                })
+                .await
+        });
+    }
+    while let Some(result) = servers.join_next().await {
+        result.context("daemon listener task panicked")??;
+    }
     Ok(())
 }
 

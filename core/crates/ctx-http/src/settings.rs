@@ -318,10 +318,21 @@ pub struct ContainerExecutionSettings {
     pub machine: ContainerMachineSettings,
 }
 
+fn default_container_runtime_kind() -> ContainerRuntimeKind {
+    #[cfg(target_os = "macos")]
+    {
+        ContainerRuntimeKind::AvfLinuxVm
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        ContainerRuntimeKind::Podman
+    }
+}
+
 impl Default for ContainerExecutionSettings {
     fn default() -> Self {
         Self {
-            runtime: ContainerRuntimeKind::Podman,
+            runtime: default_container_runtime_kind(),
             mount_mode: ContainerMountMode::HostMounted,
             network_mode: ContainerNetworkMode::LlmOnly,
             allowlist: Vec::new(),

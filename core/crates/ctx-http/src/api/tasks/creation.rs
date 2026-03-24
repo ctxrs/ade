@@ -254,7 +254,7 @@ pub(in crate::api) async fn create_task(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(ApiErrorResp {
                         error: format!(
-                            "AVF disk-isolated worktree provisioning failed: {}. retry after checking the shared VM health.",
+                            "AVF disk-isolated worktree provisioning failed: {}. retry after checking the workspace VM health.",
                             logs::redact_sensitive(&e.to_string())
                         ),
                     }),
