@@ -52,6 +52,21 @@ test("desktop prep scripts default to thin bundle sync", () => {
   }
 });
 
+test("desktop prep scripts build the AVF helper on macOS before syncing resources", () => {
+  const scripts = packageJson.scripts || {};
+  for (const id of ["desktop:prep", "desktop:prep:dev", "desktop:prep:release"]) {
+    const script = String(scripts[id] || "");
+    assert.ok(
+      script.includes('if [ "$(uname -s)" = "Darwin" ]; then'),
+      `${id} must gate AVF helper builds to macOS hosts`,
+    );
+    assert.ok(
+      script.includes("cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --bin ctx-avf-linux-helper"),
+      `${id} must build ctx-avf-linux-helper before desktop_sync_resources`,
+    );
+  }
+});
+
 test("tracked desktop bundle manifest remains thin by default", () => {
   const manifestPath = path.join(
     coreRoot,

@@ -215,6 +215,7 @@ export type PublicSettings = {
   sandboxing?: SandboxingSettings | null;
   execution?: PublicExecutionSettings | null;
   network_profiles?: NetworkProfilesSettings | null;
+  default_container_runtime?: ContainerRuntimeKind | null;
 };
 
 export type UpdateSettingsRequest = {

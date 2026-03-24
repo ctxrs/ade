@@ -4,26 +4,19 @@ export const DEFAULT_MACHINE_IDLE_SHUTDOWN_SECONDS = 60 * 60;
 export const DEFAULT_MACHINE_HOST_PRESSURE_SWAP_THRESHOLD_MB = 1024;
 export const MIN_MACHINE_IDLE_SHUTDOWN_SECONDS = 60;
 
-export function defaultContainerRuntimeKind({
-  platform,
-  userAgent,
-}: {
-  platform?: string | null;
-  userAgent?: string | null;
-} = {}): ApiExecutionSettings["container"]["runtime"] {
-  const resolvedPlatform = (platform ?? (typeof navigator !== "undefined" ? navigator.platform : "") ?? "").toLowerCase();
-  const resolvedAgent = (userAgent ?? (typeof navigator !== "undefined" ? navigator.userAgent : "") ?? "").toLowerCase();
-  if (resolvedPlatform.includes("mac") || resolvedAgent.includes("mac os")) {
-    return "avf_linux_vm";
-  }
-  return "podman";
+export function defaultContainerRuntimeKind(
+  daemonDefaultRuntime?: ApiExecutionSettings["container"]["runtime"] | null,
+): ApiExecutionSettings["container"]["runtime"] {
+  return daemonDefaultRuntime ?? "podman";
 }
 
-export function defaultExecutionSettings(): ApiExecutionSettings {
+export function defaultExecutionSettings(
+  daemonDefaultRuntime?: ApiExecutionSettings["container"]["runtime"] | null,
+): ApiExecutionSettings {
   return {
     mode: "host",
     container: {
-      runtime: defaultContainerRuntimeKind(),
+      runtime: defaultContainerRuntimeKind(daemonDefaultRuntime),
       mount_mode: "host_mounted",
       network_mode: "llm_only",
       allowlist: [],
@@ -40,8 +33,9 @@ export function defaultExecutionSettings(): ApiExecutionSettings {
 
 export function normalizeExecutionSettings(
   value: ApiExecutionSettings | PublicExecutionSettings | null | undefined,
+  daemonDefaultRuntime?: ApiExecutionSettings["container"]["runtime"] | null,
 ): ApiExecutionSettings {
-  const fallback = defaultExecutionSettings();
+  const fallback = defaultExecutionSettings(daemonDefaultRuntime);
   return {
     mode: value?.mode ?? fallback.mode,
     container: {

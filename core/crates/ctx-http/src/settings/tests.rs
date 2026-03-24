@@ -98,6 +98,10 @@ fn to_public_redacts_secret_values() {
             .memory_profile,
         ContainerMachineMemoryProfile::Economy
     );
+    assert_eq!(
+        public.default_container_runtime,
+        default_container_runtime_kind()
+    );
 
     let oracle = public.oracle.as_ref().expect("oracle");
     assert!(oracle.api_key_set);

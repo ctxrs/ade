@@ -912,6 +912,14 @@ impl HarnessRuntimeManager {
             .await
             .context("local sandbox runtime is unavailable")?;
         if matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm) {
+            ensure_avf_linux_workspace_vm_ready_with_observer(
+                &self.data_root,
+                workspace.id,
+                &settings.container,
+                observer,
+            )
+            .await
+            .context("AVF Linux workspace VM is unavailable")?;
             return Ok(());
         }
         self.ensure_workspace_container_after_machine_ready_with_observer(

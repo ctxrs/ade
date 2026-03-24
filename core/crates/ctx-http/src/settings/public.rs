@@ -34,6 +34,7 @@ pub struct PublicSettings {
     pub execution: Option<PublicExecutionSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub network_profiles: Option<PublicNetworkProfilesSettings>,
+    pub default_container_runtime: ContainerRuntimeKind,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -435,6 +436,7 @@ pub(super) fn to_public(settings: &Settings) -> PublicSettings {
         sandboxing,
         execution,
         network_profiles,
+        default_container_runtime: super::default_container_runtime_kind(),
     }
 }
 

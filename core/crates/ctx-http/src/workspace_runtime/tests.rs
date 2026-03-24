@@ -2086,6 +2086,42 @@ async fn container_status_reports_running_avf_workspace_vm() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn ensure_workspace_container_starts_avf_workspace_vm() {
+    let _serial = env_var_test_lock().lock().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = runtime_manager(&temp).await;
+    let helper_path = write_avf_linux_lifecycle_helper(temp.path());
+    let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
+    let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
+    let workspace = sample_workspace(&temp);
+    let settings = ExecutionSettings {
+        mode: ExecutionMode::Container,
+        container: ContainerExecutionSettings {
+            runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
+            mount_mode: ContainerMountMode::DiskIsolated,
+            ..ContainerExecutionSettings::default()
+        },
+    };
+
+    manager
+        .ensure_workspace_container(&workspace, &settings, "http://192.168.64.1:4399")
+        .await
+        .expect("AVF workspace VM should be started for workspace container callers");
+
+    let state = super::avf_linux_vm::workspace_vm_state(temp.path(), workspace.id)
+        .expect("workspace VM state");
+    assert_eq!(
+        state.state,
+        super::avf_linux_vm::AvfLinuxSharedVmLifecycleState::Running
+    );
+
+    for server in servers {
+        server.abort();
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn stop_container_stops_avf_workspace_vm() {
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");

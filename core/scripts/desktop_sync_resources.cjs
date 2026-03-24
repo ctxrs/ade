@@ -856,6 +856,34 @@ const copySidecarBinary = ({
   const dest = path.join(destDir, `${destName}${binExtOverride}`);
   const destTarget = targetTriple ? path.join(destDir, `${destName}-${targetTriple}${binExtOverride}`) : null;
   if (!fs.existsSync(src)) {
+    if (process.platform === "darwin" && sourceName === "ctx-avf-linux-helper") {
+      const args = [
+        "build",
+        "--manifest-path",
+        path.join("apps", "desktop", "src-tauri", "Cargo.toml"),
+        "--bin",
+        "ctx-avf-linux-helper",
+      ];
+      if (profile === "release") {
+        args.push("--release");
+      }
+      const res = childProcess.spawnSync("cargo", args, {
+        cwd: coreRoot,
+        env: {
+          ...process.env,
+          CTX_DESKTOP_SKIP_TAURI_BUILD: "1",
+          CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR || resolveCargoTargetDir(),
+        },
+        stdio: "inherit",
+      });
+      if (res.status !== 0) {
+        throw new Error(
+          `failed to build ctx-avf-linux-helper before desktop resource sync (${res.status ?? "unknown"})`,
+        );
+      }
+    }
+  }
+  if (!fs.existsSync(src)) {
     throw new Error(`missing sidecar: ${src} (did you run cargo build?)`);
   }
   fs.mkdirSync(destDir, { recursive: true });
@@ -908,6 +936,7 @@ const main = () => {
   const copied = {
     ctxDaemon: copySidecar("ctx", "ctx-daemon"),
     ctxMcp: copySidecar("ctx-mcp"),
+    avfLinuxHelper: process.platform === "darwin" ? copySidecar("ctx-avf-linux-helper") : null,
     webDist: copyWebDist(),
     bundles: syncBundlesEnabled ? syncBundles() : verifyExistingBundles(),
   };

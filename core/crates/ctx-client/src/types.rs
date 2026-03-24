@@ -9,6 +9,52 @@ use ctx_core::models::{
     MessageDelivery, WorkspaceAttachmentKind, WorkspaceIndexCursor,
 };
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerRuntimeKind {
+    Podman,
+    AvfLinuxVm,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderControlMode {
+    Full,
+    HarnessNative,
+    CtxEnforced,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionMode {
+    Host,
+    Container,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerMountMode {
+    DiskIsolated,
+    HostMounted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerNetworkMode {
+    LlmOnly,
+    Allowlist,
+    All,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerMachineMemoryProfile {
+    Economy,
+    Balanced,
+    Performance,
+    Custom,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Health {
     pub version: String,
@@ -286,6 +332,18 @@ pub struct PublicSettings {
     pub provider_restart: Option<PublicProviderRestartSettings>,
     #[serde(default)]
     pub subagents: Option<PublicSubagentSettings>,
+    #[serde(default)]
+    pub oracle: Option<PublicOracleSettings>,
+    #[serde(default)]
+    pub provider_guard: Option<PublicProviderGuardSettings>,
+    #[serde(default)]
+    pub sandboxing: Option<PublicSandboxingSettings>,
+    #[serde(default)]
+    pub execution: Option<PublicExecutionSettings>,
+    #[serde(default)]
+    pub network_profiles: Option<PublicNetworkProfilesSettings>,
+    #[serde(default)]
+    pub default_container_runtime: Option<ContainerRuntimeKind>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -309,6 +367,82 @@ pub struct PublicLiveKitDictationSettings {
 pub struct PublicTelemetrySettings {
     pub enabled: bool,
     pub endpoint: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicOracleSettings {
+    pub enabled: bool,
+    pub base_url: String,
+    pub api_key_set: bool,
+    pub model: String,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub max_output_tokens: Option<u32>,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicProviderGuardSettings {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(default)]
+    pub memory_high_mb: Option<u32>,
+    #[serde(default)]
+    pub memory_max_mb: Option<u32>,
+    #[serde(default)]
+    pub interval_ms: Option<u64>,
+    #[serde(default)]
+    pub grace_period_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicSandboxingSettings {
+    pub provider_control_mode: ProviderControlMode,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicExecutionSettings {
+    pub mode: ExecutionMode,
+    pub container: PublicContainerExecutionSettings,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicContainerExecutionSettings {
+    pub runtime: ContainerRuntimeKind,
+    pub mount_mode: ContainerMountMode,
+    pub network_mode: ContainerNetworkMode,
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+    #[serde(default)]
+    pub image: Option<String>,
+    pub machine: PublicContainerMachineSettings,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicContainerMachineSettings {
+    pub memory_profile: ContainerMachineMemoryProfile,
+    #[serde(default)]
+    pub custom_memory_mb: Option<u32>,
+    pub idle_shutdown_seconds: u64,
+    pub host_pressure_swap_threshold_mb: u32,
+    pub target_memory_mb: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicNetworkProfilesSettings {
+    pub agent_default: NetworkProfile,
+    pub merge_queue: NetworkProfile,
+    pub worktree_setup: NetworkProfile,
+    pub user_shell: NetworkProfile,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NetworkProfile {
+    pub mode: ContainerNetworkMode,
+    #[serde(default)]
+    pub allowlist: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -856,5 +990,59 @@ mod tests {
             ExecutionEnvironment::ContainerHostMounted
         );
         assert_eq!(parsed.provider_id, "codex");
+    }
+
+    #[test]
+    fn public_settings_parses_extended_daemon_fields() {
+        let payload = serde_json::json!({
+            "dictation": { "enabled": false, "provider": "livekit_inference", "livekit": null },
+            "execution": {
+                "mode": "container",
+                "container": {
+                    "runtime": "avf_linux_vm",
+                    "mount_mode": "disk_isolated",
+                    "network_mode": "llm_only",
+                    "allowlist": [],
+                    "image": null,
+                    "machine": {
+                        "memory_profile": "balanced",
+                        "custom_memory_mb": null,
+                        "idle_shutdown_seconds": 900,
+                        "host_pressure_swap_threshold_mb": 512,
+                        "target_memory_mb": 2048
+                    }
+                }
+            },
+            "provider_guard": {
+                "enabled": false,
+                "mode": "auto",
+                "memory_high_mb": null,
+                "memory_max_mb": null,
+                "interval_ms": null,
+                "grace_period_ms": null
+            },
+            "sandboxing": { "provider_control_mode": "ctx_enforced" },
+            "network_profiles": {
+                "agent_default": { "mode": "llm_only", "allowlist": [] },
+                "merge_queue": { "mode": "allowlist", "allowlist": ["github.com"] },
+                "worktree_setup": { "mode": "all", "allowlist": [] },
+                "user_shell": { "mode": "all", "allowlist": [] }
+            },
+            "default_container_runtime": "avf_linux_vm"
+        });
+
+        let parsed: PublicSettings = serde_json::from_value(payload).unwrap();
+        assert_eq!(
+            parsed.default_container_runtime,
+            Some(ContainerRuntimeKind::AvfLinuxVm)
+        );
+        assert_eq!(
+            parsed.execution.unwrap().container.runtime,
+            ContainerRuntimeKind::AvfLinuxVm
+        );
+        assert_eq!(
+            parsed.sandboxing.unwrap().provider_control_mode,
+            ProviderControlMode::CtxEnforced
+        );
     }
 }

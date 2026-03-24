@@ -153,14 +153,15 @@ describe("executionSettingsStableKey", () => {
 });
 
 describe("defaultExecutionSettings", () => {
-  it("chooses AVF as the default container runtime on mac platforms", () => {
-    expect(defaultContainerRuntimeKind({ platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" })).toBe("avf_linux_vm");
-    expect(defaultExecutionSettings().container.runtime).toBe(defaultContainerRuntimeKind());
+  it("uses the daemon-reported runtime default when present", () => {
+    expect(defaultContainerRuntimeKind("avf_linux_vm")).toBe("avf_linux_vm");
+    expect(defaultExecutionSettings("avf_linux_vm").container.runtime).toBe("avf_linux_vm");
   });
 
-  it("keeps podman as the fallback default off macOS", () => {
-    expect(defaultContainerRuntimeKind({ platform: "Linux x86_64", userAgent: "Mozilla/5.0 (X11; Linux x86_64)" })).toBe("podman");
-    expect(defaultContainerRuntimeKind({ platform: "Win32", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" })).toBe("podman");
+  it("keeps podman as the fallback when the daemon has not reported a preferred runtime", () => {
+    expect(defaultContainerRuntimeKind()).toBe("podman");
+    expect(defaultContainerRuntimeKind(null)).toBe("podman");
+    expect(defaultExecutionSettings().container.runtime).toBe("podman");
   });
 });
 
