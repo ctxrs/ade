@@ -2385,6 +2385,123 @@ describe("SessionSupervisor", () => {
     expect(sup.getSnapshot().sessions[sessionId]?.turns).toHaveLength(2);
   });
 
+  it("does not reseed recovering active sessions from bounded active heads before /head hydrate", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-bounded-active-recovering";
+    const compactHead: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: [mkTurn({ sessionId, turnId: "turn-2", status: "completed", startSeq: 3 })],
+      events: [] as SessionEvent[],
+      messages: [
+        {
+          id: "m-2",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-2",
+          role: "assistant",
+          content: "newer",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:02.000Z",
+        },
+      ],
+      last_event_seq: 4,
+      projection_rev: 7,
+      state_rev: 7,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+      head_window: {
+        turn_limit: 5,
+        message_limit: 50,
+        event_limit: 800,
+        byte_limit: 200_000,
+        turn_count: 1,
+        message_count: 1,
+        event_count: 0,
+        bytes: 256,
+        truncated: true,
+      },
+    };
+    const fullHead: SessionHeadSnapshot = {
+      ...compactHead,
+      turns: [
+        mkTurn({ sessionId, turnId: "turn-1", status: "completed", startSeq: 1 }),
+        mkTurn({ sessionId, turnId: "turn-2", status: "completed", startSeq: 3 }),
+      ],
+      messages: [
+        {
+          id: "m-1",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-1",
+          role: "assistant",
+          content: "older",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:01.000Z",
+        },
+        ...compactHead.messages,
+      ],
+      head_window: {
+        turn_limit: 0,
+        message_limit: 0,
+        event_limit: 0,
+        byte_limit: 0,
+        turn_count: 2,
+        message_count: 2,
+        event_count: 0,
+        bytes: 512,
+        truncated: false,
+      },
+    };
+    const activeState: WorkspaceActiveSnapshotState = {
+      ...mkWorkspaceSnapshotState(),
+      activeIds: ["task-bounded-active-recovering"],
+      tasksById: {
+        "task-bounded-active-recovering": {
+          ...mkWorkspaceTaskSummary({
+            taskId: "task-bounded-active-recovering",
+            primarySessionId: sessionId,
+            sessionIds: [sessionId],
+          }),
+          primarySessionHead: compactHead,
+        },
+      },
+      totalActive: 1,
+    };
+    let resolveHead!: (value: SessionHeadSnapshot) => void;
+    const headPromise = new Promise<SessionHeadSnapshot>((resolve) => {
+      resolveHead = resolve;
+    });
+    getSessionHeadMock.mockImplementationOnce(() => headPromise);
+
+    const sup = new SessionSupervisor();
+    sup.setWorkspaceSnapshotState(activeState);
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return entry?.loadState === "pending_hydration" && entry.messages.length === 0;
+    });
+
+    sup.setWorkspaceSnapshotState({ ...activeState, connection: "disconnected" });
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return entry?.freshness === "recovering" && entry.loadState === "recovering";
+    });
+
+    sup.setWorkspaceSnapshotState(activeState);
+    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
+    expect(sup.getSnapshot().sessions[sessionId]?.messages).toHaveLength(0);
+    expect(sup.getSnapshot().sessions[sessionId]?.turns).toHaveLength(0);
+
+    resolveHead(fullHead);
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
+    expect(sup.getSnapshot().sessions[sessionId]?.messages).toHaveLength(2);
+    expect(sup.getSnapshot().sessions[sessionId]?.turns).toHaveLength(2);
+  });
+
   it("clears recovering open sessions from reconnecting active-head hydration without dropping history", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 

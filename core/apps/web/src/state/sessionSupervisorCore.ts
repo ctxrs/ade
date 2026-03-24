@@ -98,7 +98,7 @@ import {
   TURN_PAGE_LIMIT,
   WARM_TTL_MS,
   isReplicaAuthority,
-  shouldSkipBoundedBootstrapSeed,
+  shouldSkipBoundedActiveSnapshotSeed,
   toReplicaFreshness,
 } from "./sessionSupervisor/config";
 import { loadMoreTurnsForEntry, loadTurnToolsForEntry } from "./sessionSupervisor/historySupport";
@@ -406,7 +406,7 @@ export class SessionSupervisor {
       sessionId,
     );
     if (!head) return false;
-    if (shouldSkipBoundedBootstrapSeed(entry, head)) {
+    if (shouldSkipBoundedActiveSnapshotSeed(entry, head)) {
       return false;
     }
     this.replica.dispatch({ type: "seed_head", sessionId, head });
@@ -993,7 +993,7 @@ export class SessionSupervisor {
       if (!sessionId) continue;
       const entry = this.ensureEntry(sessionId);
       if (!this.canSeedReplicaFromActiveSnapshot(entry, { allowRecoveringRefresh: true })) continue;
-      if (shouldSkipBoundedBootstrapSeed(entry, head)) continue;
+      if (shouldSkipBoundedActiveSnapshotSeed(entry, head)) continue;
       this.replica.dispatch({ type: "seed_head", sessionId, head });
     }
   }

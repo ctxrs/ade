@@ -34,7 +34,7 @@ export const toReplicaFreshness = (
 const isBoundedHeadSeed = (head: SessionHeadSnapshot): boolean =>
   typeof head.head_window?.turn_limit === "number" && head.head_window.turn_limit > 0;
 
-export const shouldSkipBoundedBootstrapSeed = (
+export const shouldSkipBoundedActiveSnapshotSeed = (
   entry: InternalEntry,
   head: SessionHeadSnapshot,
 ): boolean => {
@@ -44,5 +44,6 @@ export const shouldSkipBoundedBootstrapSeed = (
     entry.turns.length === 0 &&
     entry.messages.length === 0 &&
     entry.events.length === 0;
-  return freshBootstrapOpen && isBoundedHeadSeed(head);
+  const recoveringOpenSession = entry.freshness === "recovering";
+  return isBoundedHeadSeed(head) && (freshBootstrapOpen || recoveringOpenSession);
 };
