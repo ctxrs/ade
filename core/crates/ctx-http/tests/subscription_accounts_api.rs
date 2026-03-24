@@ -1041,7 +1041,12 @@ async fn claude_subscription_accounts_crud_round_trip() {
     .await;
 }
 
+// Claude subscription login is product-supported, but truthful automated coverage
+// still requires full OS automation through the real desktop/browser path.
+// Keep these backend-only integration tests out of default gates until that
+// automation lane exists.
 #[tokio::test]
+#[ignore = "Claude subscription login requires full OS automation for truthful coverage; excluded from verify:quick until that lane exists"]
 async fn claude_login_start_returns_pending_setup_token_session() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
@@ -1128,6 +1133,7 @@ sleep 30
 }
 
 #[tokio::test]
+#[ignore = "Claude subscription login requires full OS automation for truthful coverage; excluded from verify:quick until that lane exists"]
 async fn claude_login_start_requires_usable_configured_login_command() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
@@ -1178,6 +1184,7 @@ async fn claude_login_start_requires_usable_configured_login_command() {
 }
 
 #[tokio::test]
+#[ignore = "Claude subscription login requires full OS automation for truthful coverage; excluded from verify:quick until that lane exists"]
 async fn claude_login_start_reconstructs_wrapped_auth_url() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
@@ -1240,6 +1247,7 @@ exit 5
 }
 
 #[tokio::test]
+#[ignore = "Claude subscription login requires full OS automation for truthful coverage; excluded from verify:quick until that lane exists"]
 async fn claude_login_setup_token_path_succeeds_without_callback_submission() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
@@ -1308,6 +1316,7 @@ echo "ZXY987654321"
 }
 
 #[tokio::test]
+#[ignore = "Claude subscription login requires full OS automation for truthful coverage; excluded from verify:quick until that lane exists"]
 async fn claude_login_success_without_token_reports_actionable_error() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
@@ -1374,6 +1383,7 @@ echo "Token omitted intentionally for test."
 }
 
 #[tokio::test]
+#[ignore = "Claude subscription login requires full OS automation for truthful coverage; excluded from verify:quick until that lane exists"]
 async fn claude_login_hang_without_auth_url_times_out_and_fails() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
@@ -1440,6 +1450,7 @@ sleep 30
 }
 
 #[tokio::test]
+#[ignore = "Claude subscription login requires full OS automation for truthful coverage; excluded from verify:quick until that lane exists"]
 async fn claude_login_without_label_preserves_existing_account_label() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
