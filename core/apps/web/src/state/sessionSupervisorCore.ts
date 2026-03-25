@@ -88,6 +88,11 @@ import {
   seedReplicaFromActiveSnapshot,
 } from "./sessionSupervisor/activeSnapshotSeed";
 import {
+  hasSessionReplicaRecoveryData,
+  resolveReplicaReadyLoadState,
+  shouldReplayReplicaReplace,
+} from "./sessionSupervisor/authorityPolicy";
+import {
   buildSubscribedSessions,
   emitSubscribedSessions,
   markOpenSessionsRecovering,
@@ -602,10 +607,11 @@ export class SessionSupervisor {
       }
       const normalizedFreshness =
         patch.data.freshness === undefined ? undefined : toReplicaFreshness(patch.data.freshness);
-      const shouldReplaceReplay =
-        patch.op !== "replace" ||
-        !isReplicaAuthority(entry.freshness) ||
-        normalizedFreshness === "recovering";
+      const shouldReplaceReplay = shouldReplayReplicaReplace({
+        entry,
+        patch,
+        normalizedFreshness,
+      });
       const preservedTurnsById =
         patch.op === "replace" && shouldReplaceReplay
           ? new Map(
@@ -756,19 +762,6 @@ export class SessionSupervisor {
           this.setSessionLoadState(entry, "pending_hydration");
         }
       }
-      const hasRecoveryData =
-        data.session !== undefined ||
-        (Array.isArray(data.turns) && data.turns.length > 0) ||
-        (Array.isArray(data.messages) && data.messages.length > 0) ||
-        (Array.isArray(data.events) && data.events.length > 0) ||
-        (Array.isArray(data.toolSummaries) && data.toolSummaries.length > 0) ||
-        data.lastEventSeq !== undefined ||
-        data.projectionRev !== undefined ||
-        data.stateRev !== undefined ||
-        data.summaryCheckpoint !== undefined ||
-        data.headWindow !== undefined ||
-        data.hasMoreTurns !== undefined ||
-        data.turnsHydrated !== undefined;
       if (data.error !== undefined) {
         if (data.error) {
           this.setFatalError(entry, data.error);
@@ -778,9 +771,9 @@ export class SessionSupervisor {
             this.setSessionLoadState(entry, "pending_hydration");
           }
         }
-      } else if (hasRecoveryData) {
+      } else if (hasSessionReplicaRecoveryData(data)) {
         entry.error = undefined;
-        this.setSessionLoadState(entry, "live");
+        this.setSessionLoadState(entry, resolveReplicaReadyLoadState(entry));
       }
       if (data.subagentNotice) {
         void this.ensureSubagentInvocations(entry, { force: true });
@@ -856,8 +849,10 @@ export class SessionSupervisor {
       this.syncSupportLoadsForOpenSession(entry);
       return;
     }
-    if (seededHead || entry.turnsHydrated || entry.messages.length > 0 || entry.events.length > 0) {
-      this.setSessionLoadState(entry, "live");
+    const hasVisibleTranscriptData =
+      seededHead || entry.turnsHydrated || entry.messages.length > 0 || entry.events.length > 0;
+    if (hasVisibleTranscriptData) {
+      this.setSessionLoadState(entry, resolveReplicaReadyLoadState(entry));
       this.syncSupportLoadsForOpenSession(entry);
       return;
     }

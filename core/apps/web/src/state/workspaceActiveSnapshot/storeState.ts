@@ -42,6 +42,7 @@ import {
   sortSessionSummaries,
 } from "./projection";
 import {
+  isSessionHeadCompatibleWithSummary,
   normalizeSessionSummary,
   pickArchivedSessionId,
   pickArchivedSessionIdFromSummaries,
@@ -760,6 +761,10 @@ export class WorkspaceActiveSnapshotStoreState {
       const sessionId = idToString(head.session?.id ?? "");
       if (!sessionId) continue;
       const sanitized = sanitizeSessionHeadSnapshot(head);
+      const primarySummary = this.resolvePrimarySessionSummary(sessionId);
+      if (!isSessionHeadCompatibleWithSummary(primarySummary, sanitized)) {
+        continue;
+      }
       const prev = this.sessionHeadsById.get(sessionId);
       if (shouldReplaceSessionHead(prev, sanitized)) {
         this.sessionHeadsById.set(sessionId, sanitized);
@@ -844,9 +849,22 @@ export class WorkspaceActiveSnapshotStoreState {
     const sessionId = idToString(head?.session?.id ?? "");
     if (!sessionId) return;
     const sanitized = sanitizeSessionHeadSnapshot(head);
+    const primarySummary = this.resolvePrimarySessionSummary(sessionId);
+    if (!isSessionHeadCompatibleWithSummary(primarySummary, sanitized)) return;
     const prev = this.sessionHeadsById.get(sessionId);
     if (!shouldReplaceSessionHead(prev, sanitized)) return;
     this.sessionHeadsById.set(sessionId, sanitized);
+  }
+
+  private resolvePrimarySessionSummary(sessionId: string): SessionSnapshotSummary | null {
+    const id = idToString(sessionId);
+    if (!id) return null;
+    for (const item of this.tasks.values()) {
+      const primarySessionId = resolvePrimarySessionId(item);
+      if (primarySessionId !== id) continue;
+      return item.sessions.find((summary) => idToString(summary.session.id) === id) ?? null;
+    }
+    return null;
   }
 
   private collectArchivedHeads(): Map<string, SessionHeadSnapshot> {
@@ -883,12 +901,6 @@ export class WorkspaceActiveSnapshotStoreState {
       existingPrimarySessionId ||
       idToString((summary as PersistedWorkspaceActiveTaskSummaryV1).primary_session?.session?.id ?? "");
 
-    let primaryHead = summaryHasHead ? readPrimarySessionHead(summary) : existing?.primarySessionHead ?? null;
-    if (!primaryHead && primarySessionId) {
-      primaryHead = this.sessionHeadsById.get(primarySessionId) ?? null;
-    }
-    this.rememberSessionHead(primaryHead);
-
     const existingSessions = existing?.sessions ?? [];
     const primaryFromSummary = summaryHasPrimary
       ? (summary as PersistedWorkspaceActiveTaskSummaryV1).primary_session
@@ -898,6 +910,15 @@ export class WorkspaceActiveSnapshotStoreState {
       primarySummary =
         existingSessions.find((item) => idToString(item.session.id) === primarySessionId) ?? null;
     }
+
+    let primaryHead = summaryHasHead ? readPrimarySessionHead(summary) : existing?.primarySessionHead ?? null;
+    if (!primaryHead && primarySessionId) {
+      primaryHead = this.sessionHeadsById.get(primarySessionId) ?? null;
+    }
+    if (primaryHead && !isSessionHeadCompatibleWithSummary(primarySummary, primaryHead)) {
+      primaryHead = null;
+    }
+    this.rememberSessionHead(primaryHead);
 
     const sessionsRaw = summaryHasSessions
       ? Array.isArray((summary as PersistedWorkspaceActiveTaskSummaryV1).sessions)

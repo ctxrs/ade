@@ -961,6 +961,54 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(updated.activity?.last_turn_status ?? null).toBe(null);
   });
 
+  it("drops malformed primary_session_head when the summary has a durable newer cursor", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-1", "task-1", "ws-1", now);
+    const summary = {
+      ...mkSummary(session, now),
+      last_event_seq: 10,
+      projection_rev: 7,
+      state_rev: 7,
+      activity: { is_working: true, last_turn_status: "running" as const },
+    };
+    const malformedHead: SessionHeadSnapshot = {
+      ...mkHead(session),
+      last_event_seq: -7,
+      projection_rev: 7,
+      state_rev: 7,
+      activity: { is_working: true, last_turn_status: "running" },
+    };
+
+    const activeSnapshot: WorkspaceActiveSnapshot = {
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      archived_rev: 0,
+      active: {
+        total_count: 1,
+        tasks: [mkActiveSummary(task, summary, malformedHead, now)],
+      },
+    };
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: activeSnapshot,
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.tasksById["task-1"]?.sessions[0]?.last_event_seq).toBe(10);
+    expect(snapshot.tasksById["task-1"]?.primarySessionHead).toBeNull();
+    expect(store.getSessionHeadSnapshot("session-1")).toBeNull();
+  });
+
   it("treats no-op session_summary_delta as no change", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 

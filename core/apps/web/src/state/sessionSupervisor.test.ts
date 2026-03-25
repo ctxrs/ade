@@ -2074,6 +2074,86 @@ describe("SessionSupervisor", () => {
     ).toBe(true);
   });
 
+  it("keeps visible bootstrap cached active sessions pending until authoritative catch-up", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-active-visible-bootstrap";
+    const cachedHead = {
+      session: mkSession(sessionId),
+      turns: [mkTurn({ sessionId, turnId: "turn-cached", status: "completed", startSeq: 1 })],
+      events: [] as SessionEvent[],
+      messages: [
+        {
+          id: "m-cached",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-cached",
+          role: "assistant",
+          content: "cached visible bootstrap",
+          delivery: "immediate",
+          created_at: new Date().toISOString(),
+        },
+      ],
+      last_event_seq: 1,
+      has_more_turns: false,
+    } satisfies SessionHead;
+    loadSessionHeadV1Mock.mockResolvedValueOnce({
+      v: 1,
+      sessionId,
+      updatedAtMs: Date.now(),
+      head: cachedHead,
+    });
+
+    let resolveHead!: (value: SessionHeadSnapshot) => void;
+    const headPromise = new Promise<SessionHeadSnapshot>((resolve) => {
+      resolveHead = resolve;
+    });
+    getSessionHeadMock.mockImplementationOnce(() => headPromise);
+
+    const sup = new SessionSupervisor();
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return (
+        entry?.freshness === "bootstrap" &&
+        entry.messages.some((message) => message.content === "cached visible bootstrap")
+      );
+    });
+
+    const bootstrapEntry = sup.getSnapshot().sessions[sessionId];
+    expect(bootstrapEntry?.loadState).toBe("pending_hydration");
+
+    resolveHead({
+      ...cachedHead,
+      messages: [
+        {
+          id: "m-authoritative",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-cached",
+          role: "assistant",
+          content: "authoritative catch-up",
+          delivery: "immediate",
+          created_at: new Date().toISOString(),
+        },
+      ],
+      last_event_seq: 2,
+      state_rev: 2,
+      has_more_history: false,
+      history_cursor: null,
+    });
+
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return (
+        entry?.freshness === "replica" &&
+        entry.loadState === "live" &&
+        entry.messages.some((message) => message.content === "authoritative catch-up")
+      );
+    });
+  });
+
   it("rehydrates from /head when active heads came only from bootstrap cache", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 

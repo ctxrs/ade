@@ -82,7 +82,54 @@ export function shouldReplaceSessionHead(
   }
   const prevSeq = typeof prev.last_event_seq === "number" ? prev.last_event_seq : -1;
   const nextSeq = typeof next.last_event_seq === "number" ? next.last_event_seq : -1;
+  if (prevSeq >= 0 && nextSeq < 0) return false;
   if (prevSeq >= 0 && nextSeq >= 0 && nextSeq < prevSeq) return false;
+  return true;
+}
+
+export function isSessionHeadCompatibleWithSummary(
+  summary: SessionSnapshotSummary | null | undefined,
+  head: SessionHeadSnapshot | null | undefined,
+): boolean {
+  if (!summary || !head) return true;
+
+  const summarySessionId = idToString(summary.session?.id ?? "");
+  const headSessionId = idToString(head.session?.id ?? "");
+  if (summarySessionId && headSessionId && summarySessionId !== headSessionId) {
+    return false;
+  }
+
+  const summaryProjectionRev =
+    typeof summary.projection_rev === "number" ? summary.projection_rev : null;
+  const headProjectionRev =
+    typeof head.projection_rev === "number" ? head.projection_rev : null;
+  if (
+    summaryProjectionRev !== null &&
+    headProjectionRev !== null &&
+    headProjectionRev < summaryProjectionRev
+  ) {
+    return false;
+  }
+
+  const summaryLastEventSeq =
+    typeof summary.last_event_seq === "number" && summary.last_event_seq >= 0
+      ? summary.last_event_seq
+      : null;
+  const headLastEventSeq =
+    typeof head.last_event_seq === "number" && head.last_event_seq >= 0
+      ? head.last_event_seq
+      : null;
+  if (summaryLastEventSeq !== null && headLastEventSeq === null) {
+    return false;
+  }
+  if (
+    summaryLastEventSeq !== null &&
+    headLastEventSeq !== null &&
+    headLastEventSeq < summaryLastEventSeq
+  ) {
+    return false;
+  }
+
   return true;
 }
 

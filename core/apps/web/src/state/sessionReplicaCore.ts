@@ -409,6 +409,7 @@ export class SessionReplicaCore {
     opts?: {
       authoritative?: boolean;
       freshness?: SessionReplicaFreshnessState;
+      forceReplace?: boolean;
     },
   ) {
     const data = headToData(head);
@@ -507,6 +508,9 @@ export class SessionReplicaCore {
     };
     if (entry.stateRev !== undefined) {
       patch.stateRev = entry.stateRev;
+    }
+    if (opts?.forceReplace) {
+      patch.forceReplace = true;
     }
     this.emitPatch(emitOp, entry.sessionId, patch);
   }
@@ -646,7 +650,9 @@ export class SessionReplicaCore {
       if (!head || !sessionId) return;
       const entry = this.ensureEntry(sessionId);
       this.applyHead(entry, head, "replace", {
-        freshness: entry.freshness === "authoritative" ? "authoritative" : "bootstrap",
+        authoritative: true,
+        freshness: "authoritative",
+        forceReplace: true,
       });
       return;
     }
@@ -690,6 +696,7 @@ export class SessionReplicaCore {
     const sessionId = normalizeId(delta.session_id);
     if (!sessionId) return;
     const entry = this.ensureEntry(sessionId);
+    entry.freshness = "authoritative";
     const turns: SessionTurn[] = [];
     const messages: Message[] = [];
     const events: SessionEvent[] = [];

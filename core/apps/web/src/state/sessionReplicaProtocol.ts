@@ -72,6 +72,7 @@ export type SessionReplicaData = {
   projectionRev?: number;
   hasMoreTurns?: boolean;
   stateRev?: number;
+  forceReplace?: boolean;
   artifacts?: Artifact[];
   gitStatusSummary?: GitStatusSummary | null;
   loading?: boolean;
