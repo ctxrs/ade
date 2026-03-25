@@ -365,6 +365,13 @@ pub async fn ensure_workspace_root_from_host_copy(
     data_root: &Path,
     workspace: &Workspace,
 ) -> Result<PathBuf> {
+    #[cfg(windows)]
+    {
+        let _ = data_root;
+        let _ = workspace;
+        anyhow::bail!("pre-task sandbox workspace materialization is unsupported on Windows");
+    }
+
     const SANDBOX_CP_TIMEOUT: Duration = Duration::from_secs(10 * 60);
     const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
     let container_id = format!("ctx-harness-{}", workspace.id.0);

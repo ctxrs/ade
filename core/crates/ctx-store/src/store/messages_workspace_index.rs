@@ -28,18 +28,35 @@ impl Store {
     ) -> Result<i64> {
         let count: i64 = if let Some(task_id) = exclude_task_id {
             self.query_scalar(
-                r#"SELECT COUNT(*) FROM tasks
-                   WHERE primary_worktree_id = ? AND archived_at IS NULL AND id != ?"#,
+                r#"SELECT COUNT(*) FROM tasks t
+                   WHERE t.archived_at IS NULL
+                     AND t.id != ?
+                     AND (
+                       t.primary_worktree_id = ?
+                       OR EXISTS(
+                         SELECT 1 FROM sessions s
+                         WHERE s.task_id = t.id AND s.worktree_id = ?
+                       )
+                     )"#,
             )
-            .bind(worktree_id.0.to_string())
             .bind(task_id.0.to_string())
+            .bind(worktree_id.0.to_string())
+            .bind(worktree_id.0.to_string())
             .fetch_one(&self.pool)
             .await?
         } else {
             self.query_scalar(
-                r#"SELECT COUNT(*) FROM tasks
-                   WHERE primary_worktree_id = ? AND archived_at IS NULL"#,
+                r#"SELECT COUNT(*) FROM tasks t
+                   WHERE t.archived_at IS NULL
+                     AND (
+                       t.primary_worktree_id = ?
+                       OR EXISTS(
+                         SELECT 1 FROM sessions s
+                         WHERE s.task_id = t.id AND s.worktree_id = ?
+                       )
+                     )"#,
             )
+            .bind(worktree_id.0.to_string())
             .bind(worktree_id.0.to_string())
             .fetch_one(&self.pool)
             .await?
@@ -54,18 +71,31 @@ impl Store {
     ) -> Result<i64> {
         let count: i64 = if let Some(task_id) = exclude_task_id {
             self.query_scalar(
-                r#"SELECT COUNT(*) FROM tasks
-                   WHERE primary_worktree_id = ? AND id != ?"#,
+                r#"SELECT COUNT(*) FROM tasks t
+                   WHERE t.id != ?
+                     AND (
+                       t.primary_worktree_id = ?
+                       OR EXISTS(
+                         SELECT 1 FROM sessions s
+                         WHERE s.task_id = t.id AND s.worktree_id = ?
+                       )
+                     )"#,
             )
-            .bind(worktree_id.0.to_string())
             .bind(task_id.0.to_string())
+            .bind(worktree_id.0.to_string())
+            .bind(worktree_id.0.to_string())
             .fetch_one(&self.pool)
             .await?
         } else {
             self.query_scalar(
-                r#"SELECT COUNT(*) FROM tasks
-                   WHERE primary_worktree_id = ?"#,
+                r#"SELECT COUNT(*) FROM tasks t
+                   WHERE t.primary_worktree_id = ?
+                      OR EXISTS(
+                        SELECT 1 FROM sessions s
+                        WHERE s.task_id = t.id AND s.worktree_id = ?
+                      )"#,
             )
+            .bind(worktree_id.0.to_string())
             .bind(worktree_id.0.to_string())
             .fetch_one(&self.pool)
             .await?

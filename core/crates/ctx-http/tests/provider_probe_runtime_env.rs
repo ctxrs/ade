@@ -423,6 +423,7 @@ async fn provider_options_probe_uses_managed_dependency_path() {
 #[cfg(unix)]
 #[tokio::test]
 async fn kimi_provider_options_expose_live_runtime_catalog_and_bootstrap_stays_hydratable() {
+    let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
@@ -519,6 +520,7 @@ async fn kimi_provider_options_expose_live_runtime_catalog_and_bootstrap_stays_h
 #[cfg(unix)]
 #[tokio::test]
 async fn amp_provider_options_include_live_runtime_model_catalog() {
+    let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
@@ -605,6 +607,7 @@ async fn amp_provider_options_include_live_runtime_model_catalog() {
 #[cfg(unix)]
 #[tokio::test]
 async fn amp_provider_options_fail_when_runtime_probe_returns_no_live_model_catalog() {
+    let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
@@ -659,6 +662,7 @@ async fn amp_provider_options_fail_when_runtime_probe_returns_no_live_model_cata
 
 #[tokio::test]
 async fn copilot_provider_options_include_pinned_model_catalog_when_live_probe_is_unavailable() {
+    let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
@@ -741,6 +745,7 @@ async fn copilot_provider_options_include_pinned_model_catalog_when_live_probe_i
 
 #[tokio::test]
 async fn providers_bootstrap_includes_pinned_codex_claude_and_gemini_catalogs() {
+    let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
@@ -944,6 +949,7 @@ async fn gemini_provider_options_use_live_acp_catalog_when_probe_succeeds() {
 
 #[tokio::test]
 async fn fake_provider_bootstrap_and_options_are_ready_without_browser_rewrite() {
+    let _env_lock = lock_env().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;

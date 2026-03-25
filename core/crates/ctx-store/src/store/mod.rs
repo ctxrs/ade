@@ -380,7 +380,6 @@ impl Store {
             })
             .connect(&sqlite_url)
             .await?;
-        repair_rebased_sandbox_binding_migration_versions(&pool).await?;
         repair_historical_tool_order_seq_migration_version(&pool).await?;
         ensure_sqlite_journal_mode_wal(&pool).await?;
         repair_duplicate_tool_display_migration_version(&pool).await?;
@@ -661,10 +660,7 @@ mod turns_session_heads;
 mod workspace;
 mod worktrees;
 
-use migration_repairs::{
-    repair_historical_tool_order_seq_migration_version,
-    repair_rebased_sandbox_binding_migration_versions,
-};
+use migration_repairs::repair_historical_tool_order_seq_migration_version;
 
 #[cfg(test)]
 mod tests {

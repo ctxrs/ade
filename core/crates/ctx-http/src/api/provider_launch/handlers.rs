@@ -134,54 +134,194 @@ pub(in crate::api) async fn get_provider_options(
     }
 
     let use_crp_probe = provider_supports_runtime_model_catalog(&provider_id);
-    if !use_crp_probe {
-        let ws = state
-            .global_store()
-            .get_workspace(ws_id)
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
+    match provider_options_probe_plan(
+        use_crp_probe,
+        selected_endpoint
+            .as_ref()
+            .map(|endpoint| endpoint.id.as_str()),
+    ) {
+        ProviderOptionsProbePlan::EnvOnly => {
+            let ws = state
+                .global_store()
+                .get_workspace(ws_id)
+                .await
+                .map_err(|_| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({
+                            "error": "failed to load workspace",
+                        })),
+                    )
+                })?
+                .ok_or((
+                    StatusCode::NOT_FOUND,
                     Json(serde_json::json!({
-                        "error": "failed to load workspace",
+                        "error": "workspace not found",
                     })),
-                )
-            })?
-            .ok_or((
-                StatusCode::NOT_FOUND,
+                ))?;
+            let (probe_ok, auth_required, probe_error) =
+                match probe::provider_probe_env_for_workspace_runtime(&state, &ws, &provider_id)
+                    .await
+                {
+                    Ok(_) => (true, false, None),
+                    Err(err) => {
+                        let probe_error = logs::redact_sensitive(&err);
+                        let (_, auth_required, _) = classify_probe_error(&probe_error);
+                        (false, auth_required.unwrap_or(false), Some(probe_error))
+                    }
+                };
+            let now = chrono::Utc::now();
+            let mut raw_resp = serde_json::json!({
+                "provider_id": provider_id,
+                "workspace_id": ws_id.0,
+                "installed": provider_status.installed,
+                "probe_ok": probe_ok,
+                "supports_load": false,
+                "auth_required": auth_required,
+                "has_active_auth": has_active_auth,
+                "auth_mode": auth_mode,
+                "probed_at": now.to_rfc3339(),
+            });
+            if let Some(probe_error) = probe_error {
+                raw_resp["probe_error"] = serde_json::json!(probe_error);
+            }
+            if let Some(source) = source_config.as_ref() {
+                raw_resp["source"] =
+                    serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
+            }
+            if let Some(endpoint) = selected_endpoint.as_ref() {
+                raw_resp["models"] = endpoint_models_payload(&provider_id, endpoint, now);
+                if harness_sources::endpoint_model_catalog_is_stale(endpoint, now) {
+                    let state = Arc::clone(&state);
+                    let provider_id_for_refresh = provider_id.clone();
+                    let endpoint_id_for_refresh = endpoint.id.clone();
+                    tokio::spawn(async move {
+                        let _ = harness_sources::refresh_provider_endpoint_model_catalog(
+                            &state.core.data_root,
+                            &provider_id_for_refresh,
+                            &endpoint_id_for_refresh,
+                        )
+                        .await;
+                    });
+                }
+            } else if let Some(models) = subscription_models_payload_from_status(&provider_status) {
+                raw_resp["models"] = models;
+            }
+            if raw_resp.get("models").is_none()
+                || raw_resp.get("models").is_some_and(|v| v.is_null())
+            {
+                if let Some(models) = cached_models {
+                    raw_resp["models"] = models;
+                }
+            }
+            if raw_resp.get("modes").is_none() || raw_resp.get("modes").is_some_and(|v| v.is_null())
+            {
+                if let Some(modes) = cached_modes {
+                    raw_resp["modes"] = modes;
+                }
+            }
+
+            let resp = redact_json_value(raw_resp);
+            state.providers.options_cache.lock().await.insert(
+                cache_key,
+                crate::daemon::CachedProviderOptions {
+                    cached_at: std::time::Instant::now(),
+                    value: resp.clone(),
+                },
+            );
+
+            let mut out = resp;
+            if let Some((verify_at, verify)) = verify_entry.as_ref() {
+                if verify_at.elapsed() < VERIFY_TTL {
+                    if let Some(obj) = out.as_object_mut() {
+                        obj.insert("verify".to_string(), verify.clone());
+                    }
+                }
+            }
+            return Ok(Json(out));
+        }
+        ProviderOptionsProbePlan::SelectedEndpointRuntimeLaunch(endpoint_id) => {
+            let ws = state
+                .global_store()
+                .get_workspace(ws_id)
+                .await
+                .map_err(|_| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({
+                            "error": "failed to load workspace",
+                        })),
+                    )
+                })?
+                .ok_or((
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({
+                        "error": "workspace not found",
+                    })),
+                ))?;
+            let endpoint = selected_endpoint.as_ref().ok_or((
+                StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
-                    "error": "workspace not found",
+                    "error": "selected endpoint missing from provider configuration",
                 })),
             ))?;
-        let (probe_ok, auth_required, probe_error) =
-            match probe::provider_probe_env_for_workspace_runtime(&state, &ws, &provider_id).await {
-                Ok(_) => (true, false, None),
-                Err(err) => {
-                    let probe_error = logs::redact_sensitive(&err);
-                    let (_, auth_required, _) = classify_probe_error(&probe_error);
-                    (false, auth_required.unwrap_or(false), Some(probe_error))
+            let now = chrono::Utc::now();
+            let mut probe_ok = true;
+            let mut auth_required = false;
+            let mut probe_error: Option<String> = None;
+            match prepare_provider_runtime_probe(
+                &state,
+                &ws,
+                &provider_id,
+                Some(endpoint_id.to_string()),
+            )
+            .await
+            {
+                Ok(prepared) => {
+                    if let Err(err) = probe_crp_runtime_launch(
+                        &provider_id,
+                        prepared.command,
+                        prepared.args,
+                        prepared.cwd,
+                        prepared.env,
+                    )
+                    .await
+                    {
+                        let probe_error_value = logs::redact_sensitive(&err.to_string());
+                        let (_, next_auth_required, _) = classify_probe_error(&probe_error_value);
+                        probe_ok = false;
+                        auth_required = next_auth_required.unwrap_or(false);
+                        probe_error = Some(probe_error_value);
+                    }
                 }
-            };
-        let now = chrono::Utc::now();
-        let mut raw_resp = serde_json::json!({
-            "provider_id": provider_id,
-            "workspace_id": ws_id.0,
-            "installed": provider_status.installed,
-            "probe_ok": probe_ok,
-            "supports_load": false,
-            "auth_required": auth_required,
-            "has_active_auth": has_active_auth,
-            "auth_mode": auth_mode,
-            "probed_at": now.to_rfc3339(),
-        });
-        if let Some(probe_error) = probe_error {
-            raw_resp["probe_error"] = serde_json::json!(probe_error);
-        }
-        if let Some(source) = source_config.as_ref() {
-            raw_resp["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
-        }
-        if let Some(endpoint) = selected_endpoint.as_ref() {
-            raw_resp["models"] = endpoint_models_payload(&provider_id, endpoint, now);
+                Err(PreparedProviderRuntimeProbeError::Route(err)) => return Err(err),
+                Err(PreparedProviderRuntimeProbeError::Verify(err)) => {
+                    let probe_error_value = logs::redact_sensitive(&err);
+                    let (_, next_auth_required, _) = classify_probe_error(&probe_error_value);
+                    probe_ok = false;
+                    auth_required = next_auth_required.unwrap_or(false);
+                    probe_error = Some(probe_error_value);
+                }
+            }
+            let mut raw_resp = serde_json::json!({
+                "provider_id": provider_id,
+                "workspace_id": ws_id.0,
+                "installed": provider_status.installed,
+                "probe_ok": probe_ok,
+                "supports_load": false,
+                "auth_required": auth_required,
+                "has_active_auth": has_active_auth,
+                "auth_mode": auth_mode,
+                "models": endpoint_models_payload(&provider_id, endpoint, now),
+                "probed_at": now.to_rfc3339(),
+            });
+            if let Some(probe_error) = probe_error {
+                raw_resp["probe_error"] = serde_json::json!(probe_error);
+            }
+            if let Some(source) = source_config.as_ref() {
+                raw_resp["source"] =
+                    serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
+            }
             if harness_sources::endpoint_model_catalog_is_stale(endpoint, now) {
                 let state = Arc::clone(&state);
                 let provider_id_for_refresh = provider_id.clone();
@@ -195,38 +335,25 @@ pub(in crate::api) async fn get_provider_options(
                     .await;
                 });
             }
-        } else if let Some(models) = subscription_models_payload_from_status(&provider_status) {
-            raw_resp["models"] = models;
-        }
-        if raw_resp.get("models").is_none() || raw_resp.get("models").is_some_and(|v| v.is_null()) {
-            if let Some(models) = cached_models {
-                raw_resp["models"] = models;
-            }
-        }
-        if raw_resp.get("modes").is_none() || raw_resp.get("modes").is_some_and(|v| v.is_null()) {
-            if let Some(modes) = cached_modes {
-                raw_resp["modes"] = modes;
-            }
-        }
-
-        let resp = redact_json_value(raw_resp);
-        state.providers.options_cache.lock().await.insert(
-            cache_key,
-            crate::daemon::CachedProviderOptions {
-                cached_at: std::time::Instant::now(),
-                value: resp.clone(),
-            },
-        );
-
-        let mut out = resp;
-        if let Some((verify_at, verify)) = verify_entry.as_ref() {
-            if verify_at.elapsed() < VERIFY_TTL {
-                if let Some(obj) = out.as_object_mut() {
-                    obj.insert("verify".to_string(), verify.clone());
+            let resp = redact_json_value(raw_resp);
+            state.providers.options_cache.lock().await.insert(
+                cache_key,
+                crate::daemon::CachedProviderOptions {
+                    cached_at: std::time::Instant::now(),
+                    value: resp.clone(),
+                },
+            );
+            let mut out = resp;
+            if let Some((verify_at, verify)) = verify_entry.as_ref() {
+                if verify_at.elapsed() < VERIFY_TTL {
+                    if let Some(obj) = out.as_object_mut() {
+                        obj.insert("verify".to_string(), verify.clone());
+                    }
                 }
             }
+            return Ok(Json(out));
         }
-        return Ok(Json(out));
+        ProviderOptionsProbePlan::RuntimeModels => {}
     }
 
     let ws = state
@@ -247,90 +374,6 @@ pub(in crate::api) async fn get_provider_options(
                 "error": "workspace not found",
             })),
         ))?;
-
-    if let Some(endpoint) = selected_endpoint.as_ref() {
-        let now = chrono::Utc::now();
-        let mut probe_ok = true;
-        let mut auth_required = false;
-        let mut probe_error: Option<String> = None;
-        match prepare_provider_runtime_probe(&state, &ws, &provider_id, Some(endpoint.id.clone()))
-            .await
-        {
-            Ok(prepared) => {
-                if let Err(err) = probe_crp_runtime_launch(
-                    &provider_id,
-                    prepared.command,
-                    prepared.args,
-                    prepared.cwd,
-                    prepared.env,
-                )
-                .await
-                {
-                    let probe_error_value = logs::redact_sensitive(&err.to_string());
-                    let (_, next_auth_required, _) = classify_probe_error(&probe_error_value);
-                    probe_ok = false;
-                    auth_required = next_auth_required.unwrap_or(false);
-                    probe_error = Some(probe_error_value);
-                }
-            }
-            Err(PreparedProviderRuntimeProbeError::Route(err)) => return Err(err),
-            Err(PreparedProviderRuntimeProbeError::Verify(err)) => {
-                let probe_error_value = logs::redact_sensitive(&err);
-                let (_, next_auth_required, _) = classify_probe_error(&probe_error_value);
-                probe_ok = false;
-                auth_required = next_auth_required.unwrap_or(false);
-                probe_error = Some(probe_error_value);
-            }
-        }
-        let mut raw_resp = serde_json::json!({
-            "provider_id": provider_id,
-            "workspace_id": ws_id.0,
-            "installed": provider_status.installed,
-            "probe_ok": probe_ok,
-            "supports_load": false,
-            "auth_required": auth_required,
-            "has_active_auth": has_active_auth,
-            "auth_mode": auth_mode,
-            "models": endpoint_models_payload(&provider_id, endpoint, now),
-            "probed_at": now.to_rfc3339(),
-        });
-        if let Some(probe_error) = probe_error {
-            raw_resp["probe_error"] = serde_json::json!(probe_error);
-        }
-        if let Some(source) = source_config.as_ref() {
-            raw_resp["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
-        }
-        if harness_sources::endpoint_model_catalog_is_stale(endpoint, now) {
-            let state = Arc::clone(&state);
-            let provider_id_for_refresh = provider_id.clone();
-            let endpoint_id_for_refresh = endpoint.id.clone();
-            tokio::spawn(async move {
-                let _ = harness_sources::refresh_provider_endpoint_model_catalog(
-                    &state.core.data_root,
-                    &provider_id_for_refresh,
-                    &endpoint_id_for_refresh,
-                )
-                .await;
-            });
-        }
-        let resp = redact_json_value(raw_resp);
-        state.providers.options_cache.lock().await.insert(
-            cache_key,
-            crate::daemon::CachedProviderOptions {
-                cached_at: std::time::Instant::now(),
-                value: resp.clone(),
-            },
-        );
-        let mut out = resp;
-        if let Some((verify_at, verify)) = verify_entry.as_ref() {
-            if verify_at.elapsed() < VERIFY_TTL {
-                if let Some(obj) = out.as_object_mut() {
-                    obj.insert("verify".to_string(), verify.clone());
-                }
-            }
-        }
-        return Ok(Json(out));
-    }
 
     let probe = match prepare_provider_runtime_probe(&state, &ws, &provider_id, None).await {
         Ok(prepared) => {

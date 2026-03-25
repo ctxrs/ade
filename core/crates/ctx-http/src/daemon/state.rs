@@ -339,21 +339,6 @@ impl AppState {
                         .stores
                         .evict_workspaces_to_cap(&protected_workspaces)
                         .await;
-                    let workspace = match self.global_store().get_workspace(workspace_id).await {
-                        Ok(Some(workspace)) => workspace,
-                        Ok(None) => return StoreLookup::Missing,
-                        Err(err) => return StoreLookup::Unavailable(err),
-                    };
-                    if let Err(err) =
-                        crate::api::tasks::backfill::ensure_workspace_sandbox_bindings_backfilled(
-                            self,
-                            &workspace,
-                            &access.store,
-                        )
-                        .await
-                    {
-                        return StoreLookup::Unavailable(err);
-                    }
                 }
                 StoreLookup::Found(access.store)
             }

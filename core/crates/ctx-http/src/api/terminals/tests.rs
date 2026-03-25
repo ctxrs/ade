@@ -110,3 +110,21 @@ fn resolve_container_terminal_cwd_maps_workspace_root_paths_into_container_works
 
     assert_eq!(cwd, PathBuf::from("/ctx/ws/subdir"));
 }
+
+#[test]
+fn resolve_container_terminal_cwd_maps_plain_workspace_terminal_paths_without_worktree_root() {
+    let workspace = sample_workspace("/host/ws");
+    let worktree = sample_worktree(&workspace, PathBuf::from("/host/ws"));
+    let requested = PathBuf::from("/host/ws/subdir");
+    let data_plane = sandbox_data_plane(&workspace, &worktree);
+
+    let cwd = resolve_container_terminal_cwd(
+        &data_plane,
+        &PathBuf::from(&workspace.root_path),
+        None,
+        Some(&requested),
+    )
+    .unwrap();
+
+    assert_eq!(cwd, PathBuf::from("/ctx/ws/subdir"));
+}

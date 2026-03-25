@@ -109,7 +109,7 @@ pub(crate) async fn resolve_worktree_data_plane(
             )
         }) {
             return Err(anyhow!(
-                "sandbox binding is missing for sandbox worktree {}; legacy repair is required",
+                "sandbox binding is missing for sandbox worktree {}",
                 worktree.id.0
             ));
         }
@@ -175,6 +175,10 @@ pub(crate) fn apply_data_plane_to_execution_settings(
         }
         settings.mode = ExecutionMode::Sandbox;
         settings.container.runtime = binding_runtime_kind(binding);
+        settings.container.mount_mode = ContainerMountMode::DiskIsolated;
+    } else if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
+        // Workspace-scoped sandbox flows have no binding yet, but the product contract is still
+        // disk-isolated sandbox rather than a legacy host-mounted variant.
         settings.container.mount_mode = ContainerMountMode::DiskIsolated;
     }
     Ok(settings)
@@ -288,5 +292,32 @@ mod tests {
         assert_eq!(data_plane.live_workspace_root, PathBuf::from("/ctx/ws"));
         assert_eq!(data_plane.live_worktree_root, PathBuf::from("/ctx/ws"));
         assert!(data_plane.binding.is_none());
+    }
+
+    #[test]
+    fn synthetic_sandbox_data_plane_forces_disk_isolated_mount_mode() {
+        let workspace = Workspace {
+            id: WorkspaceId(Uuid::new_v4()),
+            name: "ws".to_string(),
+            root_path: "/host/ws".to_string(),
+            created_at: Utc::now(),
+            vcs_kind: None,
+        };
+        let data_plane = workspace_data_plane(&workspace, ExecutionMode::Sandbox);
+        let base = ExecutionSettings {
+            mode: ExecutionMode::Sandbox,
+            container: crate::settings::ContainerExecutionSettings {
+                mount_mode: ContainerMountMode::Legacy,
+                ..crate::settings::ContainerExecutionSettings::default()
+            },
+        };
+
+        let applied =
+            apply_data_plane_to_execution_settings(&base, &data_plane).expect("apply settings");
+        assert_eq!(applied.mode, ExecutionMode::Sandbox);
+        assert_eq!(
+            applied.container.mount_mode,
+            ContainerMountMode::DiskIsolated
+        );
     }
 }

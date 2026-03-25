@@ -95,8 +95,7 @@ pub(in crate::api) async fn archive_task(
             managed_root: managed_worktree_root(&state, &workspace, worktree),
             sandbox_binding,
             worktree: worktree.clone(),
-            delete_branch_on_cleanup: false,
-            delete_worktree_record_on_success: false,
+            destroy_worktree_on_cleanup: false,
         });
     }
     errors.extend(

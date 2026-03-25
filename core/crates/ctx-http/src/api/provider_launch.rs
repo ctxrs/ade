@@ -192,6 +192,27 @@ enum PreparedProviderRuntimeProbeError {
     Verify(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderOptionsProbePlan<'a> {
+    EnvOnly,
+    RuntimeModels,
+    SelectedEndpointRuntimeLaunch(&'a str),
+}
+
+fn provider_options_probe_plan<'a>(
+    use_crp_probe: bool,
+    selected_endpoint_id: Option<&'a str>,
+) -> ProviderOptionsProbePlan<'a> {
+    if let Some(endpoint_id) = selected_endpoint_id.filter(|value| !value.trim().is_empty()) {
+        return ProviderOptionsProbePlan::SelectedEndpointRuntimeLaunch(endpoint_id);
+    }
+    if use_crp_probe {
+        ProviderOptionsProbePlan::RuntimeModels
+    } else {
+        ProviderOptionsProbePlan::EnvOnly
+    }
+}
+
 async fn prepare_provider_runtime_probe(
     state: &Arc<AppState>,
     workspace: &ctx_core::models::Workspace,
@@ -456,5 +477,38 @@ pub(super) fn endpoint_catalog_verify_outcome(
                 endpoint_status,
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{provider_options_probe_plan, ProviderOptionsProbePlan};
+
+    #[test]
+    fn provider_options_probe_plan_prefers_selected_endpoint_runtime_launch() {
+        assert_eq!(
+            provider_options_probe_plan(false, Some("endpoint-1")),
+            ProviderOptionsProbePlan::SelectedEndpointRuntimeLaunch("endpoint-1")
+        );
+        assert_eq!(
+            provider_options_probe_plan(true, Some("endpoint-1")),
+            ProviderOptionsProbePlan::SelectedEndpointRuntimeLaunch("endpoint-1")
+        );
+    }
+
+    #[test]
+    fn provider_options_probe_plan_uses_env_only_without_selected_endpoint_or_catalog_probe() {
+        assert_eq!(
+            provider_options_probe_plan(false, None),
+            ProviderOptionsProbePlan::EnvOnly
+        );
+    }
+
+    #[test]
+    fn provider_options_probe_plan_uses_runtime_models_without_selected_endpoint() {
+        assert_eq!(
+            provider_options_probe_plan(true, None),
+            ProviderOptionsProbePlan::RuntimeModels
+        );
     }
 }

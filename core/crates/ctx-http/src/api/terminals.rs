@@ -445,9 +445,7 @@ pub(super) async fn create_workspace_terminal(
                         (
                             StatusCode::INTERNAL_SERVER_ERROR,
                             Json(ApiErrorResp {
-                                error: format!(
-                                    "failed to materialize sandbox workspace root: {e}"
-                                ),
+                                error: format!("failed to materialize sandbox workspace root: {e}"),
                             }),
                         )
                     })?;
@@ -517,9 +515,7 @@ pub(super) async fn create_workspace_terminal(
                         (
                             StatusCode::INTERNAL_SERVER_ERROR,
                             Json(ApiErrorResp {
-                                error: format!(
-                                    "failed to materialize sandbox workspace root: {e}"
-                                ),
+                                error: format!("failed to materialize sandbox workspace root: {e}"),
                             }),
                         )
                     })?;
