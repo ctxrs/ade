@@ -193,11 +193,8 @@ async fn wait_for_reset_required_or_disconnect(
     let deadline = tokio::time::Instant::now() + deadline;
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        let next = tokio::time::timeout(
-            remaining.min(Duration::from_millis(250)),
-            socket.next(),
-        )
-        .await;
+        let next =
+            tokio::time::timeout(remaining.min(Duration::from_millis(250)), socket.next()).await;
         match next {
             Ok(Some(Ok(WsMessage::Text(txt)))) => {
                 let txt_string = txt.to_string();
@@ -224,11 +221,8 @@ async fn wait_for_disconnect_without_reset(
     let deadline = tokio::time::Instant::now() + deadline;
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        let next = tokio::time::timeout(
-            remaining.min(Duration::from_millis(250)),
-            socket.next(),
-        )
-        .await;
+        let next =
+            tokio::time::timeout(remaining.min(Duration::from_millis(250)), socket.next()).await;
         match next {
             Ok(Some(Ok(WsMessage::Text(txt)))) => {
                 let txt_string = txt.to_string();
