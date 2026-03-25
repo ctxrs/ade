@@ -10,12 +10,18 @@ use super::errors::ApiErrorResp;
 use crate::buffers::BufferStore;
 use crate::container_fs::is_container_path;
 use crate::daemon::AppState;
+use crate::disk_isolated;
 use crate::execution_effective;
 use crate::harness_runtime;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::terminals::{AvfLinuxTerminalSpec, PodmanTerminalSpec, TerminalCreateRequest};
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::TerminalSession;
+use ctx_core::models::{Workspace, Worktree};
+use ctx_fs::worktrees::managed_worktree_path;
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateTerminalReq {
@@ -87,6 +93,83 @@ async fn infer_avf_terminal_worktree(
     }
 
     None
+}
+
+fn sandbox_worktree_root(
+    data_root: &std::path::Path,
+    workspace: &Workspace,
+    worktree: &Worktree,
+) -> PathBuf {
+    let root = PathBuf::from(&worktree.root_path);
+    if is_container_path(&root) {
+        return root;
+    }
+    if worktree.root_path == workspace.root_path {
+        return PathBuf::from(harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT);
+    }
+    let managed_root = managed_worktree_path(data_root, workspace.id, worktree.id);
+    if std::path::Path::new(&worktree.root_path) == managed_root.as_path() {
+        return disk_isolated::container_worktree_root(worktree.id);
+    }
+    PathBuf::from(harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT)
+}
+
+fn resolve_container_terminal_cwd(
+    data_root: &std::path::Path,
+    workspace: &Workspace,
+    worktree: Option<&Worktree>,
+    requested_cwd: Option<&PathBuf>,
+) -> Result<PathBuf, (StatusCode, Json<ApiErrorResp>)> {
+    let container_workspace_root = PathBuf::from(harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT);
+    let fallback = worktree
+        .map(|worktree| sandbox_worktree_root(data_root, workspace, worktree))
+        .unwrap_or_else(|| container_workspace_root.clone());
+
+    let Some(requested) = requested_cwd else {
+        return Ok(fallback);
+    };
+
+    let requested_str = requested.to_string_lossy().to_string();
+    if requested.is_relative() {
+        return BufferStore::resolve_path_lexical(&fallback, &requested_str).map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "cwd must be within the container worktree/workspace root".to_string(),
+                }),
+            )
+        });
+    }
+
+    if let Some(worktree) = worktree {
+        let sandbox_root = sandbox_worktree_root(data_root, workspace, worktree);
+        let host_root = PathBuf::from(&worktree.root_path);
+        if requested.starts_with(&host_root) {
+            if let Ok(relative) = requested.strip_prefix(&host_root) {
+                return Ok(sandbox_root.join(relative));
+            }
+        }
+        if requested.starts_with(&sandbox_root) {
+            return Ok(requested.clone());
+        }
+    }
+
+    let host_workspace_root = PathBuf::from(&workspace.root_path);
+    if requested.starts_with(&host_workspace_root) {
+        if let Ok(relative) = requested.strip_prefix(&host_workspace_root) {
+            return Ok(container_workspace_root.join(relative));
+        }
+    }
+    if requested.starts_with(&container_workspace_root) {
+        return Ok(requested.clone());
+    }
+
+    Err((
+        StatusCode::BAD_REQUEST,
+        Json(ApiErrorResp {
+            error: "cwd must be within the container worktree/workspace root".to_string(),
+        }),
+    ))
 }
 
 pub(super) async fn create_workspace_terminal(
@@ -253,32 +336,13 @@ pub(super) async fn create_workspace_terminal(
             .as_ref()
             .map(|root| is_container_path(root))
             .unwrap_or(false);
-    let container_workspace_root = PathBuf::from(harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT);
-
     let cwd = if container_mode {
-        let fallback = worktree_root
-            .clone()
-            .unwrap_or_else(|| container_workspace_root.clone());
-        if let Some(requested) = requested_cwd.as_ref() {
-            let requested_str = requested.to_string_lossy().to_string();
-            let resolved = worktree_root
-                .as_ref()
-                .and_then(|root| BufferStore::resolve_path_lexical(root, &requested_str).ok())
-                .or_else(|| {
-                    BufferStore::resolve_path_lexical(&container_workspace_root, &requested_str)
-                        .ok()
-                })
-                .ok_or((
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: "cwd must be within the container worktree/workspace root"
-                            .to_string(),
-                    }),
-                ))?;
-            resolved
-        } else {
-            fallback
-        }
+        resolve_container_terminal_cwd(
+            &state.core.data_root,
+            &workspace,
+            worktree.as_ref(),
+            requested_cwd.as_ref(),
+        )?
     } else {
         let fallback_cwd = worktree_root
             .clone()
