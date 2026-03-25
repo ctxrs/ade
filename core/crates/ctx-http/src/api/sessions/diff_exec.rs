@@ -1,4 +1,6 @@
 use super::*;
+use crate::settings::ExecutionMode;
+use crate::worktree_data_plane::resolve_worktree_data_plane;
 
 enum SandboxExecTarget {
     Podman { container_name: String },
@@ -45,12 +47,13 @@ async fn container_exec_stdout(
 ) -> anyhow::Result<Vec<u8>> {
     const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(30);
     let target = ensure_container_for_worktree(state, worktree).await?;
+    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
     let out = match target {
         SandboxExecTarget::Podman { container_name } => {
             let mut cmd = podman_command(&state.core.data_root)?;
             cmd.arg("exec")
                 .arg("--workdir")
-                .arg(&worktree.root_path)
+                .arg(&data_plane.live_worktree_root)
                 .arg(&container_name)
                 .arg(program)
                 .args(args);
@@ -63,7 +66,7 @@ async fn container_exec_stdout(
                 &state.core.data_root,
                 worktree.workspace_id,
                 worktree.id,
-                StdPath::new(&worktree.root_path),
+                &data_plane.live_worktree_root,
                 program,
                 &args
                     .iter()
@@ -189,24 +192,34 @@ printf '%s %s %s\n' "$file_count" "$additions" "$deletions"
     Ok((file_count, additions, deletions))
 }
 
-pub(super) async fn diff_worktree_for_session(
+pub(crate) async fn diff_worktree_for_session(
     state: &Arc<AppState>,
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> anyhow::Result<String> {
-    if is_container_path(StdPath::new(&worktree.root_path)) {
+    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+    if matches!(data_plane.execution_mode, ExecutionMode::Container) {
         return container_diff_worktree(state, worktree, base_commit_sha).await;
     }
-    ctx_fs::worktrees::diff_worktree(&worktree.root_path, base_commit_sha).await
+    ctx_fs::worktrees::diff_worktree(
+        data_plane.live_worktree_root.to_string_lossy().as_ref(),
+        base_commit_sha,
+    )
+    .await
 }
 
-pub(super) async fn diff_worktree_summary_for_session(
+pub(crate) async fn diff_worktree_summary_for_session(
     state: &Arc<AppState>,
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> anyhow::Result<(i64, i64, i64)> {
-    if is_container_path(StdPath::new(&worktree.root_path)) {
+    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+    if matches!(data_plane.execution_mode, ExecutionMode::Container) {
         return container_diff_worktree_summary(state, worktree, base_commit_sha).await;
     }
-    ctx_fs::worktrees::diff_worktree_summary(&worktree.root_path, base_commit_sha).await
+    ctx_fs::worktrees::diff_worktree_summary(
+        data_plane.live_worktree_root.to_string_lossy().as_ref(),
+        base_commit_sha,
+    )
+    .await
 }

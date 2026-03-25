@@ -302,7 +302,7 @@ pub(crate) async fn get_session_diff(
                 }),
             )
         })?;
-    let resolution = resolve_session_diff_base(&store, &workspace, &worktree, &q).await?;
+    let resolution = resolve_session_diff_base(&state, &store, &workspace, &worktree, &q).await?;
     if let Some(unavailable_reason) = resolution.unavailable_reason.clone() {
         state
             .emit_compat_payload_reject_counter("sessions.diff", "no_target_branch", None)
@@ -411,18 +411,14 @@ pub(crate) async fn get_session_diff_summary(
                 }),
             )
         })?;
-    let resolution = resolve_session_diff_base(&store, &workspace, &worktree, &q).await?;
+    let resolution = resolve_session_diff_base(&state, &store, &workspace, &worktree, &q).await?;
     if let Some(unavailable_reason) = resolution.unavailable_reason.clone() {
         state
             .emit_compat_payload_reject_counter("sessions.diff_summary", "no_target_branch", None)
             .await;
-        let head_commit_sha = match vcs::driver_for_path(StdPath::new(&worktree.root_path)).await {
-            Ok(vcs) => match vcs.rev_parse_head(StdPath::new(&worktree.root_path)).await {
-                Ok(value) => value,
-                Err(_) => resolution.base_commit_sha.clone(),
-            },
-            Err(_) => resolution.base_commit_sha.clone(),
-        };
+        let head_commit_sha = crate::git_status::worktree_rev_parse_head(&state, &worktree)
+            .await
+            .unwrap_or_else(|_| resolution.base_commit_sha.clone());
         return Ok(Json(SessionDiffSummaryResponse {
             base_commit_sha: resolution.base_commit_sha,
             head_commit_sha,
@@ -451,13 +447,9 @@ pub(crate) async fn get_session_diff_summary(
                 ));
             }
         };
-    let head_commit_sha = match vcs::driver_for_path(StdPath::new(&worktree.root_path)).await {
-        Ok(vcs) => match vcs.rev_parse_head(StdPath::new(&worktree.root_path)).await {
-            Ok(value) => value,
-            Err(_) => base_commit_sha.clone(),
-        },
-        Err(_) => base_commit_sha.clone(),
-    };
+    let head_commit_sha = crate::git_status::worktree_rev_parse_head(&state, &worktree)
+        .await
+        .unwrap_or_else(|_| base_commit_sha.clone());
     if available {
         if let Some(snapshot) = state.get_worktree_vcs_snapshot(worktree.id).await {
             if snapshot.compute_state == WorktreeVcsComputeState::Ready
@@ -602,6 +594,7 @@ pub(crate) struct WorktreeDiffBaseResolution {
 }
 
 pub(crate) async fn resolve_diff_base_with_meta(
+    state: &Arc<AppState>,
     store: &ctx_store::Store,
     workspace: &Workspace,
     worktree: &Worktree,
@@ -661,45 +654,29 @@ pub(crate) async fn resolve_diff_base_with_meta(
         }
     }
 
-    let driver = match vcs::driver_for_path(StdPath::new(&worktree.root_path)).await {
-        Ok(driver) => Some(driver),
-        Err(err) => {
-            tracing::warn!(
-                worktree_id = %worktree.id.0,
-                "failed to resolve vcs driver for diff base: {err:#}"
-            );
-            None
-        }
-    };
-
     let mut error: Option<String> = None;
     let mut unavailable_reason: Option<DiffUnavailableReason> = None;
     if let Some(target_branch) = target_branch.clone() {
-        if let Some(driver) = driver {
-            match driver
-                .merge_base(StdPath::new(&worktree.root_path), &target_branch, "HEAD")
-                .await
-            {
-                Ok(base) => {
-                    return WorktreeDiffBaseResolution {
-                        base_commit_sha: base,
-                        target_branch: Some(target_branch),
-                        target_source,
-                        kind: WorktreeVcsBaseResolutionKind::MergeBase,
-                        error: None,
-                        unavailable_reason: None,
-                        explicit_target,
-                    };
-                }
-                Err(err) => {
-                    let redacted = logs::redact_sensitive(&err.to_string());
-                    error = Some(redacted);
-                    unavailable_reason = Some(DiffUnavailableReason::NoTargetBranch);
-                    tracing::warn!(
-                        worktree_id = %worktree.id.0,
-                        "merge-base failed for target {target_branch}: {err:#}"
-                    );
-                }
+        match crate::git_status::worktree_merge_base(state, worktree, &target_branch).await {
+            Ok(base) => {
+                return WorktreeDiffBaseResolution {
+                    base_commit_sha: base,
+                    target_branch: Some(target_branch),
+                    target_source,
+                    kind: WorktreeVcsBaseResolutionKind::MergeBase,
+                    error: None,
+                    unavailable_reason: None,
+                    explicit_target,
+                };
+            }
+            Err(err) => {
+                let redacted = logs::redact_sensitive(&err.to_string());
+                error = Some(redacted);
+                unavailable_reason = Some(DiffUnavailableReason::NoTargetBranch);
+                tracing::warn!(
+                    worktree_id = %worktree.id.0,
+                    "merge-base failed for target {target_branch}: {err:#}"
+                );
             }
         }
     }
@@ -716,12 +693,13 @@ pub(crate) async fn resolve_diff_base_with_meta(
 }
 
 pub(crate) async fn resolve_session_diff_base(
+    state: &Arc<AppState>,
     store: &ctx_store::Store,
     workspace: &Workspace,
     worktree: &Worktree,
     query: &SessionDiffQuery,
 ) -> Result<WorktreeDiffBaseResolution, (StatusCode, Json<ApiErrorResp>)> {
-    let resolution = resolve_diff_base_with_meta(store, workspace, worktree, query).await;
+    let resolution = resolve_diff_base_with_meta(state, store, workspace, worktree, query).await;
     if resolution.explicit_target {
         if let Some(error) = resolution.error.clone() {
             return Err((StatusCode::BAD_REQUEST, Json(ApiErrorResp { error })));
@@ -842,9 +820,14 @@ pub(crate) async fn apply_session_diff_patch(
         )
     })?;
 
-    let resolution =
-        resolve_session_diff_base(&store, &workspace, &worktree, &SessionDiffQuery::default())
-            .await?;
+    let resolution = resolve_session_diff_base(
+        &state,
+        &store,
+        &workspace,
+        &worktree,
+        &SessionDiffQuery::default(),
+    )
+    .await?;
     if let Some(unavailable_reason) = resolution.unavailable_reason.clone() {
         state
             .emit_compat_payload_reject_counter("sessions.diff_apply", "no_target_branch", None)

@@ -30,6 +30,7 @@ use crate::execution_effective;
 use crate::harness_runtime::{
     podman_command, workspace_container_name, CTX_CONTAINER_WORKSPACE_ROOT,
 };
+use crate::worktree_data_plane::live_worktree_root_for_mode;
 
 const CONTAINER_ATTACHMENTS_SUBDIR: &str = "attachments";
 
@@ -326,7 +327,9 @@ pub async fn ensure_worktree_attachment_mounts_for_attachments(
 
     let store = state.store_for_workspace(workspace.id).await?;
 
-    let worktree_root = PathBuf::from(&worktree.root_path);
+    let effective = execution_effective::effective_execution_settings(state, workspace.id).await?;
+    let worktree_root =
+        live_worktree_root_for_mode(&state.core.data_root, workspace, worktree, effective.mode);
     ensure_git_exclude(state, workspace, worktree.id, &worktree_root).await?;
 
     let mut mounts = Vec::with_capacity(attachments.len());

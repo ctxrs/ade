@@ -366,15 +366,8 @@ pub(in crate::api) async fn create_session_for_task(
     }
 
     if let Ok(Some(worktree)) = store.get_worktree(worktree_id).await {
-        if let Err(e) = vcs_hooks::ensure_task_commit_hook(
-            &state.core.data_root,
-            task.workspace_id,
-            worktree.id,
-            StdPath::new(&worktree.root_path),
-            worktree.vcs_kind.clone(),
-            task.id,
-        )
-        .await
+        if let Err(e) =
+            vcs_hooks::ensure_task_commit_hook(&state, &workspace, &worktree, task.id).await
         {
             tracing::warn!(
                 task_id = %task.id.0,

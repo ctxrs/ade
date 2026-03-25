@@ -58,6 +58,7 @@ pub mod workspace_active_snapshot;
 pub mod workspace_config;
 pub mod workspace_runtime;
 pub mod worktree_bootstrap;
+pub mod worktree_data_plane;
 
 #[cfg(feature = "fault_injection")]
 pub mod fault_injection;

@@ -11,6 +11,9 @@ use crate::crp::rewrite_bundled_path_for_linux;
 const CTX_HARNESS_RUNTIME_KIND_ENV: &str = "CTX_HARNESS_RUNTIME_KIND";
 const CTX_HARNESS_CONTAINER_ID_ENV: &str = "CTX_HARNESS_CONTAINER_ID";
 const CTX_HARNESS_CONTAINER_USER_ENV: &str = "CTX_HARNESS_CONTAINER_USER";
+const CTX_HARNESS_HOST_WORKTREE_ROOT_ENV: &str = "CTX_HARNESS_HOST_WORKTREE_ROOT";
+const CTX_HARNESS_GUEST_WORKTREE_ROOT_ENV: &str = "CTX_HARNESS_GUEST_WORKTREE_ROOT";
+const CTX_HARNESS_GUEST_WORKSPACE_ROOT_ENV: &str = "CTX_HARNESS_GUEST_WORKSPACE_ROOT";
 const CTX_PODMAN_PATH_ENV: &str = "CTX_PODMAN_PATH";
 const CTX_AVF_LINUX_HELPER_PATH_ENV: &str = "CTX_AVF_LINUX_HELPER_PATH";
 const CTX_AVF_HOST_DATA_ROOT_ENV: &str = "CTX_AVF_HOST_DATA_ROOT";
@@ -18,7 +21,6 @@ const CTX_AVF_WORKSPACE_ID_ENV: &str = "CTX_AVF_WORKSPACE_ID";
 const CTX_AVF_WORKTREE_ID_ENV: &str = "CTX_AVF_WORKTREE_ID";
 const CTX_AVF_HOST_WORKTREE_ROOT_ENV: &str = "CTX_AVF_HOST_WORKTREE_ROOT";
 const CTX_AVF_GUEST_WORKTREE_ROOT_ENV: &str = "CTX_AVF_GUEST_WORKTREE_ROOT";
-const CTX_HARNESS_GUEST_WORKSPACE_ROOT_ENV: &str = "CTX_HARNESS_GUEST_WORKSPACE_ROOT";
 
 #[derive(Debug, Clone)]
 pub enum ContainerExecSpec {
@@ -26,6 +28,9 @@ pub enum ContainerExecSpec {
         container_id: String,
         user: Option<String>,
         podman_path: Option<String>,
+        host_worktree_root: Option<PathBuf>,
+        guest_worktree_root: Option<PathBuf>,
+        guest_workspace_root: Option<PathBuf>,
     },
     AvfLinuxVm {
         helper_path: String,
@@ -48,6 +53,15 @@ pub fn container_exec_spec(env: &HashMap<String, String>) -> Option<ContainerExe
             container_id: env.get(CTX_HARNESS_CONTAINER_ID_ENV)?.to_string(),
             user: env.get(CTX_HARNESS_CONTAINER_USER_ENV).cloned(),
             podman_path: env.get(CTX_PODMAN_PATH_ENV).cloned(),
+            host_worktree_root: env
+                .get(CTX_HARNESS_HOST_WORKTREE_ROOT_ENV)
+                .map(PathBuf::from),
+            guest_worktree_root: env
+                .get(CTX_HARNESS_GUEST_WORKTREE_ROOT_ENV)
+                .map(PathBuf::from),
+            guest_workspace_root: env
+                .get(CTX_HARNESS_GUEST_WORKSPACE_ROOT_ENV)
+                .map(PathBuf::from),
         });
     }
 
@@ -79,7 +93,20 @@ pub fn build_container_exec_command(
             container_id,
             user,
             podman_path,
+            host_worktree_root,
+            guest_worktree_root,
+            guest_workspace_root,
         } => {
+            let guest_cwd = match (
+                host_worktree_root.as_deref(),
+                guest_worktree_root.as_deref(),
+                guest_workspace_root.as_deref(),
+            ) {
+                (Some(host_root), Some(guest_root), Some(guest_workspace_root)) => {
+                    resolve_linux_sandbox_cwd(workdir, host_root, guest_root, guest_workspace_root)?
+                }
+                _ => workdir.to_path_buf(),
+            };
             let mut cmd = Command::new(podman_path.as_deref().unwrap_or("podman"));
             // Keep Podman state deterministic and tied to the daemon data root when available.
             // Without this, `podman exec` may try to use a different connection/machine and fail.
@@ -93,7 +120,7 @@ pub fn build_container_exec_command(
             if let Some(user) = user.as_deref() {
                 cmd.arg("--user").arg(user);
             }
-            cmd.arg("--workdir").arg(workdir);
+            cmd.arg("--workdir").arg(&guest_cwd);
             for (k, v) in env {
                 if should_skip_linux_exec_env_key(spec, k) {
                     continue;
@@ -117,7 +144,7 @@ pub fn build_container_exec_command(
             guest_workspace_root,
             user,
         } => {
-            let guest_cwd = resolve_avf_guest_cwd(
+            let guest_cwd = resolve_linux_sandbox_cwd(
                 workdir,
                 host_worktree_root,
                 guest_worktree_root,
@@ -167,7 +194,7 @@ fn should_skip_linux_exec_env_key(spec: &ContainerExecSpec, key: &str) -> bool {
     }
 }
 
-fn resolve_avf_guest_cwd(
+fn resolve_linux_sandbox_cwd(
     workdir: &Path,
     host_worktree_root: &Path,
     guest_worktree_root: &Path,
@@ -182,14 +209,14 @@ fn resolve_avf_guest_cwd(
     if workdir.starts_with(host_worktree_root) {
         let relative = workdir
             .strip_prefix(host_worktree_root)
-            .context("mapping host worktree cwd for AVF execution")?;
+            .context("mapping host worktree cwd for linux sandbox execution")?;
         return Ok(join_guest_relative(guest_worktree_root, relative));
     }
     if workdir.starts_with(guest_worktree_root) {
         return Ok(workdir.to_path_buf());
     }
     anyhow::bail!(
-        "AVF guest cwd mapping failed: workdir {} is outside host root {} and guest root {}",
+        "linux sandbox cwd mapping failed: workdir {} is outside host root {} and guest root {}",
         workdir.display(),
         host_worktree_root.display(),
         guest_worktree_root.display()

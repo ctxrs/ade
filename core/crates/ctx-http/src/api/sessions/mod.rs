@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::{Path as StdPath, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -19,7 +19,6 @@ use super::redact_json_value;
 use super::shared::{load_and_cache_worktree_files, FileCompletionsQuery};
 use crate::attachments;
 use crate::completions;
-use crate::container_fs::is_container_path;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::git_status::{load_git_status_snapshot, GitStatusEntry};

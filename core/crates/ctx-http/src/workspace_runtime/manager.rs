@@ -88,16 +88,34 @@ impl HarnessRuntimeManager {
             "CTX_HARNESS_CONTAINER_ID".to_string(),
             container.name.clone(),
         );
+        let guest_workspace_root = crate::worktree_data_plane::live_workspace_root_for_mode(
+            workspace,
+            ExecutionMode::Container,
+        );
+        let guest_worktree_root = crate::worktree_data_plane::live_worktree_root_for_mode(
+            &self.data_root,
+            workspace,
+            worktree,
+            ExecutionMode::Container,
+        );
+        env_overrides.insert(
+            "CTX_HARNESS_HOST_WORKTREE_ROOT".to_string(),
+            worktree.root_path.clone(),
+        );
+        env_overrides.insert(
+            "CTX_HARNESS_GUEST_WORKTREE_ROOT".to_string(),
+            guest_worktree_root.to_string_lossy().to_string(),
+        );
+        env_overrides.insert(
+            "CTX_HARNESS_GUEST_WORKSPACE_ROOT".to_string(),
+            guest_workspace_root.to_string_lossy().to_string(),
+        );
         if let Some(user) = container_user() {
             env_overrides.insert("CTX_HARNESS_CONTAINER_USER".to_string(), user);
         }
 
         if avf {
             let workspace_vm = avf_linux_workspace_vm_state(&self.data_root, workspace.id)?;
-            env_overrides.insert(
-                "CTX_HARNESS_GUEST_WORKSPACE_ROOT".to_string(),
-                CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
-            );
             env_overrides.insert(
                 "CTX_AVF_WORKSPACE_VM_ROOT".to_string(),
                 workspace_vm.vm_root.to_string_lossy().to_string(),
@@ -130,7 +148,7 @@ impl HarnessRuntimeManager {
             );
             env_overrides.insert(
                 "CTX_AVF_GUEST_WORKTREE_ROOT".to_string(),
-                worktree.root_path.clone(),
+                guest_worktree_root.to_string_lossy().to_string(),
             );
             if let Some(log_path) = workspace_vm.log_path.as_ref() {
                 env_overrides.insert(

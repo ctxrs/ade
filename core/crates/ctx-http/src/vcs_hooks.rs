@@ -1,8 +1,13 @@
 use anyhow::{bail, Context, Result};
 use ctx_core::ids::{TaskId, WorkspaceId, WorktreeId};
-use ctx_core::models::VcsKind;
+use ctx_core::models::{VcsKind, Workspace, Worktree};
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
+
+use crate::execution_effective;
+use crate::harness_runtime::{podman_command, workspace_container_name};
+use crate::settings::{ContainerRuntimeKind, ExecutionMode};
+use crate::worktree_data_plane::live_worktree_root_for_mode;
 
 const COMMIT_MSG_HOOK: &str = r#"#!/bin/sh
 set -e
@@ -43,7 +48,7 @@ pub fn worktree_hooks_dir(
         .join(worktree_id.0.to_string())
 }
 
-pub async fn ensure_task_commit_hook(
+async fn ensure_task_commit_hook_host(
     data_root: &Path,
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
@@ -90,6 +95,89 @@ pub async fn ensure_task_commit_hook(
     }
     set_git_config(worktree_root, CORE_HOOKS_PATH_KEY, &hooks_path).await?;
     set_git_config(worktree_root, CTX_TASK_ID_KEY, &task_id.0.to_string()).await?;
+    Ok(())
+}
+
+pub async fn ensure_task_commit_hook(
+    state: &crate::daemon::AppState,
+    workspace: &Workspace,
+    worktree: &Worktree,
+    task_id: TaskId,
+) -> Result<()> {
+    let settings = execution_effective::effective_execution_settings(state, workspace.id).await?;
+    if matches!(settings.mode, ExecutionMode::Host) {
+        return ensure_task_commit_hook_host(
+            &state.core.data_root,
+            workspace.id,
+            worktree.id,
+            Path::new(&worktree.root_path),
+            worktree.vcs_kind.clone(),
+            task_id,
+        )
+        .await;
+    }
+    if worktree.vcs_kind != Some(VcsKind::Git) {
+        return Ok(());
+    }
+
+    state
+        .execution
+        .harness
+        .ensure_workspace_container_for_worktree(
+            workspace,
+            worktree,
+            &settings,
+            &state.core.daemon_url,
+        )
+        .await?;
+
+    let live_worktree_root = live_worktree_root_for_mode(
+        &state.core.data_root,
+        workspace,
+        worktree,
+        settings.mode.clone(),
+    );
+    let hooks_dir = live_worktree_root.join(".ctx-hooks");
+    let hook_path = hooks_dir.join("commit-msg");
+    sandbox_write_hook(
+        state, workspace, worktree, &settings, &hooks_dir, &hook_path,
+    )
+    .await?;
+
+    let hooks_path = hooks_dir.to_string_lossy().to_string();
+    if let Some(existing) =
+        sandbox_git_config_get(state, workspace, worktree, &settings, CORE_HOOKS_PATH_KEY).await?
+    {
+        if existing != hooks_path {
+            sandbox_git_config_set(
+                state,
+                workspace,
+                worktree,
+                &settings,
+                CTX_PREV_HOOKS_PATH_KEY,
+                &existing,
+            )
+            .await?;
+        }
+    }
+    sandbox_git_config_set(
+        state,
+        workspace,
+        worktree,
+        &settings,
+        CORE_HOOKS_PATH_KEY,
+        &hooks_path,
+    )
+    .await?;
+    sandbox_git_config_set(
+        state,
+        workspace,
+        worktree,
+        &settings,
+        CTX_TASK_ID_KEY,
+        &task_id.0.to_string(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -152,6 +240,160 @@ async fn set_git_config(worktree_root: &Path, key: &str, value: &str) -> Result<
         bail!(
             "git config --worktree failed: {}",
             String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+async fn sandbox_write_hook(
+    state: &crate::daemon::AppState,
+    workspace: &Workspace,
+    worktree: &Worktree,
+    settings: &crate::settings::ExecutionSettings,
+    hooks_dir: &Path,
+    hook_path: &Path,
+) -> Result<()> {
+    let script = "set -eu; mkdir -p -- \"$1\"; cat > \"$2\"; chmod 755 \"$2\"";
+    let mut cmd = sandbox_command(
+        state,
+        workspace,
+        worktree,
+        settings,
+        "sh",
+        &[
+            "-lc".to_string(),
+            script.to_string(),
+            "--".to_string(),
+            hooks_dir.to_string_lossy().to_string(),
+            hook_path.to_string_lossy().to_string(),
+        ],
+    )?;
+    cmd.stdin(std::process::Stdio::piped());
+    cmd.kill_on_drop(true);
+    let mut child = cmd.spawn().context("spawning sandbox vcs hook install")?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        stdin.write_all(COMMIT_MSG_HOOK.as_bytes()).await?;
+    }
+    let output = child
+        .wait_with_output()
+        .await
+        .context("waiting on sandbox vcs hook install")?;
+    if !output.status.success() {
+        bail!(
+            "sandbox hook install failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+fn sandbox_command(
+    state: &crate::daemon::AppState,
+    workspace: &Workspace,
+    worktree: &Worktree,
+    settings: &crate::settings::ExecutionSettings,
+    command: &str,
+    args: &[String],
+) -> Result<Command> {
+    let live_worktree_root = live_worktree_root_for_mode(
+        &state.core.data_root,
+        workspace,
+        worktree,
+        settings.mode.clone(),
+    );
+    match settings.container.runtime {
+        ContainerRuntimeKind::Podman => {
+            let mut cmd = podman_command(&state.core.data_root)?;
+            cmd.arg("exec")
+                .arg("--interactive")
+                .arg("--workdir")
+                .arg(&live_worktree_root)
+                .arg(workspace_container_name(workspace.id))
+                .arg(command);
+            cmd.args(args);
+            Ok(cmd)
+        }
+        ContainerRuntimeKind::AvfLinuxVm => {
+            crate::workspace_runtime::build_avf_linux_guest_exec_command(
+                &state.core.data_root,
+                workspace.id,
+                worktree.id,
+                &live_worktree_root,
+                command,
+                args,
+                &std::collections::HashMap::new(),
+                None,
+                false,
+            )
+        }
+    }
+}
+
+async fn sandbox_git_config_get(
+    state: &crate::daemon::AppState,
+    workspace: &Workspace,
+    worktree: &Worktree,
+    settings: &crate::settings::ExecutionSettings,
+    key: &str,
+) -> Result<Option<String>> {
+    let mut cmd = sandbox_command(
+        state,
+        workspace,
+        worktree,
+        settings,
+        "git",
+        &[
+            "config".to_string(),
+            "--worktree".to_string(),
+            "--get".to_string(),
+            key.to_string(),
+        ],
+    )?;
+    let output = cmd
+        .output()
+        .await
+        .context("running sandbox git config --get")?;
+    if output.status.success() {
+        return Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ));
+    }
+    if output.status.code() == Some(1) {
+        return Ok(None);
+    }
+    bail!(
+        "sandbox git config --get failed: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    )
+}
+
+async fn sandbox_git_config_set(
+    state: &crate::daemon::AppState,
+    workspace: &Workspace,
+    worktree: &Worktree,
+    settings: &crate::settings::ExecutionSettings,
+    key: &str,
+    value: &str,
+) -> Result<()> {
+    let mut cmd = sandbox_command(
+        state,
+        workspace,
+        worktree,
+        settings,
+        "git",
+        &[
+            "config".to_string(),
+            "--worktree".to_string(),
+            key.to_string(),
+            value.to_string(),
+        ],
+    )?;
+    let output = cmd.output().await.context("running sandbox git config")?;
+    if !output.status.success() {
+        bail!(
+            "sandbox git config --worktree failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
         );
     }
     Ok(())

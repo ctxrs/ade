@@ -363,16 +363,7 @@ pub(in crate::api) async fn create_task(
         tracing::warn!(worktree_id = %worktree_id.0, "failed to update worktree index: {e:?}");
     }
 
-    if let Err(e) = vcs_hooks::ensure_task_commit_hook(
-        &state.core.data_root,
-        ws_id,
-        worktree_id,
-        StdPath::new(&worktree.root_path),
-        worktree.vcs_kind.clone(),
-        task.id,
-    )
-    .await
-    {
+    if let Err(e) = vcs_hooks::ensure_task_commit_hook(&state, &ws, &worktree, task.id).await {
         tracing::warn!(
             task_id = %task.id.0,
             worktree_id = %worktree_id.0,

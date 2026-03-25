@@ -10,15 +10,16 @@ use super::errors::ApiErrorResp;
 use crate::buffers::BufferStore;
 use crate::container_fs::is_container_path;
 use crate::daemon::AppState;
-use crate::disk_isolated;
 use crate::execution_effective;
 use crate::harness_runtime;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::terminals::{AvfLinuxTerminalSpec, PodmanTerminalSpec, TerminalCreateRequest};
+use crate::worktree_data_plane::{
+    live_workspace_root_for_mode, map_host_path_to_live_path, sandbox_worktree_root,
+};
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::TerminalSession;
 use ctx_core::models::{Workspace, Worktree};
-use ctx_fs::worktrees::managed_worktree_path;
 
 #[cfg(test)]
 mod tests;
@@ -95,32 +96,14 @@ async fn infer_avf_terminal_worktree(
     None
 }
 
-fn sandbox_worktree_root(
-    data_root: &std::path::Path,
-    workspace: &Workspace,
-    worktree: &Worktree,
-) -> PathBuf {
-    let root = PathBuf::from(&worktree.root_path);
-    if is_container_path(&root) {
-        return root;
-    }
-    if worktree.root_path == workspace.root_path {
-        return PathBuf::from(harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT);
-    }
-    let managed_root = managed_worktree_path(data_root, workspace.id, worktree.id);
-    if std::path::Path::new(&worktree.root_path) == managed_root.as_path() {
-        return disk_isolated::container_worktree_root(worktree.id);
-    }
-    PathBuf::from(harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT)
-}
-
 fn resolve_container_terminal_cwd(
     data_root: &std::path::Path,
     workspace: &Workspace,
     worktree: Option<&Worktree>,
     requested_cwd: Option<&PathBuf>,
 ) -> Result<PathBuf, (StatusCode, Json<ApiErrorResp>)> {
-    let container_workspace_root = PathBuf::from(harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT);
+    let container_workspace_root =
+        live_workspace_root_for_mode(workspace, ExecutionMode::Container);
     let fallback = worktree
         .map(|worktree| sandbox_worktree_root(data_root, workspace, worktree))
         .unwrap_or_else(|| container_workspace_root.clone());
@@ -142,26 +125,24 @@ fn resolve_container_terminal_cwd(
     }
 
     if let Some(worktree) = worktree {
-        let sandbox_root = sandbox_worktree_root(data_root, workspace, worktree);
-        let host_root = PathBuf::from(&worktree.root_path);
-        if requested.starts_with(&host_root) {
-            if let Ok(relative) = requested.strip_prefix(&host_root) {
-                return Ok(sandbox_root.join(relative));
-            }
-        }
-        if requested.starts_with(&sandbox_root) {
-            return Ok(requested.clone());
-        }
-    }
-
-    let host_workspace_root = PathBuf::from(&workspace.root_path);
-    if requested.starts_with(&host_workspace_root) {
-        if let Ok(relative) = requested.strip_prefix(&host_workspace_root) {
-            return Ok(container_workspace_root.join(relative));
+        if let Some(mapped) = map_host_path_to_live_path(
+            data_root,
+            workspace,
+            Some(worktree),
+            requested,
+            ExecutionMode::Container,
+        ) {
+            return Ok(mapped);
         }
     }
-    if requested.starts_with(&container_workspace_root) {
-        return Ok(requested.clone());
+    if let Some(mapped) = map_host_path_to_live_path(
+        data_root,
+        workspace,
+        None,
+        requested,
+        ExecutionMode::Container,
+    ) {
+        return Ok(mapped);
     }
 
     Err((

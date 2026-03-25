@@ -12,13 +12,13 @@ use ctx_core::ids::WorktreeId;
 use ctx_core::models::{Workspace, Worktree, WorktreeBootstrapNotice, WorktreeBootstrapStatus};
 use ctx_store::WorktreeBootstrapResultUpdate;
 
-use crate::container_fs::is_container_path;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::harness_runtime;
 use crate::logs;
-use crate::settings::ContainerRuntimeKind;
+use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::workspace_config;
+use crate::worktree_data_plane::{live_workspace_root_for_mode, live_worktree_root_for_mode};
 
 const DEFAULT_TIMEOUT_SEC: u64 = 60;
 const MAX_LOG_BYTES: usize = 200 * 1024;
@@ -336,18 +336,37 @@ async fn run_bootstrap_step(
     worktree: &Worktree,
     timeout: Duration,
 ) -> Result<BootstrapCommandResult> {
-    if is_container_path(Path::new(&worktree.root_path)) {
-        return run_bootstrap_step_in_container(state, step, workspace, worktree, timeout).await;
+    let settings = execution_effective::effective_execution_settings(state, workspace.id).await?;
+    let execution_mode = settings.mode.clone();
+    let live_workspace_root = live_workspace_root_for_mode(workspace, execution_mode.clone());
+    let live_worktree_root = live_worktree_root_for_mode(
+        &state.core.data_root,
+        workspace,
+        worktree,
+        execution_mode.clone(),
+    );
+    if matches!(execution_mode, ExecutionMode::Container) {
+        return run_bootstrap_step_in_container(
+            state,
+            step,
+            workspace,
+            worktree,
+            &settings,
+            &live_workspace_root,
+            &live_worktree_root,
+            timeout,
+        )
+        .await;
     }
 
     let mut cmd = match &step.kind {
         BootstrapStepKind::Command { command } => command_for_shell(command),
     };
 
-    cmd.current_dir(&worktree.root_path)
+    cmd.current_dir(&live_worktree_root)
         .stdin(Stdio::null())
-        .env("CTX_WORKSPACE_ROOT", &workspace.root_path)
-        .env("CTX_WORKTREE_ROOT", &worktree.root_path)
+        .env("CTX_WORKSPACE_ROOT", &live_workspace_root)
+        .env("CTX_WORKTREE_ROOT", &live_worktree_root)
         .env("CTX_WORKTREE_ID", worktree.id.0.to_string())
         .env(
             "CTX_BRANCH_NAME",
@@ -421,10 +440,12 @@ async fn run_bootstrap_step_in_container(
     step: &BootstrapStep,
     workspace: &Workspace,
     worktree: &Worktree,
+    settings: &crate::settings::ExecutionSettings,
+    live_workspace_root: &Path,
+    live_worktree_root: &Path,
     timeout: Duration,
 ) -> Result<BootstrapCommandResult> {
     // Ensure the harness container is up, then execute within it.
-    let settings = execution_effective::effective_execution_settings(state, workspace.id).await?;
     state
         .execution
         .harness
@@ -438,11 +459,11 @@ async fn run_bootstrap_step_in_container(
     let mut env = std::collections::HashMap::new();
     env.insert(
         "CTX_WORKSPACE_ROOT".to_string(),
-        worktree.root_path.trim().to_string(),
+        live_workspace_root.to_string_lossy().to_string(),
     );
     env.insert(
         "CTX_WORKTREE_ROOT".to_string(),
-        worktree.root_path.trim().to_string(),
+        live_worktree_root.to_string_lossy().to_string(),
     );
     env.insert("CTX_WORKTREE_ID".to_string(), worktree.id.0.to_string());
     env.insert(
@@ -474,7 +495,7 @@ async fn run_bootstrap_step_in_container(
         ContainerRuntimeKind::Podman => {
             let container_name = harness_runtime::workspace_container_name(workspace.id);
             let mut cmd = harness_runtime::podman_command(&state.core.data_root)?;
-            cmd.arg("exec").arg("--workdir").arg(&worktree.root_path);
+            cmd.arg("exec").arg("--workdir").arg(live_worktree_root);
             for (key, value) in &env {
                 cmd.arg("--env").arg(format!("{key}={value}"));
             }
@@ -492,7 +513,7 @@ async fn run_bootstrap_step_in_container(
                     &state.core.data_root,
                     workspace.id,
                     worktree.id,
-                    Path::new(&worktree.root_path),
+                    live_worktree_root,
                     "sh",
                     &["-lc".to_string(), command.clone()],
                     &env,

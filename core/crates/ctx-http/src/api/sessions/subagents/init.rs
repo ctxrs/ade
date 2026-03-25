@@ -243,39 +243,21 @@ pub(crate) async fn mcp_agent_init(
         ))?;
 
     let worktree_plan = if worktree_selection == SubagentWorktreeSelection::New {
-        let parent_root = StdPath::new(&parent_worktree.root_path);
-        let vcs = vcs::driver_for_path(parent_root).await.map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-        let base_commit_sha = vcs.rev_parse_head(parent_root).await.map_err(|e| {
-            let msg = e.to_string().to_lowercase();
-            if msg.contains("ambiguous argument 'head'")
-                || msg.contains("unknown revision or path not in the working tree")
-            {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: "git repo has no commits; create an initial commit before creating a worktree".to_string(),
-                    }),
-                );
-            }
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-
-        let (dirty_files, dirty_additions, dirty_deletions) =
-            ctx_fs::worktrees::diff_worktree_summary(parent_root, &base_commit_sha)
+        let base_commit_sha =
+            crate::git_status::worktree_rev_parse_head(&state, &parent_worktree)
                 .await
                 .map_err(|e| {
+                    let msg = e.to_string().to_lowercase();
+                    if msg.contains("ambiguous argument 'head'")
+                        || msg.contains("unknown revision or path not in the working tree")
+                    {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(ApiErrorResp {
+                                error: "git repo has no commits; create an initial commit before creating a worktree".to_string(),
+                            }),
+                        );
+                    }
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ApiErrorResp {
@@ -283,6 +265,22 @@ pub(crate) async fn mcp_agent_init(
                         }),
                     )
                 })?;
+        let vcs = vcs::driver_for_kind(parent_worktree.vcs_kind.clone());
+        let (dirty_files, dirty_additions, dirty_deletions) =
+            crate::api::sessions::diff_exec::diff_worktree_summary_for_session(
+                &state,
+                &parent_worktree,
+                &base_commit_sha,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
         if dirty_files > 0 || dirty_additions > 0 || dirty_deletions > 0 {
             return Err((
                 StatusCode::BAD_REQUEST,

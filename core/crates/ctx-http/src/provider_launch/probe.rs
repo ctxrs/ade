@@ -8,13 +8,12 @@ use ctx_core::models::{Workspace, Worktree};
 use ctx_fs::worktrees::managed_worktree_path;
 
 use crate::daemon::AppState;
-use crate::disk_isolated;
 use crate::execution_effective;
-use crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT;
 use crate::harness_sources::{self, HarnessSourceKind, ResolvedHarnessSource};
 use crate::logs;
 use crate::provider_accounts;
 use crate::settings::{ContainerMountMode, ExecutionMode};
+use crate::worktree_data_plane::live_worktree_root_for_mode;
 
 pub(crate) struct WorkspaceRuntimeProbeContext {
     pub(crate) source: ResolvedHarnessSource,
@@ -203,22 +202,12 @@ fn probe_cwd_for_workspace_runtime(
     mode: ExecutionMode,
     mount_mode: ContainerMountMode,
 ) -> PathBuf {
-    if !matches!(mode, ExecutionMode::Container)
-        || !matches!(mount_mode, ContainerMountMode::DiskIsolated)
+    if matches!(mode, ExecutionMode::Container)
+        && matches!(mount_mode, ContainerMountMode::DiskIsolated)
     {
-        return PathBuf::from(&worktree.root_path);
+        return live_worktree_root_for_mode(data_root, workspace, worktree, mode);
     }
-
-    if worktree.root_path == workspace.root_path {
-        return PathBuf::from(CTX_CONTAINER_WORKSPACE_ROOT);
-    }
-
-    let managed_root = managed_worktree_path(data_root, workspace.id, worktree.id);
-    if Path::new(&worktree.root_path) == managed_root {
-        return disk_isolated::container_worktree_root(worktree.id);
-    }
-
-    PathBuf::from(CTX_CONTAINER_WORKSPACE_ROOT)
+    PathBuf::from(&worktree.root_path)
 }
 
 async fn finalize_workspace_probe_env(
