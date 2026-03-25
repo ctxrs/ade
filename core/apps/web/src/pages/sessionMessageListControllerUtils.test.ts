@@ -310,6 +310,18 @@ describe("sessionMessageListControllerUtils", () => {
     expect(
       shouldReplaceBottomLockedStructuralUpdate({
         stickToBottom: true,
+        currentLen: 51,
+        nextLen: 16,
+        prefixLen: 0,
+        suffixLen: 1,
+        deleteCount: 50,
+        insertCount: 15,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldReplaceBottomLockedStructuralUpdate({
+        stickToBottom: true,
         currentLen: 40,
         nextLen: 40,
         prefixLen: 18,
@@ -336,6 +348,20 @@ describe("assertWholeListPurgeAllowed", () => {
     ).not.toThrow();
   });
 
+  it("allows a full purge for reconcile", () => {
+    expect(() =>
+      assertWholeListPurgeAllowed({
+        reason: "bottomLockedStructuralReconcile",
+        threadOp: {
+          kind: "reconcile",
+          projectionRevision: 3,
+          changedItemIds: ["row-3"],
+          remeasureItemIds: ["row-3"],
+        },
+      }),
+    ).not.toThrow();
+  });
+
   it("throws when a localized op attempts to use a full purge", () => {
     expect(() =>
       assertWholeListPurgeAllowed({
@@ -347,6 +373,6 @@ describe("assertWholeListPurgeAllowed", () => {
           remeasureItemIds: ["row-2"],
         },
       }),
-    ).toThrow(/full-list purge is reserved for replace_session/i);
+    ).toThrow(/full-list purge is reserved for replace_session\/reconcile/i);
   });
 });

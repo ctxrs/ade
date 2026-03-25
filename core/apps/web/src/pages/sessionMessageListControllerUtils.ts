@@ -173,11 +173,15 @@ export function shouldReplaceBottomLockedStructuralUpdate(params: {
 
   const replacedCount = Math.max(deleteCount, insertCount);
   const sharedLen = Math.min(currentLen, nextLen);
+  const replacesLargeVisiblePortion =
+    sharedLen > 0 && replacedCount >= 32 && replacedCount >= Math.floor(sharedLen / 2);
+  if (replacesLargeVisiblePortion) return true;
+
   const replacesMostOfVisibleList =
     replacedCount >= 64 && sharedLen > 0 && replacedCount >= Math.floor(sharedLen / 2);
   if (replacesMostOfVisibleList) return true;
 
-  return nextLen >= currentLen * 2;
+  return currentLen >= 32 && nextLen >= currentLen * 2;
 }
 
 export function assertWholeListPurgeAllowed(params: {
@@ -185,9 +189,9 @@ export function assertWholeListPurgeAllowed(params: {
   threadOp?: WorkbenchThreadProjectionOp | null;
 }): void {
   const kind = params.threadOp?.kind ?? null;
-  if (!kind || kind === "replace_session") return;
+  if (!kind || kind === "replace_session" || kind === "reconcile") return;
 
-  const message = `[MessageList] full-list purge is reserved for replace_session (reason=${params.reason}, op=${kind})`;
+  const message = `[MessageList] full-list purge is reserved for replace_session/reconcile (reason=${params.reason}, op=${kind})`;
   if (import.meta.env.DEV || import.meta.env.MODE === "test") {
     throw new Error(message);
   }

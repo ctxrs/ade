@@ -842,7 +842,7 @@ export function useSessionMessageListReconcileEffect({
       deleteCount,
       insertCount: insertData.length,
     });
-    if (replaceBottomLockedStructuralUpdate && threadOp?.kind === "replace_session") {
+    if (replaceBottomLockedStructuralUpdate) {
       assertWholeListPurgeAllowed({ reason: "bottomLockedStructuralReconcile", threadOp });
       methods.cancelSmoothScroll();
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 1 };

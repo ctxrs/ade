@@ -285,6 +285,8 @@ describe("useSessionMessageListController", () => {
     fake.spies.deleteRange.mockClear();
     fake.spies.insert.mockClear();
     fake.spies.batch.mockClear();
+    fake.spies.cancelSmoothScroll.mockClear();
+    fake.spies.scrollToItem.mockClear();
     coalescedItems = mixedStructuralNext;
 
     rerender({
@@ -296,7 +298,7 @@ describe("useSessionMessageListController", () => {
     expect(fake.spies.batch).toHaveBeenCalled();
   });
 
-  it("reconciles same-length large middle churn while bottom-locked", () => {
+  it("replaces same-length large middle churn while bottom-locked", () => {
     const initialItems = Array.from({ length: 231 }, (_, index) => makeSpacer(`current-${index}`));
     const mixedStructuralNext = [
       ...initialItems.slice(0, 92),
@@ -337,6 +339,8 @@ describe("useSessionMessageListController", () => {
     fake.spies.deleteRange.mockClear();
     fake.spies.insert.mockClear();
     fake.spies.batch.mockClear();
+    fake.spies.cancelSmoothScroll.mockClear();
+    fake.spies.scrollToItem.mockClear();
     coalescedItems = mixedStructuralNext;
 
     rerender({
@@ -344,8 +348,72 @@ describe("useSessionMessageListController", () => {
       layoutRevision: "layout-1",
     });
 
-    expect(fake.spies.replace).not.toHaveBeenCalled();
-    expect(fake.spies.batch).toHaveBeenCalled();
+    expect(fake.spies.replace).toHaveBeenCalledTimes(1);
+    expect(fake.spies.batch).not.toHaveBeenCalled();
+    expect(fake.spies.cancelSmoothScroll).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces bottom-locked destructive shrink reconciles to purge stale row sizes", () => {
+    const initialItems = Array.from({ length: 51 }, (_, index) => makeSpacer(`current-${index}`));
+    const nextItems = [...Array.from({ length: 15 }, (_, index) => makeSpacer(`next-${index}`)), initialItems.at(-1)!];
+    const threadOp: WorkbenchThreadProjectionOp = {
+      kind: "reconcile",
+      projectionRevision: 2,
+      changedItemIds: nextItems.map((item) => item.id),
+      remeasureItemIds: nextItems.map((item) => item.id),
+    };
+    const fake = createFakeMethods(initialItems);
+    coalescedItems = initialItems;
+
+    const { result, rerender } = renderHook(
+      ({
+        listItems,
+        activeThreadOp,
+      }: {
+        listItems: WorkbenchListItem[];
+        activeThreadOp: WorkbenchThreadProjectionOp | null;
+      }) =>
+        useSessionMessageListController({
+          sessionId: "session-1",
+          isActive: true,
+          loaded: true,
+          listItems,
+          canLoadOlder: false,
+          loadOlder: async () => {},
+          layoutRevision: "layout-1",
+          itemSizeCacheKey: () => null,
+          threadOp: activeThreadOp,
+          showDebug: false,
+        }),
+      {
+        initialProps: {
+          listItems: initialItems,
+          activeThreadOp: null as WorkbenchThreadProjectionOp | null,
+        },
+      },
+    );
+
+    result.current.methodsRef.current = fake.methods as unknown as typeof result.current.methodsRef.current;
+    rerender({
+      listItems: [...initialItems],
+      activeThreadOp: null,
+    });
+
+    fake.spies.replace.mockClear();
+    fake.spies.batch.mockClear();
+    fake.spies.cancelSmoothScroll.mockClear();
+    fake.spies.scrollToItem.mockClear();
+    coalescedItems = nextItems;
+
+    rerender({
+      listItems: nextItems,
+      activeThreadOp: threadOp,
+    });
+
+    expect(fake.spies.replace).toHaveBeenCalledTimes(1);
+    expect(fake.spies.batch).not.toHaveBeenCalled();
+    expect(fake.spies.cancelSmoothScroll).toHaveBeenCalledTimes(1);
+    expect(fake.spies.scrollToItem).toHaveBeenCalledWith({ index: "LAST", align: "end", behavior: "auto" });
   });
 
   it("settles bottom lock immediately for localized remeasure updates", () => {
