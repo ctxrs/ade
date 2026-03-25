@@ -211,9 +211,41 @@ pub(crate) async fn mcp_agent_init(
         }
     }
 
+    let parent_worktree_execution = crate::api::tasks::resolve_existing_worktree_execution(
+        &state,
+        &store,
+        &workspace,
+        parent.worktree_id,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let parent_worktree = parent_worktree_execution.worktree.clone();
+    let resolved_parent_execution_environment = parent_worktree_execution.execution_environment();
+    if parent.execution_environment != resolved_parent_execution_environment {
+        tracing::warn!(
+            session_id = %parent.id.0,
+            stored = parent.execution_environment.as_str(),
+            resolved = resolved_parent_execution_environment.as_str(),
+            "parent session execution_environment drifted from resolved worktree identity"
+        );
+    }
+
     let mut model_catalogs: HashMap<String, Option<ModelCatalog>> = HashMap::new();
     for provider_id in provider_ids.iter() {
-        let catalog = load_provider_model_catalog(&state, &workspace, provider_id).await;
+        let catalog = load_provider_model_catalog_for_execution_environment(
+            &state,
+            &workspace,
+            provider_id,
+            resolved_parent_execution_environment,
+        )
+        .await;
         match catalog {
             Ok(cat) => {
                 model_catalogs.insert(provider_id.clone(), cat);
@@ -223,24 +255,6 @@ pub(crate) async fn mcp_agent_init(
             }
         }
     }
-
-    let parent_worktree = store
-        .get_worktree(parent.worktree_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "parent worktree not found".to_string(),
-            }),
-        ))?;
 
     let worktree_plan = if worktree_selection == SubagentWorktreeSelection::New {
         let base_commit_sha =
@@ -398,6 +412,7 @@ pub(crate) async fn mcp_agent_init(
     .await?;
 
     let child_ids = Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
+    let parent_effective = parent_worktree_execution.effective.clone();
 
     let mut futures = Vec::with_capacity(req.agents.len());
     for (idx, agent) in req.agents.into_iter().enumerate() {
@@ -414,6 +429,7 @@ pub(crate) async fn mcp_agent_init(
             .cloned()
             .unwrap_or_else(|| format!("Subagent {}", idx + 1));
         let worktree_plan = worktree_plan.clone();
+        let parent_effective = parent_effective.clone();
         futures.push(async move {
             let store = state.store_for_session(parent.id).await.map_err(|e| {
                 (
@@ -510,6 +526,7 @@ pub(crate) async fn mcp_agent_init(
                         parent.task_id,
                         &base_commit_sha,
                         vcs_kind,
+                        &parent_effective,
                     )
                     .await?;
                     worktree.id
@@ -521,7 +538,7 @@ pub(crate) async fn mcp_agent_init(
                     parent.task_id,
                     parent.workspace_id,
                     worktree_id,
-                    parent.execution_environment,
+                    resolved_parent_execution_environment,
                     provider_id.clone(),
                     resolved.model_id.clone(),
                     reasoning_effort.clone(),

@@ -207,8 +207,3 @@ impl ContainerFs {
         Ok(cmd)
     }
 }
-
-pub(crate) fn is_container_path(path: &Path) -> bool {
-    // Disk-isolated worktrees use a fixed in-container root.
-    path.to_string_lossy().starts_with("/ctx/")
-}

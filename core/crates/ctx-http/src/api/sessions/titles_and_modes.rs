@@ -9,9 +9,9 @@ use serde::Deserialize;
 
 use super::super::errors::ApiErrorResp;
 use super::{
-    compose_model_id, load_provider_model_catalog, normalize_effort_id, resolve_model_id,
-    store_for_existing_session_api_error, store_for_existing_session_api_error_for_write,
-    store_for_existing_session_status_for_write,
+    compose_model_id, load_provider_model_catalog_for_execution_environment, normalize_effort_id,
+    resolve_model_id, store_for_existing_session_api_error,
+    store_for_existing_session_api_error_for_write, store_for_existing_session_status_for_write,
 };
 use crate::daemon::AppState;
 use crate::execution_effective;
@@ -260,10 +260,32 @@ pub(crate) async fn set_session_model(
             )
         })?
         .ok_or_else(|| session_model_error(StatusCode::NOT_FOUND, "worktree not found"))?;
+    let resolved_worktree = crate::api::tasks::resolve_existing_worktree_execution(
+        &state,
+        &store,
+        &workspace,
+        worktree.id,
+    )
+    .await
+    .map_err(|err| {
+        session_model_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            logs::redact_sensitive(&err.to_string()),
+        )
+    })?;
+    let execution_environment = resolved_worktree.execution_environment();
+    if session.execution_environment != execution_environment {
+        tracing::warn!(
+            session_id = %session.id.0,
+            stored = session.execution_environment.as_str(),
+            resolved = execution_environment.as_str(),
+            "session model update resolved a different execution_environment than persisted metadata"
+        );
+    }
     let install_target = execution_effective::effective_install_target_for_environment(
         state.as_ref(),
         worktree.workspace_id,
-        session.execution_environment,
+        execution_environment,
     )
     .await
     .map_err(|err| {
@@ -298,14 +320,19 @@ pub(crate) async fn set_session_model(
             ));
         }
     }
-    let catalog = load_provider_model_catalog(&state, &workspace, &session.provider_id)
-        .await
-        .map_err(|err| {
-            session_model_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                logs::redact_sensitive(&err.to_string()),
-            )
-        })?;
+    let catalog = load_provider_model_catalog_for_execution_environment(
+        &state,
+        &workspace,
+        &session.provider_id,
+        execution_environment,
+    )
+    .await
+    .map_err(|err| {
+        session_model_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            logs::redact_sensitive(&err.to_string()),
+        )
+    })?;
     let resolved_model = resolve_model_id(
         Some(req.model_id.as_str()),
         reasoning_effort.as_deref(),
@@ -419,10 +446,33 @@ pub(crate) async fn set_session_mode(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    let workspace = state
+        .global_store()
+        .get_workspace(session.workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let resolved_worktree = crate::api::tasks::resolve_existing_worktree_execution(
+        &state,
+        &store,
+        &workspace,
+        worktree.id,
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let execution_environment = resolved_worktree.execution_environment();
+    if session.execution_environment != execution_environment {
+        tracing::warn!(
+            session_id = %session.id.0,
+            stored = session.execution_environment.as_str(),
+            resolved = execution_environment.as_str(),
+            "session mode update resolved a different execution_environment than persisted metadata"
+        );
+    }
     let install_target = crate::execution_effective::effective_install_target_for_environment(
         state.as_ref(),
         worktree.workspace_id,
-        session.execution_environment,
+        execution_environment,
     )
     .await
     .map_err(|err| {

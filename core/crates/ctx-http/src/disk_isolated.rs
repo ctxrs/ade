@@ -101,6 +101,29 @@ async fn resolve_git_dir(worktree_root: &Path) -> Result<PathBuf> {
     }
 }
 
+async fn resolve_common_git_dir(git_dir: &Path) -> Result<PathBuf> {
+    let commondir = git_dir.join("commondir");
+    let meta = match tokio::fs::symlink_metadata(&commondir).await {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(git_dir.to_path_buf());
+        }
+        Err(err) => return Err(err).with_context(|| format!("reading {}", commondir.display())),
+    };
+    if !meta.is_file() {
+        return Ok(git_dir.to_path_buf());
+    }
+    let raw = tokio::fs::read_to_string(&commondir)
+        .await
+        .with_context(|| format!("reading {}", commondir.display()))?;
+    let path = PathBuf::from(raw.trim());
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(git_dir.join(path))
+    }
+}
+
 #[cfg(unix)]
 fn symlink_path(target: &Path, dest: &Path, _is_dir: bool) -> Result<()> {
     std::os::unix::fs::symlink(target, dest)?;
@@ -157,6 +180,7 @@ async fn prepare_self_contained_copy_root(
     }
 
     let git_dir = resolve_git_dir(source_root).await?;
+    let common_git_dir = resolve_common_git_dir(&git_dir).await?;
     let staging_parent = data_root.join("disk-isolated").join("staging");
     tokio::fs::create_dir_all(&staging_parent)
         .await
@@ -166,6 +190,7 @@ async fn prepare_self_contained_copy_root(
     let staging_root = staging.path().join("worktree");
     let source = source_root.to_path_buf();
     let git_dir_copy = git_dir.clone();
+    let common_git_dir_copy = common_git_dir.clone();
     let staging_copy = staging_root.clone();
     tokio::task::spawn_blocking(move || -> Result<()> {
         copy_dir_recursive(&source, &staging_copy)?;
@@ -177,7 +202,18 @@ async fn prepare_self_contained_copy_root(
                 std::fs::remove_file(&staged_dotgit)?;
             }
         }
-        copy_dir_recursive(&git_dir_copy, &staged_dotgit)?;
+        copy_dir_recursive(&common_git_dir_copy, &staged_dotgit)?;
+        if git_dir_copy != common_git_dir_copy {
+            copy_dir_recursive(&git_dir_copy, &staged_dotgit)?;
+        }
+        let commondir = staged_dotgit.join("commondir");
+        if commondir.exists() {
+            std::fs::remove_file(&commondir)?;
+        }
+        let gitdir = staged_dotgit.join("gitdir");
+        if gitdir.exists() {
+            std::fs::remove_file(&gitdir)?;
+        }
         Ok(())
     })
     .await??;
@@ -322,4 +358,65 @@ pub async fn ensure_worktree_from_host_copy(
     );
 
     Ok(dest_root)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command as StdCommand;
+
+    fn git(args: &[&str], cwd: &Path) {
+        let status = StdCommand::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .status()
+            .expect("run git command");
+        assert!(status.success(), "git command failed: {args:?}");
+    }
+
+    #[tokio::test]
+    async fn prepare_self_contained_copy_root_makes_git_worktree_clone_standalone() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repo_root = temp.path().join("repo");
+        std::fs::create_dir_all(&repo_root).expect("create repo root");
+        git(&["init", "-b", "main"], &repo_root);
+        git(&["config", "user.name", "Test User"], &repo_root);
+        git(&["config", "user.email", "test@example.com"], &repo_root);
+        std::fs::write(repo_root.join("README.md"), "hello\n").expect("write readme");
+        git(&["add", "README.md"], &repo_root);
+        git(&["commit", "-m", "initial"], &repo_root);
+
+        let worktree_root = temp.path().join("worktree");
+        git(
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "ctx/test-worktree",
+                worktree_root.to_str().expect("worktree path"),
+            ],
+            &repo_root,
+        );
+
+        let (copy_root, _guard) = prepare_self_contained_copy_root(temp.path(), &worktree_root)
+            .await
+            .expect("prepare self-contained root");
+        assert_ne!(copy_root, worktree_root);
+        assert!(copy_root.join(".git").is_dir());
+        assert!(!copy_root.join(".git").join("commondir").exists());
+        assert!(!copy_root.join(".git").join("gitdir").exists());
+
+        let output = StdCommand::new("git")
+            .arg("rev-parse")
+            .arg("--is-inside-work-tree")
+            .current_dir(&copy_root)
+            .output()
+            .expect("run git rev-parse");
+        assert!(
+            output.status.success(),
+            "git rev-parse failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "true");
+    }
 }

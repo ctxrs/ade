@@ -94,26 +94,6 @@ pub(in crate::api) async fn create_session_for_task(
     {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let catalog = sessions::load_provider_model_catalog(&state, &workspace, &provider_id)
-        .await
-        .map_err(|error| {
-            tracing::warn!(
-                workspace_id = %workspace.id.0,
-                provider_id = provider_id,
-                "failed to load provider model catalog while creating session: {error}"
-            );
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    let resolved_model = sessions::resolve_model_id(
-        Some(req.model_id.as_str()),
-        req.reasoning_effort.as_deref(),
-        None,
-        catalog.as_ref(),
-    )
-    .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let model_id = resolved_model.model_id.clone();
-    let reasoning_effort = resolved_model.reasoning_effort.clone();
-
     let session_id = match req.id.as_deref().map(str::trim) {
         Some("") | None => None,
         Some(raw) => Some(SessionId(
@@ -132,19 +112,6 @@ pub(in crate::api) async fn create_session_for_task(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.to_string());
-    let effective = execution_effective::effective_execution_settings(&state, workspace.id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let effective_execution_environment = execution_environment_from_settings(&effective);
-    let execution_environment = match req.execution_environment {
-        Some(requested) => {
-            if requested != effective_execution_environment {
-                return Err(StatusCode::BAD_REQUEST);
-            }
-            requested
-        }
-        None => effective_execution_environment,
-    };
     let requested_relationship = relationship.clone();
     if parent_session_id.is_some() != relationship.is_some() {
         return Err(StatusCode::BAD_REQUEST);
@@ -158,9 +125,26 @@ pub(in crate::api) async fn create_session_for_task(
         return Err(StatusCode::BAD_REQUEST);
     }
 
+    let workspace_effective =
+        execution_effective::effective_execution_settings(&state, workspace.id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut existing_worktree = None;
     let worktree_id = if let Some(worktree_id) = req.worktree_id.as_deref() {
-        WorktreeId(uuid::Uuid::parse_str(worktree_id).map_err(|_| StatusCode::BAD_REQUEST)?)
+        let worktree_id =
+            WorktreeId(uuid::Uuid::parse_str(worktree_id).map_err(|_| StatusCode::BAD_REQUEST)?);
+        existing_worktree = Some(
+            resolve_existing_worktree_execution(&state, &store, &workspace, worktree_id)
+                .await
+                .map_err(|_| StatusCode::NOT_FOUND)?,
+        );
+        worktree_id
     } else if let Some(primary) = task.primary_worktree_id {
+        existing_worktree = Some(
+            resolve_existing_worktree_execution(&state, &store, &workspace, primary)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        );
         primary
     } else {
         let workspace_root = StdPath::new(&workspace.root_path);
@@ -184,7 +168,7 @@ pub(in crate::api) async fn create_session_for_task(
             worktree_id,
             &base_commit_sha,
             &branch_name,
-            &effective,
+            &workspace_effective,
         )
         .await
         .map_err(|e| {
@@ -217,53 +201,57 @@ pub(in crate::api) async fn create_session_for_task(
             bootstrap_command: None,
             bootstrap_script_path: None,
         };
-        store
-            .insert_worktree(worktree.clone())
+        persist_provisioned_worktree(&state, &store, &workspace, worktree, sandbox_binding)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        if let Some(binding) = sandbox_binding {
-            store
-                .upsert_sandbox_binding(binding)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        }
-        if let Err(e) = retry_global_index_write(|| async {
-            state
-                .global_store()
-                .upsert_workspace_worktree_index(worktree_id, task.workspace_id)
-                .await
-        })
-        .await
-        {
-            tracing::warn!(
-                worktree_id = %worktree_id.0,
-                "failed to update worktree index: {e:?}"
-            );
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-        if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
-            Arc::clone(&state),
-            workspace.clone(),
-            worktree.clone(),
-        )
-        .await
-        {
-            tracing::warn!(task_id = %task.id.0, "worktree bootstrap failed: {e:?}");
-        }
-        if let Err(e) =
-            attachments::sync_workspace_attachments(Arc::clone(&state), &workspace, false).await
-        {
-            tracing::warn!(task_id = %task.id.0, "attachment sync failed: {e:?}");
-        }
-        if let Err(e) = attachments::ensure_worktree_attachment_mounts_if_materialized(
-            &state, &workspace, &worktree,
-        )
-        .await
-        {
-            tracing::warn!(task_id = %task.id.0, "attachment mounts failed: {e:?}");
-        }
         worktree_id
     };
+    let execution_environment = if let Some(existing) = existing_worktree.as_ref() {
+        let persisted = existing.execution_environment();
+        if let Some(requested) = req.execution_environment {
+            if requested != persisted {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+        }
+        persisted
+    } else {
+        let effective_execution_environment =
+            execution_environment_from_settings(&workspace_effective);
+        match req.execution_environment {
+            Some(requested) => {
+                if requested != effective_execution_environment {
+                    return Err(StatusCode::BAD_REQUEST);
+                }
+                requested
+            }
+            None => effective_execution_environment,
+        }
+    };
+    let catalog = sessions::load_provider_model_catalog_for_execution_environment(
+        &state,
+        &workspace,
+        &provider_id,
+        execution_environment,
+    )
+    .await
+    .map_err(|error| {
+        tracing::warn!(
+            workspace_id = %workspace.id.0,
+            provider_id = provider_id,
+            execution_environment = execution_environment.as_str(),
+            "failed to load provider model catalog while creating session: {error}"
+        );
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let resolved_model = sessions::resolve_model_id(
+        Some(req.model_id.as_str()),
+        req.reasoning_effort.as_deref(),
+        None,
+        catalog.as_ref(),
+    )
+    .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let model_id = resolved_model.model_id.clone();
+    let reasoning_effort = resolved_model.reasoning_effort.clone();
 
     if let Some(session_id) = session_id {
         let existing_ws = state

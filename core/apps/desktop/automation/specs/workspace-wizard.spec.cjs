@@ -2093,19 +2093,19 @@ describe("launcher workspace wizard (e2e)", () => {
     await assertWorkspaceTerminalCwdPrefix(id, "/ctx/ws");
   });
 
-  it("local host can start Codex and respond", async function () {
-    if (!scenarioEnabled("local-codex-smoke", ["local", "host", "provider"])) this.skip();
+  it("local sandbox can start Codex and respond", async function () {
+    if (!scenarioEnabled("local-codex-smoke", ["local", "sandbox", "provider"])) this.skip();
     // Sandbox startup + provider spin-up can take a while on a fresh machine (guest boot, artifact staging, etc).
     this.timeout(420000);
 
-    const dest = path.join(localBase, "codex-host");
+    const dest = path.join(localBase, "codex-sandbox");
     const id = await runWizardScenario({
       location: "local",
-      container: "host",
+      container: "sandbox",
       network: "providers",
       downloadHarnesses: true,
       selectedHarnessProviderIds: ["codex"],
-      source: { kind: "new", destPath: dest, workspaceName: "codex-host-smoke" },
+      source: { kind: "new", destPath: dest, workspaceName: "codex-sandbox-smoke" },
       setupHook: "",
       mergeQueue: { kind: "skip" },
     });
@@ -2114,7 +2114,7 @@ describe("launcher workspace wizard (e2e)", () => {
     await waitForProviderInstallCompletion("codex", "container", { timeoutMs: 10 * 60_000, pollMs: 2_000 });
     const provider = await ensureCodexOpenRouterWorkspaceReady(id, {
       installTarget: "container",
-      endpointName: `host-codex-openrouter-${Date.now()}`,
+      endpointName: `sandbox-codex-openrouter-${Date.now()}`,
       allowInstall: false,
     });
     await runCodexFirstTurnApiSmoke(id, {
@@ -2125,7 +2125,7 @@ describe("launcher workspace wizard (e2e)", () => {
 
     // Sanity: ensure we stayed in the same workspace route.
     const ws = await getWorkspace(id);
-    await assertLocalWorkspaceConfig(id, { environment: "host" });
+    await assertLocalWorkspaceConfig(id, { environment: "sandbox" });
   });
 
   it("local host can start Codex and respond", async function () {

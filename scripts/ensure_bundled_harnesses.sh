@@ -899,13 +899,7 @@ ensure_node_runtime() {
 
   local extract_dir
   extract_dir="$(mktemp -d "${dest_dir}/node-${node_folder}.extract.XXXXXX")"
-  if [[ "$archive_ext" == "zip" ]]; then
-    require_cmd unzip
-    unzip -q "$tmp" -d "$extract_dir"
-  else
-    require_cmd tar
-    tar -xzf "$tmp" -C "$extract_dir"
-  fi
+  extract_archive "$url" "$tmp" "$extract_dir"
 
   local extracted="$extract_dir/$node_folder"
   if [[ ! -d "$extracted" ]]; then
@@ -967,10 +961,9 @@ ensure_python_runtime_versioned() {
   tmp="$(mktemp -p "$dest_dir" "python-${py_folder}.XXXXXX")"
   fetch_file "$url" "$tmp"
 
-  require_cmd tar
   local extract_dir
   extract_dir="$(mktemp -d "${dest_dir}/python-${py_folder}.extract.XXXXXX")"
-  tar -xzf "$tmp" -C "$extract_dir"
+  extract_archive "$url" "$tmp" "$extract_dir"
 
   local extracted="$extract_dir/python"
   if [[ ! -d "$extracted" ]]; then
@@ -988,6 +981,45 @@ ensure_python_runtime_versioned() {
     log "error: python runtime incomplete after extract"
     exit 4
   fi
+}
+
+extract_archive() {
+  local archive_path=""
+  local archive_type=""
+  local downloaded_path="$2"
+  local extract_dir="$3"
+
+  archive_path="$1"
+  case "$archive_path" in
+    *.zip)
+      archive_type="zip"
+      ;;
+    *.tar)
+      archive_type="tar"
+      ;;
+    *.tar.gz|*.tgz)
+      archive_type="tgz"
+      ;;
+    *)
+      log "error: unsupported archive type: $archive_path"
+      exit 4
+      ;;
+  esac
+
+  case "$archive_type" in
+    zip)
+      require_cmd unzip
+      unzip -q "$downloaded_path" -d "$extract_dir"
+      ;;
+    tar)
+      require_cmd tar
+      tar -xf "$downloaded_path" -C "$extract_dir"
+      ;;
+    tgz)
+      require_cmd tar
+      tar -xzf "$downloaded_path" -C "$extract_dir"
+      ;;
+  esac
 }
 
 ensure_python_runtime() {

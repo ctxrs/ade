@@ -340,6 +340,24 @@ impl Store {
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn update_worktree_root_path(
+        &self,
+        worktree_id: WorktreeId,
+        root_path: &str,
+    ) -> Result<bool> {
+        let result = self
+            .query(
+                r#"UPDATE worktrees
+               SET root_path = ?
+               WHERE id = ?"#,
+            )
+            .bind(root_path)
+            .bind(worktree_id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn update_worktree_bootstrap_result(
         &self,
         update: WorktreeBootstrapResultUpdate,

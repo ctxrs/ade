@@ -410,7 +410,9 @@ const stageAvfLinuxGuestRuntime = (bundleDir) => {
   const rootfsPath = path.join(sourceDir, AVF_LINUX_GUEST_ROOTFS_NAME);
   const kernelPath = path.join(sourceDir, AVF_LINUX_GUEST_KERNEL_REL);
   const initrdPath = path.join(sourceDir, AVF_LINUX_GUEST_INITRD_REL);
-  for (const requiredPath of [rootfsPath, kernelPath, initrdPath]) {
+  const guestAgentPath = path.join(sourceDir, AVF_LINUX_GUEST_AGENT_REL);
+  const egressProxyPath = path.join(sourceDir, AVF_LINUX_EGRESS_PROXY_REL);
+  for (const requiredPath of [rootfsPath, kernelPath, initrdPath, guestAgentPath, egressProxyPath]) {
     if (!fs.existsSync(requiredPath) || !fs.statSync(requiredPath).isFile()) {
       throw new Error(
         `AVF Linux guest runtime is incomplete; missing required file: ${requiredPath}`,
@@ -443,7 +445,13 @@ const stageAvfLinuxGuestRuntime = (bundleDir) => {
   const bundledInitrdPath = path.join(runtimeRootDir, AVF_LINUX_GUEST_INITRD_REL);
   const bundledGuestAgentPath = path.join(runtimeRootDir, AVF_LINUX_GUEST_AGENT_REL);
   const bundledEgressProxyPath = path.join(runtimeRootDir, AVF_LINUX_EGRESS_PROXY_REL);
-  for (const requiredPath of [bundledRootfsPath, bundledKernelPath, bundledInitrdPath]) {
+  for (const requiredPath of [
+    bundledRootfsPath,
+    bundledKernelPath,
+    bundledInitrdPath,
+    bundledGuestAgentPath,
+    bundledEgressProxyPath,
+  ]) {
     if (!fs.existsSync(requiredPath) || !fs.statSync(requiredPath).isFile()) {
       throw new Error(
         `staged AVF Linux guest runtime is incomplete; missing required file: ${requiredPath}`,
@@ -470,14 +478,8 @@ const stageAvfLinuxGuestRuntime = (bundleDir) => {
     rootfsPath: bundledRootfsPath,
     kernelPath: bundledKernelPath,
     initrdPath: bundledInitrdPath,
-    guestAgentPath:
-      fs.existsSync(bundledGuestAgentPath) && fs.statSync(bundledGuestAgentPath).isFile()
-        ? bundledGuestAgentPath
-        : null,
-    egressProxyPath:
-      fs.existsSync(bundledEgressProxyPath) && fs.statSync(bundledEgressProxyPath).isFile()
-        ? bundledEgressProxyPath
-        : null,
+    guestAgentPath: bundledGuestAgentPath,
+    egressProxyPath: bundledEgressProxyPath,
   };
 };
 

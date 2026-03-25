@@ -392,17 +392,12 @@ pub(crate) fn resolve_model_id(
     Ok(resolved_from_full_model_id(None, &model))
 }
 
-pub(crate) async fn load_provider_model_catalog(
+async fn load_provider_model_catalog_for_install_target(
     state: &Arc<AppState>,
     workspace: &Workspace,
     provider_id: &str,
+    install_target: crate::installs::InstallTarget,
 ) -> Result<Option<ModelCatalog>, String> {
-    let install_target =
-        crate::execution_effective::effective_install_target(state.as_ref(), workspace.id)
-            .await
-            .map_err(|err| {
-                format!("workspace execution settings unavailable for provider options: {err:#}")
-            })?;
     let cache_key = format!(
         "{}/{}/{}",
         workspace.id.0,
@@ -608,6 +603,41 @@ pub(crate) async fn load_provider_model_catalog(
 }
 
 #[cfg(test)]
+pub(crate) async fn load_provider_model_catalog(
+    state: &Arc<AppState>,
+    workspace: &Workspace,
+    provider_id: &str,
+) -> Result<Option<ModelCatalog>, String> {
+    let install_target =
+        crate::execution_effective::effective_install_target(state.as_ref(), workspace.id)
+            .await
+            .map_err(|err| {
+                format!("workspace execution settings unavailable for provider options: {err:#}")
+            })?;
+    load_provider_model_catalog_for_install_target(state, workspace, provider_id, install_target)
+        .await
+}
+
+pub(crate) async fn load_provider_model_catalog_for_execution_environment(
+    state: &Arc<AppState>,
+    workspace: &Workspace,
+    provider_id: &str,
+    execution_environment: ctx_core::models::ExecutionEnvironment,
+) -> Result<Option<ModelCatalog>, String> {
+    let install_target = crate::execution_effective::effective_install_target_for_environment(
+        state.as_ref(),
+        workspace.id,
+        execution_environment,
+    )
+    .await
+    .map_err(|err| {
+        format!("workspace execution settings unavailable for provider options: {err:#}")
+    })?;
+    load_provider_model_catalog_for_install_target(state, workspace, provider_id, install_target)
+        .await
+}
+
+#[cfg(test)]
 mod tests {
     use super::{load_provider_model_catalog, resolve_model_id, ModelCatalog};
 
@@ -658,19 +688,19 @@ mod tests {
             crate::daemon::CachedProviderOptions {
                 cached_at: std::time::Instant::now(),
                 value: serde_json::json!({
-                    "models": {
-                        "models": [
-                            { "id": "gpt-5" },
-                            { "id": "gpt-5/high" }
-                        ],
-                        "current_model_id": "gpt-5",
-                        "meta": {
-                            "source_kind": "subscription",
-                            "catalog_source": "runtime_probe_live",
-                            "refresh_pending": false
-                        }
+                                "models": {
+                                    "models": [
+                                        { "id": "gpt-5" },
+                                        { "id": "gpt-5/high" }
+                                    ],
+                                    "current_model_id": "gpt-5",
+                                    "meta": {
+                                        "source_kind": "subscription",
+                                        "catalog_source": "runtime_probe_live",
+                                        "refresh_pending": false
                     }
-                }),
+                }
+                            }),
             },
         );
 

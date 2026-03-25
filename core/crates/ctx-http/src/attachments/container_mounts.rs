@@ -670,8 +670,16 @@ pub(super) async fn ensure_attachment_mount(
     };
     let mount_rel = sanitize_mount_relpath(&attachment.mount_relpath)?;
     let mount_abs = worktree_root.join(&mount_rel);
-
-    let container_mode = is_container_path(worktree_root);
+    let worktree = state
+        .global_store()
+        .get_worktree(worktree_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("worktree not found for attachment mount"))?;
+    let data_plane = resolve_worktree_data_plane(state, &worktree).await?;
+    let container_mode = matches!(
+        data_plane.execution_mode,
+        crate::settings::ExecutionMode::Sandbox
+    );
     if container_mode {
         let runtime =
             attachment_runtime_for_worktree(state, workspace, worktree_id, worktree_root).await?;
@@ -757,7 +765,21 @@ pub(super) async fn cleanup_removed_attachment(
         .await?;
     for mount in mounts {
         let path = PathBuf::from(&mount.mount_abs_path);
-        if is_container_path(&path) {
+        let worktree = state.global_store().get_worktree(mount.worktree_id).await?;
+        let container_mode = match worktree {
+            Some(worktree) => {
+                let data_plane = resolve_worktree_data_plane(state, &worktree).await?;
+                matches!(
+                    data_plane.execution_mode,
+                    crate::settings::ExecutionMode::Sandbox
+                )
+            }
+            None => store
+                .get_sandbox_binding(mount.worktree_id)
+                .await?
+                .is_some(),
+        };
+        if container_mode {
             let _ = container_remove_mount_path(
                 state,
                 attachment.workspace_id,

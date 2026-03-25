@@ -63,7 +63,7 @@ describe("harness install/probe matrix (desktop e2e)", () => {
 
   it("covers install failure signal, probe failure signal, and successful recovery", async function () {
     this.timeout(14 * 60_000);
-    if (!scenarioEnabled("local-codex-smoke", ["local", "host", "provider"])) this.skip();
+    if (!scenarioEnabled("local-codex-smoke", ["local", "sandbox", "provider"])) this.skip();
 
     const apiKey = String(process.env.OPENROUTER_API_KEY || "").trim();
     if (!apiKey) {

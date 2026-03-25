@@ -40,7 +40,7 @@ mod repo;
 pub(crate) mod sessions;
 mod settings;
 mod shared;
-mod tasks;
+pub(crate) mod tasks;
 mod telemetry;
 mod terminals;
 mod types;

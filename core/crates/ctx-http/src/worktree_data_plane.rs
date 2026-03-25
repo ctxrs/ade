@@ -17,31 +17,45 @@ pub(crate) struct WorktreeDataPlane {
     pub live_worktree_root: PathBuf,
 }
 
-pub(crate) fn map_host_or_live_path_to_live_path(
-    data_plane: &WorktreeDataPlane,
+pub(crate) fn map_host_or_live_path_to_live_roots(
+    live_workspace_root: &Path,
+    live_worktree_root: &Path,
     host_workspace_root: &Path,
     host_worktree_root: Option<&Path>,
     requested: &Path,
 ) -> Option<PathBuf> {
-    if requested.starts_with(&data_plane.live_workspace_root)
-        || requested.starts_with(&data_plane.live_worktree_root)
-    {
+    if requested.starts_with(live_workspace_root) || requested.starts_with(live_worktree_root) {
         return Some(requested.to_path_buf());
     }
 
     if let Some(host_worktree_root) = host_worktree_root {
         if requested.starts_with(host_worktree_root) {
             let relative = requested.strip_prefix(host_worktree_root).ok()?;
-            return Some(data_plane.live_worktree_root.join(relative));
+            return Some(live_worktree_root.join(relative));
         }
     }
 
     if requested.starts_with(host_workspace_root) {
         let relative = requested.strip_prefix(host_workspace_root).ok()?;
-        return Some(data_plane.live_workspace_root.join(relative));
+        return Some(live_workspace_root.join(relative));
     }
 
     None
+}
+
+pub(crate) fn map_host_or_live_path_to_live_path(
+    data_plane: &WorktreeDataPlane,
+    host_workspace_root: &Path,
+    host_worktree_root: Option<&Path>,
+    requested: &Path,
+) -> Option<PathBuf> {
+    map_host_or_live_path_to_live_roots(
+        &data_plane.live_workspace_root,
+        &data_plane.live_worktree_root,
+        host_workspace_root,
+        host_worktree_root,
+        requested,
+    )
 }
 
 pub(crate) fn sandbox_workspace_root() -> PathBuf {
@@ -86,6 +100,20 @@ pub(crate) async fn resolve_worktree_data_plane(
         .ok_or_else(|| anyhow!("workspace not found for worktree"))?;
     let store = state.store_for_workspace(worktree.workspace_id).await?;
     let binding = store.get_sandbox_binding(worktree.id).await?;
+    if binding.is_none() {
+        let sessions = store.list_sessions_for_worktree(worktree.id).await?;
+        if sessions.iter().any(|session| {
+            matches!(
+                session.execution_environment,
+                ctx_core::models::ExecutionEnvironment::Sandbox
+            )
+        }) {
+            return Err(anyhow!(
+                "sandbox binding is missing for sandbox worktree {}; legacy repair is required",
+                worktree.id.0
+            ));
+        }
+    }
     let execution_mode = if binding.is_some() {
         ExecutionMode::Sandbox
     } else {
@@ -106,6 +134,21 @@ pub(crate) async fn resolve_worktree_data_plane(
         live_worktree_root,
         workspace,
     })
+}
+
+pub(crate) fn workspace_data_plane(
+    workspace: &Workspace,
+    execution_mode: ExecutionMode,
+) -> WorktreeDataPlane {
+    let live_workspace_root = live_workspace_root_for_mode(workspace, execution_mode.clone());
+    let live_worktree_root = live_workspace_root.clone();
+    WorktreeDataPlane {
+        binding: None,
+        workspace: workspace.clone(),
+        execution_mode,
+        live_workspace_root,
+        live_worktree_root,
+    }
 }
 
 pub(crate) fn binding_runtime_kind(binding: &SandboxBinding) -> ContainerRuntimeKind {
@@ -213,5 +256,39 @@ mod tests {
             applied.container.image,
             Some("registry.example/sandbox:v1".to_string())
         );
+    }
+
+    #[test]
+    fn workspace_data_plane_uses_workspace_root_for_host_mode() {
+        let workspace = Workspace {
+            id: WorkspaceId(Uuid::new_v4()),
+            name: "ws".to_string(),
+            root_path: "/host/ws".to_string(),
+            created_at: Utc::now(),
+            vcs_kind: None,
+        };
+
+        let data_plane = workspace_data_plane(&workspace, ExecutionMode::Host);
+        assert_eq!(data_plane.execution_mode, ExecutionMode::Host);
+        assert_eq!(data_plane.live_workspace_root, PathBuf::from("/host/ws"));
+        assert_eq!(data_plane.live_worktree_root, PathBuf::from("/host/ws"));
+        assert!(data_plane.binding.is_none());
+    }
+
+    #[test]
+    fn workspace_data_plane_uses_container_workspace_root_for_sandbox_mode() {
+        let workspace = Workspace {
+            id: WorkspaceId(Uuid::new_v4()),
+            name: "ws".to_string(),
+            root_path: "/host/ws".to_string(),
+            created_at: Utc::now(),
+            vcs_kind: None,
+        };
+
+        let data_plane = workspace_data_plane(&workspace, ExecutionMode::Sandbox);
+        assert_eq!(data_plane.execution_mode, ExecutionMode::Sandbox);
+        assert_eq!(data_plane.live_workspace_root, PathBuf::from("/ctx/ws"));
+        assert_eq!(data_plane.live_worktree_root, PathBuf::from("/ctx/ws"));
+        assert!(data_plane.binding.is_none());
     }
 }

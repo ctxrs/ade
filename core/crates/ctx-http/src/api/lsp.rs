@@ -376,7 +376,7 @@ pub(super) async fn resolve_session_root_and_file(
     state: &Arc<AppState>,
     session_id: &str,
     path: &str,
-) -> Result<(SessionId, WorkspaceId, WorktreeId, PathBuf, PathBuf), StatusCode> {
+) -> Result<(SessionId, WorkspaceId, WorktreeId, PathBuf, PathBuf, bool), StatusCode> {
     let sid = SessionId(uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
 
     let store = state
@@ -404,13 +404,27 @@ pub(super) async fn resolve_session_root_and_file(
     ) {
         let file = crate::buffers::BufferStore::resolve_path_lexical(&root, path)
             .map_err(|_| StatusCode::BAD_REQUEST)?;
-        Ok((sid, session.workspace_id, session.worktree_id, root, file))
+        Ok((
+            sid,
+            session.workspace_id,
+            session.worktree_id,
+            root,
+            file,
+            true,
+        ))
     } else {
         let root = root.canonicalize().map_err(|_| StatusCode::BAD_REQUEST)?;
         let file = crate::buffers::BufferStore::resolve_path(&root, path)
             .await
             .map_err(|_| StatusCode::BAD_REQUEST)?;
-        Ok((sid, session.workspace_id, session.worktree_id, root, file))
+        Ok((
+            sid,
+            session.workspace_id,
+            session.worktree_id,
+            root,
+            file,
+            false,
+        ))
     }
 }
 
@@ -418,9 +432,9 @@ pub(super) async fn open_buffer(
     State(state): State<Arc<AppState>>,
     Json(req): Json<BufferOpenReq>,
 ) -> Result<Json<BufferOpenResp>, StatusCode> {
-    let (sid, workspace_id, worktree_id, root, file) =
+    let (sid, workspace_id, worktree_id, root, file, is_container_file) =
         resolve_session_root_and_file(&state, &req.session_id, &req.path).await?;
-    let text = if crate::container_fs::is_container_path(&file) {
+    let text = if is_container_file {
         let fs = crate::container_fs::ContainerFs::for_worktree(&state, workspace_id, worktree_id)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -447,7 +461,7 @@ pub(super) async fn open_buffer(
         .await;
     if state.core.lsp.enabled() {
         // Container-only paths are not available on the host filesystem; skip host LSP sync.
-        if !crate::container_fs::is_container_path(&file) {
+        if !is_container_file {
             if let Some(lang) = ctx_lsp::Language::detect(&file, &state.core.lsp_cfg) {
                 state
                     .ensure_lsp_diagnostics_forwarder(root.clone(), lang)
@@ -491,46 +505,60 @@ pub(super) async fn update_buffer(
             disk_text: "".to_string(),
         }),
     ))?;
+    let store = state
+        .store_for_worktree(current.worktree_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(BufferConflictResp {
+                    error: "worktree not found".to_string(),
+                    disk_sha256: "".to_string(),
+                    disk_text: "".to_string(),
+                }),
+            )
+        })?;
+    let wt = store
+        .get_worktree(current.worktree_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(BufferConflictResp {
+                    error: "failed to load worktree".to_string(),
+                    disk_sha256: "".to_string(),
+                    disk_text: "".to_string(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(BufferConflictResp {
+                error: "worktree not found".to_string(),
+                disk_sha256: "".to_string(),
+                disk_text: "".to_string(),
+            }),
+        ))?;
+    let data_plane = crate::worktree_data_plane::resolve_worktree_data_plane(&state, &wt)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(BufferConflictResp {
+                    error: "failed to resolve worktree data plane".to_string(),
+                    disk_sha256: "".to_string(),
+                    disk_text: "".to_string(),
+                }),
+            )
+        })?;
+    let is_container_file = matches!(
+        data_plane.execution_mode,
+        crate::settings::ExecutionMode::Sandbox
+    );
 
     let new_sha = if req.persist {
-        let is_container_file = crate::container_fs::is_container_path(&current.path);
-
         // Detect external changes on disk.
         let disk_text = if is_container_file {
-            let store = state
-                .store_for_worktree(current.worktree_id)
-                .await
-                .map_err(|_| {
-                    (
-                        StatusCode::NOT_FOUND,
-                        Json(BufferConflictResp {
-                            error: "worktree not found".to_string(),
-                            disk_sha256: "".to_string(),
-                            disk_text: "".to_string(),
-                        }),
-                    )
-                })?;
-            let wt = store
-                .get_worktree(current.worktree_id)
-                .await
-                .map_err(|_| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(BufferConflictResp {
-                            error: "failed to load worktree".to_string(),
-                            disk_sha256: "".to_string(),
-                            disk_text: "".to_string(),
-                        }),
-                    )
-                })?
-                .ok_or((
-                    StatusCode::NOT_FOUND,
-                    Json(BufferConflictResp {
-                        error: "worktree not found".to_string(),
-                        disk_sha256: "".to_string(),
-                        disk_text: "".to_string(),
-                    }),
-                ))?;
             let fs = crate::container_fs::ContainerFs::for_worktree(&state, wt.workspace_id, wt.id)
                 .await
                 .map_err(|_| {
@@ -581,40 +609,6 @@ pub(super) async fn update_buffer(
 
         // Write to disk (autosave).
         if is_container_file {
-            let store = state
-                .store_for_worktree(current.worktree_id)
-                .await
-                .map_err(|_| {
-                    (
-                        StatusCode::NOT_FOUND,
-                        Json(BufferConflictResp {
-                            error: "worktree not found".to_string(),
-                            disk_sha256: "".to_string(),
-                            disk_text: "".to_string(),
-                        }),
-                    )
-                })?;
-            let wt = store
-                .get_worktree(current.worktree_id)
-                .await
-                .map_err(|_| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(BufferConflictResp {
-                            error: "failed to load worktree".to_string(),
-                            disk_sha256: "".to_string(),
-                            disk_text: "".to_string(),
-                        }),
-                    )
-                })?
-                .ok_or((
-                    StatusCode::NOT_FOUND,
-                    Json(BufferConflictResp {
-                        error: "worktree not found".to_string(),
-                        disk_sha256: "".to_string(),
-                        disk_text: "".to_string(),
-                    }),
-                ))?;
             let fs = crate::container_fs::ContainerFs::for_worktree(&state, wt.workspace_id, wt.id)
                 .await
                 .map_err(|_| {
@@ -673,7 +667,7 @@ pub(super) async fn update_buffer(
             )
         })?;
 
-    if state.core.lsp.enabled() && !crate::container_fs::is_container_path(&st.path) {
+    if state.core.lsp.enabled() && !is_container_file {
         if let Some(lang) = ctx_lsp::Language::detect(&st.path, &state.core.lsp_cfg) {
             state
                 .ensure_lsp_diagnostics_forwarder(st.root.clone(), lang)

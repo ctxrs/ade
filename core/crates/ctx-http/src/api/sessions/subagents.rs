@@ -1,7 +1,6 @@
-use super::models::{
-    load_provider_model_catalog, normalize_effort_id, resolve_model_id, ModelCatalog,
-};
+use super::models::{normalize_effort_id, resolve_model_id, ModelCatalog};
 use super::*;
+use crate::vcs_hooks;
 
 mod handlers;
 mod init;
@@ -731,25 +730,17 @@ async fn create_subagent_worktree(
     task_id: TaskId,
     base_commit_sha: &str,
     vcs_kind: VcsKind,
+    effective: &crate::settings::ExecutionSettings,
 ) -> Result<Worktree, (StatusCode, Json<ApiErrorResp>)> {
     let worktree_id = WorktreeId::new();
-    let wt_path = managed_worktree_path(&state.core.data_root, workspace.id, worktree_id);
-    if let Some(parent) = wt_path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    }
     let branch_name = format!("ctx/{}/{}", task_id.0, worktree_id.0);
-    create_worktree(
-        &workspace.root_path,
-        &wt_path,
+    let (wt_path, sandbox_binding) = crate::api::tasks::provision_worktree_for_execution(
+        state,
+        workspace,
+        worktree_id,
         base_commit_sha,
         &branch_name,
+        effective,
     )
     .await
     .map_err(|e| {
@@ -783,7 +774,15 @@ async fn create_subagent_worktree(
         bootstrap_script_path: None,
     };
 
-    store.insert_worktree(worktree.clone()).await.map_err(|e| {
+    let worktree = crate::api::tasks::persist_provisioned_worktree(
+        state,
+        store,
+        workspace,
+        worktree,
+        sandbox_binding,
+    )
+    .await
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiErrorResp {
@@ -791,37 +790,14 @@ async fn create_subagent_worktree(
             }),
         )
     })?;
-    if let Err(e) = state
-        .global_store()
-        .upsert_workspace_worktree_index(worktree_id, workspace.id)
-        .await
+    if let Err(err) = vcs_hooks::ensure_task_commit_hook(state, workspace, &worktree, task_id).await
     {
         tracing::warn!(
-            worktree_id = %worktree_id.0,
-            "failed to update worktree index: {e:?}"
+            task_id = %task_id.0,
+            worktree_id = %worktree.id.0,
+            "failed to configure vcs hooks for subagent worktree: {err:#}"
         );
     }
-    if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
-        Arc::clone(state),
-        workspace.clone(),
-        worktree.clone(),
-    )
-    .await
-    {
-        tracing::warn!(worktree_id = %worktree_id.0, "worktree bootstrap failed: {e:?}");
-    }
-    if let Err(e) =
-        attachments::sync_workspace_attachments(Arc::clone(state), workspace, false).await
-    {
-        tracing::warn!(worktree_id = %worktree_id.0, "attachment sync failed: {e:?}");
-    }
-    if let Err(e) =
-        attachments::ensure_worktree_attachment_mounts_if_materialized(state, workspace, &worktree)
-            .await
-    {
-        tracing::warn!(worktree_id = %worktree_id.0, "attachment mounts failed: {e:?}");
-    }
-
     Ok(worktree)
 }
 

@@ -392,3 +392,101 @@ test("runtime lock v2 accepts managed required images without bundled image tar 
   assert.equal(result.ok, true);
   assert.deepEqual(result.errors, []);
 });
+
+test("runtime lock v2 accepts macos/host AVF guest runtime with a single host-arch manifest entry", () => {
+  const fixture = makeFixture();
+  const avfRuntimeRoot = path.join(fixture.dir, "runtimes", "avf-linux-guest");
+  fs.mkdirSync(avfRuntimeRoot, { recursive: true });
+  fs.writeFileSync(path.join(avfRuntimeRoot, "rootfs.raw"), "rootfs\n", "utf8");
+
+  const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, "utf8"));
+  manifest.runtimes = [
+    {
+      id: "avf-linux-guest",
+      os: "macos",
+      arch: hostArch,
+      root: avfRuntimeRoot,
+      bin: "rootfs.raw",
+    },
+  ];
+  writeJson(fixture.manifestPath, manifest);
+
+  writeJson(fixture.lockPath, {
+    version: 2,
+    profiles: {
+      parity: { allowed_source_types: ["ci", "vendor"] },
+      override: { allowed_source_types: ["ci", "vendor", "local"] },
+      "source-all": { allowed_source_types: ["local"] },
+    },
+    required: {
+      targets: {
+        provider: [],
+        runtime: ["macos/host"],
+        image: [],
+      },
+      provider_ids: [],
+      runtime_ids: ["avf-linux-guest"],
+      image_ids: [],
+    },
+    components: [
+      makeV2Component({
+        kind: "runtime",
+        id: "avf-linux-guest",
+        os: "macos",
+        arch: "host",
+        sourceType: "ci",
+      }),
+    ],
+  });
+
+  const result = validateRuntimeLock({
+    lockPath: fixture.lockPath,
+    manifestPath: fixture.manifestPath,
+    profile: "parity",
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.errors, []);
+});
+
+test("runtime lock v2 accepts a thin bundle when required runtimes use managed sources", () => {
+  const fixture = makeFixture();
+  const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, "utf8"));
+  manifest.runtimes = [];
+  writeJson(fixture.manifestPath, manifest);
+
+  writeJson(fixture.lockPath, {
+    version: 2,
+    profiles: {
+      parity: { allowed_source_types: ["ci", "vendor"] },
+      override: { allowed_source_types: ["ci", "vendor", "local"] },
+      "source-all": { allowed_source_types: ["local"] },
+    },
+    required: {
+      targets: {
+        provider: [],
+        runtime: ["host/host"],
+        image: [],
+      },
+      provider_ids: [],
+      runtime_ids: ["node"],
+      image_ids: [],
+    },
+    components: [
+      makeV2Component({
+        kind: "runtime",
+        id: "node",
+        os: "host",
+        arch: "host",
+        sourceType: "ci",
+      }),
+    ],
+  });
+
+  const result = validateRuntimeLock({
+    lockPath: fixture.lockPath,
+    manifestPath: fixture.manifestPath,
+    profile: "parity",
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.errors, []);
+});

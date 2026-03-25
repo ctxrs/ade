@@ -17,7 +17,6 @@ use super::errors::ApiErrorResp;
 use super::extractors::extract_model_entries;
 use super::redact_json_value;
 use super::shared::{load_and_cache_worktree_files, FileCompletionsQuery};
-use crate::attachments;
 use crate::completions;
 use crate::daemon::AppState;
 use crate::execution_effective;
@@ -33,11 +32,9 @@ use crate::provider_accounts;
 use crate::scheduler::SchedulerCommand;
 use crate::settings as user_settings;
 use crate::workspace_config;
-use crate::worktree_bootstrap;
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_fs::vcs;
-use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
 use ctx_providers::events::NormalizedEvent;
 use ctx_providers::{
     ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome},
@@ -65,8 +62,8 @@ pub(crate) use messages::ensure_session_turn_for_message;
 pub(super) use messages::{delete_session_message, post_message};
 mod models;
 pub(crate) use models::{
-    compose_model_id, deserialize_optional_reasoning_effort, load_provider_model_catalog,
-    normalize_effort_id, resolve_model_id,
+    compose_model_id, deserialize_optional_reasoning_effort,
+    load_provider_model_catalog_for_execution_environment, normalize_effort_id, resolve_model_id,
 };
 mod snapshot;
 pub(super) use snapshot::{

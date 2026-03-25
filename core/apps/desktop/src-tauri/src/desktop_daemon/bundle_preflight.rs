@@ -463,13 +463,22 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(bundle_dir: Option<&Path>)
 
     for runtime_id in &lock.required.runtime_ids {
         for target in &runtime_targets {
+            let managed_source_available = required_component_has_managed_source(
+                &lock,
+                "runtime",
+                runtime_id,
+                target,
+                &allowed_managed_sources,
+            );
             let Some(entry) = manifest.runtimes.iter().find(|entry| {
                 entry.id == *runtime_id && entry.os == target.os && entry.arch == target.arch
             }) else {
-                failures.push(format!(
-                    "missing runtime entry: {} ({}/{})",
-                    runtime_id, target.os, target.arch
-                ));
+                if !managed_source_available {
+                    failures.push(format!(
+                        "missing runtime entry: {} ({}/{})",
+                        runtime_id, target.os, target.arch
+                    ));
+                }
                 continue;
             };
             let root_path = bundle_dir.join(&entry.root);
@@ -558,6 +567,7 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(bundle_dir: Option<&Path>)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn parse_target_requires_os_arch_pair() {
@@ -653,5 +663,68 @@ mod tests {
             arch: "aarch64".to_string(),
         }];
         assert_eq!(host_relevant_targets(&configured, &fallback), fallback);
+    }
+
+    #[test]
+    fn thin_bundle_runtime_requirement_accepts_managed_runtime_source() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            temp.path().join("manifest.json"),
+            r#"{
+  "version": 1,
+  "providers": [],
+  "runtimes": [],
+  "images": []
+}"#,
+        )
+        .expect("write manifest");
+        fs::write(
+            temp.path().join("runtime_lock.v2.json"),
+            format!(
+                r#"{{
+  "version": 2,
+  "profiles": {{
+    "parity": {{
+      "allowed_source_types": ["ci", "vendor"]
+    }}
+  }},
+  "required": {{
+    "targets": {{
+      "provider": [],
+      "runtime": ["host/host"],
+      "image": [],
+      "machine_cache": []
+    }},
+    "provider_ids": [],
+    "runtime_ids": ["node"],
+    "image_ids": [],
+    "machine_cache_ids": []
+  }},
+  "components": [
+    {{
+      "kind": "runtime",
+      "id": "node",
+      "os": "{os}",
+      "arch": "{arch}",
+      "variant": "default",
+      "sources": [
+        {{
+          "source_type": "ci",
+          "uri": "locked://runtime/node/{os}/{arch}",
+          "sha256": "{sha}"
+        }}
+      ]
+    }}
+  ]
+}}"#,
+                os = std::env::consts::OS,
+                arch = std::env::consts::ARCH,
+                sha = "0".repeat(64),
+            ),
+        )
+        .expect("write runtime lock");
+
+        enforce_desktop_parity_bundle_preflight(Some(temp.path()))
+            .expect("managed runtime source should satisfy thin-bundle preflight");
     }
 }

@@ -17,7 +17,7 @@ use crate::terminals::{
 };
 use crate::worktree_data_plane::{
     apply_data_plane_to_execution_settings, map_host_or_live_path_to_live_path,
-    resolve_worktree_data_plane, WorktreeDataPlane,
+    resolve_worktree_data_plane, workspace_data_plane, WorktreeDataPlane,
 };
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::TerminalSession;
@@ -65,12 +65,28 @@ async fn infer_terminal_worktree(
     workspace_id: WorkspaceId,
     session_id: Option<SessionId>,
     task_id: Option<TaskId>,
-) -> Option<ctx_core::models::Worktree> {
+) -> Result<Option<ctx_core::models::Worktree>, (StatusCode, Json<ApiErrorResp>)> {
     if let Some(session_id) = session_id {
         if let Ok(store) = state.store_for_session(session_id).await {
             if let Ok(Some(session)) = store.get_session(session_id).await {
+                if session.workspace_id != workspace_id {
+                    return Err((
+                        StatusCode::NOT_FOUND,
+                        Json(ApiErrorResp {
+                            error: "session not found".to_string(),
+                        }),
+                    ));
+                }
                 if let Ok(Some(worktree)) = store.get_worktree(session.worktree_id).await {
-                    return Some(worktree);
+                    if worktree.workspace_id != workspace_id {
+                        return Err((
+                            StatusCode::NOT_FOUND,
+                            Json(ApiErrorResp {
+                                error: "worktree not found".to_string(),
+                            }),
+                        ));
+                    }
+                    return Ok(Some(worktree));
                 }
             }
         }
@@ -79,9 +95,25 @@ async fn infer_terminal_worktree(
     if let Some(task_id) = task_id {
         if let Ok(store) = state.store_for_task(task_id).await {
             if let Ok(Some(task)) = store.get_task(task_id).await {
+                if task.workspace_id != workspace_id {
+                    return Err((
+                        StatusCode::NOT_FOUND,
+                        Json(ApiErrorResp {
+                            error: "task not found".to_string(),
+                        }),
+                    ));
+                }
                 if let Some(primary_worktree_id) = task.primary_worktree_id {
                     if let Ok(Some(worktree)) = store.get_worktree(primary_worktree_id).await {
-                        return Some(worktree);
+                        if worktree.workspace_id != workspace_id {
+                            return Err((
+                                StatusCode::NOT_FOUND,
+                                Json(ApiErrorResp {
+                                    error: "worktree not found".to_string(),
+                                }),
+                            ));
+                        }
+                        return Ok(Some(worktree));
                     }
                 }
             }
@@ -90,11 +122,11 @@ async fn infer_terminal_worktree(
 
     if let Ok(store) = state.store_for_workspace(workspace_id).await {
         if let Ok(worktrees) = store.list_worktrees(workspace_id).await {
-            return worktrees.into_iter().last();
+            return Ok(worktrees.into_iter().last());
         }
     }
 
-    None
+    Ok(None)
 }
 
 fn resolve_container_terminal_cwd(
@@ -257,9 +289,17 @@ pub(super) async fn create_workspace_terminal(
                     error: "worktree not found".to_string(),
                 }),
             ))?;
+        if wt.workspace_id != workspace_id {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "worktree not found".to_string(),
+                }),
+            ));
+        }
         Some(wt)
     } else if session_id.is_some() || task_id.is_some() {
-        infer_terminal_worktree(&state, workspace_id, session_id, task_id).await
+        infer_terminal_worktree(&state, workspace_id, session_id, task_id).await?
     } else {
         None
     };
@@ -276,6 +316,8 @@ pub(super) async fn create_workspace_terminal(
                     )
                 })?,
         )
+    } else if matches!(effective.mode, ExecutionMode::Sandbox) {
+        Some(workspace_data_plane(&workspace, effective.mode.clone()))
     } else {
         None
     };

@@ -1,11 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
-use chrono::Utc;
-use ctx_core::ids::WorktreeId;
-use ctx_core::models::{Workspace, Worktree};
-use ctx_fs::worktrees::managed_worktree_path;
 
 use crate::daemon::AppState;
 use crate::execution_effective;
@@ -14,8 +9,12 @@ use crate::logs;
 use crate::provider_accounts;
 use crate::settings::{ContainerMountMode, ExecutionMode};
 use crate::worktree_data_plane::{
-    apply_data_plane_to_execution_settings, resolve_worktree_data_plane, WorktreeDataPlane,
+    apply_data_plane_to_execution_settings, resolve_worktree_data_plane, workspace_data_plane,
+    WorktreeDataPlane,
 };
+use chrono::Utc;
+use ctx_core::ids::WorktreeId;
+use ctx_core::models::{Workspace, Worktree};
 
 pub(crate) struct WorkspaceRuntimeProbeContext {
     pub(crate) source: ResolvedHarnessSource,
@@ -118,11 +117,12 @@ fn subscription_probe_requires_account_env(provider_id: &str) -> bool {
     )
 }
 
+#[cfg(test)]
 fn probe_worktree_priority(
     data_root: &Path,
     workspace: &Workspace,
     worktree: &Worktree,
-    sandbox_bound_worktree_ids: &HashSet<WorktreeId>,
+    sandbox_bound_worktree_ids: &std::collections::HashSet<WorktreeId>,
 ) -> Option<u8> {
     if worktree.root_path == workspace.root_path {
         return Some(0);
@@ -130,7 +130,7 @@ fn probe_worktree_priority(
 
     if sandbox_bound_worktree_ids.contains(&worktree.id)
         || Path::new(&worktree.root_path)
-            == managed_worktree_path(data_root, workspace.id, worktree.id)
+            == ctx_fs::worktrees::managed_worktree_path(data_root, workspace.id, worktree.id)
     {
         return Some(1);
     }
@@ -138,11 +138,12 @@ fn probe_worktree_priority(
     None
 }
 
+#[cfg(test)]
 fn select_probe_worktree(
     data_root: &Path,
     workspace: &Workspace,
     worktrees: &[Worktree],
-    sandbox_bound_worktree_ids: &HashSet<WorktreeId>,
+    sandbox_bound_worktree_ids: &std::collections::HashSet<WorktreeId>,
 ) -> Result<Option<Worktree>, String> {
     if worktrees.is_empty() {
         return Ok(None);
@@ -270,51 +271,8 @@ async fn provider_context_for_workspace_runtime(
         });
     }
 
-    let worktrees = state
-        .global_store()
-        .list_worktrees(workspace.id)
-        .await
-        .map_err(|err| {
-            logs::redact_sensitive(&format!("loading workspace worktrees failed: {err}"))
-        })?;
-    let store = state
-        .store_for_workspace(workspace.id)
-        .await
-        .map_err(|err| {
-            logs::redact_sensitive(&format!(
-                "opening workspace store for provider probe failed: {err:#}"
-            ))
-        })?;
-    let mut sandbox_bound_worktree_ids = HashSet::new();
-    for worktree in &worktrees {
-        if store
-            .get_sandbox_binding(worktree.id)
-            .await
-            .map_err(|err| {
-                logs::redact_sensitive(&format!(
-                    "loading probe sandbox binding failed for worktree {}: {err:#}",
-                    worktree.id.0
-                ))
-            })?
-            .is_some()
-        {
-            sandbox_bound_worktree_ids.insert(worktree.id);
-        }
-    }
-    let worktree = select_probe_worktree(
-        &state.core.data_root,
-        workspace,
-        &worktrees,
-        &sandbox_bound_worktree_ids,
-    )?
-    .unwrap_or_else(|| synthetic_probe_worktree(workspace));
-    let worktree_data_plane = resolve_worktree_data_plane(state, &worktree)
-        .await
-        .map_err(|err| {
-            logs::redact_sensitive(&format!(
-                "resolving probe worktree data plane failed: {err:#}"
-            ))
-        })?;
+    let worktree = synthetic_probe_worktree(workspace);
+    let worktree_data_plane = workspace_data_plane(workspace, effective.mode.clone());
     let effective = apply_data_plane_to_execution_settings(&effective, &worktree_data_plane);
     let cwd = probe_cwd_for_workspace_runtime(
         &worktree_data_plane,
@@ -341,6 +299,58 @@ async fn provider_context_for_workspace_runtime(
         require_subscription_account_env,
     )
     .await?;
+    for (key, value) in runtime_plan.env_overrides {
+        env.insert(key, value);
+    }
+    finalize_workspace_probe_env(&source, provider_id, &mut env).await?;
+    Ok(WorkspaceRuntimeProbeContext { source, env, cwd })
+}
+
+pub(crate) async fn provider_auth_context_for_worktree_runtime(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    provider_id: &str,
+) -> Result<WorkspaceRuntimeProbeContext, String> {
+    let workspace = state
+        .global_store()
+        .get_workspace(worktree.workspace_id)
+        .await
+        .map_err(|err| logs::redact_sensitive(&format!("loading workspace failed: {err:#}")))?
+        .ok_or_else(|| "workspace not found".to_string())?;
+    let effective = execution_effective::effective_execution_settings(state, workspace.id)
+        .await
+        .map_err(|err| {
+            logs::redact_sensitive(&format!("effective execution settings failed: {err}"))
+        })?;
+    let worktree_data_plane =
+        resolve_worktree_data_plane(state, worktree)
+            .await
+            .map_err(|err| {
+                logs::redact_sensitive(&format!(
+                    "resolving session auth worktree data plane failed: {err:#}"
+                ))
+            })?;
+    let effective = apply_data_plane_to_execution_settings(&effective, &worktree_data_plane);
+    let cwd = probe_cwd_for_workspace_runtime(
+        &worktree_data_plane,
+        worktree,
+        effective.mode.clone(),
+        effective.container.mount_mode.clone(),
+    );
+    let runtime_plan = state
+        .execution
+        .harness
+        .prepare(&workspace, worktree, &effective, &state.core.daemon_url)
+        .await
+        .map_err(|err| {
+            logs::redact_sensitive(&format!("session auth runtime preparation failed: {err:#}"))
+        })?;
+    let runtime_root = runtime_plan
+        .env_overrides
+        .get("CTX_DATA_ROOT")
+        .map(|value| Path::new(value).to_path_buf());
+    let (source, mut env) =
+        provider_env_with_runtime_root(state, provider_id, runtime_root.as_deref(), false).await?;
     for (key, value) in runtime_plan.env_overrides {
         env.insert(key, value);
     }

@@ -24,7 +24,6 @@ use ctx_core::models::{
     WorktreeAttachmentStatus,
 };
 
-use crate::container_fs::is_container_path;
 use crate::daemon::{AppState, AttachmentMaterializationTask};
 use crate::execution_effective;
 use crate::harness_runtime::{
@@ -687,11 +686,21 @@ async fn ensure_git_exclude(
     worktree_id: WorktreeId,
     worktree_root: &Path,
 ) -> Result<()> {
-    if is_container_path(worktree_root) {
+    let worktree = state
+        .global_store()
+        .get_worktree(worktree_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("worktree not found for attachment git exclude"))?;
+    let data_plane = resolve_worktree_data_plane(state, &worktree).await?;
+    if matches!(
+        data_plane.execution_mode,
+        crate::settings::ExecutionMode::Sandbox
+    ) {
         return container_ensure_git_exclude(state, workspace, worktree_id, worktree_root).await;
     }
     let git_dir = resolve_git_dir(worktree_root).await?;
-    let git_info = git_dir.join("info");
+    let common_git_dir = resolve_common_git_dir(&git_dir).await?;
+    let git_info = common_git_dir.join("info");
     tokio::fs::create_dir_all(&git_info).await?;
     let path = git_info.join("exclude");
     let mut content = if path.exists() {
@@ -735,6 +744,29 @@ async fn resolve_git_dir(worktree_root: &Path) -> Result<PathBuf> {
         Ok(path)
     } else {
         Ok(worktree_root.join(path))
+    }
+}
+
+async fn resolve_common_git_dir(git_dir: &Path) -> Result<PathBuf> {
+    let commondir = git_dir.join("commondir");
+    let meta = match tokio::fs::symlink_metadata(&commondir).await {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(git_dir.to_path_buf());
+        }
+        Err(err) => return Err(err).with_context(|| format!("reading {}", commondir.display())),
+    };
+    if !meta.is_file() {
+        return Ok(git_dir.to_path_buf());
+    }
+    let raw = tokio::fs::read_to_string(&commondir)
+        .await
+        .with_context(|| format!("reading {}", commondir.display()))?;
+    let path = PathBuf::from(raw.trim());
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(git_dir.join(path))
     }
 }
 
@@ -909,4 +941,54 @@ fn looks_like_sha(value: &str) -> bool {
         return false;
     }
     value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command as StdCommand;
+
+    fn git(args: &[&str], cwd: &Path) {
+        let status = StdCommand::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .status()
+            .expect("run git command");
+        assert!(status.success(), "git command failed: {args:?}");
+    }
+
+    #[tokio::test]
+    async fn resolve_common_git_dir_follows_linked_worktree_commondir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repo_root = temp.path().join("repo");
+        std::fs::create_dir_all(&repo_root).expect("create repo root");
+        git(&["init", "-b", "main"], &repo_root);
+        git(&["config", "user.name", "Test User"], &repo_root);
+        git(&["config", "user.email", "test@example.com"], &repo_root);
+        std::fs::write(repo_root.join("README.md"), "hello\n").expect("write readme");
+        git(&["add", "README.md"], &repo_root);
+        git(&["commit", "-m", "initial"], &repo_root);
+
+        let worktree_root = temp.path().join("worktree");
+        git(
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "ctx/test-worktree",
+                worktree_root.to_str().expect("worktree path"),
+            ],
+            &repo_root,
+        );
+
+        let git_dir = resolve_git_dir(&worktree_root)
+            .await
+            .expect("resolve git dir");
+        let common_git_dir = resolve_common_git_dir(&git_dir)
+            .await
+            .expect("resolve common git dir");
+        assert_ne!(git_dir, common_git_dir);
+        assert!(common_git_dir.join("info").is_dir());
+        assert!(common_git_dir.join("objects").exists());
+    }
 }

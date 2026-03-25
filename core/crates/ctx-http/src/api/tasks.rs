@@ -12,6 +12,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
+#[path = "tasks/backfill.rs"]
+pub(crate) mod backfill;
 #[path = "tasks/creation.rs"]
 mod creation;
 mod handlers;
@@ -31,6 +33,9 @@ use crate::settings::{ExecutionMode, ExecutionSettings};
 use crate::telemetry::TelemetryEvent;
 use crate::vcs_hooks;
 use crate::worktree_bootstrap;
+use crate::worktree_data_plane::{
+    apply_data_plane_to_execution_settings, binding_runtime_kind, resolve_worktree_data_plane,
+};
 use ctx_core::ids::{MessageId, RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     ExecutionEnvironment, Message, MessageDelivery, MessageRole, SandboxBinding, SandboxProfile,
@@ -40,7 +45,7 @@ use ctx_core::models::{
 use ctx_fs::git::delete_branch;
 use ctx_fs::vcs;
 use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
-use ctx_store::is_unique_constraint_violation;
+use ctx_store::{is_unique_constraint_violation, Store};
 
 const GLOBAL_INDEX_WRITE_RETRY_LIMIT: usize = 3;
 const GLOBAL_INDEX_WRITE_RETRY_BASE_MS: u64 = 40;
@@ -50,6 +55,212 @@ fn execution_environment_from_settings(settings: &ExecutionSettings) -> Executio
         ExecutionMode::Host => ExecutionEnvironment::Host,
         ExecutionMode::Sandbox => ExecutionEnvironment::Sandbox,
     }
+}
+
+pub(in crate::api) struct ResolvedExistingWorktreeExecution {
+    pub worktree: Worktree,
+    pub effective: ExecutionSettings,
+}
+
+impl ResolvedExistingWorktreeExecution {
+    pub fn execution_environment(&self) -> ExecutionEnvironment {
+        execution_environment_from_settings(&self.effective)
+    }
+}
+
+pub(in crate::api) async fn resolve_existing_worktree_execution(
+    state: &Arc<AppState>,
+    store: &Store,
+    workspace: &Workspace,
+    worktree_id: WorktreeId,
+) -> anyhow::Result<ResolvedExistingWorktreeExecution> {
+    let worktree = store
+        .get_worktree(worktree_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("worktree not found"))?;
+    let base_effective = execution_effective::effective_execution_settings(state, workspace.id)
+        .await
+        .context("loading workspace execution settings")?;
+    let data_plane = resolve_worktree_data_plane(state, &worktree)
+        .await
+        .context("resolving worktree data plane")?;
+    let effective = apply_data_plane_to_execution_settings(&base_effective, &data_plane);
+    Ok(ResolvedExistingWorktreeExecution {
+        worktree,
+        effective,
+    })
+}
+
+fn sandbox_execution_settings_from_binding(
+    binding: &SandboxBinding,
+) -> anyhow::Result<ExecutionSettings> {
+    if let Some(raw) = binding.execution_settings_json.as_deref() {
+        return serde_json::from_str(raw).context("parsing sandbox binding execution settings");
+    }
+
+    let mut settings = ExecutionSettings {
+        mode: ExecutionMode::Sandbox,
+        ..ExecutionSettings::default()
+    };
+    settings.container.runtime = binding_runtime_kind(binding);
+    settings.container.mount_mode = crate::settings::ContainerMountMode::DiskIsolated;
+    Ok(settings)
+}
+
+pub(in crate::api) async fn materialize_sandbox_binding_for_worktree(
+    state: &AppState,
+    workspace: &Workspace,
+    worktree: &Worktree,
+    canonical_root: &StdPath,
+    effective: &ExecutionSettings,
+    created_at: DateTime<Utc>,
+) -> anyhow::Result<Option<SandboxBinding>> {
+    if !matches!(effective.mode, ExecutionMode::Sandbox)
+        || !matches!(
+            effective.container.mount_mode,
+            crate::settings::ContainerMountMode::DiskIsolated
+        )
+    {
+        return Ok(None);
+    }
+
+    state
+        .execution
+        .harness
+        .ensure_workspace_container(workspace, effective, &state.core.daemon_url)
+        .await?;
+
+    let branch_name = worktree
+        .git_branch
+        .as_deref()
+        .or(worktree.vcs_ref.as_deref())
+        .ok_or_else(|| anyhow::anyhow!("managed sandbox worktree is missing branch metadata"))?;
+
+    let (live_worktree_root, runtime_family, host_projection_root) = if matches!(
+        effective.container.runtime,
+        crate::settings::ContainerRuntimeKind::SharedVmContainer
+    ) {
+        let guest_worktree =
+            crate::workspace_runtime::ensure_avf_linux_guest_worktree_from_host_copy(
+                &state.core.data_root,
+                workspace.id,
+                worktree.id,
+                canonical_root,
+                &worktree.base_commit_sha,
+                branch_name,
+                None,
+            )
+            .await?;
+        let live_root = crate::disk_isolated::ensure_worktree_from_host_copy(
+            &state.core.data_root,
+            workspace.id,
+            worktree.id,
+            &guest_worktree.host_shadow_root,
+            &worktree.base_commit_sha,
+            branch_name,
+        )
+        .await?;
+        (
+            live_root,
+            SandboxRuntimeFamily::SharedVmContainer,
+            Some(
+                guest_worktree
+                    .host_shadow_root
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+        )
+    } else {
+        let live_root = crate::disk_isolated::ensure_worktree_from_host_copy(
+            &state.core.data_root,
+            workspace.id,
+            worktree.id,
+            canonical_root,
+            &worktree.base_commit_sha,
+            branch_name,
+        )
+        .await?;
+        (live_root, SandboxRuntimeFamily::NativeContainer, None)
+    };
+
+    Ok(Some(SandboxBinding {
+        worktree_id: worktree.id,
+        workspace_id: workspace.id,
+        runtime_family,
+        profile: SandboxProfile::Standard,
+        live_workspace_root: crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+        live_worktree_root: live_worktree_root.to_string_lossy().to_string(),
+        execution_settings_json: Some(serde_json::to_string(effective)?),
+        container_name: Some(crate::harness_runtime::workspace_container_name(
+            workspace.id,
+        )),
+        host_projection_root,
+        created_at,
+    }))
+}
+
+pub(in crate::api) async fn rematerialize_sandbox_binding_for_worktree(
+    state: &AppState,
+    workspace: &Workspace,
+    worktree: &Worktree,
+    existing_binding: &SandboxBinding,
+) -> anyhow::Result<SandboxBinding> {
+    let canonical_root = managed_worktree_root(state, workspace, worktree)
+        .ok_or_else(|| anyhow::anyhow!("worktree is not a managed ctx worktree"))?;
+    let effective = sandbox_execution_settings_from_binding(existing_binding)?;
+    materialize_sandbox_binding_for_worktree(
+        state,
+        workspace,
+        worktree,
+        &canonical_root,
+        &effective,
+        existing_binding.created_at,
+    )
+    .await?
+    .ok_or_else(|| anyhow::anyhow!("sandbox binding rematerialization produced host mode"))
+}
+
+pub(in crate::api) async fn persist_provisioned_worktree(
+    state: &Arc<AppState>,
+    store: &Store,
+    workspace: &Workspace,
+    worktree: Worktree,
+    sandbox_binding: Option<SandboxBinding>,
+) -> anyhow::Result<Worktree> {
+    store.insert_worktree(worktree.clone()).await?;
+    if let Some(binding) = sandbox_binding {
+        store.upsert_sandbox_binding(binding).await?;
+    }
+    retry_global_index_write(|| async {
+        state
+            .global_store()
+            .upsert_workspace_worktree_index(worktree.id, workspace.id)
+            .await
+    })
+    .await?;
+
+    if let Err(err) = worktree_bootstrap::spawn_worktree_bootstrap(
+        Arc::clone(state),
+        workspace.clone(),
+        worktree.clone(),
+    )
+    .await
+    {
+        tracing::warn!(worktree_id = %worktree.id.0, "worktree bootstrap failed: {err:?}");
+    }
+    if let Err(err) =
+        attachments::sync_workspace_attachments(Arc::clone(state), workspace, false).await
+    {
+        tracing::warn!(worktree_id = %worktree.id.0, "attachment sync failed: {err:?}");
+    }
+    if let Err(err) =
+        attachments::ensure_worktree_attachment_mounts_if_materialized(state, workspace, &worktree)
+            .await
+    {
+        tracing::warn!(worktree_id = %worktree.id.0, "attachment mounts failed: {err:?}");
+    }
+
+    Ok(worktree)
 }
 
 pub(in crate::api) async fn provision_worktree_for_execution(
@@ -72,85 +283,38 @@ pub(in crate::api) async fn provision_worktree_for_execution(
     )
     .await?;
 
-    if !matches!(effective.mode, ExecutionMode::Sandbox)
-        || !matches!(
-            effective.container.mount_mode,
-            crate::settings::ContainerMountMode::DiskIsolated
-        )
-    {
-        return Ok((canonical_root, None));
-    }
-
-    state
-        .execution
-        .harness
-        .ensure_workspace_container(workspace, effective, &state.core.daemon_url)
-        .await?;
-
-    let (live_worktree_root, runtime_family, host_projection_root) = if matches!(
-        effective.container.runtime,
-        crate::settings::ContainerRuntimeKind::SharedVmContainer
-    ) {
-        let guest_worktree =
-            crate::workspace_runtime::ensure_avf_linux_guest_worktree_from_host_copy(
-                &state.core.data_root,
-                workspace.id,
-                worktree_id,
-                &canonical_root,
-                base_commit_sha,
-                branch_name,
-                None,
-            )
-            .await?;
-        let live_root = crate::disk_isolated::ensure_worktree_from_host_copy(
-            &state.core.data_root,
-            workspace.id,
-            worktree_id,
-            &guest_worktree.host_shadow_root,
-            base_commit_sha,
-            branch_name,
-        )
-        .await?;
-        (
-            live_root,
-            SandboxRuntimeFamily::SharedVmContainer,
-            Some(
-                guest_worktree
-                    .host_shadow_root
-                    .to_string_lossy()
-                    .to_string(),
-            ),
-        )
-    } else {
-        let live_root = crate::disk_isolated::ensure_worktree_from_host_copy(
-            &state.core.data_root,
-            workspace.id,
-            worktree_id,
-            &canonical_root,
-            base_commit_sha,
-            branch_name,
-        )
-        .await?;
-        (live_root, SandboxRuntimeFamily::NativeContainer, None)
+    let worktree = Worktree {
+        id: worktree_id,
+        workspace_id: workspace.id,
+        root_path: canonical_root.to_string_lossy().to_string(),
+        base_commit_sha: base_commit_sha.to_string(),
+        git_branch: Some(branch_name.to_string()),
+        vcs_kind: Some(VcsKind::Git),
+        base_revision: Some(base_commit_sha.to_string()),
+        vcs_ref: Some(branch_name.to_string()),
+        created_at: Utc::now(),
+        bootstrap_status: None,
+        bootstrap_started_at: None,
+        bootstrap_finished_at: None,
+        bootstrap_exit_code: None,
+        bootstrap_timeout_sec: None,
+        bootstrap_error: None,
+        bootstrap_log_path: None,
+        bootstrap_log_truncated: None,
+        bootstrap_command: None,
+        bootstrap_script_path: None,
     };
+    let binding = materialize_sandbox_binding_for_worktree(
+        state,
+        workspace,
+        &worktree,
+        &canonical_root,
+        effective,
+        Utc::now(),
+    )
+    .await?;
 
-    Ok((
-        canonical_root,
-        Some(SandboxBinding {
-            worktree_id,
-            workspace_id: workspace.id,
-            runtime_family,
-            profile: SandboxProfile::Standard,
-            live_workspace_root: crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
-            live_worktree_root: live_worktree_root.to_string_lossy().to_string(),
-            execution_settings_json: Some(serde_json::to_string(effective)?),
-            container_name: Some(crate::harness_runtime::workspace_container_name(
-                workspace.id,
-            )),
-            host_projection_root,
-            created_at: Utc::now(),
-        }),
-    ))
+    Ok((canonical_root, binding))
 }
 
 fn is_transient_store_error(err: &anyhow::Error) -> bool {
@@ -499,7 +663,7 @@ pub(super) async fn prune_worktrees(workspace_root: impl AsRef<StdPath>) -> anyh
     Ok(())
 }
 
-pub(super) async fn ensure_worktree_attached(
+pub(crate) async fn ensure_worktree_attached(
     workspace_root: impl AsRef<StdPath>,
     worktree_path: impl AsRef<StdPath>,
     base_commit_sha: &str,

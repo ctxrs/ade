@@ -143,7 +143,7 @@ describe("container provider OpenRouter (desktop e2e)", () => {
 
   it("creates container workspace, installs codex, resolves models, and runs first real turn", async function () {
     this.timeout(20 * 60_000);
-    if (!scenarioEnabled("local-codex-smoke", ["local", "host", "provider"])) this.skip();
+    if (!scenarioEnabled("local-codex-smoke", ["local", "sandbox", "provider"])) this.skip();
 
     const { apiKey, baseUrl, modelOverride } = requiredOpenRouterEnv(DEFAULT_PROVIDER_ID);
     if (!apiKey) {

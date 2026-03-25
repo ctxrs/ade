@@ -137,31 +137,80 @@ pub(crate) async fn authenticate_session(
                 }),
             )
         })?;
-    let install_target =
-        crate::execution_effective::effective_install_target(state.as_ref(), worktree.workspace_id)
-            .await
-            .map_err(|err| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: format!("failed to load workspace execution settings: {err:#}"),
-                    }),
-                )
-            })?;
+    let workspace = state
+        .global_store()
+        .get_workspace(worktree.workspace_id)
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: format!("failed to load workspace: {err:#}"),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "workspace not found".to_string(),
+                }),
+            )
+        })?;
+    let resolved_worktree = crate::api::tasks::resolve_existing_worktree_execution(
+        &state,
+        &store,
+        &workspace,
+        worktree.id,
+    )
+    .await
+    .map_err(|err| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: format!("failed to resolve session worktree execution: {err:#}"),
+            }),
+        )
+    })?;
+    let execution_environment = resolved_worktree.execution_environment();
+    if session.execution_environment != execution_environment {
+        tracing::warn!(
+            session_id = %session.id.0,
+            stored = session.execution_environment.as_str(),
+            resolved = execution_environment.as_str(),
+            "session authenticate resolved a different execution_environment than persisted metadata"
+        );
+    }
+    let install_target = crate::execution_effective::effective_install_target_for_environment(
+        state.as_ref(),
+        worktree.workspace_id,
+        execution_environment,
+    )
+    .await
+    .map_err(|err| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: format!("failed to load workspace execution settings: {err:#}"),
+            }),
+        )
+    })?;
     let adapter = crate::daemon::ensure_provider_adapter_for_target(
         state.as_ref(),
         &session.provider_id,
         install_target,
     )
     .await;
+    let probe_context = crate::provider_launch::probe::provider_auth_context_for_worktree_runtime(
+        &state,
+        &resolved_worktree.worktree,
+        &session.provider_id,
+    )
+    .await
+    .map_err(|err| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: err })))?;
+    let workdir = probe_context.cwd;
 
-    let workdir = PathBuf::from(worktree.root_path.clone());
-
-    let mut provider_env = std::collections::HashMap::new();
-    provider_env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
-    if let Some(token) = state.core.auth_token.clone() {
-        provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
-    }
+    let mut provider_env = probe_context.env;
     if let Some(provider_ref) = session.provider_session_ref.clone() {
         provider_env.insert("CTX_PROVIDER_SESSION_REF".to_string(), provider_ref);
     }
@@ -172,7 +221,7 @@ pub(crate) async fn authenticate_session(
     if let Ok(v) = std::env::var("CTX_MCP_DISABLED") {
         provider_env.insert("CTX_MCP_DISABLED".to_string(), v);
     }
-    if session.provider_id == "codex" {
+    if session.provider_id == "codex" && !provider_env.contains_key("CODEX_HOME") {
         if let Ok(extra) =
             provider_accounts::codex_env_for_active_account(&state.core.data_root).await
         {

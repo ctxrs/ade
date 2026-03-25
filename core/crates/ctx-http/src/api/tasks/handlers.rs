@@ -122,18 +122,30 @@ pub(in crate::api) async fn archive_task(
                 );
                 errors.push(err);
             }
-        }
-        let Some(root) = managed_worktree_root(&state, &workspace, worktree) else {
-            if sandbox_binding.is_some() {
-                if let Err(err) = store.delete_sandbox_binding(worktree.id).await {
-                    tracing::warn!(
-                        task_id = %task_id.0,
-                        worktree_id = %worktree.id.0,
-                        "failed to delete sandbox binding: {err:#}"
-                    );
-                    errors.push(err);
+            if let Some(host_projection_root) = binding.host_projection_root.as_deref() {
+                let host_projection_root = PathBuf::from(host_projection_root);
+                if tokio::fs::metadata(&host_projection_root).await.is_ok() {
+                    if let Err(err) = tokio::fs::remove_dir_all(&host_projection_root)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "removing AVF host shadow worktree at {}",
+                                host_projection_root.display()
+                            )
+                        })
+                    {
+                        tracing::warn!(
+                            task_id = %task_id.0,
+                            worktree_id = %worktree.id.0,
+                            host_projection_root = %host_projection_root.display(),
+                            "failed to remove sandbox host projection root: {err:#}"
+                        );
+                        errors.push(err);
+                    }
                 }
             }
+        }
+        let Some(root) = managed_worktree_root(&state, &workspace, worktree) else {
             continue;
         };
         let branch = worktree
@@ -202,16 +214,6 @@ pub(in crate::api) async fn archive_task(
                     branch,
                     "failed to delete worktree branch: {err:#}"
                 );
-            }
-        }
-        if sandbox_binding.is_some() {
-            if let Err(err) = store.delete_sandbox_binding(worktree.id).await {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    worktree_id = %worktree.id.0,
-                    "failed to delete sandbox binding: {err:#}"
-                );
-                errors.push(err);
             }
         }
     }
@@ -329,6 +331,27 @@ pub(in crate::api) async fn unarchive_task(
     }
 
     for worktree in &worktrees {
+        let sandbox_binding = store
+            .get_sandbox_binding(worktree.id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if let Some(binding) = sandbox_binding.as_ref() {
+            let refreshed_binding =
+                rematerialize_sandbox_binding_for_worktree(&state, &workspace, worktree, binding)
+                    .await
+                    .map_err(|err| {
+                        tracing::warn!(
+                            task_id = %task_id.0,
+                            worktree_id = %worktree.id.0,
+                            "failed to rematerialize sandbox worktree on unarchive: {err:#}"
+                        );
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    })?;
+            store
+                .upsert_sandbox_binding(refreshed_binding)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        }
         if let Err(e) = attachments::ensure_worktree_attachment_mounts_if_materialized(
             &state, &workspace, worktree,
         )

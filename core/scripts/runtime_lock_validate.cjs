@@ -480,9 +480,28 @@ const validateManifestEntries = ({
 
   for (const runtimeId of runtimeIds) {
     for (const target of runtimeTargets) {
+      const runtimeComponentKey = componentKey(
+        {
+          kind: "runtime",
+          id: runtimeId,
+          os: target.os,
+          arch: target.arch,
+          variant: "default",
+        },
+        hostOs,
+        hostArch,
+      );
+      const runtimeComponent =
+        requiredComponentMap instanceof Map ? requiredComponentMap.get(runtimeComponentKey) : null;
+      const managedRuntimeAvailable = componentHasManagedDownloadSource({
+        component: runtimeComponent,
+        allowedSourceTypes,
+      });
       const entry = findManifestEntry(manifest.runtimes || [], runtimeId, target.os, target.arch);
       if (!entry) {
-        errors.push(`missing runtime bundle entry for ${runtimeId} (${target.label})`);
+        if (!managedRuntimeAvailable) {
+          errors.push(`missing runtime bundle entry for ${runtimeId} (${target.label})`);
+        }
         continue;
       }
       const rootPath = resolvePathFromManifestValue(bundlesRoot, entry.root);

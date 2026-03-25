@@ -529,6 +529,54 @@ const pickUnusedPort = () => {
 
 const readJson = (p) => JSON.parse(fs.readFileSync(p, "utf8"));
 
+const hasManagedDownloadSource = (component) => {
+  const sources = Array.isArray(component?.sources) ? component.sources : [];
+  return sources.some((source) => {
+    const sourceType = String(source?.source_type || "").trim();
+    if (!sourceType || sourceType === "local") return false;
+    return String(source?.uri || "").trim() && String(source?.sha256 || "").trim();
+  });
+};
+
+const findManagedComponent = (lock, kind, id, osValue, archValue) => {
+  const components = Array.isArray(lock?.components) ? lock.components : [];
+  return components.find((component) =>
+    component
+    && component.kind === kind
+    && component.id === id
+    && component.os === osValue
+    && component.arch === archValue
+    && String(component.variant || "default").trim() === "default"
+  );
+};
+
+const assertManagedAvfRuntimeComponent = (lock, hostOs, hostArch) => {
+  const component = findManagedComponent(lock, "runtime", "avf-linux-guest", hostOs, hostArch);
+  if (!component || !hasManagedDownloadSource(component)) {
+    throw new Error(
+      `runtime lock missing managed AVF guest runtime source for ${hostOs}/${hostArch}; run pnpm -C core desktop:prep:release`,
+    );
+  }
+  const helpers = component.helpers || {};
+  for (const helperName of ["kernel", "initrd", "guest-agent", "egress-proxy"]) {
+    const helper = helpers[helperName];
+    if (!String(helper?.uri || "").trim() || !String(helper?.sha256 || "").trim()) {
+      throw new Error(
+        `runtime lock missing AVF helper metadata for ${helperName} (${hostOs}/${hostArch}); run pnpm -C core desktop:prep:release`,
+      );
+    }
+  }
+};
+
+const assertManagedHarnessImageComponent = (lock, archValue) => {
+  const component = findManagedComponent(lock, "image", "ctx-harness", "linux", archValue);
+  if (!component || !hasManagedDownloadSource(component)) {
+    throw new Error(
+      `runtime lock missing managed harness image source for linux/${archValue}; run pnpm -C core desktop:prep:release`,
+    );
+  }
+};
+
 const desktopOs = () => {
   if (process.platform === "darwin") return "macos";
   if (process.platform === "win32") return "windows";
@@ -541,14 +589,30 @@ const desktopArch = () => {
   return process.arch;
 };
 
+const resolveBundlesDir = () => {
+  const configured = String(process.env.CTX_BUNDLE_DIR || "").trim();
+  if (configured) {
+    return path.resolve(configured);
+  }
+  return BUNDLES_DIR;
+};
+
 const ensureBundledContainerAssets = () => {
-  const manifestPath = path.join(BUNDLES_DIR, "manifest.json");
+  const bundlesDir = resolveBundlesDir();
+  const manifestPath = path.join(bundlesDir, "manifest.json");
+  const runtimeLockPath = path.join(bundlesDir, "runtime_lock.v2.json");
   if (!fs.existsSync(manifestPath)) {
     throw new Error(
       `bundled manifest missing at ${manifestPath}; run pnpm -C core desktop:prep:release`,
     );
   }
+  if (!fs.existsSync(runtimeLockPath)) {
+    throw new Error(
+      `runtime lock missing at ${runtimeLockPath}; run pnpm -C core desktop:prep:release`,
+    );
+  }
   const manifest = readJson(manifestPath);
+  const runtimeLock = readJson(runtimeLockPath);
   const runtimes = Array.isArray(manifest?.runtimes) ? manifest.runtimes : [];
   const images = Array.isArray(manifest?.images)
     ? manifest.images
@@ -569,17 +633,23 @@ const ensureBundledContainerAssets = () => {
     && entry.bin.trim().length > 0
   );
   if (avfGuestRuntime) {
-    const guestRootfsPath = path.join(BUNDLES_DIR, avfGuestRuntime.root, avfGuestRuntime.bin);
-    if (!fs.existsSync(guestRootfsPath)) {
-      throw new Error(
-        `bundled AVF guest runtime image missing at ${guestRootfsPath}; run pnpm -C core desktop:prep:release`,
-      );
+    const runtimeRoot = path.join(bundlesDir, avfGuestRuntime.root);
+    const requiredPaths = [
+      path.join(runtimeRoot, avfGuestRuntime.bin),
+      path.join(runtimeRoot, "helpers", "kernel"),
+      path.join(runtimeRoot, "helpers", "initrd"),
+      path.join(runtimeRoot, "helpers", "guest-agent"),
+      path.join(runtimeRoot, "helpers", "egress-proxy"),
+    ];
+    for (const requiredPath of requiredPaths) {
+      if (!fs.existsSync(requiredPath)) {
+        throw new Error(
+          `bundled AVF guest runtime asset missing at ${requiredPath}; run pnpm -C core desktop:prep:release`,
+        );
+      }
     }
   } else {
-    // Canonical path for thin bundles: daemon downloads the managed AVF guest runtime on demand.
-    console.error(
-      `[wdio] bundled AVF guest runtime metadata missing for ${hostOs}/${hostArch}; relying on managed AVF guest runtime download`,
-    );
+    assertManagedAvfRuntimeComponent(runtimeLock, hostOs, hostArch);
   }
 
   const harnessImage = images.find((entry) =>
@@ -591,17 +661,14 @@ const ensureBundledContainerAssets = () => {
     && entry.tar.trim().length > 0
   );
   if (harnessImage) {
-    const harnessImageTar = path.join(BUNDLES_DIR, harnessImage.tar);
+    const harnessImageTar = path.join(bundlesDir, harnessImage.tar);
     if (!fs.existsSync(harnessImageTar)) {
       throw new Error(
         `bundled harness image tar missing at ${harnessImageTar}; run pnpm -C core desktop:prep:release`,
       );
     }
   } else {
-    // Minimal bundle mode allows runtime pull for the default harness image.
-    console.error(
-      `[wdio] bundled harness image metadata missing for linux/${hostArch}; relying on runtime image pull`,
-    );
+    assertManagedHarnessImageComponent(runtimeLock, hostArch);
   }
 };
 
@@ -1566,5 +1633,6 @@ exports.config = {
 
 exports.__cnSharedBackendTestHooks = cnSharedBackendTestHooks;
 exports.__desktopAutomationConfigTestHooks = {
+  ensureBundledContainerAssets,
   resolveMochaTimeoutMs,
 };

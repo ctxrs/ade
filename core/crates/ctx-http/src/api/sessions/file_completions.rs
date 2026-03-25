@@ -22,6 +22,21 @@ pub(crate) async fn session_file_completions(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    let data_plane = crate::worktree_data_plane::resolve_worktree_data_plane(&state, &worktree)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let execution_environment = match data_plane.execution_mode {
+        crate::settings::ExecutionMode::Host => ctx_core::models::ExecutionEnvironment::Host,
+        crate::settings::ExecutionMode::Sandbox => ctx_core::models::ExecutionEnvironment::Sandbox,
+    };
+    if session.execution_environment != execution_environment {
+        tracing::warn!(
+            session_id = %session.id.0,
+            stored = session.execution_environment.as_str(),
+            resolved = execution_environment.as_str(),
+            "session file completions resolved a different execution_environment than persisted metadata"
+        );
+    }
 
     let query = q.query.unwrap_or_default();
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT) as usize;
@@ -35,13 +50,11 @@ pub(crate) async fn session_file_completions(
                 entry.value.files.clone()
             } else {
                 drop(cache);
-                load_and_cache_worktree_files(&state, &worktree, session.execution_environment, now)
-                    .await?
+                load_and_cache_worktree_files(&state, &worktree, execution_environment, now).await?
             }
         } else {
             drop(cache);
-            load_and_cache_worktree_files(&state, &worktree, session.execution_environment, now)
-                .await?
+            load_and_cache_worktree_files(&state, &worktree, execution_environment, now).await?
         }
     };
 
