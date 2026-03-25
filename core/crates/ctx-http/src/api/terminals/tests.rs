@@ -1,11 +1,14 @@
-use super::resolve_container_terminal_cwd;
+use super::{infer_terminal_worktree, resolve_container_terminal_cwd};
+use crate::daemon::AppState;
 use crate::disk_isolated;
 use crate::settings::ExecutionMode;
 use crate::worktree_data_plane::{sandbox_worktree_root, WorktreeDataPlane};
 use chrono::Utc;
-use ctx_core::ids::{WorkspaceId, WorktreeId};
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{VcsKind, Workspace, Worktree};
+use ctx_store::StoreManager;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 fn sample_workspace(root_path: &str) -> Workspace {
     Workspace {
@@ -49,6 +52,16 @@ fn sandbox_data_plane(workspace: &Workspace, worktree: &Worktree) -> WorktreeDat
         live_workspace_root: PathBuf::from("/ctx/ws"),
         live_worktree_root: sandbox_worktree_root(workspace, worktree),
     }
+}
+
+async fn test_state(data_root: &std::path::Path) -> Arc<AppState> {
+    Arc::new(AppState::new(
+        data_root.to_path_buf(),
+        StoreManager::open(data_root).await.expect("open stores"),
+        std::collections::HashMap::new(),
+        "http://127.0.0.1:4310".to_string(),
+        None,
+    ))
 }
 
 #[test]
@@ -127,4 +140,86 @@ fn resolve_container_terminal_cwd_maps_plain_workspace_terminal_paths_without_wo
     .unwrap();
 
     assert_eq!(cwd, PathBuf::from("/ctx/ws/subdir"));
+}
+
+#[tokio::test]
+async fn infer_terminal_worktree_returns_not_found_for_unknown_session_without_fallback() {
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let state = test_state(data_root.path()).await;
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            "ws".to_string(),
+            data_root
+                .path()
+                .join("workspace")
+                .to_string_lossy()
+                .to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .expect("create workspace");
+    let store = state
+        .store_for_workspace(workspace.id)
+        .await
+        .expect("workspace store");
+    let _worktree = store
+        .insert_worktree(sample_worktree(
+            &workspace,
+            data_root.path().join("workspace").join("wt-existing"),
+        ))
+        .await
+        .expect("insert worktree");
+
+    let err = infer_terminal_worktree(
+        &state,
+        workspace.id,
+        Some(SessionId(uuid::Uuid::new_v4())),
+        None,
+    )
+    .await
+    .expect_err("unknown explicit session target should 404");
+
+    assert_eq!(err.0, axum::http::StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn infer_terminal_worktree_returns_not_found_for_unknown_task_without_fallback() {
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let state = test_state(data_root.path()).await;
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            "ws".to_string(),
+            data_root
+                .path()
+                .join("workspace")
+                .to_string_lossy()
+                .to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .expect("create workspace");
+    let store = state
+        .store_for_workspace(workspace.id)
+        .await
+        .expect("workspace store");
+    let _worktree = store
+        .insert_worktree(sample_worktree(
+            &workspace,
+            data_root.path().join("workspace").join("wt-existing"),
+        ))
+        .await
+        .expect("insert worktree");
+
+    let err = infer_terminal_worktree(
+        &state,
+        workspace.id,
+        None,
+        Some(TaskId(uuid::Uuid::new_v4())),
+    )
+    .await
+    .expect_err("unknown explicit task target should 404");
+
+    assert_eq!(err.0, axum::http::StatusCode::NOT_FOUND);
 }

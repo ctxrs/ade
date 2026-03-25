@@ -759,10 +759,7 @@ const ensureBundledContainerAssets = () => {
         }
       }
     } else {
-      throw new Error(
-        `macOS desktop automation requires a bundled AVF guest runtime in ${manifestPath}; ` +
-          "set CTX_AVF_LINUX_GUEST_RUNTIME_DIR before desktop:prep:release or let WDIO prepare it automatically.",
-      );
+      assertManagedAvfRuntimeComponent(runtimeLock, hostOs, hostArch);
     }
   }
 

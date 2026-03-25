@@ -266,16 +266,9 @@ test("wdio AVF container preflight accepts a thin bundle with managed AVF/image 
         CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
       },
       (mod) => {
-        if (desktopOs() === "macos") {
-          assert.throws(
-            () => mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets(),
-            /requires a bundled AVF guest runtime/,
-          );
-        } else {
-          assert.doesNotThrow(() => {
-            mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets();
-          });
-        }
+        assert.doesNotThrow(() => {
+          mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets();
+        });
       },
     );
   } finally {
@@ -295,17 +288,10 @@ test("wdio AVF container preflight rejects a thin bundle missing managed AVF hel
         CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
       },
       (mod) => {
-        if (desktopOs() === "macos") {
-          assert.throws(
-            () => mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets(),
-            /requires a bundled AVF guest runtime/,
-          );
-        } else {
-          assert.throws(
-            () => mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets(),
-            /guest-agent/,
-          );
-        }
+        assert.throws(
+          () => mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets(),
+          /guest-agent/,
+        );
       },
     );
   } finally {

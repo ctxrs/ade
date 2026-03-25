@@ -1,8 +1,8 @@
 #[cfg(test)]
 pub(super) use super::super::provider_probe_auth::endpoint_selection_is_active;
-pub(super) use super::super::provider_probe_auth::{
-    provider_auth_mode, provider_has_active_auth_config,
-};
+pub(super) use super::super::provider_probe_auth::provider_auth_mode;
+#[cfg(test)]
+pub(super) use super::super::provider_probe_auth::provider_has_active_auth_config;
 use super::*;
 
 pub(super) fn classify_probe_error(

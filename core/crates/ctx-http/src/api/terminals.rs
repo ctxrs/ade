@@ -67,57 +67,121 @@ async fn infer_terminal_worktree(
     task_id: Option<TaskId>,
 ) -> Result<Option<ctx_core::models::Worktree>, (StatusCode, Json<ApiErrorResp>)> {
     if let Some(session_id) = session_id {
-        if let Ok(store) = state.store_for_session(session_id).await {
-            if let Ok(Some(session)) = store.get_session(session_id).await {
-                if session.workspace_id != workspace_id {
-                    return Err((
-                        StatusCode::NOT_FOUND,
-                        Json(ApiErrorResp {
-                            error: "session not found".to_string(),
-                        }),
-                    ));
-                }
-                if let Ok(Some(worktree)) = store.get_worktree(session.worktree_id).await {
-                    if worktree.workspace_id != workspace_id {
-                        return Err((
-                            StatusCode::NOT_FOUND,
-                            Json(ApiErrorResp {
-                                error: "worktree not found".to_string(),
-                            }),
-                        ));
-                    }
-                    return Ok(Some(worktree));
-                }
-            }
+        let store = state.store_for_session(session_id).await.map_err(|_| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "session not found".to_string(),
+                }),
+            )
+        })?;
+        let session = store.get_session(session_id).await.map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load session".to_string(),
+                }),
+            )
+        })?;
+        let session = session.ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "session not found".to_string(),
+            }),
+        ))?;
+        if session.workspace_id != workspace_id {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "session not found".to_string(),
+                }),
+            ));
         }
+        let worktree = store.get_worktree(session.worktree_id).await.map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load worktree".to_string(),
+                }),
+            )
+        })?;
+        let worktree = worktree.ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "worktree not found".to_string(),
+            }),
+        ))?;
+        if worktree.workspace_id != workspace_id {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "worktree not found".to_string(),
+                }),
+            ));
+        }
+        return Ok(Some(worktree));
     }
 
     if let Some(task_id) = task_id {
-        if let Ok(store) = state.store_for_task(task_id).await {
-            if let Ok(Some(task)) = store.get_task(task_id).await {
-                if task.workspace_id != workspace_id {
-                    return Err((
-                        StatusCode::NOT_FOUND,
-                        Json(ApiErrorResp {
-                            error: "task not found".to_string(),
-                        }),
-                    ));
-                }
-                if let Some(primary_worktree_id) = task.primary_worktree_id {
-                    if let Ok(Some(worktree)) = store.get_worktree(primary_worktree_id).await {
-                        if worktree.workspace_id != workspace_id {
-                            return Err((
-                                StatusCode::NOT_FOUND,
-                                Json(ApiErrorResp {
-                                    error: "worktree not found".to_string(),
-                                }),
-                            ));
-                        }
-                        return Ok(Some(worktree));
-                    }
-                }
-            }
+        let store = state.store_for_task(task_id).await.map_err(|_| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "task not found".to_string(),
+                }),
+            )
+        })?;
+        let task = store.get_task(task_id).await.map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load task".to_string(),
+                }),
+            )
+        })?;
+        let task = task.ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "task not found".to_string(),
+            }),
+        ))?;
+        if task.workspace_id != workspace_id {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "task not found".to_string(),
+                }),
+            ));
         }
+        let primary_worktree_id = task.primary_worktree_id.ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "worktree not found".to_string(),
+            }),
+        ))?;
+        let worktree = store.get_worktree(primary_worktree_id).await.map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load worktree".to_string(),
+                }),
+            )
+        })?;
+        let worktree = worktree.ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "worktree not found".to_string(),
+            }),
+        ))?;
+        if worktree.workspace_id != workspace_id {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "worktree not found".to_string(),
+                }),
+            ));
+        }
+        return Ok(Some(worktree));
     }
 
     if let Ok(store) = state.store_for_workspace(workspace_id).await {

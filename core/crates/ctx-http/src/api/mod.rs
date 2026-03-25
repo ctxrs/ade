@@ -34,7 +34,7 @@ mod merge_queue_api;
 mod mobile_access;
 mod provider_catalog;
 mod provider_launch;
-mod provider_probe_auth;
+pub(crate) mod provider_probe_auth;
 mod providers;
 mod repo;
 pub(crate) mod sessions;

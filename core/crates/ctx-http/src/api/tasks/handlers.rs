@@ -60,6 +60,13 @@ pub(in crate::api) async fn archive_task(
         worktrees.push(worktree);
     }
 
+    let updated = store
+        .archive_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !updated {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let mut errors: Vec<anyhow::Error> = Vec::new();
     let mut cleanup_targets = Vec::new();
     for worktree in &worktrees {
@@ -103,15 +110,10 @@ pub(in crate::api) async fn archive_task(
     );
     let cleanup_failed = !errors.is_empty();
     if cleanup_failed {
-        tracing::warn!(task_id = %task_id.0, "archive cleanup had errors; task will still be archived");
-    }
-
-    let updated = store
-        .archive_task(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if !updated {
-        return Err(StatusCode::NOT_FOUND);
+        tracing::warn!(
+            task_id = %task_id.0,
+            "archive cleanup had errors after task state was persisted"
+        );
     }
     let task = match store
         .get_task_with_activity(task_id)

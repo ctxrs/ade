@@ -181,6 +181,10 @@ daemon_health_restricted_stderr="${artifact_dir}/daemon-health.restricted.stderr
 restricted_block_stdout="${artifact_dir}/restricted-block.stdout.log"
 restricted_block_stderr="${artifact_dir}/restricted-block.stderr.log"
 report_json="${artifact_dir}/report.json"
+staged_runtime_dir=""
+staged_rootfs_path=""
+staged_kernel_path=""
+staged_initrd_path=""
 
 toolchain="${CTX_AVF_GUEST_AGENT_TOOLCHAIN:-$(toolchain_for_host_arch)}"
 guest_python_fetch_code='import sys, urllib.request; print(urllib.request.urlopen(sys.argv[1], timeout=10).read().decode(), end="")'
@@ -236,27 +240,8 @@ else
     --force
 fi
 
-if [[ -n "$prepared_runtime_dir" ]]; then
-  echo "==> Recording reused runtime metadata"
-  node - "$runtime_dir" "$staging_json" <<'NODE'
-const fs = require("node:fs");
-const runtimeDir = process.argv[2];
-const reportPath = process.argv[3];
-const helpersDir = `${runtimeDir}/helpers`;
-const report = {
-  reusedPreparedRuntime: true,
-  sourceDir: runtimeDir,
-  rootfsPath: `${runtimeDir}/rootfs.raw`,
-  kernelPath: `${helpersDir}/kernel`,
-  initrdPath: `${helpersDir}/initrd`,
-  guestAgentPath: `${helpersDir}/guest-agent`,
-  egressProxyPath: `${helpersDir}/egress-proxy`,
-};
-fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
-NODE
-else
-  echo "==> Staging runtime through desktop_sync_resources"
-  CTX_AVF_LINUX_GUEST_RUNTIME_DIR="$runtime_dir" CTX_AVF_CI_CORE_ROOT="$repo_root" node - "$bundle_dir" "$staging_json" <<'NODE'
+echo "==> Staging runtime through desktop_sync_resources"
+CTX_AVF_LINUX_GUEST_RUNTIME_DIR="$runtime_dir" CTX_AVF_CI_CORE_ROOT="$repo_root" node - "$bundle_dir" "$staging_json" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 const bundleDir = process.argv[2];
@@ -273,7 +258,15 @@ fs.writeFileSync(
 const staged = stageAvfLinuxGuestRuntime(bundleDir);
 fs.writeFileSync(reportPath, JSON.stringify(staged, null, 2));
 NODE
-fi
+staged_runtime_dir="$(json_get "$staging_json" 'input.runtimeRootDir')"
+staged_rootfs_path="$(json_get "$staging_json" 'input.rootfsPath')"
+staged_kernel_path="$(json_get "$staging_json" 'input.kernelPath')"
+staged_initrd_path="$(json_get "$staging_json" 'input.initrdPath')"
+[[ -n "$staged_runtime_dir" ]] || die "staging report missing runtimeRootDir"
+[[ -d "$staged_runtime_dir" ]] || die "staged runtime root missing at ${staged_runtime_dir}"
+[[ -f "$staged_rootfs_path" ]] || die "staged rootfs missing at ${staged_rootfs_path}"
+[[ -f "$staged_kernel_path" ]] || die "staged kernel missing at ${staged_kernel_path}"
+[[ -f "$staged_initrd_path" ]] || die "staged initrd missing at ${staged_initrd_path}"
 
 echo "==> Helper lifecycle smoke"
 "$helper_bin" prepare-runtime-layout "$data_root" | tee "$layout_json"
@@ -311,10 +304,10 @@ if [[ "$real_exec_mode" != "skip" ]]; then
   echo "==> Starting workspace VM"
   if "$helper_bin" start-workspace-vm \
     "$data_root" \
-    "$runtime_dir" \
-    "${runtime_dir}/rootfs.raw" \
-    "${runtime_dir}/helpers/kernel" \
-    "${runtime_dir}/helpers/initrd" \
+    "$staged_runtime_dir" \
+    "$staged_rootfs_path" \
+    "$staged_kernel_path" \
+    "$staged_initrd_path" \
     "ci-${runtime_arch}" | tee "$start_json"
   then
     workspace_id="ws-avf-ci-smoke"
@@ -528,10 +521,10 @@ EOF
             set +e
             "$helper_bin" start-workspace-vm \
               "$data_root" \
-              "$runtime_dir" \
-              "${runtime_dir}/rootfs.raw" \
-              "${runtime_dir}/helpers/kernel" \
-              "${runtime_dir}/helpers/initrd" \
+              "$staged_runtime_dir" \
+              "$staged_rootfs_path" \
+              "$staged_kernel_path" \
+              "$staged_initrd_path" \
               "ci-${runtime_arch}" >"$start2_json"
             start2_status=$?
             set -e
@@ -649,6 +642,7 @@ node - "$report_json" \
   "$prepared2_json" \
   "$staging_json" \
   "$runtime_dir" \
+  "$staged_runtime_dir" \
   "$artifact_dir" \
   "$real_exec_status" \
   "$real_exec_reason" \
@@ -676,6 +670,7 @@ const [
   prepared2Path,
   stagingPath,
   runtimeDir,
+  stagedRuntimeDir,
   artifactDir,
   realExecStatus,
   realExecReason,
@@ -714,6 +709,7 @@ const report = {
   guest_worktree_restore: maybeJson(prepared2Path),
   staging: maybeJson(stagingPath),
   runtime_dir: runtimeDir,
+  staged_runtime_dir: stagedRuntimeDir,
   artifact_dir: artifactDir,
   real_exec: {
     status: realExecStatus,

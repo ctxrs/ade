@@ -65,12 +65,14 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                 )
                 .await
                 .ok();
-                let has_active_auth = probe::provider_has_active_auth_config(
-                    &state.core.data_root,
-                    &provider_id,
-                    source_config.as_ref(),
-                )
-                .await;
+                let has_active_auth =
+                    provider_probe::provider_has_active_auth_for_workspace_runtime(
+                        &state,
+                        &workspace,
+                        &provider_id,
+                        source_config.as_ref(),
+                    )
+                    .await;
                 let auth_mode = probe::provider_auth_mode(has_active_auth, source_config.as_ref());
                 let (probe_ok, auth_required, probe_error) =
                     probe::bootstrap_provider_probe_summary(

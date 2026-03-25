@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::api::provider_probe_auth::provider_has_active_auth_config_with_runtime_root;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::harness_sources::{self, HarnessSourceKind, ResolvedHarnessSource};
@@ -389,6 +390,25 @@ pub(crate) async fn provider_auth_context_for_workspace_runtime(
     provider_id: &str,
 ) -> Result<WorkspaceRuntimeProbeContext, String> {
     provider_context_for_workspace_runtime(state, workspace, provider_id, false).await
+}
+
+pub(crate) async fn provider_has_active_auth_for_workspace_runtime(
+    state: &Arc<AppState>,
+    workspace: &Workspace,
+    provider_id: &str,
+    source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
+) -> bool {
+    let runtime_root = provider_context_for_workspace_runtime(state, workspace, provider_id, false)
+        .await
+        .ok()
+        .and_then(|context| context.env.get("CTX_DATA_ROOT").map(PathBuf::from));
+    provider_has_active_auth_config_with_runtime_root(
+        &state.core.data_root,
+        runtime_root.as_deref(),
+        provider_id,
+        source_config,
+    )
+    .await
 }
 
 pub(crate) async fn provider_probe_env_for_workspace_runtime(

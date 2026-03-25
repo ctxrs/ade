@@ -18,8 +18,19 @@ pub(super) fn endpoint_selection_is_active(
         .any(|endpoint| endpoint.id == selected_endpoint_id)
 }
 
+#[cfg(test)]
 pub(super) async fn provider_has_active_auth_config(
     data_root: &StdPath,
+    provider_id: &str,
+    source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
+) -> bool {
+    provider_has_active_auth_config_with_runtime_root(data_root, None, provider_id, source_config)
+        .await
+}
+
+pub(crate) async fn provider_has_active_auth_config_with_runtime_root(
+    data_root: &StdPath,
+    runtime_data_root: Option<&StdPath>,
     provider_id: &str,
     source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
 ) -> bool {
@@ -32,13 +43,33 @@ pub(super) async fn provider_has_active_auth_config(
         }
     }
     if provider_id == "codex" {
-        return crate::provider_accounts::codex_has_active_auth(data_root)
-            .await
-            .unwrap_or(false);
+        return match runtime_data_root {
+            Some(runtime_root) => {
+                crate::provider_accounts::codex_has_active_auth_with_runtime_root(
+                    data_root,
+                    runtime_root,
+                )
+                .await
+            }
+            None => crate::provider_accounts::codex_has_active_auth(data_root).await,
+        }
+        .unwrap_or(false);
     }
-    match crate::provider_accounts::subscription_env_for_active_account(data_root, provider_id)
-        .await
-    {
+    let env = match runtime_data_root {
+        Some(runtime_root) => {
+            crate::provider_accounts::subscription_env_for_active_account_with_runtime_root(
+                data_root,
+                runtime_root,
+                provider_id,
+            )
+            .await
+        }
+        None => {
+            crate::provider_accounts::subscription_env_for_active_account(data_root, provider_id)
+                .await
+        }
+    };
+    match env {
         Ok(env) => !env.is_empty(),
         Err(_) => false,
     }

@@ -21,7 +21,7 @@ use super::provider_catalog::{
     provider_options_cache_entry_is_authoritative, provider_supports_runtime_model_catalog,
     runtime_probe_models_payload,
 };
-use super::provider_probe_auth::{provider_auth_mode, provider_has_active_auth_config};
+use super::provider_probe_auth::provider_auth_mode;
 use super::redact_json_value;
 use crate::daemon::AppState;
 use crate::harness_sources;

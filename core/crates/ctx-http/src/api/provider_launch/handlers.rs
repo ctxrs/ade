@@ -74,15 +74,6 @@ pub(in crate::api) async fn get_provider_options(
         harness_sources::get_provider_source_config(&state.core.data_root, &provider_id)
             .await
             .ok();
-    let has_active_auth = provider_has_active_auth_config(
-        &state.core.data_root,
-        &provider_id,
-        source_config.as_ref(),
-    )
-    .await;
-    let auth_mode = provider_auth_mode(has_active_auth, source_config.as_ref());
-    let selected_endpoint = selected_endpoint_record_from_harness_config(source_config.as_ref());
-
     if !known {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -92,8 +83,36 @@ pub(in crate::api) async fn get_provider_options(
         ));
     }
 
+    let workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "failed to load workspace",
+                })),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "workspace not found",
+            })),
+        ))?;
+
     let provider_status =
         provider_status_for_target(&state, &managed, &matrix, &provider_id, install_target).await;
+    let has_active_auth = probe::provider_has_active_auth_for_workspace_runtime(
+        &state,
+        &workspace,
+        &provider_id,
+        source_config.as_ref(),
+    )
+    .await;
+    let auth_mode = provider_auth_mode(has_active_auth, source_config.as_ref());
+    let selected_endpoint = selected_endpoint_record_from_harness_config(source_config.as_ref());
 
     if !provider_status_is_usable(&provider_status) {
         let mut raw_base_resp = serde_json::json!({
@@ -141,27 +160,13 @@ pub(in crate::api) async fn get_provider_options(
             .map(|endpoint| endpoint.id.as_str()),
     ) {
         ProviderOptionsProbePlan::EnvOnly => {
-            let ws = state
-                .global_store()
-                .get_workspace(ws_id)
-                .await
-                .map_err(|_| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(serde_json::json!({
-                            "error": "failed to load workspace",
-                        })),
-                    )
-                })?
-                .ok_or((
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({
-                        "error": "workspace not found",
-                    })),
-                ))?;
             let (probe_ok, auth_required, probe_error) =
-                match probe::provider_probe_env_for_workspace_runtime(&state, &ws, &provider_id)
-                    .await
+                match probe::provider_probe_env_for_workspace_runtime(
+                    &state,
+                    &workspace,
+                    &provider_id,
+                )
+                .await
                 {
                     Ok(_) => (true, false, None),
                     Err(err) => {
@@ -705,7 +710,6 @@ pub(in crate::api) async fn verify_provider_for_workspace(
         checked_at: Some(checked_at),
         message: message.clone(),
     };
-
     let verify_value =
         redact_json_value(serde_json::to_value(&resp).unwrap_or(serde_json::Value::Null));
     let cache_key = workspace_provider_cache_key(ws_id, install_target, &provider_id);
@@ -730,7 +734,6 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
     }
     let ws_id = parse_workspace_id(&ws_id)?;
     let method_id = req.and_then(|value| value.0.method_id);
-
     let workspace = state
         .global_store()
         .get_workspace(ws_id)
@@ -775,10 +778,8 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
         .map_err(|error| workspace_execution_settings_error_json(&error))?;
     let adapter =
         ensure_provider_adapter_for_target(state.as_ref(), &provider_id, install_target).await;
-
     let (event_tx, mut event_rx) = mpsc::channel(32);
     tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
-
     let checked_at = Utc::now().to_rfc3339();
     let result = adapter
         .authenticate_session(
@@ -812,7 +813,6 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
             }
         }
     };
-
     let verify_value =
         redact_json_value(serde_json::to_value(&resp).unwrap_or(serde_json::Value::Null));
     let cache_key = workspace_provider_cache_key(ws_id, install_target, &provider_id);
