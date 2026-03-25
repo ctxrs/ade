@@ -20,6 +20,7 @@ import {
 } from "./uiStateStore";
 import { SessionReplicaBridge } from "./sessionReplicaBridge";
 import type { SessionReplicaFreshnessState, SessionReplicaPatch } from "./sessionReplicaProtocol";
+import { isAuthoritativeSessionReplicaReplace } from "./sessionReplicaProtocol";
 import { emitUiDiagnostic } from "./diagnosticsChannel";
 import type { SessionSubscriptionCursor } from "./sessionSubscription";
 import { hasModelList } from "./sessionSupervisor/eventHydration";
@@ -84,7 +85,7 @@ import {
   upsertOptimisticThreadMessage,
 } from "./sessionSupervisor/optimisticOverlay";
 import {
-  canSeedReplicaFromActiveSnapshot,
+  classifyActiveSnapshotSeedMode,
   seedReplicaFromActiveSnapshot,
 } from "./sessionSupervisor/activeSnapshotSeed";
 import {
@@ -106,7 +107,6 @@ import {
   TURN_PAGE_LIMIT,
   WARM_TTL_MS,
   isReplicaAuthority,
-  shouldSkipBoundedActiveSnapshotSeed,
   toReplicaFreshness,
 } from "./sessionSupervisor/config";
 import { loadMoreTurnsForEntry, loadTurnToolsForEntry } from "./sessionSupervisor/historySupport";
@@ -134,6 +134,22 @@ export type {
   SessionSupportLoadErrorKey,
   SessionSupervisorSnapshot,
 } from "./sessionSupervisor/entryState";
+
+const repairReplaceIsCoveredByEntry = (
+  entry: Pick<InternalEntry, "turns" | "messages">,
+  data: Pick<Exclude<SessionReplicaPatch, { op: "evict" }>["data"], "turns" | "messages">,
+): boolean => {
+  const incomingTurns = Array.isArray(data.turns) ? data.turns : [];
+  const incomingMessages = Array.isArray(data.messages) ? data.messages : [];
+
+  const entryTurnIds = new Set(entry.turns.map((turn) => idToString(turn.turn_id)).filter(Boolean));
+  const entryMessageIds = new Set(entry.messages.map((message) => idToString(message.id)).filter(Boolean));
+
+  return (
+    incomingTurns.every((turn) => entryTurnIds.has(idToString(turn.turn_id))) &&
+    incomingMessages.every((message) => entryMessageIds.has(idToString(message.id)))
+  );
+};
 
 // The daemon serializes transient events with `seq: null` (see Rust `SessionEvent` Serialize).
 // We assign a stable synthetic seq in a negative JS-safe range so sorting never scrambles
@@ -257,6 +273,12 @@ export class SessionSupervisor {
 
   setWorkspaceSessionHeads = (heads: SessionSupervisorWorkspaceSessionHeads) => {
     this.workspaceSessionHeadsById = new Map(Object.entries(heads));
+    for (const [sessionId, head] of this.workspaceSessionHeadsById.entries()) {
+      const entry = this.entries.get(sessionId);
+      if (!entry) continue;
+      if (classifyActiveSnapshotSeedMode(entry, head) !== "repair_replace") continue;
+      this.replica.dispatch({ type: "seed_head", sessionId, head, mode: "repair_replace" });
+    }
     for (const entry of this.entries.values()) {
       this.syncSupportLoadsForOpenSession(entry);
     }
@@ -612,8 +634,18 @@ export class SessionSupervisor {
         patch,
         normalizedFreshness,
       });
+      const replaceMode = patch.op === "replace" ? patch.data.replaceMode ?? null : null;
+      const authoritativeReplace = isAuthoritativeSessionReplicaReplace(replaceMode);
+      const preserveCoveredHistoryOnRepair =
+        replaceMode === "repair_replace" && repairReplaceIsCoveredByEntry(entry, patch.data);
+      const shouldApplyReplace =
+        patch.op !== "replace" || shouldReplaceReplay;
+      const preservedTurns =
+        patch.op === "replace" && shouldApplyReplace && preserveCoveredHistoryOnRepair
+          ? entry.turns.slice()
+          : null;
       const preservedTurnsById =
-        patch.op === "replace" && shouldReplaceReplay
+        patch.op === "replace" && shouldApplyReplace && (!authoritativeReplace || preserveCoveredHistoryOnRepair)
           ? new Map(
               entry.turns
                 .map((turn) => {
@@ -632,9 +664,10 @@ export class SessionSupervisor {
         );
         localOnlyMessages = entry.messages.filter((message) => {
           const id = idToString(message.id);
-          return id ? !incomingMessageIds.has(id) : false;
+          if (!id || incomingMessageIds.has(id)) return false;
+          return !authoritativeReplace || preserveCoveredHistoryOnRepair || message.delivery === "queued";
         });
-        if (shouldReplaceReplay) {
+        if (shouldApplyReplace) {
           this.resetEntryProjectionForReplace(entry, { skipPublish: true });
         }
       }
@@ -655,17 +688,20 @@ export class SessionSupervisor {
       if (normalizedFreshness !== undefined) {
         entry.freshness = normalizedFreshness;
       }
-      if (shouldReplaceReplay && data.turns && data.turns.length > 0) {
+      if (shouldApplyReplace && data.turns && data.turns.length > 0) {
         this.mergeTurns(entry, data.turns);
       }
-      if (shouldReplaceReplay && data.messages && data.messages.length > 0) {
+      if (preservedTurns && preservedTurns.length > 0) {
+        this.mergeTurns(entry, preservedTurns);
+      }
+      if (shouldApplyReplace && data.messages && data.messages.length > 0) {
         this.mergeMessages(entry, data.messages);
       }
       if (localOnlyMessages.length > 0) {
         this.mergeMessages(entry, localOnlyMessages);
       }
       reconcileOptimisticOverlay(entry);
-      if (shouldReplaceReplay && data.events && data.events.length > 0) {
+      if (shouldApplyReplace && data.events && data.events.length > 0) {
         this.mergeEvents(entry, data.events, { notify: patch.op !== "replace" });
         this.applyAcpMetaFromEvents(entry, data.events);
       }
@@ -971,9 +1007,9 @@ export class SessionSupervisor {
       const sessionId = idToString(head.session?.id);
       if (!sessionId) continue;
       const entry = this.ensureEntry(sessionId);
-      if (!canSeedReplicaFromActiveSnapshot(entry, { allowRecoveringRefresh: true })) continue;
-      if (shouldSkipBoundedActiveSnapshotSeed(entry, head)) continue;
-      this.replica.dispatch({ type: "seed_head", sessionId, head });
+      const mode = classifyActiveSnapshotSeedMode(entry, head, { allowRecoveringRefresh: true });
+      if (!mode) continue;
+      this.replica.dispatch({ type: "seed_head", sessionId, head, mode });
     }
   }
 }

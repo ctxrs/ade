@@ -20,6 +20,16 @@ export type SessionReplicaConfig = {
 
 export type SessionReplicaFreshnessState = "bootstrap" | "authoritative" | "recovering";
 
+export type SessionReplicaHeadSeedMode = "bootstrap_seed" | "repair_replace";
+
+export type SessionReplicaReplaceMode =
+  | SessionReplicaHeadSeedMode
+  | "authoritative_replace";
+
+export const isAuthoritativeSessionReplicaReplace = (
+  mode: SessionReplicaReplaceMode | null | undefined,
+): boolean => mode === "authoritative_replace" || mode === "repair_replace";
+
 export type SessionReplicaCommand =
   | {
       type: "init";
@@ -47,7 +57,7 @@ export type SessionReplicaCommand =
   | { type: "close_session"; sessionId: string }
   | { type: "refresh_session"; sessionId: string }
   | { type: "hydrate_session_head"; sessionId: string; force?: boolean; silent?: boolean }
-  | { type: "seed_head"; sessionId: string; head: SessionHeadSnapshot }
+  | { type: "seed_head"; sessionId: string; head: SessionHeadSnapshot; mode: SessionReplicaHeadSeedMode }
   | { type: "workspace_event"; event: WorkspaceActiveSnapshotEvent }
   | { type: "set_session"; session: Session };
 
@@ -82,6 +92,7 @@ export type SessionReplicaData = {
   stateLoading?: boolean;
   artifactsLoaded?: boolean;
   subagentNotice?: boolean;
+  replaceMode?: SessionReplicaReplaceMode;
 };
 
 export type SessionReplicaPatch =

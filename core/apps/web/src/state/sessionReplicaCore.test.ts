@@ -172,6 +172,44 @@ describe("SessionReplicaCore", () => {
     expect(latest?.data?.error).toBeFalsy();
   });
 
+  it("emits explicit lifecycle replace modes for bootstrap seeds and authoritative repairs", () => {
+    const sessionId = "session-replace-modes";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: mkHead(sessionId, "bootstrap-head"),
+      mode: "bootstrap_seed",
+    });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        ...mkHead(sessionId, "repair-head"),
+        last_event_seq: 2,
+        projection_rev: 2,
+        activity: { is_working: false, last_turn_status: "completed" },
+      },
+      mode: "repair_replace",
+    });
+
+    const replacePatches = patches.filter(
+      (patch): patch is Exclude<SessionReplicaPatch, { op: "evict" }> =>
+        patch.sessionId === sessionId && patch.op === "replace",
+    );
+    expect(replacePatches).toHaveLength(2);
+    expect(replacePatches[0]?.data.replaceMode).toBe("bootstrap_seed");
+    expect(replacePatches[0]?.data.freshness).toBe("bootstrap");
+    expect(replacePatches[1]?.data.replaceMode).toBe("repair_replace");
+    expect(replacePatches[1]?.data.freshness).toBe("authoritative");
+  });
+
   it("refetches /head on session_gap", async () => {
     const head = mkHead("session-gap");
     const getSessionHead = vi.fn(async () => head);

@@ -1,4 +1,8 @@
-import type { SessionReplicaData, SessionReplicaPatch } from "../sessionReplicaProtocol";
+import {
+  isAuthoritativeSessionReplicaReplace,
+  type SessionReplicaData,
+  type SessionReplicaPatch,
+} from "../sessionReplicaProtocol";
 import { isReplicaAuthority } from "./config";
 import type { InternalEntry, SessionLoadState } from "./entryState";
 
@@ -39,7 +43,12 @@ export const shouldReplayReplicaReplace = ({
   if (patch.op !== "replace") return true;
   if (!isReplicaAuthority(entry.freshness)) return true;
   if (normalizedFreshness === "recovering") return true;
-  if (patch.data.forceReplace !== true || normalizedFreshness !== "replica") return false;
+  if (patch.data.replaceMode === "repair_replace" && normalizedFreshness === "replica") {
+    return true;
+  }
+  if (!isAuthoritativeSessionReplicaReplace(patch.data.replaceMode) || normalizedFreshness !== "replica") {
+    return false;
+  }
 
   const incomingProjectionRev =
     typeof patch.data.projectionRev === "number" ? patch.data.projectionRev : undefined;

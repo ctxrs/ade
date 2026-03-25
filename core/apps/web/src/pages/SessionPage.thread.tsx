@@ -14,7 +14,6 @@ import {
   WorkbenchMessageListEmptyPlaceholder,
   WorkbenchMessageListStickyFooter,
 } from "./sessionThread/SessionThreadMessageListChrome";
-import { getWorkbenchListItemRenderKey } from "./sessionMessageListStableUpdate";
 import { recordSessionMessageListRowSizeMismatch } from "./sessionMessageListDebug";
 
 type WorkbenchMessageListStackProps = {
@@ -162,7 +161,7 @@ export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack
       if (!data) return <div style={{ height: 1 }} />;
       const measuredItemKey = itemKeyRef.current(data);
       return (
-        <MeasuredThreadRow id={data.id} itemKind={data.kind} itemKey={measuredItemKey}>
+        <MeasuredThreadRow key={measuredItemKey} id={data.id} itemKind={data.kind} itemKey={measuredItemKey}>
           {itemContentRef.current(index, data)}
         </MeasuredThreadRow>
       );
@@ -182,9 +181,7 @@ export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack
           data={dataState}
           context={context}
           itemIdentity={itemIdentity}
-          computeItemKey={({ data, context: itemContext, index }) =>
-            getWorkbenchListItemRenderKey(data, itemContext, index)
-          }
+          computeItemKey={({ data }) => itemKeyRef.current(data)}
           ItemContent={ItemContent}
           initialLocation={initialLocation}
           onScroll={onScroll}

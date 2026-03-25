@@ -27,8 +27,11 @@ import type {
   SessionReplicaConfig,
   SessionReplicaData,
   SessionReplicaFreshnessState,
+  SessionReplicaHeadSeedMode,
+  SessionReplicaReplaceMode,
   SessionReplicaPatch,
 } from "./sessionReplicaProtocol";
+import { isAuthoritativeSessionReplicaReplace } from "./sessionReplicaProtocol";
 
 export type SessionReplicaApi = {
   getSessionHead: (sessionId: string, limit?: number, includeEvents?: boolean) => Promise<SessionHeadSnapshot | null>;
@@ -321,7 +324,7 @@ export class SessionReplicaCore {
         }).catch(() => {});
         return;
       case "seed_head":
-        this.seedHead(cmd.sessionId, cmd.head);
+        this.seedHead(cmd.sessionId, cmd.head, cmd.mode);
         return;
       case "workspace_event":
         this.handleWorkspaceEvent(cmd.event);
@@ -407,11 +410,12 @@ export class SessionReplicaCore {
     head: SessionHead | SessionHeadSnapshot,
     emitOp: "append" | "replace" = "replace",
     opts?: {
-      authoritative?: boolean;
+      replaceMode?: SessionReplicaReplaceMode;
       freshness?: SessionReplicaFreshnessState;
       forceReplace?: boolean;
     },
   ) {
+    const authoritative = isAuthoritativeSessionReplicaReplace(opts?.replaceMode);
     const data = headToData(head);
     let turns = data.turns ?? [];
     let messages = data.messages ?? [];
@@ -428,12 +432,12 @@ export class SessionReplicaCore {
       existingProjectionRev,
     );
     const incomingIsNarrower =
-      !opts?.authoritative &&
+      !authoritative &&
       (turns.length < entry.turns.length ||
         messages.length < entry.messages.length ||
         events.length < entry.events.length);
     let toolSummaries = data.toolSummaries ?? entry.toolSummaries;
-    if (incomingIsOlder || (!opts?.authoritative && existingSeq > incomingSeq) || incomingIsNarrower) {
+    if (incomingIsOlder || (!authoritative && existingSeq > incomingSeq) || incomingIsNarrower) {
       turns = mergeTurns(turns, entry.turns);
       messages = mergeMessages(messages, entry.messages);
       events = mergeEvents(events, entry.events);
@@ -509,8 +513,8 @@ export class SessionReplicaCore {
     if (entry.stateRev !== undefined) {
       patch.stateRev = entry.stateRev;
     }
-    if (opts?.forceReplace) {
-      patch.forceReplace = true;
+    if (opts?.replaceMode) {
+      patch.replaceMode = opts.replaceMode;
     }
     this.emitPatch(emitOp, entry.sessionId, patch);
   }
@@ -551,7 +555,10 @@ export class SessionReplicaCore {
         const shouldSkipBoundedBootstrapCache =
           opts?.skipBoundedBootstrapCache && isBoundedHeadSeed(cached.head);
         if (!shouldSkipBoundedBootstrapCache) {
-          this.applyHead(entry, cached.head, opts?.emitOp, { freshness: "bootstrap" });
+          this.applyHead(entry, cached.head, opts?.emitOp, {
+            replaceMode: opts?.emitOp === "append" ? undefined : "bootstrap_seed",
+            freshness: "bootstrap",
+          });
         }
       }
     }
@@ -576,7 +583,7 @@ export class SessionReplicaCore {
       if (head) {
         const persisted = snapshotToHead(head);
         this.applyHead(entry, persisted, opts?.emitOp, {
-          authoritative: true,
+          replaceMode: opts?.emitOp === "replace" ? "authoritative_replace" : undefined,
           freshness: "authoritative",
         });
         await this.persistHead(entry);
@@ -613,7 +620,7 @@ export class SessionReplicaCore {
       if (head) {
         const persisted = snapshotToHead(head);
         this.applyHead(entry, persisted, opts?.emitOp, {
-          authoritative: true,
+          replaceMode: opts?.emitOp === "replace" ? "authoritative_replace" : undefined,
           freshness: "authoritative",
         });
         await this.persistHead(entry);
@@ -627,12 +634,17 @@ export class SessionReplicaCore {
     }
   }
 
-  private seedHead(sessionId: string, head: SessionHeadSnapshot) {
+  private seedHead(
+    sessionId: string,
+    head: SessionHeadSnapshot,
+    mode: SessionReplicaHeadSeedMode,
+  ) {
     const id = normalizeId(sessionId);
     if (!id) return;
     const entry = this.ensureEntry(id);
     this.applyHead(entry, head, "replace", {
-      freshness: entry.freshness === "authoritative" ? "authoritative" : "bootstrap",
+      replaceMode: mode,
+      freshness: mode === "repair_replace" ? "authoritative" : "bootstrap",
     });
     entry.hydrated = true;
   }
@@ -650,9 +662,8 @@ export class SessionReplicaCore {
       if (!head || !sessionId) return;
       const entry = this.ensureEntry(sessionId);
       this.applyHead(entry, head, "replace", {
-        authoritative: true,
+        replaceMode: "authoritative_replace",
         freshness: "authoritative",
-        forceReplace: true,
       });
       return;
     }

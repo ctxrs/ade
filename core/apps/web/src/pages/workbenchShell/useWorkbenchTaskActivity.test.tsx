@@ -572,6 +572,49 @@ describe("useWorkbenchTaskActivity helpers", () => {
     expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
   });
 
+  it("ignores bootstrap live activity when canonical head is already completed", () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById: {
+        "task-1": makeTaskSummary({
+          taskId: "task-1",
+          primarySessionId: primarySession.id,
+          sessions: [
+            makeSessionSummary(primarySession, {
+              activity: { is_working: false, last_turn_status: "completed" },
+              last_message_at: "2026-03-09T00:00:06.000Z",
+            }),
+          ],
+          primarySessionHead: {
+            session: primarySession,
+            turns: [],
+            tool_summaries: [],
+            messages: [],
+            events: [],
+            last_event_seq: 8,
+            projection_rev: 8,
+            state_rev: 8,
+            activity: { is_working: false, last_turn_status: "completed" },
+            has_more_turns: false,
+            has_more_history: false,
+          },
+        }),
+      },
+      optimisticTasks: [],
+      sessions: {
+        [primarySession.id]: makeSessionEntry({
+          session: primarySession,
+          turns: [makeTurn(primarySession.id, "running")],
+          messageCreatedAt: "2026-03-09T00:00:08.000Z",
+          freshness: "bootstrap",
+        }),
+      },
+    });
+
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(false);
+    expect(taskLiveInfo.lastAssistantMsByTask["task-1"]).toBe(Date.parse("2026-03-09T00:00:06.000Z"));
+  });
+
   it("does not let live primary turns override a non-working canonical summary", () => {
     const primarySession = makeSession("session-1", "task-1", "active");
     const taskLiveInfo = deriveTaskLiveInfo({

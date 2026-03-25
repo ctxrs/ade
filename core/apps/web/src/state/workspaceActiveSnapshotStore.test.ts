@@ -835,9 +835,82 @@ describe("WorkspaceActiveSnapshotStore", () => {
       }),
     );
 
-    const updated = store.getSessionHeadSnapshot(session.id);
-    expect(updated?.tool_summaries?.length ?? 0).toBe(1);
-    expect(updated?.tool_summaries?.[0]?.tool_call_id).toBe("call-1");
+  const updated = store.getSessionHeadSnapshot(session.id);
+  expect(updated?.tool_summaries?.length ?? 0).toBe(1);
+  expect(updated?.tool_summaries?.[0]?.tool_call_id).toBe("call-1");
+  });
+
+  it("does not synthesize head activity from summary-only state when the first delta arrives", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-1", "task-1", "ws-1", now);
+    const summary: SessionSnapshotSummary = {
+      ...mkSummary(session, now),
+      activity: { is_working: true, last_turn_status: "running" },
+      last_event_seq: 4,
+      state_rev: 4,
+    };
+
+    const activeSnapshot: WorkspaceActiveSnapshot = {
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      archived_rev: 0,
+      active: {
+        total_count: 1,
+        tasks: [
+          {
+            task,
+            primary_session: summary,
+            sessions: [summary],
+            sort_at: now,
+          } as WorkspaceActiveTaskSummary,
+        ],
+      },
+    };
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: activeSnapshot,
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 2,
+        event: {
+          type: "session_head_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 2,
+          delta: {
+            session_id: session.id,
+            last_event_seq: 5,
+            state_rev: 5,
+            message: {
+              id: "m-1",
+              session_id: session.id,
+              task_id: task.id,
+              role: "assistant",
+              content: "from delta",
+              delivery: "immediate",
+              created_at: now,
+            },
+          },
+        },
+      }),
+    );
+
+    const seededHead = store.getSessionHeadSnapshot(session.id);
+    expect(seededHead?.activity).toBeUndefined();
+    expect(seededHead?.last_event_seq).toBe(5);
+    expect(seededHead?.messages?.[0]?.content).toBe("from delta");
   });
 
   it("applies session_summary_delta preview metadata without changing canonical activity", async () => {

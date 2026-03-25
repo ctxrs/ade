@@ -2273,6 +2273,91 @@ describe("SessionSupervisor", () => {
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
   });
 
+  it("keeps active bootstrap transcript pending until authoritative catch-up completes", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-active-bootstrap-pending";
+    const head: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: [mkTurn({ sessionId, turnId: "turn-bootstrap", status: "running", startSeq: 3 })],
+      events: [] as SessionEvent[],
+      messages: [
+        {
+          id: "m-bootstrap",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-bootstrap",
+          role: "assistant",
+          content: "bootstrap",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:03.000Z",
+        },
+      ],
+      last_event_seq: 3,
+      state_rev: 3,
+      activity: { is_working: true, last_turn_status: "running" },
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    };
+    const activeState: WorkspaceActiveSnapshotState = {
+      ...mkWorkspaceSnapshotState(),
+      activeIds: ["task-active-bootstrap-pending"],
+      tasksById: {
+        "task-active-bootstrap-pending": {
+          ...mkWorkspaceTaskSummary({
+            taskId: "task-active-bootstrap-pending",
+            primarySessionId: sessionId,
+            sessionIds: [sessionId],
+          }),
+          primarySessionHead: head,
+        },
+      },
+      totalActive: 1,
+    };
+    let resolveHead!: (value: SessionHeadSnapshot) => void;
+    const headPromise = new Promise<SessionHeadSnapshot>((resolve) => {
+      resolveHead = resolve;
+    });
+    getSessionHeadMock.mockImplementationOnce(() => headPromise);
+
+    const sup = new SessionSupervisor();
+    sup.setWorkspaceSessionHeads({ [sessionId]: head });
+    sup.setWorkspaceSnapshotState(activeState);
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return entry?.freshness === "bootstrap" && entry.messages.length === 1;
+    });
+    expect(sup.getSnapshot().sessions[sessionId]?.loadState).toBe("pending_hydration");
+
+    resolveHead({
+      ...head,
+      turns: [mkTurn({ sessionId, turnId: "turn-authoritative", status: "completed", startSeq: 4 })],
+      messages: [
+        {
+          id: "m-authoritative",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-authoritative",
+          role: "assistant",
+          content: "authoritative",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:04.000Z",
+        },
+      ],
+      last_event_seq: 4,
+      state_rev: 4,
+      activity: { is_working: false, last_turn_status: "completed" },
+    });
+
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return entry?.freshness === "replica" && entry.loadState === "live";
+    });
+  });
+
   it("does not let compact active-head seeds overwrite a replica-warm session", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
@@ -2357,6 +2442,106 @@ describe("SessionSupervisor", () => {
     expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
     expect(sup.getSnapshot().sessions[sessionId]?.messages).toHaveLength(2);
     expect(sup.getSnapshot().sessions[sessionId]?.turns).toHaveLength(2);
+  });
+
+  it("repairs an already-open stale active transcript from newer workspace session heads", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-open-stale-repair";
+    const staleTurn = mkTurn({ sessionId, turnId: "turn-stale", status: "running", startSeq: 1 });
+    const staleMessage: Message = {
+      id: "m-stale",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-stale",
+      role: "assistant",
+      content: "stale",
+      delivery: "immediate",
+      created_at: "2026-03-09T00:00:01.000Z",
+    };
+    const freshTurns = [
+      mkTurn({ sessionId, turnId: "turn-fresh-1", status: "completed", startSeq: 10 }),
+      mkTurn({ sessionId, turnId: "turn-fresh-2", status: "completed", startSeq: 12 }),
+    ];
+    const freshMessages: Message[] = [
+      {
+        id: "m-fresh-1",
+        session_id: sessionId,
+        task_id: "task-1",
+        turn_id: "turn-fresh-1",
+        role: "assistant",
+        content: "fresh-1",
+        delivery: "immediate",
+        created_at: "2026-03-09T00:00:10.000Z",
+      },
+      {
+        id: "m-fresh-2",
+        session_id: sessionId,
+        task_id: "task-1",
+        turn_id: "turn-fresh-2",
+        role: "assistant",
+        content: "fresh-2",
+        delivery: "immediate",
+        created_at: "2026-03-09T00:00:12.000Z",
+      },
+    ];
+    const currentHead: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: freshTurns,
+      events: [] as SessionEvent[],
+      messages: freshMessages,
+      activity: { is_working: false, last_turn_status: "completed" },
+      last_event_seq: 20,
+      projection_rev: 7,
+      state_rev: 7,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    };
+    getSessionHeadMock.mockImplementationOnce(() => new Promise<SessionHeadSnapshot>(() => {}));
+
+    const sup = new SessionSupervisor();
+    sup.openSession(sessionId, { mode: "active" });
+    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
+
+    const internals = asSupervisorInternals(sup);
+    internals.handleReplicaPatches([
+      {
+        op: "replace",
+        sessionId,
+        data: {
+          session: mkSession(sessionId),
+          freshness: "authoritative",
+          turns: [staleTurn],
+          messages: [staleMessage],
+          events: [] as SessionEvent[],
+          activity: { is_working: false, last_turn_status: "completed" },
+          lastEventSeq: 20,
+          projectionRev: 7,
+          turnsHydrated: true,
+          loading: false,
+        },
+      },
+    ]);
+
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return entry?.freshness === "replica" && entry.turns[0]?.turn_id === "turn-stale";
+    });
+
+    sup.setWorkspaceSessionHeads({ [sessionId]: currentHead });
+
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return (
+        entry?.freshness === "replica" &&
+        entry.turns.map((turn) => turn.turn_id).join(",") === freshTurns.map((turn) => turn.turn_id).join(",")
+      );
+    });
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.messages.map((message) => message.id)).toEqual(freshMessages.map((message) => message.id));
+    expect(entry?.turns.some((turn) => turn.turn_id === "turn-stale")).toBe(false);
   });
 
   it("does not seed freshly opened active sessions from bounded active heads before /head hydrate", async () => {

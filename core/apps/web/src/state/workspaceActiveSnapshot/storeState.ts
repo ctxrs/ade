@@ -832,7 +832,7 @@ export class WorkspaceActiveSnapshotStoreState {
           last_event_seq: summary.last_event_seq ?? 0,
           projection_rev: summary.projection_rev ?? 0,
           state_rev: summary.state_rev ?? 0,
-          activity: summary.activity ?? { is_working: false },
+          activity: undefined,
           has_more_turns: false,
           history_cursor: null,
           has_more_history: false,

@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { MutableRefObject } from "react";
 import { WorkbenchMessageListStack, type WorkbenchMessageListContext } from "./SessionPage.thread";
 import type { WorkbenchListItem } from "./SessionPage.types";
+import { getWorkbenchListItemRenderKey } from "./sessionMessageListStableUpdate";
 
 const baseContext: WorkbenchMessageListContext = {
   loaded: true,
@@ -65,9 +66,11 @@ const buildToolItem = (
 function renderMessageList({
   data,
   context = baseContext,
+  itemKey = (item: WorkbenchListItem) => getWorkbenchListItemRenderKey(item, context),
 }: {
   data: WorkbenchListItem[];
   context?: WorkbenchMessageListContext;
+  itemKey?: (item: WorkbenchListItem) => string;
 }) {
   const listRef =
     {
@@ -82,7 +85,7 @@ function renderMessageList({
         initialData={data}
         itemContent={(_index, item) => <div>{item.kind === "assistant" ? item.content : item.kind}</div>}
         itemIdentity={(item) => item.id}
-        itemKey={(item) => item.id}
+        itemKey={itemKey}
         increaseViewportBy={0}
         initialLocation={{ index: 0, align: "start" }}
         dataState={dataState}
@@ -134,6 +137,10 @@ describe("WorkbenchMessageListStack", () => {
         content: "this reply is now much longer and should force the measured wrapper to remount",
       }),
     ];
+    const nextContext: WorkbenchMessageListContext = {
+      ...baseContext,
+      renderRevisionByItemId: { [current[0].id]: 1 },
+    };
     const view = renderMessageList({ data: current });
     const firstWrapper = await findMeasuredWrapper(view.container, current[0].id);
 
@@ -144,11 +151,11 @@ describe("WorkbenchMessageListStack", () => {
           initialData={current}
           itemContent={(_index, item) => <div>{item.kind === "assistant" ? item.content : item.kind}</div>}
           itemIdentity={(item) => item.id}
-          itemKey={(item) => item.id}
+          itemKey={(item) => getWorkbenchListItemRenderKey(item, nextContext)}
           increaseViewportBy={0}
           initialLocation={{ index: 0, align: "start" }}
           dataState={{ data: next }}
-          context={baseContext}
+          context={nextContext}
           onScroll={() => {}}
           onRenderedDataChange={() => {}}
           listRef={
@@ -179,7 +186,7 @@ describe("WorkbenchMessageListStack", () => {
           initialData={current}
           itemContent={(_index, item) => <div>{item.kind === "assistant" ? item.content : item.kind}</div>}
           itemIdentity={(item) => item.id}
-          itemKey={(item) => item.id}
+          itemKey={(item) => getWorkbenchListItemRenderKey(item, baseContext)}
           increaseViewportBy={0}
           initialLocation={{ index: 0, align: "start" }}
           dataState={{ data: next }}
@@ -219,8 +226,13 @@ describe("WorkbenchMessageListStack", () => {
       loaded: true,
       loadingOlder: false,
       expandedToolById: { [secondTool.id]: true },
+      renderRevisionByItemId: { [secondTool.id]: 1 },
     };
-    const view = renderMessageList({ data: current, context: collapsedContext });
+    const view = renderMessageList({
+      data: current,
+      context: collapsedContext,
+      itemKey: (item) => getWorkbenchListItemRenderKey(item, collapsedContext),
+    });
     const firstToolWrapper = await findMeasuredWrapper(view.container, firstTool.id);
     const secondToolWrapper = await findMeasuredWrapper(view.container, secondTool.id);
 
@@ -231,7 +243,7 @@ describe("WorkbenchMessageListStack", () => {
           initialData={current}
           itemContent={(_index, item) => <div>{item.kind === "assistant" ? item.content : item.kind}</div>}
           itemIdentity={(item) => item.id}
-          itemKey={(item) => item.id}
+          itemKey={(item) => getWorkbenchListItemRenderKey(item, expandedContext)}
           increaseViewportBy={0}
           initialLocation={{ index: 0, align: "start" }}
           dataState={{ data: current }}
@@ -257,6 +269,10 @@ describe("WorkbenchMessageListStack", () => {
     const shiftedAssistant = buildAssistantItem();
     const current = [shiftedAssistant, buildTurnStatusItem()];
     const next = [buildToolItem(), shiftedAssistant, buildTurnStatusItem()];
+    const nextContext: WorkbenchMessageListContext = {
+      ...baseContext,
+      renderRevisionByItemId: { [shiftedAssistant.id]: 1 },
+    };
     const view = renderMessageList({ data: current });
     const firstWrapper = await findMeasuredWrapper(view.container, shiftedAssistant.id);
 
@@ -267,11 +283,11 @@ describe("WorkbenchMessageListStack", () => {
           initialData={current}
           itemContent={(_index, item) => <div>{item.kind === "assistant" ? item.content : item.kind}</div>}
           itemIdentity={(item) => item.id}
-          itemKey={(item) => item.id}
+          itemKey={(item) => getWorkbenchListItemRenderKey(item, nextContext)}
           increaseViewportBy={0}
           initialLocation={{ index: 0, align: "start" }}
           dataState={{ data: next }}
-          context={baseContext}
+          context={nextContext}
           onScroll={() => {}}
           onRenderedDataChange={() => {}}
           listRef={
@@ -287,5 +303,44 @@ describe("WorkbenchMessageListStack", () => {
 
     const secondWrapper = await findMeasuredWrapper(view.container, shiftedAssistant.id);
     expect(secondWrapper).not.toBe(firstWrapper);
+  });
+
+  it("remounts a turn-status row when a running turn terminalizes", async () => {
+    const current = [buildTurnStatusItem({ status: "running", assistant_messages_content: "" })];
+    const next = [buildTurnStatusItem({ status: "completed", assistant_messages_content: "done" })];
+    const nextContext: WorkbenchMessageListContext = {
+      ...baseContext,
+      renderRevisionByItemId: { [current[0].id]: 1 },
+    };
+    const view = renderMessageList({ data: current });
+    const firstWrapper = await findMeasuredWrapper(view.container, current[0].id);
+
+    view.rerender(
+      <VirtuosoMessageListTestingContext.Provider value={{ viewportHeight: 600, itemHeight: 120 }}>
+        <WorkbenchMessageListStack
+          virtuosoStyle={{ height: 400 }}
+          initialData={current}
+          itemContent={(_index, item) => <div>{item.kind === "turn_status" ? item.status : item.kind}</div>}
+          itemIdentity={(item) => item.id}
+          itemKey={(item) => getWorkbenchListItemRenderKey(item, nextContext)}
+          increaseViewportBy={0}
+          initialLocation={{ index: 0, align: "start" }}
+          dataState={{ data: next }}
+          context={nextContext}
+          onScroll={() => {}}
+          onRenderedDataChange={() => {}}
+          listRef={
+            {
+              current: null,
+            } as MutableRefObject<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>
+          }
+          licenseKey=""
+          shortSizeAlign="top"
+        />
+      </VirtuosoMessageListTestingContext.Provider>,
+    );
+
+    expect(await findMeasuredWrapper(view.container, next[0].id)).not.toBe(firstWrapper);
+    expect(view.container).toHaveTextContent("completed");
   });
 });
