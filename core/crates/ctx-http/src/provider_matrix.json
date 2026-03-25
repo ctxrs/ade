@@ -300,8 +300,9 @@
       ]
     },
     {
-      "id": "codex",
-      "display_name": "Codex",
+      "id": "codex-cli",
+      "kind": "dependency",
+      "display_name": "Codex CLI",
       "tier": "tier2",
       "command": {
         "command": "codex",
@@ -309,32 +310,32 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.114.0-ctx.1",
+        "version": "0.114.0",
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.1/codex-crp-0.114.0-ctx.1-aarch64-apple-darwin.tar.gz",
-            "sha256": "9d8b4c5e19b17326d94bac5dab0ae427c46446b91a4a3866eb9c28a525d5955e",
+            "url": "https://github.com/openai/codex/releases/download/rust-v0.114.0/codex-aarch64-apple-darwin.tar.gz",
+            "sha256": "c98eb550695f99eaec27df9971a1b76a83acb15eb55522383fa31b0497297c54",
             "archive": "tar_gz",
-            "bin_path": "codex-crp"
+            "bin_path": "codex"
           },
           "darwin-x86_64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.1/codex-crp-0.114.0-ctx.1-x86_64-apple-darwin.tar.gz",
-            "sha256": "591fb47ec2ea00221d467bbab30e5b41d312ed9efdf3be23eadd744613ae70a2",
+            "url": "https://github.com/openai/codex/releases/download/rust-v0.114.0/codex-x86_64-apple-darwin.tar.gz",
+            "sha256": "b0c7ce9f6e3693ecc150bc0cb95b4a1766d7b849747090e5077de8d4d2cac974",
             "archive": "tar_gz",
-            "bin_path": "codex-crp"
+            "bin_path": "codex"
           },
           "linux-aarch64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.1/codex-crp-0.114.0-ctx.1-aarch64-unknown-linux-gnu.tar.gz",
-            "sha256": "1c42b75efb47dd9611798a8539f74dcd86f0aa1a7dcf911b1e1010249d63a422",
+            "url": "https://github.com/openai/codex/releases/download/rust-v0.114.0/codex-aarch64-unknown-linux-gnu.tar.gz",
+            "sha256": "c923ffd32c50b8d8f4c5f39e8623c8afab90ee984c65f3c73709b82cf63150bb",
             "archive": "tar_gz",
-            "bin_path": "codex-crp"
+            "bin_path": "codex"
           },
           "linux-x86_64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.1/codex-crp-0.114.0-ctx.1-x86_64-unknown-linux-gnu.tar.gz",
-            "sha256": "8cc55e936990c212a095d28d3c26c42a22164b2fb4566b27f90a7c825d9fa2ab",
+            "url": "https://github.com/openai/codex/releases/download/rust-v0.114.0/codex-x86_64-unknown-linux-gnu.tar.gz",
+            "sha256": "f18294d4da6756e9e5ad4dc62b3030b7a75a94e5e5022f3bfa4a21a7d3c52ae0",
             "archive": "tar_gz",
-            "bin_path": "codex-crp"
+            "bin_path": "codex"
           }
         }
       },
@@ -346,18 +347,80 @@
       },
       "releases": [
         {
-          "version": "0.114.0-ctx.1",
+          "version": "0.114.0",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Pinned stock Codex CLI release",
+          "upstream_version": "0.114.0"
+        }
+      ]
+    },
+    {
+      "id": "codex",
+      "display_name": "Codex",
+      "tier": "tier2",
+      "command": {
+        "command": "codex",
+        "args": []
+      },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.114.0-ctx.2",
+        "args": [],
+        "targets": {
+          "darwin-aarch64": {
+            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.2/codex-crp-0.114.0-ctx.2-aarch64-apple-darwin.tar.gz",
+            "sha256": "337b323fab9515626ca66f0cb3cce8c83603f9a6763d4780dbc8f97946e9fce8",
+            "archive": "tar_gz",
+            "bin_path": "codex-crp"
+          },
+          "darwin-x86_64": {
+            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.2/codex-crp-0.114.0-ctx.2-x86_64-apple-darwin.tar.gz",
+            "sha256": "8c948a4e05098d62cfb089815372d8f8577887954f6f59a4cc55bf1a04f5b995",
+            "archive": "tar_gz",
+            "bin_path": "codex-crp"
+          },
+          "linux-aarch64": {
+            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.2/codex-crp-0.114.0-ctx.2-aarch64-unknown-linux-gnu.tar.gz",
+            "sha256": "570f2db15f6993f1f85c3650010716c2ad5058a5151fd394d9ff7381bc22a7dc",
+            "archive": "tar_gz",
+            "bin_path": "codex-crp"
+          },
+          "linux-x86_64": {
+            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.2/codex-crp-0.114.0-ctx.2-x86_64-unknown-linux-gnu.tar.gz",
+            "sha256": "a58f84df0150c06b375d5f1ea1635d25915fb77068faf0a38b2885ebc73a3a85",
+            "archive": "tar_gz",
+            "bin_path": "codex-crp"
+          }
+        }
+      },
+      "provider_dependencies": [
+        {
+          "id": "codex-cli",
+          "role": "prerequisite",
+          "target": "host"
+        }
+      ],
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
+      "releases": [
+        {
+          "version": "0.114.0-ctx.2",
           "upstream_version": "0.114.0",
           "provenance": {
             "upstream_repo": "openai/codex",
             "upstream_release_tag": "rust-v0.114.0",
             "upstream_commit_sha": "b9904c0ae4ecb773549efd6ea3fb05229402fdb9",
             "ctx_repo": "ctxrs/codex-crp",
-            "ctx_release_tag": "v0.114.0-ctx.1"
+            "ctx_release_tag": "v0.114.0-ctx.2"
           },
           "status": "supported",
           "context_min": "0.1.0",
-          "notes": "Release-only intake from openai/codex rust-v0.114.0"
+          "notes": "Thin app-server adapter over stock Codex rust-v0.114.0"
         },
         {
           "version": "0.0.0-ctx.2",

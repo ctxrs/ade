@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CRP_WORKSPACE="${ROOT_DIR}/external-harnesses/codex/codex-rs"
+WORKSPACE_MANIFEST="${ROOT_DIR}/core/Cargo.toml"
 PROFILE="${CTX_CRP_PROFILE:-debug}"
 
 # shellcheck source=lib/codex_crp_build_env.sh
@@ -15,8 +15,8 @@ INSTALL_DIR="${DATA_DIR}/providers/agent-servers/codex-crp/dev"
 INSTALL_BIN="${INSTALL_DIR}/codex-crp"
 AGENT_CFG="${DATA_DIR}/providers/agent-servers/agent_servers.json"
 
-if [[ ! -d "${CRP_WORKSPACE}" ]]; then
-  echo "error: codex-crp workspace not found at ${CRP_WORKSPACE}" >&2
+if [[ ! -f "${WORKSPACE_MANIFEST}" ]]; then
+  echo "error: Cargo workspace manifest not found at ${WORKSPACE_MANIFEST}" >&2
   exit 1
 fi
 
@@ -25,11 +25,9 @@ if [[ "${PROFILE}" == "release" ]]; then
   profile_args+=(--release)
 fi
 
-(
-  cd "${CRP_WORKSPACE}"
-  mkdir -p "${TARGET_DIR}"
-  CARGO_TARGET_DIR="${TARGET_DIR}" CARGO_BUILD_JOBS="${BUILD_JOBS}" cargo build -p codex-crp "${profile_args[@]}"
-)
+mkdir -p "${TARGET_DIR}"
+CARGO_TARGET_DIR="${TARGET_DIR}" CARGO_BUILD_JOBS="${BUILD_JOBS}" \
+  cargo build --manifest-path "${WORKSPACE_MANIFEST}" -p codex-crp "${profile_args[@]}"
 
 if [[ ! -f "${TARGET_DIR}/${PROFILE}/codex-crp" ]]; then
   echo "error: codex-crp binary not found at ${TARGET_DIR}/${PROFILE}/codex-crp" >&2
@@ -63,7 +61,7 @@ if not isinstance(managed, dict):
 providers["codex"] = {
     "command": install_bin,
     "args": [],
-    "dependencies": [],
+    "dependencies": ["codex-cli"],
 }
 
 payload["providers"] = providers

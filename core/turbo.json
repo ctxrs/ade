@@ -104,10 +104,11 @@
       ],
       "inputs": [
         "package.json",
+        "Cargo.toml",
+        "Cargo.lock",
         "../scripts/build_codex_crp.sh",
         "../scripts/lib/codex_crp_build_env.sh",
-        "../external-harnesses/codex/codex-rs/**",
-        "!../external-harnesses/codex/codex-rs/target/**"
+        "crates/codex-crp/**"
       ],
       "outputs": []
     },
@@ -122,10 +123,11 @@
       ],
       "inputs": [
         "package.json",
+        "Cargo.toml",
+        "Cargo.lock",
         "../scripts/test_codex_crp.sh",
         "../scripts/lib/codex_crp_build_env.sh",
-        "../external-harnesses/codex/codex-rs/**",
-        "!../external-harnesses/codex/codex-rs/target/**"
+        "crates/codex-crp/**"
       ],
       "outputs": []
     },

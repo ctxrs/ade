@@ -1,0 +1,38 @@
+{
+  "events": [
+    {
+      "channel": "control",
+      "event": {
+        "error": {
+          "details": "{\"type\":\"UsageLimitExceeded\"}\nretry later",
+          "kind": "app_server_error",
+          "message": "quota exceeded"
+        },
+        "session_id": "fixture-session",
+        "status": "error",
+        "turn_id": "turn_crp_3",
+        "type": "turn.completed"
+      }
+    }
+  ],
+  "aliases": {
+    "turn_app_3": "turn_crp_3"
+  },
+  "latest_token_usage": {
+    "last": {
+      "cachedInputTokens": 0,
+      "inputTokens": 8000,
+      "outputTokens": 500,
+      "reasoningOutputTokens": 500,
+      "totalTokens": 9000
+    },
+    "modelContextWindow": 10000,
+    "total": {
+      "cachedInputTokens": 0,
+      "inputTokens": 8000,
+      "outputTokens": 500,
+      "reasoningOutputTokens": 500,
+      "totalTokens": 9000
+    }
+  }
+}

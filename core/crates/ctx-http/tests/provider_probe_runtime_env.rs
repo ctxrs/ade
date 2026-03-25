@@ -10,6 +10,7 @@ use ctx_http::daemon::AppState;
 use ctx_http::installer::{
     load_agent_server_config, save_agent_server_config, AgentServerCommand, ManagedInstallMetadata,
 };
+use ctx_http::installs::InstallTarget;
 use ctx_http::provider_accounts::{
     add_copilot_account, add_gemini_account, add_kimi_account, upsert_amp_account,
 };
@@ -321,6 +322,51 @@ async fn seed_runtime_and_status(
 }
 
 #[cfg(unix)]
+async fn seed_managed_codex_cli_dependency(state: &Arc<AppState>, dep_bin_rel: &str) {
+    let dep_bin_dir = state.core.data_root.join(dep_bin_rel);
+    std::fs::create_dir_all(&dep_bin_dir).expect("create codex-cli dep bin dir");
+    let codex_cmd = dep_bin_dir.join("codex");
+    write_executable(
+        &codex_cmd,
+        r#"#!/bin/sh
+exit 0
+"#,
+    );
+
+    let mut cfg = load_agent_server_config(&state.core.data_root)
+        .await
+        .unwrap_or_default();
+    cfg.managed_provider_targets.insert(
+        "codex-cli".to_string(),
+        HashMap::from([(
+            "host".to_string(),
+            AgentServerCommand {
+                command: codex_cmd.to_string_lossy().to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: None,
+            },
+        )]),
+    );
+    cfg.managed_installs.insert(
+        "codex-cli".to_string(),
+        ManagedInstallMetadata {
+            package: Some("codex-cli".to_string()),
+            version: Some("fixture".to_string()),
+            archive_sha256: None,
+            target: Some(InstallTarget::Host),
+            install_dir_rel: None,
+            bin_dir_rel: Some(dep_bin_rel.to_string()),
+            last_success_at: None,
+            last_error: None,
+        },
+    );
+    save_agent_server_config(&state.core.data_root, &cfg)
+        .await
+        .expect("save codex-cli managed dependency");
+}
+
+#[cfg(unix)]
 async fn seed_acp_bridge_runtime(data_root: &Path) {
     let bridge_dir = data_root
         .join("providers")
@@ -396,6 +442,7 @@ async fn provider_options_probe_uses_managed_dependency_path() {
     let (runtime_cmd, dep_bin_rel) =
         setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex");
     seed_runtime_and_status(&state, "codex", runtime_cmd, dep_bin_rel).await;
+    seed_managed_codex_cli_dependency(&state, "managed/runtime-node-codex/bin").await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
@@ -1086,6 +1133,7 @@ async fn provider_verify_probe_uses_managed_dependency_path() {
     let (runtime_cmd, dep_bin_rel) =
         setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex");
     seed_runtime_and_status(&state, "codex", runtime_cmd, dep_bin_rel).await;
+    seed_managed_codex_cli_dependency(&state, "managed/runtime-node-codex/bin").await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
@@ -1134,6 +1182,7 @@ async fn provider_options_probe_uses_workspace_runtime_context_for_container_mod
     let (runtime_cmd, dep_bin_rel) =
         setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex");
     seed_runtime_and_status(&state, "codex", runtime_cmd, dep_bin_rel).await;
+    seed_managed_codex_cli_dependency(&state, "managed/runtime-node-codex/bin").await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (cfg_status, cfg_body): (StatusCode, serde_json::Value) = common::json_request(

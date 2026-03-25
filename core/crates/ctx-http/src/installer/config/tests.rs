@@ -491,10 +491,10 @@ fn apply_managed_install_details_includes_archive_sha256() {
             "linux-x86_64".to_string(),
             ManagedInstallMetadata {
                 package: Some("@openai/codex".to_string()),
-                version: Some("0.114.0-ctx.1".to_string()),
+                version: Some("0.114.0-ctx.2".to_string()),
                 archive_sha256: Some("deadbeef".to_string()),
                 target: Some(InstallTarget::LinuxX8664),
-                install_dir_rel: Some("providers/agent-servers/codex/0.114.0-ctx.1".to_string()),
+                install_dir_rel: Some("providers/agent-servers/codex/0.114.0-ctx.2".to_string()),
                 bin_dir_rel: None,
                 last_success_at: None,
                 last_error: None,
@@ -529,7 +529,7 @@ fn apply_managed_install_details_includes_archive_sha256() {
 fn managed_install_metadata_reads_legacy_sha256_and_writes_archive_sha256() {
     let meta: ManagedInstallMetadata = serde_json::from_value(serde_json::json!({
         "package": "@openai/codex",
-        "version": "0.114.0-ctx.1",
+        "version": "0.114.0-ctx.2",
         "sha256": "deadbeef"
     }))
     .expect("deserialize legacy metadata");

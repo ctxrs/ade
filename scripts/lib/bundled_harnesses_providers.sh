@@ -608,9 +608,17 @@ local_codex_crp_binary_path() {
 
 	build_codex_crp_in_container() {
 	  if ! ensure_docker_ready_for_builds "0" "codex-crp container build"; then
-	    log "error: building codex-crp for ${os}/${arch} requires Docker on PATH and a healthy daemon."
-	    log "       Ensure Docker Desktop (or Docker Engine) is running and retry."
-	    exit 5
+	    if ! command -v cargo-zigbuild >/dev/null 2>&1 || ! command -v zig >/dev/null 2>&1; then
+	      log "error: building codex-crp for ${os}/${arch} requires either Docker or cargo-zigbuild+zig."
+	      log "       Ensure Docker Desktop is running, or install cargo-zigbuild and zig, then retry."
+	      exit 5
+	    fi
+	    mkdir -p "$target_dir"
+	    (
+	      cd "$CODEX_CRP_WORKSPACE"
+	      env CARGO_TARGET_DIR="$target_dir" "${cargo_profile_env[@]}" cargo zigbuild --manifest-path "$CODEX_CRP_WORKSPACE/Cargo.toml" -p codex-crp --target "$rust_target" "${profile_args[@]}"
+	    )
+	    return
 	  fi
 
 	  mkdir -p "$target_dir"
@@ -630,7 +638,7 @@ local_codex_crp_binary_path() {
 	  # Also: `codex-crp` upstream ships with a very heavy release profile (fat LTO, 1 codegen unit),
 	  # which can OOM on typical Docker Desktop configs. Override to a lighter release build: still
 	  # optimized, but much less memory hungry.
-	  docker "${run_args[@]}" "$image" bash -c "set -euo pipefail; export PATH=\"/usr/local/cargo/bin:\$PATH\"; rustup target add '$rust_target' >/dev/null 2>&1 || true; ${cargo_profile_env[*]} cargo build -p codex-crp --target '$rust_target' ${profile_args[*]}"
+	  docker "${run_args[@]}" "$image" bash -c "set -euo pipefail; export PATH=\"/usr/local/cargo/bin:\$PATH\"; rustup target add '$rust_target' >/dev/null 2>&1 || true; ${cargo_profile_env[*]} cargo build --manifest-path /work/Cargo.toml -p codex-crp --target '$rust_target' ${profile_args[*]}"
 	}
 
 	if [[ "$os" == "linux" && "$host_os" != "linux" ]]; then
@@ -639,7 +647,7 @@ local_codex_crp_binary_path() {
 	  require_cmd cargo
 	  (
 	    cd "$CODEX_CRP_WORKSPACE"
-	    env CARGO_TARGET_DIR="$target_dir" "${cargo_profile_env[@]}" cargo build -p codex-crp --target "$rust_target" "${profile_args[@]}"
+	    env CARGO_TARGET_DIR="$target_dir" "${cargo_profile_env[@]}" cargo build --manifest-path "$CODEX_CRP_WORKSPACE/Cargo.toml" -p codex-crp --target "$rust_target" "${profile_args[@]}"
 	  )
 	fi
 
@@ -696,7 +704,7 @@ if should_build_codex_crp; then
   fi
   codex_crp_bin="$(local_codex_crp_binary_path || true)"
   if [[ -n "$codex_crp_bin" && -f "$codex_crp_bin" ]]; then
-    add_local_provider "codex" "local-bin" "$codex_crp_version" "$codex_crp_bin" "codex-crp$BIN_EXT" "[]"
+    add_local_provider "codex" "local-bin" "$codex_crp_version" "$codex_crp_bin" "codex-crp$BIN_EXT" "[\"codex-cli\"]"
   else
     log "error: codex-crp build requested but source not available at $CODEX_CRP_WORKSPACE"
     exit 5

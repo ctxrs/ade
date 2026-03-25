@@ -21,6 +21,7 @@ use crate::events::NormalizedEvent;
 
 mod config;
 mod normalize;
+mod normalize_tool_payload;
 mod policy;
 mod probe;
 mod protocol;

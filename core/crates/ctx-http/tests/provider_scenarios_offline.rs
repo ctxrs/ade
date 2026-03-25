@@ -551,13 +551,14 @@ async fn provider_scenarios_offline_crp_fixtures_persist_context_window_metrics(
         let turn = turns
             .last()
             .unwrap_or_else(|| panic!("expected one completed turn for {provider_id}: {turns:#?}"));
-        let metrics = turn
-            .metrics_json
-            .as_ref()
-            .unwrap_or_else(|| panic!("expected metrics_json on final turn for {provider_id}: {turn:#?}"));
+        let metrics = turn.metrics_json.as_ref().unwrap_or_else(|| {
+            panic!("expected metrics_json on final turn for {provider_id}: {turn:#?}")
+        });
 
         assert_eq!(
-            metrics.get("context_window_tokens").and_then(serde_json::Value::as_u64),
+            metrics
+                .get("context_window_tokens")
+                .and_then(serde_json::Value::as_u64),
             Some(200_000),
             "unexpected context_window_tokens for {provider_id}: {metrics:#?}"
         );

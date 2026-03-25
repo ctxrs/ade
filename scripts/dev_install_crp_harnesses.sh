@@ -5,8 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="${CTX_DATA_DIR:-${HOME}/.ctx}"
 PROFILE="${CTX_CRP_PROFILE:-debug}"
 INSTALL_LOCAL_CODEX="${CTX_INSTALL_LOCAL_CODEX_CRP:-0}"
-
-CODEX_WORKSPACE="${ROOT_DIR}/external-harnesses/codex/codex-rs"
+WORKSPACE_MANIFEST="${ROOT_DIR}/core/Cargo.toml"
 
 # shellcheck source=lib/codex_crp_build_env.sh
 source "${ROOT_DIR}/scripts/lib/codex_crp_build_env.sh"
@@ -95,7 +94,7 @@ if install_local_codex:
     providers["codex"] = {
         "command": codex_bin,
         "args": [],
-        "dependencies": [],
+        "dependencies": ["codex-cli"],
     }
 else:
     providers.pop("codex", None)

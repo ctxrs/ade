@@ -12,9 +12,7 @@ import {
   type SubagentInvocation,
 } from "../api/client";
 import type { WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
-import {
-  type PersistedTaskThoughtsV1,
-} from "./uiStateStore";
+import { type PersistedTaskThoughtsV1 } from "./uiStateStore";
 import { SessionReplicaBridge } from "./sessionReplicaBridge";
 import type {
   SessionReplicaCommand,
