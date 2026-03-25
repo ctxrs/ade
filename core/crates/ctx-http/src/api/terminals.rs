@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
@@ -99,9 +99,9 @@ async fn infer_terminal_worktree(
 
 fn resolve_container_terminal_cwd(
     data_plane: &WorktreeDataPlane,
-    host_workspace_root: &PathBuf,
-    host_worktree_root: Option<&PathBuf>,
-    requested_cwd: Option<&PathBuf>,
+    host_workspace_root: &FsPath,
+    host_worktree_root: Option<&FsPath>,
+    requested_cwd: Option<&FsPath>,
 ) -> Result<PathBuf, (StatusCode, Json<ApiErrorResp>)> {
     let fallback = data_plane.live_worktree_root.clone();
 
@@ -124,7 +124,7 @@ fn resolve_container_terminal_cwd(
     if let Some(mapped) = map_host_or_live_path_to_live_path(
         data_plane,
         host_workspace_root,
-        host_worktree_root.map(PathBuf::as_path),
+        host_worktree_root,
         requested,
     ) {
         return Ok(mapped);
@@ -316,8 +316,8 @@ pub(super) async fn create_workspace_terminal(
                 }),
             ))?,
             &workspace_root,
-            worktree_root.as_ref(),
-            requested_cwd.as_ref(),
+            worktree_root.as_deref(),
+            requested_cwd.as_deref(),
         )?
     } else {
         let fallback_cwd = worktree_root
