@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 const CODEX_APP_SERVER_ARGS: [&str; 5] = ["-s", "danger-full-access", "-a", "never", "app-server"];
 const CODEX_RAW_EVENT_DUMP_ENV: &str = "CODEX_CRP_DUMP_CODEX_EVENTS_PATH";
 
-static APP_SERVER_EVENT_DUMP: OnceLock<StdMutex<std::io::BufWriter<std::fs::File>>> =
+static APP_SERVER_EVENT_DUMP: OnceLock<StdMutex<Option<std::io::BufWriter<std::fs::File>>>> =
     OnceLock::new();
 static APP_SERVER_EVENT_DUMP_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -321,15 +321,14 @@ fn maybe_dump_app_server_message(direction: &str, value: &Value) {
         return;
     };
     let writer = APP_SERVER_EVENT_DUMP.get_or_init(|| {
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .expect("failed to open CODEX_CRP_DUMP_CODEX_EVENTS_PATH");
-        StdMutex::new(std::io::BufWriter::new(file))
+        let file = OpenOptions::new().create(true).append(true).open(path).ok();
+        StdMutex::new(file.map(std::io::BufWriter::new))
     });
 
     let Ok(mut writer) = writer.lock() else {
+        return;
+    };
+    let Some(writer) = writer.as_mut() else {
         return;
     };
     let event = json!({
