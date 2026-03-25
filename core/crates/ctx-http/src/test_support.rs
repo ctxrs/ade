@@ -13,10 +13,10 @@ use crate::execution_setup::{
     ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionSetupCoordinator,
 };
 
-/// Tests that mutate sandbox CLI-related process globals, or that execute
-/// container-mode launch/prewarm flows which can observe those globals, must
-/// hold this lock for the full lifetime of the test and drain any spawned
-/// background launch work before returning.
+/// Tests that mutate workspace-runtime-related process globals, or that execute
+/// launch/prewarm/runtime flows which can observe those globals, must hold
+/// this lock for the full lifetime of the test and drain any spawned
+/// background work before returning.
 pub(crate) fn sandbox_cli_env_test_lock() -> &'static AsyncMutex<()> {
     static LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| AsyncMutex::new(()))

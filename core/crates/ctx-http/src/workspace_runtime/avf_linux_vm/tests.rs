@@ -29,8 +29,7 @@ impl Drop for EnvGuard {
 }
 
 fn helper_env_test_lock() -> &'static tokio::sync::Mutex<()> {
-    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    crate::test_support::sandbox_cli_env_test_lock()
 }
 
 fn write_probe_helper(dir: &Path) -> PathBuf {
@@ -422,6 +421,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 #[test]
 fn helper_probe_uses_configured_helper_binary() {
+    let _serial = helper_env_test_lock().blocking_lock();
     let temp = tempfile::tempdir().unwrap();
     let helper = write_probe_helper(temp.path());
     let _guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
@@ -671,6 +671,7 @@ async fn ensure_avf_linux_runtime_prefers_bundled_guest_runtime_over_managed_sou
 
 #[test]
 fn helper_lifecycle_commands_round_trip_structured_state() {
+    let _serial = helper_env_test_lock().blocking_lock();
     let temp = tempfile::tempdir().unwrap();
     let helper = write_lifecycle_helper(temp.path());
     let _guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
@@ -719,6 +720,7 @@ fn helper_lifecycle_commands_round_trip_structured_state() {
 
 #[test]
 fn helper_prepare_guest_worktree_round_trips_structured_state() {
+    let _serial = helper_env_test_lock().blocking_lock();
     let temp = tempfile::tempdir().unwrap();
     let (helper, capture_path) = write_guest_exec_helper(temp.path());
     let _guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());

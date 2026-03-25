@@ -434,6 +434,10 @@ mod tests {
     use super::*;
     use crate::settings::{ContainerExecutionSettings, ExecutionSettings};
 
+    fn runtime_env_test_lock() -> &'static tokio::sync::Mutex<()> {
+        crate::test_support::sandbox_cli_env_test_lock()
+    }
+
     struct EnvVarGuard {
         key: &'static str,
         prev: Option<String>,
@@ -459,6 +463,7 @@ mod tests {
 
     #[test]
     fn default_public_machine_memory_uses_automatic_economy_target() {
+        let _serial = runtime_env_test_lock().blocking_lock();
         let _host_memory = EnvVarGuard::set("CTX_TEST_HOST_MEMORY_MB", "49152");
         let settings = Settings {
             execution: Some(ExecutionSettings {
@@ -479,6 +484,7 @@ mod tests {
 
     #[test]
     fn public_machine_memory_prefers_explicit_custom_value() {
+        let _serial = runtime_env_test_lock().blocking_lock();
         let _host_memory = EnvVarGuard::set("CTX_TEST_HOST_MEMORY_MB", "49152");
         let settings = Settings {
             execution: Some(ExecutionSettings {
@@ -502,6 +508,7 @@ mod tests {
 
     #[test]
     fn public_machine_memory_uses_runtime_fallback_for_missing_custom_value() {
+        let _serial = runtime_env_test_lock().blocking_lock();
         let _host_memory = EnvVarGuard::set("CTX_TEST_HOST_MEMORY_MB", "49152");
         let settings = Settings {
             execution: Some(ExecutionSettings {
