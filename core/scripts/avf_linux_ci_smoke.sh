@@ -44,6 +44,17 @@ need_cmd() {
   command -v "$cmd" >/dev/null 2>&1 || die "missing required command: $cmd"
 }
 
+cargo_target_dir() {
+  local manifest="$1"
+  cargo metadata --manifest-path "$manifest" --format-version 1 --no-deps | node -e '
+const fs = require("node:fs");
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const dir = typeof input.target_directory === "string" ? input.target_directory.trim() : "";
+if (!dir) process.exit(1);
+process.stdout.write(dir);
+'
+}
+
 normalize_arch() {
   case "$1" in
     x86_64|amd64) printf '%s' "x86_64" ;;
@@ -145,8 +156,8 @@ need_cmd codesign
 
 helper_manifest="${repo_root}/apps/desktop/src-tauri/Cargo.toml"
 helper_entitlements="${repo_root}/apps/desktop/src-tauri/ctx-avf-linux-helper.entitlements"
-helper_target_root="${CARGO_TARGET_DIR:-${repo_root}/apps/desktop/src-tauri/target}"
-guest_target_root="${CARGO_TARGET_DIR:-${repo_root}/target}"
+helper_target_root="${CARGO_TARGET_DIR:-$(cargo_target_dir "$helper_manifest")}"
+guest_target_root="${CARGO_TARGET_DIR:-$(cargo_target_dir "${repo_root}/Cargo.toml")}"
 helper_bin="${helper_target_root}/debug/ctx-avf-linux-helper"
 ctx_bin="${guest_target_root}/debug/ctx"
 guest_target="$(linux_guest_target "$runtime_arch")"
