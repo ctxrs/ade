@@ -1,0 +1,211 @@
+#!/usr/bin/env node
+
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+const { Readable } = require("node:stream");
+const { pathToFileURL, fileURLToPath } = require("node:url");
+
+const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+const coreRoot = path.resolve(__dirname, "..");
+const defaultMatrixPath = path.join(
+  coreRoot,
+  "crates",
+  "ctx-http",
+  "src",
+  "provider_matrix.json",
+);
+
+function fail(message) {
+  console.error(`error: ${message}`);
+  process.exit(1);
+}
+
+function parseArgs(argv) {
+  const out = {
+    matrixPath: defaultMatrixPath,
+    providers: [],
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+  };
+  for (let i = 2; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--matrix") {
+      out.matrixPath = argv[++i] || "";
+      continue;
+    }
+    if (arg === "--provider") {
+      out.providers.push((argv[++i] || "").trim());
+      continue;
+    }
+    if (arg === "--timeout-ms") {
+      const raw = Number(argv[++i] || "");
+      if (!Number.isFinite(raw) || raw <= 0) {
+        fail(`invalid --timeout-ms value: ${argv[i]}`);
+      }
+      out.timeoutMs = Math.floor(raw);
+      continue;
+    }
+    if (arg === "--help" || arg === "-h") {
+      console.log(
+        "Usage: node core/scripts/provider_matrix_archive_artifact_gate.cjs [--matrix <provider_matrix.json>] [--provider <id>]... [--timeout-ms <ms>]",
+      );
+      process.exit(0);
+    }
+    fail(`unknown argument: ${arg}`);
+  }
+  out.providers = out.providers.filter(Boolean);
+  return out;
+}
+
+function readMatrix(matrixPath) {
+  const resolved = path.resolve(matrixPath);
+  if (!fs.existsSync(resolved)) {
+    fail(`matrix file does not exist: ${resolved}`);
+  }
+  return JSON.parse(fs.readFileSync(resolved, "utf8"));
+}
+
+function collectManagedArchiveTargets(matrix, providerFilter = []) {
+  const requested = new Set(providerFilter);
+  const matchedProviders = new Set();
+  const targets = [];
+
+  for (const entry of matrix.providers || []) {
+    if (requested.size > 0 && !requested.has(entry.id)) {
+      continue;
+    }
+    matchedProviders.add(entry.id);
+    const install = entry.managed_install;
+    if (!install || install.kind !== "archive") {
+      continue;
+    }
+    const targetMap = install.targets || {};
+    for (const [targetKey, target] of Object.entries(targetMap)) {
+      targets.push({
+        providerId: entry.id,
+        targetKey,
+        url: String(target?.url || "").trim(),
+        expectedSha256: String(target?.sha256 || "").trim().toLowerCase(),
+        sizeBytes: Number.isFinite(target?.size_bytes) ? Number(target.size_bytes) : null,
+      });
+    }
+  }
+
+  const missing = [...requested].filter((id) => !matchedProviders.has(id));
+  return { missing, targets };
+}
+
+async function sha256Readable(readable) {
+  const hash = crypto.createHash("sha256");
+  let sizeBytes = 0;
+  for await (const chunk of readable) {
+    hash.update(chunk);
+    sizeBytes += chunk.length;
+  }
+  return {
+    sha256: hash.digest("hex"),
+    sizeBytes,
+  };
+}
+
+async function fetchDigest(url, timeoutMs) {
+  const parsed = new URL(url);
+  if (parsed.protocol === "file:") {
+    return sha256Readable(fs.createReadStream(fileURLToPath(parsed)));
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`unsupported URL scheme: ${parsed.protocol}`);
+  }
+  const response = await fetch(parsed, {
+    redirect: "follow",
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) {
+    throw new Error(`request failed with ${response.status} ${response.statusText}`);
+  }
+  if (!response.body) {
+    throw new Error("response body missing");
+  }
+  return sha256Readable(Readable.fromWeb(response.body));
+}
+
+async function verifyManagedArchiveTargets(targets, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  const errors = [];
+  let verifiedCount = 0;
+  for (const target of targets) {
+    if (!target.url) {
+      errors.push(`provider=${target.providerId} target=${target.targetKey}: missing url`);
+      continue;
+    }
+    if (!target.expectedSha256) {
+      errors.push(
+        `provider=${target.providerId} target=${target.targetKey}: missing expected sha256`,
+      );
+      continue;
+    }
+    try {
+      const result = await fetchDigest(target.url, timeoutMs);
+      if (result.sha256 !== target.expectedSha256) {
+        errors.push(
+          `provider=${target.providerId} target=${target.targetKey}: checksum mismatch expected=${target.expectedSha256} actual=${result.sha256}`,
+        );
+        continue;
+      }
+      if (target.sizeBytes !== null && result.sizeBytes !== target.sizeBytes) {
+        errors.push(
+          `provider=${target.providerId} target=${target.targetKey}: size mismatch expected=${target.sizeBytes} actual=${result.sizeBytes}`,
+        );
+        continue;
+      }
+      verifiedCount += 1;
+    } catch (error) {
+      errors.push(
+        `provider=${target.providerId} target=${target.targetKey}: ${error?.message ?? String(error)}`,
+      );
+    }
+  }
+  return { errors, verifiedCount };
+}
+
+async function main(argv = process.argv) {
+  const args = parseArgs(argv);
+  const matrix = readMatrix(args.matrixPath);
+  const { missing, targets } = collectManagedArchiveTargets(matrix, args.providers);
+  if (missing.length > 0) {
+    fail(`requested provider ids not present in matrix: ${missing.join(", ")}`);
+  }
+  if (targets.length === 0) {
+    fail("no managed archive targets matched the selected provider set");
+  }
+
+  const result = await verifyManagedArchiveTargets(targets, {
+    timeoutMs: args.timeoutMs,
+  });
+  if (result.errors.length > 0) {
+    for (const error of result.errors) {
+      console.error(`error: ${error}`);
+    }
+    process.exit(1);
+  }
+
+  const providerCount = new Set(targets.map((target) => target.providerId)).size;
+  console.log(
+    `ok: verified ${result.verifiedCount} managed archive targets across ${providerCount} provider(s)`,
+  );
+}
+
+if (require.main === module) {
+  main().catch((error) => {
+    fail(error?.message ?? String(error));
+  });
+}
+
+module.exports = {
+  collectManagedArchiveTargets,
+  defaultMatrixPath,
+  fetchDigest,
+  parseArgs,
+  pathToFileURL,
+  readMatrix,
+  verifyManagedArchiveTargets,
+};

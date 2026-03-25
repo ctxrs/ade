@@ -890,7 +890,7 @@ mod runtime_tests {
             ManagedInstallMetadata {
                 package: None,
                 version: None,
-                sha256: None,
+                archive_sha256: None,
                 target: None,
                 install_dir_rel: None,
                 bin_dir_rel: Some(managed_bin_rel.to_string()),

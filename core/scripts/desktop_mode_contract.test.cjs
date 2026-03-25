@@ -8,12 +8,15 @@ const path = require("node:path");
 const { resolveLaunchMode } = require("./desktop_mode.cjs");
 
 const coreRoot = path.resolve(__dirname, "..");
-const packageJson = JSON.parse(
+const rootPackageJson = JSON.parse(
   fs.readFileSync(path.join(coreRoot, "package.json"), "utf8"),
+);
+const desktopPackageJson = JSON.parse(
+  fs.readFileSync(path.join(coreRoot, "apps", "desktop", "package.json"), "utf8"),
 );
 
 test("mode contract commands are present", () => {
-  const scripts = packageJson.scripts || {};
+  const scripts = rootPackageJson.scripts || {};
   const required = [
     "desktop-prod",
     "desktop-staging",
@@ -31,40 +34,20 @@ test("mode contract commands are present", () => {
 });
 
 test("desktop prep scripts inject desktop version into web build", () => {
-  const scripts = packageJson.scripts || {};
-  for (const id of ["desktop:prep", "desktop:prep:release"]) {
-    const script = String(scripts[id] || "");
-    assert.ok(
-      script.includes("VITE_CTX_APP_VERSION=$(node scripts/desktop_version.cjs)"),
-      `${id} must inject desktop app version into web build`,
-    );
-  }
+  const scripts = rootPackageJson.scripts || {};
+  assert.equal(scripts["desktop:prep"], "node scripts/desktop_prepare.cjs --mode debug-build");
+  assert.equal(scripts["desktop:prep:release"], "node scripts/desktop_prepare.cjs --mode release-build");
 });
 
 test("desktop prep scripts default to thin bundle sync", () => {
-  const scripts = packageJson.scripts || {};
-  for (const id of ["desktop:prep", "desktop:prep:dev", "desktop:prep:release"]) {
-    const script = String(scripts[id] || "");
-    assert.ok(
-      script.includes("CTX_DESKTOP_SYNC_BUNDLES=${CTX_DESKTOP_SYNC_BUNDLES:-0}"),
-      `${id} must default CTX_DESKTOP_SYNC_BUNDLES to 0 (thin manifest policy)`,
-    );
-  }
+  const scripts = rootPackageJson.scripts || {};
+  assert.equal(scripts["desktop:prep:dev"], "node scripts/desktop_prepare.cjs --mode dev");
 });
 
-test("desktop prep scripts build the AVF helper on macOS before syncing resources", () => {
-  const scripts = packageJson.scripts || {};
-  for (const id of ["desktop:prep", "desktop:prep:dev", "desktop:prep:release"]) {
-    const script = String(scripts[id] || "");
-    assert.ok(
-      script.includes('if [ "$(uname -s)" = "Darwin" ]; then'),
-      `${id} must gate AVF helper builds to macOS hosts`,
-    );
-    assert.ok(
-      script.includes("cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --bin ctx-avf-linux-helper"),
-      `${id} must build ctx-avf-linux-helper before desktop_sync_resources`,
-    );
-  }
+test("desktop app scripts route tauri through the guarded entrypoint", () => {
+  const scripts = desktopPackageJson.scripts || {};
+  assert.equal(scripts.dev, "node ../../scripts/desktop_tauri_entry.cjs dev");
+  assert.equal(scripts.build, "node ../../scripts/desktop_tauri_entry.cjs build");
 });
 
 test("tracked desktop bundle manifest remains thin by default", () => {

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
-const childProcess = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 
+const childProcess = require("node:child_process");
+const { resolveCargoTargetDir } = require("./lib/cargo_target_dir.cjs");
 const { resolveDefaultLockPath, validateRuntimeLock } = require("./runtime_lock_validate.cjs");
 
 const coreRoot = path.resolve(__dirname, "..");
@@ -26,25 +26,6 @@ const run = (command, args, options = {}) => {
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
-};
-
-const resolveGitDirName = () => {
-  try {
-    const raw = childProcess
-      .execSync("git rev-parse --git-dir", { cwd: coreRoot, stdio: ["ignore", "pipe", "ignore"] })
-      .toString()
-      .trim();
-    if (!raw) return "default";
-    return path.basename(raw);
-  } catch {
-    return "default";
-  }
-};
-
-const resolveCargoTargetDir = () => {
-  const raw = String(process.env.CARGO_TARGET_DIR || "").trim();
-  if (raw) return raw;
-  return path.join(os.homedir(), ".cache", "cargo", "ctx-monorepo", resolveGitDirName());
 };
 
 const resolveProfile = () => {
@@ -106,7 +87,7 @@ const writeRuntimeState = ({
 
 const main = () => {
   const profile = resolveProfile();
-  const cargoTargetDir = resolveCargoTargetDir();
+  const cargoTargetDir = resolveCargoTargetDir({ cwd: coreRoot });
   const prepEnv = { ...process.env, CARGO_TARGET_DIR: cargoTargetDir };
   const lockPath = resolveDefaultLockPath();
   const prepMode = profile === "source-all" ? "source-all" : "parity-with-existing-bundles";

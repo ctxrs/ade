@@ -381,7 +381,7 @@ pub async fn apply_matrix_to_status(
     }
 
     let mut diagnostics = Vec::new();
-    if let Some((expected_sha256, detected_sha256)) =
+    if let Some((expected_archive_sha256, detected_archive_sha256)) =
         detect_managed_archive_checksum_mismatch(cfg, entry, status, detected_version.as_deref())
             .await
     {
@@ -389,12 +389,12 @@ pub async fn apply_matrix_to_status(
             .details
             .insert("managed_checksum_mismatch".to_string(), "true".to_string());
         status.details.insert(
-            "managed_expected_sha256".to_string(),
-            expected_sha256.clone(),
+            "managed_expected_archive_sha256".to_string(),
+            expected_archive_sha256.clone(),
         );
         status.details.insert(
-            "managed_detected_sha256".to_string(),
-            detected_sha256.clone(),
+            "managed_detected_archive_sha256".to_string(),
+            detected_archive_sha256.clone(),
         );
         status
             .details
@@ -403,7 +403,7 @@ pub async fn apply_matrix_to_status(
         status.capabilities = None;
         status.health = ctx_providers::adapters::ProviderHealth::Error;
         diagnostics.push(format!(
-            "Managed provider artifact checksum mismatch; expected {expected_sha256}, found {detected_sha256}. Reinstall {} to restore the pinned release.",
+            "Managed provider archive checksum mismatch; expected {expected_archive_sha256}, found {detected_archive_sha256}. Reinstall {} to restore the pinned release.",
             status.provider_id
         ));
     }
@@ -552,18 +552,21 @@ async fn detect_managed_archive_checksum_mismatch(
     let version = detected_version.or(meta.version.as_deref())?;
     let release = release_for_version(entry, version)?;
     let expected_target = managed_archive_target_for_release(entry, release, requested_target)?;
-    let expected_sha256 = expected_target.sha256.as_deref()?.trim();
-    if expected_sha256.is_empty() {
+    let expected_archive_sha256 = expected_target.sha256.as_deref()?.trim();
+    if expected_archive_sha256.is_empty() {
         return None;
     }
-    let detected_sha256 = meta.sha256.as_deref()?.trim();
-    if detected_sha256.is_empty() {
+    let detected_archive_sha256 = meta.archive_sha256.as_deref()?.trim();
+    if detected_archive_sha256.is_empty() {
         return None;
     }
-    if detected_sha256.eq_ignore_ascii_case(expected_sha256) {
+    if detected_archive_sha256.eq_ignore_ascii_case(expected_archive_sha256) {
         return None;
     }
-    Some((expected_sha256.to_string(), detected_sha256.to_string()))
+    Some((
+        expected_archive_sha256.to_string(),
+        detected_archive_sha256.to_string(),
+    ))
 }
 
 fn managed_archive_target_for_release<'a>(

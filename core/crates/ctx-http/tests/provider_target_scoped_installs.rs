@@ -145,7 +145,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                     managed: Some(ManagedInstallMetadata {
                         package: Some("@openai/codex".to_string()),
                         version: Some("1.0.0-host".to_string()),
-                        sha256: None,
+                        archive_sha256: None,
                         target: Some(ctx_http::installs::InstallTarget::Host),
                         install_dir_rel: Some(
                             "providers/agent-servers/codex/host-fixture".to_string(),
@@ -167,7 +167,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                     managed: Some(ManagedInstallMetadata {
                         package: Some("@openai/codex".to_string()),
                         version: Some("1.0.0-container".to_string()),
-                        sha256: None,
+                        archive_sha256: None,
                         target: Some(ctx_http::installs::InstallTarget::Container),
                         install_dir_rel: Some(
                             "providers/agent-servers/codex/container-fixture".to_string(),
@@ -190,7 +190,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                 ManagedInstallMetadata {
                     package: Some("@openai/codex".to_string()),
                     version: Some("1.0.0-host".to_string()),
-                    sha256: None,
+                    archive_sha256: None,
                     target: Some(ctx_http::installs::InstallTarget::Host),
                     install_dir_rel: Some("providers/agent-servers/codex/host-fixture".to_string()),
                     bin_dir_rel: Some("providers/agent-servers/codex/host-fixture/bin".to_string()),
@@ -203,7 +203,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                 ManagedInstallMetadata {
                     package: Some("@openai/codex".to_string()),
                     version: Some("1.0.0-container".to_string()),
-                    sha256: None,
+                    archive_sha256: None,
                     target: Some(ctx_http::installs::InstallTarget::Container),
                     install_dir_rel: Some(
                         "providers/agent-servers/codex/container-fixture".to_string(),
@@ -222,7 +222,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
         ManagedInstallMetadata {
             package: Some("node-runtime".to_string()),
             version: Some("24.14.0".to_string()),
-            sha256: None,
+            archive_sha256: None,
             target: Some(ctx_http::installs::InstallTarget::Host),
             install_dir_rel: Some("providers/runtimes/runtime-node-host".to_string()),
             bin_dir_rel: Some(host_bin_rel.to_string()),
@@ -235,7 +235,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
         ManagedInstallMetadata {
             package: Some("node-runtime".to_string()),
             version: Some("24.14.0".to_string()),
-            sha256: None,
+            archive_sha256: None,
             target: Some(ctx_http::installs::InstallTarget::Container),
             install_dir_rel: Some("providers/runtimes/runtime-node-container".to_string()),
             bin_dir_rel: Some(container_bin_rel.to_string()),
@@ -697,7 +697,7 @@ async fn save_invalid_container_bridge_runtime(data_root: &Path) {
                 managed: Some(ManagedInstallMetadata {
                     package: Some("acp-crp-bridge".to_string()),
                     version: Some("1.0.0".to_string()),
-                    sha256: None,
+                    archive_sha256: None,
                     target: Some(ctx_http::installs::InstallTarget::Container),
                     install_dir_rel: Some(
                         "providers/agent-servers/acp-crp-bridge/invalid".to_string(),
@@ -1549,10 +1549,23 @@ async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps
     );
     assert_eq!(
         provider_body
+            .pointer("/details/ready_for_use")
+            .and_then(serde_json::Value::as_str),
+        Some("true"),
+        "provider should be ready after the happy-path install completes: {provider_body:#?}"
+    );
+    assert_eq!(
+        provider_body
             .pointer("/details/managed_target")
             .and_then(serde_json::Value::as_str),
         Some("container"),
         "provider should keep its container managed-target record: {provider_body:#?}"
+    );
+    assert!(
+        provider_body
+            .pointer("/details/managed_checksum_mismatch")
+            .is_none(),
+        "successful archive installs must not report checksum drift: {provider_body:#?}"
     );
 }
 
@@ -2139,6 +2152,12 @@ async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready
             .and_then(serde_json::Value::as_str),
         Some("true"),
         "claude-crp should become ready once claude-cli finishes: {provider_body:#?}"
+    );
+    assert!(
+        provider_body
+            .pointer("/details/managed_checksum_mismatch")
+            .is_none(),
+        "successful archive installs must not report checksum drift after reload: {provider_body:#?}"
     );
     assert!(
         provider_body.pointer("/details/pending_dependency_ids").is_none(),

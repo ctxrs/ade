@@ -656,7 +656,7 @@ async fn install_managed_npm_provider(
     let meta = ManagedInstallMetadata {
         package: Some(package.to_string()),
         version: Some(version.to_string()),
-        sha256: None,
+        archive_sha256: None,
         target: Some(target),
         install_dir_rel: Some(install_dir_rel),
         bin_dir_rel: None,
@@ -705,7 +705,7 @@ async fn install_managed_archive_provider(
     let meta = ManagedInstallMetadata {
         package: Some(url.to_string()),
         version: Some(version.to_string()),
-        sha256: expected_sha256.map(str::to_string),
+        archive_sha256: expected_sha256.map(str::to_string),
         target: Some(target),
         install_dir_rel: Some(install_dir_rel(&state.core.data_root, &install_dir)),
         bin_dir_rel: None,
@@ -937,7 +937,7 @@ async fn install_managed_python_provider(
     let meta = ManagedInstallMetadata {
         package: Some(package.to_string()),
         version: Some(version.to_string()),
-        sha256: None,
+        archive_sha256: None,
         target: Some(target),
         install_dir_rel: Some(install_dir_rel),
         bin_dir_rel: None,

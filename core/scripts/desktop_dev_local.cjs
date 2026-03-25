@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 const childProcess = require("node:child_process");
-const os = require("node:os");
 const path = require("node:path");
 const fs = require("node:fs");
 const net = require("node:net");
 
 const { resolveBoolishFlag } = require("./lib/boolish.cjs");
+const { resolveCargoTargetDir } = require("./lib/cargo_target_dir.cjs");
 const { resolveLaunchMode } = require("./desktop_mode.cjs");
 const { readDesktopVersion } = require("./desktop_version.cjs");
 
@@ -21,25 +21,6 @@ const run = (command, args, options = {}) => {
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
-};
-
-const resolveGitDirName = () => {
-  try {
-    const raw = childProcess
-      .execSync("git rev-parse --git-dir", { cwd: coreRoot, stdio: ["ignore", "pipe", "ignore"] })
-      .toString()
-      .trim();
-    if (!raw) return "default";
-    return path.basename(raw);
-  } catch {
-    return "default";
-  }
-};
-
-const resolveCargoTargetDir = () => {
-  const raw = String(process.env.CARGO_TARGET_DIR || "").trim();
-  if (raw) return raw;
-  return path.join(os.homedir(), ".cache", "cargo", "ctx-monorepo", resolveGitDirName());
 };
 
 const envFlagEnabled = (value, defaultValue = false) => {
@@ -77,7 +58,7 @@ const resolveWebDevPort = async (host) => {
 const main = async () => {
   const mode = resolveLaunchMode({ surface: "desktop" });
   const desktopVersion = readDesktopVersion(coreRoot);
-  const cargoTargetDir = resolveCargoTargetDir();
+  const cargoTargetDir = resolveCargoTargetDir({ cwd: coreRoot });
   const effectiveManifestPath = path.join(
     coreRoot,
     "apps",

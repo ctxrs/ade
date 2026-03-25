@@ -3,8 +3,8 @@
   "private": true,
   "version": "0.22.0",
   "scripts": {
-    "dev": "tauri dev",
-    "build": "tauri build",
+    "dev": "node ../../scripts/desktop_tauri_entry.cjs dev",
+    "build": "node ../../scripts/desktop_tauri_entry.cjs build",
     "test:automation": "wdio run automation/wdio.conf.cjs",
     "test:automation:image-drag-drop": "../../../scripts/desktop_smoke_with_infisical.sh -- --spec automation/specs/workbench-image-drag-drop.spec.cjs",
     "test:automation:provider-auth-matrix": "../../../scripts/desktop_smoke_with_infisical.sh -- --spec automation/specs/provider-auth-matrix-cell.spec.cjs",

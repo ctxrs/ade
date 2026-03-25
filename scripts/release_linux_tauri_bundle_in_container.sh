@@ -87,7 +87,7 @@ select_tauri_cache_dir() {
   printf '%s' "."
 }
 
-if ! RUST_LOG=tauri_bundler=debug pnpm -C core/apps/desktop exec tauri build --bundles appimage; then
+if ! RUST_LOG=tauri_bundler=debug pnpm -C core/apps/desktop run build -- --bundles appimage; then
   echo "::group::linuxdeploy diagnostics (${platform})"
 
   tauri_cache_dir="$(select_tauri_cache_dir)"

@@ -437,7 +437,7 @@ pub(crate) fn node_runtime_dependency_metadata(
     ManagedInstallMetadata {
         package: Some("node-runtime".to_string()),
         version: Some(NODE_VERSION.to_string()),
-        sha256: None,
+        archive_sha256: None,
         target: Some(target),
         install_dir_rel: Some(install_dir_rel(data_root, &node.node_root)),
         bin_dir_rel: Some(install_dir_rel(data_root, &bin_dir)),

@@ -407,7 +407,7 @@ fn managed_dependency_update_available_when_runtime_dependency_version_mismatche
         ManagedInstallMetadata {
             package: Some("node-runtime".to_string()),
             version: Some("0.0.1".to_string()),
-            sha256: None,
+            archive_sha256: None,
             target: None,
             install_dir_rel: None,
             bin_dir_rel: None,
@@ -448,7 +448,7 @@ fn managed_dependency_update_unavailable_when_runtime_dependency_matches_expecte
         ManagedInstallMetadata {
             package: Some("node-runtime".to_string()),
             version: Some(expected.to_string()),
-            sha256: None,
+            archive_sha256: None,
             target: None,
             install_dir_rel: None,
             bin_dir_rel: None,
@@ -518,7 +518,7 @@ fn managed_archive_cfg(
     let meta = ManagedInstallMetadata {
         package: Some("https://example.com/codex.tar.gz".to_string()),
         version: Some(version.to_string()),
-        sha256: Some(installed_sha256.to_string()),
+        archive_sha256: Some(installed_sha256.to_string()),
         target: Some(InstallTarget::LinuxX8664),
         install_dir_rel: Some(format!("providers/agent-servers/codex/{version}")),
         bin_dir_rel: None,
@@ -605,14 +605,14 @@ async fn apply_matrix_to_status_flags_managed_archive_checksum_mismatch() {
     assert_eq!(
         status
             .details
-            .get("managed_expected_sha256")
+            .get("managed_expected_archive_sha256")
             .map(String::as_str),
         Some(expected_sha256.as_str())
     );
     assert_eq!(
         status
             .details
-            .get("managed_detected_sha256")
+            .get("managed_detected_archive_sha256")
             .map(String::as_str),
         Some(actual_sha256.as_str())
     );

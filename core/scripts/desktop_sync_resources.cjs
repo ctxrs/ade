@@ -4,6 +4,7 @@ const childProcess = require("child_process");
 const crypto = require("crypto");
 const { shouldBundleRemoteDaemons } = require("./desktop_sync_resources_remote_daemon_policy.cjs");
 const { parseBoolish, resolveBoolishFlag } = require("./lib/boolish.cjs");
+const { resolveCargoTargetDir } = require("./lib/cargo_target_dir.cjs");
 
 const args = process.argv.slice(2);
 const profileIdx = args.indexOf("--profile");
@@ -43,12 +44,6 @@ const AVF_LINUX_EGRESS_PROXY_REL = path.join("helpers", "egress-proxy");
 
 const isWindows = process.platform === "win32";
 const binExt = isWindows ? ".exe" : "";
-
-const resolveCargoTargetDir = () => {
-  const env = process.env.CARGO_TARGET_DIR;
-  if (env && String(env).trim()) return String(env).trim();
-  return path.join(coreRoot, "target");
-};
 
 const copyDirRecursive = (srcDir, destDir) => {
   fs.mkdirSync(destDir, { recursive: true });
@@ -885,7 +880,7 @@ const copySidecarBinary = ({
         env: {
           ...process.env,
           CTX_DESKTOP_SKIP_TAURI_BUILD: "1",
-          CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR || resolveCargoTargetDir(),
+          CARGO_TARGET_DIR: resolveCargoTargetDir({ cwd: coreRoot }),
         },
         stdio: "inherit",
       });
@@ -911,7 +906,7 @@ const copySidecarBinary = ({
 
 const copySidecar = (sourceName, destName = sourceName) => {
   const { dest } = copySidecarBinary({
-    sourceDir: path.join(resolveCargoTargetDir(), profile),
+    sourceDir: path.join(resolveCargoTargetDir({ cwd: coreRoot }), profile),
     destDir: destBinDir,
     sourceName,
     destName,

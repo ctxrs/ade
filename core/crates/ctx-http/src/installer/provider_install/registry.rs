@@ -21,7 +21,7 @@ pub(super) async fn update_registry_last_error(
                 .unwrap_or(ManagedInstallMetadata {
                     package: package.map(|s| s.to_string()),
                     version: version.map(|s| s.to_string()),
-                    sha256: None,
+                    archive_sha256: None,
                     target,
                     install_dir_rel: install_dir_rel_clone,
                     bin_dir_rel: None,

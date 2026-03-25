@@ -39,8 +39,13 @@ pub struct ManagedInstallMetadata {
     pub package: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sha256: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "archive_sha256",
+        alias = "sha256"
+    )]
+    pub archive_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<InstallTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -184,10 +189,10 @@ pub fn apply_managed_install_details_for_target(
             .details
             .insert("managed_version".to_string(), v.clone());
     }
-    if let Some(sha256) = &meta.sha256 {
+    if let Some(archive_sha256) = &meta.archive_sha256 {
         status
             .details
-            .insert("managed_sha256".to_string(), sha256.clone());
+            .insert("managed_archive_sha256".to_string(), archive_sha256.clone());
     }
     if let Some(target) = meta.target {
         status
