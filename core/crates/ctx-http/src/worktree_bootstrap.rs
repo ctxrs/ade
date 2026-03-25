@@ -56,6 +56,12 @@ struct BootstrapCommandResult {
     timed_out: bool,
 }
 
+struct SandboxBootstrapContext<'a> {
+    settings: &'a crate::settings::ExecutionSettings,
+    live_workspace_root: &'a Path,
+    live_worktree_root: &'a Path,
+}
+
 pub async fn run_worktree_bootstrap(
     state: &AppState,
     workspace: &Workspace,
@@ -351,9 +357,11 @@ async fn run_bootstrap_step(
             step,
             workspace,
             worktree,
-            &settings,
-            &live_workspace_root,
-            &live_worktree_root,
+            SandboxBootstrapContext {
+                settings: &settings,
+                live_workspace_root: &live_workspace_root,
+                live_worktree_root: &live_worktree_root,
+            },
             timeout,
         )
         .await;
@@ -440,9 +448,7 @@ async fn run_bootstrap_step_in_container(
     step: &BootstrapStep,
     workspace: &Workspace,
     worktree: &Worktree,
-    settings: &crate::settings::ExecutionSettings,
-    live_workspace_root: &Path,
-    live_worktree_root: &Path,
+    sandbox: SandboxBootstrapContext<'_>,
     timeout: Duration,
 ) -> Result<BootstrapCommandResult> {
     // Ensure the harness container is up, then execute within it.
@@ -452,18 +458,18 @@ async fn run_bootstrap_step_in_container(
         .ensure_workspace_container_for_worktree(
             workspace,
             worktree,
-            &settings,
+            sandbox.settings,
             &state.core.daemon_url,
         )
         .await?;
     let mut env = std::collections::HashMap::new();
     env.insert(
         "CTX_WORKSPACE_ROOT".to_string(),
-        live_workspace_root.to_string_lossy().to_string(),
+        sandbox.live_workspace_root.to_string_lossy().to_string(),
     );
     env.insert(
         "CTX_WORKTREE_ROOT".to_string(),
-        live_worktree_root.to_string_lossy().to_string(),
+        sandbox.live_worktree_root.to_string_lossy().to_string(),
     );
     env.insert("CTX_WORKTREE_ID".to_string(), worktree.id.0.to_string());
     env.insert(
@@ -491,11 +497,13 @@ async fn run_bootstrap_step_in_container(
             .to_string(),
     );
 
-    let mut cmd = match settings.container.runtime {
+    let mut cmd = match sandbox.settings.container.runtime {
         ContainerRuntimeKind::Podman => {
             let container_name = harness_runtime::workspace_container_name(workspace.id);
             let mut cmd = harness_runtime::podman_command(&state.core.data_root)?;
-            cmd.arg("exec").arg("--workdir").arg(live_worktree_root);
+            cmd.arg("exec")
+                .arg("--workdir")
+                .arg(sandbox.live_worktree_root);
             for (key, value) in &env {
                 cmd.arg("--env").arg(format!("{key}={value}"));
             }
@@ -513,7 +521,7 @@ async fn run_bootstrap_step_in_container(
                     &state.core.data_root,
                     workspace.id,
                     worktree.id,
-                    live_worktree_root,
+                    sandbox.live_worktree_root,
                     "sh",
                     &["-lc".to_string(), command.clone()],
                     &env,

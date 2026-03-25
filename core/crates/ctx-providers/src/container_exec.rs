@@ -401,6 +401,9 @@ mod tests {
             container_id: "ctx-harness-1".to_string(),
             user: Some("1000:1000".to_string()),
             podman_path: None,
+            host_worktree_root: None,
+            guest_worktree_root: None,
+            guest_workspace_root: None,
         };
 
         let cmd = build_container_exec_command(
@@ -460,6 +463,9 @@ mod tests {
             container_id: "ctx-harness-1".to_string(),
             user: None,
             podman_path: None,
+            host_worktree_root: None,
+            guest_worktree_root: None,
+            guest_workspace_root: None,
         };
 
         let err =

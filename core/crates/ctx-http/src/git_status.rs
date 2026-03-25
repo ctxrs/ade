@@ -6,9 +6,9 @@ use anyhow::Result;
 use serde::Serialize;
 
 use ctx_core::models::{
-    Worktree, WorktreeVcsBaseResolution, WorktreeVcsComputeState, WorktreeVcsFreshness,
-    WorktreeVcsGitStatusSummary, WorktreeVcsSnapshot, WorktreeVcsSummary, WorktreeVcsTouchedFile,
-    WorktreeVcsTouchedFiles,
+    Worktree, WorktreeVcsBaseResolution, WorktreeVcsBaseResolutionKind, WorktreeVcsComputeState,
+    WorktreeVcsFreshness, WorktreeVcsGitStatusSummary, WorktreeVcsSnapshot, WorktreeVcsSummary,
+    WorktreeVcsTouchedFile, WorktreeVcsTouchedFiles,
 };
 use ctx_fs::vcs::{self, VcsDriver};
 
@@ -60,6 +60,38 @@ pub struct GitStatusEntry {
 
 fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<dyn VcsDriver> {
     vcs::driver_for_kind(worktree.vcs_kind.clone())
+}
+
+pub(crate) async fn worktree_has_vcs_repo(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+) -> Result<bool> {
+    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+    if matches!(data_plane.execution_mode, ExecutionMode::Container) {
+        return match sandbox::container_git_stdout(
+            state,
+            worktree,
+            &["rev-parse", "--is-inside-work-tree"],
+        )
+        .await
+        {
+            Ok(_) => Ok(true),
+            Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => Ok(false),
+            Err(err) => Err(err),
+        };
+    }
+
+    let root = data_plane.live_worktree_root.as_path();
+    let driver = match vcs::driver_for_path(root).await {
+        Ok(driver) => driver,
+        Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => return Ok(false),
+        Err(err) => return Err(err),
+    };
+    match driver.assert_repo(root).await {
+        Ok(()) => Ok(true),
+        Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => Ok(false),
+        Err(err) => Err(err),
+    }
 }
 
 fn now_epoch_ms() -> i64 {
@@ -454,6 +486,23 @@ pub async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktr
             WorktreeVcsSummary::default()
         }
     };
+    if !worktree_has_vcs_repo(&state, &worktree).await? {
+        return publish_no_repo_snapshot(
+            &state,
+            &worktree,
+            crate::api::sessions::WorktreeDiffBaseResolution {
+                base_commit_sha: worktree.base_commit_sha.clone(),
+                target_branch: None,
+                target_source: None,
+                kind: WorktreeVcsBaseResolutionKind::WorktreeBase,
+                error: Some("worktree is not a vcs repository".to_string()),
+                unavailable_reason: Some(ctx_core::models::DiffUnavailableReason::NoRepo),
+                explicit_target: false,
+            },
+            false,
+        )
+        .await;
+    }
     let workspace = state
         .global_store()
         .get_workspace(worktree.workspace_id)
@@ -590,6 +639,23 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
     let active = state.is_worktree_vcs_active(worktree.id).await;
     if !active {
         return Ok(());
+    }
+    if !worktree_has_vcs_repo(state, worktree).await? {
+        return publish_no_repo_snapshot(
+            state,
+            worktree,
+            crate::api::sessions::WorktreeDiffBaseResolution {
+                base_commit_sha: worktree.base_commit_sha.clone(),
+                target_branch: None,
+                target_source: None,
+                kind: WorktreeVcsBaseResolutionKind::WorktreeBase,
+                error: Some("worktree is not a vcs repository".to_string()),
+                unavailable_reason: Some(ctx_core::models::DiffUnavailableReason::NoRepo),
+                explicit_target: false,
+            },
+            force_emit,
+        )
+        .await;
     }
     let store = state.store_for_worktree(worktree.id).await?;
     let workspace = state

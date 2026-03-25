@@ -302,6 +302,23 @@ pub(crate) async fn get_session_diff(
                 }),
             )
         })?;
+    if !crate::git_status::worktree_has_vcs_repo(&state, &worktree)
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&err.to_string()),
+                }),
+            )
+        })?
+    {
+        return Ok(Json(SessionDiffResponse {
+            diff: String::new(),
+            available: false,
+            unavailable_reason: Some(DiffUnavailableReason::NoRepo),
+        }));
+    }
     let resolution = resolve_session_diff_base(&state, &store, &workspace, &worktree, &q).await?;
     if let Some(unavailable_reason) = resolution.unavailable_reason.clone() {
         state
@@ -411,6 +428,27 @@ pub(crate) async fn get_session_diff_summary(
                 }),
             )
         })?;
+    if !crate::git_status::worktree_has_vcs_repo(&state, &worktree)
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&err.to_string()),
+                }),
+            )
+        })?
+    {
+        return Ok(Json(SessionDiffSummaryResponse {
+            base_commit_sha: worktree.base_commit_sha.clone(),
+            head_commit_sha: worktree.base_commit_sha.clone(),
+            file_count: 0,
+            line_additions: 0,
+            line_deletions: 0,
+            available: false,
+            unavailable_reason: Some(DiffUnavailableReason::NoRepo),
+        }));
+    }
     let resolution = resolve_session_diff_base(&state, &store, &workspace, &worktree, &q).await?;
     if let Some(unavailable_reason) = resolution.unavailable_reason.clone() {
         state
