@@ -1,5 +1,6 @@
 #![deny(clippy::print_stdout)]
 
+mod app_server_runtime;
 mod protocol;
 
 use crate::protocol::CrpChannel;
@@ -929,6 +930,14 @@ async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()>
         .parse_overrides()
         .map_err(|err| anyhow::anyhow!(err))?;
 
+    app_server_runtime::run_main(&cli_kv_overrides, arg0_paths).await
+}
+
+#[allow(dead_code)]
+async fn run_legacy_runtime(
+    cli_kv_overrides: &[(String, toml::Value)],
+    arg0_paths: Arg0DispatchPaths,
+) -> anyhow::Result<()> {
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
     tokio::spawn(read_commands(cmd_tx));
 
@@ -1620,6 +1629,8 @@ async fn load_config_from_crp(
     arg0_paths: Arg0DispatchPaths,
 ) -> anyhow::Result<Config> {
     let session_effort = session_config.reasoning_effort.clone();
+    let developer_instructions =
+        normalize_ctx_system_prompt_append(std::env::var("CTX_SYSTEM_PROMPT_APPEND").ok());
     let (model_override, effort_override) = session_config
         .model
         .as_deref()
@@ -1641,7 +1652,7 @@ async fn load_config_from_crp(
         js_repl_node_module_dirs: None,
         zsh_path: None,
         base_instructions: None,
-        developer_instructions: None,
+        developer_instructions,
         personality: session_config.personality,
         compact_prompt: None,
         include_apply_patch_tool: None,
@@ -1667,6 +1678,11 @@ async fn load_config_from_crp(
     }
 
     Ok(config)
+}
+
+fn normalize_ctx_system_prompt_append(raw: Option<String>) -> Option<String> {
+    raw.map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn split_model_and_effort(model: &str) -> (String, Option<ReasoningEffort>) {
@@ -3164,6 +3180,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         session_id,
                         turn_id: turn.turn_id.clone(),
                         status: CrpTurnStatus::Success,
+                        context_window: None,
                         error: None,
                     },
                 ));
@@ -3185,6 +3202,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         session_id,
                         turn_id: turn.turn_id.clone(),
                         status,
+                        context_window: None,
                         error: None,
                     },
                 )]
@@ -3203,6 +3221,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         session_id,
                         turn_id: turn.turn_id.clone(),
                         status: CrpTurnStatus::Error,
+                        context_window: None,
                         error: Some(error),
                     },
                 )]
@@ -3229,6 +3248,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         session_id,
                         turn_id: turn.turn_id.clone(),
                         status: CrpTurnStatus::Error,
+                        context_window: None,
                         error: Some(error),
                     },
                 )]
@@ -3345,6 +3365,7 @@ mod tests {
     use codex_protocol::protocol::TurnCompleteEvent;
     use codex_protocol::protocol::TurnStartedEvent;
     use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
     use std::path::PathBuf;
 
     #[test]
@@ -3895,6 +3916,48 @@ mod tests {
                     argument_hint: None,
                 }
             ]
+        );
+    }
+
+    #[test]
+    fn normalize_ctx_system_prompt_append_trims_and_drops_empty_values() {
+        assert_eq!(
+            normalize_ctx_system_prompt_append(Some("  follow the repo rules  ".to_string())),
+            Some("follow the repo rules".to_string())
+        );
+        assert_eq!(
+            normalize_ctx_system_prompt_append(Some("   ".to_string())),
+            None
+        );
+        assert_eq!(normalize_ctx_system_prompt_append(None), None);
+    }
+
+    #[test]
+    fn mcp_server_to_toml_preserves_tool_timeout() {
+        let value = mcp_server_to_toml(CrpMcpServerConfig {
+            command: Some("ctx-mcp".to_string()),
+            args: Some(vec!["--stdio".to_string()]),
+            env: Some(HashMap::from([(
+                "CTX_DAEMON_URL".to_string(),
+                "http://127.0.0.1:3000".to_string(),
+            )])),
+            env_vars: None,
+            cwd: None,
+            url: None,
+            http_headers: None,
+            env_http_headers: None,
+            enabled_tools: None,
+            disabled_tools: None,
+            tool_timeout_sec: Some(7200.0),
+        })
+        .expect("stdio mcp server should serialize");
+
+        let table = value
+            .as_table()
+            .expect("mcp server override should serialize as a TOML table");
+        assert_eq!(
+            table.get("tool_timeout_sec"),
+            Some(&toml::Value::Float(7200.0))
         );
     }
 

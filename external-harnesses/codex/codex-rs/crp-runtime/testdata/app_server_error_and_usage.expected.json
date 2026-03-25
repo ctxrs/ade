@@ -1,0 +1,57 @@
+{
+  "events": [
+    {
+      "channel": "control",
+      "event": {
+        "type": "turn.started",
+        "session_id": "fixture-session",
+        "turn_id": "crp-turn-error"
+      }
+    },
+    {
+      "channel": "control",
+      "event": {
+        "type": "turn.completed",
+        "session_id": "fixture-session",
+        "turn_id": "crp-turn-error",
+        "status": "error",
+        "error": {
+          "message": "provider boom",
+          "kind": "error"
+        }
+      }
+    },
+    {
+      "channel": "control",
+      "event": {
+        "type": "session.gap",
+        "session_id": "fixture-session",
+        "reason": "app_server_lagged:2"
+      }
+    }
+  ],
+  "state": {
+    "active_app_turn_id": null,
+    "active_crp_turn_id": null,
+    "latest_token_usage": {
+      "total": {
+        "totalTokens": 1200,
+        "inputTokens": 800,
+        "cachedInputTokens": 100,
+        "outputTokens": 300,
+        "reasoningOutputTokens": 50
+      },
+      "last": {
+        "totalTokens": 250,
+        "inputTokens": 150,
+        "cachedInputTokens": 25,
+        "outputTokens": 75,
+        "reasoningOutputTokens": 10
+      },
+      "modelContextWindow": 200000
+    },
+    "turn_aliases": {
+      "app-turn-error": "crp-turn-error"
+    }
+  }
+}

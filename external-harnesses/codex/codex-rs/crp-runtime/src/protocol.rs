@@ -83,7 +83,7 @@ pub enum CrpCommand {
     },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct CrpSessionConfig {
     pub cwd: Option<PathBuf>,
     pub model: Option<String>,
@@ -98,7 +98,7 @@ pub struct CrpSessionConfig {
     pub mcp_servers: Option<HashMap<String, CrpMcpServerConfig>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct CrpMcpServerConfig {
     #[serde(default)]
     pub command: Option<String>,
@@ -249,6 +249,8 @@ pub enum CrpEvent {
         session_id: String,
         turn_id: String,
         status: CrpTurnStatus,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        context_window: Option<Value>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<CrpTurnError>,
     },

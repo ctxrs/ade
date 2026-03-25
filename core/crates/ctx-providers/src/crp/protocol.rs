@@ -347,6 +347,8 @@ pub(super) enum CrpEvent {
         turn_id: String,
         status: CrpTurnStatus,
         #[serde(default)]
+        context_window: Option<Value>,
+        #[serde(default)]
         error: Option<CrpTurnError>,
     },
     #[serde(rename = "session.gap")]

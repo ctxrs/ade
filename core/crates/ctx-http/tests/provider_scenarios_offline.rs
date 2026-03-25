@@ -13,6 +13,7 @@ use ctx_store::StoreManager;
 mod common;
 
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+const STORAGE_GUARD_EMERGENCY_FREE_BYTES: u64 = 1024 * 1024 * 1024;
 
 fn lock_env() -> std::sync::MutexGuard<'static, ()> {
     ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner())
@@ -478,4 +479,111 @@ async fn provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_
         message_order < tool_order,
         "interleaved assistant message should stay anchored before later tool calls; message={message_order}, tool={tool_order}, events={events:#?}"
     );
+}
+
+#[allow(clippy::await_holding_lock)]
+#[tokio::test]
+async fn provider_scenarios_offline_crp_fixtures_persist_context_window_metrics() {
+    let _env_lock = lock_env();
+
+    let Some(python) = common::crp_fixture_runtime::python_binary() else {
+        eprintln!("skipping: python3/python not found");
+        return;
+    };
+
+    let fixtures_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("provider_scenarios");
+    let _guard_fixtures = EnvGuard::set("CTX_TEST_FIXTURES_DIR", &fixtures_dir.to_string_lossy());
+    let _guard_scenario = EnvGuard::set("CTX_TEST_SCENARIO", "context_window");
+
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let min_free_bytes = [
+        fs2::available_space(repo.path()).ok(),
+        fs2::available_space(data_dir.path()).ok(),
+        fs2::available_space(std::env::temp_dir()).ok(),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .unwrap_or(u64::MAX);
+    if min_free_bytes <= STORAGE_GUARD_EMERGENCY_FREE_BYTES {
+        eprintln!("skipping: storage guard would trip on low-disk test host");
+        return;
+    }
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+    let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
+    let provider_ids: &[&str] = &["codex", "claude-crp"];
+    let providers = common::crp_fixture_runtime::build_crp_fixture_providers(
+        provider_ids,
+        &python,
+        &script_path,
+    );
+
+    let state = Arc::new(AppState::new(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0".to_string(),
+        None,
+    ));
+    let app = ctx_http::api::router(state.clone());
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let task = common::create_task(&app, ws.id.0, "t1").await;
+
+    for provider_id in provider_ids {
+        let model_id = fixture_model_id_for_provider(&app, ws.id.0, provider_id).await;
+        let session = create_session_for_provider(&app, task.id.0, provider_id, &model_id)
+            .await
+            .unwrap_or_else(|err| panic!("failed to create session for {provider_id}: {err}"));
+
+        post_message(&app, session.id.0, "hi").await;
+        wait_for_done(&state, session.id).await;
+
+        let store = state.store_for_session(session.id).await.unwrap();
+        let turns = store
+            .list_session_turns_page_by_seq(session.id, None, Some(10))
+            .await
+            .unwrap();
+        let turn = turns
+            .last()
+            .unwrap_or_else(|| panic!("expected one completed turn for {provider_id}: {turns:#?}"));
+        let metrics = turn
+            .metrics_json
+            .as_ref()
+            .unwrap_or_else(|| panic!("expected metrics_json on final turn for {provider_id}: {turn:#?}"));
+
+        assert_eq!(
+            metrics.get("context_window_tokens").and_then(serde_json::Value::as_u64),
+            Some(200_000),
+            "unexpected context_window_tokens for {provider_id}: {metrics:#?}"
+        );
+        assert_eq!(
+            metrics
+                .get("context_tokens_estimate")
+                .and_then(serde_json::Value::as_u64),
+            Some(50_000),
+            "unexpected context_tokens_estimate for {provider_id}: {metrics:#?}"
+        );
+        assert_eq!(
+            metrics
+                .get("remaining_tokens_estimate")
+                .and_then(serde_json::Value::as_u64),
+            Some(150_000),
+            "unexpected remaining_tokens_estimate for {provider_id}: {metrics:#?}"
+        );
+        let remaining_fraction = metrics
+            .get("remaining_fraction")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or_else(|| {
+                panic!("expected remaining_fraction for {provider_id}: {metrics:#?}")
+            });
+        assert!(
+            (remaining_fraction - 0.75).abs() < 1e-9,
+            "unexpected remaining_fraction for {provider_id}: {remaining_fraction}; metrics={metrics:#?}"
+        );
+    }
 }

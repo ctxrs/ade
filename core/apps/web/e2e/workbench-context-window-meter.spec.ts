@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { execSync } from "child_process";
 import { tmpdir } from "os";
 import path from "path";
+import type { APIRequestContext } from "playwright/test";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 import { waitForTerminalState } from "../src/testing/providerRuntime";
@@ -11,6 +12,47 @@ const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
 };
+
+async function apiPost<T>(request: APIRequestContext, url: string, data: unknown): Promise<T> {
+  const response = await request.post(url, { data });
+  expect(response.ok(), `request failed for ${url} (${response.status()})`).toBe(true);
+  return (await response.json()) as T;
+}
+
+async function waitForSessionSnapshotReady(
+  request: APIRequestContext,
+  sessionId: string,
+  options: { timeoutMs?: number; pollMs?: number } = {},
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? 20_000;
+  const pollMs = options.pollMs ?? 250;
+  const deadline = Date.now() + timeoutMs;
+  let lastStatus = "no response";
+  while (Date.now() < deadline) {
+    const response = await request.get(`/api/sessions/${sessionId}/snapshot?limit=1`);
+    if (response.ok()) {
+      return;
+    }
+    lastStatus = `${response.status()}`;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  throw new Error(`session ${sessionId} snapshot was not ready before timeout (last status ${lastStatus})`);
+}
+
+const SEEDED_HARNESS_CASE = {
+  providerId: "codex",
+  modelId: "gpt-5.4/medium",
+  title: "Codex seeded meter",
+} as const;
+
+const SHARED_CONTEXT_WINDOW = {
+  context_tokens_estimate: 50_000,
+  context_window_tokens: 200_000,
+  remaining_tokens_estimate: 150_000,
+  remaining_fraction: 0.75,
+} as const;
+
+const EXPECTED_CONTEXT_WINDOW_SUMMARY = "25% · 50k/200k";
 
 test("workbench: context window meter renders for a live fake-provider session", async ({ page, request }) => {
   test.setTimeout(120_000);
@@ -85,4 +127,60 @@ test("workbench: context window meter renders for a live fake-provider session",
   await expect(contextWindow).toBeVisible({ timeout: 20_000 });
   await expect(contextWindow).toHaveText("7% · 7/100", { timeout: 20_000 });
   await expect(contextWindow).toHaveAttribute("title", "Context Window: 7% · 7/100");
+});
+
+test("workbench: seeded context window metrics render in the workbench UI", async ({ page, request }) => {
+  test.setTimeout(120_000);
+
+  const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-provider-meter-"));
+  execSync("git init", { cwd: repo });
+  execSync("git config user.email test@example.com", { cwd: repo });
+  execSync("git config user.name Test", { cwd: repo });
+  writeFileSync(path.join(repo, "file.txt"), "hello\n");
+  execSync("git add .", { cwd: repo });
+  execSync("git commit -m init", { cwd: repo });
+
+  const workspaceId = await createWorkspaceAndOpenWorkbench({
+    page,
+    request,
+    repo,
+    workspaceName: `provider-meter-${Date.now()}`,
+  });
+
+  const task = await apiPost<{ id: string }>(request, `/api/workspaces/${workspaceId}/tasks`, {
+    title: SEEDED_HARNESS_CASE.title,
+    create_default_session: false,
+  });
+  const session = await apiPost<{ id: string }>(request, `/api/tasks/${task.id}/sessions`, {
+    provider_id: SEEDED_HARNESS_CASE.providerId,
+    model_id: SEEDED_HARNESS_CASE.modelId,
+    execution_environment: "host",
+  });
+  await waitForSessionSnapshotReady(request, session.id);
+  await apiPost(request, `/api/dev/sessions/${session.id}/seed_transcript`, {
+    turns: [
+      {
+        user: `seed ${SEEDED_HARNESS_CASE.providerId}`,
+        assistant: `assistant ${SEEDED_HARNESS_CASE.providerId}`,
+        context_window: SHARED_CONTEXT_WINDOW,
+      },
+    ],
+  });
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator(".wb-main")).toBeVisible({ timeout: 20_000 });
+
+  const rows = page.locator(".wb-task-row");
+  await expect(rows).toHaveCount(1, { timeout: 20_000 });
+
+  const row = rows.filter({ hasText: SEEDED_HARNESS_CASE.title }).first();
+  await expect(row).toBeVisible({ timeout: 20_000 });
+  await row.click();
+  const contextWindow = page.locator(".wb-session-slot .wb-context-window");
+  await expect(contextWindow).toBeVisible({ timeout: 20_000 });
+  await expect(contextWindow).toHaveText(EXPECTED_CONTEXT_WINDOW_SUMMARY, { timeout: 20_000 });
+  await expect(contextWindow).toHaveAttribute(
+    "title",
+    `Context Window: ${EXPECTED_CONTEXT_WINDOW_SUMMARY}`,
+  );
 });

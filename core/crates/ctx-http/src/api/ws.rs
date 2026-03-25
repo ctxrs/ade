@@ -333,7 +333,7 @@ async fn handle_mobile_secure_ws(
                             if include_initial_snapshot {
                                 send_control.set_hydrating();
                             }
-                            if include_initial_snapshot
+                            let active_head_cursors = if include_initial_snapshot
                                 && queue_snapshot_payload(
                                     &control,
                                     &state,
@@ -344,12 +344,36 @@ async fn handle_mobile_secure_ws(
                                     .is_err()
                             {
                                 break;
-                            }
+                            } else if include_initial_snapshot {
+                                state
+                                    .workspaces
+                                    .workspace_active_snapshot
+                                    .active_heads(workspace_id)
+                                    .await
+                                    .heads
+                                    .into_iter()
+                                    .map(|head| (head.session.id, SessionReplayCursor::from_head(&head)))
+                                    .collect::<HashMap<_, _>>()
+                            } else {
+                                HashMap::new()
+                            };
 
                             let mut skip_replay_sessions = HashSet::new();
                             if include_initial_snapshot && next_state.active_scope {
                                 for session_id in next_state.active_task_sessions.values() {
-                                    skip_replay_sessions.insert(*session_id);
+                                    let Some(snapshot_cursor) =
+                                        active_head_cursors.get(session_id).copied()
+                                    else {
+                                        continue;
+                                    };
+                                    let current_tail = state
+                                        .workspaces
+                                        .workspace_active_snapshot
+                                        .session_replay_cursor(workspace_id, *session_id)
+                                        .await;
+                                    if current_tail <= snapshot_cursor {
+                                        skip_replay_sessions.insert(*session_id);
+                                    }
                                 }
                             }
 

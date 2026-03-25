@@ -99,6 +99,15 @@ export function isSessionHeadCompatibleWithSummary(
     return false;
   }
 
+  const summaryLastEventSeq =
+    typeof summary.last_event_seq === "number" && summary.last_event_seq >= 0
+      ? summary.last_event_seq
+      : null;
+  const headLastEventSeq =
+    typeof head.last_event_seq === "number" && head.last_event_seq >= 0
+      ? head.last_event_seq
+      : null;
+
   const summaryProjectionRev =
     typeof summary.projection_rev === "number" ? summary.projection_rev : null;
   const headProjectionRev =
@@ -108,24 +117,14 @@ export function isSessionHeadCompatibleWithSummary(
     headProjectionRev !== null &&
     headProjectionRev < summaryProjectionRev
   ) {
-    return false;
-  }
-
-  const summaryLastEventSeq =
-    typeof summary.last_event_seq === "number" && summary.last_event_seq >= 0
-      ? summary.last_event_seq
-      : null;
-  const headLastEventSeq =
-    typeof head.last_event_seq === "number" && head.last_event_seq >= 0
-      ? head.last_event_seq
-      : null;
-  if (summaryLastEventSeq !== null && headLastEventSeq === null) {
-    return false;
+    // Keep a usable head when only the projection cursor advanced but the durable event cursor matches.
+    if (summaryLastEventSeq === null || headLastEventSeq === null || headLastEventSeq < summaryLastEventSeq) {
+      return false;
+    }
   }
   if (
     summaryLastEventSeq !== null &&
-    headLastEventSeq !== null &&
-    headLastEventSeq < summaryLastEventSeq
+    (headLastEventSeq === null || headLastEventSeq < summaryLastEventSeq)
   ) {
     return false;
   }

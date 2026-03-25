@@ -621,7 +621,7 @@ async fn handle_subscribe_message(
     *ctx.reset_queued = false;
     ctx.send_control.clear_disconnect_after_flush();
     sync_active_worktrees(state, ctx.active_worktrees, &worktree_vcs_session_ids).await;
-    if include_initial_snapshot {
+    let active_head_cursors = if include_initial_snapshot {
         ctx.send_control.set_hydrating();
         if queue_snapshot_payload(ctx.control, state, workspace_id, &worktree_vcs_session_ids)
             .await
@@ -629,12 +629,33 @@ async fn handle_subscribe_message(
         {
             return Err(());
         }
-    }
+        state
+            .workspaces
+            .workspace_active_snapshot
+            .active_heads(workspace_id)
+            .await
+            .heads
+            .into_iter()
+            .map(|head| (head.session.id, SessionReplayCursor::from_head(&head)))
+            .collect::<HashMap<_, _>>()
+    } else {
+        HashMap::new()
+    };
 
     let mut skip_replay_sessions = HashSet::new();
     if include_initial_snapshot && next_state.active_scope {
         for session_id in next_state.active_task_sessions.values() {
-            skip_replay_sessions.insert(*session_id);
+            let Some(snapshot_cursor) = active_head_cursors.get(session_id).copied() else {
+                continue;
+            };
+            let current_tail = state
+                .workspaces
+                .workspace_active_snapshot
+                .session_replay_cursor(workspace_id, *session_id)
+                .await;
+            if current_tail <= snapshot_cursor {
+                skip_replay_sessions.insert(*session_id);
+            }
         }
     }
 

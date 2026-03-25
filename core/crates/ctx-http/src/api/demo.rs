@@ -25,6 +25,8 @@ fn dev_tools_enabled() -> bool {
 pub(crate) struct SeedTranscriptTurnReq {
     pub(crate) user: String,
     pub(crate) assistant: String,
+    #[serde(default)]
+    pub(crate) context_window: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -327,9 +329,17 @@ pub(crate) async fn dev_seed_session_transcript(
                 Some(run_id),
                 Some(turn_id),
                 SessionEventType::Done,
-                serde_json::json!({
-                    "status": "completed",
-                }),
+                {
+                    let mut payload = serde_json::json!({
+                        "status": "completed",
+                    });
+                    if let Some(metrics) = turn.context_window.clone() {
+                        if let Some(obj) = payload.as_object_mut() {
+                            obj.insert("context_window".to_string(), metrics);
+                        }
+                    }
+                    payload
+                },
             )
             .await
             .map_err(|_| {
@@ -377,7 +387,7 @@ pub(crate) async fn dev_seed_session_transcript(
                 updated_at: assistant_created_at,
                 assistant_partial: None,
                 thought_partial: None,
-                metrics_json: None,
+                metrics_json: turn.context_window.clone(),
                 tool_total: 0,
                 tool_pending: 0,
                 tool_running: 0,

@@ -18,9 +18,7 @@ mkdir -p "${TARGET_DIR}"
 
 cd "${WORKSPACE}"
 if [[ "${PROFILE}" == "release" ]]; then
-  cargo test -q --release -p codex-crp replay_golden_tests
-  cargo test -q --release -p codex-crp reasoning_summary_state_tests
+  cargo test -q --release -p codex-crp
 else
-  cargo test -q -p codex-crp replay_golden_tests
-  cargo test -q -p codex-crp reasoning_summary_state_tests
+  cargo test -q -p codex-crp
 fi

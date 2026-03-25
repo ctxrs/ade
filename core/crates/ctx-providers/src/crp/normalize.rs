@@ -328,12 +328,22 @@ pub(super) fn map_crp_event(
                 done: false,
             }
         }
-        CrpEvent::TurnCompleted { status, error, .. } => {
+        CrpEvent::TurnCompleted {
+            status,
+            context_window,
+            error,
+            ..
+        } => {
             let (event_type, payload) = match status {
-                CrpTurnStatus::Success => (
-                    SessionEventType::Done,
-                    json!({"status": "completed", "crp_seq": seq}),
-                ),
+                CrpTurnStatus::Success => {
+                    let mut payload = serde_json::Map::new();
+                    payload.insert("status".to_string(), json!("completed"));
+                    payload.insert("crp_seq".to_string(), json!(seq));
+                    if let Some(context_window) = context_window {
+                        payload.insert("context_window".to_string(), context_window);
+                    }
+                    (SessionEventType::Done, Value::Object(payload))
+                }
                 CrpTurnStatus::Error => {
                     let message = error
                         .as_ref()

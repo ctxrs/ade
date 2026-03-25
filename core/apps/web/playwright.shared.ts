@@ -140,6 +140,7 @@ export async function createCtxPlaywrightConfig(
     CARGO_TARGET_DIR: cargoTargetDir,
     CTX_EXECUTION_MODE: "host",
     CTX_SHOW_FAKE_PROVIDER: "1",
+    CTX_DEV_MODE: "1",
     CTX_STORAGE_BACKEND: "sqlite",
     ...(process.platform === "win32" ? {} : { SHELL: "/bin/sh" }),
   };

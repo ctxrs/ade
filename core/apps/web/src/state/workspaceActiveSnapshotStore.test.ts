@@ -409,7 +409,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(ws.send).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
     expect(payload.type).toBe("subscribe");
-    expect(payload.include_active_heads).toBe(false);
+    expect(payload.include_active_heads).toBe(true);
   });
 
   it("flushes subscribe messages when only replay intent changes", async () => {
@@ -1080,6 +1080,70 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(snapshot.tasksById["task-1"]?.sessions[0]?.last_event_seq).toBe(10);
     expect(snapshot.tasksById["task-1"]?.primarySessionHead).toBeNull();
     expect(store.getSessionHeadSnapshot("session-1")).toBeNull();
+  });
+
+  it("keeps a reconnect session head when the event cursor matches but the projection cursor trails", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-1", "task-1", "ws-1", now);
+    const summary = {
+      ...mkSummary(session, now),
+      last_event_seq: 10,
+      projection_rev: 7,
+      state_rev: 7,
+      activity: { is_working: true, last_turn_status: "running" as const },
+    };
+    const reconnectHead: SessionHeadSnapshot = {
+      ...mkHead(session),
+      last_event_seq: 10,
+      projection_rev: 6,
+      state_rev: 7,
+      activity: { is_working: true, last_turn_status: "running" },
+      messages: [
+        {
+          id: "msg-1",
+          session_id: "session-1",
+          task_id: "task-1",
+          turn_id: "turn-1",
+          turn_sequence: 1,
+          order_seq: 1,
+          role: "assistant",
+          content: "recovered message",
+          delivery: "immediate",
+          created_at: now,
+        },
+      ],
+    };
+
+    const activeSnapshot: WorkspaceActiveSnapshot = {
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      archived_rev: 0,
+      active: {
+        total_count: 1,
+        tasks: [mkActiveSummary(task, summary, reconnectHead, now)],
+      },
+    };
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: activeSnapshot,
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.tasksById["task-1"]?.primarySessionHead?.last_event_seq).toBe(10);
+    expect(snapshot.tasksById["task-1"]?.primarySessionHead?.projection_rev).toBe(6);
+    expect(store.getSessionHeadSnapshot("session-1")?.messages.map((message) => message.content)).toEqual([
+      "recovered message",
+    ]);
   });
 
   it("treats no-op session_summary_delta as no change", async () => {

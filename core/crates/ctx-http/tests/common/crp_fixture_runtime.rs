@@ -156,6 +156,7 @@ def send_tool(session_id, turn_id, tool):
     }, channel="data")
 
 def send_turn(session_id, turn_id, turn):
+    context_window = turn.get("context_window")
     if turn.get("events"):
         msg_id = str(uuid.uuid4())
         final = turn.get("final") or ("hola from " + PROVIDER_ID)
@@ -203,12 +204,15 @@ def send_turn(session_id, turn_id, turn):
                     "message_id": msg_id,
                     "content": step.get("content") or final,
                 }, channel="data")
-                send({
+                completed = {
                     "type": "turn.completed",
                     "session_id": session_id,
                     "turn_id": turn_id,
                     "status": "success",
-                }, channel="control")
+                }
+                if context_window is not None:
+                    completed["context_window"] = context_window
+                send(completed, channel="control")
                 return
         send({
             "type": "message.final",
@@ -217,12 +221,15 @@ def send_turn(session_id, turn_id, turn):
             "message_id": msg_id,
             "content": final,
         }, channel="data")
-        send({
+        completed = {
             "type": "turn.completed",
             "session_id": session_id,
             "turn_id": turn_id,
             "status": "success",
-        }, channel="control")
+        }
+        if context_window is not None:
+            completed["context_window"] = context_window
+        send(completed, channel="control")
         return
 
     thought = turn.get("thought")
@@ -265,12 +272,15 @@ def send_turn(session_id, turn_id, turn):
         "message_id": msg_id,
         "content": final,
     }, channel="data")
-    send({
+    completed = {
         "type": "turn.completed",
         "session_id": session_id,
         "turn_id": turn_id,
         "status": "success",
-    }, channel="control")
+    }
+    if context_window is not None:
+        completed["context_window"] = context_window
+    send(completed, channel="control")
 
 for line in sys.stdin:
     line = line.strip()

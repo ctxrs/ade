@@ -1,0 +1,5 @@
+{"type":"bind_turn","app_turn_id":"app-turn-error","crp_turn_id":"crp-turn-error"}
+{"type":"server_notification","notification":{"method":"thread/tokenUsage/updated","params":{"threadId":"thr_fixture","turnId":"app-turn-error","tokenUsage":{"total":{"totalTokens":1200,"inputTokens":800,"cachedInputTokens":100,"outputTokens":300,"reasoningOutputTokens":50},"last":{"totalTokens":250,"inputTokens":150,"cachedInputTokens":25,"outputTokens":75,"reasoningOutputTokens":10},"modelContextWindow":200000}}}}
+{"type":"legacy_notification","notification":{"method":"codex/event/task_started","params":{"conversationId":"thr_fixture","id":"app-turn-error","msg":{"turn_id":"app-turn-error","model_context_window":null,"collaboration_mode_kind":"default"}}}}
+{"type":"legacy_notification","notification":{"method":"codex/event/error","params":{"conversationId":"thr_fixture","id":"app-turn-error","msg":{"message":"provider boom","codex_error_info":null}}}}
+{"type":"lagged","skipped":2}
