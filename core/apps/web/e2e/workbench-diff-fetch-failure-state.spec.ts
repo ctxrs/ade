@@ -169,6 +169,9 @@ test("workbench: diff fetch failure does not render false no-changes state", asy
 
   const diffPane = page.locator(".wb-right-pane.wb-diff");
   await expect(diffPane).toBeVisible({ timeout: 10_000 });
+  await expect(diffPane.locator(".cursor-diff-file-header").filter({ hasText: "file.txt" })).toBeVisible({
+    timeout: 20_000,
+  });
   await expect(diffPane).toContainText("Failed to load diff content", { timeout: 20_000 });
   await expect(diffPane.getByText("No changes.")).toHaveCount(0);
   await expect(diffPane.getByText("No changes on this worktree.")).toHaveCount(0);

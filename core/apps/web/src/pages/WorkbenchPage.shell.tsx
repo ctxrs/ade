@@ -914,6 +914,8 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             daemonBaseUrl={activeTaskController.daemonBaseUrl}
             webSessionsLoading={activeTaskController.webSessionsLoading}
             hasDiff={activeTaskController.hasDiff}
+            gitPaneModel={activeTaskController.gitPaneModel}
+            diffLoading={activeTaskController.diffLoading}
             diffSummaryError={activeTaskController.diffSummaryError}
             diffTooLarge={activeTaskController.diffTooLarge}
             diffTooLargeLabel={activeTaskController.diffTooLargeLabel}

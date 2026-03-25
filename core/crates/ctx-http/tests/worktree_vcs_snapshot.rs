@@ -5,8 +5,10 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+use axum::http::{Method, StatusCode};
 use ctx_core::models::DiffUnavailableReason;
-use ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree;
+use ctx_http::git_status::{emit_worktree_vcs_snapshot_for_worktree, run_git_status_watcher};
+use serde_json::Value;
 use tokio::process::Command;
 
 async fn run_git(root: &Path, args: &[&str]) {
@@ -315,4 +317,103 @@ async fn worktree_vcs_snapshot_does_not_repopulate_cache_after_activity_eviction
             .all(|candidate| candidate.worktree_id != worktree.id),
         "inactive emit should not repopulate workspace active snapshot",
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn worktree_vcs_snapshot_watcher_recomputes_when_target_branch_ref_moves() {
+    let _guard = worktree_vcs_snapshot_test_lock().lock().await;
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    run_git(repo.path(), &["branch", "merge-target"]).await;
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (_status, _resp): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/workspaces/{}/primary_branch", ws.id.0),
+        Some(serde_json::json!({ "primary_branch": "merge-target" })),
+    )
+    .await;
+
+    let task = common::create_task(&app, ws.id.0, "watcher-ref-move").await;
+    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let worktree = state
+        .store_for_worktree(session.worktree_id)
+        .await
+        .expect("store for worktree")
+        .get_worktree(session.worktree_id)
+        .await
+        .expect("load worktree")
+        .expect("worktree should exist");
+
+    let mut next_active = HashSet::new();
+    next_active.insert(worktree.id);
+    state
+        .workspaces
+        .update_worktree_vcs_activity(&HashSet::new(), &next_active)
+        .await;
+
+    let watcher = tokio::spawn(run_git_status_watcher(state.clone(), worktree.clone()));
+
+    let worktree_root = Path::new(&worktree.root_path);
+    tokio::fs::write(worktree_root.join("file.txt"), "hello\nphase1\n")
+        .await
+        .expect("write changed file");
+    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+        .await
+        .expect("initial vcs snapshot emission should succeed");
+
+    let start = Instant::now();
+    loop {
+        let snapshot = state
+            .get_worktree_vcs_snapshot(worktree.id)
+            .await
+            .expect("expected worktree vcs snapshot");
+        if snapshot.summary.file_count.unwrap_or(0) > 0 {
+            break;
+        }
+        if start.elapsed() > Duration::from_secs(10) {
+            watcher.abort();
+            panic!("timed out waiting for non-zero vcs summary");
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    run_git(worktree_root, &["add", "file.txt"]).await;
+    run_git(worktree_root, &["commit", "-m", "phase1"]).await;
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(worktree_root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .await
+        .expect("read worktree head sha");
+    assert!(output.status.success(), "rev-parse HEAD should succeed");
+    let phase1_sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    run_git(repo.path(), &["branch", "-f", "merge-target", &phase1_sha]).await;
+
+    let start = Instant::now();
+    loop {
+        let snapshot = state
+            .get_worktree_vcs_snapshot(worktree.id)
+            .await
+            .expect("expected refreshed worktree vcs snapshot");
+        if snapshot.summary.file_count.unwrap_or(-1) == 0 {
+            watcher.abort();
+            return;
+        }
+        if start.elapsed() > Duration::from_secs(10) {
+            watcher.abort();
+            panic!("timed out waiting for merge-target ref move to clear vcs summary");
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }

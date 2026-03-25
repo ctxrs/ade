@@ -33,7 +33,7 @@ export const shouldReplayReplicaReplace = ({
   normalizedFreshness,
 }: {
   entry: Pick<InternalEntry, "freshness" | "projectionRev" | "lastEventSeq">;
-  patch: Pick<SessionReplicaPatch, "op" | "data">;
+  patch: SessionReplicaPatch;
   normalizedFreshness?: InternalEntry["freshness"];
 }): boolean => {
   if (patch.op !== "replace") return true;

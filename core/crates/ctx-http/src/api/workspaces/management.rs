@@ -1,4 +1,5 @@
 use super::*;
+use crate::git_status::emit_worktree_vcs_snapshot_for_worktree;
 
 mod prompt_config;
 
@@ -155,6 +156,23 @@ pub(in crate::api) async fn update_workspace_primary_branch(
                 }),
             )
         })?;
+    let worktrees = store.list_worktrees(ws_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    for worktree in worktrees {
+        if let Err(err) = emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true).await {
+            tracing::warn!(
+                workspace_id = %ws_id.0,
+                worktree_id = %worktree.id.0,
+                "failed to refresh worktree vcs after primary branch update: {err:#}"
+            );
+        }
+    }
     Ok(Json(WorkspacePrimaryBranchResp { primary_branch }))
 }
 

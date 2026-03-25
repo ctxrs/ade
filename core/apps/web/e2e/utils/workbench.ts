@@ -3,6 +3,8 @@ import fs from "fs";
 import path from "path";
 import type { APIRequestContext, Page } from "playwright/test";
 
+const AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
+
 type CreateWorkspaceArgs = {
   page: Page;
   request: APIRequestContext;
@@ -29,7 +31,8 @@ const normalizePath = (value: string): string => {
 export async function createWorkspaceAndOpenWorkbench(opts: CreateWorkspaceArgs): Promise<string> {
   const { page, request, repo, workspaceName, token } = opts;
   const repoPath = normalizePath(repo);
-  const headers = token ? { authorization: `Bearer ${token}` } : undefined;
+  const authToken = token ?? AUTH_TOKEN;
+  const headers = authToken ? { authorization: `Bearer ${authToken}` } : undefined;
   const createResp = await request.post("/api/workspaces", {
     headers,
     data: {
@@ -43,7 +46,7 @@ export async function createWorkspaceAndOpenWorkbench(opts: CreateWorkspaceArgs)
   expect(workspaceId).not.toBe("");
 
   const query = new URLSearchParams();
-  if (token) query.set("token", token);
+  if (authToken) query.set("token", authToken);
   const workspaceUrl = query.size > 0 ? `/workspaces/${workspaceId}?${query.toString()}` : `/workspaces/${workspaceId}`;
   await page.goto(workspaceUrl, { waitUntil: "domcontentloaded" });
   await expect(page).toHaveURL(new RegExp(`/workspaces/${workspaceId}(\\?.*)?$`), { timeout: 20_000 });

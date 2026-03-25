@@ -1,10 +1,12 @@
 mod common;
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::process::Command;
 
 use axum::http::{Method, StatusCode};
 use ctx_core::models::Worktree;
+use ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree;
 use serde_json::Value;
 
 #[tokio::test]
@@ -222,6 +224,63 @@ async fn workspace_primary_branch_endpoint_updates_branch() {
         after.get("primary_branch").and_then(Value::as_str),
         Some("merge-target")
     );
+
+    let task = common::create_task(&app, ws.id.0, "primary-branch-refresh").await;
+    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let worktree = state
+        .store_for_worktree(session.worktree_id)
+        .await
+        .expect("store for worktree")
+        .get_worktree(session.worktree_id)
+        .await
+        .expect("load worktree")
+        .expect("worktree should exist");
+    let mut next_active = HashSet::new();
+    next_active.insert(worktree.id);
+    state
+        .workspaces
+        .update_worktree_vcs_activity(&HashSet::new(), &next_active)
+        .await;
+    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+        .await
+        .expect("initial vcs snapshot emission should succeed");
+    let before_snapshot = state
+        .get_worktree_vcs_snapshot(worktree.id)
+        .await
+        .expect("expected cached worktree vcs snapshot");
+    assert_eq!(
+        before_snapshot.target_branch.as_deref(),
+        Some("merge-target")
+    );
+
+    let branch_status = Command::new("git")
+        .current_dir(repo.path())
+        .args(["branch", "release-target"])
+        .status()
+        .expect("git branch command should run");
+    assert!(
+        branch_status.success(),
+        "git branch release-target should succeed"
+    );
+
+    let (set_status, set_resp): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/workspaces/{}/primary_branch", ws.id.0),
+        Some(serde_json::json!({ "primary_branch": "release-target" })),
+    )
+    .await;
+    assert_eq!(set_status, StatusCode::OK);
+    assert_eq!(
+        set_resp.get("primary_branch").and_then(Value::as_str),
+        Some("release-target")
+    );
+
+    let refreshed = state
+        .get_worktree_vcs_snapshot(worktree.id)
+        .await
+        .expect("expected refreshed worktree vcs snapshot");
+    assert_eq!(refreshed.target_branch.as_deref(), Some("release-target"));
 }
 
 #[tokio::test]

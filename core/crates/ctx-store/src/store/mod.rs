@@ -1,34 +1,32 @@
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
+use conversions::*;
+use conversions_tools::*;
+use ctx_core::ids::*;
+use ctx_core::models::*;
+use metrics_and_runtime::*;
+use serde::Serialize;
+use serde_json::Value;
+use sqlx::sqlite::{SqliteArguments, SqlitePoolOptions, SqliteRow};
+use sqlx::{Pool, Row, Sqlite};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
-
-use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
-use ctx_core::ids::*;
-use ctx_core::models::*;
-use serde::Serialize;
-use serde_json::Value;
-use sqlx::sqlite::{SqliteArguments, SqlitePoolOptions, SqliteRow};
-use sqlx::{Pool, Row, Sqlite};
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;
 
-use conversions::*;
-use conversions_tools::*;
 use head_kind::*;
 pub(crate) use head_projection::*;
 pub(crate) use lease::StoreLeaseGuard;
-use metrics_and_runtime::*;
 
 mod head_kind;
 mod head_projection;
 mod lease;
 #[cfg(test)]
 mod tests_runtime_shutdown;
-
 #[derive(Clone)]
 pub struct Store {
     pool: Pool<Sqlite>,
@@ -47,7 +45,6 @@ pub struct SessionRetentionPruneStats {
     pub tool_summaries_deleted: u64,
     pub turn_thoughts_cleared: u64,
 }
-
 pub fn is_unique_constraint_violation(err: &anyhow::Error) -> bool {
     for cause in err.chain() {
         let Some(sqlx::Error::Database(db_err)) = cause.downcast_ref::<sqlx::Error>() else {
@@ -383,6 +380,7 @@ impl Store {
             })
             .connect(&sqlite_url)
             .await?;
+        repair_historical_tool_order_seq_migration_version(&pool).await?;
         ensure_sqlite_journal_mode_wal(&pool).await?;
         repair_duplicate_tool_display_migration_version(&pool).await?;
         repair_workspace_message_index_migration_versions(&pool).await?;
@@ -652,6 +650,7 @@ mod messages_snapshots;
 mod messages_workspace_active;
 mod messages_workspace_index;
 mod metrics_and_runtime;
+mod migration_repairs;
 mod mobile;
 mod sessions;
 mod tasks;
@@ -659,6 +658,8 @@ mod turns;
 mod turns_session_heads;
 mod workspace;
 mod worktrees;
+
+use migration_repairs::repair_historical_tool_order_seq_migration_version;
 
 #[cfg(test)]
 mod tests {

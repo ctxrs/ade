@@ -36,6 +36,7 @@ import {
 import { canRenderWorkbenchActiveSession } from "./workbenchTaskActivity";
 import { getDiffSummaryStats, isDiffSummaryTooLarge } from "./useWorkbenchDiffPane";
 import { useWorkbenchSessionActions } from "./useWorkbenchSessionActions";
+import { buildGitPaneModel } from "./worktreeGitPaneModel";
 
 type PaneMode = "diff" | "artifacts" | "sessions" | null;
 
@@ -357,7 +358,7 @@ export function useWorkbenchActiveTaskController({
   }, [activeWorktreeVcsSnapshot]);
   const activeWorktreeVcsComputeState = activeWorktreeVcsSnapshot?.compute_state ?? null;
   const activeWorktreeDiffAvailable = activeWorktreeVcsSnapshot?.available !== false;
-  const activeWorktreeDiffUnavailableReason = activeWorktreeVcsSnapshot?.unavailable_reason ?? null;
+  const gitPaneModel = useMemo(() => buildGitPaneModel(activeWorktreeVcsSnapshot), [activeWorktreeVcsSnapshot]);
   const snapshotSummaryStats = useMemo(
     () => getDiffSummaryStats(activeWorktreeVcsSummary),
     [activeWorktreeVcsSummary],
@@ -540,40 +541,21 @@ export function useWorkbenchActiveTaskController({
   }, [diffSummaryStats, diffTooLarge]);
 
   const diffSummaryReady = snapshotHasCounts || diffSummary !== null || diffSummaryError !== null;
-  const diffUnavailableLabel =
-    activeWorktreeDiffAvailable
-      ? null
-      : activeWorktreeDiffUnavailableReason === "no_repo"
-        ? "No git repo detected for this workspace yet."
-        : activeWorktreeDiffUnavailableReason === "no_target_branch"
-          ? "Primary branch is not configured for this workspace."
-          : "Diff unavailable for this workspace.";
-  const diffHasChanges =
-    diffSummaryCount !== null
-      ? diffSummaryCount > 0
-      : diffSummaryStats.lineCount !== null
-        ? diffSummaryStats.lineCount > 0
-        : false;
-  const hasDiff = activeWorktreeDiffAvailable
-    ? diffSummaryError !== null
-      ? true
-      : diffSummaryReady
-        ? diffHasChanges
-        : false
-    : false;
-  const diffEmptyLabel =
-    diffUnavailableLabel ??
-    (diffLoading || !diffSummaryReady ? "Loading changes..." : "No changes on this worktree.");
+  const diffUnavailableLabel = gitPaneModel.unavailableLabel;
+  const hasDiff =
+    !!diffSummaryError ||
+    gitPaneModel.loading ||
+    !gitPaneModel.listReady ||
+    gitPaneModel.totalCount > 0 ||
+    !!diffUnavailableLabel;
+  const diffEmptyLabel = diffUnavailableLabel ?? (diffLoading || !diffSummaryReady ? "Loading changes..." : "No changes on this worktree.");
   const diffBadgeCount = useMemo(() => {
-    if (!activeWorktreeDiffAvailable) return 0;
-    if (!snapshotHasCounts) return 0;
-    if (snapshotSummaryStats.fileCount !== null) return Math.max(0, snapshotSummaryStats.fileCount);
-    if (snapshotSummaryStats.lineCount !== null) return Math.max(0, snapshotSummaryStats.lineCount);
-    return 0;
-  }, [activeWorktreeDiffAvailable, snapshotHasCounts, snapshotSummaryStats]);
+    return gitPaneModel.badgeCount;
+  }, [gitPaneModel.badgeCount]);
   const gitStatusSignature = useMemo(() => {
     if (activeWorktreeVcsSnapshot) {
       return [
+        `rev:${String(activeWorktreeVcsSnapshot.rev ?? "")}`,
         `base:${String(activeWorktreeVcsSnapshot.base_commit_sha ?? "")}`,
         `head:${String(activeWorktreeVcsSnapshot.head_commit_sha ?? "")}`,
         `available:${activeWorktreeVcsSnapshot.available === false ? "0" : "1"}`,
@@ -651,7 +633,7 @@ export function useWorkbenchActiveTaskController({
         supervisor.setDiff(sessionId, "");
         return;
       }
-      if (!snapshotHasCounts || !activeWorktreeVcsSummary) {
+      if (gitPaneModel.totalCount <= 0 || !activeWorktreeVcsSummary) {
         setDiffContentErrorBySessionId((prev) => ({ ...prev, [sessionId]: undefined }));
         supervisor.setDiff(sessionId, "");
         return;
@@ -692,9 +674,9 @@ export function useWorkbenchActiveTaskController({
       activeSessionId,
       activeWorktreeDiffAvailable,
       activeWorktreeVcsSummary,
+      gitPaneModel.totalCount,
       optimisticSessionIdSet,
       optimisticStartingTaskRef,
-      snapshotHasCounts,
       supervisor,
     ],
   );
@@ -985,6 +967,8 @@ export function useWorkbenchActiveTaskController({
     convoMenuRef,
     openConvoMenu,
     closeConvoMenu,
+    gitPaneModel,
+    diffLoading,
     diffBadgeCount,
   };
 }

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,9 +29,10 @@ pub(super) async fn run_git_status_watcher(state: Arc<AppState>, worktree: Workt
     }
     let vcs = vcs_driver_for_worktree(&worktree);
     vcs.assert_repo(root).await?;
+    let git_dir = resolve_git_dir(root).await?;
 
     let (tx, mut rx) = mpsc::channel::<()>(1);
-    let mut watcher = watcher(tx)?;
+    let mut watcher = watcher(tx, git_dir.clone())?;
     if let Err(err) = watcher.watch(root, RecursiveMode::Recursive) {
         // On hosts with low watch limits (or many concurrent watchers), file watching can fail with
         // ENOSPC/too-many-watches. Falling back to polling keeps git status updates flowing and
@@ -41,6 +42,16 @@ pub(super) async fn run_git_status_watcher(state: Arc<AppState>, worktree: Workt
             "git status watcher unavailable; falling back to polling: {err:#}"
         );
         return run_git_status_poller(state, worktree).await;
+    }
+    if !git_dir.starts_with(root) {
+        if let Err(err) = watcher.watch(&git_dir, RecursiveMode::Recursive) {
+            tracing::warn!(
+                worktree_id = %worktree.id.0,
+                git_dir = %git_dir.display(),
+                "shared git-dir watcher unavailable; falling back to polling: {err:#}"
+            );
+            return run_git_status_poller(state, worktree).await;
+        }
     }
 
     let debounce = Duration::from_millis(GIT_STATUS_WATCH_DEBOUNCE_MS);
@@ -68,6 +79,26 @@ pub(super) async fn run_git_status_watcher(state: Arc<AppState>, worktree: Workt
     Ok(())
 }
 
+async fn resolve_git_dir(worktree_root: &Path) -> Result<PathBuf> {
+    let dotgit = worktree_root.join(".git");
+    let meta = tokio::fs::metadata(&dotgit).await?;
+    if meta.is_dir() {
+        return Ok(dotgit);
+    }
+    let txt = tokio::fs::read_to_string(&dotgit).await?;
+    let line = txt
+        .lines()
+        .find(|l| l.trim_start().starts_with("gitdir:"))
+        .ok_or_else(|| anyhow::anyhow!("invalid .git file: missing gitdir"))?;
+    let raw = line.trim_start().trim_start_matches("gitdir:").trim();
+    let path = PathBuf::from(raw);
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(worktree_root.join(path))
+    }
+}
+
 async fn run_git_status_poller(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
     let mut interval = tokio::time::interval(Duration::from_millis(GIT_STATUS_POLL_INTERVAL_MS));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -79,14 +110,19 @@ async fn run_git_status_poller(state: Arc<AppState>, worktree: Worktree) -> Resu
     }
 }
 
-fn should_ignore_event(event: &Event) -> bool {
-    event.paths.iter().all(|path| should_ignore_path(path))
+fn should_ignore_event(event: &Event, git_dir: &Path) -> bool {
+    event.paths.iter().all(|path| {
+        if path.starts_with(git_dir) {
+            return false;
+        }
+        should_ignore_path(path)
+    })
 }
 
-fn watcher(tx: mpsc::Sender<()>) -> Result<RecommendedWatcher> {
+fn watcher(tx: mpsc::Sender<()>, git_dir: PathBuf) -> Result<RecommendedWatcher> {
     let watcher = notify::recommended_watcher(move |res| {
         if let Ok(event) = res {
-            if should_ignore_event(&event) {
+            if should_ignore_event(&event, &git_dir) {
                 return;
             }
             let _ = tx.try_send(());

@@ -6,6 +6,7 @@ import { SessionsPane } from "../../components/SessionsPane";
 import { WorkbenchSessionSlot } from "../WorkbenchPage.sessionSlot";
 import { WorkbenchSessionHeader } from "./WorkbenchSessionHeader";
 import { WorkbenchSessionLoadIssues } from "./WorkbenchSessionLoadIssues";
+import type { GitPaneModel } from "./worktreeGitPaneModel";
 
 type WorktreeChip = ComponentProps<typeof WorkbenchSessionHeader>["worktreeChip"];
 type SessionLoadIssues = ComponentProps<typeof WorkbenchSessionLoadIssues>["issues"];
@@ -47,6 +48,8 @@ type WorkbenchActiveTaskViewProps = {
   daemonBaseUrl: string;
   webSessionsLoading: boolean;
   hasDiff: boolean;
+  gitPaneModel: GitPaneModel;
+  diffLoading: boolean;
   diffSummaryError: string | null;
   diffTooLarge: boolean;
   diffTooLargeLabel: string | null;
@@ -93,6 +96,8 @@ export function WorkbenchActiveTaskView({
   daemonBaseUrl,
   webSessionsLoading,
   hasDiff,
+  gitPaneModel,
+  diffLoading,
   diffSummaryError,
   diffTooLarge,
   diffTooLargeLabel,
@@ -162,20 +167,17 @@ export function WorkbenchActiveTaskView({
             ) : showReviewPane ? (
               <div className="wb-right-pane wb-diff">
                 {hasDiff ? (
-                  diffSummaryError ? (
-                    <div className="wb-diff-empty">
-                      <div className="wb-muted">{diffSummaryError}</div>
-                    </div>
-                  ) : diffTooLarge ? (
-                    <div className="wb-diff-empty">
-                      <div className="wb-muted">{diffTooLargeLabel ?? "Diff too large to display."}</div>
-                    </div>
-                  ) : (
-                    <DiffReviewPane
-                      diff={activeSessionDiff}
-                      labels={activeDiffContentError ? { empty: activeDiffContentError } : undefined}
-                    />
-                  )
+                  <DiffReviewPane
+                    diff={activeSessionDiff}
+                    inventory={gitPaneModel}
+                    detail={{
+                      loading: diffLoading,
+                      error: activeDiffContentError ?? diffSummaryError,
+                      tooLarge: diffTooLarge,
+                      tooLargeLabel: diffTooLargeLabel,
+                    }}
+                    labels={activeDiffContentError ? { empty: activeDiffContentError } : undefined}
+                  />
                 ) : (
                   <div className="wb-diff-empty">
                     <div className="wb-muted">{diffEmptyLabel}</div>

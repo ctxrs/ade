@@ -247,13 +247,88 @@ async fn open_repairs_workspace_message_index_migration_version_conflict() -> Re
     let applied = applied_migrations(&db_path).await?;
     assert!(applied
         .iter()
-        .any(|(version, description)| *version == 49 && description == "tool order seq"));
+        .any(|(version, description)| *version == 55 && description == "tool order seq"));
     assert!(applied.iter().any(|(version, description)| {
         *version == 50 && description == "drop workspace owned routing indexes"
     }));
     assert!(applied.iter().any(|(version, description)| {
         *version == 51 && description == "drop workspace message index"
     }));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn open_repairs_historical_tool_order_seq_duplicate_version() -> Result<()> {
+    let tempdir = tempfile::tempdir().context("creating tempdir for tool-order repair")?;
+    let subset_dir = tempdir.path().join("subset-migrations");
+    fs::create_dir_all(&subset_dir).context("creating subset migration dir")?;
+
+    let migrations = migration_files()?;
+    for migration in &migrations {
+        let version = migration_version(migration)?;
+        if version <= 48 {
+            let filename = migration
+                .file_name()
+                .context("migration file missing name")?;
+            fs::copy(migration, subset_dir.join(filename)).with_context(|| {
+                format!("copying {} into tool-order subset", migration.display())
+            })?;
+        }
+    }
+
+    let tool_order_migration = migrations
+        .iter()
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name == "0055_tool_order_seq.sql")
+        })
+        .cloned()
+        .context("finding tool order seq migration")?;
+    fs::copy(
+        &tool_order_migration,
+        subset_dir.join("0049_tool_order_seq.sql"),
+    )
+    .with_context(|| {
+        format!(
+            "copying {} into tool-order subset as 0049",
+            tool_order_migration.display()
+        )
+    })?;
+
+    let db_path = tempdir.path().join("db.sqlite");
+    fs::File::create(&db_path).context("creating sqlite file")?;
+    let sqlite_url = sqlite_url(&db_path);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&sqlite_url)
+        .await
+        .context("connecting partial-migration pool for tool-order repair")?;
+    let subset_migrator = Migrator::new(subset_dir.clone())
+        .await
+        .context("loading subset migrator for tool-order repair")?;
+    subset_migrator
+        .run(&pool)
+        .await
+        .context("running subset migrator for tool-order repair")?;
+    pool.close().await;
+
+    let store = Store::open(&db_path)
+        .await
+        .context("opening store after historical tool-order migration")?;
+    store.close().await;
+
+    assert_store_integrity(&db_path).await?;
+    assert!(column_exists(&db_path, "session_turn_tools", "order_seq").await?);
+
+    let applied = applied_migrations(&db_path).await?;
+    assert!(applied
+        .iter()
+        .any(|(version, description)| *version == 51
+            && description == "drop workspace message index"));
+    assert!(applied
+        .iter()
+        .any(|(version, description)| *version == 55 && description == "tool order seq"));
 
     Ok(())
 }

@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures";
-import { mkdtempSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
@@ -116,6 +116,18 @@ async function waitForWorktreeSummary(opts: {
     .toBeGreaterThan(0);
 }
 
+function clearTempWorktreeIndexLocks(repoRoot: string) {
+  const gitWorktreesDir = path.join(repoRoot, ".git", "worktrees");
+  if (!existsSync(gitWorktreesDir)) return;
+  for (const entry of readdirSync(gitWorktreesDir)) {
+    const lockPath = path.join(gitWorktreesDir, entry, "index.lock");
+    if (!existsSync(lockPath)) continue;
+    const stats = statSync(lockPath);
+    if (!stats.isFile()) continue;
+    rmSync(lockPath, { force: true });
+  }
+}
+
 test("workbench: merge-base diff badge + pane stay consistent across phases", async ({ page, request }) => {
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
   execSync("git init -b main", { cwd: repo });
@@ -154,6 +166,7 @@ test("workbench: merge-base diff badge + pane stay consistent across phases", as
     page.locator(".wb-right-pane.wb-diff").getByText("No changes on this worktree."),
   ).toHaveCount(0);
 
+  clearTempWorktreeIndexLocks(repo);
   execSync("git add file.txt", { cwd: worktreeRoot });
   execSync("git commit -m phase1", { cwd: worktreeRoot });
   const phase1Sha = execSync("git rev-parse HEAD", { cwd: worktreeRoot }).toString().trim();

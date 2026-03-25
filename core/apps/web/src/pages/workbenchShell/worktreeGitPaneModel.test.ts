@@ -1,0 +1,133 @@
+import { describe, expect, it } from "vitest";
+
+import type { WorktreeVcsSnapshot } from "@ctx/types";
+
+import { buildGitPaneModel } from "./worktreeGitPaneModel";
+
+const makeSnapshot = (overrides?: Partial<WorktreeVcsSnapshot>): WorktreeVcsSnapshot => ({
+  worktree_id: "wt-1",
+  rev: 1,
+  emitted_at_ms: 1,
+  base_commit_sha: "base",
+  head_commit_sha: "head",
+  base_resolution: { kind: "merge_base", target_source: "primary_branch_config", error: null },
+  compute_state: "ready",
+  summary: { file_count: 0, line_additions: 0, line_deletions: 0, line_count: 0 },
+  git_status: {
+    branch: "main",
+    upstream: "origin/main",
+    ahead: 0,
+    behind: 0,
+    detached: false,
+    staged: 0,
+    unstaged: 0,
+    untracked: 0,
+    entries: [],
+  },
+  touched_files: {
+    items: [],
+    truncated: false,
+    total_count: 0,
+  },
+  freshness: "fresh",
+  available: true,
+  unavailable_reason: null,
+  schema_version: 1,
+  ...overrides,
+});
+
+describe("buildGitPaneModel", () => {
+  it("keeps pane inventory non-empty when the badge summary is non-zero but diff detail is absent", () => {
+    const model = buildGitPaneModel(
+      makeSnapshot({
+        summary: { file_count: 1, line_additions: 3, line_deletions: 1, line_count: 4 },
+        git_status: {
+          branch: "main",
+          upstream: "origin/main",
+          ahead: 0,
+          behind: 0,
+          detached: false,
+          staged: 0,
+          unstaged: 1,
+          untracked: 0,
+          entries: [{ path: "file.txt", index_status: " ", worktree_status: "M", orig_path: null }],
+        },
+        touched_files: {
+          items: [{ path: "file.txt", index_status: " ", worktree_status: "M", orig_path: null }],
+          truncated: false,
+          total_count: 1,
+        },
+      }),
+    );
+
+    expect(model.badgeCount).toBe(1);
+    expect(model.totalCount).toBe(1);
+    expect(model.sections).toHaveLength(1);
+    expect(model.sections[0]?.key).toBe("unstaged");
+    expect(model.sections[0]?.files[0]?.path).toBe("file.txt");
+  });
+
+  it("falls back to summary count without claiming the pane is empty when inventory is not ready yet", () => {
+    const model = buildGitPaneModel(
+      makeSnapshot({
+        compute_state: "computing",
+        summary: { file_count: 2, line_additions: 4, line_deletions: 0, line_count: 4 },
+        touched_files: { items: [], truncated: false, total_count: 2 },
+      }),
+    );
+
+    expect(model.badgeCount).toBe(2);
+    expect(model.totalCount).toBe(2);
+    expect(model.listReady).toBe(false);
+    expect(model.loading).toBe(false);
+  });
+
+  it("groups staged, unstaged, and untracked files deterministically", () => {
+    const model = buildGitPaneModel(
+      makeSnapshot({
+        summary: { file_count: 3, line_additions: 3, line_deletions: 0, line_count: 3 },
+        git_status: {
+          branch: "main",
+          upstream: "origin/main",
+          ahead: 0,
+          behind: 0,
+          detached: false,
+          staged: 1,
+          unstaged: 1,
+          untracked: 1,
+          entries: [
+            { path: "staged.txt", index_status: "M", worktree_status: " ", orig_path: null },
+            { path: "unstaged.txt", index_status: " ", worktree_status: "M", orig_path: null },
+            { path: "new.txt", index_status: "?", worktree_status: null, orig_path: null },
+          ],
+        },
+        touched_files: {
+          items: [],
+          truncated: false,
+          total_count: 3,
+        },
+      }),
+    );
+
+    expect(model.sections.map((section) => section.key)).toEqual(["staged", "unstaged", "untracked"]);
+    expect(model.sections.map((section) => section.files[0]?.path)).toEqual([
+      "staged.txt",
+      "unstaged.txt",
+      "new.txt",
+    ]);
+  });
+
+  it("reports unavailable no-repo worktrees as unavailable instead of empty", () => {
+    const model = buildGitPaneModel(
+      makeSnapshot({
+        available: false,
+        unavailable_reason: "no_repo",
+      }),
+    );
+
+    expect(model.badgeCount).toBe(0);
+    expect(model.totalCount).toBe(0);
+    expect(model.unavailableLabel).toBe("No git repo detected for this workspace yet.");
+    expect(model.listReady).toBe(true);
+  });
+});

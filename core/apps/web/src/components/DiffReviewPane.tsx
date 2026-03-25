@@ -4,6 +4,7 @@ import type { editor as MonacoEditor } from "monaco-editor";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { FileIcon } from "./FileIcon";
 import { useThemeVariant } from "../utils/theme";
+import type { GitPaneFileEntry, GitPaneModel } from "../pages/workbenchShell/worktreeGitPaneModel";
 
 type DiffFile = {
   key: string;
@@ -91,9 +92,18 @@ const parseDiffInWorker = (diff: string): Promise<DiffFile[]> => {
 
 const DiffReviewPane = memo(function DiffReviewPane({
   diff,
+  inventory,
+  detail,
   labels,
 }: {
   diff: string;
+  inventory?: GitPaneModel;
+  detail?: {
+    loading: boolean;
+    error?: string | null;
+    tooLarge?: boolean;
+    tooLargeLabel?: string | null;
+  };
   labels?: Partial<{
     empty: string;
   }>;
@@ -138,6 +148,102 @@ const DiffReviewPane = memo(function DiffReviewPane({
   }, [diff]);
 
   const toggleFile = (key: string) => setExpandedFiles((prev) => ({ ...prev, [key]: !(prev[key] ?? false) }));
+
+  if (inventory) {
+    const hasInventory = inventory.totalCount > 0;
+    return (
+      <div className="diff-pane">
+        {inventory.unavailableLabel && <div className="muted">{inventory.unavailableLabel}</div>}
+        {!inventory.unavailableLabel && inventory.loading && !hasInventory && (
+          <div className="muted">Loading changes...</div>
+        )}
+        {!inventory.unavailableLabel && !inventory.loading && !hasInventory && (
+          <div className="muted">{inventory.computeError ?? labels?.empty ?? "No changes on this worktree."}</div>
+        )}
+        {!inventory.unavailableLabel && hasInventory && (
+          <div className="cursor-diff">
+            <div className="cursor-diff-toolbar">
+              <button
+                type="button"
+                className={`cursor-diff-toggle ${wrapLines ? "cursor-diff-toggle-active" : ""}`}
+                aria-pressed={wrapLines}
+                title={wrapLines ? "Disable line wrap" : "Enable line wrap"}
+                onClick={() => setWrapLines((prev) => !prev)}
+              >
+                Wrap lines
+              </button>
+            </div>
+            {detail?.error ? <div className="muted">{detail.error}</div> : null}
+            {!inventory.listReady ? <div className="muted">Loading changed files...</div> : null}
+            <div className="cursor-diff-list">
+              {inventory.sections.map((section) => (
+                <div key={section.key} className="cursor-diff-section">
+                  <div className="cursor-diff-section-header">
+                    <span className="cursor-diff-section-title">{section.label}</span>
+                    <span className="cursor-diff-section-count">{section.count}</span>
+                  </div>
+                  {section.files.map((fileEntry) => {
+                    const isOpen = expandedFiles[fileEntry.path] ?? false;
+                    const parsedFile = findParsedDiffFile(files, fileEntry);
+                    return (
+                      <div key={fileEntry.path} className={`cursor-diff-file ${parsedFile ? fileAccentClass(parsedFile) : ""}`}>
+                        <div className="cursor-diff-file-header">
+                          <button
+                            type="button"
+                            className="cursor-diff-chevron"
+                            onClick={() => toggleFile(fileEntry.path)}
+                            aria-label={isOpen ? "Collapse file diff" : "Expand file diff"}
+                            aria-expanded={isOpen}
+                          >
+                            {isOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                          </button>
+                          <FileIcon path={fileEntry.path} size={14} className="cursor-diff-file-icon" />
+                          <span className="cursor-diff-file-path" title={fileEntry.path}>
+                            {fileEntry.path}
+                          </span>
+                          {renderInventorySummary(fileEntry, parsedFile)}
+                          <div className="cursor-diff-spacer" />
+                        </div>
+                        {isOpen ? (
+                          <div className="cursor-diff-file-body" role="region" aria-label={`Diff for ${fileEntry.path}`}>
+                            {detail?.tooLarge ? (
+                              <div className="muted" style={{ padding: 12 }}>
+                                {detail.tooLargeLabel ?? "Diff too large to display."}
+                              </div>
+                            ) : detail?.error ? (
+                              <div className="muted" style={{ padding: 12 }}>
+                                {detail.error}
+                              </div>
+                            ) : detail?.loading && !parsedFile ? (
+                              <div className="muted" style={{ padding: 12 }}>
+                                Loading diff...
+                              </div>
+                            ) : parsedFile?.isBinary ? (
+                              <div className="muted" style={{ padding: 12 }}>
+                                Binary or metadata-only diff.
+                              </div>
+                            ) : parsedFile ? (
+                              <div className="cursor-diff-editor-shell">
+                                <DecoratedDiffEditor file={parsedFile} wrapLines={wrapLines} monacoTheme={monacoTheme} />
+                              </div>
+                            ) : (
+                              <div className="muted" style={{ padding: 12 }}>
+                                No file diff available.
+                              </div>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   const hasChanges = diff.trim().length > 0;
 
@@ -235,6 +341,55 @@ const DiffReviewPane = memo(function DiffReviewPane({
 });
 
 export { DiffReviewPane };
+
+function findParsedDiffFile(files: DiffFile[], entry: GitPaneFileEntry): DiffFile | null {
+  const origPath = entry.origPath ?? "";
+  for (const file of files) {
+    if (file.filePath === entry.path || file.newPath === entry.path || file.oldPath === entry.path) return file;
+    if (origPath && (file.filePath === origPath || file.oldPath === origPath || file.newPath === origPath)) {
+      return file;
+    }
+  }
+  return null;
+}
+
+function renderInventorySummary(entry: GitPaneFileEntry, parsedFile: DiffFile | null) {
+  if (parsedFile) {
+    return (
+      <span className="cursor-diff-summary" aria-label="Diff summary">
+        {parsedFile.isNew ? (
+          <>
+            <span className="cursor-diff-new">(New)</span>{" "}
+            <span className="cursor-diff-plus">+{parsedFile.addedLines}</span>
+          </>
+        ) : parsedFile.isDeleted ? (
+          <>
+            <span className="cursor-diff-deleted">(Deleted)</span>{" "}
+            <span className="cursor-diff-minus">-{parsedFile.deletedLines}</span>
+          </>
+        ) : (
+          <>
+            <span className="cursor-diff-plus">+{parsedFile.addedLines}</span>{" "}
+            <span className="cursor-diff-minus">-{parsedFile.deletedLines}</span>
+          </>
+        )}
+      </span>
+    );
+  }
+  return (
+    <span className="cursor-diff-summary" aria-label="File status">
+      <span className="cursor-diff-status-pill">
+        {entry.section === "staged"
+          ? "Staged"
+          : entry.section === "unstaged"
+            ? "Unstaged"
+            : entry.section === "untracked"
+              ? "Untracked"
+              : "Changed"}
+      </span>
+    </span>
+  );
+}
 
 function parseUnifiedDiff(diffText: string): DiffFile[] {
   const lines = String(diffText ?? "").split("\n");
