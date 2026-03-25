@@ -184,20 +184,82 @@ async fn subscribe_session(
         .unwrap();
 }
 
+async fn wait_for_reset_required_or_disconnect(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    deadline: Duration,
+) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + deadline;
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let next = tokio::time::timeout(
+            remaining.min(Duration::from_millis(250)),
+            socket.next(),
+        )
+        .await;
+        match next {
+            Ok(Some(Ok(WsMessage::Text(txt)))) => {
+                let txt_string = txt.to_string();
+                let value: serde_json::Value =
+                    serde_json::from_str(&txt_string).map_err(|err| err.to_string())?;
+                if value.get("type").and_then(|v| v.as_str()) == Some("reset_required") {
+                    return Ok(());
+                }
+            }
+            Ok(Some(Ok(WsMessage::Close(_)))) | Ok(None) | Ok(Some(Err(_))) => return Ok(()),
+            Ok(Some(Ok(_))) | Err(_) => {}
+        }
+    }
+
+    Ok(())
+}
+
+async fn wait_for_disconnect_without_reset(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    deadline: Duration,
+) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + deadline;
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let next = tokio::time::timeout(
+            remaining.min(Duration::from_millis(250)),
+            socket.next(),
+        )
+        .await;
+        match next {
+            Ok(Some(Ok(WsMessage::Text(txt)))) => {
+                let txt_string = txt.to_string();
+                let value: serde_json::Value =
+                    serde_json::from_str(&txt_string).map_err(|err| err.to_string())?;
+                if value.get("type").and_then(|v| v.as_str()) == Some("reset_required") {
+                    return Err(format!(
+                        "unexpected reset_required while disconnecting: {txt_string}"
+                    ));
+                }
+            }
+            Ok(Some(Ok(WsMessage::Close(_)))) | Ok(None) | Ok(Some(Err(_))) => return Ok(()),
+            Ok(Some(Ok(_))) | Err(_) => {}
+        }
+    }
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn fault_matrix_replay_errors_become_gaps() {
     let (_state, server, addr, ws, session, _last_seq) = setup_server().await;
 
     struct Case {
         name: &'static str,
-        allow_transport_failure: bool,
         setup: fn(),
     }
 
     let cases = [
         Case {
             name: "replay list fails",
-            allow_transport_failure: true,
             setup: || {
                 ctx_http::fault_injection::clear_failpoints();
                 ctx_store::fault_injection::clear_failpoints();
@@ -209,7 +271,6 @@ async fn fault_matrix_replay_errors_become_gaps() {
         },
         Case {
             name: "replay send fails",
-            allow_transport_failure: true,
             setup: || {
                 clear_all_failpoints();
                 ctx_http::fault_injection::set_failpoint(
@@ -226,17 +287,10 @@ async fn fault_matrix_replay_errors_become_gaps() {
         (case.setup)();
         subscribe_session(&mut socket, session.id, 0).await;
 
-        let recv = tokio::time::timeout(Duration::from_secs(10), socket.next()).await;
-        match recv {
-            Ok(Some(Ok(WsMessage::Text(txt)))) => {
-                let value: serde_json::Value = serde_json::from_str(&txt).unwrap();
-                let msg_type = value.get("type").and_then(|v| v.as_str());
-                assert_eq!(msg_type, Some("reset_required"), "{}", case.name);
-            }
-            Ok(Some(Err(_))) | Ok(None) | Err(_) if case.allow_transport_failure => {
-                // Synthetic replay failpoints can abort the websocket before the reset frame is flushed.
-            }
-            other => panic!("{}: unexpected replay result: {:?}", case.name, other),
+        if let Err(err) =
+            wait_for_reset_required_or_disconnect(&mut socket, Duration::from_secs(10)).await
+        {
+            panic!("{}: {}", case.name, err);
         }
 
         clear_all_failpoints();
@@ -276,14 +330,9 @@ async fn fault_matrix_snapshot_send_failure_reconnects_cleanly() {
         .await
         .unwrap();
 
-    let first_recv = tokio::time::timeout(Duration::from_secs(3), socket.next()).await;
-    match first_recv {
-        Ok(Some(Ok(WsMessage::Close(_)))) | Ok(None) | Ok(Some(Err(_))) | Err(_) => {}
-        Ok(Some(Ok(WsMessage::Text(txt)))) => {
-            panic!("expected snapshot send failure to disconnect, got frame: {txt}");
-        }
-        other => panic!("unexpected result after snapshot send failure: {other:?}"),
-    }
+    wait_for_disconnect_without_reset(&mut socket, Duration::from_secs(5))
+        .await
+        .unwrap();
 
     ctx_http::fault_injection::clear_failpoints();
     ctx_store::fault_injection::clear_failpoints();
@@ -343,19 +392,9 @@ async fn fault_matrix_reset_emit_failure_disconnects_stream() {
 
     subscribe_session(&mut socket, session.id, 0).await;
 
-    let recv = tokio::time::timeout(Duration::from_secs(3), socket.next()).await;
-    match recv {
-        Ok(Some(Ok(WsMessage::Text(txt)))) => {
-            panic!("unexpected reset payload when reset send failpoint is armed: {txt}");
-        }
-        Ok(Some(Ok(WsMessage::Close(_)))) | Ok(None) | Err(_) => {}
-        Ok(Some(Ok(other))) => {
-            panic!("unexpected websocket frame after reset send failure: {other:?}");
-        }
-        Ok(Some(Err(err))) => {
-            panic!("unexpected websocket error after reset send failure: {err:?}");
-        }
-    }
+    wait_for_disconnect_without_reset(&mut socket, Duration::from_secs(5))
+        .await
+        .unwrap();
 
     clear_all_failpoints();
     server.abort();

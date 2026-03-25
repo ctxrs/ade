@@ -553,8 +553,8 @@ async fn apply_matrix_to_status_flags_managed_archive_checksum_mismatch() {
 
     let expected_sha256 = sha256_hex(b"new-codex-runtime");
     let actual_sha256 = sha256_hex(b"previous-archive");
-    let entry = codex_archive_test_entry("0.114.0-ctx.2", &expected_sha256);
-    let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.2", &actual_sha256);
+    let entry = codex_archive_test_entry("0.114.0-ctx.1", &expected_sha256);
+    let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.1", &actual_sha256);
     let mut status = ctx_providers::adapters::ProviderStatus {
         provider_id: "codex".to_string(),
         installed: true,
@@ -629,8 +629,8 @@ async fn apply_matrix_to_status_accepts_matching_managed_archive_checksum() {
     std::fs::write(&runtime, b"bridge-or-runtime-bytes-can-differ").expect("write runtime");
 
     let sha256 = sha256_hex(b"matching-downloaded-archive");
-    let entry = codex_archive_test_entry("0.114.0-ctx.2", &sha256);
-    let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.2", &sha256);
+    let entry = codex_archive_test_entry("0.114.0-ctx.1", &sha256);
+    let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.1", &sha256);
     let mut status = ctx_providers::adapters::ProviderStatus {
         provider_id: "codex".to_string(),
         installed: true,

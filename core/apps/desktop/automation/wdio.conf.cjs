@@ -658,17 +658,21 @@ const assertManagedHarnessImageComponent = (lock, target) => {
   }
 };
 
-const desktopOs = () => {
-  if (process.platform === "darwin") return "macos";
-  if (process.platform === "win32") return "windows";
+const normalizeDesktopOs = (platform = process.platform) => {
+  if (platform === "darwin" || platform === "macos") return "macos";
+  if (platform === "win32" || platform === "windows") return "windows";
   return "linux";
 };
 
-const desktopArch = () => {
-  if (process.arch === "arm64") return "aarch64";
-  if (process.arch === "x64") return "x86_64";
-  return process.arch;
+const normalizeDesktopArch = (arch = process.arch) => {
+  if (arch === "arm64" || arch === "aarch64") return "aarch64";
+  if (arch === "x64" || arch === "x86_64") return "x86_64";
+  return arch;
 };
+
+const desktopOs = () => normalizeDesktopOs(process.platform);
+
+const desktopArch = () => normalizeDesktopArch(process.arch);
 
 const normalizeTargetToken = (raw, hostValue) => {
   const trimmed = String(raw || "").trim();
@@ -705,7 +709,7 @@ const resolveBundlesDir = () => {
   return BUNDLES_DIR;
 };
 
-const ensureBundledContainerAssets = () => {
+const ensureBundledContainerAssets = (options = {}) => {
   const bundlesDir = resolveBundlesDir();
   const manifestPath = path.join(bundlesDir, "manifest.json");
   const runtimeLockPath = path.join(bundlesDir, "runtime_lock.v2.json");
@@ -728,8 +732,8 @@ const ensureBundledContainerAssets = () => {
       ? manifest.harness_images
       : [];
 
-  const hostOs = desktopOs();
-  const hostArch = desktopArch();
+  const hostOs = normalizeDesktopOs(options.platform);
+  const hostArch = normalizeDesktopArch(options.arch);
   const requiresBundledAvfRuntime = hostOs === "macos";
   if (requiresBundledAvfRuntime) {
     const avfGuestRuntime = runtimes.find((entry) =>

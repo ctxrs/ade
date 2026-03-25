@@ -222,7 +222,10 @@ test("wdio AVF container preflight accepts a complete guest runtime payload", as
       },
       (mod) => {
         assert.doesNotThrow(() => {
-          mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets();
+          mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets({
+            platform: "darwin",
+            arch: "arm64",
+          });
         });
       },
     );
@@ -232,7 +235,7 @@ test("wdio AVF container preflight accepts a complete guest runtime payload", as
   }
 });
 
-test("wdio AVF container preflight rejects a bundle missing the guest agent helper", async () => {
+test("wdio AVF container preflight rejects a bundle missing the guest agent helper on macOS", async () => {
   const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-avf-assets-"));
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
   try {
@@ -244,7 +247,11 @@ test("wdio AVF container preflight rejects a bundle missing the guest agent help
       },
       (mod) => {
         assert.throws(
-          () => mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets(),
+          () =>
+            mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets({
+              platform: "darwin",
+              arch: "arm64",
+            }),
           /guest-agent/,
         );
       },
@@ -267,7 +274,10 @@ test("wdio AVF container preflight accepts a thin bundle with managed AVF/image 
       },
       (mod) => {
         assert.doesNotThrow(() => {
-          mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets();
+          mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets({
+            platform: "darwin",
+            arch: "arm64",
+          });
         });
       },
     );
@@ -277,7 +287,7 @@ test("wdio AVF container preflight accepts a thin bundle with managed AVF/image 
   }
 });
 
-test("wdio AVF container preflight rejects a thin bundle missing managed AVF helper metadata", async () => {
+test("wdio AVF container preflight rejects a thin bundle missing managed AVF helper metadata on macOS", async () => {
   const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-avf-assets-"));
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
   try {
@@ -289,7 +299,11 @@ test("wdio AVF container preflight rejects a thin bundle missing managed AVF hel
       },
       (mod) => {
         assert.throws(
-          () => mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets(),
+          () =>
+            mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets({
+              platform: "darwin",
+              arch: "arm64",
+            }),
           /guest-agent/,
         );
       },

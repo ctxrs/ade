@@ -139,7 +139,7 @@
     "verify:agent:fast": "bash -lc 'scripts/affected_tests.sh'",
     "verify:e2e:all": "pnpm verify:e2e && pnpm verify:e2e:release && pnpm verify:e2e:cross-platform && pnpm verify:e2e:soak && pnpm verify:e2e:load",
     "verify:nightly": "pnpm verify:anomaly && pnpm verify:fuzz:regression && pnpm verify:e2e:soak && pnpm verify:e2e:load && pnpm test:providers:e2e && pnpm test:providers:e2e:runner",
-    "verify:release": "pnpm verify:merge:ci && pnpm verify:e2e:release && pnpm test:bundles:codex-provenance && pnpm test:bundles:codex-patch-series",
+    "verify:release": "pnpm verify:merge:ci && pnpm verify:e2e:release && pnpm test:bundles:codex-archive-artifacts && pnpm test:bundles:codex-provenance && pnpm test:bundles:codex-patch-series",
     "posthog:bootstrap": "node scripts/posthog_bootstrap.mjs",
     "posthog:smoke": "node scripts/posthog_smoke_test.mjs --env staging --timeout-seconds 180"
   },
