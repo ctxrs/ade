@@ -1,6 +1,8 @@
-use super::*;
+use std::collections::HashSet;
 
-#[derive(Default)]
+use serde_json::{json, Value};
+
+#[derive(Default, Debug, Clone)]
 pub(super) struct DiffStats {
     added: usize,
     removed: usize,
@@ -11,13 +13,15 @@ pub(super) const MAX_PREVIEW_PATHS: usize = 5;
 pub(super) const TOOL_PREVIEW_MAX_LINES: usize = 5;
 pub(super) const TOOL_PREVIEW_MAX_LINE_CHARS: usize = 80;
 
-pub(super) struct ToolTextPreview {
+#[derive(Debug, Clone)]
+pub(in crate::scheduler) struct ToolTextPreview {
     pub(super) preview: String,
     pub(super) truncated: bool,
     pub(super) original_bytes: usize,
 }
 
-pub(super) struct ToolJsonPreview {
+#[derive(Debug, Clone)]
+pub(in crate::scheduler) struct ToolJsonPreview {
     pub(super) preview: Option<Value>,
     pub(super) truncated: Option<bool>,
     pub(super) original_bytes: Option<i64>,

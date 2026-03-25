@@ -33,6 +33,7 @@ use crate::workspace_config;
 
 mod event_loop;
 mod helpers;
+mod tool_runtime;
 
 use self::event_loop::{spawn_turn_event_loop, TurnEventLoop};
 pub(crate) use self::helpers::model_context_window;
@@ -40,11 +41,16 @@ use self::helpers::{
     apply_provider_launch_overrides, compute_context_window_metrics, normalize_session_model_id,
     provider_supports_system_prompt_append, runtime_provider_id_for_session_provider,
 };
+use self::tool_runtime::{cwd_outside_worktree, maybe_spool_tool_output};
 use super::lifecycle::RunningTurn;
 use super::persistence::{append_session_event_with_retry, emit_event, persist_assistant_message};
 use super::tools::{
-    build_tool_ops_meta, build_turn_tool_update_from_payload, cwd_outside_worktree,
-    maybe_spool_tool_output, merge_tool_update, sanitize_tool_event_payload, tool_count_deltas,
+    normalize::normalize_tool_event,
+    projections::{
+        build_tool_ops_meta_from_normalized, build_turn_tool_update,
+        sanitize_normalized_tool_event_payload,
+    },
+    state::{merge_tool_update, tool_count_deltas},
 };
 use super::QueuedMessage;
 

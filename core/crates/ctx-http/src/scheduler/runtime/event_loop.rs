@@ -292,72 +292,76 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                 obj.entry("status").or_insert(json!("completed"));
             }
         }
-        if matches!(event_type, SessionEventType::ToolCall) {
-            let tool_meta = build_tool_ops_meta(&event_type, &raw_payload);
-            let mut meta = serde_json::Map::new();
-            if let Some(tool_call_id) = tool_meta.tool_call_id.clone() {
-                meta.insert("tool_call_id".to_string(), json!(tool_call_id));
-            }
-            if let Some(title) = tool_meta.title.clone() {
-                meta.insert("title".to_string(), json!(title));
-            }
-            if let Some(status) = tool_meta.status.clone() {
-                meta.insert("status".to_string(), json!(status));
-            }
-            if let Some(input_preview) = tool_meta.input_preview.clone() {
-                meta.insert("input".to_string(), input_preview);
-            }
-            let mut event = OpsEvent::new("info", "tool_exec");
-            event.session_id = Some(session_id.0.to_string());
-            event.worktree_id = Some(worktree_id.0.to_string());
-            event.run_id = Some(run_id.0.to_string());
-            event.turn_id = Some(turn_id.0.to_string());
-            event.provider_id = Some(provider_id.clone());
-            event.tool_kind = tool_meta.tool_kind.clone();
-            event.cwd = tool_meta.cwd.clone();
-            event.worktree_root = Some(workdir_str.clone());
-            event.meta = if meta.is_empty() {
-                None
-            } else {
-                Some(Value::Object(meta))
-            };
-            state.telemetry.ops_events.emit(event);
-
-            if let Some(cwd) = tool_meta.cwd.as_deref() {
-                if cwd_outside_worktree(cwd, &workdir_root, workdir_canonical.as_ref()) {
-                    let mut warn_event = OpsEvent::new("warn", "tool_exec_anomaly");
-                    warn_event.session_id = Some(session_id.0.to_string());
-                    warn_event.worktree_id = Some(worktree_id.0.to_string());
-                    warn_event.run_id = Some(run_id.0.to_string());
-                    warn_event.turn_id = Some(turn_id.0.to_string());
-                    warn_event.provider_id = Some(provider_id.clone());
-                    warn_event.tool_kind = tool_meta.tool_kind.clone();
-                    warn_event.cwd = Some(cwd.to_string());
-                    warn_event.worktree_root = Some(workdir_str.clone());
-                    warn_event.meta = Some(json!({
-                        "reason": "cwd_outside_worktree",
-                        "tool_call_id": tool_meta.tool_call_id,
-                    }));
-                    state.telemetry.ops_events.emit(warn_event);
-                }
-            }
-        }
-        if matches!(
+        let normalized_tool_event = if matches!(
             event_type,
             SessionEventType::ToolCall
                 | SessionEventType::ToolCallUpdate
                 | SessionEventType::ToolResult
         ) {
+            Some(normalize_tool_event(&event_type, &raw_payload))
+        } else {
+            None
+        };
+        if matches!(event_type, SessionEventType::ToolCall) {
+            if let Some(tool_event) = normalized_tool_event.as_ref() {
+                let tool_meta = build_tool_ops_meta_from_normalized(tool_event);
+                let mut meta = serde_json::Map::new();
+                if let Some(tool_call_id) = tool_meta.tool_call_id.clone() {
+                    meta.insert("tool_call_id".to_string(), json!(tool_call_id));
+                }
+                if let Some(title) = tool_meta.title.clone() {
+                    meta.insert("title".to_string(), json!(title));
+                }
+                if let Some(status) = tool_meta.status.clone() {
+                    meta.insert("status".to_string(), json!(status));
+                }
+                if let Some(input_preview) = tool_meta.input_preview.clone() {
+                    meta.insert("input".to_string(), input_preview);
+                }
+                let mut event = OpsEvent::new("info", "tool_exec");
+                event.session_id = Some(session_id.0.to_string());
+                event.worktree_id = Some(worktree_id.0.to_string());
+                event.run_id = Some(run_id.0.to_string());
+                event.turn_id = Some(turn_id.0.to_string());
+                event.provider_id = Some(provider_id.clone());
+                event.tool_kind = tool_meta.tool_kind.clone();
+                event.cwd = tool_meta.cwd.clone();
+                event.worktree_root = Some(workdir_str.clone());
+                event.meta = if meta.is_empty() {
+                    None
+                } else {
+                    Some(Value::Object(meta))
+                };
+                state.telemetry.ops_events.emit(event);
+
+                if let Some(cwd) = tool_meta.cwd.as_deref() {
+                    if cwd_outside_worktree(cwd, &workdir_root, workdir_canonical.as_ref()) {
+                        let mut warn_event = OpsEvent::new("warn", "tool_exec_anomaly");
+                        warn_event.session_id = Some(session_id.0.to_string());
+                        warn_event.worktree_id = Some(worktree_id.0.to_string());
+                        warn_event.run_id = Some(run_id.0.to_string());
+                        warn_event.turn_id = Some(turn_id.0.to_string());
+                        warn_event.provider_id = Some(provider_id.clone());
+                        warn_event.tool_kind = tool_meta.tool_kind.clone();
+                        warn_event.cwd = Some(cwd.to_string());
+                        warn_event.worktree_root = Some(workdir_str.clone());
+                        warn_event.meta = Some(json!({
+                            "reason": "cwd_outside_worktree",
+                            "tool_call_id": tool_meta.tool_call_id,
+                        }));
+                        state.telemetry.ops_events.emit(warn_event);
+                    }
+                }
+            }
+        }
+        if let Some(tool_event) = normalized_tool_event.as_ref() {
             let output_spool_path = if matches!(event_type, SessionEventType::ToolResult) {
-                maybe_spool_tool_output(state.as_ref(), &raw_payload, session_id, turn_id).await
+                maybe_spool_tool_output(state.as_ref(), tool_event, session_id, turn_id).await
             } else {
                 None
             };
-            payload = sanitize_tool_event_payload(
-                &event_type,
-                &raw_payload,
-                output_spool_path.as_deref(),
-            );
+            payload =
+                sanitize_normalized_tool_event_payload(tool_event, output_spool_path.as_deref());
         }
         {
             let mut order_seq_state = order_seq_state.lock().await;
@@ -455,61 +459,62 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
             SessionEventType::ToolCall
             | SessionEventType::ToolCallUpdate
             | SessionEventType::ToolResult => {
-                if let Some(update) =
-                    build_turn_tool_update_from_payload(&event_type, &event.payload_json)
-                {
-                    let prev = if matches!(event.event_type, SessionEventType::ToolCallUpdate) {
-                        tool_cache.get(&update.tool_call_id).cloned()
-                    } else if let Some(cached) = tool_cache.get(&update.tool_call_id).cloned() {
-                        Some(cached)
-                    } else {
-                        store
-                            .get_session_turn_tool(session_id, &update.tool_call_id)
-                            .await
-                            .ok()
-                            .flatten()
-                    };
-                    if let Some(merged) = merge_tool_update(
-                        prev.as_ref(),
-                        update,
-                        session_id,
-                        turn_id,
-                        event.seq,
-                        event.created_at,
-                    ) {
-                        if matches!(event.event_type, SessionEventType::ToolCallUpdate) {
-                            tool_cache.insert(merged.tool_call_id.clone(), merged);
+                if let Some(tool_event) = normalized_tool_event.as_ref() {
+                    let order_seq = read_order_seq(&event.payload_json);
+                    if let Some(update) = build_turn_tool_update(tool_event, order_seq) {
+                        let prev = if matches!(event.event_type, SessionEventType::ToolCallUpdate) {
+                            tool_cache.get(&update.tool_call_id).cloned()
+                        } else if let Some(cached) = tool_cache.get(&update.tool_call_id).cloned() {
+                            Some(cached)
                         } else {
-                            let (
-                                delta_total,
-                                delta_pending,
-                                delta_running,
-                                delta_completed,
-                                delta_failed,
-                            ) = tool_count_deltas(prev.as_ref(), &merged);
-                            let _ = store.upsert_session_turn_tool(merged.clone()).await;
-                            if delta_total != 0
-                                || delta_pending != 0
-                                || delta_running != 0
-                                || delta_completed != 0
-                                || delta_failed != 0
-                            {
-                                let _ = store
-                                    .update_session_turn_tool_counts(
-                                        session_id,
-                                        turn_id,
-                                        SessionTurnToolCountDeltas {
-                                            total: delta_total,
-                                            pending: delta_pending,
-                                            running: delta_running,
-                                            completed: delta_completed,
-                                            failed: delta_failed,
-                                        },
-                                        event.created_at,
-                                    )
-                                    .await;
+                            store
+                                .get_session_turn_tool(session_id, &update.tool_call_id)
+                                .await
+                                .ok()
+                                .flatten()
+                        };
+                        if let Some(merged) = merge_tool_update(
+                            prev.as_ref(),
+                            update,
+                            session_id,
+                            turn_id,
+                            event.seq,
+                            event.created_at,
+                        ) {
+                            if matches!(event.event_type, SessionEventType::ToolCallUpdate) {
+                                tool_cache.insert(merged.tool_call_id.clone(), merged);
+                            } else {
+                                let (
+                                    delta_total,
+                                    delta_pending,
+                                    delta_running,
+                                    delta_completed,
+                                    delta_failed,
+                                ) = tool_count_deltas(prev.as_ref(), &merged);
+                                let _ = store.upsert_session_turn_tool(merged.clone()).await;
+                                if delta_total != 0
+                                    || delta_pending != 0
+                                    || delta_running != 0
+                                    || delta_completed != 0
+                                    || delta_failed != 0
+                                {
+                                    let _ = store
+                                        .update_session_turn_tool_counts(
+                                            session_id,
+                                            turn_id,
+                                            SessionTurnToolCountDeltas {
+                                                total: delta_total,
+                                                pending: delta_pending,
+                                                running: delta_running,
+                                                completed: delta_completed,
+                                                failed: delta_failed,
+                                            },
+                                            event.created_at,
+                                        )
+                                        .await;
+                                }
+                                tool_cache.insert(merged.tool_call_id.clone(), merged);
                             }
-                            tool_cache.insert(merged.tool_call_id.clone(), merged);
                         }
                     }
                 }
