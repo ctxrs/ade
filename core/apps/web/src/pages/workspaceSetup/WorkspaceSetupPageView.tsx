@@ -124,7 +124,7 @@ type WorkspaceSetupPageViewProps = {
   setRepoUrl: Dispatch<SetStateAction<string>>;
   repoBranch: string;
   setRepoBranch: Dispatch<SetStateAction<string>>;
-  useDiskIsolatedStaging: boolean;
+  useSandboxStaging: boolean;
   setupHook: string;
   setSetupHook: Dispatch<SetStateAction<string>>;
   workspaceName: string;
@@ -256,7 +256,7 @@ export function WorkspaceSetupPageView({
   setRepoUrl,
   repoBranch,
   setRepoBranch,
-  useDiskIsolatedStaging,
+  useSandboxStaging,
   setupHook,
   setSetupHook,
   workspaceName,
@@ -610,7 +610,7 @@ export function WorkspaceSetupPageView({
                         )}
                       </div>
                     </label>
-                    {selections.container !== "no-container" && (
+                    {selections.container !== "host" && (
                       <div className="wizard-note">
                         This is the project folder on the host. In sandbox mode, ctx will copy the workspace into an isolated managed filesystem for execution.
                       </div>
@@ -668,12 +668,12 @@ export function WorkspaceSetupPageView({
                         }}
                       />
                     </label>
-                    {useDiskIsolatedStaging && (
+                    {useSandboxStaging && (
                       <div className="wizard-note">
-                        Ctx will clone into a managed staging path under <code>~/.ctx/workspaces/staging/</code> by default. Your workspace will live in the container.
+                        Ctx will clone into a managed staging path under <code>~/.ctx/workspaces/staging/</code> by default. Your workspace will live in the sandbox.
                       </div>
                     )}
-                    {!useDiskIsolatedStaging && (
+                    {!useSandboxStaging && (
                       <div className="wizard-note">
                         Tip: If you enter a folder ending in <code>/</code>, ctx will derive the repo name from the URL.
                       </div>
@@ -707,9 +707,9 @@ export function WorkspaceSetupPageView({
                         }}
                       />
                     </label>
-                    {selections.source === "new" && useDiskIsolatedStaging && (
+                    {selections.source === "new" && useSandboxStaging && (
                       <div className="wizard-note">
-                        Ctx will create the repo in a managed staging path. Your workspace will live in the container.
+                        Ctx will create the repo in a managed staging path. Your workspace will live in the sandbox.
                       </div>
                     )}
                   </div>
@@ -846,11 +846,11 @@ export function WorkspaceSetupPageView({
                           <div className="wizard-summary-v">{repoUrl.trim()}</div>
                         </div>
                       )}
-                      {selections.source === "clone" && (sourcePath.trim() || useDiskIsolatedStaging) && (
+                      {selections.source === "clone" && (sourcePath.trim() || useSandboxStaging) && (
                         <div className="wizard-summary-row">
                           <div className="wizard-summary-k">Destination</div>
                           <div className="wizard-summary-v">
-                            {useDiskIsolatedStaging ? "Managed staging (sandbox)" : sourcePath.trim()}
+                            {useSandboxStaging ? "Managed staging (sandbox)" : sourcePath.trim()}
                           </div>
                         </div>
                       )}
@@ -860,11 +860,11 @@ export function WorkspaceSetupPageView({
                           <div className="wizard-summary-v">{sourcePath.trim()}</div>
                         </div>
                       )}
-                      {selections.source === "new" && (sourcePath.trim() || useDiskIsolatedStaging) && (
+                      {selections.source === "new" && (sourcePath.trim() || useSandboxStaging) && (
                         <div className="wizard-summary-row">
                           <div className="wizard-summary-k">Destination</div>
                           <div className="wizard-summary-v">
-                            {useDiskIsolatedStaging ? "Managed staging (container)" : sourcePath.trim()}
+                            {useSandboxStaging ? "Managed staging (sandbox)" : sourcePath.trim()}
                           </div>
                         </div>
                       )}
@@ -877,12 +877,12 @@ export function WorkspaceSetupPageView({
                       <div className="wizard-summary-row">
                         <div className="wizard-summary-k">Sandbox</div>
                         <div className="wizard-summary-v">
-                          {selections.container === "no-container"
+                          {selections.container === "host"
                             ? "Host"
                             : "Sandbox"}
                         </div>
                       </div>
-                      {selections.container !== "no-container" && (
+                      {selections.container !== "host" && (
                         <div className="wizard-summary-row">
                           <div className="wizard-summary-k">Network</div>
                           <div className="wizard-summary-v">

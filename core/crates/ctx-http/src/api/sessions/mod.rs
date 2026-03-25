@@ -23,7 +23,7 @@ use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::git_status::{load_git_status_snapshot, GitStatusEntry};
 use crate::harness_runtime::{
-    command_output_with_timeout, podman_command, workspace_container_name,
+    command_output_with_timeout, sandbox_container_command, workspace_container_name,
 };
 use crate::installer;
 use crate::logs;

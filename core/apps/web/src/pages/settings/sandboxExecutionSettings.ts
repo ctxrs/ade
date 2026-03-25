@@ -1,14 +1,12 @@
-import type { ExecutionSettings as ApiExecutionSettings, PublicExecutionSettings } from "../../api/client";
+import type {
+  ExecutionSettings as ApiExecutionSettings,
+  PublicExecutionSettings,
+  UpdateExecutionSettingsRequest,
+} from "../../api/client";
 
 export const DEFAULT_MACHINE_IDLE_SHUTDOWN_SECONDS = 60 * 60;
 export const DEFAULT_MACHINE_HOST_PRESSURE_SWAP_THRESHOLD_MB = 1024;
 export const MIN_MACHINE_IDLE_SHUTDOWN_SECONDS = 60;
-
-export function defaultContainerRuntimeKind(
-  daemonDefaultRuntime?: ApiExecutionSettings["container"]["runtime"] | null,
-): ApiExecutionSettings["container"]["runtime"] {
-  return daemonDefaultRuntime ?? "podman";
-}
 
 export function defaultContainerMountMode(
   _runtime: ApiExecutionSettings["container"]["runtime"],
@@ -16,10 +14,8 @@ export function defaultContainerMountMode(
   return "disk_isolated";
 }
 
-export function defaultExecutionSettings(
-  daemonDefaultRuntime?: ApiExecutionSettings["container"]["runtime"] | null,
-): ApiExecutionSettings {
-  const runtime = defaultContainerRuntimeKind(daemonDefaultRuntime);
+export function defaultExecutionSettings(): ApiExecutionSettings {
+  const runtime: ApiExecutionSettings["container"]["runtime"] = "native_container";
   return {
     mode: "host",
     container: {
@@ -40,11 +36,16 @@ export function defaultExecutionSettings(
 
 export function normalizeExecutionSettings(
   value: ApiExecutionSettings | PublicExecutionSettings | null | undefined,
-  daemonDefaultRuntime?: ApiExecutionSettings["container"]["runtime"] | null,
 ): ApiExecutionSettings {
-  const fallback = defaultExecutionSettings(daemonDefaultRuntime);
-  const runtime = value?.container?.runtime ?? fallback.container.runtime;
-  const mountMode = value?.container?.mount_mode ?? fallback.container.mount_mode;
+  const fallback = defaultExecutionSettings();
+  const runtime =
+    value?.container && "runtime" in value.container
+      ? value.container.runtime
+      : fallback.container.runtime;
+  const mountMode =
+    value?.container && "mount_mode" in value.container
+      ? value.container.mount_mode
+      : fallback.container.mount_mode;
   return {
     mode: value?.mode ?? fallback.mode,
     container: {
@@ -62,6 +63,20 @@ export function normalizeExecutionSettings(
           value?.container?.machine?.host_pressure_swap_threshold_mb
           ?? fallback.container.machine.host_pressure_swap_threshold_mb,
       },
+    },
+  };
+}
+
+export function toExecutionUpdateRequest(
+  value: ApiExecutionSettings,
+): UpdateExecutionSettingsRequest {
+  return {
+    mode: value.mode,
+    container: {
+      network_mode: value.container.network_mode,
+      allowlist: value.container.allowlist,
+      image: value.container.image,
+      machine: value.container.machine,
     },
   };
 }

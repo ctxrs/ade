@@ -6,7 +6,7 @@ set -euo pipefail
 # Usage:
 #   scripts/smoke_bundled_ctx_harness_image_tar.sh <bundle_dir>
 #
-# This loads the ctx-harness image tar from <bundle_dir>/manifest.json into podman and then runs the
+# This loads the ctx-harness image tar from <bundle_dir>/manifest.json into the sandbox runtime and then runs the
 # standard egress-guard smoke test against the loaded image reference.
 
 bundle_dir="${1:-}"
@@ -69,14 +69,14 @@ if [[ ! -f "$tar_path" ]]; then
   exit 2
 fi
 
-if ! command -v podman >/dev/null 2>&1; then
-  echo "missing podman" >&2
+runtime="${CONTAINER_RUNTIME:-nerdctl}"
+if ! command -v "$runtime" >/dev/null 2>&1; then
+  echo "missing container runtime: $runtime" >&2
   exit 2
 fi
 
-podman load -i "$tar_path" >/dev/null
+"$runtime" load -i "$tar_path" >/dev/null
 
-CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-podman}" \
+CONTAINER_RUNTIME="$runtime" \
 CTX_HARNESS_IMAGE="$image_ref" \
 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/smoke_ctx_harness_egress_guard.sh"
-

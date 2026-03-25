@@ -34,13 +34,13 @@ const buildSteps = (stepKeys: WizardStepKey[]): WizardStep[] => {
       note: "Choose whether agents run directly on the host or in a sandbox for this workspace.",
       options: [
         {
-          id: "disk-isolated",
+          id: "sandbox",
           title: "Sandbox",
           desc: "Run agents in the standard isolated workspace sandbox. ctx mediates shells, files, git, and network policy.",
           badge: "Recommended",
         },
         {
-          id: "no-container",
+          id: "host",
           title: "Host",
           desc: "Run directly on the host. Useful if this machine is already agent-safe (e.g. a dedicated dev box).",
         },
@@ -74,7 +74,7 @@ const buildSteps = (stepKeys: WizardStepKey[]): WizardStep[] => {
     "network": {
       key: "network",
       title: "Network Policy",
-      note: "Restrict or permit agent network access (container mode only).",
+      note: "Restrict or permit agent network access (sandbox mode only).",
       options: [
         {
           id: "providers",
@@ -199,14 +199,14 @@ export function useWorkspaceSetupFlow({
   const hasSelection = Boolean(selections[step.key]);
   const mergeQueueSkipped = selections["merge-queue"] === "skip";
   const isSourceStep = step.key === "source";
-  const useDiskIsolatedStaging =
-    selections.container === "disk-isolated"
+  const useSandboxStaging =
+    selections.container === "sandbox"
     && (selections.source === "clone" || selections.source === "new");
   const sourceStepValidation = getSourceStepValidation({
     source: selections.source,
     sourcePath,
     repoUrl,
-    useDiskIsolatedStaging,
+    useSandboxStaging,
   });
   const needsSourcePath = isSourceStep && sourceStepValidation.needsSourcePath;
 
@@ -245,7 +245,7 @@ export function useWorkspaceSetupFlow({
     requiresSelection,
     hasSelection,
     mergeQueueSkipped,
-    useDiskIsolatedStaging,
+    useSandboxStaging,
     sourceStepValidation,
     needsSourcePath,
     goToStepKey,

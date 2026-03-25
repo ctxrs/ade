@@ -5,9 +5,11 @@ use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 use crate::execution_effective;
-use crate::harness_runtime::{podman_command, workspace_container_name};
+use crate::harness_runtime::{sandbox_container_command, workspace_container_name};
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
-use crate::worktree_data_plane::live_worktree_root_for_mode;
+use crate::worktree_data_plane::{
+    apply_data_plane_to_execution_settings, resolve_worktree_data_plane,
+};
 
 const COMMIT_MSG_HOOK: &str = r#"#!/bin/sh
 set -e
@@ -104,7 +106,9 @@ pub async fn ensure_task_commit_hook(
     worktree: &Worktree,
     task_id: TaskId,
 ) -> Result<()> {
+    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
     let settings = execution_effective::effective_execution_settings(state, workspace.id).await?;
+    let settings = apply_data_plane_to_execution_settings(&settings, &data_plane);
     if matches!(settings.mode, ExecutionMode::Host) {
         return ensure_task_commit_hook_host(
             &state.core.data_root,
@@ -131,12 +135,7 @@ pub async fn ensure_task_commit_hook(
         )
         .await?;
 
-    let live_worktree_root = live_worktree_root_for_mode(
-        &state.core.data_root,
-        workspace,
-        worktree,
-        settings.mode.clone(),
-    );
+    let live_worktree_root = data_plane.live_worktree_root;
     let hooks_dir = live_worktree_root.join(".ctx-hooks");
     let hook_path = hooks_dir.join("commit-msg");
     sandbox_write_hook(
@@ -267,7 +266,8 @@ async fn sandbox_write_hook(
             hooks_dir.to_string_lossy().to_string(),
             hook_path.to_string_lossy().to_string(),
         ],
-    )?;
+    )
+    .await?;
     cmd.stdin(std::process::Stdio::piped());
     cmd.kill_on_drop(true);
     let mut child = cmd.spawn().context("spawning sandbox vcs hook install")?;
@@ -288,7 +288,7 @@ async fn sandbox_write_hook(
     Ok(())
 }
 
-fn sandbox_command(
+async fn sandbox_command(
     state: &crate::daemon::AppState,
     workspace: &Workspace,
     worktree: &Worktree,
@@ -296,15 +296,11 @@ fn sandbox_command(
     command: &str,
     args: &[String],
 ) -> Result<Command> {
-    let live_worktree_root = live_worktree_root_for_mode(
-        &state.core.data_root,
-        workspace,
-        worktree,
-        settings.mode.clone(),
-    );
+    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+    let live_worktree_root = data_plane.live_worktree_root;
     match settings.container.runtime {
-        ContainerRuntimeKind::Podman => {
-            let mut cmd = podman_command(&state.core.data_root)?;
+        ContainerRuntimeKind::NativeContainer => {
+            let mut cmd = sandbox_container_command(&state.core.data_root)?;
             cmd.arg("exec")
                 .arg("--interactive")
                 .arg("--workdir")
@@ -314,7 +310,7 @@ fn sandbox_command(
             cmd.args(args);
             Ok(cmd)
         }
-        ContainerRuntimeKind::AvfLinuxVm => {
+        ContainerRuntimeKind::SharedVmContainer => {
             crate::workspace_runtime::build_avf_linux_guest_exec_command(
                 &state.core.data_root,
                 workspace.id,
@@ -349,7 +345,8 @@ async fn sandbox_git_config_get(
             "--get".to_string(),
             key.to_string(),
         ],
-    )?;
+    )
+    .await?;
     let output = cmd
         .output()
         .await
@@ -388,7 +385,8 @@ async fn sandbox_git_config_set(
             key.to_string(),
             value.to_string(),
         ],
-    )?;
+    )
+    .await?;
     let output = cmd.output().await.context("running sandbox git config")?;
     if !output.status.success() {
         bail!(

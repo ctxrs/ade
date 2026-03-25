@@ -21,11 +21,11 @@ fn container_machine_defaults_are_stable() {
     let settings = ContainerExecutionSettings::default();
     #[cfg(target_os = "macos")]
     {
-        assert_eq!(settings.runtime, ContainerRuntimeKind::AvfLinuxVm);
+        assert_eq!(settings.runtime, ContainerRuntimeKind::SharedVmContainer);
     }
     #[cfg(not(target_os = "macos"))]
     {
-        assert_eq!(settings.runtime, ContainerRuntimeKind::Podman);
+        assert_eq!(settings.runtime, ContainerRuntimeKind::NativeContainer);
     }
     assert_eq!(settings.mount_mode, ContainerMountMode::DiskIsolated);
     assert_eq!(
@@ -47,7 +47,7 @@ fn container_machine_defaults_are_stable() {
 #[test]
 fn normalize_container_execution_settings_coerces_legacy_mount_mode_to_disk_isolated() {
     let mut settings = ContainerExecutionSettings {
-        runtime: ContainerRuntimeKind::AvfLinuxVm,
+        runtime: ContainerRuntimeKind::SharedVmContainer,
         mount_mode: ContainerMountMode::Legacy,
         ..ContainerExecutionSettings::default()
     };
@@ -58,7 +58,7 @@ fn normalize_container_execution_settings_coerces_legacy_mount_mode_to_disk_isol
 }
 
 #[test]
-fn apply_update_coerces_legacy_mount_mode_to_disk_isolated() {
+fn apply_update_preserves_internal_runtime_fields() {
     let next = apply_update(
         Settings::default(),
         UpdateSettingsReq {
@@ -73,11 +73,12 @@ fn apply_update_coerces_legacy_mount_mode_to_disk_isolated() {
             subagents: None,
             sandboxing: None,
             execution: Some(update::UpdateExecutionSettingsReq {
-                mode: ExecutionMode::Container,
-                container: ContainerExecutionSettings {
-                    runtime: ContainerRuntimeKind::AvfLinuxVm,
-                    mount_mode: ContainerMountMode::Legacy,
-                    ..ContainerExecutionSettings::default()
+                mode: ExecutionMode::Sandbox,
+                container: update::UpdateContainerExecutionSettingsReq {
+                    network_mode: ContainerNetworkMode::LlmOnly,
+                    allowlist: vec![],
+                    image: None,
+                    machine: ContainerMachineSettings::default(),
                 },
             }),
             network_profiles: None,
@@ -91,6 +92,15 @@ fn apply_update_coerces_legacy_mount_mode_to_disk_isolated() {
             .container
             .mount_mode,
         ContainerMountMode::DiskIsolated
+    );
+    #[cfg(target_os = "macos")]
+    assert_eq!(
+        next.execution
+            .as_ref()
+            .expect("execution settings")
+            .container
+            .runtime,
+        ContainerRuntimeKind::SharedVmContainer
     );
 }
 
@@ -153,11 +163,6 @@ fn to_public_redacts_secret_values() {
             .memory_profile,
         ContainerMachineMemoryProfile::Economy
     );
-    assert_eq!(
-        public.default_container_runtime,
-        default_public_container_runtime_kind()
-    );
-
     let oracle = public.oracle.as_ref().expect("oracle");
     assert!(oracle.api_key_set);
 }
@@ -252,7 +257,7 @@ fn apply_update_preserves_existing_secret_values_when_omitted() {
 fn apply_update_replaces_container_machine_settings() {
     let current = Settings {
         execution: Some(ExecutionSettings {
-            mode: ExecutionMode::Container,
+            mode: ExecutionMode::Sandbox,
             container: ContainerExecutionSettings::default(),
         }),
         ..Settings::default()
@@ -272,15 +277,17 @@ fn apply_update_replaces_container_machine_settings() {
             subagents: None,
             sandboxing: None,
             execution: Some(update::UpdateExecutionSettingsReq {
-                mode: ExecutionMode::Container,
-                container: ContainerExecutionSettings {
+                mode: ExecutionMode::Sandbox,
+                container: update::UpdateContainerExecutionSettingsReq {
+                    network_mode: ContainerExecutionSettings::default().network_mode,
+                    allowlist: ContainerExecutionSettings::default().allowlist,
+                    image: ContainerExecutionSettings::default().image,
                     machine: ContainerMachineSettings {
                         memory_profile: ContainerMachineMemoryProfile::Custom,
                         custom_memory_mb: Some(6144),
                         idle_shutdown_seconds: 90,
                         host_pressure_swap_threshold_mb: 256,
                     },
-                    ..ContainerExecutionSettings::default()
                 },
             }),
             network_profiles: None,
@@ -318,13 +325,15 @@ fn apply_update_clamps_container_machine_idle_shutdown_seconds() {
             subagents: None,
             sandboxing: None,
             execution: Some(update::UpdateExecutionSettingsReq {
-                mode: ExecutionMode::Container,
-                container: ContainerExecutionSettings {
+                mode: ExecutionMode::Sandbox,
+                container: update::UpdateContainerExecutionSettingsReq {
+                    network_mode: ContainerExecutionSettings::default().network_mode,
+                    allowlist: ContainerExecutionSettings::default().allowlist,
+                    image: ContainerExecutionSettings::default().image,
                     machine: ContainerMachineSettings {
                         idle_shutdown_seconds: 5,
                         ..ContainerMachineSettings::default()
                     },
-                    ..ContainerExecutionSettings::default()
                 },
             }),
             network_profiles: None,

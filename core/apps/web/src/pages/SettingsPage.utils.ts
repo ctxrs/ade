@@ -78,8 +78,6 @@ export function executionSettingsStableKey(settings: ApiExecutionSettings): stri
   return JSON.stringify({
     mode: settings.mode,
     container: {
-      runtime: settings.container.runtime,
-      mount_mode: settings.container.mount_mode,
       network_mode: settings.container.network_mode,
       allowlist: settings.container.allowlist,
       image: settings.container.image ?? null,

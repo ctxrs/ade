@@ -47,7 +47,7 @@ export function AgentSystemPromptSection({
               <div className="settings-row-left">
                 <div className="settings-row-title">Prompt Append</div>
                 <div className="settings-row-desc">
-                  In addition to the default prompt managed by your agent harness and any other prompts you provide directly or in AGENTS.md, this is an additional prompt that relates specifically to informing agents about their environment - specifically being run inside ctx, the container and network policies, and the tools available. We recommend keeping this as the default value as we have optimized it accordingly.
+                  In addition to the default prompt managed by your agent harness and any other prompts you provide directly or in AGENTS.md, this is an additional prompt that relates specifically to informing agents about their environment - specifically being run inside ctx, the sandbox and network policies, and the tools available. We recommend keeping this as the default value as we have optimized it accordingly.
                 </div>
               </div>
               <div

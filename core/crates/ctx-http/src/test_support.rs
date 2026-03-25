@@ -13,11 +13,11 @@ use crate::execution_setup::{
     ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionSetupCoordinator,
 };
 
-/// Tests that mutate podman-related process globals, or that execute
+/// Tests that mutate sandbox CLI-related process globals, or that execute
 /// container-mode launch/prewarm flows which can observe those globals, must
 /// hold this lock for the full lifetime of the test and drain any spawned
 /// background launch work before returning.
-pub(crate) fn podman_env_test_lock() -> &'static AsyncMutex<()> {
+pub(crate) fn sandbox_cli_env_test_lock() -> &'static AsyncMutex<()> {
     static LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| AsyncMutex::new(()))
 }
@@ -25,7 +25,7 @@ pub(crate) fn podman_env_test_lock() -> &'static AsyncMutex<()> {
 // `start_workspace_launch` and `start_runtime_prewarm` return snapshots while
 // the real work continues in background tasks. Tests that start these jobs
 // must wait for a terminal state before returning or they can leak work into
-// later tests that rebind global podman env vars.
+// later tests that rebind global sandbox CLI env vars.
 #[cfg(test)]
 pub(crate) async fn wait_for_execution_launch_terminal(
     coordinator: &Arc<ExecutionSetupCoordinator>,
@@ -84,24 +84,24 @@ impl TrackedExecutionLaunch {
 }
 
 #[cfg(unix)]
-pub(crate) fn write_running_container_podman_shim(
+pub(crate) fn write_running_container_sandbox_cli_shim(
     dir: &Path,
     log_path: &Path,
     container_name: &str,
 ) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
-    let path = dir.join("podman-running-container-test.sh");
+    let path = dir.join("sandbox-cli-running-container-test.sh");
     std::fs::write(
         &path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  echo 'transient image store failure' >&2\n  exit 125\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  suffix=${{2#ctx-harness-}}\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"ctx-ws-%s\",\"Destination\":\"/ctx/ws\"}}]}}]\\n' \"$suffix\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  echo 'transient image store failure' >&2\n  exit 125\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  suffix=${{2#ctx-harness-}}\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"ctx-ws-%s\",\"Destination\":\"/ctx/ws\"}}]}}]\\n' \"$suffix\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             container = container_name,
         ),
     )
-    .expect("write running-container podman shim");
+    .expect("write running-container sandbox CLI shim");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod running-container podman shim");
+        .expect("chmod running-container sandbox CLI shim");
     path
 }

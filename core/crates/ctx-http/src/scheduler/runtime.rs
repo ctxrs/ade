@@ -30,6 +30,9 @@ use crate::settings::{self, ProviderControlMode};
 use crate::storage_guard;
 use crate::telemetry::TelemetryEvent;
 use crate::workspace_config;
+use crate::worktree_data_plane::{
+    apply_data_plane_to_execution_settings, resolve_worktree_data_plane,
+};
 
 mod event_loop;
 mod helpers;
@@ -294,6 +297,13 @@ pub(crate) async fn start_turn(
                 return Err(err);
             }
         };
+    let execution_settings = match resolve_worktree_data_plane(state, &worktree_for_runtime).await {
+        Ok(data_plane) => apply_data_plane_to_execution_settings(&execution_settings, &data_plane),
+        Err(err) => {
+            emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err).await;
+            return Err(err);
+        }
+    };
     let runtime_plan = match state
         .execution
         .harness

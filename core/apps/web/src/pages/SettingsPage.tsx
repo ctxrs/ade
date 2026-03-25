@@ -70,6 +70,7 @@ import {
   defaultExecutionSettings,
   normalizeExecutionSettings,
   parseUnsignedInteger,
+  toExecutionUpdateRequest,
 } from "./settings/sandboxExecutionSettings";
 import type { SectionId, SettingsSectionMeta } from "./SettingsPage.types";
 import { runBillingCheckoutFlow } from "./settings/billingCheckoutFlow";
@@ -386,10 +387,7 @@ export default function SettingsPage() {
         if (sb?.provider_control_mode) {
           setProviderControlMode(sb.provider_control_mode);
         }
-        const execution = normalizeExecutionSettings(
-          s.execution ?? null,
-          s.default_container_runtime ?? null,
-        );
+        const execution = normalizeExecutionSettings(s.execution ?? null);
         setMachineResolvedMemoryMb(s.execution?.container.machine.target_memory_mb ?? null);
         savedExecutionPayloadKey.current = executionSettingsStableKey(execution);
         setExecutionSettings(execution);
@@ -447,10 +445,7 @@ export default function SettingsPage() {
       if (next.sandboxing?.provider_control_mode) {
         setProviderControlMode(next.sandboxing.provider_control_mode);
       }
-      const execution = normalizeExecutionSettings(
-        next.execution ?? null,
-        next.default_container_runtime ?? null,
-      );
+      const execution = normalizeExecutionSettings(next.execution ?? null);
       setMachineResolvedMemoryMb(next.execution?.container.machine.target_memory_mb ?? null);
       savedExecutionPayloadKey.current = executionSettingsStableKey(execution);
       setExecutionSettings(execution);
@@ -580,7 +575,7 @@ export default function SettingsPage() {
     if (!sandboxMachineCanSave) return;
     if (savedExecutionPayloadKey.current === executionPayloadKey) return;
     const t = window.setTimeout(() => {
-      savePatch({ execution: executionPayload });
+      savePatch({ execution: toExecutionUpdateRequest(executionPayload) });
     }, 450);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps

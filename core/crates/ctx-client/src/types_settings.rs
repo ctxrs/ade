@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ContainerRuntimeKind {
-    Podman,
-    AvfLinuxVm,
+    NativeContainer,
+    SharedVmContainer,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -19,7 +19,8 @@ pub enum ProviderControlMode {
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionMode {
     Host,
-    Container,
+    #[serde(rename = "sandbox", alias = "container")]
+    Sandbox,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -71,8 +72,6 @@ pub struct PublicSettings {
     pub execution: Option<PublicExecutionSettings>,
     #[serde(default)]
     pub network_profiles: Option<PublicNetworkProfilesSettings>,
-    #[serde(default)]
-    pub default_container_runtime: Option<ContainerRuntimeKind>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -139,8 +138,6 @@ pub struct PublicExecutionSettings {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PublicContainerExecutionSettings {
-    pub runtime: ContainerRuntimeKind,
-    pub mount_mode: ContainerMountMode,
     pub network_mode: ContainerNetworkMode,
     #[serde(default)]
     pub allowlist: Vec<String>,

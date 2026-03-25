@@ -95,13 +95,24 @@ fn should_run() -> bool {
         return false;
     }
     matches!(
-        env::var("CTX_E2E_PODMAN").ok().as_deref(),
+        env::var("CTX_E2E_SANDBOX").ok().as_deref(),
         Some("1") | Some("true") | Some("yes")
     )
 }
 
-fn podman_env_for_data_root(data_root: &Path) -> Vec<(String, String)> {
-    let xdg_root = data_root.join("podman").join("xdg");
+fn sandbox_cli_binary_for_tests() -> Option<std::path::PathBuf> {
+    if let Some(raw) = env::var_os("CTX_HARNESS_SANDBOX_CLI_PATH") {
+        let path = std::path::PathBuf::from(raw);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    which::which("nerdctl").ok()
+}
+
+fn sandbox_cli_env_for_data_root(data_root: &Path) -> Vec<(String, String)> {
+    let sandbox_root = data_root.join("sandbox");
+    let xdg_root = sandbox_root.join("xdg");
     vec![
         (
             "XDG_CONFIG_HOME".to_string(),
@@ -113,15 +124,34 @@ fn podman_env_for_data_root(data_root: &Path) -> Vec<(String, String)> {
         ),
         (
             "XDG_RUNTIME_DIR".to_string(),
-            xdg_root.join("run").to_string_lossy().to_string(),
+            sandbox_root.join("run").to_string_lossy().to_string(),
+        ),
+        (
+            "HOME".to_string(),
+            sandbox_root.join("home").to_string_lossy().to_string(),
+        ),
+        (
+            "TMPDIR".to_string(),
+            sandbox_root.join("tmp").to_string_lossy().to_string(),
+        ),
+        (
+            "TMP".to_string(),
+            sandbox_root.join("tmp").to_string_lossy().to_string(),
+        ),
+        (
+            "TEMP".to_string(),
+            sandbox_root.join("tmp").to_string_lossy().to_string(),
         ),
     ]
 }
 
-async fn podman_volume_exists(data_root: &Path, name: &str) -> bool {
-    let mut cmd = Command::new("podman");
+async fn sandbox_volume_exists(data_root: &Path, name: &str) -> bool {
+    let Some(sandbox_cli) = sandbox_cli_binary_for_tests() else {
+        return false;
+    };
+    let mut cmd = Command::new(sandbox_cli);
     cmd.arg("volume").arg("inspect").arg(name);
-    for (k, v) in podman_env_for_data_root(data_root) {
+    for (k, v) in sandbox_cli_env_for_data_root(data_root) {
         cmd.env(k, v);
     }
     match cmd.output().await {
@@ -131,7 +161,7 @@ async fn podman_volume_exists(data_root: &Path, name: &str) -> bool {
 }
 
 #[tokio::test]
-async fn disk_isolated_smoke_podman_volume_buffers_terminal() {
+async fn disk_isolated_smoke_sandbox_volume_buffers_terminal() {
     if !should_run() {
         return;
     }
@@ -141,13 +171,14 @@ async fn disk_isolated_smoke_podman_volume_buffers_terminal() {
         return;
     }
 
-    let Some(podman_bin) = which::which("podman").ok() else {
+    let Some(sandbox_cli) = sandbox_cli_binary_for_tests() else {
         return;
     };
-    let _podman_path = EnvVarGuard::set("CTX_PODMAN_PATH", podman_bin.as_os_str());
+    let _sandbox_cli_path =
+        EnvVarGuard::set("CTX_HARNESS_SANDBOX_CLI_PATH", sandbox_cli.as_os_str());
 
-    // Ensure podman is present before we spend time bootstrapping.
-    if Command::new(&podman_bin)
+    // Ensure the sandbox CLI is present before we spend time bootstrapping.
+    if Command::new(&sandbox_cli)
         .arg("version")
         .output()
         .await
@@ -473,7 +504,7 @@ async fn disk_isolated_smoke_podman_volume_buffers_terminal() {
 
     // Deleting the workspace should clean up the disk-isolated volume.
     let vol_name = format!("ctx-ws-{}", ws.id.0);
-    assert!(podman_volume_exists(data_dir.path(), &vol_name).await);
+    assert!(sandbox_volume_exists(data_dir.path(), &vol_name).await);
     let _ = client
         .delete(format!("{base}/api/workspaces/{}", ws.id.0))
         .send()
@@ -481,5 +512,5 @@ async fn disk_isolated_smoke_podman_volume_buffers_terminal() {
         .unwrap();
     // Give the async cleanup a brief moment.
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(!podman_volume_exists(data_dir.path(), &vol_name).await);
+    assert!(!sandbox_volume_exists(data_dir.path(), &vol_name).await);
 }

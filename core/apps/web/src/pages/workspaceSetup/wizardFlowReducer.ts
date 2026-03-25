@@ -48,7 +48,7 @@ const nextSelectionsForOption = (
   optionId: string,
 ): WizardSelections => {
   const next = { ...selections, [stepKey]: optionId };
-  if (stepKey === "container" && optionId === "no-container") {
+  if (stepKey === "container" && optionId === "host") {
     delete next.network;
   }
   return next;

@@ -126,7 +126,6 @@ maybe_adhoc_codesign_macos_binary() {
 # Build-time container contract:
 # - Build-time operations (containerized codex-crp builds + bundled harness image builds)
 #   use Docker as the only engine, with Docker buildx required for image bundling.
-# - Podman remains a bundled runtime artifact for runtime container execution only.
 docker_buildx_output_looks_unhealthy() {
   local output="$1"
   if [[ -z "$output" ]]; then
@@ -254,14 +253,6 @@ read_const() {
 NODE_VERSION="$(read_const NODE_VERSION "$INSTALLER_RS")"
 PYTHON_VERSION="$(read_const PYTHON_VERSION "$INSTALLER_RS")"
 PYTHON_BUILD_TAG="$(read_const PYTHON_BUILD_TAG "$INSTALLER_RS")"
-PODMAN_VERSION="${PODMAN_VERSION:-}"
-PODMAN_ARCHIVE_URL="${PODMAN_ARCHIVE_URL:-}"
-PODMAN_ARCHIVE_PATH="${PODMAN_ARCHIVE_PATH:-}"
-PODMAN_ARCHIVE_SHA256="${PODMAN_ARCHIVE_SHA256:-}"
-PODMAN_BIN_REL="${PODMAN_BIN_REL:-}"
-PODMAN_EXTRACT_SUBDIR="${PODMAN_EXTRACT_SUBDIR:-}"
-PODMAN_GVPROXY_SHA256="${PODMAN_GVPROXY_SHA256:-}"
-PODMAN_VFKIT_SHA256="${PODMAN_VFKIT_SHA256:-}"
 DOCKER_HEALTH_TIMEOUT_SECS="${CTX_BUNDLE_DOCKER_HEALTH_TIMEOUT_SECS:-8}"
 DOCKER_HEALTH_WAIT_SECS="${CTX_BUNDLE_DOCKER_HEALTH_WAIT_SECS:-60}"
 
@@ -1001,161 +992,6 @@ ensure_python_runtime_versioned() {
 
 ensure_python_runtime() {
   ensure_python_runtime_versioned "$PYTHON_VERSION" "$PYTHON_BUILD_TAG"
-}
-
-resolve_podman_root() {
-  local extract_dir="$1"
-  if [[ -n "$PODMAN_EXTRACT_SUBDIR" ]]; then
-    printf '%s' "${extract_dir}/${PODMAN_EXTRACT_SUBDIR}"
-    return
-  fi
-  local entries
-  entries=("$extract_dir"/*)
-  if [[ ${#entries[@]} -eq 1 && -d "${entries[0]}" ]]; then
-    printf '%s' "${entries[0]}"
-    return
-  fi
-  printf '%s' "$extract_dir"
-}
-
-ensure_podman_macos_helpers() {
-  local podman_root_abs="$1"
-  if [[ "$os" != "macos" ]]; then
-    return
-  fi
-  # Podman machine on macOS requires helper binaries (gvproxy, vfkit) that must be colocated
-  # under $BINDIR/../libexec/podman for out-of-the-box behavior.
-  local helpers_dir="$podman_root_abs/usr/libexec/podman"
-  mkdir -p "$helpers_dir"
-
-  local gvproxy_path="$helpers_dir/gvproxy"
-  local vfkit_path="$helpers_dir/vfkit"
-
-  local gvproxy_url="${PODMAN_GVPROXY_URL:-https://github.com/containers/gvisor-tap-vsock/releases/download/v0.8.8/gvproxy-darwin}"
-  local vfkit_url="${PODMAN_VFKIT_URL:-https://github.com/crc-org/vfkit/releases/download/v0.6.3/vfkit-unsigned}"
-
-  if [[ ! -f "$gvproxy_path" ]]; then
-    local tmp
-    tmp="$(mktemp -p "$helpers_dir" "gvproxy.XXXXXX")"
-    fetch_file "$gvproxy_url" "$tmp"
-    verify_sha256_if_expected "$tmp" "$PODMAN_GVPROXY_SHA256" "podman helper gvproxy"
-    mv "$tmp" "$gvproxy_path"
-  else
-    verify_sha256_if_expected "$gvproxy_path" "$PODMAN_GVPROXY_SHA256" "podman helper gvproxy"
-  fi
-  if [[ ! -f "$vfkit_path" ]]; then
-    local tmp
-    tmp="$(mktemp -p "$helpers_dir" "vfkit.XXXXXX")"
-    fetch_file "$vfkit_url" "$tmp"
-    verify_sha256_if_expected "$tmp" "$PODMAN_VFKIT_SHA256" "podman helper vfkit"
-    mv "$tmp" "$vfkit_path"
-  else
-    verify_sha256_if_expected "$vfkit_path" "$PODMAN_VFKIT_SHA256" "podman helper vfkit"
-  fi
-
-  chmod +x "$gvproxy_path" "$vfkit_path" || true
-}
-
-ensure_podman_runtime() {
-  if [[ "${CTX_BUNDLE_PODMAN:-0}" != "1" ]]; then
-    return
-  fi
-  if [[ -z "$PODMAN_VERSION" ]]; then
-    log "error: PODMAN_VERSION is required when CTX_BUNDLE_PODMAN=1"
-    exit 3
-  fi
-
-  local podman_root="runtimes/podman/${os}/${arch}/podman-${PODMAN_VERSION}"
-  local podman_root_abs="$bundle_dir/$podman_root"
-  local podman_bin_rel
-  if [[ -n "$PODMAN_BIN_REL" ]]; then
-    podman_bin_rel="$PODMAN_BIN_REL"
-  elif [[ "$os" == "windows" ]]; then
-    podman_bin_rel="podman.exe"
-  else
-    podman_bin_rel="bin/podman"
-  fi
-  local podman_bin_abs="$podman_root_abs/$podman_bin_rel"
-
-  if [[ -f "$podman_bin_abs" ]]; then
-    ensure_podman_macos_helpers "$podman_root_abs"
-    return
-  fi
-
-  local archive_path=""
-  local archive_type=""
-  if [[ -n "$PODMAN_ARCHIVE_PATH" ]]; then
-    archive_path="$PODMAN_ARCHIVE_PATH"
-    case "$archive_path" in
-      *.zip) archive_type="zip" ;;
-      *.tar) archive_type="tar" ;;
-      *.tgz|*.tar.gz) archive_type="tar.gz" ;;
-      *)
-        log "error: unsupported podman archive type: $archive_path"
-        exit 4
-        ;;
-    esac
-  elif [[ -n "$PODMAN_ARCHIVE_URL" ]]; then
-    local dest_dir
-    dest_dir="$(dirname "$podman_root_abs")"
-    mkdir -p "$dest_dir"
-    archive_type="tar.gz"
-    if [[ "$PODMAN_ARCHIVE_URL" == *.zip ]]; then
-      archive_type="zip"
-    elif [[ "$PODMAN_ARCHIVE_URL" == *.tar ]]; then
-      archive_type="tar"
-    elif [[ "$PODMAN_ARCHIVE_URL" == *.tgz ]]; then
-      archive_type="tgz"
-    fi
-    archive_path="$(mktemp -p "$dest_dir" "podman-${PODMAN_VERSION}.XXXXXX")"
-    fetch_file "$PODMAN_ARCHIVE_URL" "$archive_path"
-  else
-    log "error: PODMAN_ARCHIVE_URL or PODMAN_ARCHIVE_PATH is required when CTX_BUNDLE_PODMAN=1"
-    exit 3
-  fi
-  verify_sha256_if_expected "$archive_path" "$PODMAN_ARCHIVE_SHA256" "podman archive"
-
-  local extract_dir
-  extract_dir="$(mktemp -d "$(dirname "$podman_root_abs")/podman-${PODMAN_VERSION}.extract.XXXXXX")"
-  case "$archive_type" in
-    zip)
-      require_cmd unzip
-      unzip -q "$archive_path" -d "$extract_dir"
-      ;;
-    tar)
-      require_cmd tar
-      tar -xf "$archive_path" -C "$extract_dir"
-      ;;
-    tgz|tar.gz)
-      require_cmd tar
-      tar -xzf "$archive_path" -C "$extract_dir"
-      ;;
-    *)
-      log "error: unsupported podman archive type: $archive_path"
-      exit 4
-      ;;
-  esac
-
-  local extracted_root
-  extracted_root="$(resolve_podman_root "$extract_dir")"
-  if [[ ! -d "$extracted_root" ]]; then
-    log "error: podman extraction failed (missing root at $extracted_root)"
-    exit 4
-  fi
-
-  rm -rf "$podman_root_abs"
-  mv "$extracted_root" "$podman_root_abs"
-  rm -rf "$extract_dir"
-  if [[ "$archive_path" != "$PODMAN_ARCHIVE_PATH" ]]; then
-    rm -f "$archive_path"
-  fi
-
-  if [[ ! -f "$podman_bin_abs" ]]; then
-    log "error: podman runtime incomplete after extract (missing $podman_bin_rel)"
-    exit 4
-  fi
-
-  ensure_podman_macos_helpers "$podman_root_abs"
 }
 
 venv_bin_dir() {

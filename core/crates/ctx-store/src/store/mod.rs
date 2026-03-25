@@ -652,6 +652,7 @@ mod messages_workspace_index;
 mod metrics_and_runtime;
 mod migration_repairs;
 mod mobile;
+mod sandbox_bindings;
 mod sessions;
 mod tasks;
 mod turns;

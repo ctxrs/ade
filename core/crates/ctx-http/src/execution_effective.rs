@@ -53,7 +53,7 @@ pub async fn effective_execution_settings(
 }
 
 pub fn install_target_for_settings(settings: &ExecutionSettings) -> InstallTarget {
-    if matches!(settings.mode, crate::settings::ExecutionMode::Container) {
+    if matches!(settings.mode, crate::settings::ExecutionMode::Sandbox) {
         InstallTarget::Container
     } else {
         InstallTarget::Host
@@ -77,7 +77,7 @@ pub fn apply_execution_environment(
             settings.mode = crate::settings::ExecutionMode::Host;
         }
         SessionExecutionEnvironment::Sandbox => {
-            settings.mode = crate::settings::ExecutionMode::Container;
+            settings.mode = crate::settings::ExecutionMode::Sandbox;
             settings.container.mount_mode = crate::settings::ContainerMountMode::DiskIsolated;
         }
     }
@@ -124,7 +124,7 @@ mod tests {
             ..ExecutionSettings::default()
         };
         let container = ExecutionSettings {
-            mode: ExecutionMode::Container,
+            mode: ExecutionMode::Sandbox,
             ..ExecutionSettings::default()
         };
 

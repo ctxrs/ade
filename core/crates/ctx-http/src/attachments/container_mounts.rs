@@ -1,12 +1,15 @@
 use super::*;
 use crate::settings::ContainerRuntimeKind;
+use crate::worktree_data_plane::{
+    apply_data_plane_to_execution_settings, resolve_worktree_data_plane,
+};
 
 #[derive(Debug, Clone)]
 enum AttachmentRuntime {
-    Podman {
+    NativeContainer {
         container_id: String,
     },
-    AvfLinuxVm {
+    SharedVmContainer {
         workspace_id: WorkspaceId,
         worktree_id: WorktreeId,
         worktree_root: PathBuf,
@@ -19,6 +22,8 @@ async fn ensure_workspace_container_for_attachments(
     worktree: &Worktree,
 ) -> Result<ContainerRuntimeKind> {
     let effective = execution_effective::effective_execution_settings(state, workspace.id).await?;
+    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+    let effective = apply_data_plane_to_execution_settings(&effective, &data_plane);
     state
         .execution
         .harness
@@ -45,10 +50,10 @@ async fn attachment_runtime_for_worktree(
         .ok_or_else(|| anyhow::anyhow!("worktree not found for attachment mount"))?;
     let runtime = ensure_workspace_container_for_attachments(state, workspace, &worktree).await?;
     Ok(match runtime {
-        ContainerRuntimeKind::Podman => AttachmentRuntime::Podman {
+        ContainerRuntimeKind::NativeContainer => AttachmentRuntime::NativeContainer {
             container_id: workspace_container_name(workspace.id),
         },
-        ContainerRuntimeKind::AvfLinuxVm => AttachmentRuntime::AvfLinuxVm {
+        ContainerRuntimeKind::SharedVmContainer => AttachmentRuntime::SharedVmContainer {
             workspace_id: workspace.id,
             worktree_id,
             worktree_root: worktree_root.to_path_buf(),
@@ -70,7 +75,7 @@ fn container_attachment_root(attachment: &WorkspaceAttachment) -> PathBuf {
 }
 
 async fn container_path_exists(state: &AppState, container_id: &str, path: &Path) -> Result<bool> {
-    let mut cmd = podman_command(&state.core.data_root)?;
+    let mut cmd = sandbox_container_command(&state.core.data_root)?;
     cmd.arg("exec")
         .arg("--interactive")
         .arg(container_id)
@@ -78,7 +83,7 @@ async fn container_path_exists(state: &AppState, container_id: &str, path: &Path
         .arg("-e")
         .arg("--")
         .arg(path);
-    let out = cmd.output().await.context("podman exec test -e")?;
+    let out = cmd.output().await.context("sandbox exec test -e")?;
     Ok(out.status.success())
 }
 
@@ -95,7 +100,7 @@ fn command_failure_detail(output: &std::process::Output) -> String {
 }
 
 async fn container_rm_rf(state: &AppState, container_id: &str, path: &Path) -> Result<()> {
-    let mut cmd = podman_command(&state.core.data_root)?;
+    let mut cmd = sandbox_container_command(&state.core.data_root)?;
     cmd.arg("exec")
         .arg("--interactive")
         .arg(container_id)
@@ -103,7 +108,7 @@ async fn container_rm_rf(state: &AppState, container_id: &str, path: &Path) -> R
         .arg("-rf")
         .arg("--")
         .arg(path);
-    let out = cmd.output().await.context("podman exec rm -rf")?;
+    let out = cmd.output().await.context("sandbox exec rm -rf")?;
     if out.status.success() {
         Ok(())
     } else {
@@ -376,7 +381,7 @@ async fn avf_copy_source_to_mount(
 }
 
 async fn container_mkdir_p(state: &AppState, container_id: &str, path: &Path) -> Result<()> {
-    let mut cmd = podman_command(&state.core.data_root)?;
+    let mut cmd = sandbox_container_command(&state.core.data_root)?;
     cmd.arg("exec")
         .arg("--interactive")
         .arg(container_id)
@@ -384,7 +389,7 @@ async fn container_mkdir_p(state: &AppState, container_id: &str, path: &Path) ->
         .arg("-p")
         .arg("--")
         .arg(path);
-    let out = cmd.output().await.context("podman exec mkdir -p")?;
+    let out = cmd.output().await.context("sandbox exec mkdir -p")?;
     if out.status.success() {
         Ok(())
     } else {
@@ -403,14 +408,14 @@ async fn import_dir_to_container(
     dest: &Path,
 ) -> Result<()> {
     // Stream a tar archive into the container so extracted files are writable by the execution
-    // user (avoids `podman cp` ownership quirks).
+    // user (avoids `container cp` ownership quirks).
     let mut tar_cmd = Command::new("tar");
     tar_cmd.arg("-C").arg(src).arg("-cf").arg("-").arg(".");
     tar_cmd.stdout(Stdio::piped());
     let mut tar_child = tar_cmd.spawn().context("spawning tar")?;
     let mut tar_out = tar_child.stdout.take().context("taking tar stdout")?;
 
-    let mut pod_cmd = podman_command(&state.core.data_root)?;
+    let mut pod_cmd = sandbox_container_command(&state.core.data_root)?;
     pod_cmd
         .arg("exec")
         .arg("--interactive")
@@ -421,12 +426,15 @@ async fn import_dir_to_container(
         .arg("-xf")
         .arg("-");
     pod_cmd.stdin(Stdio::piped());
-    let mut pod_child = pod_cmd.spawn().context("spawning podman exec tar")?;
-    let mut pod_in = pod_child.stdin.take().context("taking podman exec stdin")?;
+    let mut pod_child = pod_cmd.spawn().context("spawning sandbox exec tar")?;
+    let mut pod_in = pod_child
+        .stdin
+        .take()
+        .context("taking sandbox exec stdin")?;
 
     tokio::io::copy(&mut tar_out, &mut pod_in)
         .await
-        .context("streaming tar to podman exec")?;
+        .context("streaming tar to sandbox exec")?;
     drop(pod_in);
 
     let tar_status = tar_child.wait().await.context("waiting on tar")?;
@@ -436,10 +444,10 @@ async fn import_dir_to_container(
     let out = pod_child
         .wait_with_output()
         .await
-        .context("waiting on podman exec tar")?;
+        .context("waiting on sandbox exec tar")?;
     if !out.status.success() {
         anyhow::bail!(
-            "podman exec tar failed (status {}): {}",
+            "sandbox exec tar failed (status {}): {}",
             out.status,
             String::from_utf8_lossy(&out.stderr).trim()
         );
@@ -485,7 +493,7 @@ async fn container_ensure_mount(
     let _ = container_rm_rf(state, container_id, target).await;
 
     // Prefer symlink; if unavailable, fall back to a recursive copy.
-    let mut ln = podman_command(&state.core.data_root)?;
+    let mut ln = sandbox_container_command(&state.core.data_root)?;
     ln.arg("exec")
         .arg("--interactive")
         .arg(container_id)
@@ -494,12 +502,12 @@ async fn container_ensure_mount(
         .arg("--")
         .arg(source)
         .arg(target);
-    let out = ln.output().await.context("podman exec ln -s")?;
+    let out = ln.output().await.context("sandbox exec ln -s")?;
     if out.status.success() {
         return Ok(());
     }
 
-    let mut cp = podman_command(&state.core.data_root)?;
+    let mut cp = sandbox_container_command(&state.core.data_root)?;
     cp.arg("exec")
         .arg("--interactive")
         .arg(container_id)
@@ -508,7 +516,7 @@ async fn container_ensure_mount(
         .arg("--")
         .arg(source)
         .arg(target);
-    let out = cp.output().await.context("podman exec cp -a")?;
+    let out = cp.output().await.context("sandbox exec cp -a")?;
     if out.status.success() {
         Ok(())
     } else {
@@ -541,8 +549,8 @@ for line in ".ctx/attachments/refs/" ".ctx/attachments/docs/"; do
 done
 "#;
     match runtime {
-        AttachmentRuntime::Podman { container_id } => {
-            let mut cmd = podman_command(&state.core.data_root)?;
+        AttachmentRuntime::NativeContainer { container_id } => {
+            let mut cmd = sandbox_container_command(&state.core.data_root)?;
             cmd.arg("exec")
                 .arg("--interactive")
                 .arg("--workdir")
@@ -551,7 +559,7 @@ done
                 .arg("sh")
                 .arg("-lc")
                 .arg(script);
-            let out = cmd.output().await.context("podman exec git exclude")?;
+            let out = cmd.output().await.context("sandbox exec git exclude")?;
             if out.status.success() {
                 Ok(())
             } else {
@@ -562,7 +570,7 @@ done
                 );
             }
         }
-        AttachmentRuntime::AvfLinuxVm {
+        AttachmentRuntime::SharedVmContainer {
             workspace_id,
             worktree_id,
             worktree_root,
@@ -587,24 +595,26 @@ async fn container_remove_mount_path(
     target: &Path,
 ) -> Result<()> {
     let effective = execution_effective::effective_execution_settings(state, workspace_id).await?;
+    let store = state.store_for_workspace(workspace_id).await?;
+    let Some(worktree) = store.get_worktree(worktree_id).await? else {
+        return Ok(());
+    };
+    let data_plane = resolve_worktree_data_plane(state, &worktree).await?;
+    let effective = apply_data_plane_to_execution_settings(&effective, &data_plane);
     match effective.container.runtime {
-        ContainerRuntimeKind::Podman => {
+        ContainerRuntimeKind::NativeContainer => {
             let container_id = workspace_container_name(workspace_id);
             // Best-effort: if the container doesn't exist, skip.
-            let mut exists = podman_command(&state.core.data_root)?;
+            let mut exists = sandbox_container_command(&state.core.data_root)?;
             exists.arg("container").arg("exists").arg(&container_id);
-            let out = exists.output().await.context("podman container exists")?;
+            let out = exists.output().await.context("container exists")?;
             if !out.status.success() {
                 return Ok(());
             }
             let _ = container_rm_rf(state, &container_id, target).await;
             Ok(())
         }
-        ContainerRuntimeKind::AvfLinuxVm => {
-            let store = state.store_for_workspace(workspace_id).await?;
-            let Some(worktree) = store.get_worktree(worktree_id).await? else {
-                return Ok(());
-            };
+        ContainerRuntimeKind::SharedVmContainer => {
             let worktree_root = PathBuf::from(worktree.root_path);
             let _ = avf_rm_rf(state, workspace_id, worktree_id, &worktree_root, target).await;
             Ok(())
@@ -620,14 +630,14 @@ async fn container_remove_attachment_data_best_effort(
     let effective = execution_effective::effective_execution_settings(state, workspace_id).await?;
     if matches!(
         effective.container.runtime,
-        ContainerRuntimeKind::AvfLinuxVm
+        ContainerRuntimeKind::SharedVmContainer
     ) {
         return Ok(());
     }
     let container_id = workspace_container_name(workspace_id);
-    let mut exists = podman_command(&state.core.data_root)?;
+    let mut exists = sandbox_container_command(&state.core.data_root)?;
     exists.arg("container").arg("exists").arg(&container_id);
-    let out = exists.output().await.context("podman container exists")?;
+    let out = exists.output().await.context("container exists")?;
     if !out.status.success() {
         return Ok(());
     }
@@ -666,7 +676,7 @@ pub(super) async fn ensure_attachment_mount(
         let runtime =
             attachment_runtime_for_worktree(state, workspace, worktree_id, worktree_root).await?;
         match runtime {
-            AttachmentRuntime::Podman { container_id } => {
+            AttachmentRuntime::NativeContainer { container_id } => {
                 let should_refresh =
                     refresh || attachment.update_policy != AttachmentUpdatePolicy::Manual;
                 let imported = ensure_attachment_imported_to_container(
@@ -684,7 +694,7 @@ pub(super) async fn ensure_attachment_mount(
                 };
                 container_ensure_mount(state, &container_id, &mount_abs, &source_path).await?;
             }
-            AttachmentRuntime::AvfLinuxVm {
+            AttachmentRuntime::SharedVmContainer {
                 workspace_id,
                 worktree_id,
                 worktree_root,

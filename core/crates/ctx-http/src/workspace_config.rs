@@ -3,10 +3,7 @@ pub use ctx_core::models::ExecutionEnvironment;
 use ctx_store::Store;
 use serde::{Deserialize, Serialize};
 
-use crate::settings::{
-    ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind, ExecutionMode,
-    ExecutionSettings,
-};
+use crate::settings::{ContainerNetworkMode, ExecutionMode, ExecutionSettings};
 
 const WORKSPACE_SETTINGS_SCHEMA_VERSION: i64 = 1;
 
@@ -165,8 +162,6 @@ struct WorkspaceExecutionConfig {
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 struct WorkspaceContainerExecutionConfig {
     #[serde(default)]
-    runtime: Option<ContainerRuntimeKind>,
-    #[serde(default)]
     network_mode: Option<ContainerNetworkMode>,
     #[serde(default)]
     allowlist: Option<Vec<String>>,
@@ -192,8 +187,6 @@ pub struct ExecutionSettingsOverride {
 
 #[derive(Debug, Clone, Default)]
 pub struct ContainerExecutionSettingsOverride {
-    pub runtime: Option<ContainerRuntimeKind>,
-    pub mount_mode: Option<ContainerMountMode>,
     pub network_mode: Option<ContainerNetworkMode>,
     pub allowlist: Option<Vec<String>>,
     pub image: Option<String>,
@@ -215,14 +208,12 @@ pub async fn load_execution_settings_override(
                 ov.mode = Some(ExecutionMode::Host);
             }
             ExecutionEnvironment::Sandbox => {
-                ov.mode = Some(ExecutionMode::Container);
-                ov.container.mount_mode = Some(ContainerMountMode::DiskIsolated);
+                ov.mode = Some(ExecutionMode::Sandbox);
             }
         }
     }
 
     if let Some(c) = exec.container {
-        ov.container.runtime = c.runtime;
         ov.container.network_mode = c.network_mode;
         ov.container.allowlist = c.allowlist.map(|v| {
             v.into_iter()
@@ -245,12 +236,6 @@ pub fn apply_execution_settings_override(
 ) {
     if let Some(mode) = ov.mode.clone() {
         settings.mode = mode;
-    }
-    if let Some(runtime) = ov.container.runtime.clone() {
-        settings.container.runtime = runtime;
-    }
-    if let Some(mount_mode) = ov.container.mount_mode.clone() {
-        settings.container.mount_mode = mount_mode;
     }
     if let Some(network_mode) = ov.container.network_mode.clone() {
         settings.container.network_mode = network_mode;
@@ -545,7 +530,6 @@ pub async fn update_worktree_bootstrap_config(
 #[derive(Debug, Clone)]
 pub struct ExecutionConfigUpdate {
     pub environment: ExecutionEnvironment,
-    pub runtime: Option<ContainerRuntimeKind>,
     pub network_mode: Option<ContainerNetworkMode>,
     pub allowlist: Option<Vec<String>>,
     pub image: Option<String>,
@@ -556,7 +540,6 @@ pub async fn update_execution_config(store: &Store, update: ExecutionConfigUpdat
 
     let container = if matches!(update.environment, ExecutionEnvironment::Sandbox) {
         Some(WorkspaceContainerExecutionConfig {
-            runtime: update.runtime,
             network_mode: update.network_mode,
             allowlist: update.allowlist.map(|v| {
                 v.into_iter()
@@ -664,7 +647,6 @@ mod tests {
             &store,
             ExecutionConfigUpdate {
                 environment: ExecutionEnvironment::Sandbox,
-                runtime: None,
                 network_mode: Some(ContainerNetworkMode::LlmOnly),
                 allowlist: Some(vec![" api.openai.com ".to_string(), "".to_string()]),
                 image: None,
@@ -677,12 +659,7 @@ mod tests {
             .await
             .expect("load override")
             .expect("execution override");
-        assert_eq!(loaded.mode, Some(ExecutionMode::Container));
-        assert_eq!(
-            loaded.container.mount_mode,
-            Some(ContainerMountMode::DiskIsolated)
-        );
-        assert_eq!(loaded.container.runtime, None);
+        assert_eq!(loaded.mode, Some(ExecutionMode::Sandbox));
         assert_eq!(
             loaded.container.network_mode,
             Some(ContainerNetworkMode::LlmOnly)

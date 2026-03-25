@@ -63,7 +63,7 @@ export const buildWizardStepPath = ({
   maybePush(
     path,
     "network",
-    (containerSelection ?? "") !== "" && containerSelection !== "no-container"
+    (containerSelection ?? "") !== "" && containerSelection !== "host"
       || current === "network",
   );
 

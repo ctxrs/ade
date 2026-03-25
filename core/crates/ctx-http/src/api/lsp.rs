@@ -394,8 +394,14 @@ pub(super) async fn resolve_session_root_and_file(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let root = PathBuf::from(&wt.root_path);
-    if crate::container_fs::is_container_path(&root) {
+    let data_plane = crate::worktree_data_plane::resolve_worktree_data_plane(state, &wt)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let root = data_plane.live_worktree_root;
+    if matches!(
+        data_plane.execution_mode,
+        crate::settings::ExecutionMode::Sandbox
+    ) {
         let file = crate::buffers::BufferStore::resolve_path_lexical(&root, path)
             .map_err(|_| StatusCode::BAD_REQUEST)?;
         Ok((sid, session.workspace_id, session.worktree_id, root, file))

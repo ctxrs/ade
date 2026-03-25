@@ -2,16 +2,16 @@ use super::*;
 
 #[cfg(any(test, not(unix)))]
 #[cfg(any(test, not(unix)))]
-pub(in crate::workspace_runtime) fn is_ctx_managed_podman_helper_process_command(
+pub(in crate::workspace_runtime) fn is_ctx_managed_sandbox_helper_process_command(
     command: &[String],
     data_root: &Path,
     machine_name: &str,
 ) -> bool {
     let rendered = command.join("\n");
-    is_ctx_managed_podman_helper_process_rendered(&rendered, data_root, machine_name)
+    is_ctx_managed_sandbox_helper_process_rendered(&rendered, data_root, machine_name)
 }
 
-fn is_ctx_managed_podman_helper_process_rendered(
+fn is_ctx_managed_sandbox_helper_process_rendered(
     rendered: &str,
     data_root: &Path,
     machine_name: &str,
@@ -25,11 +25,14 @@ fn is_ctx_managed_podman_helper_process_rendered(
     }
 
     let scoped_roots = [
-        data_root.join("managed").join("runtimes").join("podman"),
-        podman_runtime_root(data_root),
-        podman_home_root(data_root),
-        podman_temp_root(data_root),
-        data_root.join("podman"),
+        data_root
+            .join("managed")
+            .join("runtimes")
+            .join("sandbox-cli"),
+        sandbox_machine_runtime_root(data_root),
+        sandbox_machine_home_root(data_root),
+        sandbox_machine_temp_root(data_root),
+        data_root.join("sandbox-cli"),
     ];
     scoped_roots.iter().any(|root| {
         let root = root.to_string_lossy();
@@ -38,7 +41,7 @@ fn is_ctx_managed_podman_helper_process_rendered(
 }
 
 #[cfg(any(test, not(unix)))]
-pub(in crate::workspace_runtime) fn collect_ctx_managed_podman_helper_pids<I>(
+pub(in crate::workspace_runtime) fn collect_ctx_managed_sandbox_helper_pids<I>(
     rows: I,
     data_root: &Path,
     machine_name: &str,
@@ -49,7 +52,7 @@ where
     let mut pids = rows
         .into_iter()
         .filter_map(|(pid, command)| {
-            is_ctx_managed_podman_helper_process_command(&command, data_root, machine_name)
+            is_ctx_managed_sandbox_helper_process_command(&command, data_root, machine_name)
                 .then_some(pid)
         })
         .collect::<Vec<_>>();
@@ -109,7 +112,7 @@ fn snapshot_ps_process_rows() -> Option<Vec<PsProcessRow>> {
 }
 
 #[cfg(unix)]
-fn collect_ctx_managed_podman_helper_processes_from_ps_rows<I>(
+fn collect_ctx_managed_sandbox_helper_processes_from_ps_rows<I>(
     rows: I,
     data_root: &Path,
     machine_name: &str,
@@ -120,7 +123,7 @@ where
     let mut processes = rows
         .into_iter()
         .filter(|row| {
-            is_ctx_managed_podman_helper_process_rendered(&row.command, data_root, machine_name)
+            is_ctx_managed_sandbox_helper_process_rendered(&row.command, data_root, machine_name)
         })
         .collect::<Vec<_>>();
     processes.sort_by(|left, right| {
@@ -133,7 +136,7 @@ where
 }
 
 #[cfg(test)]
-pub(in crate::workspace_runtime) fn collect_ctx_managed_podman_helper_pids_from_ps_output(
+pub(in crate::workspace_runtime) fn collect_ctx_managed_sandbox_helper_pids_from_ps_output(
     output: &str,
     data_root: &Path,
     machine_name: &str,
@@ -141,7 +144,7 @@ pub(in crate::workspace_runtime) fn collect_ctx_managed_podman_helper_pids_from_
     let mut pids = collect_ps_process_rows(output)
         .into_iter()
         .filter_map(|row| {
-            is_ctx_managed_podman_helper_process_rendered(&row.command, data_root, machine_name)
+            is_ctx_managed_sandbox_helper_process_rendered(&row.command, data_root, machine_name)
                 .then_some(row.pid)
         })
         .collect::<Vec<_>>();
@@ -151,7 +154,7 @@ pub(in crate::workspace_runtime) fn collect_ctx_managed_podman_helper_pids_from_
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(in crate::workspace_runtime) struct PodmanHelperCleanupOutcome {
+pub(in crate::workspace_runtime) struct SandboxHelperCleanupOutcome {
     pub(in crate::workspace_runtime) killed: Vec<u32>,
     pub(in crate::workspace_runtime) failed: Vec<u32>,
     pub(in crate::workspace_runtime) skipped: Vec<u32>,
@@ -172,7 +175,7 @@ pub(in crate::workspace_runtime) fn literal_pkill_pattern(command: &str) -> Stri
 }
 
 #[cfg(unix)]
-fn kill_ctx_managed_podman_helper_command(command: &str) -> bool {
+fn kill_ctx_managed_sandbox_helper_command(command: &str) -> bool {
     let literal_pattern = literal_pkill_pattern(command);
     StdCommand::new("pkill")
         .arg("-9")
@@ -185,19 +188,19 @@ fn kill_ctx_managed_podman_helper_command(command: &str) -> bool {
 }
 
 #[cfg(unix)]
-pub(in crate::workspace_runtime) fn kill_ctx_managed_podman_helper_processes(
+pub(in crate::workspace_runtime) fn kill_ctx_managed_sandbox_helper_processes(
     data_root: &Path,
     machine_name: &str,
-) -> PodmanHelperCleanupOutcome {
+) -> SandboxHelperCleanupOutcome {
     let Some(before_rows) = snapshot_ps_process_rows() else {
-        return PodmanHelperCleanupOutcome::default();
+        return SandboxHelperCleanupOutcome::default();
     };
-    let helpers = collect_ctx_managed_podman_helper_processes_from_ps_rows(
+    let helpers = collect_ctx_managed_sandbox_helper_processes_from_ps_rows(
         before_rows,
         data_root,
         machine_name,
     );
-    let mut outcome = PodmanHelperCleanupOutcome::default();
+    let mut outcome = SandboxHelperCleanupOutcome::default();
     if helpers.is_empty() {
         return outcome;
     }
@@ -206,7 +209,7 @@ pub(in crate::workspace_runtime) fn kill_ctx_managed_podman_helper_processes(
     for helper in &helpers {
         kill_results
             .entry(helper.command.clone())
-            .or_insert_with(|| kill_ctx_managed_podman_helper_command(&helper.command));
+            .or_insert_with(|| kill_ctx_managed_sandbox_helper_command(&helper.command));
     }
 
     let after_rows = snapshot_ps_process_rows().map(|rows| {
@@ -242,10 +245,10 @@ pub(in crate::workspace_runtime) fn kill_ctx_managed_podman_helper_processes(
 }
 
 #[cfg(not(unix))]
-pub(in crate::workspace_runtime) fn kill_ctx_managed_podman_helper_processes(
+pub(in crate::workspace_runtime) fn kill_ctx_managed_sandbox_helper_processes(
     data_root: &Path,
     machine_name: &str,
-) -> PodmanHelperCleanupOutcome {
+) -> SandboxHelperCleanupOutcome {
     let mut system = sysinfo::System::new_all();
     system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     let rows = system.processes().iter().map(|(pid, process)| {
@@ -257,8 +260,8 @@ pub(in crate::workspace_runtime) fn kill_ctx_managed_podman_helper_processes(
             .collect::<Vec<_>>();
         (pid_u32, command)
     });
-    let pids = collect_ctx_managed_podman_helper_pids(rows, data_root, machine_name);
-    let mut outcome = PodmanHelperCleanupOutcome::default();
+    let pids = collect_ctx_managed_sandbox_helper_pids(rows, data_root, machine_name);
+    let mut outcome = SandboxHelperCleanupOutcome::default();
     for pid in pids {
         system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
         let still_matches = system
@@ -269,7 +272,7 @@ pub(in crate::workspace_runtime) fn kill_ctx_managed_podman_helper_processes(
                     .iter()
                     .map(|part| part.to_string_lossy().into_owned())
                     .collect::<Vec<_>>();
-                is_ctx_managed_podman_helper_process_command(&command, data_root, machine_name)
+                is_ctx_managed_sandbox_helper_process_command(&command, data_root, machine_name)
             })
             .unwrap_or(false);
         if !still_matches {
@@ -290,19 +293,19 @@ pub(in crate::workspace_runtime) fn kill_ctx_managed_podman_helper_processes(
     outcome
 }
 
-pub(super) fn cleanup_ctx_managed_podman_helper_processes(
+pub(super) fn cleanup_ctx_managed_sandbox_helper_processes(
     data_root: &Path,
     machine_name: &str,
     observer: Option<&dyn HarnessSetupObserver>,
 ) {
-    let outcome = kill_ctx_managed_podman_helper_processes(data_root, machine_name);
+    let outcome = kill_ctx_managed_sandbox_helper_processes(data_root, machine_name);
     if !outcome.killed.is_empty() {
         observe_log(
             observer,
             HarnessSetupPhase::MachineStartOrInit,
             HarnessSetupLogLevel::Warn,
             &format!(
-                "killed stale ctx-managed podman helper process(es) before recovery: {}",
+                "killed stale ctx-managed sandbox helper process(es) before recovery: {}",
                 outcome
                     .killed
                     .iter()
@@ -318,7 +321,7 @@ pub(super) fn cleanup_ctx_managed_podman_helper_processes(
             HarnessSetupPhase::MachineStartOrInit,
             HarnessSetupLogLevel::Warn,
             &format!(
-                "failed to kill stale ctx-managed podman helper process(es) before recovery: {}",
+                "failed to kill stale ctx-managed sandbox helper process(es) before recovery: {}",
                 outcome
                     .failed
                     .iter()
@@ -334,7 +337,7 @@ pub(super) fn cleanup_ctx_managed_podman_helper_processes(
             HarnessSetupPhase::MachineStartOrInit,
             HarnessSetupLogLevel::Warn,
             &format!(
-                "skipped killing stale ctx-managed podman helper process(es) after command-scoped cleanup no longer matched the original helper identity: {}",
+                "skipped killing stale ctx-managed sandbox helper process(es) after command-scoped cleanup no longer matched the original helper identity: {}",
                 outcome
                     .skipped
                     .iter()

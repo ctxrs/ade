@@ -62,11 +62,11 @@ fn write_executable(path: &Path, contents: &str) {
 }
 
 #[cfg(unix)]
-fn write_fake_podman(path: &Path) {
+fn write_fake_sandbox_cli(path: &Path) {
     write_executable(
         path,
         r#"#!/bin/sh
-echo "fake podman unavailable" >&2
+echo "fake sandbox CLI unavailable" >&2
 exit 1
 "#,
     );
@@ -1116,13 +1116,13 @@ async fn provider_options_probe_uses_workspace_runtime_context_for_container_mod
     let state = app_state(data_dir.path()).await;
     let app = api::router(state.clone());
 
-    let fake_podman = data_dir.path().join("podman");
-    write_fake_podman(&fake_podman);
-    let _podman_guard = EnvVarGuard::set(
-        "CTX_PODMAN_PATH",
-        fake_podman
+    let fake_sandbox_cli = data_dir.path().join("sandbox-cli");
+    write_fake_sandbox_cli(&fake_sandbox_cli);
+    let _sandbox_cli_guard = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        fake_sandbox_cli
             .to_str()
-            .expect("fake podman path should be utf-8"),
+            .expect("fake sandbox CLI path should be utf-8"),
     );
 
     let (runtime_cmd, dep_bin_rel) =

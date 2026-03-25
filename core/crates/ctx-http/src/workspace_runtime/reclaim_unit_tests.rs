@@ -27,7 +27,7 @@ impl Drop for EnvGuard {
 }
 
 fn env_var_test_lock() -> &'static tokio::sync::Mutex<()> {
-    crate::test_support::podman_env_test_lock()
+    crate::test_support::sandbox_cli_env_test_lock()
 }
 
 #[cfg(unix)]
@@ -38,20 +38,23 @@ async fn idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_contai
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = HarnessRuntimeManager::new(temp.path().to_path_buf());
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let machine_name = sandbox_machine_name(temp.path());
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"ps\" ]; then\n  printf 'ctx-harness-123\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"ps\" ]; then\n  printf 'ctx-harness-123\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     {
         let mut last_activity = manager
             .last_activity
@@ -78,7 +81,7 @@ async fn idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_contai
     };
 
     let stopped = manager
-        .maybe_reclaim_podman_machine(
+        .maybe_reclaim_sandbox_machine(
             &settings,
             &snapshot,
             None,
@@ -102,20 +105,23 @@ async fn active_prewarm_artifact_activity_suppresses_reclaim() {
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = HarnessRuntimeManager::new(temp.path().to_path_buf());
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let machine_name = sandbox_machine_name(temp.path());
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     {
         let mut last_activity = manager
             .last_activity
@@ -143,7 +149,7 @@ async fn active_prewarm_artifact_activity_suppresses_reclaim() {
     let _prewarm_activity = manager.begin_prewarm_artifact_activity();
 
     let stopped = manager
-        .maybe_reclaim_podman_machine(
+        .maybe_reclaim_sandbox_machine(
             &settings,
             &snapshot,
             None,

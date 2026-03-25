@@ -27,24 +27,24 @@
   "required": {
     "targets": {
       "provider": [],
-      "runtime": [],
+      "runtime": [
+        "macos/aarch64",
+        "macos/x86_64"
+      ],
       "image": [
         "linux/aarch64",
         "linux/x86_64"
       ],
-      "machine_cache": [
-        "macos/aarch64",
-        "macos/x86_64"
-      ]
+      "machine_cache": []
     },
     "provider_ids": [],
-    "runtime_ids": [],
+    "runtime_ids": [
+      "avf-linux-guest"
+    ],
     "image_ids": [
       "ctx-harness"
     ],
-    "machine_cache_ids": [
-      "podman-machine"
-    ]
+    "machine_cache_ids": []
   },
   "components": [
     {
@@ -1246,66 +1246,6 @@
     },
     {
       "kind": "runtime",
-      "id": "podman",
-      "os": "macos",
-      "arch": "aarch64",
-      "variant": "default",
-      "version": "5.8.0",
-      "bin": "usr/bin/podman",
-      "helpers": {
-        "gvproxy": {
-          "uri": "https://github.com/containers/gvisor-tap-vsock/releases/download/v0.8.8/gvproxy-darwin",
-          "sha256": "614d58dd3f8473258fb6ec18f7631000d2e5c9a761ca52748cc714c07d16382f"
-        },
-        "vfkit": {
-          "uri": "https://github.com/crc-org/vfkit/releases/download/v0.6.3/vfkit-unsigned",
-          "sha256": "c78270d70d6aaa5a16a96a645561229678ca404a2153e1ed4780dc6fea0db1da"
-        }
-      },
-      "sources": [
-        {
-          "source_type": "local",
-          "build": "desktop:prep"
-        },
-        {
-          "source_type": "vendor",
-          "uri": "https://github.com/containers/podman/releases/download/v5.8.0/podman-remote-release-darwin_arm64.zip",
-          "sha256": "dfd1bb61afab0cffb994291e9dd2bc0c4e7e5a10ddfbdad550edf903b3b5c1d1"
-        }
-      ]
-    },
-    {
-      "kind": "runtime",
-      "id": "podman",
-      "os": "macos",
-      "arch": "x86_64",
-      "variant": "default",
-      "version": "5.8.0",
-      "bin": "usr/bin/podman",
-      "helpers": {
-        "gvproxy": {
-          "uri": "https://github.com/containers/gvisor-tap-vsock/releases/download/v0.8.8/gvproxy-darwin",
-          "sha256": "614d58dd3f8473258fb6ec18f7631000d2e5c9a761ca52748cc714c07d16382f"
-        },
-        "vfkit": {
-          "uri": "https://github.com/crc-org/vfkit/releases/download/v0.6.3/vfkit-unsigned",
-          "sha256": "c78270d70d6aaa5a16a96a645561229678ca404a2153e1ed4780dc6fea0db1da"
-        }
-      },
-      "sources": [
-        {
-          "source_type": "local",
-          "build": "desktop:prep"
-        },
-        {
-          "source_type": "vendor",
-          "uri": "https://github.com/containers/podman/releases/download/v5.8.0/podman-remote-release-darwin_amd64.zip",
-          "sha256": "a4d68a7be94d2c6f9c752731736ab0ec5145bc5b5ac5909d6b5bc36badd73f44"
-        }
-      ]
-    },
-    {
-      "kind": "runtime",
       "id": "avf-linux-guest",
       "os": "macos",
       "arch": "aarch64",
@@ -1377,36 +1317,6 @@
           "source_type": "ci",
           "uri": "locked://runtimes/avf-linux-guest/macos/x86_64/rootfs.raw.zst",
           "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-        }
-      ]
-    },
-    {
-      "kind": "machine_cache",
-      "id": "podman-machine",
-      "os": "macos",
-      "arch": "aarch64",
-      "variant": "default",
-      "version": "5.8.0",
-      "sources": [
-        {
-          "source_type": "vendor",
-          "uri": "https://github.com/containers/podman-machine-os/releases/download/v5.8.0/podman-machine.aarch64.applehv.raw.zst",
-          "sha256": "f73f222eb4027e1d97c8c3e7f30da80c159da9fc97848af72de816ac3992599c"
-        }
-      ]
-    },
-    {
-      "kind": "machine_cache",
-      "id": "podman-machine",
-      "os": "macos",
-      "arch": "x86_64",
-      "variant": "default",
-      "version": "5.8.0",
-      "sources": [
-        {
-          "source_type": "vendor",
-          "uri": "https://github.com/containers/podman-machine-os/releases/download/v5.8.0/podman-machine.x86_64.applehv.raw.zst",
-          "sha256": "63dca13a105c7b1a2630aebe1d1ff7070a1c36e43bac9b208542a0caea6cde6b"
         }
       ]
     },

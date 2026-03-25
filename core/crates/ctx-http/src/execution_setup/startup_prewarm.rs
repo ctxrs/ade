@@ -116,7 +116,6 @@ impl ExecutionSetupCoordinator {
                 return;
             }
         };
-
         if !gate.needs_prewarm {
             let snapshot = StartupPrewarmSnapshot {
                 state: StartupPrewarmState::Ready,
@@ -273,10 +272,10 @@ impl ExecutionSetupCoordinator {
         let metadata = read_prewarm_metadata(&self.data_root).await?;
         let (machine_ready, image_present) = self.startup_runtime_state(settings).await?;
         let bundled_image_fingerprint = match settings.runtime {
-            crate::settings::ContainerRuntimeKind::Podman => {
+            crate::settings::ContainerRuntimeKind::NativeContainer => {
                 bundled_image_fingerprint(&target).await?
             }
-            crate::settings::ContainerRuntimeKind::AvfLinuxVm => None,
+            crate::settings::ContainerRuntimeKind::SharedVmContainer => None,
         };
 
         let image_ref_changed = metadata
@@ -310,10 +309,10 @@ impl ExecutionSetupCoordinator {
         settings: &crate::settings::ContainerExecutionSettings,
     ) -> Result<(bool, bool)> {
         match settings.runtime {
-            crate::settings::ContainerRuntimeKind::Podman => {
+            crate::settings::ContainerRuntimeKind::NativeContainer => {
                 let target = harness_runtime::resolve_container_image(settings);
-                let machine_ready = normalize_podman_engine_ready_for_gate(
-                    harness_runtime::podman_engine_ready(&self.data_root).await,
+                let machine_ready = normalize_container_engine_ready_for_gate(
+                    harness_runtime::sandbox_engine_ready(&self.data_root).await,
                 )?;
                 let image_present = if machine_ready {
                     harness_runtime::container_image_present(&self.data_root, &target).await?
@@ -322,7 +321,7 @@ impl ExecutionSetupCoordinator {
                 };
                 Ok((machine_ready, image_present))
             }
-            crate::settings::ContainerRuntimeKind::AvfLinuxVm => {
+            crate::settings::ContainerRuntimeKind::SharedVmContainer => {
                 harness_runtime::selected_runtime_state(&self.data_root, settings).await
             }
         }
@@ -400,7 +399,7 @@ impl ExecutionSetupCoordinator {
         }
 
         let bundled_image_fingerprint = match settings.runtime {
-            crate::settings::ContainerRuntimeKind::Podman => {
+            crate::settings::ContainerRuntimeKind::NativeContainer => {
                 match bundled_image_fingerprint(&target).await {
                     Ok(fingerprint) => fingerprint,
                     Err(err) => {
@@ -413,7 +412,7 @@ impl ExecutionSetupCoordinator {
                     }
                 }
             }
-            crate::settings::ContainerRuntimeKind::AvfLinuxVm => None,
+            crate::settings::ContainerRuntimeKind::SharedVmContainer => None,
         };
 
         let ready_at = format_ts(Utc::now());

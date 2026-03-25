@@ -114,9 +114,9 @@ impl HarnessRuntimeManager {
                 HarnessSetupPhase::ContainerStartOrCreate,
                 "recreating workspace container",
             );
-            if let Ok(mut cmd) = podman_command(&self.data_root) {
+            if let Ok(mut cmd) = sandbox_container_command(&self.data_root) {
                 cmd.arg("rm").arg("-f").arg(&name);
-                let _ = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await;
+                let _ = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await;
             }
         }
 
@@ -136,17 +136,20 @@ impl HarnessRuntimeManager {
                     HarnessSetupPhase::ContainerStartOrCreate,
                     "starting existing workspace container",
                 );
-                let mut cmd = podman_command(&self.data_root)?;
+                let mut cmd = sandbox_container_command(&self.data_root)?;
                 cmd.arg("start").arg(&name);
-                let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+                let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     let combined = format!("{stderr}\n{stdout}").trim().to_string();
                     if combined.is_empty() {
-                        anyhow::bail!("podman start failed for {name} (status: {})", output.status);
+                        anyhow::bail!(
+                            "container start failed for {name} (status: {})",
+                            output.status
+                        );
                     }
-                    anyhow::bail!("podman start failed for {name}: {combined}");
+                    anyhow::bail!("container start failed for {name}: {combined}");
                 }
             } else {
                 observe_log(
@@ -166,7 +169,7 @@ impl HarnessRuntimeManager {
                 HarnessSetupPhase::ContainerStartOrCreate,
                 "creating workspace container",
             );
-            let mut cmd = podman_command(&self.data_root)?;
+            let mut cmd = sandbox_container_command(&self.data_root)?;
             cmd.arg("run").arg("-d").arg("--name").arg(&name);
             if should_use_keep_id_userns() {
                 cmd.arg("--userns=keep-id");
@@ -186,15 +189,15 @@ impl HarnessRuntimeManager {
             cmd.arg("/bin/sh")
                 .arg("-c")
                 .arg("while true; do sleep 100000; done");
-            let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+            let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                 let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 let combined = format!("{stderr}\n{stdout}").trim().to_string();
                 if combined.is_empty() {
-                    anyhow::bail!("podman run failed for {name} (status: {})", output.status);
+                    anyhow::bail!("container run failed for {name} (status: {})", output.status);
                 }
-                anyhow::bail!("podman run failed for {name}: {combined}");
+                anyhow::bail!("container run failed for {name}: {combined}");
             }
         }
 

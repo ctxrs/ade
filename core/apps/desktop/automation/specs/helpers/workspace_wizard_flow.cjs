@@ -50,14 +50,14 @@ const parsePositiveInt = (raw, fallback) => {
 const normalizeText = (value) => String(value || "").trim();
 const normalizeExecutionEnvironment = (value) => {
   const text = normalizeText(value).toLowerCase();
-  if (text === "container_host_mounted" || text === "host-mounted") return "host";
-  if (text === "container_disk_isolated" || text === "disk-isolated") return "sandbox";
+  if (text === "host" || text === "host") return "host";
+  if (text === "sandbox" || text === "sandbox") return "sandbox";
   return text;
 };
 const containerOptionIdForEnvironment = (value) => {
   const normalized = normalizeExecutionEnvironment(value);
-  if (normalized === "host") return "host-mounted";
-  if (normalized === "sandbox") return "disk-isolated";
+  if (normalized === "host") return "host";
+  if (normalized === "sandbox") return "sandbox";
   return normalizeText(value);
 };
 const REMOTE_PORT = parsePort(process.env.CTX_AUTOMATION_REMOTE_PORT || "44099", 44099);
@@ -1510,8 +1510,8 @@ const ensureReadyForSourceSelection = async (
     }
     if (key === "container") {
       if (!container) throw new Error("container step reached but scenario.container is missing");
-      if (container === "host-mounted") {
-        const hostMountedVisible = await ensureContainerOptionVisible("host-mounted");
+      if (container === "host") {
+        const hostMountedVisible = await ensureContainerOptionVisible("host");
         if (!hostMountedVisible) {
           await browser.pause(100);
           continue;
@@ -1567,7 +1567,7 @@ const ensureReadyForSourceSelection = async (
         ).filter((providerId) => !readyProviders.has(providerId));
         const next = await clickNextIfEnabled();
         if (next.clicked) {
-          const installTarget = container === "no-container" ? "host" : "container";
+          const installTarget = container === "host" ? "host" : "container";
           if (requireSelectedHarnessInstallsNonBlocking) {
             if (expectedKickoffProviderIds.length === 0) {
               throw new Error(
@@ -1618,7 +1618,7 @@ const ensureReadyForSourceSelection = async (
       const expectedKickoffProviderIds = await readSelectedHarnessProviderIds();
       const next = await clickNextIfEnabled();
       if (next.clicked) {
-        const installTarget = container === "no-container" ? "host" : "container";
+        const installTarget = container === "host" ? "host" : "container";
         await waitForSelectedHarnessInstallsToKickOff(
           expectedKickoffProviderIds,
           installTarget,
@@ -2078,7 +2078,7 @@ const runWizardScenario = async (scenario) => {
 
   if (scenario.location === "remote") {
     const afterLocation = await waitForRemoteStepAfterLocation();
-    if (afterLocation === "source" && scenario.container && scenario.container !== "no-container") {
+    if (afterLocation === "source" && scenario.container && scenario.container !== "host") {
       throw new Error("remote wizard did not expose container step (container modes unavailable)");
     }
     if (
@@ -2113,7 +2113,7 @@ const runWizardScenario = async (scenario) => {
     () => Boolean(document.querySelector('[data-testid="wizard-source-path"]')),
   );
   const expectsManagedStagingSource = (
-    scenario.container === "disk-isolated"
+    scenario.container === "sandbox"
     && (scenario.source.kind === "clone" || scenario.source.kind === "new")
   );
 
@@ -2307,9 +2307,9 @@ const runWizardScenario = async (scenario) => {
     await scenario.beforeCreate();
   }
   await clickCreate(
-    scenario.container && scenario.container !== "no-container" ? CONTAINER_LAUNCH_TIMEOUT_MS : 30000,
+    scenario.container && scenario.container !== "host" ? CONTAINER_LAUNCH_TIMEOUT_MS : 30000,
   );
-  if (scenario.container && scenario.container !== "no-container") {
+  if (scenario.container && scenario.container !== "host") {
     const launchVisibility = await waitForLaunchLogsOrWorkspaceRoute(15000);
     if (launchVisibility.kind === "logs" && typeof scenario.onLaunchLogsVisible === "function") {
       await scenario.onLaunchLogsVisible();
@@ -2318,7 +2318,7 @@ const runWizardScenario = async (scenario) => {
 
   const workspaceRouteTimeoutMs = scenario.location === "remote"
     ? REMOTE_LAUNCH_TIMEOUT_MS
-    : (scenario.container && scenario.container !== "no-container" ? CONTAINER_LAUNCH_TIMEOUT_MS : 120000);
+    : (scenario.container && scenario.container !== "host" ? CONTAINER_LAUNCH_TIMEOUT_MS : 120000);
   const id = await waitForWorkspaceRoute(workspaceRouteTimeoutMs);
   return await finalizeWizardSuccess(id);
 };

@@ -4,7 +4,7 @@ import { Card, Row } from "../../SettingsPage.components";
 import { formatGiB } from "../../SettingsPage.utils";
 
 export const MACHINE_MEMORY_DESCRIPTION =
-  "ctx sizes the local sandbox runtime automatically for this machine. Changes apply when the sandbox VM is recreated.";
+  "ctx sizes the local sandbox runtime automatically for this machine. Changes apply when the sandbox runtime is recreated.";
 
 export function formatResolvedMachineMemory(memoryMb: number | null | undefined): string {
   if (typeof memoryMb !== "number" || !Number.isFinite(memoryMb) || memoryMb <= 0) {
@@ -64,7 +64,7 @@ export function SandboxingSection({
         />
         <Row
           title="Idle shutdown (seconds)"
-          description="Stop the local sandbox VM after this much inactivity to reclaim RAM and swap."
+          description="Stop the local sandbox runtime after this much inactivity to reclaim RAM and swap."
           control={
             <input
               className="settings-control"
@@ -80,7 +80,7 @@ export function SandboxingSection({
         />
         <Row
           title="Host pressure swap threshold (MiB)"
-          description="If host swap use exceeds this threshold, ctx may stop an idle sandbox VM sooner."
+          description="If host swap use exceeds this threshold, ctx may stop an idle sandbox runtime sooner."
           control={
             <input
               className="settings-control"

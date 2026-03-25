@@ -172,7 +172,7 @@ async fn ensure_egress_proxy_available(data_root: &Path, container_name: &str) -
     let script = format!(
         "set -e; command -v iptables >/dev/null 2>&1; test -x '{EGRESS_PROXY_CONTAINER_PATH}'"
     );
-    let mut cmd = podman_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("exec")
         .arg("--user")
         .arg("0")
@@ -180,7 +180,7 @@ async fn ensure_egress_proxy_available(data_root: &Path, container_name: &str) -
         .arg("sh")
         .arg("-c")
         .arg(script);
-    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+    let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
     if output.status.success() {
         return Ok(());
     }
@@ -233,7 +233,7 @@ echo $! > "$pid_file"
 exit 0
 "#
     );
-    let mut cmd = podman_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("exec")
         .arg("--user")
         .arg("0")
@@ -241,7 +241,7 @@ exit 0
         .arg("sh")
         .arg("-c")
         .arg(script);
-    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+    let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
     if output.status.success() {
         Ok(())
     } else {
@@ -273,7 +273,7 @@ if [ -f "$pid_file" ]; then
 fi
 "#;
     let script = script.replace("{pid_file}", pid_file.as_ref());
-    let mut cmd = podman_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("exec")
         .arg("--user")
         .arg("0")
@@ -281,7 +281,7 @@ fi
         .arg("sh")
         .arg("-c")
         .arg(script);
-    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+    let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
     if output.status.success() {
         Ok(())
     } else {
@@ -329,7 +329,7 @@ iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-ports {proxy_port}
 exit 0
 "#
     );
-    let mut cmd = podman_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("exec")
         .arg("--user")
         .arg("0")
@@ -337,7 +337,7 @@ exit 0
         .arg("sh")
         .arg("-c")
         .arg(script);
-    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+    let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
     if output.status.success() {
         return Ok(true);
     }
@@ -365,7 +365,7 @@ iptables -t nat -F OUTPUT
 iptables -F OUTPUT
 iptables -P OUTPUT ACCEPT
 "#;
-    let mut cmd = podman_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("exec")
         .arg("--user")
         .arg("0")
@@ -373,7 +373,7 @@ iptables -P OUTPUT ACCEPT
         .arg("sh")
         .arg("-c")
         .arg(script);
-    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+    let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
     if output.status.success() {
         Ok(())
     } else {

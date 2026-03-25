@@ -321,16 +321,16 @@ const runLocalContainerCreate = async ({ container, workspaceName, destPath, net
     const hasDetailedError = launch.lines.some((line) => line.level.toLowerCase() === "error" && line.message.length > 8);
     if (!hasDetailedError) {
       throw new Error(
-        `container launch failed without detailed launch diagnostics; error=${String(error)} launch=${JSON.stringify(launch)} route=${JSON.stringify(routeDiag)}`,
+        `sandbox launch failed without detailed launch diagnostics; error=${String(error)} launch=${JSON.stringify(launch)} route=${JSON.stringify(routeDiag)}`,
       );
     }
     throw new Error(
-      `container launch failed; error=${String(error)} launch=${JSON.stringify(launch)} route=${JSON.stringify(routeDiag)}`,
+      `sandbox launch failed; error=${String(error)} launch=${JSON.stringify(launch)} route=${JSON.stringify(routeDiag)}`,
     );
   }
 };
 
-describe("container daemon liveness", () => {
+describe("sandbox daemon liveness", () => {
   const runId = `${Date.now()}`;
   const localBase = mkTempDir(`ctx-container-daemon-liveness-${runId}-`);
 
@@ -406,7 +406,7 @@ describe("container daemon liveness", () => {
     });
     const container = await getWorkspaceHarnessContainer(workspaceId);
     if (!container || !container.running) {
-      throw new Error(`expected running host harness after contention create, got ${JSON.stringify(container)}`);
+      throw new Error(`expected running host execution harness after contention create, got ${JSON.stringify(container)}`);
     }
   }).timeout(CASE_TIMEOUT_MS);
 
@@ -434,7 +434,7 @@ describe("container daemon liveness", () => {
     });
     const container = await getWorkspaceHarnessContainer(workspaceId);
     if (!container || !container.running) {
-      throw new Error(`expected running host harness, got ${JSON.stringify(container)}`);
+      throw new Error(`expected running host execution harness, got ${JSON.stringify(container)}`);
     }
     await assertNoDaemonOverlayFor(20_000);
     const health = await sampleDaemonHealth({ durationMs: 20_000, intervalMs: 2_000 });
@@ -471,7 +471,7 @@ describe("container daemon liveness", () => {
     });
     const container = await getWorkspaceHarnessContainer(workspaceId);
     if (!container || !container.running) {
-      throw new Error(`expected running sandbox harness, got ${JSON.stringify(container)}`);
+      throw new Error(`expected running sandbox environment, got ${JSON.stringify(container)}`);
     }
 
     const tasksResp = await daemonJson("GET", `/api/workspaces/${workspaceId}/tasks`);
@@ -492,7 +492,7 @@ describe("container daemon liveness", () => {
     const hostDest = path.join(localBase, "mixed-host");
     const hostWorkspaceId = await runWizardScenario({
       location: "local",
-      container: "no-container",
+      container: "host",
       source: { kind: "new", destPath: hostDest, workspaceName: "mixed-host" },
       setupHook: "",
       mergeQueue: { kind: "skip" },

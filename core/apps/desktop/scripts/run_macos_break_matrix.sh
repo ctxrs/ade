@@ -168,7 +168,6 @@ fs.writeFileSync(process.argv[3], JSON.stringify(c, null, 2) + "\n");
     "CTX_AUTOMATION_WDIO_LOG_LEVEL=${CTX_AUTOMATION_WDIO_LOG_LEVEL:-info}"
     "CTX_AUTOMATION_MOCHA_TIMEOUT_MS=${CTX_AUTOMATION_MOCHA_TIMEOUT_MS:-900000}"
     "CTX_AUTOMATION_SKIP_APP_BUILD=${CTX_AUTOMATION_SKIP_APP_BUILD:-1}"
-    "CTX_CONTAINER_LIFECYCLE_RESUME_REPORT=${case_dir}/container-lifecycle-resume.json"
     "CTX_HARNESS_MATRIX_REPORT=${case_dir}/harness-install-probe-matrix.json"
     "CTX_REMOTE_CONTAINER_CONTRACT_REPORT=${case_dir}/remote-container-contract.json"
     "CTX_UPDATER_NATIVE_SMOKE_REPORT=${case_dir}/updater-native-smoke.json"

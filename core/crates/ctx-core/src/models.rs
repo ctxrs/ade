@@ -126,6 +126,39 @@ pub struct Worktree {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum SandboxRuntimeFamily {
+    NativeContainer,
+    SharedVmContainer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxProfile {
+    #[default]
+    Standard,
+    Strict,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxBinding {
+    pub worktree_id: WorktreeId,
+    pub workspace_id: WorkspaceId,
+    pub runtime_family: SandboxRuntimeFamily,
+    #[serde(default)]
+    pub profile: SandboxProfile,
+    pub live_workspace_root: String,
+    pub live_worktree_root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_settings_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_projection_root: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum WorktreeVcsComputeState {
     Computing,
     Ready,

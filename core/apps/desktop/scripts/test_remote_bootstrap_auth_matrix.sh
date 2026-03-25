@@ -13,7 +13,7 @@ PASSTHROUGH_ARGS=()
 usage() {
   cat <<'USAGE' >&2
 usage:
-  test_remote_bootstrap_auth_matrix.sh [--runtime auto|docker|podman] [--cases key,password_once,wrong_password] [--max-infra-retries N] [--log-dir PATH] [-- ...wdio args]
+  test_remote_bootstrap_auth_matrix.sh [--runtime auto|docker|nerdctl] [--cases key,password_once,wrong_password] [--max-infra-retries N] [--log-dir PATH] [-- ...wdio args]
 USAGE
 }
 

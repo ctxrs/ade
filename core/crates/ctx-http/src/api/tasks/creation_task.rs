@@ -1,5 +1,4 @@
 use super::*;
-use crate::settings::{ContainerMountMode, ContainerRuntimeKind};
 
 pub(in crate::api) async fn create_task(
     State(state): State<Arc<AppState>>,
@@ -216,115 +215,23 @@ pub(in crate::api) async fn create_task(
                 }),
             )
         })?;
-    let wt_path = if matches!(effective.mode, ExecutionMode::Container)
-        && matches!(
-            effective.container.mount_mode,
-            ContainerMountMode::DiskIsolated
-        ) {
-        if let Err(e) = state
-            .execution
-            .harness
-            .ensure_workspace_container(&ws, &effective, &state.core.daemon_url)
-            .await
-        {
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            ));
-        }
-        if matches!(
-            effective.container.runtime,
-            ContainerRuntimeKind::AvfLinuxVm
-        ) {
-            let guest_worktree = crate::workspace_runtime::ensure_avf_linux_guest_worktree_from_host_copy(
-                &state.core.data_root,
-                ws_id,
-                worktree_id,
-                ws_root,
-                &base_commit_sha,
-                &branch_name,
-                None,
-            )
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: format!(
-                            "AVF disk-isolated worktree provisioning failed: {}. retry after checking the workspace VM health.",
-                            logs::redact_sensitive(&e.to_string())
-                        ),
-                    }),
-                )
-            })?;
-            crate::disk_isolated::ensure_worktree_from_host_copy(
-                &state.core.data_root,
-                ws_id,
-                worktree_id,
-                &guest_worktree.host_shadow_root,
-                &base_commit_sha,
-                &branch_name,
-            )
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: format!(
-                            "AVF disk-isolated worktree provisioning failed: {}. retry after checking the shared VM and sandbox container health.",
-                            logs::redact_sensitive(&e.to_string())
-                        ),
-                    }),
-                )
-            })?
-        } else {
-            crate::disk_isolated::ensure_worktree_from_host_copy(
-                &state.core.data_root,
-                ws_id,
-                worktree_id,
-                ws_root,
-                &base_commit_sha,
-                &branch_name,
-            )
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: format!(
-                            "disk-isolated worktree provisioning failed: {}. retry after checking container runtime health.",
-                            logs::redact_sensitive(&e.to_string())
-                        ),
-                    }),
-                )
-            })?
-        }
-    } else {
-        let wt_path = managed_worktree_path(&state.core.data_root, ws_id, worktree_id);
-        if let Some(parent) = wt_path.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&e.to_string()),
-                    }),
-                )
-            })?;
-        }
-        create_worktree(&ws.root_path, &wt_path, &base_commit_sha, &branch_name)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&e.to_string()),
-                    }),
-                )
-            })?;
-        wt_path
-    };
+    let (wt_path, sandbox_binding) = provision_worktree_for_execution(
+        &state,
+        &ws,
+        worktree_id,
+        &base_commit_sha,
+        &branch_name,
+        &effective,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
 
     let worktree = Worktree {
         id: worktree_id,
@@ -355,6 +262,16 @@ pub(in crate::api) async fn create_task(
             }),
         )
     })?;
+    if let Some(binding) = sandbox_binding {
+        store.upsert_sandbox_binding(binding).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    }
     if let Err(e) = state
         .global_store()
         .upsert_workspace_worktree_index(worktree_id, ws_id)

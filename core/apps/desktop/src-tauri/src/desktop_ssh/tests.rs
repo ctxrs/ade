@@ -53,7 +53,7 @@ fn remote_ctx_bin_parent_dir_handles_home_and_absolute_paths() {
 }
 
 #[test]
-fn remote_daemon_exec_command_does_not_inject_system_podman_env() {
+fn remote_daemon_exec_command_does_not_inject_system_sandbox_cli_env() {
     let command = super::install::render_remote_daemon_exec_cmd("~/.ctx/bin/ctx", 44199, "~/.ctx")
         .expect("render remote daemon exec command");
     assert!(
@@ -63,12 +63,12 @@ fn remote_daemon_exec_command_does_not_inject_system_podman_env() {
         "unexpected command: {command}"
     );
     assert!(
-        !command.contains("CTX_PODMAN_PATH"),
-        "remote daemon start command should not inject system podman: {command}"
+        !command.contains("CTX_HARNESS_SANDBOX_CLI_PATH"),
+        "remote daemon start command should not inject a system sandbox CLI path: {command}"
     );
     assert!(
-        !command.contains("CTX_PODMAN_MACHINE_PREFETCH"),
-        "remote daemon start command should not depend on desktop podman prefetch env: {command}"
+        !command.contains("CTX_SANDBOX_PREFETCH"),
+        "remote daemon start command should not depend on legacy sandbox prefetch env: {command}"
     );
 }
 

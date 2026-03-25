@@ -177,7 +177,7 @@ const advancePastContainerForHost = async () => {
   await waitFor(() => {
     expect(wizardStepKey()).toBe("container");
   });
-  fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+  fireEvent.click(screen.getByTestId("wizard-option-container-host"));
   await waitFor(() => {
     expect(wizardStepKey()).not.toBe("container");
   });
@@ -417,7 +417,7 @@ describe("WorkspaceSetupPage", () => {
       expect(wizardStepKey()).toBe("container");
     });
 
-    fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-sandbox"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("harness-downloads");
     });
@@ -450,7 +450,7 @@ describe("WorkspaceSetupPage", () => {
       expect(wizardStepKey()).toBe("container");
     });
 
-    fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-sandbox"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("source");
     });
@@ -498,7 +498,7 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("container");
     });
-    fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-sandbox"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("harness-downloads");
     });
@@ -531,7 +531,7 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("container");
     });
-    fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-sandbox"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("harness-downloads");
     });
@@ -579,7 +579,7 @@ describe("WorkspaceSetupPage", () => {
       expect(wizardStepKey()).toBe("container");
     });
 
-    fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-sandbox"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("container");
       expect(screen.getByTestId("wizard-next")).toBeDisabled();
@@ -638,7 +638,7 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("container");
     });
-    fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-sandbox"));
     await waitFor(() => {
       expect(["harness-downloads", "source"]).toContain(wizardStepKey());
     });
@@ -701,7 +701,7 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("container");
     });
-    fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-sandbox"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("source");
     });
@@ -758,7 +758,7 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("container");
     });
-    fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-sandbox"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("harness-downloads");
     });
@@ -880,7 +880,7 @@ describe("WorkspaceSetupPage", () => {
       });
     });
 
-    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-host"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("source");
     });
@@ -941,7 +941,7 @@ describe("WorkspaceSetupPage", () => {
       });
     });
 
-    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-host"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("source");
     });
@@ -1050,7 +1050,7 @@ describe("WorkspaceSetupPage", () => {
       });
     });
 
-    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-host"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("source");
     });
@@ -1254,7 +1254,7 @@ describe("WorkspaceSetupPage", () => {
       expect(wizardStepKey()).toBe("container");
     });
 
-    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-host"));
     await waitFor(() => {
       expect(["session-titling", "source"]).toContain(wizardStepKey());
     });
@@ -1294,7 +1294,7 @@ describe("WorkspaceSetupPage", () => {
       expect(wizardStepKey()).toBe("container");
     });
 
-    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-host"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("source");
     });
@@ -1327,7 +1327,7 @@ describe("WorkspaceSetupPage", () => {
       expect(wizardStepKey()).toBe("container");
     });
 
-    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-host"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("source");
     });
@@ -1359,7 +1359,7 @@ describe("WorkspaceSetupPage", () => {
       expect(wizardStepKey()).toBe("container");
     });
 
-    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-host"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("source");
     });
@@ -1393,7 +1393,7 @@ describe("WorkspaceSetupPage", () => {
       expect(wizardStepKey()).toBe("container");
     });
 
-    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-host"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("source");
     });
@@ -1696,7 +1696,7 @@ describe("WorkspaceSetupPage", () => {
       expect(listProviderAuthImportCandidates).toHaveBeenCalled();
     });
 
-    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-host"));
 
     await act(async () => {
       resolveScan?.({
@@ -1806,7 +1806,7 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("container");
     });
-    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-host"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("container");
       expect(screen.getByTestId("wizard-next")).toBeDisabled();
@@ -2141,7 +2141,7 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("container");
     });
-    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-host"));
     fireEvent.click(screen.getByTestId("wizard-next"));
 
     await waitFor(() => {
@@ -2272,7 +2272,7 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("container");
     });
-    fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-sandbox"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("harness-downloads");
     });
@@ -2284,7 +2284,7 @@ describe("WorkspaceSetupPage", () => {
 
     fireEvent.click(screen.getByTestId("wizard-option-source-new"));
     fireEvent.change(screen.getByTestId("wizard-workspace-name"), {
-      target: { value: "disk-isolated-bg" },
+      target: { value: "sandbox-bg" },
     });
     fireEvent.click(screen.getByTestId("wizard-next"));
 
@@ -2320,7 +2320,7 @@ describe("WorkspaceSetupPage", () => {
         expect.objectContaining({
           workspaceId: "ws_test",
           workspaceKind: "local",
-          executionMode: "container",
+          executionMode: "sandbox",
           result: "ready",
           persistPendingRoute: false,
         }),
@@ -2330,7 +2330,7 @@ describe("WorkspaceSetupPage", () => {
         expect.objectContaining({
           workspaceId: "ws_test",
           workspaceKind: "local",
-          executionMode: "container",
+          executionMode: "sandbox",
           result: "ready",
           emitEvent: false,
         }),

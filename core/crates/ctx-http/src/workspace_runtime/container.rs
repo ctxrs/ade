@@ -128,20 +128,21 @@ pub(super) fn proxy_runtime_path(data_root: &Path) -> PathBuf {
     proxy_runtime_root(data_root).join(EGRESS_PROXY_BINARY)
 }
 
-pub(super) fn podman_machine_required() -> bool {
+#[cfg(test)]
+pub(super) fn sandbox_machine_required() -> bool {
     cfg!(target_os = "macos") || cfg!(target_os = "windows")
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-struct PodmanInspectContainer {
+struct SandboxInspectContainer {
     #[serde(default)]
-    mounts: Vec<PodmanInspectMount>,
+    mounts: Vec<SandboxInspectMount>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-struct PodmanInspectMount {
+struct SandboxInspectMount {
     #[serde(rename = "Type")]
     mount_type: Option<String>,
     name: Option<String>,
@@ -153,28 +154,28 @@ pub(super) async fn verify_disk_isolated_container_mounts(
     workspace: &Workspace,
     container_name: &str,
 ) -> Result<()> {
-    let mut cmd = podman_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("inspect").arg(container_name);
-    let out = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+    let out = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
         let combined = format!("{stderr}\n{stdout}").trim().to_string();
         if combined.is_empty() {
             anyhow::bail!(
-                "podman inspect failed for {container_name} (status: {})",
+                "container inspect failed for {container_name} (status: {})",
                 out.status
             );
         }
-        anyhow::bail!("podman inspect failed for {container_name}: {combined}");
+        anyhow::bail!("container inspect failed for {container_name}: {combined}");
     }
 
-    let inspected: Vec<PodmanInspectContainer> = serde_json::from_slice(&out.stdout)
-        .context("failed to parse podman inspect output as JSON")?;
+    let inspected: Vec<SandboxInspectContainer> = serde_json::from_slice(&out.stdout)
+        .context("failed to parse container inspect output as JSON")?;
     let container = inspected
         .into_iter()
         .next()
-        .context("podman inspect returned empty output")?;
+        .context("container inspect returned empty output")?;
 
     let expected_vol = format!("ctx-ws-{}", workspace.id.0);
     let has_ws_volume = container.mounts.iter().any(|m| {

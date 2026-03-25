@@ -15,7 +15,7 @@ import {
 
 const routePlan = (overrides?: Partial<WizardRoutePlan>): WizardRoutePlan => ({
   targetKey: "local",
-  containerSelection: "disk-isolated",
+  containerSelection: "sandbox",
   includeHarnessDownloads: false,
   includeAuthImport: false,
   includeTitling: false,
@@ -26,8 +26,8 @@ describe("wizardFlow", () => {
   it("builds the stable local host path", () => {
     expect(
       buildWizardStepPath({
-        containerSelection: "no-container",
-        routePlan: routePlan({ containerSelection: "no-container" }),
+        containerSelection: "host",
+        routePlan: routePlan({ containerSelection: "host" }),
       }),
     ).toEqual([
       "location",
@@ -42,7 +42,7 @@ describe("wizardFlow", () => {
   it("includes optional post-container steps from the frozen route plan", () => {
     expect(
       buildWizardStepPath({
-        containerSelection: "disk-isolated",
+        containerSelection: "sandbox",
         routePlan: routePlan({
           includeHarnessDownloads: true,
           includeAuthImport: true,
@@ -66,7 +66,7 @@ describe("wizardFlow", () => {
   it("preserves the current optional step even if the latest route plan no longer includes it", () => {
     expect(
       buildWizardStepPath({
-        containerSelection: "disk-isolated",
+        containerSelection: "sandbox",
         routePlan: routePlan({ includeHarnessDownloads: false }),
         currentStepKey: "harness-downloads",
       }),
@@ -75,7 +75,7 @@ describe("wizardFlow", () => {
 
   it("resolves the current step without falling back to location when a later optional step disappears", () => {
     const keys = buildWizardStepPath({
-      containerSelection: "disk-isolated",
+      containerSelection: "sandbox",
       routePlan: routePlan({ includeAuthImport: true }),
     });
     expect(resolveWizardCurrentStepKey(keys, "harness-downloads", 2)).toBe("auth-import");
@@ -94,7 +94,7 @@ describe("wizardFlow", () => {
 
   it("walks backward and forward over the explicit path", () => {
     const keys = buildWizardStepPath({
-      containerSelection: "disk-isolated",
+      containerSelection: "sandbox",
       routePlan: routePlan({
         includeHarnessDownloads: true,
         includeAuthImport: true,
@@ -109,18 +109,18 @@ describe("wizardFlow", () => {
       {
         ...createInitialWizardFlowState(),
         selections: {
-          container: "disk-isolated",
+          container: "sandbox",
           network: "allowlist",
         },
       },
       {
         type: "select_option",
         stepKey: "container",
-        optionId: "no-container",
+        optionId: "host",
       },
     );
 
-    expect(state.selections.container).toBe("no-container");
+    expect(state.selections.container).toBe("host");
     expect(state.selections.network).toBeUndefined();
   });
 

@@ -72,20 +72,16 @@ test("linux-arm lanes source repo-owned local adapters from the workspace before
   );
 });
 
-test("linux-arm lanes rely on host podman instead of demanding a bundled podman archive", () => {
+test("linux-arm lanes keep sandbox runtime bundling out of the default host-mode path", () => {
   const script = fs.readFileSync(scriptPath, "utf8");
 
   assert.match(
     script,
-    /runtime lock only vendors Podman artifacts for/,
+    /run_linux_arm_runtime_install_lane/,
   );
   assert.match(
     script,
-    /macOS remote clients/,
-  );
-  assert.match(
-    script,
-    /CTX_E2E_ENDPOINT_BUNDLE_PODMAN="\$\{CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-0\}"/,
+    /CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS="\$\{CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS:-0\}"/,
   );
   assert.match(
     script,
@@ -162,10 +158,6 @@ test("endpoint-ui lane defaults to host-mode bundles and scopes focused reruns",
   );
   assert.match(
     script,
-    /CTX_E2E_ENDPOINT_BUNDLE_PODMAN="\$\{CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-0\}"/,
-  );
-  assert.match(
-    script,
     /CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS="\$\{CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS:-0\}"/,
   );
   assert.match(
@@ -226,13 +218,11 @@ test("bundle runtime downloads use mktemp templates that work on macOS", () => {
 
   assert.match(script, /mktemp -p "\$dest_dir" "node-\$\{node_folder\}\.XXXXXX"/);
   assert.match(script, /mktemp -p "\$dest_dir" "python-\$\{py_folder\}\.XXXXXX"/);
-  assert.match(script, /mktemp -p "\$dest_dir" "podman-\$\{PODMAN_VERSION\}\.XXXXXX"/);
   assert.doesNotMatch(script, /mktemp -p "\$dest_dir" "node-[^"]+XXXXXX\.[^"]+"/);
   assert.doesNotMatch(script, /mktemp -p "\$dest_dir" "python-[^"]+XXXXXX\.[^"]+"/);
-  assert.doesNotMatch(script, /mktemp -p "\$dest_dir" "podman-[^"]+XXXXXX\.[^"]+"/);
 });
 
-test("bundle podman extraction dispatches on detected archive type, not temp filename suffix", () => {
+test("bundle archive extraction dispatches on detected archive type, not temp filename suffix", () => {
   const script = fs.readFileSync(bundleHarnessScriptPath, "utf8");
 
   assert.match(script, /local archive_path=""\s+local archive_type=""/);

@@ -11,13 +11,15 @@ use ctx_fs::git::{list_tracked_files, list_untracked_files};
 use serde::Deserialize;
 
 use super::errors::ApiErrorResp;
-use crate::container_fs::is_container_path;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::harness_runtime;
 use crate::logs;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::settings::ContainerRuntimeKind;
+use crate::worktree_data_plane::{
+    apply_data_plane_to_execution_settings, resolve_worktree_data_plane,
+};
 
 pub(super) async fn store_for_existing_workspace_status(
     state: &Arc<AppState>,
@@ -71,8 +73,14 @@ pub(super) async fn load_and_cache_worktree_files(
     now: Instant,
 ) -> Result<Arc<Vec<String>>, StatusCode> {
     let started_at = Instant::now();
-    let root = PathBuf::from(&worktree.root_path);
-    let files = if is_container_path(&root) {
+    let data_plane = resolve_worktree_data_plane(state, worktree)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let root = data_plane.live_worktree_root.clone();
+    let files = if matches!(
+        data_plane.execution_mode,
+        crate::settings::ExecutionMode::Sandbox
+    ) {
         Arc::new(list_container_worktree_files(state, worktree, execution_environment).await?)
     } else {
         let mut files = list_tracked_files(&root)
@@ -140,6 +148,10 @@ async fn list_container_worktree_files(
     )
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let data_plane = resolve_worktree_data_plane(state, worktree)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let settings = apply_data_plane_to_execution_settings(&settings, &data_plane);
     state
         .execution
         .harness
@@ -152,13 +164,13 @@ async fn list_container_worktree_files(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let workdir = worktree.root_path.trim();
+    let workdir = data_plane.live_worktree_root.to_string_lossy().to_string();
 
     let tracked = container_git_ls_files(
         state,
         worktree,
         settings.container.runtime.clone(),
-        workdir,
+        &workdir,
         &["ls-files", "-z"],
     )
     .await?;
@@ -166,7 +178,7 @@ async fn list_container_worktree_files(
         state,
         worktree,
         settings.container.runtime,
-        workdir,
+        &workdir,
         &["ls-files", "--others", "--exclude-standard", "-z"],
     )
     .await?;
@@ -195,8 +207,8 @@ async fn container_git_ls_files(
     // hang request handling indefinitely.
     const SANDBOX_GIT_LS_FILES_TIMEOUT: Duration = Duration::from_secs(30);
     let out = match runtime {
-        ContainerRuntimeKind::Podman => {
-            let mut cmd = harness_runtime::podman_command(&state.core.data_root)
+        ContainerRuntimeKind::NativeContainer => {
+            let mut cmd = harness_runtime::sandbox_container_command(&state.core.data_root)
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             cmd.arg("exec")
                 .arg("--workdir")
@@ -212,7 +224,7 @@ async fn container_git_ls_files(
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         }
-        ContainerRuntimeKind::AvfLinuxVm => {
+        ContainerRuntimeKind::SharedVmContainer => {
             let args = git_args
                 .iter()
                 .map(|arg| (*arg).to_string())

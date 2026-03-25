@@ -180,7 +180,7 @@ const normalizeContainerSelection = (value: string): string => {
 export const installTargetForWorkspaceSetupContainerSelection = (
   containerSelection: string | null | undefined,
 ): InstallTarget => (
-  containerSelection && containerSelection !== "no-container" ? "container" : "host"
+  containerSelection && containerSelection !== "host" ? "container" : "host"
 );
 
 export const createWorkspaceSetupProvisioningScope = (

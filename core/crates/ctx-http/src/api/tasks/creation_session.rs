@@ -1,6 +1,5 @@
 use super::*;
 use crate::api::sessions;
-use crate::settings::{ContainerMountMode, ContainerRuntimeKind};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -179,94 +178,23 @@ pub(in crate::api) async fn create_session_for_task(
         })?;
         let worktree_id = WorktreeId::new();
         let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
-        let wt_path = if matches!(effective.mode, ExecutionMode::Container)
-            && matches!(
-                effective.container.mount_mode,
-                ContainerMountMode::DiskIsolated
-            ) {
-            state
-                .execution
-                .harness
-                .ensure_workspace_container(&workspace, &effective, &state.core.daemon_url)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            if matches!(
-                effective.container.runtime,
-                ContainerRuntimeKind::AvfLinuxVm
-            ) {
-                let guest_worktree =
-                    crate::workspace_runtime::ensure_avf_linux_guest_worktree_from_host_copy(
-                        &state.core.data_root,
-                        task.workspace_id,
-                        worktree_id,
-                        workspace_root,
-                        &base_commit_sha,
-                        &branch_name,
-                        None,
-                    )
-                    .await
-                    .map_err(|e| {
-                        tracing::warn!(
-                            task_id = %task.id.0,
-                            worktree_id = %worktree_id.0,
-                            "AVF disk-isolated worktree provisioning failed: {e:#}"
-                        );
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    })?;
-                crate::disk_isolated::ensure_worktree_from_host_copy(
-                    &state.core.data_root,
-                    task.workspace_id,
-                    worktree_id,
-                    &guest_worktree.host_shadow_root,
-                    &base_commit_sha,
-                    &branch_name,
-                )
-                .await
-                .map_err(|e| {
-                    tracing::warn!(
-                        task_id = %task.id.0,
-                        worktree_id = %worktree_id.0,
-                        "AVF disk-isolated container provisioning failed: {e:#}"
-                    );
-                    StatusCode::INTERNAL_SERVER_ERROR
-                })?
-            } else {
-                crate::disk_isolated::ensure_worktree_from_host_copy(
-                    &state.core.data_root,
-                    task.workspace_id,
-                    worktree_id,
-                    workspace_root,
-                    &base_commit_sha,
-                    &branch_name,
-                )
-                .await
-                .map_err(|e| {
-                    tracing::warn!(
-                        task_id = %task.id.0,
-                        worktree_id = %worktree_id.0,
-                        "disk-isolated worktree provisioning failed: {e:#}"
-                    );
-                    StatusCode::INTERNAL_SERVER_ERROR
-                })?
-            }
-        } else {
-            let wt_path =
-                managed_worktree_path(&state.core.data_root, task.workspace_id, worktree_id);
-            if let Some(parent) = wt_path.parent() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            }
-            create_worktree(
-                &workspace.root_path,
-                &wt_path,
-                &base_commit_sha,
-                &branch_name,
-            )
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            wt_path
-        };
+        let (wt_path, sandbox_binding) = provision_worktree_for_execution(
+            &state,
+            &workspace,
+            worktree_id,
+            &base_commit_sha,
+            &branch_name,
+            &effective,
+        )
+        .await
+        .map_err(|e| {
+            tracing::warn!(
+                task_id = %task.id.0,
+                worktree_id = %worktree_id.0,
+                "worktree provisioning failed: {e:#}"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
         let worktree = Worktree {
             id: worktree_id,
@@ -293,6 +221,12 @@ pub(in crate::api) async fn create_session_for_task(
             .insert_worktree(worktree.clone())
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if let Some(binding) = sandbox_binding {
+            store
+                .upsert_sandbox_binding(binding)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        }
         if let Err(e) = retry_global_index_write(|| async {
             state
                 .global_store()

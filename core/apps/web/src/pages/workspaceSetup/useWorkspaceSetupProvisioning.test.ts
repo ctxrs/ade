@@ -153,7 +153,7 @@ describe("useWorkspaceSetupProvisioning", () => {
         currentStepKeyRef,
         selections: {
           location: "local",
-          container: "disk-isolated",
+          container: "sandbox",
         },
         routePlan,
         setRoutePlan,
@@ -172,12 +172,12 @@ describe("useWorkspaceSetupProvisioning", () => {
 
     let staleRoutePlan: WizardRoutePlan | null = null;
     await act(async () => {
-      staleRoutePlan = await latest!.ensureRoutePlanForSelection("disk-isolated");
+      staleRoutePlan = await latest!.ensureRoutePlanForSelection("sandbox");
     });
 
     expect(staleRoutePlan).toEqual({
-      targetKey: expect.stringContaining("\"disk-isolated\""),
-      containerSelection: "disk-isolated",
+      targetKey: expect.stringContaining("\"sandbox\""),
+      containerSelection: "sandbox",
       includeHarnessDownloads: true,
       includeAuthImport: false,
       includeTitling: false,
@@ -190,12 +190,12 @@ describe("useWorkspaceSetupProvisioning", () => {
 
     let recoveredRoutePlan: WizardRoutePlan | null = null;
     await act(async () => {
-      recoveredRoutePlan = await latest!.ensureRoutePlanForSelection("disk-isolated");
+      recoveredRoutePlan = await latest!.ensureRoutePlanForSelection("sandbox");
     });
 
     expect(recoveredRoutePlan).toEqual({
       targetKey: staleRoutePlan!.targetKey,
-      containerSelection: "disk-isolated",
+      containerSelection: "sandbox",
       includeHarnessDownloads: false,
       includeAuthImport: false,
       includeTitling: false,
@@ -233,7 +233,7 @@ describe("useWorkspaceSetupProvisioning", () => {
         currentStepKeyRef,
         selections: {
           location: "local",
-          container: "disk-isolated",
+          container: "sandbox",
         },
         routePlan,
         setRoutePlan,
@@ -252,12 +252,12 @@ describe("useWorkspaceSetupProvisioning", () => {
 
     let readyRoutePlan: WizardRoutePlan | null = null;
     await act(async () => {
-      readyRoutePlan = await latest!.ensureRoutePlanForSelection("disk-isolated");
+      readyRoutePlan = await latest!.ensureRoutePlanForSelection("sandbox");
     });
 
     expect(readyRoutePlan).toEqual({
-      targetKey: expect.stringContaining("\"disk-isolated\""),
-      containerSelection: "disk-isolated",
+      targetKey: expect.stringContaining("\"sandbox\""),
+      containerSelection: "sandbox",
       includeHarnessDownloads: false,
       includeAuthImport: false,
       includeTitling: false,
@@ -271,7 +271,7 @@ describe("useWorkspaceSetupProvisioning", () => {
 
     let secondRoutePlan: WizardRoutePlan | null = null;
     await act(async () => {
-      secondRoutePlan = await latest!.ensureRoutePlanForSelection("disk-isolated");
+      secondRoutePlan = await latest!.ensureRoutePlanForSelection("sandbox");
     });
 
     expect(secondRoutePlan).toEqual(readyRoutePlan);
@@ -337,7 +337,7 @@ describe("useWorkspaceSetupProvisioning", () => {
     const { rerender } = render(
       createElement(Harness, {
         location: "local",
-        container: "disk-isolated",
+        container: "sandbox",
         effectiveTarget: deriveWorkspaceSetupEffectiveTarget("local", {
           remoteHostInput: "",
           remotePortInput: "4399",
@@ -349,13 +349,13 @@ describe("useWorkspaceSetupProvisioning", () => {
 
     let localRoutePlanPromise: Promise<unknown> | null = null;
     await act(async () => {
-      localRoutePlanPromise = latest!.ensureRoutePlanForSelection("disk-isolated");
+      localRoutePlanPromise = latest!.ensureRoutePlanForSelection("sandbox");
     });
 
     rerender(
       createElement(Harness, {
         location: "remote",
-        container: "no-container",
+        container: "host",
         effectiveTarget: deriveWorkspaceSetupEffectiveTarget("remote", {
           remoteHostInput: "alice@builder.internal",
           remotePortInput: "4400",
@@ -367,7 +367,7 @@ describe("useWorkspaceSetupProvisioning", () => {
 
     let remoteRoutePlan: WizardRoutePlan | null = null;
     await act(async () => {
-      remoteRoutePlan = await latest!.ensureRoutePlanForSelection("no-container");
+      remoteRoutePlan = await latest!.ensureRoutePlanForSelection("host");
     });
 
     await act(async () => {
@@ -402,7 +402,7 @@ describe("useWorkspaceSetupProvisioning", () => {
 
     expect(remoteRoutePlan).toEqual({
       targetKey: expect.stringContaining("\"desktop_ssh\""),
-      containerSelection: "no-container",
+      containerSelection: "host",
       includeHarnessDownloads: false,
       includeAuthImport: false,
       includeTitling: false,
@@ -439,7 +439,7 @@ describe("useWorkspaceSetupProvisioning", () => {
         currentStepKeyRef,
         selections: {
           location: "local",
-          container: "disk-isolated",
+          container: "sandbox",
         },
         routePlan: null,
         setRoutePlan,
@@ -457,7 +457,7 @@ describe("useWorkspaceSetupProvisioning", () => {
     render(createElement(Harness));
 
     await act(async () => {
-      await latest!.ensureRoutePlanForSelection("disk-isolated");
+      await latest!.ensureRoutePlanForSelection("sandbox");
     });
 
     expect(latest!.authImportCandidates).toEqual([authImportCandidateFixture]);
@@ -466,7 +466,7 @@ describe("useWorkspaceSetupProvisioning", () => {
     await act(async () => {
       await latest!.refreshAuthImportForRouteScope(
         "local",
-        createWorkspaceSetupRouteScope(effectiveTarget, "disk-isolated"),
+        createWorkspaceSetupRouteScope(effectiveTarget, "sandbox"),
         { force: true },
       );
     });
@@ -513,7 +513,7 @@ describe("useWorkspaceSetupProvisioning", () => {
         currentStepKeyRef,
         selections: {
           location: "local",
-          container: "disk-isolated",
+          container: "sandbox",
         },
         routePlan: null,
         setRoutePlan,
@@ -535,7 +535,7 @@ describe("useWorkspaceSetupProvisioning", () => {
     render(createElement(Harness));
 
     await act(async () => {
-      await latest!.ensureRoutePlanForSelection("disk-isolated");
+      await latest!.ensureRoutePlanForSelection("sandbox");
     });
 
     expect(latest!.harnessInstallCandidates).toEqual([
@@ -615,7 +615,7 @@ describe("useWorkspaceSetupProvisioning", () => {
         currentStepKeyRef,
         selections: {
           location: "remote",
-          container: "disk-isolated",
+          container: "sandbox",
         },
         routePlan: null,
         setRoutePlan,
@@ -633,7 +633,7 @@ describe("useWorkspaceSetupProvisioning", () => {
     render(createElement(Harness));
 
     await act(async () => {
-      await latest!.ensureRoutePlanForSelection("disk-isolated");
+      await latest!.ensureRoutePlanForSelection("sandbox");
     });
 
     expect(subscribeProviderInstallProgressForScope).toHaveBeenCalledWith(
@@ -690,11 +690,11 @@ describe("useWorkspaceSetupProvisioning", () => {
         currentStepKeyRef,
         selections: {
           location: "remote",
-          container: "disk-isolated",
+          container: "sandbox",
         },
         routePlan: {
           targetKey: "remote-route",
-          containerSelection: "disk-isolated",
+          containerSelection: "sandbox",
           includeHarnessDownloads: true,
           includeAuthImport: false,
           includeTitling: false,
@@ -714,7 +714,7 @@ describe("useWorkspaceSetupProvisioning", () => {
     render(createElement(Harness));
 
     await act(async () => {
-      await latest!.ensureRoutePlanForSelection("disk-isolated");
+      await latest!.ensureRoutePlanForSelection("sandbox");
     });
 
     await act(async () => {

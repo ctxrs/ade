@@ -175,8 +175,8 @@ mod tests {
         }
     }
 
-    fn podman_env_test_lock() -> &'static tokio::sync::Mutex<()> {
-        crate::test_support::podman_env_test_lock()
+    fn sandbox_cli_env_test_lock() -> &'static tokio::sync::Mutex<()> {
+        crate::test_support::sandbox_cli_env_test_lock()
     }
 
     #[tokio::test]
@@ -701,8 +701,8 @@ mod tests {
 
     #[tokio::test]
     async fn execution_launch_startup_prewarm_kind_supported() {
-        let _serial = podman_env_test_lock().lock().await;
-        let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "0");
+        let _serial = sandbox_cli_env_test_lock().lock().await;
+        let _sandbox_cli = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
         let home = tempfile::tempdir().unwrap();
         std::env::set_var("HOME", home.path());
 

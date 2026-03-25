@@ -116,7 +116,7 @@ export function WorkspaceSetupPageController() {
   }, [wizardKey, workflow.flow.step.key, workflow.flow.stepIndex]);
 
   useEffect(() => {
-    if (workflow.flow.selections.container !== "no-container") {
+    if (workflow.flow.selections.container !== "host") {
       setContainerAdvancedOpen(true);
     }
   }, [workflow.flow.selections.container]);
@@ -237,7 +237,7 @@ export function WorkspaceSetupPageController() {
       setRepoUrl={workflow.setters.repoUrl}
       repoBranch={workflow.draft.repoBranch}
       setRepoBranch={workflow.setters.repoBranch}
-      useDiskIsolatedStaging={workflow.flow.useDiskIsolatedStaging}
+      useSandboxStaging={workflow.flow.useSandboxStaging}
       setupHook={workflow.draft.setupHook}
       setSetupHook={workflow.setters.setupHook}
       workspaceName={workflow.draft.workspaceName}

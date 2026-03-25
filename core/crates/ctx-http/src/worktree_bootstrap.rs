@@ -18,7 +18,9 @@ use crate::harness_runtime;
 use crate::logs;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::workspace_config;
-use crate::worktree_data_plane::{live_workspace_root_for_mode, live_worktree_root_for_mode};
+use crate::worktree_data_plane::{
+    apply_data_plane_to_execution_settings, resolve_worktree_data_plane,
+};
 
 const DEFAULT_TIMEOUT_SEC: u64 = 60;
 const MAX_LOG_BYTES: usize = 200 * 1024;
@@ -342,16 +344,13 @@ async fn run_bootstrap_step(
     worktree: &Worktree,
     timeout: Duration,
 ) -> Result<BootstrapCommandResult> {
+    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
     let settings = execution_effective::effective_execution_settings(state, workspace.id).await?;
+    let settings = apply_data_plane_to_execution_settings(&settings, &data_plane);
     let execution_mode = settings.mode.clone();
-    let live_workspace_root = live_workspace_root_for_mode(workspace, execution_mode.clone());
-    let live_worktree_root = live_worktree_root_for_mode(
-        &state.core.data_root,
-        workspace,
-        worktree,
-        execution_mode.clone(),
-    );
-    if matches!(execution_mode, ExecutionMode::Container) {
+    let live_workspace_root = data_plane.live_workspace_root;
+    let live_worktree_root = data_plane.live_worktree_root;
+    if matches!(execution_mode, ExecutionMode::Sandbox) {
         return run_bootstrap_step_in_container(
             state,
             step,
@@ -498,9 +497,9 @@ async fn run_bootstrap_step_in_container(
     );
 
     let mut cmd = match sandbox.settings.container.runtime {
-        ContainerRuntimeKind::Podman => {
+        ContainerRuntimeKind::NativeContainer => {
             let container_name = harness_runtime::workspace_container_name(workspace.id);
-            let mut cmd = harness_runtime::podman_command(&state.core.data_root)?;
+            let mut cmd = harness_runtime::sandbox_container_command(&state.core.data_root)?;
             cmd.arg("exec")
                 .arg("--workdir")
                 .arg(sandbox.live_worktree_root);
@@ -515,7 +514,7 @@ async fn run_bootstrap_step_in_container(
             }
             cmd
         }
-        ContainerRuntimeKind::AvfLinuxVm => match &step.kind {
+        ContainerRuntimeKind::SharedVmContainer => match &step.kind {
             BootstrapStepKind::Command { command } => {
                 crate::workspace_runtime::build_avf_linux_guest_exec_command(
                     &state.core.data_root,

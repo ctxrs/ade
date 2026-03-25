@@ -564,7 +564,7 @@ pub(in crate::api) async fn get_execution_config(
 
     let environment = match effective.mode {
         crate::settings::ExecutionMode::Host => "host",
-        crate::settings::ExecutionMode::Container => "sandbox",
+        crate::settings::ExecutionMode::Sandbox => "sandbox",
     }
     .to_string();
     let network_mode = match effective.container.network_mode {
@@ -621,7 +621,7 @@ pub(in crate::api) async fn update_execution_config(
             {
                 if !crate::workspace_runtime::local_runtime_available(
                     &state.core.data_root,
-                    &crate::settings::ContainerRuntimeKind::AvfLinuxVm,
+                    &crate::settings::ContainerRuntimeKind::SharedVmContainer,
                 ) {
                     return Err((
                         StatusCode::BAD_REQUEST,
@@ -678,7 +678,6 @@ pub(in crate::api) async fn update_execution_config(
         &store,
         workspace_config::ExecutionConfigUpdate {
             environment,
-            runtime: None,
             network_mode,
             allowlist,
             image: None,

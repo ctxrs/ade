@@ -8,7 +8,7 @@ use chrono::Utc;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::{Barrier, Notify};
+use tokio::sync::{Barrier, Semaphore};
 use tokio::task::JoinHandle;
 
 use crate::execution_setup::warmup_coordination::SharedWarmupOperations;
@@ -17,7 +17,8 @@ use crate::ops_events::OpsEvents;
 use crate::perf_telemetry::PerfTelemetry;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode, ExecutionSettings, Settings};
 use crate::test_support::{
-    wait_for_execution_launch_terminal, write_running_container_podman_shim, TrackedExecutionLaunch,
+    wait_for_execution_launch_terminal, write_running_container_sandbox_cli_shim,
+    TrackedExecutionLaunch,
 };
 
 struct EnvVarGuard {
@@ -50,7 +51,7 @@ impl Drop for EnvVarGuard {
 }
 
 fn env_var_test_lock() -> &'static tokio::sync::Mutex<()> {
-    crate::test_support::podman_env_test_lock()
+    crate::test_support::sandbox_cli_env_test_lock()
 }
 
 const BACKGROUND_TEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -66,18 +67,18 @@ fn test_workspace(id: WorkspaceId) -> Workspace {
     }
 }
 
-fn podman_container_settings() -> crate::settings::ContainerExecutionSettings {
+fn sandbox_container_settings() -> crate::settings::ContainerExecutionSettings {
     crate::settings::ContainerExecutionSettings {
-        runtime: ContainerRuntimeKind::Podman,
+        runtime: ContainerRuntimeKind::NativeContainer,
         mount_mode: crate::settings::ContainerMountMode::DiskIsolated,
         ..Default::default()
     }
 }
 
-fn podman_execution_settings() -> ExecutionSettings {
+fn sandbox_execution_settings() -> ExecutionSettings {
     ExecutionSettings {
-        mode: ExecutionMode::Container,
-        container: podman_container_settings(),
+        mode: ExecutionMode::Sandbox,
+        container: sandbox_container_settings(),
     }
 }
 
@@ -148,46 +149,46 @@ fn bundle_tar_fingerprint(tar_path: &Path) -> String {
     format!("{len}:{modified}")
 }
 
-fn write_startup_prewarm_podman_shim(dir: &Path) -> PathBuf {
+fn write_startup_prewarm_sandbox_cli_shim(dir: &Path) -> PathBuf {
     let path = dir.join(if cfg!(windows) {
-        "podman-startup-test.cmd"
+        "sandbox-cli-startup-test.cmd"
     } else {
-        "podman-startup-test.sh"
+        "sandbox-cli-startup-test.sh"
     });
     let script = if cfg!(windows) {
-        "@echo off\r\nif \"%1\"==\"info\" (\r\n  >&2 echo engine unavailable\r\n  exit /b 125\r\n)\r\n>&2 echo unexpected podman invocation: %*\r\nexit /b 1\r\n"
+        "@echo off\r\nif \"%1\"==\"info\" (\r\n  >&2 echo engine unavailable\r\n  exit /b 125\r\n)\r\n>&2 echo unexpected sandbox CLI invocation: %*\r\nexit /b 1\r\n"
     } else {
-        "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  echo 'engine unavailable' >&2\n  exit 125\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n"
+        "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  echo 'engine unavailable' >&2\n  exit 125\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n"
     };
-    std::fs::write(&path, script).expect("write startup prewarm podman shim");
+    std::fs::write(&path, script).expect("write startup prewarm sandbox CLI shim");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
 
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod startup prewarm podman shim");
+            .expect("chmod startup prewarm sandbox CLI shim");
     }
     path
 }
 
-fn write_ready_runtime_podman_shim(dir: &Path) -> PathBuf {
+fn write_ready_runtime_sandbox_cli_shim(dir: &Path) -> PathBuf {
     let path = dir.join(if cfg!(windows) {
-        "podman-ready-runtime-test.cmd"
+        "sandbox-cli-ready-runtime-test.cmd"
     } else {
-        "podman-ready-runtime-test.sh"
+        "sandbox-cli-ready-runtime-test.sh"
     });
     let script = if cfg!(windows) {
-        "@echo off\r\nif \"%1\"==\"info\" (\r\n  echo {}\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"image\" if \"%2\"==\"exists\" exit /b 0\r\n>&2 echo unexpected podman invocation: %*\r\nexit /b 1\r\n"
+        "@echo off\r\nif \"%1\"==\"info\" (\r\n  echo {}\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"image\" if \"%2\"==\"exists\" exit /b 0\r\n>&2 echo unexpected sandbox CLI invocation: %*\r\nexit /b 1\r\n"
     } else {
-        "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  printf '{}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n"
+        "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  printf '{}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n"
     };
-    std::fs::write(&path, script).expect("write ready runtime podman shim");
+    std::fs::write(&path, script).expect("write ready runtime sandbox CLI shim");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
 
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod ready runtime podman shim");
+            .expect("chmod ready runtime sandbox CLI shim");
     }
     path
 }
@@ -196,6 +197,13 @@ fn with_workspace_volume_support(script: String) -> String {
     script.replace(
         "if [ \"$1\" = \"container\" ]",
         "if [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ]; then\n  suffix=${2#ctx-harness-}\n  printf '[{\"Mounts\":[{\"Type\":\"volume\",\"Name\":\"ctx-ws-%s\",\"Destination\":\"/ctx/ws\"}]}]\\n' \"$suffix\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ]",
+    )
+}
+
+fn with_native_runtime_ready(script: String) -> String {
+    script.replace(
+        "if [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\n",
+        "if [ \"$1\" = \"info\" ]; then\n  printf '{}\\n'\n  exit 0\nfi\n",
     )
 }
 
@@ -255,7 +263,7 @@ async fn spawn_static_http_server(body: Vec<u8>) -> (String, JoinHandle<()>) {
 async fn install_test_managed_machine_cache_source(
     body: Vec<u8>,
 ) -> (
-    crate::bundled_assets::TestManagedPodmanMachineCacheSourceGuard,
+    crate::bundled_assets::TestManagedSandboxMachineCacheSourceGuard,
     JoinHandle<()>,
 ) {
     let digest = {
@@ -264,7 +272,7 @@ async fn install_test_managed_machine_cache_source(
         hex::encode(hasher.finalize())
     };
     let (url, server) = spawn_static_http_server(body).await;
-    let guard = crate::bundled_assets::override_managed_podman_machine_cache_source_for_test(
+    let guard = crate::bundled_assets::override_managed_sandbox_machine_cache_source_for_test(
         crate::bundled_assets::ManagedArtifactSource {
             uri: url,
             sha256: digest,
@@ -416,12 +424,22 @@ async fn make_test_managed_avf_linux_runtime_source() -> (
     )
 }
 
-#[derive(Default)]
 struct BlockingWarmupOperations {
     runtime_runs: AtomicUsize,
     builder_runs: AtomicUsize,
-    runtime_release: Notify,
-    builder_release: Notify,
+    runtime_release: Semaphore,
+    builder_release: Semaphore,
+}
+
+impl Default for BlockingWarmupOperations {
+    fn default() -> Self {
+        Self {
+            runtime_runs: AtomicUsize::new(0),
+            builder_runs: AtomicUsize::new(0),
+            runtime_release: Semaphore::new(0),
+            builder_release: Semaphore::new(0),
+        }
+    }
 }
 
 impl BlockingWarmupOperations {
@@ -452,11 +470,11 @@ impl BlockingWarmupOperations {
     }
 
     fn release_runtime(&self) {
-        self.runtime_release.notify_waiters();
+        self.runtime_release.add_permits(1);
     }
 
     fn release_builder(&self) {
-        self.builder_release.notify_waiters();
+        self.builder_release.add_permits(1);
     }
 }
 
@@ -490,14 +508,22 @@ impl SharedWarmupOperations for BlockingWarmupOperations {
     ) -> Result<()> {
         self.runtime_runs.fetch_add(1, Ordering::SeqCst);
         observer.on_phase(HarnessSetupPhase::MachineCheck, "warming runtime");
-        self.runtime_release.notified().await;
+        self.runtime_release
+            .acquire()
+            .await
+            .expect("runtime release semaphore closed")
+            .forget();
         Ok(())
     }
 
     async fn warm_builder(&self, observer: Arc<dyn HarnessSetupObserver>) -> Result<()> {
         self.builder_runs.fetch_add(1, Ordering::SeqCst);
         observer.on_phase(HarnessSetupPhase::ImageLoad, "warming builder");
-        self.builder_release.notified().await;
+        self.builder_release
+            .acquire()
+            .await
+            .expect("builder release semaphore closed")
+            .forget();
         Ok(())
     }
 }
@@ -529,59 +555,13 @@ impl SharedWarmupOperations for RecordingStartupWarmupOperations {
     }
 }
 
-#[derive(Default)]
-struct DeferredFailingWarmupOperations {
-    runtime_runs: AtomicUsize,
-    runtime_release: Notify,
-}
-
-impl DeferredFailingWarmupOperations {
-    async fn wait_for_runtime_runs(&self, expected: usize) {
-        tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                if self.runtime_runs.load(Ordering::SeqCst) >= expected {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("timed out waiting for runtime runs");
-    }
-
-    fn release_runtime(&self) {
-        self.runtime_release.notify_waiters();
-    }
-}
-
-#[async_trait]
-impl SharedWarmupOperations for DeferredFailingWarmupOperations {
-    async fn warm_runtime(
-        &self,
-        _settings: ExecutionSettings,
-        observer: Arc<dyn HarnessSetupObserver>,
-    ) -> Result<()> {
-        self.runtime_runs.fetch_add(1, Ordering::SeqCst);
-        observer.on_phase(
-            HarnessSetupPhase::ArtifactDownload,
-            "downloading startup prewarm artifacts",
-        );
-        self.runtime_release.notified().await;
-        anyhow::bail!("simulated startup prewarm failure")
-    }
-
-    async fn warm_builder(&self, _observer: Arc<dyn HarnessSetupObserver>) -> Result<()> {
-        Ok(())
-    }
-}
-
-struct BlockingPodmanLoadWarmupOperations {
+struct BlockingSandboxCliLoadWarmupOperations {
     data_root: PathBuf,
     image_tar: PathBuf,
 }
 
 #[async_trait]
-impl SharedWarmupOperations for BlockingPodmanLoadWarmupOperations {
+impl SharedWarmupOperations for BlockingSandboxCliLoadWarmupOperations {
     async fn warm_runtime(
         &self,
         _settings: ExecutionSettings,
@@ -591,7 +571,7 @@ impl SharedWarmupOperations for BlockingPodmanLoadWarmupOperations {
             HarnessSetupPhase::ImageLoad,
             "loading harness image into local sandbox runtime",
         );
-        let mut cmd = crate::harness_runtime::podman_command(&self.data_root)?;
+        let mut cmd = crate::harness_runtime::sandbox_container_command(&self.data_root)?;
         cmd.arg("load").arg("-i").arg(&self.image_tar);
         let output =
             crate::harness_runtime::command_output_with_timeout(cmd, Duration::from_secs(60))
@@ -603,7 +583,7 @@ impl SharedWarmupOperations for BlockingPodmanLoadWarmupOperations {
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let combined = format!("{stderr}\n{stdout}").trim().to_string();
         anyhow::bail!(
-            "podman load failed: {}",
+            "sandbox CLI load failed: {}",
             if combined.is_empty() {
                 format!("status {}", output.status)
             } else {
@@ -627,16 +607,17 @@ fn needs_prewarm_gate_matches_truth_table() {
 }
 
 #[test]
-fn normalize_podman_engine_ready_for_gate_treats_missing_binary_as_not_ready() {
-    let value =
-        normalize_podman_engine_ready_for_gate(Err(anyhow::anyhow!("podman binary unavailable")))
-            .expect("missing binary should map to not-ready");
+fn normalize_container_engine_ready_for_gate_treats_missing_cli_as_not_ready() {
+    let value = normalize_container_engine_ready_for_gate(Err(anyhow::anyhow!(
+        "native sandbox container runtime is unavailable"
+    )))
+    .expect("missing binary should map to not-ready");
     assert!(!value);
 }
 
 #[test]
-fn normalize_podman_engine_ready_for_gate_preserves_other_errors() {
-    let err = normalize_podman_engine_ready_for_gate(Err(anyhow::anyhow!("boom")));
+fn normalize_container_engine_ready_for_gate_preserves_other_errors() {
+    let err = normalize_container_engine_ready_for_gate(Err(anyhow::anyhow!("boom")));
     assert!(err.is_err());
 }
 
@@ -787,18 +768,21 @@ async fn concurrent_launch_start_is_deduplicated() {
         created_at: Utc::now(),
         vcs_kind: None,
     };
-    let log_path = data_dir.path().join("podman-invocations.log");
+    let log_path = data_dir.path().join("sandbox-cli-invocations.log");
     let container_name = format!("ctx-harness-{}", workspace.id.0);
-    let podman_path =
-        write_running_container_podman_shim(data_dir.path(), &log_path, &container_name);
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    let sandbox_cli_path =
+        write_running_container_sandbox_cli_shim(data_dir.path(), &log_path, &container_name);
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     let ops = Arc::new(UnexpectedRuntimeWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..podman_container_settings()
+            ..sandbox_container_settings()
         },
     };
     let barrier = Arc::new(Barrier::new(3));
@@ -838,7 +822,7 @@ async fn concurrent_launch_start_is_deduplicated() {
         .await;
     assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
 
-    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     let exists_line = format!("container exists {container_name}");
     let inspect_line =
         format!("container inspect --format {{{{.State.Running}}}} {container_name}");
@@ -873,20 +857,23 @@ async fn startup_prewarm_runs_runtime_warmup_for_cold_container_settings() {
 
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
-    let podman_path = data_dir.path().join("podman.sh");
+    let sandbox_cli_path = data_dir.path().join("sandbox-cli.sh");
     std::fs::write(
-            &podman_path,
-            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nexit 0\n",
+            &sandbox_cli_path,
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nexit 0\n",
         )
-        .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _podman_available = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
+        .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let ops = Arc::new(BlockingWarmupOperations::default());
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
-        container: podman_container_settings(),
+        mode: ExecutionMode::Sandbox,
+        container: sandbox_container_settings(),
     };
     save_test_execution_settings(data_dir.path(), settings).await;
 
@@ -914,13 +901,16 @@ async fn startup_prewarm_runs_runtime_warmup_for_cold_container_settings() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn spawned_startup_prewarm_respects_podman_env_test_lock() {
+async fn spawned_startup_prewarm_respects_sandbox_cli_env_test_lock() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let serial = env_var_test_lock().lock().await;
-    let podman_path = write_ready_runtime_podman_shim(data_dir.path());
-    let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
-    let _podman_path = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    save_test_execution_settings(data_dir.path(), podman_execution_settings()).await;
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(data_dir.path());
+    let _sandbox_cli = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+    let _sandbox_cli_path = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    save_test_execution_settings(data_dir.path(), sandbox_execution_settings()).await;
     let coordinator = test_coordinator(data_dir.path().to_path_buf());
 
     coordinator.spawn_startup_prewarm();
@@ -932,7 +922,7 @@ async fn spawned_startup_prewarm_respects_podman_env_test_lock() {
     let startup = coordinator.startup_status().await;
     assert!(
         startup.last_attempt_at.is_none(),
-        "startup prewarm should not begin while the podman env test lock is held: {startup:?}"
+        "startup prewarm should not begin while the sandbox CLI env test lock is held: {startup:?}"
     );
 
     drop(serial);
@@ -948,9 +938,12 @@ async fn spawned_startup_prewarm_respects_podman_env_test_lock() {
 async fn startup_prewarm_keeps_existing_metadata_when_machine_stays_down() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
-    let podman_path = write_startup_prewarm_podman_shim(data_dir.path());
-    let _test_podman = EnvVarGuard::unset("CTX_TEST_PODMAN_AVAILABLE");
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    let sandbox_cli_path = write_startup_prewarm_sandbox_cli_shim(data_dir.path());
+    let _test_sandbox_cli = EnvVarGuard::unset("CTX_TEST_SANDBOX_CLI_AVAILABLE");
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
 
     let image = crate::harness_runtime::default_container_image();
     write_prewarm_metadata(
@@ -964,7 +957,7 @@ async fn startup_prewarm_keeps_existing_metadata_when_machine_stays_down() {
     .await
     .expect("write existing prewarm metadata");
 
-    let settings = podman_execution_settings();
+    let settings = sandbox_execution_settings();
     save_test_execution_settings(data_dir.path(), settings).await;
 
     let ops = Arc::new(RecordingStartupWarmupOperations::default());
@@ -1025,16 +1018,19 @@ async fn startup_prewarm_does_not_record_success_for_stale_loaded_default_image(
     .expect("write bundle manifest");
     let _bundle_dir = EnvVarGuard::set("CTX_BUNDLE_DIR", &bundle_dir.to_string_lossy());
 
-    let podman_path = data_dir.path().join("podman.sh");
+    let sandbox_cli_path = data_dir.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
-        "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  printf '{}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+        &sandbox_cli_path,
+        "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  printf '{}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _podman_available = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let (_image_guard, _image_server) =
         install_test_managed_harness_image_source(vec![4, 5, 6]).await;
 
@@ -1051,7 +1047,7 @@ async fn startup_prewarm_does_not_record_success_for_stale_loaded_default_image(
     .await
     .expect("write stale prewarm metadata");
 
-    let settings = podman_execution_settings();
+    let settings = sandbox_execution_settings();
     save_test_execution_settings(data_dir.path(), settings).await;
 
     let ops = Arc::new(RecordingStartupWarmupOperations::default());
@@ -1134,31 +1130,34 @@ async fn successful_workspace_launch_writes_missing_prewarm_metadata() {
     let container_name = format!("ctx-harness-{}", workspace.id.0);
     let machine_started = data_dir.path().join("machine-started");
     let image_present = data_dir.path().join("image-present");
-    let podman_path = data_dir.path().join("podman.sh");
+    let sandbox_cli_path = data_dir.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
-        with_workspace_volume_support(format!(
-            "#!/bin/sh\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+        &sandbox_cli_path,
+        with_native_runtime_ready(with_workspace_volume_support(format!(
+            "#!/bin/sh\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             started = machine_started.display(),
             image_present = image_present.display(),
             container = container_name,
-        )),
+        ))),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _test_podman = EnvVarGuard::unset("CTX_TEST_PODMAN_AVAILABLE");
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let _test_sandbox_cli = EnvVarGuard::unset("CTX_TEST_SANDBOX_CLI_AVAILABLE");
     let (_cache_guard, _cache_server) =
         install_test_managed_machine_cache_source(vec![1, 2, 3]).await;
     let (_image_guard, _image_server) =
         install_test_managed_harness_image_source(vec![4, 5, 6]).await;
 
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..podman_container_settings()
+            ..sandbox_container_settings()
         },
     };
     save_test_execution_settings(data_dir.path(), settings.clone()).await;
@@ -1251,35 +1250,38 @@ async fn successful_workspace_launch_refresh_clears_stale_prewarm_metadata() {
         vcs_kind: None,
     };
     let container_name = format!("ctx-harness-{}", workspace.id.0);
-    let log_path = data_dir.path().join("podman-invocations.log");
+    let log_path = data_dir.path().join("sandbox-cli-invocations.log");
     let machine_started = data_dir.path().join("machine-started");
     let image_present = data_dir.path().join("image-present");
-    let podman_path = data_dir.path().join("podman.sh");
+    let sandbox_cli_path = data_dir.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
-        with_workspace_volume_support(format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+        &sandbox_cli_path,
+        with_native_runtime_ready(with_workspace_volume_support(format!(
+            "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             started = machine_started.display(),
             image_present = image_present.display(),
             container = container_name,
-        )),
+        ))),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _test_podman = EnvVarGuard::unset("CTX_TEST_PODMAN_AVAILABLE");
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let _test_sandbox_cli = EnvVarGuard::unset("CTX_TEST_SANDBOX_CLI_AVAILABLE");
     let (_cache_guard, _cache_server) =
         install_test_managed_machine_cache_source(vec![1, 2, 3]).await;
     let (_image_guard, _image_server) =
         install_test_managed_harness_image_source(vec![4, 5, 6]).await;
 
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..podman_container_settings()
+            ..sandbox_container_settings()
         },
     };
     save_test_execution_settings(data_dir.path(), settings.clone()).await;
@@ -1318,7 +1320,7 @@ async fn successful_workspace_launch_refresh_clears_stale_prewarm_metadata() {
     assert!(refreshed.image_present);
     assert!(!refreshed.bundled_image_digest_changed);
 
-    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert!(log.contains("load -i"));
 }
 
@@ -1382,31 +1384,34 @@ async fn successful_workspace_launch_refreshes_prewarm_metadata_when_image_ref_c
     let container_name = format!("ctx-harness-{}", workspace.id.0);
     let machine_started = data_dir.path().join("machine-started");
     let image_present = data_dir.path().join("image-present");
-    let podman_path = data_dir.path().join("podman.sh");
+    let sandbox_cli_path = data_dir.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
-        with_workspace_volume_support(format!(
-            "#!/bin/sh\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+        &sandbox_cli_path,
+        with_native_runtime_ready(with_workspace_volume_support(format!(
+            "#!/bin/sh\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             started = machine_started.display(),
             image_present = image_present.display(),
             container = container_name,
-        )),
+        ))),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _test_podman = EnvVarGuard::unset("CTX_TEST_PODMAN_AVAILABLE");
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let _test_sandbox_cli = EnvVarGuard::unset("CTX_TEST_SANDBOX_CLI_AVAILABLE");
     let (_cache_guard, _cache_server) =
         install_test_managed_machine_cache_source(vec![1, 2, 3]).await;
     let (_image_guard, _image_server) =
         install_test_managed_harness_image_source(vec![4, 5, 6]).await;
 
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..podman_container_settings()
+            ..sandbox_container_settings()
         },
     };
     save_test_execution_settings(data_dir.path(), settings.clone()).await;
@@ -1469,43 +1474,46 @@ async fn workspace_override_image_does_not_clobber_startup_prewarm_metadata() {
     };
     let container_name = format!("ctx-harness-{}", workspace.id.0);
     let machine_started = data_dir.path().join("machine-started");
-    let podman_path = data_dir.path().join("podman.sh");
+    let sandbox_cli_path = data_dir.path().join("sandbox-cli.sh");
     let override_image = "ghcr.io/ctxrs/custom-harness:test";
     std::fs::write(
-        &podman_path,
-        with_workspace_volume_support(format!(
-            "#!/bin/sh\nSTARTED=\"{started}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ] && [ \"$4\" = \"{override_image}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+        &sandbox_cli_path,
+        with_native_runtime_ready(with_workspace_volume_support(format!(
+            "#!/bin/sh\nSTARTED=\"{started}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ] && [ \"$4\" = \"{override_image}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             started = machine_started.display(),
             container = container_name,
             override_image = override_image,
-        )),
+        ))),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _test_podman = EnvVarGuard::unset("CTX_TEST_PODMAN_AVAILABLE");
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let _test_sandbox_cli = EnvVarGuard::unset("CTX_TEST_SANDBOX_CLI_AVAILABLE");
     let (_cache_guard, _cache_server) =
         install_test_managed_machine_cache_source(vec![1, 2, 3]).await;
 
     save_test_execution_settings(
         data_dir.path(),
         ExecutionSettings {
-            mode: ExecutionMode::Container,
+            mode: ExecutionMode::Sandbox,
             container: crate::settings::ContainerExecutionSettings {
                 network_mode: crate::settings::ContainerNetworkMode::All,
-                ..podman_container_settings()
+                ..sandbox_container_settings()
             },
         },
     )
     .await;
 
     let launch_settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: crate::settings::ContainerExecutionSettings {
             image: Some(override_image.to_string()),
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..podman_container_settings()
+            ..sandbox_container_settings()
         },
     };
 
@@ -1538,12 +1546,15 @@ async fn workspace_override_image_does_not_clobber_startup_prewarm_metadata() {
 async fn runtime_prewarm_reuses_background_all_job_and_waits_for_builder_tail_when_runtime_joins() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
-    let podman_path = write_ready_runtime_podman_shim(data_dir.path());
-    let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
-    let _podman_path = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(data_dir.path());
+    let _sandbox_cli = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+    let _sandbox_cli_path = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     let ops = Arc::new(BlockingWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    let settings = podman_execution_settings();
+    let settings = sandbox_execution_settings();
 
     let background = coordinator
         .start_runtime_prewarm(settings.clone(), RuntimePrewarmScope::All)
@@ -1595,13 +1606,16 @@ async fn runtime_prewarm_reuses_background_all_job_and_waits_for_builder_tail_wh
 async fn runtime_prewarm_errors_when_only_startup_artifacts_were_warmed() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
-    let podman_path = write_startup_prewarm_podman_shim(data_dir.path());
-    let _test_podman = EnvVarGuard::unset("CTX_TEST_PODMAN_AVAILABLE");
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    let sandbox_cli_path = write_startup_prewarm_sandbox_cli_shim(data_dir.path());
+    let _test_sandbox_cli = EnvVarGuard::unset("CTX_TEST_SANDBOX_CLI_AVAILABLE");
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
 
     let ops = Arc::new(RecordingStartupWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    let settings = podman_execution_settings();
+    let settings = sandbox_execution_settings();
 
     let snapshot = coordinator
         .start_runtime_prewarm(settings, RuntimePrewarmScope::Runtime)
@@ -1632,9 +1646,9 @@ async fn compute_prewarm_gate_marks_avf_linux_runtime_ready() {
     let _runtime =
         crate::harness_runtime::override_managed_avf_linux_runtime_source_for_test(runtime_source);
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: crate::settings::ContainerExecutionSettings {
-            runtime: ContainerRuntimeKind::AvfLinuxVm,
+            runtime: ContainerRuntimeKind::SharedVmContainer,
             ..Default::default()
         },
     };
@@ -1683,9 +1697,9 @@ async fn runtime_prewarm_succeeds_for_avf_linux_runtime() {
         crate::harness_runtime::override_managed_avf_linux_runtime_source_for_test(runtime_source);
     let coordinator = test_coordinator(data_dir.path().to_path_buf());
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: crate::settings::ContainerExecutionSettings {
-            runtime: ContainerRuntimeKind::AvfLinuxVm,
+            runtime: ContainerRuntimeKind::SharedVmContainer,
             ..Default::default()
         },
     };
@@ -1718,9 +1732,9 @@ async fn workspace_launch_waits_for_running_startup_prewarm_without_duplicate_ru
     let data_dir = tempfile::tempdir().expect("tempdir");
     let workspace_root = data_dir.path().join("ws");
     std::fs::create_dir_all(&workspace_root).expect("create workspace root");
-    let log_path = data_dir.path().join("podman-invocations.log");
+    let log_path = data_dir.path().join("sandbox-cli-invocations.log");
     let machine_started = data_dir.path().join("machine-started");
-    let podman_path = data_dir.path().join("podman.sh");
+    let sandbox_cli_path = data_dir.path().join("sandbox-cli.sh");
     let workspace = Workspace {
         id: WorkspaceId::new(),
         name: "ws".to_string(),
@@ -1732,25 +1746,28 @@ async fn workspace_launch_waits_for_running_startup_prewarm_without_duplicate_ru
     let (_cache_guard, _cache_server) =
         install_test_managed_machine_cache_source(vec![1, 2, 3]).await;
     std::fs::write(
-            &podman_path,
-            with_workspace_volume_support(format!(
-                "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            &sandbox_cli_path,
+            with_native_runtime_ready(with_workspace_volume_support(format!(
+                "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
                 log = log_path.display(),
                 started = machine_started.display(),
                 container = container_name,
-            )),
+            ))),
         )
-        .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _podman_available = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
+        .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let ops = Arc::new(BlockingWarmupOperations::default());
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..podman_container_settings()
+            ..sandbox_container_settings()
         },
     };
     save_test_execution_settings(data_dir.path(), settings.clone()).await;
@@ -1792,22 +1809,14 @@ async fn workspace_launch_waits_for_running_startup_prewarm_without_duplicate_ru
     assert_eq!(ready.state, ExecutionLaunchState::Ready);
     assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
 
-    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert!(
         log.contains(&format!("container exists {container_name}")),
         "expected reusable container check in log:\n{log}"
     );
     assert!(
-        log.contains("machine init "),
-        "joined launch should materialize the machine before checking reusable containers:\n{log}"
-    );
-    assert!(
-        log.contains("machine start "),
-        "joined launch should start the machine before checking reusable containers:\n{log}"
-    );
-    assert!(
-        !log.contains("image exists"),
-        "joined launch should not restart runtime/image probes for reusable containers:\n{log}"
+        !log.contains("load -i"),
+        "joined launch should not trigger a second image load for reusable containers:\n{log}"
     );
 }
 
@@ -1830,38 +1839,41 @@ async fn workspace_launch_reuses_active_runtime_prewarm_without_second_image_loa
         vcs_kind: None,
     };
     let container_name = format!("ctx-harness-{}", workspace.id.0);
-    let log_path = data_dir.path().join("podman-invocations.log");
+    let log_path = data_dir.path().join("sandbox-cli-invocations.log");
     let load_release = data_dir.path().join("release-load");
     let image_present = data_dir.path().join("image-present");
-    let podman_path = data_dir.path().join("podman.sh");
+    let sandbox_cli_path = data_dir.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
-        with_workspace_volume_support(format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nLOAD_RELEASE=\"{load_release}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  while [ ! -f \"$LOAD_RELEASE\" ]; do\n    sleep 0.05\n  done\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+        &sandbox_cli_path,
+        with_native_runtime_ready(with_workspace_volume_support(format!(
+            "#!/bin/sh\nLOG=\"{log}\"\nLOAD_RELEASE=\"{load_release}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  while [ ! -f \"$LOAD_RELEASE\" ]; do\n    sleep 0.05\n  done\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             load_release = load_release.display(),
             image_present = image_present.display(),
             container = container_name,
-        )),
+        ))),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _podman_available = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
 
     let coordinator = test_coordinator_with_operations(
         data_dir.path().to_path_buf(),
-        Arc::new(BlockingPodmanLoadWarmupOperations {
+        Arc::new(BlockingSandboxCliLoadWarmupOperations {
             data_root: data_dir.path().to_path_buf(),
             image_tar,
         }),
     );
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..podman_container_settings()
+            ..sandbox_container_settings()
         },
     };
 
@@ -1879,7 +1891,7 @@ async fn workspace_launch_reuses_active_runtime_prewarm_without_second_image_loa
         }
     })
     .await
-    .expect("timed out waiting for runtime prewarm podman load");
+    .expect("timed out waiting for runtime prewarm sandbox CLI load");
 
     let launch = coordinator
         .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
@@ -1892,7 +1904,7 @@ async fn workspace_launch_reuses_active_runtime_prewarm_without_second_image_loa
     assert_eq!(running.state, ExecutionLaunchState::Running);
 
     tokio::time::sleep(Duration::from_millis(250)).await;
-    std::fs::write(&load_release, b"ok").expect("release podman load");
+    std::fs::write(&load_release, b"ok").expect("release sandbox CLI load");
 
     let prewarm_terminal =
         wait_for_execution_launch_terminal(&coordinator, &prewarm.job_id, Duration::from_secs(5))
@@ -1904,7 +1916,7 @@ async fn workspace_launch_reuses_active_runtime_prewarm_without_second_image_loa
     assert_eq!(prewarm_terminal.state, ExecutionLaunchState::Ready);
     assert_eq!(launch_terminal.state, ExecutionLaunchState::Ready);
 
-    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert_eq!(
         log.matches("load -i").count(),
         1,
@@ -1935,38 +1947,41 @@ async fn workspace_launch_reuses_startup_prewarm_without_second_image_load_when_
         vcs_kind: None,
     };
     let container_name = format!("ctx-harness-{}", workspace.id.0);
-    let log_path = data_dir.path().join("podman-invocations.log");
+    let log_path = data_dir.path().join("sandbox-cli-invocations.log");
     let load_release = data_dir.path().join("release-load");
     let image_present = data_dir.path().join("image-present");
-    let podman_path = data_dir.path().join("podman.sh");
+    let sandbox_cli_path = data_dir.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
-        with_workspace_volume_support(format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nLOAD_RELEASE=\"{load_release}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  while [ ! -f \"$LOAD_RELEASE\" ]; do\n    sleep 0.05\n  done\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+        &sandbox_cli_path,
+        with_native_runtime_ready(with_workspace_volume_support(format!(
+            "#!/bin/sh\nLOG=\"{log}\"\nLOAD_RELEASE=\"{load_release}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  while [ ! -f \"$LOAD_RELEASE\" ]; do\n    sleep 0.05\n  done\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             load_release = load_release.display(),
             image_present = image_present.display(),
             container = container_name,
-        )),
+        ))),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _podman_available = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
 
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..podman_container_settings()
+            ..sandbox_container_settings()
         },
     };
     save_test_execution_settings(data_dir.path(), settings.clone()).await;
 
     let coordinator = test_coordinator_with_operations(
         data_dir.path().to_path_buf(),
-        Arc::new(BlockingPodmanLoadWarmupOperations {
+        Arc::new(BlockingSandboxCliLoadWarmupOperations {
             data_root: data_dir.path().to_path_buf(),
             image_tar,
         }),
@@ -1986,7 +2001,7 @@ async fn workspace_launch_reuses_startup_prewarm_without_second_image_load_when_
         }
     })
     .await
-    .expect("timed out waiting for startup prewarm podman load");
+    .expect("timed out waiting for startup prewarm sandbox CLI load");
 
     let running = coordinator.startup_status().await;
     assert_eq!(running.state, StartupPrewarmState::Running);
@@ -2006,7 +2021,7 @@ async fn workspace_launch_reuses_startup_prewarm_without_second_image_load_when_
     assert_eq!(launch_running.state, ExecutionLaunchState::Running);
 
     tokio::time::sleep(Duration::from_millis(250)).await;
-    std::fs::write(&load_release, b"ok").expect("release podman load");
+    std::fs::write(&load_release, b"ok").expect("release sandbox CLI load");
 
     startup.await.expect("startup prewarm task");
     let launch_terminal =
@@ -2015,7 +2030,7 @@ async fn workspace_launch_reuses_startup_prewarm_without_second_image_load_when_
 
     assert_eq!(launch_terminal.state, ExecutionLaunchState::Ready);
 
-    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert_eq!(
         log.matches("load -i").count(),
         1,
@@ -2027,114 +2042,19 @@ async fn workspace_launch_reuses_startup_prewarm_without_second_image_load_when_
     );
 }
 
-#[cfg(unix)]
-#[tokio::test]
-async fn workspace_launch_joining_startup_prewarm_starts_machine_before_creating_container() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let _serial = env_var_test_lock().lock().await;
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let workspace_root = data_dir.path().join("ws");
-    std::fs::create_dir_all(&workspace_root).expect("create workspace root");
-    let log_path = data_dir.path().join("podman-invocations.log");
-    let machine_started = data_dir.path().join("machine-started");
-    let podman_path = data_dir.path().join("podman.sh");
-    let workspace = Workspace {
-        id: WorkspaceId::new(),
-        name: "ws".to_string(),
-        root_path: workspace_root.to_string_lossy().to_string(),
-        created_at: Utc::now(),
-        vcs_kind: None,
-    };
-    let container_name = format!("ctx-harness-{}", workspace.id.0);
-    let (_cache_guard, _cache_server) =
-        install_test_managed_machine_cache_source(vec![1, 2, 3]).await;
-    std::fs::write(
-        &podman_path,
-        with_workspace_volume_support(format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
-            log = log_path.display(),
-            started = machine_started.display(),
-            container = container_name,
-        )),
-    )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _podman_available = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
-    let ops = Arc::new(BlockingWarmupOperations::default());
-    let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
-        container: crate::settings::ContainerExecutionSettings {
-            network_mode: crate::settings::ContainerNetworkMode::All,
-            ..podman_container_settings()
-        },
-    };
-    save_test_execution_settings(data_dir.path(), settings.clone()).await;
-
-    let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    let coordinator_task = Arc::clone(&coordinator);
-    let startup = tokio::spawn(async move {
-        coordinator_task.run_startup_prewarm().await;
-    });
-
-    ops.wait_for_runtime_runs(1).await;
-
-    let snapshot = coordinator
-        .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
-        .await;
-    assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
-
-    ops.release_runtime();
-    startup.await.expect("startup prewarm task");
-
-    let ready = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let latest = coordinator
-                .launch_status(&snapshot.job_id)
-                .await
-                .expect("missing workspace launch job");
-            if latest.state == ExecutionLaunchState::Ready {
-                break latest;
-            }
-            if latest.state == ExecutionLaunchState::Error {
-                panic!("workspace launch failed unexpectedly: {:?}", latest.error);
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("timed out waiting for joined launch readiness");
-
-    assert_eq!(ready.state, ExecutionLaunchState::Ready);
-    assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
-
-    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
-    assert!(
-        log.contains("machine init "),
-        "joined launch should materialize a missing machine before creating a container:\n{log}"
-    );
-    assert!(
-        log.contains("machine start "),
-        "joined launch should start the machine before creating a container:\n{log}"
-    );
-    assert!(
-        log.contains("run -d --name"),
-        "joined launch should create the workspace container after the machine is ready:\n{log}"
-    );
-}
-
 #[tokio::test]
 async fn builder_prewarm_reuses_background_all_job() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
-    let podman_path = write_ready_runtime_podman_shim(data_dir.path());
-    let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
-    let _podman_path = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(data_dir.path());
+    let _sandbox_cli = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+    let _sandbox_cli_path = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     let ops = Arc::new(BlockingWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    let settings = podman_execution_settings();
+    let settings = sandbox_execution_settings();
 
     let background = coordinator
         .start_runtime_prewarm(settings.clone(), RuntimePrewarmScope::All)
@@ -2264,7 +2184,7 @@ async fn runtime_prewarm_emits_initial_log_before_runtime_work_completes() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let coordinator = test_coordinator(data_dir.path().to_path_buf());
-    let settings = podman_execution_settings();
+    let settings = sandbox_execution_settings();
 
     let snapshot = coordinator
         .start_runtime_prewarm(settings, RuntimePrewarmScope::Runtime)
@@ -2311,11 +2231,11 @@ async fn runtime_prewarm_emits_initial_log_before_runtime_work_completes() {
 #[tokio::test]
 async fn builder_only_prewarm_skips_runtime_warmup_and_runtime_availability() {
     let _serial = env_var_test_lock().lock().await;
-    let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "0");
+    let _sandbox_cli = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
     let data_dir = tempfile::tempdir().expect("tempdir");
     let ops = Arc::new(BlockingWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    let settings = podman_execution_settings();
+    let settings = sandbox_execution_settings();
 
     let snapshot = coordinator
         .start_runtime_prewarm(settings, RuntimePrewarmScope::Builder)
@@ -2361,10 +2281,13 @@ async fn builder_only_prewarm_skips_runtime_warmup_and_runtime_availability() {
 async fn startup_prewarm_enters_shared_runtime_warmup_when_machine_is_not_ready() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
-    let podman_path = write_startup_prewarm_podman_shim(data_dir.path());
-    let _test_podman = EnvVarGuard::unset("CTX_TEST_PODMAN_AVAILABLE");
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    save_test_execution_settings(data_dir.path(), podman_execution_settings()).await;
+    let sandbox_cli_path = write_startup_prewarm_sandbox_cli_shim(data_dir.path());
+    let _test_sandbox_cli = EnvVarGuard::unset("CTX_TEST_SANDBOX_CLI_AVAILABLE");
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    save_test_execution_settings(data_dir.path(), sandbox_execution_settings()).await;
 
     let ops = Arc::new(RecordingStartupWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
@@ -2387,12 +2310,15 @@ async fn startup_prewarm_enters_shared_runtime_warmup_when_machine_is_not_ready(
 async fn workspace_launch_is_not_blocked_by_background_runtime_prewarm_job() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
-    let podman_path = write_ready_runtime_podman_shim(data_dir.path());
-    let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
-    let _podman_path = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(data_dir.path());
+    let _sandbox_cli = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+    let _sandbox_cli_path = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     let ops = Arc::new(BlockingWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    let prewarm_settings = podman_execution_settings();
+    let prewarm_settings = sandbox_execution_settings();
     let workspace = test_workspace(WorkspaceId::new());
     let host_settings = ExecutionSettings {
         mode: ExecutionMode::Host,
@@ -2451,100 +2377,6 @@ async fn workspace_launch_is_not_blocked_by_background_runtime_prewarm_job() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn workspace_launch_does_not_wait_for_downloads_only_runtime_prewarm_when_machine_is_off() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let _serial = env_var_test_lock().lock().await;
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let workspace_root = data_dir.path().join("ws");
-    std::fs::create_dir_all(&workspace_root).expect("create workspace root");
-    let workspace = Workspace {
-        id: WorkspaceId::new(),
-        name: "ws".to_string(),
-        root_path: workspace_root.to_string_lossy().to_string(),
-        created_at: Utc::now(),
-        vcs_kind: None,
-    };
-    let container_name = format!("ctx-harness-{}", workspace.id.0);
-    let log_path = data_dir.path().join("podman-invocations.log");
-    let machine_started = data_dir.path().join("machine-started");
-    let image_present = data_dir.path().join("image-present");
-    std::fs::write(&image_present, b"present").expect("seed image presence");
-    let podman_path = data_dir.path().join("podman.sh");
-    std::fs::write(
-        &podman_path,
-        with_workspace_volume_support(format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
-            log = log_path.display(),
-            started = machine_started.display(),
-            image_present = image_present.display(),
-            container = container_name,
-        )),
-    )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _test_podman = EnvVarGuard::unset("CTX_TEST_PODMAN_AVAILABLE");
-    let (_cache_guard, _cache_server) =
-        install_test_managed_machine_cache_source(vec![1, 2, 3]).await;
-
-    let ops = Arc::new(BlockingWarmupOperations::default());
-    let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
-        container: crate::settings::ContainerExecutionSettings {
-            network_mode: crate::settings::ContainerNetworkMode::All,
-            ..podman_container_settings()
-        },
-    };
-
-    let background = coordinator
-        .start_runtime_prewarm(settings.clone(), RuntimePrewarmScope::Runtime)
-        .await;
-    ops.wait_for_runtime_runs(1).await;
-
-    let launch = coordinator
-        .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
-        .await;
-    let ready =
-        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(5))
-            .await;
-    assert_eq!(ready.state, ExecutionLaunchState::Ready);
-    assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
-
-    let background_snapshot = coordinator
-        .launch_status(&background.job_id)
-        .await
-        .expect("missing background prewarm job");
-    assert_eq!(background_snapshot.state, ExecutionLaunchState::Running);
-
-    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
-    assert!(
-        log.contains("machine init "),
-        "launch should materialize the machine instead of waiting for downloads-only runtime prewarm:\n{log}"
-    );
-    assert!(
-        log.contains("machine start "),
-        "launch should start the machine instead of waiting for downloads-only runtime prewarm:\n{log}"
-    );
-    assert!(
-        log.contains(&format!("run -d --name {container_name}")),
-        "launch should create the workspace container without waiting for the background runtime prewarm:\n{log}"
-    );
-
-    ops.release_runtime();
-    let background_terminal = wait_for_execution_launch_terminal(
-        &coordinator,
-        &background.job_id,
-        Duration::from_secs(5),
-    )
-    .await;
-    assert_eq!(background_terminal.state, ExecutionLaunchState::Ready);
-}
-
-#[cfg(unix)]
-#[tokio::test]
 async fn workspace_launch_reuses_existing_container_without_waiting_for_startup_prewarm() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -2552,8 +2384,8 @@ async fn workspace_launch_reuses_existing_container_without_waiting_for_startup_
     let data_dir = tempfile::tempdir().expect("tempdir");
     let workspace_root = data_dir.path().join("ws");
     std::fs::create_dir_all(&workspace_root).expect("create workspace root");
-    let log_path = data_dir.path().join("podman-invocations.log");
-    let podman_path = data_dir.path().join("podman.sh");
+    let log_path = data_dir.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = data_dir.path().join("sandbox-cli.sh");
     let workspace = Workspace {
         id: WorkspaceId::new(),
         name: "ws".to_string(),
@@ -2563,25 +2395,28 @@ async fn workspace_launch_reuses_existing_container_without_waiting_for_startup_
     };
     let container_name = format!("ctx-harness-{}", workspace.id.0);
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         with_workspace_volume_support(format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             container = container_name,
         )),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _podman_available = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
 
     let ops = Arc::new(BlockingWarmupOperations::default());
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..podman_container_settings()
+            ..sandbox_container_settings()
         },
     };
     save_test_execution_settings(data_dir.path(), settings.clone()).await;
@@ -2613,7 +2448,7 @@ async fn workspace_launch_reuses_existing_container_without_waiting_for_startup_
         StartupPrewarmState::Running
     );
 
-    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert!(
         log.contains(&format!("container exists {container_name}")),
         "expected existing-container check in log:\n{log}"
@@ -2644,7 +2479,7 @@ async fn workspace_launch_reuses_running_container_without_runtime_prewarm_or_im
     let data_dir = tempfile::tempdir().expect("tempdir");
     let workspace_root = data_dir.path().join("ws");
     std::fs::create_dir_all(&workspace_root).expect("create workspace root");
-    let log_path = data_dir.path().join("podman-invocations.log");
+    let log_path = data_dir.path().join("sandbox-cli-invocations.log");
     let ops = Arc::new(UnexpectedRuntimeWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
     let workspace = Workspace {
@@ -2656,16 +2491,19 @@ async fn workspace_launch_reuses_running_container_without_runtime_prewarm_or_im
     };
     let container_name = format!("ctx-harness-{}", workspace.id.0);
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: crate::settings::ContainerExecutionSettings {
             network_mode: crate::settings::ContainerNetworkMode::All,
-            ..podman_container_settings()
+            ..sandbox_container_settings()
         },
     };
 
-    let podman_path =
-        write_running_container_podman_shim(data_dir.path(), &log_path, &container_name);
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    let sandbox_cli_path =
+        write_running_container_sandbox_cli_shim(data_dir.path(), &log_path, &container_name);
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
 
     let launch = TrackedExecutionLaunch::new(
         &coordinator,
@@ -2693,7 +2531,7 @@ async fn workspace_launch_reuses_running_container_without_runtime_prewarm_or_im
         ready.logs
     );
 
-    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert!(
         log.contains(&format!("container exists {container_name}")),
         "expected existing-container check in log:\n{log}"
@@ -2718,112 +2556,13 @@ async fn workspace_launch_reuses_running_container_without_runtime_prewarm_or_im
     );
 }
 
-#[cfg(unix)]
-#[tokio::test]
-async fn workspace_launch_falls_back_when_downloads_only_startup_prewarm_fails() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let _serial = env_var_test_lock().lock().await;
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let workspace_root = data_dir.path().join("ws");
-    std::fs::create_dir_all(&workspace_root).expect("create workspace root");
-    let log_path = data_dir.path().join("podman-invocations.log");
-    let machine_started = data_dir.path().join("machine-started");
-    let podman_path = data_dir.path().join("podman.sh");
-    let workspace = Workspace {
-        id: WorkspaceId::new(),
-        name: "ws".to_string(),
-        root_path: workspace_root.to_string_lossy().to_string(),
-        created_at: Utc::now(),
-        vcs_kind: None,
-    };
-    let container_name = format!("ctx-harness-{}", workspace.id.0);
-    let (_cache_guard, _cache_server) =
-        install_test_managed_machine_cache_source(vec![1, 2, 3]).await;
-    std::fs::write(
-        &podman_path,
-        with_workspace_volume_support(format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
-            log = log_path.display(),
-            started = machine_started.display(),
-            container = container_name,
-        )),
-    )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _podman_available = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
-
-    let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
-        container: crate::settings::ContainerExecutionSettings {
-            network_mode: crate::settings::ContainerNetworkMode::All,
-            ..podman_container_settings()
-        },
-    };
-    save_test_execution_settings(data_dir.path(), settings.clone()).await;
-
-    let ops = Arc::new(DeferredFailingWarmupOperations::default());
-    let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    let coordinator_task = Arc::clone(&coordinator);
-    let startup = tokio::spawn(async move {
-        coordinator_task.run_startup_prewarm().await;
-    });
-
-    ops.wait_for_runtime_runs(1).await;
-    assert_eq!(
-        coordinator.startup_status().await.state,
-        StartupPrewarmState::Running
-    );
-
-    let launch = TrackedExecutionLaunch::new(
-        &coordinator,
-        coordinator
-            .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
-            .await,
-    );
-    let ready = launch.wait_ready(Duration::from_secs(10)).await;
-    assert_eq!(ready.state, ExecutionLaunchState::Ready);
-    assert_eq!(
-        coordinator.startup_status().await.state,
-        StartupPrewarmState::Running
-    );
-
-    ops.release_runtime();
-    startup.await.expect("startup prewarm task");
-
-    let startup_snapshot = coordinator.startup_status().await;
-    assert_eq!(startup_snapshot.state, StartupPrewarmState::Error);
-    assert!(startup_snapshot.needs_prewarm);
-    assert!(startup_snapshot
-        .error
-        .as_deref()
-        .unwrap_or_default()
-        .contains("simulated startup prewarm failure"));
-
-    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
-    assert!(
-        log.contains("machine init "),
-        "workspace launch should materialize the machine even if startup prewarm later fails:\n{log}"
-    );
-    assert!(
-        log.contains("machine start "),
-        "workspace launch should start the machine even if startup prewarm later fails:\n{log}"
-    );
-    assert!(
-        log.contains("run -d --name"),
-        "workspace launch should continue through container creation when startup prewarm fails:\n{log}"
-    );
-}
-
 #[tokio::test]
 async fn workspace_launch_emits_initial_log_before_runtime_work_completes() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let coordinator = test_coordinator(data_dir.path().to_path_buf());
     let workspace = test_workspace(WorkspaceId::new());
-    let settings = podman_execution_settings();
+    let settings = sandbox_execution_settings();
 
     let snapshot = coordinator
         .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())

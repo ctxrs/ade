@@ -61,16 +61,16 @@ async fn runtime_manager(tmp: &TempDir) -> HarnessRuntimeManager {
 async fn runtime_ready_container_creation_skips_front_loaded_image_checks() {
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let log_path = temp.path().join("podman-invocations.log");
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
     let state_path = temp.path().join("container-created");
-    let podman_path = temp.path().join("podman.sh");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     let manager = runtime_manager(&temp).await;
     let workspace = sample_workspace(&temp);
     let container_name = format!("ctx-harness-{}", workspace.id.0);
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
-            runtime: ContainerRuntimeKind::Podman,
+            runtime: ContainerRuntimeKind::NativeContainer,
             mount_mode: ContainerMountMode::DiskIsolated,
             network_mode: ContainerNetworkMode::All,
             allowlist: Vec::new(),
@@ -79,18 +79,21 @@ async fn runtime_ready_container_creation_skips_front_loaded_image_checks() {
     };
 
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  if [ -f \"$STATE\" ]; then exit 0; fi\n  exit 1\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  if [ -f \"$STATE\" ]; then printf 'true\\n'; exit 0; fi\n  exit 1\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  suffix=${{2#ctx-harness-}}\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"ctx-ws-%s\",\"Destination\":\"/ctx/ws\"}}]}}]\\n' \"$suffix\"\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  : > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  if [ -f \"$STATE\" ]; then exit 0; fi\n  exit 1\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  if [ -f \"$STATE\" ]; then printf 'true\\n'; exit 0; fi\n  exit 1\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  suffix=${{2#ctx-harness-}}\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"ctx-ws-%s\",\"Destination\":\"/ctx/ws\"}}]}}]\\n' \"$suffix\"\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  : > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             state = state_path.display(),
             container = container_name,
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
 
     manager
         .ensure_workspace_container_after_runtime_ready_with_observer(
@@ -102,7 +105,7 @@ async fn runtime_ready_container_creation_skips_front_loaded_image_checks() {
         .await
         .expect("runtime-ready path should create workspace container without image checks");
 
-    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert!(
         log.contains(&format!("container exists {container_name}")),
         "expected container existence check in log:\n{log}"

@@ -180,7 +180,6 @@ if ! is_truthy "$skip_runtimes_raw"; then
       ensure_python_runtime_versioned "$python_version" "$python_build_tag"
     done < "$python_specs_src"
   fi
-  ensure_podman_runtime
 fi
 if ! is_falsy "$INCLUDE_BRIDGE"; then
   require_bridge_binary
@@ -214,23 +213,6 @@ if ! is_truthy "$skip_runtimes_raw"; then
     node_bin="$node_root/$node_bin_rel"
     npm_cli="$node_root/$npm_cli_rel"
   fi
-fi
-
-podman_root_rel=""
-podman_bin_rel=""
-podman_root=""
-podman_bin=""
-if [[ "${CTX_BUNDLE_PODMAN:-0}" == "1" ]]; then
-  podman_root_rel="runtimes/podman/${os}/${arch}/podman-${PODMAN_VERSION}"
-  if [[ -n "$PODMAN_BIN_REL" ]]; then
-    podman_bin_rel="$PODMAN_BIN_REL"
-  elif [[ "$os" == "windows" ]]; then
-    podman_bin_rel="podman.exe"
-  else
-    podman_bin_rel="bin/podman"
-  fi
-  podman_root="$bundle_dir/$podman_root_rel"
-  podman_bin="$podman_root/$podman_bin_rel"
 fi
 
 providers_src="$(mktemp /tmp/ctx-bundle-providers.XXXXXX)"
@@ -1233,32 +1215,4 @@ PY
     done < "$python_specs_src"
   fi
 
-  if [[ "${CTX_BUNDLE_PODMAN:-0}" == "1" ]]; then
-    if [[ ! -f "$podman_bin" ]]; then
-      log "error: podman binary missing at $podman_bin"
-      exit 4
-    fi
-    podman_sha="$(sha256_file "$podman_bin")"
-    PODMAN_VERSION_ENV="$PODMAN_VERSION" \
-    PODMAN_OS_ENV="$os" \
-    PODMAN_ARCH_ENV="$arch" \
-    PODMAN_SHA_ENV="$podman_sha" \
-    PODMAN_ROOT_REL_ENV="$podman_root_rel" \
-    PODMAN_BIN_REL_ENV="$podman_bin_rel" \
-    run_python - <<'PY' >> "$runtimes_out"
-import json
-import os
-
-entry = {
-    "id": "podman",
-    "version": os.environ["PODMAN_VERSION_ENV"],
-    "os": os.environ["PODMAN_OS_ENV"],
-    "arch": os.environ["PODMAN_ARCH_ENV"],
-    "sha256": os.environ["PODMAN_SHA_ENV"],
-    "root": os.environ["PODMAN_ROOT_REL_ENV"],
-    "bin": os.environ["PODMAN_BIN_REL_ENV"],
-}
-print(json.dumps(entry, separators=(",", ":")))
-PY
-  fi
 fi

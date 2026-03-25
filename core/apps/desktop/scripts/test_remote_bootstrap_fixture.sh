@@ -16,7 +16,7 @@ PASSTHROUGH_ARGS=()
 usage() {
   cat <<'USAGE' >&2
 usage:
-  test_remote_bootstrap_fixture.sh [--runtime auto|docker|podman] [--auth-mode key|password] [--password VALUE] [--test-mode key|password_once|wrong_password] [--log-dir PATH] [--keep-alive] [--state-file PATH] [-- ...wdio args]
+  test_remote_bootstrap_fixture.sh [--runtime auto|docker|nerdctl] [--auth-mode key|password] [--password VALUE] [--test-mode key|password_once|wrong_password] [--log-dir PATH] [--keep-alive] [--state-file PATH] [-- ...wdio args]
 USAGE
 }
 

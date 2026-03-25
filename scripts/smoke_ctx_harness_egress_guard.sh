@@ -11,7 +11,7 @@ set -euo pipefail
 # Notes:
 # - We intentionally run curl as a non-root uid because the daemon config allows uid 0 egress.
 
-RUNTIME="${CONTAINER_RUNTIME:-podman}"
+RUNTIME="${CONTAINER_RUNTIME:-nerdctl}"
 IMAGE="${CTX_HARNESS_IMAGE:-ghcr.io/ctxrs/ctx-harness:ubuntu-24.04}"
 
 ALLOW_HOST="${ALLOW_HOST:-example.com}"

@@ -1,10 +1,12 @@
 use super::network_policy_transition::transparent_proxy_policy;
-use super::podman_recovery::{
-    collect_ctx_managed_podman_helper_pids, collect_ctx_managed_podman_helper_pids_from_ps_output,
-    initialize_podman_machine, is_ctx_managed_podman_helper_process_command,
-    kill_ctx_managed_podman_helper_processes, literal_pkill_pattern,
-    looks_like_missing_machine_error, looks_like_recoverable_machine_start_error,
-    looks_like_running_but_unreachable_machine_start_error, podman_machine_temp_state_paths,
+use super::sandbox_machine_recovery::{
+    collect_ctx_managed_sandbox_helper_pids,
+    collect_ctx_managed_sandbox_helper_pids_from_ps_output,
+    ensure_sandbox_machine_running_with_observer, initialize_sandbox_machine,
+    is_ctx_managed_sandbox_helper_process_command, kill_ctx_managed_sandbox_helper_processes,
+    literal_pkill_pattern, looks_like_missing_machine_error,
+    looks_like_recoverable_machine_start_error,
+    looks_like_running_but_unreachable_machine_start_error, sandbox_machine_temp_state_paths,
 };
 use super::*;
 use chrono::Utc;
@@ -46,7 +48,7 @@ impl Drop for EnvGuard {
 }
 
 fn env_var_test_lock() -> &'static tokio::sync::Mutex<()> {
-    crate::test_support::podman_env_test_lock()
+    crate::test_support::sandbox_cli_env_test_lock()
 }
 
 #[test]
@@ -209,7 +211,7 @@ fn sample_cached_container() -> HarnessContainer {
 
 fn sample_container_settings() -> ContainerExecutionSettings {
     ContainerExecutionSettings {
-        runtime: crate::settings::ContainerRuntimeKind::Podman,
+        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
         mount_mode: ContainerMountMode::DiskIsolated,
         network_mode: ContainerNetworkMode::Allowlist,
         allowlist: vec!["github.com".to_string()],
@@ -257,7 +259,7 @@ async fn spawn_static_http_server_with_suffix(
 async fn install_test_managed_machine_cache_source(
     body: Vec<u8>,
 ) -> (
-    crate::bundled_assets::TestManagedPodmanMachineCacheSourceGuard,
+    crate::bundled_assets::TestManagedSandboxMachineCacheSourceGuard,
     JoinHandle<()>,
 ) {
     let digest = {
@@ -266,7 +268,7 @@ async fn install_test_managed_machine_cache_source(
         hex::encode(hasher.finalize())
     };
     let (url, server) = spawn_static_http_server(body).await;
-    let guard = crate::bundled_assets::override_managed_podman_machine_cache_source_for_test(
+    let guard = crate::bundled_assets::override_managed_sandbox_machine_cache_source_for_test(
         bundled_assets::ManagedArtifactSource {
             uri: url,
             sha256: digest,
@@ -373,10 +375,10 @@ fn write_avf_linux_lifecycle_helper(dir: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
     let path = dir.join("ctx-avf-linux-helper-runtime-manager-test.sh");
-    let podman_path = dir.join("ctx-avf-linux-podman-runtime-manager-test.sh");
+    let sandbox_cli_path = dir.join("ctx-avf-linux-sandbox-cli-runtime-manager-test.sh");
     let host_os = std::env::consts::OS;
     let host_arch = std::env::consts::ARCH;
-    let podman_script = format!(
+    let sandbox_cli_script = format!(
         r#"#!/bin/sh
 data_root="$1"
 shift
@@ -384,7 +386,7 @@ vm_root="$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared"
 containers_root="$vm_root/test-containers"
 volumes_root="$vm_root/test-volumes"
 images_root="$vm_root/test-images"
-log_path="$vm_root/podman-invocations.log"
+log_path="$vm_root/sandbox-cli-invocations.log"
 mkdir -p "$containers_root" "$volumes_root" "$images_root" "$(dirname "$log_path")"
 printf '%s\n' "$*" >> "$log_path"
 
@@ -525,7 +527,7 @@ case "$subcmd" in
         exit 0
         ;;
       *)
-        echo "unexpected podman image command: $image_cmd $*" >&2
+        echo "unexpected sandbox CLI image command: $image_cmd $*" >&2
         exit 1
         ;;
     esac
@@ -558,7 +560,7 @@ case "$subcmd" in
         rm -rf "$volumes_root/$volume_name"
         ;;
       *)
-        echo "unexpected podman volume command: $volume_cmd $*" >&2
+        echo "unexpected sandbox CLI volume command: $volume_cmd $*" >&2
         exit 1
         ;;
     esac
@@ -578,12 +580,12 @@ case "$subcmd" in
           state=$(cat "$(container_state_file "$container_name")" 2>/dev/null || printf 'false')
           printf '%s\n' "$state"
         else
-          echo "unexpected podman container inspect command: $*" >&2
+          echo "unexpected sandbox CLI container inspect command: $*" >&2
           exit 1
         fi
         ;;
       *)
-        echo "unexpected podman container command: $container_cmd $*" >&2
+        echo "unexpected sandbox CLI container command: $container_cmd $*" >&2
         exit 1
         ;;
     esac
@@ -670,15 +672,15 @@ case "$subcmd" in
     run_cp "$1" "$2"
     ;;
   *)
-    echo "unexpected podman command: $subcmd $*" >&2
+    echo "unexpected sandbox CLI command: $subcmd $*" >&2
     exit 1
     ;;
 esac
 "#
     );
-    std::fs::write(&podman_path, podman_script).expect("write AVF podman helper shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod AVF podman helper shim");
+    std::fs::write(&sandbox_cli_path, sandbox_cli_script).expect("write AVF sandbox helper shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod AVF sandbox helper shim");
     let script = format!(
         r#"#!/bin/sh
 cmd="$1"
@@ -820,8 +822,8 @@ case "$cmd" in
         *) echo "unexpected shared-vm-exec arg: $1" >&2; exit 1 ;;
       esac
     done
-    if [ "$shared_command" = "podman" ]; then
-      exec "{podman_shim}" "$data_root" "$@"
+    if [ "$shared_command" = "sandbox-cli" ] || [ "$shared_command" = "nerdctl" ]; then
+      exec "{sandbox_cli_shim}" "$data_root" "$@"
     fi
     exec "$shared_command" "$@"
     ;;
@@ -831,7 +833,7 @@ case "$cmd" in
     ;;
 esac
 "#,
-        podman_shim = podman_path.display()
+        sandbox_cli_shim = sandbox_cli_path.display()
     );
     std::fs::write(&path, script).expect("write AVF lifecycle helper shim");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
@@ -840,17 +842,17 @@ esac
 }
 
 #[tokio::test]
-async fn container_mode_errors_when_podman_unavailable() {
+async fn sandbox_mode_errors_when_container_cli_is_unavailable() {
     let _serial = env_var_test_lock().lock().await;
-    let _guard = EnvGuard::set("CTX_TEST_PODMAN_AVAILABLE", "0");
+    let _guard = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
     let tmp = tempfile::tempdir().unwrap();
     let manager = runtime_manager(&tmp).await;
     let workspace = sample_workspace(&tmp);
     let worktree = sample_worktree(&tmp, workspace.id);
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
-            runtime: crate::settings::ContainerRuntimeKind::Podman,
+            runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
             ..ContainerExecutionSettings::default()
         },
     };
@@ -860,8 +862,12 @@ async fn container_mode_errors_when_podman_unavailable() {
         .await
         .unwrap_err();
     let message = err.to_string();
-    assert!(message.contains("podman unavailable"));
-    assert!(message.contains("execution mode is container"));
+    assert!(
+        message.contains("native sandbox container runtime")
+            || message.contains("sandbox container CLI unavailable")
+            || message.contains("container runtime failed"),
+        "unexpected error message: {message}"
+    );
 }
 
 #[cfg(unix)]
@@ -874,19 +880,22 @@ async fn prepare_in_host_mode_does_not_refresh_local_sandbox_activity() {
     let manager = runtime_manager(&temp).await;
     let workspace = sample_workspace(&temp);
     let worktree = sample_worktree(&temp, workspace.id);
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     let before_prepare = Instant::now() - Duration::from_secs(600);
     {
         let mut last_activity = manager
@@ -906,14 +915,14 @@ async fn prepare_in_host_mode_does_not_refresh_local_sandbox_activity() {
         .expect("host prepare should succeed without touching the local sandbox");
     match plan.runtime {
         HarnessRuntimeKind::Host => {}
-        HarnessRuntimeKind::Container { .. } => panic!("expected host runtime"),
-        HarnessRuntimeKind::AvfLinuxVm => panic!("expected host runtime"),
+        HarnessRuntimeKind::NativeContainer { .. } => panic!("expected host runtime"),
+        HarnessRuntimeKind::SharedVmContainer => panic!("expected host runtime"),
     }
     assert!(
         std::fs::read_to_string(&log_path)
             .unwrap_or_default()
             .is_empty(),
-        "host prepare should not invoke podman"
+        "host prepare should not invoke sandbox CLI"
     );
     let idle_for = manager.runtime_idle_for();
     assert!(
@@ -929,36 +938,39 @@ async fn prepare_reuses_running_workspace_container_without_front_loading_image_
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     let manager = runtime_manager(&temp).await;
     let workspace = sample_workspace(&temp);
     let worktree = sample_worktree(&temp, workspace.id);
     let container_name = workspace_container_name(workspace.id);
     let volume_name = format!("ctx-ws-{}", workspace.id.0);
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
             network_mode: ContainerNetworkMode::All,
-            runtime: crate::settings::ContainerRuntimeKind::Podman,
+            runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
             ..Default::default()
         },
     };
 
     std::fs::write(
-            &podman_path,
+            &sandbox_cli_path,
             format!(
-                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  echo 'transient image store failure' >&2\n  exit 125\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"{volume}\",\"Destination\":\"{workspace_root}\"}}]}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"rm\" ] && [ \"$2\" = \"-f\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  echo 'transient image store failure' >&2\n  exit 125\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"{volume}\",\"Destination\":\"{workspace_root}\"}}]}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"rm\" ] && [ \"$2\" = \"-f\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
                 log = log_path.display(),
                 container = container_name,
                 volume = volume_name,
                 workspace_root = CTX_CONTAINER_WORKSPACE_ROOT,
             ),
         )
-        .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
 
     let plan = manager
         .prepare(&workspace, &worktree, &settings, "http://127.0.0.1:4399")
@@ -966,12 +978,12 @@ async fn prepare_reuses_running_workspace_container_without_front_loading_image_
         .expect("running workspace container should be reused without image checks");
 
     match plan.runtime {
-        HarnessRuntimeKind::Container { name } => assert_eq!(name, container_name),
+        HarnessRuntimeKind::NativeContainer { name } => assert_eq!(name, container_name),
         HarnessRuntimeKind::Host => panic!("expected container runtime"),
-        HarnessRuntimeKind::AvfLinuxVm => panic!("expected podman container runtime"),
+        HarnessRuntimeKind::SharedVmContainer => panic!("expected sandbox container runtime"),
     }
 
-    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert!(
         log.contains(&format!("container exists {container_name}")),
         "expected running container existence check in log:\n{log}"
@@ -994,24 +1006,24 @@ async fn prepare_reuses_running_workspace_container_without_front_loading_image_
 
 #[cfg(unix)]
 #[tokio::test]
-async fn prepare_starts_cached_workspace_container_when_podman_reports_it_stopped() {
+async fn prepare_starts_cached_workspace_container_when_sandbox_cli_reports_it_stopped() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     let manager = runtime_manager(&temp).await;
     let workspace = sample_workspace(&temp);
     let worktree = sample_worktree(&temp, workspace.id);
     let container_name = workspace_container_name(workspace.id);
     let volume_name = format!("ctx-ws-{}", workspace.id.0);
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
             network_mode: ContainerNetworkMode::All,
             allowlist: Vec::new(),
-            runtime: crate::settings::ContainerRuntimeKind::Podman,
+            runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
             ..Default::default()
         },
     };
@@ -1035,19 +1047,22 @@ async fn prepare_starts_cached_workspace_container_when_podman_reports_it_stoppe
     );
 
     std::fs::write(
-            &podman_path,
+            &sandbox_cli_path,
             format!(
-                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'false\\n'\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"{volume}\",\"Destination\":\"{workspace_root}\"}}]}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'false\\n'\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"{volume}\",\"Destination\":\"{workspace_root}\"}}]}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
                 log = log_path.display(),
                 container = container_name,
                 volume = volume_name,
                 workspace_root = CTX_CONTAINER_WORKSPACE_ROOT,
             ),
         )
-        .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
 
     let plan = manager
         .prepare(&workspace, &worktree, &settings, "http://127.0.0.1:4399")
@@ -1055,12 +1070,12 @@ async fn prepare_starts_cached_workspace_container_when_podman_reports_it_stoppe
         .expect("stopped cached workspace container should be restarted");
 
     match plan.runtime {
-        HarnessRuntimeKind::Container { name } => assert_eq!(name, container_name),
+        HarnessRuntimeKind::NativeContainer { name } => assert_eq!(name, container_name),
         HarnessRuntimeKind::Host => panic!("expected container runtime"),
-        HarnessRuntimeKind::AvfLinuxVm => panic!("expected podman container runtime"),
+        HarnessRuntimeKind::SharedVmContainer => panic!("expected sandbox container runtime"),
     }
 
-    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert!(
         log.contains(&format!("container exists {container_name}")),
         "expected container existence check in log:\n{log}"
@@ -1086,22 +1101,25 @@ async fn prepare_starts_cached_workspace_container_when_podman_reports_it_stoppe
 }
 
 #[test]
-fn podman_binary_path_uses_env_override() {
+fn sandbox_cli_binary_path_uses_env_override() {
     let _serial = env_var_test_lock().blocking_lock();
     let tmp = tempfile::NamedTempFile::new().unwrap();
     let path = tmp.path().to_string_lossy().to_string();
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &path);
-    let resolved = podman_binary_path(Path::new("/tmp")).expect("env override should resolve");
+    let _guard = EnvGuard::set("CTX_HARNESS_SANDBOX_CLI_PATH", &path);
+    let resolved = sandbox_cli_binary_path(Path::new("/tmp")).expect("env override should resolve");
     assert_eq!(resolved, tmp.path());
 }
 
 #[test]
-fn podman_invocation_sets_paths_under_short_runtime_root() {
+fn sandbox_cli_invocation_sets_paths_under_sandbox_root() {
     let _serial = env_var_test_lock().blocking_lock();
     let tmp = tempfile::tempdir().expect("tempdir");
-    let podman_bin = tempfile::NamedTempFile::new().expect("podman bin");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_bin.path().to_string_lossy());
-    let inv = podman_invocation(tmp.path()).expect("podman invocation");
+    let sandbox_cli_bin = tempfile::NamedTempFile::new().expect("sandbox CLI bin");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_bin.path().to_string_lossy(),
+    );
+    let inv = sandbox_cli_invocation(tmp.path()).expect("sandbox CLI invocation");
     let runtime_dir = inv
         .env
         .get("XDG_RUNTIME_DIR")
@@ -1111,10 +1129,13 @@ fn podman_invocation_sets_paths_under_short_runtime_root() {
     let tmpdir = inv.env.get("TMPDIR").cloned().expect("tmpdir env");
     assert_eq!(
         PathBuf::from(runtime_dir),
-        podman_runtime_root(tmp.path()).join("run")
+        tmp.path().join("sandbox").join("run")
     );
-    assert_eq!(PathBuf::from(home), podman_home_root(tmp.path()));
-    assert_eq!(PathBuf::from(tmpdir), podman_temp_root(tmp.path()));
+    assert_eq!(PathBuf::from(home), tmp.path().join("sandbox").join("home"));
+    assert_eq!(
+        PathBuf::from(tmpdir),
+        tmp.path().join("sandbox").join("tmp")
+    );
 }
 
 #[test]
@@ -1173,12 +1194,12 @@ async fn ensure_avf_guest_gateway_proxy_forwards_to_loopback_backend() {
 }
 
 #[tokio::test]
-async fn seed_shared_podman_machine_cache_populates_local_cache_root() {
+async fn seed_shared_sandbox_machine_cache_populates_local_cache_root() {
     let _serial = env_var_test_lock().lock().await;
     let shared = tempfile::tempdir().expect("shared tempdir");
     let data_root = tempfile::tempdir().expect("data root tempdir");
     let _guard = EnvGuard::set(
-        "CTX_PODMAN_MACHINE_CACHE_DIR",
+        "CTX_SANDBOX_MACHINE_CACHE_DIR",
         &shared.path().to_string_lossy(),
     );
     let relpath = PathBuf::from("applehv")
@@ -1189,33 +1210,33 @@ async fn seed_shared_podman_machine_cache_populates_local_cache_root() {
         .expect("create shared cache dir");
     std::fs::write(&shared_file, b"seeded-machine-cache").expect("write shared cache file");
 
-    seed_shared_podman_machine_cache(data_root.path(), None)
+    seed_shared_sandbox_machine_cache(data_root.path(), None)
         .await
         .expect("seed shared cache");
 
-    let local_file = podman_machine_cache_root(data_root.path()).join(relpath);
+    let local_file = sandbox_machine_cache_root(data_root.path()).join(relpath);
     let local_body = std::fs::read(&local_file).expect("read local cache file");
     assert_eq!(local_body, b"seeded-machine-cache");
 }
 
 #[tokio::test]
-async fn persist_podman_machine_cache_to_shared_does_not_depend_on_local_path() {
+async fn persist_sandbox_machine_cache_to_shared_does_not_depend_on_local_path() {
     let _serial = env_var_test_lock().lock().await;
     let shared = tempfile::tempdir().expect("shared tempdir");
     let data_root = tempfile::tempdir().expect("data root tempdir");
     let _guard = EnvGuard::set(
-        "CTX_PODMAN_MACHINE_CACHE_DIR",
+        "CTX_SANDBOX_MACHINE_CACHE_DIR",
         &shared.path().to_string_lossy(),
     );
     let relpath = PathBuf::from("applehv")
         .join("cache")
         .join("persisted-machine-cache.raw.zst");
-    let local_file = podman_machine_cache_root(data_root.path()).join(&relpath);
+    let local_file = sandbox_machine_cache_root(data_root.path()).join(&relpath);
     std::fs::create_dir_all(local_file.parent().expect("local cache parent"))
         .expect("create local cache dir");
     std::fs::write(&local_file, b"persisted-machine-cache").expect("write local cache file");
 
-    persist_podman_machine_cache_to_shared(data_root.path(), None)
+    persist_sandbox_machine_cache_to_shared(data_root.path(), None)
         .await
         .expect("persist shared cache");
 
@@ -1226,35 +1247,38 @@ async fn persist_podman_machine_cache_to_shared_does_not_depend_on_local_path() 
 }
 
 #[tokio::test]
-async fn ensure_podman_machine_download_skips_when_machine_lock_is_busy() {
+async fn ensure_sandbox_machine_download_skips_when_machine_lock_is_busy() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\nexit 0\n",
             log_path.display()
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     let _host_memory = EnvGuard::set("CTX_TEST_HOST_MEMORY_MB", "49152");
     let (_machine_cache_guard, machine_cache_server) =
         install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
 
     let manager = HarnessRuntimeManager::new(temp.path().to_path_buf());
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let machine_lock = podman_machine_singleflight_lock(&machine_name);
+    let machine_name = sandbox_machine_name(temp.path());
+    let machine_lock = sandbox_machine_singleflight_lock(&machine_name);
     let _machine_guard = machine_lock.lock().await;
 
     manager
-        .ensure_podman_machine_download()
+        .ensure_sandbox_machine_download()
         .await
         .expect("prefetch should skip while launch holds the machine lock");
 
@@ -1294,7 +1318,7 @@ fn recoverable_machine_start_error_detection_matches_expected_shapes() {
             "time=\"2026-03-05T00:23:28-06:00\" level=warning msg=\"detected port conflict on machine ssh port [49401], reassigning\"\nError: vfkit exited unexpectedly with exit code 1"
         ));
     assert!(looks_like_recoverable_machine_start_error(
-        "Error: unable to connect to \"gvproxy\" socket at \"/tmp/podman.sock\""
+        "Error: unable to connect to \"gvproxy\" socket at \"/tmp/sandbox-cli.sock\""
     ));
     assert!(!looks_like_recoverable_machine_start_error(
         "error: unknown vm provider configuration"
@@ -1307,7 +1331,7 @@ fn running_but_unreachable_machine_start_error_detection_matches_expected_shapes
         "Error: unable to start \"ctx\": already running"
     ));
     assert!(looks_like_running_but_unreachable_machine_start_error(
-        "Error: unable to connect to \"gvproxy\" socket at \"/tmp/podman.sock\""
+        "Error: unable to connect to \"gvproxy\" socket at \"/tmp/sandbox-cli.sock\""
     ));
     assert!(!looks_like_running_but_unreachable_machine_start_error(
         "error: resource busy while acquiring lock"
@@ -1318,29 +1342,29 @@ fn running_but_unreachable_machine_start_error_detection_matches_expected_shapes
 }
 
 #[test]
-fn collect_ctx_managed_podman_helper_pids_matches_only_ctx_scoped_helpers() {
+fn collect_ctx_managed_sandbox_helper_pids_matches_only_ctx_scoped_helpers() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let machine_name = ctx_podman_machine_name(temp.path());
+    let machine_name = sandbox_machine_name(temp.path());
     let helper_dir = temp
         .path()
         .join("managed")
         .join("runtimes")
-        .join("podman")
+        .join("sandbox-cli")
         .join("macos")
         .join("aarch64")
-        .join("podman-5.8.0")
+        .join("sandbox-cli-5.8.0")
         .join("usr")
         .join("libexec")
-        .join("podman");
-    let matches = collect_ctx_managed_podman_helper_pids(
+        .join("sandbox-cli");
+    let matches = collect_ctx_managed_sandbox_helper_pids(
         vec![
             (
                 42,
                 vec![
                     helper_dir.join("gvproxy").to_string_lossy().into_owned(),
                     machine_name.clone(),
-                    podman_temp_root(temp.path())
-                        .join("podman")
+                    sandbox_machine_temp_root(temp.path())
+                        .join("sandbox-cli")
                         .join(format!("{machine_name}-api.sock"))
                         .to_string_lossy()
                         .into_owned(),
@@ -1351,11 +1375,11 @@ fn collect_ctx_managed_podman_helper_pids_matches_only_ctx_scoped_helpers() {
                 vec![
                     "/opt/homebrew/bin/vfkit".to_string(),
                     temp.path()
-                        .join("podman")
+                        .join("sandbox-cli")
                         .join("xdg")
                         .join("data")
                         .join("containers")
-                        .join("podman")
+                        .join("sandbox-cli")
                         .join("machine")
                         .join("applehv")
                         .join(format!("{machine_name}-arm64.raw"))
@@ -1367,9 +1391,9 @@ fn collect_ctx_managed_podman_helper_pids_matches_only_ctx_scoped_helpers() {
             (
                 88,
                 vec![
-                    "/opt/homebrew/libexec/podman/gvproxy".to_string(),
-                    "/tmp/podman/podman-machine-default-api.sock".to_string(),
-                    "podman-machine-default".to_string(),
+                    "/opt/homebrew/libexec/sandbox-cli/gvproxy".to_string(),
+                    "/tmp/sandbox-cli/sandbox-machine-default-api.sock".to_string(),
+                    "sandbox-machine-default".to_string(),
                 ],
             ),
         ],
@@ -1380,31 +1404,31 @@ fn collect_ctx_managed_podman_helper_pids_matches_only_ctx_scoped_helpers() {
 }
 
 #[test]
-fn ctx_managed_podman_helper_process_detection_matches_expected_shapes() {
+fn ctx_managed_sandbox_helper_process_detection_matches_expected_shapes() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let machine_name = ctx_podman_machine_name(temp.path());
+    let machine_name = sandbox_machine_name(temp.path());
     let matching_gvproxy = vec![
         temp.path()
             .join("managed")
             .join("runtimes")
-            .join("podman")
+            .join("sandbox-cli")
             .join("macos")
             .join("aarch64")
-            .join("podman-5.8.0")
+            .join("sandbox-cli-5.8.0")
             .join("usr")
             .join("libexec")
-            .join("podman")
+            .join("sandbox-cli")
             .join("gvproxy")
             .to_string_lossy()
             .into_owned(),
-        podman_temp_root(temp.path())
-            .join("podman")
+        sandbox_machine_temp_root(temp.path())
+            .join("sandbox-cli")
             .join(format!("{machine_name}-api.sock"))
             .to_string_lossy()
             .into_owned(),
         machine_name.clone(),
     ];
-    assert!(is_ctx_managed_podman_helper_process_command(
+    assert!(is_ctx_managed_sandbox_helper_process_command(
         &matching_gvproxy,
         temp.path(),
         &machine_name
@@ -1413,11 +1437,11 @@ fn ctx_managed_podman_helper_process_detection_matches_expected_shapes() {
     let matching_vfkit = vec![
         String::from("/opt/homebrew/bin/vfkit"),
         temp.path()
-            .join("podman")
+            .join("sandbox-cli")
             .join("xdg")
             .join("data")
             .join("containers")
-            .join("podman")
+            .join("sandbox-cli")
             .join("machine")
             .join("applehv")
             .join(format!("{machine_name}-arm64.raw"))
@@ -1425,7 +1449,7 @@ fn ctx_managed_podman_helper_process_detection_matches_expected_shapes() {
             .into_owned(),
         machine_name.clone(),
     ];
-    assert!(is_ctx_managed_podman_helper_process_command(
+    assert!(is_ctx_managed_sandbox_helper_process_command(
         &matching_vfkit,
         temp.path(),
         &machine_name
@@ -1434,29 +1458,29 @@ fn ctx_managed_podman_helper_process_detection_matches_expected_shapes() {
     let wrong_machine = vec![
         String::from("/opt/homebrew/bin/vfkit"),
         temp.path()
-            .join("podman")
+            .join("sandbox-cli")
             .join("xdg")
             .join("data")
             .join("containers")
-            .join("podman")
+            .join("sandbox-cli")
             .join("machine")
             .join("applehv")
             .join("ctx-someone-else-arm64.raw")
             .to_string_lossy()
             .into_owned(),
     ];
-    assert!(!is_ctx_managed_podman_helper_process_command(
+    assert!(!is_ctx_managed_sandbox_helper_process_command(
         &wrong_machine,
         temp.path(),
         &machine_name
     ));
 
     let host_helper = vec![
-        String::from("/opt/homebrew/libexec/podman/gvproxy"),
-        String::from("/tmp/podman/podman-machine-default-api.sock"),
-        String::from("podman-machine-default"),
+        String::from("/opt/homebrew/libexec/sandbox-cli/gvproxy"),
+        String::from("/tmp/sandbox-cli/sandbox-machine-default-api.sock"),
+        String::from("sandbox-machine-default"),
     ];
-    assert!(!is_ctx_managed_podman_helper_process_command(
+    assert!(!is_ctx_managed_sandbox_helper_process_command(
         &host_helper,
         temp.path(),
         &machine_name
@@ -1464,69 +1488,69 @@ fn ctx_managed_podman_helper_process_detection_matches_expected_shapes() {
 }
 
 #[test]
-fn collect_ctx_managed_podman_helper_pids_from_ps_output_matches_real_macos_shapes() {
+fn collect_ctx_managed_sandbox_helper_pids_from_ps_output_matches_real_macos_shapes() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let machine_name = ctx_podman_machine_name(temp.path());
+    let machine_name = sandbox_machine_name(temp.path());
     let helper_dir = temp
         .path()
         .join("managed")
         .join("runtimes")
-        .join("podman")
+        .join("sandbox-cli")
         .join("macos")
         .join("aarch64")
-        .join("podman-5.8.0")
+        .join("sandbox-cli-5.8.0")
         .join("usr")
         .join("libexec")
-        .join("podman");
+        .join("sandbox-cli");
     let gvproxy_line = format!(
             " 6622 {} -mtu 1500 -listen-vfkit unixgram://{} -forward-sock {} -forward-identity {} -pid-file {}/gvproxy.pid",
             helper_dir.join("gvproxy").display(),
-            podman_temp_root(temp.path())
-                .join("podman")
+            sandbox_machine_temp_root(temp.path())
+                .join("sandbox-cli")
                 .join(format!("{machine_name}-gvproxy.sock"))
                 .display(),
-            podman_temp_root(temp.path())
-                .join("podman")
+            sandbox_machine_temp_root(temp.path())
+                .join("sandbox-cli")
                 .join(format!("{machine_name}-api.sock"))
                 .display(),
             temp.path()
-                .join("podman")
+                .join("sandbox-cli")
                 .join("xdg")
                 .join("data")
                 .join("containers")
-                .join("podman")
+                .join("sandbox-cli")
                 .join("machine")
                 .join("machine")
                 .display(),
-            podman_temp_root(temp.path()).join("podman").display(),
+            sandbox_machine_temp_root(temp.path()).join("sandbox-cli").display(),
         );
     let vfkit_line = format!(
             "12484 /Users/example-user/Library/Application Support/vfkit --device virtio-blk,path={} --device virtio-vsock,port=1025,socketURL={} --device virtio-net,unixSocketPath={}",
             temp.path()
-                .join("podman")
+                .join("sandbox-cli")
                 .join("xdg")
                 .join("data")
                 .join("containers")
-                .join("podman")
+                .join("sandbox-cli")
                 .join("machine")
                 .join("applehv")
                 .join(format!("{machine_name}-arm64.raw"))
                 .display(),
-            podman_temp_root(temp.path())
-                .join("podman")
+            sandbox_machine_temp_root(temp.path())
+                .join("sandbox-cli")
                 .join(format!("{machine_name}.sock"))
                 .display(),
-            podman_temp_root(temp.path())
-                .join("podman")
+            sandbox_machine_temp_root(temp.path())
+                .join("sandbox-cli")
                 .join(format!("{machine_name}-gvproxy.sock"))
                 .display(),
         );
     let host_line = String::from(
-            "88 /opt/homebrew/libexec/podman/gvproxy -forward-sock /tmp/podman/podman-machine-default-api.sock podman-machine-default",
+            "88 /opt/homebrew/libexec/sandbox-cli/gvproxy -forward-sock /tmp/sandbox-cli/sandbox-machine-default-api.sock sandbox-machine-default",
         );
     let ps_output = format!("{gvproxy_line}\n{vfkit_line}\n{host_line}\n");
 
-    let matches = collect_ctx_managed_podman_helper_pids_from_ps_output(
+    let matches = collect_ctx_managed_sandbox_helper_pids_from_ps_output(
         &ps_output,
         temp.path(),
         &machine_name,
@@ -1536,33 +1560,36 @@ fn collect_ctx_managed_podman_helper_pids_from_ps_output_matches_real_macos_shap
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 #[tokio::test]
-async fn ensure_podman_machine_running_recreates_immediately_for_already_running_unreachable_machine(
+async fn ensure_sandbox_machine_running_recreates_immediately_for_already_running_unreachable_machine(
 ) {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let log_path = temp.path().join("podman-invocations.log");
-    let state_path = temp.path().join("podman-ready");
-    let start_count_path = temp.path().join("podman-start-count");
-    let podman_path = temp.path().join("podman.sh");
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let state_path = temp.path().join("sandbox-machine-ready");
+    let start_count_path = temp.path().join("sandbox-machine-start-count");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-            &podman_path,
+            &sandbox_cli_path,
             format!(
-                "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nSTART_COUNT=\"{start_count}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STATE\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ]; then\n  rm -f \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  count=0\n  if [ -f \"$START_COUNT\" ]; then\n    count=$(cat \"$START_COUNT\")\n  fi\n  count=$((count + 1))\n  printf '%s' \"$count\" > \"$START_COUNT\"\n  if [ \"$count\" -eq 1 ]; then\n    echo 'Error: unable to start \"ctx\": already running' >&2\n    exit 125\n  fi\n  touch \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  rm -f \"$STATE\"\n  exit 0\nfi\nexit 0\n",
+                "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nSTART_COUNT=\"{start_count}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STATE\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ]; then\n  rm -f \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  count=0\n  if [ -f \"$START_COUNT\" ]; then\n    count=$(cat \"$START_COUNT\")\n  fi\n  count=$((count + 1))\n  printf '%s' \"$count\" > \"$START_COUNT\"\n  if [ \"$count\" -eq 1 ]; then\n    echo 'Error: unable to start \"ctx\": already running' >&2\n    exit 125\n  fi\n  touch \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  rm -f \"$STATE\"\n  exit 0\nfi\nexit 0\n",
                 log = log_path.display(),
                 state = state_path.display(),
                 start_count = start_count_path.display(),
             ),
         )
-        .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     let (_machine_cache_guard, machine_cache_server) =
         install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
 
-    ensure_podman_machine_running_with_observer(temp.path(), None)
+    ensure_sandbox_machine_running_with_observer(temp.path(), None)
         .await
         .expect("already-running unreachable machine should recover");
 
@@ -1578,26 +1605,29 @@ async fn ensure_podman_machine_running_recreates_immediately_for_already_running
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 #[tokio::test]
-async fn ensure_podman_machine_running_fails_fast_on_unknown_start_error() {
+async fn ensure_sandbox_machine_running_fails_fast_on_unknown_start_error() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-            &podman_path,
+            &sandbox_cli_path,
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\nif [ \"$1\" = \"info\" ]; then\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  echo 'error: unknown vm provider configuration' >&2\n  exit 125\nfi\nexit 0\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\nif [ \"$1\" = \"info\" ]; then\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  echo 'error: unknown vm provider configuration' >&2\n  exit 125\nfi\nexit 0\n",
                 log_path.display()
             ),
         )
-        .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
 
-    let err = ensure_podman_machine_running_with_observer(temp.path(), None)
+    let err = ensure_sandbox_machine_running_with_observer(temp.path(), None)
         .await
         .expect_err("unknown start error should fail");
     let message = format!("{err:#}");
@@ -1610,29 +1640,32 @@ async fn ensure_podman_machine_running_fails_fast_on_unknown_start_error() {
 }
 
 #[tokio::test]
-async fn initialize_podman_machine_uses_init_then_start_without_now() {
+async fn initialize_sandbox_machine_uses_init_then_start_without_now() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\nexit 0\n",
             log_path.display()
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     let (_machine_cache_guard, machine_cache_server) =
         install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
 
     let mut last_err = String::new();
-    initialize_podman_machine(temp.path(), "ctx-test-machine", None, None, &mut last_err)
+    initialize_sandbox_machine(temp.path(), "ctx-test-machine", None, None, &mut last_err)
         .await
         .expect("initialize machine");
 
@@ -1645,24 +1678,27 @@ async fn initialize_podman_machine_uses_init_then_start_without_now() {
 }
 
 #[tokio::test]
-async fn initialize_podman_machine_terminates_stuck_init_when_machine_is_present() {
+async fn initialize_sandbox_machine_terminates_stuck_init_when_machine_is_present() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-            &podman_path,
+            &sandbox_cli_path,
             format!(
                 "#!/bin/sh\nLOG=\"{}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exec sleep 30\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  exit 0\nfi\nexit 0\n",
                 log_path.display()
             ),
         )
-        .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     let (_machine_cache_guard, machine_cache_server) =
         install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
 
@@ -1671,12 +1707,12 @@ async fn initialize_podman_machine_terminates_stuck_init_when_machine_is_present
     // validates the kill-and-continue recovery path instead of host scheduling variance.
     let result = tokio::time::timeout(
         Duration::from_secs(15),
-        initialize_podman_machine(temp.path(), "ctx-test-machine", None, None, &mut last_err),
+        initialize_sandbox_machine(temp.path(), "ctx-test-machine", None, None, &mut last_err),
     )
     .await;
     let log = std::fs::read_to_string(&log_path).unwrap_or_default();
     let init_result = result
-        .unwrap_or_else(|_| panic!("initialize_podman_machine timed out; invocation log:\n{log}"));
+        .unwrap_or_else(|_| panic!("initialize_sandbox_machine timed out; invocation log:\n{log}"));
     init_result.expect("initialize machine");
 
     assert!(log.contains("machine init ctx-test-machine"));
@@ -1687,27 +1723,30 @@ async fn initialize_podman_machine_terminates_stuck_init_when_machine_is_present
 }
 
 #[tokio::test]
-async fn ensure_podman_machine_materialized_recreates_machine_for_memory_profile_change_when_engine_is_down(
+async fn ensure_sandbox_machine_materialized_recreates_machine_for_memory_profile_change_when_engine_is_down(
 ) {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = runtime_manager(&temp).await;
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let machine_name = sandbox_machine_name(temp.path());
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"ls\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[{{\"State\":\"stopped\",\"Resources\":{{\"Memory\":2048}}}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ] && [ \"$3\" = \"-f\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"ls\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[{{\"State\":\"stopped\",\"Resources\":{{\"Memory\":2048}}}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ] && [ \"$3\" = \"-f\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     let (_machine_cache_guard, machine_cache_server) =
         install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
     let settings = ContainerExecutionSettings {
@@ -1717,13 +1756,13 @@ async fn ensure_podman_machine_materialized_recreates_machine_for_memory_profile
             custom_memory_mb: Some(12288),
             ..crate::settings::ContainerMachineSettings::default()
         },
-        runtime: crate::settings::ContainerRuntimeKind::Podman,
+        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
     assert_eq!(container_machine_memory_mb(&settings), 12288);
 
     manager
-        .ensure_podman_machine_materialized(&settings, None)
+        .ensure_sandbox_machine_materialized(&settings, None)
         .await
         .expect("machine should be recreated with desired memory");
 
@@ -1739,38 +1778,41 @@ async fn ensure_podman_machine_materialized_recreates_machine_for_memory_profile
 }
 
 #[tokio::test]
-async fn ensure_podman_machine_materialized_defers_reconfiguration_when_machine_is_running_but_engine_unreachable(
+async fn ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine_is_running_but_engine_unreachable(
 ) {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = runtime_manager(&temp).await;
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let machine_name = sandbox_machine_name(temp.path());
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  echo 'unable to connect to \"gvproxy\" socket' >&2\n  exit 125\nfi\nif [ \"$1\" = \"ps\" ]; then\n  echo 'unable to connect to \"gvproxy\" socket' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[{{\"State\":\"running\",\"Resources\":{{\"Memory\":2048}}}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ] && [ \"$3\" = \"-f\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  echo 'unable to connect to \"gvproxy\" socket' >&2\n  exit 125\nfi\nif [ \"$1\" = \"ps\" ]; then\n  echo 'unable to connect to \"gvproxy\" socket' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[{{\"State\":\"running\",\"Resources\":{{\"Memory\":2048}}}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ] && [ \"$3\" = \"-f\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     let settings = ContainerExecutionSettings {
         machine: crate::settings::ContainerMachineSettings {
             memory_profile: crate::settings::ContainerMachineMemoryProfile::Balanced,
             ..crate::settings::ContainerMachineSettings::default()
         },
-        runtime: crate::settings::ContainerRuntimeKind::Podman,
+        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
 
     manager
-        .ensure_podman_machine_materialized(&settings, None)
+        .ensure_sandbox_machine_materialized(&settings, None)
         .await
         .expect("running-but-unreachable machine should defer destructive reconfiguration");
 
@@ -1783,38 +1825,41 @@ async fn ensure_podman_machine_materialized_defers_reconfiguration_when_machine_
 }
 
 #[tokio::test]
-async fn ensure_podman_machine_materialized_defers_reconfiguration_when_machine_state_is_unknown_and_engine_unreachable(
+async fn ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine_state_is_unknown_and_engine_unreachable(
 ) {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = runtime_manager(&temp).await;
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let machine_name = sandbox_machine_name(temp.path());
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  echo 'unable to connect to \"gvproxy\" socket' >&2\n  exit 125\nfi\nif [ \"$1\" = \"ps\" ]; then\n  echo 'unable to connect to \"gvproxy\" socket' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ] && [ \"$3\" = \"-f\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  echo 'unable to connect to \"gvproxy\" socket' >&2\n  exit 125\nfi\nif [ \"$1\" = \"ps\" ]; then\n  echo 'unable to connect to \"gvproxy\" socket' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ] && [ \"$3\" = \"-f\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     let settings = ContainerExecutionSettings {
         machine: crate::settings::ContainerMachineSettings {
             memory_profile: crate::settings::ContainerMachineMemoryProfile::Balanced,
             ..crate::settings::ContainerMachineSettings::default()
         },
-        runtime: crate::settings::ContainerRuntimeKind::Podman,
+        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
 
     manager
-        .ensure_podman_machine_materialized(&settings, None)
+        .ensure_sandbox_machine_materialized(&settings, None)
         .await
         .expect("unknown runtime state should defer destructive reconfiguration");
 
@@ -1827,26 +1872,29 @@ async fn ensure_podman_machine_materialized_defers_reconfiguration_when_machine_
 }
 
 #[tokio::test]
-async fn maybe_reclaim_podman_machine_stops_idle_machine() {
+async fn maybe_reclaim_sandbox_machine_stops_idle_machine() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = runtime_manager(&temp).await;
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let machine_name = sandbox_machine_name(temp.path());
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     {
         let mut last_activity = manager
             .last_activity
@@ -1859,7 +1907,7 @@ async fn maybe_reclaim_podman_machine_stops_idle_machine() {
             idle_shutdown_seconds: 60,
             ..crate::settings::ContainerMachineSettings::default()
         },
-        runtime: crate::settings::ContainerRuntimeKind::Podman,
+        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
@@ -1874,7 +1922,7 @@ async fn maybe_reclaim_podman_machine_stops_idle_machine() {
     };
 
     let stopped = manager
-        .maybe_reclaim_podman_machine(
+        .maybe_reclaim_sandbox_machine(
             &settings,
             &snapshot,
             None,
@@ -1892,26 +1940,29 @@ async fn maybe_reclaim_podman_machine_stops_idle_machine() {
 }
 
 #[tokio::test]
-async fn maybe_reclaim_podman_machine_clamps_short_idle_timeout() {
+async fn maybe_reclaim_sandbox_machine_clamps_short_idle_timeout() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = runtime_manager(&temp).await;
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let machine_name = sandbox_machine_name(temp.path());
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     {
         let mut last_activity = manager
             .last_activity
@@ -1924,7 +1975,7 @@ async fn maybe_reclaim_podman_machine_clamps_short_idle_timeout() {
             idle_shutdown_seconds: 5,
             ..crate::settings::ContainerMachineSettings::default()
         },
-        runtime: crate::settings::ContainerRuntimeKind::Podman,
+        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
@@ -1939,7 +1990,7 @@ async fn maybe_reclaim_podman_machine_clamps_short_idle_timeout() {
     };
 
     let stopped = manager
-        .maybe_reclaim_podman_machine(
+        .maybe_reclaim_sandbox_machine(
             &settings,
             &snapshot,
             None,
@@ -1957,26 +2008,29 @@ async fn maybe_reclaim_podman_machine_clamps_short_idle_timeout() {
 }
 
 #[tokio::test]
-async fn maybe_reclaim_podman_machine_stops_idle_runtime_with_running_workspace_containers() {
+async fn maybe_reclaim_sandbox_machine_stops_idle_runtime_with_running_workspace_containers() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = runtime_manager(&temp).await;
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let machine_name = sandbox_machine_name(temp.path());
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"ps\" ]; then\n  printf 'ctx-harness-running\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"ps\" ]; then\n  printf 'ctx-harness-running\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     {
         let mut last_activity = manager
             .last_activity
@@ -1989,7 +2043,7 @@ async fn maybe_reclaim_podman_machine_stops_idle_runtime_with_running_workspace_
             idle_shutdown_seconds: 60,
             ..crate::settings::ContainerMachineSettings::default()
         },
-        runtime: crate::settings::ContainerRuntimeKind::Podman,
+        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
@@ -2004,7 +2058,7 @@ async fn maybe_reclaim_podman_machine_stops_idle_runtime_with_running_workspace_
     };
 
     let stopped = manager
-        .maybe_reclaim_podman_machine(
+        .maybe_reclaim_sandbox_machine(
             &settings,
             &snapshot,
             None,
@@ -2021,26 +2075,29 @@ async fn maybe_reclaim_podman_machine_stops_idle_runtime_with_running_workspace_
 }
 
 #[tokio::test]
-async fn maybe_reclaim_podman_machine_skips_active_container_sessions() {
+async fn maybe_reclaim_sandbox_machine_skips_active_container_sessions() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = runtime_manager(&temp).await;
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let machine_name = sandbox_machine_name(temp.path());
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     {
         let mut last_activity = manager
             .last_activity
@@ -2059,7 +2116,7 @@ async fn maybe_reclaim_podman_machine_skips_active_container_sessions() {
             idle_shutdown_seconds: 60,
             ..crate::settings::ContainerMachineSettings::default()
         },
-        runtime: crate::settings::ContainerRuntimeKind::Podman,
+        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
     let snapshot = SystemSnapshot {
@@ -2071,7 +2128,7 @@ async fn maybe_reclaim_podman_machine_skips_active_container_sessions() {
     };
 
     let stopped = manager
-        .maybe_reclaim_podman_machine(
+        .maybe_reclaim_sandbox_machine(
             &settings,
             &snapshot,
             None,
@@ -2097,7 +2154,7 @@ async fn maybe_reclaim_podman_machine_skips_active_container_sessions() {
     }
 
     let stopped = manager
-        .maybe_reclaim_podman_machine(
+        .maybe_reclaim_sandbox_machine(
             &settings,
             &snapshot,
             None,
@@ -2111,26 +2168,29 @@ async fn maybe_reclaim_podman_machine_skips_active_container_sessions() {
 }
 
 #[tokio::test]
-async fn maybe_reclaim_podman_machine_skips_running_container_terminals() {
+async fn maybe_reclaim_sandbox_machine_skips_running_container_terminals() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = runtime_manager(&temp).await;
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let machine_name = sandbox_machine_name(temp.path());
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"exec\" ]; then\n  sleep 60\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"exec\" ]; then\n  sleep 60\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     {
         let mut last_activity = manager
             .last_activity
@@ -2152,13 +2212,13 @@ async fn maybe_reclaim_podman_machine_skips_running_container_terminals() {
             cols: None,
             rows: None,
             env: HashMap::new(),
-            podman: Some(crate::terminals::PodmanTerminalSpec {
-                podman_bin: podman_path.clone(),
-                podman_env: HashMap::new(),
+            native_container: Some(crate::terminals::NativeContainerTerminalSpec {
+                cli_bin: sandbox_cli_path.clone(),
+                cli_env: HashMap::new(),
                 container_name: "ctx-harness-terminal".to_string(),
                 workdir: "/workspace".to_string(),
             }),
-            avf_linux_vm: None,
+            shared_vm_container: None,
         })
         .await
         .expect("create terminal");
@@ -2167,7 +2227,7 @@ async fn maybe_reclaim_podman_machine_skips_running_container_terminals() {
             idle_shutdown_seconds: 60,
             ..crate::settings::ContainerMachineSettings::default()
         },
-        runtime: crate::settings::ContainerRuntimeKind::Podman,
+        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
     let snapshot = SystemSnapshot {
@@ -2179,7 +2239,7 @@ async fn maybe_reclaim_podman_machine_skips_running_container_terminals() {
     };
 
     let stopped = manager
-        .maybe_reclaim_podman_machine(
+        .maybe_reclaim_sandbox_machine(
             &settings,
             &snapshot,
             None,
@@ -2206,7 +2266,7 @@ async fn maybe_reclaim_podman_machine_skips_running_container_terminals() {
     }
 
     let stopped = manager
-        .maybe_reclaim_podman_machine(
+        .maybe_reclaim_sandbox_machine(
             &settings,
             &snapshot,
             None,
@@ -2219,78 +2279,6 @@ async fn maybe_reclaim_podman_machine_skips_running_container_terminals() {
     assert!(stopped);
 }
 
-#[tokio::test]
-async fn ensure_container_machine_ready_reconfigures_running_machine_when_idle() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let _serial = env_var_test_lock().lock().await;
-    let temp = tempfile::tempdir().expect("tempdir");
-    let manager = runtime_manager(&temp).await;
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let state_path = temp.path().join("podman-state.txt");
-    std::fs::write(&state_path, "running\n").expect("seed podman state");
-    let podman_path = temp.path().join("podman.sh");
-    std::fs::write(
-        &podman_path,
-        format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nstate=$(cat \"$STATE\" 2>/dev/null || true)\nif [ \"$1\" = \"info\" ]; then\n  [ \"$state\" = \"running\" ] && exit 0\n  exit 1\nfi\nif [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"ls\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[{{\"Resources\":{{\"Memory\":2048}}}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  printf 'stopped\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ] && [ \"$3\" = \"-f\" ]; then\n  printf 'absent\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  printf 'initialized\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  printf 'running\\n' > \"$STATE\"\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
-            log = log_path.display(),
-            state = state_path.display(),
-        ),
-    )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _host_memory = EnvGuard::set("CTX_TEST_HOST_MEMORY_MB", "49152");
-    let (_machine_cache_guard, machine_cache_server) =
-        install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
-    let settings = ContainerExecutionSettings {
-        mount_mode: ContainerMountMode::DiskIsolated,
-        machine: crate::settings::ContainerMachineSettings {
-            memory_profile: crate::settings::ContainerMachineMemoryProfile::Custom,
-            custom_memory_mb: Some(12288),
-            ..crate::settings::ContainerMachineSettings::default()
-        },
-        runtime: crate::settings::ContainerRuntimeKind::Podman,
-        ..ContainerExecutionSettings::default()
-    };
-    assert_eq!(container_machine_memory_mb(&settings), 12288);
-
-    manager
-        .ensure_container_machine_ready(&settings, None)
-        .await
-        .expect("idle running machine should be reconfigured and restarted");
-
-    let log = std::fs::read_to_string(&log_path).expect("read invocation log");
-    assert!(
-        log.contains(&format!("machine inspect {machine_name}")),
-        "expected machine inspect in log:\n{log}"
-    );
-    assert!(
-        log.contains(&format!("machine stop {machine_name}")),
-        "expected machine stop in log:\n{log}"
-    );
-    assert!(
-        log.contains(&format!("machine rm -f {machine_name}")),
-        "expected machine rm in log:\n{log}"
-    );
-    assert!(
-        log.contains(&format!("machine init {machine_name}")),
-        "expected machine init in log:\n{log}"
-    );
-    assert!(
-        log.contains("--memory 12288"),
-        "expected memory override in log:\n{log}"
-    );
-    assert!(
-        log.contains(&format!("machine start {machine_name}")),
-        "expected machine start in log:\n{log}"
-    );
-    machine_cache_server.abort();
-}
-
 #[cfg(unix)]
 #[tokio::test]
 async fn ensure_container_machine_ready_prefetches_avf_runtime_without_starting_a_global_vm() {
@@ -2301,7 +2289,7 @@ async fn ensure_container_machine_ready_prefetches_avf_runtime_without_starting_
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
     let settings = ContainerExecutionSettings {
-        runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
+        runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
         ..ContainerExecutionSettings::default()
     };
 
@@ -2332,9 +2320,9 @@ async fn prepare_returns_avf_linux_vm_plan_after_workspace_vm_and_container_read
     let workspace = sample_workspace(&temp);
     let worktree = sample_worktree(&temp, workspace.id);
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
-            runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
+            runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
             mount_mode: ContainerMountMode::DiskIsolated,
             network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
@@ -2346,15 +2334,15 @@ async fn prepare_returns_avf_linux_vm_plan_after_workspace_vm_and_container_read
         .await
         .expect("AVF prepare should now return a container-backed AVF plan");
     match &plan.runtime {
-        HarnessRuntimeKind::AvfLinuxVm => {}
+        HarnessRuntimeKind::SharedVmContainer => {}
         HarnessRuntimeKind::Host => panic!("expected AVF Linux VM runtime"),
-        HarnessRuntimeKind::Container { .. } => panic!("expected AVF Linux VM runtime"),
+        HarnessRuntimeKind::NativeContainer { .. } => panic!("expected AVF Linux VM runtime"),
     }
     assert_eq!(
         plan.env_overrides
             .get(crate::workspace_runtime::CTX_HARNESS_RUNTIME_KIND_ENV)
             .map(String::as_str),
-        Some("avf_linux_vm")
+        Some("shared_vm_container")
     );
     let workspace_id = workspace.id.0.to_string();
     let worktree_id = worktree.id.0.to_string();
@@ -2408,9 +2396,9 @@ async fn container_status_reports_running_avf_workspace_container() {
     let workspace = sample_workspace(&temp);
     let worktree = sample_worktree(&temp, workspace.id);
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
-            runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
+            runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
             mount_mode: ContainerMountMode::DiskIsolated,
             network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
@@ -2448,9 +2436,9 @@ async fn ensure_workspace_container_starts_avf_workspace_vm() {
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
     let workspace = sample_workspace(&temp);
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
-            runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
+            runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
             mount_mode: ContainerMountMode::DiskIsolated,
             network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
@@ -2486,9 +2474,9 @@ async fn ensure_workspace_container_for_worktree_keeps_avf_workspace_container_r
     let workspace = sample_workspace(&temp);
     let worktree = sample_worktree(&temp, workspace.id);
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
-            runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
+            runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
             mount_mode: ContainerMountMode::DiskIsolated,
             network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
@@ -2528,9 +2516,9 @@ async fn ensure_workspace_container_after_runtime_ready_starts_avf_workspace_vm(
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
     let workspace = sample_workspace(&temp);
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
-            runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
+            runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
             mount_mode: ContainerMountMode::DiskIsolated,
             network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
@@ -2575,9 +2563,9 @@ async fn stop_container_removes_avf_workspace_container() {
     let workspace = sample_workspace(&temp);
     let worktree = sample_worktree(&temp, workspace.id);
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
-            runtime: crate::settings::ContainerRuntimeKind::AvfLinuxVm,
+            runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
             mount_mode: ContainerMountMode::DiskIsolated,
             network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
@@ -2608,193 +2596,41 @@ async fn stop_container_removes_avf_workspace_container() {
     }
 }
 
-#[tokio::test]
-async fn ensure_container_machine_ready_defers_running_machine_reconfiguration_for_active_workspace_containers(
-) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let _serial = env_var_test_lock().lock().await;
-    let temp = tempfile::tempdir().expect("tempdir");
-    let manager = runtime_manager(&temp).await;
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let state_path = temp.path().join("podman-state.txt");
-    std::fs::write(&state_path, "running\n").expect("seed podman state");
-    let podman_path = temp.path().join("podman.sh");
-    std::fs::write(
-        &podman_path,
-        format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nstate=$(cat \"$STATE\" 2>/dev/null || true)\nif [ \"$1\" = \"info\" ]; then\n  [ \"$state\" = \"running\" ] && exit 0\n  exit 1\nfi\nif [ \"$1\" = \"ps\" ]; then\n  printf 'ctx-harness-active\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[{{\"Resources\":{{\"Memory\":2048}}}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  printf 'stopped\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ] && [ \"$3\" = \"-f\" ]; then\n  printf 'absent\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  printf 'initialized\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  printf 'running\\n' > \"$STATE\"\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
-            log = log_path.display(),
-            state = state_path.display(),
-        ),
-    )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _host_memory = EnvGuard::set("CTX_TEST_HOST_MEMORY_MB", "49152");
-    let settings = ContainerExecutionSettings {
-        mount_mode: ContainerMountMode::DiskIsolated,
-        machine: crate::settings::ContainerMachineSettings {
-            memory_profile: crate::settings::ContainerMachineMemoryProfile::Custom,
-            custom_memory_mb: Some(12288),
-            ..crate::settings::ContainerMachineSettings::default()
-        },
-        runtime: crate::settings::ContainerRuntimeKind::Podman,
-        ..ContainerExecutionSettings::default()
-    };
-    assert_eq!(container_machine_memory_mb(&settings), 12288);
-
-    manager
-        .ensure_container_machine_ready(&settings, None)
-        .await
-        .expect("active running containers should defer reconfiguration without failing launch");
-
-    let log = std::fs::read_to_string(&log_path).expect("read invocation log");
-    assert!(log.contains(&format!("machine inspect {machine_name}")));
-    assert!(!log.contains(&format!("machine stop {machine_name}")));
-    assert!(!log.contains(&format!("machine rm -f {machine_name}")));
-    assert!(!log.contains(&format!("machine init {machine_name}")));
-    assert!(!log.contains(&format!("machine start {machine_name}")));
-}
-
-#[tokio::test]
-async fn ensure_container_machine_ready_reconfigures_disk_isolated_machine_without_workspace_volumes(
-) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let _serial = env_var_test_lock().lock().await;
-    let temp = tempfile::tempdir().expect("tempdir");
-    let manager = runtime_manager(&temp).await;
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let state_path = temp.path().join("podman-state.txt");
-    std::fs::write(&state_path, "running\n").expect("seed podman state");
-    let podman_path = temp.path().join("podman.sh");
-    std::fs::write(
-        &podman_path,
-        format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nstate=$(cat \"$STATE\" 2>/dev/null || true)\nif [ \"$1\" = \"info\" ]; then\n  [ \"$state\" = \"running\" ] && exit 0\n  exit 1\nfi\nif [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"ls\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[{{\"Resources\":{{\"Memory\":2048}}}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  printf 'stopped\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ] && [ \"$3\" = \"-f\" ]; then\n  printf 'absent\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  printf 'initialized\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  printf 'running\\n' > \"$STATE\"\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
-            log = log_path.display(),
-            state = state_path.display(),
-        ),
-    )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _host_memory = EnvGuard::set("CTX_TEST_HOST_MEMORY_MB", "49152");
-    let (machine_cache_guard, machine_cache_server) =
-        install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
-    assert!(
-        crate::bundled_assets::managed_podman_machine_cache_source().is_some(),
-        "test machine cache override should be installed before reconfiguration"
-    );
-    let _keep_machine_cache_guard_alive = &machine_cache_guard;
-    let settings = ContainerExecutionSettings {
-        mount_mode: ContainerMountMode::DiskIsolated,
-        machine: crate::settings::ContainerMachineSettings {
-            memory_profile: crate::settings::ContainerMachineMemoryProfile::Balanced,
-            ..crate::settings::ContainerMachineSettings::default()
-        },
-        runtime: crate::settings::ContainerRuntimeKind::Podman,
-        ..ContainerExecutionSettings::default()
-    };
-
-    manager
-        .ensure_container_machine_ready(&settings, None)
-        .await
-        .expect("disk-isolated machine without workspace volumes should be reconfigured");
-
-    let log = std::fs::read_to_string(&log_path).expect("read invocation log");
-    assert!(log.contains("volume ls --format {{.Name}}"));
-    assert!(log.contains(&format!("machine stop {machine_name}")));
-    assert!(log.contains(&format!("machine rm -f {machine_name}")));
-    assert!(log.contains(&format!("machine init {machine_name}")));
-    assert!(log.contains(&format!("machine start {machine_name}")));
-    machine_cache_server.abort();
-}
-
-#[tokio::test]
-async fn ensure_container_machine_ready_defers_disk_isolated_reconfiguration_when_workspace_volumes_exist(
-) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let _serial = env_var_test_lock().lock().await;
-    let temp = tempfile::tempdir().expect("tempdir");
-    let manager = runtime_manager(&temp).await;
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let state_path = temp.path().join("podman-state.txt");
-    std::fs::write(&state_path, "running\n").expect("seed podman state");
-    let podman_path = temp.path().join("podman.sh");
-    std::fs::write(
-        &podman_path,
-        format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nstate=$(cat \"$STATE\" 2>/dev/null || true)\nif [ \"$1\" = \"info\" ]; then\n  [ \"$state\" = \"running\" ] && exit 0\n  exit 1\nfi\nif [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"ls\" ]; then\n  printf 'ctx-ws-existing\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[{{\"Resources\":{{\"Memory\":2048}}}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  printf 'stopped\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ] && [ \"$3\" = \"-f\" ]; then\n  printf 'absent\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  printf 'initialized\\n' > \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  printf 'running\\n' > \"$STATE\"\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
-            log = log_path.display(),
-            state = state_path.display(),
-        ),
-    )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
-    let _host_memory = EnvGuard::set("CTX_TEST_HOST_MEMORY_MB", "49152");
-    let settings = ContainerExecutionSettings {
-        mount_mode: ContainerMountMode::DiskIsolated,
-        machine: crate::settings::ContainerMachineSettings {
-            memory_profile: crate::settings::ContainerMachineMemoryProfile::Balanced,
-            ..crate::settings::ContainerMachineSettings::default()
-        },
-        runtime: crate::settings::ContainerRuntimeKind::Podman,
-        ..ContainerExecutionSettings::default()
-    };
-
-    manager
-        .ensure_container_machine_ready(&settings, None)
-        .await
-        .expect("existing disk-isolated workspace volumes should defer reconfiguration");
-
-    let log = std::fs::read_to_string(&log_path).expect("read invocation log");
-    assert!(log.contains("volume ls --format {{.Name}}"));
-    assert!(!log.contains(&format!("machine stop {machine_name}")));
-    assert!(!log.contains(&format!("machine rm -f {machine_name}")));
-    assert!(!log.contains(&format!("machine init {machine_name}")));
-}
-
 #[test]
-fn podman_machine_temp_state_paths_match_expected_names() {
+fn sandbox_machine_temp_state_paths_match_expected_names() {
     let data_root = tempfile::tempdir().expect("tempdir");
-    let paths = podman_machine_temp_state_paths(data_root.path(), "ctx");
+    let paths = sandbox_machine_temp_state_paths(data_root.path(), "ctx");
     let rendered: Vec<String> = paths
         .into_iter()
         .map(|p| p.to_string_lossy().to_string())
         .collect();
-    let expected_tmp_prefix = podman_temp_root(data_root.path())
-        .join("podman")
+    let expected_tmp_prefix = sandbox_machine_temp_root(data_root.path())
+        .join("sandbox-cli")
         .to_string_lossy()
         .to_string();
     assert!(rendered.iter().any(|p| p.starts_with(&expected_tmp_prefix)));
-    assert!(rendered.iter().any(|p| p.ends_with("podman/gvproxy.pid")));
-    assert!(rendered.iter().any(|p| p.ends_with("podman/ctx-api.sock")));
     assert!(rendered
         .iter()
-        .any(|p| p.ends_with("podman/ctx-gvproxy.sock")));
-    assert!(rendered.iter().any(|p| p.ends_with("podman/ctx.sock")));
+        .any(|p| p.ends_with("sandbox-cli/gvproxy.pid")));
     assert!(rendered
         .iter()
-        .any(|p| p.ends_with("home/.podman/ctx-api.sock")));
+        .any(|p| p.ends_with("sandbox-cli/ctx-api.sock")));
     assert!(rendered
         .iter()
-        .any(|p| p.ends_with("home/.podman/ctx-gvproxy.sock")));
+        .any(|p| p.ends_with("sandbox-cli/ctx-gvproxy.sock")));
+    assert!(rendered.iter().any(|p| p.ends_with("sandbox-cli/ctx.sock")));
+    assert!(rendered
+        .iter()
+        .any(|p| p.ends_with("home/.sandbox-cli/ctx-api.sock")));
+    assert!(rendered
+        .iter()
+        .any(|p| p.ends_with("home/.sandbox-cli/ctx-gvproxy.sock")));
 }
 
 #[tokio::test]
-async fn podman_machine_singleflight_lock_reuses_lock_for_same_machine() {
-    let first = podman_machine_singleflight_lock("ctx-machine-a");
-    let second = podman_machine_singleflight_lock("ctx-machine-a");
+async fn sandbox_machine_singleflight_lock_reuses_lock_for_same_machine() {
+    let first = sandbox_machine_singleflight_lock("ctx-machine-a");
+    let second = sandbox_machine_singleflight_lock("ctx-machine-a");
     assert!(Arc::ptr_eq(&first, &second));
 
     let guard = first.lock().await;
@@ -2804,9 +2640,9 @@ async fn podman_machine_singleflight_lock_reuses_lock_for_same_machine() {
 }
 
 #[tokio::test]
-async fn podman_machine_singleflight_lock_isolated_by_machine_name() {
-    let first = podman_machine_singleflight_lock("ctx-machine-b");
-    let second = podman_machine_singleflight_lock("ctx-machine-c");
+async fn sandbox_machine_singleflight_lock_isolated_by_machine_name() {
+    let first = sandbox_machine_singleflight_lock("ctx-machine-b");
+    let second = sandbox_machine_singleflight_lock("ctx-machine-c");
     assert!(!Arc::ptr_eq(&first, &second));
 
     let _guard = first.lock().await;
@@ -2827,7 +2663,7 @@ fn transparent_proxy_policy_preserves_custom_allowlist_mode() {
     let settings = ContainerExecutionSettings {
         network_mode: ContainerNetworkMode::Allowlist,
         allowlist: vec!["example.com".to_string(), "api.example.com".to_string()],
-        runtime: crate::settings::ContainerRuntimeKind::Podman,
+        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
         ..Default::default()
     };
     let (mode, allowlist) = transparent_proxy_policy(&settings);
@@ -2842,7 +2678,7 @@ async fn unrestricted_network_transition_surfaces_teardown_failures() {
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let log_path = temp.path().join("podman-invocations.log");
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
     let fakebin = temp.path().join("fakebin");
     std::fs::create_dir_all(&fakebin).expect("create fakebin");
     let helper_log_path = temp.path().join("cleanup-helpers.log");
@@ -2877,23 +2713,26 @@ async fn unrestricted_network_transition_surfaces_teardown_failures() {
     std::fs::set_permissions(&iptables_path, std::fs::Permissions::from_mode(0o755))
         .expect("chmod fake iptables");
 
-    let podman_path = temp.path().join("podman.sh");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-            &podman_path,
+            &sandbox_cli_path,
             format!(
                 "#!/bin/sh\nLOG=\"{log}\"\nFAKEBIN=\"{fakebin}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"exec\" ]; then\n  PATH=\"$FAKEBIN:$PATH\" /bin/sh -c \"$7\"\n  exit $?\nfi\nexit 0\n",
                 log = log_path.display(),
                 fakebin = fakebin.display(),
             ),
         )
-        .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
 
     let settings = ContainerExecutionSettings {
         network_mode: ContainerNetworkMode::All,
-        runtime: crate::settings::ContainerRuntimeKind::Podman,
+        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
         ..Default::default()
     };
     let err = apply_container_network_policy(
@@ -2936,7 +2775,7 @@ async fn unrestricted_network_transition_ignores_stale_proxy_pid_file() {
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let log_path = temp.path().join("podman-invocations.log");
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
     let fakebin = temp.path().join("fakebin");
     std::fs::create_dir_all(&fakebin).expect("create fakebin");
     let helper_log_path = temp.path().join("cleanup-helpers.log");
@@ -2971,23 +2810,26 @@ async fn unrestricted_network_transition_ignores_stale_proxy_pid_file() {
     std::fs::set_permissions(&iptables_path, std::fs::Permissions::from_mode(0o755))
         .expect("chmod fake iptables");
 
-    let podman_path = temp.path().join("podman.sh");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-            &podman_path,
+            &sandbox_cli_path,
             format!(
                 "#!/bin/sh\nLOG=\"{log}\"\nFAKEBIN=\"{fakebin}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"exec\" ]; then\n  PATH=\"$FAKEBIN:$PATH\" /bin/sh -c \"$7\"\n  exit $?\nfi\nexit 0\n",
                 log = log_path.display(),
                 fakebin = fakebin.display(),
             ),
         )
-        .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
 
     let settings = ContainerExecutionSettings {
         network_mode: ContainerNetworkMode::All,
-        runtime: crate::settings::ContainerRuntimeKind::Podman,
+        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
         ..Default::default()
     };
     let applied = apply_container_network_policy(
@@ -3024,33 +2866,33 @@ async fn unrestricted_network_transition_ignores_stale_proxy_pid_file() {
 
 #[cfg(unix)]
 #[test]
-fn kill_ctx_managed_podman_helper_processes_reports_only_successful_kills() {
+fn kill_ctx_managed_sandbox_helper_processes_reports_only_successful_kills() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().blocking_lock();
     let temp = tempfile::tempdir().expect("tempdir");
-    let machine_name = ctx_podman_machine_name(temp.path());
+    let machine_name = sandbox_machine_name(temp.path());
     let fakebin = temp.path().join("fakebin");
     std::fs::create_dir_all(&fakebin).expect("create fakebin");
     let helper_dir = temp
         .path()
         .join("managed")
         .join("runtimes")
-        .join("podman")
+        .join("sandbox-cli")
         .join("macos")
         .join("aarch64")
-        .join("podman-5.8.0")
+        .join("sandbox-cli-5.8.0")
         .join("usr")
         .join("libexec")
-        .join("podman");
+        .join("sandbox-cli");
     let pkill_log_path = temp.path().join("pkill-invocations.log");
     let ps_count_path = temp.path().join("ps-count");
 
     let gvproxy = format!(
         "{} -forward-sock {} {}",
         helper_dir.join("gvproxy").display(),
-        podman_temp_root(temp.path())
-            .join("podman")
+        sandbox_machine_temp_root(temp.path())
+            .join("sandbox-cli")
             .join(format!("{machine_name}-api.sock"))
             .display(),
         machine_name,
@@ -3058,17 +2900,17 @@ fn kill_ctx_managed_podman_helper_processes_reports_only_successful_kills() {
     let vfkit = format!(
         "/opt/homebrew/bin/vfkit --device virtio-blk,path={} --device virtio-net,unixSocketPath={}",
         temp.path()
-            .join("podman")
+            .join("sandbox-cli")
             .join("xdg")
             .join("data")
             .join("containers")
-            .join("podman")
+            .join("sandbox-cli")
             .join("machine")
             .join("applehv")
             .join(format!("{machine_name}-arm64.raw"))
             .display(),
-        podman_temp_root(temp.path())
-            .join("podman")
+        sandbox_machine_temp_root(temp.path())
+            .join("sandbox-cli")
             .join(format!("{machine_name}-gvproxy.sock"))
             .display(),
     );
@@ -3106,7 +2948,7 @@ fn kill_ctx_managed_podman_helper_processes_reports_only_successful_kills() {
     let path_value = format!("{}:{prior_path}", fakebin.display());
     let _guard = EnvGuard::set("PATH", &path_value);
 
-    let outcome = kill_ctx_managed_podman_helper_processes(temp.path(), &machine_name);
+    let outcome = kill_ctx_managed_sandbox_helper_processes(temp.path(), &machine_name);
     assert_eq!(outcome.killed, vec![6622]);
     assert_eq!(outcome.failed, vec![12484]);
     assert!(outcome.skipped.is_empty());
@@ -3118,33 +2960,33 @@ fn kill_ctx_managed_podman_helper_processes_reports_only_successful_kills() {
 
 #[cfg(unix)]
 #[test]
-fn kill_ctx_managed_podman_helper_processes_escapes_regex_metacharacters_for_pkill() {
+fn kill_ctx_managed_sandbox_helper_processes_escapes_regex_metacharacters_for_pkill() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().blocking_lock();
     let temp = tempfile::tempdir().expect("tempdir");
-    let machine_name = ctx_podman_machine_name(temp.path());
+    let machine_name = sandbox_machine_name(temp.path());
     let fakebin = temp.path().join("fakebin");
     std::fs::create_dir_all(&fakebin).expect("create fakebin");
     let helper_dir = temp
         .path()
         .join("managed")
         .join("runtimes")
-        .join("podman")
+        .join("sandbox-cli")
         .join("macos")
         .join("aarch64")
-        .join("podman-5.8.0")
+        .join("sandbox-cli-5.8.0")
         .join("usr")
         .join("libexec")
-        .join("podman");
+        .join("sandbox-cli");
     let pkill_log_path = temp.path().join("pkill-invocations.log");
     let ps_count_path = temp.path().join("ps-count");
 
     let gvproxy = format!(
         "{} -forward-sock {} {}",
         helper_dir.join("gvproxy").display(),
-        podman_temp_root(temp.path())
-            .join("podman")
+        sandbox_machine_temp_root(temp.path())
+            .join("sandbox-cli")
             .join(format!("{machine_name}-api.sock"))
             .display(),
         machine_name,
@@ -3179,7 +3021,7 @@ fn kill_ctx_managed_podman_helper_processes_escapes_regex_metacharacters_for_pki
     let path_value = format!("{}:{prior_path}", fakebin.display());
     let _guard = EnvGuard::set("PATH", &path_value);
 
-    let outcome = kill_ctx_managed_podman_helper_processes(temp.path(), &machine_name);
+    let outcome = kill_ctx_managed_sandbox_helper_processes(temp.path(), &machine_name);
     assert_eq!(outcome.killed, vec![6622]);
     assert!(outcome.failed.is_empty());
     assert!(outcome.skipped.is_empty());
@@ -3190,33 +3032,33 @@ fn kill_ctx_managed_podman_helper_processes_escapes_regex_metacharacters_for_pki
 
 #[cfg(unix)]
 #[test]
-fn kill_ctx_managed_podman_helper_processes_skips_reused_pid_after_command_scoped_kill() {
+fn kill_ctx_managed_sandbox_helper_processes_skips_reused_pid_after_command_scoped_kill() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().blocking_lock();
     let temp = tempfile::tempdir().expect("tempdir");
-    let machine_name = ctx_podman_machine_name(temp.path());
+    let machine_name = sandbox_machine_name(temp.path());
     let fakebin = temp.path().join("fakebin");
     std::fs::create_dir_all(&fakebin).expect("create fakebin");
     let helper_dir = temp
         .path()
         .join("managed")
         .join("runtimes")
-        .join("podman")
+        .join("sandbox-cli")
         .join("macos")
         .join("aarch64")
-        .join("podman-5.8.0")
+        .join("sandbox-cli-5.8.0")
         .join("usr")
         .join("libexec")
-        .join("podman");
+        .join("sandbox-cli");
     let pkill_log_path = temp.path().join("pkill-invocations.log");
     let ps_count_path = temp.path().join("ps-count");
 
     let gvproxy = format!(
         "{} -forward-sock {} {}",
         helper_dir.join("gvproxy").display(),
-        podman_temp_root(temp.path())
-            .join("podman")
+        sandbox_machine_temp_root(temp.path())
+            .join("sandbox-cli")
             .join(format!("{machine_name}-api.sock"))
             .display(),
         machine_name,
@@ -3251,7 +3093,7 @@ fn kill_ctx_managed_podman_helper_processes_skips_reused_pid_after_command_scope
     let path_value = format!("{}:{prior_path}", fakebin.display());
     let _guard = EnvGuard::set("PATH", &path_value);
 
-    let outcome = kill_ctx_managed_podman_helper_processes(temp.path(), &machine_name);
+    let outcome = kill_ctx_managed_sandbox_helper_processes(temp.path(), &machine_name);
     assert!(outcome.killed.is_empty());
     assert!(outcome.failed.is_empty());
     assert_eq!(outcome.skipped, vec![6622]);
@@ -3314,7 +3156,7 @@ fn bundle_dir_mount_policy_matches_platform_expectations() {
         return;
     }
 
-    // Podman-machine platforms cannot reliably mount non-home host paths (for example
+    // Sandbox-machine platforms cannot reliably mount non-home host paths (for example
     // /Applications in macOS release installs).
     if cfg!(target_os = "macos") || cfg!(target_os = "windows") {
         assert!(!should_mount_bundle_dir_in_container(Path::new(

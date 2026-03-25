@@ -74,8 +74,8 @@ const readStepState = async () => {
       createDisabled: createBtn instanceof HTMLButtonElement ? createBtn.disabled : null,
       hasSourcePath: Boolean(document.querySelector('[data-testid="wizard-source-path"]')),
       hasSourceImport: Boolean(document.querySelector('[data-testid="wizard-option-source-import"]')),
-      hasContainerNoContainer: Boolean(document.querySelector('[data-testid="wizard-option-container-no-container"]')),
-      hasContainerDiskIsolated: Boolean(document.querySelector('[data-testid="wizard-option-container-disk-isolated"]')),
+      hasContainerHost: Boolean(document.querySelector('[data-testid="wizard-option-container-host"]')),
+      hasContainerSandbox: Boolean(document.querySelector('[data-testid="wizard-option-container-sandbox"]')),
     };
   });
 };
@@ -229,8 +229,8 @@ describe("workbench blank debug (e2e)", () => {
           if (step === "location") {
             click('[data-testid="wizard-option-location-local"]');
           } else if (step === "container") {
-            if (!click('[data-testid="wizard-option-container-no-container"]')) {
-              click('[data-testid="wizard-option-container-disk-isolated"]');
+            if (!click('[data-testid="wizard-option-container-host"]')) {
+              click('[data-testid="wizard-option-container-sandbox"]');
             }
           } else if (step === "source") {
             click('[data-testid="wizard-option-source-import"]');

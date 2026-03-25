@@ -8,18 +8,19 @@ use serde::Deserialize;
 
 use super::errors::ApiErrorResp;
 use crate::buffers::BufferStore;
-use crate::container_fs::is_container_path;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::harness_runtime;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
-use crate::terminals::{AvfLinuxTerminalSpec, PodmanTerminalSpec, TerminalCreateRequest};
+use crate::terminals::{
+    NativeContainerTerminalSpec, SharedVmContainerTerminalSpec, TerminalCreateRequest,
+};
 use crate::worktree_data_plane::{
-    live_workspace_root_for_mode, map_host_path_to_live_path, sandbox_worktree_root,
+    apply_data_plane_to_execution_settings, map_host_or_live_path_to_live_path,
+    resolve_worktree_data_plane, WorktreeDataPlane,
 };
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::TerminalSession;
-use ctx_core::models::{Workspace, Worktree};
 
 #[cfg(test)]
 mod tests;
@@ -59,7 +60,7 @@ fn default_shell() -> String {
     }
 }
 
-async fn infer_avf_terminal_worktree(
+async fn infer_terminal_worktree(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
     session_id: Option<SessionId>,
@@ -97,16 +98,12 @@ async fn infer_avf_terminal_worktree(
 }
 
 fn resolve_container_terminal_cwd(
-    data_root: &std::path::Path,
-    workspace: &Workspace,
-    worktree: Option<&Worktree>,
+    data_plane: &WorktreeDataPlane,
+    host_workspace_root: &PathBuf,
+    host_worktree_root: Option<&PathBuf>,
     requested_cwd: Option<&PathBuf>,
 ) -> Result<PathBuf, (StatusCode, Json<ApiErrorResp>)> {
-    let container_workspace_root =
-        live_workspace_root_for_mode(workspace, ExecutionMode::Container);
-    let fallback = worktree
-        .map(|worktree| sandbox_worktree_root(data_root, workspace, worktree))
-        .unwrap_or_else(|| container_workspace_root.clone());
+    let fallback = data_plane.live_worktree_root.clone();
 
     let Some(requested) = requested_cwd else {
         return Ok(fallback);
@@ -124,23 +121,11 @@ fn resolve_container_terminal_cwd(
         });
     }
 
-    if let Some(worktree) = worktree {
-        if let Some(mapped) = map_host_path_to_live_path(
-            data_root,
-            workspace,
-            Some(worktree),
-            requested,
-            ExecutionMode::Container,
-        ) {
-            return Ok(mapped);
-        }
-    }
-    if let Some(mapped) = map_host_path_to_live_path(
-        data_root,
-        workspace,
-        None,
+    if let Some(mapped) = map_host_or_live_path_to_live_path(
+        data_plane,
+        host_workspace_root,
+        host_worktree_root.map(PathBuf::as_path),
         requested,
-        ExecutionMode::Container,
     ) {
         return Ok(mapped);
     }
@@ -246,8 +231,6 @@ pub(super) async fn create_workspace_terminal(
                 }),
             )
         })?;
-
-    let container_mode = matches!(effective.mode, ExecutionMode::Container);
     let worktree = if let Some(wt_id) = worktree_id {
         let store = state.store_for_worktree(wt_id).await.map_err(|_| {
             (
@@ -275,31 +258,43 @@ pub(super) async fn create_workspace_terminal(
                 }),
             ))?;
         Some(wt)
-    } else if container_mode
-        && matches!(
-            effective.container.runtime,
-            ContainerRuntimeKind::AvfLinuxVm
-        )
-    {
-        infer_avf_terminal_worktree(&state, workspace_id, session_id, task_id).await
+    } else if session_id.is_some() || task_id.is_some() {
+        infer_terminal_worktree(&state, workspace_id, session_id, task_id).await
     } else {
         None
     };
+    let worktree_data_plane = if let Some(worktree) = worktree.as_ref() {
+        Some(
+            resolve_worktree_data_plane(&state, worktree)
+                .await
+                .map_err(|_| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: "failed to resolve worktree data plane".to_string(),
+                        }),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
+    let effective = worktree_data_plane
+        .as_ref()
+        .map(|data_plane| apply_data_plane_to_execution_settings(&effective, data_plane))
+        .unwrap_or(effective);
+    let container_mode = matches!(effective.mode, ExecutionMode::Sandbox);
 
     let worktree_root = if let Some(wt) = worktree.as_ref() {
         let root = PathBuf::from(&wt.root_path);
-        if is_container_path(&root) {
-            Some(root)
-        } else {
-            Some(tokio::fs::canonicalize(&root).await.map_err(|_| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: "worktree root is unavailable".to_string(),
-                    }),
-                )
-            })?)
-        }
+        Some(tokio::fs::canonicalize(&root).await.map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "worktree root is unavailable".to_string(),
+                }),
+            )
+        })?)
     } else {
         None
     };
@@ -312,16 +307,16 @@ pub(super) async fn create_workspace_terminal(
             Some(PathBuf::from(trimmed))
         }
     });
-    let container_mode = container_mode
-        || worktree_root
-            .as_ref()
-            .map(|root| is_container_path(root))
-            .unwrap_or(false);
     let cwd = if container_mode {
         resolve_container_terminal_cwd(
-            &state.core.data_root,
-            &workspace,
-            worktree.as_ref(),
+            worktree_data_plane.as_ref().ok_or((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "sandbox terminal requires a resolved worktree data plane".to_string(),
+                }),
+            ))?,
+            &workspace_root,
+            worktree_root.as_ref(),
             requested_cwd.as_ref(),
         )?
     } else {
@@ -372,9 +367,9 @@ pub(super) async fn create_workspace_terminal(
             .unwrap_or_else(default_shell)
     };
 
-    let (podman, avf_linux_vm) = if container_mode {
+    let (native_container, shared_vm_container) = if container_mode {
         match effective.container.runtime {
-            ContainerRuntimeKind::Podman => {
+            ContainerRuntimeKind::NativeContainer => {
                 state
                     .execution
                     .harness
@@ -388,26 +383,27 @@ pub(super) async fn create_workspace_terminal(
                             }),
                         )
                     })?;
-                let inv =
-                    harness_runtime::podman_invocation(&state.core.data_root).map_err(|e| {
+                let inv = harness_runtime::sandbox_cli_invocation(&state.core.data_root).map_err(
+                    |e| {
                         (
                             StatusCode::INTERNAL_SERVER_ERROR,
                             Json(ApiErrorResp {
-                                error: format!("podman unavailable: {e}"),
+                                error: format!("sandbox container CLI unavailable: {e}"),
                             }),
                         )
-                    })?;
+                    },
+                )?;
                 (
-                    Some(PodmanTerminalSpec {
-                        podman_bin: inv.bin,
-                        podman_env: inv.env,
+                    Some(NativeContainerTerminalSpec {
+                        cli_bin: inv.bin,
+                        cli_env: inv.env,
                         container_name: harness_runtime::workspace_container_name(workspace_id),
                         workdir: cwd.to_string_lossy().to_string(),
                     }),
                     None,
                 )
             }
-            ContainerRuntimeKind::AvfLinuxVm => {
+            ContainerRuntimeKind::SharedVmContainer => {
                 if let Some(worktree) = worktree.as_ref() {
                     state
                         .execution
@@ -452,7 +448,7 @@ pub(super) async fn create_workspace_terminal(
                 })?;
                 (
                     None,
-                    Some(AvfLinuxTerminalSpec {
+                    Some(SharedVmContainerTerminalSpec {
                         helper_path,
                         data_root: state.core.data_root.clone(),
                         workspace_id,
@@ -477,8 +473,8 @@ pub(super) async fn create_workspace_terminal(
             cols: None,
             rows: None,
             env: std::collections::HashMap::new(),
-            podman,
-            avf_linux_vm,
+            native_container,
+            shared_vm_container,
         })
         .await
         .map_err(|e| {

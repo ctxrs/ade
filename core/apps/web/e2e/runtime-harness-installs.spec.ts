@@ -424,7 +424,7 @@ const moveWizardToHarnessDownloads = async (page: Page) => {
     }
 
     if (key === "container") {
-      await page.getByTestId("wizard-option-container-no-container").click();
+      await page.getByTestId("wizard-option-container-host").click();
       await expect.poll(async () => wizard.getAttribute("data-step-key")).not.toBe("container");
       continue;
     }

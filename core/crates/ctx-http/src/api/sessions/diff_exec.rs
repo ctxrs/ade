@@ -1,27 +1,27 @@
 use super::*;
 use crate::settings::ExecutionMode;
-use crate::worktree_data_plane::resolve_worktree_data_plane;
+use crate::worktree_data_plane::{
+    apply_data_plane_to_execution_settings, resolve_worktree_data_plane,
+};
 
 enum SandboxExecTarget {
-    Podman { container_name: String },
-    AvfLinuxVm,
+    NativeContainer { container_name: String },
+    SharedVmContainer,
 }
 
 async fn ensure_container_for_worktree(
     state: &Arc<AppState>,
     worktree: &Worktree,
 ) -> anyhow::Result<SandboxExecTarget> {
-    let workspace = state
-        .global_store()
-        .get_workspace(worktree.workspace_id)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
-    let effective = execution_effective::effective_execution_settings(state, workspace.id).await?;
+    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+    let effective =
+        execution_effective::effective_execution_settings(state, data_plane.workspace.id).await?;
+    let effective = apply_data_plane_to_execution_settings(&effective, &data_plane);
     state
         .execution
         .harness
         .ensure_workspace_container_for_worktree(
-            &workspace,
+            &data_plane.workspace,
             worktree,
             &effective,
             &state.core.daemon_url,
@@ -29,12 +29,12 @@ async fn ensure_container_for_worktree(
         .await?;
     if matches!(
         effective.container.runtime,
-        crate::settings::ContainerRuntimeKind::AvfLinuxVm
+        crate::settings::ContainerRuntimeKind::SharedVmContainer
     ) {
-        Ok(SandboxExecTarget::AvfLinuxVm)
+        Ok(SandboxExecTarget::SharedVmContainer)
     } else {
-        Ok(SandboxExecTarget::Podman {
-            container_name: workspace_container_name(worktree.workspace_id),
+        Ok(SandboxExecTarget::NativeContainer {
+            container_name: workspace_container_name(data_plane.workspace.id),
         })
     }
 }
@@ -49,8 +49,8 @@ async fn container_exec_stdout(
     let target = ensure_container_for_worktree(state, worktree).await?;
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
     let out = match target {
-        SandboxExecTarget::Podman { container_name } => {
-            let mut cmd = podman_command(&state.core.data_root)?;
+        SandboxExecTarget::NativeContainer { container_name } => {
+            let mut cmd = sandbox_container_command(&state.core.data_root)?;
             cmd.arg("exec")
                 .arg("--workdir")
                 .arg(&data_plane.live_worktree_root)
@@ -59,9 +59,9 @@ async fn container_exec_stdout(
                 .args(args);
             command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
                 .await
-                .context("podman exec command timed out")?
+                .context("sandbox exec command timed out")?
         }
-        SandboxExecTarget::AvfLinuxVm => {
+        SandboxExecTarget::SharedVmContainer => {
             crate::workspace_runtime::run_avf_linux_guest_exec_capture(
                 &state.core.data_root,
                 worktree.workspace_id,
@@ -77,7 +77,7 @@ async fn container_exec_stdout(
                 false,
             )
             .await
-            .context("AVF guest exec command failed")?
+            .context("shared VM container exec command failed")?
         }
     };
     if out.status.success() {
@@ -198,7 +198,7 @@ pub(crate) async fn diff_worktree_for_session(
     base_commit_sha: &str,
 ) -> anyhow::Result<String> {
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
-    if matches!(data_plane.execution_mode, ExecutionMode::Container) {
+    if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
         return container_diff_worktree(state, worktree, base_commit_sha).await;
     }
     ctx_fs::worktrees::diff_worktree(
@@ -214,7 +214,7 @@ pub(crate) async fn diff_worktree_summary_for_session(
     base_commit_sha: &str,
 ) -> anyhow::Result<(i64, i64, i64)> {
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
-    if matches!(data_plane.execution_mode, ExecutionMode::Container) {
+    if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
         return container_diff_worktree_summary(state, worktree, base_commit_sha).await;
     }
     ctx_fs::worktrees::diff_worktree_summary(

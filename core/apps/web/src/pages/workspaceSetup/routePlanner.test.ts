@@ -18,7 +18,7 @@ const routeScope = (
   overrides?: Partial<WorkspaceSetupRouteScope>,
 ): WorkspaceSetupRouteScope => ({
   provisioningScope: createProvisioningScope(createDesktopLocalDaemonTargetScope(), "container"),
-  containerSelection: "disk-isolated",
+  containerSelection: "sandbox",
   ...overrides,
 });
 
@@ -45,7 +45,7 @@ describe("routePlanner", () => {
       titlingMode: "remote",
     }))).toEqual({
       targetKey: serializeWorkspaceSetupRouteScope(routeScope()),
-      containerSelection: "disk-isolated",
+      containerSelection: "sandbox",
       includeHarnessDownloads: true,
       includeAuthImport: true,
       includeTitling: true,
@@ -72,7 +72,7 @@ describe("routePlanner", () => {
   it("reuses prior onboarding insertions only for the same route key", () => {
     const previousPlan = {
       targetKey: serializeWorkspaceSetupRouteScope(routeScope()),
-      containerSelection: "disk-isolated",
+      containerSelection: "sandbox",
       includeHarnessDownloads: true,
       includeAuthImport: false,
       includeTitling: false,
@@ -88,7 +88,7 @@ describe("routePlanner", () => {
   it("does not suppress onboarding insertions when the route key changes", () => {
     const previousPlan = {
       targetKey: serializeWorkspaceSetupRouteScope(routeScope()),
-      containerSelection: "disk-isolated",
+      containerSelection: "sandbox",
       includeHarnessDownloads: true,
       includeAuthImport: true,
       includeTitling: true,
@@ -96,7 +96,7 @@ describe("routePlanner", () => {
     const plan = buildWizardRoutePlan(snapshot({
       routeScope: {
         provisioningScope: createProvisioningScope(createDesktopLocalDaemonTargetScope(), "container"),
-        containerSelection: "no-container",
+        containerSelection: "host",
       },
       authImportCandidateCount: 1,
       missingHarnessCount: 1,

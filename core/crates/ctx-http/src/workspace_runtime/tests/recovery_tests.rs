@@ -40,37 +40,40 @@ async fn prepare_starts_existing_workspace_container_when_not_cached() {
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     let manager = runtime_manager(&temp).await;
     let workspace = sample_workspace(&temp);
     let worktree = sample_worktree(&temp, workspace.id);
     let container_name = workspace_container_name(workspace.id);
     let volume_name = format!("ctx-ws-{}", workspace.id.0);
     let settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
             network_mode: ContainerNetworkMode::All,
             allowlist: Vec::new(),
-            runtime: crate::settings::ContainerRuntimeKind::Podman,
+            runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
             ..Default::default()
         },
     };
 
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  echo 'unexpected image check' >&2\n  exit 125\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'false\\n'\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"{volume}\",\"Destination\":\"{workspace_root}\"}}]}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  echo 'unexpected image check' >&2\n  exit 125\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'false\\n'\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"{volume}\",\"Destination\":\"{workspace_root}\"}}]}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             container = container_name,
             volume = volume_name,
             workspace_root = CTX_CONTAINER_WORKSPACE_ROOT,
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
 
     let plan = manager
         .prepare(&workspace, &worktree, &settings, "http://127.0.0.1:4399")
@@ -78,12 +81,12 @@ async fn prepare_starts_existing_workspace_container_when_not_cached() {
         .expect("existing stopped workspace container should be started");
 
     match plan.runtime {
-        HarnessRuntimeKind::Container { name } => assert_eq!(name, container_name),
+        HarnessRuntimeKind::NativeContainer { name } => assert_eq!(name, container_name),
         HarnessRuntimeKind::Host => panic!("expected container runtime"),
-        HarnessRuntimeKind::AvfLinuxVm => panic!("expected podman container runtime"),
+        HarnessRuntimeKind::SharedVmContainer => panic!("expected sandbox container runtime"),
     }
 
-    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert!(
         log.contains(&format!("container exists {container_name}")),
         "expected container existence check in log:\n{log}"
@@ -115,24 +118,27 @@ async fn stop_container_returns_false_when_missing() {
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     let manager = runtime_manager(&temp).await;
     let workspace = sample_workspace(&temp);
     let container_name = workspace_container_name(workspace.id);
 
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             container = container_name,
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
 
     let stopped = manager
         .stop_container(workspace.id)
@@ -140,7 +146,7 @@ async fn stop_container_returns_false_when_missing() {
         .expect("stop container");
     assert!(!stopped);
 
-    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert!(
         log.contains(&format!("container exists {container_name}")),
         "expected container existence probe:\n{log}"
@@ -158,24 +164,27 @@ async fn remove_workspace_volume_returns_false_when_missing() {
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     let manager = runtime_manager(&temp).await;
     let workspace = sample_workspace(&temp);
     let volume_name = format!("ctx-ws-{}", workspace.id.0);
 
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{volume}\" ]; then\n  exit 1\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{volume}\" ]; then\n  exit 1\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             volume = volume_name,
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
 
     let removed = manager
         .remove_workspace_volume(workspace.id)
@@ -183,7 +192,7 @@ async fn remove_workspace_volume_returns_false_when_missing() {
         .expect("remove volume");
     assert!(!removed);
 
-    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert!(
         log.contains(&format!("volume inspect {volume_name}")),
         "expected volume existence probe:\n{log}"
@@ -196,28 +205,31 @@ async fn remove_workspace_volume_returns_false_when_missing() {
 
 #[cfg(target_os = "macos")]
 #[tokio::test]
-async fn ensure_podman_machine_running_waits_for_readiness_on_recoverable_start_error() {
+async fn ensure_sandbox_machine_running_waits_for_readiness_on_recoverable_start_error() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let log_path = temp.path().join("podman-invocations.log");
-    let info_count_path = temp.path().join("podman-info-count");
-    let podman_path = temp.path().join("podman.sh");
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let info_count_path = temp.path().join("sandbox-cli-info-count");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nINFO_COUNT=\"{info_count}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  count=0\n  if [ -f \"$INFO_COUNT\" ]; then\n    count=$(cat \"$INFO_COUNT\")\n  fi\n  count=$((count + 1))\n  printf '%s' \"$count\" > \"$INFO_COUNT\"\n  if [ \"$count\" -ge 2 ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  echo 'error: operation timed out while waiting for vm startup' >&2\n  exit 125\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nINFO_COUNT=\"{info_count}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  count=0\n  if [ -f \"$INFO_COUNT\" ]; then\n    count=$(cat \"$INFO_COUNT\")\n  fi\n  count=$((count + 1))\n  printf '%s' \"$count\" > \"$INFO_COUNT\"\n  if [ \"$count\" -ge 2 ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  echo 'error: operation timed out while waiting for vm startup' >&2\n  exit 125\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             info_count = info_count_path.display(),
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
 
-    ensure_podman_machine_running_with_observer(temp.path(), None)
+    ensure_sandbox_machine_running_with_observer(temp.path(), None)
         .await
         .expect("recoverable start error should resolve once runtime becomes reachable");
 
@@ -240,27 +252,27 @@ async fn ensure_podman_machine_running_waits_for_readiness_on_recoverable_start_
 
 #[cfg(target_os = "macos")]
 #[tokio::test]
-async fn ensure_podman_machine_running_missing_machine_recovery_uses_configured_memory() {
+async fn ensure_sandbox_machine_running_missing_machine_recovery_uses_configured_memory() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let state_path = temp.path().join("podman-ready");
-    let init_state_path = temp.path().join("podman-initialized");
-    let podman_path = temp.path().join("podman.sh");
+    let machine_name = sandbox_machine_name(temp.path());
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let state_path = temp.path().join("sandbox-machine-ready");
+    let init_state_path = temp.path().join("sandbox-machine-initialized");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     save_test_execution_settings(
         temp.path(),
         ExecutionSettings {
-            mode: ExecutionMode::Container,
+            mode: ExecutionMode::Sandbox,
             container: ContainerExecutionSettings {
                 machine: crate::settings::ContainerMachineSettings {
                     memory_profile: crate::settings::ContainerMachineMemoryProfile::Custom,
                     custom_memory_mb: Some(6144),
                     ..crate::settings::ContainerMachineSettings::default()
                 },
-                runtime: crate::settings::ContainerRuntimeKind::Podman,
+                runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
                 ..ContainerExecutionSettings::default()
             },
         },
@@ -268,22 +280,25 @@ async fn ensure_podman_machine_running_missing_machine_recovery_uses_configured_
     .await;
 
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nINIT_STATE=\"{init_state}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STATE\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  if [ -f \"$INIT_STATE\" ]; then\n    touch \"$STATE\"\n    exit 0\n  fi\n  echo 'error: machine does not exist' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  touch \"$INIT_STATE\"\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nINIT_STATE=\"{init_state}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STATE\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  if [ -f \"$INIT_STATE\" ]; then\n    touch \"$STATE\"\n    exit 0\n  fi\n  echo 'error: machine does not exist' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  touch \"$INIT_STATE\"\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             state = state_path.display(),
             init_state = init_state_path.display(),
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     let (_machine_cache_guard, machine_cache_server) =
         install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
 
-    ensure_podman_machine_running_with_observer(temp.path(), None)
+    ensure_sandbox_machine_running_with_observer(temp.path(), None)
         .await
         .expect("missing machine recovery should materialize machine with configured memory");
 
@@ -299,27 +314,27 @@ async fn ensure_podman_machine_running_missing_machine_recovery_uses_configured_
 
 #[cfg(target_os = "macos")]
 #[tokio::test]
-async fn ensure_podman_machine_running_recreate_recovery_uses_configured_memory() {
+async fn ensure_sandbox_machine_running_recreate_recovery_uses_configured_memory() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let state_path = temp.path().join("podman-ready");
-    let start_count_path = temp.path().join("podman-start-count");
-    let podman_path = temp.path().join("podman.sh");
+    let machine_name = sandbox_machine_name(temp.path());
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let state_path = temp.path().join("sandbox-machine-ready");
+    let start_count_path = temp.path().join("sandbox-machine-start-count");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     save_test_execution_settings(
         temp.path(),
         ExecutionSettings {
-            mode: ExecutionMode::Container,
+            mode: ExecutionMode::Sandbox,
             container: ContainerExecutionSettings {
                 machine: crate::settings::ContainerMachineSettings {
                     memory_profile: crate::settings::ContainerMachineMemoryProfile::Custom,
                     custom_memory_mb: Some(7168),
                     ..crate::settings::ContainerMachineSettings::default()
                 },
-                runtime: crate::settings::ContainerRuntimeKind::Podman,
+                runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
                 ..ContainerExecutionSettings::default()
             },
         },
@@ -327,22 +342,25 @@ async fn ensure_podman_machine_running_recreate_recovery_uses_configured_memory(
     .await;
 
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nSTART_COUNT=\"{start_count}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STATE\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ]; then\n  rm -f \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  count=0\n  if [ -f \"$START_COUNT\" ]; then\n    count=$(cat \"$START_COUNT\")\n  fi\n  count=$((count + 1))\n  printf '%s' \"$count\" > \"$START_COUNT\"\n  if [ \"$count\" -eq 1 ]; then\n    echo 'Error: unable to start \"ctx\": already running' >&2\n    exit 125\n  fi\n  touch \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  rm -f \"$STATE\"\n  exit 0\nfi\nexit 0\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nSTART_COUNT=\"{start_count}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STATE\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ]; then\n  rm -f \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  count=0\n  if [ -f \"$START_COUNT\" ]; then\n    count=$(cat \"$START_COUNT\")\n  fi\n  count=$((count + 1))\n  printf '%s' \"$count\" > \"$START_COUNT\"\n  if [ \"$count\" -eq 1 ]; then\n    echo 'Error: unable to start \"ctx\": already running' >&2\n    exit 125\n  fi\n  touch \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  rm -f \"$STATE\"\n  exit 0\nfi\nexit 0\n",
             log = log_path.display(),
             state = state_path.display(),
             start_count = start_count_path.display(),
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     let (_machine_cache_guard, machine_cache_server) =
         install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
 
-    ensure_podman_machine_running_with_observer(temp.path(), None)
+    ensure_sandbox_machine_running_with_observer(temp.path(), None)
         .await
         .expect("recreate recovery should reinitialize machine with configured memory");
 
@@ -359,36 +377,39 @@ async fn ensure_podman_machine_running_recreate_recovery_uses_configured_memory(
 
 #[cfg(target_os = "macos")]
 #[tokio::test]
-async fn ensure_podman_machine_running_uses_info_fast_path_before_recovery_settings_load() {
+async fn ensure_sandbox_machine_running_uses_info_fast_path_before_recovery_settings_load() {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let log_path = temp.path().join("podman-invocations.log");
-    let podman_path = temp.path().join("podman.sh");
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     std::fs::create_dir_all(temp.path().join("db").join("db.sqlite"))
         .expect("create invalid settings store path");
 
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
 
-    ensure_podman_machine_running_with_observer(temp.path(), None)
+    ensure_sandbox_machine_running_with_observer(temp.path(), None)
         .await
         .expect("reachable runtime should not load recovery settings before the info fast path");
 
     let log = std::fs::read_to_string(&log_path).unwrap_or_default();
     assert!(
         log.contains("info"),
-        "expected podman info fast path to run:\n{log}"
+        "expected sandbox CLI info fast path to run:\n{log}"
     );
     assert!(
         !log.contains("machine start "),
@@ -402,37 +423,40 @@ async fn ensure_podman_machine_running_uses_info_fast_path_before_recovery_setti
 
 #[cfg(target_os = "macos")]
 #[tokio::test]
-async fn ensure_podman_machine_running_falls_back_to_default_memory_when_recovery_settings_are_corrupt(
+async fn ensure_sandbox_machine_running_falls_back_to_default_memory_when_recovery_settings_are_corrupt(
 ) {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let machine_name = ctx_podman_machine_name(temp.path());
-    let log_path = temp.path().join("podman-invocations.log");
-    let state_path = temp.path().join("podman-ready");
-    let init_state_path = temp.path().join("podman-initialized");
-    let podman_path = temp.path().join("podman.sh");
+    let machine_name = sandbox_machine_name(temp.path());
+    let log_path = temp.path().join("sandbox-cli-invocations.log");
+    let state_path = temp.path().join("sandbox-machine-ready");
+    let init_state_path = temp.path().join("sandbox-machine-initialized");
+    let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
     write_invalid_test_execution_settings(temp.path(), "{").await;
 
     std::fs::write(
-        &podman_path,
+        &sandbox_cli_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nINIT_STATE=\"{init_state}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STATE\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  if [ -f \"$INIT_STATE\" ]; then\n    touch \"$STATE\"\n    exit 0\n  fi\n  echo 'error: machine does not exist' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  touch \"$INIT_STATE\"\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nINIT_STATE=\"{init_state}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STATE\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  if [ -f \"$INIT_STATE\" ]; then\n    touch \"$STATE\"\n    exit 0\n  fi\n  echo 'error: machine does not exist' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  touch \"$INIT_STATE\"\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             state = state_path.display(),
             init_state = init_state_path.display(),
         ),
     )
-    .expect("write podman shim");
-    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod podman shim");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
     let _host_memory = EnvGuard::set("CTX_TEST_HOST_MEMORY_MB", "49152");
     let (_machine_cache_guard, machine_cache_server) =
         install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
 
-    ensure_podman_machine_running_with_observer(temp.path(), None)
+    ensure_sandbox_machine_running_with_observer(temp.path(), None)
         .await
         .expect("corrupt recovery settings should fall back to default machine memory");
 

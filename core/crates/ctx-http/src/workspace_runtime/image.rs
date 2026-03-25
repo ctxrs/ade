@@ -63,41 +63,22 @@ pub(crate) async fn prefetch_container_startup_artifacts_with_overrides(
     if image.is_empty() {
         anyhow::bail!("image is required");
     }
-    let download_aggregate = ManagedDownloadAggregate::default();
     let prefetch_default_image_tar =
         image == DEFAULT_CONTAINER_IMAGE && bundled_default_container_image_tar().is_none();
-    let runtime_download = super::machine::ensure_managed_podman_runtime_with_override(
-        data_root,
-        overrides.and_then(|value| value.podman_runtime_source.as_ref()),
-        observer,
-        Some(download_aggregate.clone()),
-    );
-    let machine_cache_download = async {
-        if podman_machine_required() {
-            let _ = ensure_managed_podman_machine_cache(
-                data_root,
-                observer,
-                Some(download_aggregate.clone()),
-            )
-            .await?;
-        }
-        Ok::<(), anyhow::Error>(())
-    };
     let image_tar_download = async {
         if prefetch_default_image_tar {
             return ensure_managed_default_container_image_tar_with_override(
                 data_root,
                 overrides.and_then(|value| value.default_image_source.as_ref()),
                 observer,
-                Some(download_aggregate.clone()),
+                Some(ManagedDownloadAggregate::default()),
             )
             .await
             .map(Some);
         }
         Ok(None)
     };
-    let (_, _, prefetched_image_tar) =
-        tokio::try_join!(runtime_download, machine_cache_download, image_tar_download)?;
+    let prefetched_image_tar = image_tar_download.await?;
     if let Some(prefetched_image_tar) = prefetched_image_tar {
         observe_log(
             observer,
@@ -140,7 +121,9 @@ pub(crate) async fn prefetch_container_image_with_overrides(
     }
     prefetch_container_startup_artifacts_with_overrides(data_root, image, overrides, observer)
         .await?;
-    ensure_podman_machine_running_with_observer(data_root, observer).await?;
+    if !sandbox_engine_ready(data_root).await.unwrap_or(false) {
+        anyhow::bail!("native sandbox container runtime is not reachable for image prewarm");
+    }
     observe_phase(
         observer,
         HarnessSetupPhase::ImageCheck,
@@ -172,16 +155,16 @@ pub async fn container_image_present(data_root: &Path, image: &str) -> Result<bo
     if image.is_empty() {
         anyhow::bail!("image is required");
     }
-    let mut cmd = podman_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("image").arg("exists").arg("--").arg(image);
-    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+    let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
     if output.status.success() {
         return Ok(true);
     }
     match output.status.code() {
         Some(1) => Ok(false),
         _ => anyhow::bail!(
-            "podman image exists failed: {}",
+            "container image exists failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         ),
     }
@@ -232,7 +215,7 @@ pub(super) async fn ensure_container_image_available(
     }
 
     anyhow::bail!(
-        "container image '{}' is not present; registry pulls are disabled, so the image must already exist in podman",
+        "container image '{}' is not present; registry pulls are disabled, so the image must already exist in the local sandbox runtime",
         image
     );
 }
@@ -376,36 +359,39 @@ async fn load_container_image_tar(
     image: &str,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<()> {
-    let mut cmd = podman_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("load").arg("-i").arg(tar);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     cmd.kill_on_drop(true);
     let mut child = cmd
         .spawn()
-        .with_context(|| format!("spawning podman load for {}", tar.display()))?;
+        .with_context(|| format!("spawning container image load for {}", tar.display()))?;
     let stdout = child
         .stdout
         .take()
-        .context("podman load stdout was not captured")?;
+        .context("container image load stdout was not captured")?;
     let stderr = child
         .stderr
         .take()
-        .context("podman load stderr was not captured")?;
+        .context("container image load stderr was not captured")?;
     let stdout_task = tokio::spawn(read_child_pipe(stdout));
     let stderr_task = tokio::spawn(read_child_pipe(stderr));
-    let deadline = tokio::time::Instant::now() + PODMAN_LOAD_TIMEOUT;
+    let deadline = tokio::time::Instant::now() + SANDBOX_IMAGE_LOAD_TIMEOUT;
     let started = tokio::time::Instant::now();
     let mut last_heartbeat = started;
 
     let output = loop {
-        if let Some(status) = child.try_wait().context("polling podman load process")? {
+        if let Some(status) = child
+            .try_wait()
+            .context("polling container image load process")?
+        {
             let stdout = stdout_task
                 .await
-                .context("joining podman load stdout capture")??;
+                .context("joining container image load stdout capture")??;
             let stderr = stderr_task
                 .await
-                .context("joining podman load stderr capture")??;
+                .context("joining container image load stderr capture")??;
             break std::process::Output {
                 status,
                 stdout,
@@ -418,13 +404,13 @@ async fn load_container_image_tar(
             let status = child
                 .wait()
                 .await
-                .context("waiting for timed out podman load")?;
+                .context("waiting for timed out container image load")?;
             let stdout = stdout_task
                 .await
-                .context("joining timed out podman load stdout capture")??;
+                .context("joining timed out container image load stdout capture")??;
             let stderr = stderr_task
                 .await
-                .context("joining timed out podman load stderr capture")??;
+                .context("joining timed out container image load stderr capture")??;
             let output = std::process::Output {
                 status,
                 stdout,
@@ -433,13 +419,13 @@ async fn load_container_image_tar(
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             if stderr.is_empty() {
                 anyhow::bail!(
-                    "podman load timed out after {}s",
-                    PODMAN_LOAD_TIMEOUT.as_secs()
+                    "container image load timed out after {}s",
+                    SANDBOX_IMAGE_LOAD_TIMEOUT.as_secs()
                 );
             }
             anyhow::bail!(
-                "podman load timed out after {}s: {stderr}",
-                PODMAN_LOAD_TIMEOUT.as_secs()
+                "container image load timed out after {}s: {stderr}",
+                SANDBOX_IMAGE_LOAD_TIMEOUT.as_secs()
             );
         }
 
@@ -469,15 +455,15 @@ async fn load_container_image_tar(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if stderr.is_empty() {
-            anyhow::bail!("podman load failed (status: {})", output.status);
+            anyhow::bail!("container image load failed (status: {})", output.status);
         }
-        anyhow::bail!("podman load failed: {stderr}");
+        anyhow::bail!("container image load failed: {stderr}");
     }
     if container_image_present(data_root, image).await? {
         return Ok(());
     }
     anyhow::bail!(
-        "podman load reported success but image '{}' is still missing",
+        "container image load reported success but image '{}' is still missing",
         image
     );
 }
@@ -494,10 +480,10 @@ pub async fn container_image_status(data_root: &Path, image: &str) -> Result<Con
     if image.is_empty() {
         anyhow::bail!("image is required");
     }
-    let output = match podman_command(data_root) {
+    let output = match sandbox_container_command(data_root) {
         Ok(mut cmd) => {
             cmd.arg("image").arg("exists").arg("--").arg(image);
-            command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await
+            command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await
         }
         Err(err) => {
             return Ok(ContainerImageStatus {
@@ -571,7 +557,7 @@ mod tests {
     }
 
     fn env_var_test_lock() -> &'static tokio::sync::Mutex<()> {
-        crate::test_support::podman_env_test_lock()
+        crate::test_support::sandbox_cli_env_test_lock()
     }
 
     #[derive(Default)]
@@ -602,21 +588,24 @@ mod tests {
     async fn load_container_image_emits_heartbeat_logs_and_progress_while_waiting() {
         let _serial = env_var_test_lock().lock().await;
         let temp = tempdir().expect("tempdir");
-        let podman_path = temp.path().join("podman.sh");
+        let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
         let marker_path = temp.path().join("image-present");
         let tar_path = temp.path().join("ctx-harness.tar");
         std::fs::write(&tar_path, b"fake-image-tar").expect("write image tar");
         std::fs::write(
-            &podman_path,
+            &sandbox_cli_path,
             format!(
-                "#!/bin/sh\nset -eu\nmarker='{}'\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  sleep 0.25\n  : > \"$marker\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$marker\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nprintf 'unexpected podman invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+                "#!/bin/sh\nset -eu\nmarker='{}'\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  sleep 0.25\n  : > \"$marker\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$marker\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nprintf 'unexpected sandbox CLI invocation: %s\\n' \"$*\" >&2\nexit 1\n",
                 marker_path.display()
             ),
         )
-        .expect("write podman shim");
-        std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod podman shim");
-        let _guard = EnvGuard::set(PODMAN_PATH_ENV, &podman_path.to_string_lossy());
+        .expect("write sandbox CLI shim");
+        std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod sandbox CLI shim");
+        let _guard = EnvGuard::set(
+            CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+            &sandbox_cli_path.to_string_lossy(),
+        );
         let observer = RecordingObserver::default();
 
         load_container_image_tar(

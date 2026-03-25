@@ -584,8 +584,6 @@ mod tests {
             "execution": {
                 "mode": "container",
                 "container": {
-                    "runtime": "avf_linux_vm",
-                    "mount_mode": "disk_isolated",
                     "network_mode": "llm_only",
                     "allowlist": [],
                     "image": null,
@@ -612,18 +610,13 @@ mod tests {
                 "merge_queue": { "mode": "allowlist", "allowlist": ["github.com"] },
                 "worktree_setup": { "mode": "all", "allowlist": [] },
                 "user_shell": { "mode": "all", "allowlist": [] }
-            },
-            "default_container_runtime": "avf_linux_vm"
+            }
         });
 
         let parsed: PublicSettings = serde_json::from_value(payload).unwrap();
         assert_eq!(
-            parsed.default_container_runtime,
-            Some(ContainerRuntimeKind::AvfLinuxVm)
-        );
-        assert_eq!(
-            parsed.execution.unwrap().container.runtime,
-            ContainerRuntimeKind::AvfLinuxVm
+            parsed.execution.unwrap().container.network_mode,
+            ContainerNetworkMode::LlmOnly
         );
         assert_eq!(
             parsed.sandboxing.unwrap().provider_control_mode,

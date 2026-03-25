@@ -119,7 +119,7 @@ export function useWorkspaceSetupCreate({
     repoBranch,
     workspaceName,
     networkAllowlist,
-    useDiskIsolatedStaging,
+    useSandboxStaging,
     targetBranch,
     verifyCommand,
     mergeQueueSkipped,
@@ -196,7 +196,7 @@ export function useWorkspaceSetupCreate({
       }
     }
 
-    if (selections.source === "clone" && !useDiskIsolatedStaging) {
+    if (selections.source === "clone" && !useSandboxStaging) {
       const dest = parseCloneDestPath(sourcePath);
       if (!dest) {
         setCreateError("Destination must be an absolute path (e.g. /Users/example-user/projects/ or /Users/example-user/projects/repo-name).");
@@ -221,7 +221,7 @@ export function useWorkspaceSetupCreate({
       return true;
     }
 
-    if (selections.source === "new" && !useDiskIsolatedStaging) {
+    if (selections.source === "new" && !useSandboxStaging) {
       const destPath = sourcePath.trim().replace(/\/+$/, "");
       if (!destPath) {
         setCreateError("Destination folder is required.");
@@ -440,7 +440,7 @@ export function useWorkspaceSetupCreate({
       } else if (selections.source === "clone") {
         let destParent: string;
         let destName: string | null;
-        if (useDiskIsolatedStaging) {
+        if (useSandboxStaging) {
           const staging = await repoStagingPath();
           destParent = staging.path;
           destName = deriveRepoNameFromUrl(repoUrl) || workspaceName.trim() || null;
@@ -463,13 +463,13 @@ export function useWorkspaceSetupCreate({
           source: selections.source,
           workspaceName,
           repoUrl,
-          destPath: useDiskIsolatedStaging ? null : sourcePath,
-          useDiskIsolatedStaging,
+          destPath: useSandboxStaging ? null : sourcePath,
+          useSandboxStaging,
           existingWorkspaceNames,
         });
       } else if (selections.source === "new") {
         let destPath: string;
-        if (useDiskIsolatedStaging) {
+        if (useSandboxStaging) {
           const staging = await repoStagingPath();
           destPath = staging.path;
         } else {
@@ -484,7 +484,7 @@ export function useWorkspaceSetupCreate({
           workspaceName,
           repoUrl,
           destPath,
-          useDiskIsolatedStaging,
+          useSandboxStaging,
           existingWorkspaceNames,
         });
       } else {
@@ -492,11 +492,11 @@ export function useWorkspaceSetupCreate({
       }
 
       const workspaceKind = selections.location === "remote" ? "remote" : "local";
-      const executionMode = selections.container === "no-container" ? "host" : "container";
+      const executionMode = selections.container === "host" ? "host" : "sandbox";
       let pendingRouteLaunch: {
         workspaceId: string;
         workspaceKind: "local" | "remote";
-        executionMode: "host" | "container";
+        executionMode: "host" | "sandbox";
         source: "wizard";
         startedAtMs: number;
       } | null = null;
@@ -505,7 +505,7 @@ export function useWorkspaceSetupCreate({
         workspaceId = idToString(created.id);
       }
 
-      const environment = selections.container === "no-container"
+      const environment = selections.container === "host"
         ? "host"
         : "sandbox";
       const allowlist = parseNetworkAllowlist(networkAllowlist);
@@ -516,11 +516,11 @@ export function useWorkspaceSetupCreate({
           : "llm_only";
       await updateWorkspaceExecutionConfig(workspaceId, {
         environment,
-        network_mode: selections.container !== "no-container" ? netMode : null,
-        allowlist: selections.container !== "no-container" && netMode === "allowlist" ? allowlist : null,
+        network_mode: selections.container !== "host" ? netMode : null,
+        allowlist: selections.container !== "host" && netMode === "allowlist" ? allowlist : null,
       });
 
-      if (selections.container !== "no-container") {
+      if (selections.container !== "host") {
         try {
           await waitForLaunchCompletion(workspaceId);
           trackWorkspaceLaunchCompleted({

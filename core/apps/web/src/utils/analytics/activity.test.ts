@@ -146,7 +146,7 @@ describe("analytics events", () => {
     trackWorkspaceLaunchCompleted({
       workspaceId: "ws_123",
       workspaceKind: "local",
-      executionMode: "container",
+      executionMode: "sandbox",
       source: "wizard",
       startedAtMs: Date.parse("2026-03-10T00:00:00.000Z"),
       result: "ready",
@@ -156,7 +156,7 @@ describe("analytics events", () => {
     trackWorkspaceLaunchCompleted({
       workspaceId: "ws_123",
       workspaceKind: "local",
-      executionMode: "container",
+      executionMode: "sandbox",
       source: "wizard",
       startedAtMs: Date.parse("2026-03-10T00:00:00.000Z"),
       result: "ready",
@@ -169,7 +169,7 @@ describe("analytics events", () => {
       1,
       expect.objectContaining({
         click_to_launch_ready_ms: 10000,
-        execution_mode: "container",
+        execution_mode: "sandbox",
         result: "ready",
       }),
     );
@@ -178,7 +178,7 @@ describe("analytics events", () => {
       1,
       expect.objectContaining({
         click_to_workspace_route_ms: 10000,
-        execution_mode: "container",
+        execution_mode: "sandbox",
       }),
     );
     expect(

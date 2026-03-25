@@ -20,7 +20,7 @@ const routeScopeFixture = (
   overrides?: Partial<WorkspaceSetupRouteScope>,
 ): WorkspaceSetupRouteScope => ({
   provisioningScope: createProvisioningScope(createDesktopLocalDaemonTargetScope(), "container"),
-  containerSelection: "disk-isolated",
+  containerSelection: "sandbox",
   ...overrides,
 });
 
@@ -52,7 +52,7 @@ const authImportCandidate = (
 describe("workspaceSetupProvisioningMachine", () => {
   it("drops stale completions after the route scope changes", () => {
     const scopeA = routeScopeFixture();
-    const scopeB = routeScopeFixture({ containerSelection: "no-container" });
+    const scopeB = routeScopeFixture({ containerSelection: "host" });
 
     const startedA = beginWorkspaceSetupProvisioningRefresh(
       createInitialWorkspaceSetupProvisioningMachineState(),
@@ -106,7 +106,7 @@ describe("workspaceSetupProvisioningMachine", () => {
 
     expect(withTitling.routePlan).toEqual({
       targetKey: serializeWorkspaceSetupRouteScope(scopeB),
-      containerSelection: "no-container",
+      containerSelection: "host",
       includeHarnessDownloads: false,
       includeAuthImport: false,
       includeTitling: false,

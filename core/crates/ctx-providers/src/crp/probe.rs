@@ -349,7 +349,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn probe_crp_runtime_launch_routes_avf_linux_vm_through_helper() {
+    async fn probe_crp_runtime_launch_routes_shared_vm_container_through_helper() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let log_path = tmp.path().join("helper.log");
         let helper = write_probe_script(
@@ -363,7 +363,7 @@ mod tests {
         let mut env = HashMap::new();
         env.insert(
             "CTX_HARNESS_RUNTIME_KIND".to_string(),
-            "avf_linux_vm".to_string(),
+            "shared_vm_container".to_string(),
         );
         env.insert(
             "CTX_AVF_LINUX_HELPER_PATH".to_string(),
@@ -418,7 +418,7 @@ mod tests {
             }
         };
         assert!(logged.contains("shared-vm-exec"));
-        assert!(logged.contains("--command podman"));
+        assert!(logged.contains("--command nerdctl"));
         assert!(logged.contains("--workdir /ctx/ws/worktrees/wt-456/src"));
         assert!(logged.contains("ctx-harness-ws-123"));
         assert!(logged.contains("/bin/sh"));

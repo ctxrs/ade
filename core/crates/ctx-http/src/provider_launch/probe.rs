@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -13,7 +13,9 @@ use crate::harness_sources::{self, HarnessSourceKind, ResolvedHarnessSource};
 use crate::logs;
 use crate::provider_accounts;
 use crate::settings::{ContainerMountMode, ExecutionMode};
-use crate::worktree_data_plane::live_worktree_root_for_mode;
+use crate::worktree_data_plane::{
+    apply_data_plane_to_execution_settings, resolve_worktree_data_plane, WorktreeDataPlane,
+};
 
 pub(crate) struct WorkspaceRuntimeProbeContext {
     pub(crate) source: ResolvedHarnessSource,
@@ -120,12 +122,15 @@ fn probe_worktree_priority(
     data_root: &Path,
     workspace: &Workspace,
     worktree: &Worktree,
+    sandbox_bound_worktree_ids: &HashSet<WorktreeId>,
 ) -> Option<u8> {
     if worktree.root_path == workspace.root_path {
         return Some(0);
     }
 
-    if Path::new(&worktree.root_path) == managed_worktree_path(data_root, workspace.id, worktree.id)
+    if sandbox_bound_worktree_ids.contains(&worktree.id)
+        || Path::new(&worktree.root_path)
+            == managed_worktree_path(data_root, workspace.id, worktree.id)
     {
         return Some(1);
     }
@@ -137,6 +142,7 @@ fn select_probe_worktree(
     data_root: &Path,
     workspace: &Workspace,
     worktrees: &[Worktree],
+    sandbox_bound_worktree_ids: &HashSet<WorktreeId>,
 ) -> Result<Option<Worktree>, String> {
     if worktrees.is_empty() {
         return Ok(None);
@@ -145,7 +151,7 @@ fn select_probe_worktree(
     let mut selected: Option<(u8, Worktree)> = None;
     let mut stale_paths = Vec::new();
     for worktree in worktrees {
-        match probe_worktree_priority(data_root, workspace, worktree) {
+        match probe_worktree_priority(data_root, workspace, worktree, sandbox_bound_worktree_ids) {
             Some(priority) => {
                 if selected
                     .as_ref()
@@ -165,7 +171,7 @@ fn select_probe_worktree(
 
     stale_paths.sort();
     Err(format!(
-        "container provider probe requires an explicit ctx-managed worktree; workspace '{}' has no worktree at the workspace root or ctx-managed path (found: {})",
+        "container provider probe requires an explicit workspace-root or sandbox-managed worktree; workspace '{}' has no eligible probe root (found: {})",
         workspace.root_path,
         stale_paths.join(", ")
     ))
@@ -196,16 +202,15 @@ fn synthetic_probe_worktree(workspace: &Workspace) -> Worktree {
 }
 
 fn probe_cwd_for_workspace_runtime(
-    data_root: &Path,
-    workspace: &Workspace,
+    data_plane: &WorktreeDataPlane,
     worktree: &Worktree,
     mode: ExecutionMode,
     mount_mode: ContainerMountMode,
 ) -> PathBuf {
-    if matches!(mode, ExecutionMode::Container)
+    if matches!(mode, ExecutionMode::Sandbox)
         && matches!(mount_mode, ContainerMountMode::DiskIsolated)
     {
-        return live_worktree_root_for_mode(data_root, workspace, worktree, mode);
+        return data_plane.live_worktree_root.clone();
     }
     PathBuf::from(&worktree.root_path)
 }
@@ -272,11 +277,47 @@ async fn provider_context_for_workspace_runtime(
         .map_err(|err| {
             logs::redact_sensitive(&format!("loading workspace worktrees failed: {err}"))
         })?;
-    let worktree = select_probe_worktree(&state.core.data_root, workspace, &worktrees)?
-        .unwrap_or_else(|| synthetic_probe_worktree(workspace));
-    let cwd = probe_cwd_for_workspace_runtime(
+    let store = state
+        .store_for_workspace(workspace.id)
+        .await
+        .map_err(|err| {
+            logs::redact_sensitive(&format!(
+                "opening workspace store for provider probe failed: {err:#}"
+            ))
+        })?;
+    let mut sandbox_bound_worktree_ids = HashSet::new();
+    for worktree in &worktrees {
+        if store
+            .get_sandbox_binding(worktree.id)
+            .await
+            .map_err(|err| {
+                logs::redact_sensitive(&format!(
+                    "loading probe sandbox binding failed for worktree {}: {err:#}",
+                    worktree.id.0
+                ))
+            })?
+            .is_some()
+        {
+            sandbox_bound_worktree_ids.insert(worktree.id);
+        }
+    }
+    let worktree = select_probe_worktree(
         &state.core.data_root,
         workspace,
+        &worktrees,
+        &sandbox_bound_worktree_ids,
+    )?
+    .unwrap_or_else(|| synthetic_probe_worktree(workspace));
+    let worktree_data_plane = resolve_worktree_data_plane(state, &worktree)
+        .await
+        .map_err(|err| {
+            logs::redact_sensitive(&format!(
+                "resolving probe worktree data plane failed: {err:#}"
+            ))
+        })?;
+    let effective = apply_data_plane_to_execution_settings(&effective, &worktree_data_plane);
+    let cwd = probe_cwd_for_workspace_runtime(
+        &worktree_data_plane,
         &worktree,
         effective.mode.clone(),
         effective.container.mount_mode.clone(),
@@ -339,7 +380,7 @@ mod tests {
         finalize_workspace_probe_env, probe_cwd_for_workspace_runtime,
         provider_env_with_runtime_root, select_probe_worktree, synthetic_probe_worktree,
     };
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
@@ -356,6 +397,7 @@ mod tests {
     use crate::provider_accounts;
     use crate::provider_accounts::KIMI_SHARE_DIR_ENV;
     use crate::settings::{ContainerMountMode, ExecutionMode};
+    use crate::worktree_data_plane::WorktreeDataPlane;
 
     static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -436,9 +478,13 @@ mod tests {
         let workspace = sample_workspace("/repo");
         let first = sample_worktree(workspace.id, "/repo-alt");
         let preferred = sample_worktree(workspace.id, "/repo");
-        let selected =
-            select_probe_worktree(Path::new("/ctx"), &workspace, &[first, preferred.clone()])
-                .expect("selection should succeed");
+        let selected = select_probe_worktree(
+            Path::new("/ctx"),
+            &workspace,
+            &[first, preferred.clone()],
+            &HashSet::new(),
+        )
+        .expect("selection should succeed");
         assert_eq!(selected.expect("selected").id, preferred.id);
     }
 
@@ -470,10 +516,32 @@ mod tests {
             bootstrap_script_path: None,
         };
 
-        let selected =
-            select_probe_worktree(data_root.path(), &workspace, std::slice::from_ref(&managed))
-                .expect("selection should succeed");
+        let selected = select_probe_worktree(
+            data_root.path(),
+            &workspace,
+            std::slice::from_ref(&managed),
+            &HashSet::new(),
+        )
+        .expect("selection should succeed");
         assert_eq!(selected.expect("selected").id, managed.id);
+    }
+
+    #[test]
+    fn select_probe_worktree_accepts_sandbox_bound_worktree() {
+        let workspace = sample_workspace("/repo");
+        let sandbox_worktree = sample_worktree(workspace.id, "/shadow/worktrees/one");
+        let mut sandbox_bound_worktree_ids = HashSet::new();
+        sandbox_bound_worktree_ids.insert(sandbox_worktree.id);
+
+        let selected = select_probe_worktree(
+            Path::new("/ctx"),
+            &workspace,
+            std::slice::from_ref(&sandbox_worktree),
+            &sandbox_bound_worktree_ids,
+        )
+        .expect("selection should succeed");
+
+        assert_eq!(selected.expect("selected").id, sandbox_worktree.id);
     }
 
     #[test]
@@ -481,17 +549,24 @@ mod tests {
         let workspace = sample_workspace("/repo");
         let first = sample_worktree(workspace.id, "/repo-a");
         let second = sample_worktree(workspace.id, "/repo-b");
-        let err = select_probe_worktree(Path::new("/ctx"), &workspace, &[first, second])
-            .expect_err("stale worktrees should be rejected explicitly");
-        assert!(err.contains("explicit ctx-managed worktree"));
+        let err = select_probe_worktree(
+            Path::new("/ctx"),
+            &workspace,
+            &[first, second],
+            &HashSet::new(),
+        )
+        .expect_err("stale worktrees should be rejected explicitly");
+        assert!(err.contains("sandbox-managed worktree"));
     }
 
     #[test]
     fn select_probe_worktree_returns_none_for_empty_list() {
         let workspace = sample_workspace("/repo");
-        assert!(select_probe_worktree(Path::new("/ctx"), &workspace, &[])
-            .expect("empty selection should not error")
-            .is_none());
+        assert!(
+            select_probe_worktree(Path::new("/ctx"), &workspace, &[], &HashSet::new())
+                .expect("empty selection should not error")
+                .is_none()
+        );
     }
 
     #[test]
@@ -528,6 +603,7 @@ mod tests {
             data_root.path(),
             &workspace,
             &[managed, root_worktree.clone()],
+            &HashSet::new(),
         )
         .expect("multiple valid candidates should be accepted");
         assert_eq!(selected.expect("selected").id, root_worktree.id);
@@ -586,9 +662,13 @@ mod tests {
             bootstrap_script_path: None,
         };
 
-        let selected =
-            select_probe_worktree(data_root.path(), &workspace, &[first.clone(), second])
-                .expect("multiple valid managed worktrees should be accepted");
+        let selected = select_probe_worktree(
+            data_root.path(),
+            &workspace,
+            &[first.clone(), second],
+            &HashSet::new(),
+        )
+        .expect("multiple valid managed worktrees should be accepted");
         assert_eq!(selected.expect("selected").id, first.id);
     }
 
@@ -602,15 +682,20 @@ mod tests {
 
     #[test]
     fn probe_cwd_uses_container_workspace_root_for_disk_isolated_workspace_root() {
-        let data_root = tempfile::tempdir().expect("tempdir");
         let workspace = sample_workspace("/host/workspace");
         let worktree = sample_worktree(workspace.id, "/host/workspace");
+        let data_plane = WorktreeDataPlane {
+            binding: None,
+            workspace: workspace.clone(),
+            execution_mode: ExecutionMode::Sandbox,
+            live_workspace_root: PathBuf::from("/ctx/ws"),
+            live_worktree_root: PathBuf::from("/ctx/ws"),
+        };
 
         let cwd = probe_cwd_for_workspace_runtime(
-            data_root.path(),
-            &workspace,
+            &data_plane,
             &worktree,
-            ExecutionMode::Container,
+            ExecutionMode::Sandbox,
             ContainerMountMode::DiskIsolated,
         );
 
@@ -619,13 +704,12 @@ mod tests {
 
     #[test]
     fn probe_cwd_uses_container_managed_worktree_root_for_disk_isolated_worktree() {
-        let data_root = tempfile::tempdir().expect("tempdir");
         let workspace = sample_workspace("/host/workspace");
         let worktree_id = WorktreeId(Uuid::new_v4());
         let worktree = Worktree {
             id: worktree_id,
             workspace_id: workspace.id,
-            root_path: managed_worktree_path(data_root.path(), workspace.id, worktree_id)
+            root_path: managed_worktree_path(Path::new("/ctx"), workspace.id, worktree_id)
                 .to_string_lossy()
                 .to_string(),
             base_commit_sha: String::new(),
@@ -645,12 +729,18 @@ mod tests {
             bootstrap_command: None,
             bootstrap_script_path: None,
         };
+        let data_plane = WorktreeDataPlane {
+            binding: None,
+            workspace: workspace.clone(),
+            execution_mode: ExecutionMode::Sandbox,
+            live_workspace_root: PathBuf::from("/ctx/ws"),
+            live_worktree_root: disk_isolated::container_worktree_root(worktree_id),
+        };
 
         let cwd = probe_cwd_for_workspace_runtime(
-            data_root.path(),
-            &workspace,
+            &data_plane,
             &worktree,
-            ExecutionMode::Container,
+            ExecutionMode::Sandbox,
             ContainerMountMode::DiskIsolated,
         );
 

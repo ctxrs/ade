@@ -83,21 +83,14 @@ const parseAvfLinuxGuestRuntimeVersion = (raw) => {
   return bareVersion || "";
 };
 
-const resolveBundledRuntimeIds = (runtimeIds, platform = process.platform) => {
+const resolveBundledRuntimeIds = (runtimeIds) => {
   const ids = Array.isArray(runtimeIds)
     ? runtimeIds
         .map((entry) => String(entry || "").trim())
         .filter((entry) => entry.length > 0)
     : [];
-  const uniqueIds = [...new Set(ids)].sort();
-  if (platform !== "darwin") {
-    return uniqueIds;
-  }
-  return uniqueIds.filter((id) => id !== "podman");
+  return [...new Set(ids)].sort();
 };
-
-const resolveMacOsBundlePodman = (env) =>
-  resolveBoolishFlag(env.CTX_BUNDLE_PODMAN, false, "CTX_BUNDLE_PODMAN");
 
 const readRustStringConst = (filePath, constName) => {
   if (!fs.existsSync(filePath)) {
@@ -276,60 +269,6 @@ const readRuntimeLockRequiredTargets = (kind, fallbackTargets) => {
   return targets.length > 0 ? targets : fallbackTargets;
 };
 
-const readPinnedPodmanConfig = ({ os, arch }) => {
-  const lock = readRuntimeLock();
-  const components = Array.isArray(lock?.components) ? lock.components : [];
-  const component = components.find(
-    (entry) => entry?.kind === "runtime" && entry?.id === "podman" && entry?.os === os && entry?.arch === arch,
-  );
-  if (!component) {
-    throw new Error(`runtime lock ${runtimeLockPath} missing runtime/podman component for ${os}/${arch}`);
-  }
-  const version = String(component.version || "").trim();
-  if (!version) {
-    throw new Error(`runtime lock podman component ${os}/${arch} missing version`);
-  }
-  const sources = Array.isArray(component.sources) ? component.sources : [];
-  const archiveSource = sources.find((source) => {
-    const sourceType = String(source?.source_type || "").trim();
-    const uri = String(source?.uri || "").trim();
-    return (sourceType === "vendor" || sourceType === "ci") && uri.startsWith("http");
-  });
-  if (!archiveSource) {
-    throw new Error(
-      `runtime lock podman component ${os}/${arch} missing vendor/ci archive source URI`,
-    );
-  }
-  const archiveUrl = String(archiveSource.uri || "").trim();
-  const archiveSha256 = String(archiveSource.sha256 || "").trim();
-  if (!archiveSha256) {
-    throw new Error(`runtime lock podman component ${os}/${arch} missing archive sha256`);
-  }
-  const binRel = String(component.bin || "").trim() || "usr/bin/podman";
-  const extractSubdir = String(component.extract_subdir || "").trim();
-  const gvproxyUrl = String(component?.helpers?.gvproxy?.uri || "").trim();
-  const gvproxySha256 = String(component?.helpers?.gvproxy?.sha256 || "").trim();
-  const vfkitUrl = String(component?.helpers?.vfkit?.uri || "").trim();
-  const vfkitSha256 = String(component?.helpers?.vfkit?.sha256 || "").trim();
-  if (!gvproxyUrl || !gvproxySha256 || !vfkitUrl || !vfkitSha256) {
-    throw new Error(
-      `runtime lock podman component ${os}/${arch} missing helper URIs/sha256 for gvproxy or vfkit`,
-    );
-  }
-
-  return {
-    version,
-    archiveUrl,
-    archiveSha256,
-    binRel,
-    extractSubdir,
-    gvproxyUrl,
-    gvproxySha256,
-    vfkitUrl,
-    vfkitSha256,
-  };
-};
-
 const applyPinnedEnv = (env, key, value) => {
   if (!value) return;
   if (env[key] && env[key] !== value) {
@@ -375,7 +314,7 @@ const commandExists = (name) => {
 
 const runtimeProbeArgs = (runtime) => {
   if (runtime === "docker") return ["info", "--format", "{{.ServerVersion}}"];
-  if (runtime === "podman") return ["info", "--format", "json"];
+  if (runtime === "nerdctl") return ["info"];
   return null;
 };
 
@@ -404,7 +343,7 @@ const resolveContainerRuntime = () => {
 
   const runtimeChecks = [
     { name: "docker", installed: commandExists("docker"), usable: false },
-    { name: "podman", installed: commandExists("podman"), usable: false },
+    { name: "nerdctl", installed: commandExists("nerdctl"), usable: false },
   ];
   for (const check of runtimeChecks) {
     if (check.installed) check.usable = runtimeUsable(check.name);
@@ -420,12 +359,12 @@ const resolveContainerRuntime = () => {
     throw new Error(
       `remote daemon bundling found container runtime(s) in PATH but none are usable (${installedButUnusable.join(
         ", ",
-      )}). Ensure the runtime daemon/service is running (for example, start Docker Desktop or podman machine) and rerun desktop prep.`,
+      )}). Ensure the runtime daemon/service is running (for example, start Docker Desktop or containerd) and rerun desktop prep.`,
     );
   }
 
   throw new Error(
-    "remote daemon bundling requires docker or podman in PATH. Install a container runtime and rerun desktop prep.",
+    "remote daemon bundling requires docker or nerdctl in PATH. Install a container runtime and rerun desktop prep.",
   );
 };
 
@@ -724,26 +663,6 @@ const syncBundles = () => {
   if (requiredImageIds.length === 0 || !bundleHarnessImages) {
     env.CTX_BUNDLE_SKIP_IMAGES = env.CTX_BUNDLE_SKIP_IMAGES || "1";
   }
-  // Shipped macOS desktop prep follows the AVF guest-runtime path. Bundled Podman is
-  // legacy opt-in only and must be requested explicitly with CTX_BUNDLE_PODMAN=1.
-  if (process.platform === "darwin") {
-    const bundlePodman = resolveMacOsBundlePodman(env);
-    env.CTX_BUNDLE_PODMAN = bundlePodman ? "1" : "0";
-    if (bundlePodman) {
-      // Podman is represented as a runtime artifact; force runtime lane on when explicitly bundling it.
-      env.CTX_BUNDLE_SKIP_RUNTIMES = "0";
-      const pinnedPodman = readPinnedPodmanConfig({ os: hostManifestOs, arch: hostManifestArch });
-      applyPinnedEnv(env, "PODMAN_VERSION", pinnedPodman.version);
-      applyPinnedEnv(env, "PODMAN_ARCHIVE_URL", pinnedPodman.archiveUrl);
-      applyPinnedEnv(env, "PODMAN_ARCHIVE_SHA256", pinnedPodman.archiveSha256);
-      applyPinnedEnv(env, "PODMAN_BIN_REL", pinnedPodman.binRel);
-      applyPinnedEnv(env, "PODMAN_EXTRACT_SUBDIR", pinnedPodman.extractSubdir);
-      applyPinnedEnv(env, "PODMAN_GVPROXY_URL", pinnedPodman.gvproxyUrl);
-      applyPinnedEnv(env, "PODMAN_GVPROXY_SHA256", pinnedPodman.gvproxySha256);
-      applyPinnedEnv(env, "PODMAN_VFKIT_URL", pinnedPodman.vfkitUrl);
-      applyPinnedEnv(env, "PODMAN_VFKIT_SHA256", pinnedPodman.vfkitSha256);
-    }
-  }
   const res = childProcess.spawnSync(bundleScript, {
     env,
     stdio: "inherit",
@@ -784,7 +703,6 @@ const syncBundles = () => {
         CTX_BUNDLE_LOCAL_ADAPTERS: "off",
         CTX_BUNDLE_BUILD_LOCAL_ADAPTERS: "0",
         CTX_BUNDLE_HARNESS_IMAGE: shouldBundleLinuxImage ? "1" : "0",
-        CTX_BUNDLE_PODMAN: "0",
       };
       const linuxRes = childProcess.spawnSync(bundleScript, {
         env: linuxEnv,
@@ -802,9 +720,11 @@ const syncBundles = () => {
     for (const runtimeId of bundledRuntimeIds) {
       assertBundledRuntimeTargets(destBundleDir, runtimeId, requiredRuntimeTargets);
     }
-    if (parseBoolish(env.CTX_BUNDLE_PODMAN) === true) {
-      assertBundledRuntimeTargets(destBundleDir, "podman", [{ os: hostManifestOs, arch: hostManifestArch }]);
-    }
+  }
+
+  const stagedAvfGuestRuntime = stageAvfLinuxGuestRuntime(destBundleDir);
+  for (const runtimeId of bundledRuntimeIds) {
+    assertBundledRuntimeTargets(destBundleDir, runtimeId, requiredRuntimeTargets);
   }
 
   if (
@@ -826,7 +746,10 @@ const syncBundles = () => {
     );
   }
 
-  return destBundleDir;
+  return {
+    bundleDir: destBundleDir,
+    stagedAvfGuestRuntime,
+  };
 };
 
 const verifyExistingBundles = () => {
@@ -946,12 +869,15 @@ const main = () => {
     ctxMcp: copySidecar("ctx-mcp"),
     avfLinuxHelper: process.platform === "darwin" ? copySidecar("ctx-avf-linux-helper") : null,
     webDist: copyWebDist(),
-    bundles: syncBundlesEnabled ? syncBundles() : verifyExistingBundles(),
+    bundleInfo: syncBundlesEnabled
+      ? syncBundles()
+      : { bundleDir: verifyExistingBundles(), stagedAvfGuestRuntime: null },
   };
-  const stagedAvfGuestRuntime = stageAvfLinuxGuestRuntime(copied.bundles);
-  if (stagedAvfGuestRuntime) {
-    copied.avfLinuxGuestRuntime = stagedAvfGuestRuntime.runtimeRootDir;
+  copied.bundles = copied.bundleInfo.bundleDir;
+  if (copied.bundleInfo.stagedAvfGuestRuntime) {
+    copied.avfLinuxGuestRuntime = copied.bundleInfo.stagedAvfGuestRuntime.runtimeRootDir;
   }
+  delete copied.bundleInfo;
 
   console.log("desktop_sync_resources:", copied);
 };
@@ -963,7 +889,6 @@ if (require.main === module) {
     copySidecarBinary,
     parseAvfLinuxGuestRuntimeVersion,
     resolveBundledRuntimeIds,
-    resolveMacOsBundlePodman,
     stageAvfLinuxGuestRuntime,
   };
 }

@@ -73,13 +73,24 @@ fn should_run() -> bool {
         return false;
     }
     matches!(
-        env::var("CTX_E2E_PODMAN").ok().as_deref(),
+        env::var("CTX_E2E_SANDBOX").ok().as_deref(),
         Some("1") | Some("true") | Some("yes")
     )
 }
 
-fn podman_env_for_data_root(data_root: &Path) -> Vec<(String, String)> {
-    let xdg_root = data_root.join("podman").join("xdg");
+fn sandbox_cli_binary_for_tests() -> Option<std::path::PathBuf> {
+    if let Some(raw) = env::var_os("CTX_HARNESS_SANDBOX_CLI_PATH") {
+        let path = std::path::PathBuf::from(raw);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    which::which("nerdctl").ok()
+}
+
+fn sandbox_cli_env_for_data_root(data_root: &Path) -> Vec<(String, String)> {
+    let sandbox_root = data_root.join("sandbox");
+    let xdg_root = sandbox_root.join("xdg");
     vec![
         (
             "XDG_CONFIG_HOME".to_string(),
@@ -91,7 +102,23 @@ fn podman_env_for_data_root(data_root: &Path) -> Vec<(String, String)> {
         ),
         (
             "XDG_RUNTIME_DIR".to_string(),
-            xdg_root.join("run").to_string_lossy().to_string(),
+            sandbox_root.join("run").to_string_lossy().to_string(),
+        ),
+        (
+            "HOME".to_string(),
+            sandbox_root.join("home").to_string_lossy().to_string(),
+        ),
+        (
+            "TMPDIR".to_string(),
+            sandbox_root.join("tmp").to_string_lossy().to_string(),
+        ),
+        (
+            "TMP".to_string(),
+            sandbox_root.join("tmp").to_string_lossy().to_string(),
+        ),
+        (
+            "TEMP".to_string(),
+            sandbox_root.join("tmp").to_string_lossy().to_string(),
         ),
     ]
 }
@@ -105,11 +132,12 @@ async fn disk_isolated_task_creation_produces_valid_git_worktree() {
         return;
     }
 
-    let Some(podman_bin) = which::which("podman").ok() else {
+    let Some(sandbox_cli) = sandbox_cli_binary_for_tests() else {
         return;
     };
-    let _podman_path = EnvVarGuard::set("CTX_PODMAN_PATH", podman_bin.as_os_str());
-    if Command::new(&podman_bin)
+    let _sandbox_cli_path =
+        EnvVarGuard::set("CTX_HARNESS_SANDBOX_CLI_PATH", sandbox_cli.as_os_str());
+    if Command::new(&sandbox_cli)
         .arg("version")
         .output()
         .await
@@ -230,7 +258,7 @@ async fn disk_isolated_task_creation_produces_valid_git_worktree() {
         .unwrap();
 
     let container_id = format!("ctx-harness-{}", ws.id.0);
-    let mut cmd = Command::new("podman");
+    let mut cmd = Command::new(&sandbox_cli);
     cmd.arg("exec")
         .arg("--workdir")
         .arg(&worktree.root_path)
@@ -238,7 +266,7 @@ async fn disk_isolated_task_creation_produces_valid_git_worktree() {
         .arg("sh")
         .arg("-lc")
         .arg("git rev-parse --is-inside-work-tree && git rev-parse HEAD >/dev/null");
-    for (k, v) in podman_env_for_data_root(data_dir.path()) {
+    for (k, v) in sandbox_cli_env_for_data_root(data_dir.path()) {
         cmd.env(k, v);
     }
     let output = cmd.output().await.unwrap();
@@ -254,7 +282,7 @@ async fn disk_isolated_task_creation_produces_valid_git_worktree() {
         "expected git rev-parse --is-inside-work-tree to return true"
     );
 
-    let mut mutate = Command::new("podman");
+    let mut mutate = Command::new(&sandbox_cli);
     mutate
         .arg("exec")
         .arg("--workdir")
@@ -263,7 +291,7 @@ async fn disk_isolated_task_creation_produces_valid_git_worktree() {
         .arg("sh")
         .arg("-lc")
         .arg("printf 'hello from container\\n' > file.txt");
-    for (k, v) in podman_env_for_data_root(data_dir.path()) {
+    for (k, v) in sandbox_cli_env_for_data_root(data_dir.path()) {
         mutate.env(k, v);
     }
     let mutate_out = mutate.output().await.unwrap();

@@ -17,7 +17,8 @@ fn managed_artifact_extension(uri: &str) -> &'static str {
     }
 }
 
-pub(super) fn managed_podman_archive_path(
+#[cfg(test)]
+pub(super) fn managed_sandbox_cli_archive_path(
     data_root: &Path,
     source: &bundled_assets::ManagedRuntimeSource,
 ) -> PathBuf {
@@ -26,7 +27,7 @@ pub(super) fn managed_podman_archive_path(
     data_root
         .join("managed")
         .join("downloads")
-        .join("podman")
+        .join("sandbox-cli")
         .join(os)
         .join(arch)
         .join(format!(
@@ -85,7 +86,7 @@ pub(crate) fn extract_archive_to_dir(
             let mut archive = tar::Archive::new(archive_file);
             archive.unpack(out_dir).context("extract tar archive")
         }
-        _ => anyhow::bail!("unsupported podman archive type for {source_uri}"),
+        _ => anyhow::bail!("unsupported sandbox CLI archive type for {source_uri}"),
     }
 }
 

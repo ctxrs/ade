@@ -1,5 +1,7 @@
-use super::{resolve_container_terminal_cwd, sandbox_worktree_root};
+use super::resolve_container_terminal_cwd;
 use crate::disk_isolated;
+use crate::settings::ExecutionMode;
+use crate::worktree_data_plane::{sandbox_worktree_root, WorktreeDataPlane};
 use chrono::Utc;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{VcsKind, Workspace, Worktree};
@@ -39,6 +41,16 @@ fn sample_worktree(workspace: &Workspace, root_path: PathBuf) -> Worktree {
     }
 }
 
+fn sandbox_data_plane(workspace: &Workspace, worktree: &Worktree) -> WorktreeDataPlane {
+    WorktreeDataPlane {
+        binding: None,
+        workspace: workspace.clone(),
+        execution_mode: ExecutionMode::Sandbox,
+        live_workspace_root: PathBuf::from("/ctx/ws"),
+        live_worktree_root: sandbox_worktree_root(workspace, worktree),
+    }
+}
+
 #[test]
 fn sandbox_worktree_root_maps_managed_host_worktree_to_container_root() {
     let data_root = tempfile::tempdir().unwrap();
@@ -50,7 +62,7 @@ fn sandbox_worktree_root_maps_managed_host_worktree_to_container_root() {
     worktree.id = worktree_id;
 
     assert_eq!(
-        sandbox_worktree_root(data_root.path(), &workspace, &worktree),
+        sandbox_worktree_root(&workspace, &worktree),
         disk_isolated::container_worktree_root(worktree_id)
     );
 }
@@ -65,11 +77,12 @@ fn resolve_container_terminal_cwd_maps_host_subdir_into_managed_container_worktr
     let mut worktree = sample_worktree(&workspace, managed_root.clone());
     worktree.id = worktree_id;
     let requested = managed_root.join("src/bin");
+    let data_plane = sandbox_data_plane(&workspace, &worktree);
 
     let cwd = resolve_container_terminal_cwd(
-        data_root.path(),
-        &workspace,
-        Some(&worktree),
+        &data_plane,
+        &PathBuf::from(&workspace.root_path),
+        Some(&managed_root),
         Some(&requested),
     )
     .unwrap();
@@ -82,15 +95,15 @@ fn resolve_container_terminal_cwd_maps_host_subdir_into_managed_container_worktr
 
 #[test]
 fn resolve_container_terminal_cwd_maps_workspace_root_paths_into_container_workspace_root() {
-    let data_root = tempfile::tempdir().unwrap();
     let workspace = sample_workspace("/host/ws");
     let worktree = sample_worktree(&workspace, PathBuf::from("/host/ws"));
     let requested = PathBuf::from("/host/ws/subdir");
+    let data_plane = sandbox_data_plane(&workspace, &worktree);
 
     let cwd = resolve_container_terminal_cwd(
-        data_root.path(),
-        &workspace,
-        Some(&worktree),
+        &data_plane,
+        &PathBuf::from(&workspace.root_path),
+        Some(&PathBuf::from(&worktree.root_path)),
         Some(&requested),
     )
     .unwrap();

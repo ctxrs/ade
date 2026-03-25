@@ -116,7 +116,7 @@ async function moveWizardToStep(
         await clickWizardStepOption(page, "wizard-option-location-local");
         break;
       case "container":
-        await clickWizardStepOption(page, "wizard-option-container-no-container");
+        await clickWizardStepOption(page, "wizard-option-container-host");
         break;
       case "harness-downloads": {
         const skip = page.getByTestId("wizard-harness-skip");

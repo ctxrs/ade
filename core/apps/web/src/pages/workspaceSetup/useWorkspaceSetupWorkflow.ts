@@ -147,7 +147,7 @@ export function useWorkspaceSetupWorkflow({
       repoBranch: draft.repoBranch,
       workspaceName: draft.workspaceName,
       networkAllowlist: draft.networkAllowlist,
-      useDiskIsolatedStaging: flow.useDiskIsolatedStaging,
+      useSandboxStaging: flow.useSandboxStaging,
       importRepoStatus: draft.importRepoStatus,
       importRepoNote: draft.importRepoNote,
       targetBranch: draft.targetBranch,
@@ -281,7 +281,7 @@ export function useWorkspaceSetupWorkflow({
     if (stepKey === "location") {
       flow.invalidateRoutePlan();
     }
-    if (stepKey === "container" && optionId === "no-container") {
+    if (stepKey === "container" && optionId === "host") {
       setters.networkAllowlist("");
     }
     if (stepKey === "network" && optionId !== "allowlist") {
@@ -362,7 +362,7 @@ export function useWorkspaceSetupWorkflow({
       localTitlingWarmupRouteKeyRef.current = null;
       return;
     }
-    const routeScope = createWorkspaceSetupRouteScope(localTarget, "no-container");
+    const routeScope = createWorkspaceSetupRouteScope(localTarget, "host");
     const routeKey = serializeWorkspaceSetupRouteScope(routeScope);
     if (localTitlingWarmupRouteKeyRef.current === routeKey) {
       return;
@@ -387,7 +387,7 @@ export function useWorkspaceSetupWorkflow({
       localAuthWarmupRouteKeyRef.current = null;
       return;
     }
-    const routeScope = createWorkspaceSetupRouteScope(localTarget, "no-container");
+    const routeScope = createWorkspaceSetupRouteScope(localTarget, "host");
     const routeKey = serializeWorkspaceSetupRouteScope(routeScope);
     if (localAuthWarmupRouteKeyRef.current === routeKey) {
       return;

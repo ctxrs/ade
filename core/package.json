@@ -35,7 +35,7 @@
     "test:bundles:codex-patch-series": "bash -lc '../scripts/codex_release_upgrade.sh --mode check --from-provider-matrix --verify-sync'",
     "test:bundles:codex-archive-artifacts": "node scripts/provider_matrix_archive_artifact_gate.cjs --provider codex",
     "test:bundles:manifest-required-providers": "bash -lc '../scripts/tests/validate_required_bundle_manifest.sh ${CTX_BUNDLE_MANIFEST:?set CTX_BUNDLE_MANIFEST to bundle manifest path}'",
-    "test:bundles:runtime-lock-podman": "bash -lc '../scripts/tests/runtime_lock_podman_pinned.sh'",
+    "test:bundles:runtime-lock-sandbox": "bash -lc '../scripts/tests/runtime_lock_sandbox_contract.sh'",
     "test:bundles:docker-only": "bash -lc '../scripts/tests/ensure_bundled_harnesses_docker_only.sh'",
     "test:bundles:droid-managed": "bash -lc '../scripts/tests/ensure_bundled_harnesses_droid_dependencies.sh'",
     "test:bundles:opencode-managed": "bash -lc '../scripts/tests/ensure_bundled_harnesses_opencode_managed.sh'",

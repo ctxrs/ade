@@ -7,7 +7,7 @@ FIXTURE_DIR="${SCRIPT_DIR}/remote-fixture"
 usage() {
   cat <<'USAGE' >&2
 usage:
-  remote_ssh_fixture.sh start [--runtime auto|docker|podman] [--auth-mode key|password] [--password VALUE] [--state-file PATH] [--log-dir PATH] [--user NAME]
+  remote_ssh_fixture.sh start [--runtime auto|docker|nerdctl] [--auth-mode key|password] [--password VALUE] [--state-file PATH] [--log-dir PATH] [--user NAME]
   remote_ssh_fixture.sh stop [--state-file PATH]
   remote_ssh_fixture.sh print-env [--state-file PATH]
 
@@ -76,7 +76,7 @@ runtime_healthy() {
 pick_runtime() {
   local requested="$1"
   case "$requested" in
-    docker|podman)
+    docker|nerdctl)
       ensure_exists "$requested"
       runtime_healthy "$requested" || die "${requested} is installed but not responding"
       echo "$requested"
@@ -88,18 +88,18 @@ pick_runtime() {
           echo "docker"
           return 0
         fi
-        log "docker is installed but not responding; trying podman"
+        log "docker is installed but not responding; trying nerdctl"
       fi
-      if command -v podman >/dev/null 2>&1; then
-        if runtime_healthy podman; then
-          echo "podman"
+      if command -v nerdctl >/dev/null 2>&1; then
+        if runtime_healthy nerdctl; then
+          echo "nerdctl"
           return 0
         fi
-        log "podman is installed but not responding"
+        log "nerdctl is installed but not responding"
       fi
       ;;
   esac
-  die "no supported container runtime found (tried docker, podman)"
+  die "no supported container runtime found (tried docker, nerdctl)"
 }
 
 parse_flags() {

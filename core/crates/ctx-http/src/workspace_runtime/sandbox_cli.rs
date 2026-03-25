@@ -1,70 +1,72 @@
 use super::*;
 
-fn podman_available(data_root: &Path) -> bool {
+fn explicit_sandbox_cli_binary_path() -> Option<PathBuf> {
+    let raw = std::env::var(CTX_HARNESS_SANDBOX_CLI_PATH_ENV).ok()?;
+    let path = PathBuf::from(raw.trim());
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn sandbox_cli_available(data_root: &Path) -> bool {
     if cfg!(test) {
-        if let Ok(value) = std::env::var("CTX_TEST_PODMAN_AVAILABLE") {
+        if let Ok(value) = std::env::var("CTX_TEST_SANDBOX_CLI_AVAILABLE") {
             let value = value.trim().to_ascii_lowercase();
             return matches!(value.as_str(), "1" | "true" | "yes" | "y");
         }
+    }
+    if explicit_sandbox_cli_binary_path().is_some() {
+        return true;
     }
     #[cfg(target_os = "macos")]
     if super::avf_linux_runtime_available() && super::avf_linux_vm::helper_path().is_ok() {
         return true;
     }
-    podman_binary_path(data_root).is_some()
+    sandbox_cli_binary_path(data_root).is_some()
 }
 
-pub(super) fn podman_binary_path(data_root: &Path) -> Option<PathBuf> {
-    if let Ok(raw) = std::env::var(PODMAN_PATH_ENV) {
-        let path = PathBuf::from(raw.trim());
-        if path.exists() {
-            return Some(path);
-        }
+pub(super) fn sandbox_cli_binary_path(data_root: &Path) -> Option<PathBuf> {
+    if let Some(path) = explicit_sandbox_cli_binary_path() {
+        return Some(path);
     }
-    if let Some(bundled) = bundled_assets::bundled_podman_runtime() {
-        return Some(bundled.bin);
-    }
-    if let Some(source) = managed_podman_runtime_source() {
-        let managed_path = managed_podman_runtime_bin_path(data_root, &source);
-        if managed_path.exists() {
-            return Some(managed_path);
-        }
-    }
-    None
+    let _ = data_root;
+    which::which("nerdctl").ok()
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PodmanInvocation {
+pub(crate) struct SandboxCliInvocation {
     pub(crate) bin: PathBuf,
     pub(crate) env: HashMap<String, String>,
 }
 
-pub(crate) fn podman_invocation(data_root: &Path) -> Result<PodmanInvocation> {
-    let bin = podman_binary_path(data_root)
-        .ok_or_else(|| anyhow::anyhow!("podman binary unavailable"))?;
-    let env = podman_env_for_data_root(data_root)?;
-    Ok(PodmanInvocation { bin, env })
+pub(crate) fn sandbox_cli_invocation(data_root: &Path) -> Result<SandboxCliInvocation> {
+    let bin = sandbox_cli_binary_path(data_root)
+        .ok_or_else(|| anyhow::anyhow!("sandbox container CLI unavailable"))?;
+    let env = sandbox_cli_env_for_data_root(data_root)?;
+    Ok(SandboxCliInvocation { bin, env })
 }
 
-pub(crate) fn podman_env_for_data_root(data_root: &Path) -> Result<HashMap<String, String>> {
-    let xdg_root = data_root.join("podman").join("xdg");
+pub(crate) fn sandbox_cli_env_for_data_root(data_root: &Path) -> Result<HashMap<String, String>> {
+    let xdg_root = data_root.join("sandbox").join("xdg");
     let xdg_config = xdg_root.join("config");
     let xdg_data = xdg_root.join("data");
-    let xdg_run = podman_runtime_root(data_root).join("run");
-    let podman_home = podman_home_root(data_root);
-    let podman_tmp_root = podman_temp_root(data_root);
+    let xdg_run = data_root.join("sandbox").join("run");
+    let sandbox_home = data_root.join("sandbox").join("home");
+    let sandbox_tmp_root = data_root.join("sandbox").join("tmp");
     std::fs::create_dir_all(&xdg_config)
         .with_context(|| format!("create dir {}", xdg_config.display()))?;
     std::fs::create_dir_all(&xdg_data)
         .with_context(|| format!("create dir {}", xdg_data.display()))?;
     std::fs::create_dir_all(&xdg_run)
         .with_context(|| format!("create dir {}", xdg_run.display()))?;
-    std::fs::create_dir_all(&podman_home)
-        .with_context(|| format!("create dir {}", podman_home.display()))?;
-    std::fs::create_dir_all(&podman_tmp_root)
-        .with_context(|| format!("create dir {}", podman_tmp_root.display()))?;
+    std::fs::create_dir_all(&sandbox_home)
+        .with_context(|| format!("create dir {}", sandbox_home.display()))?;
+    std::fs::create_dir_all(&sandbox_tmp_root)
+        .with_context(|| format!("create dir {}", sandbox_tmp_root.display()))?;
     let _ = std::fs::set_permissions(&xdg_run, std::fs::Permissions::from_mode(0o700));
-    let _ = std::fs::set_permissions(&podman_home, std::fs::Permissions::from_mode(0o700));
+    let _ = std::fs::set_permissions(&sandbox_home, std::fs::Permissions::from_mode(0o700));
 
     let mut env = HashMap::new();
     env.insert(
@@ -81,20 +83,28 @@ pub(crate) fn podman_env_for_data_root(data_root: &Path) -> Result<HashMap<Strin
     );
     env.insert(
         "HOME".to_string(),
-        podman_home.to_string_lossy().to_string(),
+        sandbox_home.to_string_lossy().to_string(),
     );
-    let tmp = podman_tmp_root.to_string_lossy().to_string();
+    let tmp = sandbox_tmp_root.to_string_lossy().to_string();
     env.insert("TMPDIR".to_string(), tmp.clone());
     env.insert("TMP".to_string(), tmp.clone());
     env.insert("TEMP".to_string(), tmp);
     Ok(env)
 }
 
-pub(crate) fn podman_command(data_root: &Path) -> Result<Command> {
+pub(crate) fn sandbox_container_command(data_root: &Path) -> Result<Command> {
+    if let Some(bin) = explicit_sandbox_cli_binary_path() {
+        let env = sandbox_cli_env_for_data_root(data_root)?;
+        let mut cmd = Command::new(bin);
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        return Ok(cmd);
+    }
     #[cfg(target_os = "macos")]
     if super::avf_linux_runtime_available() && super::avf_linux_vm::helper_path().is_ok() {
         let helper = super::avf_linux_vm::helper_path()?;
-        let env = podman_env_for_data_root(data_root)?;
+        let env = sandbox_cli_env_for_data_root(data_root)?;
         let mut cmd = Command::new(helper);
         cmd.arg("shared-vm-exec")
             .arg("--data-root")
@@ -102,7 +112,7 @@ pub(crate) fn podman_command(data_root: &Path) -> Result<Command> {
             .arg("--cwd")
             .arg("/")
             .arg("--command")
-            .arg("podman")
+            .arg("nerdctl")
             .arg("--user")
             .arg("root");
         let mut env_pairs = env.into_iter().collect::<Vec<_>>();
@@ -113,7 +123,7 @@ pub(crate) fn podman_command(data_root: &Path) -> Result<Command> {
         cmd.arg("--");
         return Ok(cmd);
     }
-    let inv = podman_invocation(data_root)?;
+    let inv = sandbox_cli_invocation(data_root)?;
     let mut cmd = Command::new(inv.bin);
     for (key, value) in inv.env {
         cmd.env(key, value);
@@ -136,13 +146,13 @@ pub(crate) async fn command_output_with_timeout(
 }
 
 pub fn container_runtime_available(data_root: &Path) -> bool {
-    podman_available(data_root) || managed_podman_runtime_source().is_some()
+    sandbox_cli_available(data_root)
 }
 
-pub async fn podman_engine_ready(data_root: &Path) -> Result<bool> {
-    let mut cmd = podman_command(data_root)?;
+pub async fn sandbox_engine_ready(data_root: &Path) -> Result<bool> {
+    let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("info");
-    match command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await {
+    match command_output_with_timeout(cmd, SANDBOX_INFO_TIMEOUT).await {
         Ok(out) => Ok(out.status.success()),
         Err(_) => Ok(false),
     }
@@ -155,20 +165,20 @@ pub(super) fn command_output_message(output: &std::process::Output) -> String {
 }
 
 pub(super) async fn container_exists(data_root: &Path, name: &str) -> Result<bool> {
-    let mut cmd = podman_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("container").arg("exists").arg(name);
-    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+    let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
     Ok(output.status.success())
 }
 
 pub(super) async fn container_running(data_root: &Path, name: &str) -> Result<Option<bool>> {
-    let mut cmd = podman_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("container")
         .arg("inspect")
         .arg("--format")
         .arg("{{.State.Running}}")
         .arg(name);
-    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+    let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
     if !output.status.success() {
         return Ok(None);
     }
@@ -181,32 +191,34 @@ pub(super) async fn ensure_workspace_volume(
     workspace_id: WorkspaceId,
 ) -> Result<String> {
     let name = format!("ctx-ws-{}", workspace_id.0);
-    let mut inspect = podman_command(data_root)?;
+    let mut inspect = sandbox_container_command(data_root)?;
     inspect.arg("volume").arg("inspect").arg(&name);
-    let out = command_output_with_timeout(inspect, PODMAN_OP_TIMEOUT).await?;
+    let out = command_output_with_timeout(inspect, SANDBOX_OP_TIMEOUT).await?;
     if out.status.success() {
         return Ok(name);
     }
-    let mut create = podman_command(data_root)?;
+    let mut create = sandbox_container_command(data_root)?;
     create.arg("volume").arg("create").arg(&name);
-    let out = command_output_with_timeout(create, PODMAN_OP_TIMEOUT).await?;
+    let out = command_output_with_timeout(create, SANDBOX_OP_TIMEOUT).await?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
         let combined = format!("{stderr}\n{stdout}").trim().to_string();
         if combined.is_empty() {
             anyhow::bail!(
-                "podman volume create failed for {name} (status: {})",
+                "container volume create failed for {name} (status: {})",
                 out.status
             );
         }
-        anyhow::bail!("podman volume create failed for {name}: {combined}");
+        anyhow::bail!("container volume create failed for {name}: {combined}");
     }
     Ok(name)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
     use tempfile::tempdir;
 
     use super::*;
@@ -235,13 +247,39 @@ mod tests {
     }
 
     fn env_var_test_lock() -> &'static tokio::sync::Mutex<()> {
-        crate::test_support::podman_env_test_lock()
+        crate::test_support::sandbox_cli_env_test_lock()
     }
 
     #[tokio::test]
-    async fn podman_available_uses_test_override() {
+    async fn sandbox_cli_available_uses_test_override() {
         let _serial = env_var_test_lock().lock().await;
-        let _guard = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "true");
-        assert!(podman_available(tempdir().unwrap().path()));
+        let _guard = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "true");
+        assert!(sandbox_cli_available(tempdir().unwrap().path()));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sandbox_engine_ready_uses_explicit_cli_override() {
+        let _serial = env_var_test_lock().lock().await;
+        let temp = tempdir().expect("tempdir");
+        let cli_path = temp.path().join("sandbox-cli.sh");
+        std::fs::write(
+            &cli_path,
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  printf '{}\\n'\n  exit 0\nfi\necho \"unexpected invocation: $*\" >&2\nexit 1\n",
+        )
+        .expect("write sandbox cli shim");
+        std::fs::set_permissions(&cli_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod sandbox cli shim");
+        let _guard = EnvVarGuard::set(
+            CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+            &cli_path.to_string_lossy(),
+        );
+
+        assert!(
+            sandbox_engine_ready(temp.path())
+                .await
+                .expect("sandbox engine ready check"),
+            "sandbox engine should honor the explicit CLI override",
+        );
     }
 }

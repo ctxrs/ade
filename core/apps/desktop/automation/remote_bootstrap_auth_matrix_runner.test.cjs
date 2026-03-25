@@ -23,7 +23,7 @@ const runRunner = ({ wrapperBody, cases = "key,password_once" }) => {
   const wrapperPath = writeWrapper(tmp, wrapperBody);
   const result = spawnSync(
     "bash",
-    [runnerPath, "--runtime", "podman", "--cases", cases, "--log-dir", artifactsDir],
+    [runnerPath, "--runtime", "nerdctl", "--cases", cases, "--log-dir", artifactsDir],
     {
       cwd: repoRoot,
       encoding: "utf8",

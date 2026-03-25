@@ -9,7 +9,7 @@ export type WorkspaceSetupCreateIntent = {
   repoBranch: string;
   workspaceName: string;
   networkAllowlist: string;
-  useDiskIsolatedStaging: boolean;
+  useSandboxStaging: boolean;
   importRepoStatus: ImportRepoStatus;
   importRepoNote: string | null;
   targetBranch: string;

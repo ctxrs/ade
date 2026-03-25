@@ -83,20 +83,20 @@ pub struct TerminalCreateRequest {
     pub cols: Option<u16>,
     pub rows: Option<u16>,
     pub env: HashMap<String, String>,
-    pub podman: Option<PodmanTerminalSpec>,
-    pub avf_linux_vm: Option<AvfLinuxTerminalSpec>,
+    pub native_container: Option<NativeContainerTerminalSpec>,
+    pub shared_vm_container: Option<SharedVmContainerTerminalSpec>,
 }
 
 #[derive(Debug, Clone)]
-pub struct PodmanTerminalSpec {
-    pub podman_bin: PathBuf,
-    pub podman_env: HashMap<String, String>,
+pub struct NativeContainerTerminalSpec {
+    pub cli_bin: PathBuf,
+    pub cli_env: HashMap<String, String>,
     pub container_name: String,
     pub workdir: String,
 }
 
 #[derive(Debug, Clone)]
-pub struct AvfLinuxTerminalSpec {
+pub struct SharedVmContainerTerminalSpec {
     pub helper_path: PathBuf,
     pub data_root: PathBuf,
     pub workspace_id: WorkspaceId,
@@ -364,9 +364,9 @@ impl TerminalManager {
             })
             .context("open pty")?;
 
-        let cmd = if let Some(podman) = &req.podman {
-            let mut cmd = CommandBuilder::new(podman.podman_bin.clone());
-            for (key, value) in &podman.podman_env {
+        let cmd = if let Some(native_container) = &req.native_container {
+            let mut cmd = CommandBuilder::new(native_container.cli_bin.clone());
+            for (key, value) in &native_container.cli_env {
                 cmd.env(key, value);
             }
 
@@ -375,31 +375,31 @@ impl TerminalManager {
             cmd.arg("-i");
             cmd.arg("-t");
             cmd.arg("--workdir");
-            cmd.arg(podman.workdir.clone());
+            cmd.arg(native_container.workdir.clone());
             cmd.arg("--env");
             cmd.arg("TERM=xterm-256color");
             for (key, value) in &req.env {
                 cmd.arg("--env");
                 cmd.arg(format!("{key}={value}"));
             }
-            cmd.arg(podman.container_name.clone());
+            cmd.arg(native_container.container_name.clone());
             cmd.arg(req.shell.clone());
             cmd
-        } else if let Some(avf) = &req.avf_linux_vm {
-            let mut cmd = CommandBuilder::new(avf.helper_path.clone());
+        } else if let Some(shared_vm_container) = &req.shared_vm_container {
+            let mut cmd = CommandBuilder::new(shared_vm_container.helper_path.clone());
             cmd.arg("shared-vm-exec");
             cmd.arg("--data-root");
-            cmd.arg(avf.data_root.clone());
+            cmd.arg(shared_vm_container.data_root.clone());
             cmd.arg("--cwd");
             cmd.arg("/");
             cmd.arg("--command");
-            cmd.arg("podman");
+            cmd.arg("nerdctl");
             cmd.arg("--user");
             cmd.arg("root");
-            if let Ok(podman_env) =
-                crate::workspace_runtime::podman_env_for_data_root(&avf.data_root)
-            {
-                let mut env_pairs = podman_env.into_iter().collect::<Vec<_>>();
+            if let Ok(sandbox_env) = crate::workspace_runtime::sandbox_cli_env_for_data_root(
+                &shared_vm_container.data_root,
+            ) {
+                let mut env_pairs = sandbox_env.into_iter().collect::<Vec<_>>();
                 env_pairs.sort_by(|(left, _), (right, _)| left.cmp(right));
                 for (key, value) in env_pairs {
                     cmd.arg("--env");
@@ -412,14 +412,17 @@ impl TerminalManager {
             cmd.arg("-i");
             cmd.arg("-t");
             cmd.arg("--workdir");
-            cmd.arg(avf.workdir.clone());
+            cmd.arg(shared_vm_container.workdir.clone());
             cmd.arg("--env");
             cmd.arg("TERM=xterm-256color");
             for (key, value) in &req.env {
                 cmd.arg("--env");
                 cmd.arg(format!("{key}={value}"));
             }
-            cmd.arg(format!("ctx-harness-{}", avf.workspace_id.0));
+            cmd.arg(format!(
+                "ctx-harness-{}",
+                shared_vm_container.workspace_id.0
+            ));
             cmd.arg(req.shell.clone());
             cmd
         } else {
@@ -533,7 +536,7 @@ impl TerminalManager {
 
         let session = Arc::new(TerminalSessionHandle {
             info,
-            container_backed: req.podman.is_some() || req.avf_linux_vm.is_some(),
+            container_backed: req.native_container.is_some() || req.shared_vm_container.is_some(),
             runtime,
             output_tx,
             status_tx,

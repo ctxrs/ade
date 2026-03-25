@@ -54,11 +54,11 @@ describe("useWorkspaceSetupWorkflow", () => {
       currentStepKeyRef: { current: "harness-downloads" },
       selections: {
         location: "local",
-        container: "disk-isolated",
+        container: "sandbox",
       },
       routePlan: {
-        targetKey: "local|disk-isolated",
-        containerSelection: "disk-isolated",
+        targetKey: "local|sandbox",
+        containerSelection: "sandbox",
         includeHarnessDownloads: true,
         includeAuthImport: false,
         includeTitling: false,
@@ -77,7 +77,7 @@ describe("useWorkspaceSetupWorkflow", () => {
       requiresSelection: false,
       hasSelection: true,
       mergeQueueSkipped: false,
-      useDiskIsolatedStaging: false,
+      useSandboxStaging: false,
       sourceStepValidation: {
         isComplete: true,
         needsSourcePath: false,

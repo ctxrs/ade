@@ -80,6 +80,17 @@ pub(in crate::api) async fn archive_task(
         if other_active {
             continue;
         }
+        let sandbox_binding = match store.get_sandbox_binding(worktree.id).await {
+            Ok(binding) => binding,
+            Err(err) => {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree.id.0,
+                    "failed to load sandbox binding for cleanup: {err:#}"
+                );
+                None
+            }
+        };
         if let Err(err) = vcs_hooks::cleanup_worktree_hooks(
             &state.core.data_root,
             workspace.id,
@@ -95,7 +106,34 @@ pub(in crate::api) async fn archive_task(
                 "failed to remove vcs hooks: {err:#}"
             );
         }
+        if let Some(binding) = sandbox_binding.as_ref() {
+            if let Err(err) = crate::disk_isolated::remove_live_worktree_root(
+                &state.core.data_root,
+                workspace.id,
+                StdPath::new(&binding.live_worktree_root),
+            )
+            .await
+            {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree.id.0,
+                    live_worktree_root = binding.live_worktree_root,
+                    "failed to remove sandbox live worktree root: {err:#}"
+                );
+                errors.push(err);
+            }
+        }
         let Some(root) = managed_worktree_root(&state, &workspace, worktree) else {
+            if sandbox_binding.is_some() {
+                if let Err(err) = store.delete_sandbox_binding(worktree.id).await {
+                    tracing::warn!(
+                        task_id = %task_id.0,
+                        worktree_id = %worktree.id.0,
+                        "failed to delete sandbox binding: {err:#}"
+                    );
+                    errors.push(err);
+                }
+            }
             continue;
         };
         let branch = worktree
@@ -164,6 +202,16 @@ pub(in crate::api) async fn archive_task(
                     branch,
                     "failed to delete worktree branch: {err:#}"
                 );
+            }
+        }
+        if sandbox_binding.is_some() {
+            if let Err(err) = store.delete_sandbox_binding(worktree.id).await {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree.id.0,
+                    "failed to delete sandbox binding: {err:#}"
+                );
+                errors.push(err);
             }
         }
     }

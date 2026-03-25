@@ -73,7 +73,7 @@ pub async fn ensure_builder_ready(data_root: &Path) -> Result<()> {
     .await
     .context("ensuring builder image availability")?;
 
-    let mut cmd = harness_runtime::podman_command(data_root)?;
+    let mut cmd = harness_runtime::sandbox_container_command(data_root)?;
     configure_builder_run(
         &mut cmd,
         data_root,
@@ -110,7 +110,7 @@ pub async fn run_command(
     argv: &[String],
     timeout_dur: Duration,
 ) -> Result<std::process::Output> {
-    let mut cmd = harness_runtime::podman_command(data_root)?;
+    let mut cmd = harness_runtime::sandbox_container_command(data_root)?;
     configure_builder_run(&mut cmd, data_root, cwd, env, argv)?;
     harness_runtime::command_output_with_timeout(cmd, timeout_dur)
         .await
@@ -179,7 +179,7 @@ mod tests {
             .expect("--env flag");
         assert!(
             env_flag_index < image_index,
-            "--env flags must be Podman run options before image"
+            "--env flags must be container run options before image"
         );
     }
 

@@ -152,11 +152,6 @@ impl AppState {
             ops_events.clone(),
         ));
         execution_setup.spawn_startup_prewarm();
-        harness_runtime.spawn_background_podman_machine_reclaim(
-            stores.clone(),
-            running_sessions.clone(),
-            terminals.clone(),
-        );
         let workspace_active_snapshot = Arc::new(WorkspaceActiveSnapshotHub::new());
         let web_sessions = Arc::new(WebSessionManager::new());
         let merge_queue_notify = Arc::new(Notify::new());

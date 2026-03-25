@@ -62,9 +62,6 @@ function asExecutionEnvironment(value: unknown): LauncherExecutionEnvironment | 
   if (value === "host" || value === "sandbox") {
     return value;
   }
-  if (typeof value === "string" && value.startsWith("container_")) {
-    return "sandbox";
-  }
   return undefined;
 }
 

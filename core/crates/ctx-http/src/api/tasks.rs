@@ -33,9 +33,9 @@ use crate::vcs_hooks;
 use crate::worktree_bootstrap;
 use ctx_core::ids::{MessageId, RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    ExecutionEnvironment, Message, MessageDelivery, MessageRole, Session, SessionEventType,
-    SessionTurn, SessionTurnStatus, Task, TaskDeltaKind, VcsKind, Workspace, WorkspaceArchivedPage,
-    WorkspaceIndexCursor, Worktree,
+    ExecutionEnvironment, Message, MessageDelivery, MessageRole, SandboxBinding, SandboxProfile,
+    SandboxRuntimeFamily, Session, SessionEventType, SessionTurn, SessionTurnStatus, Task,
+    TaskDeltaKind, VcsKind, Workspace, WorkspaceArchivedPage, WorkspaceIndexCursor, Worktree,
 };
 use ctx_fs::git::delete_branch;
 use ctx_fs::vcs;
@@ -48,8 +48,109 @@ const GLOBAL_INDEX_WRITE_RETRY_BASE_MS: u64 = 40;
 fn execution_environment_from_settings(settings: &ExecutionSettings) -> ExecutionEnvironment {
     match settings.mode {
         ExecutionMode::Host => ExecutionEnvironment::Host,
-        ExecutionMode::Container => ExecutionEnvironment::Sandbox,
+        ExecutionMode::Sandbox => ExecutionEnvironment::Sandbox,
     }
+}
+
+pub(in crate::api) async fn provision_worktree_for_execution(
+    state: &Arc<AppState>,
+    workspace: &Workspace,
+    worktree_id: WorktreeId,
+    base_commit_sha: &str,
+    branch_name: &str,
+    effective: &ExecutionSettings,
+) -> anyhow::Result<(PathBuf, Option<SandboxBinding>)> {
+    let canonical_root = managed_worktree_path(&state.core.data_root, workspace.id, worktree_id);
+    if let Some(parent) = canonical_root.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    create_worktree(
+        &workspace.root_path,
+        &canonical_root,
+        base_commit_sha,
+        branch_name,
+    )
+    .await?;
+
+    if !matches!(effective.mode, ExecutionMode::Sandbox)
+        || !matches!(
+            effective.container.mount_mode,
+            crate::settings::ContainerMountMode::DiskIsolated
+        )
+    {
+        return Ok((canonical_root, None));
+    }
+
+    state
+        .execution
+        .harness
+        .ensure_workspace_container(workspace, effective, &state.core.daemon_url)
+        .await?;
+
+    let (live_worktree_root, runtime_family, host_projection_root) = if matches!(
+        effective.container.runtime,
+        crate::settings::ContainerRuntimeKind::SharedVmContainer
+    ) {
+        let guest_worktree =
+            crate::workspace_runtime::ensure_avf_linux_guest_worktree_from_host_copy(
+                &state.core.data_root,
+                workspace.id,
+                worktree_id,
+                &canonical_root,
+                base_commit_sha,
+                branch_name,
+                None,
+            )
+            .await?;
+        let live_root = crate::disk_isolated::ensure_worktree_from_host_copy(
+            &state.core.data_root,
+            workspace.id,
+            worktree_id,
+            &guest_worktree.host_shadow_root,
+            base_commit_sha,
+            branch_name,
+        )
+        .await?;
+        (
+            live_root,
+            SandboxRuntimeFamily::SharedVmContainer,
+            Some(
+                guest_worktree
+                    .host_shadow_root
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+        )
+    } else {
+        let live_root = crate::disk_isolated::ensure_worktree_from_host_copy(
+            &state.core.data_root,
+            workspace.id,
+            worktree_id,
+            &canonical_root,
+            base_commit_sha,
+            branch_name,
+        )
+        .await?;
+        (live_root, SandboxRuntimeFamily::NativeContainer, None)
+    };
+
+    Ok((
+        canonical_root,
+        Some(SandboxBinding {
+            worktree_id,
+            workspace_id: workspace.id,
+            runtime_family,
+            profile: SandboxProfile::Standard,
+            live_workspace_root: crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+            live_worktree_root: live_worktree_root.to_string_lossy().to_string(),
+            execution_settings_json: Some(serde_json::to_string(effective)?),
+            container_name: Some(crate::harness_runtime::workspace_container_name(
+                workspace.id,
+            )),
+            host_projection_root,
+            created_at: Utc::now(),
+        }),
+    ))
 }
 
 fn is_transient_store_error(err: &anyhow::Error) -> bool {

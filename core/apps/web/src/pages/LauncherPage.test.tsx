@@ -92,7 +92,7 @@ describe("LauncherPage recents", () => {
     render(<LauncherPage />);
 
     expect(await screen.findByText("ctx-monorepo")).toBeInTheDocument();
-    expect(screen.getByText("~/code/ctx-monorepo (Host)")).toBeInTheDocument();
+    expect(screen.getByText("~/code/ctx-monorepo")).toBeInTheDocument();
     expect(loadLauncherRecents).toHaveBeenCalled();
   });
 
@@ -113,7 +113,7 @@ describe("LauncherPage recents", () => {
     expect(screen.getByText("~/code/ctx-monorepo (Host)")).toBeInTheDocument();
   });
 
-  it("shows daemon-managed local container recents as local containers", async () => {
+  it("does not guess sandbox mode from a local recent path alone", async () => {
     vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
       {
         kind: "local",
@@ -126,7 +126,7 @@ describe("LauncherPage recents", () => {
     render(<LauncherPage />);
 
     expect(await screen.findByText("workspace-abc")).toBeInTheDocument();
-    expect(screen.getByText("Local container")).toBeInTheDocument();
+    expect(screen.getByText("~/.ctx/workspaces/staging/workspace-abc")).toBeInTheDocument();
   });
 
   it("renders remote host paths with host-mode suffix", async () => {

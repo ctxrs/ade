@@ -44,14 +44,14 @@ impl Drop for EnvGuard {
     }
 }
 
-fn podman_binary_for_tests() -> Option<PathBuf> {
-    if let Ok(raw) = std::env::var("CTX_PODMAN_PATH") {
+fn sandbox_cli_binary_for_tests() -> Option<PathBuf> {
+    if let Ok(raw) = std::env::var("CTX_HARNESS_SANDBOX_CLI_PATH") {
         let path = PathBuf::from(raw);
         if path.exists() {
             return Some(path);
         }
     }
-    which::which("podman").ok()
+    which::which("nerdctl").ok()
 }
 
 async fn run_git(root: &Path, args: &[&str]) {
@@ -193,7 +193,7 @@ async fn configure_container_settings(
 ) {
     let settings = Settings {
         execution: Some(ExecutionSettings {
-            mode: ExecutionMode::Container,
+            mode: ExecutionMode::Sandbox,
             container: ContainerExecutionSettings {
                 mount_mode,
                 network_mode: ContainerNetworkMode::All,
@@ -216,7 +216,7 @@ async fn configure_container_network_settings(
 ) {
     let settings = Settings {
         execution: Some(ExecutionSettings {
-            mode: ExecutionMode::Container,
+            mode: ExecutionMode::Sandbox,
             container: ContainerExecutionSettings {
                 mount_mode,
                 network_mode,
@@ -231,8 +231,8 @@ async fn configure_container_network_settings(
 }
 
 async fn run_container_python(container_name: &str, script: &str) -> std::process::Output {
-    let podman = podman_binary_for_tests().expect("podman required for e2e");
-    Command::new(podman)
+    let sandbox_cli = sandbox_cli_binary_for_tests().expect("sandbox CLI required for e2e");
+    Command::new(sandbox_cli)
         .arg("exec")
         .arg(container_name)
         .arg("python3")
@@ -330,17 +330,20 @@ const PROMPT: &str = "Reply with the exact text: done";
 
 #[tokio::test]
 #[ignore]
-async fn harness_container_podman_fake_acp() {
-    if std::env::var("CTX_E2E_PODMAN").ok().as_deref() != Some("1") {
-        eprintln!("skipping: CTX_E2E_PODMAN not set");
+async fn harness_container_sandbox_fake_acp() {
+    if std::env::var("CTX_E2E_SANDBOX").ok().as_deref() != Some("1") {
+        eprintln!("skipping: CTX_E2E_SANDBOX not set");
         return;
     }
-    if podman_binary_for_tests().is_none() {
-        eprintln!("skipping: podman not found");
+    if sandbox_cli_binary_for_tests().is_none() {
+        eprintln!("skipping: sandbox CLI not found");
         return;
     }
-    let podman = podman_binary_for_tests().expect("podman not found");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman.to_string_lossy());
+    let sandbox_cli = sandbox_cli_binary_for_tests().expect("sandbox CLI not found");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli.to_string_lossy(),
+    );
 
     let git_repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -383,24 +386,28 @@ async fn harness_container_podman_fake_acp() {
 
 #[tokio::test]
 #[ignore]
-async fn harness_container_podman_egress_allowlist() {
+async fn harness_container_sandbox_egress_allowlist() {
     let _ = tracing_subscriber::fmt::try_init();
-    if std::env::var("CTX_E2E_PODMAN").ok().as_deref() != Some("1") {
-        eprintln!("skipping: CTX_E2E_PODMAN not set");
+    if std::env::var("CTX_E2E_SANDBOX").ok().as_deref() != Some("1") {
+        eprintln!("skipping: CTX_E2E_SANDBOX not set");
         return;
     }
-    if podman_binary_for_tests().is_none() {
-        eprintln!("skipping: podman not found");
+    if sandbox_cli_binary_for_tests().is_none() {
+        eprintln!("skipping: sandbox CLI not found");
         return;
     }
     if std::env::var("CTX_EGRESS_PROXY_PATH").ok().is_none() {
         eprintln!("skipping: CTX_EGRESS_PROXY_PATH not set");
         return;
     }
-    let podman = podman_binary_for_tests().expect("podman not found");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman.to_string_lossy());
+    let sandbox_cli = sandbox_cli_binary_for_tests().expect("sandbox CLI not found");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli.to_string_lossy(),
+    );
 
-    let image = std::env::var("CTX_E2E_PODMAN_IMAGE").unwrap_or_else(|_| "python:3.11".to_string());
+    let image =
+        std::env::var("CTX_E2E_SANDBOX_IMAGE").unwrap_or_else(|_| "python:3.11".to_string());
     let allow_host = "example.com";
 
     let git_repo = setup_git_repo().await;
@@ -535,24 +542,28 @@ except Exception:
 
 #[tokio::test]
 #[ignore]
-async fn harness_container_podman_egress_allow_all() {
+async fn harness_container_sandbox_egress_allow_all() {
     let _ = tracing_subscriber::fmt::try_init();
-    if std::env::var("CTX_E2E_PODMAN").ok().as_deref() != Some("1") {
-        eprintln!("skipping: CTX_E2E_PODMAN not set");
+    if std::env::var("CTX_E2E_SANDBOX").ok().as_deref() != Some("1") {
+        eprintln!("skipping: CTX_E2E_SANDBOX not set");
         return;
     }
-    if podman_binary_for_tests().is_none() {
-        eprintln!("skipping: podman not found");
+    if sandbox_cli_binary_for_tests().is_none() {
+        eprintln!("skipping: sandbox CLI not found");
         return;
     }
     if std::env::var("CTX_EGRESS_PROXY_PATH").ok().is_none() {
         eprintln!("skipping: CTX_EGRESS_PROXY_PATH not set");
         return;
     }
-    let podman = podman_binary_for_tests().expect("podman not found");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman.to_string_lossy());
+    let sandbox_cli = sandbox_cli_binary_for_tests().expect("sandbox CLI not found");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli.to_string_lossy(),
+    );
 
-    let image = std::env::var("CTX_E2E_PODMAN_IMAGE").unwrap_or_else(|_| "python:3.11".to_string());
+    let image =
+        std::env::var("CTX_E2E_SANDBOX_IMAGE").unwrap_or_else(|_| "python:3.11".to_string());
 
     let git_repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -664,24 +675,28 @@ sock.recv(4)
 
 #[tokio::test]
 #[ignore]
-async fn harness_container_podman_egress_deny_all() {
+async fn harness_container_sandbox_egress_deny_all() {
     let _ = tracing_subscriber::fmt::try_init();
-    if std::env::var("CTX_E2E_PODMAN").ok().as_deref() != Some("1") {
-        eprintln!("skipping: CTX_E2E_PODMAN not set");
+    if std::env::var("CTX_E2E_SANDBOX").ok().as_deref() != Some("1") {
+        eprintln!("skipping: CTX_E2E_SANDBOX not set");
         return;
     }
-    if podman_binary_for_tests().is_none() {
-        eprintln!("skipping: podman not found");
+    if sandbox_cli_binary_for_tests().is_none() {
+        eprintln!("skipping: sandbox CLI not found");
         return;
     }
     if std::env::var("CTX_EGRESS_PROXY_PATH").ok().is_none() {
         eprintln!("skipping: CTX_EGRESS_PROXY_PATH not set");
         return;
     }
-    let podman = podman_binary_for_tests().expect("podman not found");
-    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman.to_string_lossy());
+    let sandbox_cli = sandbox_cli_binary_for_tests().expect("sandbox CLI not found");
+    let _guard = EnvGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli.to_string_lossy(),
+    );
 
-    let image = std::env::var("CTX_E2E_PODMAN_IMAGE").unwrap_or_else(|_| "python:3.11".to_string());
+    let image =
+        std::env::var("CTX_E2E_SANDBOX_IMAGE").unwrap_or_else(|_| "python:3.11".to_string());
 
     let git_repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();

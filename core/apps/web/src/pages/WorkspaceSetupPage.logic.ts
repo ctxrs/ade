@@ -188,7 +188,7 @@ export type SourceStepValidationInput = {
   source?: string | null;
   sourcePath: string;
   repoUrl: string;
-  useDiskIsolatedStaging: boolean;
+  useSandboxStaging: boolean;
 };
 
 export type SourceStepValidation = {
@@ -205,13 +205,13 @@ export const getSourceStepValidation = ({
   source,
   sourcePath,
   repoUrl,
-  useDiskIsolatedStaging,
+  useSandboxStaging,
 }: SourceStepValidationInput): SourceStepValidation => {
   const selectedSource = isSourceKind(source) ? source : null;
   const sourceSelected = selectedSource !== null;
   const needsRepoUrl = selectedSource === "clone";
   const hasRepoUrl = !needsRepoUrl || repoUrl.trim() !== "";
-  const needsSourcePath = sourceSelected && !useDiskIsolatedStaging;
+  const needsSourcePath = sourceSelected && !useSandboxStaging;
   const hasSourcePath = !needsSourcePath || sourcePath.trim() !== "";
   const hasValidCloneDestination = selectedSource !== "clone"
     || !needsSourcePath
@@ -248,7 +248,7 @@ export type ResolveWorkspaceNameInput = {
   workspaceName: string;
   repoUrl: string;
   destPath?: string | null;
-  useDiskIsolatedStaging: boolean;
+  useSandboxStaging: boolean;
   existingWorkspaceNames: Iterable<string>;
 };
 
@@ -257,7 +257,7 @@ export const resolveWorkspaceName = ({
   workspaceName,
   repoUrl,
   destPath,
-  useDiskIsolatedStaging,
+  useSandboxStaging,
   existingWorkspaceNames,
 }: ResolveWorkspaceNameInput): string | undefined => {
   const userProvidedName = workspaceName.trim();
@@ -272,7 +272,7 @@ export const resolveWorkspaceName = ({
   }
 
   if (selectedSource === "new") {
-    const base = useDiskIsolatedStaging
+    const base = useSandboxStaging
       ? "new-workspace"
       : parseCloneDestPath(destPath ?? "")?.dest_name || null;
     return base ? dedupeGeneratedWorkspaceName(base, existingWorkspaceNames) : undefined;

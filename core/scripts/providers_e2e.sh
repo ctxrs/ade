@@ -142,8 +142,8 @@ ensure_endpoint_ui_bundles() {
   cache_root="$(default_e2e_bundle_root)"
   mkdir -p "${cache_root}"
   local canonical_bundle_dir="${repo_root}/apps/desktop/src-tauri/bundles"
-  # Keep fresh E2E bundle dirs under a home/cache root so Podman-machine container
-  # mounts can see them during bundled-only container validation on macOS hosts.
+  # Keep fresh E2E bundle dirs under a home/cache root so containerized validation
+  # can see them reliably on macOS hosts.
   local bundle_dir="${CTX_E2E_BUNDLE_DIR:-${cache_root}/bundles-${cache_key}}"
   local first_pass_providers="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,cline,copilot,gemini,goose,openhands,qwen,pi,opencode,mistral,droid,kimi}"
   local matrix_json="${CTX_BUNDLE_MATRIX_JSON:-${repo_root}/crates/ctx-http/src/provider_matrix.json}"
@@ -160,20 +160,6 @@ ensure_endpoint_ui_bundles() {
   local append_local_adapters="${CTX_E2E_ENDPOINT_BUNDLE_APPEND_LOCAL_ADAPTERS:-auto}"
   local append_build_local_adapters="${CTX_E2E_ENDPOINT_BUNDLE_APPEND_BUILD_LOCAL_ADAPTERS:-0}"
   local bundle_append_linux_targets="${CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS:-1}"
-  local bundle_podman="${CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-}"
-  if [[ -z "${bundle_podman}" && "${OSTYPE:-}" == darwin* ]]; then
-    bundle_podman="1"
-  fi
-  local podman_version="${PODMAN_VERSION:-5.8.0}"
-  local podman_archive_url="${PODMAN_ARCHIVE_URL:-}"
-  if [[ -z "${podman_archive_url}" && "${bundle_podman}" == "1" && "${OSTYPE:-}" == darwin* ]]; then
-    local podman_arch="amd64"
-    if [[ "$(uname -m)" == "arm64" ]]; then
-      podman_arch="arm64"
-    fi
-    podman_archive_url="https://github.com/containers/podman/releases/download/v${podman_version}/podman-remote-release-darwin_${podman_arch}.zip"
-  fi
-
   if [[ "${bundle_dir}" == "${canonical_bundle_dir}" && "${CTX_E2E_ALLOW_CANONICAL_BUNDLES:-0}" != "1" ]]; then
     echo "refusing to use canonical desktop bundles dir for e2e: ${bundle_dir}" >&2
     echo "set CTX_E2E_BUNDLE_DIR to an isolated path (or CTX_E2E_ALLOW_CANONICAL_BUNDLES=1 to override intentionally)" >&2
@@ -196,10 +182,6 @@ ensure_endpoint_ui_bundles() {
   CTX_BUNDLE_LOCAL_ADAPTERS="${bundle_local_adapters}" \
   CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="${bundle_build_local_adapters}" \
   CTX_BUNDLE_USE_ACP_SHIMS="1" \
-  CTX_BUNDLE_PODMAN="${bundle_podman:-0}" \
-  PODMAN_VERSION="${podman_version}" \
-  PODMAN_ARCHIVE_URL="${podman_archive_url}" \
-  PODMAN_BIN_REL="${PODMAN_BIN_REL:-usr/bin/podman}" \
   CARGO_TARGET_DIR="${cargo_target_dir}" \
   CARGO_HOME="${cargo_home_dir}" \
   "${bundle_script}" >/dev/null
@@ -237,7 +219,6 @@ ensure_endpoint_ui_bundles() {
       CTX_BUNDLE_LOCAL_ADAPTERS="${append_local_adapters}" \
       CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="${append_build_local_adapters}" \
       CTX_BUNDLE_USE_ACP_SHIMS="1" \
-      CTX_BUNDLE_PODMAN="0" \
       CARGO_TARGET_DIR="${cargo_target_dir}" \
       CARGO_HOME="${cargo_home_dir}" \
       "${bundle_script}" >/dev/null
@@ -257,7 +238,6 @@ ensure_endpoint_ui_bundles() {
       CTX_BUNDLE_LOCAL_ADAPTERS="off" \
       CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="0" \
       CTX_BUNDLE_USE_ACP_SHIMS="1" \
-      CTX_BUNDLE_PODMAN="0" \
       CARGO_TARGET_DIR="${cargo_target_dir}" \
       CARGO_HOME="${cargo_home_dir}" \
       "${bundle_script}" >/dev/null
@@ -450,11 +430,6 @@ run_linux_arm_runtime_install_lane() {
   # are published, so source local adapters from the workspace while external lane
   # providers continue using their managed archive paths.
   export CTX_E2E_ENDPOINT_BUNDLE_INCLUDE_BRIDGE="${CTX_E2E_ENDPOINT_BUNDLE_INCLUDE_BRIDGE:-1}"
-  # Native Linux reliability lanes should exercise bundled provider resolution, but
-  # use the host Podman install. The runtime lock only vendors Podman artifacts for
-  # macOS remote clients, so forcing bundled Podman on Linux makes the lane demand
-  # an archive that does not exist.
-  export CTX_E2E_ENDPOINT_BUNDLE_PODMAN="${CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-0}"
   export CTX_E2E_ENDPOINT_BUNDLE_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_LOCAL_ADAPTERS:-true}"
   export CTX_E2E_ENDPOINT_BUNDLE_BUILD_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_BUILD_LOCAL_ADAPTERS:-1}"
   export CTX_E2E_ENDPOINT_BUNDLE_APPEND_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_APPEND_LOCAL_ADAPTERS:-off}"
@@ -472,7 +447,6 @@ run_linux_arm_runtime_install_lane() {
   # stable artifacts exist, so explicit install requests must treat bundled-only
   # providers as preseeded instead of forcing a managed download.
   export CTX_E2E_INSTALL_SMOKE_SKIP_BUNDLED_ONLY_INSTALLS="${CTX_E2E_INSTALL_SMOKE_SKIP_BUNDLED_ONLY_INSTALLS:-1}"
-  export CTX_PODMAN_MACHINE_PREFETCH="${CTX_PODMAN_MACHINE_PREFETCH:-1}"
   export OPENAI_API_KEY="${OPENAI_API_KEY:-${OPENROUTER_API_KEY}}"
   export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${OPENROUTER_BASE_URL}}"
 
@@ -494,11 +468,11 @@ add_test() {
 case "${suite}" in
   e2e)
     add_test "ctx-providers" "real_acp_e2e" "${providers_tests_dir}/real_acp_e2e.rs"
-    add_test "ctx-http" "harness_container_podman_e2e" "${http_tests_dir}/harness_container_podman_e2e.rs"
+    add_test "ctx-http" "harness_container_sandbox_e2e" "${http_tests_dir}/harness_container_sandbox_e2e.rs"
     ;;
   runner)
     add_test "ctx-http" "provider_runner_acp_e2e" "${http_tests_dir}/provider_runner_acp_e2e.rs"
-    add_test "ctx-http" "harness_container_podman_e2e" "${http_tests_dir}/harness_container_podman_e2e.rs"
+    add_test "ctx-http" "harness_container_sandbox_e2e" "${http_tests_dir}/harness_container_sandbox_e2e.rs"
     ;;
   tokens)
     run_preflight "providers-tokens"
@@ -552,7 +526,6 @@ case "${suite}" in
       export CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS="${endpoint_bundle_providers}"
     fi
     export CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE="${CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-0}"
-    export CTX_E2E_ENDPOINT_BUNDLE_PODMAN="${CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-0}"
     export CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS="${CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS:-0}"
 
     ensure_endpoint_ui_bundles
@@ -612,7 +585,6 @@ case "${suite}" in
     export CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE="${CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-0}"
     # Provider API-key auth checks execute in host-mode web e2e and don't need
     # linux target append/payloads.
-    export CTX_E2E_ENDPOINT_BUNDLE_PODMAN="${CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-0}"
     export CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS="${CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS:-0}"
     ensure_endpoint_ui_bundles
 
@@ -664,7 +636,6 @@ case "${suite}" in
 
     export CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-${CTX_E2E_PROVIDER_BROWSER_AUTH_BUNDLE_PROVIDERS:-acp-crp-bridge,claude-cli,claude-crp}}"
     export CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE="${CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-0}"
-    export CTX_E2E_ENDPOINT_BUNDLE_PODMAN="${CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-0}"
     export CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS="${CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS:-0}"
     ensure_endpoint_ui_bundles
 

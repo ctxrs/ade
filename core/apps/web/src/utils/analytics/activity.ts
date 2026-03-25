@@ -86,7 +86,7 @@ export const trackWorkspaceOpened = (workspaceKind: "local" | "remote"): void =>
 type PendingWorkspaceLaunch = {
   workspace_id: string;
   workspace_kind: "local" | "remote";
-  execution_mode: "host" | "container";
+  execution_mode: "host" | "sandbox";
   source: "wizard" | "launcher" | "api" | "unknown";
   started_at_ms: number;
 };
@@ -129,7 +129,7 @@ const clearPendingWorkspaceLaunch = (workspaceId: string): void => {
 export const trackWorkspaceLaunchCompleted = (props: {
   workspaceId: string;
   workspaceKind: "local" | "remote";
-  executionMode: "host" | "container";
+  executionMode: "host" | "sandbox";
   source: "wizard" | "launcher" | "api" | "unknown";
   startedAtMs: number;
   result: "ready" | "error";

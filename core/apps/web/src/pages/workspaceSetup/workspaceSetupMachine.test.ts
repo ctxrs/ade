@@ -8,7 +8,7 @@ import {
 
 const routePlanFixture = (overrides?: Partial<WizardRoutePlan>): WizardRoutePlan => ({
   targetKey: "local|container",
-  containerSelection: "disk-isolated",
+  containerSelection: "sandbox",
   includeHarnessDownloads: false,
   includeAuthImport: false,
   includeTitling: false,
@@ -74,7 +74,7 @@ describe("workspaceSetupMachine", () => {
       {
         type: "option_selected",
         stepKey: "container",
-        optionId: "disk-isolated",
+        optionId: "sandbox",
         snapshot: snapshotFixture({
           stepKey: "container",
         }),
@@ -87,7 +87,7 @@ describe("workspaceSetupMachine", () => {
         kind: "run_command",
         command: {
           kind: "ensure_route_plan",
-          containerSelectionOverride: "disk-isolated",
+          containerSelectionOverride: "sandbox",
         },
       },
     ]);

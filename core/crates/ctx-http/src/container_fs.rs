@@ -10,18 +10,21 @@ use tokio::process::Command;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::settings::ContainerRuntimeKind;
+use crate::worktree_data_plane::{
+    apply_data_plane_to_execution_settings, resolve_worktree_data_plane,
+};
 
 // Minimal container filesystem mediation for disk-isolated worktrees.
 //
-// v1 intentionally uses `podman exec`-based primitives (cat + stdin redirect) to avoid additional
-// dependencies. This can be optimized later (tar streaming / podman cp).
+// v1 intentionally uses container CLI exec-based primitives (cat + stdin redirect) to avoid
+// additional dependencies. This can be optimized later (tar streaming / container cp).
 
 #[derive(Debug, Clone)]
 enum ContainerFsBackend {
-    Podman {
+    NativeContainer {
         container_id: String,
     },
-    AvfLinuxVm {
+    SharedVmContainer {
         workspace_id: WorkspaceId,
         worktree_id: WorktreeId,
     },
@@ -37,7 +40,7 @@ impl ContainerFs {
     pub(crate) fn new(data_root: PathBuf, container_id: String) -> Self {
         Self {
             data_root,
-            backend: ContainerFsBackend::Podman { container_id },
+            backend: ContainerFsBackend::NativeContainer { container_id },
         }
     }
 
@@ -48,7 +51,7 @@ impl ContainerFs {
     ) -> Self {
         Self {
             data_root,
-            backend: ContainerFsBackend::AvfLinuxVm {
+            backend: ContainerFsBackend::SharedVmContainer {
                 workspace_id,
                 worktree_id,
             },
@@ -70,8 +73,10 @@ impl ContainerFs {
             .get_worktree(worktree_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("worktree not found"))?;
+        let data_plane = resolve_worktree_data_plane(state, &worktree).await?;
         let effective =
             execution_effective::effective_execution_settings(state, workspace_id).await?;
+        let effective = apply_data_plane_to_execution_settings(&effective, &data_plane);
         state
             .execution
             .harness
@@ -83,11 +88,11 @@ impl ContainerFs {
             )
             .await?;
         Ok(match effective.container.runtime {
-            ContainerRuntimeKind::Podman => Self::new(
+            ContainerRuntimeKind::NativeContainer => Self::new(
                 state.core.data_root.clone(),
                 crate::harness_runtime::workspace_container_name(workspace_id),
             ),
-            ContainerRuntimeKind::AvfLinuxVm => {
+            ContainerRuntimeKind::SharedVmContainer => {
                 Self::avf_linux_vm(state.core.data_root.clone(), workspace_id, worktree_id)
             }
         })
@@ -108,14 +113,14 @@ impl ContainerFs {
     pub(crate) async fn read_to_string(&self, path: &Path) -> Result<String> {
         const SANDBOX_FS_TIMEOUT: Duration = Duration::from_secs(60);
         let out = match &self.backend {
-            ContainerFsBackend::Podman { .. } => {
+            ContainerFsBackend::NativeContainer { .. } => {
                 let mut cmd = self.base_exec().await?;
                 cmd.arg("cat").arg("--").arg(path);
                 crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_FS_TIMEOUT)
                     .await
-                    .context("podman exec cat")?
+                    .context("sandbox exec cat")?
             }
-            ContainerFsBackend::AvfLinuxVm {
+            ContainerFsBackend::SharedVmContainer {
                 workspace_id,
                 worktree_id,
             } => crate::workspace_runtime::run_avf_linux_guest_exec_capture(
@@ -148,12 +153,12 @@ impl ContainerFs {
         // Note: `/bin/sh` is typically `dash` in Ubuntu images, so avoid `pipefail`.
         let script = "set -eu; cat > \"$1\"";
         let mut cmd = match &self.backend {
-            ContainerFsBackend::Podman { .. } => {
+            ContainerFsBackend::NativeContainer { .. } => {
                 let mut cmd = self.base_exec().await?;
                 cmd.arg("sh").arg("-lc").arg(script).arg("--").arg(path);
                 cmd
             }
-            ContainerFsBackend::AvfLinuxVm {
+            ContainerFsBackend::SharedVmContainer {
                 workspace_id,
                 worktree_id,
             } => crate::workspace_runtime::build_avf_linux_guest_exec_command(
@@ -194,9 +199,9 @@ impl ContainerFs {
     }
 
     async fn base_exec(&self) -> Result<Command> {
-        let mut cmd = crate::harness_runtime::podman_command(&self.data_root)?;
-        let ContainerFsBackend::Podman { container_id } = &self.backend else {
-            anyhow::bail!("podman exec requested for non-podman container filesystem backend");
+        let mut cmd = crate::harness_runtime::sandbox_container_command(&self.data_root)?;
+        let ContainerFsBackend::NativeContainer { container_id } = &self.backend else {
+            anyhow::bail!("container exec requested for non-native-container filesystem backend");
         };
         cmd.arg("exec").arg("--interactive").arg(container_id);
         Ok(cmd)

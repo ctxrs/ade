@@ -8,7 +8,57 @@ impl HarnessRuntimeManager {
             last_activity: StdMutex::new(Instant::now()),
             active_runtime_operations: AtomicUsize::new(0),
             active_prewarm_artifact_operations: AtomicUsize::new(0),
-            reclaim_loop_started: AtomicBool::new(false),
+        }
+    }
+
+    pub(crate) fn note_runtime_activity(&self) {
+        let mut last_activity = match self.last_activity.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *last_activity = Instant::now();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn runtime_idle_for(&self) -> Duration {
+        let last_activity = match self.last_activity.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        last_activity.elapsed()
+    }
+
+    pub(crate) fn begin_runtime_operation(&self) -> RuntimeOperationGuard<'_> {
+        self.note_runtime_activity();
+        self.active_runtime_operations
+            .fetch_add(1, Ordering::SeqCst);
+        RuntimeOperationGuard { manager: self }
+    }
+
+    pub(crate) fn begin_prewarm_artifact_activity(&self) -> PrewarmArtifactActivityGuard<'_> {
+        self.note_runtime_activity();
+        self.active_prewarm_artifact_operations
+            .fetch_add(1, Ordering::SeqCst);
+        PrewarmArtifactActivityGuard { manager: self }
+    }
+
+    pub async fn stats(&self) -> HarnessRuntimeStats {
+        let containers = self.containers.lock().await;
+        let mut container_allowlist_entries = 0;
+        let mut container_external_mounts = 0;
+        let mut container_egress_guards = 0;
+        for container in containers.values() {
+            container_allowlist_entries += container.allowlist.len();
+            container_external_mounts += container.external_mounts.len();
+            if container.egress_guard {
+                container_egress_guards += 1;
+            }
+        }
+        HarnessRuntimeStats {
+            container_count: containers.len(),
+            container_allowlist_entries,
+            container_external_mounts,
+            container_egress_guards,
         }
     }
 
@@ -32,17 +82,23 @@ impl HarnessRuntimeManager {
             });
         }
         let _activity = self.begin_runtime_operation();
-        if !matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm) {
-            let podman_bin = ensure_managed_podman_runtime(&self.data_root, None, None)
-                .await
-                .context("podman unavailable and execution mode is container")?;
+        if !matches!(
+            settings.container.runtime,
+            ContainerRuntimeKind::SharedVmContainer
+        ) {
+            let sandbox_cli_bin = sandbox_cli_invocation(&self.data_root)
+                .context("sandbox container CLI unavailable and execution mode is sandbox")?
+                .bin;
             env_overrides.insert(
-                PODMAN_PATH_ENV.to_string(),
-                podman_bin.to_string_lossy().to_string(),
+                CTX_HARNESS_SANDBOX_CLI_PATH_ENV.to_string(),
+                sandbox_cli_bin.to_string_lossy().to_string(),
             );
         }
 
-        let avf = matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm);
+        let avf = matches!(
+            settings.container.runtime,
+            ContainerRuntimeKind::SharedVmContainer
+        );
         let proxy_host = if avf {
             AVF_GUEST_HOST_GATEWAY
         } else {
@@ -70,9 +126,9 @@ impl HarnessRuntimeManager {
         env_overrides.insert(
             CTX_HARNESS_RUNTIME_KIND_ENV.to_string(),
             if avf {
-                "avf_linux_vm".to_string()
+                "shared_vm_container".to_string()
             } else {
-                "podman_container".to_string()
+                "native_container".to_string()
             },
         );
         env_overrides.insert(CTX_HARNESS_LINUX_SANDBOX_ENV.to_string(), "1".to_string());
@@ -90,13 +146,12 @@ impl HarnessRuntimeManager {
         );
         let guest_workspace_root = crate::worktree_data_plane::live_workspace_root_for_mode(
             workspace,
-            ExecutionMode::Container,
+            ExecutionMode::Sandbox,
         );
         let guest_worktree_root = crate::worktree_data_plane::live_worktree_root_for_mode(
-            &self.data_root,
             workspace,
             worktree,
-            ExecutionMode::Container,
+            ExecutionMode::Sandbox,
         );
         env_overrides.insert(
             "CTX_HARNESS_HOST_WORKTREE_ROOT".to_string(),
@@ -160,9 +215,9 @@ impl HarnessRuntimeManager {
 
         Ok(HarnessExecutionPlan {
             runtime: if avf {
-                HarnessRuntimeKind::AvfLinuxVm
+                HarnessRuntimeKind::SharedVmContainer
             } else {
-                HarnessRuntimeKind::Container {
+                HarnessRuntimeKind::NativeContainer {
                     name: container.name,
                 }
             },
@@ -256,7 +311,10 @@ impl HarnessRuntimeManager {
         if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(());
         }
-        let proxy_host = if matches!(settings.container.runtime, ContainerRuntimeKind::AvfLinuxVm) {
+        let proxy_host = if matches!(
+            settings.container.runtime,
+            ContainerRuntimeKind::SharedVmContainer
+        ) {
             ensure_avf_linux_workspace_vm_ready_with_observer(
                 &self.data_root,
                 workspace.id,
@@ -310,7 +368,7 @@ impl HarnessRuntimeManager {
         settings: &ContainerExecutionSettings,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<()> {
-        if matches!(settings.runtime, ContainerRuntimeKind::AvfLinuxVm) {
+        if matches!(settings.runtime, ContainerRuntimeKind::SharedVmContainer) {
             prefetch_avf_linux_runtime_with_observer(&self.data_root, settings, observer).await?;
             return Ok(());
         }
@@ -319,16 +377,7 @@ impl HarnessRuntimeManager {
             HarnessSetupPhase::MachineCheck,
             "checking container runtime",
         );
-        ensure_managed_podman_runtime(&self.data_root, observer, None).await?;
-        if podman_engine_ready(&self.data_root).await.unwrap_or(false) {
-            self.reconcile_running_podman_machine_memory(settings, observer)
-                .await?;
-            if !podman_engine_ready(&self.data_root).await.unwrap_or(false) {
-                self.ensure_podman_machine_materialized(settings, observer)
-                    .await?;
-                ensure_podman_machine_running_with_observer(&self.data_root, observer).await?;
-                return Ok(());
-            }
+        if sandbox_engine_ready(&self.data_root).await.unwrap_or(false) {
             observe_log(
                 observer,
                 HarnessSetupPhase::MachineCheck,
@@ -337,10 +386,13 @@ impl HarnessRuntimeManager {
             );
             return Ok(());
         }
-        self.ensure_podman_machine_materialized(settings, observer)
-            .await?;
-        ensure_podman_machine_running_with_observer(&self.data_root, observer).await?;
-        Ok(())
+        if sandbox_cli_invocation(&self.data_root).is_err() {
+            anyhow::bail!(
+                "native sandbox container runtime is unavailable; install nerdctl or set {}",
+                CTX_HARNESS_SANDBOX_CLI_PATH_ENV
+            );
+        }
+        anyhow::bail!("native sandbox container runtime is installed but not reachable")
     }
 
     pub(crate) async fn workspace_container_exists(
@@ -351,7 +403,7 @@ impl HarnessRuntimeManager {
         match container_exists(&self.data_root, &name).await {
             Ok(exists) => Ok(exists),
             Err(err) => {
-                if podman_engine_ready(&self.data_root).await.unwrap_or(false) {
+                if sandbox_engine_ready(&self.data_root).await.unwrap_or(false) {
                     Err(err)
                 } else {
                     Ok(false)
@@ -393,13 +445,13 @@ impl HarnessRuntimeManager {
         workspace_id: WorkspaceId,
     ) -> Result<Option<HarnessContainerStatus>> {
         let name = format!("ctx-harness-{}", workspace_id.0);
-        let podman_exists = match container_exists(&self.data_root, &name).await {
+        let container_present = match container_exists(&self.data_root, &name).await {
             Ok(exists) => exists,
             Err(err) => {
                 if err
                     .to_string()
                     .to_ascii_lowercase()
-                    .contains("podman binary unavailable")
+                    .contains("sandbox container cli unavailable")
                 {
                     false
                 } else {
@@ -407,7 +459,7 @@ impl HarnessRuntimeManager {
                 }
             }
         };
-        if podman_exists {
+        if container_present {
             let running = container_running(&self.data_root, &name)
                 .await?
                 .unwrap_or(false);
@@ -443,13 +495,13 @@ impl HarnessRuntimeManager {
     pub async fn stop_container(&self, workspace_id: WorkspaceId) -> Result<bool> {
         let _activity = self.begin_runtime_operation();
         let name = format!("ctx-harness-{}", workspace_id.0);
-        let podman_exists = match container_exists(&self.data_root, &name).await {
+        let container_present = match container_exists(&self.data_root, &name).await {
             Ok(exists) => exists,
             Err(err) => {
                 if err
                     .to_string()
                     .to_ascii_lowercase()
-                    .contains("podman binary unavailable")
+                    .contains("sandbox container cli unavailable")
                 {
                     false
                 } else {
@@ -457,12 +509,12 @@ impl HarnessRuntimeManager {
                 }
             }
         };
-        if podman_exists {
+        if container_present {
             let mut containers = self.containers.lock().await;
             containers.remove(&workspace_id);
-            let mut cmd = podman_command(&self.data_root)?;
+            let mut cmd = sandbox_container_command(&self.data_root)?;
             cmd.arg("rm").arg("-f").arg(&name);
-            let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+            let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
             if output.status.success() {
                 return Ok(true);
             } else {
@@ -470,9 +522,9 @@ impl HarnessRuntimeManager {
                 let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 let combined = format!("{stderr}\n{stdout}").trim().to_string();
                 if combined.is_empty() {
-                    anyhow::bail!("podman rm failed for {name} (status: {})", output.status);
+                    anyhow::bail!("container rm failed for {name} (status: {})", output.status);
                 }
-                anyhow::bail!("podman rm failed for {name}: {combined}");
+                anyhow::bail!("container rm failed for {name}: {combined}");
             }
         }
 
@@ -485,16 +537,16 @@ impl HarnessRuntimeManager {
         let _activity = self.begin_runtime_operation();
         // Best-effort cleanup: callers (e.g. workspace deletion) may ignore failures.
         let name = format!("ctx-ws-{}", workspace_id.0);
-        let mut inspect = podman_command(&self.data_root)?;
+        let mut inspect = sandbox_container_command(&self.data_root)?;
         inspect.arg("volume").arg("inspect").arg(&name);
-        let out = command_output_with_timeout(inspect, PODMAN_OP_TIMEOUT).await?;
+        let out = command_output_with_timeout(inspect, SANDBOX_OP_TIMEOUT).await?;
         if !out.status.success() {
             return Ok(false);
         }
 
-        let mut cmd = podman_command(&self.data_root)?;
+        let mut cmd = sandbox_container_command(&self.data_root)?;
         cmd.arg("volume").arg("rm").arg("-f").arg(&name);
-        let out = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+        let out = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
         if out.status.success() {
             Ok(true)
         } else {
@@ -503,11 +555,11 @@ impl HarnessRuntimeManager {
             let combined = format!("{stderr}\n{stdout}").trim().to_string();
             if combined.is_empty() {
                 anyhow::bail!(
-                    "podman volume rm failed for {name} (status: {})",
+                    "container volume rm failed for {name} (status: {})",
                     out.status
                 );
             }
-            anyhow::bail!("podman volume rm failed for {name}: {combined}");
+            anyhow::bail!("container volume rm failed for {name}: {combined}");
         }
     }
 
@@ -522,7 +574,7 @@ impl HarnessRuntimeManager {
     ) -> Result<HarnessContainer> {
         self.ensure_container_machine_ready(settings, observer)
             .await?;
-        if matches!(settings.runtime, ContainerRuntimeKind::AvfLinuxVm) {
+        if matches!(settings.runtime, ContainerRuntimeKind::SharedVmContainer) {
             ensure_avf_linux_workspace_vm_ready_with_observer(
                 &self.data_root,
                 workspace.id,
@@ -633,9 +685,9 @@ impl HarnessRuntimeManager {
                 HarnessSetupPhase::ContainerStartOrCreate,
                 "recreating workspace container",
             );
-            if let Ok(mut cmd) = podman_command(&self.data_root) {
+            if let Ok(mut cmd) = sandbox_container_command(&self.data_root) {
                 cmd.arg("rm").arg("-f").arg(&name);
-                let _ = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await;
+                let _ = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await;
             }
         }
 
@@ -655,17 +707,20 @@ impl HarnessRuntimeManager {
                     HarnessSetupPhase::ContainerStartOrCreate,
                     "starting existing workspace container",
                 );
-                let mut cmd = podman_command(&self.data_root)?;
+                let mut cmd = sandbox_container_command(&self.data_root)?;
                 cmd.arg("start").arg(&name);
-                let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+                let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     let combined = format!("{stderr}\n{stdout}").trim().to_string();
                     if combined.is_empty() {
-                        anyhow::bail!("podman start failed for {name} (status: {})", output.status);
+                        anyhow::bail!(
+                            "container start failed for {name} (status: {})",
+                            output.status
+                        );
                     }
-                    anyhow::bail!("podman start failed for {name}: {combined}");
+                    anyhow::bail!("container start failed for {name}: {combined}");
                 }
             } else {
                 observe_log(
@@ -685,7 +740,7 @@ impl HarnessRuntimeManager {
                 HarnessSetupPhase::ContainerStartOrCreate,
                 "creating workspace container",
             );
-            let mut cmd = podman_command(&self.data_root)?;
+            let mut cmd = sandbox_container_command(&self.data_root)?;
             cmd.arg("run").arg("-d").arg("--name").arg(&name);
             if should_use_keep_id_userns() {
                 cmd.arg("--userns=keep-id");
@@ -705,15 +760,18 @@ impl HarnessRuntimeManager {
             cmd.arg("/bin/sh")
                 .arg("-c")
                 .arg("while true; do sleep 100000; done");
-            let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+            let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                 let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 let combined = format!("{stderr}\n{stdout}").trim().to_string();
                 if combined.is_empty() {
-                    anyhow::bail!("podman run failed for {name} (status: {})", output.status);
+                    anyhow::bail!(
+                        "container run failed for {name} (status: {})",
+                        output.status
+                    );
                 }
-                anyhow::bail!("podman run failed for {name}: {combined}");
+                anyhow::bail!("container run failed for {name}: {combined}");
             }
         }
 
@@ -752,5 +810,31 @@ impl HarnessRuntimeManager {
         };
         containers.insert(workspace.id, container.clone());
         Ok(container)
+    }
+}
+
+pub(crate) struct RuntimeOperationGuard<'a> {
+    manager: &'a HarnessRuntimeManager,
+}
+
+impl Drop for RuntimeOperationGuard<'_> {
+    fn drop(&mut self) {
+        self.manager.note_runtime_activity();
+        self.manager
+            .active_runtime_operations
+            .fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+pub(crate) struct PrewarmArtifactActivityGuard<'a> {
+    manager: &'a HarnessRuntimeManager,
+}
+
+impl Drop for PrewarmArtifactActivityGuard<'_> {
+    fn drop(&mut self) {
+        self.manager.note_runtime_activity();
+        self.manager
+            .active_prewarm_artifact_operations
+            .fetch_sub(1, Ordering::SeqCst);
     }
 }

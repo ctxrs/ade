@@ -278,7 +278,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
         }
     };
     tokio::fs::create_dir_all(&data_root).await?;
-    // Canonicalize so Podman machine mount sources resolve under shared roots on macOS
+    // Canonicalize so legacy machine mount sources resolve under shared roots on macOS
     // (e.g. /tmp -> /private/tmp). This also reduces accidental duplicate state roots.
     let data_root = tokio::fs::canonicalize(&data_root)
         .await

@@ -8,10 +8,10 @@
       "scenarios": "local-new-host",
       "preconditions": [
         "macOS desktop automation environment",
-        "managed podman runtime path enabled"
+        "managed sandbox runtime path enabled"
       ],
       "trigger": "attempt local host create with unavailable runtime precondition",
-      "expected_failure_signal": "workspace launch snapshot contains `container runtime unavailable` in machine/image phase",
+      "expected_failure_signal": "workspace launch snapshot contains a runtime-unavailable failure in the machine/image phase",
       "required_logs": [
         "wdio.log",
         "test-runner-backend.log",
@@ -26,9 +26,9 @@
       "scenarios": "local-new-sandbox",
       "preconditions": [
         "macOS desktop automation environment",
-        "podman machine reachable"
+        "sandbox runtime substrate reachable"
       ],
-      "trigger": "attempt sandbox create and force container create failure path",
+      "trigger": "attempt sandbox create and force sandbox launch failure path",
       "expected_failure_signal": "workspace launch snapshot fails in `container_start_or_create` with non-generic diagnostics",
       "required_logs": [
         "wdio.log",
@@ -39,7 +39,7 @@
     },
     {
       "id": "BRK-003",
-      "title": "daemon unavailable overlay during container lifecycle",
+      "title": "daemon unavailable overlay during sandbox lifecycle",
       "spec": "automation/specs/container-daemon-liveness.spec.cjs",
       "scenarios": "local-new-sandbox",
       "preconditions": [
@@ -109,12 +109,12 @@
     },
     {
       "id": "BRK-007",
-      "title": "first real turn failure in containerized workspace",
+      "title": "first real turn failure in sandboxed workspace",
       "spec": "automation/specs/container-provider-openrouter.spec.cjs",
       "scenarios": "local-codex-smoke",
       "preconditions": [
         "OPENROUTER_API_KEY set",
-        "container workspace created"
+        "sandbox workspace created"
       ],
       "trigger": "send first prompt and observe runtime path",
       "expected_failure_signal": "task shows `Failed to start`/HTTP 500/runtime command error",
@@ -125,35 +125,16 @@
       ]
     },
     {
-      "id": "BRK-008",
-      "title": "container workspace fails to recover after podman machine restart",
-      "spec": "automation/specs/container-lifecycle-resume.spec.cjs",
-      "scenarios": "local-runtime-resume",
-      "preconditions": [
-        "OPENROUTER_API_KEY set",
-        "container workspace created and first turn already succeeded",
-        "podman machine lifecycle supported"
-      ],
-      "trigger": "stop and restart the daemon-owned podman machine, reopen the existing workspace, then run the next first-turn smoke",
-      "expected_failure_signal": "reopened workspace shows daemon overlay OR post-restart first turn fails without lifecycle diagnostics",
-      "required_logs": [
-        "wdio.log",
-        "test-runner-backend.log",
-        "tauri-driver.log",
-        "container-lifecycle-resume.json"
-      ]
-    },
-    {
       "id": "BRK-009",
       "title": "remote sandbox contract (env-gated)",
       "spec": "automation/specs/remote-container-contract.spec.cjs",
       "scenarios": "remote-new-sandbox",
       "preconditions": [
         "remote automation env vars set",
-        "remote podman available"
+        "remote sandbox fixture available"
       ],
-      "trigger": "run remote container create + first-turn contract checks",
-      "expected_failure_signal": "remote container flow fails without explicit skip reason and diagnostics",
+      "trigger": "run remote sandbox create + first-turn contract checks",
+      "expected_failure_signal": "remote sandbox flow fails without explicit skip reason and diagnostics",
       "required_logs": [
         "wdio.log",
         "remote-contract.json",
@@ -177,24 +158,6 @@
         "recovery-summary.json"
       ]
     },
-    {
-      "id": "BRK-011",
-      "title": "container workspace fails to recover after local daemon + desktop restart",
-      "spec": "automation/specs/container-lifecycle-resume.spec.cjs",
-      "scenarios": "local-app-daemon-resume",
-      "preconditions": [
-        "OPENROUTER_API_KEY set",
-        "container workspace created and first turn already succeeded",
-        "desktop automation restart hooks enabled"
-      ],
-      "trigger": "restart the local daemon and desktop app, reopen the existing workspace, then run the next first-turn smoke",
-      "expected_failure_signal": "daemon unavailable overlay appears after restart OR reopened workspace cannot complete the next first turn with captured diagnostics",
-      "required_logs": [
-        "wdio.log",
-        "test-runner-backend.log",
-        "tauri-driver.log",
-        "container-lifecycle-resume.json"
-      ]
     }
   ]
 }

@@ -81,7 +81,7 @@ pub(super) async fn launch_start(
                     )
                 })?;
             let mut execution_settings = settings.execution.unwrap_or_default();
-            execution_settings.mode = ExecutionMode::Container;
+            execution_settings.mode = ExecutionMode::Sandbox;
             state
                 .execution
                 .setup

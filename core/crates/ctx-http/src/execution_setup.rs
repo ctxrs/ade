@@ -33,7 +33,7 @@ use launch_state::{
 };
 use progress::{
     bundled_image_fingerprint, format_error_chain, format_ts, needs_prewarm,
-    normalize_podman_engine_ready_for_gate, phase_label, read_prewarm_metadata,
+    normalize_container_engine_ready_for_gate, phase_label, read_prewarm_metadata,
     write_prewarm_metadata, LaunchObserver,
 };
 use warmup_coordination::{
@@ -222,9 +222,11 @@ impl ExecutionSetupCoordinator {
         let coordinator = Arc::clone(self);
         tokio::spawn(async move {
             #[cfg(test)]
-            // Tests temporarily rebind podman process env vars, so startup prewarm
+            // Tests temporarily rebind sandbox CLI process env vars, so startup prewarm
             // must serialize with the shared test lock before it can observe them.
-            let _podman_env_test_lock = crate::test_support::podman_env_test_lock().lock().await;
+            let _sandbox_cli_env_test_lock = crate::test_support::sandbox_cli_env_test_lock()
+                .lock()
+                .await;
             coordinator.run_startup_prewarm().await;
         });
     }
@@ -419,7 +421,7 @@ impl ExecutionSetupCoordinator {
                     self.harness
                         .ensure_container_machine_ready(&settings.container, Some(&observer))
                         .await
-                        .context("podman unavailable and execution mode is container")?;
+                        .context("sandbox runtime unavailable and execution mode is sandbox")?;
 
                     let joined_shared_runtime = if join_shared_runtime {
                         match self

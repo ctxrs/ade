@@ -481,8 +481,9 @@ pub fn bundled_python_runtime_version(version: &str) -> Option<BundledRuntimePat
     bundled_runtime_from_manifest(&root, &manifest, "python", Some(version))
 }
 
-pub fn bundled_podman_runtime() -> Option<BundledRuntimePaths> {
-    bundled_runtime("podman")
+#[cfg(test)]
+pub fn bundled_sandbox_cli_runtime() -> Option<BundledRuntimePaths> {
+    bundled_runtime("sandbox-cli")
 }
 
 pub fn bundled_avf_linux_guest_runtime() -> Option<BundledRuntimePaths> {
@@ -592,9 +593,10 @@ pub fn managed_ctx_harness_image_source(_expected_image: &str) -> Option<Managed
     managed_image_source("ctx-harness", "linux", current_arch())
 }
 
-pub fn managed_podman_machine_cache_source() -> Option<ManagedArtifactSource> {
+#[cfg(test)]
+pub fn managed_sandbox_machine_cache_source() -> Option<ManagedArtifactSource> {
     #[cfg(test)]
-    if let Some(source) = test_managed_podman_machine_cache_source_override()
+    if let Some(source) = test_managed_sandbox_machine_cache_source_override()
         .lock()
         .expect("test managed machine cache override lock poisoned")
         .clone()
@@ -602,11 +604,15 @@ pub fn managed_podman_machine_cache_source() -> Option<ManagedArtifactSource> {
         return Some(source);
     }
 
-    managed_machine_cache_source("podman-machine", current_platform().0, current_platform().1)
+    managed_machine_cache_source(
+        "sandbox-machine",
+        current_platform().0,
+        current_platform().1,
+    )
 }
 
 #[cfg(test)]
-fn test_managed_podman_machine_cache_source_override(
+fn test_managed_sandbox_machine_cache_source_override(
 ) -> &'static std::sync::Mutex<Option<ManagedArtifactSource>> {
     static OVERRIDE: std::sync::OnceLock<std::sync::Mutex<Option<ManagedArtifactSource>>> =
         std::sync::OnceLock::new();
@@ -630,14 +636,14 @@ fn test_manifest_override() -> &'static std::sync::Mutex<Option<(PathBuf, Bundle
 }
 
 #[cfg(test)]
-pub(crate) struct TestManagedPodmanMachineCacheSourceGuard {
+pub(crate) struct TestManagedSandboxMachineCacheSourceGuard {
     previous: Option<ManagedArtifactSource>,
 }
 
 #[cfg(test)]
-impl Drop for TestManagedPodmanMachineCacheSourceGuard {
+impl Drop for TestManagedSandboxMachineCacheSourceGuard {
     fn drop(&mut self) {
-        let mut guard = test_managed_podman_machine_cache_source_override()
+        let mut guard = test_managed_sandbox_machine_cache_source_override()
             .lock()
             .expect("test managed machine cache override lock poisoned");
         *guard = self.previous.take();
@@ -676,15 +682,15 @@ impl Drop for TestBundledAssetsManifestGuard {
 }
 
 #[cfg(test)]
-pub(crate) fn override_managed_podman_machine_cache_source_for_test(
+pub(crate) fn override_managed_sandbox_machine_cache_source_for_test(
     source: ManagedArtifactSource,
-) -> TestManagedPodmanMachineCacheSourceGuard {
-    let mut guard = test_managed_podman_machine_cache_source_override()
+) -> TestManagedSandboxMachineCacheSourceGuard {
+    let mut guard = test_managed_sandbox_machine_cache_source_override()
         .lock()
         .expect("test managed machine cache override lock poisoned");
     let previous = guard.clone();
     *guard = Some(source);
-    TestManagedPodmanMachineCacheSourceGuard { previous }
+    TestManagedSandboxMachineCacheSourceGuard { previous }
 }
 
 #[cfg(test)]
@@ -859,12 +865,12 @@ mod tests {
     fn select_managed_runtime_source_extracts_version_bin_and_helpers() {
         let component = RuntimeLockComponent {
             kind: "runtime".to_string(),
-            id: "podman".to_string(),
+            id: "sandbox-cli".to_string(),
             os: "macos".to_string(),
             arch: "aarch64".to_string(),
             variant: Some("default".to_string()),
             version: Some("5.8.0".to_string()),
-            bin: Some("usr/bin/podman".to_string()),
+            bin: Some("usr/bin/nerdctl".to_string()),
             helpers: HashMap::from([(
                 "gvproxy".to_string(),
                 RuntimeLockHelperSource {
@@ -874,17 +880,17 @@ mod tests {
             )]),
             sources: vec![RuntimeLockSource {
                 source_type: "vendor".to_string(),
-                uri: Some("https://example.test/podman.zip".to_string()),
+                uri: Some("https://example.test/sandbox-cli.tgz".to_string()),
                 sha256: Some("abcd".to_string()),
             }],
         };
         let mut allowed = HashSet::new();
         allowed.insert("vendor".to_string());
         let source = select_managed_runtime_source(&component, &allowed).expect("runtime source");
-        assert_eq!(source.uri, "https://example.test/podman.zip");
+        assert_eq!(source.uri, "https://example.test/sandbox-cli.tgz");
         assert_eq!(source.sha256, "abcd");
         assert_eq!(source.version, "5.8.0");
-        assert_eq!(source.bin, "usr/bin/podman");
+        assert_eq!(source.bin, "usr/bin/nerdctl");
         let helper = source
             .helpers
             .get("gvproxy")
@@ -963,17 +969,17 @@ mod tests {
     }
 
     #[test]
-    fn managed_podman_machine_cache_source_can_be_overridden_for_tests() {
+    fn managed_sandbox_machine_cache_source_can_be_overridden_for_tests() {
         let override_source = ManagedArtifactSource {
-            uri: "https://example.test/podman-machine.raw.zst".to_string(),
+            uri: "https://example.test/sandbox-machine.raw.zst".to_string(),
             sha256: "cafebabe".to_string(),
         };
-        let guard = override_managed_podman_machine_cache_source_for_test(override_source.clone());
-        let resolved = managed_podman_machine_cache_source().expect("override should resolve");
+        let guard = override_managed_sandbox_machine_cache_source_for_test(override_source.clone());
+        let resolved = managed_sandbox_machine_cache_source().expect("override should resolve");
         assert_eq!(resolved.uri, override_source.uri);
         assert_eq!(resolved.sha256, override_source.sha256);
         drop(guard);
-        if let Some(restored) = managed_podman_machine_cache_source() {
+        if let Some(restored) = managed_sandbox_machine_cache_source() {
             assert!(
                 restored.uri != override_source.uri || restored.sha256 != override_source.sha256,
                 "dropping the guard should restore the prior source"

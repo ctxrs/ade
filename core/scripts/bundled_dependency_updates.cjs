@@ -11,7 +11,6 @@ const repoRoot = path.resolve(coreRoot, "..");
 const providerMatrixPath = path.join(coreRoot, "crates", "ctx-http", "src", "provider_matrix.json");
 const runtimeLockPath = path.join(coreRoot, "apps", "desktop", "src-tauri", "bundles", "runtime_lock.v2.json");
 const installerRsPath = path.join(coreRoot, "crates", "ctx-http", "src", "installer.rs");
-const providersE2ePath = path.join(coreRoot, "scripts", "providers_e2e.sh");
 
 const modeArg = (process.argv[2] || "check").trim().toLowerCase();
 if (!["check", "apply", "policy"].includes(modeArg)) {
@@ -88,16 +87,6 @@ const updateRustConst = (filePath, constName, nextValue) => {
     throw new Error(`failed to update const ${constName} in ${filePath}`);
   }
   const updated = source.replace(pattern, `$1${nextValue}$3`);
-  fs.writeFileSync(filePath, updated, "utf8");
-};
-
-const updateShellDefaultPodmanVersion = (filePath, nextVersion) => {
-  const source = fs.readFileSync(filePath, "utf8");
-  const pattern = /(local podman_version="\$\{PODMAN_VERSION:-)([^}]+)(\}")/;
-  if (!pattern.test(source)) {
-    throw new Error(`failed to update podman default in ${filePath}`);
-  }
-  const updated = source.replace(pattern, `$1${nextVersion}$3`);
   fs.writeFileSync(filePath, updated, "utf8");
 };
 
@@ -405,75 +394,6 @@ const fetchLatestPython313 = async () => {
   return { version: sorted[sorted.length - 1], buildTag };
 };
 
-const fetchLatestPodmanBundleMetadata = async () => {
-  const podman = await fetchGithubLatestRelease("containers/podman");
-  const gvproxy = await fetchGithubLatestRelease("containers/gvisor-tap-vsock");
-  const vfkit = await fetchGithubLatestRelease("crc-org/vfkit");
-
-  const armAsset = "podman-remote-release-darwin_arm64.zip";
-  const x64Asset = "podman-remote-release-darwin_amd64.zip";
-  const gvAsset = "gvproxy-darwin";
-  const vfAsset = "vfkit-unsigned";
-
-  const armUrl = podman.assetsByName.get(armAsset);
-  const x64Url = podman.assetsByName.get(x64Asset);
-  const gvUrl = gvproxy.assetsByName.get(gvAsset);
-  const vfUrl = vfkit.assetsByName.get(vfAsset);
-  if (!armUrl || !x64Url || !gvUrl || !vfUrl) {
-    throw new Error("failed to resolve required podman helper assets");
-  }
-
-  const [armSha, x64Sha, gvSha, vfSha] = await Promise.all([
-    hashUrlSha256(armUrl),
-    hashUrlSha256(x64Url),
-    hashUrlSha256(gvUrl),
-    hashUrlSha256(vfUrl),
-  ]);
-
-  return {
-    version: podman.version,
-    arm64: { url: armUrl, sha256: armSha },
-    x64: { url: x64Url, sha256: x64Sha },
-    gvproxy: { url: gvUrl, sha256: gvSha },
-    vfkit: { url: vfUrl, sha256: vfSha },
-  };
-};
-
-const updatePodmanRuntimeLock = (runtimeLock, podmanMeta) => {
-  const components = Array.isArray(runtimeLock.components) ? runtimeLock.components : [];
-  for (const component of components) {
-    if (!component || component.kind !== "runtime" || component.id !== "podman" || component.os !== "macos") {
-      continue;
-    }
-    const arch = component.arch;
-    const isArm = arch === "aarch64";
-    const podmanAsset = isArm ? podmanMeta.arm64 : podmanMeta.x64;
-    if (!podmanAsset) continue;
-    component.version = podmanMeta.version;
-    component.bin = "usr/bin/podman";
-    component.helpers = {
-      gvproxy: { uri: podmanMeta.gvproxy.url, sha256: podmanMeta.gvproxy.sha256 },
-      vfkit: { uri: podmanMeta.vfkit.url, sha256: podmanMeta.vfkit.sha256 },
-    };
-    if (!Array.isArray(component.sources)) component.sources = [];
-    let updatedVendor = false;
-    for (const source of component.sources) {
-      const sourceType = String(source?.source_type || "").trim();
-      if (sourceType !== "vendor" && sourceType !== "ci") continue;
-      source.uri = podmanAsset.url;
-      source.sha256 = podmanAsset.sha256;
-      updatedVendor = true;
-    }
-    if (!updatedVendor) {
-      component.sources.push({
-        source_type: "vendor",
-        uri: podmanAsset.url,
-        sha256: podmanAsset.sha256,
-      });
-    }
-  }
-};
-
 const requiredProviderIdsFromRuntimeLock = (runtimeLock) => {
   const raw = runtimeLock?.required?.provider_ids;
   if (!Array.isArray(raw)) return [];
@@ -741,14 +661,6 @@ const main = async () => {
     ? { version: currentPython, buildTag: currentPythonTag }
     : await fetchLatestPython313();
 
-  const podmanComponents = (runtimeLock.components || []).filter(
-    (c) => c && c.kind === "runtime" && c.id === "podman" && c.os === "macos",
-  );
-  const currentPodman = String(podmanComponents[0]?.version || "").trim();
-  const latestPodmanVersion = policyMode
-    ? currentPodman
-    : (await fetchGithubLatestRelease("containers/podman")).version;
-
   const staleProviders = providerReports.filter(
     (row) => row.currentVersion && row.latestVersion && row.currentVersion !== row.latestVersion,
   );
@@ -764,7 +676,6 @@ const main = async () => {
     { id: "node", current: currentNode, latest: latestNode },
     { id: "python", current: currentPython, latest: latestPython.version },
     { id: "python-build-tag", current: currentPythonTag, latest: latestPython.buildTag },
-    { id: "podman", current: currentPodman, latest: latestPodmanVersion },
   ].filter((row) => row.current !== row.latest);
 
   for (const row of providerReports) {
@@ -818,7 +729,6 @@ const main = async () => {
       latest: latestPython.buildTag,
       resolver: "python-build-standalone",
     },
-    { id: "podman", current: currentPodman, latest: latestPodmanVersion, resolver: "github:containers/podman" },
   ]) {
     const status = row.current === row.latest ? "ok" : "update";
     console.log(`runtime:${status}\t${row.id}\t${row.current || "<unset>"}\t${row.latest}\t${row.resolver}`);
@@ -910,12 +820,6 @@ const main = async () => {
   }
   if (currentPythonTag !== latestPython.buildTag) {
     updateRustConst(installerRsPath, "PYTHON_BUILD_TAG", latestPython.buildTag);
-  }
-
-  if (!policyMode && currentPodman !== latestPodmanVersion) {
-    const podmanMeta = await fetchLatestPodmanBundleMetadata();
-    updatePodmanRuntimeLock(runtimeLock, podmanMeta);
-    updateShellDefaultPodmanVersion(providersE2ePath, podmanMeta.version);
   }
 
   writeJson(providerMatrixPath, matrix);

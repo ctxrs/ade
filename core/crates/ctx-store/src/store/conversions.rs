@@ -1,4 +1,5 @@
 use super::*;
+use ctx_core::models::{SandboxBinding, SandboxProfile, SandboxRuntimeFamily};
 
 pub(super) fn build_mobile_connection_profile_from_row(
     row: SqliteRow,
@@ -160,6 +161,54 @@ pub(super) fn derive_activity_from_status(
         is_working: has_running_turn,
         last_turn_status: last_status,
     }
+}
+
+pub(super) fn sandbox_runtime_family_to_str(value: &SandboxRuntimeFamily) -> &'static str {
+    match value {
+        SandboxRuntimeFamily::NativeContainer => "native_container",
+        SandboxRuntimeFamily::SharedVmContainer => "shared_vm_container",
+    }
+}
+
+pub(super) fn parse_sandbox_runtime_family(value: &str) -> SandboxRuntimeFamily {
+    match value {
+        "shared_vm_container" => SandboxRuntimeFamily::SharedVmContainer,
+        _ => SandboxRuntimeFamily::NativeContainer,
+    }
+}
+
+pub(super) fn sandbox_profile_to_str(value: &SandboxProfile) -> &'static str {
+    match value {
+        SandboxProfile::Standard => "standard",
+        SandboxProfile::Strict => "strict",
+    }
+}
+
+pub(super) fn parse_sandbox_profile(value: &str) -> SandboxProfile {
+    match value {
+        "strict" => SandboxProfile::Strict,
+        _ => SandboxProfile::Standard,
+    }
+}
+
+pub(super) fn map_sandbox_binding(row: SqliteRow) -> Option<SandboxBinding> {
+    let worktree_id: String = row.try_get("worktree_id").ok()?;
+    let workspace_id: String = row.try_get("workspace_id").ok()?;
+    let runtime_family: String = row.try_get("runtime_family").ok()?;
+    let profile: String = row.try_get("profile").ok()?;
+    let created_at: String = row.try_get("created_at").ok()?;
+    Some(SandboxBinding {
+        worktree_id: WorktreeId(uuid::Uuid::parse_str(&worktree_id).ok()?),
+        workspace_id: WorkspaceId(uuid::Uuid::parse_str(&workspace_id).ok()?),
+        runtime_family: parse_sandbox_runtime_family(&runtime_family),
+        profile: parse_sandbox_profile(&profile),
+        live_workspace_root: row.try_get("live_workspace_root").ok()?,
+        live_worktree_root: row.try_get("live_worktree_root").ok()?,
+        execution_settings_json: row.try_get("execution_settings_json").ok(),
+        container_name: row.try_get("container_name").ok()?,
+        host_projection_root: row.try_get("host_projection_root").ok()?,
+        created_at: parse_dt(&created_at).ok()?,
+    })
 }
 
 pub(super) fn parse_dt(value: &str) -> Result<DateTime<Utc>> {

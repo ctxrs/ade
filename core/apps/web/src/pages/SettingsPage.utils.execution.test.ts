@@ -4,7 +4,6 @@ import {
   MIN_MACHINE_IDLE_SHUTDOWN_SECONDS,
   canSaveSandboxMachineSettings,
   defaultContainerMountMode,
-  defaultContainerRuntimeKind,
   defaultExecutionSettings,
   normalizeExecutionSettings,
 } from "./settings/sandboxExecutionSettings";
@@ -80,7 +79,7 @@ describe("executionSettingsStableKey", () => {
       executionSettingsStableKey({
         mode: "host",
         container: {
-          runtime: "podman",
+          runtime: "native_container",
           mount_mode: "disk_isolated",
           network_mode: "llm_only",
           allowlist: [],
@@ -97,7 +96,7 @@ describe("executionSettingsStableKey", () => {
       executionSettingsStableKey({
         mode: "host",
         container: {
-          runtime: "podman",
+          runtime: "native_container",
           mount_mode: "disk_isolated",
           network_mode: "llm_only",
           allowlist: [],
@@ -117,7 +116,7 @@ describe("executionSettingsStableKey", () => {
     const baseSettings = {
       mode: "host" as const,
       container: {
-        runtime: "podman" as const,
+        runtime: "native_container" as const,
         mount_mode: "disk_isolated" as const,
         network_mode: "llm_only" as const,
         allowlist: [],
@@ -154,27 +153,18 @@ describe("executionSettingsStableKey", () => {
 });
 
 describe("defaultExecutionSettings", () => {
-  it("uses the daemon-reported runtime default when present", () => {
-    expect(defaultContainerRuntimeKind("avf_linux_vm")).toBe("avf_linux_vm");
-    expect(defaultExecutionSettings("avf_linux_vm").container.runtime).toBe("avf_linux_vm");
-    expect(defaultContainerMountMode("avf_linux_vm")).toBe("disk_isolated");
-    expect(defaultExecutionSettings("avf_linux_vm").container.mount_mode).toBe("disk_isolated");
-  });
-
-  it("keeps podman as the fallback when the daemon has not reported a preferred runtime", () => {
-    expect(defaultContainerRuntimeKind()).toBe("podman");
-    expect(defaultContainerRuntimeKind(null)).toBe("podman");
-    expect(defaultExecutionSettings().container.runtime).toBe("podman");
-    expect(defaultContainerMountMode("podman")).toBe("disk_isolated");
+  it("uses a stable internal fallback when no persisted execution payload exists yet", () => {
+    expect(defaultExecutionSettings().container.runtime).toBe("native_container");
+    expect(defaultContainerMountMode("native_container")).toBe("disk_isolated");
     expect(defaultExecutionSettings().container.mount_mode).toBe("disk_isolated");
   });
 
-  it("keeps sandbox execution settings disk-isolated", () => {
+  it("keeps sandbox execution settings normalized", () => {
     expect(
       normalizeExecutionSettings({
-        mode: "container",
+        mode: "sandbox",
         container: {
-          runtime: "avf_linux_vm",
+          runtime: "shared_vm_container",
           mount_mode: "disk_isolated",
           network_mode: "llm_only",
           allowlist: [],

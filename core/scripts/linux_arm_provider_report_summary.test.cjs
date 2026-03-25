@@ -37,11 +37,11 @@ test("markdown summary includes failing provider table", () => {
         stage: "install",
         error_code: "download_failed",
         category: "environment",
-        reason: "podman unavailable",
+        reason: "sandbox runtime unavailable",
       },
     ],
   });
 
   assert.match(markdown, /Linux ARM Provider Reliability Summary/);
-  assert.match(markdown, /\| codex \| install \| download_failed \| environment \| podman unavailable \|/);
+  assert.match(markdown, /\| codex \| install \| download_failed \| environment \| sandbox runtime unavailable \|/);
 });

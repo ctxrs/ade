@@ -32,12 +32,12 @@ trap 'rm -rf "$tmp_root"' EXIT
 
 shim_dir="$tmp_root/shims"
 mkdir -p "$shim_dir"
-cat >"$shim_dir/podman" <<'SH'
+cat >"$shim_dir/nerdctl" <<'SH'
 #!/usr/bin/env bash
-echo "unexpected podman invocation" >&2
+echo "unexpected nerdctl invocation" >&2
 exit 97
 SH
-chmod +x "$shim_dir/podman"
+chmod +x "$shim_dir/nerdctl"
 
 host_arch_raw="$(uname -m 2>/dev/null || true)"
 case "$host_arch_raw" in
@@ -49,7 +49,7 @@ case "$host_arch_raw" in
     ;;
 esac
 
-echo "smoke: harness image bundling ignores podman even when podman is first on PATH"
+echo "smoke: harness image bundling ignores sandbox runtime CLIs even when nerdctl is first on PATH"
 bundle_dir_image="$tmp_root/bundle-image"
 PATH="$shim_dir:$PATH" \
 CTX_BUNDLE_DIR="$bundle_dir_image" \

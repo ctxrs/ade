@@ -114,6 +114,18 @@ async function resolveWorkspaceByPath(rootPath: string): Promise<ResolvedWorkspa
   }
 }
 
+async function loadWorkspaceExecutionEnvironment(
+  workspaceId: string,
+): Promise<LauncherExecutionEnvironment | undefined> {
+  if (!workspaceId) return undefined;
+  try {
+    const config = await getWorkspaceExecutionConfig(workspaceId);
+    return normalizeExecutionEnvironment(config.environment);
+  } catch {
+    return undefined;
+  }
+}
+
 export default function LauncherPage() {
   const navigate = useNavigate();
   const [connection, setConnection] = useState<DesktopConnectionInfo | null>(null);
@@ -194,11 +206,13 @@ export default function LauncherPage() {
           return;
         }
         try {
+          const resolvedExecutionEnvironment =
+            executionEnvironment ?? await loadWorkspaceExecutionEnvironment(resolvedWorkspace.workspaceId);
           await upsertLauncherRecent({
             kind: "local",
             label: resolvedWorkspace.label,
             root_path: resolvedWorkspace.rootPath,
-            execution_environment: executionEnvironment ?? inferLocalExecutionEnvironment(resolvedWorkspace.rootPath),
+            execution_environment: resolvedExecutionEnvironment,
             updated_at_ms: Date.now(),
           });
         } catch {
@@ -323,23 +337,11 @@ function lastSegment(path: string): string {
   return idx >= 0 ? s.slice(idx + 1) : s;
 }
 
-function isDaemonManagedLocalContainerPath(path: string): boolean {
-  const normalized = String(path || "")
-    .trim()
-    .replace(/\\/g, "/")
-    .toLowerCase();
-  return normalized.includes("/.ctx/workspaces/") || normalized.includes("/workspaces/staging/");
-}
-
 function normalizeExecutionEnvironment(value: unknown): LauncherExecutionEnvironment | undefined {
   if (value === "host" || value === "sandbox") {
     return value;
   }
   return undefined;
-}
-
-function inferLocalExecutionEnvironment(path: string): LauncherExecutionEnvironment {
-  return isDaemonManagedLocalContainerPath(path) ? "sandbox" : "host";
 }
 
 function pathForDisplay(path: string): string {
@@ -361,7 +363,7 @@ function pathForDisplay(path: string): string {
 
 function recentLocationDisplay(recent: LauncherRecentEntry): { label: string; title: string } {
   if (recent.kind === "local") {
-    const env = normalizeExecutionEnvironment(recent.execution_environment) ?? inferLocalExecutionEnvironment(recent.root_path);
+    const env = normalizeExecutionEnvironment(recent.execution_environment);
     if (env === "sandbox") {
       return {
         label: "Local sandbox",
@@ -369,6 +371,12 @@ function recentLocationDisplay(recent: LauncherRecentEntry): { label: string; ti
       };
     }
     const displayPath = pathForDisplay(recent.root_path);
+    if (env !== "host") {
+      return {
+        label: displayPath,
+        title: recent.root_path,
+      };
+    }
     return {
       label: `${displayPath} (Host)`,
       title: `${recent.root_path} (Host)`,
@@ -387,6 +395,12 @@ function recentLocationDisplay(recent: LauncherRecentEntry): { label: string; ti
   const workspaceRootPath = String(recent.workspace_root_path ?? "").trim();
   if (workspaceRootPath) {
     const displayPath = pathForDisplay(workspaceRootPath);
+    if (env !== "host") {
+      return {
+        label: `${target}:${displayPath}`,
+        title: `${target}:${workspaceRootPath}`,
+      };
+    }
     return {
       label: `${target}:${displayPath} (Host)`,
       title: `${target}:${workspaceRootPath} (Host)`,
@@ -410,15 +424,7 @@ async function recentsFromWorkspaces(workspaces: Awaited<ReturnType<typeof listW
     .filter((workspace) => workspace.root_path.trim().length > 0)
     .map(async (workspace) => {
       const workspaceId = idToString(workspace.id ?? "").trim();
-      let executionEnvironment = inferLocalExecutionEnvironment(workspace.root_path);
-      if (workspaceId) {
-        try {
-          const config = await getWorkspaceExecutionConfig(workspaceId);
-          executionEnvironment = normalizeExecutionEnvironment(config.environment) ?? executionEnvironment;
-        } catch {
-          // keep inferred fallback
-        }
-      }
+      const executionEnvironment = await loadWorkspaceExecutionEnvironment(workspaceId);
       return {
         kind: "local" as const,
         label: workspace.name.trim() || lastSegment(workspace.root_path),

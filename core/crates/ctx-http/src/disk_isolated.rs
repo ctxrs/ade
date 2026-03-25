@@ -11,13 +11,42 @@ pub fn container_worktree_root(worktree_id: WorktreeId) -> PathBuf {
     PathBuf::from("/ctx/ws/worktrees").join(worktree_id.0.to_string())
 }
 
+pub async fn remove_live_worktree_root(
+    data_root: &Path,
+    workspace_id: WorkspaceId,
+    live_worktree_root: &Path,
+) -> Result<()> {
+    const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
+    let container_id = format!("ctx-harness-{}", workspace_id.0);
+    let mut cmd = crate::harness_runtime::sandbox_container_command(data_root)?;
+    cmd.arg("exec")
+        .arg("--interactive")
+        .arg(&container_id)
+        .arg("rm")
+        .arg("-rf")
+        .arg("--")
+        .arg(live_worktree_root);
+    let out = crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
+        .await
+        .context("sandbox exec rm -rf disk-isolated worktree")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "failed to remove disk-isolated worktree root {} (status {}): {}",
+            live_worktree_root.display(),
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
 async fn verify_container_git_repo(
     data_root: &Path,
     container_id: &str,
     worktree_root: &Path,
 ) -> Result<()> {
-    const PODMAN_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
-    let mut cmd = crate::harness_runtime::podman_command(data_root)?;
+    const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
+    let mut cmd = crate::harness_runtime::sandbox_container_command(data_root)?;
     cmd.arg("exec")
         .arg("--interactive")
         .arg("--workdir")
@@ -26,9 +55,9 @@ async fn verify_container_git_repo(
         .arg("sh")
         .arg("-lc")
         .arg("git rev-parse --is-inside-work-tree && git rev-parse HEAD >/dev/null");
-    let out = crate::harness_runtime::command_output_with_timeout(cmd, PODMAN_EXEC_TIMEOUT)
+    let out = crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
         .await
-        .context("podman exec git repo verification")?;
+        .context("sandbox exec git repo verification")?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -164,8 +193,8 @@ pub async fn ensure_worktree_from_host_copy(
     base_commit_sha: &str,
     branch_name: &str,
 ) -> Result<PathBuf> {
-    const PODMAN_CP_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-    const PODMAN_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
+    const SANDBOX_CP_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+    const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
     let container_id = format!("ctx-harness-{}", workspace_id.0);
     let dest_root = container_worktree_root(worktree_id);
     tracing::info!(
@@ -187,7 +216,7 @@ pub async fn ensure_worktree_from_host_copy(
 
     // 1) Create destination directory.
     {
-        let mut cmd = crate::harness_runtime::podman_command(data_root)?;
+        let mut cmd = crate::harness_runtime::sandbox_container_command(data_root)?;
         cmd.arg("exec")
             .arg("--interactive")
             .arg(&container_id)
@@ -195,9 +224,9 @@ pub async fn ensure_worktree_from_host_copy(
             .arg("-p")
             .arg("--")
             .arg(&dest_root);
-        let out = crate::harness_runtime::command_output_with_timeout(cmd, PODMAN_EXEC_TIMEOUT)
+        let out = crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
             .await
-            .context("podman exec mkdir")?;
+            .context("sandbox exec mkdir")?;
         if !out.status.success() {
             anyhow::bail!(
                 "failed to create disk-isolated worktree dir (status {}): {}",
@@ -212,20 +241,20 @@ pub async fn ensure_worktree_from_host_copy(
     // This is intentionally a one-time copy for v1. The disk-isolated worktree becomes the
     // canonical filesystem for the workbench + agents.
     {
-        // Prefer `podman cp` so we don't depend on any host-side `tar` binary being present
+        // Prefer `container cp` so we don't depend on any host-side `tar` binary being present
         // (notably on some Windows setups).
-        // `podman cp` copies directory contents when the source path ends in `/.` (or `\\.` on
+        // `container cp` copies directory contents when the source path ends in `/.` (or `\\.` on
         // Windows). Use `Path::join` to avoid hard-coding separators.
         let host_src = copy_root.join(".").to_string_lossy().to_string();
         let container_dst = format!("{}:{}", container_id, dest_root.to_string_lossy());
-        let mut cmd = crate::harness_runtime::podman_command(data_root)?;
+        let mut cmd = crate::harness_runtime::sandbox_container_command(data_root)?;
         cmd.arg("cp").arg(host_src).arg(container_dst);
-        let out = crate::harness_runtime::command_output_with_timeout(cmd, PODMAN_CP_TIMEOUT)
+        let out = crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_CP_TIMEOUT)
             .await
-            .context("podman cp host -> disk-isolated worktree")?;
+            .context("container cp host -> disk-isolated worktree")?;
         if !out.status.success() {
             anyhow::bail!(
-                "podman cp failed (status {}): {}",
+                "container cp failed (status {}): {}",
                 out.status,
                 String::from_utf8_lossy(&out.stderr).trim()
             );
@@ -237,7 +266,7 @@ pub async fn ensure_worktree_from_host_copy(
         );
 
         // Best-effort: ensure files are writable for the execution user.
-        let mut chmod = crate::harness_runtime::podman_command(data_root)?;
+        let mut chmod = crate::harness_runtime::sandbox_container_command(data_root)?;
         chmod
             .arg("exec")
             .arg("--interactive")
@@ -248,12 +277,12 @@ pub async fn ensure_worktree_from_host_copy(
             .arg("-lc")
             .arg("chmod -R u+rwX . >/dev/null 2>&1 || true");
         let _ =
-            crate::harness_runtime::command_output_with_timeout(chmod, PODMAN_EXEC_TIMEOUT).await;
+            crate::harness_runtime::command_output_with_timeout(chmod, SANDBOX_EXEC_TIMEOUT).await;
     }
 
     // 3) Create/reset the worktree branch at the base revision.
     {
-        let mut cmd = crate::harness_runtime::podman_command(data_root)?;
+        let mut cmd = crate::harness_runtime::sandbox_container_command(data_root)?;
         cmd.arg("exec")
             .arg("--interactive")
             .arg("--workdir")
@@ -264,9 +293,9 @@ pub async fn ensure_worktree_from_host_copy(
             .arg("-B")
             .arg(branch_name)
             .arg(base_commit_sha);
-        let out = crate::harness_runtime::command_output_with_timeout(cmd, PODMAN_EXEC_TIMEOUT)
+        let out = crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
             .await
-            .context("podman exec git checkout")?;
+            .context("sandbox exec git checkout")?;
         if !out.status.success() {
             anyhow::bail!(
                 "git checkout failed (status {}): {}",

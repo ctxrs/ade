@@ -3,16 +3,19 @@ use std::io::ErrorKind;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
+#[cfg(test)]
 use ctx_core::ids::SessionId;
+#[cfg(test)]
 use ctx_core::models::ExecutionEnvironment;
+#[cfg(test)]
 use ctx_store::StoreManager;
 use futures::StreamExt;
-use sha2::Digest;
+#[cfg(test)]
 use sysinfo::System;
 use tokio::process::Command;
 use tokio::sync::Mutex;
@@ -25,12 +28,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::bundled_assets;
 use crate::network_allowlist;
-use crate::resource_utilization::{ResourceSampler, SystemSnapshot};
+#[cfg(test)]
+use crate::resource_utilization::SystemSnapshot;
+#[cfg(test)]
 use crate::settings::{
-    normalize_container_machine_idle_shutdown_seconds, ContainerExecutionSettings,
-    ContainerMachineMemoryProfile, ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind,
+    normalize_container_machine_idle_shutdown_seconds, ContainerMachineMemoryProfile,
+};
+use crate::settings::{
+    ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind,
     ExecutionMode, ExecutionSettings,
 };
+#[cfg(test)]
 use crate::terminals::TerminalManager;
 use crate::updates;
 use url::Url;
@@ -41,11 +49,13 @@ mod image;
 mod machine;
 mod manager;
 mod network_policy_transition;
-mod podman;
-mod podman_machine_lifecycle;
-mod podman_recovery;
 #[cfg(test)]
 mod reclaim_unit_tests;
+mod sandbox_cli;
+#[cfg(test)]
+mod sandbox_machine_lifecycle;
+#[cfg(test)]
+mod sandbox_machine_recovery;
 
 static AVF_DAEMON_GATEWAY_PROXIES: OnceLock<StdMutex<HashMap<u16, tokio::task::JoinHandle<()>>>> =
     OnceLock::new();
@@ -66,14 +76,15 @@ use self::avf_linux_vm::{
     workspace_vm_data_root as avf_linux_workspace_vm_data_root,
     workspace_vm_state as avf_linux_workspace_vm_state,
 };
+#[cfg(test)]
+use self::container::sandbox_machine_required;
 pub(crate) use self::container::AVF_GUEST_HOST_GATEWAY;
 #[cfg(test)]
 use self::container::{bind_mount, should_mount_bundle_dir_in_container};
 use self::container::{
-    build_mounts, container_data_root, container_user, daemon_port_from_url,
-    podman_machine_required, proxy_runtime_path, proxy_runtime_root,
-    rewrite_daemon_url_for_avf_guest, rewrite_daemon_url_for_container, should_use_keep_id_userns,
-    verify_disk_isolated_container_mounts,
+    build_mounts, container_data_root, container_user, daemon_port_from_url, proxy_runtime_path,
+    proxy_runtime_root, rewrite_daemon_url_for_avf_guest, rewrite_daemon_url_for_container,
+    should_use_keep_id_userns, verify_disk_isolated_container_mounts,
 };
 use self::image::ensure_container_image_available;
 pub(crate) use self::image::resolve_container_image;
@@ -88,47 +99,42 @@ use self::image::{
     ensure_managed_default_container_image_tar_with_source, managed_default_image_install_lock,
 };
 use self::machine::{
-    ctx_podman_machine_name, download_managed_artifact, ensure_managed_podman_machine_cache,
-    ensure_managed_podman_runtime, managed_podman_runtime_bin_path, managed_podman_runtime_source,
-    persist_podman_machine_cache_to_shared_best_effort, podman_home_root, podman_runtime_root,
-    podman_temp_root, seed_shared_podman_machine_cache_best_effort,
-    ManagedArtifactDownloadReporter, ManagedDownloadAggregate,
+    download_managed_artifact, ManagedArtifactDownloadReporter, ManagedDownloadAggregate,
 };
 #[cfg(test)]
 use self::machine::{
-    persist_podman_machine_cache_to_shared, podman_machine_cache_root,
-    seed_shared_podman_machine_cache,
+    ensure_managed_sandbox_cli_runtime, ensure_managed_sandbox_machine_cache,
+    persist_sandbox_machine_cache_to_shared, persist_sandbox_machine_cache_to_shared_best_effort,
+    sandbox_machine_cache_root, sandbox_machine_home_root, sandbox_machine_name,
+    sandbox_machine_runtime_root, sandbox_machine_temp_root, seed_shared_sandbox_machine_cache,
+    seed_shared_sandbox_machine_cache_best_effort,
 };
 use self::network_policy_transition::apply_container_network_policy;
 #[cfg(test)]
-use self::podman::podman_binary_path;
-use self::podman::{
+use self::sandbox_cli::sandbox_cli_binary_path;
+use self::sandbox_cli::{
     command_output_message, container_exists, container_running, ensure_workspace_volume,
 };
-pub(crate) use self::podman::{
-    command_output_with_timeout, container_runtime_available, podman_command, podman_engine_ready,
-    podman_env_for_data_root, podman_invocation,
+pub(crate) use self::sandbox_cli::{
+    command_output_with_timeout, container_runtime_available, sandbox_cli_env_for_data_root,
+    sandbox_cli_invocation, sandbox_container_command, sandbox_engine_ready,
 };
-#[allow(unused_imports)]
-pub(crate) use self::podman_machine_lifecycle::{
-    HarnessRuntimeStats, PrewarmArtifactActivityGuard, RuntimeOperationGuard,
-};
-use self::podman_recovery::{
-    ensure_podman_machine_running_with_observer, podman_machine_present,
-    podman_machine_singleflight_lock, run_podman_machine_init,
+#[cfg(test)]
+use self::sandbox_machine_recovery::{
+    run_sandbox_machine_init, sandbox_machine_present, sandbox_machine_singleflight_lock,
 };
 
 pub(crate) fn local_runtime_available(data_root: &Path, runtime: &ContainerRuntimeKind) -> bool {
     match runtime {
-        ContainerRuntimeKind::Podman => container_runtime_available(data_root),
-        ContainerRuntimeKind::AvfLinuxVm => avf_linux_runtime_available(),
+        ContainerRuntimeKind::NativeContainer => container_runtime_available(data_root),
+        ContainerRuntimeKind::SharedVmContainer => avf_linux_runtime_available(),
     }
 }
 
 pub(crate) fn runtime_prewarm_target(settings: &ContainerExecutionSettings) -> String {
     match settings.runtime {
-        ContainerRuntimeKind::Podman => resolve_container_image(settings),
-        ContainerRuntimeKind::AvfLinuxVm => avf_linux_runtime_target_label(),
+        ContainerRuntimeKind::NativeContainer => resolve_container_image(settings),
+        ContainerRuntimeKind::SharedVmContainer => avf_linux_runtime_target_label(),
     }
 }
 
@@ -137,9 +143,10 @@ pub(crate) async fn selected_runtime_state(
     settings: &ContainerExecutionSettings,
 ) -> Result<(bool, bool)> {
     match settings.runtime {
-        ContainerRuntimeKind::Podman => {
-            let machine_ready =
-                normalize_podman_engine_ready_for_runtime(podman_engine_ready(data_root).await)?;
+        ContainerRuntimeKind::NativeContainer => {
+            let machine_ready = normalize_container_engine_ready_for_runtime(
+                sandbox_engine_ready(data_root).await,
+            )?;
             let image_present = if machine_ready {
                 container_image_present(data_root, &resolve_container_image(settings)).await?
             } else {
@@ -147,7 +154,7 @@ pub(crate) async fn selected_runtime_state(
             };
             Ok((machine_ready, image_present))
         }
-        ContainerRuntimeKind::AvfLinuxVm => avf_linux_runtime_state(data_root),
+        ContainerRuntimeKind::SharedVmContainer => avf_linux_runtime_state(data_root),
     }
 }
 
@@ -157,10 +164,11 @@ pub(crate) async fn prewarm_selected_runtime_with_observer(
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<()> {
     match settings.runtime {
-        ContainerRuntimeKind::Podman => {
+        ContainerRuntimeKind::NativeContainer => {
             let image = resolve_container_image(settings);
-            let machine_ready =
-                normalize_podman_engine_ready_for_runtime(podman_engine_ready(data_root).await)?;
+            let machine_ready = normalize_container_engine_ready_for_runtime(
+                sandbox_engine_ready(data_root).await,
+            )?;
             if machine_ready {
                 prefetch_container_image_with_observer(data_root, &image, observer).await
             } else {
@@ -168,20 +176,19 @@ pub(crate) async fn prewarm_selected_runtime_with_observer(
                     .await
             }
         }
-        ContainerRuntimeKind::AvfLinuxVm => {
+        ContainerRuntimeKind::SharedVmContainer => {
             prefetch_avf_linux_runtime_with_observer(data_root, settings, observer).await
         }
     }
 }
 
-fn normalize_podman_engine_ready_for_runtime(result: Result<bool>) -> Result<bool> {
+fn normalize_container_engine_ready_for_runtime(result: Result<bool>) -> Result<bool> {
     match result {
         Ok(value) => Ok(value),
         Err(err) => {
-            if err
-                .to_string()
-                .to_ascii_lowercase()
-                .contains("podman binary unavailable")
+            let lowered = err.to_string().to_ascii_lowercase();
+            if lowered.contains("sandbox container cli unavailable")
+                || lowered.contains("native sandbox container runtime is unavailable")
             {
                 return Ok(false);
             }
@@ -196,19 +203,21 @@ fn normalize_podman_engine_ready_for_runtime(result: Result<bool>) -> Result<boo
 // - iptables (for restricted egress enforcement)
 // - /usr/local/bin/ctx-egress-proxy (Linux binary executed inside the container)
 const DEFAULT_CONTAINER_IMAGE: &str = "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04";
-const PODMAN_PATH_ENV: &str = "CTX_PODMAN_PATH";
-const PODMAN_MACHINE_CACHE_DIR_ENV: &str = "CTX_PODMAN_MACHINE_CACHE_DIR";
+pub(crate) const CTX_HARNESS_SANDBOX_CLI_PATH_ENV: &str = "CTX_HARNESS_SANDBOX_CLI_PATH";
+#[cfg(test)]
+const SANDBOX_MACHINE_CACHE_DIR_ENV: &str = "CTX_SANDBOX_MACHINE_CACHE_DIR";
 const EGRESS_PROXY_BINARY: &str = "ctx-egress-proxy";
 const EGRESS_PROXY_RUNTIME_ID: &str = "ctx-egress-proxy";
 const EGRESS_PROXY_CONFIG_NAME: &str = "egress-proxy.json";
 const TRANSPARENT_PROXY_PORT: u16 = 15001;
 const EGRESS_PROXY_CONTAINER_PATH: &str = "/usr/local/bin/ctx-egress-proxy";
-// Dedicated Podman machine name prefix for ctx-managed container execution on macOS/Windows.
+#[cfg(test)]
+// Dedicated Sandbox machine name prefix for ctx-managed container execution on macOS/Windows.
 //
 // Final machine name is deterministic per daemon data_root to avoid cross-daemon collisions in
-// Podman's host-global machine temp/socket state.
-const CTX_PODMAN_MACHINE_PREFIX: &str = "ctx";
-// In-container root for disk-isolated workspaces (Podman volume mounted here).
+// the sandbox CLI helper's host-global machine temp/socket state.
+const CTX_SANDBOX_MACHINE_PREFIX: &str = "ctx";
+// In-container root for disk-isolated workspaces (sandbox workspace volume mounted here).
 pub(crate) const CTX_CONTAINER_WORKSPACE_ROOT: &str = "/ctx/ws";
 pub(crate) const CTX_HARNESS_RUNTIME_KIND_ENV: &str = "CTX_HARNESS_RUNTIME_KIND";
 pub(crate) const CTX_HARNESS_LINUX_SANDBOX_ENV: &str = "CTX_HARNESS_LINUX_SANDBOX";
@@ -216,20 +225,29 @@ pub(crate) const CTX_AVF_HOST_DATA_ROOT_ENV: &str = "CTX_AVF_HOST_DATA_ROOT";
 pub(crate) const CTX_AVF_WORKSPACE_ID_ENV: &str = "CTX_AVF_WORKSPACE_ID";
 pub(crate) const CTX_AVF_WORKTREE_ID_ENV: &str = "CTX_AVF_WORKTREE_ID";
 pub(crate) const CTX_AVF_HOST_WORKTREE_ROOT_ENV: &str = "CTX_AVF_HOST_WORKTREE_ROOT";
-const PODMAN_INFO_TIMEOUT: Duration = Duration::from_secs(5);
-const PODMAN_MACHINE_START_TIMEOUT: Duration = Duration::from_secs(180);
-// Bound machine init so wedged podman subprocesses cannot stall launch indefinitely.
-const PODMAN_MACHINE_INIT_TIMEOUT: Duration = Duration::from_secs(8 * 60);
+const SANDBOX_INFO_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const SANDBOX_MACHINE_START_TIMEOUT: Duration = Duration::from_secs(180);
+// Bound machine init so wedged sandbox CLI subprocesses cannot stall launch indefinitely.
+#[cfg(test)]
+const SANDBOX_MACHINE_INIT_TIMEOUT: Duration = Duration::from_secs(8 * 60);
 // First boot can be slow on fresh installs (image download + provisioning), but readiness loops
 // must remain bounded tightly enough to surface actionable errors quickly.
-const PODMAN_MACHINE_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
-const PODMAN_OP_TIMEOUT: Duration = Duration::from_secs(60);
-const PODMAN_LOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+#[cfg(test)]
+const SANDBOX_MACHINE_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+const SANDBOX_OP_TIMEOUT: Duration = Duration::from_secs(60);
+const SANDBOX_IMAGE_LOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+#[cfg(test)]
 const DEFAULT_PRESET_HOST_MEMORY_MB: u32 = 32 * 1024;
-const PODMAN_MACHINE_MEMORY_PRESET_FLOOR_MB: u32 = 4096;
-const PODMAN_MACHINE_MEMORY_ECONOMY_CAP_MB: u32 = 8192;
-const PODMAN_MACHINE_MEMORY_BALANCED_CAP_MB: u32 = 16 * 1024;
-const PODMAN_MACHINE_MEMORY_PERFORMANCE_CAP_MB: u32 = 32 * 1024;
+#[cfg(test)]
+const SANDBOX_VM_MEMORY_PRESET_FLOOR_MB: u32 = 4096;
+#[cfg(test)]
+const SANDBOX_VM_MEMORY_ECONOMY_CAP_MB: u32 = 8192;
+#[cfg(test)]
+const SANDBOX_VM_MEMORY_BALANCED_CAP_MB: u32 = 16 * 1024;
+#[cfg(test)]
+const SANDBOX_VM_MEMORY_PERFORMANCE_CAP_MB: u32 = 32 * 1024;
+#[cfg(test)]
 const MI_B: u64 = 1024 * 1024;
 
 fn avf_daemon_gateway_proxies() -> &'static StdMutex<HashMap<u16, tokio::task::JoinHandle<()>>> {
@@ -376,15 +394,8 @@ pub(crate) async fn ensure_avf_guest_gateway_proxy_for_test(
     ensure_avf_guest_gateway_proxy(gateway_addr, backend_addr, port).await
 }
 
-fn podman_machine_reclaim_poll_interval() -> Duration {
-    if cfg!(test) {
-        Duration::from_millis(100)
-    } else {
-        Duration::from_secs(30)
-    }
-}
-
-fn podman_machine_pressure_idle_grace() -> Duration {
+#[cfg(test)]
+fn sandbox_machine_pressure_idle_grace() -> Duration {
     if cfg!(test) {
         Duration::from_millis(100)
     } else {
@@ -392,6 +403,7 @@ fn podman_machine_pressure_idle_grace() -> Duration {
     }
 }
 
+#[cfg(test)]
 fn detected_host_memory_mb() -> Option<u32> {
     #[cfg(test)]
     if let Ok(raw) = std::env::var("CTX_TEST_HOST_MEMORY_MB") {
@@ -412,31 +424,30 @@ fn detected_host_memory_mb() -> Option<u32> {
     u32::try_from(total_mb).ok()
 }
 
+#[cfg(test)]
 fn preset_memory_mb(total_memory_mb: u32, numerator: u32, denominator: u32, cap_mb: u32) -> u32 {
     total_memory_mb
         .saturating_mul(numerator)
         .checked_div(denominator)
-        .unwrap_or(PODMAN_MACHINE_MEMORY_PRESET_FLOOR_MB)
-        .clamp(PODMAN_MACHINE_MEMORY_PRESET_FLOOR_MB, cap_mb)
+        .unwrap_or(SANDBOX_VM_MEMORY_PRESET_FLOOR_MB)
+        .clamp(SANDBOX_VM_MEMORY_PRESET_FLOOR_MB, cap_mb)
 }
 
+#[cfg(test)]
 fn container_machine_memory_mb_for_host_memory(
     settings: &ContainerExecutionSettings,
     host_memory_mb: u32,
 ) -> u32 {
     match settings.machine.memory_profile {
         ContainerMachineMemoryProfile::Economy => {
-            preset_memory_mb(host_memory_mb, 1, 8, PODMAN_MACHINE_MEMORY_ECONOMY_CAP_MB)
+            preset_memory_mb(host_memory_mb, 1, 8, SANDBOX_VM_MEMORY_ECONOMY_CAP_MB)
         }
         ContainerMachineMemoryProfile::Balanced => {
-            preset_memory_mb(host_memory_mb, 1, 4, PODMAN_MACHINE_MEMORY_BALANCED_CAP_MB)
+            preset_memory_mb(host_memory_mb, 1, 4, SANDBOX_VM_MEMORY_BALANCED_CAP_MB)
         }
-        ContainerMachineMemoryProfile::Performance => preset_memory_mb(
-            host_memory_mb,
-            1,
-            2,
-            PODMAN_MACHINE_MEMORY_PERFORMANCE_CAP_MB,
-        ),
+        ContainerMachineMemoryProfile::Performance => {
+            preset_memory_mb(host_memory_mb, 1, 2, SANDBOX_VM_MEMORY_PERFORMANCE_CAP_MB)
+        }
         ContainerMachineMemoryProfile::Custom => settings
             .machine
             .custom_memory_mb
@@ -444,18 +455,20 @@ fn container_machine_memory_mb_for_host_memory(
                 host_memory_mb,
                 1,
                 4,
-                PODMAN_MACHINE_MEMORY_BALANCED_CAP_MB,
+                SANDBOX_VM_MEMORY_BALANCED_CAP_MB,
             ))
             .max(1024),
     }
 }
 
+#[cfg(test)]
 fn container_machine_memory_mb(settings: &ContainerExecutionSettings) -> u32 {
     let host_memory_mb = detected_host_memory_mb().unwrap_or(DEFAULT_PRESET_HOST_MEMORY_MB);
     container_machine_memory_mb_for_host_memory(settings, host_memory_mb)
 }
 
-fn podman_machine_init_created_machine_grace() -> Duration {
+#[cfg(test)]
+fn sandbox_machine_init_created_machine_grace() -> Duration {
     if cfg!(test) {
         Duration::from_millis(300)
     } else {
@@ -463,7 +476,8 @@ fn podman_machine_init_created_machine_grace() -> Duration {
     }
 }
 
-fn podman_machine_init_poll_interval() -> Duration {
+#[cfg(test)]
+fn sandbox_machine_init_poll_interval() -> Duration {
     if cfg!(test) {
         Duration::from_millis(50)
     } else {
@@ -471,15 +485,17 @@ fn podman_machine_init_poll_interval() -> Duration {
     }
 }
 
-fn podman_machine_ready_timeout() -> Duration {
+#[cfg(test)]
+fn sandbox_machine_ready_timeout() -> Duration {
     if cfg!(test) {
         Duration::from_millis(300)
     } else {
-        PODMAN_MACHINE_READY_TIMEOUT
+        SANDBOX_MACHINE_READY_TIMEOUT
     }
 }
 
-fn podman_machine_ready_poll_interval() -> Duration {
+#[cfg(test)]
+fn sandbox_machine_ready_poll_interval() -> Duration {
     if cfg!(test) {
         Duration::from_millis(25)
     } else {
@@ -528,8 +544,15 @@ pub struct HarnessSetupProgressUpdate {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ManagedContainerBootstrapOverrides {
-    pub(crate) podman_runtime_source: Option<bundled_assets::ManagedRuntimeSource>,
     pub(crate) default_image_source: Option<bundled_assets::ManagedArtifactSource>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HarnessRuntimeStats {
+    pub container_count: usize,
+    pub container_allowlist_entries: usize,
+    pub container_external_mounts: usize,
+    pub container_egress_guards: usize,
 }
 
 pub trait HarnessSetupObserver: Send + Sync {
@@ -575,8 +598,8 @@ pub(crate) fn workspace_container_name(workspace_id: WorkspaceId) -> String {
 #[derive(Debug, Clone)]
 pub enum HarnessRuntimeKind {
     Host,
-    Container { name: String },
-    AvfLinuxVm,
+    NativeContainer { name: String },
+    SharedVmContainer,
 }
 
 impl HarnessRuntimeKind {
@@ -677,7 +700,6 @@ pub struct HarnessRuntimeManager {
     last_activity: StdMutex<Instant>,
     active_runtime_operations: AtomicUsize,
     active_prewarm_artifact_operations: AtomicUsize,
-    reclaim_loop_started: AtomicBool,
 }
 
 #[cfg(test)]

@@ -209,15 +209,16 @@ impl Default for SandboxingSettings {
 pub enum ExecutionMode {
     #[default]
     Host,
-    Container,
+    #[serde(rename = "sandbox", alias = "container")]
+    Sandbox,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ContainerRuntimeKind {
     #[default]
-    Podman,
-    AvfLinuxVm,
+    NativeContainer,
+    SharedVmContainer,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -324,26 +325,11 @@ pub struct ContainerExecutionSettings {
 pub(crate) fn default_container_runtime_kind() -> ContainerRuntimeKind {
     #[cfg(target_os = "macos")]
     {
-        ContainerRuntimeKind::AvfLinuxVm
+        ContainerRuntimeKind::SharedVmContainer
     }
     #[cfg(not(target_os = "macos"))]
     {
-        ContainerRuntimeKind::Podman
-    }
-}
-
-pub(crate) fn default_public_container_runtime_kind() -> Option<ContainerRuntimeKind> {
-    #[cfg(target_os = "macos")]
-    {
-        crate::workspace_runtime::local_runtime_available(
-            std::path::Path::new("."),
-            &ContainerRuntimeKind::AvfLinuxVm,
-        )
-        .then_some(ContainerRuntimeKind::AvfLinuxVm)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Some(ContainerRuntimeKind::Podman)
+        ContainerRuntimeKind::NativeContainer
     }
 }
 
@@ -351,8 +337,8 @@ pub(crate) fn default_container_mount_mode_for_runtime(
     runtime: ContainerRuntimeKind,
 ) -> ContainerMountMode {
     match runtime {
-        ContainerRuntimeKind::AvfLinuxVm => ContainerMountMode::DiskIsolated,
-        ContainerRuntimeKind::Podman => ContainerMountMode::DiskIsolated,
+        ContainerRuntimeKind::SharedVmContainer => ContainerMountMode::DiskIsolated,
+        ContainerRuntimeKind::NativeContainer => ContainerMountMode::DiskIsolated,
     }
 }
 
@@ -767,7 +753,7 @@ pub async fn load_settings(store: &Store) -> anyhow::Result<Settings> {
         let normalized = mode.trim().to_lowercase();
         let mode = match normalized.as_str() {
             "host" => Some(ExecutionMode::Host),
-            "container" => Some(ExecutionMode::Container),
+            "sandbox" | "container" => Some(ExecutionMode::Sandbox),
             _ => None,
         };
         if let Some(mode) = mode {

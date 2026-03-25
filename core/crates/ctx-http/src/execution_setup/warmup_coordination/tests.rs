@@ -116,7 +116,7 @@ impl SharedWarmupOperations for FakeWarmupOperations {
 
 fn container_settings(image: &str) -> ExecutionSettings {
     let mut settings = ExecutionSettings {
-        mode: ExecutionMode::Container,
+        mode: ExecutionMode::Sandbox,
         ..ExecutionSettings::default()
     };
     settings.container.image = Some(image.to_string());

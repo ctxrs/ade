@@ -558,9 +558,9 @@ const ensureBundledContainerAssets = () => {
 
   const hostOs = desktopOs();
   const hostArch = desktopArch();
-  const podmanRuntime = runtimes.find((entry) =>
+  const avfGuestRuntime = runtimes.find((entry) =>
     entry
-    && entry.id === "podman"
+    && entry.id === "avf-linux-guest"
     && entry.os === hostOs
     && entry.arch === hostArch
     && typeof entry.root === "string"
@@ -568,17 +568,17 @@ const ensureBundledContainerAssets = () => {
     && typeof entry.bin === "string"
     && entry.bin.trim().length > 0
   );
-  if (podmanRuntime) {
-    const podmanBinPath = path.join(BUNDLES_DIR, podmanRuntime.root, podmanRuntime.bin);
-    if (!fs.existsSync(podmanBinPath)) {
+  if (avfGuestRuntime) {
+    const guestRootfsPath = path.join(BUNDLES_DIR, avfGuestRuntime.root, avfGuestRuntime.bin);
+    if (!fs.existsSync(guestRootfsPath)) {
       throw new Error(
-        `bundled podman binary missing at ${podmanBinPath}; run pnpm -C core desktop:prep:release`,
+        `bundled AVF guest runtime image missing at ${guestRootfsPath}; run pnpm -C core desktop:prep:release`,
       );
     }
   } else {
-    // Canonical path for thin bundles: daemon downloads managed podman runtime on demand.
+    // Canonical path for thin bundles: daemon downloads the managed AVF guest runtime on demand.
     console.error(
-      `[wdio] bundled podman runtime metadata missing for ${hostOs}/${hostArch}; relying on managed podman runtime download`,
+      `[wdio] bundled AVF guest runtime metadata missing for ${hostOs}/${hostArch}; relying on managed AVF guest runtime download`,
     );
   }
 

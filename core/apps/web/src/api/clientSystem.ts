@@ -215,7 +215,6 @@ export type PublicSettings = {
   sandboxing?: SandboxingSettings | null;
   execution?: PublicExecutionSettings | null;
   network_profiles?: NetworkProfilesSettings | null;
-  default_container_runtime?: ContainerRuntimeKind | null;
 };
 
 export type UpdateSettingsRequest = {
@@ -226,12 +225,12 @@ export type UpdateSettingsRequest = {
   provider_guard?: ProviderGuardSettings | null;
   subagents?: SubagentSettings | null;
   sandboxing?: SandboxingSettings | null;
-  execution?: ExecutionSettings | null;
+  execution?: UpdateExecutionSettingsRequest | null;
   network_profiles?: NetworkProfilesSettings | null;
 };
 
-export type ExecutionMode = "host" | "container";
-export type ContainerRuntimeKind = "podman" | "avf_linux_vm";
+export type ExecutionMode = "host" | "sandbox";
+export type ContainerRuntimeKind = "native_container" | "shared_vm_container";
 export type ContainerMountMode = "disk_isolated";
 export type ContainerNetworkMode = "llm_only" | "allowlist" | "all";
 export type ContainerMachineMemoryProfile = "economy" | "balanced" | "performance" | "custom";
@@ -261,12 +260,24 @@ export type ExecutionSettings = {
   container: ContainerExecutionSettings;
 };
 
-export type PublicContainerExecutionSettings = Omit<ContainerExecutionSettings, "machine"> & {
+export type PublicContainerExecutionSettings = Omit<
+  ContainerExecutionSettings,
+  "runtime" | "mount_mode" | "machine"
+> & {
   machine: PublicContainerMachineSettings;
 };
 
 export type PublicExecutionSettings = Omit<ExecutionSettings, "container"> & {
   container: PublicContainerExecutionSettings;
+};
+
+export type UpdateContainerExecutionSettings = Omit<
+  ContainerExecutionSettings,
+  "runtime" | "mount_mode"
+>;
+
+export type UpdateExecutionSettingsRequest = Omit<ExecutionSettings, "container"> & {
+  container: UpdateContainerExecutionSettings;
 };
 
 export type NetworkProfile = {

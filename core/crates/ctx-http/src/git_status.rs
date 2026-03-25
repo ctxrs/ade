@@ -67,7 +67,7 @@ pub(crate) async fn worktree_has_vcs_repo(
     worktree: &Worktree,
 ) -> Result<bool> {
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
-    if matches!(data_plane.execution_mode, ExecutionMode::Container) {
+    if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
         return match sandbox::container_git_stdout(
             state,
             worktree,
@@ -162,7 +162,7 @@ async fn load_diff_touched_entries(
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
     let root = data_plane.live_worktree_root.as_path();
     let entries: Vec<(String, String, Option<String>)> =
-        if matches!(data_plane.execution_mode, ExecutionMode::Container) {
+        if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
             container_git_diff_name_status(state, worktree, base_commit_sha).await?
         } else {
             let driver = vcs_driver_for_worktree(worktree);
@@ -191,7 +191,7 @@ async fn load_diff_touched_entries(
             worktree_status: None,
         });
     }
-    let untracked = if matches!(data_plane.execution_mode, ExecutionMode::Container) {
+    let untracked = if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
         container_git_list_untracked(state, worktree)
             .await
             .unwrap_or_default()
@@ -248,7 +248,7 @@ async fn build_worktree_vcs_snapshot_from_parts(
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
     let root = data_plane.live_worktree_root.as_path();
     let (head_commit_sha, target_branch_commit_sha) =
-        if matches!(data_plane.execution_mode, ExecutionMode::Container) {
+        if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
             let head = container_git_rev_parse(state, worktree, "HEAD")
                 .await
                 .unwrap_or_else(|_| base_commit_sha.clone());
@@ -393,14 +393,14 @@ pub async fn load_git_status_snapshot(
 ) -> Result<GitStatusSnapshot> {
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
     let root = data_plane.live_worktree_root.as_path();
-    let status_text = if matches!(data_plane.execution_mode, ExecutionMode::Container) {
+    let status_text = if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
         container_git_status_short(state, worktree).await?
     } else {
         let vcs = vcs_driver_for_worktree(worktree);
         vcs.status_short(root).await?
     };
     let branch_info = parse_git_status_short(&status_text);
-    let entries = if matches!(data_plane.execution_mode, ExecutionMode::Container) {
+    let entries = if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
         container_git_status_porcelain(state, worktree).await?
     } else {
         let vcs = vcs_driver_for_worktree(worktree);
@@ -539,7 +539,7 @@ pub async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktr
         };
     let touched_files = build_touched_files(&diff_entries);
     let data_plane = resolve_worktree_data_plane(&state, &worktree).await?;
-    let summary_result = if matches!(data_plane.execution_mode, ExecutionMode::Container) {
+    let summary_result = if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
         container_diff_worktree_summary(&state, &worktree, &resolution.base_commit_sha).await
     } else {
         ctx_fs::worktrees::diff_worktree_summary(

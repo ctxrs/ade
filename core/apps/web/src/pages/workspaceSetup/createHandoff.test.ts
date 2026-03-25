@@ -28,7 +28,7 @@ describe("createHandoff", () => {
       repoBranch: "",
       workspaceName: "repo",
       networkAllowlist: "",
-      useDiskIsolatedStaging: false,
+      useSandboxStaging: false,
       importRepoStatus: "idle",
       importRepoNote: null,
       targetBranch: "main",

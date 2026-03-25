@@ -22,7 +22,7 @@ const GIT_STATUS_POLL_INTERVAL_MS: u64 = 60_000;
 pub(super) async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
     let data_plane = resolve_worktree_data_plane(&state, &worktree).await?;
     let root = data_plane.live_worktree_root.as_path();
-    if matches!(data_plane.execution_mode, ExecutionMode::Container) {
+    if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
         // Disk-isolated worktrees live inside the harness container; host filesystem watchers
         // cannot observe changes. Polling keeps VCS snapshots up to date.
         let _ = container_git_stdout(&state, &worktree, &["rev-parse", "--is-inside-work-tree"])

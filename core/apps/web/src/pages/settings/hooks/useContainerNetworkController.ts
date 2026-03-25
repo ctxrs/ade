@@ -79,7 +79,7 @@ export function useContainerNetworkController({
       .filter(Boolean);
 
     if (workspaceExecution.environment === "host") {
-      setWorkspaceExecutionError("Allowlist only applies in container mode.");
+      setWorkspaceExecutionError("Allowlist only applies in sandbox mode.");
       return false;
     }
     if (workspaceExecution.network_mode !== "allowlist") {

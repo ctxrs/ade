@@ -1154,7 +1154,7 @@ const ensureReadyForSourceSelection = async (
       continue;
     }
     if (key === "container") {
-      if (!container) throw new Error("container step reached but scenario.container is missing");
+      if (!container) throw new Error("sandbox step reached but scenario.container is missing");
       if (container === "host") {
         const hostVisible = await ensureContainerOptionVisible("host");
         if (!hostVisible) {
@@ -1209,7 +1209,7 @@ const ensureReadyForSourceSelection = async (
         ).filter((providerId) => !readyProviders.has(providerId));
         const next = await clickNextIfEnabled();
         if (next.clicked) {
-          const installTarget = container === "no-container" ? "host" : "container";
+          const installTarget = container === "host" ? "host" : "container";
           if (requireSelectedHarnessInstallsNonBlocking) {
             if (expectedKickoffProviderIds.length === 0) {
               throw new Error(
@@ -1260,7 +1260,7 @@ const ensureReadyForSourceSelection = async (
       const expectedKickoffProviderIds = await readSelectedHarnessProviderIds();
       const next = await clickNextIfEnabled();
       if (next.clicked) {
-        const installTarget = container === "no-container" ? "host" : "container";
+        const installTarget = container === "host" ? "host" : "container";
         await waitForSelectedHarnessInstallsToKickOff(
           expectedKickoffProviderIds,
           installTarget,
@@ -1655,8 +1655,8 @@ const runWizardScenario = async (scenario) => {
 
   if (scenario.location === "remote") {
     const afterLocation = await waitForRemoteStepAfterLocation();
-    if (afterLocation === "source" && scenario.container && scenario.container !== "no-container") {
-      throw new Error("remote wizard did not expose container step (container modes unavailable)");
+    if (afterLocation === "source" && scenario.container && scenario.container !== "host") {
+      throw new Error("remote wizard did not expose the sandbox step (sandbox mode unavailable)");
     }
     if (
       afterLocation !== "source"
@@ -1852,15 +1852,15 @@ const runWizardScenario = async (scenario) => {
 
   await waitForStep("confirm");
   await clickCreate(
-    scenario.container && scenario.container !== "no-container" ? CONTAINER_WORKSPACE_TIMEOUT_MS : 30000,
+    scenario.container && scenario.container !== "host" ? CONTAINER_WORKSPACE_TIMEOUT_MS : 30000,
   );
-  if (scenario.container && scenario.container !== "no-container") {
+  if (scenario.container && scenario.container !== "host") {
     await waitForLaunchLogsOrWorkspaceRoute(15000);
   }
 
   const workspaceRouteTimeoutMs = scenario.location === "remote"
-    ? (scenario.container && scenario.container !== "no-container" ? CONTAINER_WORKSPACE_TIMEOUT_MS : 180000)
-    : (scenario.container && scenario.container !== "no-container" ? CONTAINER_WORKSPACE_TIMEOUT_MS : 120000);
+    ? (scenario.container && scenario.container !== "host" ? CONTAINER_WORKSPACE_TIMEOUT_MS : 180000)
+    : (scenario.container && scenario.container !== "host" ? CONTAINER_WORKSPACE_TIMEOUT_MS : 120000);
   const id = await waitForWorkspaceRoute(workspaceRouteTimeoutMs);
   const trace = await readWizardStepTrace();
   await stopWizardStepTrace();
@@ -1885,7 +1885,7 @@ describe("launcher workspace wizard (e2e)", () => {
   const remoteDataDir = REMOTE_DATA_DIR_RAW.trim() || `${remoteBase}/daemon`;
   const preserveRemoteDaemonDir = SSH_NO_START_REMOTE;
   let remoteBaseResolved = remoteBase;
-  let remoteHasPodman = false;
+  let remoteHasSandboxCli = false;
   let remoteSupportsContainerStep = false;
 
   before(async () => {
@@ -1893,11 +1893,11 @@ describe("launcher workspace wizard (e2e)", () => {
     initGitRepo(localCloneSrc, "local-clone-src");
 
     if (remoteTarget) {
-      const podmanProbe = ssh(
+      const sandboxCliProbe = ssh(
         remoteTarget,
-        "if command -v podman >/dev/null 2>&1; then echo yes; else echo no; fi",
+        "if { [ -n \"${CTX_HARNESS_SANDBOX_CLI_PATH:-}\" ] && [ -x \"${CTX_HARNESS_SANDBOX_CLI_PATH}\" ]; } || command -v nerdctl >/dev/null 2>&1; then echo yes; else echo no; fi",
       ).trim();
-      remoteHasPodman = podmanProbe === "yes";
+      remoteHasSandboxCli = sandboxCliProbe === "yes";
       // Pre-create remote repos for import/clone without touching the daemon.
       const script = [
         "set -euo pipefail",
@@ -1934,7 +1934,7 @@ describe("launcher workspace wizard (e2e)", () => {
         // Keep the nominal /tmp path if realpath is unavailable.
       }
 
-      // Probe whether the current wizard flow exposes a container step for remote targets.
+      // Probe whether the current wizard flow exposes a sandbox step for remote targets.
       await browser.url(`tauri://localhost/workspace-setup?remoteProbe=${Date.now()}`);
       await waitForTauri();
       await waitForTestId("workspace-setup", 60000);
@@ -1982,7 +1982,7 @@ describe("launcher workspace wizard (e2e)", () => {
     if (!scenarioEnabled("local-import", ["local", "host"])) this.skip();
     const id = await runWizardScenario({
       location: "local",
-      container: "no-container",
+      container: "host",
       source: { kind: "import", path: localImportRepo },
       setupHook: "pnpm install",
       mergeQueue: { kind: "skip" },
@@ -2021,7 +2021,7 @@ describe("launcher workspace wizard (e2e)", () => {
     });
     const container = await getWorkspaceHarnessContainer(id);
     if (!container || !container.running) {
-      throw new Error(`expected running sandbox container, got: ${JSON.stringify(container)}`);
+      throw new Error(`expected running sandbox environment, got: ${JSON.stringify(container)}`);
     }
     const cloneCwd = await getWorkspaceTerminalCwd(id);
     if (!cloneCwd.startsWith("/ctx/ws")) {
@@ -2054,12 +2054,12 @@ describe("launcher workspace wizard (e2e)", () => {
     });
     const container = await getWorkspaceHarnessContainer(id);
     if (!container || !container.running) {
-      throw new Error(`expected running host container, got: ${JSON.stringify(container)}`);
+      throw new Error(`expected running host execution harness, got: ${JSON.stringify(container)}`);
     }
     await assertWorkspaceTerminalCwdPrefix(id, ws.root_path);
   });
 
-  it("local sandbox container works end-to-end", async function () {
+  it("local sandbox works end-to-end", async function () {
     if (!scenarioEnabled("local-new-sandbox", ["local", "sandbox"])) this.skip();
     this.timeout(780000);
     const dest = path.join(localBase, "new-sandbox");
@@ -2088,14 +2088,14 @@ describe("launcher workspace wizard (e2e)", () => {
     });
     const container = await getWorkspaceHarnessContainer(id);
     if (!container || !container.running) {
-      throw new Error(`expected running sandbox container, got: ${JSON.stringify(container)}`);
+      throw new Error(`expected running sandbox environment, got: ${JSON.stringify(container)}`);
     }
     await assertWorkspaceTerminalCwdPrefix(id, "/ctx/ws");
   });
 
   it("local host can start Codex and respond", async function () {
     if (!scenarioEnabled("local-codex-smoke", ["local", "host", "provider"])) this.skip();
-    // Container start + provider spin-up can take a while on a fresh machine (Podman VM, image load, etc).
+    // Sandbox startup + provider spin-up can take a while on a fresh machine (guest boot, artifact staging, etc).
     this.timeout(420000);
 
     const dest = path.join(localBase, "codex-host");
@@ -2135,7 +2135,7 @@ describe("launcher workspace wizard (e2e)", () => {
     const dest = path.join(localBase, "codex-host-direct");
     const id = await runWizardScenario({
       location: "local",
-      container: "no-container",
+      container: "host",
       downloadHarnesses: true,
       source: { kind: "new", destPath: dest, workspaceName: "codex-host-smoke" },
       setupHook: "",
@@ -2157,7 +2157,7 @@ describe("launcher workspace wizard (e2e)", () => {
       remoteHost: remoteHostForWizard,
       remotePort: REMOTE_PORT,
       remoteDataDir,
-      container: "no-container",
+      container: "host",
       source: { kind: "import", path: importPath },
       setupHook: "pnpm install",
       mergeQueue: { kind: "skip" },
@@ -2174,7 +2174,7 @@ describe("launcher workspace wizard (e2e)", () => {
   it("remote clone works end-to-end", async function () {
     if (!scenarioEnabled("remote-clone-host", ["remote", "host"])) this.skip();
     if (!remoteTarget) this.skip();
-    if (!remoteHasPodman) this.skip();
+    if (!remoteHasSandboxCli) this.skip();
     if (!remoteSupportsContainerStep) this.skip();
     const destParent = `${remoteBase}/clone-dest`;
     const destPath = `${destParent}/`;
@@ -2205,7 +2205,7 @@ describe("launcher workspace wizard (e2e)", () => {
   it("remote new empty works end-to-end", async function () {
     if (!scenarioEnabled("remote-new-sandbox", ["remote", "sandbox"])) this.skip();
     if (!remoteTarget) this.skip();
-    if (!remoteHasPodman) this.skip();
+    if (!remoteHasSandboxCli) this.skip();
     if (!remoteSupportsContainerStep) this.skip();
     const dest = `${remoteBase}/new-sandbox`;
     ssh(remoteTarget, `rm -rf ${JSON.stringify(dest)}`);

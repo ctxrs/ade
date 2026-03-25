@@ -764,18 +764,18 @@ fn assert_assistant_message_contains(events: &[ctx_core::models::SessionEvent], 
     );
 }
 
-fn podman_binary_for_tests() -> Option<PathBuf> {
-    if let Ok(raw) = std::env::var("CTX_PODMAN_PATH") {
+fn sandbox_cli_binary_for_tests() -> Option<PathBuf> {
+    if let Ok(raw) = std::env::var("CTX_HARNESS_SANDBOX_CLI_PATH") {
         let path = PathBuf::from(raw);
         if path.exists() {
             return Some(path);
         }
     }
-    which::which("podman").ok()
+    which::which("nerdctl").ok()
 }
 
-async fn podman_ready(podman: &Path) -> bool {
-    tokio::process::Command::new(podman)
+async fn sandbox_cli_ready(sandbox_cli: &Path) -> bool {
+    tokio::process::Command::new(sandbox_cli)
         .arg("version")
         .output()
         .await
@@ -783,8 +783,8 @@ async fn podman_ready(podman: &Path) -> bool {
         .is_some_and(|output| output.status.success())
 }
 
-async fn podman_has_image(podman: &Path, image: &str) -> bool {
-    tokio::process::Command::new(podman)
+async fn sandbox_cli_has_image(sandbox_cli: &Path, image: &str) -> bool {
+    tokio::process::Command::new(sandbox_cli)
         .args(["image", "exists", image])
         .output()
         .await
@@ -2168,22 +2168,25 @@ async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready
 #[tokio::test]
 #[ignore]
 async fn provider_target_scoped_installs_work_for_host_and_container_workspaces() {
-    if std::env::var("CTX_E2E_PODMAN").ok().as_deref() != Some("1") {
-        eprintln!("skipping: CTX_E2E_PODMAN not set");
+    if std::env::var("CTX_E2E_SANDBOX").ok().as_deref() != Some("1") {
+        eprintln!("skipping: CTX_E2E_SANDBOX not set");
         return;
     }
-    if podman_binary_for_tests().is_none() {
-        eprintln!("skipping: podman not available");
+    if sandbox_cli_binary_for_tests().is_none() {
+        eprintln!("skipping: sandbox CLI not available");
         return;
     }
-    let podman = podman_binary_for_tests().expect("podman not available");
-    let _podman_path = EnvVarGuard::set("CTX_PODMAN_PATH", &podman.to_string_lossy());
-    if !podman_ready(&podman).await {
-        eprintln!("skipping: podman connection is not ready");
+    let sandbox_cli = sandbox_cli_binary_for_tests().expect("sandbox CLI not available");
+    let _sandbox_cli_path = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli.to_string_lossy(),
+    );
+    if !sandbox_cli_ready(&sandbox_cli).await {
+        eprintln!("skipping: sandbox CLI connection is not ready");
         return;
     }
-    if !podman_has_image(&podman, "python:3.11").await {
-        eprintln!("skipping: python:3.11 image is not present locally in podman");
+    if !sandbox_cli_has_image(&sandbox_cli, "python:3.11").await {
+        eprintln!("skipping: python:3.11 image is not present locally in the sandbox runtime");
         return;
     }
 

@@ -1,9 +1,9 @@
 use serde::Deserialize;
 
 use super::{
-    normalize_container_machine_settings, ContainerExecutionSettings, DictationProvider,
-    ExecutionMode, NetworkProfilesSettings, ProviderControlMode, ResourceGovernanceMode, Settings,
-    TitleGenerationLocalSettings, TitleGenerationMode,
+    normalize_container_machine_settings, ContainerMachineSettings, ContainerNetworkMode,
+    DictationProvider, ExecutionMode, NetworkProfilesSettings, ProviderControlMode,
+    ResourceGovernanceMode, Settings, TitleGenerationLocalSettings, TitleGenerationMode,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -159,7 +159,18 @@ pub struct UpdateSandboxingSettingsReq {
 pub struct UpdateExecutionSettingsReq {
     pub mode: ExecutionMode,
     #[serde(default)]
-    pub container: ContainerExecutionSettings,
+    pub container: UpdateContainerExecutionSettingsReq,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct UpdateContainerExecutionSettingsReq {
+    pub network_mode: ContainerNetworkMode,
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+    #[serde(default)]
+    pub image: Option<String>,
+    #[serde(default)]
+    pub machine: ContainerMachineSettings,
 }
 
 pub(super) fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
@@ -269,12 +280,14 @@ pub(super) fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Set
         current.sandboxing = Some(next);
     }
     if let Some(e) = req.execution {
-        let mut container = e.container;
-        normalize_container_machine_settings(&mut container.machine);
-        current.execution = Some(super::ExecutionSettings {
-            mode: e.mode,
-            container,
-        });
+        let mut next = current.execution.unwrap_or_default();
+        next.mode = e.mode;
+        next.container.network_mode = e.container.network_mode;
+        next.container.allowlist = e.container.allowlist;
+        next.container.image = e.container.image;
+        next.container.machine = e.container.machine;
+        normalize_container_machine_settings(&mut next.container.machine);
+        current.execution = Some(next);
     }
     if let Some(p) = req.network_profiles {
         current.network_profiles = Some(p);

@@ -644,7 +644,7 @@ mod tests {
             state.global_store(),
             &Settings {
                 execution: Some(ExecutionSettings {
-                    mode: ExecutionMode::Container,
+                    mode: ExecutionMode::Sandbox,
                     ..ExecutionSettings::default()
                 }),
                 ..Settings::default()

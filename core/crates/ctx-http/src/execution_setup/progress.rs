@@ -300,19 +300,18 @@ pub(super) fn needs_prewarm(
     !machine_ready || !image_present || image_ref_changed || bundled_image_digest_changed
 }
 
-pub(super) fn normalize_podman_engine_ready_for_gate(
+pub(super) fn normalize_container_engine_ready_for_gate(
     result: anyhow::Result<bool>,
 ) -> anyhow::Result<bool> {
     match result {
         Ok(value) => Ok(value),
         Err(err) => {
-            if err
-                .to_string()
-                .to_ascii_lowercase()
-                .contains("podman binary unavailable")
+            let lowered = err.to_string().to_ascii_lowercase();
+            if lowered.contains("sandbox container cli unavailable")
+                || lowered.contains("native sandbox container runtime is unavailable")
             {
-                // Thin desktop bundles can start with no local podman binary yet; treat that as
-                // "not ready" so startup prewarm proceeds to managed runtime install.
+                // Thin desktop bundles can start with no local sandbox CLI yet; treat that as
+                // "not ready" so startup prewarm can surface the missing runtime cleanly.
                 return Ok(false);
             }
             Err(err)

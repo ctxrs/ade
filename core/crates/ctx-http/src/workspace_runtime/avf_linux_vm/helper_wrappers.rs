@@ -97,7 +97,7 @@ pub(crate) fn build_guest_exec_command(
     user: Option<&str>,
     pty: bool,
 ) -> Result<tokio::process::Command> {
-    let mut child = super::super::podman_command(data_root)?;
+    let mut child = super::super::sandbox_container_command(data_root)?;
     child.arg("exec").arg("--interactive");
     if pty {
         child.arg("--tty");

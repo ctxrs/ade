@@ -3,9 +3,9 @@ use sysinfo::System;
 
 use super::{
     normalize_container_machine_idle_shutdown_seconds, ContainerMachineMemoryProfile,
-    ContainerMachineSettings, ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind,
-    DictationProvider, ExecutionMode, NetworkProfile, ProviderControlMode, ResourceGovernanceMode,
-    Settings, TitleGenerationLocalSettings, TitleGenerationMode,
+    ContainerMachineSettings, ContainerNetworkMode, DictationProvider, ExecutionMode,
+    NetworkProfile, ProviderControlMode, ResourceGovernanceMode, Settings,
+    TitleGenerationLocalSettings, TitleGenerationMode,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -34,8 +34,6 @@ pub struct PublicSettings {
     pub execution: Option<PublicExecutionSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub network_profiles: Option<PublicNetworkProfilesSettings>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_container_runtime: Option<ContainerRuntimeKind>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -111,8 +109,6 @@ pub struct PublicNetworkProfilesSettings {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PublicContainerExecutionSettings {
-    pub runtime: ContainerRuntimeKind,
-    pub mount_mode: ContainerMountMode,
     pub network_mode: ContainerNetworkMode,
     pub allowlist: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -225,10 +221,10 @@ pub struct PublicSubagentSettings {
 }
 
 const DEFAULT_PRESET_HOST_MEMORY_MB: u32 = 32 * 1024;
-const PODMAN_MACHINE_MEMORY_PRESET_FLOOR_MB: u32 = 4096;
-const PODMAN_MACHINE_MEMORY_ECONOMY_CAP_MB: u32 = 8192;
-const PODMAN_MACHINE_MEMORY_BALANCED_CAP_MB: u32 = 16 * 1024;
-const PODMAN_MACHINE_MEMORY_PERFORMANCE_CAP_MB: u32 = 32 * 1024;
+const SANDBOX_VM_MEMORY_PRESET_FLOOR_MB: u32 = 4096;
+const SANDBOX_VM_MEMORY_ECONOMY_CAP_MB: u32 = 8192;
+const SANDBOX_VM_MEMORY_BALANCED_CAP_MB: u32 = 16 * 1024;
+const SANDBOX_VM_MEMORY_PERFORMANCE_CAP_MB: u32 = 32 * 1024;
 const MI_B: u64 = 1024 * 1024;
 
 fn detected_host_memory_mb() -> Option<u32> {
@@ -255,29 +251,26 @@ fn preset_memory_mb(total_memory_mb: u32, numerator: u32, denominator: u32, cap_
     total_memory_mb
         .saturating_mul(numerator)
         .checked_div(denominator)
-        .unwrap_or(PODMAN_MACHINE_MEMORY_PRESET_FLOOR_MB)
-        .clamp(PODMAN_MACHINE_MEMORY_PRESET_FLOOR_MB, cap_mb)
+        .unwrap_or(SANDBOX_VM_MEMORY_PRESET_FLOOR_MB)
+        .clamp(SANDBOX_VM_MEMORY_PRESET_FLOOR_MB, cap_mb)
 }
 
 fn resolved_machine_memory_mb(machine: &ContainerMachineSettings) -> u32 {
     let host_memory_mb = detected_host_memory_mb().unwrap_or(DEFAULT_PRESET_HOST_MEMORY_MB);
     match machine.memory_profile {
         ContainerMachineMemoryProfile::Economy => {
-            preset_memory_mb(host_memory_mb, 1, 8, PODMAN_MACHINE_MEMORY_ECONOMY_CAP_MB)
+            preset_memory_mb(host_memory_mb, 1, 8, SANDBOX_VM_MEMORY_ECONOMY_CAP_MB)
         }
         ContainerMachineMemoryProfile::Balanced => {
-            preset_memory_mb(host_memory_mb, 1, 4, PODMAN_MACHINE_MEMORY_BALANCED_CAP_MB)
+            preset_memory_mb(host_memory_mb, 1, 4, SANDBOX_VM_MEMORY_BALANCED_CAP_MB)
         }
-        ContainerMachineMemoryProfile::Performance => preset_memory_mb(
-            host_memory_mb,
-            1,
-            2,
-            PODMAN_MACHINE_MEMORY_PERFORMANCE_CAP_MB,
-        ),
+        ContainerMachineMemoryProfile::Performance => {
+            preset_memory_mb(host_memory_mb, 1, 2, SANDBOX_VM_MEMORY_PERFORMANCE_CAP_MB)
+        }
         ContainerMachineMemoryProfile::Custom => machine
             .custom_memory_mb
             .unwrap_or_else(|| {
-                preset_memory_mb(host_memory_mb, 1, 4, PODMAN_MACHINE_MEMORY_BALANCED_CAP_MB)
+                preset_memory_mb(host_memory_mb, 1, 4, SANDBOX_VM_MEMORY_BALANCED_CAP_MB)
             })
             .max(1024),
     }
@@ -400,20 +393,16 @@ pub(super) fn to_public(settings: &Settings) -> PublicSettings {
         .map(|s| PublicSandboxingSettings {
             provider_control_mode: s.provider_control_mode.clone(),
         });
-    let execution = settings
-        .execution
-        .as_ref()
-        .map(|e| PublicExecutionSettings {
-            mode: e.mode.clone(),
-            container: PublicContainerExecutionSettings {
-                runtime: e.container.runtime.clone(),
-                mount_mode: e.container.mount_mode.clone(),
-                network_mode: e.container.network_mode.clone(),
-                allowlist: e.container.allowlist.clone(),
-                image: e.container.image.clone(),
-                machine: to_public_container_machine_settings(&e.container.machine),
-            },
-        });
+    let effective_execution = settings.execution.clone().unwrap_or_default();
+    let execution = Some(PublicExecutionSettings {
+        mode: effective_execution.mode,
+        container: PublicContainerExecutionSettings {
+            network_mode: effective_execution.container.network_mode,
+            allowlist: effective_execution.container.allowlist,
+            image: effective_execution.container.image,
+            machine: to_public_container_machine_settings(&effective_execution.container.machine),
+        },
+    });
     let network_profiles =
         settings
             .network_profiles
@@ -437,7 +426,6 @@ pub(super) fn to_public(settings: &Settings) -> PublicSettings {
         sandboxing,
         execution,
         network_profiles,
-        default_container_runtime: super::default_public_container_runtime_kind(),
     }
 }
 

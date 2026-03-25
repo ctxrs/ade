@@ -273,7 +273,7 @@ impl BufferStore {
     /// Resolve a path without touching the host filesystem.
     ///
     /// This is used for container-only worktrees (disk-isolated mode) where the daemon mediates
-    /// file IO via `podman exec` and host canonicalization is not possible.
+    /// file IO via `sandbox exec` and host canonicalization is not possible.
     pub fn resolve_path_lexical(root: &Path, path: &str) -> Result<PathBuf> {
         let candidate = if PathBuf::from(path).is_absolute() {
             PathBuf::from(path)

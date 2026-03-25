@@ -151,8 +151,7 @@ const classifyFailureCategory = (stage: string, reason: string, errorCode: strin
   }
 
   if (
-    normalizedReason.includes("podman")
-    || normalizedReason.includes("container runtime")
+    normalizedReason.includes("container runtime")
     || normalizedReason.includes("no space left")
     || normalizedReason.includes("permission denied")
     || normalizedReason.includes("cannot connect")

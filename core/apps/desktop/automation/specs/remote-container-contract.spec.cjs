@@ -73,7 +73,7 @@ const remoteSsh = (command, { auth = "key", label = "ssh" } = {}) => {
   if (usePassword) {
     const password = String(fixture.passwordActual || fixture.password || "").trim();
     if (!password) {
-      throw new Error("password auth requested but remote container fixture password is not set");
+      throw new Error("password auth requested but the remote sandbox fixture password is not set");
     }
     binary = "sshpass";
     finalArgs = [
@@ -184,7 +184,7 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
 
     contractRecorder = createRemoteContractRecorder({
       outputPath: reportPath,
-      suite: "remote container contract",
+      suite: "remote sandbox contract",
       lane: "sandbox",
       fixture,
       secretValues: [fixture.password, fixture.passwordActual, process.env.OPENROUTER_API_KEY],
@@ -202,7 +202,7 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
     let provider = null;
     let firstTurn = { attempted: false };
     let finalResult = "passed";
-    let finalReason = "remote container contract validated";
+    let finalReason = "remote sandbox contract validated";
     let finalError = "";
 
     contractRecorder.recordArtifact("fixture_preflight", {
@@ -232,26 +232,26 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
     }
 
     try {
-      contractRecorder.recordAssertion("fixture_preflight", "pass", "resolved remote container fixture contract");
+      contractRecorder.recordAssertion("fixture_preflight", "pass", "resolved remote sandbox fixture contract");
 
       await browser.url(`tauri://localhost/workspace-setup?remoteContainerContract=${Date.now()}`);
       await waitForTauri();
 
-      const podmanProbe = remoteSsh(
-        "if command -v podman >/dev/null 2>&1; then echo yes; else echo no; fi",
+      const sandboxCliProbe = remoteSsh(
+        "if { [ -n \"${CTX_HARNESS_SANDBOX_CLI_PATH:-}\" ] && [ -x \"${CTX_HARNESS_SANDBOX_CLI_PATH}\" ]; } || command -v nerdctl >/dev/null 2>&1; then echo yes; else echo no; fi",
         {
           auth: fixture.authMode === "password" ? "password" : "key",
-          label: "podman-probe",
+          label: "sandbox-cli-probe",
         },
       ).trim();
-      contractRecorder.recordArtifact("podman_probe", { result: podmanProbe });
-      if (podmanProbe !== "yes") {
-        const detail = "remote podman unavailable";
-        contractRecorder.recordAssertion("podman_probe", "skip", detail);
+      contractRecorder.recordArtifact("sandbox_cli_probe", { result: sandboxCliProbe });
+      if (sandboxCliProbe !== "yes") {
+        const detail = "remote sandbox substrate unavailable";
+        contractRecorder.recordAssertion("sandbox_cli_probe", "skip", detail);
         finalizeReport({ result: "skipped", reason: detail });
         this.skip();
       }
-      contractRecorder.recordAssertion("podman_probe", "pass", "remote podman available");
+      contractRecorder.recordAssertion("sandbox_cli_probe", "pass", "remote sandbox substrate available");
 
       remoteSsh(
         `set -euo pipefail; rm -rf ${JSON.stringify(remoteBase)}; mkdir -p ${JSON.stringify(remoteBase)}`,
@@ -321,11 +321,11 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
       contractRecorder.recordAssertion(
         "first_turn",
         firstTurn.status === "success" ? "pass" : "warn",
-        firstTurn.status === "success" ? "remote container first turn succeeded" : JSON.stringify(firstTurn),
+        firstTurn.status === "success" ? "remote sandbox first turn succeeded" : JSON.stringify(firstTurn),
       );
     } catch (error) {
       finalResult = "failed";
-      finalReason = "remote container contract failed";
+      finalReason = "remote sandbox contract failed";
       finalError = String(error);
       contractRecorder.recordAssertion("contract", "fail", finalError);
       await collectFailureArtifacts("failure");

@@ -10,13 +10,15 @@ use ctx_fs::vcs;
 
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::harness_runtime::{podman_command, workspace_container_name};
+use crate::harness_runtime::{sandbox_container_command, workspace_container_name};
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
-use crate::worktree_data_plane::resolve_worktree_data_plane;
+use crate::worktree_data_plane::{
+    apply_data_plane_to_execution_settings, resolve_worktree_data_plane,
+};
 
 enum SandboxGitTarget {
-    Podman { container_name: String },
-    AvfLinuxVm,
+    NativeContainer { container_name: String },
+    SharedVmContainer,
 }
 
 struct SandboxGitContext {
@@ -31,6 +33,7 @@ async fn ensure_container_for_worktree(
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
     let effective =
         execution_effective::effective_execution_settings(state, data_plane.workspace.id).await?;
+    let effective = apply_data_plane_to_execution_settings(&effective, &data_plane);
     state
         .execution
         .harness
@@ -43,16 +46,16 @@ async fn ensure_container_for_worktree(
         .await?;
     if matches!(
         effective.container.runtime,
-        ContainerRuntimeKind::AvfLinuxVm
+        ContainerRuntimeKind::SharedVmContainer
     ) {
         Ok(SandboxGitContext {
             live_worktree_root: data_plane.live_worktree_root,
-            target: SandboxGitTarget::AvfLinuxVm,
+            target: SandboxGitTarget::SharedVmContainer,
         })
     } else {
         Ok(SandboxGitContext {
             live_worktree_root: data_plane.live_worktree_root,
-            target: SandboxGitTarget::Podman {
+            target: SandboxGitTarget::NativeContainer {
                 container_name: workspace_container_name(worktree.workspace_id),
             },
         })
@@ -67,8 +70,8 @@ async fn container_git_output(
     const SANDBOX_GIT_TIMEOUT: Duration = Duration::from_secs(30);
     let context = ensure_container_for_worktree(state, worktree).await?;
     match context.target {
-        SandboxGitTarget::Podman { container_name } => {
-            let mut cmd = podman_command(&state.core.data_root)?;
+        SandboxGitTarget::NativeContainer { container_name } => {
+            let mut cmd = sandbox_container_command(&state.core.data_root)?;
             cmd.arg("exec")
                 .arg("--workdir")
                 .arg(&context.live_worktree_root)
@@ -77,9 +80,9 @@ async fn container_git_output(
                 .args(args);
             crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_GIT_TIMEOUT)
                 .await
-                .context("podman exec git timed out")
+                .context("sandbox exec git timed out")
         }
-        SandboxGitTarget::AvfLinuxVm => {
+        SandboxGitTarget::SharedVmContainer => {
             let guest_args = args
                 .iter()
                 .map(|arg| (*arg).to_string())
@@ -99,7 +102,7 @@ async fn container_git_output(
                 ),
             )
             .await
-            .context("AVF guest exec git timed out")?
+            .context("shared VM container exec git timed out")?
         }
     }
 }
@@ -231,7 +234,7 @@ pub(crate) async fn worktree_rev_parse_head(
     worktree: &Worktree,
 ) -> Result<String> {
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
-    if matches!(data_plane.execution_mode, ExecutionMode::Container) {
+    if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
         return container_git_rev_parse(state, worktree, "HEAD").await;
     }
     let root = data_plane.live_worktree_root.as_path();
@@ -245,7 +248,7 @@ pub(crate) async fn worktree_merge_base(
     target_branch: &str,
 ) -> Result<String> {
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
-    if matches!(data_plane.execution_mode, ExecutionMode::Container) {
+    if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
         return container_git_merge_base(state, worktree, target_branch).await;
     }
     let root = data_plane.live_worktree_root.as_path();
@@ -287,8 +290,8 @@ printf '%s %s\n' "$count" "$adds"
 "#;
     let target = ensure_container_for_worktree(state, worktree).await?;
     let out = match target.target {
-        SandboxGitTarget::Podman { container_name } => {
-            let mut cmd = podman_command(&state.core.data_root)?;
+        SandboxGitTarget::NativeContainer { container_name } => {
+            let mut cmd = sandbox_container_command(&state.core.data_root)?;
             cmd.arg("exec")
                 .arg("--interactive")
                 .arg("--workdir")
@@ -299,9 +302,9 @@ printf '%s %s\n' "$count" "$adds"
                 .arg(script);
             tokio::time::timeout(Duration::from_secs(30), cmd.output())
                 .await
-                .context("podman exec timed out")??
+                .context("sandbox exec timed out")??
         }
-        SandboxGitTarget::AvfLinuxVm => tokio::time::timeout(
+        SandboxGitTarget::SharedVmContainer => tokio::time::timeout(
             Duration::from_secs(30),
             crate::workspace_runtime::run_avf_linux_guest_exec_capture(
                 &state.core.data_root,

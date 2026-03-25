@@ -605,7 +605,7 @@ mod tests {
         let aggregate = ManagedDownloadAggregate::default();
 
         let first = aggregate
-            .update("Podman runtime", 10, Some(40), Some(3), false)
+            .update("Sandbox CLI runtime", 10, Some(40), Some(3), false)
             .expect("first aggregate snapshot");
         assert_eq!(first.artifact, "Required artifacts");
         assert_eq!(first.downloaded_bytes, 10);
@@ -620,7 +620,7 @@ mod tests {
         assert_eq!(combined.bytes_per_sec, Some(5));
 
         let still_running = aggregate
-            .update("Podman runtime", 40, Some(40), Some(4), true)
+            .update("Sandbox CLI runtime", 40, Some(40), Some(4), true)
             .expect("remaining artifact should keep aggregate active");
         assert_eq!(still_running.downloaded_bytes, 45);
         assert_eq!(still_running.total_bytes, Some(60));
@@ -636,9 +636,9 @@ mod tests {
     #[tokio::test]
     async fn finalize_managed_artifact_download_tolerates_parallel_committers() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let final_path = temp.path().join("podman-machine");
-        let first_tmp = temp.path().join("podman-machine.download-first");
-        let second_tmp = temp.path().join("podman-machine.download-second");
+        let final_path = temp.path().join("sandbox-machine");
+        let first_tmp = temp.path().join("sandbox-machine.download-first");
+        let second_tmp = temp.path().join("sandbox-machine.download-second");
         let payload = b"shared-machine-cache";
 
         fs::write(&first_tmp, payload)
@@ -656,13 +656,13 @@ mod tests {
                 &first_tmp,
                 &final_path,
                 &expected_sha256,
-                "managed podman machine cache"
+                "managed sandbox machine cache"
             ),
             finalize_managed_artifact_download(
                 &second_tmp,
                 &final_path,
                 &expected_sha256,
-                "managed podman machine cache"
+                "managed sandbox machine cache"
             ),
         );
 
