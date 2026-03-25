@@ -314,25 +314,25 @@
         "targets": {
           "darwin-aarch64": {
             "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.1/codex-crp-0.114.0-ctx.1-aarch64-apple-darwin.tar.gz",
-            "sha256": "eb9329adab62e54430032d5eb075dd8fc2ede49e0ee5de0c16085e46839a85b1",
+            "sha256": "9d8b4c5e19b17326d94bac5dab0ae427c46446b91a4a3866eb9c28a525d5955e",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           },
           "darwin-x86_64": {
             "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.1/codex-crp-0.114.0-ctx.1-x86_64-apple-darwin.tar.gz",
-            "sha256": "38828ff8317923d1f0516d9a98933ee824e2b5a2e63d4721ca2ff726b8444cc5",
+            "sha256": "591fb47ec2ea00221d467bbab30e5b41d312ed9efdf3be23eadd744613ae70a2",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           },
           "linux-aarch64": {
             "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.1/codex-crp-0.114.0-ctx.1-aarch64-unknown-linux-gnu.tar.gz",
-            "sha256": "366cce0f042c23e3cbbf981cfcc3ff048781d591786a1de53c94c6c1d917e93c",
+            "sha256": "1c42b75efb47dd9611798a8539f74dcd86f0aa1a7dcf911b1e1010249d63a422",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           },
           "linux-x86_64": {
             "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.1/codex-crp-0.114.0-ctx.1-x86_64-unknown-linux-gnu.tar.gz",
-            "sha256": "3197299d045bf2c1f8e5fb9195fe1f500281ccf51d2306c7dc591c222c69ff4a",
+            "sha256": "8cc55e936990c212a095d28d3c26c42a22164b2fb4566b27f90a7c825d9fa2ab",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           }

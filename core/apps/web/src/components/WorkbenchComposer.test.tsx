@@ -1251,6 +1251,96 @@ describe("WorkbenchComposer textarea sizing", () => {
     expect(finalizingButton.className).toContain("wb-harness-install-busy");
   });
 
+  it("does not show finalizing for installed providers that still need auth", async () => {
+    const onRequestHarnessAuth = vi.fn();
+
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
+      const harnessCatalog: HarnessCatalogEntry[] = [
+        { id: "codex", label: "Codex", logoSrc: "" },
+        { id: "cursor", label: "Cursor", logoSrc: "" },
+      ];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: makeProviderStatus("codex"),
+        cursor: makeProviderStatus("cursor", {
+          installed: true,
+          health: "error",
+          diagnostics: ["Authentication required"],
+          usability: {
+            usable: false,
+            status: "blocked",
+            blocking_provider_ids: [],
+            recommended_action: "configure_runtime",
+            reason: "Authentication required",
+          },
+          details: {
+            install_supported: "true",
+            install_target: "host",
+          },
+        }),
+      };
+      const providerOptions: Record<string, ProviderOptions | undefined> = {
+        codex: { ...baseOptions("codex"), has_active_auth: true },
+        cursor: { ...baseOptions("cursor"), has_active_auth: false },
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{
+            cursor: {
+              installId: "install-cursor",
+              state: "succeeded",
+              pct: 100,
+              target: "host",
+            },
+          }}
+          onInstallProvider={vi.fn()}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={providerOptions}
+          ensureProviderAuthSummary={async (providerId: string) => providerOptions[providerId]}
+          onRequestHarnessAuth={onRequestHarnessAuth}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
+          defaultProviderId="codex"
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const cursorRow = screen.getByText("Cursor").closest(".wb-harness-row");
+    expect(cursorRow).not.toBeNull();
+    expect(within(cursorRow as HTMLElement).queryByRole("button", { name: "Finalizing…" })).not.toBeInTheDocument();
+    expect(within(cursorRow as HTMLElement).queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
+    expect(within(cursorRow as HTMLElement).getByTitle("Authentication not configured")).toBeInTheDocument();
+    fireEvent.click(within(cursorRow as HTMLElement).getByRole("button", { name: /Cursor/ }));
+    expect(onRequestHarnessAuth).toHaveBeenCalledWith("cursor");
+  });
+
   it("hydrates provider auth summary even when bootstrap options already exist", async () => {
     const ensureProviderAuthSummary = vi.fn(async () => undefined);
 

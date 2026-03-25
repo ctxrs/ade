@@ -57,6 +57,12 @@ function deriveVisibleHarnessOptions(newSession: NewSessionProps, harnessSearch:
   });
 }
 
+function hasInstalledHarnessBinary(
+  status: NewSessionProps["providersById"][string] | null | undefined,
+): boolean {
+  return isVisibleHarnessProviderStatus(status) && status.installed === true;
+}
+
 export function WorkbenchComposerHarnessMenu({
   logoClasses,
   menuRef,
@@ -68,7 +74,7 @@ export function WorkbenchComposerHarnessMenu({
 
   useEffect(() => {
     for (const [providerId, status] of Object.entries(newSession.providersById)) {
-      if (!isReadyVisibleHarnessProviderStatus(status)) continue;
+      if (!hasInstalledHarnessBinary(status)) continue;
       newSession.ensureProviderAuthSummary(providerId).catch(() => {});
     }
   }, [newSession]);
@@ -83,15 +89,15 @@ export function WorkbenchComposerHarnessMenu({
       Object.values(newSession.providersById).some(
         (status) =>
           providerDetailFlag(status.details, "install_supported")
-          && !isReadyVisibleHarnessProviderStatus(status),
+          && !hasInstalledHarnessBinary(status),
       ),
     [newSession.providersById],
   );
 
   const toggleHarness = (providerId: string) => {
     const status = newSession.providersById[providerId];
-    const installed = isReadyVisibleHarnessProviderStatus(status);
-    if (!installed) return;
+    const binaryInstalled = hasInstalledHarnessBinary(status);
+    if (!binaryInstalled) return;
 
     const hasActiveAuth = hasConfiguredHarnessAuth(providerId, newSession.providerOptions[providerId]);
     if (!hasActiveAuth) {
@@ -103,6 +109,9 @@ export function WorkbenchComposerHarnessMenu({
       onClose();
       return;
     }
+
+    const installed = isReadyVisibleHarnessProviderStatus(status);
+    if (!installed) return;
 
     if (newSession.draftHarness?.providerId !== providerId) {
       trackProviderSelected({
@@ -160,12 +169,13 @@ export function WorkbenchComposerHarnessMenu({
           const id = String(h.id);
           const label = String(h.label ?? id);
           const providerStatus = newSession.providersById[id];
+          const binaryInstalled = hasInstalledHarnessBinary(providerStatus);
           const installed = isReadyVisibleHarnessProviderStatus(providerStatus);
           const installSupported = providerDetailFlag(providerStatus?.details, "install_supported");
           const installUi = newSession.providerInstallsById[id];
           const installRunning =
             installUi?.state === "running" || providerDetailFlag(newSession.providersById[id]?.details, "install_running");
-          const installFinishing = installUi?.state === "succeeded" && !installed;
+          const installFinishing = installUi?.state === "succeeded" && !binaryInstalled;
           const installBusy = installRunning || installFinishing;
           const installPct =
             installUi?.state === "running"
@@ -197,14 +207,15 @@ export function WorkbenchComposerHarnessMenu({
               : null;
           const checked = newSession.draftHarness?.providerId === id;
           const hasActiveAuth = hasConfiguredHarnessAuth(id, newSession.providerOptions[id]);
+          const canOpenHarnessRow = installed || (binaryInstalled && !hasActiveAuth && !installBusy);
 
           return (
-            <div key={id} className={`wb-harness-row ${installed ? "" : "wb-disabled"}`}>
+            <div key={id} className={`wb-harness-row ${canOpenHarnessRow ? "" : "wb-disabled"}`}>
               <button
                 type="button"
                 className="wb-harness-row-main"
                 onClick={() => toggleHarness(id)}
-                disabled={!installed}
+                disabled={!canOpenHarnessRow}
               >
                 <span className={`wb-check ${checked ? "wb-check-on" : ""}`} aria-hidden="true">
                   {checked ? "✓" : ""}
@@ -217,7 +228,7 @@ export function WorkbenchComposerHarnessMenu({
                   />
                 ) : null}
                 <span className="wb-harness-name">{label}</span>
-                {installed ? (
+                {binaryInstalled ? (
                   <span className="wb-harness-status-lights">
                     <span
                       className={`wb-harness-auth-dot ${hasActiveAuth ? "wb-harness-auth-dot-active" : "wb-harness-auth-dot-inactive"}`}
@@ -228,7 +239,7 @@ export function WorkbenchComposerHarnessMenu({
                 ) : null}
               </button>
 
-              {!installed && PROVIDER_INSTALLS_ENABLED ? (
+              {!binaryInstalled && PROVIDER_INSTALLS_ENABLED ? (
                 <div className="wb-harness-actions">
                   <button
                     type="button"
