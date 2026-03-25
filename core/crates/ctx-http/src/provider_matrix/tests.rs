@@ -549,11 +549,10 @@ fn managed_archive_cfg(
 async fn apply_matrix_to_status_flags_managed_archive_checksum_mismatch() {
     let temp = tempdir().expect("tempdir");
     let runtime = temp.path().join("codex-crp");
-    let actual_bytes = b"old-codex-runtime";
-    std::fs::write(&runtime, actual_bytes).expect("write runtime");
+    std::fs::write(&runtime, b"runtime-bytes-do-not-matter").expect("write runtime");
 
     let expected_sha256 = sha256_hex(b"new-codex-runtime");
-    let actual_sha256 = sha256_hex(actual_bytes);
+    let actual_sha256 = sha256_hex(b"previous-archive");
     let entry = codex_archive_test_entry("0.114.0-ctx.1", &expected_sha256);
     let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.1", &actual_sha256);
     let mut status = ctx_providers::adapters::ProviderStatus {
@@ -627,10 +626,9 @@ async fn apply_matrix_to_status_flags_managed_archive_checksum_mismatch() {
 async fn apply_matrix_to_status_accepts_matching_managed_archive_checksum() {
     let temp = tempdir().expect("tempdir");
     let runtime = temp.path().join("codex-crp");
-    let bytes = b"matching-codex-runtime";
-    std::fs::write(&runtime, bytes).expect("write runtime");
+    std::fs::write(&runtime, b"bridge-or-runtime-bytes-can-differ").expect("write runtime");
 
-    let sha256 = sha256_hex(bytes);
+    let sha256 = sha256_hex(b"matching-downloaded-archive");
     let entry = codex_archive_test_entry("0.114.0-ctx.1", &sha256);
     let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.1", &sha256);
     let mut status = ctx_providers::adapters::ProviderStatus {

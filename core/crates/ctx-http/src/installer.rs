@@ -348,10 +348,6 @@ pub fn resolve_matrix_target_key(target: InstallTarget) -> Result<&'static str> 
     }
 }
 
-pub(crate) async fn sha256_file_for_path(path: &Path) -> Result<String> {
-    artifacts::sha256_file(path).await
-}
-
 pub fn is_supported_managed_provider_for_target(
     matrix: &provider_matrix::ProviderMatrix,
     provider_id: &str,

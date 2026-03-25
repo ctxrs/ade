@@ -553,22 +553,17 @@ async fn detect_managed_archive_checksum_mismatch(
     let release = release_for_version(entry, version)?;
     let expected_target = managed_archive_target_for_release(entry, release, requested_target)?;
     let expected_sha256 = expected_target.sha256.as_deref()?.trim();
-    let command = crate::installer::managed_provider_command_for_target(
-        cfg,
-        &status.provider_id,
-        Some(requested_target),
-    )?;
-    let command_path = Path::new(&command.command);
-    if !command_path.is_absolute() || !command_path.exists() {
+    if expected_sha256.is_empty() {
         return None;
     }
-    let detected_sha256 = crate::installer::sha256_file_for_path(command_path)
-        .await
-        .ok()?;
+    let detected_sha256 = meta.sha256.as_deref()?.trim();
+    if detected_sha256.is_empty() {
+        return None;
+    }
     if detected_sha256.eq_ignore_ascii_case(expected_sha256) {
         return None;
     }
-    Some((expected_sha256.to_string(), detected_sha256))
+    Some((expected_sha256.to_string(), detected_sha256.to_string()))
 }
 
 fn managed_archive_target_for_release<'a>(
