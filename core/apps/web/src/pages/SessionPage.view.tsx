@@ -137,7 +137,6 @@ export function SessionView({
   const [fileOpenError, setFileOpenError] = useState<string | null>(null);
   const [modelSwitchError, setModelSwitchError] = useState<string | null>(null);
   const [optimisticModelId, setOptimisticModelId] = useState<string | null>(null);
-  const [modifierDown, setModifierDown] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const [authMethodId, setAuthMethodId] = useState<string>("");
   const [authBusy, setAuthBusy] = useState(false);
@@ -179,21 +178,6 @@ export function SessionView({
     setAuthError(null);
     setAtBottom(true);
   }, [id]);
-
-  useEffect(() => {
-    const update = (event: KeyboardEvent) => {
-      setModifierDown(event.metaKey || event.ctrlKey);
-    };
-    const handleBlur = () => setModifierDown(false);
-    window.addEventListener("keydown", update);
-    window.addEventListener("keyup", update);
-    window.addEventListener("blur", handleBlur);
-    return () => {
-      window.removeEventListener("keydown", update);
-      window.removeEventListener("keyup", update);
-      window.removeEventListener("blur", handleBlur);
-    };
-  }, []);
 
   const setVerbosityPref = useCallback((next: SessionViewVerbosity) => {
     setVerbosity(next);
@@ -886,7 +870,6 @@ export function SessionView({
       messages={baseMessages}
       worktreeId={worktreeId}
       handleFileOpenError={handleFileOpenError}
-      modifierDown={modifierDown}
       activeAskToolCallId={activeAskToolCallId}
       expandedTurnHeaders={expandedTurnHeaders}
       setExpandedTurnHeaders={setExpandedTurnHeaders}

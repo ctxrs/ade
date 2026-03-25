@@ -497,20 +497,21 @@ button.linklike:hover {
 
 .code-token-path,
 .code-token-url {
+  color: var(--text-strong);
   text-decoration: none;
 }
 
-.markdown-modifier .ctx-markdown-link,
-.markdown-modifier .ctx-file-link,
-.markdown-modifier .code-token-path {
-  color: var(--accent);
+.ctx-markdown-link.ctx-modifier-hover,
+.ctx-file-link.ctx-modifier-hover,
+.code-token-path.ctx-modifier-hover {
+  color: inherit;
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
   cursor: pointer;
 }
 
-.markdown-modifier .code-token-url {
+.code-token-url.ctx-modifier-hover {
   color: inherit;
   text-decoration: underline;
   text-decoration-thickness: 1px;

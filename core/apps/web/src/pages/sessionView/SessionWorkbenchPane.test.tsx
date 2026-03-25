@@ -86,7 +86,6 @@ function TestPane() {
         messages={[]}
         worktreeId={null}
         handleFileOpenError={() => {}}
-        modifierDown={false}
         activeAskToolCallId={null}
         expandedTurnHeaders={expandedTurnHeaders}
         setExpandedTurnHeaders={setExpandedTurnHeaders}
@@ -218,7 +217,6 @@ function TestMessagePane() {
         messages={[]}
         worktreeId={null}
         handleFileOpenError={() => {}}
-        modifierDown={false}
         activeAskToolCallId={null}
         expandedTurnHeaders={expandedTurnHeaders}
         setExpandedTurnHeaders={setExpandedTurnHeaders}
@@ -351,7 +349,6 @@ function TestAssistantPane() {
         messages={[]}
         worktreeId={null}
         handleFileOpenError={() => {}}
-        modifierDown={false}
         activeAskToolCallId={null}
         expandedTurnHeaders={expandedTurnHeaders}
         setExpandedTurnHeaders={setExpandedTurnHeaders}

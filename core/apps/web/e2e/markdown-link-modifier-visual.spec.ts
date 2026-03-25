@@ -34,17 +34,17 @@ const VISUAL_CSS = `
     text-decoration: none;
   }
 
-  .markdown-modifier .ctx-markdown-link,
-  .markdown-modifier .ctx-file-link,
-  .markdown-modifier .code-token-path {
-    color: var(--accent);
+  .ctx-markdown-link.ctx-modifier-hover,
+  .ctx-file-link.ctx-modifier-hover,
+  .code-token-path.ctx-modifier-hover {
+    color: inherit;
     text-decoration: underline;
     text-decoration-thickness: 1px;
     text-underline-offset: 2px;
     cursor: pointer;
   }
 
-  .markdown-modifier .code-token-url {
+  .code-token-url.ctx-modifier-hover {
     color: inherit;
     text-decoration: underline;
     text-decoration-thickness: 1px;
@@ -78,10 +78,8 @@ test("assistant markdown links visibly underline under modifier state", async ({
     <style>${VISUAL_CSS}</style>
     <div class="surface">
       <div class="label">Modifier Active</div>
-      <div class="markdown-modifier">
-        <div class="wb-assistant-body">
-          Open <a class="ctx-markdown-link" href="https://example.com/docs">https://example.com/docs</a>
-        </div>
+      <div class="wb-assistant-body">
+        Open <a class="ctx-markdown-link ctx-modifier-hover" href="https://example.com/docs">https://example.com/docs</a>
       </div>
     </div>
   `);
@@ -100,6 +98,7 @@ test("assistant markdown links visibly underline under modifier state", async ({
   });
 
   expect(decoration.line).toContain("underline");
+  expect(decoration.color).toBe("rgb(216, 224, 217)");
   expect(decoration.thickness).toBe("1px");
   expect(decoration.offset).toBe("2px");
 

@@ -364,7 +364,6 @@ describe("AssistantEntry", () => {
         content={content}
         worktreeId={null}
         onFileOpenError={() => {}}
-        modifierDown={false}
       />,
     );
 

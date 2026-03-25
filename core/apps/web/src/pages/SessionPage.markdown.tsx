@@ -4,6 +4,7 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -71,6 +72,144 @@ type CodeTokenOptions = {
   wrapPlainTokens?: boolean;
 };
 
+const hasModifier = (event: { metaKey?: boolean; ctrlKey?: boolean }): boolean =>
+  Boolean(event.metaKey || event.ctrlKey);
+
+const joinClassNames = (...values: Array<string | false | null | undefined>): string =>
+  values.filter(Boolean).join(" ");
+
+const modifierSubscribers = new Set<() => void>();
+let modifierSnapshot = false;
+let detachModifierListeners: (() => void) | null = null;
+
+const emitModifierSnapshot = () => {
+  for (const notify of modifierSubscribers) notify();
+};
+
+const setModifierSnapshot = (next: boolean) => {
+  if (modifierSnapshot === next) return;
+  modifierSnapshot = next;
+  emitModifierSnapshot();
+};
+
+const updateModifierSnapshot = (event: { metaKey?: boolean; ctrlKey?: boolean }) => {
+  setModifierSnapshot(hasModifier(event));
+};
+
+const clearModifierSnapshot = () => {
+  setModifierSnapshot(false);
+};
+
+const subscribeModifierSnapshot = (notify: () => void) => {
+  modifierSubscribers.add(notify);
+  if (modifierSubscribers.size === 1 && typeof window !== "undefined") {
+    const handleKeyboard = (event: KeyboardEvent) => updateModifierSnapshot(event);
+    const handleMouse = (event: globalThis.MouseEvent) => updateModifierSnapshot(event);
+    const handleBlur = () => clearModifierSnapshot();
+
+    window.addEventListener("keydown", handleKeyboard);
+    window.addEventListener("keyup", handleKeyboard);
+    window.addEventListener("mousemove", handleMouse);
+    window.addEventListener("blur", handleBlur);
+
+    detachModifierListeners = () => {
+      window.removeEventListener("keydown", handleKeyboard);
+      window.removeEventListener("keyup", handleKeyboard);
+      window.removeEventListener("mousemove", handleMouse);
+      window.removeEventListener("blur", handleBlur);
+    };
+  }
+
+  return () => {
+    modifierSubscribers.delete(notify);
+    if (modifierSubscribers.size > 0) return;
+    detachModifierListeners?.();
+    detachModifierListeners = null;
+    clearModifierSnapshot();
+  };
+};
+
+const getModifierSnapshot = () => modifierSnapshot;
+
+function useModifierHoverState<T extends HTMLElement>() {
+  const modifierDown = useSyncExternalStore(subscribeModifierSnapshot, getModifierSnapshot, () => false);
+  const [hovered, setHovered] = useState(false);
+
+  const syncFromPointer = useCallback((event: MouseEvent<T>) => {
+    setHovered(true);
+    updateModifierSnapshot(event);
+  }, []);
+
+  const clear = useCallback(() => {
+    setHovered(false);
+  }, []);
+
+  return {
+    modifierHoverActive: hovered && modifierDown,
+    hoverProps: {
+      onMouseEnter: syncFromPointer,
+      onMouseMove: syncFromPointer,
+      onMouseLeave: clear,
+    },
+  };
+}
+
+function ModifierAwareExternalLink({
+  href,
+  className,
+  children,
+  ...rest
+}: React.ComponentProps<typeof ExternalLink>) {
+  const { modifierHoverActive, hoverProps } = useModifierHoverState<HTMLAnchorElement>();
+  return (
+    <ExternalLink
+      href={href}
+      className={joinClassNames(className, modifierHoverActive && "ctx-modifier-hover")}
+      {...hoverProps}
+      {...rest}
+    >
+      {children}
+    </ExternalLink>
+  );
+}
+
+function ModifierAwareFileLink({
+  href,
+  className,
+  children,
+  ...rest
+}: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+  const { modifierHoverActive, hoverProps } = useModifierHoverState<HTMLAnchorElement>();
+  return (
+    <a
+      data-allow-raw-anchor
+      href={href}
+      className={joinClassNames(className, modifierHoverActive && "ctx-modifier-hover")}
+      {...hoverProps}
+      {...rest}
+    >
+      {children}
+    </a>
+  );
+}
+
+function ModifierAwareCodePath({
+  className,
+  children,
+  ...rest
+}: React.HTMLAttributes<HTMLSpanElement>) {
+  const { modifierHoverActive, hoverProps } = useModifierHoverState<HTMLSpanElement>();
+  return (
+    <span
+      className={joinClassNames(className, modifierHoverActive && "ctx-modifier-hover")}
+      {...hoverProps}
+      {...rest}
+    >
+      {children}
+    </span>
+  );
+}
+
 const handleCodeTokenClick = async (
   event: MouseEvent<HTMLElement>,
   ref: FileRef,
@@ -105,6 +244,7 @@ const handleCodeTokenClick = async (
 };
 
 const handleUrlTokenClick = (event: MouseEvent<HTMLElement>, href: string) => {
+  if (!isDesktopApp()) return;
   if (!event.metaKey && !event.ctrlKey) {
     event.preventDefault();
     return;
@@ -123,7 +263,7 @@ const buildCodeTokenNodes = (text: string, opts: CodeTokenOptions): ReactNode[] 
       const urlRef = parseUrlToken(part);
       if (urlRef) {
         return (
-          <a
+          <ModifierAwareExternalLink
             key={`token-${idx}`}
             className="code-token code-token-url"
             data-allow-raw-anchor
@@ -133,20 +273,20 @@ const buildCodeTokenNodes = (text: string, opts: CodeTokenOptions): ReactNode[] 
             onClick={(event) => handleUrlTokenClick(event, urlRef.url)}
           >
             {part}
-          </a>
+          </ModifierAwareExternalLink>
         );
       }
 
       const ref = parseFileRefToken(part);
       if (ref && (opts.worktreeId || isAbsolutePath(ref.path))) {
         return (
-          <span
+          <ModifierAwareCodePath
             key={`token-${idx}`}
             className="code-token code-token-path"
             onClick={(event) => handleCodeTokenClick(event, ref, opts.worktreeId, opts.onFileOpenError)}
           >
             {part}
-          </span>
+          </ModifierAwareCodePath>
         );
       }
     }
@@ -365,11 +505,18 @@ export function Markdown({
             const isContextOpen =
               typeof href === "string" && href.startsWith("ctx://open?");
             const markdownLinkClassName = [className, "ctx-markdown-link"].filter(Boolean).join(" ");
+            const modifierOpenTitle = isDesktopApp() ? "Cmd/Ctrl+Click to open link" : undefined;
             if (!isContextOpen) {
               return (
-                <ExternalLink href={href ?? ""} className={markdownLinkClassName} {...rest}>
+                <ModifierAwareExternalLink
+                  href={href ?? ""}
+                  className={markdownLinkClassName}
+                  title={modifierOpenTitle}
+                  onClick={(event) => handleUrlTokenClick(event, href ?? "")}
+                  {...rest}
+                >
                   {children}
-                </ExternalLink>
+                </ModifierAwareExternalLink>
               );
             }
 
@@ -407,8 +554,7 @@ export function Markdown({
 
             const combinedClassName = [className, "ctx-markdown-link", "ctx-file-link"].filter(Boolean).join(" ");
             return (
-              <a
-                data-allow-raw-anchor
+              <ModifierAwareFileLink
                 href={href}
                 className={combinedClassName}
                 title="Cmd/Ctrl+Click to open in editor"
@@ -416,7 +562,7 @@ export function Markdown({
                 {...rest}
               >
                 {children}
-              </a>
+              </ModifierAwareFileLink>
             );
           },
           pre({ children }) {

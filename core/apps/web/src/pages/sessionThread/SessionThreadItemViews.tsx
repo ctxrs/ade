@@ -94,14 +94,12 @@ export const ThreadItemView = memo(function ThreadItemView({
   item,
   worktreeId,
   onFileOpenError,
-  modifierDown,
   messageExpanded,
   onToggleMessageExpanded,
 }: {
   item: ThreadItem;
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
-  modifierDown: boolean;
   messageExpanded?: boolean;
   onToggleMessageExpanded?: (expanded: boolean) => void;
 }) {
@@ -115,7 +113,6 @@ export const ThreadItemView = memo(function ThreadItemView({
           attachments={item.attachments}
           worktreeId={worktreeId}
           onFileOpenError={onFileOpenError}
-          modifierDown={modifierDown}
           expanded={messageExpanded ?? !isExpandableMessageContent(item.content)}
           onToggleExpanded={onToggleMessageExpanded}
         />
@@ -245,7 +242,6 @@ function CollapsibleMessage({
   attachments,
   worktreeId,
   onFileOpenError,
-  modifierDown,
   expanded,
   onToggleExpanded,
 }: {
@@ -255,7 +251,6 @@ function CollapsibleMessage({
   attachments: MessageAttachment[];
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
-  modifierDown: boolean;
   expanded: boolean;
   onToggleExpanded?: (expanded: boolean) => void;
 }) {
@@ -268,14 +263,12 @@ function CollapsibleMessage({
     <div className={`msg ${role}`}>
       <div className="role">{role}</div>
       <div id={`msg-${id}`}>
-        <div className={modifierDown ? "markdown-modifier" : undefined}>
-          <MemoMarkdown
-            content={shown}
-            linkifyFiles={role === "assistant"}
-            worktreeId={worktreeId}
-            onFileOpenError={onFileOpenError}
-          />
-        </div>
+        <MemoMarkdown
+          content={shown}
+          linkifyFiles={role === "assistant"}
+          worktreeId={worktreeId}
+          onFileOpenError={onFileOpenError}
+        />
       </div>
       {attachments?.length > 0 && (
         <div className="attachments">
@@ -306,19 +299,15 @@ export const AssistantEntry = memo(function AssistantEntry({
   content,
   worktreeId,
   onFileOpenError,
-  modifierDown,
 }: {
   content: string;
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
-  modifierDown: boolean;
 }) {
   return (
     <div className="wb-assistant-entry">
       <div className="wb-assistant-body">
-        <div className={modifierDown ? "markdown-modifier" : undefined}>
-          <MemoMarkdown content={content} linkifyFiles worktreeId={worktreeId} onFileOpenError={onFileOpenError} />
-        </div>
+        <MemoMarkdown content={content} linkifyFiles worktreeId={worktreeId} onFileOpenError={onFileOpenError} />
       </div>
     </div>
   );

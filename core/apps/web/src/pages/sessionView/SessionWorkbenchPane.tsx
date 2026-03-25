@@ -98,7 +98,6 @@ type SessionWorkbenchPaneProps = {
   messages: Message[];
   worktreeId: string | null;
   handleFileOpenError: (message: string | null) => void;
-  modifierDown: boolean;
   activeAskToolCallId: string | null;
   expandedTurnHeaders: Record<string, boolean>;
   setExpandedTurnHeaders: Dispatch<SetStateAction<Record<string, boolean>>>;
@@ -209,7 +208,6 @@ export function SessionWorkbenchPane({
   messages,
   worktreeId,
   handleFileOpenError,
-  modifierDown,
   activeAskToolCallId,
   expandedTurnHeaders,
   setExpandedTurnHeaders,
@@ -327,7 +325,6 @@ export function SessionWorkbenchPane({
           content={item.content}
           worktreeId={worktreeId}
           onFileOpenError={handleFileOpenError}
-          modifierDown={modifierDown}
         />
       );
     }
@@ -406,7 +403,6 @@ export function SessionWorkbenchPane({
         item={item}
         worktreeId={worktreeId}
         onFileOpenError={handleFileOpenError}
-        modifierDown={modifierDown}
         messageExpanded={
           item.kind === "message" ? resolveWorkbenchMessageExpanded(item, expandedMessageById) : undefined
         }
