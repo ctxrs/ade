@@ -9,7 +9,7 @@ use tracing::warn;
 
 const CRP_EVENT_DUMP_ENV: &str = "CODEX_CRP_DUMP_CRP_EVENTS_PATH";
 
-static CRP_EVENT_DUMP: OnceLock<Mutex<std::io::BufWriter<std::fs::File>>> = OnceLock::new();
+static CRP_EVENT_DUMP: OnceLock<Option<Mutex<std::io::BufWriter<std::fs::File>>>> = OnceLock::new();
 
 pub(super) struct CrpWriter {
     seq: u64,
@@ -147,14 +147,25 @@ fn maybe_dump_crp_event(envelope: &CrpEventEnvelope) {
         return;
     };
 
-    let writer = CRP_EVENT_DUMP.get_or_init(|| {
-        let file = std::fs::OpenOptions::new()
+    let Some(writer) = CRP_EVENT_DUMP.get_or_init(|| {
+        match std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(path)
-            .expect("failed to open CODEX_CRP_DUMP_CRP_EVENTS_PATH");
-        Mutex::new(std::io::BufWriter::new(file))
-    });
+            .open(&path)
+        {
+            Ok(file) => Some(Mutex::new(std::io::BufWriter::new(file))),
+            Err(err) => {
+                warn!(
+                    path = %path,
+                    error = %err,
+                    "failed to open CODEX_CRP_DUMP_CRP_EVENTS_PATH; disabling CRP event dumps"
+                );
+                None
+            }
+        }
+    }) else {
+        return;
+    };
 
     let Ok(mut writer) = writer.lock() else {
         return;
