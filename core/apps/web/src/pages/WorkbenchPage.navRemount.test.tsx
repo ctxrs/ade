@@ -536,6 +536,25 @@ describe("WorkbenchPage task rename selection", () => {
   });
 });
 
+describe("WorkbenchPage keyboard shortcuts", () => {
+  it("opens new task on Cmd/Ctrl+N even when the event was already prevented", async () => {
+    renderWorkbenchPage();
+
+    const shortcutEvent = new KeyboardEvent("keydown", {
+      key: "n",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    shortcutEvent.preventDefault();
+    window.dispatchEvent(shortcutEvent);
+
+    await waitFor(() => {
+      expect(focusNewTaskSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
 describe("WorkbenchPage archive navigation", () => {
   it("does not refocus new task after navigation during archive", async () => {
     workspaceSnapshotSnap = {

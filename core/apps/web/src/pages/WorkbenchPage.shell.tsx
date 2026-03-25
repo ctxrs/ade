@@ -278,7 +278,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
       if (event.altKey || event.shiftKey) return;
       const hasModifier = event.metaKey || event.ctrlKey;
       if (!hasModifier) return;
