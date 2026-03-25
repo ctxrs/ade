@@ -358,6 +358,18 @@ impl Store {
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn delete_worktree(&self, worktree_id: WorktreeId) -> Result<bool> {
+        let result = self
+            .query(
+                r#"DELETE FROM worktrees
+               WHERE id = ?"#,
+            )
+            .bind(worktree_id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn update_worktree_bootstrap_result(
         &self,
         update: WorktreeBootstrapResultUpdate,

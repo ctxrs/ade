@@ -108,7 +108,7 @@ pub async fn ensure_task_commit_hook(
 ) -> Result<()> {
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
     let settings = execution_effective::effective_execution_settings(state, workspace.id).await?;
-    let settings = apply_data_plane_to_execution_settings(&settings, &data_plane);
+    let settings = apply_data_plane_to_execution_settings(&settings, &data_plane)?;
     if matches!(settings.mode, ExecutionMode::Host) {
         return ensure_task_commit_hook_host(
             &state.core.data_root,

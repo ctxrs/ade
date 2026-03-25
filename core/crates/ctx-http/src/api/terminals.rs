@@ -323,7 +323,17 @@ pub(super) async fn create_workspace_terminal(
     };
     let effective = worktree_data_plane
         .as_ref()
-        .map(|data_plane| apply_data_plane_to_execution_settings(&effective, data_plane))
+        .map(|data_plane| {
+            apply_data_plane_to_execution_settings(&effective, data_plane).map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: "failed to apply worktree data plane".to_string(),
+                    }),
+                )
+            })
+        })
+        .transpose()?
         .unwrap_or(effective);
     let container_mode = matches!(effective.mode, ExecutionMode::Sandbox);
 
@@ -425,6 +435,23 @@ pub(super) async fn create_workspace_terminal(
                             }),
                         )
                     })?;
+                if worktree.is_none() {
+                    crate::disk_isolated::ensure_workspace_root_from_host_copy(
+                        &state.core.data_root,
+                        &workspace,
+                    )
+                    .await
+                    .map_err(|e| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiErrorResp {
+                                error: format!(
+                                    "failed to materialize sandbox workspace root: {e}"
+                                ),
+                            }),
+                        )
+                    })?;
+                }
                 let inv = harness_runtime::sandbox_cli_invocation(&state.core.data_root).map_err(
                     |e| {
                         (
@@ -479,6 +506,23 @@ pub(super) async fn create_workspace_terminal(
                                 }),
                             )
                         })?;
+                }
+                if worktree.is_none() {
+                    crate::disk_isolated::ensure_workspace_root_from_host_copy(
+                        &state.core.data_root,
+                        &workspace,
+                    )
+                    .await
+                    .map_err(|e| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiErrorResp {
+                                error: format!(
+                                    "failed to materialize sandbox workspace root: {e}"
+                                ),
+                            }),
+                        )
+                    })?;
                 }
                 let helper_path = harness_runtime::avf_linux_helper_path().map_err(|e| {
                     (

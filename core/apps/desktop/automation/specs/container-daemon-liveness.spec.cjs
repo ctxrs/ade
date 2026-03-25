@@ -413,7 +413,7 @@ describe("sandbox daemon liveness", () => {
   it("local host workspace create keeps daemon healthy", async function () {
     if (
       !scenarioEnabled("local-new-host", ["local", "host"])
-      && !scenarioEnabled("local-codex-smoke", ["local", "host", "provider"])
+      && !scenarioEnabled("local-codex-host-smoke", ["local", "host", "provider"])
     ) {
       this.skip();
     }

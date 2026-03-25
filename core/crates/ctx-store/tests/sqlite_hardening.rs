@@ -334,6 +334,127 @@ async fn open_repairs_historical_tool_order_seq_duplicate_version() -> Result<()
 }
 
 #[tokio::test]
+async fn open_repairs_rebased_sandbox_migration_versions_before_tool_order_claims_55() -> Result<()>
+{
+    let tempdir = tempfile::tempdir().context("creating tempdir for sandbox migration repair")?;
+    let subset_dir = tempdir.path().join("subset-migrations");
+    fs::create_dir_all(&subset_dir).context("creating subset migration dir")?;
+
+    let migrations = migration_files()?;
+    for migration in &migrations {
+        let version = migration_version(migration)?;
+        if version <= 48 {
+            let filename = migration
+                .file_name()
+                .context("migration file missing name")?;
+            fs::copy(migration, subset_dir.join(filename)).with_context(|| {
+                format!(
+                    "copying {} into rebased-sandbox subset",
+                    migration.display()
+                )
+            })?;
+        }
+    }
+
+    let tool_order_migration = migrations
+        .iter()
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name == "0055_tool_order_seq.sql")
+        })
+        .cloned()
+        .context("finding tool order seq migration")?;
+    fs::copy(
+        &tool_order_migration,
+        subset_dir.join("0049_tool_order_seq.sql"),
+    )
+    .with_context(|| {
+        format!(
+            "copying {} into rebased-sandbox subset as 0049",
+            tool_order_migration.display()
+        )
+    })?;
+
+    let sandbox_bindings_migration = migrations
+        .iter()
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name == "0056_sandbox_bindings.sql")
+        })
+        .cloned()
+        .context("finding sandbox bindings migration")?;
+    fs::copy(
+        &sandbox_bindings_migration,
+        subset_dir.join("0055_sandbox_bindings.sql"),
+    )
+    .with_context(|| {
+        format!(
+            "copying {} into rebased-sandbox subset as 0055",
+            sandbox_bindings_migration.display()
+        )
+    })?;
+
+    let sandbox_exec_settings_migration = migrations
+        .iter()
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name == "0057_sandbox_binding_execution_settings.sql")
+        })
+        .cloned()
+        .context("finding sandbox binding execution settings migration")?;
+    fs::copy(
+        &sandbox_exec_settings_migration,
+        subset_dir.join("0056_sandbox_binding_execution_settings.sql"),
+    )
+    .with_context(|| {
+        format!(
+            "copying {} into rebased-sandbox subset as 0056",
+            sandbox_exec_settings_migration.display()
+        )
+    })?;
+
+    let db_path = tempdir.path().join("db.sqlite");
+    fs::File::create(&db_path).context("creating sqlite file")?;
+    let sqlite_url = sqlite_url(&db_path);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&sqlite_url)
+        .await
+        .context("connecting partial-migration pool for sandbox migration repair")?;
+    let subset_migrator = Migrator::new(subset_dir.clone())
+        .await
+        .context("loading subset migrator for sandbox migration repair")?;
+    subset_migrator
+        .run(&pool)
+        .await
+        .context("running subset migrator for sandbox migration repair")?;
+    pool.close().await;
+
+    let store = Store::open(&db_path)
+        .await
+        .context("opening store after rebased sandbox migration repair")?;
+    store.close().await;
+
+    assert_store_integrity(&db_path).await?;
+    assert!(column_exists(&db_path, "session_turn_tools", "order_seq").await?);
+    assert!(table_exists(&db_path, "sandbox_bindings").await?);
+    assert!(column_exists(&db_path, "sandbox_bindings", "execution_settings_json").await?);
+
+    let applied = applied_migrations(&db_path).await?;
+    assert!(applied
+        .iter()
+        .any(|(version, description)| *version == 55 && description == "tool order seq"));
+    assert!(applied
+        .iter()
+        .any(|(version, description)| *version == 56 && description == "sandbox bindings"));
+    assert!(applied.iter().any(|(version, description)| {
+        *version == 57 && description == "sandbox binding execution settings"
+    }));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn sqlite_pragmas_and_integrity_hold_after_reopen() -> Result<()> {
     let tempdir = tempfile::tempdir().context("creating tempdir")?;
     let db_path = tempdir.path().join("db.sqlite");
@@ -622,6 +743,24 @@ async fn column_exists(db_path: &Path, table: &str, column: &str) -> Result<bool
         .fetch_one(&pool)
         .await
         .with_context(|| format!("checking {table}.{column}"))?;
+    pool.close().await;
+    Ok(count > 0)
+}
+
+async fn table_exists(db_path: &Path, table: &str) -> Result<bool> {
+    let sqlite_url = sqlite_url(db_path);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&sqlite_url)
+        .await
+        .with_context(|| format!("connecting table check pool for {}", db_path.display()))?;
+    let count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = ?",
+    )
+    .bind(table)
+    .fetch_one(&pool)
+    .await
+    .with_context(|| format!("checking table {table}"))?;
     pool.close().await;
     Ok(count > 0)
 }

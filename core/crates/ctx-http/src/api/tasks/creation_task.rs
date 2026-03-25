@@ -254,16 +254,9 @@ pub(in crate::api) async fn create_task(
         bootstrap_command: None,
         bootstrap_script_path: None,
     };
-    store.insert_worktree(worktree.clone()).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    if let Some(binding) = sandbox_binding {
-        store.upsert_sandbox_binding(binding).await.map_err(|e| {
+    let worktree = persist_provisioned_worktree(&state, &store, &ws, worktree, sandbox_binding)
+        .await
+        .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiErrorResp {
@@ -271,14 +264,6 @@ pub(in crate::api) async fn create_task(
                 }),
             )
         })?;
-    }
-    if let Err(e) = state
-        .global_store()
-        .upsert_workspace_worktree_index(worktree_id, ws_id)
-        .await
-    {
-        tracing::warn!(worktree_id = %worktree_id.0, "failed to update worktree index: {e:?}");
-    }
 
     if let Err(e) = vcs_hooks::ensure_task_commit_hook(&state, &ws, &worktree, task.id).await {
         tracing::warn!(
@@ -288,28 +273,8 @@ pub(in crate::api) async fn create_task(
         );
     }
 
-    if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
-        Arc::clone(&state),
-        ws.clone(),
-        worktree.clone(),
-    )
-    .await
-    {
-        tracing::warn!(task_id = %task.id.0, "worktree bootstrap failed: {e:?}");
-    }
-
     if let Err(e) = store.set_task_primary_worktree(task.id, worktree_id).await {
         tracing::warn!(task_id = %task.id.0, "failed to set primary worktree: {e:?}");
-    }
-
-    if let Err(e) = attachments::sync_workspace_attachments(Arc::clone(&state), &ws, false).await {
-        tracing::warn!(task_id = %task.id.0, "attachment sync failed: {e:?}");
-    }
-
-    if let Err(e) =
-        attachments::ensure_worktree_attachment_mounts_if_materialized(&state, &ws, &worktree).await
-    {
-        tracing::warn!(task_id = %task.id.0, "attachment mounts failed: {e:?}");
     }
 
     let task = match store.get_task_with_activity(task.id).await.map_err(|e| {

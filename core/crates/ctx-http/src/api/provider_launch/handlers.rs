@@ -250,18 +250,53 @@ pub(in crate::api) async fn get_provider_options(
 
     if let Some(endpoint) = selected_endpoint.as_ref() {
         let now = chrono::Utc::now();
+        let mut probe_ok = true;
+        let mut auth_required = false;
+        let mut probe_error: Option<String> = None;
+        match prepare_provider_runtime_probe(&state, &ws, &provider_id, Some(endpoint.id.clone()))
+            .await
+        {
+            Ok(prepared) => {
+                if let Err(err) = probe_crp_runtime_launch(
+                    &provider_id,
+                    prepared.command,
+                    prepared.args,
+                    prepared.cwd,
+                    prepared.env,
+                )
+                .await
+                {
+                    let probe_error_value = logs::redact_sensitive(&err.to_string());
+                    let (_, next_auth_required, _) = classify_probe_error(&probe_error_value);
+                    probe_ok = false;
+                    auth_required = next_auth_required.unwrap_or(false);
+                    probe_error = Some(probe_error_value);
+                }
+            }
+            Err(PreparedProviderRuntimeProbeError::Route(err)) => return Err(err),
+            Err(PreparedProviderRuntimeProbeError::Verify(err)) => {
+                let probe_error_value = logs::redact_sensitive(&err);
+                let (_, next_auth_required, _) = classify_probe_error(&probe_error_value);
+                probe_ok = false;
+                auth_required = next_auth_required.unwrap_or(false);
+                probe_error = Some(probe_error_value);
+            }
+        }
         let mut raw_resp = serde_json::json!({
             "provider_id": provider_id,
             "workspace_id": ws_id.0,
             "installed": provider_status.installed,
-            "probe_ok": true,
+            "probe_ok": probe_ok,
             "supports_load": false,
-            "auth_required": false,
+            "auth_required": auth_required,
             "has_active_auth": has_active_auth,
             "auth_mode": auth_mode,
             "models": endpoint_models_payload(&provider_id, endpoint, now),
             "probed_at": now.to_rfc3339(),
         });
+        if let Some(probe_error) = probe_error {
+            raw_resp["probe_error"] = serde_json::json!(probe_error);
+        }
         if let Some(source) = source_config.as_ref() {
             raw_resp["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
         }

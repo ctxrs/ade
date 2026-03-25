@@ -346,7 +346,7 @@ async fn run_bootstrap_step(
 ) -> Result<BootstrapCommandResult> {
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
     let settings = execution_effective::effective_execution_settings(state, workspace.id).await?;
-    let settings = apply_data_plane_to_execution_settings(&settings, &data_plane);
+    let settings = apply_data_plane_to_execution_settings(&settings, &data_plane)?;
     let execution_mode = settings.mode.clone();
     let live_workspace_root = data_plane.live_workspace_root;
     let live_worktree_root = data_plane.live_worktree_root;

@@ -18,6 +18,8 @@ const desktopArch = () => {
   return process.arch;
 };
 
+const linuxImageTargetsForFixture = ["aarch64", "x86_64"];
+
 const withEnv = async (overrides, fn) => {
   const previous = new Map();
   for (const key of Object.keys(overrides)) {
@@ -117,15 +119,19 @@ const writeAvfRuntimeBundle = (bundleDir, { includeGuestAgent = true } = {}) => 
               "egress-proxy": { uri: "locked://egress-proxy", sha256: "4".repeat(64) },
             },
           },
-          {
+          ...linuxImageTargetsForFixture.map((arch, index) => ({
             kind: "image",
             id: "ctx-harness",
             os: "linux",
-            arch: hostArch,
+            arch,
             variant: "default",
             version: "test",
-            sources: [{ source_type: "ci", uri: "locked://image", sha256: "5".repeat(64) }],
-          },
+            sources: [{
+              source_type: "ci",
+              uri: `locked://image-${arch}`,
+              sha256: String(index + 5).repeat(64),
+            }],
+          })),
         ],
       },
       null,
@@ -182,15 +188,19 @@ const writeThinBundleManifestAndRuntimeLock = (bundleDir, { includeGuestAgent = 
             sources: [{ source_type: "ci", uri: "locked://runtime", sha256: "0".repeat(64) }],
             helpers,
           },
-          {
+          ...linuxImageTargetsForFixture.map((arch, index) => ({
             kind: "image",
             id: "ctx-harness",
             os: "linux",
-            arch: hostArch,
+            arch,
             variant: "default",
             version: "test",
-            sources: [{ source_type: "ci", uri: "locked://image", sha256: "5".repeat(64) }],
-          },
+            sources: [{
+              source_type: "ci",
+              uri: `locked://image-${arch}`,
+              sha256: String(index + 5).repeat(64),
+            }],
+          })),
         ],
       },
       null,
@@ -256,9 +266,16 @@ test("wdio AVF container preflight accepts a thin bundle with managed AVF/image 
         CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
       },
       (mod) => {
-        assert.doesNotThrow(() => {
-          mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets();
-        });
+        if (desktopOs() === "macos") {
+          assert.throws(
+            () => mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets(),
+            /requires a bundled AVF guest runtime/,
+          );
+        } else {
+          assert.doesNotThrow(() => {
+            mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets();
+          });
+        }
       },
     );
   } finally {
@@ -278,14 +295,101 @@ test("wdio AVF container preflight rejects a thin bundle missing managed AVF hel
         CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
       },
       (mod) => {
-        assert.throws(
-          () => mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets(),
-          /guest-agent/,
-        );
+        if (desktopOs() === "macos") {
+          assert.throws(
+            () => mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets(),
+            /requires a bundled AVF guest runtime/,
+          );
+        } else {
+          assert.throws(
+            () => mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets(),
+            /guest-agent/,
+          );
+        }
       },
     );
   } finally {
     fs.rmSync(bundleDir, { recursive: true, force: true });
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("wdio automation AVF runtime prep reuses an existing prepared runtime directory", async () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-avf-runtime-"));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
+  const logs = [];
+  try {
+    fs.mkdirSync(path.join(runtimeDir, "helpers"), { recursive: true });
+    fs.writeFileSync(path.join(runtimeDir, "rootfs.raw"), "rootfs\n", "utf8");
+    fs.writeFileSync(path.join(runtimeDir, "helpers", "kernel"), "kernel\n", "utf8");
+    fs.writeFileSync(path.join(runtimeDir, "helpers", "initrd"), "initrd\n", "utf8");
+    fs.writeFileSync(path.join(runtimeDir, "helpers", "guest-agent"), "guest-agent\n", "utf8");
+    fs.writeFileSync(path.join(runtimeDir, "helpers", "egress-proxy"), "egress-proxy\n", "utf8");
+    await withEnv(
+      {
+        CTX_AVF_LINUX_GUEST_RUNTIME_DIR: runtimeDir,
+        CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
+      },
+      (mod) => {
+        let spawnCalled = false;
+        const resolved = mod.__desktopAutomationConfigTestHooks.ensureAutomationAvfLinuxGuestRuntime({
+          platform: "darwin",
+          runsContainerScenarios: true,
+          env: process.env,
+          log: (line) => logs.push(line),
+          spawnSyncImpl: () => {
+            spawnCalled = true;
+            return { status: 0 };
+          },
+        });
+        assert.equal(resolved, runtimeDir);
+        assert.equal(process.env.CTX_AVF_LINUX_GUEST_RUNTIME_DIR, runtimeDir);
+        assert.equal(spawnCalled, false);
+      },
+    );
+    assert.ok(logs.some((line) => line.includes("CTX_AVF_LINUX_GUEST_RUNTIME_DIR")));
+  } finally {
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("wdio automation AVF runtime prep prepares and exports a missing runtime directory", async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-avf-runtime-parent-"));
+  const runtimeDir = path.join(tempRoot, "runtime");
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
+  try {
+    await withEnv(
+      {
+        CTX_AVF_LINUX_GUEST_RUNTIME_DIR: null,
+        CTX_AUTOMATION_AVF_LINUX_GUEST_RUNTIME_DIR: runtimeDir,
+        CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
+      },
+      (mod) => {
+        let preparedPath = null;
+        const resolved = mod.__desktopAutomationConfigTestHooks.ensureAutomationAvfLinuxGuestRuntime({
+          platform: "darwin",
+          runsContainerScenarios: true,
+          env: process.env,
+          spawnSyncImpl: (_cmd, args) => {
+            preparedPath = args[2];
+            fs.mkdirSync(path.join(preparedPath, "helpers"), { recursive: true });
+            fs.writeFileSync(path.join(preparedPath, "rootfs.raw"), "rootfs\n", "utf8");
+            fs.writeFileSync(path.join(preparedPath, "helpers", "kernel"), "kernel\n", "utf8");
+            fs.writeFileSync(path.join(preparedPath, "helpers", "initrd"), "initrd\n", "utf8");
+            fs.writeFileSync(path.join(preparedPath, "helpers", "guest-agent"), "guest-agent\n", "utf8");
+            fs.writeFileSync(path.join(preparedPath, "helpers", "egress-proxy"), "egress-proxy\n", "utf8");
+            return { status: 0 };
+          },
+          log: () => {},
+        });
+        assert.equal(preparedPath, runtimeDir);
+        assert.equal(resolved, runtimeDir);
+        assert.equal(process.env.CTX_AVF_LINUX_GUEST_RUNTIME_DIR, runtimeDir);
+      },
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
 });

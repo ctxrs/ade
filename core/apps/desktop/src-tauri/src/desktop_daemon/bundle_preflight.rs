@@ -93,6 +93,26 @@ struct RuntimeLockComponentSource {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+struct RuntimeLockComponentHelper {
+    #[serde(default)]
+    uri: Option<String>,
+    #[serde(default)]
+    sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct RuntimeLockComponentHelpers {
+    #[serde(default)]
+    kernel: Option<RuntimeLockComponentHelper>,
+    #[serde(default)]
+    initrd: Option<RuntimeLockComponentHelper>,
+    #[serde(rename = "guest-agent", default)]
+    guest_agent: Option<RuntimeLockComponentHelper>,
+    #[serde(rename = "egress-proxy", default)]
+    egress_proxy: Option<RuntimeLockComponentHelper>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
 struct RuntimeLockComponent {
     #[serde(default)]
     kind: String,
@@ -106,6 +126,8 @@ struct RuntimeLockComponent {
     variant: Option<String>,
     #[serde(default)]
     sources: Vec<RuntimeLockComponentSource>,
+    #[serde(default)]
+    helpers: RuntimeLockComponentHelpers,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,7 +211,18 @@ fn required_component_has_managed_source(
     target: &RuntimeTarget,
     allowed_sources: &HashSet<String>,
 ) -> bool {
-    lock.components.iter().any(|component| {
+    find_required_component(lock, kind, id, target)
+        .map(|component| lock_component_has_managed_source(component, allowed_sources))
+        .unwrap_or(false)
+}
+
+fn find_required_component<'a>(
+    lock: &'a RuntimeLockV2,
+    kind: &str,
+    id: &str,
+    target: &RuntimeTarget,
+) -> Option<&'a RuntimeLockComponent> {
+    lock.components.iter().find(|component| {
         let variant = component
             .variant
             .as_deref()
@@ -201,8 +234,36 @@ fn required_component_has_managed_source(
             && component.os == target.os
             && component.arch == target.arch
             && variant == "default"
-            && lock_component_has_managed_source(component, allowed_sources)
     })
+}
+
+fn helper_metadata_complete(helper: Option<&RuntimeLockComponentHelper>) -> bool {
+    helper
+        .and_then(|helper| helper.uri.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some()
+        && helper
+            .and_then(|helper| helper.sha256.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some()
+}
+
+fn avf_helper_names_and_paths() -> [(&'static str, &'static str); 4] {
+    [
+        ("kernel", "helpers/kernel"),
+        ("initrd", "helpers/initrd"),
+        ("guest-agent", "helpers/guest-agent"),
+        ("egress-proxy", "helpers/egress-proxy"),
+    ]
+}
+
+fn avf_helper_metadata_complete(component: &RuntimeLockComponent) -> bool {
+    helper_metadata_complete(component.helpers.kernel.as_ref())
+        && helper_metadata_complete(component.helpers.initrd.as_ref())
+        && helper_metadata_complete(component.helpers.guest_agent.as_ref())
+        && helper_metadata_complete(component.helpers.egress_proxy.as_ref())
 }
 
 fn normalize_target_token(raw: &str, host_value: &str) -> Option<String> {
@@ -463,6 +524,7 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(bundle_dir: Option<&Path>)
 
     for runtime_id in &lock.required.runtime_ids {
         for target in &runtime_targets {
+            let runtime_component = find_required_component(&lock, "runtime", runtime_id, target);
             let managed_source_available = required_component_has_managed_source(
                 &lock,
                 "runtime",
@@ -470,6 +532,17 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(bundle_dir: Option<&Path>)
                 target,
                 &allowed_managed_sources,
             );
+            if *runtime_id == "avf-linux-guest"
+                && managed_source_available
+                && runtime_component
+                    .map(|component| !avf_helper_metadata_complete(component))
+                    .unwrap_or(true)
+            {
+                failures.push(format!(
+                    "runtime lock missing AVF helper metadata: {} ({}/{})",
+                    runtime_id, target.os, target.arch
+                ));
+            }
             let Some(entry) = manifest.runtimes.iter().find(|entry| {
                 entry.id == *runtime_id && entry.os == target.os && entry.arch == target.arch
             }) else {
@@ -501,6 +574,21 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(bundle_dir: Option<&Path>)
                     target.arch,
                     bin_path.display()
                 ));
+            }
+            if *runtime_id == "avf-linux-guest" {
+                for (helper_name, helper_rel) in avf_helper_names_and_paths() {
+                    let helper_path = root_path.join(helper_rel);
+                    if !helper_path.exists() {
+                        failures.push(format!(
+                            "missing AVF runtime helper file: {} {} ({}/{}) at {}",
+                            runtime_id,
+                            helper_name,
+                            target.os,
+                            target.arch,
+                            helper_path.display()
+                        ));
+                    }
+                }
             }
         }
     }
@@ -667,9 +755,21 @@ mod tests {
 
     #[test]
     fn thin_bundle_runtime_requirement_accepts_managed_runtime_source() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("unix epoch")
+            .as_nanos();
+        let temp = std::env::temp_dir().join(format!(
+            "ctx-desktop-bundle-preflight-{}-{}",
+            std::process::id(),
+            nonce
+        ));
+        if temp.exists() {
+            fs::remove_dir_all(&temp).expect("clear tempdir");
+        }
+        fs::create_dir_all(&temp).expect("create tempdir");
         fs::write(
-            temp.path().join("manifest.json"),
+            temp.join("manifest.json"),
             r#"{
   "version": 1,
   "providers": [],
@@ -679,7 +779,7 @@ mod tests {
         )
         .expect("write manifest");
         fs::write(
-            temp.path().join("runtime_lock.v2.json"),
+            temp.join("runtime_lock.v2.json"),
             format!(
                 r#"{{
   "version": 2,
@@ -724,7 +824,206 @@ mod tests {
         )
         .expect("write runtime lock");
 
-        enforce_desktop_parity_bundle_preflight(Some(temp.path()))
+        enforce_desktop_parity_bundle_preflight(Some(&temp))
             .expect("managed runtime source should satisfy thin-bundle preflight");
+        fs::remove_dir_all(&temp).expect("cleanup tempdir");
+    }
+
+    #[test]
+    fn thin_bundle_avf_runtime_requires_helper_metadata() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("unix epoch")
+            .as_nanos();
+        let temp = std::env::temp_dir().join(format!(
+            "ctx-desktop-bundle-preflight-avf-lock-{}-{}",
+            std::process::id(),
+            nonce
+        ));
+        if temp.exists() {
+            fs::remove_dir_all(&temp).expect("clear tempdir");
+        }
+        fs::create_dir_all(&temp).expect("create tempdir");
+        fs::write(
+            temp.join("manifest.json"),
+            r#"{
+  "version": 1,
+  "providers": [],
+  "runtimes": [],
+  "images": []
+}"#,
+        )
+        .expect("write manifest");
+        fs::write(
+            temp.join("runtime_lock.v2.json"),
+            format!(
+                r#"{{
+  "version": 2,
+  "profiles": {{
+    "parity": {{
+      "allowed_source_types": ["ci", "vendor"]
+    }}
+  }},
+  "required": {{
+    "targets": {{
+      "provider": [],
+      "runtime": ["macos/host"],
+      "image": [],
+      "machine_cache": []
+    }},
+    "provider_ids": [],
+    "runtime_ids": ["avf-linux-guest"],
+    "image_ids": [],
+    "machine_cache_ids": []
+  }},
+  "components": [
+    {{
+      "kind": "runtime",
+      "id": "avf-linux-guest",
+      "os": "{os}",
+      "arch": "{arch}",
+      "variant": "default",
+      "version": "locked",
+      "sources": [
+        {{
+          "source_type": "ci",
+          "uri": "locked://runtime/avf-linux-guest/{os}/{arch}",
+          "sha256": "{sha}"
+        }}
+      ]
+    }}
+  ]
+}}"#,
+                os = std::env::consts::OS,
+                arch = std::env::consts::ARCH,
+                sha = "0".repeat(64),
+            ),
+        )
+        .expect("write runtime lock");
+
+        let err = enforce_desktop_parity_bundle_preflight(Some(&temp))
+            .expect_err("missing helper metadata should fail");
+        assert!(err.to_string().contains("AVF helper metadata"));
+        fs::remove_dir_all(&temp).expect("cleanup tempdir");
+    }
+
+    #[test]
+    fn bundled_avf_runtime_requires_helper_payloads() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("unix epoch")
+            .as_nanos();
+        let temp = std::env::temp_dir().join(format!(
+            "ctx-desktop-bundle-preflight-avf-bundle-{}-{}",
+            std::process::id(),
+            nonce
+        ));
+        let host_os = if cfg!(target_os = "macos") {
+            "macos"
+        } else if cfg!(target_os = "windows") {
+            "windows"
+        } else {
+            "linux"
+        };
+        let host_arch = if cfg!(target_arch = "aarch64") {
+            "aarch64"
+        } else if cfg!(target_arch = "x86_64") {
+            "x86_64"
+        } else {
+            std::env::consts::ARCH
+        };
+        let runtime_root = temp
+            .join("runtimes")
+            .join("avf-linux-guest")
+            .join(host_os)
+            .join(host_arch);
+        let helpers_dir = runtime_root.join("helpers");
+        if temp.exists() {
+            fs::remove_dir_all(&temp).expect("clear tempdir");
+        }
+        fs::create_dir_all(&helpers_dir).expect("create helpers dir");
+        fs::write(runtime_root.join("rootfs.raw"), "rootfs").expect("write rootfs");
+        fs::write(helpers_dir.join("kernel"), "kernel").expect("write kernel");
+        fs::write(helpers_dir.join("initrd"), "initrd").expect("write initrd");
+        fs::write(helpers_dir.join("egress-proxy"), "proxy").expect("write proxy");
+        fs::write(
+            temp.join("manifest.json"),
+            format!(
+                r#"{{
+  "version": 1,
+  "providers": [],
+  "runtimes": [
+    {{
+      "id": "avf-linux-guest",
+      "os": "{os}",
+      "arch": "{arch}",
+      "root": "runtimes/avf-linux-guest/{os}/{arch}",
+      "bin": "rootfs.raw"
+    }}
+  ],
+  "images": []
+}}"#,
+                os = host_os,
+                arch = host_arch,
+            ),
+        )
+        .expect("write manifest");
+        fs::write(
+            temp.join("runtime_lock.v2.json"),
+            format!(
+                r#"{{
+  "version": 2,
+  "profiles": {{
+    "parity": {{
+      "allowed_source_types": ["ci", "vendor"]
+    }}
+  }},
+  "required": {{
+    "targets": {{
+      "provider": [],
+      "runtime": ["{os}/host"],
+      "image": [],
+      "machine_cache": []
+    }},
+    "provider_ids": [],
+    "runtime_ids": ["avf-linux-guest"],
+    "image_ids": [],
+    "machine_cache_ids": []
+  }},
+  "components": [
+    {{
+      "kind": "runtime",
+      "id": "avf-linux-guest",
+      "os": "{os}",
+      "arch": "{arch}",
+      "variant": "default",
+      "version": "locked",
+      "sources": [
+        {{
+          "source_type": "ci",
+          "uri": "locked://runtime/avf-linux-guest/{os}/{arch}",
+          "sha256": "{sha}"
+        }}
+      ],
+      "helpers": {{
+        "kernel": {{ "uri": "locked://kernel", "sha256": "{sha}" }},
+        "initrd": {{ "uri": "locked://initrd", "sha256": "{sha}" }},
+        "guest-agent": {{ "uri": "locked://guest-agent", "sha256": "{sha}" }},
+        "egress-proxy": {{ "uri": "locked://egress-proxy", "sha256": "{sha}" }}
+      }}
+    }}
+  ]
+}}"#,
+                os = host_os,
+                arch = host_arch,
+                sha = "0".repeat(64),
+            ),
+        )
+        .expect("write runtime lock");
+
+        let err = enforce_desktop_parity_bundle_preflight(Some(&temp))
+            .expect_err("missing guest-agent helper should fail");
+        assert!(err.to_string().contains("guest-agent"));
+        fs::remove_dir_all(&temp).expect("cleanup tempdir");
     }
 }

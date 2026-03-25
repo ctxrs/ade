@@ -273,7 +273,12 @@ async fn provider_context_for_workspace_runtime(
 
     let worktree = synthetic_probe_worktree(workspace);
     let worktree_data_plane = workspace_data_plane(workspace, effective.mode.clone());
-    let effective = apply_data_plane_to_execution_settings(&effective, &worktree_data_plane);
+    let effective = apply_data_plane_to_execution_settings(&effective, &worktree_data_plane)
+        .map_err(|err| {
+            logs::redact_sensitive(&format!(
+                "applying workspace probe data plane failed: {err:#}"
+            ))
+        })?;
     let cwd = probe_cwd_for_workspace_runtime(
         &worktree_data_plane,
         &worktree,
@@ -287,6 +292,13 @@ async fn provider_context_for_workspace_runtime(
         .await
         .map_err(|err| {
             logs::redact_sensitive(&format!("probe runtime preparation failed: {err:#}"))
+        })?;
+    crate::disk_isolated::ensure_workspace_root_from_host_copy(&state.core.data_root, workspace)
+        .await
+        .map_err(|err| {
+            logs::redact_sensitive(&format!(
+                "sandbox workspace root materialization failed: {err:#}"
+            ))
         })?;
     let runtime_root = runtime_plan
         .env_overrides
@@ -330,7 +342,12 @@ pub(crate) async fn provider_auth_context_for_worktree_runtime(
                     "resolving session auth worktree data plane failed: {err:#}"
                 ))
             })?;
-    let effective = apply_data_plane_to_execution_settings(&effective, &worktree_data_plane);
+    let effective = apply_data_plane_to_execution_settings(&effective, &worktree_data_plane)
+        .map_err(|err| {
+            logs::redact_sensitive(&format!(
+                "applying session auth worktree data plane failed: {err:#}"
+            ))
+        })?;
     let cwd = probe_cwd_for_workspace_runtime(
         &worktree_data_plane,
         worktree,

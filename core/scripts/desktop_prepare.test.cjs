@@ -47,7 +47,7 @@ test("desktop_prepare release mode builds web, checks versions, and syncs releas
   assert.deepEqual(steps[3].args, ["-C", "apps/web", "build"]);
   assert.equal(steps[3].env.VITE_CTX_APP_VERSION, "0.22.0");
   assert.deepEqual(steps[4].args, ["scripts/desktop_sync_resources.cjs", "--profile", "release"]);
-  assert.equal(steps[4].env.CTX_DESKTOP_SYNC_BUNDLES, "0");
+  assert.equal(steps[4].env.CTX_DESKTOP_SYNC_BUNDLES, "1");
 });
 
 test("desktop_prepare dev mode skips web build and version checks", () => {

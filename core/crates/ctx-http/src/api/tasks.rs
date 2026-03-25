@@ -84,7 +84,8 @@ pub(in crate::api) async fn resolve_existing_worktree_execution(
     let data_plane = resolve_worktree_data_plane(state, &worktree)
         .await
         .context("resolving worktree data plane")?;
-    let effective = apply_data_plane_to_execution_settings(&base_effective, &data_plane);
+    let effective = apply_data_plane_to_execution_settings(&base_effective, &data_plane)
+        .context("applying worktree data plane to execution settings")?;
     Ok(ResolvedExistingWorktreeExecution {
         worktree,
         effective,
@@ -218,6 +219,15 @@ pub(in crate::api) async fn rematerialize_sandbox_binding_for_worktree(
     )
     .await?
     .ok_or_else(|| anyhow::anyhow!("sandbox binding rematerialization produced host mode"))
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::api) struct TaskWorktreeCleanupTarget {
+    pub worktree: Worktree,
+    pub sandbox_binding: Option<SandboxBinding>,
+    pub managed_root: Option<PathBuf>,
+    pub delete_branch_on_cleanup: bool,
+    pub delete_worktree_record_on_success: bool,
 }
 
 pub(in crate::api) async fn persist_provisioned_worktree(
@@ -510,6 +520,12 @@ pub(super) async fn delete_task(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    let workspace = state
+        .global_store()
+        .get_workspace(task.workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let sessions = store
         .list_sessions_for_task(task_id)
         .await
@@ -518,19 +534,10 @@ pub(super) async fn delete_task(
     if let Some(primary_worktree_id) = task.primary_worktree_id {
         worktree_ids.insert(primary_worktree_id);
     }
-    for session in &sessions {
-        state.cleanup_session(session.id).await;
-    }
-    let deleted = store
-        .delete_task(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if !deleted {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    for worktree_id in worktree_ids {
+    let mut cleanup_targets = Vec::new();
+    for worktree_id in &worktree_ids {
         let other_active = match store
-            .count_active_tasks_for_worktree(worktree_id, Some(task_id))
+            .count_active_tasks_for_worktree(*worktree_id, Some(task_id))
             .await
         {
             Ok(count) => count > 0,
@@ -546,35 +553,88 @@ pub(super) async fn delete_task(
         if other_active {
             continue;
         }
-        let worktree = match store.get_worktree(worktree_id).await {
-            Ok(Some(worktree)) => Some(worktree),
-            Ok(None) => None,
+        let other_tasks = match store.count_tasks_for_worktree(*worktree_id, Some(task_id)).await {
+            Ok(count) => count > 0,
             Err(err) => {
                 tracing::warn!(
                     task_id = %task_id.0,
                     worktree_id = %worktree_id.0,
-                    "failed to load worktree for hooks cleanup: {err:#}"
+                    "failed to check total worktree usage: {err:#}"
+                );
+                true
+            }
+        };
+        let worktree = match store.get_worktree(*worktree_id).await {
+            Ok(Some(worktree)) => worktree,
+            Ok(None) => continue,
+            Err(err) => {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree_id.0,
+                    "failed to load worktree for delete cleanup: {err:#}"
+                );
+                continue;
+            }
+        };
+        let sandbox_binding = match store.get_sandbox_binding(*worktree_id).await {
+            Ok(binding) => binding,
+            Err(err) => {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree_id.0,
+                    "failed to load sandbox binding for delete cleanup: {err:#}"
                 );
                 None
             }
         };
-        let worktree_root = worktree
-            .as_ref()
-            .map(|entry| StdPath::new(&entry.root_path));
-        let vcs_kind = worktree.as_ref().and_then(|entry| entry.vcs_kind.clone());
-        if let Err(err) = vcs_hooks::cleanup_worktree_hooks(
-            &state.core.data_root,
-            task.workspace_id,
-            worktree_id,
-            worktree_root,
-            vcs_kind,
-        )
+        cleanup_targets.push(TaskWorktreeCleanupTarget {
+            managed_root: managed_worktree_root(&state, &workspace, &worktree),
+            sandbox_binding,
+            worktree,
+            delete_branch_on_cleanup: !other_tasks,
+            delete_worktree_record_on_success: !other_tasks,
+        });
+    }
+    for session in &sessions {
+        state.cleanup_session(session.id).await;
+    }
+    let deleted = store
+        .delete_task(task_id)
         .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !deleted {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let cleanup_errors =
+        cleanup_task_worktrees(state.as_ref(), &workspace, task_id, &cleanup_targets).await;
+    if !cleanup_errors.is_empty() {
+        tracing::warn!(
+            task_id = %task_id.0,
+            cleanup_errors = cleanup_errors.len(),
+            "delete cleanup had errors after task row removal"
+        );
+    }
+    let cleanup_succeeded = cleanup_errors.is_empty();
+    for target in &cleanup_targets {
+        if !target.delete_worktree_record_on_success || !cleanup_succeeded {
+            continue;
+        }
+        if let Err(err) = store.delete_worktree(target.worktree.id).await {
+            tracing::warn!(
+                task_id = %task_id.0,
+                worktree_id = %target.worktree.id.0,
+                "failed to delete worktree row after task delete: {err:#}"
+            );
+        }
+        if let Err(err) = state
+            .global_store()
+            .delete_workspace_worktree_index(target.worktree.id)
+            .await
         {
             tracing::warn!(
                 task_id = %task_id.0,
-                worktree_id = %worktree_id.0,
-                "failed to remove vcs hooks: {err:#}"
+                worktree_id = %target.worktree.id.0,
+                "failed to delete worktree index after task delete: {err:#}"
             );
         }
     }
@@ -611,6 +671,153 @@ fn managed_worktree_root(
     } else {
         None
     }
+}
+
+pub(in crate::api) async fn cleanup_task_worktrees(
+    state: &AppState,
+    workspace: &Workspace,
+    task_id: TaskId,
+    targets: &[TaskWorktreeCleanupTarget],
+) -> Vec<anyhow::Error> {
+    let mut errors = Vec::new();
+    let mut needs_prune = false;
+    for target in targets {
+        let worktree = &target.worktree;
+        if let Err(err) = vcs_hooks::cleanup_worktree_hooks(
+            &state.core.data_root,
+            workspace.id,
+            worktree.id,
+            Some(StdPath::new(&worktree.root_path)),
+            worktree.vcs_kind.clone(),
+        )
+        .await
+        {
+            tracing::warn!(
+                task_id = %task_id.0,
+                worktree_id = %worktree.id.0,
+                "failed to remove vcs hooks: {err:#}"
+            );
+        }
+        if let Some(binding) = target.sandbox_binding.as_ref() {
+            if let Err(err) = crate::disk_isolated::remove_live_worktree_root(
+                &state.core.data_root,
+                workspace.id,
+                StdPath::new(&binding.live_worktree_root),
+            )
+            .await
+            {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree.id.0,
+                    live_worktree_root = binding.live_worktree_root,
+                    "failed to remove sandbox live worktree root: {err:#}"
+                );
+                errors.push(err);
+            }
+            if let Some(host_projection_root) = binding.host_projection_root.as_deref() {
+                let host_projection_root = PathBuf::from(host_projection_root);
+                if tokio::fs::metadata(&host_projection_root).await.is_ok() {
+                    if let Err(err) = tokio::fs::remove_dir_all(&host_projection_root)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "removing AVF host shadow worktree at {}",
+                                host_projection_root.display()
+                            )
+                        })
+                    {
+                        tracing::warn!(
+                            task_id = %task_id.0,
+                            worktree_id = %worktree.id.0,
+                            host_projection_root = %host_projection_root.display(),
+                            "failed to remove sandbox host projection root: {err:#}"
+                        );
+                        errors.push(err);
+                    }
+                }
+            }
+        }
+        let Some(root) = target.managed_root.as_ref() else {
+            continue;
+        };
+        let branch = worktree
+            .git_branch
+            .as_deref()
+            .filter(|name| name.starts_with("ctx/"));
+        if tokio::fs::metadata(root).await.is_err() {
+            if branch.is_some() {
+                needs_prune = true;
+            }
+            if target.delete_branch_on_cleanup {
+                if let Some(branch) = branch {
+                    if let Err(err) = delete_branch(&workspace.root_path, branch).await {
+                        tracing::warn!(
+                            task_id = %task_id.0,
+                            worktree_id = %worktree.id.0,
+                            branch,
+                            "failed to delete worktree branch: {err:#}"
+                        );
+                    }
+                }
+            }
+            continue;
+        }
+        let is_git = is_git_worktree(root).await.unwrap_or(false);
+        if is_git {
+            needs_prune = true;
+            if let Err(err) = remove_worktree(&workspace.root_path, root).await {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree.id.0,
+                    "failed to remove worktree: {err:#}"
+                );
+                errors.push(err);
+                continue;
+            }
+            if tokio::fs::metadata(root).await.is_ok() {
+                if let Err(err) = tokio::fs::remove_dir_all(root)
+                    .await
+                    .with_context(|| format!("removing worktree dir at {}", root.display()))
+                {
+                    tracing::warn!(
+                        task_id = %task_id.0,
+                        worktree_id = %worktree.id.0,
+                        "failed to remove worktree dir: {err:#}"
+                    );
+                    errors.push(err);
+                }
+            }
+        } else if let Err(err) = tokio::fs::remove_dir_all(root)
+            .await
+            .with_context(|| format!("removing non-git worktree dir at {}", root.display()))
+        {
+            tracing::warn!(
+                task_id = %task_id.0,
+                worktree_id = %worktree.id.0,
+                "failed to remove worktree dir: {err:#}"
+            );
+            errors.push(err);
+        }
+        if target.delete_branch_on_cleanup {
+            if let Some(branch) = branch {
+                if let Err(err) = delete_branch(&workspace.root_path, branch).await {
+                    tracing::warn!(
+                        task_id = %task_id.0,
+                        worktree_id = %worktree.id.0,
+                        branch,
+                        "failed to delete worktree branch: {err:#}"
+                    );
+                }
+            }
+        }
+    }
+    if needs_prune {
+        if let Err(err) = prune_worktrees(&workspace.root_path).await {
+            tracing::warn!(task_id = %task_id.0, "failed to prune worktrees: {err:#}");
+            errors.push(err);
+        }
+    }
+    errors
 }
 
 pub(super) async fn remove_worktree(
@@ -758,6 +965,159 @@ pub(super) async fn is_git_worktree(worktree_path: impl AsRef<StdPath>) -> anyho
 
 mod snapshot_state;
 pub(super) use snapshot_state::load_workspace_active_snapshot_state;
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use crate::daemon::AppState;
+    use ctx_core::models::VcsKind;
+    use ctx_store::StoreManager;
+    use std::collections::HashMap;
+
+    fn git(args: &[&str], cwd: &StdPath) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {:?} failed", args);
+    }
+
+    fn git_output(args: &[&str], cwd: &StdPath) -> String {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .expect("run git output");
+        assert!(output.status.success(), "git {:?} failed", args);
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    fn init_git_workspace(root: &StdPath) -> String {
+        git(&["init", "-b", "main"], root);
+        git(&["config", "user.email", "ctx@example.com"], root);
+        git(&["config", "user.name", "Ctx Test"], root);
+        std::fs::write(root.join("README.md"), "hello\n").expect("write readme");
+        git(&["add", "README.md"], root);
+        git(&["commit", "-m", "initial"], root);
+        git_output(&["rev-parse", "HEAD"], root)
+    }
+
+    async fn test_state(data_root: &StdPath) -> Arc<AppState> {
+        Arc::new(AppState::new(
+            data_root.to_path_buf(),
+            StoreManager::open(data_root).await.expect("open stores"),
+            HashMap::new(),
+            "http://127.0.0.1:4310".to_string(),
+            None,
+        ))
+    }
+
+    #[tokio::test]
+    async fn delete_task_removes_unused_worktree_rows_and_indexes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repo_root = temp.path().join("repo");
+        std::fs::create_dir_all(&repo_root).expect("create repo root");
+        let base_commit = init_git_workspace(&repo_root);
+        let state = test_state(temp.path()).await;
+        let workspace = state
+            .global_store()
+            .create_workspace(
+                "ws".to_string(),
+                repo_root.to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .expect("create workspace");
+        let store = state
+            .store_for_workspace(workspace.id)
+            .await
+            .expect("workspace store");
+        let task = store
+            .create_task(workspace.id, "task".to_string(), None)
+            .await
+            .expect("create task");
+        state
+            .global_store()
+            .upsert_workspace_task_index(task.id, workspace.id)
+            .await
+            .expect("upsert task index");
+
+        let worktree_id = WorktreeId::new();
+        let managed_root = managed_worktree_path(temp.path(), workspace.id, worktree_id);
+        let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
+        git(
+            &[
+                "worktree",
+                "add",
+                "-b",
+                &branch_name,
+                managed_root.to_string_lossy().as_ref(),
+                &base_commit,
+            ],
+            &repo_root,
+        );
+        let worktree = store
+            .insert_worktree(Worktree {
+                id: worktree_id,
+                workspace_id: workspace.id,
+                root_path: managed_root.to_string_lossy().to_string(),
+                base_commit_sha: base_commit.clone(),
+                git_branch: Some(branch_name),
+                vcs_kind: Some(VcsKind::Git),
+                base_revision: Some(base_commit.clone()),
+                vcs_ref: Some("".to_string()),
+                created_at: Utc::now(),
+                bootstrap_status: None,
+                bootstrap_started_at: None,
+                bootstrap_finished_at: None,
+                bootstrap_exit_code: None,
+                bootstrap_timeout_sec: None,
+                bootstrap_error: None,
+                bootstrap_log_path: None,
+                bootstrap_log_truncated: None,
+                bootstrap_command: None,
+                bootstrap_script_path: None,
+            })
+            .await
+            .expect("insert worktree");
+        state
+            .global_store()
+            .upsert_workspace_worktree_index(worktree.id, workspace.id)
+            .await
+            .expect("upsert worktree index");
+        store
+            .set_task_primary_worktree(task.id, worktree.id)
+            .await
+            .expect("set primary worktree");
+
+        let status = delete_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
+            .await
+            .expect("delete task");
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(
+            store
+                .get_worktree(worktree.id)
+                .await
+                .expect("load worktree")
+                .is_none(),
+            "unused worktree row should be removed on task delete"
+        );
+        assert!(
+            state
+                .global_store()
+                .get_workspace_id_for_worktree(worktree.id)
+                .await
+                .expect("load worktree index")
+                .is_none(),
+            "unused worktree index should be removed on task delete"
+        );
+        assert!(
+            tokio::fs::metadata(&managed_root).await.is_err(),
+            "managed worktree root should be removed on task delete"
+        );
+    }
+}
 
 #[cfg(test)]
 mod tests;

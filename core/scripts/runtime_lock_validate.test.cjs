@@ -141,7 +141,7 @@ const makeFixture = () => {
 
 const makeV2Sources = (sourceType) => [{ source_type: sourceType, uri: `locked://${sourceType}`, sha256: "0".repeat(64) }];
 
-const makeV2Component = ({ kind, id, os, arch, sourceType }) => ({
+const makeV2Component = ({ kind, id, os, arch, sourceType, ...rest }) => ({
   kind,
   id,
   os,
@@ -149,6 +149,14 @@ const makeV2Component = ({ kind, id, os, arch, sourceType }) => ({
   variant: "default",
   version: "test",
   sources: sourceType === "local" ? [{ source_type: "local", build: "desktop:prep" }] : makeV2Sources(sourceType),
+  ...rest,
+});
+
+const makeAvfHelperMetadata = () => ({
+  kernel: { uri: "locked://kernel", sha256: "1".repeat(64) },
+  initrd: { uri: "locked://initrd", sha256: "2".repeat(64) },
+  "guest-agent": { uri: "locked://guest-agent", sha256: "3".repeat(64) },
+  "egress-proxy": { uri: "locked://egress-proxy", sha256: "4".repeat(64) },
 });
 
 test("runtime lock v1 validation accepts required host + linux entries", () => {
@@ -396,8 +404,12 @@ test("runtime lock v2 accepts managed required images without bundled image tar 
 test("runtime lock v2 accepts macos/host AVF guest runtime with a single host-arch manifest entry", () => {
   const fixture = makeFixture();
   const avfRuntimeRoot = path.join(fixture.dir, "runtimes", "avf-linux-guest");
-  fs.mkdirSync(avfRuntimeRoot, { recursive: true });
+  fs.mkdirSync(path.join(avfRuntimeRoot, "helpers"), { recursive: true });
   fs.writeFileSync(path.join(avfRuntimeRoot, "rootfs.raw"), "rootfs\n", "utf8");
+  fs.writeFileSync(path.join(avfRuntimeRoot, "helpers", "kernel"), "kernel\n", "utf8");
+  fs.writeFileSync(path.join(avfRuntimeRoot, "helpers", "initrd"), "initrd\n", "utf8");
+  fs.writeFileSync(path.join(avfRuntimeRoot, "helpers", "guest-agent"), "agent\n", "utf8");
+  fs.writeFileSync(path.join(avfRuntimeRoot, "helpers", "egress-proxy"), "proxy\n", "utf8");
 
   const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, "utf8"));
   manifest.runtimes = [
@@ -435,6 +447,7 @@ test("runtime lock v2 accepts macos/host AVF guest runtime with a single host-ar
         os: "macos",
         arch: "host",
         sourceType: "ci",
+        helpers: makeAvfHelperMetadata(),
       }),
     ],
   });
@@ -446,6 +459,108 @@ test("runtime lock v2 accepts macos/host AVF guest runtime with a single host-ar
   });
   assert.equal(result.ok, true);
   assert.deepEqual(result.errors, []);
+});
+
+test("runtime lock v2 rejects bundled AVF runtime missing helper payloads", () => {
+  const fixture = makeFixture();
+  const avfRuntimeRoot = path.join(fixture.dir, "runtimes", "avf-linux-guest-missing-helper");
+  fs.mkdirSync(path.join(avfRuntimeRoot, "helpers"), { recursive: true });
+  fs.writeFileSync(path.join(avfRuntimeRoot, "rootfs.raw"), "rootfs\n", "utf8");
+  fs.writeFileSync(path.join(avfRuntimeRoot, "helpers", "kernel"), "kernel\n", "utf8");
+  fs.writeFileSync(path.join(avfRuntimeRoot, "helpers", "initrd"), "initrd\n", "utf8");
+  fs.writeFileSync(path.join(avfRuntimeRoot, "helpers", "egress-proxy"), "proxy\n", "utf8");
+
+  const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, "utf8"));
+  manifest.runtimes = [
+    {
+      id: "avf-linux-guest",
+      os: "macos",
+      arch: hostArch,
+      root: avfRuntimeRoot,
+      bin: "rootfs.raw",
+    },
+  ];
+  writeJson(fixture.manifestPath, manifest);
+
+  writeJson(fixture.lockPath, {
+    version: 2,
+    profiles: {
+      parity: { allowed_source_types: ["ci", "vendor"] },
+      override: { allowed_source_types: ["ci", "vendor", "local"] },
+      "source-all": { allowed_source_types: ["local"] },
+    },
+    required: {
+      targets: {
+        provider: [],
+        runtime: ["macos/host"],
+        image: [],
+      },
+      provider_ids: [],
+      runtime_ids: ["avf-linux-guest"],
+      image_ids: [],
+    },
+    components: [
+      makeV2Component({
+        kind: "runtime",
+        id: "avf-linux-guest",
+        os: "macos",
+        arch: "host",
+        sourceType: "ci",
+        helpers: makeAvfHelperMetadata(),
+      }),
+    ],
+  });
+
+  const result = validateRuntimeLock({
+    lockPath: fixture.lockPath,
+    manifestPath: fixture.manifestPath,
+    profile: "parity",
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join("\n"), /runtime helper avf-linux-guest\/guest-agent/);
+});
+
+test("runtime lock v2 rejects thin AVF runtime components missing helper metadata", () => {
+  const fixture = makeFixture();
+  const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, "utf8"));
+  manifest.runtimes = [];
+  writeJson(fixture.manifestPath, manifest);
+
+  writeJson(fixture.lockPath, {
+    version: 2,
+    profiles: {
+      parity: { allowed_source_types: ["ci", "vendor"] },
+      override: { allowed_source_types: ["ci", "vendor", "local"] },
+      "source-all": { allowed_source_types: ["local"] },
+    },
+    required: {
+      targets: {
+        provider: [],
+        runtime: ["macos/host"],
+        image: [],
+      },
+      provider_ids: [],
+      runtime_ids: ["avf-linux-guest"],
+      image_ids: [],
+    },
+    components: [
+      makeV2Component({
+        kind: "runtime",
+        id: "avf-linux-guest",
+        os: "macos",
+        arch: "host",
+        sourceType: "ci",
+      }),
+    ],
+  });
+
+  const result = validateRuntimeLock({
+    lockPath: fixture.lockPath,
+    manifestPath: fixture.manifestPath,
+    profile: "parity",
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join("\n"), /missing AVF helper metadata/);
 });
 
 test("runtime lock v2 accepts a thin bundle when required runtimes use managed sources", () => {

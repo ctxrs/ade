@@ -320,6 +320,17 @@ bundle_build_dir="${CTX_BUNDLE_BUILD_DIR:-$cache_base/.build}"
 mkdir -p "$bundle_build_dir"
 bundle_build_dir="$(cd "$bundle_build_dir" && pwd)"
 
+# Bundle cargo outputs must be deterministic and isolated from user-global cargo config.
+if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+  mkdir -p "$CARGO_TARGET_DIR"
+  CARGO_TARGET_DIR="$(cd "$CARGO_TARGET_DIR" && pwd)"
+else
+  CARGO_TARGET_DIR="$bundle_build_dir/cargo/$target_key"
+  mkdir -p "$CARGO_TARGET_DIR"
+  CARGO_TARGET_DIR="$(cd "$CARGO_TARGET_DIR" && pwd)"
+fi
+export CARGO_TARGET_DIR
+
 sha256_file() {
   local path="$1"
   if command -v sha256sum >/dev/null 2>&1; then

@@ -289,6 +289,25 @@ impl Store {
         Ok(())
     }
 
+    pub async fn update_session_execution_environment(
+        &self,
+        id: SessionId,
+        execution_environment: ExecutionEnvironment,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.query(
+            r#"UPDATE sessions
+               SET execution_environment = ?, updated_at = ?
+               WHERE id = ?"#,
+        )
+        .bind(execution_environment_to_str(execution_environment))
+        .bind(now)
+        .bind(id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn update_session_title(&self, id: SessionId, title: String) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
         let res = self

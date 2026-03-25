@@ -23,7 +23,7 @@ async fn ensure_workspace_container_for_attachments(
 ) -> Result<ContainerRuntimeKind> {
     let effective = execution_effective::effective_execution_settings(state, workspace.id).await?;
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
-    let effective = apply_data_plane_to_execution_settings(&effective, &data_plane);
+    let effective = apply_data_plane_to_execution_settings(&effective, &data_plane)?;
     state
         .execution
         .harness
@@ -600,7 +600,7 @@ async fn container_remove_mount_path(
         return Ok(());
     };
     let data_plane = resolve_worktree_data_plane(state, &worktree).await?;
-    let effective = apply_data_plane_to_execution_settings(&effective, &data_plane);
+    let effective = apply_data_plane_to_execution_settings(&effective, &data_plane)?;
     match effective.container.runtime {
         ContainerRuntimeKind::NativeContainer => {
             let container_id = workspace_container_name(workspace_id);

@@ -365,6 +365,87 @@ const ensureDesktopDevBinDir = () => {
   console.error(`[wdio] CTX_DESKTOP_DEV_BIN_DIR=${candidateDir}`);
 };
 
+const avfGuestRuntimeRequiredPaths = (runtimeDir) => [
+  path.join(runtimeDir, "rootfs.raw"),
+  path.join(runtimeDir, "helpers", "kernel"),
+  path.join(runtimeDir, "helpers", "initrd"),
+  path.join(runtimeDir, "helpers", "guest-agent"),
+  path.join(runtimeDir, "helpers", "egress-proxy"),
+];
+
+const avfGuestRuntimeReady = (runtimeDir, fsImpl = fs) => {
+  try {
+    return avfGuestRuntimeRequiredPaths(runtimeDir).every((candidate) =>
+      fsImpl.existsSync(candidate) && fsImpl.statSync(candidate).isFile(),
+    );
+  } catch {
+    return false;
+  }
+};
+
+const defaultAutomationAvfGuestRuntimeDir = (platform = process.platform) => {
+  if (platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Caches", "ctx-desktop-e2e", "avf-linux-guest-runtime");
+  }
+  if (platform === "win32") {
+    const base = String(process.env.LOCALAPPDATA || os.tmpdir()).trim() || os.tmpdir();
+    return path.join(base, "ctx-desktop-e2e", "avf-linux-guest-runtime");
+  }
+  return path.join(os.homedir(), ".cache", "ctx-desktop-e2e", "avf-linux-guest-runtime");
+};
+
+const ensureAutomationAvfLinuxGuestRuntime = ({
+  platform = process.platform,
+  runsContainerScenarios = RUNS_CONTAINER_SCENARIOS,
+  env = process.env,
+  fsImpl = fs,
+  spawnSyncImpl = spawnSync,
+  coreRoot = CORE_ROOT,
+  log = console.error,
+} = {}) => {
+  if (platform !== "darwin" || !runsContainerScenarios) {
+    return null;
+  }
+
+  const configured = String(
+    env.CTX_AVF_LINUX_GUEST_RUNTIME_DIR || env.CTX_AUTOMATION_AVF_LINUX_GUEST_RUNTIME_DIR || "",
+  ).trim();
+  const runtimeDir = path.resolve(configured || defaultAutomationAvfGuestRuntimeDir(platform));
+  if (avfGuestRuntimeReady(runtimeDir, fsImpl)) {
+    env.CTX_AVF_LINUX_GUEST_RUNTIME_DIR = runtimeDir;
+    log(`[wdio] CTX_AVF_LINUX_GUEST_RUNTIME_DIR=${runtimeDir}`);
+    return runtimeDir;
+  }
+
+  fsImpl.mkdirSync(path.dirname(runtimeDir), { recursive: true });
+  const args = [
+    path.join(coreRoot, "scripts", "prepare_avf_linux_guest_runtime.sh"),
+    "--output-dir",
+    runtimeDir,
+  ];
+  if (fsImpl.existsSync(runtimeDir)) {
+    args.push("--force");
+  }
+  const result = spawnSyncImpl("bash", args, {
+    cwd: coreRoot,
+    env: { ...env },
+    stdio: "inherit",
+  });
+  if (result.status !== 0) {
+    throw new Error(
+      `failed to prepare local AVF Linux guest runtime for desktop automation (${result.status ?? "unknown"})`,
+    );
+  }
+  if (!avfGuestRuntimeReady(runtimeDir, fsImpl)) {
+    throw new Error(
+      `prepared AVF Linux guest runtime is incomplete at ${runtimeDir}; expected ${avfGuestRuntimeRequiredPaths(runtimeDir).join(", ")}`,
+    );
+  }
+  env.CTX_AVF_LINUX_GUEST_RUNTIME_DIR = runtimeDir;
+  log(`[wdio] CTX_AVF_LINUX_GUEST_RUNTIME_DIR=${runtimeDir}`);
+  return runtimeDir;
+};
+
 const stopSystemdScope = (scopeName) => {
   spawnSync("systemctl", ["--user", "stop", scopeName], { stdio: "ignore" });
   spawnSync("systemctl", ["--user", "reset-failed", scopeName], { stdio: "ignore" });
@@ -568,11 +649,11 @@ const assertManagedAvfRuntimeComponent = (lock, hostOs, hostArch) => {
   }
 };
 
-const assertManagedHarnessImageComponent = (lock, archValue) => {
-  const component = findManagedComponent(lock, "image", "ctx-harness", "linux", archValue);
+const assertManagedHarnessImageComponent = (lock, target) => {
+  const component = findManagedComponent(lock, "image", "ctx-harness", target.os, target.arch);
   if (!component || !hasManagedDownloadSource(component)) {
     throw new Error(
-      `runtime lock missing managed harness image source for linux/${archValue}; run pnpm -C core desktop:prep:release`,
+      `runtime lock missing managed harness image source for ${target.os}/${target.arch}; run pnpm -C core desktop:prep:release`,
     );
   }
 };
@@ -587,6 +668,33 @@ const desktopArch = () => {
   if (process.arch === "arm64") return "aarch64";
   if (process.arch === "x64") return "x86_64";
   return process.arch;
+};
+
+const normalizeTargetToken = (raw, hostValue) => {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return null;
+  return trimmed === "host" ? hostValue : trimmed;
+};
+
+const requiredTargetsFromRuntimeLock = (lock, kind, hostOs, hostArch, fallbackTargets) => {
+  const configured = Array.isArray(lock?.required?.targets?.[kind]) ? lock.required.targets[kind] : [];
+  if (configured.length === 0) {
+    return fallbackTargets;
+  }
+  const seen = new Set();
+  const targets = [];
+  for (const raw of configured) {
+    const [rawOs, rawArch] = String(raw || "").split("/");
+    if (!rawOs || !rawArch) continue;
+    const osValue = normalizeTargetToken(rawOs, hostOs);
+    const archValue = normalizeTargetToken(rawArch, hostArch);
+    if (!osValue || !archValue) continue;
+    const key = `${osValue}/${archValue}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push({ os: osValue, arch: archValue });
+  }
+  return targets.length > 0 ? targets : fallbackTargets;
 };
 
 const resolveBundlesDir = () => {
@@ -622,53 +730,68 @@ const ensureBundledContainerAssets = () => {
 
   const hostOs = desktopOs();
   const hostArch = desktopArch();
-  const avfGuestRuntime = runtimes.find((entry) =>
-    entry
-    && entry.id === "avf-linux-guest"
-    && entry.os === hostOs
-    && entry.arch === hostArch
-    && typeof entry.root === "string"
-    && entry.root.trim().length > 0
-    && typeof entry.bin === "string"
-    && entry.bin.trim().length > 0
-  );
-  if (avfGuestRuntime) {
-    const runtimeRoot = path.join(bundlesDir, avfGuestRuntime.root);
-    const requiredPaths = [
-      path.join(runtimeRoot, avfGuestRuntime.bin),
-      path.join(runtimeRoot, "helpers", "kernel"),
-      path.join(runtimeRoot, "helpers", "initrd"),
-      path.join(runtimeRoot, "helpers", "guest-agent"),
-      path.join(runtimeRoot, "helpers", "egress-proxy"),
-    ];
-    for (const requiredPath of requiredPaths) {
-      if (!fs.existsSync(requiredPath)) {
-        throw new Error(
-          `bundled AVF guest runtime asset missing at ${requiredPath}; run pnpm -C core desktop:prep:release`,
-        );
+  const requiresBundledAvfRuntime = hostOs === "macos";
+  if (requiresBundledAvfRuntime) {
+    const avfGuestRuntime = runtimes.find((entry) =>
+      entry
+      && entry.id === "avf-linux-guest"
+      && entry.os === hostOs
+      && entry.arch === hostArch
+      && typeof entry.root === "string"
+      && entry.root.trim().length > 0
+      && typeof entry.bin === "string"
+      && entry.bin.trim().length > 0
+    );
+    if (avfGuestRuntime) {
+      const runtimeRoot = path.join(bundlesDir, avfGuestRuntime.root);
+      const requiredPaths = [
+        path.join(runtimeRoot, avfGuestRuntime.bin),
+        path.join(runtimeRoot, "helpers", "kernel"),
+        path.join(runtimeRoot, "helpers", "initrd"),
+        path.join(runtimeRoot, "helpers", "guest-agent"),
+        path.join(runtimeRoot, "helpers", "egress-proxy"),
+      ];
+      for (const requiredPath of requiredPaths) {
+        if (!fs.existsSync(requiredPath)) {
+          throw new Error(
+            `bundled AVF guest runtime asset missing at ${requiredPath}; run pnpm -C core desktop:prep:release`,
+          );
+        }
       }
-    }
-  } else {
-    assertManagedAvfRuntimeComponent(runtimeLock, hostOs, hostArch);
-  }
-
-  const harnessImage = images.find((entry) =>
-    entry
-    && entry.id === "ctx-harness"
-    && entry.os === "linux"
-    && entry.arch === hostArch
-    && typeof entry.tar === "string"
-    && entry.tar.trim().length > 0
-  );
-  if (harnessImage) {
-    const harnessImageTar = path.join(bundlesDir, harnessImage.tar);
-    if (!fs.existsSync(harnessImageTar)) {
+    } else {
       throw new Error(
-        `bundled harness image tar missing at ${harnessImageTar}; run pnpm -C core desktop:prep:release`,
+        `macOS desktop automation requires a bundled AVF guest runtime in ${manifestPath}; ` +
+          "set CTX_AVF_LINUX_GUEST_RUNTIME_DIR before desktop:prep:release or let WDIO prepare it automatically.",
       );
     }
-  } else {
-    assertManagedHarnessImageComponent(runtimeLock, hostArch);
+  }
+
+  const requiredHarnessTargets = requiredTargetsFromRuntimeLock(
+    runtimeLock,
+    "image",
+    hostOs,
+    hostArch,
+    [{ os: "linux", arch: hostArch }],
+  ).filter((target) => target.os === "linux");
+  for (const target of requiredHarnessTargets) {
+    const harnessImage = images.find((entry) =>
+      entry
+      && entry.id === "ctx-harness"
+      && entry.os === target.os
+      && entry.arch === target.arch
+      && typeof entry.tar === "string"
+      && entry.tar.trim().length > 0
+    );
+    if (harnessImage) {
+      const harnessImageTar = path.join(bundlesDir, harnessImage.tar);
+      if (!fs.existsSync(harnessImageTar)) {
+        throw new Error(
+          `bundled harness image tar missing at ${harnessImageTar}; run pnpm -C core desktop:prep:release`,
+        );
+      }
+      continue;
+    }
+    assertManagedHarnessImageComponent(runtimeLock, target);
   }
 };
 
@@ -1321,6 +1444,10 @@ exports.config = {
     }
     stopStaleSystemdScope();
 
+    if (!SKIP_PREP_RELEASE) {
+      ensureAutomationAvfLinuxGuestRuntime();
+    }
+
     // Container-mode provider smoke needs a fully-bundled release-style resource set
     // (Linux provider binaries + harness image tars). Keep the app build in debug mode
     // for the automation plugin, but sync release resources.
@@ -1633,6 +1760,7 @@ exports.config = {
 
 exports.__cnSharedBackendTestHooks = cnSharedBackendTestHooks;
 exports.__desktopAutomationConfigTestHooks = {
+  ensureAutomationAvfLinuxGuestRuntime,
   ensureBundledContainerAssets,
   resolveMochaTimeoutMs,
 };

@@ -73,7 +73,11 @@ pub(super) fn guest_exec(
                 Some(worktree.guest_user.clone())
             }
         });
-    run_guest_exec_process(
+    let stdout = std::io::stdout();
+    let stderr = std::io::stderr();
+    let mut stdout = stdout.lock();
+    let mut stderr = stderr.lock();
+    run_guest_exec_cli(
         &control_socket,
         cwd,
         command,
@@ -81,6 +85,8 @@ pub(super) fn guest_exec(
         guest_user.as_deref(),
         guest_env,
         pty,
+        &mut stdout,
+        &mut stderr,
     )
     .with_context(|| {
         format!(
@@ -109,7 +115,21 @@ pub(super) fn shared_vm_exec(
 
     let control_socket = shared_vm_control_socket_path(data_root);
     let guest_env = parse_guest_exec_env(env)?;
-    run_guest_exec_process(&control_socket, cwd, command, args, user, guest_env, pty)
+    let stdout = std::io::stdout();
+    let stderr = std::io::stderr();
+    let mut stdout = stdout.lock();
+    let mut stderr = stderr.lock();
+    run_guest_exec_cli(
+        &control_socket,
+        cwd,
+        command,
+        args,
+        user,
+        guest_env,
+        pty,
+        &mut stdout,
+        &mut stderr,
+    )
         .with_context(|| format!("running shared AVF Linux guest exec `{command}`"))
 }
 
@@ -263,6 +283,49 @@ pub(super) fn finalize_guest_worktree_permissions(
             None,
         )?,
     )
+}
+
+#[cfg(unix)]
+pub(super) fn run_guest_exec_cli(
+    control_socket: &Path,
+    cwd: &Path,
+    command: &str,
+    args: &[String],
+    user: Option<&str>,
+    env: HashMap<String, String>,
+    pty: bool,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<i32> {
+    if pty {
+        return run_guest_exec_process(control_socket, cwd, command, args, user, env, true);
+    }
+
+    let result = run_guest_exec_capture(control_socket, cwd, command, args, user, env, None)?;
+    stdout
+        .write_all(&result.stdout)
+        .and_then(|_| stdout.flush())
+        .context("writing captured guest stdout")?;
+    stderr
+        .write_all(&result.stderr)
+        .and_then(|_| stderr.flush())
+        .context("writing captured guest stderr")?;
+    Ok(result.exit_code)
+}
+
+#[cfg(not(unix))]
+pub(super) fn run_guest_exec_cli(
+    _control_socket: &Path,
+    _cwd: &Path,
+    _command: &str,
+    _args: &[String],
+    _user: Option<&str>,
+    _env: HashMap<String, String>,
+    _pty: bool,
+    _stdout: &mut dyn Write,
+    _stderr: &mut dyn Write,
+) -> Result<i32> {
+    bail!("AVF Linux guest exec relay requires unix domain sockets")
 }
 
 #[cfg(unix)]

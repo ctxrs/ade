@@ -213,6 +213,13 @@ test("bundle harnesses treat archive js entrypoints as requiring node", () => {
   );
 });
 
+test("bundle harnesses pin cargo artifacts under the bundle build dir by default", () => {
+  const script = fs.readFileSync(bundleHarnessScriptPath, "utf8");
+
+  assert.match(script, /CARGO_TARGET_DIR="\$bundle_build_dir\/cargo\/\$target_key"/);
+  assert.match(script, /export CARGO_TARGET_DIR/);
+});
+
 test("bundle runtime downloads use mktemp templates that work on macOS", () => {
   const script = fs.readFileSync(bundleHarnessScriptPath, "utf8");
 

@@ -465,6 +465,17 @@ const validateManifestEntries = ({
   );
 
   const bundlesRoot = path.dirname(manifestPath);
+  const avfHelperChecks = [
+    ["kernel", path.join("helpers", "kernel")],
+    ["initrd", path.join("helpers", "initrd")],
+    ["guest-agent", path.join("helpers", "guest-agent")],
+    ["egress-proxy", path.join("helpers", "egress-proxy")],
+  ];
+  const hasCompleteAvfHelperMetadata = (component) =>
+    avfHelperChecks.every(([helperName]) => {
+      const helper = component?.helpers?.[helperName];
+      return isNonEmptyString(helper?.uri) && isNonEmptyString(helper?.sha256);
+    });
 
   for (const providerId of providerIds) {
     for (const target of providerTargets) {
@@ -497,6 +508,9 @@ const validateManifestEntries = ({
         component: runtimeComponent,
         allowedSourceTypes,
       });
+      if (runtimeId === "avf-linux-guest" && managedRuntimeAvailable && !hasCompleteAvfHelperMetadata(runtimeComponent)) {
+        errors.push(`runtime lock missing AVF helper metadata for ${runtimeId} (${target.label})`);
+      }
       const entry = findManifestEntry(manifest.runtimes || [], runtimeId, target.os, target.arch);
       if (!entry) {
         if (!managedRuntimeAvailable) {
@@ -508,6 +522,11 @@ const validateManifestEntries = ({
       expectDirPath(rootPath, errors, `runtime root ${runtimeId} (${target.label})`);
       if (rootPath && isNonEmptyString(entry.bin)) {
         expectFilePath(path.join(rootPath, entry.bin.trim()), errors, `runtime bin ${runtimeId} (${target.label})`);
+        if (runtimeId === "avf-linux-guest") {
+          for (const [helperName, helperRel] of avfHelperChecks) {
+            expectFilePath(path.join(rootPath, helperRel), errors, `runtime helper ${runtimeId}/${helperName} (${target.label})`);
+          }
+        }
       } else {
         errors.push(`runtime bin ${runtimeId} (${target.label}) is missing`);
       }

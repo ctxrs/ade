@@ -76,7 +76,7 @@ impl ContainerFs {
         let data_plane = resolve_worktree_data_plane(state, &worktree).await?;
         let effective =
             execution_effective::effective_execution_settings(state, workspace_id).await?;
-        let effective = apply_data_plane_to_execution_settings(&effective, &data_plane);
+        let effective = apply_data_plane_to_execution_settings(&effective, &data_plane)?;
         state
             .execution
             .harness

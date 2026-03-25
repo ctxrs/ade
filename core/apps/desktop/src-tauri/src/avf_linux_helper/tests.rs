@@ -45,7 +45,11 @@ fn runtime_with_guest_agent_can_enable_real_vm_path() {
 
 #[test]
 fn cloud_init_user_data_embeds_guest_agent_and_service() {
-    let user_data = render_shared_vm_cloud_init_user_data(b"guest-agent", Some(b"egress-proxy"));
+    let user_data = render_shared_vm_cloud_init_user_data(
+        Path::new("/tmp"),
+        b"guest-agent",
+        Some(&b"egress-proxy"[..]),
+    );
     assert!(user_data.contains("#cloud-config"));
     assert!(user_data.contains("/usr/local/bin/ctx-avf-linux-guest-agent"));
     assert!(user_data.contains("/usr/local/bin/ctx-egress-proxy"));
@@ -172,6 +176,75 @@ fn guest_exec_relays_request_over_shared_vm_control_socket() {
     .expect("guest exec should succeed");
 
     assert_eq!(exit_code, 7);
+    server.join().expect("server thread");
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(unix)]
+#[test]
+fn non_pty_guest_exec_cli_writes_captured_output() {
+    use std::os::unix::net::UnixListener;
+    use std::thread;
+
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-cli-capture-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+    let socket_path = temp.join("shared-vm-control.sock");
+    let listener = UnixListener::bind(&socket_path).expect("bind control socket");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept control socket");
+        let request = read_exec_frame(&mut stream)
+            .expect("read request")
+            .expect("request frame");
+        let request = match request {
+            AvfLinuxExecFrame::Request(request) => request,
+            other => panic!("expected request frame, got {other:?}"),
+        };
+        assert_eq!(request.command, "/bin/pwd");
+        assert_eq!(request.cwd, "/ctx/ws/worktrees/wt-456");
+        assert!(!request.pty);
+        assert_eq!(request.user.as_deref(), Some("ctxagent"));
+        write_exec_frame(
+            &mut stream,
+            &AvfLinuxExecFrame::Stdout(b"/ctx/ws/worktrees/wt-456\n".to_vec()),
+        )
+        .expect("write stdout frame");
+        write_exec_frame(
+            &mut stream,
+            &AvfLinuxExecFrame::Stderr(b"warning: capture-path\n".to_vec()),
+        )
+        .expect("write stderr frame");
+        write_exec_frame(
+            &mut stream,
+            &AvfLinuxExecFrame::Exit(AvfLinuxExecExit { exit_code: 17 }),
+        )
+        .expect("write exit frame");
+    });
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit_code = run_guest_exec_cli(
+        &socket_path,
+        Path::new("/ctx/ws/worktrees/wt-456"),
+        "/bin/pwd",
+        &[],
+        Some("ctxagent"),
+        HashMap::new(),
+        false,
+        &mut stdout,
+        &mut stderr,
+    )
+    .expect("non-PTY CLI guest exec should succeed");
+
+    assert_eq!(exit_code, 17);
+    assert_eq!(String::from_utf8(stdout).expect("stdout utf8"), "/ctx/ws/worktrees/wt-456\n");
+    assert_eq!(String::from_utf8(stderr).expect("stderr utf8"), "warning: capture-path\n");
     server.join().expect("server thread");
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }

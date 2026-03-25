@@ -330,7 +330,7 @@ pub async fn ensure_worktree_attachment_mounts_for_attachments(
 
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
     let effective = execution_effective::effective_execution_settings(state, workspace.id).await?;
-    let _effective = apply_data_plane_to_execution_settings(&effective, &data_plane);
+    let _effective = apply_data_plane_to_execution_settings(&effective, &data_plane)?;
     let worktree_root = data_plane.live_worktree_root;
     ensure_git_exclude(state, workspace, worktree.id, &worktree_root).await?;
 

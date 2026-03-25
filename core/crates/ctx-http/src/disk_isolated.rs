@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use tempfile::TempDir;
 
 use ctx_core::ids::{WorkspaceId, WorktreeId};
+use ctx_core::models::Workspace;
 
 /// Container path for a disk-isolated worktree root.
 pub fn container_worktree_root(worktree_id: WorktreeId) -> PathBuf {
@@ -357,6 +358,89 @@ pub async fn ensure_worktree_from_host_copy(
         "disk-isolated worktree repo verification succeeded"
     );
 
+    Ok(dest_root)
+}
+
+pub async fn ensure_workspace_root_from_host_copy(
+    data_root: &Path,
+    workspace: &Workspace,
+) -> Result<PathBuf> {
+    const SANDBOX_CP_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+    const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
+    let container_id = format!("ctx-harness-{}", workspace.id.0);
+    let dest_root = PathBuf::from(crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT);
+    if verify_container_git_repo(data_root, &container_id, &dest_root)
+        .await
+        .is_ok()
+    {
+        return Ok(dest_root);
+    }
+
+    let host_workspace_root = Path::new(&workspace.root_path);
+    let (copy_root, _staging_guard) =
+        prepare_self_contained_copy_root(data_root, host_workspace_root)
+            .await
+            .with_context(|| {
+                format!(
+                    "preparing self-contained sandbox workspace copy root from {}",
+                    host_workspace_root.display()
+                )
+            })?;
+
+    {
+        let mut cmd = crate::harness_runtime::sandbox_container_command(data_root)?;
+        cmd.arg("exec")
+            .arg("--interactive")
+            .arg(&container_id)
+            .arg("mkdir")
+            .arg("-p")
+            .arg("--")
+            .arg(&dest_root);
+        let out = crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
+            .await
+            .context("sandbox exec mkdir for workspace root")?;
+        if !out.status.success() {
+            anyhow::bail!(
+                "failed to create disk-isolated workspace dir (status {}): {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+    }
+
+    {
+        let host_src = copy_root.join(".").to_string_lossy().to_string();
+        let container_dst = format!("{}:{}", container_id, dest_root.to_string_lossy());
+        let mut cmd = crate::harness_runtime::sandbox_container_command(data_root)?;
+        cmd.arg("cp").arg(host_src).arg(container_dst);
+        let out = crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_CP_TIMEOUT)
+            .await
+            .context("container cp host -> disk-isolated workspace root")?;
+        if !out.status.success() {
+            anyhow::bail!(
+                "container cp for workspace root failed (status {}): {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+
+        let mut chmod = crate::harness_runtime::sandbox_container_command(data_root)?;
+        chmod
+            .arg("exec")
+            .arg("--interactive")
+            .arg("--workdir")
+            .arg(&dest_root)
+            .arg(&container_id)
+            .arg("sh")
+            .arg("-lc")
+            .arg("chmod -R u+rwX . >/dev/null 2>&1 || true");
+        let _ =
+            crate::harness_runtime::command_output_with_timeout(chmod, SANDBOX_EXEC_TIMEOUT).await;
+    }
+
+    verify_container_git_repo(data_root, &container_id, &dest_root)
+        .await
+        .context("verifying seeded disk-isolated workspace root")?;
     Ok(dest_root)
 }
 

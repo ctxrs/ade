@@ -59,7 +59,7 @@ function createPrepSteps({
   mode,
   cargoTargetDir,
   desktopVersion,
-  syncBundles = process.env.CTX_DESKTOP_SYNC_BUNDLES || "0",
+  syncBundles = process.env.CTX_DESKTOP_SYNC_BUNDLES || (mode === "dev" ? "0" : "1"),
   platform = process.platform,
 }) {
   const config = PREP_MODES[mode];

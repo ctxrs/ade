@@ -298,7 +298,18 @@ pub(crate) async fn start_turn(
             }
         };
     let execution_settings = match resolve_worktree_data_plane(state, &worktree_for_runtime).await {
-        Ok(data_plane) => apply_data_plane_to_execution_settings(&execution_settings, &data_plane),
+        Ok(data_plane) => {
+            match apply_data_plane_to_execution_settings(&execution_settings, &data_plane) {
+                Ok(settings) => settings,
+                Err(err) => {
+                    emit_turn_start_failed(
+                        state, &store, session, run_id, turn_id, message_id, &err,
+                    )
+                    .await;
+                    return Err(err);
+                }
+            }
+        }
         Err(err) => {
             emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err).await;
             return Err(err);

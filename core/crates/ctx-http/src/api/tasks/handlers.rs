@@ -61,7 +61,7 @@ pub(in crate::api) async fn archive_task(
     }
 
     let mut errors: Vec<anyhow::Error> = Vec::new();
-    let mut needs_prune = false;
+    let mut cleanup_targets = Vec::new();
     for worktree in &worktrees {
         let other_active = match store
             .count_active_tasks_for_worktree(worktree.id, Some(task_id))
@@ -91,141 +91,17 @@ pub(in crate::api) async fn archive_task(
                 None
             }
         };
-        if let Err(err) = vcs_hooks::cleanup_worktree_hooks(
-            &state.core.data_root,
-            workspace.id,
-            worktree.id,
-            Some(StdPath::new(&worktree.root_path)),
-            worktree.vcs_kind.clone(),
-        )
-        .await
-        {
-            tracing::warn!(
-                task_id = %task_id.0,
-                worktree_id = %worktree.id.0,
-                "failed to remove vcs hooks: {err:#}"
-            );
-        }
-        if let Some(binding) = sandbox_binding.as_ref() {
-            if let Err(err) = crate::disk_isolated::remove_live_worktree_root(
-                &state.core.data_root,
-                workspace.id,
-                StdPath::new(&binding.live_worktree_root),
-            )
-            .await
-            {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    worktree_id = %worktree.id.0,
-                    live_worktree_root = binding.live_worktree_root,
-                    "failed to remove sandbox live worktree root: {err:#}"
-                );
-                errors.push(err);
-            }
-            if let Some(host_projection_root) = binding.host_projection_root.as_deref() {
-                let host_projection_root = PathBuf::from(host_projection_root);
-                if tokio::fs::metadata(&host_projection_root).await.is_ok() {
-                    if let Err(err) = tokio::fs::remove_dir_all(&host_projection_root)
-                        .await
-                        .with_context(|| {
-                            format!(
-                                "removing AVF host shadow worktree at {}",
-                                host_projection_root.display()
-                            )
-                        })
-                    {
-                        tracing::warn!(
-                            task_id = %task_id.0,
-                            worktree_id = %worktree.id.0,
-                            host_projection_root = %host_projection_root.display(),
-                            "failed to remove sandbox host projection root: {err:#}"
-                        );
-                        errors.push(err);
-                    }
-                }
-            }
-        }
-        let Some(root) = managed_worktree_root(&state, &workspace, worktree) else {
-            continue;
-        };
-        let branch = worktree
-            .git_branch
-            .as_deref()
-            .filter(|name| name.starts_with("ctx/"));
-        if tokio::fs::metadata(&root).await.is_err() {
-            if branch.is_some() {
-                needs_prune = true;
-            }
-            if let Some(branch) = branch {
-                if let Err(err) = delete_branch(&workspace.root_path, branch).await {
-                    tracing::warn!(
-                        task_id = %task_id.0,
-                        worktree_id = %worktree.id.0,
-                        branch,
-                        "failed to delete worktree branch: {err:#}"
-                    );
-                }
-            }
-            continue;
-        }
-        let is_git = is_git_worktree(&root).await.unwrap_or(false);
-        if is_git {
-            needs_prune = true;
-            if let Err(err) = remove_worktree(&workspace.root_path, &root).await {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    worktree_id = %worktree.id.0,
-                    "failed to remove worktree: {err:#}"
-                );
-                errors.push(err);
-                continue;
-            }
-            // Defensive: ensure the directory is actually gone even if `git worktree remove`
-            // succeeds but leaves the directory behind.
-            if tokio::fs::metadata(&root).await.is_ok() {
-                if let Err(err) = tokio::fs::remove_dir_all(&root)
-                    .await
-                    .with_context(|| format!("removing worktree dir at {}", root.display()))
-                {
-                    tracing::warn!(
-                        task_id = %task_id.0,
-                        worktree_id = %worktree.id.0,
-                        "failed to remove worktree dir: {err:#}"
-                    );
-                    errors.push(err);
-                }
-            }
-        } else if let Err(err) = tokio::fs::remove_dir_all(&root)
-            .await
-            .with_context(|| format!("removing non-git worktree dir at {}", root.display()))
-        {
-            tracing::warn!(
-                task_id = %task_id.0,
-                worktree_id = %worktree.id.0,
-                "failed to remove worktree dir: {err:#}"
-            );
-            errors.push(err);
-        }
-        if let Some(branch) = branch {
-            if let Err(err) = delete_branch(&workspace.root_path, branch).await {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    worktree_id = %worktree.id.0,
-                    branch,
-                    "failed to delete worktree branch: {err:#}"
-                );
-            }
-        }
+        cleanup_targets.push(TaskWorktreeCleanupTarget {
+            managed_root: managed_worktree_root(&state, &workspace, worktree),
+            sandbox_binding,
+            worktree: worktree.clone(),
+            delete_branch_on_cleanup: false,
+            delete_worktree_record_on_success: false,
+        });
     }
-    if needs_prune {
-        if let Err(err) = prune_worktrees(&workspace.root_path).await {
-            tracing::warn!(
-                task_id = %task_id.0,
-                "failed to prune worktrees: {err:#}"
-            );
-            errors.push(err);
-        }
-    }
+    errors.extend(
+        cleanup_task_worktrees(state.as_ref(), &workspace, task_id, &cleanup_targets).await,
+    );
     let cleanup_failed = !errors.is_empty();
     if cleanup_failed {
         tracing::warn!(task_id = %task_id.0, "archive cleanup had errors; task will still be archived");

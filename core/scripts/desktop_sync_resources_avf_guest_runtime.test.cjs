@@ -5,6 +5,7 @@ const os = require("os");
 const path = require("path");
 
 const {
+  __desktopSyncResourcesTestHooks,
   parseAvfLinuxGuestRuntimeVersion,
   stageAvfLinuxGuestRuntime,
 } = require("./desktop_sync_resources.cjs");
@@ -153,4 +154,37 @@ test("parseAvfLinuxGuestRuntimeVersion handles metadata-style version files", ()
     "dev-runtime",
   );
   assert.equal(parseAvfLinuxGuestRuntimeVersion("ubuntu-release=noble\n"), "");
+});
+
+test("bundle reset preserves tracked lock files and recreates a placeholder manifest", () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-desktop-bundle-reset-"));
+  const bundleDir = path.join(tmpRoot, "bundles");
+
+  fs.mkdirSync(bundleDir, { recursive: true });
+  fs.writeFileSync(path.join(bundleDir, "README.md"), "bundle docs\n", "utf8");
+  fs.writeFileSync(path.join(bundleDir, "tauri_tools_lock.v1.json"), "{\n  \"schema_version\": 1\n}\n", "utf8");
+  fs.writeFileSync(path.join(bundleDir, "runtime_lock.v1.json"), "{\n  \"schema_version\": 1\n}\n", "utf8");
+  fs.writeFileSync(path.join(bundleDir, "runtime_lock.v2.json"), "{\n  \"schema_version\": 2\n}\n", "utf8");
+  fs.writeFileSync(path.join(bundleDir, "manifest.json"), "{\n  \"version\": 1\n}\n", "utf8");
+  fs.writeFileSync(path.join(bundleDir, "scratch.txt"), "delete me\n", "utf8");
+
+  try {
+    __desktopSyncResourcesTestHooks.resetBundleDir(bundleDir);
+    assert.ok(fs.existsSync(path.join(bundleDir, "tauri_tools_lock.v1.json")));
+    assert.ok(fs.existsSync(path.join(bundleDir, "runtime_lock.v1.json")));
+    assert.ok(fs.existsSync(path.join(bundleDir, "runtime_lock.v2.json")));
+    assert.ok(!fs.existsSync(path.join(bundleDir, "scratch.txt")));
+
+    __desktopSyncResourcesTestHooks.writePlaceholderBundleManifest(bundleDir);
+    const manifest = JSON.parse(fs.readFileSync(path.join(bundleDir, "manifest.json"), "utf8"));
+    assert.deepEqual(manifest, {
+      version: 1,
+      providers: [],
+      runtimes: [],
+      images: [],
+      daemons: [],
+    });
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
 });

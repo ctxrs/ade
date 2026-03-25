@@ -47,6 +47,32 @@ impl Store {
         Ok(count)
     }
 
+    pub async fn count_tasks_for_worktree(
+        &self,
+        worktree_id: WorktreeId,
+        exclude_task_id: Option<TaskId>,
+    ) -> Result<i64> {
+        let count: i64 = if let Some(task_id) = exclude_task_id {
+            self.query_scalar(
+                r#"SELECT COUNT(*) FROM tasks
+                   WHERE primary_worktree_id = ? AND id != ?"#,
+            )
+            .bind(worktree_id.0.to_string())
+            .bind(task_id.0.to_string())
+            .fetch_one(&self.pool)
+            .await?
+        } else {
+            self.query_scalar(
+                r#"SELECT COUNT(*) FROM tasks
+                   WHERE primary_worktree_id = ?"#,
+            )
+            .bind(worktree_id.0.to_string())
+            .fetch_one(&self.pool)
+            .await?
+        };
+        Ok(count)
+    }
+
     pub async fn list_workspace_index_page(
         &self,
         workspace_id: WorkspaceId,

@@ -151,7 +151,8 @@ async fn list_container_worktree_files(
     let data_plane = resolve_worktree_data_plane(state, worktree)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let settings = apply_data_plane_to_execution_settings(&settings, &data_plane);
+    let settings = apply_data_plane_to_execution_settings(&settings, &data_plane)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     state
         .execution
         .harness

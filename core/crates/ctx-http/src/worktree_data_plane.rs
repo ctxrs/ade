@@ -161,26 +161,23 @@ pub(crate) fn binding_runtime_kind(binding: &SandboxBinding) -> ContainerRuntime
 pub(crate) fn apply_data_plane_to_execution_settings(
     base: &ExecutionSettings,
     data_plane: &WorktreeDataPlane,
-) -> ExecutionSettings {
+) -> Result<ExecutionSettings> {
     let mut settings = base.clone();
     settings.mode = data_plane.execution_mode.clone();
     if let Some(binding) = data_plane.binding.as_ref() {
         if let Some(raw) = binding.execution_settings_json.as_deref() {
-            match serde_json::from_str::<ExecutionSettings>(raw) {
-                Ok(snapshot) => return snapshot,
-                Err(err) => {
-                    tracing::warn!(
-                        worktree_id = %binding.worktree_id.0,
-                        "sandbox binding had invalid execution settings snapshot: {err:#}"
-                    );
-                }
-            }
+            return serde_json::from_str::<ExecutionSettings>(raw).map_err(|err| {
+                anyhow!(
+                    "sandbox binding {} had invalid execution settings snapshot: {err:#}",
+                    binding.worktree_id.0
+                )
+            });
         }
         settings.mode = ExecutionMode::Sandbox;
         settings.container.runtime = binding_runtime_kind(binding);
         settings.container.mount_mode = ContainerMountMode::DiskIsolated;
     }
-    settings
+    Ok(settings)
 }
 
 #[cfg(test)]
@@ -242,7 +239,8 @@ mod tests {
             },
         };
 
-        let applied = apply_data_plane_to_execution_settings(&current, &data_plane);
+        let applied =
+            apply_data_plane_to_execution_settings(&current, &data_plane).expect("apply settings");
         assert_eq!(
             applied.container.runtime,
             ContainerRuntimeKind::SharedVmContainer

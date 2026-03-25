@@ -2,7 +2,7 @@
   "version": 1,
   "name": "linux-arm-provider-install-reliability",
   "updated_at": "2026-03-12",
-  "expected_environment": "host",
+  "expected_environment": "sandbox",
   "expected_network_mode": "llm_only",
   "critical_providers": [
     {
