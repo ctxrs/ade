@@ -529,10 +529,10 @@ export function applyArtifactsEvent(
   const artifacts = Array.isArray(event.payload_json?.artifacts)
     ? (event.payload_json.artifacts as Artifact[])
     : [];
-  entry.artifacts = artifacts;
-  entry.artifactsLoaded = true;
-  entry.artifactsLoading = false;
-  entry.artifactsFetchedAtMs = Date.now();
+  entry.support.artifacts = artifacts;
+  entry.support.artifactsLoaded = true;
+  entry.support.artifactsLoading = false;
+  entry.support.artifactsFetchedAtMs = Date.now();
   this.clearSupportLoadError(entry, "artifacts");
   this.syncStateCache(entry);
   return true;
@@ -548,7 +548,7 @@ export function applyGitStatusSnapshotNotice(
   if (payload?.kind !== "git_status_snapshot") return false;
   const partial = normalizeGitStatusSummaryInput(payload.summary, payload.entries);
   if (Object.keys(partial).length === 0) return false;
-  entry.gitStatusSummary = { ...(entry.gitStatusSummary ?? {}), ...partial };
+  entry.support.gitStatusSummary = { ...(entry.support.gitStatusSummary ?? {}), ...partial };
   this.syncStateCache(entry);
   return true;
 }

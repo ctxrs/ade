@@ -125,6 +125,13 @@ export function seedReplicaFromActiveSnapshot(
     sessionId,
   );
   if (!head) return false;
+  const recoveringBootstrap =
+    (entry.freshness === "recovering" || entry.loadState === "recovering") &&
+    !shouldSkipBoundedActiveSnapshotSeed(entry, head);
+  if (recoveringBootstrap) {
+    host.dispatchSeedHead({ type: "seed_head", sessionId, head, mode: "bootstrap_seed" });
+    return true;
+  }
   if (classifyActiveSnapshotSeedMode(entry, head) !== "bootstrap_seed") return false;
   host.dispatchSeedHead({ type: "seed_head", sessionId, head, mode: "bootstrap_seed" });
   return true;

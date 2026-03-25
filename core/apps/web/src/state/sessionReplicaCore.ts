@@ -22,6 +22,14 @@ import {
   loadSessionHeadV1,
   saveSessionHeadV1,
 } from "./uiStateStore";
+import {
+  applyReplicaTranscriptEvent,
+  ensureReplicaEventSeq,
+  mergeReplicaEventsIntoEntry,
+  mergeReplicaMessagesIntoEntry,
+  mergeReplicaTurnsIntoEntry,
+  rebuildReplicaTranscriptAuxState,
+} from "./sessionReplicaTranscript";
 import type {
   SessionReplicaCommand,
   SessionReplicaConfig,
@@ -53,8 +61,11 @@ type SessionReplicaEntry = {
   projectionRev?: number;
   stateRev?: number;
   turns: SessionTurn[];
+  turnsRev: number;
   messages: Message[];
+  messagesRev: number;
   events: SessionEvent[];
+  eventsRev: number;
   toolSummaries: SessionTurnToolSummary[];
   lastEventSeq?: number;
   hasMoreTurns: boolean;
@@ -62,6 +73,9 @@ type SessionReplicaEntry = {
   requestToken: number;
   hydrated: boolean;
   nextTransientSeq: number;
+  startedTurnIds: Set<string>;
+  toolStatusByKey: Map<string, string>;
+  toolIdsByTurn: Map<string, Set<string>>;
 };
 
 const normalizeId = (value: unknown): string => {
@@ -366,8 +380,11 @@ export class SessionReplicaCore {
       projectionRev: undefined,
       stateRev: undefined,
       turns: [],
+      turnsRev: 0,
       messages: [],
+      messagesRev: 0,
       events: [],
+      eventsRev: 0,
       toolSummaries: [],
       lastEventSeq: undefined,
       hasMoreTurns: true,
@@ -375,16 +392,16 @@ export class SessionReplicaCore {
       requestToken: 0,
       hydrated: false,
       nextTransientSeq: TRANSIENT_SEQ_START,
+      startedTurnIds: new Set<string>(),
+      toolStatusByKey: new Map<string, string>(),
+      toolIdsByTurn: new Map<string, Set<string>>(),
     };
     this.entries.set(id, entry);
     return entry;
   }
 
   private ensureEventSeq(entry: SessionReplicaEntry, event: SessionEvent): SessionEvent {
-    if (typeof event.seq === "number") return event;
-    const nextSeq = entry.nextTransientSeq;
-    entry.nextTransientSeq = nextSeq + 1;
-    return { ...event, seq: nextSeq };
+    return ensureReplicaEventSeq(entry, event);
   }
 
   private normalizeEvents(entry: SessionReplicaEntry, events: SessionEvent[]): SessionEvent[] {
@@ -400,6 +417,37 @@ export class SessionReplicaCore {
     this.emitPatch("append", sessionId, { session });
   }
 
+  private buildCanonicalPatch(
+    entry: SessionReplicaEntry,
+    opts?: { replaceMode?: SessionReplicaReplaceMode },
+  ): SessionReplicaData {
+    const patch: SessionReplicaData = {
+      session: entry.session,
+      activity: entry.activity ?? null,
+      freshness: entry.freshness,
+      turns: entry.turns,
+      turnsRev: entry.turnsRev,
+      messages: entry.messages,
+      messagesRev: entry.messagesRev,
+      events: entry.events,
+      eventsRev: entry.eventsRev,
+      toolSummaries: entry.toolSummaries,
+      lastEventSeq: entry.lastEventSeq,
+      projectionRev: entry.projectionRev,
+      hasMoreTurns: entry.hasMoreTurns,
+      summaryCheckpoint: entry.summaryCheckpoint ?? null,
+      headWindow: entry.headWindow ?? null,
+      turnsHydrated: entry.hydrated,
+    };
+    if (entry.stateRev !== undefined) {
+      patch.stateRev = entry.stateRev;
+    }
+    if (opts?.replaceMode) {
+      patch.replaceMode = opts.replaceMode;
+    }
+    return patch;
+  }
+
   private closeSession(sessionId: string) {
     const id = normalizeId(sessionId);
     if (id) this.entries.delete(id);
@@ -412,7 +460,6 @@ export class SessionReplicaCore {
     opts?: {
       replaceMode?: SessionReplicaReplaceMode;
       freshness?: SessionReplicaFreshnessState;
-      forceReplace?: boolean;
     },
   ) {
     const authoritative = isAuthoritativeSessionReplicaReplace(opts?.replaceMode);
@@ -486,8 +533,11 @@ export class SessionReplicaCore {
           : data.projectionRev;
     }
     entry.turns = turns;
+    entry.turnsRev += 1;
     entry.messages = messages;
+    entry.messagesRev += 1;
     entry.events = events;
+    entry.eventsRev += 1;
     entry.toolSummaries = toolSummaries;
     entry.lastEventSeq =
       incomingSeq >= 0
@@ -495,28 +545,8 @@ export class SessionReplicaCore {
         : entry.lastEventSeq;
     entry.hasMoreTurns = data.hasMoreTurns ?? entry.hasMoreTurns;
     entry.hydrated = true;
-
-    const patch: SessionReplicaData = {
-      session: entry.session,
-      activity: entry.activity ?? null,
-      freshness: entry.freshness,
-      turns: entry.turns,
-      messages: entry.messages,
-      events: entry.events,
-      toolSummaries: entry.toolSummaries,
-      lastEventSeq: entry.lastEventSeq,
-      projectionRev: entry.projectionRev,
-      hasMoreTurns: entry.hasMoreTurns,
-      summaryCheckpoint: entry.summaryCheckpoint ?? null,
-      headWindow: entry.headWindow ?? null,
-    };
-    if (entry.stateRev !== undefined) {
-      patch.stateRev = entry.stateRev;
-    }
-    if (opts?.replaceMode) {
-      patch.replaceMode = opts.replaceMode;
-    }
-    this.emitPatch(emitOp, entry.sessionId, patch);
+    rebuildReplicaTranscriptAuxState(entry);
+    this.emitPatch(emitOp, entry.sessionId, this.buildCanonicalPatch(entry, opts));
   }
 
   private async openSession(
@@ -715,11 +745,18 @@ export class SessionReplicaCore {
     if (delta.turn) turns.push(delta.turn);
     if (delta.message) messages.push(delta.message);
     if (delta.event) events.push(this.ensureEventSeq(entry, delta.event));
-    if (turns.length) entry.turns = mergeTurns(entry.turns, turns);
-    if (messages.length) entry.messages = mergeMessages(entry.messages, messages);
-    if (events.length) {
-      entry.events = this.normalizeEvents(entry, entry.events);
-      entry.events = mergeEvents(entry.events, events);
+    if (turns.length) {
+      mergeReplicaTurnsIntoEntry(entry, turns);
+    }
+    if (messages.length) {
+      mergeReplicaMessagesIntoEntry(entry, messages);
+    }
+    const { newEvents, evictedBeforeSeq } =
+      events.length > 0
+        ? mergeReplicaEventsIntoEntry(entry, events, this.config.eventBufferLimit)
+        : { newEvents: [] as SessionEvent[] };
+    for (const event of newEvents) {
+      applyReplicaTranscriptEvent(entry, event);
     }
     if (toolSummaries.length) {
       const byId = new Map(entry.toolSummaries.map((summary) => [String(summary.tool_call_id), summary]));
@@ -727,14 +764,10 @@ export class SessionReplicaCore {
         byId.set(String(summary.tool_call_id), summary);
       }
       entry.toolSummaries = Array.from(byId.values());
+      rebuildReplicaTranscriptAuxState(entry);
     }
-    if (entry.events.length > this.config.eventBufferLimit) {
-      const trimmed = entry.events.slice(-this.config.eventBufferLimit);
-      const beforeSeq = trimmed[0]?.seq;
-      entry.events = trimmed;
-      if (typeof beforeSeq === "number") {
-        this.emitPatch("evict", sessionId, { eventsBeforeSeq: beforeSeq });
-      }
+    if (typeof evictedBeforeSeq === "number") {
+      this.emitPatch("evict", sessionId, { eventsBeforeSeq: evictedBeforeSeq });
     }
     const incomingSeq = typeof delta.last_event_seq === "number" ? delta.last_event_seq : -1;
     const existingSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
@@ -767,22 +800,8 @@ export class SessionReplicaCore {
             : delta.projection_rev;
       }
     }
-    const data: SessionReplicaData = {
-      lastEventSeq: entry.lastEventSeq,
-      projectionRev: entry.projectionRev,
-    };
-    if (entry.stateRev !== undefined) data.stateRev = entry.stateRev;
-    data.freshness = entry.freshness;
-    if (turns.length) data.turns = turns;
-    if (messages.length) data.messages = messages;
-    if (events.length) data.events = events;
-    if (toolSummaries.length) data.toolSummaries = toolSummaries;
-    if (entry.session) data.session = entry.session;
-    if ("activity" in delta) data.activity = entry.activity ?? null;
-    if (entry.summaryCheckpoint !== undefined) data.summaryCheckpoint = entry.summaryCheckpoint ?? null;
-    if (entry.headWindow !== undefined) data.headWindow = entry.headWindow ?? null;
-    this.emitPatch("append", sessionId, data);
     entry.hydrated = true;
+    this.emitPatch("append", sessionId, this.buildCanonicalPatch(entry));
     void this.persistHead(entry);
   }
 

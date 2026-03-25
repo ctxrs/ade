@@ -119,6 +119,7 @@ describe("useWorkspaceSetupWorkflow", () => {
       titlingMode: "unset",
       titlingRemoteValid: false,
       titlingPersistError: null,
+      prefetchTitlingForCurrentTarget: vi.fn().mockResolvedValue(undefined),
       ensureTitlingPersistedForCurrentTarget: vi.fn().mockResolvedValue(true),
       ensureOnboardingAfterDaemonConnect: vi.fn().mockResolvedValue(null),
       refreshAuthImportForRouteScope: vi.fn().mockResolvedValue(undefined),

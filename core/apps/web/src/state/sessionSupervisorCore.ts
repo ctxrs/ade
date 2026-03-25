@@ -13,17 +13,16 @@ import {
 } from "../api/client";
 import type { WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
 import {
-  collectWorkspaceActivePrimarySessionIds,
-} from "./workspaceActiveSnapshot/projection";
-import {
   type PersistedTaskThoughtsV1,
 } from "./uiStateStore";
 import { SessionReplicaBridge } from "./sessionReplicaBridge";
-import type { SessionReplicaFreshnessState, SessionReplicaPatch } from "./sessionReplicaProtocol";
-import { isAuthoritativeSessionReplicaReplace } from "./sessionReplicaProtocol";
+import type {
+  SessionReplicaCommand,
+  SessionReplicaFreshnessState,
+  SessionReplicaPatch,
+} from "./sessionReplicaProtocol";
 import { emitUiDiagnostic } from "./diagnosticsChannel";
 import type { SessionSubscriptionCursor } from "./sessionSubscription";
-import { hasModelList } from "./sessionSupervisor/eventHydration";
 import {
   createInternalEntry,
   type ConnectionStatus,
@@ -74,7 +73,13 @@ import {
   resolveEntryWorkspaceOwnerScope,
   resolveWorkspaceOwnerScope,
 } from "./sessionSupervisor/thoughtCache";
-import { dedupeIds, mergeTurn, sameIdList } from "./sessionSupervisor/cachePolicy";
+import {
+  buildThoughtCacheKey,
+  isFinalThoughtEvent,
+  normalizeFinalThoughtPayload,
+  readThoughtFullContent,
+} from "./sessionSupervisor/thoughtProjection";
+import { dedupeIds, sameIdList } from "./sessionSupervisor/cachePolicy";
 import {
   addOptimisticQueueRemovalId,
   reconcileOptimisticOverlay,
@@ -84,21 +89,22 @@ import {
   upsertOptimisticQueuedMessage,
   upsertOptimisticThreadMessage,
 } from "./sessionSupervisor/optimisticOverlay";
-import {
-  classifyActiveSnapshotSeedMode,
-  seedReplicaFromActiveSnapshot,
-} from "./sessionSupervisor/activeSnapshotSeed";
-import {
-  hasSessionReplicaRecoveryData,
-  resolveReplicaReadyLoadState,
-  shouldReplayReplicaReplace,
-} from "./sessionSupervisor/authorityPolicy";
+import { applyReplicaPatches } from "./sessionSupervisor/replicaPatchApply";
 import {
   buildSubscribedSessions,
   emitSubscribedSessions,
   markOpenSessionsRecovering,
   refreshSubscriptions,
 } from "./sessionSupervisor/subscriptions";
+import {
+  beginSessionOpen as beginSessionLifecycleOpen,
+  closeSession as closeSessionLifecycle,
+  commitSessionOpenMode as commitSessionLifecycleOpenMode,
+  dropSessionEntry as dropSessionLifecycleEntry,
+  failPendingSessionOpen as failPendingLifecycleOpen,
+  openSession as openSessionLifecycle,
+  refreshSession as refreshSessionLifecycle,
+} from "./sessionSupervisor/sessionLifecycle";
 import { resolveSessionMode, shouldFailPendingSessionOpen } from "./sessionSupervisor/sessionMode";
 import {
   EVENT_BUFFER_LIMIT,
@@ -106,18 +112,13 @@ import {
   MAX_CACHED_SESSIONS,
   TURN_PAGE_LIMIT,
   WARM_TTL_MS,
-  isReplicaAuthority,
-  toReplicaFreshness,
 } from "./sessionSupervisor/config";
 import { loadMoreTurnsForEntry, loadTurnToolsForEntry } from "./sessionSupervisor/historySupport";
 import {
   adoptLoadedSubagentInvocationsRevision,
-  adoptLoadedStateRevision,
   clearSupportLoadError,
   invalidateSupportLoadsWithoutAuthoritativeRevision,
   setSupportLoadError,
-  shouldFetchSessionState,
-  shouldFetchSubagentInvocations,
   syncSupportLoadsForOpenSession,
 } from "./sessionSupervisor/supportLoads";
 import type {
@@ -126,6 +127,12 @@ import type {
   SessionSupervisorWorkspaceSessionHeads,
   SessionSupervisorWorkspaceSnapshotState,
 } from "./sessionSupervisor/workspaceInputs";
+import {
+  ingestWorkspaceEvent as ingestWorkspaceAuthorityEvent,
+  setWorkspaceSessionHeads as setWorkspaceAuthoritySessionHeads,
+  setWorkspaceSnapshotState as setWorkspaceAuthoritySnapshotState,
+  syncActiveSnapshot as syncWorkspaceAuthorityActiveSnapshot,
+} from "./sessionSupervisor/workspaceAuthority";
 
 export type {
   SessionCacheEntry,
@@ -134,22 +141,6 @@ export type {
   SessionSupportLoadErrorKey,
   SessionSupervisorSnapshot,
 } from "./sessionSupervisor/entryState";
-
-const repairReplaceIsCoveredByEntry = (
-  entry: Pick<InternalEntry, "turns" | "messages">,
-  data: Pick<Exclude<SessionReplicaPatch, { op: "evict" }>["data"], "turns" | "messages">,
-): boolean => {
-  const incomingTurns = Array.isArray(data.turns) ? data.turns : [];
-  const incomingMessages = Array.isArray(data.messages) ? data.messages : [];
-
-  const entryTurnIds = new Set(entry.turns.map((turn) => idToString(turn.turn_id)).filter(Boolean));
-  const entryMessageIds = new Set(entry.messages.map((message) => idToString(message.id)).filter(Boolean));
-
-  return (
-    incomingTurns.every((turn) => entryTurnIds.has(idToString(turn.turn_id))) &&
-    incomingMessages.every((message) => entryMessageIds.has(idToString(message.id)))
-  );
-};
 
 // The daemon serializes transient events with `seq: null` (see Rust `SessionEvent` Serialize).
 // We assign a stable synthetic seq in a negative JS-safe range so sorting never scrambles
@@ -181,6 +172,7 @@ export class SessionSupervisor {
   workspaceSnapshotState: SessionSupervisorWorkspaceSnapshotState = null;
   workspaceSessionHeadsById = new Map<string, SessionHeadSnapshot>();
   private workspaceActivePrimarySessionIds: string[] = [];
+  replicaDispatch = (cmd: SessionReplicaCommand) => this.replica.dispatch(cmd);
   applyAcpMeta = applyAcpMeta;
   applyAcpMetaFromEvents = applyAcpMetaFromEvents;
   applyGitStatusSnapshotFromEvents = applyGitStatusSnapshotFromEvents;
@@ -250,140 +242,35 @@ export class SessionSupervisor {
   };
 
   setWorkspaceSnapshotState = (state: SessionSupervisorWorkspaceSnapshotState) => {
-    this.workspaceSnapshotState = state;
-    if (!state) {
-      this.workspaceActivePrimarySessionIds = [];
-      this.setConnection("disconnected");
-      return;
-    }
-    const nextWorkspaceActivePrimarySessionIds = collectWorkspaceActivePrimarySessionIds(state);
-    const activePrimaryMembershipChanged = !sameIdList(
-      nextWorkspaceActivePrimarySessionIds,
-      this.workspaceActivePrimarySessionIds,
-    );
-    this.workspaceActivePrimarySessionIds = nextWorkspaceActivePrimarySessionIds;
-    const next = this.mapConnection(state.connection);
-    this.setConnection(next);
-    this.syncActiveSnapshot(state);
-    if (next !== "connected") {
-      this.markOpenSessionsRecovering();
-    }
-    this.refreshSubscriptions({ emitIfUnchanged: activePrimaryMembershipChanged });
+    setWorkspaceAuthoritySnapshotState(this.createWorkspaceAuthorityHost(), state);
   };
 
   setWorkspaceSessionHeads = (heads: SessionSupervisorWorkspaceSessionHeads) => {
-    this.workspaceSessionHeadsById = new Map(Object.entries(heads));
-    for (const [sessionId, head] of this.workspaceSessionHeadsById.entries()) {
-      const entry = this.entries.get(sessionId);
-      if (!entry) continue;
-      if (classifyActiveSnapshotSeedMode(entry, head) !== "repair_replace") continue;
-      this.replica.dispatch({ type: "seed_head", sessionId, head, mode: "repair_replace" });
-    }
-    for (const entry of this.entries.values()) {
-      this.syncSupportLoadsForOpenSession(entry);
-    }
-    this.emitSubscribedSessions();
+    setWorkspaceAuthoritySessionHeads(this.createWorkspaceAuthorityHost(), heads);
   };
 
   handleWorkspaceEvent = (evt: SessionSupervisorWorkspaceEvent) => {
-    this.ingestWorkspaceEvent(evt);
+    ingestWorkspaceAuthorityEvent(this.createWorkspaceAuthorityHost(), evt);
   };
-
-  private beginSessionOpenEntry(sessionId: string, opts?: OpenOptions): InternalEntry | null {
-    const id = String(sessionId ?? "").trim();
-    if (!id) return null;
-    const entry = this.ensureEntry(id);
-    const reopeningSession = entry.refCount === 0;
-    entry.refCount += 1;
-    entry.warmUntilMs = Date.now() + WARM_TTL_MS;
-    if (opts?.mode) {
-      entry.mode = opts.mode;
-    }
-    if (entry.error) {
-      entry.error = undefined;
-    }
-    if (reopeningSession) {
-      this.invalidateSupportLoadsWithoutAuthoritativeRevision(entry);
-      const requestedStateRev = this.resolveRequestedStateRev(entry);
-      if (shouldFetchSessionState(entry)) {
-        entry.stateAutoLoadKey = undefined;
-      }
-      if (shouldFetchSubagentInvocations(entry, requestedStateRev)) {
-        entry.subagentAutoLoadKey = undefined;
-      }
-    }
-    this.setSessionLoadState(entry, "pending_hydration");
-    return entry;
-  }
 
   beginSessionOpen = (sessionId: string, opts?: OpenOptions) => {
-    const entry = this.beginSessionOpenEntry(sessionId, opts);
-    if (!entry) return;
-    this.refreshSubscriptions();
-    this.publish();
+    beginSessionLifecycleOpen(this.createSessionLifecycleHost(), sessionId, opts);
   };
   commitSessionOpenMode = (sessionId: string, mode: SessionMode, opts?: OpenOptions) => {
-    const id = String(sessionId ?? "").trim();
-    if (!id) return;
-    const entry = this.entries.get(id);
-    if (!entry || entry.refCount <= 0) return;
-    this.openSessionWithMode(id, entry, mode, opts);
-    this.refreshSubscriptions();
-    this.publish();
+    commitSessionLifecycleOpenMode(this.createSessionLifecycleHost(), sessionId, mode, opts);
   };
 
   failPendingSessionOpen = (sessionId: string, message?: string) => {
-    const id = String(sessionId ?? "").trim();
-    if (!id) return;
-    const entry = this.entries.get(id);
-    if (!entry || entry.refCount <= 0) return;
-    this.setFatalError(entry, message ?? `Session not found in workspace snapshot: ${id}`);
-    entry.updatedAtMs = Date.now();
-    this.refreshSubscriptions();
-    this.publish();
+    failPendingLifecycleOpen(this.createSessionLifecycleHost(), sessionId, message);
   };
   openSession = (sessionId: string, opts?: OpenOptions) => {
-    const id = String(sessionId ?? "").trim();
-    if (!id) return () => {};
-    const entry = this.beginSessionOpenEntry(id, opts);
-    if (!entry) return () => this.closeSession(id, opts);
-    const mode = this.resolveSessionMode(id, entry, opts?.mode);
-    if (mode) {
-      this.openSessionWithMode(id, entry, mode, opts);
-    } else if (this.shouldFailPendingSessionOpen()) {
-      this.setFatalError(entry, `Session not found in workspace snapshot: ${id}`);
-      entry.updatedAtMs = Date.now();
-    }
-    this.refreshSubscriptions();
-    this.publish();
-    return () => this.closeSession(id, opts);
+    return openSessionLifecycle(this.createSessionLifecycleHost(), sessionId, opts);
   };
   closeSession = (sessionId: string, opts?: OpenOptions) => {
-    const entry = this.entries.get(sessionId);
-    if (!entry) return;
-    entry.refCount = Math.max(0, entry.refCount - 1);
-    entry.warmUntilMs = Date.now() + WARM_TTL_MS;
-    this.replica.dispatch({ type: "close_session", sessionId });
-    this.refreshSubscriptions();
-    this.publish();
+    closeSessionLifecycle(this.createSessionLifecycleHost(), sessionId, opts);
   };
   refreshSession = (sessionId: string, opts?: OpenOptions) => {
-    const entry = this.entries.get(String(sessionId));
-    if (!entry) return;
-    const mode = this.resolveSessionMode(sessionId, entry, opts?.mode);
-    if (!mode) {
-      if (this.shouldFailPendingSessionOpen()) {
-        this.failPendingSessionOpen(sessionId);
-      }
-      return;
-    }
-    this.replica.dispatch({
-      type: "refresh_session",
-      sessionId,
-    });
-    if (mode === "archived" || !isReplicaAuthority(entry.freshness)) {
-      this.setSessionLoadState(entry, "pending_hydration");
-    }
+    refreshSessionLifecycle(this.createSessionLifecycleHost(), sessionId, opts);
   };
 
   loadSessionState = (sessionId: string, opts?: { force?: boolean }) => {
@@ -549,27 +436,19 @@ export class SessionSupervisor {
   };
 
   dropSessionEntry = (sessionId: string) => {
-    const id = String(sessionId || "").trim();
-    if (!id) return;
-    if (!this.entries.has(id)) return;
-    this.entries.delete(id);
-    this.activeTaskSessionIds = this.activeTaskSessionIds.filter((entryId) => entryId !== id);
-    this.warmSessionIds = this.warmSessionIds.filter((entryId) => entryId !== id);
-    this.subscribedSessionIds = this.subscribedSessionIds.filter((entryId) => entryId !== id);
-    this.refreshSubscriptions();
-    this.publish();
+    dropSessionLifecycleEntry(this.createSessionLifecycleHost(), sessionId);
   };
 
   setDiff = (sessionId: string, diff: string) => {
     const entry = this.ensureEntry(sessionId);
-    entry.diff = diff;
+    entry.support.diff = diff;
     entry.updatedAtMs = Date.now();
     this.publish();
   };
 
   setGitStatusSummary = (sessionId: string, summary: GitStatusSummary | null) => {
     const entry = this.ensureEntry(sessionId);
-    entry.gitStatusSummary = summary;
+    entry.support.gitStatusSummary = summary;
     entry.updatedAtMs = Date.now();
     this.publish();
   };
@@ -601,227 +480,66 @@ export class SessionSupervisor {
   }
 
   private handleReplicaPatches = (patches: SessionReplicaPatch[]) => {
-    if (!patches || patches.length === 0) return;
-    let changed = false;
-    let subscriptionCursorsChanged = false;
+    const { changed, subscriptionCursorsChanged } = applyReplicaPatches(
+      {
+        ensureEntry: (sessionId) => this.ensureEntry(sessionId),
+        resolveSessionMode: (sessionId, entry, explicitMode) =>
+          this.resolveSessionMode(sessionId, entry, explicitMode),
+        resetEntryProjectionForReplace: (entry, opts) => this.resetEntryProjectionForReplace(entry, opts),
+        setSessionLoadState: (entry, next) => this.setSessionLoadState(entry, next),
+        setFatalError: (entry, message) => this.setFatalError(entry, message),
+        applyAcpMetaFromEvents: (entry, events) => this.applyAcpMetaFromEvents(entry, events),
+        applyGitStatusSnapshotFromEvents: (entry, events) =>
+          this.applyGitStatusSnapshotFromEvents(entry, events),
+        syncStateCache: (entry) => this.syncStateCache(entry),
+        clearSupportLoadError: (entry, key) => this.clearSupportLoadError(entry, key),
+        adoptLoadedSubagentInvocationsRevision: (entry, stateRev) =>
+          this.adoptLoadedSubagentInvocationsRevision(entry, stateRev),
+        ensureProviderOptions: (entry) => this.ensureProviderOptions(entry),
+        ensureSubagentInvocations: (entry, opts) => this.ensureSubagentInvocations(entry, opts),
+        syncSupportLoadsForOpenSession: (entry) => this.syncSupportLoadsForOpenSession(entry),
+      },
+      patches,
+    );
     for (const patch of patches) {
+      if (patch.op === "evict") continue;
       const sessionId = String(patch.sessionId || "").trim();
       if (!sessionId) continue;
-      const entry = this.ensureEntry(sessionId);
-      const priorHistoryExtended = entry.historyExtended;
-      let localOnlyMessages: Message[] = [];
-      if (patch.op === "evict") {
-        const beforeSeq = patch.data.eventsBeforeSeq;
-        if (typeof beforeSeq === "number") {
-          entry.events = entry.events.filter(
-            (event) => typeof event.seq === "number" && event.seq >= beforeSeq,
-          );
-          this.bumpEventsRev(entry);
-          entry.seqSet = new Set(
-            entry.events
-              .map((event) => (typeof event.seq === "number" ? event.seq : Number.NaN))
-              .filter((seq) => Number.isFinite(seq)) as number[],
-          );
-          entry.updatedAtMs = Date.now();
-          changed = true;
-        }
-        continue;
-      }
-      const normalizedFreshness =
-        patch.data.freshness === undefined ? undefined : toReplicaFreshness(patch.data.freshness);
-      const shouldReplaceReplay = shouldReplayReplicaReplace({
-        entry,
-        patch,
-        normalizedFreshness,
-      });
-      const replaceMode = patch.op === "replace" ? patch.data.replaceMode ?? null : null;
-      const authoritativeReplace = isAuthoritativeSessionReplicaReplace(replaceMode);
-      const preserveCoveredHistoryOnRepair =
-        replaceMode === "repair_replace" && repairReplaceIsCoveredByEntry(entry, patch.data);
-      const shouldApplyReplace =
-        patch.op !== "replace" || shouldReplaceReplay;
-      const preservedTurns =
-        patch.op === "replace" && shouldApplyReplace && preserveCoveredHistoryOnRepair
-          ? entry.turns.slice()
-          : null;
-      const preservedTurnsById =
-        patch.op === "replace" && shouldApplyReplace && (!authoritativeReplace || preserveCoveredHistoryOnRepair)
-          ? new Map(
-              entry.turns
-                .map((turn) => {
-                  const turnId = idToString(turn.turn_id);
-                  return turnId ? ([turnId, turn] as const) : null;
-                })
-                .filter((item): item is readonly [string, SessionTurn] => item !== null),
-            )
-          : null;
-      if (patch.op === "replace") {
-        const incomingMessages = Array.isArray(patch.data.messages) ? patch.data.messages : [];
-        const incomingMessageIds = new Set(
-          incomingMessages
-            .map((message) => idToString(message.id))
-            .filter((id): id is string => !!id),
-        );
-        localOnlyMessages = entry.messages.filter((message) => {
-          const id = idToString(message.id);
-          if (!id || incomingMessageIds.has(id)) return false;
-          return !authoritativeReplace || preserveCoveredHistoryOnRepair || message.delivery === "queued";
-        });
-        if (shouldApplyReplace) {
-          this.resetEntryProjectionForReplace(entry, { skipPublish: true });
-        }
-      }
-      const data = patch.data;
-      if (data.session) {
-        entry.session = data.session;
-        if (!entry.mode) {
-          const resolvedMode = this.resolveSessionMode(sessionId, entry);
-          if (resolvedMode) {
-            entry.mode = resolvedMode;
-          }
-        }
+      const entry = this.entries.get(sessionId);
+      if (!entry) continue;
+      if (patch.data.session) {
         void this.ensureThoughtCache(entry);
       }
-      if (data.activity !== undefined) {
-        entry.activity = data.activity ?? null;
-      }
-      if (normalizedFreshness !== undefined) {
-        entry.freshness = normalizedFreshness;
-      }
-      if (shouldApplyReplace && data.turns && data.turns.length > 0) {
-        this.mergeTurns(entry, data.turns);
-      }
-      if (preservedTurns && preservedTurns.length > 0) {
-        this.mergeTurns(entry, preservedTurns);
-      }
-      if (shouldApplyReplace && data.messages && data.messages.length > 0) {
-        this.mergeMessages(entry, data.messages);
-      }
-      if (localOnlyMessages.length > 0) {
-        this.mergeMessages(entry, localOnlyMessages);
+      if (Array.isArray(patch.data.events) && patch.data.events.length > 0) {
+        let thoughtChanged = false;
+        for (const event of patch.data.events) {
+          if (!isFinalThoughtEvent(event)) continue;
+          const key = buildThoughtCacheKey(event);
+          if (!key) continue;
+          const payload = normalizeFinalThoughtPayload(event.payload_json ?? {});
+          if (!readThoughtFullContent(payload)) continue;
+          const normalizedEvent: SessionEvent = {
+            ...event,
+            payload_json: payload,
+          };
+          const existing = entry.thoughtCacheByKey[key];
+          if (existing && existing.event.seq === normalizedEvent.seq) continue;
+          entry.thoughtCacheByKey = {
+            ...entry.thoughtCacheByKey,
+            [key]: {
+              key,
+              event: normalizedEvent,
+              updatedAtMs: Date.now(),
+            },
+          };
+          entry.thoughtCacheDirty = true;
+          thoughtChanged = true;
+        }
+        if (thoughtChanged) {
+          void this.persistThoughtCache(entry);
+        }
       }
       reconcileOptimisticOverlay(entry);
-      if (shouldApplyReplace && data.events && data.events.length > 0) {
-        this.mergeEvents(entry, data.events, { notify: patch.op !== "replace" });
-        this.applyAcpMetaFromEvents(entry, data.events);
-      }
-      if (preservedTurnsById && preservedTurnsById.size > 0 && entry.turns.length > 0) {
-        let reapplied = false;
-        const nextTurns = entry.turns.map((turn) => {
-          const turnId = idToString(turn.turn_id);
-          if (!turnId) return turn;
-          const preserved = preservedTurnsById.get(turnId);
-          if (!preserved) return turn;
-          reapplied = true;
-          return mergeTurn(preserved, turn);
-        });
-        if (reapplied) {
-          entry.turns = nextTurns;
-          this.bumpTurnsRev(entry);
-        }
-      }
-      if (data.toolSummaries && data.toolSummaries.length > 0) {
-        this.applyToolSummaries(entry, data.toolSummaries);
-      }
-      if (data.acpMeta) {
-        this.applyAcpMeta(entry, data.acpMeta, { persist: false });
-      }
-      if (data.gitStatusSummary !== undefined) {
-        entry.gitStatusSummary = data.gitStatusSummary ?? null;
-        this.syncStateCache(entry);
-      }
-      if (data.artifacts) {
-        entry.artifacts = data.artifacts;
-        entry.artifactsFetchedAtMs = Date.now();
-        entry.artifactsLoaded = true;
-        entry.artifactsLoading = false;
-        this.clearSupportLoadError(entry, "artifacts");
-        this.syncStateCache(entry);
-      }
-      if (data.artifactsLoaded !== undefined) {
-        entry.artifactsLoaded = data.artifactsLoaded;
-        if (data.artifactsLoaded) {
-          entry.artifactsLoading = false;
-          this.clearSupportLoadError(entry, "artifacts");
-        }
-      }
-      if (data.stateLoaded !== undefined) {
-        entry.stateLoaded = data.stateLoaded;
-        if (data.stateLoaded) {
-          this.clearSupportLoadError(entry, "state");
-        }
-      }
-      if (data.stateLoading !== undefined) {
-        entry.stateLoading = data.stateLoading;
-      }
-      if (data.projectionRev !== undefined) {
-        entry.projectionRev = data.projectionRev;
-      }
-      if (data.stateRev !== undefined) {
-        entry.stateRev = data.stateRev;
-        entry.stateAppliedRev = adoptLoadedStateRevision(
-          entry.stateLoaded,
-          entry.stateAppliedRev,
-          data.stateRev,
-        );
-        this.adoptLoadedSubagentInvocationsRevision(entry, data.stateRev);
-      }
-      if (data.summaryCheckpoint !== undefined) {
-        entry.summaryCheckpoint = data.summaryCheckpoint;
-      }
-      if (data.headWindow !== undefined) {
-        entry.headWindow = data.headWindow;
-      }
-      if (data.lastEventSeq !== undefined) {
-        if (entry.lastEventSeq !== data.lastEventSeq) {
-          entry.lastEventSeq = data.lastEventSeq;
-          if (entry.subscribed) {
-            subscriptionCursorsChanged = true;
-          }
-        }
-      }
-      if (data.hasMoreTurns !== undefined) {
-        const preserveHasMoreHistory = patch.op === "replace" && data.hasMoreTurns === false && priorHistoryExtended;
-        if (!preserveHasMoreHistory) {
-          entry.hasMoreTurns = data.hasMoreTurns;
-        } else {
-          entry.hasMoreTurns = true;
-          entry.historyExtended = true;
-        }
-      }
-      if (data.turnsHydrated !== undefined) {
-        entry.turnsHydrated = data.turnsHydrated;
-      }
-      if (data.loading !== undefined) {
-        entry.loading = data.loading;
-        if (data.loading && entry.loadState !== "live") {
-          this.setSessionLoadState(entry, "pending_hydration");
-        }
-      }
-      if (data.error !== undefined) {
-        if (data.error) {
-          this.setFatalError(entry, data.error);
-        } else {
-          entry.error = undefined;
-          if (entry.loadState === "fatal") {
-            this.setSessionLoadState(entry, "pending_hydration");
-          }
-        }
-      } else if (hasSessionReplicaRecoveryData(data)) {
-        entry.error = undefined;
-        this.setSessionLoadState(entry, resolveReplicaReadyLoadState(entry));
-      }
-      if (data.subagentNotice) {
-        void this.ensureSubagentInvocations(entry, { force: true });
-      }
-      if (!entry.acpModels || !hasModelList(entry.acpModels)) {
-        void this.ensureProviderOptions(entry);
-      }
-      entry.queue = entry.messages.filter((m) => m.delivery === "queued");
-      reconcileOptimisticOverlay(entry);
-      this.syncSupportLoadsForOpenSession(entry);
-      entry.updatedAtMs = Date.now();
-      changed = true;
     }
     if (changed) {
       this.publish();
@@ -842,58 +560,77 @@ export class SessionSupervisor {
     return entry;
   }
 
-  private openSessionWithMode(
-    sessionId: string,
-    entry: InternalEntry,
-    mode: SessionMode,
-    opts?: OpenOptions,
-  ) {
-    entry.mode = mode;
-    const seededHead =
-      mode === "active"
-        ? seedReplicaFromActiveSnapshot(
-            {
-              workspaceSnapshotState: this.workspaceSnapshotState,
-              workspaceSessionHeadsById: this.workspaceSessionHeadsById,
-              dispatchSeedHead: (cmd) => this.replica.dispatch(cmd),
-            },
-            sessionId,
-            entry,
-          )
-        : false;
-    const shouldSkipCache =
-      (entry.turnsHydrated ||
-        entry.messages.length > 0 ||
-        entry.events.length > 0 ||
-        typeof entry.lastEventSeq === "number") ||
-      entry.freshness !== "bootstrap";
-    this.replica.dispatch({
-      type: "open_session",
-      sessionId,
-      force: opts?.force,
-      silent: opts?.silent,
-      skipCache: shouldSkipCache,
-      skipBoundedBootstrapCache: mode === "active",
-      forceHydrate: entry.freshness === "recovering" || entry.loadState === "recovering",
-      hydrateIfNeeded:
-        mode === "archived" ||
-        !isReplicaAuthority(entry.freshness) ||
-        entry.loadState === "recovering",
-    });
-    if (mode === "archived") {
-      this.setSessionLoadState(entry, "pending_hydration");
-      this.syncSupportLoadsForOpenSession(entry);
-      return;
-    }
-    const hasVisibleTranscriptData =
-      seededHead || entry.turnsHydrated || entry.messages.length > 0 || entry.events.length > 0;
-    if (hasVisibleTranscriptData) {
-      this.setSessionLoadState(entry, resolveReplicaReadyLoadState(entry));
-      this.syncSupportLoadsForOpenSession(entry);
-      return;
-    }
-    this.setSessionLoadState(entry, "pending_hydration");
-    this.syncSupportLoadsForOpenSession(entry);
+  private createSessionLifecycleHost() {
+    return {
+      entries: this.entries,
+      getWorkspaceSnapshotState: () => this.workspaceSnapshotState,
+      getWorkspaceSessionHeadsById: () => this.workspaceSessionHeadsById,
+      getActiveTaskSessionIds: () => this.activeTaskSessionIds,
+      setActiveTaskSessionIds: (sessionIds: string[]) => {
+        this.activeTaskSessionIds = sessionIds;
+      },
+      getWarmSessionIds: () => this.warmSessionIds,
+      setWarmSessionIds: (sessionIds: string[]) => {
+        this.warmSessionIds = sessionIds;
+      },
+      getSubscribedSessionIds: () => this.subscribedSessionIds,
+      setSubscribedSessionIds: (sessionIds: string[]) => {
+        this.subscribedSessionIds = sessionIds;
+      },
+      ensureEntry: (sessionId: string) => this.ensureEntry(sessionId),
+      invalidateSupportLoadsWithoutAuthoritativeRevision: (entry: InternalEntry) =>
+        this.invalidateSupportLoadsWithoutAuthoritativeRevision(entry),
+      resolveRequestedStateRev: (entry: InternalEntry) => this.resolveRequestedStateRev(entry),
+      setSessionLoadState: (entry: InternalEntry, next: SessionLoadState) =>
+        this.setSessionLoadState(entry, next),
+      setFatalError: (entry: InternalEntry, message: string) => this.setFatalError(entry, message),
+      syncSupportLoadsForOpenSession: (entry: InternalEntry) => this.syncSupportLoadsForOpenSession(entry),
+      resolveSessionMode: (sessionId: string, entry?: InternalEntry, explicitMode?: SessionMode) =>
+        this.resolveSessionMode(sessionId, entry, explicitMode),
+      shouldFailPendingSessionOpen: () => this.shouldFailPendingSessionOpen(),
+      refreshSubscriptions: (opts?: { emitIfUnchanged?: boolean }) => this.refreshSubscriptions(opts),
+      publish: () => this.publish(),
+      replicaDispatch: (cmd: SessionReplicaCommand) => this.replicaDispatch(cmd),
+    };
+  }
+
+  private createWorkspaceAuthorityHost() {
+    return {
+      getWorkspaceSnapshotState: () => this.workspaceSnapshotState,
+      setWorkspaceSnapshotState: (state: SessionSupervisorWorkspaceSnapshotState) => {
+        this.workspaceSnapshotState = state;
+      },
+      getWorkspaceSessionHeadsById: () => this.workspaceSessionHeadsById,
+      setWorkspaceSessionHeadsById: (heads: Map<string, SessionHeadSnapshot>) => {
+        this.workspaceSessionHeadsById = heads;
+      },
+      getWorkspaceActivePrimarySessionIds: () => this.workspaceActivePrimarySessionIds,
+      setWorkspaceActivePrimarySessionIds: (sessionIds: string[]) => {
+        this.workspaceActivePrimarySessionIds = sessionIds;
+      },
+      mapConnection: (connection: WorkspaceActiveSnapshotState["connection"]) =>
+        this.mapConnection(connection),
+      setConnection: (next: ConnectionStatus) => this.setConnection(next),
+      syncActiveSnapshot: (state: WorkspaceActiveSnapshotState) => this.syncActiveSnapshot(state),
+      markOpenSessionsRecovering: () => this.markOpenSessionsRecovering(),
+      refreshSubscriptions: (opts?: { emitIfUnchanged?: boolean }) => this.refreshSubscriptions(opts),
+      emitSubscribedSessions: () => this.emitSubscribedSessions(),
+      clearTaskThoughts: (taskId: string) => this.clearTaskThoughts(taskId),
+      publish: () => this.publish(),
+      syncSupportLoadsForOpenSession: (entry: InternalEntry) => this.syncSupportLoadsForOpenSession(entry),
+      replicaDispatch: (cmd: SessionReplicaCommand) => this.replicaDispatch(cmd),
+      entries: this.entries,
+      ensureEntry: (sessionId: string) => this.ensureEntry(sessionId),
+      setSessionLoadState: (entry: InternalEntry, next: SessionLoadState) =>
+        this.setSessionLoadState(entry, next),
+    };
+  }
+
+  private createWorkspaceActiveSyncHost() {
+    return {
+      ensureEntry: (sessionId: string) => this.ensureEntry(sessionId),
+      replicaDispatch: (cmd: SessionReplicaCommand) => this.replicaDispatch(cmd),
+    };
   }
 
   resolveSessionMode(
@@ -962,54 +699,7 @@ export class SessionSupervisor {
     emitSubscribedSessions(this.subscribedSessionIdsSink, this.buildSubscribedSessions());
   }
 
-  private ingestWorkspaceEvent(evt: SessionSupervisorWorkspaceEvent) {
-    let changed = false;
-    let subscriptionCursorsChanged = false;
-    if (evt.type === "archived_task_upsert") {
-      const taskId = idToString(evt.task?.task?.id);
-      if (taskId) {
-        void this.clearTaskThoughts(taskId);
-      }
-    } else if (evt.type === "archived_task_delete") {
-      const taskId = idToString(evt.task_id);
-      if (taskId) {
-        void this.clearTaskThoughts(taskId);
-      }
-    } else if (evt.type === "session_gap") {
-      const sessionId = idToString(evt.session_id);
-      if (sessionId) {
-        const entry = this.entries.get(sessionId);
-        if (entry) {
-          this.setSessionLoadState(entry, "recovering");
-          entry.error = undefined;
-          entry.updatedAtMs = Date.now();
-          changed = true;
-          if (entry.subscribed) {
-            subscriptionCursorsChanged = true;
-          }
-        }
-      }
-    }
-    if (changed) {
-      this.publish();
-    }
-    if (subscriptionCursorsChanged) {
-      this.emitSubscribedSessions();
-    }
-    this.replica.dispatch({ type: "workspace_event", event: evt });
-  }
-
   private syncActiveSnapshot(state: WorkspaceActiveSnapshotState) {
-    for (const taskId of state.activeIds) {
-      const item = state.tasksById[taskId];
-      const head = item?.primarySessionHead;
-      if (!head) continue;
-      const sessionId = idToString(head.session?.id);
-      if (!sessionId) continue;
-      const entry = this.ensureEntry(sessionId);
-      const mode = classifyActiveSnapshotSeedMode(entry, head, { allowRecoveringRefresh: true });
-      if (!mode) continue;
-      this.replica.dispatch({ type: "seed_head", sessionId, head, mode });
-    }
+    syncWorkspaceAuthorityActiveSnapshot(this.createWorkspaceActiveSyncHost(), state);
   }
 }

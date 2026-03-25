@@ -1,14 +1,7 @@
 import { idToString, type Message } from "../../api/client";
+import type { InternalEntry } from "./entryState";
 
-type SessionSupervisorOptimisticOverlayEntry = {
-  messages: Message[];
-  queue: Message[];
-  optimisticThreadMessages?: Message[];
-  optimisticQueuedMessages?: Message[];
-  optimisticQueueRemovalIds?: string[];
-  overlayRev?: number;
-  updatedAtMs: number;
-};
+type SessionSupervisorOptimisticOverlayEntry = Pick<InternalEntry, "messages" | "queue" | "updatedAtMs" | "overlay">;
 
 function normalizeMessageId(messageId: string): string {
   return String(messageId || "").trim();
@@ -50,7 +43,7 @@ function removeHiddenId(ids: readonly string[], messageId: string): { next: stri
 }
 
 function bumpOverlayRev(entry: SessionSupervisorOptimisticOverlayEntry) {
-  entry.overlayRev = (entry.overlayRev ?? 0) + 1;
+  entry.overlay.overlayRev += 1;
   entry.updatedAtMs = Date.now();
 }
 
@@ -58,9 +51,9 @@ export function upsertOptimisticThreadMessage(
   entry: SessionSupervisorOptimisticOverlayEntry,
   message: Message,
 ): boolean {
-  const { next, changed } = upsertById(entry.optimisticThreadMessages ?? [], message);
+  const { next, changed } = upsertById(entry.overlay.optimisticThreadMessages, message);
   if (!changed) return false;
-  entry.optimisticThreadMessages = next;
+  entry.overlay.optimisticThreadMessages = next;
   bumpOverlayRev(entry);
   return true;
 }
@@ -69,9 +62,9 @@ export function removeOptimisticThreadMessage(
   entry: SessionSupervisorOptimisticOverlayEntry,
   messageId: string,
 ): boolean {
-  const { next, changed } = removeById(entry.optimisticThreadMessages ?? [], messageId);
+  const { next, changed } = removeById(entry.overlay.optimisticThreadMessages, messageId);
   if (!changed) return false;
-  entry.optimisticThreadMessages = next;
+  entry.overlay.optimisticThreadMessages = next;
   bumpOverlayRev(entry);
   return true;
 }
@@ -80,9 +73,9 @@ export function upsertOptimisticQueuedMessage(
   entry: SessionSupervisorOptimisticOverlayEntry,
   message: Message,
 ): boolean {
-  const { next, changed } = upsertById(entry.optimisticQueuedMessages ?? [], message);
+  const { next, changed } = upsertById(entry.overlay.optimisticQueuedMessages, message);
   if (!changed) return false;
-  entry.optimisticQueuedMessages = next;
+  entry.overlay.optimisticQueuedMessages = next;
   bumpOverlayRev(entry);
   return true;
 }
@@ -91,9 +84,9 @@ export function removeOptimisticQueuedMessage(
   entry: SessionSupervisorOptimisticOverlayEntry,
   messageId: string,
 ): boolean {
-  const { next, changed } = removeById(entry.optimisticQueuedMessages ?? [], messageId);
+  const { next, changed } = removeById(entry.overlay.optimisticQueuedMessages, messageId);
   if (!changed) return false;
-  entry.optimisticQueuedMessages = next;
+  entry.overlay.optimisticQueuedMessages = next;
   bumpOverlayRev(entry);
   return true;
 }
@@ -102,9 +95,9 @@ export function addOptimisticQueueRemovalId(
   entry: SessionSupervisorOptimisticOverlayEntry,
   messageId: string,
 ): boolean {
-  const { next, changed } = addHiddenId(entry.optimisticQueueRemovalIds ?? [], messageId);
+  const { next, changed } = addHiddenId(entry.overlay.optimisticQueueRemovalIds, messageId);
   if (!changed) return false;
-  entry.optimisticQueueRemovalIds = next;
+  entry.overlay.optimisticQueueRemovalIds = next;
   bumpOverlayRev(entry);
   return true;
 }
@@ -113,9 +106,9 @@ export function removeOptimisticQueueRemovalId(
   entry: SessionSupervisorOptimisticOverlayEntry,
   messageId: string,
 ): boolean {
-  const { next, changed } = removeHiddenId(entry.optimisticQueueRemovalIds ?? [], messageId);
+  const { next, changed } = removeHiddenId(entry.overlay.optimisticQueueRemovalIds, messageId);
   if (!changed) return false;
-  entry.optimisticQueueRemovalIds = next;
+  entry.overlay.optimisticQueueRemovalIds = next;
   bumpOverlayRev(entry);
   return true;
 }
@@ -125,30 +118,31 @@ export function reconcileOptimisticOverlay(
 ): boolean {
   const liveMessageIds = new Set(entry.messages.map((message) => messageIdOf(message)).filter(Boolean));
   const liveQueueIds = new Set(entry.queue.map((message) => messageIdOf(message)).filter(Boolean));
+  const overlay = entry.overlay;
 
-  const nextOptimisticThreadMessages = (entry.optimisticThreadMessages ?? []).filter((message) => {
+  const nextOptimisticThreadMessages = overlay.optimisticThreadMessages.filter((message) => {
     const messageId = messageIdOf(message);
     return !messageId || !liveMessageIds.has(messageId);
   });
-  const nextOptimisticQueuedMessages = (entry.optimisticQueuedMessages ?? []).filter((message) => {
+  const nextOptimisticQueuedMessages = overlay.optimisticQueuedMessages.filter((message) => {
     const messageId = messageIdOf(message);
     return !messageId || !liveQueueIds.has(messageId);
   });
-  const nextOptimisticQueueRemovalIds = (entry.optimisticQueueRemovalIds ?? []).filter(
+  const nextOptimisticQueueRemovalIds = overlay.optimisticQueueRemovalIds.filter(
     (messageId) => liveQueueIds.has(normalizeMessageId(messageId)),
   );
 
   if (
-    nextOptimisticThreadMessages.length === (entry.optimisticThreadMessages ?? []).length &&
-    nextOptimisticQueuedMessages.length === (entry.optimisticQueuedMessages ?? []).length &&
-    nextOptimisticQueueRemovalIds.length === (entry.optimisticQueueRemovalIds ?? []).length
+    nextOptimisticThreadMessages.length === overlay.optimisticThreadMessages.length &&
+    nextOptimisticQueuedMessages.length === overlay.optimisticQueuedMessages.length &&
+    nextOptimisticQueueRemovalIds.length === overlay.optimisticQueueRemovalIds.length
   ) {
     return false;
   }
 
-  entry.optimisticThreadMessages = nextOptimisticThreadMessages;
-  entry.optimisticQueuedMessages = nextOptimisticQueuedMessages;
-  entry.optimisticQueueRemovalIds = nextOptimisticQueueRemovalIds;
+  overlay.optimisticThreadMessages = nextOptimisticThreadMessages;
+  overlay.optimisticQueuedMessages = nextOptimisticQueuedMessages;
+  overlay.optimisticQueueRemovalIds = nextOptimisticQueueRemovalIds;
   bumpOverlayRev(entry);
   return true;
 }

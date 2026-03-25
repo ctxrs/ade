@@ -1,8 +1,7 @@
-import test from "node:test";
-import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { expect, test } from "vitest";
 
 import {
   lockedInstallHint,
@@ -15,7 +14,9 @@ import { resolveWebBuildArgs } from "./start-e2e-server.mjs";
 test("resolveLocalNodeBin points at the local .bin entry", () => {
   const packageRoot = "/tmp/ctx-web";
   const expectedBin = process.platform === "win32" ? "playwright.cmd" : "playwright";
-  assert.equal(resolveLocalNodeBin(packageRoot, "playwright"), path.join(packageRoot, "node_modules", ".bin", expectedBin));
+  expect(resolveLocalNodeBin(packageRoot, "playwright")).toBe(
+    path.join(packageRoot, "node_modules", ".bin", expectedBin),
+  );
 });
 
 test("resolveWorkspaceRoot walks up to the pnpm workspace root", () => {
@@ -23,7 +24,7 @@ test("resolveWorkspaceRoot walks up to the pnpm workspace root", () => {
   const packageRoot = path.join(root, "apps", "web");
   fs.mkdirSync(packageRoot, { recursive: true });
   fs.writeFileSync(path.join(root, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n");
-  assert.equal(resolveWorkspaceRoot(packageRoot), root);
+  expect(resolveWorkspaceRoot(packageRoot)).toBe(root);
 });
 
 test("resolveLocalNodeBin falls back to workspace-root bins", () => {
@@ -35,8 +36,8 @@ test("resolveLocalNodeBin falls back to workspace-root bins", () => {
   fs.writeFileSync(path.join(root, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n");
   fs.writeFileSync(binPath, "#!/bin/sh\n");
 
-  assert.equal(resolveLocalNodeBin(packageRoot, "vite"), binPath);
-  assert.equal(requireLocalNodeBin(packageRoot, "vite"), binPath);
+  expect(resolveLocalNodeBin(packageRoot, "vite")).toBe(binPath);
+  expect(requireLocalNodeBin(packageRoot, "vite")).toBe(binPath);
 });
 
 test("requireLocalNodeBin returns the local binary when present", () => {
@@ -45,7 +46,7 @@ test("requireLocalNodeBin returns the local binary when present", () => {
   fs.mkdirSync(path.dirname(binPath), { recursive: true });
   fs.writeFileSync(binPath, "#!/bin/sh\n");
 
-  assert.equal(requireLocalNodeBin(packageRoot, "vite"), binPath);
+  expect(requireLocalNodeBin(packageRoot, "vite")).toBe(binPath);
 });
 
 test("requireLocalNodeBin throws a clear install hint when missing", () => {
@@ -53,8 +54,7 @@ test("requireLocalNodeBin throws a clear install hint when missing", () => {
   const packageRoot = path.join(root, "apps", "web");
   fs.mkdirSync(packageRoot, { recursive: true });
   fs.writeFileSync(path.join(root, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n");
-  assert.throws(
-    () => requireLocalNodeBin(packageRoot, "playwright"),
+  expect(() => requireLocalNodeBin(packageRoot, "playwright")).toThrow(
     new RegExp(
       `cd ${packageRoot.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")} && pnpm install --frozen-lockfile`,
     ),
@@ -62,14 +62,13 @@ test("requireLocalNodeBin throws a clear install hint when missing", () => {
 });
 
 test("lockedInstallHint uses the normal frozen-lockfile workspace install", () => {
-  assert.match(
-    lockedInstallHint("/tmp/ctx-root/apps/web"),
+  expect(lockedInstallHint("/tmp/ctx-root/apps/web")).toMatch(
     /cd \/tmp\/ctx-root\/apps\/web && pnpm install --frozen-lockfile/,
   );
 });
 
 test("resolveWebBuildArgs calls vite directly without pnpm exec indirection", () => {
-  assert.deepEqual(resolveWebBuildArgs("/tmp/ctx-dist"), [
+  expect(resolveWebBuildArgs("/tmp/ctx-dist")).toEqual([
     "build",
     "--outDir",
     "/tmp/ctx-dist",

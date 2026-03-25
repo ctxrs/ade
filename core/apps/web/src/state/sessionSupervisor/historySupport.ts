@@ -25,13 +25,14 @@ export async function loadMoreTurnsForEntry({
   publish,
   persistHead,
 }: LoadMoreTurnsContext): Promise<number | null> {
-  if (entry.fetching.history) return null;
+  const support = entry.support;
+  if (support.fetching.history) return null;
   if (!entry.hasMoreTurns) return 0;
   const beforeSeq = entry.oldestTurnSeq;
   if (beforeSeq == null || !Number.isFinite(beforeSeq)) {
     return 0;
   }
-  entry.fetching.history = true;
+  support.fetching.history = true;
   const beforeLen = entry.turns.length;
   try {
     const ownerScope = resolveEntryWorkspaceOwnerScope(entry);
@@ -64,7 +65,7 @@ export async function loadMoreTurnsForEntry({
     await persistHead(entry);
     return entry.turns.length - beforeLen;
   } finally {
-    entry.fetching.history = false;
+    support.fetching.history = false;
   }
 }
 
@@ -81,22 +82,21 @@ export async function loadTurnToolsForEntry({
   entry,
   publish,
 }: LoadTurnToolsContext): Promise<void> {
-  if (entry.turnToolsHydratedByTurnId?.[turnId]) return;
-  if (entry.turnToolsLoadingSet.has(turnId)) return;
-  entry.turnToolsLoadingSet.add(turnId);
-  entry.turnToolsLoading = [...entry.turnToolsLoadingSet];
+  const support = entry.support;
+  if (support.turnToolsHydratedByTurnId[turnId]) return;
+  if (support.turnToolsLoadingSet.has(turnId)) return;
+  support.turnToolsLoadingSet.add(turnId);
   publish();
   try {
     const tools = await listTurnTools(sessionId, turnId);
     const summarized = tools.map(summarizeToolPayload);
-    entry.turnToolsByTurnId = {
-      ...entry.turnToolsByTurnId,
+    support.turnToolsByTurnId = {
+      ...support.turnToolsByTurnId,
       [turnId]: summarized,
     };
-    entry.turnToolsHydratedByTurnId[turnId] = true;
+    support.turnToolsHydratedByTurnId[turnId] = true;
   } finally {
-    entry.turnToolsLoadingSet.delete(turnId);
-    entry.turnToolsLoading = [...entry.turnToolsLoadingSet];
+    support.turnToolsLoadingSet.delete(turnId);
     entry.updatedAtMs = Date.now();
     publish();
   }

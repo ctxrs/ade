@@ -30,36 +30,11 @@ import {
 } from "./acpMeta";
 import { updateProvidersBootstrap } from "../providersBootstrapStore";
 import type { SessionSupervisorWorkspaceSnapshotState } from "./workspaceInputs";
+import type { InternalEntry } from "./entryState";
 
 type SessionSupportLoadErrorKey = "state" | "artifacts" | "subagentInvocations";
 
-export type SessionSupervisorHydrationEntry = {
-  sessionId: string;
-  freshness?: "bootstrap" | "authoritative" | "replica" | "recovering";
-  session?: Session;
-  acpModels?: unknown;
-  acpModes?: unknown;
-  acpCurrentModelId?: string;
-  acpCommands?: unknown;
-  acpSlashCommands?: unknown;
-  acpMetaUpdatedAtMs?: number;
-  gitStatusSummary?: GitStatusSummary | null;
-  updatedAtMs: number;
-  stateRev?: number;
-  stateAppliedRev?: number;
-  stateLoading: boolean;
-  stateLoaded: boolean;
-  stateFetchToken: number;
-  artifacts: Artifact[];
-  artifactsLoaded: boolean;
-  artifactsLoading: boolean;
-  artifactsFetchedAtMs?: number;
-  subagentInvocations: SubagentInvocation[];
-  subagentInvocationsLoaded?: boolean;
-  subagentInvocationsLoading: boolean;
-  subagentInvocationsAppliedRev?: number;
-  subagentInvocationsFetchedAtMs?: number;
-};
+export type SessionSupervisorHydrationEntry = InternalEntry;
 
 export type SessionSupervisorHydrationHost = {
   providerOptionsCache: Map<string, ProviderOptions>;
@@ -195,7 +170,7 @@ export function applyGitStatusSnapshotFromEvents(
     if (payload?.kind !== "git_status_snapshot") continue;
     const partial = normalizeGitStatusSummaryInput(payload.summary, payload.entries);
     if (Object.keys(partial).length === 0) return false;
-    entry.gitStatusSummary = { ...(entry.gitStatusSummary ?? {}), ...partial };
+    entry.support.gitStatusSummary = { ...(entry.support.gitStatusSummary ?? {}), ...partial };
     return true;
   }
   return false;
@@ -284,7 +259,7 @@ export async function ensureState(
   const cached = this.stateCacheBySessionId.get(entry.sessionId);
   const requestedStateRev = this.resolveRequestedStateRev(entry);
   const cachedOrAppliedRev =
-    typeof cached?.stateRev === "number" ? cached.stateRev : entry.stateAppliedRev;
+    typeof cached?.stateRev === "number" ? cached.stateRev : entry.support.stateAppliedRev;
   const cacheMatchesRequestedRev =
     typeof requestedStateRev === "number" &&
     typeof cachedOrAppliedRev === "number" &&
@@ -296,24 +271,24 @@ export async function ensureState(
     return;
   }
   if (this.stateRequestsInFlight.has(entry.sessionId)) {
-    entry.stateLoading = true;
+    entry.support.stateLoading = true;
     entry.updatedAtMs = Date.now();
     this.publish();
     return;
   }
-  if (!shouldFetchSessionState(entry, opts)) return;
-  entry.stateLoading = true;
+  if (!shouldFetchSessionState({ ...entry.support, stateRev: entry.stateRev }, opts)) return;
+  entry.support.stateLoading = true;
   this.clearSupportLoadError(entry, "state");
   const requestRev = requestedStateRev;
-  entry.stateFetchToken += 1;
-  const fetchToken = entry.stateFetchToken;
+  entry.support.stateFetchToken += 1;
+  const fetchToken = entry.support.stateFetchToken;
   entry.updatedAtMs = Date.now();
   this.publish();
   const request = (async () => {
     try {
       const state = await getSessionState(entry.sessionId);
       const liveEntry = this.entries.get(entry.sessionId);
-      if (!liveEntry || liveEntry.stateFetchToken !== fetchToken) return;
+      if (!liveEntry || liveEntry.support.stateFetchToken !== fetchToken) return;
       if (
         typeof requestRev === "number" &&
         typeof liveEntry.stateRev === "number" &&
@@ -328,12 +303,12 @@ export async function ensureState(
       this.applyState(liveEntry, state, requestRev ?? liveEntry.stateRev);
     } catch (err) {
       const liveEntry = this.entries.get(entry.sessionId);
-      if (!liveEntry || liveEntry.stateFetchToken !== fetchToken) return;
+      if (!liveEntry || liveEntry.support.stateFetchToken !== fetchToken) return;
       this.setSupportLoadError(liveEntry, "state", err);
     } finally {
       const liveEntry = this.entries.get(entry.sessionId);
-      if (liveEntry && liveEntry.stateFetchToken === fetchToken) {
-        liveEntry.stateLoading = false;
+      if (liveEntry && liveEntry.support.stateFetchToken === fetchToken) {
+        liveEntry.support.stateLoading = false;
         this.syncSupportLoadsForOpenSession(liveEntry);
         liveEntry.updatedAtMs = Date.now();
         this.publish();
@@ -352,22 +327,22 @@ export async function ensureArtifacts(
   entry: SessionSupervisorHydrationEntry,
   opts?: { force?: boolean },
 ) {
-  if (entry.artifactsLoading) return;
-  if (entry.artifactsLoaded && !opts?.force) return;
-  entry.artifactsLoading = true;
+  if (entry.support.artifactsLoading) return;
+  if (entry.support.artifactsLoaded && !opts?.force) return;
+  entry.support.artifactsLoading = true;
   this.clearSupportLoadError(entry, "artifacts");
   entry.updatedAtMs = Date.now();
   this.publish();
   try {
     const artifacts = await listSessionArtifacts(entry.sessionId);
-    entry.artifacts = artifacts;
-    entry.artifactsLoaded = true;
-    entry.artifactsFetchedAtMs = Date.now();
+    entry.support.artifacts = artifacts;
+    entry.support.artifactsLoaded = true;
+    entry.support.artifactsFetchedAtMs = Date.now();
     this.clearSupportLoadError(entry, "artifacts");
   } catch (err) {
     this.setSupportLoadError(entry, "artifacts", err);
   } finally {
-    entry.artifactsLoading = false;
+    entry.support.artifactsLoading = false;
     entry.updatedAtMs = Date.now();
     this.publish();
   }
@@ -385,24 +360,24 @@ export async function ensureSubagentInvocations(
     typeof cached?.stateRev === "number" &&
     cached.stateRev >= requestedStateRev;
   if (!opts?.force && cached && cacheMatchesRequestedRev) {
-    entry.subagentInvocations = cached.invocations.slice();
-    entry.subagentInvocationsLoaded = true;
-    entry.subagentInvocationsLoading = false;
-    entry.subagentInvocationsAppliedRev = cached.stateRev;
-    entry.subagentInvocationsFetchedAtMs = Date.now();
+    entry.support.subagentInvocations = cached.invocations.slice();
+    entry.support.subagentInvocationsLoaded = true;
+    entry.support.subagentInvocationsLoading = false;
+    entry.support.subagentInvocationsAppliedRev = cached.stateRev;
+    entry.support.subagentInvocationsFetchedAtMs = Date.now();
     this.clearSupportLoadError(entry, "subagentInvocations");
     entry.updatedAtMs = Date.now();
     this.publish();
     return;
   }
   if (this.subagentInvocationsRequestsInFlight.has(entry.sessionId)) {
-    entry.subagentInvocationsLoading = true;
+    entry.support.subagentInvocationsLoading = true;
     entry.updatedAtMs = Date.now();
     this.publish();
     return;
   }
-  if (!shouldFetchSubagentInvocations(entry, requestedStateRev, opts)) return;
-  entry.subagentInvocationsLoading = true;
+  if (!shouldFetchSubagentInvocations(entry.support, requestedStateRev, opts)) return;
+  entry.support.subagentInvocationsLoading = true;
   this.clearSupportLoadError(entry, "subagentInvocations");
   entry.updatedAtMs = Date.now();
   this.publish();
@@ -421,11 +396,11 @@ export async function ensureSubagentInvocations(
       }
       const appliedStateRev =
         typeof requestedStateRev === "number" ? requestedStateRev : liveRequestedStateRev;
-      liveEntry.subagentInvocations = invocations;
-      liveEntry.subagentInvocationsLoaded = true;
-      liveEntry.subagentInvocationsAppliedRev =
+      liveEntry.support.subagentInvocations = invocations;
+      liveEntry.support.subagentInvocationsLoaded = true;
+      liveEntry.support.subagentInvocationsAppliedRev =
         typeof appliedStateRev === "number" ? appliedStateRev : undefined;
-      liveEntry.subagentInvocationsFetchedAtMs = Date.now();
+      liveEntry.support.subagentInvocationsFetchedAtMs = Date.now();
       if (typeof appliedStateRev === "number") {
         this.subagentInvocationsCacheBySessionId.set(entry.sessionId, {
           invocations: invocations.slice(),
@@ -442,7 +417,7 @@ export async function ensureSubagentInvocations(
     } finally {
       const liveEntry = this.entries.get(entry.sessionId);
       if (liveEntry) {
-        liveEntry.subagentInvocationsLoading = false;
+        liveEntry.support.subagentInvocationsLoading = false;
         this.syncSupportLoadsForOpenSession(liveEntry);
         liveEntry.updatedAtMs = Date.now();
         this.publish();

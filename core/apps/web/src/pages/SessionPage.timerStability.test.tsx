@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { act, render } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Message, SessionEvent, SessionTurn } from "../api/client";
 import { SessionView } from "./SessionPage";
+import { buildSessionThreadProjectionFromSnapshot } from "../state/sessionThreadProjection/applySnapshot";
 
 const sessionEntries = vi.hoisted(() => ({ map: {} as Record<string, unknown> }));
 const focusTaskSpy = vi.hoisted(() => vi.fn());
@@ -108,11 +110,47 @@ const sessionIdB = "session-2";
 
 const baseIso = "2025-01-01T00:00:00.000Z";
 const baseMs = Date.parse(baseIso);
+type ThreadProjectionSource = Parameters<typeof buildSessionThreadProjectionFromSnapshot>[0];
 
 const buildSessionEntry = (sessionId: string, taskId: string, startedAtMs: number) => {
   const turnId = `${sessionId}-turn-1`;
   const userMessageId = `${sessionId}-user-1`;
-  return {
+  const turns: SessionTurn[] = [
+    {
+      turn_id: turnId,
+      session_id: sessionId,
+      run_id: null,
+      user_message_id: userMessageId,
+      status: "running",
+      start_seq: null,
+      end_seq: null,
+      started_at: new Date(startedAtMs).toISOString(),
+      updated_at: new Date(startedAtMs).toISOString(),
+      assistant_partial: "",
+      thought_partial: "",
+      metrics_json: null,
+      tool_total: 0,
+      tool_pending: 0,
+      tool_running: 0,
+      tool_completed: 0,
+      tool_failed: 0,
+    },
+  ];
+  const messages: Message[] = [
+    {
+      id: userMessageId,
+      session_id: sessionId,
+      task_id: taskId,
+      role: "user",
+      content: "hello",
+      attachments: [],
+      delivery: "immediate",
+      created_at: baseIso,
+      turn_id: turnId,
+      order_seq: 1,
+    },
+  ];
+  const entry: ThreadProjectionSource & Record<string, unknown> = {
     sessionId,
     session: {
       id: sessionId,
@@ -121,45 +159,13 @@ const buildSessionEntry = (sessionId: string, taskId: string, startedAtMs: numbe
       status: "active",
       created_at: baseIso,
     },
-    turns: [
-      {
-        turn_id: turnId,
-        session_id: sessionId,
-        run_id: null,
-        user_message_id: userMessageId,
-        status: "running",
-        start_seq: null,
-        end_seq: null,
-        started_at: new Date(startedAtMs).toISOString(),
-        updated_at: new Date(startedAtMs).toISOString(),
-        assistant_partial: "",
-        thought_partial: "",
-        metrics_json: null,
-        tool_total: 0,
-        tool_pending: 0,
-        tool_running: 0,
-        tool_completed: 0,
-        tool_failed: 0,
-      },
-    ],
+    turns,
     turnToolsByTurnId: {},
     turnToolsLoading: [],
     toolSummariesReady: true,
     hasMoreTurns: false,
-    events: [],
-    messages: [
-      {
-        id: userMessageId,
-        session_id: sessionId,
-        role: "user",
-        content: "hello",
-        attachments: [],
-        delivery: "immediate",
-        created_at: baseIso,
-        turn_id: turnId,
-        order_seq: 1,
-      },
-    ],
+    events: [] as SessionEvent[],
+    messages,
     artifacts: [],
     artifactsLoading: false,
     subagentInvocations: [],
@@ -169,12 +175,24 @@ const buildSessionEntry = (sessionId: string, taskId: string, startedAtMs: numbe
     turnsRev: 0,
     messagesRev: 0,
     eventsRev: 0,
+    projectionRev: 0,
     queue: [],
     loading: false,
     subscribed: true,
     updatedAtMs: 0,
   };
+  return {
+    ...entry,
+    threadProjection: buildSessionThreadProjectionFromSnapshot(entry),
+  };
 };
+
+const withThreadProjection = <T extends ThreadProjectionSource>(entry: T): T & {
+  threadProjection: ReturnType<typeof buildSessionThreadProjectionFromSnapshot>;
+} => ({
+  ...entry,
+  threadProjection: buildSessionThreadProjectionFromSnapshot(entry),
+});
 
 beforeAll(() => {
   const globalWithMocks = globalThis as typeof globalThis & {
@@ -321,12 +339,10 @@ describe("SessionPage timer stability", () => {
       vi.advanceTimersByTime(16);
     });
 
-    const initialTurnsKeyCalls = workbenchKeySpies.deriveTurnsKey.mock.calls.length;
-    const initialMessagesKeyCalls = workbenchKeySpies.deriveMessagesKey.mock.calls.length;
-    expect(initialTurnsKeyCalls).toBeGreaterThan(0);
-    expect(initialMessagesKeyCalls).toBeGreaterThan(0);
+    const initialControllerArgs = controllerParamSpies.useWorkbenchThreadViewModelController.mock.calls.at(-1)?.[0];
+    expect(initialControllerArgs).toBeTruthy();
     const initialEntry = sessionEntries.map[sessionIdA] as ReturnType<typeof buildSessionEntry>;
-    sessionEntries.map[sessionIdA] = {
+    const nextEntry = withThreadProjection({
       ...initialEntry,
       lastEventSeq: 1,
       eventsRev: 1,
@@ -341,9 +357,10 @@ describe("SessionPage timer stability", () => {
           payload_json: { kind: "context.compacted", message: "Compacted." },
           created_at: new Date(baseMs + 1_000).toISOString(),
         },
-      ],
+      ] as SessionEvent[],
       updatedAtMs: 1,
-    };
+    });
+    sessionEntries.map[sessionIdA] = nextEntry;
 
     rerender(<SessionView sessionId={sessionIdA} isActive autoOpenSession={false} />);
 
@@ -351,8 +368,11 @@ describe("SessionPage timer stability", () => {
       vi.advanceTimersByTime(16);
     });
 
-    expect(workbenchKeySpies.deriveTurnsKey.mock.calls).toHaveLength(initialTurnsKeyCalls);
-    expect(workbenchKeySpies.deriveMessagesKey.mock.calls).toHaveLength(initialMessagesKeyCalls);
+    const nextControllerArgs = controllerParamSpies.useWorkbenchThreadViewModelController.mock.calls.at(-1)?.[0];
+    expect(nextControllerArgs?.turns).toBe(initialControllerArgs?.turns);
+    expect(nextControllerArgs?.messages).toBe(initialControllerArgs?.messages);
+    expect(nextEntry.threadProjection.turnsStamp).toBe(initialEntry.threadProjection.turnsStamp);
+    expect(nextEntry.threadProjection.messagesStamp).toBe(initialEntry.threadProjection.messagesStamp);
   });
 
   it("keeps ask-user answers referentially stable across unrelated event appends", async () => {
@@ -369,7 +389,7 @@ describe("SessionPage timer stability", () => {
     expect(initialAskAnswers).toBeInstanceOf(Map);
 
     const initialEntry = sessionEntries.map[sessionIdA] as ReturnType<typeof buildSessionEntry>;
-    sessionEntries.map[sessionIdA] = {
+    sessionEntries.map[sessionIdA] = withThreadProjection({
       ...initialEntry,
       lastEventSeq: 1,
       eventsRev: 1,
@@ -384,9 +404,9 @@ describe("SessionPage timer stability", () => {
           payload_json: { kind: "context.compacted", message: "Compacted." },
           created_at: new Date(baseMs + 1_000).toISOString(),
         },
-      ],
+      ] as SessionEvent[],
       updatedAtMs: 1,
-    };
+    });
 
     rerender(<SessionView sessionId={sessionIdA} isActive autoOpenSession={false} />);
 
@@ -413,7 +433,7 @@ describe("SessionPage timer stability", () => {
     expect(initialAskAnswers.size).toBe(0);
 
     const initialEntry = sessionEntries.map[sessionIdA] as ReturnType<typeof buildSessionEntry>;
-    sessionEntries.map[sessionIdA] = {
+    sessionEntries.map[sessionIdA] = withThreadProjection({
       ...initialEntry,
       lastEventSeq: 1,
       eventsRev: 1,
@@ -435,9 +455,9 @@ describe("SessionPage timer stability", () => {
           },
           created_at: new Date(baseMs + 1_000).toISOString(),
         },
-      ],
+      ] as SessionEvent[],
       updatedAtMs: 1,
-    };
+    });
 
     rerender(<SessionView sessionId={sessionIdA} isActive autoOpenSession={false} />);
 

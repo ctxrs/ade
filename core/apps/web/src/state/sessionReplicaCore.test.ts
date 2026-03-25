@@ -582,4 +582,177 @@ describe("SessionReplicaCore", () => {
     expect(latest.data.messages[0]?.content).toBe("post-summary-delta");
     expect(latest.data.activity).toEqual({ is_working: true, last_turn_status: "running" });
   });
+
+  it("emits canonical merged transcript state for streamed event-only deltas", () => {
+    const sessionId = "session-canonical-stream-delta";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    const createdAt = new Date().toISOString();
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [
+          {
+            turn_id: "turn-1",
+            session_id: sessionId,
+            run_id: "run-1",
+            user_message_id: "message-1",
+            status: "running",
+            start_seq: 1,
+            end_seq: null,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: "",
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+          },
+        ],
+        events: [],
+        messages: [
+          {
+            id: "message-1",
+            session_id: sessionId,
+            task_id: "task-1",
+            turn_id: "turn-1",
+            role: "user",
+            content: "queued later",
+            delivery: "immediate",
+            created_at: createdAt,
+          },
+        ],
+        last_event_seq: 1,
+        state_rev: 1,
+        activity: { is_working: true, last_turn_status: "running" },
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "bootstrap_seed",
+    });
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 2,
+          projection_rev: 2,
+          state_rev: 2,
+          event: {
+            seq: 2,
+            id: "event-done",
+            session_id: sessionId,
+            run_id: "run-1",
+            turn_id: "turn-1",
+            event_type: "done",
+            payload_json: {},
+            created_at: createdAt,
+          },
+        },
+      },
+    });
+
+    const latest = [...patches].reverse().find(
+      (patch) => patch.sessionId === sessionId && patch.op === "append" && Array.isArray(patch.data.turns),
+    );
+    if (!latest || latest.op === "evict" || !latest.data.turns || !latest.data.messages || !latest.data.events) {
+      throw new Error("expected canonical append patch");
+    }
+
+    expect(latest.data.turnsRev).toBeTypeOf("number");
+    expect(latest.data.messagesRev).toBeTypeOf("number");
+    expect(latest.data.eventsRev).toBeTypeOf("number");
+    expect(latest.data.turns[0]?.status).toBe("completed");
+    expect(latest.data.messages[0]?.delivery).toBe("immediate");
+    expect(latest.data.events.map((event) => event.id)).toContain("event-done");
+    expect(latest.data.lastEventSeq).toBe(2);
+  });
+
+  it("applies queue events into canonical message state before emitting append patches", () => {
+    const sessionId = "session-canonical-queue-delta";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    const createdAt = new Date().toISOString();
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [] as SessionTurn[],
+        events: [] as SessionEvent[],
+        messages: [
+          {
+            id: "message-queue",
+            session_id: sessionId,
+            task_id: "task-1",
+            role: "user",
+            content: "queue me",
+            delivery: "immediate",
+            created_at: createdAt,
+          },
+        ],
+        last_event_seq: 1,
+        state_rev: 1,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "bootstrap_seed",
+    });
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 2,
+          projection_rev: 2,
+          state_rev: 2,
+          event: {
+            seq: 2,
+            id: "event-queue-added",
+            session_id: sessionId,
+            run_id: "run-1",
+            event_type: "message_queue_added",
+            payload_json: { message_id: "message-queue" },
+            created_at: createdAt,
+          },
+        },
+      },
+    });
+
+    const latest = [...patches].reverse().find(
+      (patch) => patch.sessionId === sessionId && patch.op === "append" && Array.isArray(patch.data.messages),
+    );
+    if (!latest || latest.op === "evict" || !latest.data.messages) {
+      throw new Error("expected canonical queue append patch");
+    }
+
+    expect(latest.data.messages[0]?.delivery).toBe("queued");
+    expect(latest.data.messagesRev).toBeTypeOf("number");
+    expect(latest.data.lastEventSeq).toBe(2);
+  });
 });

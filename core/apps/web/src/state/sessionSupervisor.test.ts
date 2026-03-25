@@ -146,12 +146,15 @@ type TestInternalEntry = {
   historyExtended: boolean;
   lastEventSeq?: number;
   oldestTurnSeq?: number;
-  stateLoaded?: boolean;
   stateRev?: number;
-  stateAppliedRev?: number;
-  subagentInvocationsLoaded?: boolean;
-  subagentInvocationsAppliedRev?: number;
   loadState: "pending_hydration" | "live" | "recovering" | "fatal";
+  support: {
+    stateLoaded?: boolean;
+    stateRev?: number;
+    stateAppliedRev?: number;
+    subagentInvocationsLoaded?: boolean;
+    subagentInvocationsAppliedRev?: number;
+  };
 };
 
 type SessionSupervisorInternals = {
@@ -362,6 +365,13 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          messages: [
+            {
+              ...entry.messages[0],
+              delivery: "queued",
+            } as Message,
+          ],
+          messagesRev: beforeMessagesRev + 1,
           events: [
             {
               seq: 1,
@@ -421,6 +431,15 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          turns: [
+            {
+              ...entry.turns[0],
+              status: "completed",
+              end_seq: 2,
+              updated_at: createdAt,
+            } as SessionTurn,
+          ],
+          turnsRev: beforeTurnsRev + 1,
           events: [
             {
               seq: 2,
@@ -3019,10 +3038,10 @@ describe("SessionSupervisor", () => {
     await waitForCondition(() => {
       const entry = internals.entries.get(sessionId);
       return entry?.stateRev === 7
-        && entry?.stateAppliedRev === 7
-        && entry?.subagentInvocationsAppliedRev === 7
-        && entry?.stateLoaded === true
-        && entry?.subagentInvocationsLoaded === true;
+        && entry?.support.stateAppliedRev === 7
+        && entry?.support.subagentInvocationsAppliedRev === 7
+        && entry?.support.stateLoaded === true
+        && entry?.support.subagentInvocationsLoaded === true;
     });
 
     expect(getSessionState).toHaveBeenCalledTimes(1);
@@ -3080,8 +3099,8 @@ describe("SessionSupervisor", () => {
     await waitForCondition(() => {
       const entry = internals.entries.get(sessionId);
       return Boolean(
-        entry?.stateLoaded
-          && entry?.subagentInvocationsLoaded
+        entry?.support.stateLoaded
+          && entry?.support.subagentInvocationsLoaded
           && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/a"
           && sup.getSnapshot().sessions[sessionId]?.subagentInvocations[0]?.id === "subagent-a",
       );
@@ -3092,8 +3111,8 @@ describe("SessionSupervisor", () => {
 
     const reopened = internals.entries.get(sessionId);
     expect(reopened?.stateRev).toBeUndefined();
-    expect(reopened?.stateLoaded).toBe(false);
-    expect(reopened?.subagentInvocationsLoaded).toBe(false);
+    expect(reopened?.support.stateLoaded).toBe(false);
+    expect(reopened?.support.subagentInvocationsLoaded).toBe(false);
     expect(getSessionState).toHaveBeenCalledTimes(1);
     expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(1);
 
@@ -3164,8 +3183,8 @@ describe("SessionSupervisor", () => {
 
     await waitForCondition(() => {
       const current = internals.entries.get(sessionId);
-      return current?.stateAppliedRev === 7
-        && current?.subagentInvocationsAppliedRev === 7
+      return current?.support.stateAppliedRev === 7
+        && current?.support.subagentInvocationsAppliedRev === 7
         && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/b"
         && sup.getSnapshot().sessions[sessionId]?.subagentInvocations[0]?.id === "subagent-b";
     });
@@ -3184,14 +3203,14 @@ describe("SessionSupervisor", () => {
     const entry = internals.ensureEntry(sessionId);
     entry.freshness = "replica";
     entry.stateRev = 7;
-    entry.stateAppliedRev = 7;
+    entry.support.stateAppliedRev = 7;
 
     sup.loadSessionState(sessionId);
     sup.loadSubagentInvocations(sessionId);
 
     await waitForCondition(() => {
       const current = internals.entries.get(sessionId);
-      return Boolean(current?.stateLoaded && current?.subagentInvocationsLoaded);
+      return Boolean(current?.support.stateLoaded && current?.support.subagentInvocationsLoaded);
     });
 
     internals.handleReplicaPatches([
@@ -3221,9 +3240,9 @@ describe("SessionSupervisor", () => {
     ]);
 
     const replaced = internals.entries.get(sessionId);
-    expect(replaced?.stateLoaded).toBe(true);
-    expect(replaced?.stateAppliedRev).toBe(7);
-    expect(replaced?.subagentInvocationsLoaded).toBe(true);
+    expect(replaced?.support.stateLoaded).toBe(true);
+    expect(replaced?.support.stateAppliedRev).toBe(7);
+    expect(replaced?.support.subagentInvocationsLoaded).toBe(true);
 
     sup.loadSessionState(sessionId);
     sup.loadSubagentInvocations(sessionId);
@@ -3334,6 +3353,8 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          turns: [mkTurn({ sessionId, turnId: "turn-1", status: "interrupted", startSeq: 1 })],
+          turnsRev: 2,
           events: [
             {
               seq: 2,
@@ -3405,6 +3426,8 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
+          turns: [mkTurn({ sessionId, turnId: "turn-1", status: "interrupted", startSeq: 1 })],
+          turnsRev: 2,
           events: [
             {
               seq: 2,
@@ -3476,14 +3499,14 @@ describe("SessionSupervisor", () => {
     const internals = asSupervisorInternals(sup);
 
     sup.loadSessionState(sessionId);
-    await waitForCondition(() => internals.entries.get(sessionId)?.stateLoaded === true);
+    await waitForCondition(() => internals.entries.get(sessionId)?.support.stateLoaded === true);
 
     internals.entries.delete(sessionId);
 
     sup.loadSessionState(sessionId);
     await waitForCondition(() => {
       const entry = internals.entries.get(sessionId);
-      return entry?.stateLoaded === true
+      return entry?.support.stateLoaded === true
         && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/b";
     });
 
@@ -3499,7 +3522,7 @@ describe("SessionSupervisor", () => {
 
     sup.loadSessionState(sessionId);
 
-    await waitForCondition(() => internals.entries.get(sessionId)?.stateLoaded === true);
+    await waitForCondition(() => internals.entries.get(sessionId)?.support.stateLoaded === true);
 
     internals.handleReplicaPatches([
       {
@@ -3535,7 +3558,7 @@ describe("SessionSupervisor", () => {
 
     await waitForCondition(() => {
       const entry = internals.entries.get(sessionId);
-      return entry?.stateAppliedRev === 9;
+      return entry?.support.stateAppliedRev === 9;
     });
 
     expect(getSessionState).toHaveBeenCalledTimes(2);
@@ -3591,8 +3614,8 @@ describe("SessionSupervisor", () => {
 
     await waitForCondition(() => {
       const current = internals.entries.get(sessionId);
-      return current?.stateAppliedRev === 7
-        && current?.subagentInvocationsAppliedRev === 7
+      return current?.support.stateAppliedRev === 7
+        && current?.support.subagentInvocationsAppliedRev === 7
         && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/a"
         && sup.getSnapshot().sessions[sessionId]?.subagentInvocations[0]?.id === "subagent-a";
     });
@@ -3610,8 +3633,8 @@ describe("SessionSupervisor", () => {
 
     await waitForCondition(() => {
       const current = internals.entries.get(sessionId);
-      return current?.stateAppliedRev === 9
-        && current?.subagentInvocationsAppliedRev === 9
+      return current?.support.stateAppliedRev === 9
+        && current?.support.subagentInvocationsAppliedRev === 9
         && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/b"
         && sup.getSnapshot().sessions[sessionId]?.subagentInvocations[0]?.id === "subagent-b";
     });
@@ -4042,7 +4065,7 @@ describe("SessionSupervisor", () => {
     const internals = asSupervisorInternals(sup);
 
     sup.loadSessionState(sessionId);
-    await waitForCondition(() => internals.entries.get(sessionId)?.stateLoaded === true);
+    await waitForCondition(() => internals.entries.get(sessionId)?.support.stateLoaded === true);
 
     sup.loadSessionState(sessionId, { force: true });
     await waitForCondition(() => internals.stateCacheBySessionId.get(sessionId)?.state.git_status === null);

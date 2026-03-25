@@ -110,16 +110,20 @@ export function syncSupportLoadsForOpenSession(
   if (entry.refCount <= 0) return;
   const requestedStateRev = deps.resolveRequestedStateRev(entry);
   if (typeof requestedStateRev !== "number") return;
-  const freshnessKey = deriveSupportFreshnessKey(requestedStateRev, entry.supportFreshnessEpoch);
-  if (entry.stateAutoLoadKey !== freshnessKey && shouldFetchSessionState(entry)) {
-    entry.stateAutoLoadKey = freshnessKey;
+  const support = entry.support;
+  const freshnessKey = deriveSupportFreshnessKey(requestedStateRev, support.supportFreshnessEpoch);
+  if (
+    support.stateAutoLoadKey !== freshnessKey &&
+    shouldFetchSessionState({ ...support, stateRev: entry.stateRev })
+  ) {
+    support.stateAutoLoadKey = freshnessKey;
     void deps.ensureState(entry);
   }
   if (
-    entry.subagentAutoLoadKey !== freshnessKey &&
-    shouldFetchSubagentInvocations(entry, requestedStateRev)
+    support.subagentAutoLoadKey !== freshnessKey &&
+    shouldFetchSubagentInvocations(support, requestedStateRev)
   ) {
-    entry.subagentAutoLoadKey = freshnessKey;
+    support.subagentAutoLoadKey = freshnessKey;
     void deps.ensureSubagentInvocations(entry);
   }
 }
@@ -137,14 +141,15 @@ export function invalidateSupportLoadsWithoutAuthoritativeRevision(
   deps: SupportLoadInvalidationDeps,
 ): void {
   if (typeof deps.resolveRequestedStateRev(entry) === "number") return;
-  entry.supportFreshnessEpoch += 1;
-  if (!entry.stateLoading) {
-    entry.stateLoaded = false;
-    entry.stateAppliedRev = undefined;
+  const support = entry.support;
+  support.supportFreshnessEpoch += 1;
+  if (!support.stateLoading) {
+    support.stateLoaded = false;
+    support.stateAppliedRev = undefined;
   }
-  if (!entry.subagentInvocationsLoading) {
-    entry.subagentInvocationsLoaded = false;
-    entry.subagentInvocationsAppliedRev = undefined;
+  if (!support.subagentInvocationsLoading) {
+    support.subagentInvocationsLoaded = false;
+    support.subagentInvocationsAppliedRev = undefined;
   }
   deps.subagentInvocationsCacheBySessionId.delete(entry.sessionId);
 }
@@ -157,11 +162,12 @@ export function adoptLoadedSubagentInvocationsRevision(
     { invocations: SubagentInvocation[]; stateRev: number }
   >,
 ): void {
-  if (!entry.subagentInvocationsLoaded) return;
-  if (typeof entry.subagentInvocationsAppliedRev === "number") return;
-  entry.subagentInvocationsAppliedRev = stateRev;
+  const support = entry.support;
+  if (!support.subagentInvocationsLoaded) return;
+  if (typeof support.subagentInvocationsAppliedRev === "number") return;
+  support.subagentInvocationsAppliedRev = stateRev;
   subagentInvocationsCacheBySessionId.set(entry.sessionId, {
-    invocations: entry.subagentInvocations.slice(),
+    invocations: support.subagentInvocations.slice(),
     stateRev,
   });
 }
@@ -170,8 +176,8 @@ export function clearSupportLoadError(
   entry: InternalEntry,
   key: SessionSupportLoadErrorKey,
 ): void {
-  if (!entry.loadErrors[key]) return;
-  delete entry.loadErrors[key];
+  if (!entry.support.loadErrors[key]) return;
+  delete entry.support.loadErrors[key];
 }
 
 export function setSupportLoadError(
@@ -192,5 +198,5 @@ export function setSupportLoadError(
       target: key,
     },
   });
-  entry.loadErrors[key] = message;
+  entry.support.loadErrors[key] = message;
 }

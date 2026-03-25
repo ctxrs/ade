@@ -31,6 +31,43 @@ export type SessionSupervisorSnapshot = {
   sessions: Record<string, SessionCacheEntry>;
 };
 
+export type SessionOverlayState = {
+  optimisticThreadMessages: Message[];
+  optimisticQueuedMessages: Message[];
+  optimisticQueueRemovalIds: string[];
+  overlayRev: number;
+};
+
+export type SessionSupportState = {
+  turnToolsByTurnId: Record<string, SessionTurnTool[]>;
+  turnToolsLoadingSet: Set<string>;
+  turnToolsHydratedByTurnId: Record<string, boolean>;
+  toolSummariesReady: boolean;
+  artifacts: Artifact[];
+  artifactsLoading: boolean;
+  artifactsLoaded: boolean;
+  artifactsFetchedAtMs?: number;
+  subagentInvocations: SubagentInvocation[];
+  subagentInvocationsLoaded: boolean;
+  subagentInvocationsLoading: boolean;
+  subagentInvocationsFetchedAtMs?: number;
+  subagentInvocationsAppliedRev?: number;
+  stateLoaded: boolean;
+  stateLoading: boolean;
+  stateAppliedRev?: number;
+  stateFetchToken: number;
+  loadErrors: SessionSupportLoadErrors;
+  supportFreshnessEpoch: number;
+  stateAutoLoadKey?: string;
+  subagentAutoLoadKey?: string;
+  diff?: string;
+  gitStatusSummary?: GitStatusSummary | null;
+  fetching: {
+    head: boolean;
+    history: boolean;
+  };
+};
+
 export type SessionCacheEntry = {
   sessionId: string;
   mode?: SessionMode;
@@ -100,7 +137,30 @@ export type OpenOptions = {
   mode?: SessionMode;
 };
 
-export type InternalEntry = SessionCacheEntry & {
+type InternalEntryBase = Omit<
+  SessionCacheEntry,
+  | "turnToolsByTurnId"
+  | "turnToolsLoading"
+  | "toolSummariesReady"
+  | "artifacts"
+  | "artifactsLoading"
+  | "subagentInvocations"
+  | "subagentInvocationsLoaded"
+  | "subagentInvocationsLoading"
+  | "stateLoaded"
+  | "stateLoading"
+  | "loadErrors"
+  | "optimisticThreadMessages"
+  | "optimisticQueuedMessages"
+  | "optimisticQueueRemovalIds"
+  | "overlayRev"
+  | "diff"
+  | "gitStatusSummary"
+  | "threadProjection"
+  | "fetching"
+>;
+
+export type InternalEntry = InternalEntryBase & {
   refCount: number;
   warmUntilMs: number;
   historyExtended: boolean;
@@ -112,23 +172,10 @@ export type InternalEntry = SessionCacheEntry & {
   oldestTurnSeq?: number;
   toolStatusByKey: Map<string, string>;
   toolIdsByTurn: Map<string, Set<string>>;
-  turnToolsLoadingSet: Set<string>;
-  turnToolsHydratedByTurnId: Record<string, boolean>;
   turnsRev: number;
   messagesRev: number;
   eventsRev: number;
-  artifactsLoaded: boolean;
-  artifactsFetchedAtMs?: number;
-  subagentInvocationsLoaded: boolean;
-  subagentInvocationsFetchedAtMs?: number;
-  subagentInvocationsAppliedRev?: number;
-  stateLoaded: boolean;
-  stateLoading: boolean;
   stateRev?: number;
-  stateAppliedRev?: number;
-  stateFetchToken: number;
-  loadErrors: SessionSupportLoadErrors;
-  diagnosticsByPath: Record<string, unknown[]>;
   headFromCache: boolean;
   thoughtCacheByKey: Record<string, ThoughtCacheEntry>;
   thoughtCacheLoaded: boolean;
@@ -136,13 +183,9 @@ export type InternalEntry = SessionCacheEntry & {
   thoughtCacheDirty: boolean;
   thoughtCacheOwnerTaskKey?: string;
   thoughtCacheLoadToken: number;
-  supportFreshnessEpoch: number;
-  stateAutoLoadKey?: string;
-  subagentAutoLoadKey?: string;
-  fetching: {
-    head: boolean;
-    history: boolean;
-  };
+  diagnosticsByPath: Record<string, unknown[]>;
+  overlay: SessionOverlayState;
+  support: SessionSupportState;
 };
 
 export function createInternalEntry(
@@ -162,37 +205,18 @@ export function createInternalEntry(
     acpCommands: undefined,
     acpSlashCommands: undefined,
     turns: [],
-    turnToolsByTurnId: {},
-    turnToolsLoading: [],
     toolSummaries: [],
-    toolSummariesReady: false,
     hasMoreTurns: true,
     events: [],
     eventsRev: 0,
     messages: [],
     messagesRev: 0,
     turnsRev: 0,
-    artifacts: [],
-    artifactsLoading: false,
-    subagentInvocations: [],
-    subagentInvocationsLoading: false,
-    stateLoaded: false,
-    stateLoading: false,
     stateRev: undefined,
-    stateAppliedRev: undefined,
-    stateFetchToken: 0,
-    loadErrors: {},
     queue: [],
-    optimisticThreadMessages: [],
-    optimisticQueuedMessages: [],
-    optimisticQueueRemovalIds: [],
-    overlayRev: 0,
-    diff: undefined,
-    gitStatusSummary: null,
     summaryCheckpoint: null,
     headWindow: null,
     projectionRev: undefined,
-    threadProjection: undefined,
     diagnosticsByPath: {},
     lastEventSeq: undefined,
     loading: false,
@@ -209,13 +233,6 @@ export function createInternalEntry(
     oldestTurnSeq: undefined,
     toolStatusByKey: new Map(),
     toolIdsByTurn: new Map(),
-    turnToolsLoadingSet: new Set(),
-    turnToolsHydratedByTurnId: {},
-    artifactsLoaded: false,
-    artifactsFetchedAtMs: undefined,
-    subagentInvocationsLoaded: false,
-    subagentInvocationsFetchedAtMs: undefined,
-    subagentInvocationsAppliedRev: undefined,
     headFromCache: false,
     historyExtended: false,
     thoughtCacheByKey: {},
@@ -224,12 +241,40 @@ export function createInternalEntry(
     thoughtCacheDirty: false,
     thoughtCacheOwnerTaskKey: undefined,
     thoughtCacheLoadToken: 0,
-    supportFreshnessEpoch: 0,
-    stateAutoLoadKey: undefined,
-    subagentAutoLoadKey: undefined,
-    fetching: {
-      head: false,
-      history: false,
+    overlay: {
+      optimisticThreadMessages: [],
+      optimisticQueuedMessages: [],
+      optimisticQueueRemovalIds: [],
+      overlayRev: 0,
+    },
+    support: {
+      turnToolsByTurnId: {},
+      turnToolsLoadingSet: new Set(),
+      turnToolsHydratedByTurnId: {},
+      toolSummariesReady: false,
+      artifacts: [],
+      artifactsLoading: false,
+      artifactsLoaded: false,
+      artifactsFetchedAtMs: undefined,
+      subagentInvocations: [],
+      subagentInvocationsLoaded: false,
+      subagentInvocationsLoading: false,
+      subagentInvocationsFetchedAtMs: undefined,
+      subagentInvocationsAppliedRev: undefined,
+      stateLoaded: false,
+      stateLoading: false,
+      stateAppliedRev: undefined,
+      stateFetchToken: 0,
+      loadErrors: {},
+      supportFreshnessEpoch: 0,
+      stateAutoLoadKey: undefined,
+      subagentAutoLoadKey: undefined,
+      diff: undefined,
+      gitStatusSummary: null,
+      fetching: {
+        head: false,
+        history: false,
+      },
     },
   };
 }

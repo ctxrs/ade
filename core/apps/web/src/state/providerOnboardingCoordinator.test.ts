@@ -104,6 +104,15 @@ const baseOptions = (workspaceId: string, providerId: string): ProviderOptions =
   probed_at: "2026-03-10T00:00:00.000Z",
 });
 
+const readyUsability = {
+  usable: true,
+  status: "ready",
+  reason_code: null,
+  reason: null,
+  blocking_provider_ids: [],
+  recommended_action: "none",
+} as const;
+
 const makeBootstrap = (
   workspaceId: string,
   overrides?: Partial<ProvidersBootstrapResponse>,
@@ -120,6 +129,7 @@ const makeBootstrap = (
         install_running: "true",
         install_target: "container",
       },
+      usability: readyUsability,
     } as never,
   ],
   provider_options: {
@@ -179,6 +189,7 @@ const makeHostProvider = (overrides?: Record<string, unknown>) => ({
   installed: false,
   health: "ok",
   diagnostics: [],
+  usability: readyUsability,
   details: {
     install_running: "false",
     install_target: "host",
@@ -364,6 +375,7 @@ describe("providerOnboardingCoordinator", () => {
           installed: true,
           health: "ok",
           diagnostics: [],
+          usability: readyUsability,
           details: {
             install_id: "install-codex",
             install_running: "false",
@@ -461,6 +473,7 @@ describe("providerOnboardingCoordinator", () => {
           installed: true,
           health: "ok",
           diagnostics: [],
+          usability: readyUsability,
           details: {
             install_id: "install-codex",
             install_running: "true",

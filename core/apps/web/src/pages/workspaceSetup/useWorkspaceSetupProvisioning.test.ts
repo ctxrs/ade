@@ -91,6 +91,15 @@ const authImportCandidateFixture = {
 
 type MockProviderInstallProgressSnapshot = Record<string, ProviderInstallProgressSession>;
 
+const blockedInstallUsability = {
+  usable: false,
+  status: "blocked",
+  reason_code: "not_installed",
+  reason: "Not installed.",
+  blocking_provider_ids: [],
+  recommended_action: "install",
+} as const;
+
 describe("useWorkspaceSetupProvisioning", () => {
   let providerProgressSnapshot: ProviderInstallProgressSnapshot;
   let providerProgressListeners: Set<(snapshot: ProviderInstallProgressSnapshot) => void>;
@@ -391,6 +400,7 @@ describe("useWorkspaceSetupProvisioning", () => {
           installed: false,
           health: "error",
           diagnostics: [],
+          usability: blockedInstallUsability,
           details: {
             install_supported: "true",
           },
@@ -487,6 +497,7 @@ describe("useWorkspaceSetupProvisioning", () => {
           installed: false,
           health: "error",
           diagnostics: [],
+          usability: blockedInstallUsability,
           details: {
             install_supported: "true",
             install_running: "true",
@@ -584,6 +595,7 @@ describe("useWorkspaceSetupProvisioning", () => {
           installed: false,
           health: "error",
           diagnostics: [],
+          usability: blockedInstallUsability,
           details: {
             install_supported: "true",
             install_target: "container",
@@ -653,6 +665,7 @@ describe("useWorkspaceSetupProvisioning", () => {
           installed: false,
           health: "error",
           diagnostics: [],
+          usability: blockedInstallUsability,
           details: {
             install_supported: "true",
             install_target: "container",

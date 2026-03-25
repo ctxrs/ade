@@ -73,8 +73,11 @@ export type SessionReplicaData = {
     slashCommands?: unknown;
   };
   turns?: SessionTurn[];
+  turnsRev?: number;
   messages?: Message[];
+  messagesRev?: number;
   events?: SessionEvent[];
+  eventsRev?: number;
   toolSummaries?: SessionTurnToolSummary[];
   headWindow?: SessionHeadWindow | null;
   summaryCheckpoint?: SessionSummaryCheckpoint | null;
@@ -82,7 +85,6 @@ export type SessionReplicaData = {
   projectionRev?: number;
   hasMoreTurns?: boolean;
   stateRev?: number;
-  forceReplace?: boolean;
   artifacts?: Artifact[];
   gitStatusSummary?: GitStatusSummary | null;
   loading?: boolean;

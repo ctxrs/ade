@@ -82,6 +82,7 @@ function pruneOmittedNonTerminalTurns(
   incomingTurns: SessionTurn[],
 ) {
   if (incomingTurns.length === 0 || entry.turns.length === 0) return;
+  const support = entry.support;
   const retainedTurnIds = new Set(
     incomingTurns
       .map((turn) => idToString(turn.turn_id))
@@ -111,14 +112,15 @@ function pruneOmittedNonTerminalTurns(
   });
 
   for (const turnId of removedTurnIds) {
-    delete entry.turnToolsByTurnId[turnId];
-    delete entry.turnToolsHydratedByTurnId[turnId];
+    delete support.turnToolsByTurnId[turnId];
+    delete support.turnToolsHydratedByTurnId[turnId];
     entry.startedTurnIds.delete(turnId);
     entry.toolIdsByTurn.delete(turnId);
   }
 
-  entry.turnToolsLoading = entry.turnToolsLoading.filter((turnId) => !removedTurnIds.has(turnId));
-  entry.turnToolsLoadingSet = new Set(entry.turnToolsLoading);
+  for (const turnId of removedTurnIds) {
+    support.turnToolsLoadingSet.delete(turnId);
+  }
   entry.oldestTurnSeq = entry.turns[0]?.start_seq ?? entry.oldestTurnSeq;
   this.bumpTurnsRev(entry);
   this.bumpMessagesRev(entry);
@@ -162,6 +164,7 @@ export function applyHead(
     freshness?: InternalEntry["freshness"];
   },
 ) {
+  const support = entry.support;
   entry.headFromCache = Boolean(opts?.fromCache);
   entry.session = head.session;
   if ("activity" in head) {
@@ -185,9 +188,9 @@ export function applyHead(
   const headStateRev = headRecord?.state_rev ?? headRecord?.stateRev;
   if (typeof headStateRev === "number") {
     entry.stateRev = headStateRev;
-    entry.stateAppliedRev = adoptLoadedStateRevision(
-      entry.stateLoaded,
-      entry.stateAppliedRev,
+    support.stateAppliedRev = adoptLoadedStateRevision(
+      support.stateLoaded,
+      support.stateAppliedRev,
       headStateRev,
     );
     this.adoptLoadedSubagentInvocationsRevision(entry, headStateRev);
@@ -210,7 +213,7 @@ export function applyHead(
     entry.toolSummaries = incomingToolSummaries ?? [];
   }
   if (head.tool_summaries && head.tool_summaries.length > 0) {
-    const hydrated = entry.turnToolsHydratedByTurnId;
+    const hydrated = support.turnToolsHydratedByTurnId;
     const nextByTurn: Record<string, SessionTurnTool[]> = {};
     for (const summary of head.tool_summaries) {
       const turnId = idToString(summary.turn_id);
@@ -241,8 +244,8 @@ export function applyHead(
       nextByTurn[turnId] = list;
     }
     if (Object.keys(nextByTurn).length > 0) {
-      entry.turnToolsByTurnId = {
-        ...entry.turnToolsByTurnId,
+      support.turnToolsByTurnId = {
+        ...support.turnToolsByTurnId,
         ...nextByTurn,
       };
       for (const turnId of Object.keys(nextByTurn)) {
@@ -250,7 +253,7 @@ export function applyHead(
       }
     }
   }
-  entry.toolSummariesReady = true;
+  support.toolSummariesReady = true;
   entry.error = undefined;
   this.setSessionLoadState(entry, "live");
   this.syncSupportLoadsForOpenSession(entry);
@@ -264,7 +267,8 @@ export function applyToolSummaries(
   entry: InternalEntry,
   summaries: SessionTurnToolSummary[],
 ) {
-  const hydrated = entry.turnToolsHydratedByTurnId;
+  const support = entry.support;
+  const hydrated = support.turnToolsHydratedByTurnId;
   let changed = false;
   const nextByTurn: Record<string, SessionTurnTool[]> = {};
   entry.toolSummaries = summaries;
@@ -299,7 +303,7 @@ export function applyToolSummaries(
   }
 
   for (const [turnId, incoming] of Object.entries(nextByTurn)) {
-    const existing = entry.turnToolsByTurnId[turnId] ?? [];
+    const existing = support.turnToolsByTurnId[turnId] ?? [];
     const seen = new Set(existing.map((tool) => String(tool.tool_call_id)));
     const merged = existing.slice();
     for (const tool of incoming) {
@@ -308,8 +312,8 @@ export function applyToolSummaries(
       seen.add(key);
       merged.push(tool);
     }
-    entry.turnToolsByTurnId = {
-      ...entry.turnToolsByTurnId,
+    support.turnToolsByTurnId = {
+      ...support.turnToolsByTurnId,
       [turnId]: merged,
     };
     if (!hydrated[turnId]) hydrated[turnId] = false;
@@ -317,7 +321,7 @@ export function applyToolSummaries(
   }
 
   if (changed) {
-    entry.toolSummariesReady = true;
+    support.toolSummariesReady = true;
     entry.updatedAtMs = Date.now();
     this.publish();
   }
@@ -330,6 +334,7 @@ export function applyState(
   stateRev?: number,
 ) {
   if (!state) return;
+  const support = entry.support;
   if (
     typeof stateRev === "number" &&
     typeof entry.stateRev === "number" &&
@@ -337,19 +342,19 @@ export function applyState(
   ) {
     return;
   }
-  entry.stateLoaded = true;
-  entry.stateLoading = false;
+  support.stateLoaded = true;
+  support.stateLoading = false;
   this.clearSupportLoadError(entry, "state");
   if (typeof stateRev === "number") {
     entry.stateRev = stateRev;
-    entry.stateAppliedRev = stateRev;
+    support.stateAppliedRev = stateRev;
   }
-  entry.artifacts = Array.isArray(state.artifacts) ? state.artifacts : [];
-  entry.artifactsLoaded = true;
-  entry.artifactsLoading = false;
-  entry.artifactsFetchedAtMs = Date.now();
+  support.artifacts = Array.isArray(state.artifacts) ? state.artifacts : [];
+  support.artifactsLoaded = true;
+  support.artifactsLoading = false;
+  support.artifactsFetchedAtMs = Date.now();
   this.clearSupportLoadError(entry, "artifacts");
-  entry.gitStatusSummary = state.git_status ?? null;
+  support.gitStatusSummary = state.git_status ?? null;
   syncStateCache.call(this, entry, stateRev);
 }
 
@@ -361,7 +366,7 @@ export function syncStateCache(
   const cached = this.stateCacheBySessionId.get(entry.sessionId);
   this.stateCacheBySessionId.set(entry.sessionId, {
     state: {
-      artifacts: entry.artifacts.slice(),
+      artifacts: entry.support.artifacts.slice(),
       git_status: buildStateGitStatusSummary(this, entry),
     },
     stateRev: typeof stateRev === "number" ? stateRev : cached?.stateRev,
@@ -372,7 +377,7 @@ const buildStateGitStatusSummary = (
   host: SessionSupervisorHeadProjectionHost,
   entry: InternalEntry,
 ): SessionState["git_status"] => {
-  const summary = entry.gitStatusSummary;
+  const summary = entry.support.gitStatusSummary;
   const cached = host.stateCacheBySessionId.get(entry.sessionId)?.state.git_status ?? null;
   if (!summary) return null;
 
@@ -454,6 +459,7 @@ export function resetEntryProjectionForReplace(
   entry: InternalEntry,
   opts?: { skipPublish?: boolean },
 ) {
+  const support = entry.support;
   entry.turns = [];
   entry.events = [];
   entry.messages = [];
@@ -461,17 +467,16 @@ export function resetEntryProjectionForReplace(
   this.bumpTurnsRev(entry);
   this.bumpEventsRev(entry);
   this.bumpMessagesRev(entry);
-  entry.turnToolsByTurnId = {};
-  entry.turnToolsHydratedByTurnId = {};
-  entry.turnToolsLoadingSet.clear();
-  entry.turnToolsLoading = [];
+  support.turnToolsByTurnId = {};
+  support.turnToolsHydratedByTurnId = {};
+  support.turnToolsLoadingSet.clear();
   entry.toolStatusByKey.clear();
   entry.toolIdsByTurn.clear();
   entry.historyExtended = false;
   entry.seqSet.clear();
   entry.startedTurnIds.clear();
   entry.turnsHydrated = false;
-  entry.toolSummariesReady = false;
+  support.toolSummariesReady = false;
   entry.hasMoreTurns = true;
   this.setSessionLoadState(entry, "recovering");
   entry.updatedAtMs = Date.now();
