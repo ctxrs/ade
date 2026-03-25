@@ -43,6 +43,7 @@ type Result = {
 };
 
 const INITIAL_LOCATION_BOTTOM: ItemLocation = { index: "LAST", align: "end" };
+const USER_SCROLL_INTENT_HOLD_MS = 600;
 
 export function useSessionMessageListController(params: Params): Result {
   const {
@@ -64,6 +65,8 @@ export function useSessionMessageListController(params: Params): Result {
   const lastSessionIdRef = useRef(sessionId);
   const lastIsActiveRef = useRef(isActive);
   const contractViolationLoggedRef = useRef<{ sessionId: string; violationKey: string } | null>(null);
+  const wheelIntentScrollerRef = useRef<HTMLElement | null>(null);
+  const releaseBottomLockUntilRef = useRef(0);
 
   const lastScrollLocationRef = useRef<ListScrollLocation | null>(null);
   const stickToBottomRef = useRef(true);
@@ -165,6 +168,29 @@ export function useSessionMessageListController(params: Params): Result {
     [],
   );
 
+  const releaseBottomLock = useCallback(() => {
+    releaseBottomLockUntilRef.current = Date.now() + USER_SCROLL_INTENT_HOLD_MS;
+    stickToBottomRef.current = false;
+    if (onAtBottomChange && lastAtBottomRef.current !== false) {
+      lastAtBottomRef.current = false;
+      onAtBottomChange(false);
+    }
+  }, [onAtBottomChange]);
+
+  const releaseBottomLockOnWheel = useCallback(
+    (event: WheelEvent) => {
+      if (event.deltaY >= 0) return;
+      const scroller = methodsRef.current?.scrollerElement?.() ?? null;
+      if (!scroller) return;
+      const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      if (maxScrollTop <= 0) return;
+      const distanceFromBottom = Math.max(0, maxScrollTop - scroller.scrollTop);
+      if (distanceFromBottom > 16) return;
+      releaseBottomLock();
+    },
+    [releaseBottomLock],
+  );
+
   const appendBehavior = useMemo<AutoscrollToBottom<WorkbenchListItem, WorkbenchMessageListContext>>(
     () => (params) => (params.atBottom ? "auto" : false),
     [],
@@ -184,6 +210,25 @@ export function useSessionMessageListController(params: Params): Result {
   // Keep an up-to-date reference without introducing additional hook ordering churn under HMR.
   firstListItemIdRef.current = visibleListItems?.[0]?.id ?? null;
 
+  useEffect(() => {
+    const previousScroller = wheelIntentScrollerRef.current;
+    if (previousScroller) {
+      previousScroller.removeEventListener("wheel", releaseBottomLockOnWheel);
+      wheelIntentScrollerRef.current = null;
+    }
+    if (!isActive) return;
+    const scroller = methodsRef.current?.scrollerElement?.() ?? null;
+    if (!scroller) return;
+    wheelIntentScrollerRef.current = scroller;
+    scroller.addEventListener("wheel", releaseBottomLockOnWheel, { passive: true });
+    return () => {
+      scroller.removeEventListener("wheel", releaseBottomLockOnWheel);
+      if (wheelIntentScrollerRef.current === scroller) {
+        wheelIntentScrollerRef.current = null;
+      }
+    };
+  });
+
   const onScroll = useCallback(
     (location: ListScrollLocation) => {
       lastScrollLocationRef.current = location;
@@ -196,13 +241,15 @@ export function useSessionMessageListController(params: Params): Result {
         scroller
           ? scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight) <= 16
           : atBottomFromLocation;
-      stickToBottomRef.current = atBottom;
-      if (atBottom && deferTrailingAppends) {
+      const holdBottomLockRelease = Date.now() < releaseBottomLockUntilRef.current;
+      const effectiveAtBottom = holdBottomLockRelease ? false : atBottom;
+      stickToBottomRef.current = effectiveAtBottom;
+      if (effectiveAtBottom && deferTrailingAppends) {
         setDeferTrailingAppends(false);
       }
-      if (isActive && onAtBottomChange && lastAtBottomRef.current !== atBottom) {
-        lastAtBottomRef.current = atBottom;
-        onAtBottomChange(atBottom);
+      if (isActive && onAtBottomChange && lastAtBottomRef.current !== effectiveAtBottom) {
+        lastAtBottomRef.current = effectiveAtBottom;
+        onAtBottomChange(effectiveAtBottom);
       }
 
       // History pagination trigger: use the library-provided scroll location only.
@@ -227,7 +274,7 @@ export function useSessionMessageListController(params: Params): Result {
             listOffset: location.listOffset,
             visibleListHeight: location.visibleListHeight,
             bottomOffset: location.bottomOffset,
-            atBottom,
+            atBottom: effectiveAtBottom,
           });
         }
       }

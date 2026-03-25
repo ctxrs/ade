@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useSessionMessageListController } from "./useSessionMessageListController";
 import type { WorkbenchListItem } from "./SessionPage.types";
 import type { WorkbenchThreadProjectionOp } from "./sessionThreadProjection";
+import type { ListScrollLocation } from "@virtuoso.dev/message-list";
 
 let coalescedItems: WorkbenchListItem[] = [];
 
@@ -95,10 +96,44 @@ function createFakeMethods(initialItems: WorkbenchListItem[] = []) {
   };
 }
 
+function createFakeScroller({
+  scrollHeight,
+  clientHeight,
+  scrollTop,
+}: {
+  scrollHeight: number;
+  clientHeight: number;
+  scrollTop: number;
+}) {
+  const scroller = document.createElement("div");
+  Object.defineProperty(scroller, "scrollHeight", {
+    configurable: true,
+    value: scrollHeight,
+  });
+  Object.defineProperty(scroller, "clientHeight", {
+    configurable: true,
+    value: clientHeight,
+  });
+  scroller.scrollTop = scrollTop;
+  return scroller;
+}
+
+function makeScrollLocation(overrides: Partial<ListScrollLocation> = {}): ListScrollLocation {
+  return {
+    bottomOffset: 0,
+    isAtBottom: true,
+    listOffset: -600,
+    scrollHeight: 1200,
+    visibleListHeight: 600,
+    ...overrides,
+  };
+}
+
 describe("useSessionMessageListController", () => {
   beforeEach(() => {
     coalescedItems = [];
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it("initializes the keyed message list from the visible coalesced items", () => {
@@ -367,6 +402,117 @@ describe("useSessionMessageListController", () => {
     expect(fake.spies.batch).toHaveBeenCalled();
     expect(fake.spies.map).toHaveBeenCalled();
     expect(fake.spies.scrollToItem).toHaveBeenCalledWith({ index: "LAST", align: "end", behavior: "auto" });
+  });
+
+  it("releases bottom lock on upward wheel intent before a streamed remeasure update", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-25T11:00:00.000Z"));
+    const initialItems = [makeAssistant("short reply"), makeTurnStatus()];
+    const nextItems = [makeAssistant("short reply\nwith another line"), makeTurnStatus()];
+    const threadOp: WorkbenchThreadProjectionOp = {
+      kind: "reconcile",
+      projectionRevision: 2,
+      changedItemIds: ["assistant-turn-1-pending"],
+      remeasureItemIds: ["assistant-turn-1-pending", "turn-status-turn-1"],
+    };
+    const fake = createFakeMethods(initialItems);
+    const scroller = createFakeScroller({
+      scrollHeight: 1200,
+      clientHeight: 600,
+      scrollTop: 600,
+    });
+    const onAtBottomChange = vi.fn();
+    fake.spies.scrollerElement.mockReturnValue(scroller as unknown as ReturnType<typeof fake.methods.scrollerElement>);
+    coalescedItems = initialItems;
+
+    const { result, rerender } = renderHook(
+      ({ listItems, activeThreadOp }: { listItems: WorkbenchListItem[]; activeThreadOp: WorkbenchThreadProjectionOp | null }) =>
+        useSessionMessageListController({
+          sessionId: "session-1",
+          isActive: true,
+          loaded: true,
+          listItems,
+          canLoadOlder: false,
+          loadOlder: async () => {},
+          layoutRevision: "layout-1",
+          itemSizeCacheKey: () => null,
+          threadOp: activeThreadOp,
+          showDebug: false,
+          onAtBottomChange,
+        }),
+      {
+        initialProps: {
+          listItems: initialItems,
+          activeThreadOp: null as WorkbenchThreadProjectionOp | null,
+        },
+      },
+    );
+
+    result.current.methodsRef.current = fake.methods as unknown as typeof result.current.methodsRef.current;
+    rerender({
+      listItems: initialItems,
+      activeThreadOp: null,
+    });
+
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -40 }));
+    result.current.onScroll(makeScrollLocation());
+
+    fake.spies.scrollToItem.mockClear();
+    fake.spies.map.mockClear();
+    fake.spies.replace.mockClear();
+    fake.spies.batch.mockClear();
+    coalescedItems = nextItems;
+
+    rerender({
+      listItems: nextItems,
+      activeThreadOp: threadOp,
+    });
+
+    expect(onAtBottomChange).toHaveBeenCalledWith(false);
+    expect(fake.spies.replace).not.toHaveBeenCalled();
+    expect(fake.spies.batch).toHaveBeenCalled();
+    expect(fake.spies.map).toHaveBeenCalled();
+    expect(fake.spies.scrollToItem).not.toHaveBeenCalled();
+  });
+
+  it("allows bottom lock to re-enter after the user-scroll hold window expires", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-25T11:00:00.000Z"));
+    const fake = createFakeMethods([makeAssistant("short reply"), makeTurnStatus()]);
+    const scroller = createFakeScroller({
+      scrollHeight: 1200,
+      clientHeight: 600,
+      scrollTop: 600,
+    });
+    const onAtBottomChange = vi.fn();
+    fake.spies.scrollerElement.mockReturnValue(scroller as unknown as ReturnType<typeof fake.methods.scrollerElement>);
+
+    const { result, rerender } = renderHook(() =>
+      useSessionMessageListController({
+        sessionId: "session-1",
+        isActive: true,
+        loaded: true,
+        listItems: [makeAssistant("short reply"), makeTurnStatus()],
+        canLoadOlder: false,
+        loadOlder: async () => {},
+        layoutRevision: "layout-1",
+        itemSizeCacheKey: () => null,
+        showDebug: false,
+        onAtBottomChange,
+      }),
+    );
+
+    result.current.methodsRef.current = fake.methods as unknown as typeof result.current.methodsRef.current;
+    rerender();
+
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -40 }));
+    result.current.onScroll(makeScrollLocation());
+
+    vi.advanceTimersByTime(700);
+    result.current.onScroll(makeScrollLocation());
+
+    expect(onAtBottomChange).toHaveBeenCalledWith(false);
+    expect(onAtBottomChange).toHaveBeenLastCalledWith(true);
   });
 
 });
