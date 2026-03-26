@@ -18,7 +18,6 @@ const destWebDistDir = path.join(desktopTauriRoot, "web", "dist");
 const destBundleDir = path.join(desktopTauriRoot, "bundles");
 const bundleScript = path.join(coreRoot, "..", "scripts", "ensure_bundled_harnesses.sh");
 const harnessRuntimeRs = path.join(coreRoot, "crates", "ctx-http", "src", "harness_runtime.rs");
-const runtimeLockPath = path.join(destBundleDir, "runtime_lock.v2.json");
 const hostManifestOs = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
 const hostManifestArch = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch;
 const parityProviderTargets = [
@@ -160,8 +159,61 @@ const assertBundledProviderTargets = (bundleDir, providerId, targets) => {
   }
 };
 
-const assertBundledRuntimeTargets = (bundleDir, runtimeId, targets) => {
+const hasManagedDownloadSource = (component) => {
+  const sources = Array.isArray(component?.sources) ? component.sources : [];
+  return sources.some((source) => {
+    const sourceType = String(source?.source_type || "").trim();
+    const uri = String(source?.uri || "").trim();
+    const sha256 = String(source?.sha256 || "").trim();
+    return (sourceType === "ci" || sourceType === "vendor") && uri.length > 0 && sha256.length > 0;
+  });
+};
+
+const findLockedComponent = (lock, kind, id, osValue, archValue) => {
+  const components = Array.isArray(lock?.components) ? lock.components : [];
+  return components.find((component) =>
+    component
+    && component.kind === kind
+    && component.id === id
+    && component.os === osValue
+    && component.arch === archValue
+    && String(component.variant || "default").trim() === "default"
+  );
+};
+
+const assertManagedAvfRuntimeComponent = (lock, hostOs, hostArch) => {
+  const component = findLockedComponent(lock, "runtime", AVF_LINUX_GUEST_RUNTIME_ID, hostOs, hostArch);
+  if (!component || !hasManagedDownloadSource(component)) {
+    throw new Error(
+      `runtime lock missing managed AVF guest runtime source for ${hostOs}/${hostArch}; run pnpm -C core desktop:prep:release`,
+    );
+  }
+  const helpers = component.helpers || {};
+  for (const helperName of ["kernel", "initrd", "guest-agent", "egress-proxy"]) {
+    const helper = helpers[helperName];
+    if (!String(helper?.uri || "").trim() || !String(helper?.sha256 || "").trim()) {
+      throw new Error(
+        `runtime lock missing AVF helper metadata for ${helperName} (${hostOs}/${hostArch}); run pnpm -C core desktop:prep:release`,
+      );
+    }
+  }
+};
+
+const readRuntimeLock = (bundleDir = destBundleDir) => {
+  const runtimeLockPath = path.join(bundleDir, "runtime_lock.v2.json");
+  if (!fs.existsSync(runtimeLockPath)) {
+    throw new Error(`missing runtime lock for parity enforcement: ${runtimeLockPath}`);
+  }
+  try {
+    return JSON.parse(fs.readFileSync(runtimeLockPath, "utf8"));
+  } catch (error) {
+    throw new Error(`failed to parse runtime lock ${runtimeLockPath}: ${error?.message ?? error}`);
+  }
+};
+
+const assertRuntimeTargetsAvailable = (bundleDir, runtimeId, targets) => {
   const manifest = readBundleManifest(bundleDir);
+  const runtimeLock = readRuntimeLock(bundleDir);
   const runtimes = Array.isArray(manifest?.runtimes) ? manifest.runtimes : [];
   const missing = [];
   for (const target of targets) {
@@ -176,13 +228,26 @@ const assertBundledRuntimeTargets = (bundleDir, runtimeId, targets) => {
         typeof r.bin === "string" &&
         r.bin.trim().length > 0,
     );
-    if (!found) missing.push(`${target.os}/${target.arch}`);
+    if (found) continue;
+    if (runtimeId === AVF_LINUX_GUEST_RUNTIME_ID && target.os === "macos") {
+      try {
+        assertManagedAvfRuntimeComponent(runtimeLock, target.os, target.arch);
+        continue;
+      } catch (_error) {
+        missing.push(`${target.os}/${target.arch}`);
+        continue;
+      }
+    }
+    const component = findLockedComponent(runtimeLock, "runtime", runtimeId, target.os, target.arch);
+    if (!component || !hasManagedDownloadSource(component)) {
+      missing.push(`${target.os}/${target.arch}`);
+    }
   }
   if (missing.length > 0) {
     throw new Error(
-      `bundle manifest missing ${runtimeId} runtime targets: ${missing.join(
+      `bundle/runtime lock missing ${runtimeId} runtime targets: ${missing.join(
         ", ",
-      )}. Container/provider startup requires bundled host+linux runtimes.`,
+      )}. Container/provider startup requires either bundled runtime payloads or managed runtime-lock sources.`,
     );
   }
 };
@@ -214,17 +279,6 @@ const assertBundledHarnessImageTargets = (bundleDir, expectedImage, targets) => 
           "Re-run desktop bundle sync with CTX_BUNDLE_HARNESS_IMAGE=both.",
       );
     }
-  }
-};
-
-const readRuntimeLock = () => {
-  if (!fs.existsSync(runtimeLockPath)) {
-    throw new Error(`missing runtime lock for parity enforcement: ${runtimeLockPath}`);
-  }
-  try {
-    return JSON.parse(fs.readFileSync(runtimeLockPath, "utf8"));
-  } catch (error) {
-    throw new Error(`failed to parse runtime lock ${runtimeLockPath}: ${error?.message ?? error}`);
   }
 };
 
@@ -721,13 +775,13 @@ const syncBundles = () => {
       assertBundledProviderTargets(destBundleDir, providerId, requiredProviderTargets);
     }
     for (const runtimeId of bundledRuntimeIds) {
-      assertBundledRuntimeTargets(destBundleDir, runtimeId, requiredRuntimeTargets);
+      assertRuntimeTargetsAvailable(destBundleDir, runtimeId, requiredRuntimeTargets);
     }
   }
 
   const stagedAvfGuestRuntime = stageAvfLinuxGuestRuntime(destBundleDir);
   for (const runtimeId of bundledRuntimeIds) {
-    assertBundledRuntimeTargets(destBundleDir, runtimeId, requiredRuntimeTargets);
+    assertRuntimeTargetsAvailable(destBundleDir, runtimeId, requiredRuntimeTargets);
   }
 
   if (
@@ -890,6 +944,7 @@ if (require.main === module) {
 } else {
   module.exports = {
     __desktopSyncResourcesTestHooks: {
+      assertRuntimeTargetsAvailable,
       resetBundleDir,
       writePlaceholderBundleManifest,
     },

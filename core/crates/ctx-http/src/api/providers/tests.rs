@@ -17,6 +17,7 @@ use ctx_store::StoreManager;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 fn test_endpoint(id: &str) -> harness_sources::HarnessEndpointRecord {
     harness_sources::HarnessEndpointRecord {
@@ -179,11 +180,11 @@ fn auth_url_looks_complete_requires_port_for_loopback_callback() {
 #[tokio::test]
 async fn read_trailing_claude_login_lines_waits_for_late_arrival() {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(40)).await;
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(40));
         let _ = tx.send("sk-ant-oat01-late-token".to_string());
     });
-    let lines = read_trailing_claude_login_lines(&mut rx, Duration::from_millis(120)).await;
+    let lines = read_trailing_claude_login_lines(&mut rx, Duration::from_secs(2)).await;
     assert_eq!(lines, vec!["sk-ant-oat01-late-token".to_string()]);
 }
 

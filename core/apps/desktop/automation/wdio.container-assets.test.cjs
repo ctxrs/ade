@@ -47,9 +47,14 @@ const withEnv = async (overrides, fn) => {
   }
 };
 
-const writeAvfRuntimeBundle = (bundleDir, { includeGuestAgent = true } = {}) => {
-  const hostOs = desktopOs();
-  const hostArch = desktopArch();
+const resolveFixtureHost = ({ hostOs = desktopOs(), hostArch = desktopArch() } = {}) => ({
+  hostOs,
+  hostArch,
+});
+
+const writeAvfRuntimeBundle = (bundleDir, options = {}) => {
+  const { includeGuestAgent = true, ...hostOverride } = options;
+  const { hostOs, hostArch } = resolveFixtureHost(hostOverride);
   const runtimeRootRel = path.join("runtimes", "avf-linux-guest", hostOs, hostArch, "dev");
   const runtimeRoot = path.join(bundleDir, runtimeRootRel);
   fs.mkdirSync(path.join(runtimeRoot, "helpers"), { recursive: true });
@@ -141,9 +146,9 @@ const writeAvfRuntimeBundle = (bundleDir, { includeGuestAgent = true } = {}) => 
   );
 };
 
-const writeThinBundleManifestAndRuntimeLock = (bundleDir, { includeGuestAgent = true } = {}) => {
-  const hostOs = desktopOs();
-  const hostArch = desktopArch();
+const writeThinBundleManifestAndRuntimeLock = (bundleDir, options = {}) => {
+  const { includeGuestAgent = true, ...hostOverride } = options;
+  const { hostOs, hostArch } = resolveFixtureHost(hostOverride);
   fs.writeFileSync(
     path.join(bundleDir, "manifest.json"),
     JSON.stringify({ version: 1, providers: [], runtimes: [], images: [], daemons: [] }, null, 2),
@@ -214,7 +219,7 @@ test("wdio AVF container preflight accepts a complete guest runtime payload", as
   const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-avf-assets-"));
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
   try {
-    writeAvfRuntimeBundle(bundleDir);
+    writeAvfRuntimeBundle(bundleDir, { hostOs: "macos", hostArch: "aarch64" });
     await withEnv(
       {
         CTX_BUNDLE_DIR: bundleDir,
@@ -239,7 +244,11 @@ test("wdio AVF container preflight rejects a bundle missing the guest agent help
   const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-avf-assets-"));
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
   try {
-    writeAvfRuntimeBundle(bundleDir, { includeGuestAgent: false });
+    writeAvfRuntimeBundle(bundleDir, {
+      includeGuestAgent: false,
+      hostOs: "macos",
+      hostArch: "aarch64",
+    });
     await withEnv(
       {
         CTX_BUNDLE_DIR: bundleDir,
@@ -266,7 +275,7 @@ test("wdio AVF container preflight accepts a thin bundle with managed AVF/image 
   const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-avf-assets-"));
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
   try {
-    writeThinBundleManifestAndRuntimeLock(bundleDir);
+    writeThinBundleManifestAndRuntimeLock(bundleDir, { hostOs: "macos", hostArch: "aarch64" });
     await withEnv(
       {
         CTX_BUNDLE_DIR: bundleDir,
@@ -291,7 +300,11 @@ test("wdio AVF container preflight rejects a thin bundle missing managed AVF hel
   const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-avf-assets-"));
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
   try {
-    writeThinBundleManifestAndRuntimeLock(bundleDir, { includeGuestAgent: false });
+    writeThinBundleManifestAndRuntimeLock(bundleDir, {
+      includeGuestAgent: false,
+      hostOs: "macos",
+      hostArch: "aarch64",
+    });
     await withEnv(
       {
         CTX_BUNDLE_DIR: bundleDir,

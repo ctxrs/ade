@@ -7,7 +7,11 @@ const path = require("node:path");
 const {
   resolveBundledRuntimeIds,
   stageAvfLinuxGuestRuntime,
+  __desktopSyncResourcesTestHooks,
 } = require("./desktop_sync_resources.cjs");
+
+const hostManifestOs = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
+const hostManifestArch = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch;
 
 test("resolveBundledRuntimeIds dedupes and sorts bundle runtime identifiers", () => {
   assert.deepEqual(
@@ -19,6 +23,125 @@ test("resolveBundledRuntimeIds dedupes and sorts bundle runtime identifiers", ()
 test("stageAvfLinuxGuestRuntime leaves the bundle untouched when no guest artifact is present", () => {
   const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bundle-"));
   const staged = stageAvfLinuxGuestRuntime(bundleDir);
-  assert.equal(staged, false);
+  assert.equal(staged, null);
   assert.equal(fs.existsSync(path.join(bundleDir, "runtimes", "avf-linux-guest")), false);
+});
+
+test("thin bundle parity accepts managed AVF runtime metadata from runtime lock", () => {
+  const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bundle-runtime-lock-"));
+  try {
+    fs.writeFileSync(
+      path.join(bundleDir, "manifest.json"),
+      JSON.stringify({ version: 1, providers: [], runtimes: [], images: [], daemons: [] }, null, 2),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(bundleDir, "runtime_lock.v2.json"),
+      JSON.stringify(
+        {
+          version: 2,
+          required: {
+            provider_ids: [],
+            runtime_ids: ["avf-linux-guest"],
+            image_ids: [],
+            machine_cache_ids: [],
+            targets: {
+              provider: [],
+              runtime: ["macos/host"],
+              image: [],
+              machine_cache: [],
+            },
+          },
+          components: [
+            {
+              kind: "runtime",
+              id: "avf-linux-guest",
+              os: hostManifestOs,
+              arch: hostManifestArch,
+              variant: "default",
+              version: "test",
+              sources: [{ source_type: "ci", uri: "locked://runtime", sha256: "0".repeat(64) }],
+              helpers: {
+                kernel: { uri: "locked://kernel", sha256: "1".repeat(64) },
+                initrd: { uri: "locked://initrd", sha256: "2".repeat(64) },
+                "guest-agent": { uri: "locked://guest-agent", sha256: "3".repeat(64) },
+                "egress-proxy": { uri: "locked://egress-proxy", sha256: "4".repeat(64) },
+              },
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    assert.doesNotThrow(() => {
+      __desktopSyncResourcesTestHooks.assertRuntimeTargetsAvailable(bundleDir, "avf-linux-guest", [
+        { os: hostManifestOs, arch: hostManifestArch },
+      ]);
+    });
+  } finally {
+    fs.rmSync(bundleDir, { recursive: true, force: true });
+  }
+});
+
+test("thin bundle parity rejects AVF runtime metadata missing helper payloads", () => {
+  const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bundle-runtime-lock-"));
+  try {
+    fs.writeFileSync(
+      path.join(bundleDir, "manifest.json"),
+      JSON.stringify({ version: 1, providers: [], runtimes: [], images: [], daemons: [] }, null, 2),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(bundleDir, "runtime_lock.v2.json"),
+      JSON.stringify(
+        {
+          version: 2,
+          required: {
+            provider_ids: [],
+            runtime_ids: ["avf-linux-guest"],
+            image_ids: [],
+            machine_cache_ids: [],
+            targets: {
+              provider: [],
+              runtime: ["macos/host"],
+              image: [],
+              machine_cache: [],
+            },
+          },
+          components: [
+            {
+              kind: "runtime",
+              id: "avf-linux-guest",
+              os: hostManifestOs,
+              arch: hostManifestArch,
+              variant: "default",
+              version: "test",
+              sources: [{ source_type: "ci", uri: "locked://runtime", sha256: "0".repeat(64) }],
+              helpers: {
+                kernel: { uri: "locked://kernel", sha256: "1".repeat(64) },
+                initrd: { uri: "locked://initrd", sha256: "2".repeat(64) },
+                "egress-proxy": { uri: "locked://egress-proxy", sha256: "4".repeat(64) },
+              },
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    assert.throws(
+      () =>
+        __desktopSyncResourcesTestHooks.assertRuntimeTargetsAvailable(bundleDir, "avf-linux-guest", [
+          { os: hostManifestOs, arch: hostManifestArch },
+        ]),
+      /bundle\/runtime lock missing avf-linux-guest runtime targets/,
+    );
+  } finally {
+    fs.rmSync(bundleDir, { recursive: true, force: true });
+  }
 });
