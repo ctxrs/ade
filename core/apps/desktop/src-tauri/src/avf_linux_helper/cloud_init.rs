@@ -41,6 +41,54 @@ pub(super) fn render_shared_vm_host_data_mount_service(host_data_root: &Path) ->
     )
 }
 
+pub(super) fn render_shared_vm_grow_rootfs_script() -> String {
+    "#!/bin/sh\nset -eu\nroot_device=\"$(findmnt -n -o SOURCE /)\"\nif [ -z \"$root_device\" ]; then\n  echo \"[ctx-avf-linux] could not determine root device\" >/dev/hvc0\n  exit 1\nfi\nroot_device=\"$(readlink -f \"$root_device\" 2>/dev/null || printf '%s' \"$root_device\")\"\ncase \"$root_device\" in\n  /dev/*) ;;\n  *)\n    echo \"[ctx-avf-linux] unsupported root device $root_device\" >/dev/hvc0\n    exit 1\n    ;;\nesac\nif ! command -v growpart >/dev/null 2>&1; then\n  echo \"[ctx-avf-linux] missing growpart\" >/dev/hvc0\n  exit 1\nfi\nif ! command -v resize2fs >/dev/null 2>&1; then\n  echo \"[ctx-avf-linux] missing resize2fs\" >/dev/hvc0\n  exit 1\nfi\ndisk_name=\"$(lsblk -nro PKNAME \"$root_device\" | head -n1)\"\npart_number=\"$(lsblk -nro PARTN \"$root_device\" | head -n1)\"\nif [ -z \"$disk_name\" ] || [ -z \"$part_number\" ]; then\n  echo \"[ctx-avf-linux] could not resolve parent disk for $root_device\" >/dev/hvc0\n  exit 1\nfi\ngrow_output=\"\"\ngrow_status=0\nif ! grow_output=\"$(growpart \"/dev/$disk_name\" \"$part_number\" 2>&1)\"; then\n  grow_status=$?\nfi\nif [ \"$grow_status\" -ne 0 ]; then\n  case \"$grow_output\" in\n    *NOCHANGE:*)\n      printf '%s\\n' \"$grow_output\" >/dev/hvc0\n      ;;\n    *)\n      printf '%s\\n' \"$grow_output\" >/dev/hvc0\n      exit \"$grow_status\"\n      ;;\n  esac\nelif [ -n \"$grow_output\" ]; then\n  printf '%s\\n' \"$grow_output\" >/dev/hvc0\nfi\nresize2fs \"$root_device\" >/dev/hvc0 2>&1\n".to_string()
+}
+
+pub(super) fn render_shared_vm_grow_rootfs_service() -> String {
+    format!(
+        "[Unit]\nDescription=ctx AVF Root Filesystem Growth\nAfter=local-fs.target\nBefore={containerd_service} {buildkit_service} {guest_agent_service}\n\n[Service]\nType=oneshot\nExecStart=/bin/sh -lc 'exec {script_path}'\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target\n# {service_name}\n",
+        containerd_service = SHARED_VM_CONTAINERD_SERVICE_NAME,
+        buildkit_service = SHARED_VM_BUILDKIT_SERVICE_NAME,
+        guest_agent_service = SHARED_VM_GUEST_AGENT_SERVICE_NAME,
+        script_path = SHARED_VM_GROW_ROOTFS_INSTALL_PATH,
+        service_name = SHARED_VM_GROW_ROOTFS_SERVICE_NAME,
+    )
+}
+
+pub(super) fn render_shared_vm_containerd_service() -> String {
+    format!(
+        "[Unit]\nDescription=containerd Container Runtime\nAfter=network-online.target local-fs.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStartPre=/bin/sh -lc 'mkdir -p /run/containerd /var/lib/containerd'\nExecStart=/usr/local/bin/containerd\nRestart=always\nRestartSec=1\nKillMode=process\nDelegate=yes\n\n[Install]\nWantedBy=multi-user.target\n# {}\n",
+        SHARED_VM_CONTAINERD_SERVICE_NAME
+    )
+}
+
+pub(super) fn render_shared_vm_buildkit_service() -> String {
+    format!(
+        "[Unit]\nDescription=BuildKit\nAfter={containerd_service} network-online.target local-fs.target\nWants=network-online.target\nRequires={containerd_service}\n\n[Service]\nType=simple\nExecStartPre=/bin/sh -lc 'mkdir -p /run/buildkit /var/lib/buildkit /etc/buildkit'\nExecStart=/usr/local/bin/buildkitd --config /etc/buildkit/buildkitd.toml --addr {buildkit_socket}\nRestart=always\nRestartSec=1\n\n[Install]\nWantedBy=multi-user.target\n# {buildkit_service}\n",
+        containerd_service = SHARED_VM_CONTAINERD_SERVICE_NAME,
+        buildkit_service = SHARED_VM_BUILDKIT_SERVICE_NAME,
+        buildkit_socket = SHARED_VM_GUEST_BUILDKIT_SOCKET,
+    )
+}
+
+pub(super) fn render_shared_vm_container_stack_install_script(
+    container_stack_host_path: &Path,
+    container_stack_sha256: &str,
+) -> String {
+    let escaped_payload_path =
+        shell_escape_single_quotes(&container_stack_host_path.display().to_string());
+    let escaped_expected_sha = shell_escape_single_quotes(container_stack_sha256);
+    let escaped_marker_path =
+        shell_escape_single_quotes(SHARED_VM_GUEST_CONTAINER_STACK_MARKER_PATH);
+    format!(
+        "#!/bin/sh\nset -eu\npayload='{payload_path}'\nexpected_sha='{expected_sha}'\nmarker='{marker_path}'\nif [ ! -f \"$payload\" ]; then\n  echo \"[ctx-avf-linux] missing guest container-stack payload at $payload\" >/dev/hvc0\n  exit 1\nfi\nactual_sha=\"$(sha256sum \"$payload\" | awk '{{print $1}}')\"\nif [ \"$actual_sha\" != \"$expected_sha\" ]; then\n  echo \"[ctx-avf-linux] guest container-stack sha mismatch: expected $expected_sha got $actual_sha\" >/dev/hvc0\n  exit 1\nfi\nif [ -f \"$marker\" ] && [ \"$(cat \"$marker\" 2>/dev/null || true)\" = \"$expected_sha\" ]; then\n  exit 0\nfi\nmkdir -p /usr/local /usr/local/lib/ctx /etc/containerd /etc/buildkit /var/lib/containerd /var/lib/buildkit /run/containerd /run/buildkit\ntar -xzf \"$payload\" -C /usr/local\ncat > /etc/containerd/config.toml <<'EOF'\nversion = 2\nroot = \"/var/lib/containerd\"\nstate = \"/run/containerd\"\n[grpc]\n  address = \"/run/containerd/containerd.sock\"\nEOF\ncat > /etc/buildkit/buildkitd.toml <<'EOF'\nroot = \"/var/lib/buildkit\"\n[worker.oci]\n  enabled = false\n[worker.containerd]\n  enabled = true\n  namespace = \"default\"\nEOF\nprintf '%s\\n' \"$expected_sha\" > \"$marker\"\nchmod 0644 \"$marker\"\n",
+        payload_path = escaped_payload_path,
+        expected_sha = escaped_expected_sha,
+        marker_path = escaped_marker_path,
+    )
+}
+
 pub(super) fn shell_escape_single_quotes(value: &str) -> String {
     value.replace('\'', "'\"'\"'")
 }
@@ -57,13 +105,17 @@ pub(super) fn hash_shared_vm_seed_component(bytes: &[u8]) -> String {
 pub(super) fn render_shared_vm_cloud_init_meta_data(
     guest_agent_bytes: &[u8],
     egress_proxy_bytes: Option<&[u8]>,
+    container_stack_sha256: &str,
 ) -> String {
     let mut seed_material = Vec::with_capacity(guest_agent_bytes.len() + 256);
     seed_material.extend_from_slice(guest_agent_bytes);
     if let Some(egress_proxy_bytes) = egress_proxy_bytes {
         seed_material.extend_from_slice(egress_proxy_bytes);
     }
+    seed_material.extend_from_slice(container_stack_sha256.as_bytes());
     seed_material.extend_from_slice(render_shared_vm_guest_agent_service().as_bytes());
+    seed_material.extend_from_slice(render_shared_vm_containerd_service().as_bytes());
+    seed_material.extend_from_slice(render_shared_vm_buildkit_service().as_bytes());
     let seed_hash = hash_shared_vm_seed_component(&seed_material);
     format!("instance-id: ctx-avf-linux-{seed_hash}\nlocal-hostname: ctx-avf-linux\n")
 }
@@ -72,11 +124,22 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
     data_root: &Path,
     guest_agent_bytes: &[u8],
     egress_proxy_bytes: Option<&[u8]>,
+    container_stack_host_path: &Path,
+    container_stack_sha256: &str,
 ) -> String {
     let guest_agent_b64 = indent_cloud_init_block(&wrap_cloud_init_base64(guest_agent_bytes), 6);
-    let service = indent_cloud_init_block(&render_shared_vm_guest_agent_service(), 6);
-    let host_data_service = indent_cloud_init_block(
-        &render_shared_vm_host_data_mount_service(data_root),
+    let guest_agent_service = indent_cloud_init_block(&render_shared_vm_guest_agent_service(), 6);
+    let host_data_service =
+        indent_cloud_init_block(&render_shared_vm_host_data_mount_service(data_root), 6);
+    let grow_rootfs_script = indent_cloud_init_block(&render_shared_vm_grow_rootfs_script(), 6);
+    let grow_rootfs_service = indent_cloud_init_block(&render_shared_vm_grow_rootfs_service(), 6);
+    let containerd_service = indent_cloud_init_block(&render_shared_vm_containerd_service(), 6);
+    let buildkit_service = indent_cloud_init_block(&render_shared_vm_buildkit_service(), 6);
+    let install_script = indent_cloud_init_block(
+        &render_shared_vm_container_stack_install_script(
+            container_stack_host_path,
+            container_stack_sha256,
+        ),
         6,
     );
     let egress_proxy_block = egress_proxy_bytes.map(|bytes| {
@@ -85,17 +148,143 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
             "  - path: /usr/local/bin/ctx-egress-proxy\n    permissions: '0755'\n    encoding: b64\n    content: |\n{egress_proxy_b64}\n"
         )
     });
-    format!(
-        "#cloud-config\nwrite_files:\n  - path: /usr/local/bin/ctx-avf-linux-guest-agent\n    permissions: '0755'\n    encoding: b64\n    content: |\n{guest_agent_b64}\n{egress_proxy_block}  - path: /etc/systemd/system/{host_data_service_name}\n    permissions: '0644'\n    content: |\n{host_data_service}\n  - path: /etc/systemd/system/{service_name}\n    permissions: '0644'\n    content: |\n{service}\nruncmd:\n  - [ sh, -lc, 'echo \"[ctx-avf-linux] preparing {service_name}\" >/dev/hvc0; ls -l /usr/local/bin/ctx-avf-linux-guest-agent >/dev/hvc0 2>&1; ls -l /etc/systemd/system/{service_name} >/dev/hvc0 2>&1' ]\n  - [ systemctl, daemon-reload ]\n  - [ sh, -lc, 'systemctl enable --now {host_data_service_name} >/dev/hvc0 2>&1 || (systemctl status {host_data_service_name} --no-pager >/dev/hvc0 2>&1; exit 1)' ]\n  - [ sh, -lc, 'systemctl enable --now {service_name} >/dev/hvc0 2>&1 || (systemctl status {service_name} --no-pager >/dev/hvc0 2>&1; exit 1)' ]\n",
-        service_name = SHARED_VM_GUEST_AGENT_SERVICE_NAME,
+    let escaped_container_stack_host_path =
+        shell_escape_single_quotes(&container_stack_host_path.display().to_string());
+    let mut write_files = String::new();
+    write_files.push_str(&format!(
+        "  - path: /usr/local/bin/ctx-avf-linux-guest-agent\n    permissions: '0755'\n    encoding: b64\n    content: |\n{guest_agent_b64}\n"
+    ));
+    write_files.push_str(&egress_proxy_block.unwrap_or_default());
+    write_files.push_str(&format!(
+        "  - path: {grow_rootfs_install_path}\n    permissions: '0755'\n    content: |\n{grow_rootfs_script}\n",
+        grow_rootfs_install_path = SHARED_VM_GROW_ROOTFS_INSTALL_PATH,
+    ));
+    write_files.push_str(&format!(
+        "  - path: {install_path}\n    permissions: '0755'\n    content: |\n{install_script}\n",
+        install_path = SHARED_VM_GUEST_CONTAINER_STACK_INSTALL_PATH,
+    ));
+    write_files.push_str(&format!(
+        "  - path: /etc/systemd/system/{grow_rootfs_service_name}\n    permissions: '0644'\n    content: |\n{grow_rootfs_service}\n",
+        grow_rootfs_service_name = SHARED_VM_GROW_ROOTFS_SERVICE_NAME,
+    ));
+    write_files.push_str(&format!(
+        "  - path: /etc/systemd/system/{host_data_service_name}\n    permissions: '0644'\n    content: |\n{host_data_service}\n",
         host_data_service_name = SHARED_VM_HOST_DATA_SERVICE_NAME,
-        host_data_service = host_data_service,
-        egress_proxy_block = egress_proxy_block.unwrap_or_default(),
+    ));
+    write_files.push_str(&format!(
+        "  - path: /etc/systemd/system/{containerd_service_name}\n    permissions: '0644'\n    content: |\n{containerd_service}\n",
+        containerd_service_name = SHARED_VM_CONTAINERD_SERVICE_NAME,
+    ));
+    write_files.push_str(&format!(
+        "  - path: /etc/systemd/system/{buildkit_service_name}\n    permissions: '0644'\n    content: |\n{buildkit_service}\n",
+        buildkit_service_name = SHARED_VM_BUILDKIT_SERVICE_NAME,
+    ));
+    write_files.push_str(&format!(
+        "  - path: /etc/systemd/system/{guest_agent_service_name}\n    permissions: '0644'\n    content: |\n{guest_agent_service}\n",
+        guest_agent_service_name = SHARED_VM_GUEST_AGENT_SERVICE_NAME,
+    ));
+    let prepare_guest_agent_cmd = indent_cloud_init_block(
+        &format!(
+            "echo \"[ctx-avf-linux] preparing {guest_agent_service_name}\" >/dev/hvc0\nls -l /usr/local/bin/ctx-avf-linux-guest-agent >/dev/hvc0 2>&1\nls -l /etc/systemd/system/{guest_agent_service_name} >/dev/hvc0 2>&1\nls -l '{container_stack_host_path}' >/dev/hvc0 2>&1",
+            guest_agent_service_name = SHARED_VM_GUEST_AGENT_SERVICE_NAME,
+            container_stack_host_path = escaped_container_stack_host_path,
+        ),
+        4,
+    );
+    let enable_grow_rootfs_cmd = indent_cloud_init_block(
+        &format!(
+            "systemctl enable --now {grow_rootfs_service_name} >/dev/hvc0 2>&1 || (systemctl status {grow_rootfs_service_name} --no-pager >/dev/hvc0 2>&1; exit 1)",
+            grow_rootfs_service_name = SHARED_VM_GROW_ROOTFS_SERVICE_NAME,
+        ),
+        4,
+    );
+    let enable_host_data_cmd = indent_cloud_init_block(
+        &format!(
+            "systemctl enable --now {host_data_service_name} >/dev/hvc0 2>&1 || (systemctl status {host_data_service_name} --no-pager >/dev/hvc0 2>&1; exit 1)",
+            host_data_service_name = SHARED_VM_HOST_DATA_SERVICE_NAME,
+        ),
+        4,
+    );
+    let install_container_stack_cmd = indent_cloud_init_block(
+        &format!(
+            "{install_path} >/dev/hvc0 2>&1",
+            install_path = SHARED_VM_GUEST_CONTAINER_STACK_INSTALL_PATH,
+        ),
+        4,
+    );
+    let enable_containerd_cmd = indent_cloud_init_block(
+        &format!(
+            "systemctl enable --now {containerd_service_name} >/dev/hvc0 2>&1 || (systemctl status {containerd_service_name} --no-pager >/dev/hvc0 2>&1; exit 1)",
+            containerd_service_name = SHARED_VM_CONTAINERD_SERVICE_NAME,
+        ),
+        4,
+    );
+    let enable_buildkit_cmd = indent_cloud_init_block(
+        &format!(
+            "systemctl enable --now {buildkit_service_name} >/dev/hvc0 2>&1 || (systemctl status {buildkit_service_name} --no-pager >/dev/hvc0 2>&1; exit 1)",
+            buildkit_service_name = SHARED_VM_BUILDKIT_SERVICE_NAME,
+        ),
+        4,
+    );
+    let enable_guest_agent_cmd = indent_cloud_init_block(
+        &format!(
+            "systemctl enable --now {guest_agent_service_name} >/dev/hvc0 2>&1 || (systemctl status {guest_agent_service_name} --no-pager >/dev/hvc0 2>&1; exit 1)",
+            guest_agent_service_name = SHARED_VM_GUEST_AGENT_SERVICE_NAME,
+        ),
+        4,
+    );
+    format!(
+        "#cloud-config\nwrite_files:\n{write_files}runcmd:\n  - [ systemctl, daemon-reload ]\n  - |\n{enable_grow_rootfs_cmd}\n  - |\n{enable_host_data_cmd}\n  - |\n{prepare_guest_agent_cmd}\n  - |\n{install_container_stack_cmd}\n  - |\n{enable_containerd_cmd}\n  - |\n{enable_buildkit_cmd}\n  - |\n{enable_guest_agent_cmd}\n",
+        prepare_guest_agent_cmd = prepare_guest_agent_cmd,
+        enable_grow_rootfs_cmd = enable_grow_rootfs_cmd,
+        enable_host_data_cmd = enable_host_data_cmd,
+        install_container_stack_cmd = install_container_stack_cmd,
+        enable_containerd_cmd = enable_containerd_cmd,
+        enable_buildkit_cmd = enable_buildkit_cmd,
+        enable_guest_agent_cmd = enable_guest_agent_cmd,
     )
 }
 
 pub(super) fn render_shared_vm_cloud_init_network_config() -> &'static str {
     "version: 2\nethernets:\n  default:\n    match:\n      name: \"en*\"\n    dhcp4: true\n    optional: true\n"
+}
+
+fn sha256_hex_file(path: &Path) -> Result<String> {
+    let mut file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0_u8; 8192];
+    loop {
+        let read = file
+            .read(&mut buf)
+            .with_context(|| format!("reading {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buf[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn stage_shared_vm_runtime_payload(source_path: &Path, destination_path: &Path) -> Result<()> {
+    if let Some(parent) = destination_path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    let tmp_path = destination_path.with_extension("tmp");
+    fs::copy(source_path, &tmp_path).with_context(|| {
+        format!(
+            "staging shared VM runtime payload {} -> {}",
+            source_path.display(),
+            tmp_path.display()
+        )
+    })?;
+    fs::rename(&tmp_path, destination_path).with_context(|| {
+        format!(
+            "finalizing shared VM runtime payload {} -> {}",
+            tmp_path.display(),
+            destination_path.display()
+        )
+    })?;
+    Ok(())
 }
 
 pub(super) fn stage_shared_vm_cloud_init_seed(
@@ -105,9 +294,22 @@ pub(super) fn stage_shared_vm_cloud_init_seed(
 ) -> Result<Option<PathBuf>> {
     let guest_agent_path = shared_vm_guest_agent_helper_path(runtime_root);
     if !guest_agent_path.is_file() {
-        return Ok(None);
+        bail!(
+            "AVF Linux runtime is missing guest-agent payload at {}",
+            guest_agent_path.display()
+        );
     }
     let egress_proxy_path = shared_vm_egress_proxy_helper_path(runtime_root);
+    let container_stack_runtime_path = shared_vm_container_stack_helper_path(runtime_root);
+    if !container_stack_runtime_path.is_file() {
+        bail!(
+            "AVF Linux runtime is missing guest container-stack payload at {}",
+            container_stack_runtime_path.display()
+        );
+    }
+    let container_stack_payload_path = shared_vm_container_stack_payload_path(data_root);
+    stage_shared_vm_runtime_payload(&container_stack_runtime_path, &container_stack_payload_path)?;
+    let container_stack_sha256 = sha256_hex_file(&container_stack_payload_path)?;
     let image_path = shared_vm_cloud_init_image_path(data_root);
     if preserve_existing_image && image_path.is_file() {
         return Ok(Some(image_path));
@@ -128,7 +330,11 @@ pub(super) fn stage_shared_vm_cloud_init_seed(
     };
     fs::write(
         shared_vm_cloud_init_meta_data_path(data_root),
-        render_shared_vm_cloud_init_meta_data(&guest_agent_bytes, egress_proxy_bytes.as_deref()),
+        render_shared_vm_cloud_init_meta_data(
+            &guest_agent_bytes,
+            egress_proxy_bytes.as_deref(),
+            &container_stack_sha256,
+        ),
     )
     .with_context(|| {
         format!(
@@ -142,6 +348,8 @@ pub(super) fn stage_shared_vm_cloud_init_seed(
             data_root,
             &guest_agent_bytes,
             egress_proxy_bytes.as_deref(),
+            &container_stack_payload_path,
+            &container_stack_sha256,
         ),
     )
     .with_context(|| {

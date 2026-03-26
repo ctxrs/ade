@@ -45,6 +45,7 @@ pub(crate) use self::runtime_install::{
 };
 
 pub(crate) const AVF_LINUX_HELPER_PATH_ENV: &str = "CTX_AVF_LINUX_HELPER_PATH";
+pub(crate) const AVF_LINUX_GUEST_RUNTIME_DIR_ENV: &str = "CTX_AVF_LINUX_GUEST_RUNTIME_DIR";
 const AVF_LINUX_GUEST_RUNTIME_ID: &str = "avf-linux-guest";
 const AVF_LINUX_RUNTIME_READY_MARKER: &str = ".ctx-managed-ready";
 const AVF_LINUX_ROOTFS_LABEL: &str = "Ubuntu guest runtime";
@@ -52,6 +53,8 @@ const AVF_LINUX_KERNEL_HELPER: &str = "kernel";
 const AVF_LINUX_INITRD_HELPER: &str = "initrd";
 const AVF_LINUX_GUEST_AGENT_HELPER: &str = "guest-agent";
 const AVF_LINUX_EGRESS_PROXY_HELPER: &str = "egress-proxy";
+const AVF_LINUX_CONTAINER_STACK_HELPER: &str = "container-stack";
+const AVF_LINUX_CONTAINER_STACK_FILE: &str = "container-stack.tar.gz";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct AvfLinuxHelperProbe {
@@ -176,6 +179,7 @@ pub(crate) struct AvfLinuxGuestRuntime {
     pub initrd_path: PathBuf,
     pub guest_agent_path: Option<PathBuf>,
     pub egress_proxy_path: Option<PathBuf>,
+    pub container_stack_path: PathBuf,
     pub version: String,
     pub managed: bool,
 }

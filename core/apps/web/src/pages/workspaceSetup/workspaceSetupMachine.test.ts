@@ -59,6 +59,10 @@ describe("workspaceSetupMachine", () => {
         kind: "verify_remote_connection",
         connected: true,
       },
+      snapshot: snapshotFixture({
+        stepKey: "location",
+        locationSelection: "remote",
+      }),
     });
 
     expect(completed.pendingEffects.at(-1)).toEqual({
@@ -101,6 +105,9 @@ describe("workspaceSetupMachine", () => {
           includeHarnessDownloads: true,
         }),
       },
+      snapshot: snapshotFixture({
+        stepKey: "container",
+      }),
     });
 
     expect(advanced.pendingEffects.at(-1)).toEqual({
@@ -123,6 +130,13 @@ describe("workspaceSetupMachine", () => {
             includeTitling: true,
           }),
         },
+        snapshot: snapshotFixture({
+          stepKey: "auth-import",
+          routePlan: routePlanFixture({
+            includeAuthImport: true,
+            includeTitling: true,
+          }),
+        }),
       },
     );
 
@@ -146,6 +160,13 @@ describe("workspaceSetupMachine", () => {
           includeTitling: true,
         }),
       },
+      snapshot: snapshotFixture({
+        stepKey: "auth-import",
+        routePlan: routePlanFixture({
+          includeAuthImport: true,
+          includeTitling: true,
+        }),
+      }),
     });
 
     expect(completed.pendingEffects).toEqual([
@@ -184,6 +205,12 @@ describe("workspaceSetupMachine", () => {
             includeAuthImport: true,
           }),
         },
+        snapshot: snapshotFixture({
+          stepKey: "harness-downloads",
+          routePlan: routePlanFixture({
+            includeAuthImport: true,
+          }),
+        }),
       },
     );
 
@@ -256,6 +283,63 @@ describe("workspaceSetupMachine", () => {
         },
       },
     ]);
+  });
+
+  it("ignores late auth-import completions after the user has already navigated back", () => {
+    const activeState = {
+      ...createInitialWorkspaceSetupMachineState(),
+      activeCommand: {
+        effectId: 4,
+        kind: "advance_auth_import" as const,
+      },
+      nextEffectId: 5,
+    };
+
+    const completed = workspaceSetupMachineReducer(activeState, {
+      type: "command_completed",
+      effectId: 4,
+      result: {
+        kind: "advance_auth_import",
+        routePlan: routePlanFixture({
+          includeAuthImport: true,
+          includeTitling: true,
+        }),
+      },
+      snapshot: snapshotFixture({
+        stepKey: "container",
+      }),
+    });
+
+    expect(completed.pendingEffects).toEqual([]);
+    expect(completed.activeCommand).toBeNull();
+  });
+
+  it("ignores late container planning completions after the user has left the container step", () => {
+    const activeState = {
+      ...createInitialWorkspaceSetupMachineState(),
+      activeCommand: {
+        effectId: 2,
+        kind: "ensure_route_plan" as const,
+      },
+      nextEffectId: 3,
+    };
+
+    const completed = workspaceSetupMachineReducer(activeState, {
+      type: "command_completed",
+      effectId: 2,
+      result: {
+        kind: "ensure_route_plan",
+        routePlan: routePlanFixture({
+          includeAuthImport: true,
+        }),
+      },
+      snapshot: snapshotFixture({
+        stepKey: "location",
+      }),
+    });
+
+    expect(completed.pendingEffects).toEqual([]);
+    expect(completed.activeCommand).toBeNull();
   });
 
   it("surfaces titling validation errors before attempting persistence", () => {

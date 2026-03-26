@@ -110,6 +110,8 @@ struct RuntimeLockComponentHelpers {
     guest_agent: Option<RuntimeLockComponentHelper>,
     #[serde(rename = "egress-proxy", default)]
     egress_proxy: Option<RuntimeLockComponentHelper>,
+    #[serde(rename = "container-stack", default)]
+    container_stack: Option<RuntimeLockComponentHelper>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -250,12 +252,13 @@ fn helper_metadata_complete(helper: Option<&RuntimeLockComponentHelper>) -> bool
             .is_some()
 }
 
-fn avf_helper_names_and_paths() -> [(&'static str, &'static str); 4] {
+fn avf_helper_names_and_paths() -> [(&'static str, &'static str); 5] {
     [
         ("kernel", "helpers/kernel"),
         ("initrd", "helpers/initrd"),
         ("guest-agent", "helpers/guest-agent"),
         ("egress-proxy", "helpers/egress-proxy"),
+        ("container-stack", "helpers/container-stack.tar.gz"),
     ]
 }
 
@@ -264,6 +267,7 @@ fn avf_helper_metadata_complete(component: &RuntimeLockComponent) -> bool {
         && helper_metadata_complete(component.helpers.initrd.as_ref())
         && helper_metadata_complete(component.helpers.guest_agent.as_ref())
         && helper_metadata_complete(component.helpers.egress_proxy.as_ref())
+        && helper_metadata_complete(component.helpers.container_stack.as_ref())
 }
 
 fn normalize_target_token(raw: &str, host_value: &str) -> Option<String> {
@@ -404,6 +408,10 @@ fn bundle_manifest_path(bundle_dir: &Path) -> PathBuf {
             }
             return bundle_dir.join(candidate);
         }
+    }
+    let effective_manifest = bundle_dir.join("runtime_manifest.effective.json");
+    if effective_manifest.exists() {
+        return effective_manifest;
     }
     bundle_dir.join("manifest.json")
 }
@@ -556,6 +564,9 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(bundle_dir: Option<&Path>)
             };
             let root_path = bundle_dir.join(&entry.root);
             if !root_path.exists() {
+                if managed_source_available {
+                    continue;
+                }
                 failures.push(format!(
                     "missing runtime root dir: {} ({}/{}) at {}",
                     runtime_id,

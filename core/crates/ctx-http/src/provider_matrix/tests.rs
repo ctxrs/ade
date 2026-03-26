@@ -318,6 +318,79 @@ fn builtin_matrix_uses_goose_upstream_acp_archive() {
 }
 
 #[test]
+fn builtin_matrix_tracks_target_specific_codex_cli_archive_binaries() {
+    let matrix = builtin_matrix();
+    let codex_cli = matrix
+        .providers
+        .iter()
+        .find(|entry| entry.id == "codex-cli")
+        .expect("codex-cli entry");
+
+    let managed_install = codex_cli
+        .managed_install
+        .as_ref()
+        .expect("codex-cli managed install");
+    match managed_install {
+        ProviderInstall::Archive {
+            version, targets, ..
+        } => {
+            assert_eq!(version, "0.114.0");
+            assert_eq!(
+                targets
+                    .get("darwin-aarch64")
+                    .expect("codex-cli darwin-aarch64 target")
+                    .bin_path,
+                "codex-aarch64-apple-darwin"
+            );
+            assert_eq!(
+                targets
+                    .get("darwin-x86_64")
+                    .expect("codex-cli darwin-x86_64 target")
+                    .bin_path,
+                "codex-x86_64-apple-darwin"
+            );
+            assert_eq!(
+                targets
+                    .get("linux-aarch64")
+                    .expect("codex-cli linux-aarch64 target")
+                    .bin_path,
+                "codex-aarch64-unknown-linux-gnu"
+            );
+            assert_eq!(
+                targets
+                    .get("linux-x86_64")
+                    .expect("codex-cli linux-x86_64 target")
+                    .bin_path,
+                "codex-x86_64-unknown-linux-gnu"
+            );
+        }
+        other => panic!("expected codex-cli archive managed install, got {other:?}"),
+    }
+}
+
+#[test]
+fn builtin_matrix_routes_codex_cli_prerequisite_same_as_provider() {
+    let matrix = builtin_matrix();
+    let codex = matrix
+        .providers
+        .iter()
+        .find(|entry| entry.id == "codex")
+        .expect("codex entry");
+
+    let dependency = codex
+        .provider_dependencies
+        .iter()
+        .find(|dependency| dependency.id == "codex-cli")
+        .expect("codex-cli prerequisite");
+
+    assert_eq!(dependency.role, ProviderInstallDependencyRole::Prerequisite);
+    assert_eq!(
+        dependency.target,
+        ProviderInstallDependencyTarget::SameAsProvider
+    );
+}
+
+#[test]
 fn builtin_matrix_uses_upstream_openhands_python_acp_runtime() {
     let matrix = builtin_matrix();
     let openhands = matrix

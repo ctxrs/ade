@@ -1267,6 +1267,10 @@
         "egress-proxy": {
           "uri": "locked://runtimes/avf-linux-guest/macos/aarch64/egress-proxy",
           "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "container-stack": {
+          "uri": "locked://runtimes/avf-linux-guest/macos/aarch64/container-stack",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
         }
       },
       "sources": [
@@ -1304,6 +1308,10 @@
         },
         "egress-proxy": {
           "uri": "locked://runtimes/avf-linux-guest/macos/x86_64/egress-proxy",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "container-stack": {
+          "uri": "locked://runtimes/avf-linux-guest/macos/x86_64/container-stack",
           "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
         }
       },

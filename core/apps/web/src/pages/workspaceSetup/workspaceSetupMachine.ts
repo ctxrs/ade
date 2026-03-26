@@ -182,6 +182,7 @@ export type WorkspaceSetupMachineEvent =
       type: "command_completed";
       effectId: number;
       result: WorkspaceSetupMachineCommandResult;
+      snapshot: WorkspaceSetupMachineSnapshot;
     }
   | {
       type: "effects_applied";
@@ -254,6 +255,31 @@ const clearActiveCommand = (
     ...state,
     activeCommand: null,
   };
+};
+
+const command_result_matches_visible_step = (
+  result: WorkspaceSetupMachineCommandResult,
+  snapshot: WorkspaceSetupMachineSnapshot,
+): boolean => {
+  switch (result.kind) {
+    case "verify_remote_connection":
+      return snapshot.stepKey === "location";
+    case "ensure_route_plan":
+      return snapshot.stepKey === "container";
+    case "advance_auth_import":
+      return snapshot.stepKey === "auth-import";
+    case "advance_harness_downloads":
+      return snapshot.stepKey === "harness-downloads";
+    case "select_titling_local":
+    case "persist_titling":
+      return snapshot.stepKey === "session-titling";
+    case "preflight_source_step":
+      return snapshot.stepKey === "source";
+    default: {
+      const exhaustiveCheck: never = result;
+      return exhaustiveCheck;
+    }
+  }
 };
 
 export const workspaceSetupMachineReducer = (
@@ -433,6 +459,9 @@ export const workspaceSetupMachineReducer = (
       const nextState = clearActiveCommand(state, event.effectId);
       if (nextState === state) {
         return state;
+      }
+      if (!command_result_matches_visible_step(event.result, event.snapshot)) {
+        return nextState;
       }
 
       switch (event.result.kind) {

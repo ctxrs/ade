@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
-import { ChevronRight, X } from "lucide-react";
+import { X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ExecutionLaunchSnapshot } from "../../api/client";
@@ -177,16 +177,12 @@ type WorkspaceSetupStepOptionsProps = {
   step: WizardStep;
   selections: Record<string, string>;
   onSelectOption: (stepKey: string, optionId: string) => void;
-  containerAdvancedOpen: boolean;
-  setContainerAdvancedOpen: Dispatch<SetStateAction<boolean>>;
 };
 
 export function WorkspaceSetupStepOptions({
   step,
   selections,
   onSelectOption,
-  containerAdvancedOpen,
-  setContainerAdvancedOpen,
 }: WorkspaceSetupStepOptionsProps) {
   if (!step.options) {
     return null;
@@ -195,9 +191,7 @@ export function WorkspaceSetupStepOptions({
   return (
     <>
       <div className="wizard-option-grid">
-        {step.options
-          .filter((option) => step.key !== "container" || !option.advanced)
-          .map((option) => {
+        {step.options.map((option) => {
             const selected = selections[step.key] === option.id;
             return (
               <button
@@ -215,51 +209,8 @@ export function WorkspaceSetupStepOptions({
                 <div className="wizard-option-desc">{option.desc}</div>
               </button>
             );
-          })}
+        })}
       </div>
-      {step.key === "container" && (
-        <button
-          type="button"
-          className="wizard-advanced-link"
-          data-testid="wizard-container-advanced-toggle"
-          onClick={() => setContainerAdvancedOpen((open) => !open)}
-          aria-expanded={containerAdvancedOpen}
-        >
-          <ChevronRight
-            size={14}
-            className={containerAdvancedOpen ? "is-open" : undefined}
-            aria-hidden="true"
-          />
-          Advanced
-        </button>
-      )}
-      {step.key === "container" && containerAdvancedOpen && (
-        <div className="wizard-container-advanced">
-          <div className="wizard-option-grid wizard-option-grid--two">
-            {step.options
-              .filter((option) => Boolean(option.advanced))
-              .map((option) => {
-                const selected = selections[step.key] === option.id;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    className={`wizard-option${selected ? " is-selected" : ""}`}
-                    data-testid={`wizard-option-${step.key}-${option.id}`}
-                    onClick={() => onSelectOption(step.key, option.id)}
-                    aria-pressed={selected}
-                  >
-                    <div className="wizard-option-title">
-                      <span className="wizard-option-title-text">{option.title}</span>
-                      {option.badge && <span className="wizard-option-badge">{option.badge}</span>}
-                    </div>
-                    <div className="wizard-option-desc">{option.desc}</div>
-                  </button>
-                );
-              })}
-          </div>
-        </div>
-      )}
     </>
   );
 }

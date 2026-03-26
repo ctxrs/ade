@@ -118,6 +118,39 @@ pub(super) fn clone_or_copy_rootfs_image(
     }
 }
 
+fn gibibytes(bytes: u64) -> f64 {
+    bytes as f64 / (1024.0 * 1024.0 * 1024.0)
+}
+
+fn ensure_minimum_writable_rootfs_capacity(path: &Path) -> Result<Option<String>> {
+    let current_bytes = fs::metadata(path)
+        .with_context(|| format!("reading {}", path.display()))?
+        .len();
+    if current_bytes >= SHARED_VM_MIN_WRITABLE_ROOTFS_BYTES {
+        return Ok(None);
+    }
+
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .with_context(|| format!("opening {} for writable rootfs growth", path.display()))?;
+    file.set_len(SHARED_VM_MIN_WRITABLE_ROOTFS_BYTES)
+        .with_context(|| {
+            format!(
+                "expanding writable AVF Linux rootfs {} to {} bytes",
+                path.display(),
+                SHARED_VM_MIN_WRITABLE_ROOTFS_BYTES
+            )
+        })?;
+
+    Ok(Some(format!(
+        "expanded writable AVF Linux rootfs {} from {:.2} GiB to {:.2} GiB before guest boot",
+        path.display(),
+        gibibytes(current_bytes),
+        gibibytes(SHARED_VM_MIN_WRITABLE_ROOTFS_BYTES),
+    )))
+}
+
 pub(super) fn materialize_writable_rootfs_image(
     data_root: &Path,
     source_rootfs: &Path,
@@ -128,7 +161,8 @@ pub(super) fn materialize_writable_rootfs_image(
     let staged_rootfs_tmp = staged_rootfs_path.with_extension("tmp");
 
     if staged_rootfs_path.is_file() {
-        return Ok((staged_rootfs_path, None));
+        let resize_note = ensure_minimum_writable_rootfs_capacity(&staged_rootfs_path)?;
+        return Ok((staged_rootfs_path, resize_note));
     }
     if staged_rootfs_tmp.exists() {
         fs::remove_file(&staged_rootfs_tmp)
@@ -147,7 +181,12 @@ pub(super) fn materialize_writable_rootfs_image(
             staged_rootfs_path.display()
         )
     })?;
-    Ok((staged_rootfs_path, Some(note)))
+    let resize_note = ensure_minimum_writable_rootfs_capacity(&staged_rootfs_path)?;
+    let combined_note = match resize_note {
+        Some(resize_note) => Some(format!("{note}; {resize_note}")),
+        None => Some(note),
+    };
+    Ok((staged_rootfs_path, combined_note))
 }
 
 pub(super) fn load_shared_vm_kernel_cmdline(runtime_root: &Path) -> Result<String> {

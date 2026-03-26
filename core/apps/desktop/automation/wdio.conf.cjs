@@ -283,6 +283,43 @@ const resolveAppResourcesBinPrefix = (appPath) => {
   return path.resolve(path.dirname(appPath), "bin");
 };
 
+function canonicalPath(p) {
+  const raw = String(p || "").trim();
+  if (!raw) return raw;
+  try {
+    if (typeof fs.realpathSync.native === "function") {
+      return fs.realpathSync.native(raw);
+    }
+    return fs.realpathSync(raw);
+  } catch {
+    return raw;
+  }
+}
+
+const collectPathVariants = (candidate) => {
+  const values = new Set();
+  const resolved = path.resolve(String(candidate || ""));
+  if (!resolved) return values;
+  values.add(resolved);
+  values.add(canonicalPath(resolved));
+  return values;
+};
+
+const executableMatchesProcessCommand = (cmd, executablePath) =>
+  cmd === executablePath || cmd.startsWith(`${executablePath} `);
+
+const resourcePrefixMatchesProcessCommand = (cmd, resourcePrefix) =>
+  cmd.startsWith(`${resourcePrefix}${path.sep}`);
+
+const commandMatchesScopedAppProcess = (cmd, appPath) => {
+  const executablePaths = Array.from(collectPathVariants(resolveAppExecutablePath(appPath)));
+  if (executablePaths.some((candidate) => executableMatchesProcessCommand(cmd, candidate))) {
+    return true;
+  }
+  const resourceBinPrefixes = Array.from(collectPathVariants(resolveAppResourcesBinPrefix(appPath)));
+  return resourceBinPrefixes.some((prefix) => resourcePrefixMatchesProcessCommand(cmd, prefix));
+};
+
 const killProcesses = (matcher) => {
   const out = spawnSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" });
   if (out.status !== 0) return;
@@ -302,8 +339,6 @@ const killProcesses = (matcher) => {
 
 const killExistingAppProcesses = () => {
   if (!fs.existsSync(APP_PATH)) return;
-  const appBin = resolveAppExecutablePath(APP_PATH);
-  const appResBinPrefix = resolveAppResourcesBinPrefix(APP_PATH);
   const out = spawnSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" });
   if (out.status !== 0) return;
   const lines = String(out.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -314,12 +349,8 @@ const killExistingAppProcesses = () => {
     const pid = Number(m[1]);
     const cmd = m[2] || "";
     if (!pid || !cmd) continue;
-    if (cmd.startsWith(appBin) || cmd.includes(appBin)) {
-      pids.push(pid);
-      continue;
-    }
-    // If the app previously spawned an internal daemon, kill it too (scoped to this app bundle).
-    if (cmd.startsWith(appResBinPrefix) && /\bserve\b/.test(cmd)) {
+    // Sweep stale automation app instances and bundle-scoped helper children from prior runs.
+    if (commandMatchesScopedAppProcess(cmd, APP_PATH)) {
       pids.push(pid);
     }
   }
@@ -371,6 +402,7 @@ const avfGuestRuntimeRequiredPaths = (runtimeDir) => [
   path.join(runtimeDir, "helpers", "initrd"),
   path.join(runtimeDir, "helpers", "guest-agent"),
   path.join(runtimeDir, "helpers", "egress-proxy"),
+  path.join(runtimeDir, "helpers", "container-stack.tar.gz"),
 ];
 
 const avfGuestRuntimeReady = (runtimeDir, fsImpl = fs) => {
@@ -639,7 +671,7 @@ const assertManagedAvfRuntimeComponent = (lock, hostOs, hostArch) => {
     );
   }
   const helpers = component.helpers || {};
-  for (const helperName of ["kernel", "initrd", "guest-agent", "egress-proxy"]) {
+  for (const helperName of ["kernel", "initrd", "guest-agent", "egress-proxy", "container-stack"]) {
     const helper = helpers[helperName];
     if (!String(helper?.uri || "").trim() || !String(helper?.sha256 || "").trim()) {
       throw new Error(
@@ -754,6 +786,7 @@ const ensureBundledContainerAssets = (options = {}) => {
         path.join(runtimeRoot, "helpers", "initrd"),
         path.join(runtimeRoot, "helpers", "guest-agent"),
         path.join(runtimeRoot, "helpers", "egress-proxy"),
+        path.join(runtimeRoot, "helpers", "container-stack.tar.gz"),
       ];
       for (const requiredPath of requiredPaths) {
         if (!fs.existsSync(requiredPath)) {
@@ -946,19 +979,6 @@ const createCliAlias = (targetCliPath, aliasName) => {
   const cliPath = path.join(aliasDir, aliasName);
   fs.symlinkSync(targetCliPath, cliPath);
   return { aliasDir, cliPath };
-};
-
-const canonicalPath = (p) => {
-  const raw = String(p || "").trim();
-  if (!raw) return raw;
-  try {
-    if (typeof fs.realpathSync.native === "function") {
-      return fs.realpathSync.native(raw);
-    }
-    return fs.realpathSync(raw);
-  } catch {
-    return raw;
-  }
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1764,4 +1784,5 @@ exports.__desktopAutomationConfigTestHooks = {
   ensureAutomationAvfLinuxGuestRuntime,
   ensureBundledContainerAssets,
   resolveMochaTimeoutMs,
+  commandMatchesScopedAppProcess,
 };

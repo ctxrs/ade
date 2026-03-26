@@ -823,7 +823,7 @@ async fn concurrent_launch_start_is_deduplicated() {
     assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
 
     let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
-    let exists_line = format!("container exists {container_name}");
+    let exists_line = format!("container inspect {container_name}");
     let inspect_line =
         format!("container inspect --format {{{{.State.Running}}}} {container_name}");
     assert_eq!(
@@ -837,7 +837,7 @@ async fn concurrent_launch_start_is_deduplicated() {
         "expected exactly one running-container inspect in log:\n{log}"
     );
     assert!(
-        !log.contains("image exists"),
+        !log.contains("image inspect"),
         "deduplicated running-container launch should not front-load image checks:\n{log}"
     );
     assert!(
@@ -1811,7 +1811,7 @@ async fn workspace_launch_waits_for_running_startup_prewarm_without_duplicate_ru
 
     let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert!(
-        log.contains(&format!("container exists {container_name}")),
+        log.contains(&format!("container inspect {container_name}")),
         "expected reusable container check in log:\n{log}"
     );
     assert!(
@@ -2450,7 +2450,7 @@ async fn workspace_launch_reuses_existing_container_without_waiting_for_startup_
 
     let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert!(
-        log.contains(&format!("container exists {container_name}")),
+        log.contains(&format!("container inspect {container_name}")),
         "expected existing-container check in log:\n{log}"
     );
     assert!(
@@ -2533,7 +2533,7 @@ async fn workspace_launch_reuses_running_container_without_runtime_prewarm_or_im
 
     let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert!(
-        log.contains(&format!("container exists {container_name}")),
+        log.contains(&format!("container inspect {container_name}")),
         "expected existing-container check in log:\n{log}"
     );
     assert!(

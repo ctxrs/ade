@@ -6,11 +6,7 @@ fn build_shared_data_root_device(
 ) -> Result<Retained<VZVirtioFileSystemDeviceConfiguration>> {
     let shared_dir_url = file_url_for_path(data_root);
     let shared_dir = unsafe {
-        VZSharedDirectory::initWithURL_readOnly(
-            VZSharedDirectory::alloc(),
-            &shared_dir_url,
-            false,
-        )
+        VZSharedDirectory::initWithURL_readOnly(VZSharedDirectory::alloc(), &shared_dir_url, false)
     };
     let share = unsafe {
         VZSingleDirectoryShare::initWithDirectory(VZSingleDirectoryShare::alloc(), &shared_dir)

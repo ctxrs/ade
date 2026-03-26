@@ -5,6 +5,7 @@ import type {
 } from "../../api/client";
 import {
   createWorkspace,
+  deleteWorkspace,
   idToString,
   listWorkspaces,
   repoClone,
@@ -330,6 +331,8 @@ export function useWorkspaceSetupCreate({
     setLaunchTick(0);
     setCreating(true);
     const launchStartedAtMs = Date.now();
+    let createdWorkspaceId: string | null = null;
+    let shouldCleanupCreatedWorkspace = false;
     try {
       if (selections.location === "remote" && !desktopApp) {
         throw new Error("Workspace creation from the wizard requires the desktop app.");
@@ -503,6 +506,8 @@ export function useWorkspaceSetupCreate({
       if (!workspaceId) {
         const created = await createWorkspace(rootPath, name, workspaceKind, "wizard");
         workspaceId = idToString(created.id);
+        createdWorkspaceId = workspaceId;
+        shouldCleanupCreatedWorkspace = true;
       }
 
       const environment = selections.container === "host"
@@ -601,6 +606,7 @@ export function useWorkspaceSetupCreate({
           emitEvent: false,
         });
       }
+      shouldCleanupCreatedWorkspace = false;
       wizardCompletedRef.current = true;
       trackWizardCompleted({
         wizardKey,
@@ -608,6 +614,13 @@ export function useWorkspaceSetupCreate({
       });
       navigate(`/workspaces/${workspaceId}`, { replace: true });
     } catch (error) {
+      if (shouldCleanupCreatedWorkspace && createdWorkspaceId) {
+        try {
+          await deleteWorkspace(createdWorkspaceId);
+        } catch {
+          // Best-effort rollback only; preserve the original create failure.
+        }
+      }
       const message = messageFromError(error);
       setCreateError(message);
       const key = resolveCreateErrorStepKey(message);

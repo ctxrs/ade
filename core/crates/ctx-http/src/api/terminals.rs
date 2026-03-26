@@ -234,6 +234,25 @@ fn resolve_container_terminal_cwd(
     ))
 }
 
+async fn resolve_terminal_host_root(
+    path: &FsPath,
+    container_mode: bool,
+    unavailable_error: &'static str,
+) -> Result<PathBuf, (StatusCode, Json<ApiErrorResp>)> {
+    if container_mode {
+        return Ok(path.to_path_buf());
+    }
+
+    tokio::fs::canonicalize(path).await.map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: unavailable_error.to_string(),
+            }),
+        )
+    })
+}
+
 pub(super) async fn create_workspace_terminal(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -304,18 +323,6 @@ pub(super) async fn create_workspace_terminal(
         )?)),
         None => None,
     };
-
-    let workspace_root = PathBuf::from(&workspace.root_path);
-    let workspace_root = tokio::fs::canonicalize(&workspace_root)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "workspace root is unavailable".to_string(),
-                }),
-            )
-        })?;
 
     let effective = execution_effective::effective_execution_settings(&state, workspace_id)
         .await
@@ -400,17 +407,20 @@ pub(super) async fn create_workspace_terminal(
         .transpose()?
         .unwrap_or(effective);
     let container_mode = matches!(effective.mode, ExecutionMode::Sandbox);
+    let workspace_root_path = PathBuf::from(&workspace.root_path);
+    let workspace_root = resolve_terminal_host_root(
+        &workspace_root_path,
+        container_mode,
+        "workspace root is unavailable",
+    )
+    .await?;
 
     let worktree_root = if let Some(wt) = worktree.as_ref() {
         let root = PathBuf::from(&wt.root_path);
-        Some(tokio::fs::canonicalize(&root).await.map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "worktree root is unavailable".to_string(),
-                }),
-            )
-        })?)
+        Some(
+            resolve_terminal_host_root(&root, container_mode, "worktree root is unavailable")
+                .await?,
+        )
     } else {
         None
     };

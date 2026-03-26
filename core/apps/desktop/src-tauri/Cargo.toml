@@ -119,4 +119,7 @@ stt = ["tauri-plugin-stt"]
 tauri-plugin-automation = { path = "third_party/tauri-plugin-automation" }
 tauri-plugin-updater = { path = "third_party/tauri-plugin-updater" }
 
+[dev-dependencies]
+serde_yaml = "0.9"
+
 [workspace]

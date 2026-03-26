@@ -106,7 +106,9 @@ const daemonHttpJson = async (connection, method, apiPath, body) => {
     "content-type": "application/json",
   };
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(new Error("daemon request timeout")), DAEMON_HTTP_TIMEOUT_MS);
+  const timeout = setTimeout(() => {
+    controller.abort(new Error(`daemon request timeout: ${method} ${apiPath}`));
+  }, DAEMON_HTTP_TIMEOUT_MS);
   try {
     const response = await fetch(url, {
       method,

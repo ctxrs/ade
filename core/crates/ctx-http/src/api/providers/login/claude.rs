@@ -307,6 +307,37 @@ fn claude_login_should_skip_browser_open(raw_tier: Option<&str>) -> bool {
     )
 }
 
+fn claude_browser_open_shim_script(skip_browser_open: bool) -> &'static str {
+    if skip_browser_open {
+        r#"#!/bin/sh
+url="${1:-}"
+capture_path="${CTX_CLAUDE_AUTH_URL_CAPTURE_PATH:-}"
+if [ -n "$url" ] && [ -n "$capture_path" ]; then
+  printf '%s\n' "$url" > "$capture_path"
+fi
+exit 0
+"#
+    } else {
+        r#"#!/bin/sh
+url="${1:-}"
+capture_path="${CTX_CLAUDE_AUTH_URL_CAPTURE_PATH:-}"
+if [ -n "$url" ] && [ -n "$capture_path" ]; then
+  printf '%s\n' "$url" > "$capture_path"
+fi
+if [ -z "$url" ]; then
+  exit 1
+fi
+if command -v open >/dev/null 2>&1; then
+  exec open "$url"
+fi
+if command -v xdg-open >/dev/null 2>&1; then
+  exec xdg-open "$url"
+fi
+exit 1
+"#
+    }
+}
+
 fn create_claude_browser_open_shim() -> anyhow::Result<(tempfile::TempDir, PathBuf, PathBuf)> {
     let temp_dir = tempfile::Builder::new()
         .prefix("ctx-claude-browser-open-")
@@ -316,11 +347,7 @@ fn create_claude_browser_open_shim() -> anyhow::Result<(tempfile::TempDir, PathB
     let capture_path = temp_dir.path().join("auth-url");
     let skip_browser_open =
         claude_login_should_skip_browser_open(std::env::var("CTX_E2E_TIER").ok().as_deref());
-    let script_body = if skip_browser_open {
-        "#!/bin/sh\nurl=\"${{1:-}}\"\ncapture_path=\"${{CTX_CLAUDE_AUTH_URL_CAPTURE_PATH:-}}\"\nif [ -n \"$url\" ] && [ -n \"$capture_path\" ]; then\n  printf '%s\\n' \"$url\" > \"$capture_path\"\nfi\nexit 0\n".to_string()
-    } else {
-        "#!/bin/sh\nurl=\"${{1:-}}\"\ncapture_path=\"${{CTX_CLAUDE_AUTH_URL_CAPTURE_PATH:-}}\"\nif [ -n \"$url\" ] && [ -n \"$capture_path\" ]; then\n  printf '%s\\n' \"$url\" > \"$capture_path\"\nfi\nif [ -z \"$url\" ]; then\n  exit 1\nfi\nif command -v open >/dev/null 2>&1; then\n  exec open \"$url\"\nfi\nif command -v xdg-open >/dev/null 2>&1; then\n  exec xdg-open \"$url\"\nfi\nexit 1\n".to_string()
-    };
+    let script_body = claude_browser_open_shim_script(skip_browser_open);
     std::fs::write(&script_path, script_body)
         .with_context(|| format!("writing Claude browser-open shim {}", script_path.display()))?;
     #[cfg(unix)]
@@ -936,6 +963,7 @@ async fn monitor_claude_login(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     #[test]
     fn preferred_claude_auth_url_uses_browser_open_marker_over_scraped_url() {
@@ -989,6 +1017,76 @@ mod tests {
         assert_eq!(
             read_claude_browser_open_capture_url(&capture_path).as_deref(),
             Some(expected)
+        );
+    }
+
+    fn write_executable_script(path: &std::path::Path, body: &str) {
+        std::fs::write(path, body).expect("write script");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+                .expect("chmod script");
+        }
+    }
+
+    #[test]
+    fn browser_open_shim_capture_only_writes_auth_url() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let script_path = temp_dir.path().join("open-browser");
+        write_executable_script(&script_path, claude_browser_open_shim_script(true));
+        let capture_path = temp_dir.path().join("auth-url");
+        let auth_url = "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A5999%2Fcallback&state=test";
+
+        let status = Command::new("/bin/sh")
+            .arg(&script_path)
+            .arg(auth_url)
+            .env("CTX_CLAUDE_AUTH_URL_CAPTURE_PATH", &capture_path)
+            .status()
+            .expect("run capture-only shim");
+
+        assert!(status.success());
+        assert_eq!(
+            std::fs::read_to_string(&capture_path).expect("read capture path"),
+            format!("{auth_url}\n")
+        );
+    }
+
+    #[test]
+    fn browser_open_shim_invokes_open_and_captures_auth_url() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let script_path = temp_dir.path().join("open-browser");
+        write_executable_script(&script_path, claude_browser_open_shim_script(false));
+        let capture_path = temp_dir.path().join("auth-url");
+        let open_log_path = temp_dir.path().join("open.log");
+        let open_path = temp_dir.path().join("open");
+        write_executable_script(
+            &open_path,
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$1\" > \"{}\"\nexit 0\n",
+                open_log_path.display()
+            ),
+        );
+        let auth_url = "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A6001%2Fcallback&state=test";
+        let path_env = format!("{}:/usr/bin:/bin", temp_dir.path().display());
+
+        let status = Command::new("/bin/sh")
+            .arg(&script_path)
+            .arg(auth_url)
+            .env("CTX_CLAUDE_AUTH_URL_CAPTURE_PATH", &capture_path)
+            .env("PATH", path_env)
+            .status()
+            .expect("run browser-open shim");
+
+        assert!(status.success());
+        assert_eq!(
+            std::fs::read_to_string(&capture_path).expect("read capture path"),
+            format!("{auth_url}\n")
+        );
+        assert_eq!(
+            std::fs::read_to_string(&open_log_path).expect("read open log"),
+            format!("{auth_url}\n")
         );
     }
 }

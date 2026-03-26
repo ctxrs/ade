@@ -1,5 +1,7 @@
 use super::*;
 
+pub(crate) const SHARED_VM_SANDBOX_CLI_GUEST_BIN: &str = "/usr/local/bin/nerdctl";
+
 fn explicit_sandbox_cli_binary_path() -> Option<PathBuf> {
     let raw = std::env::var(CTX_HARNESS_SANDBOX_CLI_PATH_ENV).ok()?;
     let path = PathBuf::from(raw.trim());
@@ -92,6 +94,37 @@ pub(crate) fn sandbox_cli_env_for_data_root(data_root: &Path) -> Result<HashMap<
     Ok(env)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct SandboxContainerLaunchNetworking {
+    pub(super) network: Option<&'static str>,
+    pub(super) add_host: &'static str,
+}
+
+pub(super) fn sandbox_container_launch_networking(
+    settings: &ContainerExecutionSettings,
+) -> SandboxContainerLaunchNetworking {
+    SandboxContainerLaunchNetworking {
+        network: if matches!(settings.runtime, ContainerRuntimeKind::SharedVmContainer) {
+            None
+        } else {
+            Some("slirp4netns:allow_host_loopback=true")
+        },
+        add_host: "host.containers.internal:host-gateway",
+    }
+}
+
+pub(super) fn append_sandbox_container_launch_network_args(
+    cmd: &mut Command,
+    settings: &ContainerExecutionSettings,
+) {
+    let networking = sandbox_container_launch_networking(settings);
+    if let Some(network) = networking.network {
+        cmd.arg("--network").arg(network);
+    }
+    cmd.arg("--cap-add").arg("NET_ADMIN");
+    cmd.arg("--add-host").arg(networking.add_host);
+}
+
 pub(crate) fn sandbox_container_command(data_root: &Path) -> Result<Command> {
     if let Some(bin) = explicit_sandbox_cli_binary_path() {
         let env = sandbox_cli_env_for_data_root(data_root)?;
@@ -112,7 +145,7 @@ pub(crate) fn sandbox_container_command(data_root: &Path) -> Result<Command> {
             .arg("--cwd")
             .arg("/")
             .arg("--command")
-            .arg("nerdctl")
+            .arg(SHARED_VM_SANDBOX_CLI_GUEST_BIN)
             .arg("--user")
             .arg("root");
         let mut env_pairs = env.into_iter().collect::<Vec<_>>();
@@ -166,7 +199,7 @@ pub(super) fn command_output_message(output: &std::process::Output) -> String {
 
 pub(super) async fn container_exists(data_root: &Path, name: &str) -> Result<bool> {
     let mut cmd = sandbox_container_command(data_root)?;
-    cmd.arg("container").arg("exists").arg(name);
+    cmd.arg("container").arg("inspect").arg(name);
     let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
     Ok(output.status.success())
 }
@@ -281,5 +314,72 @@ mod tests {
                 .expect("sandbox engine ready check"),
             "sandbox engine should honor the explicit CLI override",
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn container_exists_uses_runtime_neutral_inspect_probe() {
+        let _serial = env_var_test_lock().lock().await;
+        let temp = tempdir().expect("tempdir");
+        let cli_path = temp.path().join("sandbox-cli.sh");
+        let log_path = temp.path().join("sandbox-cli.log");
+        std::fs::write(
+            &cli_path,
+            format!(
+                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"ctx-harness-test\" ]; then\n  printf '[{{}}]\\n'\n  exit 0\nfi\necho \"unexpected invocation: $*\" >&2\nexit 1\n",
+                log = log_path.display(),
+            ),
+        )
+        .expect("write sandbox cli shim");
+        std::fs::set_permissions(&cli_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod sandbox cli shim");
+        let _guard = EnvVarGuard::set(
+            CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+            &cli_path.to_string_lossy(),
+        );
+
+        assert!(
+            container_exists(temp.path(), "ctx-harness-test")
+                .await
+                .expect("container exists probe"),
+            "inspect-based probe should treat the container as existing",
+        );
+
+        let log = std::fs::read_to_string(&log_path).expect("read sandbox cli log");
+        assert!(
+            log.contains("container inspect ctx-harness-test"),
+            "expected inspect probe in log:\n{log}"
+        );
+        assert!(
+            !log.contains("container exists"),
+            "inspect-based probe should not call unsupported container exists:\n{log}"
+        );
+    }
+
+    #[test]
+    fn shared_vm_container_launch_networking_uses_default_bridge() {
+        let settings = ContainerExecutionSettings {
+            runtime: ContainerRuntimeKind::SharedVmContainer,
+            ..ContainerExecutionSettings::default()
+        };
+
+        let networking = sandbox_container_launch_networking(&settings);
+        assert_eq!(networking.network, None);
+        assert_eq!(networking.add_host, "host.containers.internal:host-gateway");
+    }
+
+    #[test]
+    fn native_container_launch_networking_keeps_slirp() {
+        let settings = ContainerExecutionSettings {
+            runtime: ContainerRuntimeKind::NativeContainer,
+            ..ContainerExecutionSettings::default()
+        };
+
+        let networking = sandbox_container_launch_networking(&settings);
+        assert_eq!(
+            networking.network,
+            Some("slirp4netns:allow_host_loopback=true")
+        );
+        assert_eq!(networking.add_host, "host.containers.internal:host-gateway");
     }
 }

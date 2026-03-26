@@ -1,4 +1,4 @@
-use super::{infer_terminal_worktree, resolve_container_terminal_cwd};
+use super::{infer_terminal_worktree, resolve_container_terminal_cwd, resolve_terminal_host_root};
 use crate::daemon::AppState;
 use crate::disk_isolated;
 use crate::settings::ExecutionMode;
@@ -140,6 +140,31 @@ fn resolve_container_terminal_cwd_maps_plain_workspace_terminal_paths_without_wo
     .unwrap();
 
     assert_eq!(cwd, PathBuf::from("/ctx/ws/subdir"));
+}
+
+#[tokio::test]
+async fn resolve_terminal_host_root_preserves_missing_path_for_container_mode() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let missing = temp.path().join("missing-root");
+
+    let resolved = resolve_terminal_host_root(&missing, true, "workspace root is unavailable")
+        .await
+        .expect("sandbox mode should not require host path materialization");
+
+    assert_eq!(resolved, missing);
+}
+
+#[tokio::test]
+async fn resolve_terminal_host_root_requires_existing_path_for_host_mode() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let missing = temp.path().join("missing-root");
+
+    let err = resolve_terminal_host_root(&missing, false, "workspace root is unavailable")
+        .await
+        .expect_err("host terminals should still require a materialized host path");
+
+    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    assert_eq!(err.1 .0.error, "workspace root is unavailable");
 }
 
 #[tokio::test]

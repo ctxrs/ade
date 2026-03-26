@@ -17,10 +17,10 @@ use anyhow::{bail, Result};
 #[cfg(target_os = "linux")]
 use portable_pty::{CommandBuilder as PtyCommandBuilder, NativePtySystem, PtySize, PtySystem};
 
+#[cfg(any(target_os = "linux", test))]
+use crate::protocol::{read_exec_frame, write_exec_frame, AvfLinuxExecFrame};
 #[cfg(target_os = "linux")]
-use crate::protocol::{
-    read_exec_frame, write_exec_frame, AvfLinuxExecError, AvfLinuxExecExit, AvfLinuxExecFrame,
-};
+use crate::protocol::{AvfLinuxExecError, AvfLinuxExecExit};
 use crate::protocol::{AvfLinuxExecRequest, AVF_LINUX_EXEC_PROTOCOL_VERSION};
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -33,6 +33,9 @@ const VSOCK_LISTENER_RETRY_INTERVAL: std::time::Duration = std::time::Duration::
 const DEFAULT_PTY_COLS: u16 = 80;
 #[cfg(target_os = "linux")]
 const DEFAULT_PTY_ROWS: u16 = 24;
+// Keep guest-agent stream chunks aligned with the host helper's empirically safe
+// shared-VM transport budget so streamed stdin is not truncated mid-import.
+const AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD: usize = 1024;
 
 fn main() -> Result<()> {
     #[cfg(target_os = "linux")]
@@ -368,18 +371,13 @@ fn relay_stream_output(
     writer: &Arc<Mutex<File>>,
     stdout: bool,
 ) -> Result<()> {
-    let mut buf = [0u8; 8192];
+    let mut buf = [0u8; AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD];
     loop {
         match reader.read(&mut buf) {
             Ok(0) => return Ok(()),
-            Ok(n) => {
-                let frame = if stdout {
-                    AvfLinuxExecFrame::Stdout(buf[..n].to_vec())
-                } else {
-                    AvfLinuxExecFrame::Stderr(buf[..n].to_vec())
-                };
-                write_stream_frame(writer, frame)?;
-            }
+            Ok(n) => emit_exec_stream_frames(&buf[..n], stdout, |frame| {
+                write_stream_frame(writer, frame)
+            })?,
             Err(err) => return Err(err).context("reading child output"),
         }
     }
@@ -387,14 +385,31 @@ fn relay_stream_output(
 
 #[cfg(target_os = "linux")]
 fn relay_pty_output(reader: &mut impl Read, writer: &Arc<Mutex<File>>) -> Result<()> {
-    let mut buf = [0u8; 8192];
+    let mut buf = [0u8; AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD];
     loop {
         match reader.read(&mut buf) {
             Ok(0) => return Ok(()),
-            Ok(n) => write_stream_frame(writer, AvfLinuxExecFrame::Stdout(buf[..n].to_vec()))?,
+            Ok(n) => {
+                emit_exec_stream_frames(&buf[..n], true, |frame| write_stream_frame(writer, frame))?
+            }
             Err(err) => return Err(err).context("reading PTY output"),
         }
     }
+}
+
+fn emit_exec_stream_frames<F>(bytes: &[u8], stdout: bool, mut emit: F) -> Result<()>
+where
+    F: FnMut(AvfLinuxExecFrame) -> Result<()>,
+{
+    for chunk in bytes.chunks(AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD) {
+        let frame = if stdout {
+            AvfLinuxExecFrame::Stdout(chunk.to_vec())
+        } else {
+            AvfLinuxExecFrame::Stderr(chunk.to_vec())
+        };
+        emit(frame)?;
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -703,8 +718,17 @@ fn terminate_exec_process_group(pid: u32) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::io::Cursor;
 
     use super::*;
+
+    #[test]
+    fn exec_stream_payload_budget_stays_within_shared_vm_safe_limit() {
+        assert!(
+            AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD <= 1024,
+            "shared-VM exec transport truncated larger stdin frames in live tar-import repros",
+        );
+    }
 
     #[test]
     fn prepare_exec_request_rejects_empty_command() {
@@ -719,5 +743,36 @@ mod tests {
         })
         .expect_err("empty command should fail");
         assert!(err.to_string().contains("must not be empty"));
+    }
+
+    #[test]
+    fn emit_exec_stream_frames_splits_large_stdout_payloads() {
+        let payload = vec![b'x'; AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD + 33];
+        let mut bytes = Vec::new();
+
+        emit_exec_stream_frames(&payload, true, |frame| {
+            write_exec_frame(&mut bytes, &frame).map_err(anyhow::Error::from)
+        })
+        .expect("split stdout frames");
+
+        let mut cursor = Cursor::new(bytes);
+        let first = read_exec_frame(&mut cursor)
+            .expect("read first")
+            .expect("first frame");
+        let second = read_exec_frame(&mut cursor)
+            .expect("read second")
+            .expect("second frame");
+        let eof = read_exec_frame(&mut cursor).expect("read eof");
+
+        let AvfLinuxExecFrame::Stdout(first) = first else {
+            panic!("expected stdout frame");
+        };
+        let AvfLinuxExecFrame::Stdout(second) = second else {
+            panic!("expected stdout frame");
+        };
+
+        assert_eq!(first.len(), AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD);
+        assert_eq!(second.len(), 33);
+        assert!(eof.is_none());
     }
 }

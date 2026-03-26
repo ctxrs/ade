@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 toolchain="${CTX_AVF_GUEST_AGENT_TOOLCHAIN:-stable-aarch64-apple-darwin}"
 cargo_home_bin="${HOME}/.cargo/bin"
 default_path="${cargo_home_bin}:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+target_root="${CTX_AVF_GUEST_HELPER_TARGET_ROOT:-${repo_root}/target}"
 
 if [[ -n "${PATH:-}" ]]; then
   export PATH="${cargo_home_bin}:${PATH}"
@@ -39,6 +40,28 @@ targets=(
   "x86_64-unknown-linux-gnu"
 )
 
+if [[ -n "${CTX_AVF_GUEST_HELPER_TARGETS:-}" ]]; then
+  requested_targets=()
+  read -r -a raw_targets <<<"${CTX_AVF_GUEST_HELPER_TARGETS//,/ }"
+  for target in "${raw_targets[@]}"; do
+    [[ -n "${target}" ]] || continue
+    case "${target}" in
+      aarch64-unknown-linux-gnu|x86_64-unknown-linux-gnu)
+        requested_targets+=("${target}")
+        ;;
+      *)
+        echo "error: unsupported CTX_AVF_GUEST_HELPER_TARGETS entry: ${target}" >&2
+        exit 1
+        ;;
+    esac
+  done
+  if ((${#requested_targets[@]} == 0)); then
+    echo "error: CTX_AVF_GUEST_HELPER_TARGETS did not include any valid targets" >&2
+    exit 1
+  fi
+  targets=("${requested_targets[@]}")
+fi
+
 packages=(
   "ctx-avf-linux-guest-agent"
   "ctx-egress-proxy"
@@ -58,7 +81,7 @@ for target in "${targets[@]}"; do
     if ((${#extra_args[@]} > 0)); then
       cargo_cmd+=("${extra_args[@]}")
     fi
-    "${cargo_cmd[@]}"
+    CARGO_TARGET_DIR="${target_root}" "${cargo_cmd[@]}"
   done
 done
 
@@ -75,7 +98,7 @@ fi
 echo "AVF Linux guest helper build complete:"
 for target in "${targets[@]}"; do
   for package in "${packages[@]}"; do
-    binary_path="${repo_root}/target/${target}/${profile_dir}/${package}"
+    binary_path="${target_root}/${target}/${profile_dir}/${package}"
     if [[ -f "${binary_path}" ]]; then
       printf '  %s\n' "${binary_path}"
     fi

@@ -60,18 +60,16 @@ use objc2::{AnyThread, ClassType};
 use objc2_foundation::{NSArray, NSData, NSError, NSString, NSURL};
 #[cfg(target_os = "macos")]
 use objc2_virtualization::{
-    VZDirectorySharingDeviceConfiguration,
-    VZDiskImageCachingMode, VZDiskImageStorageDeviceAttachment, VZDiskImageSynchronizationMode,
-    VZFileSerialPortAttachment, VZGenericMachineIdentifier, VZGenericPlatformConfiguration,
-    VZLinuxBootLoader, VZMACAddress, VZMemoryBalloonDeviceConfiguration,
-    VZNATNetworkDeviceAttachment, VZNetworkDeviceConfiguration, VZSerialPortConfiguration,
-    VZSharedDirectory, VZSingleDirectoryShare, VZSocketDeviceConfiguration,
-    VZStorageDeviceConfiguration, VZVirtioBlockDeviceConfiguration,
+    VZDirectorySharingDeviceConfiguration, VZDiskImageCachingMode,
+    VZDiskImageStorageDeviceAttachment, VZDiskImageSynchronizationMode, VZFileSerialPortAttachment,
+    VZGenericMachineIdentifier, VZGenericPlatformConfiguration, VZLinuxBootLoader, VZMACAddress,
+    VZMemoryBalloonDeviceConfiguration, VZNATNetworkDeviceAttachment, VZNetworkDeviceConfiguration,
+    VZSerialPortConfiguration, VZSharedDirectory, VZSingleDirectoryShare,
+    VZSocketDeviceConfiguration, VZStorageDeviceConfiguration, VZVirtioBlockDeviceConfiguration,
     VZVirtioConsoleDeviceSerialPortConfiguration, VZVirtioFileSystemDeviceConfiguration,
-    VZVirtioNetworkDeviceConfiguration,
-    VZVirtioSocketConnection, VZVirtioSocketDevice, VZVirtioSocketDeviceConfiguration,
-    VZVirtioTraditionalMemoryBalloonDeviceConfiguration, VZVirtualMachine,
-    VZVirtualMachineConfiguration, VZVirtualMachineState,
+    VZVirtioNetworkDeviceConfiguration, VZVirtioSocketConnection, VZVirtioSocketDevice,
+    VZVirtioSocketDeviceConfiguration, VZVirtioTraditionalMemoryBalloonDeviceConfiguration,
+    VZVirtualMachine, VZVirtualMachineConfiguration, VZVirtualMachineState,
 };
 use portable_pty::{CommandBuilder as PtyCommandBuilder, NativePtySystem, PtySize, PtySystem};
 use serde::{Deserialize, Serialize};
@@ -113,6 +111,7 @@ const GUEST_WORKSPACE_TMP_ROOT: &str = "/ctx/tmp";
 const GUEST_WORKSPACE_USER_PREFIX: &str = "ctx-ws-";
 const AVF_LINUX_GUEST_AGENT_HELPER: &str = "guest-agent";
 const AVF_LINUX_EGRESS_PROXY_HELPER: &str = "egress-proxy";
+const AVF_LINUX_CONTAINER_STACK_FILE: &str = "container-stack.tar.gz";
 const SHARED_VM_CLOUD_INIT_DIR: &str = "cloud-init";
 const SHARED_VM_CLOUD_INIT_META_DATA_FILE: &str = "meta-data";
 const SHARED_VM_CLOUD_INIT_USER_DATA_FILE: &str = "user-data";
@@ -129,6 +128,18 @@ const SHARED_VM_MAC_ADDRESS_FILE: &str = "mac-address.txt";
 const SHARED_VM_GUEST_CONSOLE_LOG_FILE: &str = "guest-console.log";
 const SHARED_VM_DATA_ROOT_SHARE_TAG: &str = "ctx-data-root";
 const SHARED_VM_HOST_DATA_SERVICE_NAME: &str = "ctx-avf-host-data.service";
+const SHARED_VM_GROW_ROOTFS_SERVICE_NAME: &str = "ctx-avf-grow-rootfs.service";
+const SHARED_VM_GROW_ROOTFS_INSTALL_PATH: &str = "/usr/local/lib/ctx/ctx-avf-grow-rootfs.sh";
+const SHARED_VM_CONTAINERD_SERVICE_NAME: &str = "containerd.service";
+const SHARED_VM_BUILDKIT_SERVICE_NAME: &str = "buildkit.service";
+const SHARED_VM_PAYLOADS_DIR: &str = "payloads";
+const SHARED_VM_GUEST_CONTAINER_STACK_INSTALL_PATH: &str =
+    "/usr/local/lib/ctx/ctx-avf-install-container-stack.sh";
+const SHARED_VM_GUEST_CONTAINER_STACK_MARKER_PATH: &str =
+    "/usr/local/lib/ctx/container-stack.sha256";
+const SHARED_VM_GUEST_NERDCTL_BIN: &str = "/usr/local/bin/nerdctl";
+const SHARED_VM_GUEST_BUILDKITCTL_BIN: &str = "/usr/local/bin/buildctl";
+const SHARED_VM_GUEST_BUILDKIT_SOCKET: &str = "unix:///run/buildkit/buildkitd.sock";
 #[cfg(target_os = "macos")]
 const SHARED_VM_GUEST_CONTROL_VSOCK_PORT: u32 = 47001;
 #[cfg(target_os = "macos")]
@@ -136,9 +147,14 @@ const SHARED_VM_CONTROL_POLL_INTERVAL: std::time::Duration = std::time::Duration
 const GUEST_EXEC_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const GUEST_EXEC_CONNECT_RETRY_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(100);
+// Real shared-VM guest control transport still truncates streamed stdin around the
+// 4 KiB-class frame budget during live `tar -xf -` imports, so keep payload chunks
+// well below that empirical limit on both sides of the relay.
+const AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD: usize = 1024;
 const GUEST_EXEC_TTY_RESIZE_POLL_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(100);
 const SHARED_VM_SHUTDOWN_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
+const SHARED_VM_MIN_WRITABLE_ROOTFS_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 const DEFAULT_PTY_COLS: u16 = 80;
 const DEFAULT_PTY_ROWS: u16 = 24;
 const REQUIRED_SHARED_VM_KERNEL_CMDLINE_TOKENS: &[&str] =

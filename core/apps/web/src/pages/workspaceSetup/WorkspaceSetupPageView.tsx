@@ -52,8 +52,6 @@ type WorkspaceSetupPageViewProps = {
   onCopyLaunchDiagnostics: () => void;
   launchLogs: WorkspaceSetupLaunchLogLine[];
   onSelectOption: (stepKey: string, optionId: string) => void;
-  containerAdvancedOpen: boolean;
-  setContainerAdvancedOpen: Dispatch<SetStateAction<boolean>>;
   networkAllowlist: string;
   setNetworkAllowlist: Dispatch<SetStateAction<string>>;
   remoteHostInput: string;
@@ -184,8 +182,6 @@ export function WorkspaceSetupPageView({
   onCopyLaunchDiagnostics,
   launchLogs,
   onSelectOption,
-  containerAdvancedOpen,
-  setContainerAdvancedOpen,
   networkAllowlist,
   setNetworkAllowlist,
   remoteHostInput,
@@ -312,7 +308,7 @@ export function WorkspaceSetupPageView({
                   <div className="wizard-error">{createError}</div>
                 )}
                 <WorkspaceLaunchLogPanel
-                  showLaunchPanel={showLaunchPanel}
+                  showLaunchPanel={showLaunchPanel && step.key === "confirm"}
                   launchSnapshot={launchSnapshot}
                   currentLaunchStepLabel={currentLaunchStepLabel}
                   currentLaunchElapsed={currentLaunchElapsed}
@@ -325,8 +321,6 @@ export function WorkspaceSetupPageView({
                   step={step}
                   selections={selections}
                   onSelectOption={onSelectOption}
-                  containerAdvancedOpen={containerAdvancedOpen}
-                  setContainerAdvancedOpen={setContainerAdvancedOpen}
                 />
                 {step.key === "network" && selections.network === "allowlist" && (
                   <div className="wizard-input">

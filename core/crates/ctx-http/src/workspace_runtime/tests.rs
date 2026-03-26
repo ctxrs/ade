@@ -305,6 +305,7 @@ async fn install_test_managed_avf_linux_runtime_source() -> (
     let initrd_bytes = b"initrd".to_vec();
     let guest_agent_bytes = b"guest-agent".to_vec();
     let egress_proxy_bytes = b"egress-proxy".to_vec();
+    let container_stack_bytes = b"container-stack".to_vec();
     let (archive_url, archive_server) =
         spawn_static_http_server_with_suffix(archive_bytes.clone(), "guest-runtime.tar.gz").await;
     let (kernel_url, kernel_server) =
@@ -318,6 +319,11 @@ async fn install_test_managed_avf_linux_runtime_source() -> (
     .await;
     let (egress_proxy_url, egress_proxy_server) =
         spawn_static_http_server_with_suffix(egress_proxy_bytes.clone(), "ctx-egress-proxy").await;
+    let (container_stack_url, container_stack_server) = spawn_static_http_server_with_suffix(
+        container_stack_bytes.clone(),
+        "container-stack.tar.gz",
+    )
+    .await;
     let source = bundled_assets::ManagedRuntimeSource {
         uri: archive_url,
         sha256: hex::encode(Sha256::digest(&archive_bytes)),
@@ -352,6 +358,13 @@ async fn install_test_managed_avf_linux_runtime_source() -> (
                     sha256: hex::encode(Sha256::digest(&egress_proxy_bytes)),
                 },
             ),
+            (
+                "container-stack".to_string(),
+                bundled_assets::ManagedArtifactSource {
+                    uri: container_stack_url,
+                    sha256: hex::encode(Sha256::digest(&container_stack_bytes)),
+                },
+            ),
         ]
         .into_iter()
         .collect(),
@@ -366,6 +379,7 @@ async fn install_test_managed_avf_linux_runtime_source() -> (
             initrd_server,
             guest_agent_server,
             egress_proxy_server,
+            container_stack_server,
         ],
     )
 }
@@ -523,8 +537,12 @@ case "$subcmd" in
     image_cmd="$1"
     shift
     case "$image_cmd" in
-      exists)
-        exit 0
+      inspect)
+        find "$images_root" -mindepth 1 -maxdepth 1 | grep -q .
+        if [ $? -ne 0 ]; then
+          exit 1
+        fi
+        printf '[]\n'
         ;;
       *)
         echo "unexpected sandbox CLI image command: $image_cmd $*" >&2
@@ -822,7 +840,7 @@ case "$cmd" in
         *) echo "unexpected shared-vm-exec arg: $1" >&2; exit 1 ;;
       esac
     done
-    if [ "$shared_command" = "sandbox-cli" ] || [ "$shared_command" = "nerdctl" ]; then
+    if [ "$shared_command" = "sandbox-cli" ] || [ "$shared_command" = "/usr/local/bin/nerdctl" ]; then
       exec "{sandbox_cli_shim}" "$data_root" "$@"
     fi
     exec "$shared_command" "$@"
@@ -985,7 +1003,7 @@ async fn prepare_reuses_running_workspace_container_without_front_loading_image_
 
     let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert!(
-        log.contains(&format!("container exists {container_name}")),
+        log.contains(&format!("container inspect {container_name}")),
         "expected running container existence check in log:\n{log}"
     );
     assert!(
@@ -995,7 +1013,7 @@ async fn prepare_reuses_running_workspace_container_without_front_loading_image_
         "expected running-container inspect in log:\n{log}"
     );
     assert!(
-        !log.contains("image exists"),
+        !log.contains("image inspect"),
         "running-container reuse should not front-load image checks:\n{log}"
     );
     assert!(
@@ -1049,7 +1067,7 @@ async fn prepare_starts_cached_workspace_container_when_sandbox_cli_reports_it_s
     std::fs::write(
             &sandbox_cli_path,
             format!(
-                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'false\\n'\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"{volume}\",\"Destination\":\"{workspace_root}\"}}]}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'false\\n'\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"{volume}\",\"Destination\":\"{workspace_root}\"}}]}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
                 log = log_path.display(),
                 container = container_name,
                 volume = volume_name,
@@ -1077,7 +1095,7 @@ async fn prepare_starts_cached_workspace_container_when_sandbox_cli_reports_it_s
 
     let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
     assert!(
-        log.contains(&format!("container exists {container_name}")),
+        log.contains(&format!("container inspect {container_name}")),
         "expected container existence check in log:\n{log}"
     );
     assert!(
@@ -1091,7 +1109,7 @@ async fn prepare_starts_cached_workspace_container_when_sandbox_cli_reports_it_s
         "expected stopped cached container to be started:\n{log}"
     );
     assert!(
-        !log.contains("image exists"),
+        !log.contains("image inspect"),
         "starting a stopped cached container should not front-load image checks:\n{log}"
     );
     assert!(
@@ -2503,6 +2521,66 @@ async fn ensure_workspace_container_for_worktree_keeps_avf_workspace_container_r
     for server in servers {
         server.abort();
     }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn shared_vm_container_launch_omits_slirp_network_flag() {
+    let _serial = env_var_test_lock().lock().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = runtime_manager(&temp).await;
+    let helper_path = write_avf_linux_lifecycle_helper(temp.path());
+    let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
+    let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
+    let image_bytes = b"ctx-harness-image".to_vec();
+    let (image_url, image_server) =
+        spawn_static_http_server_with_suffix(image_bytes.clone(), "ctx-harness.tar").await;
+    let _image_guard = bundled_assets::override_managed_ctx_harness_image_source_for_test(
+        bundled_assets::ManagedArtifactSource {
+            uri: image_url,
+            sha256: hex::encode(Sha256::digest(&image_bytes)),
+        },
+    );
+    let workspace = sample_workspace(&temp);
+    let worktree = sample_worktree(&temp, workspace.id);
+    let settings = ExecutionSettings {
+        mode: ExecutionMode::Sandbox,
+        container: ContainerExecutionSettings {
+            runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
+            mount_mode: ContainerMountMode::DiskIsolated,
+            network_mode: ContainerNetworkMode::All,
+            ..ContainerExecutionSettings::default()
+        },
+    };
+
+    manager
+        .prepare(&workspace, &worktree, &settings, "http://192.168.64.1:4399")
+        .await
+        .expect("AVF prepare should use the shared-VM container runtime");
+
+    let log_path = temp.path().join(format!(
+        "managed/vms/avf-linux/{}/{}/shared/sandbox-cli-invocations.log",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
+    let log = std::fs::read_to_string(&log_path).expect("read AVF sandbox CLI invocation log");
+    let run_line = log
+        .lines()
+        .find(|line| line.contains("run") && line.contains("ctx-harness-"))
+        .expect("shared VM sandbox CLI run invocation");
+    assert!(
+        !run_line.contains("slirp4netns:allow_host_loopback=true"),
+        "shared VM run should not use stale slirp networking: {run_line}"
+    );
+    assert!(
+        run_line.contains("--add-host host.containers.internal:host-gateway"),
+        "shared VM run should keep host gateway mapping: {run_line}"
+    );
+
+    for server in servers {
+        server.abort();
+    }
+    image_server.abort();
 }
 
 #[cfg(unix)]

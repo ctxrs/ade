@@ -14,19 +14,56 @@ pub(super) fn io_error_is_benign(err: &std::io::Error) -> bool {
 }
 
 #[cfg(unix)]
-pub(super) fn relay_socket_copy(mut reader: impl Read, mut writer: impl Write) -> Result<()> {
-    match std::io::copy(&mut reader, &mut writer) {
-        Ok(_) => Ok(()),
-        Err(err) if io_error_is_benign(&err) => Ok(()),
-        Err(err) => Err(err).context("relaying socket bytes"),
-    }
+fn write_exec_error_frame_best_effort(
+    writer: &mut impl Write,
+    code: &str,
+    message: impl Into<String>,
+) {
+    let _ = write_exec_frame(
+        writer,
+        &AvfLinuxExecFrame::Error(AvfLinuxExecError {
+            code: code.to_string(),
+            message: message.into(),
+        }),
+    );
+}
+
+#[cfg(unix)]
+fn close_guest_exec_stdin_best_effort(writer: &Arc<Mutex<File>>) {
+    let Ok(mut guard) = writer.lock() else {
+        return;
+    };
+    let _ = write_exec_frame(&mut *guard, &AvfLinuxExecFrame::CloseStdin);
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug)]
+enum SharedVmGuestControlConnectOutcome {
+    Connected(File),
+    Retryable(String),
+    Fatal(String),
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn is_transient_guest_control_connect_nserror(domain: &str, code: isize) -> bool {
+    domain == "NSPOSIXErrorDomain"
+        && matches!(
+            code as i32,
+            libc::ECONNRESET
+                | libc::ECONNABORTED
+                | libc::ECONNREFUSED
+                | libc::ETIMEDOUT
+                | libc::EAGAIN
+                | libc::EINTR
+                | libc::ENOTCONN
+        )
 }
 
 #[cfg(all(target_os = "macos", unix))]
-pub(super) fn connect_shared_vm_guest_control_socket(
+fn connect_shared_vm_guest_control_socket_once(
     queue: &DispatchQueue,
     virtual_machine: &Retained<VZVirtualMachine>,
-) -> Result<File> {
+) -> Result<SharedVmGuestControlConnectOutcome> {
     let (sender, receiver) = mpsc::sync_channel(1);
     let virtual_machine_addr = (&**virtual_machine as *const VZVirtualMachine) as usize;
     let request_sender = sender.clone();
@@ -39,26 +76,36 @@ pub(super) fn connect_shared_vm_guest_control_socket(
                 move |connection: *mut VZVirtioSocketConnection, error: *mut NSError| {
                     let result = if !error.is_null() {
                         let error = unsafe { &*error };
-                        Err(anyhow::anyhow!(format_nserror(error)))
+                        let domain = error.domain().to_string();
+                        let code = error.code();
+                        let message = format_nserror(error);
+                        if is_transient_guest_control_connect_nserror(&domain, code) {
+                            SharedVmGuestControlConnectOutcome::Retryable(message)
+                        } else {
+                            SharedVmGuestControlConnectOutcome::Fatal(message)
+                        }
                     } else if connection.is_null() {
-                        Err(anyhow::anyhow!(
-                            "guest control connection completed without a socket"
-                        ))
+                        SharedVmGuestControlConnectOutcome::Fatal(
+                            "guest control connection completed without a socket".to_string(),
+                        )
                     } else {
                         let fd = unsafe { (*connection).fileDescriptor() };
                         if fd < 0 {
-                            Err(anyhow::anyhow!(
+                            SharedVmGuestControlConnectOutcome::Fatal(
                                 "guest control connection reported a closed file descriptor"
-                            ))
+                                    .to_string(),
+                            )
                         } else {
                             let dup_fd = unsafe { libc::dup(fd) };
                             if dup_fd < 0 {
-                                Err(anyhow::anyhow!(
+                                SharedVmGuestControlConnectOutcome::Fatal(format!(
                                     "duplicating guest control file descriptor failed: {}",
                                     std::io::Error::last_os_error()
                                 ))
                             } else {
-                                Ok(dup_fd)
+                                SharedVmGuestControlConnectOutcome::Connected(unsafe {
+                                    File::from_raw_fd(dup_fd)
+                                })
                             }
                         }
                     };
@@ -84,13 +131,7 @@ pub(super) fn connect_shared_vm_guest_control_socket(
     )??;
 
     match receiver.recv_timeout(GUEST_EXEC_CONNECT_TIMEOUT) {
-        Ok(Ok(fd)) => Ok(unsafe { File::from_raw_fd(fd) }),
-        Ok(Err(err)) => Err(err).with_context(|| {
-            format!(
-                "connecting to guest vsock port {}",
-                SHARED_VM_GUEST_CONTROL_VSOCK_PORT
-            )
-        }),
+        Ok(result) => Ok(result),
         Err(mpsc::RecvTimeoutError::Timeout) => bail!(
             "timed out waiting for guest vsock port {}",
             SHARED_VM_GUEST_CONTROL_VSOCK_PORT
@@ -102,33 +143,118 @@ pub(super) fn connect_shared_vm_guest_control_socket(
 }
 
 #[cfg(all(target_os = "macos", unix))]
+pub(super) fn connect_shared_vm_guest_control_socket(
+    queue: &DispatchQueue,
+    virtual_machine: &Retained<VZVirtualMachine>,
+) -> Result<File> {
+    let deadline = std::time::Instant::now() + GUEST_EXEC_CONNECT_TIMEOUT;
+    loop {
+        match connect_shared_vm_guest_control_socket_once(queue, virtual_machine)? {
+            SharedVmGuestControlConnectOutcome::Connected(file) => return Ok(file),
+            SharedVmGuestControlConnectOutcome::Retryable(message) => {
+                if std::time::Instant::now() >= deadline {
+                    bail!(
+                        "timed out waiting for guest vsock port {} after transient connect errors: {}",
+                        SHARED_VM_GUEST_CONTROL_VSOCK_PORT,
+                        message
+                    );
+                }
+                std::thread::sleep(GUEST_EXEC_CONNECT_RETRY_INTERVAL);
+            }
+            SharedVmGuestControlConnectOutcome::Fatal(message) => {
+                return Err(anyhow::anyhow!(message)).with_context(|| {
+                    format!(
+                        "connecting to guest vsock port {}",
+                        SHARED_VM_GUEST_CONTROL_VSOCK_PORT
+                    )
+                });
+            }
+        }
+    }
+}
+
+#[cfg(all(target_os = "macos", unix))]
 pub(super) fn relay_shared_vm_control_client(client: UnixStream, guest: File) -> Result<()> {
-    let mut client_reader = client
-        .try_clone()
-        .context("cloning shared VM control client")?;
-    let mut client_writer = client;
+    let mut client_reader = client;
     let mut guest_reader = guest.try_clone().context("cloning guest control socket")?;
-    let mut guest_writer = guest;
+    let client_writer = Arc::new(Mutex::new(
+        client_reader
+            .try_clone()
+            .context("cloning shared VM control client")?,
+    ));
+    let guest_writer = Arc::new(Mutex::new(guest));
 
-    let guest_write_fd = guest_writer.as_raw_fd();
-    let forward = std::thread::spawn(move || -> Result<()> {
-        let result = relay_socket_copy(&mut client_reader, &mut guest_writer);
-        let _ = unsafe { libc::shutdown(guest_write_fd, libc::SHUT_WR) };
-        result
-    });
-    let reverse = std::thread::spawn(move || -> Result<()> {
-        let result = relay_socket_copy(&mut guest_reader, &mut client_writer);
-        let _ = client_writer.shutdown(std::net::Shutdown::Write);
-        result
-    });
+    let _client_forwarder = {
+        let guest_writer = Arc::clone(&guest_writer);
+        std::thread::spawn(move || loop {
+            match read_exec_frame(&mut client_reader) {
+                Ok(Some(
+                    frame @ (AvfLinuxExecFrame::Request(_)
+                    | AvfLinuxExecFrame::Stdin(_)
+                    | AvfLinuxExecFrame::CloseStdin
+                    | AvfLinuxExecFrame::Resize(_)),
+                )) => {
+                    let Ok(mut guard) = guest_writer.lock() else {
+                        return;
+                    };
+                    if write_exec_frame(&mut *guard, &frame).is_err() {
+                        return;
+                    }
+                }
+                Ok(Some(_)) | Ok(None) => {
+                    close_guest_exec_stdin_best_effort(&guest_writer);
+                    return;
+                }
+                Err(_) => {
+                    close_guest_exec_stdin_best_effort(&guest_writer);
+                    return;
+                }
+            }
+        })
+    };
 
-    forward
-        .join()
-        .map_err(|_| anyhow::anyhow!("shared VM control forward relay thread panicked"))??;
-    reverse
-        .join()
-        .map_err(|_| anyhow::anyhow!("shared VM control reverse relay thread panicked"))??;
-    Ok(())
+    loop {
+        match read_exec_frame(&mut guest_reader) {
+            Ok(Some(frame)) => {
+                let terminal = matches!(
+                    frame,
+                    AvfLinuxExecFrame::Exit(_) | AvfLinuxExecFrame::Error(_)
+                );
+                let mut guard = client_writer.lock().map_err(|_| {
+                    anyhow::anyhow!("shared VM control client writer mutex poisoned")
+                })?;
+                write_exec_frame(&mut *guard, &frame)
+                    .context("writing proxied shared VM guest frame")?;
+                drop(guard);
+                if terminal {
+                    return Ok(());
+                }
+            }
+            Ok(None) => {
+                let message = "shared VM guest control stream closed before sending an exit frame";
+                if let Ok(mut guard) = client_writer.lock() {
+                    write_exec_error_frame_best_effort(
+                        &mut *guard,
+                        "guest_control_stream_closed",
+                        message,
+                    );
+                }
+                bail!(message);
+            }
+            Err(err) => {
+                let code = if io_error_is_benign(&err) {
+                    "guest_control_stream_closed"
+                } else {
+                    "guest_control_stream_failed"
+                };
+                let message = format!("reading shared VM guest response frame failed: {err}");
+                if let Ok(mut guard) = client_writer.lock() {
+                    write_exec_error_frame_best_effort(&mut *guard, code, &message);
+                }
+                return Err(err).context("reading shared VM guest response frame");
+            }
+        }
+    }
 }
 
 #[cfg(all(target_os = "macos", unix))]
@@ -140,16 +266,21 @@ pub(super) fn service_real_shared_vm_control_clients(
 ) -> Result<()> {
     loop {
         match listener.accept() {
-            Ok((client, _)) => {
+            Ok((mut client, _)) => {
                 let guest = match connect_shared_vm_guest_control_socket(queue, virtual_machine) {
                     Ok(guest) => guest,
                     Err(err) => {
-                        append_shared_vm_log_line(
-                            data_root,
-                            &format!(
-                                "connecting to guest vsock port {SHARED_VM_GUEST_CONTROL_VSOCK_PORT}: {err:#}"
-                            ),
-                        )?;
+                        let message = format!(
+                            "connecting to guest vsock port {SHARED_VM_GUEST_CONTROL_VSOCK_PORT}: {err:#}"
+                        );
+                        append_shared_vm_log_line(data_root, &message)?;
+                        let _ = write_exec_frame(
+                            &mut client,
+                            &AvfLinuxExecFrame::Error(AvfLinuxExecError {
+                                code: "guest_control_connect_failed".to_string(),
+                                message,
+                            }),
+                        );
                         continue;
                     }
                 };
@@ -473,7 +604,7 @@ pub(super) fn run_shared_vm(_data_root: &Path) -> Result<()> {
     bail!("real shared AVF Linux VM ownership requires macOS")
 }
 
-pub(super) fn spawn_real_shared_vm_owner(data_root: &Path) -> Result<u32> {
+fn spawn_real_shared_vm_owner_once(data_root: &Path, readiness_timeout: Duration) -> Result<u32> {
     let current_exe = std::env::current_exe().context("resolving helper executable path")?;
     let log_path = shared_vm_log_path(data_root);
     if let Some(parent) = log_path.parent() {
@@ -496,11 +627,52 @@ pub(super) fn spawn_real_shared_vm_owner(data_root: &Path) -> Result<u32> {
         .spawn()
         .context("spawning workspace AVF VM owner process")?;
     wait_for_control_socket(data_root)?;
-    if let Err(err) = wait_for_real_guest_exec_ready(data_root) {
+    if let Err(err) = wait_for_real_guest_exec_ready(data_root, readiness_timeout) {
         stop_shared_vm_server(child.id());
         return Err(err);
     }
     Ok(child.id())
+}
+
+pub(super) fn reset_writable_shared_vm_runtime_state(data_root: &Path) -> Result<()> {
+    clear_shared_vm_shutdown_request(data_root);
+    for path in [
+        shared_vm_control_socket_path(data_root),
+        shared_vm_guest_agent_socket_path(data_root),
+        shared_vm_saved_state_path(data_root),
+        shared_vm_rootfs_path(data_root),
+    ] {
+        if path.exists() {
+            fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn shared_vm_readiness_failure_requires_writable_rootfs_reset(
+    err: &anyhow::Error,
+) -> bool {
+    let rendered = format!("{err:#}");
+    rendered.contains("[ctx-avf-linux] bridge_probe_failed")
+}
+
+pub(super) fn spawn_real_shared_vm_owner(
+    data_root: &Path,
+    readiness_timeout: Duration,
+) -> Result<u32> {
+    match spawn_real_shared_vm_owner_once(data_root, readiness_timeout) {
+        Ok(pid) => Ok(pid),
+        Err(err) if shared_vm_readiness_failure_requires_writable_rootfs_reset(&err) => {
+            eprintln!(
+                "[ctx-avf-linux] guest readiness failed bridge probe; resetting writable rootfs and retrying once: {err:#}"
+            );
+            reset_writable_shared_vm_runtime_state(data_root)
+                .context("resetting writable shared VM runtime state after bridge probe failure")?;
+            spawn_real_shared_vm_owner_once(data_root, cold_boot_real_guest_exec_ready_timeout())
+                .context("retrying shared AVF VM owner boot after writable rootfs reset")
+        }
+        Err(err) => Err(err),
+    }
 }
 
 pub(super) fn spawn_shared_vm_server(data_root: &Path) -> Result<u32> {
@@ -586,17 +758,56 @@ pub(super) fn wait_for_guest_agent_socket(data_root: &Path) -> Result<()> {
 }
 
 #[cfg(unix)]
-pub(super) fn wait_for_real_guest_exec_ready(data_root: &Path) -> Result<()> {
+pub(super) fn shared_vm_guest_readiness_args() -> Vec<String> {
+    vec![
+        String::from("-lc"),
+        format!(
+            "set -e; systemctl is-active --quiet {containerd_service}; systemctl is-active --quiet {buildkit_service}; {nerdctl_bin} version >/dev/null 2>&1; {buildctl_bin} --addr {buildkit_socket} debug workers >/dev/null 2>&1; probe_bridge=ctxavfbr0; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true; if ! ip link add name \"$probe_bridge\" type bridge >/tmp/ctx-avf-bridge-probe.out 2>/tmp/ctx-avf-bridge-probe.err; then cat /tmp/ctx-avf-bridge-probe.out >&2 || true; cat /tmp/ctx-avf-bridge-probe.err >&2 || true; echo \"[ctx-avf-linux] bridge_probe_failed\" >&2; exit 41; fi; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true",
+            containerd_service = SHARED_VM_CONTAINERD_SERVICE_NAME,
+            buildkit_service = SHARED_VM_BUILDKIT_SERVICE_NAME,
+            nerdctl_bin = SHARED_VM_GUEST_NERDCTL_BIN,
+            buildctl_bin = SHARED_VM_GUEST_BUILDKITCTL_BIN,
+            buildkit_socket = SHARED_VM_GUEST_BUILDKIT_SOCKET,
+        ),
+    ]
+}
+
+#[cfg(not(unix))]
+pub(super) fn shared_vm_guest_readiness_args() -> Vec<String> {
+    Vec::new()
+}
+
+pub(super) fn default_real_guest_exec_ready_timeout() -> Duration {
+    Duration::from_secs(30)
+}
+
+pub(super) fn cold_boot_real_guest_exec_ready_timeout() -> Duration {
+    Duration::from_secs(90)
+}
+
+pub(super) fn real_guest_exec_ready_timeout_for_rootfs_materialization(
+    rootfs_materialization_note: Option<&str>,
+) -> Duration {
+    if rootfs_materialization_note.is_some() {
+        cold_boot_real_guest_exec_ready_timeout()
+    } else {
+        default_real_guest_exec_ready_timeout()
+    }
+}
+
+#[cfg(unix)]
+pub(super) fn wait_for_real_guest_exec_ready(data_root: &Path, timeout: Duration) -> Result<()> {
     let control_socket = shared_vm_control_socket_path(data_root);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + timeout;
     let mut last_err: Option<anyhow::Error> = None;
+    let readiness_args = shared_vm_guest_readiness_args();
     while std::time::Instant::now() < deadline {
         match run_guest_exec_capture(
             &control_socket,
             Path::new("/"),
-            "/bin/true",
-            &[],
-            None,
+            "/bin/sh",
+            &readiness_args,
+            Some("root"),
             HashMap::new(),
             None,
         ) {
@@ -626,6 +837,6 @@ pub(super) fn wait_for_real_guest_exec_ready(data_root: &Path) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-pub(super) fn wait_for_real_guest_exec_ready(_data_root: &Path) -> Result<()> {
+pub(super) fn wait_for_real_guest_exec_ready(_data_root: &Path, _timeout: Duration) -> Result<()> {
     Ok(())
 }

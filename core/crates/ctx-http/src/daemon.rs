@@ -428,12 +428,16 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
     }
 
     let default_binds = {
-        let mut binds = vec!["127.0.0.1:4399".to_string()];
+        let binds = vec!["127.0.0.1:4399".to_string()];
         #[cfg(target_os = "macos")]
-        binds.push(format!(
-            "{}:4399",
-            crate::workspace_runtime::AVF_GUEST_HOST_GATEWAY
-        ));
+        let binds = {
+            let mut binds = binds;
+            binds.push(format!(
+                "{}:4399",
+                crate::workspace_runtime::AVF_GUEST_HOST_GATEWAY
+            ));
+            binds
+        };
         binds
     };
     let optional_default_bind = {

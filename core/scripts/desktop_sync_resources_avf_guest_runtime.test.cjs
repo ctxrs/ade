@@ -47,6 +47,7 @@ test("stageAvfLinuxGuestRuntime copies local guest runtime into bundle manifest"
   fs.writeFileSync(path.join(sourceDir, "helpers", "initrd"), "initrd\n", "utf8");
   fs.writeFileSync(path.join(sourceDir, "helpers", "guest-agent"), "guest-agent\n", "utf8");
   fs.writeFileSync(path.join(sourceDir, "helpers", "egress-proxy"), "egress-proxy\n", "utf8");
+  fs.writeFileSync(path.join(sourceDir, "helpers", "container-stack.tar.gz"), "container-stack\n", "utf8");
   fs.writeFileSync(
     path.join(sourceDir, "version.txt"),
     "version=dev-runtime\nubuntu-release=noble\nubuntu-arch=arm64\n",
@@ -77,6 +78,8 @@ test("stageAvfLinuxGuestRuntime copies local guest runtime into bundle manifest"
   assert.ok(fs.existsSync(staged.guestAgentPath));
   assert.ok(staged.egressProxyPath, "expected optional egress proxy to be surfaced");
   assert.ok(fs.existsSync(staged.egressProxyPath));
+  assert.ok(staged.containerStackPath, "expected guest container-stack payload to be surfaced");
+  assert.ok(fs.existsSync(staged.containerStackPath));
 
   const manifest = JSON.parse(fs.readFileSync(path.join(bundleDir, "manifest.json"), "utf8"));
   const runtime = manifest.runtimes.find(
@@ -104,6 +107,7 @@ test("stageAvfLinuxGuestRuntime hashes large staged rootfs without readFileSync"
   fs.writeFileSync(path.join(sourceDir, "helpers", "initrd"), "initrd\n", "utf8");
   fs.writeFileSync(path.join(sourceDir, "helpers", "guest-agent"), "guest-agent\n", "utf8");
   fs.writeFileSync(path.join(sourceDir, "helpers", "egress-proxy"), "egress-proxy\n", "utf8");
+  fs.writeFileSync(path.join(sourceDir, "helpers", "container-stack.tar.gz"), "container-stack\n", "utf8");
   fs.writeFileSync(
     path.join(sourceDir, "version.txt"),
     "version=dev-runtime\nubuntu-release=noble\nubuntu-arch=arm64\n",

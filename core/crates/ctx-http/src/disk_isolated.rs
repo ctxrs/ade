@@ -1,11 +1,46 @@
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tempfile::TempDir;
+use tokio::io::AsyncWriteExt;
+use tokio::process::Command;
 
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::Workspace;
+
+fn host_tar_stream_command(src_root: &Path) -> Result<Option<Command>> {
+    let entries = std::fs::read_dir(src_root)
+        .with_context(|| format!("reading {}", src_root.display()))?
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| format!("reading {}", src_root.display()))?;
+
+    if entries.is_empty() {
+        return Ok(None);
+    }
+
+    #[cfg(target_os = "macos")]
+    let mut tar_cmd = {
+        let mut cmd = Command::new("bsdtar");
+        cmd.arg("--format=ustar").arg("--no-mac-metadata");
+        cmd
+    };
+    #[cfg(not(target_os = "macos"))]
+    let mut tar_cmd = Command::new("tar");
+
+    tar_cmd
+        .arg("-C")
+        .arg(src_root)
+        .arg("-cf")
+        .arg("-")
+        // Shared-VM guest exec still truncates explicit multi-entry archives like
+        // `-- .git README.md`; archiving `.` is the stable shape now that `/ctx/ws`
+        // is normalized to the execution user before import.
+        .arg(".");
+    tar_cmd.stdout(Stdio::piped());
+    Ok(Some(tar_cmd))
+}
 
 /// Container path for a disk-isolated worktree root.
 pub fn container_worktree_root(worktree_id: WorktreeId) -> PathBuf {
@@ -73,6 +108,186 @@ async fn verify_container_git_repo(
             "disk-isolated worktree verification failed (status {}): {}",
             out.status,
             detail
+        );
+    }
+    Ok(())
+}
+
+async fn ensure_empty_container_root(
+    data_root: &Path,
+    container_id: &str,
+    dest_root: &Path,
+) -> Result<()> {
+    const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
+
+    let mut normalize = crate::harness_runtime::sandbox_container_command(data_root)?;
+    normalize
+        .arg("exec")
+        .arg("--interactive")
+        .arg("--user")
+        .arg("root")
+        .arg(container_id)
+        .arg("sh")
+        .arg("-lc")
+        .arg(r#"mkdir -p -- "$1" && chmod 0777 "$1""#)
+        .arg("sh")
+        .arg(dest_root);
+    let out = crate::harness_runtime::command_output_with_timeout(normalize, SANDBOX_EXEC_TIMEOUT)
+        .await
+        .context("sandbox exec normalize disk-isolated root")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "failed to normalize disk-isolated root {} (status {}): {}",
+            dest_root.display(),
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+
+    let mut clear = crate::harness_runtime::sandbox_container_command(data_root)?;
+    clear
+        .arg("exec")
+        .arg("--interactive")
+        .arg("--user")
+        .arg("root")
+        .arg(container_id)
+        .arg("sh")
+        .arg("-lc")
+        .arg(r#"find "$1" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +"#)
+        .arg("sh")
+        .arg(dest_root);
+    let out = crate::harness_runtime::command_output_with_timeout(clear, SANDBOX_EXEC_TIMEOUT)
+        .await
+        .context("sandbox exec clear disk-isolated root")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "failed to clear disk-isolated root {} (status {}): {}",
+            dest_root.display(),
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+
+    let uid = resolve_container_exec_id(data_root, container_id, "-u")
+        .await
+        .context("resolving sandbox exec uid for disk-isolated root")?;
+    let gid = resolve_container_exec_id(data_root, container_id, "-g")
+        .await
+        .context("resolving sandbox exec gid for disk-isolated root")?;
+    let mut chown = crate::harness_runtime::sandbox_container_command(data_root)?;
+    chown
+        .arg("exec")
+        .arg("--interactive")
+        .arg("--user")
+        .arg("root")
+        .arg(container_id)
+        .arg("chown")
+        .arg(format!("{uid}:{gid}"))
+        .arg(dest_root);
+    let out = crate::harness_runtime::command_output_with_timeout(chown, SANDBOX_EXEC_TIMEOUT)
+        .await
+        .context("sandbox exec chown disk-isolated root")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "failed to set disk-isolated root owner {} to {}:{} (status {}): {}",
+            dest_root.display(),
+            uid,
+            gid,
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+
+    Ok(())
+}
+
+async fn resolve_container_exec_id(
+    data_root: &Path,
+    container_id: &str,
+    id_flag: &str,
+) -> Result<u32> {
+    const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
+    let mut cmd = crate::harness_runtime::sandbox_container_command(data_root)?;
+    cmd.arg("exec")
+        .arg("--interactive")
+        .arg(container_id)
+        .arg("id")
+        .arg(id_flag);
+    let out = crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
+        .await
+        .with_context(|| format!("sandbox exec id {id_flag}"))?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "failed to resolve sandbox exec id {} (status {}): {}",
+            id_flag,
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<u32>()
+        .with_context(|| format!("parsing sandbox exec id {} output", id_flag))
+}
+
+async fn stream_dir_to_container(
+    data_root: &Path,
+    container_id: &str,
+    src_root: &Path,
+    dest_root: &Path,
+) -> Result<()> {
+    let mut sandbox_cmd = crate::harness_runtime::sandbox_container_command(data_root)?;
+    sandbox_cmd
+        .arg("exec")
+        .arg("--interactive")
+        .arg("--workdir")
+        .arg(dest_root)
+        .arg(container_id)
+        .arg("tar")
+        .arg("-xf")
+        .arg("-");
+    sandbox_cmd.stdin(Stdio::piped());
+    let mut sandbox_child = sandbox_cmd
+        .spawn()
+        .context("spawning sandbox exec tar for disk-isolated copy")?;
+    let mut sandbox_in = sandbox_child
+        .stdin
+        .take()
+        .context("taking sandbox exec stdin for disk-isolated copy")?;
+
+    let Some(mut tar_cmd) = host_tar_stream_command(src_root)? else {
+        return Ok(());
+    };
+    let mut tar_child = tar_cmd
+        .spawn()
+        .context("spawning tar for disk-isolated copy")?;
+    let mut tar_out = tar_child
+        .stdout
+        .take()
+        .context("taking tar stdout for disk-isolated copy")?;
+
+    tokio::io::copy(&mut tar_out, &mut sandbox_in)
+        .await
+        .context("streaming disk-isolated tar archive into container")?;
+    sandbox_in
+        .shutdown()
+        .await
+        .context("closing sandbox exec stdin for disk-isolated copy")?;
+    drop(sandbox_in);
+
+    let tar_status = tar_child.wait().await.context("waiting on tar")?;
+    if !tar_status.success() {
+        anyhow::bail!("tar failed with status {tar_status}");
+    }
+    let out = sandbox_child
+        .wait_with_output()
+        .await
+        .context("waiting on sandbox exec tar for disk-isolated copy")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "sandbox exec tar failed (status {}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
         );
     }
     Ok(())
@@ -230,7 +445,6 @@ pub async fn ensure_worktree_from_host_copy(
     base_commit_sha: &str,
     branch_name: &str,
 ) -> Result<PathBuf> {
-    const SANDBOX_CP_TIMEOUT: Duration = Duration::from_secs(10 * 60);
     const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
     let container_id = format!("ctx-harness-{}", workspace_id.0);
     let dest_root = container_worktree_root(worktree_id);
@@ -273,29 +487,14 @@ pub async fn ensure_worktree_from_host_copy(
         }
     }
 
-    // 2) Copy host workspace contents into the container worktree root.
+    // 2) Stream host workspace contents into the container worktree root.
     //
     // This is intentionally a one-time copy for v1. The disk-isolated worktree becomes the
     // canonical filesystem for the workbench + agents.
     {
-        // Prefer `container cp` so we don't depend on any host-side `tar` binary being present
-        // (notably on some Windows setups).
-        // `container cp` copies directory contents when the source path ends in `/.` (or `\\.` on
-        // Windows). Use `Path::join` to avoid hard-coding separators.
-        let host_src = copy_root.join(".").to_string_lossy().to_string();
-        let container_dst = format!("{}:{}", container_id, dest_root.to_string_lossy());
-        let mut cmd = crate::harness_runtime::sandbox_container_command(data_root)?;
-        cmd.arg("cp").arg(host_src).arg(container_dst);
-        let out = crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_CP_TIMEOUT)
+        stream_dir_to_container(data_root, &container_id, &copy_root, &dest_root)
             .await
-            .context("container cp host -> disk-isolated worktree")?;
-        if !out.status.success() {
-            anyhow::bail!(
-                "container cp failed (status {}): {}",
-                out.status,
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
-        }
+            .context("streaming host copy into disk-isolated worktree")?;
         tracing::debug!(
             workspace_id = %workspace_id.0,
             worktree_id = %worktree_id.0,
@@ -365,14 +564,6 @@ pub async fn ensure_workspace_root_from_host_copy(
     data_root: &Path,
     workspace: &Workspace,
 ) -> Result<PathBuf> {
-    #[cfg(windows)]
-    {
-        let _ = data_root;
-        let _ = workspace;
-        anyhow::bail!("pre-task sandbox workspace materialization is unsupported on Windows");
-    }
-
-    const SANDBOX_CP_TIMEOUT: Duration = Duration::from_secs(10 * 60);
     const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
     let container_id = format!("ctx-harness-{}", workspace.id.0);
     let dest_root = PathBuf::from(crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT);
@@ -383,7 +574,26 @@ pub async fn ensure_workspace_root_from_host_copy(
         return Ok(dest_root);
     }
 
+    #[cfg(windows)]
+    {
+        let _ = data_root;
+        let _ = workspace;
+        anyhow::bail!("pre-task sandbox workspace materialization is unsupported on Windows");
+    }
+
     let host_workspace_root = Path::new(&workspace.root_path);
+    if !host_workspace_root.exists() {
+        ensure_empty_container_root(data_root, &container_id, &dest_root)
+            .await
+            .with_context(|| {
+                format!(
+                    "preparing empty sandbox workspace root because host workspace root is unavailable: {}",
+                    host_workspace_root.display()
+                )
+            })?;
+        return Ok(dest_root);
+    }
+
     let (copy_root, _staging_guard) =
         prepare_self_contained_copy_root(data_root, host_workspace_root)
             .await
@@ -394,56 +604,25 @@ pub async fn ensure_workspace_root_from_host_copy(
                 )
             })?;
 
-    {
-        let mut cmd = crate::harness_runtime::sandbox_container_command(data_root)?;
-        cmd.arg("exec")
-            .arg("--interactive")
-            .arg(&container_id)
-            .arg("mkdir")
-            .arg("-p")
-            .arg("--")
-            .arg(&dest_root);
-        let out = crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
-            .await
-            .context("sandbox exec mkdir for workspace root")?;
-        if !out.status.success() {
-            anyhow::bail!(
-                "failed to create disk-isolated workspace dir (status {}): {}",
-                out.status,
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
-        }
-    }
+    ensure_empty_container_root(data_root, &container_id, &dest_root)
+        .await
+        .context("preparing disk-isolated workspace root")?;
 
-    {
-        let host_src = copy_root.join(".").to_string_lossy().to_string();
-        let container_dst = format!("{}:{}", container_id, dest_root.to_string_lossy());
-        let mut cmd = crate::harness_runtime::sandbox_container_command(data_root)?;
-        cmd.arg("cp").arg(host_src).arg(container_dst);
-        let out = crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_CP_TIMEOUT)
-            .await
-            .context("container cp host -> disk-isolated workspace root")?;
-        if !out.status.success() {
-            anyhow::bail!(
-                "container cp for workspace root failed (status {}): {}",
-                out.status,
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
-        }
+    stream_dir_to_container(data_root, &container_id, &copy_root, &dest_root)
+        .await
+        .context("streaming host copy into disk-isolated workspace root")?;
 
-        let mut chmod = crate::harness_runtime::sandbox_container_command(data_root)?;
-        chmod
-            .arg("exec")
-            .arg("--interactive")
-            .arg("--workdir")
-            .arg(&dest_root)
-            .arg(&container_id)
-            .arg("sh")
-            .arg("-lc")
-            .arg("chmod -R u+rwX . >/dev/null 2>&1 || true");
-        let _ =
-            crate::harness_runtime::command_output_with_timeout(chmod, SANDBOX_EXEC_TIMEOUT).await;
-    }
+    let mut chmod = crate::harness_runtime::sandbox_container_command(data_root)?;
+    chmod
+        .arg("exec")
+        .arg("--interactive")
+        .arg("--workdir")
+        .arg(&dest_root)
+        .arg(&container_id)
+        .arg("sh")
+        .arg("-lc")
+        .arg("chmod -R u+rwX . >/dev/null 2>&1 || true");
+    let _ = crate::harness_runtime::command_output_with_timeout(chmod, SANDBOX_EXEC_TIMEOUT).await;
 
     verify_container_git_repo(data_root, &container_id, &dest_root)
         .await
@@ -454,7 +633,11 @@ pub async fn ensure_workspace_root_from_host_copy(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::process::Command as StdCommand;
+    use std::sync::{Mutex, OnceLock};
+
+    static SANDBOX_CLI_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     fn git(args: &[&str], cwd: &Path) {
         let status = StdCommand::new("git")
@@ -509,5 +692,141 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "true");
+    }
+
+    #[tokio::test]
+    async fn ensure_workspace_root_from_host_copy_uses_empty_root_when_host_workspace_is_missing() {
+        let _env_lock = SANDBOX_CLI_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lock sandbox cli env");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let log_path = temp.path().join("sandbox-cli.log");
+        let cli_path = temp.path().join("fake-sandbox-cli.sh");
+        fs::write(
+            &cli_path,
+            format!(
+                "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$*\" >> '{log_path}'\ncmd=\"$1\"\nshift\nif [ \"$cmd\" = \"exec\" ]; then\n  requested_user=\"\"\n  while [ \"$#\" -gt 0 ]; do\n    case \"$1\" in\n      --interactive)\n        shift\n        ;;\n      --user)\n        requested_user=\"$2\"\n        shift 2\n        ;;\n      --workdir)\n        workdir=\"$2\"\n        shift 2\n        ;;\n      *)\n        break\n        ;;\n    esac\n  done\n  container_id=\"$1\"\n  shift\n  command=\"$1\"\n  shift\n  case \"$command\" in\n    sh)\n      if [ \"$1\" = \"-lc\" ] && printf '%s' \"$2\" | grep -q 'git rev-parse'; then\n        exit 1\n      fi\n      exit 0\n      ;;\n    id)\n      if [ \"$1\" = \"-u\" ]; then\n        printf '502\\n'\n        exit 0\n      fi\n      if [ \"$1\" = \"-g\" ]; then\n        printf '20\\n'\n        exit 0\n      fi\n      echo \"unexpected id args: $*\" >&2\n      exit 1\n      ;;\n    chown)\n      if [ \"$requested_user\" != \"root\" ]; then\n        echo \"expected root chown\" >&2\n        exit 1\n      fi\n      exit 0\n      ;;\n    mkdir)\n      exit 0\n      ;;\n    *)\n      echo \"unexpected exec command: $command\" >&2\n      exit 1\n      ;;\n  esac\nfi\nif [ \"$cmd\" = \"cp\" ]; then\n  echo \"unexpected container cp\" >&2\n  exit 1\nfi\necho \"unexpected sandbox cli command: $cmd\" >&2\nexit 1\n",
+                log_path = log_path.display(),
+            ),
+        )
+        .expect("write fake sandbox cli");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mut perms = fs::metadata(&cli_path).expect("metadata").permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&cli_path, perms).expect("chmod fake sandbox cli");
+        }
+
+        let old_cli = std::env::var("CTX_HARNESS_SANDBOX_CLI_PATH").ok();
+        std::env::set_var("CTX_HARNESS_SANDBOX_CLI_PATH", &cli_path);
+
+        let workspace = Workspace {
+            id: WorkspaceId(uuid::Uuid::new_v4()),
+            name: "missing-root".to_string(),
+            root_path: temp
+                .path()
+                .join("missing-workspace")
+                .to_string_lossy()
+                .to_string(),
+            created_at: chrono::Utc::now(),
+            vcs_kind: Some(ctx_core::models::VcsKind::Git),
+        };
+
+        let resolved = ensure_workspace_root_from_host_copy(temp.path(), &workspace)
+            .await
+            .expect("resolve workspace root");
+        assert_eq!(
+            resolved,
+            PathBuf::from(crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT)
+        );
+
+        let log = fs::read_to_string(&log_path).expect("read sandbox cli log");
+        assert!(log.contains("chmod 0777"));
+        assert!(log.contains("find \"$1\" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +"));
+        assert!(log.contains("id -u"));
+        assert!(log.contains("id -g"));
+        assert!(log.contains("exec --interactive --user root"));
+        assert!(log.contains("chown 502:20 /ctx/ws"));
+        assert!(!log.contains(" cp "));
+
+        match old_cli {
+            Some(value) => std::env::set_var("CTX_HARNESS_SANDBOX_CLI_PATH", value),
+            None => std::env::remove_var("CTX_HARNESS_SANDBOX_CLI_PATH"),
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_dir_to_container_uses_tar_exec_instead_of_container_cp() {
+        let _env_lock = SANDBOX_CLI_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lock sandbox cli env");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let log_path = temp.path().join("sandbox-cli.log");
+        let cli_path = temp.path().join("fake-sandbox-cli.sh");
+        fs::write(
+            &cli_path,
+            format!(
+                "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$*\" >> '{log_path}'\ncmd=\"$1\"\nshift\nif [ \"$cmd\" != \"exec\" ]; then\n  echo \"unexpected sandbox cli command: $cmd\" >&2\n  exit 1\nfi\nwhile [ \"$#\" -gt 0 ]; do\n  case \"$1\" in\n    --interactive)\n      shift\n      ;;\n    --workdir)\n      workdir=\"$2\"\n      shift 2\n      ;;\n    *)\n      break\n      ;;\n  esac\ndone\ncontainer_id=\"$1\"\nshift\ncommand=\"$1\"\nshift\nif [ \"$command\" != \"tar\" ]; then\n  echo \"unexpected exec command: $command\" >&2\n  exit 1\nfi\ncat >/dev/null\nexit 0\n",
+                log_path = log_path.display(),
+            ),
+        )
+        .expect("write fake sandbox cli");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mut perms = fs::metadata(&cli_path).expect("metadata").permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&cli_path, perms).expect("chmod fake sandbox cli");
+        }
+
+        let src = temp.path().join("src");
+        fs::create_dir_all(&src).expect("create src dir");
+        fs::write(src.join("file.txt"), "hello\n").expect("write src file");
+        fs::create_dir_all(src.join(".git")).expect("create git dir");
+        fs::write(src.join(".git").join("HEAD"), "ref: refs/heads/main\n").expect("write git head");
+
+        let old_cli = std::env::var("CTX_HARNESS_SANDBOX_CLI_PATH").ok();
+        std::env::set_var("CTX_HARNESS_SANDBOX_CLI_PATH", &cli_path);
+
+        stream_dir_to_container(temp.path(), "ctx-harness-test", &src, Path::new("/ctx/ws"))
+            .await
+            .expect("stream dir to container");
+
+        let log = fs::read_to_string(&log_path).expect("read sandbox cli log");
+        assert!(log.contains("exec --interactive --workdir /ctx/ws ctx-harness-test tar -xf -"));
+        assert!(!log.contains(" cp "));
+
+        let tar_cmd = host_tar_stream_command(&src)
+            .expect("build host tar stream command")
+            .expect("non-empty archive command");
+        let program = tar_cmd.as_std().get_program().to_string_lossy().to_string();
+        let args = tar_cmd
+            .as_std()
+            .get_args()
+            .map(|value| value.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(program, "bsdtar");
+            assert!(args.starts_with(&[
+                "--format=ustar".to_string(),
+                "--no-mac-metadata".to_string(),
+            ]));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert_eq!(program, "tar");
+        }
+        assert!(args.contains(&".".to_string()));
+        assert!(!args.contains(&".git".to_string()));
+        assert!(!args.contains(&"file.txt".to_string()));
+
+        match old_cli {
+            Some(value) => std::env::set_var("CTX_HARNESS_SANDBOX_CLI_PATH", value),
+            None => std::env::remove_var("CTX_HARNESS_SANDBOX_CLI_PATH"),
+        }
     }
 }

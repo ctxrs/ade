@@ -118,6 +118,7 @@ use self::sandbox_cli::{
 pub(crate) use self::sandbox_cli::{
     command_output_with_timeout, container_runtime_available, sandbox_cli_env_for_data_root,
     sandbox_cli_invocation, sandbox_container_command, sandbox_engine_ready,
+    SHARED_VM_SANDBOX_CLI_GUEST_BIN,
 };
 #[cfg(test)]
 use self::sandbox_machine_recovery::{

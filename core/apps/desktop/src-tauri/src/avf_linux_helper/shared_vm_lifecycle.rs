@@ -240,6 +240,9 @@ pub(super) fn start_shared_vm(
         vec!["persisting AVF runtime paths before starting the shared VM owner".to_string()];
     persist_state(&state_path, &state)?;
 
+    let readiness_timeout = real_guest_exec_ready_timeout_for_rootfs_materialization(
+        rootfs_materialization_note.as_deref(),
+    );
     let (relay_pid, guest_agent_pid, simulated, mut notes) = if cfg!(test) {
         (
             None,
@@ -248,7 +251,7 @@ pub(super) fn start_shared_vm(
             vec!["shared VM start was requested in test mode; state is simulated until actual AVF guest boot is implemented".to_string()],
         )
     } else if real_vm_supported {
-        let relay_pid = spawn_real_shared_vm_owner(data_root)?;
+        let relay_pid = spawn_real_shared_vm_owner(data_root, readiness_timeout)?;
         (
             Some(relay_pid),
             None,

@@ -6,6 +6,7 @@ import {
   buildExecutionLaunchWsUrl,
   cancelInstall,
   createWorkspace,
+  deleteWorkspace,
   getInstall,
   getExecutionLaunchStatus,
   getHealth,
@@ -65,6 +66,7 @@ vi.mock("../api/client", async () => {
     buildExecutionLaunchWsUrl: vi.fn(),
     cancelInstall: vi.fn(),
     createWorkspace: vi.fn(),
+    deleteWorkspace: vi.fn(),
     getInstall: getInstallMock,
     getInstallStatuses: vi.fn(async (installIds: string[]) => ({
       installs: await Promise.all(
@@ -244,6 +246,7 @@ describe("WorkspaceSetupPage", () => {
     vi.mocked(buildExecutionLaunchWsUrl).mockReset();
     vi.mocked(cancelInstall).mockReset();
     vi.mocked(createWorkspace).mockReset();
+    vi.mocked(deleteWorkspace).mockReset();
     vi.mocked(getExecutionLaunchStatus).mockReset();
     vi.mocked(getHealth).mockReset();
     vi.mocked(getInstall).mockReset();
@@ -327,6 +330,7 @@ describe("WorkspaceSetupPage", () => {
     vi.mocked(repoStagingPath).mockResolvedValue({ path: "/tmp/staging" } as never);
     vi.mocked(repoClone).mockResolvedValue({ path: "/tmp/staging/repo" });
     vi.mocked(createWorkspace).mockResolvedValue({ id: "ws_test", root_path: "/tmp/ws" } as never);
+    vi.mocked(deleteWorkspace).mockResolvedValue(undefined as never);
     vi.mocked(updateWorkspaceExecutionConfig).mockResolvedValue({ ok: true } as never);
     vi.mocked(updateWorkspaceMergeQueueConfig).mockResolvedValue({ ok: true } as never);
     vi.mocked(updateWorkspaceWorktreeBootstrapConfig).mockResolvedValue({ ok: true } as never);
@@ -372,6 +376,18 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("container");
     });
+  });
+
+  it("does not show a dead advanced toggle on the container step", async () => {
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+
+    expect(screen.queryByTestId("wizard-container-advanced-toggle")).not.toBeInTheDocument();
   });
 
   it("advances to container without waiting for local preflight checks", async () => {
@@ -2335,6 +2351,184 @@ describe("WorkspaceSetupPage", () => {
           emitEvent: false,
         }),
       );
+    });
+  });
+
+  it("rolls back a newly created sandbox workspace when launch fails", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
+    vi.mocked(listProviders).mockResolvedValue([
+      providerStatusFixture({
+        provider_id: "codex",
+        installed: true,
+        health: "ok",
+        details: { install_supported: "true" },
+        usability: {
+          usable: true,
+          status: "ready",
+          blocking_provider_ids: [],
+          recommended_action: "none",
+        },
+      }),
+    ] as never);
+    vi.mocked(startWorkspaceSetupLaunchHandoff).mockResolvedValue({
+      job_id: "job_fail",
+      workspace_id: "ws_test",
+      kind: "workspace_launch",
+      state: "error",
+      created_at: "2026-03-26T00:00:00Z",
+      started_at: "2026-03-26T00:00:00Z",
+      updated_at: "2026-03-26T00:00:02Z",
+      finished_at: "2026-03-26T00:00:02Z",
+      current_phase: "machine_check",
+      current_step_label: "Checking AVF Linux helper availability",
+      phases: [],
+      logs: [
+        {
+          seq: 1,
+          ts: "2026-03-26T00:00:01Z",
+          phase: "machine_check",
+          level: "error",
+          message: "container runtime failed",
+        },
+      ],
+      error: "container runtime failed",
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-container-sandbox"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-source-new"));
+    fireEvent.change(screen.getByTestId("wizard-workspace-name"), {
+      target: { value: "sandbox-failure" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("network");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-network-full"));
+
+    await waitFor(() => {
+      expect(["setup", "merge-queue"]).toContain(wizardStepKey());
+    });
+    if (wizardStepKey() === "setup") {
+      fireEvent.click(screen.getByTestId("wizard-next"));
+      await waitFor(() => {
+        expect(wizardStepKey()).toBe("merge-queue");
+      });
+    }
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("confirm");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-create"));
+
+    await waitFor(() => {
+      expect(deleteWorkspace).toHaveBeenCalledWith("ws_test");
+      expect(upsertLauncherRecent).not.toHaveBeenCalled();
+      expect(screen.getByText(/container runtime failed/i)).toBeInTheDocument();
+    });
+  });
+
+  it("shows launch logs only on the confirm step after a sandbox launch error", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
+    vi.mocked(listProviders).mockResolvedValue([
+      providerStatusFixture({
+        provider_id: "codex",
+        installed: true,
+        health: "ok",
+        details: { install_supported: "true" },
+        usability: {
+          usable: true,
+          status: "ready",
+          blocking_provider_ids: [],
+          recommended_action: "none",
+        },
+      }),
+    ] as never);
+    vi.mocked(startWorkspaceSetupLaunchHandoff).mockResolvedValue({
+      job_id: "job_fail",
+      workspace_id: "ws_test",
+      kind: "workspace_launch",
+      state: "error",
+      created_at: "2026-03-26T00:00:00Z",
+      started_at: "2026-03-26T00:00:00Z",
+      updated_at: "2026-03-26T00:00:02Z",
+      finished_at: "2026-03-26T00:00:02Z",
+      current_phase: "machine_check",
+      current_step_label: "Checking AVF Linux helper availability",
+      phases: [],
+      logs: [
+        {
+          seq: 1,
+          ts: "2026-03-26T00:00:01Z",
+          phase: "machine_check",
+          level: "error",
+          message: "container runtime failed",
+        },
+      ],
+      error: "container runtime failed",
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-container-sandbox"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-source-new"));
+    fireEvent.change(screen.getByTestId("wizard-workspace-name"), {
+      target: { value: "sandbox-panel-scope" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("network");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-network-full"));
+
+    await waitFor(() => {
+      expect(["setup", "merge-queue"]).toContain(wizardStepKey());
+    });
+    if (wizardStepKey() === "setup") {
+      fireEvent.click(screen.getByTestId("wizard-next"));
+      await waitFor(() => {
+        expect(wizardStepKey()).toBe("merge-queue");
+      });
+    }
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("confirm");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-create"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Workspace Launch Logs")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-back"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("merge-queue");
+      expect(screen.queryByText("Workspace Launch Logs")).not.toBeInTheDocument();
     });
   });
 });

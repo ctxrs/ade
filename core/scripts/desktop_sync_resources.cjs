@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const { shouldBundleRemoteDaemons } = require("./desktop_sync_resources_remote_daemon_policy.cjs");
 const { parseBoolish, resolveBoolishFlag } = require("./lib/boolish.cjs");
 const { resolveCargoTargetDir } = require("./lib/cargo_target_dir.cjs");
+const { validateRuntimeLock } = require("./runtime_lock_validate.cjs");
 
 const args = process.argv.slice(2);
 const profileIdx = args.indexOf("--profile");
@@ -16,6 +17,10 @@ const desktopTauriRoot = path.join(coreRoot, "apps", "desktop", "src-tauri");
 const destBinDir = path.join(desktopTauriRoot, "bin");
 const destWebDistDir = path.join(desktopTauriRoot, "web", "dist");
 const destBundleDir = path.join(desktopTauriRoot, "bundles");
+const avfLinuxHelperEntitlementsPath = path.join(
+  desktopTauriRoot,
+  "ctx-avf-linux-helper.entitlements",
+);
 const bundleScript = path.join(coreRoot, "..", "scripts", "ensure_bundled_harnesses.sh");
 const harnessRuntimeRs = path.join(coreRoot, "crates", "ctx-http", "src", "harness_runtime.rs");
 const hostManifestOs = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
@@ -40,6 +45,12 @@ const AVF_LINUX_GUEST_KERNEL_REL = path.join("helpers", "kernel");
 const AVF_LINUX_GUEST_INITRD_REL = path.join("helpers", "initrd");
 const AVF_LINUX_GUEST_AGENT_REL = path.join("helpers", "guest-agent");
 const AVF_LINUX_EGRESS_PROXY_REL = path.join("helpers", "egress-proxy");
+const AVF_LINUX_CONTAINER_STACK_REL = path.join("helpers", "container-stack.tar.gz");
+const MANIFEST_FILENAME = "manifest.json";
+const EFFECTIVE_MANIFEST_FILENAME = "runtime_manifest.effective.json";
+const RUNTIME_LOCK_V2_FILENAME = "runtime_lock.v2.json";
+const RUNTIME_LOCK_V1_FILENAME = "runtime_lock.v1.json";
+const defaultRuntimeOverridesPath = path.join(coreRoot, "..", ".ctx", "local", "runtime_overrides.json");
 
 const isWindows = process.platform === "win32";
 const binExt = isWindows ? ".exe" : "";
@@ -105,7 +116,7 @@ const readRustStringConst = (filePath, constName) => {
 };
 
 const readBundleManifest = (bundleDir) => {
-  const manifestPath = path.join(bundleDir, "manifest.json");
+  const manifestPath = path.join(bundleDir, MANIFEST_FILENAME);
   if (!fs.existsSync(manifestPath)) {
     throw new Error(`missing bundle manifest: ${manifestPath}`);
   }
@@ -117,7 +128,7 @@ const readBundleManifest = (bundleDir) => {
 };
 
 const upsertManifestRuntimes = (bundleDir, runtimeEntries) => {
-  const manifestPath = path.join(bundleDir, "manifest.json");
+  const manifestPath = path.join(bundleDir, MANIFEST_FILENAME);
   const manifest = readBundleManifest(bundleDir);
   const existing = Array.isArray(manifest?.runtimes) ? manifest.runtimes : [];
   const keep = existing.filter(
@@ -189,7 +200,7 @@ const assertManagedAvfRuntimeComponent = (lock, hostOs, hostArch) => {
     );
   }
   const helpers = component.helpers || {};
-  for (const helperName of ["kernel", "initrd", "guest-agent", "egress-proxy"]) {
+  for (const helperName of ["kernel", "initrd", "guest-agent", "egress-proxy", "container-stack"]) {
     const helper = helpers[helperName];
     if (!String(helper?.uri || "").trim() || !String(helper?.sha256 || "").trim()) {
       throw new Error(
@@ -200,7 +211,7 @@ const assertManagedAvfRuntimeComponent = (lock, hostOs, hostArch) => {
 };
 
 const readRuntimeLock = (bundleDir = destBundleDir) => {
-  const runtimeLockPath = path.join(bundleDir, "runtime_lock.v2.json");
+  const runtimeLockPath = path.join(bundleDir, RUNTIME_LOCK_V2_FILENAME);
   if (!fs.existsSync(runtimeLockPath)) {
     throw new Error(`missing runtime lock for parity enforcement: ${runtimeLockPath}`);
   }
@@ -209,6 +220,40 @@ const readRuntimeLock = (bundleDir = destBundleDir) => {
   } catch (error) {
     throw new Error(`failed to parse runtime lock ${runtimeLockPath}: ${error?.message ?? error}`);
   }
+};
+
+const resolveRuntimeLockPath = (bundleDir = destBundleDir) => {
+  const v2Path = path.join(bundleDir, RUNTIME_LOCK_V2_FILENAME);
+  if (fs.existsSync(v2Path)) {
+    return v2Path;
+  }
+  return path.join(bundleDir, RUNTIME_LOCK_V1_FILENAME);
+};
+
+const writeEffectiveBundleManifest = (
+  bundleDir = destBundleDir,
+  profileValue = process.env.CTX_RUNTIME_PROFILE || "parity",
+) => {
+  const manifestPath = path.join(bundleDir, MANIFEST_FILENAME);
+  const runtimeLockPath = resolveRuntimeLockPath(bundleDir);
+  const validation = validateRuntimeLock({
+    lockPath: runtimeLockPath,
+    manifestPath,
+    profile: profileValue,
+    overridesPath: process.env.CTX_RUNTIME_OVERRIDES_PATH || defaultRuntimeOverridesPath,
+  });
+  if (!validation.ok) {
+    throw new Error(
+      `runtime lock validation failed while writing ${EFFECTIVE_MANIFEST_FILENAME}: ${validation.errors.join("; ")}`,
+    );
+  }
+  const effectiveManifestPath = path.join(bundleDir, EFFECTIVE_MANIFEST_FILENAME);
+  fs.writeFileSync(
+    effectiveManifestPath,
+    `${JSON.stringify(validation.effectiveManifest, null, 2)}\n`,
+    "utf8",
+  );
+  return effectiveManifestPath;
 };
 
 const assertRuntimeTargetsAvailable = (bundleDir, runtimeId, targets) => {
@@ -466,7 +511,15 @@ const stageAvfLinuxGuestRuntime = (bundleDir) => {
   const initrdPath = path.join(sourceDir, AVF_LINUX_GUEST_INITRD_REL);
   const guestAgentPath = path.join(sourceDir, AVF_LINUX_GUEST_AGENT_REL);
   const egressProxyPath = path.join(sourceDir, AVF_LINUX_EGRESS_PROXY_REL);
-  for (const requiredPath of [rootfsPath, kernelPath, initrdPath, guestAgentPath, egressProxyPath]) {
+  const containerStackPath = path.join(sourceDir, AVF_LINUX_CONTAINER_STACK_REL);
+  for (const requiredPath of [
+    rootfsPath,
+    kernelPath,
+    initrdPath,
+    guestAgentPath,
+    egressProxyPath,
+    containerStackPath,
+  ]) {
     if (!fs.existsSync(requiredPath) || !fs.statSync(requiredPath).isFile()) {
       throw new Error(
         `AVF Linux guest runtime is incomplete; missing required file: ${requiredPath}`,
@@ -499,12 +552,14 @@ const stageAvfLinuxGuestRuntime = (bundleDir) => {
   const bundledInitrdPath = path.join(runtimeRootDir, AVF_LINUX_GUEST_INITRD_REL);
   const bundledGuestAgentPath = path.join(runtimeRootDir, AVF_LINUX_GUEST_AGENT_REL);
   const bundledEgressProxyPath = path.join(runtimeRootDir, AVF_LINUX_EGRESS_PROXY_REL);
+  const bundledContainerStackPath = path.join(runtimeRootDir, AVF_LINUX_CONTAINER_STACK_REL);
   for (const requiredPath of [
     bundledRootfsPath,
     bundledKernelPath,
     bundledInitrdPath,
     bundledGuestAgentPath,
     bundledEgressProxyPath,
+    bundledContainerStackPath,
   ]) {
     if (!fs.existsSync(requiredPath) || !fs.statSync(requiredPath).isFile()) {
       throw new Error(
@@ -534,7 +589,54 @@ const stageAvfLinuxGuestRuntime = (bundleDir) => {
     initrdPath: bundledInitrdPath,
     guestAgentPath: bundledGuestAgentPath,
     egressProxyPath: bundledEgressProxyPath,
+    containerStackPath: bundledContainerStackPath,
   };
+};
+
+const buildRemoteDaemonContainerArgs = ({
+  runtime,
+  builderImage,
+  coreDir,
+  daemonsDir,
+  targetCache,
+  cargoRegistryCache,
+  cargoGitCache,
+  target,
+}) => {
+  const buildCmd =
+    "set -euo pipefail; " +
+    "export PATH=\"/usr/local/cargo/bin:$PATH\"; " +
+    "mkdir -p /out; " +
+    `rustup target add ${target.rustTarget} >/dev/null 2>&1 || true; ` +
+    `cargo build --manifest-path /src/Cargo.toml -p ctx-http --release --target ${target.rustTarget}; ` +
+    `install -Dm0755 /target/${target.rustTarget}/release/ctx /out/${target.fileName}`;
+  return [
+    runtime,
+    [
+      "run",
+      "--rm",
+      "--platform",
+      target.platform,
+      "-v",
+      `${coreDir}:/src`,
+      "-v",
+      `${daemonsDir}:/out`,
+      "-v",
+      `${targetCache}:/target`,
+      "-v",
+      `${cargoRegistryCache}:/usr/local/cargo/registry`,
+      "-v",
+      `${cargoGitCache}:/usr/local/cargo/git`,
+      "-w",
+      "/src",
+      "-e",
+      "CARGO_TARGET_DIR=/target",
+      builderImage,
+      "bash",
+      "-lc",
+      buildCmd,
+    ],
+  ];
 };
 
 const bundleRemoteDaemons = (bundleDir) => {
@@ -574,37 +676,17 @@ const bundleRemoteDaemons = (bundleDir) => {
     const targetCache = path.join(cacheRoot, "target", target.rustTarget);
     fs.mkdirSync(targetCache, { recursive: true });
     const outPath = path.join(daemonsDir, target.fileName);
-    const buildCmd =
-      "set -euo pipefail; " +
-      "export PATH=\"/usr/local/cargo/bin:$PATH\"; " +
-      `rustup target add ${target.rustTarget} >/dev/null 2>&1 || true; ` +
-      `cargo build --manifest-path /src/Cargo.toml -p ctx-http --release --target ${target.rustTarget}; ` +
-      `install -Dm0755 /target/${target.rustTarget}/release/ctx /out/${target.fileName}`;
-    const args = [
-      "run",
-      "--rm",
-      "--platform",
-      target.platform,
-      "-v",
-      `${coreRoot}:/src`,
-      "-v",
-      `${daemonsDir}:/out`,
-      "-v",
-      `${targetCache}:/target`,
-      "-v",
-      `${cargoRegistryCache}:/usr/local/cargo/registry`,
-      "-v",
-      `${cargoGitCache}:/usr/local/cargo/git`,
-      "-w",
-      "/src",
-      "-e",
-      "CARGO_TARGET_DIR=/target",
+    const [spawnCmd, args] = buildRemoteDaemonContainerArgs({
+      runtime,
       builderImage,
-      "bash",
-      "-lc",
-      buildCmd,
-    ];
-    const res = childProcess.spawnSync(runtime, args, { stdio: "inherit" });
+      coreDir: coreRoot,
+      daemonsDir,
+      targetCache,
+      cargoRegistryCache,
+      cargoGitCache,
+      target,
+    });
+    const res = childProcess.spawnSync(spawnCmd, args, { stdio: "inherit" });
     if (res.status !== 0) {
       throw new Error(
         `failed to build bundled remote daemon for linux/${target.arch} using ${runtime} (${res.status ?? "unknown"})`,
@@ -637,7 +719,12 @@ const resetBundleDir = (bundleDir = destBundleDir) => {
   ]);
   for (const entry of fs.readdirSync(bundleDir)) {
     if (keep.has(entry)) continue;
-    fs.rmSync(path.join(bundleDir, entry), { recursive: true, force: true });
+    fs.rmSync(path.join(bundleDir, entry), {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 50,
+    });
   }
   // Tauri resource globs include bundles/images/**/*; keep at least one stable file
   // so packaging doesn't fail when no generated bundle assets are present yet.
@@ -674,6 +761,7 @@ const resetBundleDir = (bundleDir = destBundleDir) => {
 const writePlaceholderBundleManifest = (bundleDir = destBundleDir) => {
   resetBundleDir(bundleDir);
   const manifestPath = path.join(bundleDir, "manifest.json");
+  const effectiveManifestPath = path.join(bundleDir, EFFECTIVE_MANIFEST_FILENAME);
   const placeholder = {
     version: 1,
     providers: [],
@@ -682,6 +770,7 @@ const writePlaceholderBundleManifest = (bundleDir = destBundleDir) => {
     daemons: [],
   };
   fs.writeFileSync(manifestPath, `${JSON.stringify(placeholder, null, 2)}\n`, "utf8");
+  fs.rmSync(effectiveManifestPath, { force: true });
 };
 
 const syncBundles = () => {
@@ -803,20 +892,24 @@ const syncBundles = () => {
     );
   }
 
+  const effectiveManifestPath = writeEffectiveBundleManifest(destBundleDir);
+
   return {
     bundleDir: destBundleDir,
     stagedAvfGuestRuntime,
+    effectiveManifestPath,
   };
 };
 
 const verifyExistingBundles = () => {
-  const manifestPath = path.join(destBundleDir, "manifest.json");
+  const manifestPath = path.join(destBundleDir, MANIFEST_FILENAME);
   if (!fs.existsSync(manifestPath)) {
     throw new Error(
       `missing existing bundle manifest: ${manifestPath}. Run CTX_RUNTIME_PROFILE=source-all pnpm -C core desktop:runtime:prepare to materialize bundled artifacts.`,
     );
   }
   readBundleManifest(destBundleDir);
+  writeEffectiveBundleManifest(destBundleDir);
   return destBundleDir;
 };
 
@@ -839,12 +932,15 @@ const copySidecarBinary = ({
   destName = sourceName,
   targetTriple = null,
   binExtOverride = binExt,
+  platform = process.platform,
+  spawnSyncImpl = childProcess.spawnSync,
+  helperEntitlementsPath = avfLinuxHelperEntitlementsPath,
 }) => {
   const src = path.join(sourceDir, `${sourceName}${binExtOverride}`);
   const dest = path.join(destDir, `${destName}${binExtOverride}`);
   const destTarget = targetTriple ? path.join(destDir, `${destName}-${targetTriple}${binExtOverride}`) : null;
   if (!fs.existsSync(src)) {
-    if (process.platform === "darwin" && sourceName === "ctx-avf-linux-helper") {
+    if (platform === "darwin" && sourceName === "ctx-avf-linux-helper") {
       const args = [
         "build",
         "--manifest-path",
@@ -855,7 +951,7 @@ const copySidecarBinary = ({
       if (profile === "release") {
         args.push("--release");
       }
-      const res = childProcess.spawnSync("cargo", args, {
+      const res = spawnSyncImpl("cargo", args, {
         cwd: coreRoot,
         env: {
           ...process.env,
@@ -875,11 +971,50 @@ const copySidecarBinary = ({
     throw new Error(`missing sidecar: ${src} (did you run cargo build?)`);
   }
   fs.mkdirSync(destDir, { recursive: true });
-  fs.copyFileSync(src, dest);
-  ensureExecutable(dest);
+  const stageAndPublish = (finalPath) => {
+    const stagedPath = path.join(
+      destDir,
+      `.${path.basename(finalPath)}.${process.pid}.${crypto.randomUUID()}.tmp`,
+    );
+    try {
+      fs.copyFileSync(src, stagedPath);
+      ensureExecutable(stagedPath);
+      if (platform === "darwin" && sourceName === "ctx-avf-linux-helper") {
+        const res = spawnSyncImpl(
+          "/usr/bin/codesign",
+          ["--force", "--sign", "-", "--entitlements", helperEntitlementsPath, stagedPath],
+          { stdio: "inherit" },
+        );
+        if (res.status !== 0) {
+          throw new Error(
+            `failed to codesign ctx-avf-linux-helper for desktop resource sync (${res.status ?? "unknown"})`,
+          );
+        }
+      }
+      fs.renameSync(stagedPath, finalPath);
+    } catch (error) {
+      fs.rmSync(stagedPath, { force: true });
+      throw error;
+    }
+  };
+  stageAndPublish(dest);
   if (destTarget) {
-    fs.copyFileSync(src, destTarget);
-    ensureExecutable(destTarget);
+    stageAndPublish(destTarget);
+  }
+  if (platform === "darwin" && sourceName === "ctx-avf-linux-helper") {
+    for (const pathToSign of [dest, destTarget].filter(Boolean)) {
+      if (!fs.existsSync(pathToSign)) {
+        throw new Error(`missing signed AVF helper sidecar at ${pathToSign}`);
+      }
+      const res = spawnSyncImpl(
+        "/usr/bin/codesign",
+        ["--verify", "--verbose=1", pathToSign],
+        { stdio: "ignore" },
+      );
+      if (res.status !== 0) {
+        throw new Error(`signed AVF helper sidecar failed verification at ${pathToSign}`);
+      }
+    }
   }
   return { src, dest, destTarget };
 };
@@ -945,8 +1080,10 @@ if (require.main === module) {
   module.exports = {
     __desktopSyncResourcesTestHooks: {
       assertRuntimeTargetsAvailable,
+      buildRemoteDaemonContainerArgs,
       resetBundleDir,
       writePlaceholderBundleManifest,
+      writeEffectiveBundleManifest,
     },
     copySidecarBinary,
     parseAvfLinuxGuestRuntimeVersion,

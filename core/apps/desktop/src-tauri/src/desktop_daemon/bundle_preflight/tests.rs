@@ -290,6 +290,8 @@ fn bundled_avf_runtime_requires_helper_payloads() {
     fs::write(helpers_dir.join("kernel"), "kernel").expect("write kernel");
     fs::write(helpers_dir.join("initrd"), "initrd").expect("write initrd");
     fs::write(helpers_dir.join("egress-proxy"), "proxy").expect("write proxy");
+    fs::write(helpers_dir.join("container-stack.tar.gz"), "container-stack")
+        .expect("write container stack");
     fs::write(
         temp.join("manifest.json"),
         format!(
@@ -353,7 +355,8 @@ fn bundled_avf_runtime_requires_helper_payloads() {
         "kernel": {{ "uri": "locked://kernel", "sha256": "{sha}" }},
         "initrd": {{ "uri": "locked://initrd", "sha256": "{sha}" }},
         "guest-agent": {{ "uri": "locked://guest-agent", "sha256": "{sha}" }},
-        "egress-proxy": {{ "uri": "locked://egress-proxy", "sha256": "{sha}" }}
+        "egress-proxy": {{ "uri": "locked://egress-proxy", "sha256": "{sha}" }},
+        "container-stack": {{ "uri": "locked://container-stack", "sha256": "{sha}" }}
       }}
     }}
   ]
@@ -368,5 +371,115 @@ fn bundled_avf_runtime_requires_helper_payloads() {
     let err = enforce_desktop_parity_bundle_preflight(Some(&temp))
         .expect_err("missing guest-agent helper should fail");
     assert!(err.to_string().contains("guest-agent"));
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn thin_bundle_avf_runtime_entry_accepts_managed_runtime_source_without_bundled_root() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("unix epoch")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!(
+        "ctx-desktop-bundle-preflight-avf-thin-{}-{}",
+        std::process::id(),
+        nonce
+    ));
+    let host_os = if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "linux"
+    };
+    let host_arch = if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else {
+        std::env::consts::ARCH
+    };
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+    fs::write(
+        temp.join("manifest.json"),
+        format!(
+            r#"{{
+  "version": 1,
+  "providers": [],
+  "runtimes": [
+    {{
+      "id": "avf-linux-guest",
+      "os": "{os}",
+      "arch": "{arch}",
+      "root": "runtimes/avf-linux-guest/{os}/{arch}/ubuntu-noble-arm64-0ade3ab45292",
+      "bin": "rootfs.raw"
+    }}
+  ],
+  "images": []
+}}"#,
+            os = host_os,
+            arch = host_arch,
+        ),
+    )
+    .expect("write manifest");
+    fs::write(
+        temp.join("runtime_lock.v2.json"),
+        format!(
+            r#"{{
+  "version": 2,
+  "profiles": {{
+    "parity": {{
+      "allowed_source_types": ["ci", "vendor"]
+    }}
+  }},
+  "required": {{
+    "targets": {{
+      "provider": [],
+      "runtime": ["{os}/host"],
+      "image": [],
+      "machine_cache": []
+    }},
+    "provider_ids": [],
+    "runtime_ids": ["avf-linux-guest"],
+    "image_ids": [],
+    "machine_cache_ids": []
+  }},
+  "components": [
+    {{
+      "kind": "runtime",
+      "id": "avf-linux-guest",
+      "os": "{os}",
+      "arch": "{arch}",
+      "variant": "default",
+      "version": "locked",
+      "sources": [
+        {{
+          "source_type": "ci",
+          "uri": "locked://runtime/avf-linux-guest/{os}/{arch}",
+          "sha256": "{sha}"
+        }}
+      ],
+      "helpers": {{
+        "kernel": {{ "uri": "locked://kernel", "sha256": "{sha}" }},
+        "initrd": {{ "uri": "locked://initrd", "sha256": "{sha}" }},
+        "guest-agent": {{ "uri": "locked://guest-agent", "sha256": "{sha}" }},
+        "egress-proxy": {{ "uri": "locked://egress-proxy", "sha256": "{sha}" }},
+        "container-stack": {{ "uri": "locked://container-stack", "sha256": "{sha}" }}
+      }}
+    }}
+  ]
+}}"#,
+            os = host_os,
+            arch = host_arch,
+            sha = "0".repeat(64),
+        ),
+    )
+    .expect("write runtime lock");
+
+    enforce_desktop_parity_bundle_preflight(Some(&temp))
+        .expect("managed AVF runtime source should satisfy thin-bundle preflight even without bundled runtime root");
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }

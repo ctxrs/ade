@@ -606,8 +606,8 @@ async fn container_remove_mount_path(
             let container_id = workspace_container_name(workspace_id);
             // Best-effort: if the container doesn't exist, skip.
             let mut exists = sandbox_container_command(&state.core.data_root)?;
-            exists.arg("container").arg("exists").arg(&container_id);
-            let out = exists.output().await.context("container exists")?;
+            exists.arg("container").arg("inspect").arg(&container_id);
+            let out = exists.output().await.context("container inspect")?;
             if !out.status.success() {
                 return Ok(());
             }
@@ -636,8 +636,8 @@ async fn container_remove_attachment_data_best_effort(
     }
     let container_id = workspace_container_name(workspace_id);
     let mut exists = sandbox_container_command(&state.core.data_root)?;
-    exists.arg("container").arg("exists").arg(&container_id);
-    let out = exists.output().await.context("container exists")?;
+    exists.arg("container").arg("inspect").arg(&container_id);
+    let out = exists.output().await.context("container inspect")?;
     if !out.status.success() {
         return Ok(());
     }

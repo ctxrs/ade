@@ -317,25 +317,25 @@
             "url": "https://github.com/openai/codex/releases/download/rust-v0.114.0/codex-aarch64-apple-darwin.tar.gz",
             "sha256": "c98eb550695f99eaec27df9971a1b76a83acb15eb55522383fa31b0497297c54",
             "archive": "tar_gz",
-            "bin_path": "codex"
+            "bin_path": "codex-aarch64-apple-darwin"
           },
           "darwin-x86_64": {
             "url": "https://github.com/openai/codex/releases/download/rust-v0.114.0/codex-x86_64-apple-darwin.tar.gz",
             "sha256": "b0c7ce9f6e3693ecc150bc0cb95b4a1766d7b849747090e5077de8d4d2cac974",
             "archive": "tar_gz",
-            "bin_path": "codex"
+            "bin_path": "codex-x86_64-apple-darwin"
           },
           "linux-aarch64": {
             "url": "https://github.com/openai/codex/releases/download/rust-v0.114.0/codex-aarch64-unknown-linux-gnu.tar.gz",
             "sha256": "c923ffd32c50b8d8f4c5f39e8623c8afab90ee984c65f3c73709b82cf63150bb",
             "archive": "tar_gz",
-            "bin_path": "codex"
+            "bin_path": "codex-aarch64-unknown-linux-gnu"
           },
           "linux-x86_64": {
             "url": "https://github.com/openai/codex/releases/download/rust-v0.114.0/codex-x86_64-unknown-linux-gnu.tar.gz",
             "sha256": "f18294d4da6756e9e5ad4dc62b3030b7a75a94e5e5022f3bfa4a21a7d3c52ae0",
             "archive": "tar_gz",
-            "bin_path": "codex"
+            "bin_path": "codex-x86_64-unknown-linux-gnu"
           }
         }
       },
@@ -398,7 +398,7 @@
         {
           "id": "codex-cli",
           "role": "prerequisite",
-          "target": "host"
+          "target": "same_as_provider"
         }
       ],
       "version_probe": {

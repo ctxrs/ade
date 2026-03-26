@@ -448,6 +448,11 @@ process.stdout.write(missing.join(","));
   fi
 
   if [[ "${runner_kind}" == "desktop_wdio" ]]; then
+    if [[ "$(uname -s)" == "Darwin" && -z "${CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP:-}" ]]; then
+      env_kv+=(
+        "CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP=1"
+      )
+    fi
     local tauri_driver_port=""
     tauri_driver_port="$(node -e '
 const net = require("node:net");

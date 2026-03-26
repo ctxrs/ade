@@ -360,7 +360,7 @@ pub(super) fn relay_child_output(
     writer: Arc<Mutex<UnixStream>>,
     stdout: bool,
 ) {
-    let mut buf = [0u8; 8192];
+    let mut buf = [0u8; AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD];
     loop {
         match reader.read(&mut buf) {
             Ok(0) => return,
@@ -383,7 +383,7 @@ pub(super) fn relay_child_output(
 }
 
 pub(super) fn relay_pty_output(reader: &mut impl Read, writer: Arc<Mutex<UnixStream>>) {
-    let mut buf = [0u8; 8192];
+    let mut buf = [0u8; AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD];
     loop {
         match reader.read(&mut buf) {
             Ok(0) => return,

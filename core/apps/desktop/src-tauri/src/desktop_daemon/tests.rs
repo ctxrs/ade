@@ -52,6 +52,28 @@ fn ssh_config_override_normalization() {
 }
 
 #[test]
+fn select_optional_bin_path_prefers_bundled_avf_helper_for_macos_debug_bundles() {
+    let bundled = PathBuf::from("/tmp/ctx.app/Contents/Resources/ctx-avf-linux-helper");
+    let dev = PathBuf::from("/tmp/dev-bin/ctx-avf-linux-helper");
+    assert_eq!(
+        select_optional_bin_path(
+            "ctx-avf-linux-helper",
+            Some(bundled.clone()),
+            Some(dev.clone()),
+            true,
+            true,
+        ),
+        Some(bundled)
+    );
+    let bundled_mcp = PathBuf::from("/tmp/bundle/ctx-mcp");
+    let dev_mcp = PathBuf::from("/tmp/dev-bin/ctx-mcp");
+    assert_eq!(
+        select_optional_bin_path("ctx-mcp", Some(bundled_mcp), Some(dev_mcp.clone()), true, true),
+        Some(dev_mcp)
+    );
+}
+
+#[test]
 fn parse_local_daemon_path_probe_output_extracts_marker_payload() {
     let output = format!(
         "noise before\n{start}/Users/test/.local/bin:/usr/bin{end}\nnoise after\n",

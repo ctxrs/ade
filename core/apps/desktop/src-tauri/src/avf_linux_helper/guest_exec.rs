@@ -130,7 +130,7 @@ pub(super) fn shared_vm_exec(
         &mut stdout,
         &mut stderr,
     )
-        .with_context(|| format!("running shared AVF Linux guest exec `{command}`"))
+    .with_context(|| format!("running shared AVF Linux guest exec `{command}`"))
 }
 
 pub(super) fn parse_guest_exec_env(env: &[String]) -> Result<HashMap<String, String>> {
@@ -301,7 +301,40 @@ pub(super) fn run_guest_exec_cli(
         return run_guest_exec_process(control_socket, cwd, command, args, user, env, true);
     }
 
-    let result = run_guest_exec_capture(control_socket, cwd, command, args, user, env, None)?;
+    let stdin = std::io::stdin();
+    let mut stdin_lock = stdin.lock();
+    let stdin_reader = if unsafe { libc::isatty(stdin_lock.as_raw_fd()) } == 1 {
+        None
+    } else {
+        Some(&mut stdin_lock as &mut dyn Read)
+    };
+    run_guest_exec_cli_with_capture_stdin(
+        control_socket,
+        cwd,
+        command,
+        args,
+        user,
+        env,
+        stdin_reader,
+        stdout,
+        stderr,
+    )
+}
+
+#[cfg(unix)]
+pub(super) fn run_guest_exec_cli_with_capture_stdin(
+    control_socket: &Path,
+    cwd: &Path,
+    command: &str,
+    args: &[String],
+    user: Option<&str>,
+    env: HashMap<String, String>,
+    stdin_reader: Option<&mut dyn Read>,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<i32> {
+    let result =
+        run_guest_exec_capture(control_socket, cwd, command, args, user, env, stdin_reader)?;
     stdout
         .write_all(&result.stdout)
         .and_then(|_| stdout.flush())
@@ -360,7 +393,7 @@ pub(super) fn run_guest_exec_capture(
         .context("writing AVF Linux guest exec capture request")?;
 
     if let Some(reader) = stdin_reader {
-        let mut buf = [0u8; 8192];
+        let mut buf = [0u8; AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD];
         loop {
             let read = reader
                 .read(&mut buf)
@@ -563,7 +596,7 @@ pub(super) fn run_guest_exec_process(
     let stdin_writer = Arc::clone(&writer);
     std::thread::spawn(move || {
         let mut stdin = std::io::stdin().lock();
-        let mut buf = [0u8; 8192];
+        let mut buf = [0u8; AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD];
         loop {
             match stdin.read(&mut buf) {
                 Ok(0) => {

@@ -28,6 +28,12 @@ pub(super) fn shared_vm_egress_proxy_helper_path(runtime_root: &Path) -> PathBuf
         .join(AVF_LINUX_EGRESS_PROXY_HELPER)
 }
 
+pub(super) fn shared_vm_container_stack_helper_path(runtime_root: &Path) -> PathBuf {
+    runtime_root
+        .join("helpers")
+        .join(AVF_LINUX_CONTAINER_STACK_FILE)
+}
+
 pub(super) fn shared_vm_root(data_root: &Path) -> PathBuf {
     data_root
         .join("managed")
@@ -94,6 +100,14 @@ pub(super) fn shared_vm_cloud_init_network_config_path(data_root: &Path) -> Path
 
 pub(super) fn shared_vm_cloud_init_image_path(data_root: &Path) -> PathBuf {
     shared_vm_cloud_init_root(data_root).join(SHARED_VM_CLOUD_INIT_IMAGE_FILE)
+}
+
+pub(super) fn shared_vm_payloads_root(data_root: &Path) -> PathBuf {
+    shared_vm_root(data_root).join(SHARED_VM_PAYLOADS_DIR)
+}
+
+pub(super) fn shared_vm_container_stack_payload_path(data_root: &Path) -> PathBuf {
+    shared_vm_payloads_root(data_root).join(AVF_LINUX_CONTAINER_STACK_FILE)
 }
 
 pub(super) fn shared_vm_control_socket_path(data_root: &Path) -> PathBuf {

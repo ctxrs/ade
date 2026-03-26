@@ -19,6 +19,11 @@ impl AvfLinuxGuestRuntime {
             managed_avf_linux_helper_path(&runtime_root, AVF_LINUX_GUEST_AGENT_HELPER);
         let egress_proxy_path =
             managed_avf_linux_helper_path(&runtime_root, AVF_LINUX_EGRESS_PROXY_HELPER);
+        let container_stack_path =
+            managed_avf_linux_helper_path(&runtime_root, AVF_LINUX_CONTAINER_STACK_HELPER)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("managed AVF Linux runtime is missing a guest container stack")
+                })?;
         Ok(Self {
             runtime_root,
             rootfs_image,
@@ -26,44 +31,108 @@ impl AvfLinuxGuestRuntime {
             initrd_path,
             guest_agent_path,
             egress_proxy_path,
+            container_stack_path,
             version: source.version.trim().to_string(),
             managed: true,
         })
     }
 
-    fn from_bundled(paths: bundled_assets::BundledRuntimePaths) -> Self {
+    fn from_runtime_root(runtime_root: PathBuf, version: String, managed: bool) -> Self {
         Self {
-            kernel_path: paths.root.join("helpers").join(AVF_LINUX_KERNEL_HELPER),
-            initrd_path: paths.root.join("helpers").join(AVF_LINUX_INITRD_HELPER),
+            kernel_path: runtime_root.join("helpers").join(AVF_LINUX_KERNEL_HELPER),
+            initrd_path: runtime_root.join("helpers").join(AVF_LINUX_INITRD_HELPER),
             guest_agent_path: {
-                let path = paths
-                    .root
+                let path = runtime_root
                     .join("helpers")
                     .join(AVF_LINUX_GUEST_AGENT_HELPER);
                 path.exists().then_some(path)
             },
             egress_proxy_path: {
-                let path = paths
-                    .root
+                let path = runtime_root
                     .join("helpers")
                     .join(AVF_LINUX_EGRESS_PROXY_HELPER);
                 path.exists().then_some(path)
             },
-            runtime_root: paths.root,
-            rootfs_image: paths.bin,
-            version: paths.version,
-            managed: false,
+            container_stack_path: runtime_root
+                .join("helpers")
+                .join(AVF_LINUX_CONTAINER_STACK_FILE),
+            rootfs_image: runtime_root.join("rootfs.raw"),
+            runtime_root,
+            version,
+            managed,
         }
+    }
+
+    fn from_bundled(paths: bundled_assets::BundledRuntimePaths) -> Self {
+        let mut runtime = Self::from_runtime_root(paths.root, paths.version, false);
+        runtime.rootfs_image = paths.bin;
+        runtime
     }
 }
 
 pub(crate) fn runtime_target_label() -> String {
+    if explicit_staged_avf_linux_guest_runtime_dir().is_some() {
+        return format!("{AVF_LINUX_GUEST_RUNTIME_ID}:staged");
+    }
     if let Some(runtime) = bundled_avf_linux_guest_runtime() {
         return format!("{AVF_LINUX_GUEST_RUNTIME_ID}:bundled:{}", runtime.version);
     }
     managed_avf_linux_guest_source()
         .map(|source| format!("{AVF_LINUX_GUEST_RUNTIME_ID}:{}", source.version.trim()))
         .unwrap_or_else(|| AVF_LINUX_GUEST_RUNTIME_ID.to_string())
+}
+
+fn explicit_staged_avf_linux_guest_runtime_dir() -> Option<PathBuf> {
+    let raw = std::env::var(AVF_LINUX_GUEST_RUNTIME_DIR_ENV).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(trimmed))
+}
+
+fn staged_runtime_version(runtime_root: &Path) -> String {
+    let version_path = runtime_root.join("version.txt");
+    std::fs::read_to_string(&version_path)
+        .ok()
+        .and_then(|contents| {
+            let lines = contents
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .collect::<Vec<_>>();
+            if lines.is_empty() {
+                return None;
+            }
+            let version = lines
+                .iter()
+                .find_map(|line| line.strip_prefix("version=").map(str::trim))
+                .filter(|line| !line.is_empty())
+                .unwrap_or(lines[0]);
+            Some(version.to_string())
+        })
+        .unwrap_or_else(|| "staged".to_string())
+}
+
+pub(super) fn staged_avf_linux_guest_runtime() -> Result<Option<AvfLinuxGuestRuntime>> {
+    let Some(runtime_root) = explicit_staged_avf_linux_guest_runtime_dir() else {
+        return Ok(None);
+    };
+    if !runtime_root.exists() {
+        bail!(
+            "explicit staged AVF Linux guest runtime dir does not exist: {}",
+            runtime_root.display()
+        );
+    }
+    let version = staged_runtime_version(&runtime_root);
+    let runtime = AvfLinuxGuestRuntime::from_runtime_root(runtime_root, version, false);
+    if avf_linux_runtime_is_ready(&runtime) {
+        return Ok(Some(runtime));
+    }
+    bail!(
+        "explicit staged AVF Linux guest runtime dir is incomplete or not ready: {}",
+        runtime.runtime_root.display()
+    );
 }
 
 pub(super) fn managed_avf_linux_guest_source() -> Option<bundled_assets::ManagedRuntimeSource> {
@@ -140,7 +209,12 @@ pub(super) fn managed_avf_linux_helper_path(
     if helper.is_empty() {
         return None;
     }
-    Some(runtime_root.join("helpers").join(helper))
+    let file_name = if helper == AVF_LINUX_CONTAINER_STACK_HELPER {
+        AVF_LINUX_CONTAINER_STACK_FILE
+    } else {
+        helper
+    };
+    Some(runtime_root.join("helpers").join(file_name))
 }
 
 pub(super) fn managed_avf_linux_runtime_ready_marker_path(runtime_root: &Path) -> PathBuf {
@@ -156,11 +230,13 @@ pub(super) fn avf_linux_runtime_is_ready(runtime: &AvfLinuxGuestRuntime) -> bool
         .egress_proxy_path
         .as_ref()
         .is_some_and(|path| path.exists());
+    let container_stack_ready = runtime.container_stack_path.exists();
     runtime.rootfs_image.exists()
         && runtime.kernel_path.exists()
         && runtime.initrd_path.exists()
         && guest_agent_ready
         && egress_proxy_ready
+        && container_stack_ready
         && (!runtime.managed
             || managed_avf_linux_runtime_ready_marker_path(&runtime.runtime_root).exists())
 }
@@ -208,6 +284,9 @@ pub(crate) async fn ensure_managed_avf_linux_guest_runtime_with_override(
     download_aggregate: Option<ManagedDownloadAggregate>,
 ) -> Result<AvfLinuxGuestRuntime> {
     if source_override.is_none() {
+        if let Some(runtime) = staged_avf_linux_guest_runtime()? {
+            return Ok(runtime);
+        }
         if let Some(runtime) = bundled_avf_linux_guest_runtime() {
             return Ok(runtime);
         }
@@ -356,6 +435,7 @@ pub(crate) async fn ensure_managed_avf_linux_guest_runtime_with_override(
         (AVF_LINUX_INITRD_HELPER, "Linux initrd"),
         (AVF_LINUX_GUEST_AGENT_HELPER, "Guest agent"),
         (AVF_LINUX_EGRESS_PROXY_HELPER, "Egress proxy"),
+        (AVF_LINUX_CONTAINER_STACK_HELPER, "Guest container stack"),
     ] {
         let helper_source = source.helpers.get(helper_name).cloned().ok_or_else(|| {
             anyhow::anyhow!("managed AVF Linux runtime is missing helper '{helper_name}'")
@@ -451,6 +531,16 @@ pub(crate) async fn ensure_managed_avf_linux_guest_runtime_with_override(
                     .with_context(|| format!("chmod {}", path.display()))?;
             }
         }
+        if runtime.container_stack_path.exists() {
+            let mut perms = fs::metadata(&runtime.container_stack_path)
+                .await
+                .with_context(|| format!("metadata {}", runtime.container_stack_path.display()))?
+                .permissions();
+            perms.set_mode(0o644);
+            fs::set_permissions(&runtime.container_stack_path, perms)
+                .await
+                .with_context(|| format!("chmod {}", runtime.container_stack_path.display()))?;
+        }
     }
     mark_managed_avf_linux_runtime_ready(&runtime.runtime_root).await?;
     Ok(runtime)
@@ -488,4 +578,142 @@ pub(crate) fn override_managed_avf_linux_runtime_source_for_test(
         .expect("AVF Linux runtime override mutex poisoned");
     let previous = guard.replace(source);
     TestManagedAvfLinuxRuntimeSourceGuard { previous }
+}
+
+#[cfg(test)]
+struct EnvGuard {
+    key: &'static str,
+    prev: Option<String>,
+}
+
+#[cfg(test)]
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let prev = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, prev }
+    }
+}
+
+#[cfg(test)]
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        if let Some(value) = self.prev.take() {
+            std::env::set_var(self.key, value);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
+
+#[cfg(test)]
+fn write_staged_runtime(runtime_root: &Path, version: &str) {
+    std::fs::create_dir_all(runtime_root.join("helpers")).expect("create staged runtime helpers");
+    std::fs::write(runtime_root.join("rootfs.raw"), b"rootfs").expect("write staged rootfs");
+    std::fs::write(runtime_root.join("version.txt"), version).expect("write staged version");
+    for helper in [
+        AVF_LINUX_KERNEL_HELPER,
+        AVF_LINUX_INITRD_HELPER,
+        AVF_LINUX_GUEST_AGENT_HELPER,
+        AVF_LINUX_EGRESS_PROXY_HELPER,
+        AVF_LINUX_CONTAINER_STACK_HELPER,
+    ] {
+        let helper_path =
+            managed_avf_linux_helper_path(runtime_root, helper).expect("staged helper path");
+        std::fs::write(helper_path, helper.as_bytes())
+            .unwrap_or_else(|err| panic!("write staged helper {helper}: {err}"));
+    }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn ensure_managed_avf_linux_guest_runtime_prefers_explicit_staged_dir() {
+    let _serial = crate::test_support::sandbox_cli_env_test_lock()
+        .lock()
+        .await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let runtime_root = temp.path().join("runtime");
+    write_staged_runtime(&runtime_root, "staged-override");
+    let _runtime_dir = EnvGuard::set(
+        AVF_LINUX_GUEST_RUNTIME_DIR_ENV,
+        runtime_root.to_str().expect("runtime root utf8"),
+    );
+    let _source =
+        override_managed_avf_linux_runtime_source_for_test(bundled_assets::ManagedRuntimeSource {
+            uri: "locked://runtimes/avf-linux-guest/macos/aarch64/rootfs.raw.zst".to_string(),
+            sha256: "0".repeat(64),
+            version: "lock-version".to_string(),
+            bin: "rootfs.raw".to_string(),
+            helpers: HashMap::from([
+                (
+                    AVF_LINUX_KERNEL_HELPER.to_string(),
+                    bundled_assets::ManagedArtifactSource {
+                        uri: "locked://kernel".to_string(),
+                        sha256: "1".repeat(64),
+                    },
+                ),
+                (
+                    AVF_LINUX_INITRD_HELPER.to_string(),
+                    bundled_assets::ManagedArtifactSource {
+                        uri: "locked://initrd".to_string(),
+                        sha256: "2".repeat(64),
+                    },
+                ),
+                (
+                    AVF_LINUX_GUEST_AGENT_HELPER.to_string(),
+                    bundled_assets::ManagedArtifactSource {
+                        uri: "locked://guest-agent".to_string(),
+                        sha256: "3".repeat(64),
+                    },
+                ),
+                (
+                    AVF_LINUX_EGRESS_PROXY_HELPER.to_string(),
+                    bundled_assets::ManagedArtifactSource {
+                        uri: "locked://egress-proxy".to_string(),
+                        sha256: "4".repeat(64),
+                    },
+                ),
+                (
+                    AVF_LINUX_CONTAINER_STACK_HELPER.to_string(),
+                    bundled_assets::ManagedArtifactSource {
+                        uri: "locked://container-stack".to_string(),
+                        sha256: "5".repeat(64),
+                    },
+                ),
+            ]),
+        });
+
+    let runtime = ensure_managed_avf_linux_guest_runtime(temp.path(), None, None)
+        .await
+        .expect("staged runtime should be used before lock download");
+
+    assert_eq!(runtime.runtime_root, runtime_root);
+    assert_eq!(runtime.version, "staged-override");
+    assert!(!runtime.managed);
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn explicit_staged_avf_linux_guest_runtime_dir_must_be_ready() {
+    let _serial = crate::test_support::sandbox_cli_env_test_lock()
+        .lock()
+        .await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let runtime_root = temp.path().join("runtime");
+    std::fs::create_dir_all(runtime_root.join("helpers")).expect("create staged helpers");
+    std::fs::write(runtime_root.join("rootfs.raw"), b"rootfs").expect("write staged rootfs");
+    let _runtime_dir = EnvGuard::set(
+        AVF_LINUX_GUEST_RUNTIME_DIR_ENV,
+        runtime_root.to_str().expect("runtime root utf8"),
+    );
+
+    let err = ensure_managed_avf_linux_guest_runtime(temp.path(), None, None)
+        .await
+        .expect_err("incomplete staged runtime should fail closed");
+
+    assert!(
+        err.to_string()
+            .contains("explicit staged AVF Linux guest runtime dir is incomplete or not ready"),
+        "unexpected error: {err:#}"
+    );
 }

@@ -12,7 +12,7 @@ mod tests {
     use tokio::process::Command;
 
     use crate::git::{assert_git_repo, rev_parse_head};
-    use crate::worktrees::{create_worktree, diff_worktree};
+    use crate::worktrees::{create_worktree, diff_worktree, standaloneize_worktree_git_dir};
 
     async fn run_git(root: &Path, args: &[&str]) {
         let output = Command::new("git")
@@ -55,5 +55,48 @@ mod tests {
 
         let diff = diff_worktree(&wt_path, &base).await.unwrap();
         assert!(diff.contains("+world"));
+    }
+
+    #[tokio::test]
+    async fn standaloneized_worktree_survives_source_repo_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo_root = dir.path().join("repo");
+        tokio::fs::create_dir_all(&repo_root).await.unwrap();
+
+        run_git(&repo_root, &["init", "-b", "main"]).await;
+        run_git(&repo_root, &["config", "user.email", "test@example.com"]).await;
+        run_git(&repo_root, &["config", "user.name", "Test"]).await;
+
+        fs::write(repo_root.join("file.txt"), "hello\n").unwrap();
+        run_git(&repo_root, &["add", "."]).await;
+        run_git(&repo_root, &["commit", "-m", "init"]).await;
+
+        let base = rev_parse_head(&repo_root).await.unwrap();
+        let managed_root = dir.path().join("managed");
+        create_worktree(&repo_root, &managed_root, &base, "ctx/test")
+            .await
+            .unwrap();
+        standaloneize_worktree_git_dir(&managed_root).await.unwrap();
+
+        assert!(managed_root.join(".git").is_dir());
+        tokio::fs::remove_dir_all(&repo_root).await.unwrap();
+
+        let head = rev_parse_head(&managed_root).await.unwrap();
+        assert_eq!(head, base);
+
+        let shadow_root = dir.path().join("shadow");
+        run_git(
+            &managed_root,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "ctx/shadow",
+                shadow_root.to_str().unwrap(),
+                &base,
+            ],
+        )
+        .await;
+        assert_git_repo(&shadow_root).await.unwrap();
     }
 }

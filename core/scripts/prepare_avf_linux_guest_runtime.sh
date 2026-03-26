@@ -5,11 +5,15 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 runtime_dir=""
 guest_agent_path=""
 egress_proxy_path=""
+container_stack_path=""
+target_root=""
 arch=""
 release_dir="https://cloud-images.ubuntu.com/releases/noble/release"
 kernel_cmdline="console=hvc0 root=LABEL=cloudimg-rootfs rootwait rw"
+container_stack_version="${NERDCTL_VERSION:-v2.2.1}"
 force=0
 dry_run=0
+auto_built_guest_helpers=0
 
 usage() {
   cat <<'EOF'
@@ -24,6 +28,8 @@ Options:
   --arch ARCH            Guest arch: arm64 or x86_64 (default: host arch)
   --guest-agent PATH     Guest-agent binary to stage (default: auto-discover)
   --egress-proxy PATH    ctx-egress-proxy Linux binary to stage (default: auto-discover)
+  --container-stack PATH Prebuilt Linux guest container-stack tarball to stage
+                         (default: download pinned nerdctl-full release)
   --release-dir URL      Ubuntu release directory (default: noble release feed)
   --force                Replace an existing output directory
   --dry-run              Print the resolved inputs and exit without downloading
@@ -57,6 +63,17 @@ resolve_qemu_img() {
   return 1
 }
 
+cargo_target_dir() {
+  local manifest="$1"
+  cargo metadata --manifest-path "$manifest" --format-version 1 --no-deps | node -e '
+const fs = require("node:fs");
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const dir = typeof input.target_directory === "string" ? input.target_directory.trim() : "";
+if (!dir) process.exit(1);
+process.stdout.write(dir);
+'
+}
+
 normalize_arch() {
   case "$1" in
     arm64|aarch64) printf '%s' "arm64" ;;
@@ -66,6 +83,14 @@ normalize_arch() {
 }
 
 ubuntu_image_arch() {
+  case "$1" in
+    arm64) printf '%s' "arm64" ;;
+    x86_64) printf '%s' "amd64" ;;
+    *) die "unsupported arch: $1" ;;
+  esac
+}
+
+container_stack_asset_arch() {
   case "$1" in
     arm64) printf '%s' "arm64" ;;
     x86_64) printf '%s' "amd64" ;;
@@ -92,8 +117,8 @@ default_host_arch() {
 discover_guest_agent() {
   local target="$1"
   local candidates=(
-    "${repo_root}/target/${target}/release/ctx-avf-linux-guest-agent"
-    "${repo_root}/target/${target}/debug/ctx-avf-linux-guest-agent"
+    "${target_root}/${target}/release/ctx-avf-linux-guest-agent"
+    "${target_root}/${target}/debug/ctx-avf-linux-guest-agent"
   )
   for candidate in "${candidates[@]}"; do
     if [[ -f "$candidate" ]]; then
@@ -107,8 +132,8 @@ discover_guest_agent() {
 discover_egress_proxy() {
   local target="$1"
   local candidates=(
-    "${repo_root}/target/${target}/release/ctx-egress-proxy"
-    "${repo_root}/target/${target}/debug/ctx-egress-proxy"
+    "${target_root}/${target}/release/ctx-egress-proxy"
+    "${target_root}/${target}/debug/ctx-egress-proxy"
   )
   for candidate in "${candidates[@]}"; do
     if [[ -f "$candidate" ]]; then
@@ -117,6 +142,15 @@ discover_egress_proxy() {
     fi
   done
   return 1
+}
+
+build_guest_helpers() {
+  local target="$1"
+  local build_script="${CTX_AVF_BUILD_AVF_LINUX_GUEST_HELPERS_SCRIPT:-${repo_root}/scripts/build_avf_linux_guest_agent.sh}"
+  [[ -f "$build_script" ]] || die "guest helper build script does not exist: $build_script"
+  CTX_AVF_GUEST_HELPER_TARGETS="$target" \
+  CTX_AVF_GUEST_HELPER_TARGET_ROOT="$target_root" \
+    bash "$build_script" --release
 }
 
 download_file() {
@@ -149,6 +183,12 @@ lookup_expected_sha256() {
   ' "$sums_file"
 }
 
+container_stack_filename() {
+  local version="$1"
+  local asset_arch="$2"
+  printf 'nerdctl-full-%s-linux-%s.tar.gz' "${version#v}" "$asset_arch"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --output-dir)
@@ -165,6 +205,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --arch)
       arch="${2:-}"
+      shift 2
+      ;;
+    --container-stack)
+      container_stack_path="${2:-}"
       shift 2
       ;;
     --release-dir)
@@ -198,23 +242,50 @@ else
 fi
 
 ubuntu_arch="$(ubuntu_image_arch "$arch")"
+container_stack_arch="$(container_stack_asset_arch "$arch")"
 target="$(guest_agent_target "$arch")"
-
-if [[ -z "$guest_agent_path" ]]; then
-  if ! guest_agent_path="$(discover_guest_agent "$target")"; then
-    die "could not find ctx-avf-linux-guest-agent for target ${target}; build it first or pass --guest-agent"
-  fi
+target_root="${CTX_AVF_GUEST_HELPER_TARGET_ROOT:-}"
+if [[ -z "$target_root" && ( -z "$guest_agent_path" || -z "$egress_proxy_path" ) ]]; then
+  need_cmd cargo
+  need_cmd node
+  target_root="$(cargo_target_dir "${repo_root}/Cargo.toml")"
+fi
+if [[ -z "$target_root" ]]; then
+  target_root="${repo_root}/target"
 fi
 
+if [[ -z "$guest_agent_path" ]]; then
+  guest_agent_path="$(discover_guest_agent "$target" || true)"
+fi
+
+if [[ -z "$egress_proxy_path" ]]; then
+  egress_proxy_path="$(discover_egress_proxy "$target" || true)"
+fi
+
+if [[ -z "$guest_agent_path" || -z "$egress_proxy_path" ]]; then
+  build_guest_helpers "$target"
+  auto_built_guest_helpers=1
+fi
+
+if [[ -z "$guest_agent_path" ]]; then
+  guest_agent_path="$(discover_guest_agent "$target" || true)"
+fi
+[[ -n "$guest_agent_path" ]] || die "could not find ctx-avf-linux-guest-agent for target ${target} under ${target_root} after building; pass --guest-agent to override"
 [[ -f "$guest_agent_path" ]] || die "guest-agent binary does not exist: $guest_agent_path"
 
 if [[ -z "$egress_proxy_path" ]]; then
-  if ! egress_proxy_path="$(discover_egress_proxy "$target")"; then
-    die "could not find ctx-egress-proxy for target ${target}; build it first or pass --egress-proxy"
-  fi
+  egress_proxy_path="$(discover_egress_proxy "$target" || true)"
 fi
-
+[[ -n "$egress_proxy_path" ]] || die "could not find ctx-egress-proxy for target ${target} under ${target_root} after building; pass --egress-proxy to override"
 [[ -f "$egress_proxy_path" ]] || die "egress proxy binary does not exist: $egress_proxy_path"
+
+container_stack_name="$(container_stack_filename "$container_stack_version" "$container_stack_arch")"
+container_stack_url="https://github.com/containerd/nerdctl/releases/download/${container_stack_version}/${container_stack_name}"
+container_stack_sha256_url="https://github.com/containerd/nerdctl/releases/download/${container_stack_version}/SHA256SUMS"
+
+if [[ -n "$container_stack_path" ]]; then
+  [[ -f "$container_stack_path" ]] || die "container stack archive does not exist: $container_stack_path"
+fi
 
 runtime_dir="$(cd "$(dirname "$runtime_dir")" && pwd)/$(basename "$runtime_dir")"
 if [[ -e "$runtime_dir" ]]; then
@@ -244,7 +315,10 @@ if [[ "$dry_run" -eq 1 ]]; then
 runtime_dir=$runtime_dir
 arch=$arch
 ubuntu_arch=$ubuntu_arch
+target_root=$target_root
 guest_agent=$guest_agent_path
+egress_proxy=$egress_proxy_path
+auto_built_guest_helpers=$auto_built_guest_helpers
 rootfs_path=$runtime_dir/rootfs.raw
 kernel_path=$runtime_dir/helpers/kernel
 initrd_path=$runtime_dir/helpers/initrd
@@ -255,6 +329,10 @@ egress_proxy_runtime_path=$runtime_dir/helpers/egress-proxy
 rootfs_url=$rootfs_url
 kernel_url=$kernel_url
 initrd_url=$initrd_url
+container_stack_version=$container_stack_version
+container_stack_path=$runtime_dir/helpers/container-stack.tar.gz
+container_stack_url=$container_stack_url
+container_stack_sha256_url=$container_stack_sha256_url
 rootfs_sha256_url=$rootfs_sha256_url
 unpacked_sha256_url=$unpacked_sha256_url
 EOF
@@ -278,19 +356,28 @@ kernel_path="$tmp_root/$kernel_name"
 initrd_path="$tmp_root/$initrd_name"
 rootfs_sha256_sums="$tmp_root/SHA256SUMS"
 unpacked_sha256_sums="$tmp_root/unpacked.SHA256SUMS"
+container_stack_sha256_sums="$tmp_root/nerdctl-full.SHA256SUMS"
+container_stack_archive="$tmp_root/$container_stack_name"
 
 mkdir -p "$runtime_dir/helpers"
 
 download_file "$rootfs_sha256_url" "$rootfs_sha256_sums"
 download_file "$unpacked_sha256_url" "$unpacked_sha256_sums"
+download_file "$container_stack_sha256_url" "$container_stack_sha256_sums"
 download_file "$rootfs_url" "$rootfs_qcow"
 download_file "$kernel_url" "$kernel_path"
 download_file "$initrd_url" "$initrd_path"
+if [[ -n "$container_stack_path" ]]; then
+  cp -p "$container_stack_path" "$container_stack_archive"
+else
+  download_file "$container_stack_url" "$container_stack_archive"
+fi
 
 for item in \
   "$rootfs_sha256_sums:$rootfs_name:$rootfs_qcow" \
   "$unpacked_sha256_sums:$kernel_name:$kernel_path" \
-  "$unpacked_sha256_sums:$initrd_name:$initrd_path"
+  "$unpacked_sha256_sums:$initrd_name:$initrd_path" \
+  "$container_stack_sha256_sums:$container_stack_name:$container_stack_archive"
 do
   item_sums="${item%%:*}"
   item_rest="${item#*:}"
@@ -308,6 +395,7 @@ rootfs_image="$tmp_root/rootfs.raw"
 rootfs_raw_sha256="$(sha256_file "$rootfs_image")"
 kernel_sha256="$(sha256_file "$kernel_path")"
 initrd_sha256="$(sha256_file "$initrd_path")"
+container_stack_sha256="$(sha256_file "$container_stack_archive")"
 runtime_version="ubuntu-noble-${ubuntu_arch}-${rootfs_raw_sha256:0:12}"
 
 install -m 0644 "$kernel_path" "$runtime_dir/helpers/kernel"
@@ -315,6 +403,7 @@ install -m 0644 "$initrd_path" "$runtime_dir/helpers/initrd"
 printf '%s\n' "$kernel_cmdline" > "$runtime_dir/helpers/kernel-cmdline"
 install -m 0755 "$guest_agent_path" "$runtime_dir/helpers/guest-agent"
 install -m 0755 "$egress_proxy_path" "$runtime_dir/helpers/egress-proxy"
+install -m 0644 "$container_stack_archive" "$runtime_dir/helpers/container-stack.tar.gz"
 cp -c "$rootfs_image" "$runtime_dir/rootfs.raw" 2>/dev/null || cp -p "$rootfs_image" "$runtime_dir/rootfs.raw"
 
 cat > "$runtime_dir/version.txt" <<EOF
@@ -332,6 +421,10 @@ initrd-sha256=$initrd_sha256
 kernel-cmdline=$kernel_cmdline
 rootfs-format=raw
 guest-agent-preinstalled=false
+container-stack-version=$container_stack_version
+container-stack-archive=$container_stack_name
+container-stack-source=$container_stack_url
+container-stack-sha256=$container_stack_sha256
 EOF
 
 cat <<EOF
@@ -342,4 +435,5 @@ prepared AVF Linux guest runtime at $runtime_dir
   kernel-cmdline: $runtime_dir/helpers/kernel-cmdline
   guest-agent: $runtime_dir/helpers/guest-agent
   egress-proxy: $runtime_dir/helpers/egress-proxy
+  container-stack: $runtime_dir/helpers/container-stack.tar.gz
 EOF

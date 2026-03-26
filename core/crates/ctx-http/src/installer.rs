@@ -298,6 +298,18 @@ pub(crate) fn prepend_runtime_bin_dirs_to_provider_path_for_target(
                         bin_dirs.push(dep_dir);
                     }
                 }
+                continue;
+            }
+            if let Ok(Some(dep_runtime_cmd)) =
+                resolve_runtime_provider_command_for_target(cfg, dep, requested_target)
+            {
+                let dep_runtime_path = Path::new(&dep_runtime_cmd.command_abs_path);
+                if let Some(parent) = dep_runtime_path.parent() {
+                    let dep_dir = parent.to_path_buf();
+                    if !bin_dirs.contains(&dep_dir) {
+                        bin_dirs.push(dep_dir);
+                    }
+                }
             }
         }
         prepend_bundled_seed_node_bin_dir(

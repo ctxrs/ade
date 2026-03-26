@@ -748,11 +748,7 @@ impl HarnessRuntimeManager {
             if let Some(user) = container_user() {
                 cmd.arg("--user").arg(user);
             }
-            cmd.arg("--network")
-                .arg("slirp4netns:allow_host_loopback=true");
-            cmd.arg("--cap-add").arg("NET_ADMIN");
-            cmd.arg("--add-host")
-                .arg("host.containers.internal:host-gateway");
+            sandbox_cli::append_sandbox_container_launch_network_args(&mut cmd, settings);
             for mount in &mount_plan.mounts {
                 cmd.arg("--mount").arg(mount);
             }
@@ -765,13 +761,50 @@ impl HarnessRuntimeManager {
                 let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                 let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 let combined = format!("{stderr}\n{stdout}").trim().to_string();
-                if combined.is_empty() {
+                let combined_lower = combined.to_ascii_lowercase();
+                let can_adopt_existing = combined_lower.contains("name-store error")
+                    || combined_lower.contains("already used by id");
+                if can_adopt_existing && container_exists(&self.data_root, &name).await? {
+                    observe_log(
+                        observer,
+                        HarnessSetupPhase::ContainerStartOrCreate,
+                        HarnessSetupLogLevel::Warn,
+                        "container create reported an existing name; adopting the existing workspace container",
+                    );
+                    let running = container_running(&self.data_root, &name)
+                        .await?
+                        .unwrap_or(false);
+                    if !running {
+                        observe_log(
+                            observer,
+                            HarnessSetupPhase::ContainerStartOrCreate,
+                            HarnessSetupLogLevel::Info,
+                            "adopted workspace container is stopped; starting it",
+                        );
+                        let mut start = sandbox_container_command(&self.data_root)?;
+                        start.arg("start").arg(&name);
+                        let output = command_output_with_timeout(start, SANDBOX_OP_TIMEOUT).await?;
+                        if !output.status.success() {
+                            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                            let combined = format!("{stderr}\n{stdout}").trim().to_string();
+                            if combined.is_empty() {
+                                anyhow::bail!(
+                                    "container start failed for {name} (status: {})",
+                                    output.status
+                                );
+                            }
+                            anyhow::bail!("container start failed for {name}: {combined}");
+                        }
+                    }
+                } else if combined.is_empty() {
                     anyhow::bail!(
                         "container run failed for {name} (status: {})",
                         output.status
                     );
+                } else {
+                    anyhow::bail!("container run failed for {name}: {combined}");
                 }
-                anyhow::bail!("container run failed for {name}: {combined}");
             }
         }
 

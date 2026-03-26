@@ -110,3 +110,20 @@ test("runner tolerates pnpm-style separator before forwarded flags", () => {
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.summary, /\tdry-run\t0\t.*\tdeferred\tdry-run/);
 });
+
+test("runner enables scoped macOS app sweeps for desktop WDIO cells by default", () => {
+  const tmpDir = mkTempDir("ctx-provider-matrix-runner-creds-macos-sweep-");
+  const oauthCredsPath = writeGeminiOauthFile(tmpDir);
+  const result = runRunner({
+    includeDeferred: true,
+    extraEnv: {
+      CTX_E2E_GEMINI_OAUTH_CREDS_PATH: oauthCredsPath,
+    },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  if (process.platform === "darwin") {
+    assert.match(result.stdout, /CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP=1/);
+  } else {
+    assert.doesNotMatch(result.stdout, /CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP=1/);
+  }
+});

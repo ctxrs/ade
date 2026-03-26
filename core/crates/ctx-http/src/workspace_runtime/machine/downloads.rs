@@ -29,6 +29,21 @@ fn managed_artifact_retry_backoff(attempt: u32) -> Duration {
     }
 }
 
+fn resolve_managed_artifact_download_url_with_base(url: &str, base_url: &str) -> Result<String> {
+    if let Some(raw_path) = url.strip_prefix("locked://") {
+        let normalized_path = raw_path.trim().trim_start_matches('/');
+        if normalized_path.is_empty() {
+            anyhow::bail!("managed artifact locked URL is missing a path: {url}");
+        }
+        return Ok(updates::join_url(base_url, &format!("/{normalized_path}")));
+    }
+    Ok(url.to_string())
+}
+
+fn resolve_managed_artifact_download_url(url: &str) -> Result<String> {
+    resolve_managed_artifact_download_url_with_base(url, &updates::default_download_base_url())
+}
+
 pub(crate) fn managed_artifact_partial_path(final_path: &Path) -> PathBuf {
     let file_name = final_path
         .file_name()
@@ -336,6 +351,7 @@ pub(crate) async fn download_managed_artifact(
     dest: &Path,
     reporter: Option<ManagedArtifactDownloadReporter<'_>>,
 ) -> Result<()> {
+    let resolved_url = resolve_managed_artifact_download_url(url)?;
     let Some(parent) = dest.parent() else {
         anyhow::bail!("download destination missing parent: {}", dest.display());
     };
@@ -349,14 +365,14 @@ pub(crate) async fn download_managed_artifact(
                 .build()
                 .context("building reqwest client for managed artifact download")?;
             let existing_len = fs::metadata(dest).await.map(|meta| meta.len()).unwrap_or(0);
-            let mut request = client.get(url);
+            let mut request = client.get(&resolved_url);
             if existing_len > 0 {
                 request = request.header(reqwest::header::RANGE, format!("bytes={existing_len}-"));
             }
             let response = request
                 .send()
                 .await
-                .with_context(|| format!("downloading managed artifact: {url}"))?;
+                .with_context(|| format!("downloading managed artifact: {resolved_url}"))?;
             let status = response.status();
             if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
                 let _ = fs::remove_file(dest).await;
@@ -364,14 +380,18 @@ pub(crate) async fn download_managed_artifact(
             }
             let response = response
                 .error_for_status()
-                .with_context(|| format!("managed artifact download http error: {url}"))?;
+                .with_context(|| {
+                    format!("managed artifact download http error: {resolved_url}")
+                })?;
             let content_length = response.content_length().ok_or_else(|| {
-                anyhow::anyhow!("managed artifact server did not provide content length: {url}")
+                anyhow::anyhow!(
+                    "managed artifact server did not provide content length: {resolved_url}"
+                )
             })?;
             let (resumed, total_opt) =
                 crate::installer::resolve_download_resume(existing_len, status, Some(content_length));
             let total_bytes = total_opt.ok_or_else(|| {
-                anyhow::anyhow!("managed artifact total size is unavailable: {url}")
+                anyhow::anyhow!("managed artifact total size is unavailable: {resolved_url}")
             })?;
 
             let download_start_bytes = if resumed { existing_len } else { 0 };
@@ -475,12 +495,13 @@ pub(crate) async fn download_managed_artifact(
                     Ok(None) => break,
                     Err(_) => {
                         anyhow::bail!(
-                            "no download progress from {url} for {}",
+                            "no download progress from {resolved_url} for {}",
                             format_duration_compact(managed_artifact_no_progress_timeout())
                         );
                     }
                 };
-                let chunk = chunk.with_context(|| format!("reading download stream from {url}"))?;
+                let chunk = chunk
+                    .with_context(|| format!("reading download stream from {resolved_url}"))?;
                 file.write_all(&chunk)
                     .await
                     .with_context(|| format!("writing {}", dest.display()))?;
@@ -682,6 +703,29 @@ mod tests {
             !second_tmp.exists(),
             "second tmp path should be cleaned up during finalization"
         );
+    }
+
+    #[test]
+    fn resolve_managed_artifact_download_url_rewrites_locked_scheme() {
+        let resolved = resolve_managed_artifact_download_url_with_base(
+            "locked://runtimes/avf-linux-guest/macos/aarch64/rootfs.raw.zst",
+            "https://api.ctx.rs/functions/v1/",
+        )
+        .expect("resolve locked uri");
+        assert_eq!(
+            resolved,
+            "https://api.ctx.rs/functions/v1/runtimes/avf-linux-guest/macos/aarch64/rootfs.raw.zst"
+        );
+    }
+
+    #[test]
+    fn resolve_managed_artifact_download_url_rejects_empty_locked_path() {
+        let err = resolve_managed_artifact_download_url_with_base(
+            "locked://",
+            "https://api.ctx.rs/functions/v1",
+        )
+        .expect_err("empty locked path should fail");
+        assert!(format!("{err:#}").contains("missing a path"));
     }
 
     async fn read_http_request(socket: &mut tokio::net::TcpStream) -> String {

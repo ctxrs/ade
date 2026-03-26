@@ -115,7 +115,7 @@ async fn runtime_ready_container_creation_skips_front_loaded_image_checks() {
         "expected runtime-ready path to create the workspace container:\n{log}"
     );
     assert!(
-        !log.contains("image exists"),
+        !log.contains("image inspect"),
         "runtime-ready path should not front-load image readiness checks:\n{log}"
     );
 }

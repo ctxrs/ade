@@ -13,7 +13,6 @@ import {
 export function WorkspaceSetupPageController() {
   const navigate = useNavigate();
   const [openInfoKey, setOpenInfoKey] = useState<string | null>(null);
-  const [containerAdvancedOpen, setContainerAdvancedOpen] = useState(false);
   const [mergeAdvancedOpen, setMergeAdvancedOpen] = useState(false);
   const [harnessDownloadsCanScroll, setHarnessDownloadsCanScroll] = useState(false);
   const [harnessDownloadsAtBottom, setHarnessDownloadsAtBottom] = useState(true);
@@ -116,12 +115,6 @@ export function WorkspaceSetupPageController() {
   }, [wizardKey, workflow.flow.step.key, workflow.flow.stepIndex]);
 
   useEffect(() => {
-    if (workflow.flow.selections.container !== "host") {
-      setContainerAdvancedOpen(true);
-    }
-  }, [workflow.flow.selections.container]);
-
-  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (workflow.create.importInitDialog) {
@@ -161,8 +154,6 @@ export function WorkspaceSetupPageController() {
       }}
       launchLogs={workflow.create.launchLogs}
       onSelectOption={workflow.onSelectOption}
-      containerAdvancedOpen={containerAdvancedOpen}
-      setContainerAdvancedOpen={setContainerAdvancedOpen}
       networkAllowlist={workflow.draft.networkAllowlist}
       setNetworkAllowlist={workflow.setters.networkAllowlist}
       remoteHostInput={workflow.remote.remoteHostInput}

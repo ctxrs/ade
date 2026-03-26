@@ -1262,7 +1262,9 @@ const getWorkspaceHarnessContainer = async (workspaceId) => {
 const createWorkspaceTerminal = async (workspaceId, body = {}) => {
   const resp = await daemonJson("POST", `/api/workspaces/${workspaceId}/terminals`, body);
   if (resp.status !== 200) {
-    throw new Error(`POST /api/workspaces/${workspaceId}/terminals failed (${resp.status})`);
+    throw new Error(
+      `POST /api/workspaces/${workspaceId}/terminals failed (${resp.status}): ${JSON.stringify(resp.payload || null)}`,
+    );
   }
   return resp.payload;
 };

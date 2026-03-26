@@ -76,6 +76,11 @@ const classifyWorkspaceCreateFailure = (
 export const getWorkspace = (id: string) =>
   apiAny<Workspace>(`/api/workspaces/${id}`);
 
+export const deleteWorkspace = (workspaceId: string) =>
+  apiAny<void>(`/api/workspaces/${workspaceId}`, {
+    method: "DELETE",
+  });
+
 export type UpdateMergeQueueConfigRequest = {
   enabled: boolean;
   target_branch?: string | null;

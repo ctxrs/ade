@@ -645,14 +645,14 @@ mod tests {
     }
 
     #[test]
-    fn codex_install_resolves_host_prerequisite_dependency() {
+    fn codex_install_resolves_same_target_prerequisite_dependency() {
         let root = tempfile::tempdir().expect("tempdir");
         let cfg = AgentServerConfigFile::default();
         let mut codex = archive_entry("codex", ProviderMatrixEntryKind::Harness);
         codex.provider_dependencies = vec![provider_matrix::ProviderInstallDependency {
             id: "codex-cli".to_string(),
             role: ProviderInstallDependencyRole::Prerequisite,
-            target: ProviderInstallDependencyTarget::Host,
+            target: ProviderInstallDependencyTarget::SameAsProvider,
         }];
         let contract = resolve_provider_install_contract(
             root.path(),
@@ -664,14 +664,14 @@ mod tests {
             "codex",
             InstallTarget::Container,
         )
-        .expect("codex should plan host codex-cli prerequisite dependency");
+        .expect("codex should plan container codex-cli prerequisite dependency");
 
         assert_eq!(
             contract.dependencies_for_role(ProviderInstallDependencyRoleKind::Prerequisite),
             vec![ProviderInstallDependency {
                 provider_id: "codex-cli".to_string(),
                 role: ProviderInstallDependencyRoleKind::Prerequisite,
-                target: InstallTarget::Host,
+                target: InstallTarget::Container,
                 satisfied: false,
             }]
         );
@@ -705,7 +705,7 @@ mod tests {
         codex.provider_dependencies = vec![provider_matrix::ProviderInstallDependency {
             id: "codex-cli".to_string(),
             role: ProviderInstallDependencyRole::Prerequisite,
-            target: ProviderInstallDependencyTarget::Host,
+            target: ProviderInstallDependencyTarget::SameAsProvider,
         }];
         let contract = resolve_provider_install_contract(
             root.path(),
@@ -725,6 +725,62 @@ mod tests {
                 provider_id: "codex-cli".to_string(),
                 role: ProviderInstallDependencyRoleKind::Prerequisite,
                 target: InstallTarget::Host,
+                satisfied: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn codex_container_prerequisite_dependency_is_marked_satisfied_when_configured() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let script_path = root.path().join("codex-linux");
+        std::fs::write(&script_path, "#!/bin/sh\nexit 0\n").expect("write script");
+        let mut perms = std::fs::metadata(&script_path)
+            .expect("metadata")
+            .permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms).expect("set perms");
+        }
+        let mut cfg = AgentServerConfigFile::default();
+        cfg.managed_provider_targets.insert(
+            "codex-cli".to_string(),
+            HashMap::from([(
+                "container".to_string(),
+                AgentServerCommand {
+                    command: script_path.to_string_lossy().to_string(),
+                    args: Vec::new(),
+                    dependencies: Vec::new(),
+                    managed: None,
+                },
+            )]),
+        );
+        let mut codex = archive_entry("codex", ProviderMatrixEntryKind::Harness);
+        codex.provider_dependencies = vec![provider_matrix::ProviderInstallDependency {
+            id: "codex-cli".to_string(),
+            role: ProviderInstallDependencyRole::Prerequisite,
+            target: ProviderInstallDependencyTarget::SameAsProvider,
+        }];
+        let contract = resolve_provider_install_contract(
+            root.path(),
+            &cfg,
+            &matrix_with_entries(vec![
+                codex,
+                archive_entry("codex-cli", ProviderMatrixEntryKind::Dependency),
+            ]),
+            "codex",
+            InstallTarget::Container,
+        )
+        .expect("configured container codex-cli should satisfy prerequisite dependency");
+
+        assert_eq!(
+            contract.dependencies_for_role(ProviderInstallDependencyRoleKind::Prerequisite),
+            vec![ProviderInstallDependency {
+                provider_id: "codex-cli".to_string(),
+                role: ProviderInstallDependencyRoleKind::Prerequisite,
+                target: InstallTarget::Container,
                 satisfied: true,
             }]
         );

@@ -53,7 +53,7 @@ const resolveFixtureHost = ({ hostOs = desktopOs(), hostArch = desktopArch() } =
 });
 
 const writeAvfRuntimeBundle = (bundleDir, options = {}) => {
-  const { includeGuestAgent = true, ...hostOverride } = options;
+  const { includeGuestAgent = true, includeContainerStack = true, ...hostOverride } = options;
   const { hostOs, hostArch } = resolveFixtureHost(hostOverride);
   const runtimeRootRel = path.join("runtimes", "avf-linux-guest", hostOs, hostArch, "dev");
   const runtimeRoot = path.join(bundleDir, runtimeRootRel);
@@ -65,6 +65,9 @@ const writeAvfRuntimeBundle = (bundleDir, options = {}) => {
     fs.writeFileSync(path.join(runtimeRoot, "helpers", "guest-agent"), "guest-agent\n", "utf8");
   }
   fs.writeFileSync(path.join(runtimeRoot, "helpers", "egress-proxy"), "egress-proxy\n", "utf8");
+  if (includeContainerStack) {
+    fs.writeFileSync(path.join(runtimeRoot, "helpers", "container-stack.tar.gz"), "container-stack\n", "utf8");
+  }
   fs.writeFileSync(
     path.join(bundleDir, "manifest.json"),
     JSON.stringify(
@@ -122,6 +125,7 @@ const writeAvfRuntimeBundle = (bundleDir, options = {}) => {
               initrd: { uri: "locked://initrd", sha256: "2".repeat(64) },
               "guest-agent": { uri: "locked://guest-agent", sha256: "3".repeat(64) },
               "egress-proxy": { uri: "locked://egress-proxy", sha256: "4".repeat(64) },
+              "container-stack": { uri: "locked://container-stack", sha256: "5".repeat(64) },
             },
           },
           ...linuxImageTargetsForFixture.map((arch, index) => ({
@@ -134,7 +138,7 @@ const writeAvfRuntimeBundle = (bundleDir, options = {}) => {
             sources: [{
               source_type: "ci",
               uri: `locked://image-${arch}`,
-              sha256: String(index + 5).repeat(64),
+              sha256: String(index + 6).repeat(64),
             }],
           })),
         ],
@@ -147,7 +151,7 @@ const writeAvfRuntimeBundle = (bundleDir, options = {}) => {
 };
 
 const writeThinBundleManifestAndRuntimeLock = (bundleDir, options = {}) => {
-  const { includeGuestAgent = true, ...hostOverride } = options;
+  const { includeGuestAgent = true, includeContainerStack = true, ...hostOverride } = options;
   const { hostOs, hostArch } = resolveFixtureHost(hostOverride);
   fs.writeFileSync(
     path.join(bundleDir, "manifest.json"),
@@ -161,6 +165,9 @@ const writeThinBundleManifestAndRuntimeLock = (bundleDir, options = {}) => {
   };
   if (includeGuestAgent) {
     helpers["guest-agent"] = { uri: "locked://guest-agent", sha256: "3".repeat(64) };
+  }
+  if (includeContainerStack) {
+    helpers["container-stack"] = { uri: "locked://container-stack", sha256: "5".repeat(64) };
   }
   fs.writeFileSync(
     path.join(bundleDir, "runtime_lock.v2.json"),
@@ -203,7 +210,7 @@ const writeThinBundleManifestAndRuntimeLock = (bundleDir, options = {}) => {
             sources: [{
               source_type: "ci",
               uri: `locked://image-${arch}`,
-              sha256: String(index + 5).repeat(64),
+              sha256: String(index + 6).repeat(64),
             }],
           })),
         ],
@@ -338,6 +345,7 @@ test("wdio automation AVF runtime prep reuses an existing prepared runtime direc
     fs.writeFileSync(path.join(runtimeDir, "helpers", "initrd"), "initrd\n", "utf8");
     fs.writeFileSync(path.join(runtimeDir, "helpers", "guest-agent"), "guest-agent\n", "utf8");
     fs.writeFileSync(path.join(runtimeDir, "helpers", "egress-proxy"), "egress-proxy\n", "utf8");
+    fs.writeFileSync(path.join(runtimeDir, "helpers", "container-stack.tar.gz"), "container-stack\n", "utf8");
     await withEnv(
       {
         CTX_AVF_LINUX_GUEST_RUNTIME_DIR: runtimeDir,
@@ -392,6 +400,7 @@ test("wdio automation AVF runtime prep prepares and exports a missing runtime di
             fs.writeFileSync(path.join(preparedPath, "helpers", "initrd"), "initrd\n", "utf8");
             fs.writeFileSync(path.join(preparedPath, "helpers", "guest-agent"), "guest-agent\n", "utf8");
             fs.writeFileSync(path.join(preparedPath, "helpers", "egress-proxy"), "egress-proxy\n", "utf8");
+            fs.writeFileSync(path.join(preparedPath, "helpers", "container-stack.tar.gz"), "container-stack\n", "utf8");
             return { status: 0 };
           },
           log: () => {},

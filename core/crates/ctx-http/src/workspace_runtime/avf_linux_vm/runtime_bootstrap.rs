@@ -6,7 +6,9 @@ pub(crate) fn runtime_available() -> bool {
 
 pub(crate) fn runtime_state(data_root: &Path) -> Result<(bool, bool)> {
     let helper_ready = probe_helper().map(|probe| probe.supported).unwrap_or(false);
-    let runtime_ready = if let Some(runtime) = bundled_avf_linux_guest_runtime() {
+    let runtime_ready = if let Some(runtime) = staged_avf_linux_guest_runtime()? {
+        avf_linux_runtime_is_ready(&runtime)
+    } else if let Some(runtime) = bundled_avf_linux_guest_runtime() {
         avf_linux_runtime_is_ready(&runtime)
     } else if let Some(source) = managed_avf_linux_guest_source() {
         let runtime = AvfLinuxGuestRuntime::from_source(data_root, &source)?;
@@ -59,7 +61,7 @@ pub(crate) async fn ensure_workspace_vm_ready_with_observer(
         HarnessSetupPhase::ArtifactDownload,
         HarnessSetupLogLevel::Info,
         &format!(
-            "AVF Linux guest runtime {} is ready (rootfs={}, kernel={}, initrd={}, guest_agent={}, egress_proxy={})",
+            "AVF Linux guest runtime {} is ready (rootfs={}, kernel={}, initrd={}, guest_agent={}, egress_proxy={}, container_stack={})",
             runtime.version,
             runtime.rootfs_image.display(),
             runtime.kernel_path.display(),
@@ -73,7 +75,8 @@ pub(crate) async fn ensure_workspace_vm_ready_with_observer(
                 .egress_proxy_path
                 .as_ref()
                 .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "none".to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            runtime.container_stack_path.display()
         ),
     );
 
@@ -223,7 +226,7 @@ pub(crate) async fn prefetch_runtime_with_observer(
         HarnessSetupPhase::ArtifactDownload,
         HarnessSetupLogLevel::Info,
         &format!(
-            "AVF Linux guest runtime {} is ready (rootfs={}, kernel={}, initrd={}, guest_agent={}, egress_proxy={})",
+            "AVF Linux guest runtime {} is ready (rootfs={}, kernel={}, initrd={}, guest_agent={}, egress_proxy={}, container_stack={})",
             runtime.version,
             runtime.rootfs_image.display(),
             runtime.kernel_path.display(),
@@ -237,7 +240,8 @@ pub(crate) async fn prefetch_runtime_with_observer(
                 .egress_proxy_path
                 .as_ref()
                 .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "none".to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            runtime.container_stack_path.display()
         ),
     );
     observe_log(

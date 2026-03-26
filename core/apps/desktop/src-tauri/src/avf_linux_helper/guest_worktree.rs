@@ -124,12 +124,7 @@ pub(super) fn prepare_guest_worktree(
     if let Some(parent) = host_shadow_root.parent() {
         fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     }
-    run_git_worktree_add(
-        host_workspace_root,
-        &host_shadow_root,
-        base_commit_sha,
-        branch_name,
-    )?;
+    stage_shadow_root_from_host_workspace(host_workspace_root, &host_shadow_root)?;
 
     let (simulated, notes) = if shared_vm.simulated {
         (
@@ -336,46 +331,66 @@ pub(super) fn best_effort_remove_git_worktree(host_workspace_root: &Path, host_s
         .output();
 }
 
-pub(super) fn run_git_worktree_add(
+pub(super) fn stage_shadow_root_from_host_workspace(
     host_workspace_root: &Path,
     host_shadow_root: &Path,
-    base_commit_sha: &str,
-    branch_name: &str,
 ) -> Result<()> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(host_workspace_root)
-        .arg("worktree")
-        .arg("add")
-        .arg("--force")
-        .arg("-B")
-        .arg(branch_name)
-        .arg(host_shadow_root)
-        .arg(base_commit_sha)
-        .output()
-        .with_context(|| {
-            format!(
-                "spawning git worktree add for {} -> {}",
-                host_workspace_root.display(),
-                host_shadow_root.display()
-            )
-        })?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let combined = format!("{stderr}\n{stdout}").trim().to_string();
-    if combined.is_empty() {
+    let dotgit = host_workspace_root.join(".git");
+    let dotgit_meta =
+        fs::metadata(&dotgit).with_context(|| format!("reading {}", dotgit.display()))?;
+    if !dotgit_meta.is_dir() {
         bail!(
-            "git worktree add failed for {} (status: {})",
-            host_shadow_root.display(),
-            output.status
+            "host workspace root {} must have a standalone .git directory before staging helper shadow root",
+            host_workspace_root.display()
         );
     }
-    bail!(
-        "git worktree add failed for {}: {}",
-        host_shadow_root.display(),
-        combined
-    )
+    copy_dir_recursive(host_workspace_root, host_shadow_root).with_context(|| {
+        format!(
+            "copying managed worktree {} into helper shadow root {}",
+            host_workspace_root.display(),
+            host_shadow_root.display()
+        )
+    })
+}
+
+#[cfg(unix)]
+fn symlink_path(target: &Path, dest: &Path, _is_dir: bool) -> Result<()> {
+    std::os::unix::fs::symlink(target, dest)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn symlink_path(target: &Path, dest: &Path, is_dir: bool) -> Result<()> {
+    if is_dir {
+        std::os::windows::fs::symlink_dir(target, dest)?;
+    } else {
+        std::os::windows::fs::symlink_file(target, dest)?;
+    }
+    Ok(())
+}
+
+fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
+    fs::create_dir_all(target)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let entry_path = entry.path();
+        let dest = target.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_recursive(&entry_path, &dest)?;
+        } else if file_type.is_symlink() {
+            if dest.exists() {
+                let _ = fs::remove_file(&dest);
+                let _ = fs::remove_dir_all(&dest);
+            }
+            let link_target = fs::read_link(&entry_path)?;
+            let is_dir = fs::metadata(&entry_path)
+                .map(|meta| meta.is_dir())
+                .unwrap_or(false);
+            symlink_path(&link_target, &dest, is_dir)?;
+        } else if file_type.is_file() {
+            fs::copy(&entry_path, &dest)?;
+        }
+    }
+    Ok(())
 }

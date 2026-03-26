@@ -1,5 +1,6 @@
 use super::*;
 use std::borrow::Cow;
+use std::net::IpAddr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct AppliedContainerNetworkPolicy {
@@ -43,6 +44,24 @@ fn transparent_proxy_pid_file() -> Cow<'static, str> {
     std::env::var("CTX_EGRESS_PROXY_PID_FILE")
         .map(Cow::Owned)
         .unwrap_or_else(|_| Cow::Borrowed("/tmp/ctx-egress-proxy.pid"))
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r#"'"'"'"#))
+}
+
+fn daemon_ip_resolution_script(daemon_host: &str) -> String {
+    if daemon_host.parse::<IpAddr>().is_ok() {
+        format!("daemon_ip={}", shell_single_quote(daemon_host))
+    } else {
+        format!(
+            r#"daemon_ip="$(getent hosts {daemon_host} | awk '{{print $1}}' | head -n1 || true)"
+if [ -z "$daemon_ip" ]; then
+  exit 44
+fi"#,
+            daemon_host = shell_single_quote(daemon_host),
+        )
+    }
 }
 
 pub(super) fn transparent_proxy_policy(
@@ -303,16 +322,14 @@ async fn configure_transparent_egress_guard(
     daemon_host: &str,
     daemon_port: u16,
 ) -> Result<bool> {
+    let daemon_ip_resolution = daemon_ip_resolution_script(daemon_host);
     let script = format!(
         r#"
 set -e
 if ! command -v iptables >/dev/null 2>&1; then
   exit 43
 fi
-daemon_ip="$(getent hosts {daemon_host} | awk '{{print $1}}' | head -n1)"
-if [ -z "$daemon_ip" ]; then
-  exit 44
-fi
+{daemon_ip_resolution}
 iptables -t nat -F OUTPUT || true
 iptables -F OUTPUT || true
 iptables -P OUTPUT DROP
@@ -327,7 +344,10 @@ iptables -t nat -A OUTPUT -m owner --uid-owner 0 -j RETURN
 iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-ports {proxy_port}
 iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-ports {proxy_port}
 exit 0
-"#
+"#,
+        daemon_ip_resolution = daemon_ip_resolution,
+        daemon_port = daemon_port,
+        proxy_port = proxy_port,
     );
     let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("exec")
@@ -349,10 +369,14 @@ exit 0
             anyhow::bail!("daemon host not resolvable inside harness container");
         }
     }
-    anyhow::bail!(
-        "failed to configure egress guard (status: {})",
-        output.status
-    );
+    let combined = command_output_message(&output);
+    if combined.is_empty() {
+        anyhow::bail!(
+            "failed to configure egress guard (status: {})",
+            output.status
+        );
+    }
+    anyhow::bail!("failed to configure egress guard: {combined}");
 }
 
 async fn clear_egress_guard(data_root: &Path, name: &str) -> Result<()> {
@@ -382,5 +406,24 @@ iptables -P OUTPUT ACCEPT
             anyhow::bail!("failed to clear egress guard (status: {})", output.status);
         }
         anyhow::bail!("failed to clear egress guard: {combined}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn daemon_ip_resolution_uses_literal_ip_without_getent() {
+        let script = daemon_ip_resolution_script("192.168.64.1");
+        assert_eq!(script, "daemon_ip='192.168.64.1'");
+        assert!(!script.contains("getent hosts"));
+    }
+
+    #[test]
+    fn daemon_ip_resolution_uses_getent_for_hostnames() {
+        let script = daemon_ip_resolution_script("host.containers.internal");
+        assert!(script.contains("getent hosts 'host.containers.internal'"));
+        assert!(script.contains("exit 44"));
     }
 }

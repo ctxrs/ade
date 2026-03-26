@@ -17,6 +17,14 @@ fn image_load_poll_interval() -> Duration {
     }
 }
 
+fn image_post_load_visibility_timeout() -> Duration {
+    if cfg!(test) {
+        Duration::from_millis(500)
+    } else {
+        Duration::from_secs(10)
+    }
+}
+
 fn format_image_load_elapsed(elapsed: Duration) -> String {
     let secs = elapsed.as_secs();
     let minutes = secs / 60;
@@ -156,7 +164,7 @@ pub async fn container_image_present(data_root: &Path, image: &str) -> Result<bo
         anyhow::bail!("image is required");
     }
     let mut cmd = sandbox_container_command(data_root)?;
-    cmd.arg("image").arg("exists").arg("--").arg(image);
+    cmd.arg("image").arg("inspect").arg(image);
     let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
     if output.status.success() {
         return Ok(true);
@@ -164,7 +172,7 @@ pub async fn container_image_present(data_root: &Path, image: &str) -> Result<bo
     match output.status.code() {
         Some(1) => Ok(false),
         _ => anyhow::bail!(
-            "container image exists failed: {}",
+            "container image inspect failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         ),
     }
@@ -459,12 +467,26 @@ async fn load_container_image_tar(
         }
         anyhow::bail!("container image load failed: {stderr}");
     }
-    if container_image_present(data_root, image).await? {
-        return Ok(());
+    let load_message = command_output_message(&output);
+    let visibility_deadline = tokio::time::Instant::now() + image_post_load_visibility_timeout();
+    while tokio::time::Instant::now() < visibility_deadline {
+        if container_image_present(data_root, image).await? {
+            return Ok(());
+        }
+        tokio::time::sleep(image_load_poll_interval()).await;
+    }
+    if load_message.is_empty() {
+        anyhow::bail!(
+            "container image load reported success but image '{}' is still missing after {}s",
+            image,
+            image_post_load_visibility_timeout().as_secs()
+        );
     }
     anyhow::bail!(
-        "container image load reported success but image '{}' is still missing",
-        image
+        "container image load reported success but image '{}' is still missing after {}s: {}",
+        image,
+        image_post_load_visibility_timeout().as_secs(),
+        load_message
     );
 }
 
@@ -482,7 +504,7 @@ pub async fn container_image_status(data_root: &Path, image: &str) -> Result<Con
     }
     let output = match sandbox_container_command(data_root) {
         Ok(mut cmd) => {
-            cmd.arg("image").arg("exists").arg("--").arg(image);
+            cmd.arg("image").arg("inspect").arg(image);
             command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await
         }
         Err(err) => {
@@ -595,7 +617,7 @@ mod tests {
         std::fs::write(
             &sandbox_cli_path,
             format!(
-                "#!/bin/sh\nset -eu\nmarker='{}'\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  sleep 0.25\n  : > \"$marker\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$marker\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nprintf 'unexpected sandbox CLI invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+                "#!/bin/sh\nset -eu\nmarker='{}'\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  sleep 0.25\n  : > \"$marker\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  if [ -f \"$marker\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nprintf 'unexpected sandbox CLI invocation: %s\\n' \"$*\" >&2\nexit 1\n",
                 marker_path.display()
             ),
         )
@@ -636,5 +658,38 @@ mod tests {
         assert!(progress.iter().any(|update| {
             update.phase == HarnessSetupPhase::ImageLoad && update.active_download.is_none()
         }));
+    }
+
+    #[tokio::test]
+    async fn load_container_image_waits_for_post_load_visibility() {
+        let _serial = env_var_test_lock().lock().await;
+        let temp = tempdir().expect("tempdir");
+        let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
+        let marker_path = temp.path().join("image-present");
+        let tar_path = temp.path().join("ctx-harness.tar");
+        std::fs::write(&tar_path, b"fake-image-tar").expect("write image tar");
+        std::fs::write(
+            &sandbox_cli_path,
+            format!(
+                "#!/bin/sh\nset -eu\nmarker='{}'\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  (sleep 0.1; : > \"$marker\") &\n  printf 'Loaded image: ghcr.io/ctxrs/ctx-harness:test\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  if [ -f \"$marker\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nprintf 'unexpected sandbox CLI invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+                marker_path.display()
+            ),
+        )
+        .expect("write sandbox CLI shim");
+        std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod sandbox CLI shim");
+        let _guard = EnvGuard::set(
+            CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+            &sandbox_cli_path.to_string_lossy(),
+        );
+
+        load_container_image_tar(
+            temp.path(),
+            &tar_path,
+            "ghcr.io/ctxrs/ctx-harness:test",
+            None,
+        )
+        .await
+        .expect("image visibility should settle after load success");
     }
 }

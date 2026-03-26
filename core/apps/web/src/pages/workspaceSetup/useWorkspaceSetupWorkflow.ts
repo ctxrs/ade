@@ -68,6 +68,7 @@ export function useWorkspaceSetupWorkflow({
   const handledMachineEffectIdsRef = useRef<Set<number>>(new Set());
   const localAuthWarmupRouteKeyRef = useRef<string | null>(null);
   const localTitlingWarmupRouteKeyRef = useRef<string | null>(null);
+  const machineSnapshotRef = useRef<WorkspaceSetupMachineSnapshot | null>(null);
 
   const setters = useMemo<FieldSetters>(() => ({
     targetDraft: makeDraftFieldSetter(dispatchDraft, "targetDraft"),
@@ -242,6 +243,10 @@ export function useWorkspaceSetupWorkflow({
   ]);
 
   useEffect(() => {
+    machineSnapshotRef.current = machineSnapshot;
+  }, [machineSnapshot]);
+
+  useEffect(() => {
     if (machineState.pendingEffects.length === 0) return;
 
     const effectIds: number[] = [];
@@ -254,10 +259,15 @@ export function useWorkspaceSetupWorkflow({
       if (effect.kind === "run_command") {
         void executeWorkspaceSetupMachineCommand(effect.command, machineCommandHandlers)
           .then((result) => {
+            const currentSnapshot = machineSnapshotRef.current;
+            if (!currentSnapshot) {
+              return;
+            }
             dispatchMachine({
               type: "command_completed",
               effectId: effect.id,
               result,
+              snapshot: currentSnapshot,
             });
           });
         continue;

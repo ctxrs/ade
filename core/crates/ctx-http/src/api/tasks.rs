@@ -42,7 +42,7 @@ use ctx_core::models::{
 };
 use ctx_fs::git::delete_branch;
 use ctx_fs::vcs;
-use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
+use ctx_fs::worktrees::{create_worktree, managed_worktree_path, standaloneize_worktree_git_dir};
 use ctx_store::{is_unique_constraint_violation, Store};
 
 const GLOBAL_INDEX_WRITE_RETRY_LIMIT: usize = 3;
@@ -122,6 +122,14 @@ pub(in crate::api) async fn materialize_sandbox_binding_for_worktree(
     {
         return Ok(None);
     }
+    standaloneize_worktree_git_dir(canonical_root)
+        .await
+        .with_context(|| {
+            format!(
+                "stabilizing sandbox worktree git metadata at {}",
+                canonical_root.display()
+            )
+        })?;
 
     state
         .execution
@@ -776,8 +784,23 @@ pub(in crate::api) async fn cleanup_task_worktrees(
             }
             continue;
         }
-        let is_git = is_git_worktree(root).await.unwrap_or(false);
-        if is_git {
+        let embedded_git_dir = tokio::fs::metadata(root.join(".git"))
+            .await
+            .map(|meta| meta.is_dir())
+            .unwrap_or(false);
+        let is_git = embedded_git_dir || is_git_worktree(root).await.unwrap_or(false);
+        if embedded_git_dir {
+            if let Err(err) = tokio::fs::remove_dir_all(root).await.with_context(|| {
+                format!("removing standalone managed worktree at {}", root.display())
+            }) {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree.id.0,
+                    "failed to remove standalone managed worktree dir: {err:#}"
+                );
+                errors.push(err);
+            }
+        } else if is_git {
             needs_prune = true;
             if let Err(err) = remove_worktree(&workspace.root_path, root).await {
                 tracing::warn!(

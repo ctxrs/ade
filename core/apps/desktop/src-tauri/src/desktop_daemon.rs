@@ -469,11 +469,30 @@ fn resolve_daemon_bin(app: &tauri::AppHandle) -> Result<PathBuf> {
     })
 }
 
-fn resolve_optional_bin(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
-    if cfg!(debug_assertions) {
-        return dev_bin(name);
+fn select_optional_bin_path(
+    name: &str,
+    bundled: Option<PathBuf>,
+    dev: Option<PathBuf>,
+    debug_build: bool,
+    is_macos: bool,
+) -> Option<PathBuf> {
+    if !debug_build {
+        return bundled;
     }
-    resource_bin(app, name)
+    if is_macos && name == "ctx-avf-linux-helper" {
+        return bundled.or(dev);
+    }
+    dev.or(bundled)
+}
+
+fn resolve_optional_bin(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
+    let bundled = resource_bin(app, name);
+    let dev = if cfg!(debug_assertions) {
+        dev_bin(name)
+    } else {
+        None
+    };
+    select_optional_bin_path(name, bundled, dev, cfg!(debug_assertions), cfg!(target_os = "macos"))
 }
 
 fn path_matches_current_platform_binary(path: &Path) -> bool {
