@@ -3,7 +3,7 @@ import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } 
 import { createServer } from "net";
 import { tmpdir } from "os";
 import path from "path";
-import { chromium, type APIRequestContext, type BrowserContext, type Locator, type Page } from "playwright/test";
+import { chromium, type BrowserContext, type Locator, type Page } from "playwright/test";
 import { parseBoolishString } from "../../src/utils/boolish";
 
 type VisibleDomState = {
@@ -73,8 +73,6 @@ export type ClaudeSetupTokenSuccess = {
 
 export type ClaudeManagedSetupTokenOptions = {
   context: BrowserContext;
-  request: APIRequestContext;
-  loginId: string;
   authUrl: string;
   email: string;
   password: string;
@@ -387,34 +385,6 @@ const parseClaudeSetupTokenRedirectUri = (rawUrl: string): string => {
   } catch {
     return "";
   }
-};
-
-const extractClaudeSetupPromptCodeFromUrl = (rawUrl: string): string => {
-  try {
-    const parsed = new URL(rawUrl);
-    const directCode = readString(parsed.searchParams.get("code"));
-    const directState = readString(parsed.searchParams.get("state"));
-    if (directCode && directCode.toLowerCase() !== "true" && directState) {
-      return `${directCode}#${directState}`;
-    }
-    const hash = parsed.hash.startsWith("#") ? parsed.hash.slice(1) : parsed.hash;
-    if (!hash) return "";
-    const hashParams = new URLSearchParams(hash);
-    const hashCode = readString(hashParams.get("code"));
-    const hashState = readString(hashParams.get("state"));
-    if (hashCode && hashState) {
-      return `${hashCode}#${hashState}`;
-    }
-  } catch {
-    // fall through
-  }
-  return "";
-};
-
-const extractClaudeSetupPromptCodeFromText = (rawText: string): string => {
-  const compact = readString(rawText).replace(/\s+/g, "");
-  const match = /([A-Za-z0-9._-]{10,}#[A-Za-z0-9._-]{10,})/.exec(compact);
-  return readString(match?.[1] ?? "");
 };
 
 const isValidClaudeSetupTokenRedirectUri = (rawUrl: string): boolean => {
@@ -1322,48 +1292,6 @@ const waitForClaudeSetupTokenCliValue = async ({
   throw new Error(`timed out waiting for claude setup-token ${label}: ${redactClaudeSetupTokenOutput(readOutput()) || "<no output>"}`);
 };
 
-const submitClaudeSetupTokenPromptCode = async (
-  request: APIRequestContext,
-  loginId: string,
-  loginCode: string,
-): Promise<void> => {
-  const normalizedCode = readString(loginCode);
-  if (!normalizedCode) {
-    throw new Error("claude setup-token prompt code is empty");
-  }
-  const response = await request.post(`/api/providers/claude-crp/accounts/login/${encodeURIComponent(loginId)}`, {
-    data: { login_code: normalizedCode },
-    timeout: 30_000,
-  });
-  if (!response.ok()) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`claude setup-token prompt code submission failed (${response.status()}): ${detail}`);
-  }
-};
-
-const submitClaudeSetupTokenPromptCodeToChild = async (
-  child: ChildProcess,
-  loginCode: string,
-): Promise<void> => {
-  const normalizedCode = readString(loginCode);
-  if (!normalizedCode) {
-    throw new Error("claude setup-token prompt code is empty");
-  }
-  const stdin = child.stdin;
-  if (!stdin) {
-    throw new Error("claude setup-token child stdin is unavailable");
-  }
-  await new Promise<void>((resolve, reject) => {
-    stdin.write(`${normalizedCode}\n`, (error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve();
-    });
-  });
-};
-
 const driveGoogleBackedBrowserLoginWithCredentials = async ({
   page,
   authUrl,
@@ -1642,7 +1570,6 @@ const driveClaudeSetupTokenBrowserFlow = async (opts: {
   pollMs: number;
   providerLabel: string;
   readSetupToken?: () => string;
-  submitLoginCode?: (loginCode: string) => Promise<void>;
 }): Promise<void> => {
   const claudePostGoogleSettleMs = readClaudePostGoogleSettleMs();
   let firstPostGoogleClaudePageAt: number | null = null;
@@ -1751,29 +1678,19 @@ const driveClaudeSetupTokenBrowserFlow = async (opts: {
         });
         return { handled: true };
       }
-      if (stateMentions(state, /copy code|you can close this tab|login successful|connected to claude code/i)) {
-        let promptCode = extractClaudeSetupPromptCodeFromUrl(state.url);
-        if (!promptCode) {
-          promptCode = extractClaudeSetupPromptCodeFromText(state.bodyText);
-        }
-        if (!promptCode && stateMentions(state, /copy code/i) && process.platform === "darwin") {
-          execFileSync("pbcopy", { input: "" });
-          const copied = await clickVisibleTextAction(activePage, ["copy code"]);
-          if (copied) {
-            await waitMs(500);
-            promptCode = readString(execFileSync("pbpaste", { encoding: "utf8" }));
-          }
-        }
-        if (promptCode && opts.submitLoginCode) {
-          await opts.submitLoginCode(promptCode);
-          return {
-            done: true,
-            result: {
-              finalUrl: sanitizeAuthUrl(state.url),
-              setupToken: emittedSetupToken,
-            },
-          };
-        }
+      if (stateMentions(state, /copy code/i)) {
+        throw new Error(
+          "Claude setup-token fell back to manual copy-code auth, which ctx intentionally does not support.",
+        );
+      }
+      if (stateMentions(state, /you can close this tab|login successful|connected to claude code/i)) {
+        return {
+          done: true,
+          result: {
+            finalUrl: sanitizeAuthUrl(state.url),
+            setupToken: emittedSetupToken,
+          },
+        };
       }
       if (stateMentions(state, /you'?re all set up for claude code|you can now close this window/i)) {
         return {
@@ -1897,7 +1814,6 @@ export async function completeClaudeManagedSetupTokenWithGoogleBrowserCredential
       timeoutMs,
       pollMs,
       providerLabel: "claude-setup-token",
-      submitLoginCode: (loginCode) => submitClaudeSetupTokenPromptCode(opts.request, opts.loginId, loginCode),
     });
   } finally {
     await page.close().catch(() => {});
@@ -1960,7 +1876,6 @@ export async function completeClaudeSetupTokenWithGoogleBrowserCredentials(
       pollMs,
       providerLabel: "claude-setup-token",
       readSetupToken: () => readClaudeSetupToken(readOutput()),
-      submitLoginCode: (loginCode) => submitClaudeSetupTokenPromptCodeToChild(child, loginCode),
     });
     const setupToken = await waitForClaudeSetupTokenCliValue({
       child,

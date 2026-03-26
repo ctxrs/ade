@@ -4,7 +4,6 @@ import type { ProviderStatus } from "../../../api/client";
 import { isDesktopApp, openExternalLink } from "../../../utils/desktop";
 import type { HarnessAuthModalState } from "../../SettingsPage.types";
 import type { useHarnessAuthenticationController } from "../hooks/useHarnessAuthenticationController";
-import { MANUAL_BROWSER_OPEN_MESSAGE } from "../hooks/harnessAuth/capabilities";
 import { HarnessAuthenticationSection } from "./HarnessAuthenticationSection";
 
 const mockUseHarnessAuthenticationController = vi.fn();
@@ -396,13 +395,13 @@ describe("HarnessAuthenticationSection Gemini subscription modal", () => {
     expect(screen.queryByRole("link", { name: "Open Claude sign-in" })).not.toBeInTheDocument();
   });
 
-  it("shows the Claude manual sign-in link only after browser auto-open fails", () => {
+  it("never shows a Claude manual sign-in link", () => {
     mockUseHarnessAuthenticationController.mockReturnValue(
       makeController({
         harnessAuthModal: {
           ...makeClaudeSubscriptionModal(),
           subscription_auth_url: "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A58215%2Fcallback",
-          subscription_status: MANUAL_BROWSER_OPEN_MESSAGE,
+          subscription_status: "Sign-in failed. Retry.",
         },
       }),
     );
@@ -415,8 +414,7 @@ describe("HarnessAuthenticationSection Gemini subscription modal", () => {
       />,
     );
 
-    expect(screen.getByText(MANUAL_BROWSER_OPEN_MESSAGE)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open Claude sign-in" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open Claude sign-in" })).not.toBeInTheDocument();
   });
 
   it("submits guided sign-in when clicking the subscription action", () => {
@@ -437,13 +435,13 @@ describe("HarnessAuthenticationSection Gemini subscription modal", () => {
     expect(submitHarnessSubscriptionModal).toHaveBeenCalledTimes(1);
   });
 
-  it("shows manual browser-open guidance text when auth URL is present", () => {
+  it("does not expose a manual sign-in link when an auth URL is present", () => {
     const authUrl = "https://example.com/oauth/start";
     mockUseHarnessAuthenticationController.mockReturnValue(
       makeController({
         harnessAuthModal: {
           ...makeGeminiSubscriptionModal(),
-          subscription_status: "Couldn't open browser automatically. Use the sign-in link below.",
+          subscription_status: "Subscription flow failed. Check error details below.",
           subscription_auth_url: authUrl,
         },
       }),
@@ -457,7 +455,7 @@ describe("HarnessAuthenticationSection Gemini subscription modal", () => {
       />,
     );
 
-    expect(screen.getByText("Couldn't open browser automatically. Use the sign-in link below.")).toBeInTheDocument();
+    expect(screen.getByText("Subscription flow failed. Check error details below.")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Open sign-in link" })).not.toBeInTheDocument();
     expect(authUrl).toContain("/oauth/");
   });

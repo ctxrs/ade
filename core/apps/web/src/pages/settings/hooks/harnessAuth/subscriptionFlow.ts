@@ -36,7 +36,6 @@ import {
   CLAUDE_LOGIN_POLL_INTERVAL_MS,
   GEMINI_LOGIN_POLL_ATTEMPTS,
   GEMINI_LOGIN_POLL_INTERVAL_MS,
-  MANUAL_BROWSER_OPEN_MESSAGE,
   MISTRAL_LOGIN_POLL_ATTEMPTS,
   MISTRAL_LOGIN_POLL_INTERVAL_MS,
   QWEN_LOGIN_POLL_ATTEMPTS,
@@ -66,6 +65,8 @@ type BrowserLoginStatus = {
   device_code?: string | null;
   error?: string | null;
 };
+
+const BROWSER_OPEN_FAILURE_MESSAGE = "Failed to launch the sign-in browser window.";
 
 type BrowserLoginDefinition = {
   providerId: "claude-crp" | "gemini" | "qwen" | "cursor" | "kimi" | "amp" | "mistral";
@@ -261,9 +262,9 @@ const openExternalAuthUrlForFlow = async (
   const opened = await openExternalLink(authUrl);
   if (opened) return true;
   deps.patchHarnessAuthModalForOperation(deps.flow, {
-    subscription_status: MANUAL_BROWSER_OPEN_MESSAGE,
+    subscription_auth_url: authUrl,
   });
-  return false;
+  throw new Error(BROWSER_OPEN_FAILURE_MESSAGE);
 };
 
 const runBrowserSubscriptionFlow = async (
@@ -287,7 +288,6 @@ const runBrowserSubscriptionFlow = async (
       deviceCode: normalizeOptionalString(login.device_code),
     });
     let initialAuthOpened = false;
-    let attemptedInitialAuthOpen = false;
     const shouldAutoOpenInitialAuthUrl = initialAuthUrl
       ? (definition.shouldAutoOpenAuthUrl?.({
         authUrl: initialAuthUrl,
@@ -295,7 +295,6 @@ const runBrowserSubscriptionFlow = async (
       }) ?? true)
       : false;
     if (initialAuthUrl && shouldAutoOpenInitialAuthUrl) {
-      attemptedInitialAuthOpen = true;
       initialAuthOpened = await openExternalAuthUrlForFlow(deps, initialAuthUrl, reservedWindow);
       reservedWindowUsed = initialAuthOpened;
       deps.flow.throwIfCancelled();
@@ -303,9 +302,7 @@ const runBrowserSubscriptionFlow = async (
 
     setFlowStatus(
       deps,
-      attemptedInitialAuthOpen && !initialAuthOpened && initialAuthUrl
-        ? MANUAL_BROWSER_OPEN_MESSAGE
-        : definition.waitingMessage,
+      definition.waitingMessage,
     );
 
     const outcome = await waitForBrowserLoginOutcome({
@@ -433,6 +430,8 @@ const runClaudeSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<vo
     maxAttempts: CLAUDE_LOGIN_POLL_ATTEMPTS,
     pollIntervalMs: CLAUDE_LOGIN_POLL_INTERVAL_MS,
     refreshAccounts: deps.refreshClaudeAccounts,
+    // Claude browser ownership lives in the daemon-side `claude setup-token`
+    // runner; the web client must not try to open this URL itself.
     shouldAutoOpenAuthUrl: () => false,
     syncBrowserLoginState: ({ authUrl }) => {
       deps.patchHarnessAuthModalForOperation(deps.flow, {

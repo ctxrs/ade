@@ -364,7 +364,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         )
         .route(
             "/api/providers/claude-crp/accounts/login/:id",
-            get(get_claude_login).post(submit_claude_login_code),
+            get(get_claude_login),
         )
         .route(
             "/api/providers/claude-crp/active-account",

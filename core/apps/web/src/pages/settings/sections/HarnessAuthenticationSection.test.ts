@@ -3,7 +3,7 @@ import type { HarnessAuthModalState } from "../../SettingsPage.types";
 import {
   canSubmitSubscriptionModal,
   shouldAutoStartSubscriptionFlow,
-  shouldSubmitClaudeFallbackOnEnter,
+  shouldSubmitClaudeSubscriptionOnEnter,
   subscriptionPrimaryActionLabel,
 } from "./HarnessAuthenticationSection";
 
@@ -38,7 +38,7 @@ function baseModal(overrides: Partial<HarnessAuthModalState> = {}): HarnessAuthM
   };
 }
 
-describe("HarnessAuthenticationSection Claude fallback submit", () => {
+describe("HarnessAuthenticationSection Claude subscription submit", () => {
   it("allows starting Claude sign-in while no token is entered", () => {
     const modal = baseModal({ subscription_busy: true });
 
@@ -54,7 +54,7 @@ describe("HarnessAuthenticationSection Claude fallback submit", () => {
 
     expect(canSubmitSubscriptionModal(modal)).toBe(true);
     expect(subscriptionPrimaryActionLabel(modal)).toBe("Save subscription");
-    expect(shouldSubmitClaudeFallbackOnEnter(modal, "Enter")).toBe(true);
+    expect(shouldSubmitClaudeSubscriptionOnEnter(modal, "Enter")).toBe(true);
   });
 
   it("keeps Claude action as save even when token text is invalid", () => {
@@ -67,13 +67,13 @@ describe("HarnessAuthenticationSection Claude fallback submit", () => {
     expect(subscriptionPrimaryActionLabel(modal)).toBe("Save subscription");
   });
 
-  it("does not submit Claude fallback for non-enter keys", () => {
+  it("does not submit Claude subscription for non-enter keys", () => {
     const modal = baseModal({
       subscription_busy: true,
       subscription_token: "sk-ant-oat01-token",
     });
 
-    expect(shouldSubmitClaudeFallbackOnEnter(modal, "Tab")).toBe(false);
+    expect(shouldSubmitClaudeSubscriptionOnEnter(modal, "Tab")).toBe(false);
   });
 
   it("keeps codex subscription action as start sign-in when idle", () => {

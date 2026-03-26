@@ -15,7 +15,7 @@ pub(crate) use browser::{
 };
 #[cfg(test)]
 pub(super) use claude::resolve_claude_login_runtime_from_config;
-pub(crate) use claude::{get_claude_login, start_claude_login, submit_claude_login_code};
+pub(crate) use claude::{get_claude_login, start_claude_login};
 pub(crate) use codex::{complete_codex_login, get_codex_login, start_codex_login};
 pub(crate) use kimi::{get_kimi_login, start_kimi_login};
 pub(crate) use mistral::{get_mistral_login, start_mistral_login};

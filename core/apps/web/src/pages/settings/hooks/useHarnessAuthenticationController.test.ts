@@ -499,7 +499,6 @@ describe("shouldSkipDuplicateAmpLoginStart", () => {
 describe("shouldOpenPolledAuthUrlForStatus", () => {
   it("opens auth url only while status is pending", () => {
     expect(shouldOpenPolledAuthUrlForStatus("pending")).toBe(true);
-    expect(shouldOpenPolledAuthUrlForStatus("manual_open_required")).toBe(true);
     expect(shouldOpenPolledAuthUrlForStatus("success")).toBe(false);
     expect(shouldOpenPolledAuthUrlForStatus("failed")).toBe(false);
     expect(shouldOpenPolledAuthUrlForStatus("timeout")).toBe(false);
@@ -1559,7 +1558,7 @@ describe("useHarnessAuthenticationController", () => {
       .mockResolvedValueOnce({
         login_id: "claude-login-1",
         auth_url: authUrl,
-        status: "manual_open_required",
+        status: "pending",
       } as Awaited<ReturnType<typeof getClaudeLogin>>)
       .mockResolvedValueOnce({
         login_id: "claude-login-1",
@@ -1625,6 +1624,51 @@ describe("useHarnessAuthenticationController", () => {
     expect(requireController(controller).providerError).toBeNull();
     expect(vi.mocked(openExternalLink)).not.toHaveBeenCalled();
     expect(vi.mocked(selectProviderHarnessSource)).toHaveBeenCalledWith("claude-crp", "subscription", null);
+  });
+
+  it("fails Kimi sign-in instead of exposing a manual browser fallback when browser launch fails", async () => {
+    let controller: Controller | null = null;
+    const authUrl = "https://kimi.example.com/login/device";
+
+    vi.mocked(openExternalLink).mockResolvedValue(false);
+    vi.mocked(startKimiLogin).mockResolvedValue({
+      login_id: "kimi-login-2",
+      auth_url: authUrl,
+      device_code: "KIMI-1234",
+    });
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("kimi");
+      controller?.patchHarnessAuthModal({
+        stage: "subscription",
+        subscription_label: "Kimi Login",
+      });
+    });
+
+    await act(async () => {
+      await controller?.submitHarnessSubscriptionModal();
+    });
+
+    expect(vi.mocked(startKimiLogin)).toHaveBeenCalledWith("Kimi Login");
+    expect(vi.mocked(openExternalLink)).toHaveBeenCalledWith(authUrl);
+    expect(vi.mocked(getKimiLogin)).not.toHaveBeenCalled();
+    expect(requireController(controller).harnessAuthModal?.subscription_auth_url).toBe(authUrl);
+    expect(requireController(controller).harnessAuthModal?.subscription_status).toBe(
+      "Subscription flow failed. Check error details below.",
+    );
+    expect(requireController(controller).providerError).toBe(
+      "Failed to launch the sign-in browser window.",
+    );
   });
 
   it("starts Amp sign-in without auto-opening the browser and surfaces auth state while polling", async () => {

@@ -14,7 +14,6 @@ import {
   type HarnessEndpointProviderPreset,
   supportsOptionalBaseUrlForHarness,
 } from "../harnessEndpointProviders";
-import { MANUAL_BROWSER_OPEN_MESSAGE } from "../hooks/harnessAuth/capabilities";
 
 export type HarnessAuthenticationModalHarness = {
   label: string;
@@ -68,7 +67,7 @@ export function subscriptionPrimaryActionLabel(modal: HarnessAuthModalState): st
   return "Save subscription";
 }
 
-export function shouldSubmitClaudeFallbackOnEnter(modal: HarnessAuthModalState, key: string): boolean {
+export function shouldSubmitClaudeSubscriptionOnEnter(modal: HarnessAuthModalState, key: string): boolean {
   if (key !== "Enter") return false;
   if (modal.provider_id !== "claude-crp") return false;
   if (!modal.subscription_token.trim()) return false;
@@ -131,10 +130,6 @@ export function HarnessAuthenticationModal({
       : harnessAuthModal.provider_id === "auggie"
         ? "Auggie session token"
         : "sk-...";
-  const showClaudeManualAuthLink = harnessAuthModal.provider_id === "claude-crp"
-    && Boolean(harnessAuthModal.subscription_auth_url)
-    && harnessAuthModal.subscription_status === MANUAL_BROWSER_OPEN_MESSAGE;
-
   const renderEndpointProviderIdentity = (preset: HarnessEndpointProviderPreset) => (
     <span className="settings-endpoint-provider-option">
       {preset.logo_src ? (
@@ -291,7 +286,7 @@ export function HarnessAuthenticationModal({
                     value={harnessAuthModal.subscription_token}
                     onChange={(e) => patchHarnessAuthModal({ subscription_token: e.target.value })}
                     onKeyDown={(e) => {
-                      if (!shouldSubmitClaudeFallbackOnEnter(harnessAuthModal, e.key)) return;
+                      if (!shouldSubmitClaudeSubscriptionOnEnter(harnessAuthModal, e.key)) return;
                       e.preventDefault();
                       void submitHarnessSubscriptionModal();
                     }}
@@ -300,18 +295,6 @@ export function HarnessAuthenticationModal({
                     autoComplete="new-password"
                   />
                 </label>
-                {showClaudeManualAuthLink && harnessAuthModal.subscription_auth_url ? (
-                  <div className="settings-row-desc">
-                    Continue the Claude sign-in flow here:{" "}
-                    <ExternalLink
-                      className="settings-harness-help-link"
-                      href={harnessAuthModal.subscription_auth_url}
-                    >
-                      Open Claude sign-in
-                    </ExternalLink>
-                    .
-                  </div>
-                ) : null}
               </>
             ) : null}
             {harnessAuthModal.provider_id === "kimi" || harnessAuthModal.provider_id === "amp" ? (

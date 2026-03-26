@@ -69,7 +69,6 @@ pub struct ProviderRuntime {
     pub cursor_login_sessions: Mutex<HashMap<String, provider_accounts::CursorLoginStatus>>,
     pub amp_login_sessions: Mutex<HashMap<String, provider_accounts::AmpLoginStatus>>,
     pub mistral_login_sessions: Mutex<HashMap<String, provider_accounts::MistralLoginStatus>>,
-    pub claude_login_inputs: Mutex<HashMap<String, mpsc::UnboundedSender<String>>>,
     pub install_start_gate: Mutex<()>,
     pub installs: Mutex<HashMap<InstallId, InstallState>>,
 }

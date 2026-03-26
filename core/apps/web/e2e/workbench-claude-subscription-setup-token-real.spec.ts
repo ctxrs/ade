@@ -192,8 +192,6 @@ test("workbench: claude setup-token subscription auth can run a real task", asyn
   const authUrl = await waitForClaudeLoginAuthUrl(request, loginId);
   await completeClaudeManagedSetupTokenWithGoogleBrowserCredentials({
     context: page.context(),
-    request,
-    loginId,
     authUrl,
     email: googleEmail,
     password: googlePassword,

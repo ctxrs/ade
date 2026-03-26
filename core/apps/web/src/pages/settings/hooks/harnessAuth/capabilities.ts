@@ -63,7 +63,6 @@ export const AMP_LOGIN_POLL_ATTEMPTS = 90;
 export const AMP_LOGIN_POLL_INTERVAL_MS = 1600;
 export const MISTRAL_LOGIN_POLL_ATTEMPTS = 90;
 export const MISTRAL_LOGIN_POLL_INTERVAL_MS = 1600;
-export const MANUAL_BROWSER_OPEN_MESSAGE = "Couldn't open browser automatically. Use the sign-in link below.";
 
 export const supportsHarnessEndpointConfigStatic = (providerId: string): boolean =>
   HARNESSES_WITH_ENDPOINT_CONFIG.has(providerId);
@@ -165,7 +164,7 @@ export const shouldSkipDuplicateAmpLoginStart = (params: {
 }): boolean => params.providerId === "amp" && params.ampLoginInFlight;
 
 export const shouldOpenPolledAuthUrlForStatus = (status: string): boolean =>
-  status === "pending" || status === "manual_open_required";
+  status === "pending";
 
 const authUrlOpenDedupKey = (authUrl: string): string => {
   try {

@@ -217,7 +217,6 @@ impl AppState {
                 cursor_login_sessions: Mutex::new(HashMap::new()),
                 amp_login_sessions: Mutex::new(HashMap::new()),
                 mistral_login_sessions: Mutex::new(HashMap::new()),
-                claude_login_inputs: Mutex::new(HashMap::new()),
                 install_start_gate: Mutex::new(()),
                 installs: Mutex::new(HashMap::new()),
             },

@@ -28,7 +28,7 @@ import {
 export {
   canSubmitSubscriptionModal,
   shouldAutoStartSubscriptionFlow,
-  shouldSubmitClaudeFallbackOnEnter,
+  shouldSubmitClaudeSubscriptionOnEnter,
   subscriptionPrimaryActionLabel,
 } from "./HarnessAuthenticationModal";
 

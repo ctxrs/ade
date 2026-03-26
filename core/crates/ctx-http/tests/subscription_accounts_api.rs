@@ -1041,10 +1041,191 @@ async fn claude_subscription_accounts_crud_round_trip() {
     .await;
 }
 
-// Claude subscription login is product-supported, but truthful automated coverage
-// still requires full OS automation through the real desktop/browser path.
-// Keep these backend-only integration tests out of default gates until that
-// automation lane exists.
+#[tokio::test]
+async fn claude_login_setup_token_path_succeeds_when_cli_invokes_browser_shim() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let fake_open_dir = data_dir.path().join("fake-open-bin");
+    std::fs::create_dir_all(&fake_open_dir).expect("create fake open dir");
+    let opened_url_path = data_dir.path().join("opened-url.txt");
+    let fake_open_path = fake_open_dir.join("open");
+    std::fs::write(
+        &fake_open_path,
+        format!(
+            "#!/usr/bin/env bash\nset -euo pipefail\nprintf '%s\\n' \"$1\" > \"{}\"\n",
+            opened_url_path.display()
+        ),
+    )
+    .expect("write fake open");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&fake_open_path)
+            .expect("fake open metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&fake_open_path, perms).expect("chmod fake open");
+    }
+
+    let script_path = write_mock_claude_runtime(
+        data_dir.path(),
+        &format!(
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+export PATH="{fake_open_dir}:$PATH"
+"$BROWSER" "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fcallback&state=test"
+echo "Long-lived authentication token created successfully!"
+echo ""
+echo "Your OAuth token (valid for 1 year):"
+echo ""
+echo "sk-ant-oat01-abcDEF1234567890_"
+echo "ZXY987654321"
+"#,
+            fake_open_dir = fake_open_dir.display(),
+        ),
+    )
+    .await;
+    let mut cfg = AgentServerConfigFile {
+        providers: HashMap::new(),
+        provider_login_commands: HashMap::new(),
+        managed_installs: HashMap::new(),
+        managed_provider_targets: HashMap::new(),
+        managed_install_targets: HashMap::new(),
+    };
+    cfg.provider_login_commands.insert(
+        "claude-cli".to_string(),
+        AgentServerCommand {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![],
+            dependencies: vec![],
+            managed: None,
+        },
+    );
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save agent config");
+
+    let start_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(&start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start claude login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
+    assert_eq!(
+        start_body.auth_url.as_deref(),
+        Some("https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fcallback&state=test")
+    );
+
+    let status =
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
+    assert_eq!(status.status, "success");
+    assert!(status.account_id.is_some());
+    assert!(status.error.is_none());
+    assert_eq!(
+        std::fs::read_to_string(&opened_url_path).expect("read opened url"),
+        "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fcallback&state=test\n"
+    );
+}
+
+#[tokio::test]
+async fn claude_login_start_rejects_manual_copy_code_fallback() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let fake_open_dir = data_dir.path().join("fake-open-bin");
+    std::fs::create_dir_all(&fake_open_dir).expect("create fake open dir");
+    let fake_open_path = fake_open_dir.join("open");
+    std::fs::write(
+        &fake_open_path,
+        "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n",
+    )
+    .expect("write fake open");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&fake_open_path)
+            .expect("fake open metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&fake_open_path, perms).expect("chmod fake open");
+    }
+
+    let script_path = write_mock_claude_runtime(
+        data_dir.path(),
+        &format!(
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+export PATH="{fake_open_dir}:$PATH"
+"$BROWSER" "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fcallback&state=test"
+echo "Browser didn't open? Use the URL below to sign in"
+echo "https://claude.ai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=bad"
+"#,
+            fake_open_dir = fake_open_dir.display(),
+        ),
+    )
+    .await;
+    let mut cfg = AgentServerConfigFile {
+        providers: HashMap::new(),
+        provider_login_commands: HashMap::new(),
+        managed_installs: HashMap::new(),
+        managed_provider_targets: HashMap::new(),
+        managed_install_targets: HashMap::new(),
+    };
+    cfg.provider_login_commands.insert(
+        "claude-cli".to_string(),
+        AgentServerCommand {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![],
+            dependencies: vec![],
+            managed: None,
+        },
+    );
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save agent config");
+
+    let start_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(&start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start claude login request");
+    assert_eq!(start_resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body: ErrorResp = start_resp.json().await.expect("start error body");
+    assert!(body
+        .error
+        .contains("fell back to manual code entry"));
+}
+
+// The real desktop/browser lane still needs OS automation, but the tests below
+// are transcript-focused mock-runtime checks rather than full browser coverage.
 #[tokio::test]
 #[ignore = "Claude subscription login requires full OS automation for truthful coverage; excluded from verify:quick until that lane exists"]
 async fn claude_login_start_returns_pending_setup_token_session() {
