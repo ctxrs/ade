@@ -54,10 +54,7 @@ pub(super) fn build_crp_session_config(
             mcp_env.insert("CTX_MCP_TOKEN".to_string(), token.clone());
         }
 
-        let mcp_command = env
-            .get("CTX_MCP_COMMAND")
-            .cloned()
-            .unwrap_or_else(|| "ctx-mcp".to_string());
+        let mcp_command = resolve_session_mcp_command(env);
         let tool_timeout_sec = env
             .get("CTX_MCP_TOOL_TIMEOUT_SEC")
             .and_then(|value| value.parse::<u64>().ok())
@@ -94,6 +91,41 @@ pub(super) fn build_crp_session_config(
             .map(|_| "pragmatic".to_string()),
         mcp_servers,
     }
+}
+
+fn resolve_session_mcp_command(env: &HashMap<String, String>) -> String {
+    let configured = env
+        .get("CTX_MCP_COMMAND")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let Some(command) = configured else {
+        return "ctx-mcp".to_string();
+    };
+    if container_exec_spec(env).is_none() || containerized_mcp_command_is_valid(command) {
+        return command.to_string();
+    }
+    "ctx-mcp".to_string()
+}
+
+fn containerized_mcp_command_is_valid(command: &str) -> bool {
+    let looks_like_path = command.contains('/') || command.contains('\\');
+    if !looks_like_path {
+        return true;
+    }
+    let path = Path::new(command);
+    if !path.is_absolute() && !looks_like_windows_absolute_path(command) {
+        return true;
+    }
+    path.exists()
+}
+
+fn looks_like_windows_absolute_path(command: &str) -> bool {
+    let bytes = command.as_bytes();
+    bytes.len() >= 3
+        && bytes[1] == b':'
+        && bytes[0].is_ascii_alphabetic()
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
 }
 
 pub(super) fn build_crp_model_probe_config(
@@ -259,6 +291,7 @@ pub(super) fn flatten_prompt_items_as_text(items: &[Value]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn probe_timeout_for_env_defaults_to_host_timeout() {
@@ -329,6 +362,52 @@ mod tests {
         let cfg = build_crp_session_config(&env, &workdir);
         assert_eq!(cfg.model, None);
         assert_eq!(cfg.reasoning_effort, None);
+    }
+
+    #[test]
+    fn build_crp_session_config_uses_default_ctx_mcp_for_container_when_override_is_host_only() {
+        let mut env = HashMap::new();
+        env.insert(
+            "CTX_HARNESS_CONTAINER_ID".to_string(),
+            "ctx-harness-123".to_string(),
+        );
+        env.insert(
+            "CTX_MCP_COMMAND".to_string(),
+            "/Users/example-user/.cache/cargo/ctx-monorepo/debug/ctx-mcp".to_string(),
+        );
+
+        let cfg = build_crp_session_config(&env, Path::new("/ctx/ws"));
+        let command = cfg
+            .mcp_servers
+            .as_ref()
+            .and_then(|servers| servers.get("ctx"))
+            .and_then(|server| server.command.as_deref());
+        assert_eq!(command, Some("ctx-mcp"));
+    }
+
+    #[test]
+    fn build_crp_session_config_preserves_existing_absolute_ctx_mcp_for_container() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let mcp_path = tempdir.path().join("ctx-mcp");
+        fs::write(&mcp_path, b"#!/bin/sh\n").expect("write mcp");
+
+        let mut env = HashMap::new();
+        env.insert(
+            "CTX_HARNESS_CONTAINER_ID".to_string(),
+            "ctx-harness-123".to_string(),
+        );
+        env.insert(
+            "CTX_MCP_COMMAND".to_string(),
+            mcp_path.to_string_lossy().to_string(),
+        );
+
+        let cfg = build_crp_session_config(&env, Path::new("/ctx/ws"));
+        let command = cfg
+            .mcp_servers
+            .as_ref()
+            .and_then(|servers| servers.get("ctx"))
+            .and_then(|server| server.command.as_deref());
+        assert_eq!(command, Some(mcp_path.to_string_lossy().as_ref()));
     }
 
     #[test]

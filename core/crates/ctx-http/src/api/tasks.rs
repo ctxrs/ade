@@ -14,8 +14,10 @@ use tokio::process::Command;
 
 #[path = "tasks/creation.rs"]
 mod creation;
+mod execution;
 mod handlers;
 pub(in crate::api) use creation::*;
+pub(in crate::api) use execution::*;
 pub(in crate::api) use handlers::*;
 
 use super::errors::ApiErrorResp;
@@ -31,9 +33,6 @@ use crate::settings::{ExecutionMode, ExecutionSettings};
 use crate::telemetry::TelemetryEvent;
 use crate::vcs_hooks;
 use crate::worktree_bootstrap;
-use crate::worktree_data_plane::{
-    apply_data_plane_to_execution_settings, binding_runtime_kind, resolve_worktree_data_plane,
-};
 use ctx_core::ids::{MessageId, RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     ExecutionEnvironment, Message, MessageDelivery, MessageRole, SandboxBinding, SandboxProfile,
@@ -53,57 +52,6 @@ fn execution_environment_from_settings(settings: &ExecutionSettings) -> Executio
         ExecutionMode::Host => ExecutionEnvironment::Host,
         ExecutionMode::Sandbox => ExecutionEnvironment::Sandbox,
     }
-}
-
-pub(in crate::api) struct ResolvedExistingWorktreeExecution {
-    pub worktree: Worktree,
-    pub effective: ExecutionSettings,
-}
-
-impl ResolvedExistingWorktreeExecution {
-    pub fn execution_environment(&self) -> ExecutionEnvironment {
-        execution_environment_from_settings(&self.effective)
-    }
-}
-
-pub(in crate::api) async fn resolve_existing_worktree_execution(
-    state: &Arc<AppState>,
-    store: &Store,
-    workspace: &Workspace,
-    worktree_id: WorktreeId,
-) -> anyhow::Result<ResolvedExistingWorktreeExecution> {
-    let worktree = store
-        .get_worktree(worktree_id)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("worktree not found"))?;
-    let base_effective = execution_effective::effective_execution_settings(state, workspace.id)
-        .await
-        .context("loading workspace execution settings")?;
-    let data_plane = resolve_worktree_data_plane(state, &worktree)
-        .await
-        .context("resolving worktree data plane")?;
-    let effective = apply_data_plane_to_execution_settings(&base_effective, &data_plane)
-        .context("applying worktree data plane to execution settings")?;
-    Ok(ResolvedExistingWorktreeExecution {
-        worktree,
-        effective,
-    })
-}
-
-fn sandbox_execution_settings_from_binding(
-    binding: &SandboxBinding,
-) -> anyhow::Result<ExecutionSettings> {
-    if let Some(raw) = binding.execution_settings_json.as_deref() {
-        return serde_json::from_str(raw).context("parsing sandbox binding execution settings");
-    }
-
-    let mut settings = ExecutionSettings {
-        mode: ExecutionMode::Sandbox,
-        ..ExecutionSettings::default()
-    };
-    settings.container.runtime = binding_runtime_kind(binding);
-    settings.container.mount_mode = crate::settings::ContainerMountMode::DiskIsolated;
-    Ok(settings)
 }
 
 pub(in crate::api) async fn materialize_sandbox_binding_for_worktree(

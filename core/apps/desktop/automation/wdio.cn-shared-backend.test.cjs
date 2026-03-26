@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const childProcess = require("node:child_process");
@@ -138,4 +139,38 @@ test("shared backend release leaves backend process alive when stop-when-idle is
   assert.equal(fs.existsSync(hooks.getPaths().stateFile), true);
 
   backendProc.kill("SIGKILL");
+});
+
+test("shared backend acquire rejects open ports not owned by the current state dir", async () => {
+  resetStateDir();
+  process.env.CTX_DESKTOP_TEST_SIG = "1";
+  const server = net.createServer();
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const port = address.port;
+
+    await assert.rejects(
+      hooks.acquireSharedCnBackendLease("127.0.0.1", port),
+      /Refusing to attach to an unowned backend/,
+    );
+
+    assert.equal(fs.existsSync(hooks.getPaths().stateFile), false);
+    const leasesDir = hooks.getPaths().leasesDir;
+    const leaseFiles = fs.existsSync(leasesDir) ? fs.readdirSync(leasesDir) : [];
+    assert.deepEqual(leaseFiles, []);
+  } finally {
+    delete process.env.CTX_DESKTOP_TEST_SIG;
+    await new Promise((resolve, reject) => {
+      server.close((err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+  }
 });

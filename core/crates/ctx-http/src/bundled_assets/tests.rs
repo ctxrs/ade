@@ -78,10 +78,52 @@ fn bundled_runtime_from_manifest_can_select_python_by_version() {
         images: vec![],
     };
 
-    let bundled = bundled_runtime_from_manifest(root, &manifest, "python", Some("3.12.13"))
-        .expect("bundled runtime");
+    let bundled = bundled_runtime_from_manifest_for_target(
+        root,
+        &manifest,
+        "python",
+        Some("3.12.13"),
+        os,
+        arch,
+    )
+    .expect("bundled runtime");
     assert_eq!(bundled.version, "3.12.13");
     assert_eq!(bundled.bin, runtime_312_root.join("bin/python3"));
+}
+
+#[test]
+fn bundled_runtime_for_can_select_explicit_linux_target() {
+    let _guard = bundled_assets_manifest_test_lock()
+        .lock()
+        .expect("bundled assets manifest test lock poisoned");
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let runtime_root = root.join("runtimes/ctx-mcp/linux/aarch64");
+    std::fs::create_dir_all(&runtime_root).expect("mkdir runtime root");
+    std::fs::write(runtime_root.join("ctx-mcp"), b"linux ctx-mcp").expect("write runtime");
+    let _guard = override_bundled_assets_manifest_for_test(
+        root.to_path_buf(),
+        BundledAssetsManifest {
+            version: MANIFEST_VERSION,
+            generated_at: None,
+            providers: vec![],
+            runtimes: vec![BundledRuntime {
+                id: "ctx-mcp".to_string(),
+                version: "0.1.0".to_string(),
+                os: "linux".to_string(),
+                arch: "aarch64".to_string(),
+                sha256: "sha".to_string(),
+                root: "runtimes/ctx-mcp/linux/aarch64".to_string(),
+                bin: "ctx-mcp".to_string(),
+                npm_cli: None,
+            }],
+            images: vec![],
+        },
+    );
+
+    let bundled = bundled_runtime_for("ctx-mcp", "linux", "aarch64").expect("bundled runtime");
+    assert_eq!(bundled.version, "0.1.0");
+    assert_eq!(bundled.bin, runtime_root.join("ctx-mcp"));
 }
 
 #[test]

@@ -420,13 +420,14 @@ pub fn bundled_provider_command(provider_id: &str) -> Option<BundledCommand> {
     })
 }
 
-fn bundled_runtime_from_manifest(
+fn bundled_runtime_from_manifest_for_target(
     root: &Path,
     manifest: &BundledAssetsManifest,
     id: &str,
     version: Option<&str>,
+    os: &str,
+    arch: &str,
 ) -> Option<BundledRuntimePaths> {
-    let (os, arch) = current_platform();
     let entry = manifest.runtimes.iter().find(|r| {
         r.id == id
             && r.os == os
@@ -469,7 +470,14 @@ fn bundled_runtime_from_manifest(
 fn bundled_runtime(id: &str) -> Option<BundledRuntimePaths> {
     let root = bundle_dir()?;
     let manifest = load_manifest()?;
-    bundled_runtime_from_manifest(&root, &manifest, id, None)
+    let (os, arch) = current_platform();
+    bundled_runtime_from_manifest_for_target(&root, &manifest, id, None, os, arch)
+}
+
+pub fn bundled_runtime_for(id: &str, os: &str, arch: &str) -> Option<BundledRuntimePaths> {
+    let root = bundle_dir()?;
+    let manifest = load_manifest()?;
+    bundled_runtime_from_manifest_for_target(&root, &manifest, id, None, os, arch)
 }
 
 pub fn bundled_node_runtime() -> Option<BundledRuntimePaths> {
@@ -483,7 +491,8 @@ pub fn bundled_python_runtime() -> Option<BundledRuntimePaths> {
 pub fn bundled_python_runtime_version(version: &str) -> Option<BundledRuntimePaths> {
     let root = bundle_dir()?;
     let manifest = load_manifest()?;
-    bundled_runtime_from_manifest(&root, &manifest, "python", Some(version))
+    let (os, arch) = current_platform();
+    bundled_runtime_from_manifest_for_target(&root, &manifest, "python", Some(version), os, arch)
 }
 
 #[cfg(test)]
@@ -638,6 +647,12 @@ fn test_manifest_override() -> &'static std::sync::Mutex<Option<(PathBuf, Bundle
         std::sync::Mutex<Option<(PathBuf, BundledAssetsManifest)>>,
     > = std::sync::OnceLock::new();
     OVERRIDE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+#[cfg(test)]
+pub(crate) fn bundled_assets_manifest_test_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
 }
 
 #[cfg(test)]

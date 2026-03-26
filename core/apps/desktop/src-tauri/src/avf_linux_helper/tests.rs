@@ -536,6 +536,79 @@ fn shared_vm_relay_turns_truncated_guest_frames_into_explicit_error_frames() {
 
 #[cfg(unix)]
 #[test]
+fn shared_vm_relay_restores_blocking_mode_for_nonblocking_clients() {
+    use std::os::fd::{FromRawFd, IntoRawFd};
+    use std::thread;
+    use std::time::Duration;
+
+    let (mut client, relay_client) = UnixStream::pair().expect("client pair");
+    relay_client
+        .set_nonblocking(true)
+        .expect("set relay client nonblocking");
+    let (mut guest_server, guest_relay) = UnixStream::pair().expect("guest pair");
+    let relay = thread::spawn(move || {
+        let guest = unsafe { File::from_raw_fd(guest_relay.into_raw_fd()) };
+        relay_shared_vm_control_client(relay_client, guest)
+    });
+
+    write_exec_frame(
+        &mut client,
+        &AvfLinuxExecFrame::Request(AvfLinuxExecRequest::new(
+            "/usr/bin/true",
+            Vec::new(),
+            "/",
+            Some("root".to_string()),
+            HashMap::new(),
+            false,
+        )),
+    )
+    .expect("write request frame");
+
+    let guest = thread::spawn(move || {
+        let frame = read_exec_frame(&mut guest_server)
+            .expect("read forwarded request")
+            .expect("request frame");
+        assert!(matches!(frame, AvfLinuxExecFrame::Request(_)));
+
+        let payload = vec![b'x'; AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD];
+        for _ in 0..2048 {
+            write_exec_frame(&mut guest_server, &AvfLinuxExecFrame::Stdout(payload.clone()))
+                .expect("write stdout frame burst");
+        }
+        write_exec_frame(
+            &mut guest_server,
+            &AvfLinuxExecFrame::Exit(AvfLinuxExecExit { exit_code: 0 }),
+        )
+        .expect("write exit frame");
+    });
+
+    thread::sleep(Duration::from_millis(100));
+
+    let mut received = 0usize;
+    loop {
+        let frame = read_exec_frame(&mut client)
+            .expect("read relayed frame")
+            .expect("relayed frame");
+        match frame {
+            AvfLinuxExecFrame::Stdout(bytes) => received += bytes.len(),
+            AvfLinuxExecFrame::Exit(exit) => {
+                assert_eq!(exit.exit_code, 0);
+                break;
+            }
+            other => panic!("unexpected relayed frame: {other:?}"),
+        }
+    }
+
+    assert_eq!(received, 2048 * AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD);
+    relay
+        .join()
+        .expect("relay thread join")
+        .expect("relay should succeed once client starts reading");
+    guest.join().expect("guest thread");
+}
+
+#[cfg(unix)]
+#[test]
 fn non_pty_guest_exec_cli_writes_captured_output() {
     use std::os::unix::net::UnixListener;
     use std::thread;
@@ -694,10 +767,12 @@ fn non_pty_guest_exec_cli_forwards_piped_stdin_into_capture_path() {
 #[cfg(unix)]
 #[test]
 fn exec_stream_payload_budget_stays_within_shared_vm_safe_limit() {
-    assert!(
-        AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD <= 1024,
-        "shared-VM exec transport truncated larger stdin frames in live tar-import repros",
-    );
+    const {
+        assert!(
+            AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD <= 1024,
+            "shared-VM exec transport truncated larger stdin frames in live tar-import repros",
+        );
+    }
 }
 
 #[cfg(unix)]

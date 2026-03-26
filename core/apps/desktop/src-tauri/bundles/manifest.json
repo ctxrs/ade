@@ -1,8 +1,17 @@
 {
   "version": 1,
-  "generated_at": "2026-03-26T20:19:21Z",
+  "generated_at": "2026-03-26T21:22:53Z",
   "providers": [],
   "runtimes": [
+    {
+      "id": "avf-linux-guest",
+      "version": "ubuntu-noble-arm64-0ade3ab45292",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "0ade3ab4529204da7250bb140fbedf8f04947fd80516fddbfe0c277244a5604c",
+      "root": "runtimes/avf-linux-guest/macos/aarch64/ubuntu-noble-arm64-0ade3ab45292",
+      "bin": "rootfs.raw"
+    },
     {
       "id": "node",
       "version": "24.14.0",

@@ -230,6 +230,15 @@ pub(crate) async fn authenticate_session(
             }
         }
     }
+    crate::mcp_command::configure_runtime_mcp_command(&mut provider_env, &state.core.data_root)
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: format!("failed to prepare sandbox MCP runtime: {err:#}"),
+                }),
+            )
+        })?;
 
     let (ev_tx, mut ev_rx) = mpsc::channel::<NormalizedEvent>(128);
     let state_for_events = state.clone();

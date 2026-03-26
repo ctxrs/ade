@@ -17,6 +17,7 @@ const desktopTauriRoot = path.join(coreRoot, "apps", "desktop", "src-tauri");
 const destBinDir = path.join(desktopTauriRoot, "bin");
 const destWebDistDir = path.join(desktopTauriRoot, "web", "dist");
 const destBundleDir = path.join(desktopTauriRoot, "bundles");
+const ctxMcpCargoTomlPath = path.join(coreRoot, "crates", "ctx-mcp", "Cargo.toml");
 const avfLinuxHelperEntitlementsPath = path.join(
   desktopTauriRoot,
   "ctx-avf-linux-helper.entitlements",
@@ -39,6 +40,7 @@ const parityImageTargets = [
   { os: "linux", arch: "aarch64" },
   { os: "linux", arch: "x86_64" },
 ];
+const CTX_MCP_RUNTIME_ID = "ctx-mcp";
 const AVF_LINUX_GUEST_RUNTIME_ID = "avf-linux-guest";
 const AVF_LINUX_GUEST_ROOTFS_NAME = "rootfs.raw";
 const AVF_LINUX_GUEST_KERNEL_REL = path.join("helpers", "kernel");
@@ -100,6 +102,18 @@ const resolveBundledRuntimeIds = (runtimeIds) => {
         .filter((entry) => entry.length > 0)
     : [];
   return [...new Set(ids)].sort();
+};
+
+const readCargoPackageVersion = (cargoTomlPath) => {
+  if (!fs.existsSync(cargoTomlPath)) {
+    throw new Error(`missing Cargo.toml for version lookup: ${cargoTomlPath}`);
+  }
+  const source = fs.readFileSync(cargoTomlPath, "utf8");
+  const match = source.match(/^\s*version\s*=\s*"([^"]+)"/m);
+  if (!match || !match[1]) {
+    throw new Error(`failed to resolve package version from ${cargoTomlPath}`);
+  }
+  return match[1].trim();
 };
 
 const readRustStringConst = (filePath, constName) => {
@@ -639,6 +653,79 @@ const buildRemoteDaemonContainerArgs = ({
   ];
 };
 
+const linuxBundleTargetForArch = (arch) => {
+  switch (arch) {
+    case "aarch64":
+      return {
+        arch,
+        platform: "linux/arm64",
+        rustTarget: "aarch64-unknown-linux-gnu",
+      };
+    case "x86_64":
+      return {
+        arch,
+        platform: "linux/amd64",
+        rustTarget: "x86_64-unknown-linux-gnu",
+      };
+    default:
+      throw new Error(`unsupported host arch for bundled linux ctx-mcp runtime: ${arch}`);
+  }
+};
+
+const buildLinuxCtxMcpContainerArgs = ({
+  runtime,
+  builderImage,
+  coreDir,
+  runtimesDir,
+  targetCache,
+  cargoRegistryCache,
+  cargoGitCache,
+  target,
+  runtimeVersion,
+}) => {
+  const runtimeRootRel = path.posix.join(
+    "runtimes",
+    CTX_MCP_RUNTIME_ID,
+    "linux",
+    target.arch,
+    runtimeVersion,
+  );
+  const buildCmd =
+    "set -euo pipefail; " +
+    "export PATH=\"/usr/local/cargo/bin:$PATH\"; " +
+    "mkdir -p /out; " +
+    `rustup target add ${target.rustTarget} >/dev/null 2>&1 || true; ` +
+    `cargo build --manifest-path /src/Cargo.toml -p ctx-mcp --release --target ${target.rustTarget}; ` +
+    `install -Dm0755 /target/${target.rustTarget}/release/ctx-mcp /out/${runtimeRootRel}/ctx-mcp`;
+  return [
+    runtime,
+    [
+      "run",
+      "--rm",
+      "--platform",
+      target.platform,
+      "-v",
+      `${coreDir}:/src`,
+      "-v",
+      `${runtimesDir}:/out`,
+      "-v",
+      `${targetCache}:/target`,
+      "-v",
+      `${cargoRegistryCache}:/usr/local/cargo/registry`,
+      "-v",
+      `${cargoGitCache}:/usr/local/cargo/git`,
+      "-w",
+      "/src",
+      "-e",
+      "CARGO_TARGET_DIR=/target",
+      builderImage,
+      "bash",
+      "-lc",
+      buildCmd,
+    ],
+  ];
+};
+
 const bundleRemoteDaemons = (bundleDir) => {
   const runtime = resolveContainerRuntime();
   const builderImage = resolveRemoteDaemonBuilderImage();
@@ -703,6 +790,63 @@ const bundleRemoteDaemons = (bundleDir) => {
   }
 
   upsertManifestDaemons(bundleDir, daemonEntries);
+};
+
+const bundleLinuxCtxMcpRuntime = (bundleDir) => {
+  const runtime = resolveContainerRuntime();
+  const builderImage = resolveRemoteDaemonBuilderImage();
+  const runtimesDir = bundleDir;
+  fs.mkdirSync(runtimesDir, { recursive: true });
+  const runtimeVersion = readCargoPackageVersion(ctxMcpCargoTomlPath);
+  const cacheRoot = path.join(
+    process.env.HOME || coreRoot,
+    ".cache",
+    "cargo",
+    "ctx-monorepo",
+    "desktop-bundled-runtimes",
+    CTX_MCP_RUNTIME_ID,
+  );
+  const cargoRegistryCache = path.join(cacheRoot, "registry");
+  const cargoGitCache = path.join(cacheRoot, "git");
+  fs.mkdirSync(cargoRegistryCache, { recursive: true });
+  fs.mkdirSync(cargoGitCache, { recursive: true });
+
+  const target = linuxBundleTargetForArch(hostManifestArch);
+  const targetCache = path.join(cacheRoot, "target", target.rustTarget);
+  fs.mkdirSync(targetCache, { recursive: true });
+
+  const [spawnCmd, args] = buildLinuxCtxMcpContainerArgs({
+    runtime,
+    builderImage,
+    coreDir: coreRoot,
+    runtimesDir,
+    targetCache,
+    cargoRegistryCache,
+    cargoGitCache,
+    target,
+    runtimeVersion,
+  });
+  const res = childProcess.spawnSync(spawnCmd, args, { stdio: "inherit" });
+  if (res.status !== 0) {
+    throw new Error(
+      `failed to build bundled linux ctx-mcp runtime for ${target.arch} using ${runtime} (${res.status ?? "unknown"})`,
+    );
+  }
+
+  const runtimeRootRel = path.join("runtimes", CTX_MCP_RUNTIME_ID, "linux", target.arch, runtimeVersion);
+  const outPath = path.join(bundleDir, runtimeRootRel, "ctx-mcp");
+  ensureExecutable(outPath);
+  upsertManifestRuntimes(bundleDir, [
+    {
+      id: CTX_MCP_RUNTIME_ID,
+      version: runtimeVersion,
+      os: "linux",
+      arch: target.arch,
+      sha256: sha256File(outPath),
+      root: runtimeRootRel,
+      bin: "ctx-mcp",
+    },
+  ]);
 };
 
 const resetBundleDir = (bundleDir = destBundleDir) => {
@@ -890,6 +1034,9 @@ const syncBundles = () => {
     console.log(
       "desktop_sync_resources: skipping remote daemon bundle build (CTX_BUNDLE_REMOTE_DAEMONS=0)",
     );
+  }
+  if (process.platform === "darwin") {
+    bundleLinuxCtxMcpRuntime(destBundleDir);
   }
 
   const effectiveManifestPath = writeEffectiveBundleManifest(destBundleDir);
@@ -1080,6 +1227,7 @@ if (require.main === module) {
   module.exports = {
     __desktopSyncResourcesTestHooks: {
       assertRuntimeTargetsAvailable,
+      buildLinuxCtxMcpContainerArgs,
       buildRemoteDaemonContainerArgs,
       resetBundleDir,
       writePlaceholderBundleManifest,

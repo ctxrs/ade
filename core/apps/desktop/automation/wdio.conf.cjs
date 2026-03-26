@@ -1219,17 +1219,10 @@ const acquireSharedCnBackendLease = async (host, port) => {
     let existingPid = parsePid(existingState.pid);
     let existingPidAlive = existingPid ? isProcessAlive(existingPid) : false;
     let portOpen = await isTcpPortOpen(host, port);
-    writeJsonFileAtomic(leaseFile, {
-      leaseId,
-      pid: process.pid,
-      host,
-      port,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
 
+    const existingStateTracked = Object.keys(existingState).length > 0;
     const existingSignatureTrusted = existingState.launchEnvSignatureSource === "spawn";
-    const launchEnvNeedsRestart = Boolean(launchEnvSignature) && (
+    const launchEnvNeedsRestart = existingStateTracked && Boolean(launchEnvSignature) && (
       !existingSignatureTrusted
       || (
         String(existingState.launchEnvSignature || "") !== ""
@@ -1261,7 +1254,25 @@ const acquireSharedCnBackendLease = async (host, port) => {
       }
     }
 
-    if (portOpen || existingPidAlive) {
+    if (portOpen && !existingPidAlive) {
+      throw new Error(
+        `[wdio] shared test-runner-backend port ${port} is already in use at ${host}, ` +
+          `but ${CN_BACKEND_STATE_FILE} does not describe a live backend for this shared state dir. ` +
+          "Refusing to attach to an unowned backend; stop the stale backend or reuse the matching " +
+          "CTX_AUTOMATION_CN_BACKEND_STATE_DIR.",
+      );
+    }
+
+    writeJsonFileAtomic(leaseFile, {
+      leaseId,
+      pid: process.pid,
+      host,
+      port,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    if (existingPidAlive) {
       writeCnBackendState({
         ...existingState,
         host,
@@ -1401,6 +1412,7 @@ const cnSharedBackendTestHooks = {
   cleanupStaleLeases: cleanupStaleCnLeases,
   readState: readCnBackendState,
   writeState: writeCnBackendState,
+  acquireSharedCnBackendLease,
   writeJsonFileAtomic,
   removeFileIfExists,
   releaseSharedCnBackendLease,

@@ -175,6 +175,14 @@ pub(super) fn connect_shared_vm_guest_control_socket(
 
 #[cfg(all(target_os = "macos", unix))]
 pub(super) fn relay_shared_vm_control_client(client: UnixStream, guest: File) -> Result<()> {
+    // The listener itself stays nonblocking so the owner loop can poll `accept()`, but the
+    // per-client relay must switch back to blocking mode before proxying framed exec traffic.
+    // Otherwise large stdin streams like disk-isolated tar imports can race with early guest
+    // response frames and spuriously fail on `WouldBlock` while the client has not started
+    // reading yet.
+    client
+        .set_nonblocking(false)
+        .context("restoring shared VM control client blocking mode")?;
     let mut client_reader = client;
     let mut guest_reader = guest.try_clone().context("cloning guest control socket")?;
     let client_writer = Arc::new(Mutex::new(

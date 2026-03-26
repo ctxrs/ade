@@ -415,3 +415,42 @@ test("wdio automation AVF runtime prep prepares and exports a missing runtime di
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
 });
+
+test("scoped app sweep matcher accepts canonical bundle paths for a symlinked app path", async () => {
+  const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-app-real-"));
+  const linkParent = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-app-link-"));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
+  const realAppPath = path.join(appRoot, "ctx.app");
+  const linkedAppPath = path.join(linkParent, "ctx.app");
+  const realMacOsDir = path.join(realAppPath, "Contents", "MacOS");
+  const realBinDir = path.join(realAppPath, "Contents", "Resources", "bin");
+  try {
+    fs.mkdirSync(realMacOsDir, { recursive: true });
+    fs.mkdirSync(realBinDir, { recursive: true });
+    fs.writeFileSync(path.join(realMacOsDir, "ctx"), "", "utf8");
+    fs.symlinkSync(realAppPath, linkedAppPath, "dir");
+
+    await withEnv(
+      {
+        CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
+      },
+      (mod) => {
+        const hooks = mod.__desktopAutomationConfigTestHooks;
+        const realExecutablePath = fs.realpathSync(path.join(linkedAppPath, "Contents", "MacOS", "ctx"));
+        const realHelperPath = path.join(fs.realpathSync(path.join(linkedAppPath, "Contents", "Resources", "bin")), "ctx-avf-linux-helper-aarch64-apple-darwin");
+        assert.equal(
+          hooks.commandMatchesScopedAppProcess(`${realExecutablePath} --automation`, linkedAppPath),
+          true,
+        );
+        assert.equal(
+          hooks.commandMatchesScopedAppProcess(`${realHelperPath} run-workspace-vm /tmp/ctx-data`, linkedAppPath),
+          true,
+        );
+      },
+    );
+  } finally {
+    fs.rmSync(appRoot, { recursive: true, force: true });
+    fs.rmSync(linkParent, { recursive: true, force: true });
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});

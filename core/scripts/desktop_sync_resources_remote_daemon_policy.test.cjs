@@ -51,3 +51,29 @@ test("remote daemon container build command creates /out before install", () => 
   assert.match(args.join(" "), /mkdir -p \/out;/);
   assert.match(args.join(" "), /install -Dm0755 .* \/out\/ctx-daemon-linux-x86_64/);
 });
+
+test("linux ctx-mcp container build command stages runtime into bundle tree", () => {
+  const [spawnCmd, args] = __desktopSyncResourcesTestHooks.buildLinuxCtxMcpContainerArgs({
+    runtime: "docker",
+    builderImage: "rust:test",
+    coreDir: "/src-host",
+    runtimesDir: "/bundle-host",
+    targetCache: "/target-host",
+    cargoRegistryCache: "/registry-host",
+    cargoGitCache: "/git-host",
+    target: {
+      arch: "aarch64",
+      platform: "linux/arm64",
+      rustTarget: "aarch64-unknown-linux-gnu",
+    },
+    runtimeVersion: "0.1.0",
+  });
+
+  assert.equal(spawnCmd, "docker");
+  assert.match(args.join(" "), /mkdir -p \/out;/);
+  assert.match(args.join(" "), /-p ctx-mcp/);
+  assert.match(
+    args.join(" "),
+    /install -Dm0755 .* \/out\/runtimes\/ctx-mcp\/linux\/aarch64\/0\.1\.0\/ctx-mcp/,
+  );
+});

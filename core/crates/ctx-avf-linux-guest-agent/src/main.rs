@@ -18,10 +18,10 @@ use anyhow::{bail, Result};
 use portable_pty::{CommandBuilder as PtyCommandBuilder, NativePtySystem, PtySize, PtySystem};
 
 #[cfg(any(target_os = "linux", test))]
-use crate::protocol::{read_exec_frame, write_exec_frame, AvfLinuxExecFrame};
+use crate::protocol::{read_exec_frame, write_exec_frame};
 #[cfg(target_os = "linux")]
 use crate::protocol::{AvfLinuxExecError, AvfLinuxExecExit};
-use crate::protocol::{AvfLinuxExecRequest, AVF_LINUX_EXEC_PROTOCOL_VERSION};
+use crate::protocol::{AvfLinuxExecFrame, AvfLinuxExecRequest, AVF_LINUX_EXEC_PROTOCOL_VERSION};
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const GUEST_VSOCK_PORT: u32 = 47001;
@@ -35,6 +35,7 @@ const DEFAULT_PTY_COLS: u16 = 80;
 const DEFAULT_PTY_ROWS: u16 = 24;
 // Keep guest-agent stream chunks aligned with the host helper's empirically safe
 // shared-VM transport budget so streamed stdin is not truncated mid-import.
+#[cfg(any(target_os = "linux", test))]
 const AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD: usize = 1024;
 
 fn main() -> Result<()> {
@@ -397,6 +398,7 @@ fn relay_pty_output(reader: &mut impl Read, writer: &Arc<Mutex<File>>) -> Result
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn emit_exec_stream_frames<F>(bytes: &[u8], stdout: bool, mut emit: F) -> Result<()>
 where
     F: FnMut(AvfLinuxExecFrame) -> Result<()>,
@@ -724,10 +726,12 @@ mod tests {
 
     #[test]
     fn exec_stream_payload_budget_stays_within_shared_vm_safe_limit() {
-        assert!(
-            AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD <= 1024,
-            "shared-VM exec transport truncated larger stdin frames in live tar-import repros",
-        );
+        const {
+            assert!(
+                AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD <= 1024,
+                "shared-VM exec transport truncated larger stdin frames in live tar-import repros",
+            );
+        }
     }
 
     #[test]
