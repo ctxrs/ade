@@ -326,6 +326,8 @@ struct AvfLinuxSharedVmStateResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedSharedVmState {
     state: AvfLinuxSharedVmLifecycleState,
+    #[serde(default)]
+    guest_identity: PersistedGuestIdentity,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     runtime_root: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -366,6 +368,37 @@ struct PersistedSharedVmState {
     notes: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum PersistedGuestPlatform {
+    Linux,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum PersistedIsolationKind {
+    Container,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum PersistedGuestRuntime {
+    Ubuntu,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+struct PersistedGuestIdentity {
+    platform: PersistedGuestPlatform,
+    isolation_kind: PersistedIsolationKind,
+    runtime: PersistedGuestRuntime,
+}
+
+impl Default for PersistedGuestIdentity {
+    fn default() -> Self {
+        supported_guest_identity()
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct AvfLinuxGuestWorktreeResponse {
     protocol_version: u32,
@@ -385,6 +418,8 @@ struct AvfLinuxGuestWorktreeResponse {
 struct PersistedGuestWorktreeState {
     workspace_id: String,
     worktree_id: String,
+    #[serde(default)]
+    guest_identity: PersistedGuestIdentity,
     host_workspace_root: PathBuf,
     guest_root: PathBuf,
     #[serde(default)]
@@ -395,6 +430,32 @@ struct PersistedGuestWorktreeState {
     updated_at: String,
     simulated: bool,
     notes: Vec<String>,
+}
+
+fn supported_guest_identity() -> PersistedGuestIdentity {
+    PersistedGuestIdentity {
+        platform: PersistedGuestPlatform::Linux,
+        isolation_kind: PersistedIsolationKind::Container,
+        runtime: PersistedGuestRuntime::Ubuntu,
+    }
+}
+
+fn ensure_supported_guest_identity(identity: PersistedGuestIdentity) -> Result<()> {
+    if identity != supported_guest_identity() {
+        bail!(
+            "unsupported persisted guest identity {}; only linux + container + ubuntu is enabled",
+            persisted_guest_identity_label(identity)
+        );
+    }
+    Ok(())
+}
+
+fn persisted_guest_identity_label(identity: PersistedGuestIdentity) -> String {
+    format!(
+        "{:?} + {:?} + {:?}",
+        identity.platform, identity.isolation_kind, identity.runtime
+    )
+    .to_ascii_lowercase()
 }
 
 fn main() {

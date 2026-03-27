@@ -124,11 +124,52 @@ pub struct Worktree {
     pub bootstrap_script_path: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum SandboxRuntimeFamily {
+pub enum SandboxSubstrate {
     NativeContainer,
     SharedVmContainer,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxGuestPlatform {
+    #[default]
+    Linux,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxIsolationKind {
+    #[default]
+    Container,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxGuestRuntime {
+    #[default]
+    Ubuntu,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SandboxGuestIdentity {
+    #[serde(default)]
+    pub platform: SandboxGuestPlatform,
+    #[serde(default)]
+    pub isolation_kind: SandboxIsolationKind,
+    #[serde(default)]
+    pub runtime: SandboxGuestRuntime,
+}
+
+impl SandboxGuestIdentity {
+    pub const fn linux_container_ubuntu() -> Self {
+        Self {
+            platform: SandboxGuestPlatform::Linux,
+            isolation_kind: SandboxIsolationKind::Container,
+            runtime: SandboxGuestRuntime::Ubuntu,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -143,7 +184,10 @@ pub enum SandboxProfile {
 pub struct SandboxBinding {
     pub worktree_id: WorktreeId,
     pub workspace_id: WorkspaceId,
-    pub runtime_family: SandboxRuntimeFamily,
+    #[serde(alias = "runtime_family")]
+    pub substrate: SandboxSubstrate,
+    #[serde(default)]
+    pub guest_identity: SandboxGuestIdentity,
     #[serde(default)]
     pub profile: SandboxProfile,
     pub live_workspace_root: String,
@@ -152,8 +196,12 @@ pub struct SandboxBinding {
     pub execution_settings_json: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub host_projection_root: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "host_projection_root"
+    )]
+    pub host_materialization_root: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 

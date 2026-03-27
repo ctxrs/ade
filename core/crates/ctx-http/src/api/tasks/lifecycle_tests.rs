@@ -1,6 +1,6 @@
 use super::*;
 use crate::daemon::AppState;
-use ctx_core::models::VcsKind;
+use ctx_core::models::{SandboxGuestIdentity, SandboxSubstrate, VcsKind};
 use ctx_store::{Store, StoreManager};
 use std::collections::HashMap;
 
@@ -177,13 +177,14 @@ async fn archive_task_only_dematerializes_sandbox_state() {
         .await
         .expect("set primary worktree");
 
-    let host_projection_root = temp.path().join("host-shadow");
-    std::fs::create_dir_all(&host_projection_root).expect("create host shadow root");
+    let host_materialization_root = temp.path().join("host-shadow");
+    std::fs::create_dir_all(&host_materialization_root).expect("create host shadow root");
     store
         .upsert_sandbox_binding(SandboxBinding {
             worktree_id: worktree.id,
             workspace_id: workspace.id,
-            runtime_family: SandboxRuntimeFamily::SharedVmContainer,
+            substrate: SandboxSubstrate::SharedVmContainer,
+            guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
             profile: SandboxProfile::Standard,
             live_workspace_root: crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
             live_worktree_root: crate::disk_isolated::container_worktree_root(worktree.id)
@@ -193,7 +194,9 @@ async fn archive_task_only_dematerializes_sandbox_state() {
             container_name: Some(crate::harness_runtime::workspace_container_name(
                 workspace.id,
             )),
-            host_projection_root: Some(host_projection_root.to_string_lossy().to_string()),
+            host_materialization_root: Some(
+                host_materialization_root.to_string_lossy().to_string(),
+            ),
             created_at: Utc::now(),
         })
         .await
@@ -253,8 +256,10 @@ async fn archive_task_only_dematerializes_sandbox_state() {
         "archive should preserve the sandbox binding row for rematerialization"
     );
     assert!(
-        tokio::fs::metadata(&host_projection_root).await.is_err(),
-        "archive should remove the AVF host projection root"
+        tokio::fs::metadata(&host_materialization_root)
+            .await
+            .is_err(),
+        "archive should remove the sandbox host materialization root"
     );
 }
 
@@ -323,7 +328,8 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
         .upsert_sandbox_binding(SandboxBinding {
             worktree_id: worktree.id,
             workspace_id: workspace.id,
-            runtime_family: SandboxRuntimeFamily::NativeContainer,
+            substrate: SandboxSubstrate::NativeContainer,
+            guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
             profile: SandboxProfile::Standard,
             live_workspace_root: crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
             live_worktree_root: crate::disk_isolated::container_worktree_root(worktree.id)
@@ -335,7 +341,7 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
             container_name: Some(crate::harness_runtime::workspace_container_name(
                 workspace.id,
             )),
-            host_projection_root: None,
+            host_materialization_root: None,
             created_at: Utc::now(),
         })
         .await
@@ -413,10 +419,7 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
         .await
         .expect("load rematerialized binding")
         .expect("binding should remain present after unarchive");
-    assert_eq!(
-        binding.runtime_family,
-        SandboxRuntimeFamily::NativeContainer
-    );
+    assert_eq!(binding.substrate, SandboxSubstrate::NativeContainer);
     let parsed = crate::api::tasks::sandbox_execution_settings_from_binding(&binding)
         .expect("parse rematerialized binding snapshot");
     assert_eq!(
@@ -489,7 +492,8 @@ async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {
         .upsert_sandbox_binding(SandboxBinding {
             worktree_id: worktree.id,
             workspace_id: workspace.id,
-            runtime_family: SandboxRuntimeFamily::NativeContainer,
+            substrate: SandboxSubstrate::NativeContainer,
+            guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
             profile: SandboxProfile::Standard,
             live_workspace_root: crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
             live_worktree_root: crate::disk_isolated::container_worktree_root(worktree.id)
@@ -511,7 +515,7 @@ async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {
             container_name: Some(crate::harness_runtime::workspace_container_name(
                 workspace.id,
             )),
-            host_projection_root: None,
+            host_materialization_root: None,
             created_at: Utc::now(),
         })
         .await

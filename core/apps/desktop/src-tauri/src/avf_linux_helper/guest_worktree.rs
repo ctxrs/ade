@@ -102,6 +102,7 @@ pub(super) fn prepare_guest_worktree(
                 let persisted = PersistedGuestWorktreeState {
                     workspace_id: workspace_id.to_string(),
                     worktree_id: worktree_id.to_string(),
+                    guest_identity: supported_guest_identity(),
                     host_workspace_root: host_workspace_root.to_path_buf(),
                     guest_root: guest_root.clone(),
                     guest_user: existing_guest_user.clone(),
@@ -184,6 +185,7 @@ pub(super) fn prepare_guest_worktree(
     let persisted = PersistedGuestWorktreeState {
         workspace_id: workspace_id.to_string(),
         worktree_id: worktree_id.to_string(),
+        guest_identity: supported_guest_identity(),
         host_workspace_root: host_workspace_root.to_path_buf(),
         guest_root: guest_root.clone(),
         guest_user: guest_user.clone(),
@@ -467,6 +469,7 @@ mod tests {
             &shared_vm_state_path(data_root),
             &PersistedSharedVmState {
                 state: AvfLinuxSharedVmLifecycleState::Running,
+                guest_identity: supported_guest_identity(),
                 runtime_root: None,
                 rootfs_image: None,
                 kernel_path: None,
@@ -618,6 +621,7 @@ mod tests {
             &PersistedGuestWorktreeState {
                 workspace_id: workspace_id.to_string(),
                 worktree_id: worktree_id.to_string(),
+                guest_identity: supported_guest_identity(),
                 host_workspace_root: host_workspace_root.clone(),
                 guest_root: guest_worktree_root(worktree_id),
                 guest_user: guest_workspace_user(workspace_id),

@@ -37,12 +37,12 @@ use crate::worktree_bootstrap;
 use ctx_core::ids::{MessageId, RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     ExecutionEnvironment, Message, MessageDelivery, MessageRole, SandboxBinding, SandboxProfile,
-    SandboxRuntimeFamily, Session, SessionEventType, SessionTurn, SessionTurnStatus, Task,
-    TaskDeltaKind, VcsKind, Workspace, WorkspaceArchivedPage, WorkspaceIndexCursor, Worktree,
+    Session, SessionEventType, SessionTurn, SessionTurnStatus, Task, TaskDeltaKind, VcsKind,
+    Workspace, WorkspaceArchivedPage, WorkspaceIndexCursor, Worktree,
 };
 use ctx_fs::git::delete_branch;
 use ctx_fs::vcs;
-use ctx_fs::worktrees::{create_worktree, managed_worktree_path, standaloneize_worktree_git_dir};
+use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
 use ctx_store::{is_unique_constraint_violation, Store};
 
 const GLOBAL_INDEX_WRITE_RETRY_LIMIT: usize = 3;
@@ -63,94 +63,36 @@ pub(in crate::api) async fn materialize_sandbox_binding_for_worktree(
     effective: &ExecutionSettings,
     created_at: DateTime<Utc>,
 ) -> anyhow::Result<Option<SandboxBinding>> {
-    if !matches!(effective.mode, ExecutionMode::Sandbox)
-        || !matches!(
-            effective.container.mount_mode,
-            crate::settings::ContainerMountMode::DiskIsolated
-        )
-    {
+    let Some(materialization) = crate::workspace_runtime::materialize_sandbox_worktree(
+        state,
+        workspace,
+        worktree,
+        canonical_root,
+        effective,
+    )
+    .await?
+    else {
         return Ok(None);
-    }
-    standaloneize_worktree_git_dir(canonical_root)
-        .await
-        .with_context(|| {
-            format!(
-                "stabilizing sandbox worktree git metadata at {}",
-                canonical_root.display()
-            )
-        })?;
-
-    state
-        .execution
-        .harness
-        .ensure_workspace_container(workspace, effective, &state.core.daemon_url)
-        .await?;
-
-    let branch_name = worktree
-        .git_branch
-        .as_deref()
-        .or(worktree.vcs_ref.as_deref())
-        .ok_or_else(|| anyhow::anyhow!("managed sandbox worktree is missing branch metadata"))?;
-
-    let (live_worktree_root, runtime_family, host_projection_root) = if matches!(
-        effective.container.runtime,
-        crate::settings::ContainerRuntimeKind::SharedVmContainer
-    ) {
-        let guest_worktree =
-            crate::workspace_runtime::ensure_avf_linux_guest_worktree_from_host_copy(
-                &state.core.data_root,
-                workspace.id,
-                worktree.id,
-                canonical_root,
-                &worktree.base_commit_sha,
-                branch_name,
-                None,
-            )
-            .await?;
-        let live_root = crate::disk_isolated::ensure_worktree_from_host_copy(
-            &state.core.data_root,
-            workspace.id,
-            worktree.id,
-            &guest_worktree.host_shadow_root,
-            &worktree.base_commit_sha,
-            branch_name,
-        )
-        .await?;
-        (
-            live_root,
-            SandboxRuntimeFamily::SharedVmContainer,
-            Some(
-                guest_worktree
-                    .host_shadow_root
-                    .to_string_lossy()
-                    .to_string(),
-            ),
-        )
-    } else {
-        let live_root = crate::disk_isolated::ensure_worktree_from_host_copy(
-            &state.core.data_root,
-            workspace.id,
-            worktree.id,
-            canonical_root,
-            &worktree.base_commit_sha,
-            branch_name,
-        )
-        .await?;
-        (live_root, SandboxRuntimeFamily::NativeContainer, None)
     };
 
     Ok(Some(SandboxBinding {
         worktree_id: worktree.id,
         workspace_id: workspace.id,
-        runtime_family,
+        substrate: materialization.substrate.substrate,
+        guest_identity: materialization.substrate.guest_identity,
         profile: SandboxProfile::Standard,
         live_workspace_root: crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
-        live_worktree_root: live_worktree_root.to_string_lossy().to_string(),
+        live_worktree_root: materialization
+            .live_worktree_root
+            .to_string_lossy()
+            .to_string(),
         execution_settings_json: Some(serde_json::to_string(effective)?),
         container_name: Some(crate::harness_runtime::workspace_container_name(
             workspace.id,
         )),
-        host_projection_root,
+        host_materialization_root: materialization
+            .host_materialization_root
+            .map(|path| path.to_string_lossy().to_string()),
         created_at,
     }))
 }
@@ -682,23 +624,23 @@ pub(in crate::api) async fn cleanup_task_worktrees(
                 );
                 errors.push(err);
             }
-            if let Some(host_projection_root) = binding.host_projection_root.as_deref() {
-                let host_projection_root = PathBuf::from(host_projection_root);
-                if tokio::fs::metadata(&host_projection_root).await.is_ok() {
-                    if let Err(err) = tokio::fs::remove_dir_all(&host_projection_root)
+            if let Some(host_materialization_root) = binding.host_materialization_root.as_deref() {
+                let host_materialization_root = PathBuf::from(host_materialization_root);
+                if tokio::fs::metadata(&host_materialization_root).await.is_ok() {
+                    if let Err(err) = tokio::fs::remove_dir_all(&host_materialization_root)
                         .await
                         .with_context(|| {
                             format!(
-                                "removing AVF host shadow worktree at {}",
-                                host_projection_root.display()
+                                "removing sandbox host materialization root at {}",
+                                host_materialization_root.display()
                             )
                         })
                     {
                         tracing::warn!(
                             task_id = %task_id.0,
                             worktree_id = %worktree.id.0,
-                            host_projection_root = %host_projection_root.display(),
-                            "failed to remove sandbox host projection root: {err:#}"
+                            host_materialization_root = %host_materialization_root.display(),
+                            "failed to remove sandbox host materialization root: {err:#}"
                         );
                         errors.push(err);
                     }

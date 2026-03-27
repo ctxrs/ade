@@ -82,6 +82,7 @@ pub(super) fn prepare_runtime_layout(data_root: &Path) -> Result<AvfLinuxRuntime
     if !state_path.exists() {
         let state = PersistedSharedVmState {
             state: AvfLinuxSharedVmLifecycleState::Stopped,
+            guest_identity: supported_guest_identity(),
             runtime_root: None,
             rootfs_image: None,
             kernel_path: None,

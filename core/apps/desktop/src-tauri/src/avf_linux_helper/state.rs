@@ -48,6 +48,7 @@ pub(super) fn map_state_response(
 pub(super) fn default_stopped_state() -> PersistedSharedVmState {
     PersistedSharedVmState {
         state: AvfLinuxSharedVmLifecycleState::Stopped,
+        guest_identity: supported_guest_identity(),
         runtime_root: None,
         rootfs_image: None,
         kernel_path: None,
@@ -77,8 +78,10 @@ pub(super) fn load_state(path: &Path) -> Result<Option<PersistedSharedVmState>> 
         return Ok(None);
     }
     let raw = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let parsed =
+    let parsed: PersistedSharedVmState =
         serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
+    ensure_supported_guest_identity(parsed.guest_identity)
+        .with_context(|| format!("validating {}", path.display()))?;
     Ok(Some(parsed))
 }
 
@@ -97,8 +100,10 @@ pub(super) fn load_guest_worktree_state(
         return Ok(None);
     }
     let raw = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let parsed =
+    let parsed: PersistedGuestWorktreeState =
         serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
+    ensure_supported_guest_identity(parsed.guest_identity)
+        .with_context(|| format!("validating {}", path.display()))?;
     Ok(Some(parsed))
 }
 

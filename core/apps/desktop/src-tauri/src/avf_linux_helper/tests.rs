@@ -36,6 +36,70 @@ fn write_gzip_file(path: &Path, bytes: &[u8]) {
 }
 
 #[test]
+fn load_state_defaults_missing_guest_identity_to_supported_shape() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-legacy-shared-state-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+    let state_path = temp.join("shared-vm-state.json");
+    fs::write(&state_path, br#"{"state":"stopped"}"#).expect("write legacy shared vm state");
+
+    let persisted = load_state(&state_path)
+        .expect("load legacy shared vm state")
+        .expect("shared vm state present");
+
+    assert_eq!(persisted.guest_identity, supported_guest_identity());
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn load_guest_worktree_state_defaults_missing_guest_identity_to_supported_shape() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-legacy-worktree-state-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+    let metadata_path = temp.join("worktree.json");
+    fs::write(
+        &metadata_path,
+        format!(
+            concat!(
+                "{{",
+                "\"workspace_id\":\"ws-123\",",
+                "\"worktree_id\":\"wt-456\",",
+                "\"host_workspace_root\":\"{}\",",
+                "\"guest_root\":\"/ctx/ws/worktrees/wt-456\",",
+                "\"host_shadow_root\":\"{}\",",
+                "\"base_commit_sha\":\"abc123\",",
+                "\"branch_name\":\"ctx/test\",",
+                "\"updated_at\":\"{}\"",
+                "}}"
+            ),
+            temp.join("repo").display(),
+            temp.join("shadow-root").display(),
+            now_timestamp_string()
+        ),
+    )
+    .expect("write legacy guest worktree state");
+
+    let persisted = load_guest_worktree_state(&metadata_path)
+        .expect("load legacy guest worktree state")
+        .expect("guest worktree state present");
+
+    assert_eq!(persisted.guest_identity, supported_guest_identity());
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
 fn parse_guest_exec_env_rejects_reserved_helper_keys() {
     let err = parse_guest_exec_env(&["CTX_AVF_SECRET=1".to_string()])
         .expect_err("reserved helper keys should be rejected");
@@ -643,6 +707,7 @@ fn persist_shared_vm_owner_error_state_marks_vm_error_and_clears_owner_processes
     let state_path = temp.join("shared-vm-state.json");
     let mut state = PersistedSharedVmState {
         state: AvfLinuxSharedVmLifecycleState::Running,
+        guest_identity: supported_guest_identity(),
         runtime_root: Some(temp.join("runtime")),
         rootfs_image: Some(temp.join("rootfs.raw")),
         kernel_path: Some(temp.join("kernel")),
@@ -715,6 +780,7 @@ fn shared_vm_state_marks_missing_owner_with_memory_pressure_request_as_error() {
         &state_path,
         &PersistedSharedVmState {
             state: AvfLinuxSharedVmLifecycleState::Running,
+            guest_identity: supported_guest_identity(),
             runtime_root: None,
             rootfs_image: None,
             kernel_path: None,
@@ -774,6 +840,7 @@ fn shared_vm_state_marks_missing_owner_as_cold_stop_and_clears_stale_save_metada
         &state_path,
         &PersistedSharedVmState {
             state: AvfLinuxSharedVmLifecycleState::Running,
+            guest_identity: supported_guest_identity(),
             runtime_root: None,
             rootfs_image: None,
             kernel_path: None,
@@ -831,6 +898,7 @@ fn shared_vm_state_surfaces_explicit_start_and_stop_outcomes() {
         &shared_vm_state_path(&temp),
         &PersistedSharedVmState {
             state: AvfLinuxSharedVmLifecycleState::Stopped,
+            guest_identity: supported_guest_identity(),
             runtime_root: Some(temp.join("runtime")),
             rootfs_image: Some(temp.join("rootfs.raw")),
             kernel_path: Some(temp.join("kernel")),
@@ -997,6 +1065,7 @@ fn start_shared_vm_surfaces_saved_state_downgrade_when_restore_is_unavailable() 
         &shared_vm_state_path(&temp),
         &PersistedSharedVmState {
             state: AvfLinuxSharedVmLifecycleState::Stopped,
+            guest_identity: supported_guest_identity(),
             runtime_root: Some(runtime_root.clone()),
             rootfs_image: Some(shared_vm_rootfs_path(&temp)),
             kernel_path: Some(shared_vm_boot_kernel_path(&temp)),
@@ -1089,6 +1158,7 @@ fn start_shared_vm_marks_already_running_path_explicitly() {
         &shared_vm_state_path(&temp),
         &PersistedSharedVmState {
             state: AvfLinuxSharedVmLifecycleState::Running,
+            guest_identity: supported_guest_identity(),
             runtime_root: Some(runtime_root.clone()),
             rootfs_image: Some(shared_vm_rootfs_path(&temp)),
             kernel_path: Some(shared_vm_boot_kernel_path(&temp)),
@@ -1166,6 +1236,7 @@ fn stop_shared_vm_discards_stale_saved_state_and_reports_cold_stop() {
         &shared_vm_state_path(&temp),
         &PersistedSharedVmState {
             state: AvfLinuxSharedVmLifecycleState::Running,
+            guest_identity: supported_guest_identity(),
             runtime_root: None,
             rootfs_image: None,
             kernel_path: None,
@@ -1296,6 +1367,7 @@ fn stop_shared_vm_discards_stale_saved_state_on_cold_stop() {
         &shared_vm_state_path(&temp),
         &PersistedSharedVmState {
             state: AvfLinuxSharedVmLifecycleState::Running,
+            guest_identity: supported_guest_identity(),
             runtime_root: Some(temp.join("runtime")),
             rootfs_image: Some(shared_vm_rootfs_path(&temp)),
             kernel_path: Some(temp.join("kernel")),
@@ -1383,6 +1455,7 @@ fn start_shared_vm_forces_restart_when_runtime_changes_while_vm_is_live() {
         &shared_vm_state_path(&temp),
         &PersistedSharedVmState {
             state: AvfLinuxSharedVmLifecycleState::Running,
+            guest_identity: supported_guest_identity(),
             runtime_root: Some(temp.join("runtime-prev")),
             rootfs_image: Some(shared_vm_rootfs_path(&temp)),
             kernel_path: Some(temp.join("kernel-prev")),
@@ -1513,6 +1586,7 @@ fn start_shared_vm_forces_restart_when_runtime_digest_changes_with_same_version(
         &shared_vm_state_path(&temp),
         &PersistedSharedVmState {
             state: AvfLinuxSharedVmLifecycleState::Running,
+            guest_identity: supported_guest_identity(),
             runtime_root: Some(runtime_root.clone()),
             rootfs_image: Some(shared_vm_rootfs_path(&temp)),
             kernel_path: Some(shared_vm_boot_kernel_path(&temp)),
@@ -2008,6 +2082,7 @@ fn guest_exec_relays_request_over_shared_vm_control_socket() {
         &PersistedGuestWorktreeState {
             workspace_id: "ws-123".to_string(),
             worktree_id: "wt-456".to_string(),
+            guest_identity: supported_guest_identity(),
             host_workspace_root: temp.join("repo"),
             guest_root: PathBuf::from("/ctx/ws/worktrees/wt-456"),
             host_shadow_root: temp.join("shadow-root"),
@@ -2799,6 +2874,7 @@ fn shared_vm_control_connection_proxies_to_guest_agent() {
         &PersistedGuestWorktreeState {
             workspace_id: "ws-123".to_string(),
             worktree_id: "wt-456".to_string(),
+            guest_identity: supported_guest_identity(),
             host_workspace_root: temp.join("repo"),
             guest_root: PathBuf::from("/ctx/ws/worktrees/wt-456"),
             host_shadow_root: host_shadow_root.clone(),

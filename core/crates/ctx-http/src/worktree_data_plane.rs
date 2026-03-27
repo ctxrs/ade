@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
 
-use ctx_core::models::{SandboxBinding, SandboxRuntimeFamily, Workspace, Worktree};
+use ctx_core::models::{SandboxBinding, Workspace, Worktree};
 
 use crate::daemon::AppState;
 use crate::disk_isolated;
@@ -151,13 +151,6 @@ pub(crate) fn workspace_data_plane(
     }
 }
 
-pub(crate) fn binding_runtime_kind(binding: &SandboxBinding) -> ContainerRuntimeKind {
-    match binding.runtime_family {
-        SandboxRuntimeFamily::NativeContainer => ContainerRuntimeKind::NativeContainer,
-        SandboxRuntimeFamily::SharedVmContainer => ContainerRuntimeKind::SharedVmContainer,
-    }
-}
-
 pub(crate) fn apply_data_plane_to_execution_settings(
     base: &ExecutionSettings,
     data_plane: &WorktreeDataPlane,
@@ -165,6 +158,7 @@ pub(crate) fn apply_data_plane_to_execution_settings(
     let mut settings = base.clone();
     settings.mode = data_plane.execution_mode.clone();
     if let Some(binding) = data_plane.binding.as_ref() {
+        let substrate = crate::workspace_runtime::UbuntuSandboxSubstrate::from_binding(binding)?;
         if binding.execution_settings_json.is_some() {
             return crate::api::tasks::sandbox_execution_settings_from_binding(binding).map_err(
                 |err| {
@@ -176,7 +170,7 @@ pub(crate) fn apply_data_plane_to_execution_settings(
             );
         }
         settings.mode = ExecutionMode::Sandbox;
-        settings.container.runtime = binding_runtime_kind(binding);
+        settings.container.runtime = substrate.runtime_kind();
         settings.container.mount_mode = ContainerMountMode::DiskIsolated;
     } else if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
         // Workspace-scoped sandbox flows have no binding yet, but the product contract is still
@@ -191,7 +185,9 @@ mod tests {
     use crate::daemon::AppState;
     use chrono::Utc;
     use ctx_core::ids::{WorkspaceId, WorktreeId};
-    use ctx_core::models::{ExecutionEnvironment, VcsKind};
+    use ctx_core::models::{
+        ExecutionEnvironment, SandboxGuestIdentity, SandboxSubstrate, VcsKind,
+    };
     use ctx_store::StoreManager;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -216,7 +212,8 @@ mod tests {
             binding: Some(SandboxBinding {
                 worktree_id: WorktreeId(Uuid::new_v4()),
                 workspace_id: WorkspaceId(Uuid::new_v4()),
-                runtime_family: SandboxRuntimeFamily::SharedVmContainer,
+                substrate: SandboxSubstrate::SharedVmContainer,
+                guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
                 profile: ctx_core::models::SandboxProfile::Standard,
                 live_workspace_root: "/ctx/ws".to_string(),
                 live_worktree_root: "/ctx/wt".to_string(),
@@ -224,7 +221,7 @@ mod tests {
                     serde_json::to_string(&snapshot).expect("serialize snapshot"),
                 ),
                 container_name: Some("ctx-harness-test".to_string()),
-                host_projection_root: None,
+                host_materialization_root: None,
                 created_at: Utc::now(),
             }),
             workspace: Workspace {
@@ -334,7 +331,8 @@ mod tests {
             binding: Some(SandboxBinding {
                 worktree_id: WorktreeId(Uuid::new_v4()),
                 workspace_id: WorkspaceId(Uuid::new_v4()),
-                runtime_family: SandboxRuntimeFamily::SharedVmContainer,
+                substrate: SandboxSubstrate::SharedVmContainer,
+                guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
                 profile: ctx_core::models::SandboxProfile::Standard,
                 live_workspace_root: "/ctx/ws".to_string(),
                 live_worktree_root: "/ctx/wt".to_string(),
@@ -352,7 +350,7 @@ mod tests {
                     .to_string(),
                 ),
                 container_name: Some("ctx-harness-test".to_string()),
-                host_projection_root: None,
+                host_materialization_root: None,
                 created_at: Utc::now(),
             }),
             workspace: Workspace {
@@ -381,7 +379,8 @@ mod tests {
             binding: Some(SandboxBinding {
                 worktree_id: WorktreeId(Uuid::new_v4()),
                 workspace_id: WorkspaceId(Uuid::new_v4()),
-                runtime_family: SandboxRuntimeFamily::NativeContainer,
+                substrate: SandboxSubstrate::NativeContainer,
+                guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
                 profile: ctx_core::models::SandboxProfile::Standard,
                 live_workspace_root: "/ctx/ws".to_string(),
                 live_worktree_root: "/ctx/wt".to_string(),
@@ -399,7 +398,7 @@ mod tests {
                     .to_string(),
                 ),
                 container_name: Some("ctx-harness-test".to_string()),
-                host_projection_root: None,
+                host_materialization_root: None,
                 created_at: Utc::now(),
             }),
             workspace: Workspace {

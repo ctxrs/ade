@@ -49,21 +49,29 @@ mod container;
 mod image;
 mod machine;
 mod manager;
+mod materialization;
 mod network_policy_transition;
 #[cfg(test)]
 mod reclaim_unit_tests;
 mod sandbox_cli;
+mod shared_vm_orchestrator;
 #[cfg(test)]
 mod sandbox_machine_lifecycle;
 #[cfg(test)]
 mod sandbox_machine_recovery;
+mod substrate;
 
 static AVF_DAEMON_GATEWAY_PROXIES: OnceLock<StdMutex<HashMap<u16, tokio::task::JoinHandle<()>>>> =
     OnceLock::new();
 
 pub(crate) use self::avf_linux_vm::build_guest_exec_command as build_avf_linux_guest_exec_command;
-pub(crate) use self::avf_linux_vm::ensure_guest_worktree_from_host_copy as ensure_avf_linux_guest_worktree_from_host_copy;
 pub(crate) use self::avf_linux_vm::helper_path as avf_linux_helper_path;
+pub(crate) use self::avf_linux_vm::{
+    ensure_shared_vm_ready_with_observer as ensure_avf_linux_shared_vm_ready_with_observer,
+    ensure_workspace_vm_ready_with_observer as ensure_avf_linux_workspace_vm_ready_with_observer,
+    prefetch_runtime_with_observer as prefetch_avf_linux_runtime_with_observer,
+    workspace_vm_data_root as avf_linux_workspace_vm_data_root, AvfLinuxSharedVmLifecycleState,
+};
 #[cfg(test)]
 pub(crate) use self::avf_linux_vm::override_managed_avf_linux_runtime_source_for_test;
 pub(crate) use self::avf_linux_vm::run_guest_exec_capture as run_avf_linux_guest_exec_capture;
@@ -72,13 +80,8 @@ pub(crate) use self::avf_linux_vm::TestManagedAvfLinuxRuntimeSourceGuard;
 #[cfg(test)]
 pub(crate) use self::avf_linux_vm::AVF_LINUX_HELPER_PATH_ENV;
 use self::avf_linux_vm::{
-    ensure_shared_vm_ready_with_observer as ensure_avf_linux_shared_vm_ready_with_observer,
-    ensure_workspace_vm_ready_with_observer as ensure_avf_linux_workspace_vm_ready_with_observer,
-    prefetch_runtime_with_observer as prefetch_avf_linux_runtime_with_observer,
     runtime_available as avf_linux_runtime_available, runtime_state as avf_linux_runtime_state,
     runtime_target_label as avf_linux_runtime_target_label,
-    workspace_vm_data_root as avf_linux_workspace_vm_data_root,
-    workspace_vm_state as avf_linux_workspace_vm_state, AvfLinuxSharedVmLifecycleState,
 };
 use self::container::sandbox_machine_required;
 pub(crate) use self::container::AVF_GUEST_HOST_GATEWAY;
@@ -128,6 +131,11 @@ pub(crate) use self::sandbox_cli::{
 use self::sandbox_machine_recovery::{
     run_sandbox_machine_init, sandbox_machine_present, sandbox_machine_singleflight_lock,
 };
+pub(crate) use self::shared_vm_orchestrator::SharedVmLifecycleOrchestrator;
+pub(crate) use self::materialization::{
+    materialize_sandbox_worktree, SandboxWorktreeMaterialization,
+};
+pub(crate) use self::substrate::UbuntuSandboxSubstrate;
 
 pub(crate) fn local_runtime_available(data_root: &Path, runtime: &ContainerRuntimeKind) -> bool {
     match runtime {
@@ -182,7 +190,9 @@ pub(crate) async fn prewarm_selected_runtime_with_observer(
             }
         }
         ContainerRuntimeKind::SharedVmContainer => {
-            prefetch_avf_linux_runtime_with_observer(data_root, settings, observer).await
+            SharedVmLifecycleOrchestrator::new(data_root)
+                .prefetch_runtime(settings, observer)
+                .await
         }
     }
 }
@@ -200,7 +210,9 @@ pub(crate) async fn prewarm_selected_runtime_for_launch_with_observer(
             .await
         }
         ContainerRuntimeKind::SharedVmContainer => {
-            ensure_avf_linux_shared_vm_ready_with_observer(data_root, settings, observer).await?;
+            SharedVmLifecycleOrchestrator::new(data_root)
+                .ensure_shared_runtime_ready(settings, observer)
+                .await?;
             let image = resolve_container_image(settings);
             prefetch_container_image_with_observer(data_root, &image, observer).await
         }
@@ -220,25 +232,15 @@ pub(crate) async fn selected_runtime_launch_readiness_state(
     data_root: &Path,
     settings: &ContainerExecutionSettings,
 ) -> Result<(bool, bool)> {
-    match settings.runtime {
-        ContainerRuntimeKind::NativeContainer => selected_runtime_state(data_root, settings).await,
-        ContainerRuntimeKind::SharedVmContainer => {
-            let (helper_ready, runtime_ready) = avf_linux_runtime_state(data_root)?;
-            if !helper_ready || !runtime_ready {
-                return Ok((false, false));
-            }
-            let shared_vm_state =
-                avf_linux_workspace_vm_state(data_root, WorkspaceId(uuid::Uuid::nil()))?;
-            let vm_ready = matches!(
-                shared_vm_state.state,
-                AvfLinuxSharedVmLifecycleState::Running
-            );
-            let image_ready = if vm_ready {
-                container_image_present(data_root, &resolve_container_image(settings)).await?
-            } else {
-                false
-            };
-            Ok((vm_ready, image_ready))
+    let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime);
+    match substrate.substrate {
+        ctx_core::models::SandboxSubstrate::NativeContainer => {
+            selected_runtime_state(data_root, settings).await
+        }
+        ctx_core::models::SandboxSubstrate::SharedVmContainer => {
+            SharedVmLifecycleOrchestrator::new(data_root)
+                .launch_readiness_state(settings)
+                .await
         }
     }
 }
@@ -249,70 +251,24 @@ pub(crate) fn launch_ready_gap_message(
     vm_ready: bool,
     image_ready: bool,
 ) -> String {
-    match runtime_kind {
-        ContainerRuntimeKind::NativeContainer => {
-            if !vm_ready {
-                format!(
-                    "runtime prewarm completed but local sandbox runtime is not launch-ready for '{runtime_target}'"
-                )
-            } else if !image_ready {
-                format!(
-                    "runtime prewarm completed but launch image for '{runtime_target}' is not present in the local sandbox runtime"
-                )
-            } else {
-                format!(
-                    "runtime prewarm completed but runtime target '{runtime_target}' is not launch-ready"
-                )
-            }
-        }
-        ContainerRuntimeKind::SharedVmContainer => {
-            if !vm_ready {
-                format!(
-                    "runtime prewarm completed but shared VM substrate for '{runtime_target}' is not launch-ready"
-                )
-            } else if !image_ready {
-                format!(
-                    "runtime prewarm completed but launch image for '{runtime_target}' is not present in the shared VM runtime"
-                )
-            } else {
-                format!("runtime prewarm completed but runtime target '{runtime_target}' is not launch-ready")
-            }
-        }
-    }
+    UbuntuSandboxSubstrate::from_runtime_kind(runtime_kind)
+        .launch_ready_gap_message(runtime_target, vm_ready, image_ready)
 }
 
 pub(crate) fn launch_ready_detail_message(runtime_kind: &ContainerRuntimeKind) -> &'static str {
-    match runtime_kind {
-        ContainerRuntimeKind::NativeContainer => "local sandbox runtime and launch image are ready",
-        ContainerRuntimeKind::SharedVmContainer => "shared VM substrate and launch image are ready",
-    }
+    UbuntuSandboxSubstrate::from_runtime_kind(runtime_kind.clone()).launch_ready_detail_message()
 }
 
 pub(crate) fn runtime_prewarm_ready_message(
     runtime_kind: &ContainerRuntimeKind,
     launch_ready: bool,
 ) -> &'static str {
-    if launch_ready {
-        return launch_ready_detail_message(runtime_kind);
-    }
-
-    match runtime_kind {
-        ContainerRuntimeKind::NativeContainer => "local sandbox runtime and launch image are ready",
-        ContainerRuntimeKind::SharedVmContainer => {
-            "shared VM runtime artifacts are ready; launch image loads when the shared VM starts"
-        }
-    }
+    UbuntuSandboxSubstrate::from_runtime_kind(runtime_kind.clone())
+        .runtime_prewarm_ready_message(launch_ready)
 }
 
 pub(crate) fn workspace_launch_ready_message(runtime_kind: &ContainerRuntimeKind) -> &'static str {
-    match runtime_kind {
-        ContainerRuntimeKind::NativeContainer => {
-            "workspace sandbox is ready in the local sandbox runtime"
-        }
-        ContainerRuntimeKind::SharedVmContainer => {
-            "workspace sandbox is ready on the shared VM substrate"
-        }
-    }
+    UbuntuSandboxSubstrate::from_runtime_kind(runtime_kind.clone()).workspace_launch_ready_message()
 }
 
 fn normalize_container_engine_ready_for_runtime(result: Result<bool>) -> Result<bool> {
@@ -456,9 +412,9 @@ pub(crate) async fn ensure_builder_backend_launch_ready_with_observer(
                 runtime: ContainerRuntimeKind::SharedVmContainer,
                 ..ContainerExecutionSettings::default()
             };
-            ensure_avf_linux_shared_vm_ready_with_observer(data_root, &settings, observer)
+            SharedVmLifecycleOrchestrator::new(data_root)
+                .ensure_shared_runtime_ready(&settings, observer)
                 .await
-                .map(|_| ())
         }
     }
 }

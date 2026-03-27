@@ -69,6 +69,8 @@ impl HarnessRuntimeManager {
         settings: &ExecutionSettings,
         daemon_url: &str,
     ) -> Result<HarnessExecutionPlan> {
+        let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.container.runtime);
+        substrate.ensure_enabled()?;
         let mut env_overrides = HashMap::new();
         env_overrides.insert(
             "CTX_DATA_ROOT_HOST".to_string(),
@@ -82,10 +84,7 @@ impl HarnessRuntimeManager {
             });
         }
         let _activity = self.begin_runtime_operation();
-        if !matches!(
-            settings.container.runtime,
-            ContainerRuntimeKind::SharedVmContainer
-        ) {
+        if !substrate.is_shared_vm_backed() {
             let sandbox_cli_bin = sandbox_cli_invocation(&self.data_root)
                 .context("sandbox container CLI unavailable and execution mode is sandbox")?
                 .bin;
@@ -94,12 +93,7 @@ impl HarnessRuntimeManager {
                 sandbox_cli_bin.to_string_lossy().to_string(),
             );
         }
-
-        let avf = matches!(
-            settings.container.runtime,
-            ContainerRuntimeKind::SharedVmContainer
-        );
-        let proxy_host = if avf {
+        let proxy_host = if substrate.is_shared_vm_backed() {
             AVF_GUEST_HOST_GATEWAY
         } else {
             "host.containers.internal"
@@ -125,15 +119,11 @@ impl HarnessRuntimeManager {
         );
         env_overrides.insert(
             CTX_HARNESS_RUNTIME_KIND_ENV.to_string(),
-            if avf {
-                "shared_vm_container".to_string()
-            } else {
-                "native_container".to_string()
-            },
+            substrate.runtime_kind_env_value().to_string(),
         );
         env_overrides.insert(CTX_HARNESS_LINUX_SANDBOX_ENV.to_string(), "1".to_string());
 
-        let daemon_url = if avf {
+        let daemon_url = if substrate.is_shared_vm_backed() {
             resolve_daemon_url_for_avf_guest(daemon_url).await?
         } else {
             rewrite_daemon_url_for_container(daemon_url, proxy_host)
@@ -169,8 +159,11 @@ impl HarnessRuntimeManager {
             env_overrides.insert("CTX_HARNESS_CONTAINER_USER".to_string(), user);
         }
 
-        if avf {
-            let workspace_vm = avf_linux_workspace_vm_state(&self.data_root, workspace.id)?;
+        if substrate.is_shared_vm_backed() {
+            let workspace_vm =
+                SharedVmLifecycleOrchestrator::new(&self.data_root).workspace_runtime_state(
+                    workspace.id,
+                )?;
             env_overrides.insert(
                 "CTX_AVF_WORKSPACE_VM_ROOT".to_string(),
                 workspace_vm.vm_root.to_string_lossy().to_string(),
@@ -214,7 +207,7 @@ impl HarnessRuntimeManager {
         }
 
         Ok(HarnessExecutionPlan {
-            runtime: if avf {
+            runtime: if substrate.is_shared_vm_backed() {
                 HarnessRuntimeKind::SharedVmContainer
             } else {
                 HarnessRuntimeKind::NativeContainer {
@@ -311,18 +304,13 @@ impl HarnessRuntimeManager {
         if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(());
         }
-        let proxy_host = if matches!(
-            settings.container.runtime,
-            ContainerRuntimeKind::SharedVmContainer
-        ) {
-            ensure_avf_linux_workspace_vm_ready_with_observer(
-                &self.data_root,
-                workspace.id,
-                &settings.container,
-                observer,
-            )
-            .await
-            .context("AVF Linux workspace VM is unavailable")?;
+        let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.container.runtime);
+        substrate.ensure_enabled()?;
+        let proxy_host = if substrate.is_shared_vm_backed() {
+            SharedVmLifecycleOrchestrator::new(&self.data_root)
+                .ensure_workspace_runtime_ready(workspace.id, &settings.container, observer)
+                .await
+                .context("shared VM substrate is unavailable")?;
             AVF_GUEST_HOST_GATEWAY
         } else {
             "host.containers.internal"
@@ -368,8 +356,12 @@ impl HarnessRuntimeManager {
         settings: &ContainerExecutionSettings,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<()> {
-        if matches!(settings.runtime, ContainerRuntimeKind::SharedVmContainer) {
-            prefetch_avf_linux_runtime_with_observer(&self.data_root, settings, observer).await?;
+        let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime);
+        substrate.ensure_enabled()?;
+        if substrate.is_shared_vm_backed() {
+            SharedVmLifecycleOrchestrator::new(&self.data_root)
+                .prefetch_runtime(settings, observer)
+                .await?;
             return Ok(());
         }
         observe_phase(
@@ -574,14 +566,12 @@ impl HarnessRuntimeManager {
     ) -> Result<HarnessContainer> {
         self.ensure_container_machine_ready(settings, observer)
             .await?;
-        if matches!(settings.runtime, ContainerRuntimeKind::SharedVmContainer) {
-            ensure_avf_linux_workspace_vm_ready_with_observer(
-                &self.data_root,
-                workspace.id,
-                settings,
-                observer,
-            )
-            .await?;
+        let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime);
+        substrate.ensure_enabled()?;
+        if substrate.is_shared_vm_backed() {
+            SharedVmLifecycleOrchestrator::new(&self.data_root)
+                .ensure_workspace_runtime_ready(workspace.id, settings, observer)
+                .await?;
         }
         self.ensure_container_after_machine_ready(EnsureContainerRequest {
             workspace,
