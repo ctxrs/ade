@@ -80,22 +80,6 @@ pub(super) fn format_duration_ms(duration: Duration) -> String {
     format!("{} ms", duration.as_millis())
 }
 
-fn describe_saved_state_path_context(save_path: &Path) -> String {
-    let mut details = vec![format!("save_path={}", save_path.display())];
-    if let Some(parent) = save_path.parent() {
-        details.push(format!("parent={}", parent.display()));
-        details.push(format!("parent_exists={}", parent.exists()));
-        match fs::metadata(parent) {
-            Ok(metadata) => details.push(format!(
-                "parent_readonly={}",
-                metadata.permissions().readonly()
-            )),
-            Err(err) => details.push(format!("parent_metadata_error={err}")),
-        }
-    }
-    details.join(", ")
-}
-
 pub(super) fn extract_shared_vm_readiness_phase_lines(stdout: &[u8], stderr: &[u8]) -> Vec<String> {
     [stdout, stderr]
         .into_iter()
@@ -126,6 +110,22 @@ pub(super) fn summarize_shared_vm_readiness_phase_lines(phase_lines: &[String]) 
         .join(", ")
 }
 
+pub(super) fn describe_saved_state_path_context(save_path: &Path) -> String {
+    let mut details = vec![format!("save_path={}", save_path.display())];
+    if let Some(parent) = save_path.parent() {
+        details.push(format!("parent={}", parent.display()));
+        details.push(format!("parent_exists={}", parent.exists()));
+        match fs::metadata(parent) {
+            Ok(metadata) => details.push(format!(
+                "parent_readonly={}",
+                metadata.permissions().readonly()
+            )),
+            Err(err) => details.push(format!("parent_metadata_error={err}")),
+        }
+    }
+    details.join(", ")
+}
+
 #[cfg(target_os = "macos")]
 pub(super) fn persist_shared_vm_owner_error_state(
     state_path: &Path,
@@ -144,89 +144,162 @@ pub(super) fn persist_shared_vm_owner_error_state(
 }
 
 #[cfg(target_os = "macos")]
+pub(super) struct SharedVmShutdownOutcome {
+    pub note: String,
+    pub stop_outcome: AvfLinuxSharedVmStopOutcome,
+    pub save_error: Option<String>,
+    pub saved_state_written: bool,
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn shared_vm_start_outcome_log_label(
+    outcome: AvfLinuxSharedVmStartOutcome,
+) -> &'static str {
+    match outcome {
+        AvfLinuxSharedVmStartOutcome::AlreadyRunning => "already-running",
+        AvfLinuxSharedVmStartOutcome::ColdBoot => "cold-boot",
+        AvfLinuxSharedVmStartOutcome::Restored => "restore-hit",
+        AvfLinuxSharedVmStartOutcome::ColdBootAfterRestoreFailure => {
+            "cold-boot-after-restore-failure"
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
 pub(super) fn shutdown_real_shared_vm_for_exit(
     queue: &DispatchQueue,
     virtual_machine: &Retained<VZVirtualMachine>,
     data_root: &Path,
-) -> String {
+) -> SharedVmShutdownOutcome {
     let virtual_machine_ptr = &**virtual_machine as *const VZVirtualMachine;
     let mut notes = Vec::new();
     let mut saved_state_written = false;
-    let initial_state = match virtual_machine_state_on_queue(queue, virtual_machine_ptr) {
-        Ok(state) => state,
-        Err(err) => return format!("failed to query workspace VM state before shutdown: {err:#}"),
-    };
+    let mut save_error = None;
+    let save_restore_supported = shared_vm_save_restore_supported();
 
-    if shared_vm_save_restore_supported() {
-        if matches!(
-            initial_state,
-            VZVirtualMachineState::Running | VZVirtualMachineState::Paused
-        ) {
-            if initial_state == VZVirtualMachineState::Running {
-                match pause_virtual_machine_on_queue(queue, virtual_machine_ptr) {
-                    Ok(()) => notes.push("paused workspace VM before save".to_string()),
-                    Err(err) => notes.push(format!("pause before save failed: {err:#}")),
+    if save_restore_supported {
+        match virtual_machine_state_on_queue(queue, virtual_machine_ptr) {
+            Ok(initial_state) => {
+                if matches!(
+                    initial_state,
+                    VZVirtualMachineState::Running | VZVirtualMachineState::Paused
+                ) {
+                    if initial_state == VZVirtualMachineState::Running {
+                        match pause_virtual_machine_on_queue(queue, virtual_machine_ptr) {
+                            Ok(()) => notes.push("paused workspace VM before save".to_string()),
+                            Err(err) => {
+                                let message = format!("pause before save failed: {err:#}");
+                                save_error = Some(message.clone());
+                                notes.push(message);
+                            }
+                        }
+                    }
+
+                    match virtual_machine_state_on_queue(queue, virtual_machine_ptr) {
+                        Ok(VZVirtualMachineState::Paused) => {
+                            let save_path = shared_vm_saved_state_path(data_root);
+                            if let Some(parent) = save_path.parent() {
+                                if let Err(err) = fs::create_dir_all(parent) {
+                                    let message = format!(
+                                        "failed to prepare saved-state directory {}: {err:#}",
+                                        parent.display()
+                                    );
+                                    save_error = Some(message.clone());
+                                    notes.push(message);
+                                }
+                            }
+                            if let Err(err) = fs::remove_file(&save_path) {
+                                if err.kind() != std::io::ErrorKind::NotFound {
+                                    let message = format!(
+                                        "failed to clear stale workspace VM save path {}: {err:#}; {}",
+                                        save_path.display(),
+                                        describe_saved_state_path_context(&save_path)
+                                    );
+                                    save_error = Some(message.clone());
+                                    notes.push(message);
+                                }
+                            }
+                            match save_virtual_machine_state_on_queue(
+                                queue,
+                                virtual_machine_ptr,
+                                &save_path,
+                            ) {
+                                Ok(()) => {
+                                    saved_state_written = true;
+                                    notes.push(format!(
+                                        "saved workspace VM state to {}",
+                                        save_path.display()
+                                    ));
+                                }
+                                Err(err) => {
+                                    let message = format!(
+                                        "saving workspace VM state to {} failed: {err:#}; {}",
+                                        save_path.display(),
+                                        describe_saved_state_path_context(&save_path)
+                                    );
+                                    save_error = Some(message.clone());
+                                    notes.push(message);
+                                }
+                            }
+                        }
+                        Ok(other) => {
+                            let message = format!(
+                                "skipped save because workspace VM remained in state {other:?}"
+                            );
+                            save_error = Some(message.clone());
+                            notes.push(message);
+                        }
+                        Err(err) => {
+                            let message = format!(
+                                "failed to re-check workspace VM state before save: {err:#}"
+                            );
+                            save_error = Some(message.clone());
+                            notes.push(message);
+                        }
+                    }
+                } else {
+                    let message =
+                        format!("skipped save because workspace VM was in state {initial_state:?}");
+                    save_error = Some(message.clone());
+                    notes.push(message);
                 }
             }
-
-            match virtual_machine_state_on_queue(queue, virtual_machine_ptr) {
-                Ok(VZVirtualMachineState::Paused) => {
-                    let save_path = shared_vm_saved_state_path(data_root);
-                    if let Some(parent) = save_path.parent() {
-                        if let Err(err) = fs::create_dir_all(parent) {
-                            notes.push(format!(
-                                "failed to prepare saved-state directory {}: {err:#}",
-                                parent.display()
-                            ));
-                        }
-                    }
-                    if let Err(err) = fs::remove_file(&save_path) {
-                        if err.kind() != std::io::ErrorKind::NotFound {
-                            notes.push(format!(
-                                "failed to clear stale workspace VM save path {}: {err:#}; {}",
-                                save_path.display(),
-                                describe_saved_state_path_context(&save_path)
-                            ));
-                        }
-                    }
-                    match save_virtual_machine_state_on_queue(
-                        queue,
-                        virtual_machine_ptr,
-                        &save_path,
-                    ) {
-                        Ok(()) => {
-                            saved_state_written = true;
-                            notes.push(format!(
-                                "saved workspace VM state to {}",
-                                save_path.display()
-                            ));
-                        }
-                        Err(err) => notes.push(format!(
-                            "saving workspace VM state to {} failed: {err:#}; {}",
-                            save_path.display(),
-                            describe_saved_state_path_context(&save_path)
-                        )),
-                    }
-                }
-                Ok(other) => notes.push(format!(
-                    "skipped save because workspace VM remained in state {other:?}"
-                )),
-                Err(err) => notes.push(format!(
-                    "failed to re-check workspace VM state before save: {err:#}"
-                )),
+            Err(err) => {
+                let message =
+                    format!("failed to query workspace VM state before shutdown: {err:#}");
+                save_error = Some(message.clone());
+                notes.push(message);
             }
-        } else {
-            notes.push(format!(
-                "skipped save because workspace VM was in state {initial_state:?}"
-            ));
         }
     } else {
         notes.push("save/restore unavailable on this host; stopping workspace VM cold".to_string());
     }
 
+    let stop_outcome = if saved_state_written {
+        AvfLinuxSharedVmStopOutcome::SavedStateWritten
+    } else if !save_restore_supported {
+        AvfLinuxSharedVmStopOutcome::ColdStopSaveUnsupported
+    } else if save_error.is_some() {
+        AvfLinuxSharedVmStopOutcome::ColdStopAfterSaveFailure
+    } else {
+        AvfLinuxSharedVmStopOutcome::ColdStop
+    };
+
     if saved_state_written {
         notes.push("workspace VM owner exited after save without an additional stop".to_string());
-        return notes.join("; ");
+        return SharedVmShutdownOutcome {
+            note: notes.join("; "),
+            stop_outcome,
+            save_error,
+            saved_state_written,
+        };
+    }
+
+    if let Some(note) = discard_stale_saved_state_for_cold_stop(data_root) {
+        if note.starts_with("failed to discard") && save_error.is_none() {
+            save_error = Some(note.clone());
+        }
+        notes.push(note);
     }
 
     match virtual_machine_can_stop_on_queue(queue, virtual_machine_ptr) {
@@ -240,7 +313,12 @@ pub(super) fn shutdown_real_shared_vm_for_exit(
         )),
     }
 
-    notes.join("; ")
+    SharedVmShutdownOutcome {
+        note: notes.join("; "),
+        stop_outcome,
+        save_error,
+        saved_state_written,
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -325,9 +403,9 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
     };
     let mut virtual_machine = build_virtual_machine()?;
     let mut virtual_machine_ptr = &*virtual_machine as *const VZVirtualMachine;
-    let restored_from_saved_state = if shared_vm_save_restore_supported()
-        && saved_state_path.is_file()
-    {
+    let mut start_outcome = AvfLinuxSharedVmStartOutcome::ColdBoot;
+    let mut restore_error = None;
+    if shared_vm_save_restore_supported() && saved_state_path.is_file() {
         append_shared_vm_log_line(
             data_root,
             &format!(
@@ -339,6 +417,7 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
             .and_then(|_| resume_virtual_machine_on_queue(&queue, virtual_machine_ptr))
         {
             Ok(()) => {
+                start_outcome = AvfLinuxSharedVmStartOutcome::Restored;
                 append_shared_vm_log_line(
                     data_root,
                     &format!(
@@ -346,28 +425,27 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
                         saved_state_path.display()
                     ),
                 )?;
-                true
             }
             Err(err) => {
+                let message = format!(
+                    "restoring saved workspace VM state from {} failed: {err:#}; {}",
+                    saved_state_path.display(),
+                    describe_saved_state_path_context(&saved_state_path)
+                );
+                start_outcome = AvfLinuxSharedVmStartOutcome::ColdBootAfterRestoreFailure;
+                restore_error = Some(message.clone());
                 append_shared_vm_log_line(
                     data_root,
-                    &format!(
-                        "restoring saved workspace VM state from {} failed; falling back to a cold boot: {err:#}; {}",
-                        saved_state_path.display(),
-                        describe_saved_state_path_context(&saved_state_path)
-                    ),
+                    &format!("{message}; continuing with a cold boot"),
                 )?;
                 let _ = fs::remove_file(&saved_state_path);
                 virtual_machine = build_virtual_machine()?;
                 virtual_machine_ptr = &*virtual_machine as *const VZVirtualMachine;
-                false
             }
         }
-    } else {
-        false
-    };
+    }
 
-    if !restored_from_saved_state {
+    if start_outcome != AvfLinuxSharedVmStartOutcome::Restored {
         let virtual_machine_addr = virtual_machine_ptr as usize;
         let can_start =
             exec_on_dispatch_queue(&queue, "shared AVF Linux VM canStart", move || unsafe {
@@ -400,13 +478,19 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
         data_root,
         &format!(
             "shared AVF Linux VM owner startup path: {}",
-            if restored_from_saved_state {
-                "restore-hit"
-            } else {
-                "cold-boot"
-            }
+            shared_vm_start_outcome_log_label(start_outcome)
         ),
     )?;
+    state.state = AvfLinuxSharedVmLifecycleState::Running;
+    state.simulated = false;
+    state.updated_at = Some(now_timestamp_string());
+    state.last_started_at = state.updated_at.clone();
+    state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Scaffolded);
+    state.last_start_outcome = Some(start_outcome);
+    state.last_restore_error = restore_error;
+    state.relay_pid = Some(std::process::id());
+    state.guest_agent_pid = None;
+    persist_state(&state_path, &state)?;
 
     let min_cpu = unsafe { VZVirtualMachineConfiguration::minimumAllowedCPUCount() };
     let max_cpu = unsafe { VZVirtualMachineConfiguration::maximumAllowedCPUCount() };
@@ -423,30 +507,34 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
     loop {
         service_real_shared_vm_control_clients(&queue, &virtual_machine, &listener, data_root)?;
         if let Some(note) = shared_vm_memory_pressure_stop_requested_note(data_root)? {
-            let shutdown_note =
-                shutdown_real_shared_vm_for_exit(&queue, &virtual_machine, data_root);
+            let shutdown = shutdown_real_shared_vm_for_exit(&queue, &virtual_machine, data_root);
             clear_shared_vm_memory_pressure_stop_request(data_root);
-            let combined_note = format!("{note}; {shutdown_note}");
+            state.last_stop_outcome = Some(shutdown.stop_outcome);
+            state.last_save_error = shutdown.save_error.clone();
+            state.last_saved_at = shutdown.saved_state_written.then(now_timestamp_string);
+            let combined_note = format!("{note}; {}", shutdown.note);
             append_shared_vm_log_line(data_root, &combined_note)?;
             persist_shared_vm_owner_error_state(&state_path, &mut state, combined_note.clone())?;
             bail!("{combined_note}");
         }
         if shared_vm_shutdown_requested(data_root) {
-            let shutdown_note =
-                shutdown_real_shared_vm_for_exit(&queue, &virtual_machine, data_root);
+            let shutdown = shutdown_real_shared_vm_for_exit(&queue, &virtual_machine, data_root);
             clear_shared_vm_shutdown_request(data_root);
             state.state = AvfLinuxSharedVmLifecycleState::Stopped;
             state.simulated = false;
             state.updated_at = Some(now_timestamp_string());
-            state.last_saved_at = shared_vm_saved_state_path(data_root)
-                .exists()
-                .then(|| state.updated_at.clone())
-                .flatten();
+            state.last_saved_at = if shutdown.saved_state_written {
+                state.updated_at.clone()
+            } else {
+                None
+            };
             state.last_stopped_at = state.updated_at.clone();
             state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Stopped);
+            state.last_stop_outcome = Some(shutdown.stop_outcome);
+            state.last_save_error = shutdown.save_error;
             state.relay_pid = None;
             state.guest_agent_pid = None;
-            state.notes = vec![shutdown_note];
+            state.notes = vec![shutdown.note];
             persist_state(&state_path, &state)?;
             append_shared_vm_log_line(
                 data_root,
@@ -462,10 +550,14 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
                 data_root,
                 &mut resource_state,
             ) {
-                let shutdown_note =
+                let shutdown =
                     shutdown_real_shared_vm_for_exit(&queue, &virtual_machine, data_root);
+                state.last_stop_outcome = Some(shutdown.stop_outcome);
+                state.last_save_error = shutdown.save_error.clone();
+                state.last_saved_at = shutdown.saved_state_written.then(now_timestamp_string);
                 let note = format!(
-                    "workspace VM owner stopped because AVF data-disk maintenance failed: {err:#}; {shutdown_note}"
+                    "workspace VM owner stopped because AVF data-disk maintenance failed: {err:#}; {}",
+                    shutdown.note
                 );
                 append_shared_vm_log_line(data_root, &note)?;
                 persist_shared_vm_owner_error_state(&state_path, &mut state, note)?;
@@ -477,10 +569,14 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
                 data_root,
                 &mut resource_state,
             ) {
-                let shutdown_note =
+                let shutdown =
                     shutdown_real_shared_vm_for_exit(&queue, &virtual_machine, data_root);
+                state.last_stop_outcome = Some(shutdown.stop_outcome);
+                state.last_save_error = shutdown.save_error.clone();
+                state.last_saved_at = shutdown.saved_state_written.then(now_timestamp_string);
                 let note = format!(
-                    "workspace VM owner stopped because AVF memory maintenance failed: {err:#}; {shutdown_note}"
+                    "workspace VM owner stopped because AVF memory maintenance failed: {err:#}; {}",
+                    shutdown.note
                 );
                 append_shared_vm_log_line(data_root, &note)?;
                 persist_shared_vm_owner_error_state(&state_path, &mut state, note)?;
@@ -513,17 +609,23 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
         state.state = AvfLinuxSharedVmLifecycleState::Stopped;
         state.simulated = false;
         state.updated_at = Some(now_timestamp_string());
-        state.last_saved_at = shared_vm_saved_state_path(data_root)
-            .exists()
-            .then(|| state.last_saved_at.clone())
-            .flatten();
+        state.last_saved_at = None;
         state.last_stopped_at = state.updated_at.clone();
         state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Stopped);
+        state.last_stop_outcome = Some(AvfLinuxSharedVmStopOutcome::ColdStop);
+        state.last_save_error = None;
         state.relay_pid = None;
         state.guest_agent_pid = None;
-        state.notes = vec![format!(
+        let mut notes = vec![format!(
             "workspace VM owner exited its control loop with state {vm_state:?}"
         )];
+        if let Some(note) = discard_stale_saved_state_for_cold_stop(data_root) {
+            if note.starts_with("failed to discard") {
+                state.last_save_error = Some(note.clone());
+            }
+            notes.push(note);
+        }
+        state.notes = notes;
         persist_state(&state_path, &state)?;
         return Ok(());
     }

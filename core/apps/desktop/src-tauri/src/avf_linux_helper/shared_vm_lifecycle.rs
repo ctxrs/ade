@@ -93,6 +93,10 @@ pub(super) fn prepare_runtime_layout(data_root: &Path) -> Result<AvfLinuxRuntime
             last_saved_at: None,
             last_stopped_at: None,
             transition_status: None,
+            last_start_outcome: None,
+            last_stop_outcome: None,
+            last_restore_error: None,
+            last_save_error: None,
             relay_pid: None,
             guest_agent_pid: None,
             simulated: true,
@@ -151,6 +155,9 @@ pub(super) fn shared_vm_state(data_root: &Path) -> Result<AvfLinuxSharedVmStateR
             };
             state.updated_at = Some(now_timestamp_string());
             state.last_stopped_at = state.updated_at.clone();
+            state.last_saved_at = None;
+            state.last_stop_outcome = Some(AvfLinuxSharedVmStopOutcome::ColdStop);
+            state.last_save_error = None;
             state.transition_status = if memory_pressure_note.is_some() {
                 None
             } else {
@@ -177,6 +184,22 @@ pub(super) fn shared_vm_state(data_root: &Path) -> Result<AvfLinuxSharedVmStateR
         state_path,
         log_path,
     ))
+}
+
+pub(super) fn discard_stale_saved_state_for_cold_stop(data_root: &Path) -> Option<String> {
+    let saved_state_path = shared_vm_saved_state_path(data_root);
+    match fs::remove_file(&saved_state_path) {
+        Ok(()) => Some(format!(
+            "discarded stale workspace VM saved state at {} because this stop did not produce a fresh save",
+            saved_state_path.display()
+        )),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => Some(format!(
+            "failed to discard stale workspace VM saved state at {}: {err:#}; {}",
+            saved_state_path.display(),
+            describe_saved_state_path_context(&saved_state_path)
+        )),
+    }
 }
 
 pub(super) fn start_shared_vm(
@@ -329,6 +352,8 @@ pub(super) fn start_shared_vm(
             state.last_saved_at = None;
         }
         state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Scaffolded);
+        state.last_start_outcome = Some(AvfLinuxSharedVmStartOutcome::AlreadyRunning);
+        state.last_restore_error = None;
         state.notes = vec![if state.simulated {
             "shared VM relay and guest-agent processes were already alive; reusing the simulated shared VM"
                     .to_string()
@@ -396,6 +421,8 @@ pub(super) fn start_shared_vm(
         state.last_saved_at = None;
     }
     state.transition_status = None;
+    state.last_start_outcome = None;
+    state.last_restore_error = None;
     state.relay_pid = None;
     state.guest_agent_pid = None;
     state.notes =
@@ -403,22 +430,32 @@ pub(super) fn start_shared_vm(
     persist_state(&state_path, &state)?;
 
     let saved_state_exists = saved_state_path.exists();
+    let restore_eligible_for_start = !cfg!(test)
+        && real_vm_supported
+        && shared_vm_save_restore_supported()
+        && saved_state_exists;
     let readiness_timeout = real_guest_exec_ready_timeout_for_start(
         rootfs_materialization_note.as_deref(),
-        saved_state_exists,
+        restore_eligible_for_start,
     );
     let timeout_reason = if rootfs_materialization_note.is_some() {
         "writable rootfs was materialized for this start"
+    } else if restore_eligible_for_start {
+        "saved state is eligible for restore on the real AVF path"
     } else if saved_state_exists {
-        "saved state already exists"
+        "saved state exists but this start cannot restore it on the selected path"
     } else {
         "no saved state exists yet"
     };
+    let restore_unavailable_error = (saved_state_exists && !restore_eligible_for_start).then(|| {
+        "saved workspace VM state was present, but this start could not use it and proceeded with a cold boot"
+            .to_string()
+    });
     append_shared_vm_log_line(
         data_root,
         &format!(
             "shared VM start selected {} path with readiness timeout {} because {}",
-            if saved_state_exists {
+            if restore_eligible_for_start {
                 "restore-candidate"
             } else {
                 "cold-boot"
@@ -427,19 +464,37 @@ pub(super) fn start_shared_vm(
             timeout_reason
         ),
     )?;
-    let (relay_pid, guest_agent_pid, simulated, mut notes) = if cfg!(test) {
+    let (relay_pid, guest_agent_pid, simulated, start_outcome, restore_error, mut notes) = if cfg!(
+        test
+    ) {
         (
             None,
             None,
             true,
+            AvfLinuxSharedVmStartOutcome::ColdBoot,
+            restore_unavailable_error.clone(),
             vec!["shared VM start was requested in test mode; state is simulated until actual AVF guest boot is implemented".to_string()],
         )
     } else if real_vm_supported {
         let relay_pid = spawn_real_shared_vm_owner(data_root, readiness_timeout)?;
+        let owner_state = load_state(&state_path)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "shared VM owner reached launch-ready but state disappeared at {}",
+                state_path.display()
+            )
+        })?;
+        let start_outcome = owner_state.last_start_outcome.ok_or_else(|| {
+            anyhow::anyhow!(
+                "shared VM owner reached launch-ready without reporting last_start_outcome in {}",
+                state_path.display()
+            )
+        })?;
         (
             Some(relay_pid),
             None,
             false,
+            start_outcome,
+            owner_state.last_restore_error.clone(),
             vec![
                 "shared VM owner process is running and owns a real AVF Linux VM lifecycle"
                     .to_string(),
@@ -459,6 +514,8 @@ pub(super) fn start_shared_vm(
             Some(relay_pid),
             Some(guest_agent_pid),
             true,
+            AvfLinuxSharedVmStartOutcome::ColdBoot,
+            restore_unavailable_error.clone(),
             vec![
                 "shared VM relay and guest-agent processes are running; state remains simulated until actual AVF guest boot is implemented".to_string(),
                 real_vm_support_note.clone(),
@@ -475,6 +532,8 @@ pub(super) fn start_shared_vm(
     state.updated_at = Some(now_timestamp_string());
     state.last_started_at = state.updated_at.clone();
     state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Scaffolded);
+    state.last_start_outcome = Some(start_outcome);
+    state.last_restore_error = restore_error;
     state.relay_pid = relay_pid;
     state.guest_agent_pid = guest_agent_pid;
     state.simulated = simulated;
@@ -494,6 +553,9 @@ pub(super) fn start_shared_vm(
         notes.push(note);
     }
     if let Some(note) = runtime_restart_note {
+        notes.push(note);
+    }
+    if let Some(note) = restore_unavailable_error {
         notes.push(note);
     }
     notes.push(format!(
@@ -530,6 +592,10 @@ pub(super) fn stop_shared_vm(data_root: &Path) -> Result<AvfLinuxSharedVmStateRe
             last_saved_at: None,
             last_stopped_at: None,
             transition_status: Some(AvfLinuxSharedVmTransitionStatus::Missing),
+            last_start_outcome: None,
+            last_stop_outcome: None,
+            last_restore_error: None,
+            last_save_error: None,
             relay_pid: None,
             guest_agent_pid: None,
             simulated: true,
@@ -574,13 +640,26 @@ pub(super) fn stop_shared_vm(data_root: &Path) -> Result<AvfLinuxSharedVmStateRe
     }
     state.state = AvfLinuxSharedVmLifecycleState::Stopped;
     state.updated_at = Some(now_timestamp_string());
+    state.last_saved_at = None;
     state.last_stopped_at = state.updated_at.clone();
     state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Stopped);
-    state.notes = vec![if state.simulated {
+    state.last_stop_outcome = Some(AvfLinuxSharedVmStopOutcome::ColdStop);
+    let mut notes = vec![if state.simulated {
         "shared VM lifecycle scaffold is stopped".to_string()
     } else {
         "real shared AVF Linux VM is stopped".to_string()
     }];
+    if let Some(note) = discard_stale_saved_state_for_cold_stop(data_root) {
+        if note.starts_with("failed to discard") {
+            state.last_save_error = Some(note.clone());
+        } else {
+            state.last_save_error = None;
+        }
+        notes.push(note);
+    } else {
+        state.last_save_error = None;
+    }
+    state.notes = notes;
     persist_state(&state_path, &state)?;
     shared_vm_state(data_root)
 }

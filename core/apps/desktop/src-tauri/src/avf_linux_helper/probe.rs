@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) fn build_probe() -> AvfLinuxHelperProbe {
     let mut notes = Vec::new();
+    let save_restore_supported = shared_vm_save_restore_supported();
     if cfg!(target_os = "macos") {
         if let Some(version) = macos_product_version() {
             notes.push(format!("host macOS {version}"));
@@ -15,10 +16,10 @@ pub(super) fn build_probe() -> AvfLinuxHelperProbe {
     }
     if cfg!(target_arch = "aarch64") {
         notes.push(
-            "Apple silicon host detected; save/restore and Rosetta-backed Linux guests are available when the runtime and VM configuration support them".to_string(),
+            "Apple silicon host detected; the host satisfies AVF save/restore prerequisites, but each VM configuration still needs runtime-time validation".to_string(),
         );
         notes.push(
-            "probe save/restore support is host-level only; the actual AVF VM configuration may still reject save/restore at validation or runtime".to_string(),
+            "probe save/restore support is scoped to host prerequisites only; actual restore success or failure is reported by the shared VM lifecycle outcomes".to_string(),
         );
     } else {
         notes.push(
@@ -33,7 +34,12 @@ pub(super) fn build_probe() -> AvfLinuxHelperProbe {
         host_os: std::env::consts::OS,
         host_arch: std::env::consts::ARCH,
         supported: cfg!(target_os = "macos"),
-        save_restore_supported: shared_vm_save_restore_supported(),
+        save_restore_supported,
+        save_restore_capability_scope: if save_restore_supported {
+            AvfLinuxSaveRestoreCapabilityScope::HostPrerequisitesOnly
+        } else {
+            AvfLinuxSaveRestoreCapabilityScope::Unsupported
+        },
         rosetta_supported: cfg!(all(target_os = "macos", target_arch = "aarch64")),
         notes,
     }

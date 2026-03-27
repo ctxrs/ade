@@ -69,6 +69,37 @@ fn runtime_with_guest_agent_can_enable_real_vm_path() {
 }
 
 #[test]
+fn build_probe_reports_host_level_save_restore_scope() {
+    let probe = build_probe();
+    let expected_scope = if probe.save_restore_supported {
+        AvfLinuxSaveRestoreCapabilityScope::HostPrerequisitesOnly
+    } else {
+        AvfLinuxSaveRestoreCapabilityScope::Unsupported
+    };
+    assert_eq!(probe.save_restore_capability_scope, expected_scope);
+}
+
+#[test]
+fn probe_scopes_save_restore_as_host_prerequisites_or_unsupported() {
+    let probe = build_probe();
+    if probe.save_restore_supported {
+        assert!(matches!(
+            probe.save_restore_capability_scope,
+            AvfLinuxSaveRestoreCapabilityScope::HostPrerequisitesOnly
+        ));
+        assert!(probe.notes.iter().any(|note| {
+            note.contains("host satisfies AVF save/restore prerequisites")
+                || note.contains("host prerequisites only")
+        }));
+    } else {
+        assert!(matches!(
+            probe.save_restore_capability_scope,
+            AvfLinuxSaveRestoreCapabilityScope::Unsupported
+        ));
+    }
+}
+
+#[test]
 fn resolve_avf_vm_sizing_defaults_to_host_logical_cpu_count_and_reserved_memory() {
     let sizing = resolve_avf_vm_sizing(
         1,
@@ -535,6 +566,10 @@ fn persist_shared_vm_owner_error_state_marks_vm_error_and_clears_owner_processes
         last_saved_at: Some("saved".to_string()),
         last_stopped_at: None,
         transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+        last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::Restored),
+        last_stop_outcome: Some(AvfLinuxSharedVmStopOutcome::SavedStateWritten),
+        last_restore_error: None,
+        last_save_error: None,
         relay_pid: Some(101),
         guest_agent_pid: Some(202),
         simulated: false,
@@ -603,6 +638,10 @@ fn shared_vm_state_marks_missing_owner_with_memory_pressure_request_as_error() {
             last_saved_at: Some(now_timestamp_string()),
             last_stopped_at: None,
             transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::Restored),
+            last_stop_outcome: Some(AvfLinuxSharedVmStopOutcome::SavedStateWritten),
+            last_restore_error: None,
+            last_save_error: None,
             relay_pid: Some(999_999),
             guest_agent_pid: None,
             simulated: false,
@@ -628,6 +667,119 @@ fn shared_vm_state_marks_missing_owner_with_memory_pressure_request_as_error() {
         !shared_vm_memory_pressure_request_path(&temp).exists(),
         "request file should be cleared once state is updated"
     );
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn shared_vm_state_marks_missing_owner_as_cold_stop_and_clears_stale_save_metadata() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-missing-owner-stop-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    prepare_runtime_layout(&temp).expect("prepare runtime layout");
+    let state_path = shared_vm_state_path(&temp);
+    persist_state(
+        &state_path,
+        &PersistedSharedVmState {
+            state: AvfLinuxSharedVmLifecycleState::Running,
+            runtime_root: None,
+            rootfs_image: None,
+            kernel_path: None,
+            initrd_path: None,
+            runtime_version: None,
+            runtime_shape_digest: None,
+            updated_at: Some(now_timestamp_string()),
+            last_started_at: Some("started".to_string()),
+            last_saved_at: Some("saved".to_string()),
+            last_stopped_at: None,
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::ColdBoot),
+            last_stop_outcome: Some(AvfLinuxSharedVmStopOutcome::SavedStateWritten),
+            last_restore_error: None,
+            last_save_error: Some("old save error".to_string()),
+            relay_pid: Some(999_999),
+            guest_agent_pid: None,
+            simulated: false,
+            notes: vec!["running".to_string()],
+        },
+    )
+    .expect("persist running state");
+
+    let response = shared_vm_state(&temp).expect("shared vm state");
+
+    assert!(matches!(
+        response.state,
+        AvfLinuxSharedVmLifecycleState::Stopped
+    ));
+    assert_eq!(
+        response.last_stop_outcome,
+        Some(AvfLinuxSharedVmStopOutcome::ColdStop)
+    );
+    assert!(response.last_saved_at.is_none());
+    assert!(response.last_save_error.is_none());
+    assert!(response
+        .notes
+        .iter()
+        .any(|note| note.contains("owner process was not alive")));
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn shared_vm_state_surfaces_explicit_start_and_stop_outcomes() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-state-outcomes-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    prepare_runtime_layout(&temp).expect("prepare runtime layout");
+    persist_state(
+        &shared_vm_state_path(&temp),
+        &PersistedSharedVmState {
+            state: AvfLinuxSharedVmLifecycleState::Stopped,
+            runtime_root: Some(temp.join("runtime")),
+            rootfs_image: Some(temp.join("rootfs.raw")),
+            kernel_path: Some(temp.join("kernel")),
+            initrd_path: Some(temp.join("initrd")),
+            runtime_version: Some("test-runtime".to_string()),
+            runtime_shape_digest: Some("digest".to_string()),
+            updated_at: Some(now_timestamp_string()),
+            last_started_at: Some("started".to_string()),
+            last_saved_at: None,
+            last_stopped_at: Some("stopped".to_string()),
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Stopped),
+            last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::ColdBootAfterRestoreFailure),
+            last_stop_outcome: Some(AvfLinuxSharedVmStopOutcome::ColdStopAfterSaveFailure),
+            last_restore_error: Some("restore failed".to_string()),
+            last_save_error: Some("save failed".to_string()),
+            relay_pid: None,
+            guest_agent_pid: None,
+            simulated: false,
+            notes: vec!["stopped".to_string()],
+        },
+    )
+    .expect("persist stopped state");
+
+    let response = shared_vm_state(&temp).expect("shared vm state");
+    assert_eq!(
+        response.last_start_outcome,
+        Some(AvfLinuxSharedVmStartOutcome::ColdBootAfterRestoreFailure)
+    );
+    assert_eq!(
+        response.last_stop_outcome,
+        Some(AvfLinuxSharedVmStopOutcome::ColdStopAfterSaveFailure)
+    );
+    assert_eq!(
+        response.last_restore_error.as_deref(),
+        Some("restore failed")
+    );
+    assert_eq!(response.last_save_error.as_deref(), Some("save failed"));
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 
@@ -676,6 +828,334 @@ fn start_shared_vm_materializes_rootfs_and_data_disk_layout() {
         .notes
         .iter()
         .any(|note| note.contains("shared VM start reached launch-ready")));
+    assert_eq!(
+        started.last_start_outcome,
+        Some(AvfLinuxSharedVmStartOutcome::ColdBoot)
+    );
+    assert!(started.last_restore_error.is_none());
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn start_shared_vm_surfaces_saved_state_downgrade_when_restore_is_unavailable() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-start-saved-state-downgrade-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    let runtime_root = temp.join("runtime");
+    let helpers_root = runtime_root.join("helpers");
+    fs::create_dir_all(&helpers_root).expect("create helpers root");
+    let source_rootfs = temp.join("source-rootfs.raw");
+    fs::write(&source_rootfs, b"rootfs").expect("write rootfs");
+    let kernel_path = helpers_root.join("kernel");
+    fs::write(&kernel_path, b"kernel").expect("write kernel");
+    let initrd_path = helpers_root.join("initrd");
+    fs::write(&initrd_path, b"initrd").expect("write initrd");
+    let saved_state_path = shared_vm_saved_state_path(&temp);
+    fs::create_dir_all(saved_state_path.parent().expect("saved-state parent"))
+        .expect("create saved-state parent");
+    fs::write(&saved_state_path, b"saved-state").expect("seed saved state");
+    prepare_runtime_layout(&temp).expect("prepare runtime layout");
+    persist_state(
+        &shared_vm_state_path(&temp),
+        &PersistedSharedVmState {
+            state: AvfLinuxSharedVmLifecycleState::Stopped,
+            runtime_root: Some(runtime_root.clone()),
+            rootfs_image: Some(shared_vm_rootfs_path(&temp)),
+            kernel_path: Some(shared_vm_boot_kernel_path(&temp)),
+            initrd_path: Some(initrd_path.clone()),
+            runtime_version: Some("test-runtime".to_string()),
+            runtime_shape_digest: Some(shared_vm_runtime_shape_digest(
+                &runtime_root,
+                &source_rootfs,
+                &kernel_path,
+                &initrd_path,
+                "test-runtime",
+            )),
+            updated_at: Some(now_timestamp_string()),
+            last_started_at: None,
+            last_saved_at: Some("saved".to_string()),
+            last_stopped_at: Some("stopped".to_string()),
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Stopped),
+            last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::Restored),
+            last_stop_outcome: Some(AvfLinuxSharedVmStopOutcome::SavedStateWritten),
+            last_restore_error: None,
+            last_save_error: None,
+            relay_pid: None,
+            guest_agent_pid: None,
+            simulated: true,
+            notes: vec!["stopped".to_string()],
+        },
+    )
+    .expect("persist prior stopped state");
+
+    let started = start_shared_vm(
+        &temp,
+        &runtime_root,
+        &source_rootfs,
+        &kernel_path,
+        &initrd_path,
+        "test-runtime".to_string(),
+    )
+    .expect("start shared vm");
+
+    assert_eq!(
+        started.last_start_outcome,
+        Some(AvfLinuxSharedVmStartOutcome::ColdBoot)
+    );
+    assert_eq!(
+        started.last_restore_error.as_deref(),
+        Some(
+            "saved workspace VM state was present, but this start could not use it and proceeded with a cold boot"
+        )
+    );
+    assert!(started.notes.iter().any(|note| {
+        note.contains("saved workspace VM state was present")
+            && note.contains("proceeded with a cold boot")
+    }));
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(unix)]
+#[test]
+fn start_shared_vm_marks_already_running_path_explicitly() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-start-already-running-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    prepare_runtime_layout(&temp).expect("prepare runtime layout");
+
+    let runtime_root = temp.join("runtime");
+    let helpers_root = runtime_root.join("helpers");
+    fs::create_dir_all(&helpers_root).expect("create helpers root");
+    let source_rootfs = temp.join("source-rootfs.raw");
+    fs::write(&source_rootfs, b"rootfs").expect("write rootfs");
+    let kernel_path = helpers_root.join("kernel");
+    fs::write(&kernel_path, b"kernel").expect("write kernel");
+    let initrd_path = helpers_root.join("initrd");
+    fs::write(&initrd_path, b"initrd").expect("write initrd");
+
+    let mut relay = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("spawn relay placeholder");
+    let mut guest = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("spawn guest placeholder");
+
+    persist_state(
+        &shared_vm_state_path(&temp),
+        &PersistedSharedVmState {
+            state: AvfLinuxSharedVmLifecycleState::Running,
+            runtime_root: Some(runtime_root.clone()),
+            rootfs_image: Some(shared_vm_rootfs_path(&temp)),
+            kernel_path: Some(shared_vm_boot_kernel_path(&temp)),
+            initrd_path: Some(initrd_path.clone()),
+            runtime_version: Some("runtime-current".to_string()),
+            runtime_shape_digest: Some(shared_vm_runtime_shape_digest(
+                &runtime_root,
+                &source_rootfs,
+                &kernel_path,
+                &initrd_path,
+                "runtime-current",
+            )),
+            updated_at: Some(now_timestamp_string()),
+            last_started_at: Some(now_timestamp_string()),
+            last_saved_at: Some("older-save".to_string()),
+            last_stopped_at: None,
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::ColdBoot),
+            last_stop_outcome: Some(AvfLinuxSharedVmStopOutcome::SavedStateWritten),
+            last_restore_error: Some("old restore error".to_string()),
+            last_save_error: None,
+            relay_pid: Some(relay.id()),
+            guest_agent_pid: Some(guest.id()),
+            simulated: true,
+            notes: vec!["simulated running state".to_string()],
+        },
+    )
+    .expect("persist running state");
+
+    let started = start_shared_vm(
+        &temp,
+        &runtime_root,
+        &source_rootfs,
+        &kernel_path,
+        &initrd_path,
+        "runtime-current".to_string(),
+    )
+    .expect("reuse already-running shared vm");
+
+    assert_eq!(
+        started.last_start_outcome,
+        Some(AvfLinuxSharedVmStartOutcome::AlreadyRunning)
+    );
+    assert!(started.last_restore_error.is_none());
+    assert_eq!(
+        started.last_stop_outcome,
+        Some(AvfLinuxSharedVmStopOutcome::SavedStateWritten)
+    );
+    assert!(relay.try_wait().expect("poll relay").is_none());
+    assert!(guest.try_wait().expect("poll guest").is_none());
+
+    let _ = relay.kill();
+    let _ = guest.kill();
+    let _ = relay.wait();
+    let _ = guest.wait();
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn stop_shared_vm_discards_stale_saved_state_and_reports_cold_stop() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-stop-stale-save-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    prepare_runtime_layout(&temp).expect("prepare runtime layout");
+    let saved_state_path = shared_vm_saved_state_path(&temp);
+    fs::create_dir_all(saved_state_path.parent().expect("saved-state parent"))
+        .expect("create saved-state parent");
+    fs::write(&saved_state_path, b"saved-state").expect("seed saved state");
+    persist_state(
+        &shared_vm_state_path(&temp),
+        &PersistedSharedVmState {
+            state: AvfLinuxSharedVmLifecycleState::Running,
+            runtime_root: None,
+            rootfs_image: None,
+            kernel_path: None,
+            initrd_path: None,
+            runtime_version: None,
+            runtime_shape_digest: None,
+            updated_at: Some(now_timestamp_string()),
+            last_started_at: Some(now_timestamp_string()),
+            last_saved_at: Some("old-save".to_string()),
+            last_stopped_at: None,
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::ColdBoot),
+            last_stop_outcome: None,
+            last_restore_error: None,
+            last_save_error: None,
+            relay_pid: None,
+            guest_agent_pid: None,
+            simulated: true,
+            notes: vec!["running".to_string()],
+        },
+    )
+    .expect("persist running state");
+
+    let stopped = stop_shared_vm(&temp).expect("stop shared vm");
+
+    assert!(matches!(
+        stopped.state,
+        AvfLinuxSharedVmLifecycleState::Stopped
+    ));
+    assert_eq!(
+        stopped.last_stop_outcome,
+        Some(AvfLinuxSharedVmStopOutcome::ColdStop)
+    );
+    assert!(stopped.last_save_error.is_none());
+    assert!(
+        !saved_state_path.exists(),
+        "stale saved state should be removed on cold stop"
+    );
+    assert!(stopped
+        .notes
+        .iter()
+        .any(|note| note.contains("discarded stale workspace VM saved state")));
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(unix)]
+#[test]
+fn stop_shared_vm_discards_stale_saved_state_on_cold_stop() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-stop-cold-discard-save-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    prepare_runtime_layout(&temp).expect("prepare runtime layout");
+
+    let mut relay = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("spawn relay placeholder");
+    let mut guest = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("spawn guest placeholder");
+    let saved_state_path = shared_vm_saved_state_path(&temp);
+    fs::create_dir_all(saved_state_path.parent().expect("saved-state parent"))
+        .expect("create saved-state parent");
+    fs::write(&saved_state_path, b"stale-save").expect("seed stale saved state");
+
+    persist_state(
+        &shared_vm_state_path(&temp),
+        &PersistedSharedVmState {
+            state: AvfLinuxSharedVmLifecycleState::Running,
+            runtime_root: Some(temp.join("runtime")),
+            rootfs_image: Some(shared_vm_rootfs_path(&temp)),
+            kernel_path: Some(temp.join("kernel")),
+            initrd_path: Some(temp.join("initrd")),
+            runtime_version: Some("runtime-current".to_string()),
+            runtime_shape_digest: Some("digest".to_string()),
+            updated_at: Some(now_timestamp_string()),
+            last_started_at: Some(now_timestamp_string()),
+            last_saved_at: Some("older-save".to_string()),
+            last_stopped_at: None,
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::Restored),
+            last_stop_outcome: Some(AvfLinuxSharedVmStopOutcome::SavedStateWritten),
+            last_restore_error: None,
+            last_save_error: None,
+            relay_pid: Some(relay.id()),
+            guest_agent_pid: Some(guest.id()),
+            simulated: true,
+            notes: vec!["simulated running state".to_string()],
+        },
+    )
+    .expect("persist running state");
+
+    let stopped = stop_shared_vm(&temp).expect("stop shared vm");
+    assert!(matches!(
+        stopped.state,
+        AvfLinuxSharedVmLifecycleState::Stopped
+    ));
+    assert_eq!(
+        stopped.last_stop_outcome,
+        Some(AvfLinuxSharedVmStopOutcome::ColdStop)
+    );
+    assert!(stopped.last_save_error.is_none());
+    assert!(
+        !saved_state_path.exists(),
+        "cold stop should discard stale saved state"
+    );
+    assert!(stopped
+        .notes
+        .iter()
+        .any(|note| note.contains("discarded stale workspace VM saved state")));
+
+    assert!(wait_for_child_exit(&mut relay, Duration::from_secs(2)));
+    assert!(wait_for_child_exit(&mut guest, Duration::from_secs(2)));
+    let _ = relay.kill();
+    let _ = guest.kill();
+    let _ = relay.wait();
+    let _ = guest.wait();
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 
@@ -726,6 +1206,10 @@ fn start_shared_vm_forces_restart_when_runtime_changes_while_vm_is_live() {
             last_saved_at: None,
             last_stopped_at: None,
             transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::AlreadyRunning),
+            last_stop_outcome: None,
+            last_restore_error: None,
+            last_save_error: None,
             relay_pid: Some(relay.id()),
             guest_agent_pid: Some(guest.id()),
             simulated: true,
@@ -858,6 +1342,10 @@ fn start_shared_vm_forces_restart_when_runtime_digest_changes_with_same_version(
             last_saved_at: None,
             last_stopped_at: None,
             transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::AlreadyRunning),
+            last_stop_outcome: None,
+            last_restore_error: None,
+            last_save_error: None,
             relay_pid: Some(relay.id()),
             guest_agent_pid: Some(guest.id()),
             simulated: true,

@@ -196,6 +196,7 @@ struct AvfLinuxHelperProbe {
     host_arch: &'static str,
     supported: bool,
     save_restore_supported: bool,
+    save_restore_capability_scope: AvfLinuxSaveRestoreCapabilityScope,
     rosetta_supported: bool,
     notes: Vec<String>,
 }
@@ -224,6 +225,31 @@ enum AvfLinuxSharedVmTransitionStatus {
     Stopped,
     AlreadyStopped,
     Missing,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum AvfLinuxSharedVmStartOutcome {
+    AlreadyRunning,
+    ColdBoot,
+    Restored,
+    ColdBootAfterRestoreFailure,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum AvfLinuxSharedVmStopOutcome {
+    SavedStateWritten,
+    ColdStop,
+    ColdStopAfterSaveFailure,
+    ColdStopSaveUnsupported,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum AvfLinuxSaveRestoreCapabilityScope {
+    HostPrerequisitesOnly,
+    Unsupported,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -280,6 +306,14 @@ struct AvfLinuxSharedVmStateResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     transition_status: Option<AvfLinuxSharedVmTransitionStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    last_start_outcome: Option<AvfLinuxSharedVmStartOutcome>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_stop_outcome: Option<AvfLinuxSharedVmStopOutcome>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_restore_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_save_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     relay_pid: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     guest_agent_pid: Option<u32>,
@@ -312,6 +346,14 @@ struct PersistedSharedVmState {
     last_stopped_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     transition_status: Option<AvfLinuxSharedVmTransitionStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_start_outcome: Option<AvfLinuxSharedVmStartOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_stop_outcome: Option<AvfLinuxSharedVmStopOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_restore_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_save_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     relay_pid: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
