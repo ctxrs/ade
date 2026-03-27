@@ -5,7 +5,21 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 toolchain="${CTX_AVF_GUEST_AGENT_TOOLCHAIN:-stable-aarch64-apple-darwin}"
 cargo_home_bin="${HOME}/.cargo/bin"
 default_path="${cargo_home_bin}:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-target_root="${CTX_AVF_GUEST_HELPER_TARGET_ROOT:-${repo_root}/target}"
+target_root="${CTX_AVF_GUEST_HELPER_TARGET_ROOT:-}"
+
+cargo_target_dir() {
+  local manifest="$1"
+  cargo metadata --manifest-path "$manifest" --format-version 1 --no-deps | python3 -c '
+import json
+import sys
+
+payload = json.load(sys.stdin)
+target_directory = str(payload.get("target_directory", "")).strip()
+if not target_directory:
+    raise SystemExit(1)
+print(target_directory, end="")
+'
+}
 
 if [[ -n "${PATH:-}" ]]; then
   export PATH="${cargo_home_bin}:${PATH}"
@@ -15,6 +29,11 @@ fi
 
 if ! command -v cargo >/dev/null 2>&1; then
   echo "error: cargo not found; install rustup first" >&2
+  exit 1
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "error: python3 not found; install python3 first" >&2
   exit 1
 fi
 
@@ -33,6 +52,10 @@ fi
 if ! command -v cargo-zigbuild >/dev/null 2>&1; then
   echo "error: cargo-zigbuild not found; install with 'cargo install cargo-zigbuild'" >&2
   exit 1
+fi
+
+if [[ -z "${target_root}" ]]; then
+  target_root="${CARGO_TARGET_DIR:-$(cargo_target_dir "${repo_root}/Cargo.toml")}"
 fi
 
 targets=(
