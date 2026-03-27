@@ -1563,6 +1563,61 @@ fn guest_exec_capture_returns_exit_and_stderr_when_guest_exits_early_during_stre
 
 #[cfg(unix)]
 #[test]
+fn guest_exec_capture_over_connected_stream_returns_output_without_reentering_relay() {
+    use std::thread;
+
+    let (mut client, mut server) = UnixStream::pair().expect("unix stream pair");
+    let guest = thread::spawn(move || {
+        let request = read_exec_frame(&mut server)
+            .expect("read request")
+            .expect("request frame");
+        let request = match request {
+            AvfLinuxExecFrame::Request(request) => request,
+            other => panic!("expected request frame, got {other:?}"),
+        };
+        assert_eq!(request.command, "/bin/sh");
+        assert_eq!(request.cwd, "/");
+
+        let close = read_exec_frame(&mut server)
+            .expect("read close stdin")
+            .expect("close stdin frame");
+        assert!(matches!(close, AvfLinuxExecFrame::CloseStdin));
+
+        write_exec_frame(&mut server, &AvfLinuxExecFrame::Stdout(b"12345\n".to_vec()))
+            .expect("write stdout");
+        write_exec_frame(&mut server, &AvfLinuxExecFrame::Stderr(b"warn\n".to_vec()))
+            .expect("write stderr");
+        write_exec_frame(
+            &mut server,
+            &AvfLinuxExecFrame::Exit(AvfLinuxExecExit { exit_code: 0 }),
+        )
+        .expect("write exit");
+    });
+
+    let result = run_guest_exec_capture_over_connected_stream(
+        &mut client,
+        Path::new("/"),
+        "/bin/sh",
+        &["-lc".to_string(), "echo 12345".to_string()],
+        Some("root"),
+        HashMap::new(),
+    )
+    .expect("capture over connected stream should succeed");
+
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        String::from_utf8(result.stdout).expect("stdout utf8"),
+        "12345\n"
+    );
+    assert_eq!(
+        String::from_utf8(result.stderr).expect("stderr utf8"),
+        "warn\n"
+    );
+    guest.join().expect("guest thread");
+}
+
+#[cfg(unix)]
+#[test]
 fn exec_stream_payload_budget_stays_within_shared_vm_safe_limit() {
     const {
         assert!(

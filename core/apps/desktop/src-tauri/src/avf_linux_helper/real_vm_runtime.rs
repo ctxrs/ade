@@ -41,6 +41,64 @@ fn close_guest_exec_stdin_best_effort(writer: &Arc<Mutex<File>>) {
     let _ = write_exec_frame(&mut *guard, &AvfLinuxExecFrame::CloseStdin);
 }
 
+#[cfg(all(target_os = "macos", unix))]
+fn socket_timeout_to_timeval(timeout: Option<Duration>) -> libc::timeval {
+    match timeout {
+        Some(timeout) => libc::timeval {
+            tv_sec: timeout.as_secs().min(libc::time_t::MAX as u64) as libc::time_t,
+            tv_usec: timeout.subsec_micros() as libc::suseconds_t,
+        },
+        None => libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        },
+    }
+}
+
+#[cfg(all(target_os = "macos", unix))]
+fn configure_guest_control_socket_timeout(socket: &File, timeout: Option<Duration>) -> Result<()> {
+    use std::os::fd::AsRawFd;
+
+    let fd = socket.as_raw_fd();
+    let timeout = socket_timeout_to_timeval(timeout);
+    let optlen = std::mem::size_of::<libc::timeval>() as libc::socklen_t;
+    for (option, direction) in [(libc::SO_RCVTIMEO, "read"), (libc::SO_SNDTIMEO, "write")] {
+        let status = unsafe {
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                option,
+                (&timeout as *const libc::timeval).cast(),
+                optlen,
+            )
+        };
+        if status != 0 {
+            return Err(std::io::Error::last_os_error()).with_context(|| {
+                format!("configuring shared AVF Linux guest control {direction} timeout")
+            });
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", unix))]
+fn run_owner_guest_exec_capture(
+    queue: &DispatchQueue,
+    virtual_machine: &Retained<VZVirtualMachine>,
+    cwd: &Path,
+    command: &str,
+    args: &[String],
+    user: Option<&str>,
+    env: HashMap<String, String>,
+) -> Result<GuestExecCaptureResult> {
+    let mut socket = connect_shared_vm_guest_control_socket(queue, virtual_machine)?;
+    configure_guest_control_socket_timeout(
+        &socket,
+        Some(SHARED_VM_READINESS_GUEST_EXEC_IO_TIMEOUT),
+    )?;
+    run_guest_exec_capture_over_connected_stream(&mut socket, cwd, command, args, user, env)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum SharedVmDataDiskGrowthDecision {
     NoAction,
@@ -565,11 +623,15 @@ fn parse_single_u64_output(stdout: &[u8], context: &str) -> Result<u64> {
         .with_context(|| format!("parsing `{raw}` as an integer for {context}"))
 }
 
-#[cfg(unix)]
-fn guest_mount_available_bytes(data_root: &Path, mount_path: &str) -> Result<u64> {
-    let control_socket = shared_vm_control_socket_path(data_root);
-    let result = run_guest_exec_capture(
-        &control_socket,
+#[cfg(all(target_os = "macos", unix))]
+fn guest_mount_available_bytes(
+    queue: &DispatchQueue,
+    virtual_machine: &Retained<VZVirtualMachine>,
+    mount_path: &str,
+) -> Result<u64> {
+    let result = run_owner_guest_exec_capture(
+        queue,
+        virtual_machine,
         Path::new("/"),
         "/bin/sh",
         &[
@@ -578,7 +640,6 @@ fn guest_mount_available_bytes(data_root: &Path, mount_path: &str) -> Result<u64
         ],
         Some("root"),
         HashMap::new(),
-        None,
     )?;
     ensure_guest_exec_success(
         &format!("reading guest free bytes for {mount_path}"),
@@ -594,11 +655,14 @@ fn guest_mount_available_bytes(data_root: &Path, mount_path: &str) -> Result<u64
     )
 }
 
-#[cfg(unix)]
-fn guest_memory_available_bytes(data_root: &Path) -> Result<u64> {
-    let control_socket = shared_vm_control_socket_path(data_root);
-    let result = run_guest_exec_capture(
-        &control_socket,
+#[cfg(all(target_os = "macos", unix))]
+fn guest_memory_available_bytes(
+    queue: &DispatchQueue,
+    virtual_machine: &Retained<VZVirtualMachine>,
+) -> Result<u64> {
+    let result = run_owner_guest_exec_capture(
+        queue,
+        virtual_machine,
         Path::new("/"),
         "/bin/sh",
         &[
@@ -607,7 +671,6 @@ fn guest_memory_available_bytes(data_root: &Path) -> Result<u64> {
         ],
         Some("root"),
         HashMap::new(),
-        None,
     )?;
     ensure_guest_exec_success(
         "reading guest MemAvailable bytes",
@@ -620,11 +683,14 @@ fn guest_memory_available_bytes(data_root: &Path) -> Result<u64> {
     parse_single_u64_output(&result.stdout, "guest MemAvailable bytes")
 }
 
-#[cfg(unix)]
-fn compact_guest_memory_best_effort(data_root: &Path) {
-    let control_socket = shared_vm_control_socket_path(data_root);
-    let _ = run_guest_exec_capture(
-        &control_socket,
+#[cfg(all(target_os = "macos", unix))]
+fn compact_guest_memory_best_effort(
+    queue: &DispatchQueue,
+    virtual_machine: &Retained<VZVirtualMachine>,
+) {
+    let _ = run_owner_guest_exec_capture(
+        queue,
+        virtual_machine,
         Path::new("/"),
         "/bin/sh",
         &[
@@ -633,21 +699,22 @@ fn compact_guest_memory_best_effort(data_root: &Path) {
         ],
         Some("root"),
         HashMap::new(),
-        None,
     );
 }
 
-#[cfg(unix)]
-fn guest_data_disk_device_path(data_root: &Path) -> Result<String> {
-    let control_socket = shared_vm_control_socket_path(data_root);
-    let result = run_guest_exec_capture(
-        &control_socket,
+#[cfg(all(target_os = "macos", unix))]
+fn guest_data_disk_device_path(
+    queue: &DispatchQueue,
+    virtual_machine: &Retained<VZVirtualMachine>,
+) -> Result<String> {
+    let result = run_owner_guest_exec_capture(
+        queue,
+        virtual_machine,
         Path::new("/"),
         "/bin/sh",
         &["-lc".to_string(), "findmnt -n -o SOURCE /ctx".to_string()],
         Some("root"),
         HashMap::new(),
-        None,
     )?;
     ensure_guest_exec_success(
         "reading guest data-disk device for /ctx",
@@ -664,12 +731,16 @@ fn guest_data_disk_device_path(data_root: &Path) -> Result<String> {
     Ok(device)
 }
 
-#[cfg(unix)]
-fn grow_guest_data_disk_filesystem(data_root: &Path, device_path: &str) -> Result<()> {
-    let control_socket = shared_vm_control_socket_path(data_root);
+#[cfg(all(target_os = "macos", unix))]
+fn grow_guest_data_disk_filesystem(
+    queue: &DispatchQueue,
+    virtual_machine: &Retained<VZVirtualMachine>,
+    device_path: &str,
+) -> Result<()> {
     let device_path_escaped = shell_escape_single_quotes(device_path);
-    let result = run_guest_exec_capture(
-        &control_socket,
+    let result = run_owner_guest_exec_capture(
+        queue,
+        virtual_machine,
         Path::new("/"),
         "/bin/sh",
         &[
@@ -681,7 +752,6 @@ fn grow_guest_data_disk_filesystem(data_root: &Path, device_path: &str) -> Resul
         ],
         Some("root"),
         HashMap::new(),
-        None,
     )?;
     ensure_guest_exec_success(
         &format!("growing guest data-disk filesystem on {device_path}"),
@@ -786,6 +856,8 @@ fn request_shared_vm_memory_target_bytes_on_queue(
 
 #[cfg(target_os = "macos")]
 fn maybe_grow_shared_vm_data_disk(
+    queue: &DispatchQueue,
+    virtual_machine: &Retained<VZVirtualMachine>,
     data_root: &Path,
     resource_state: &mut SharedVmResourceState,
 ) -> Result<()> {
@@ -799,7 +871,7 @@ fn maybe_grow_shared_vm_data_disk(
     let current_size_bytes = fs::metadata(&data_disk_path)
         .with_context(|| format!("reading {}", data_disk_path.display()))?
         .len();
-    let guest_free_bytes = guest_mount_available_bytes(data_root, "/ctx")?;
+    let guest_free_bytes = guest_mount_available_bytes(queue, virtual_machine, "/ctx")?;
     let host_available_bytes = host_available_bytes(&data_disk_path)?;
 
     match resolve_shared_vm_data_disk_growth_decision(
@@ -826,8 +898,8 @@ fn maybe_grow_shared_vm_data_disk(
                     new_size_bytes
                 )
             })?;
-            let device_path = guest_data_disk_device_path(data_root)?;
-            grow_guest_data_disk_filesystem(data_root, &device_path)?;
+            let device_path = guest_data_disk_device_path(queue, virtual_machine)?;
+            grow_guest_data_disk_filesystem(queue, virtual_machine, &device_path)?;
             resource_state.last_growth_blocked = false;
             append_shared_vm_log_line(
                 data_root,
@@ -874,22 +946,23 @@ fn maybe_grow_shared_vm_data_disk(
 #[cfg(target_os = "macos")]
 fn maybe_adjust_shared_vm_memory(
     queue: &DispatchQueue,
-    virtual_machine: *const VZVirtualMachine,
+    virtual_machine: &Retained<VZVirtualMachine>,
     data_root: &Path,
     resource_state: &mut SharedVmResourceState,
 ) -> Result<()> {
+    let virtual_machine_ptr = &**virtual_machine as *const VZVirtualMachine;
     let now = std::time::Instant::now();
     if now < resource_state.next_memory_check_at {
         return Ok(());
     }
     resource_state.next_memory_check_at = now + SHARED_VM_MEMORY_POLL_INTERVAL;
 
-    let current_target_bytes = shared_vm_memory_target_bytes_on_queue(queue, virtual_machine)?;
+    let current_target_bytes = shared_vm_memory_target_bytes_on_queue(queue, virtual_machine_ptr)?;
     let host_available_bytes = host_available_memory_bytes(resource_state.host_port)?;
     let guest_available_bytes = if host_available_bytes < SHARED_VM_HOST_MEMORY_RESERVE_BYTES {
         None
     } else {
-        guest_memory_available_bytes(data_root).ok()
+        guest_memory_available_bytes(queue, virtual_machine).ok()
     };
 
     match resolve_shared_vm_memory_balloon_action(
@@ -905,10 +978,10 @@ fn maybe_adjust_shared_vm_memory(
             available_host_bytes,
             aggressive,
         } => {
-            compact_guest_memory_best_effort(data_root);
+            compact_guest_memory_best_effort(queue, virtual_machine);
             request_shared_vm_memory_target_bytes_on_queue(
                 queue,
-                virtual_machine,
+                virtual_machine_ptr,
                 new_target_bytes,
             )?;
             append_shared_vm_log_line(
@@ -933,7 +1006,7 @@ fn maybe_adjust_shared_vm_memory(
         } => {
             request_shared_vm_memory_target_bytes_on_queue(
                 queue,
-                virtual_machine,
+                virtual_machine_ptr,
                 new_target_bytes,
             )?;
             append_shared_vm_log_line(
@@ -1309,7 +1382,12 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
         }
         let vm_state = virtual_machine_state_on_queue(&queue, virtual_machine_ptr)?;
         if vm_state == VZVirtualMachineState::Running {
-            if let Err(err) = maybe_grow_shared_vm_data_disk(data_root, &mut resource_state) {
+            if let Err(err) = maybe_grow_shared_vm_data_disk(
+                &queue,
+                &virtual_machine,
+                data_root,
+                &mut resource_state,
+            ) {
                 let shutdown_note =
                     shutdown_real_shared_vm_for_exit(&queue, &virtual_machine, data_root);
                 let note = format!(
@@ -1321,7 +1399,7 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
             }
             if let Err(err) = maybe_adjust_shared_vm_memory(
                 &queue,
-                virtual_machine_ptr,
+                &virtual_machine,
                 data_root,
                 &mut resource_state,
             ) {
