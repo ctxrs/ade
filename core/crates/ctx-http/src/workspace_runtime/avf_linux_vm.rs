@@ -14,6 +14,8 @@ use tokio::sync::Mutex;
 mod helper_wrappers;
 mod runtime_bootstrap;
 mod runtime_install;
+#[cfg(test)]
+mod tests;
 
 use super::machine::archive::{extract_archive_to_dir, resolve_single_extracted_root};
 use super::machine::downloads::{

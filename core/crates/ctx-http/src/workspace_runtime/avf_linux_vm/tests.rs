@@ -1,5 +1,6 @@
 use super::*;
-use super::helper_wrappers::stop_shared_vm;
+use super::helper_wrappers::{shared_vm_state, start_shared_vm, stop_shared_vm};
+use super::runtime_install as runtime_assets;
 use crate::settings::{ContainerExecutionSettings, ContainerRuntimeKind};
 use crate::workspace_runtime::{
     SharedSubstrateLifecycleManager, SubstrateShutdownOutcome, SubstrateStartupOutcome,
@@ -214,11 +215,13 @@ fn install_bundled_runtime_fixture(dir: &Path) -> (EnvGuard, EnvGuard) {
     std::fs::write(
         &manifest_path,
         serde_json::json!({
+            "version": 1,
             "runtimes": [{
                 "id": AVF_LINUX_GUEST_RUNTIME_ID,
                 "os": std::env::consts::OS,
                 "arch": std::env::consts::ARCH,
                 "version": "bundled-runtime",
+                "sha256": "bundled-sha256",
                 "root": format!(
                     "runtimes/{}/{}/{}",
                     AVF_LINUX_GUEST_RUNTIME_ID,
@@ -911,11 +914,13 @@ async fn ensure_avf_linux_runtime_prefers_bundled_guest_runtime_over_managed_sou
     std::fs::write(
         &manifest_path,
         serde_json::json!({
+            "version": 1,
             "runtimes": [{
                 "id": AVF_LINUX_GUEST_RUNTIME_ID,
                 "os": std::env::consts::OS,
                 "arch": std::env::consts::ARCH,
                 "version": "bundled-runtime",
+                "sha256": "bundled-sha256",
                 "root": format!(
                     "runtimes/{}/{}/{}",
                     AVF_LINUX_GUEST_RUNTIME_ID,
