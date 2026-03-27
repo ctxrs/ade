@@ -627,6 +627,9 @@ fn shared_vm_guest_readiness_args_include_bridge_probe() {
     assert!(rendered.contains("ip link add name \"$probe_bridge\" type bridge"));
     assert!(rendered.contains(SHARED_VM_GUEST_NERDCTL_BIN));
     assert!(rendered.contains(SHARED_VM_GUEST_BUILDKITCTL_BIN));
+    assert!(rendered.contains(&format!(
+        "timeout --kill-after=1s --preserve-status {SHARED_VM_READINESS_PHASE_TIMEOUT_SECONDS}s"
+    )));
 }
 
 #[test]
