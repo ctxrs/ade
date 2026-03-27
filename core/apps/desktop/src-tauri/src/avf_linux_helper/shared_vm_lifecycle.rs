@@ -116,6 +116,7 @@ pub(super) fn start_shared_vm(
     initrd_path: &Path,
     runtime_version: String,
 ) -> Result<AvfLinuxSharedVmStateResponse> {
+    let start_requested_at = std::time::Instant::now();
     for path in [runtime_root, rootfs_image, kernel_path, initrd_path] {
         if !path.exists() {
             bail!(
@@ -234,6 +235,27 @@ pub(super) fn start_shared_vm(
         if let Some(note) = stale_saved_state_note.clone() {
             state.notes.push(note);
         }
+        state.notes.push(format!(
+            "shared VM start reused an already-running {} path in {}",
+            if state.simulated {
+                "simulated"
+            } else {
+                "real AVF"
+            },
+            format_duration_ms(start_requested_at.elapsed())
+        ));
+        let _ = append_shared_vm_log_line(
+            data_root,
+            &format!(
+                "shared VM start reused an already-running {} path in {}",
+                if state.simulated {
+                    "simulated"
+                } else {
+                    "real AVF"
+                },
+                format_duration_ms(start_requested_at.elapsed())
+            ),
+        );
         persist_state(&state_path, &state)?;
         return shared_vm_state(data_root);
     }
@@ -260,10 +282,31 @@ pub(super) fn start_shared_vm(
         vec!["persisting AVF runtime paths before starting the shared VM owner".to_string()];
     persist_state(&state_path, &state)?;
 
+    let saved_state_exists = saved_state_path.exists();
     let readiness_timeout = real_guest_exec_ready_timeout_for_start(
         rootfs_materialization_note.as_deref(),
-        saved_state_path.exists(),
+        saved_state_exists,
     );
+    let timeout_reason = if rootfs_materialization_note.is_some() {
+        "writable rootfs was materialized for this start"
+    } else if saved_state_exists {
+        "saved state already exists"
+    } else {
+        "no saved state exists yet"
+    };
+    append_shared_vm_log_line(
+        data_root,
+        &format!(
+            "shared VM start selected {} path with readiness timeout {} because {}",
+            if saved_state_exists {
+                "restore-candidate"
+            } else {
+                "cold-boot"
+            },
+            format_duration_ms(readiness_timeout),
+            timeout_reason
+        ),
+    )?;
     let (relay_pid, guest_agent_pid, simulated, mut notes) = if cfg!(test) {
         (
             None,
@@ -329,6 +372,11 @@ pub(super) fn start_shared_vm(
     if let Some(note) = stale_saved_state_note {
         notes.push(note);
     }
+    notes.push(format!(
+        "shared VM start reached launch-ready in {} via {} path",
+        format_duration_ms(start_requested_at.elapsed()),
+        if simulated { "simulated" } else { "real AVF" }
+    ));
     state.notes = notes;
     persist_state(&state_path, &state)?;
     shared_vm_state(data_root)

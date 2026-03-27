@@ -609,6 +609,10 @@ fn start_shared_vm_materializes_rootfs_and_data_disk_layout() {
         .notes
         .iter()
         .any(|note| note.contains("AVF Linux data disk")));
+    assert!(started
+        .notes
+        .iter()
+        .any(|note| note.contains("shared VM start reached launch-ready")));
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 
@@ -616,9 +620,35 @@ fn start_shared_vm_materializes_rootfs_and_data_disk_layout() {
 fn shared_vm_guest_readiness_args_include_bridge_probe() {
     let rendered = shared_vm_guest_readiness_args().join(" ");
     assert!(rendered.contains("bridge_probe_failed"));
+    assert!(rendered.contains("readiness phase"));
     assert!(rendered.contains("ip link add name \"$probe_bridge\" type bridge"));
     assert!(rendered.contains(SHARED_VM_GUEST_NERDCTL_BIN));
     assert!(rendered.contains(SHARED_VM_GUEST_BUILDKITCTL_BIN));
+}
+
+#[test]
+fn readiness_phase_line_extraction_filters_non_phase_output() {
+    let stdout = b"hello\n[ctx-avf-linux] readiness phase buildctl ok in 12ms\n";
+    let stderr =
+        b"noise\n[ctx-avf-linux] readiness phase bridge-probe failed with exit 41 after 3ms\n";
+    let lines = extract_shared_vm_readiness_phase_lines(stdout, stderr);
+    assert_eq!(
+        lines,
+        vec![
+            "[ctx-avf-linux] readiness phase buildctl ok in 12ms".to_string(),
+            "[ctx-avf-linux] readiness phase bridge-probe failed with exit 41 after 3ms"
+                .to_string(),
+        ]
+    );
+}
+
+#[test]
+fn readiness_phase_summary_strips_helper_prefix() {
+    let summary = summarize_shared_vm_readiness_phase_lines(&[
+        "[ctx-avf-linux] readiness phase containerd ok in 10ms".to_string(),
+        "[ctx-avf-linux] readiness phase buildkit ok in 11ms".to_string(),
+    ]);
+    assert_eq!(summary, "containerd ok in 10ms, buildkit ok in 11ms");
 }
 
 #[test]

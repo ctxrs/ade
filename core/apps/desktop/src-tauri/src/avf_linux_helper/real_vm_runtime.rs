@@ -82,9 +82,51 @@ pub(super) fn resolve_shared_vm_data_disk_growth_decision(
 }
 
 const MEBIBYTE_BYTES: u64 = 1024 * 1024;
+const SHARED_VM_READINESS_PHASE_PREFIX: &str = "[ctx-avf-linux] readiness phase ";
 
 fn align_down_to_mebibyte(bytes: u64) -> u64 {
     bytes - (bytes % MEBIBYTE_BYTES)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SharedVmGuestReadinessReport {
+    pub(super) attempts: u32,
+    pub(super) elapsed: Duration,
+    pub(super) phase_lines: Vec<String>,
+}
+
+pub(super) fn format_duration_ms(duration: Duration) -> String {
+    format!("{} ms", duration.as_millis())
+}
+
+pub(super) fn extract_shared_vm_readiness_phase_lines(stdout: &[u8], stderr: &[u8]) -> Vec<String> {
+    [stdout, stderr]
+        .into_iter()
+        .flat_map(|buffer| {
+            String::from_utf8_lossy(buffer)
+                .lines()
+                .map(str::trim)
+                .filter(|line| line.starts_with(SHARED_VM_READINESS_PHASE_PREFIX))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+pub(super) fn summarize_shared_vm_readiness_phase_lines(phase_lines: &[String]) -> String {
+    if phase_lines.is_empty() {
+        return "no per-phase readiness timings were emitted".to_string();
+    }
+
+    phase_lines
+        .iter()
+        .map(|line| {
+            line.strip_prefix(SHARED_VM_READINESS_PHASE_PREFIX)
+                .unwrap_or(line.as_str())
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1031,6 +1073,7 @@ pub(super) fn shutdown_real_shared_vm_for_exit(
 
 #[cfg(target_os = "macos")]
 pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
+    let startup_started_at = std::time::Instant::now();
     let state_path = shared_vm_state_path(data_root);
     let mut state = load_state(&state_path)?
         .ok_or_else(|| anyhow::anyhow!("shared VM state is missing at {}", state_path.display()))?;
@@ -1075,8 +1118,16 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
             initrd_path.display()
         ),
     )?;
+    let seed_staging_started_at = std::time::Instant::now();
     let seed_image =
         stage_shared_vm_cloud_init_seed(data_root, &runtime_root, preserving_seed_for_restore)?;
+    append_shared_vm_log_line(
+        data_root,
+        &format!(
+            "prepared AVF cloud-init seed inputs in {}",
+            format_duration_ms(seed_staging_started_at.elapsed())
+        ),
+    )?;
     if let Some(seed_image) = seed_image.as_ref() {
         let action = if preserving_seed_for_restore {
             "reusing"
@@ -1109,7 +1160,15 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
             &queue,
         )
     };
+    let build_started_at = std::time::Instant::now();
     let mut virtual_machine = build_virtual_machine()?;
+    append_shared_vm_log_line(
+        data_root,
+        &format!(
+            "built real AVF Linux VM configuration in {}",
+            format_duration_ms(build_started_at.elapsed())
+        ),
+    )?;
     let mut virtual_machine_ptr = &*virtual_machine as *const VZVirtualMachine;
     let restored_from_saved_state = if shared_vm_save_restore_supported()
         && saved_state_path.is_file()
@@ -1121,6 +1180,7 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
                 saved_state_path.display()
             ),
         )?;
+        let restore_started_at = std::time::Instant::now();
         match restore_virtual_machine_state_on_queue(&queue, virtual_machine_ptr, &saved_state_path)
             .and_then(|_| resume_virtual_machine_on_queue(&queue, virtual_machine_ptr))
         {
@@ -1128,8 +1188,9 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
                 append_shared_vm_log_line(
                     data_root,
                     &format!(
-                        "restored workspace VM state from {} and resumed the guest",
-                        saved_state_path.display()
+                        "restored workspace VM state from {} and resumed the guest in {}",
+                        saved_state_path.display(),
+                        format_duration_ms(restore_started_at.elapsed())
                     ),
                 )?;
                 true
@@ -1138,12 +1199,21 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
                 append_shared_vm_log_line(
                     data_root,
                     &format!(
-                        "restoring saved workspace VM state from {} failed; falling back to a cold boot: {err:#}",
-                        saved_state_path.display()
+                        "restoring saved workspace VM state from {} failed after {}; falling back to a cold boot: {err:#}",
+                        saved_state_path.display(),
+                        format_duration_ms(restore_started_at.elapsed())
                     ),
                 )?;
                 let _ = fs::remove_file(&saved_state_path);
+                let rebuild_started_at = std::time::Instant::now();
                 virtual_machine = build_virtual_machine()?;
+                append_shared_vm_log_line(
+                    data_root,
+                    &format!(
+                        "rebuilt real AVF Linux VM configuration in {} after restore fallback",
+                        format_duration_ms(rebuild_started_at.elapsed())
+                    ),
+                )?;
                 virtual_machine_ptr = &*virtual_machine as *const VZVirtualMachine;
                 false
             }
@@ -1162,11 +1232,13 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
         if !can_start {
             bail!("shared AVF Linux VM cannot be started from its current state");
         }
+        let start_started_at = std::time::Instant::now();
         start_virtual_machine_on_queue(&queue, virtual_machine_ptr)?;
         append_shared_vm_log_line(
             data_root,
             &format!(
-                "real AVF Linux VM started successfully; forwarding host control socket {} to guest vsock port {}",
+                "real AVF Linux VM started successfully in {}; forwarding host control socket {} to guest vsock port {}",
+                format_duration_ms(start_started_at.elapsed()),
                 shared_vm_control_socket_path(data_root).display(),
                 SHARED_VM_GUEST_CONTROL_VSOCK_PORT
             ),
@@ -1192,6 +1264,13 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
             .min(sizing.memory_size_bytes);
     let _watchdog_pid = spawn_shared_vm_memory_watchdog(data_root, std::process::id())
         .context("spawning shared AVF Linux VM memory watchdog")?;
+    append_shared_vm_log_line(
+        data_root,
+        &format!(
+            "real AVF Linux VM entered the owner control loop after {}",
+            format_duration_ms(startup_started_at.elapsed())
+        ),
+    )?;
     let mut resource_state =
         SharedVmResourceState::new(sizing.memory_size_bytes, memory_floor_bytes);
     loop {
@@ -1446,11 +1525,42 @@ fn spawn_real_shared_vm_owner_once(data_root: &Path, readiness_timeout: Duration
         .stderr(Stdio::from(log_file_err))
         .spawn()
         .context("spawning workspace AVF VM owner process")?;
+    let owner_started_at = std::time::Instant::now();
+    let control_socket_wait_started_at = std::time::Instant::now();
     wait_for_control_socket(data_root)?;
-    if let Err(err) = wait_for_real_guest_exec_ready(data_root, readiness_timeout) {
-        stop_shared_vm_server(child.id());
-        return Err(err);
+    append_shared_vm_log_line(
+        data_root,
+        &format!(
+            "shared AVF Linux VM control socket became available in {} after owner spawn",
+            format_duration_ms(control_socket_wait_started_at.elapsed())
+        ),
+    )?;
+    let readiness = match wait_for_real_guest_exec_ready(data_root, readiness_timeout) {
+        Ok(report) => report,
+        Err(err) => {
+            stop_shared_vm_server(child.id());
+            return Err(err);
+        }
+    };
+    for phase_line in &readiness.phase_lines {
+        append_shared_vm_log_line(data_root, phase_line)?;
     }
+    append_shared_vm_log_line(
+        data_root,
+        &format!(
+            "shared AVF Linux guest readiness completed in {} across {} attempt(s): {}",
+            format_duration_ms(readiness.elapsed),
+            readiness.attempts,
+            summarize_shared_vm_readiness_phase_lines(&readiness.phase_lines),
+        ),
+    )?;
+    append_shared_vm_log_line(
+        data_root,
+        &format!(
+            "shared AVF Linux VM owner reached launch-ready in {} total",
+            format_duration_ms(owner_started_at.elapsed())
+        ),
+    )?;
     Ok(child.id())
 }
 
@@ -1583,12 +1693,13 @@ pub(super) fn shared_vm_guest_readiness_args() -> Vec<String> {
     vec![
         String::from("-lc"),
         format!(
-            "set -e; systemctl is-active --quiet {containerd_service}; systemctl is-active --quiet {buildkit_service}; {nerdctl_bin} version >/dev/null 2>&1; {buildctl_bin} --addr {buildkit_socket} debug workers >/dev/null 2>&1; probe_bridge=ctxavfbr0; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true; if ! ip link add name \"$probe_bridge\" type bridge >/tmp/ctx-avf-bridge-probe.out 2>/tmp/ctx-avf-bridge-probe.err; then cat /tmp/ctx-avf-bridge-probe.out >&2 || true; cat /tmp/ctx-avf-bridge-probe.err >&2 || true; echo \"[ctx-avf-linux] bridge_probe_failed\" >&2; exit 41; fi; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true",
+            "set -e; ctx_uptime_ms() {{ awk '{{print int($1 * 1000)}}' /proc/uptime; }}; ctx_run_phase() {{ phase=\"$1\"; shift; start_ms=$(ctx_uptime_ms); if \"$@\"; then end_ms=$(ctx_uptime_ms); echo \"{phase_prefix}${{phase}} ok in $((end_ms-start_ms))ms\" >&2; else status=$?; end_ms=$(ctx_uptime_ms); echo \"{phase_prefix}${{phase}} failed with exit $status after $((end_ms-start_ms))ms\" >&2; return $status; fi; }}; ctx_run_phase containerd systemctl is-active --quiet {containerd_service}; ctx_run_phase buildkit systemctl is-active --quiet {buildkit_service}; ctx_run_phase nerdctl sh -lc '{nerdctl_bin} version >/dev/null 2>&1'; ctx_run_phase buildctl sh -lc '{buildctl_bin} --addr {buildkit_socket} debug workers >/dev/null 2>&1'; ctx_run_phase bridge-probe sh -lc 'probe_bridge=ctxavfbr0; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true; if ! ip link add name \"$probe_bridge\" type bridge >/tmp/ctx-avf-bridge-probe.out 2>/tmp/ctx-avf-bridge-probe.err; then cat /tmp/ctx-avf-bridge-probe.out >&2 || true; cat /tmp/ctx-avf-bridge-probe.err >&2 || true; echo \"[ctx-avf-linux] bridge_probe_failed\" >&2; exit 41; fi; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true'",
             containerd_service = SHARED_VM_CONTAINERD_SERVICE_NAME,
             buildkit_service = SHARED_VM_BUILDKIT_SERVICE_NAME,
             nerdctl_bin = SHARED_VM_GUEST_NERDCTL_BIN,
             buildctl_bin = SHARED_VM_GUEST_BUILDKITCTL_BIN,
             buildkit_socket = SHARED_VM_GUEST_BUILDKIT_SOCKET,
+            phase_prefix = SHARED_VM_READINESS_PHASE_PREFIX,
         ),
     ]
 }
@@ -1618,12 +1729,18 @@ pub(super) fn real_guest_exec_ready_timeout_for_start(
 }
 
 #[cfg(unix)]
-pub(super) fn wait_for_real_guest_exec_ready(data_root: &Path, timeout: Duration) -> Result<()> {
+pub(super) fn wait_for_real_guest_exec_ready(
+    data_root: &Path,
+    timeout: Duration,
+) -> Result<SharedVmGuestReadinessReport> {
     let control_socket = shared_vm_control_socket_path(data_root);
+    let started_at = std::time::Instant::now();
     let deadline = std::time::Instant::now() + timeout;
     let mut last_err: Option<anyhow::Error> = None;
     let readiness_args = shared_vm_guest_readiness_args();
+    let mut attempts = 0_u32;
     while std::time::Instant::now() < deadline {
+        attempts += 1;
         match run_guest_exec_capture(
             &control_socket,
             Path::new("/"),
@@ -1633,7 +1750,16 @@ pub(super) fn wait_for_real_guest_exec_ready(data_root: &Path, timeout: Duration
             HashMap::new(),
             None,
         ) {
-            Ok(result) if result.exit_code == 0 => return Ok(()),
+            Ok(result) if result.exit_code == 0 => {
+                return Ok(SharedVmGuestReadinessReport {
+                    attempts,
+                    elapsed: started_at.elapsed(),
+                    phase_lines: extract_shared_vm_readiness_phase_lines(
+                        &result.stdout,
+                        &result.stderr,
+                    ),
+                });
+            }
             Ok(result) => {
                 let stderr = String::from_utf8_lossy(&result.stderr).trim().to_string();
                 let stdout = String::from_utf8_lossy(&result.stdout).trim().to_string();
@@ -1650,15 +1776,26 @@ pub(super) fn wait_for_real_guest_exec_ready(data_root: &Path, timeout: Duration
         }
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
-    Err(last_err.unwrap_or_else(|| {
-        anyhow::anyhow!(
-            "timed out waiting for real AVF guest exec readiness via {}",
-            control_socket.display()
-        )
-    }))
+    let timeout_message = format!(
+        "timed out waiting for real AVF guest exec readiness via {} after {} attempt(s) over {}",
+        control_socket.display(),
+        attempts,
+        format_duration_ms(started_at.elapsed())
+    );
+    match last_err {
+        Some(err) => Err(err.context(timeout_message)),
+        None => Err(anyhow::anyhow!(timeout_message)),
+    }
 }
 
 #[cfg(not(unix))]
-pub(super) fn wait_for_real_guest_exec_ready(_data_root: &Path, _timeout: Duration) -> Result<()> {
-    Ok(())
+pub(super) fn wait_for_real_guest_exec_ready(
+    _data_root: &Path,
+    _timeout: Duration,
+) -> Result<SharedVmGuestReadinessReport> {
+    Ok(SharedVmGuestReadinessReport {
+        attempts: 0,
+        elapsed: Duration::ZERO,
+        phase_lines: Vec::new(),
+    })
 }
