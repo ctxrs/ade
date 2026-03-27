@@ -182,6 +182,26 @@ pub fn container_runtime_available(data_root: &Path) -> bool {
     sandbox_cli_available(data_root)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SandboxCommandBackend {
+    NativeContainer,
+    SharedVmContainer,
+}
+
+pub(crate) fn selected_sandbox_command_backend(data_root: &Path) -> Result<SandboxCommandBackend> {
+    if explicit_sandbox_cli_binary_path().is_some() {
+        return Ok(SandboxCommandBackend::NativeContainer);
+    }
+    #[cfg(target_os = "macos")]
+    if super::avf_linux_runtime_available() && super::avf_linux_vm::helper_path().is_ok() {
+        return Ok(SandboxCommandBackend::SharedVmContainer);
+    }
+    if sandbox_cli_binary_path(data_root).is_some() {
+        return Ok(SandboxCommandBackend::NativeContainer);
+    }
+    anyhow::bail!("sandbox container CLI unavailable");
+}
+
 pub async fn sandbox_engine_ready(data_root: &Path) -> Result<bool> {
     let mut cmd = sandbox_container_command(data_root)?;
     cmd.arg("info");

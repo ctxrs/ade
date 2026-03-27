@@ -63,9 +63,9 @@ fn builder_run_args(
 }
 
 pub async fn ensure_builder_ready(data_root: &Path) -> Result<()> {
-    if !harness_runtime::container_runtime_available(data_root) {
-        anyhow::bail!("container runtime unavailable");
-    }
+    harness_runtime::ensure_builder_backend_launch_ready_with_observer(data_root, None)
+        .await
+        .context("ensuring sandbox runtime launch readiness")?;
     harness_runtime::prefetch_container_image(
         data_root,
         harness_runtime::default_container_image(),
@@ -120,6 +120,8 @@ pub async fn run_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
 
     fn make_shell_command(script: &str) -> Command {
         #[cfg(windows)]
@@ -202,5 +204,125 @@ mod tests {
             .await
             .expect("fast command should succeed");
         assert!(out.status.success());
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(prev) = self.prev.take() {
+                std::env::set_var(self.key, prev);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn write_default_harness_bundle(root: &Path) -> PathBuf {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        let bundle_dir = root.join("bundle");
+        let images_dir = bundle_dir.join("images");
+        fs::create_dir_all(&images_dir).expect("create bundle image dir");
+        let tar_path = images_dir.join("ctx-harness.tar");
+        fs::write(&tar_path, b"bundle image tar").expect("write bundle image tar");
+        let manifest = serde_json::json!({
+            "version": 1,
+            "providers": [],
+            "runtimes": [],
+            "images": [{
+                "id": "ctx-harness",
+                "version": "test",
+                "os": "linux",
+                "arch": std::env::consts::ARCH,
+                "sha256": "test-sha",
+                "tar": "images/ctx-harness.tar",
+                "image": harness_runtime::default_container_image(),
+            }],
+        });
+        fs::write(
+            bundle_dir.join("manifest.json"),
+            serde_json::to_vec_pretty(&manifest).expect("serialize manifest"),
+        )
+        .expect("write bundle manifest");
+        fs::set_permissions(&tar_path, fs::Permissions::from_mode(0o644))
+            .expect("chmod bundle image tar");
+        bundle_dir
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ensure_builder_ready_starts_clean_cold_runtime_before_image_prewarm() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        let _serial = crate::test_support::sandbox_cli_env_test_lock()
+            .lock()
+            .await;
+        let temp = tempdir().expect("tempdir");
+        let bundle_dir = write_default_harness_bundle(temp.path());
+        let log_path = temp.path().join("sandbox-cli.log");
+        let machine_present = temp.path().join("machine-present");
+        let machine_started = temp.path().join("machine-started");
+        let image_present = temp.path().join("image-present");
+        let sandbox_cli_path = temp.path().join("sandbox-cli.sh");
+        fs::write(
+            &sandbox_cli_path,
+            format!(
+                "#!/bin/sh\nLOG=\"{log}\"\nMACHINE_PRESENT=\"{machine_present}\"\nSTARTED=\"{machine_started}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'engine unavailable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  if [ -f \"$MACHINE_PRESENT\" ]; then\n    printf '[{{\"Name\":\"%s\"}}]\\n' \"$3\"\n    exit 0\n  fi\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  : > \"$MACHINE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    printf '[{{}}]\\n'\n    exit 0\n  fi\n  echo 'image missing' >&2\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  printf 'Loaded image: {image}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+                log = log_path.display(),
+                machine_present = machine_present.display(),
+                machine_started = machine_started.display(),
+                image_present = image_present.display(),
+                image = harness_runtime::default_container_image(),
+            ),
+        )
+        .expect("write sandbox CLI shim");
+        fs::set_permissions(&sandbox_cli_path, fs::Permissions::from_mode(0o755))
+            .expect("chmod sandbox CLI shim");
+
+        let _bundle = EnvVarGuard::set("CTX_BUNDLE_DIR", &bundle_dir.to_string_lossy());
+        let _sandbox_cli = EnvVarGuard::set(
+            crate::harness_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+            &sandbox_cli_path.to_string_lossy(),
+        );
+        let _test_override = EnvVarGuard::unset("CTX_TEST_SANDBOX_CLI_AVAILABLE");
+
+        ensure_builder_ready(temp.path())
+            .await
+            .expect("builder should become ready from a clean cold runtime");
+
+        let log = fs::read_to_string(&log_path).expect("read sandbox CLI log");
+        assert!(
+            log.contains("machine start ctx-"),
+            "expected cold builder readiness to start the sandbox machine: {log}"
+        );
+        assert!(
+            log.contains("load -i"),
+            "expected builder readiness to load the harness image after runtime startup: {log}"
+        );
+        assert!(
+            log.contains("run --rm"),
+            "expected builder readiness command to execute once the runtime and image were ready: {log}"
+        );
     }
 }

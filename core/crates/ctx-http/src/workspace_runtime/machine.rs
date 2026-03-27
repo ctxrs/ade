@@ -1,5 +1,4 @@
 use super::*;
-#[cfg(test)]
 use sha2::Digest;
 
 #[cfg(test)]
@@ -21,13 +20,11 @@ pub(super) use self::downloads::{
     download_managed_artifact, ManagedArtifactDownloadReporter, ManagedDownloadAggregate,
 };
 
-#[cfg(test)]
 pub(super) fn sandbox_machine_name(data_root: &Path) -> String {
     let hash = sandbox_machine_data_root_hash(data_root);
     format!("{CTX_SANDBOX_MACHINE_PREFIX}-{hash}")
 }
 
-#[cfg(test)]
 fn sandbox_machine_data_root_hash(data_root: &Path) -> String {
     let mut hasher = sha2::Sha256::new();
     hasher.update(data_root.to_string_lossy().as_bytes());

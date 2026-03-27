@@ -545,7 +545,10 @@ impl SharedWarmupOperations for BlockingWarmupOperations {
         observer: Arc<dyn HarnessSetupObserver>,
     ) -> Result<()> {
         self.runtime_runs.fetch_add(1, Ordering::SeqCst);
-        observer.on_phase(HarnessSetupPhase::MachineStartOrInit, "warming launch-ready runtime");
+        observer.on_phase(
+            HarnessSetupPhase::MachineStartOrInit,
+            "warming launch-ready runtime",
+        );
         self.runtime_release
             .acquire()
             .await
@@ -1783,13 +1786,14 @@ async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtim
         .await
         .expect("read AVF runtime state");
     assert_eq!(runtime_state, (true, true));
-    let launch_ready = crate::harness_runtime::selected_runtime_launch_ready(
-        data_dir.path(),
-        &settings.container,
-    )
-    .await
-    .expect("read AVF launch-ready state");
-    assert!(!launch_ready, "runtime scope should not boot the shared AVF VM");
+    let launch_ready =
+        crate::harness_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
+            .await
+            .expect("read AVF launch-ready state");
+    assert!(
+        !launch_ready,
+        "runtime scope should not boot the shared AVF VM"
+    );
 
     for server in servers {
         server.abort();
@@ -1828,13 +1832,14 @@ async fn runtime_prewarm_launch_ready_scope_starts_shared_vm_for_avf_linux_runti
     assert!(terminal.logs.iter().any(|line| {
         line.phase == HarnessSetupPhase::Ready && line.message == "sandbox runtime is launch-ready"
     }));
-    let launch_ready = crate::harness_runtime::selected_runtime_launch_ready(
-        data_dir.path(),
-        &settings.container,
-    )
-    .await
-    .expect("read AVF launch-ready state");
-    assert!(launch_ready, "launch-ready scope should boot the shared AVF VM");
+    let launch_ready =
+        crate::harness_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
+            .await
+            .expect("read AVF launch-ready state");
+    assert!(
+        launch_ready,
+        "launch-ready scope should boot the shared AVF VM"
+    );
 
     for server in servers {
         server.abort();
@@ -2344,6 +2349,99 @@ async fn runtime_prewarm_emits_initial_log_before_runtime_work_completes() {
     let _terminal =
         wait_for_execution_launch_terminal(&coordinator, &snapshot.job_id, Duration::from_secs(10))
             .await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn runtime_prewarm_launch_ready_scope_starts_native_runtime_before_loading_image() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _serial = env_var_test_lock().lock().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let bundle_dir = data_dir.path().join("bundle");
+    let bundle_images_dir = bundle_dir.join("images");
+    std::fs::create_dir_all(&bundle_images_dir).expect("create bundle images dir");
+    let tar_path = bundle_images_dir.join("ctx-harness.tar");
+    std::fs::write(&tar_path, b"bundle image tar").expect("write bundled image tar");
+    let default_image = crate::harness_runtime::default_container_image();
+    let manifest = serde_json::json!({
+        "version": 1,
+        "providers": [],
+        "runtimes": [],
+        "images": [{
+            "id": "ctx-harness",
+            "version": "test",
+            "os": "linux",
+            "arch": std::env::consts::ARCH,
+            "sha256": "test-sha",
+            "tar": "images/ctx-harness.tar",
+            "image": default_image,
+        }],
+    });
+    std::fs::write(
+        bundle_dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).expect("serialize manifest"),
+    )
+    .expect("write bundle manifest");
+
+    let machine_present = data_dir.path().join("machine-present");
+    let machine_started = data_dir.path().join("machine-started");
+    let image_present = data_dir.path().join("image-present");
+    let log_path = data_dir.path().join("sandbox-cli.log");
+    let sandbox_cli_path = data_dir.path().join("sandbox-cli.sh");
+    std::fs::write(
+        &sandbox_cli_path,
+        format!(
+            "#!/bin/sh\nLOG=\"{log}\"\nMACHINE_PRESENT=\"{machine_present}\"\nSTARTED=\"{machine_started}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  if [ -f \"$MACHINE_PRESENT\" ]; then\n    printf '[{{\"State\":\"stopped\",\"Resources\":{{\"Memory\":4096}}}}]\\n'\n    exit 0\n  fi\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  : > \"$MACHINE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    printf '[{{}}]\\n'\n    exit 0\n  fi\n  echo 'image missing' >&2\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  printf 'Loaded image: {image}\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+            log = log_path.display(),
+            machine_present = machine_present.display(),
+            machine_started = machine_started.display(),
+            image_present = image_present.display(),
+            image = default_image,
+        ),
+    )
+    .expect("write sandbox CLI shim");
+    std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod sandbox CLI shim");
+
+    let _bundle_dir = EnvVarGuard::set("CTX_BUNDLE_DIR", &bundle_dir.to_string_lossy());
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let _test_sandbox_cli = EnvVarGuard::unset("CTX_TEST_SANDBOX_CLI_AVAILABLE");
+
+    let coordinator = test_coordinator(data_dir.path().to_path_buf());
+    let settings = sandbox_execution_settings();
+    let launch = coordinator
+        .start_runtime_prewarm(settings.clone(), RuntimePrewarmScope::LaunchReady)
+        .await;
+    let terminal =
+        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(10))
+            .await;
+
+    assert_eq!(terminal.state, ExecutionLaunchState::Ready);
+    assert!(terminal.logs.iter().any(|line| {
+        line.phase == HarnessSetupPhase::Ready && line.message == "sandbox runtime is launch-ready"
+    }));
+    let launch_ready =
+        crate::harness_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
+            .await
+            .expect("read native launch-ready state");
+    assert!(
+        launch_ready,
+        "launch-ready scope should start the sandbox runtime and load the image"
+    );
+
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI log");
+    assert!(
+        log.contains("machine start "),
+        "expected launch-ready prewarm to start the sandbox machine: {log}"
+    );
+    assert!(
+        log.contains("load -i"),
+        "expected launch-ready prewarm to load the harness image after runtime startup: {log}"
+    );
 }
 
 #[tokio::test]

@@ -124,7 +124,6 @@ pub(super) fn proxy_runtime_path(data_root: &Path) -> PathBuf {
     proxy_runtime_root(data_root).join(EGRESS_PROXY_BINARY)
 }
 
-#[cfg(test)]
 pub(super) fn sandbox_machine_required() -> bool {
     cfg!(target_os = "macos") || cfg!(target_os = "windows")
 }
