@@ -226,6 +226,25 @@ pub(crate) async fn prewarm_selected_runtime_for_launch_with_observer(
     }
 }
 
+pub(crate) fn selected_shared_substrate_lifecycle(
+    data_root: &Path,
+) -> Result<Option<SubstrateLifecycleRecord>> {
+    if !matches!(
+        selected_sandbox_command_backend(data_root),
+        Ok(SandboxCommandBackend::SharedVmContainer)
+    ) {
+        return Ok(None);
+    }
+
+    let settings = ContainerExecutionSettings {
+        runtime: ContainerRuntimeKind::SharedVmContainer,
+        ..ContainerExecutionSettings::default()
+    };
+    SharedSubstrateLifecycleManager::new(data_root)
+        .read_shared_runtime_lifecycle(&settings)
+        .map(Some)
+}
+
 pub(crate) async fn selected_runtime_launch_ready(
     data_root: &Path,
     settings: &ContainerExecutionSettings,
@@ -925,6 +944,7 @@ pub struct HarnessRuntimeManager {
     last_activity: StdMutex<Instant>,
     active_runtime_operations: AtomicUsize,
     active_prewarm_artifact_operations: AtomicUsize,
+    ops_events: crate::ops_events::OpsEvents,
 }
 
 #[cfg(test)]

@@ -256,7 +256,10 @@ impl ExecutionSetupCoordinator {
         perf_telemetry: PerfTelemetry,
         ops_events: OpsEvents,
     ) -> Self {
-        let operations = Arc::new(DefaultWarmupOperations::new(data_root.clone()));
+        let operations = Arc::new(DefaultWarmupOperations::new(
+            data_root.clone(),
+            ops_events.clone(),
+        ));
         Self::new_with_operations(data_root, harness, perf_telemetry, ops_events, operations)
     }
 

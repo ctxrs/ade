@@ -141,7 +141,10 @@ impl AppState {
         let telemetry = Telemetry::new(data_root.clone());
         let ops_events = OpsEvents::new(data_root.clone());
         let perf_telemetry = PerfTelemetry::new(data_root.clone());
-        let harness_runtime = Arc::new(HarnessRuntimeManager::new(data_root.clone()));
+        let harness_runtime = Arc::new(HarnessRuntimeManager::new_with_ops_events(
+            data_root.clone(),
+            ops_events.clone(),
+        ));
         let storage_guard = crate::storage_guard::StorageGuardRuntime::new(&data_root);
         let running_sessions = Arc::new(Mutex::new(HashSet::new()));
         let terminals = Arc::new(TerminalManager::default());

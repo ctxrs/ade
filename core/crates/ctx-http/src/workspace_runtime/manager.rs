@@ -2,13 +2,37 @@ use super::*;
 
 impl HarnessRuntimeManager {
     pub fn new(data_root: PathBuf) -> Self {
+        Self::new_with_ops_events(data_root.clone(), crate::ops_events::OpsEvents::new(data_root))
+    }
+
+    pub fn new_with_ops_events(
+        data_root: PathBuf,
+        ops_events: crate::ops_events::OpsEvents,
+    ) -> Self {
         Self {
             data_root,
             containers: Mutex::new(HashMap::new()),
             last_activity: StdMutex::new(Instant::now()),
             active_runtime_operations: AtomicUsize::new(0),
             active_prewarm_artifact_operations: AtomicUsize::new(0),
+            ops_events,
         }
+    }
+
+    fn emit_substrate_lifecycle_ops_event(
+        &self,
+        record: &SubstrateLifecycleRecord,
+        source: &'static str,
+        workspace_id: Option<String>,
+    ) {
+        let event = crate::ops_events::substrate_lifecycle_observed_event(
+            record,
+            crate::ops_events::SubstrateLifecycleOpsEventContext {
+                source,
+                workspace_id,
+            },
+        );
+        self.ops_events.emit(event);
     }
 
     pub(crate) fn note_runtime_activity(&self) {
@@ -76,10 +100,11 @@ impl HarnessRuntimeManager {
             runtime: ContainerRuntimeKind::SharedVmContainer,
             ..ContainerExecutionSettings::default()
         };
-        SharedSubstrateLifecycleManager::new(&self.data_root)
+        let record = SharedSubstrateLifecycleManager::new(&self.data_root)
             .save_or_stop_shared_runtime(&settings)
-            .await
-            .map(Some)
+            .await?;
+        self.emit_substrate_lifecycle_ops_event(&record, "shared_substrate_save_or_stop", None);
+        Ok(Some(record))
     }
 
     pub async fn prepare(
@@ -331,7 +356,7 @@ impl HarnessRuntimeManager {
         let proxy_host = if substrate.is_shared_vm_backed() {
             let sandbox_instance_id =
                 ctx_core::models::sandbox_instance_id_for_workspace(workspace.id);
-            SharedSubstrateLifecycleManager::new(&self.data_root)
+            let record = SharedSubstrateLifecycleManager::new(&self.data_root)
                 .ensure_workspace_runtime_ready(
                     sandbox_instance_id,
                     &settings.container,
@@ -339,6 +364,11 @@ impl HarnessRuntimeManager {
                 )
                 .await
                 .context("shared VM substrate is unavailable")?;
+            self.emit_substrate_lifecycle_ops_event(
+                &record,
+                "workspace_container_after_readiness",
+                Some(workspace.id.0.to_string()),
+            );
             AVF_GUEST_HOST_GATEWAY
         } else {
             "host.containers.internal"
@@ -599,9 +629,14 @@ impl HarnessRuntimeManager {
         if substrate.is_shared_vm_backed() {
             let sandbox_instance_id =
                 ctx_core::models::sandbox_instance_id_for_workspace(workspace.id);
-            SharedSubstrateLifecycleManager::new(&self.data_root)
+            let record = SharedSubstrateLifecycleManager::new(&self.data_root)
                 .ensure_workspace_runtime_ready(sandbox_instance_id, settings, observer)
                 .await?;
+            self.emit_substrate_lifecycle_ops_event(
+                &record,
+                "container_prepare",
+                Some(workspace.id.0.to_string()),
+            );
         }
         self.ensure_container_after_machine_ready(EnsureContainerRequest {
             workspace,

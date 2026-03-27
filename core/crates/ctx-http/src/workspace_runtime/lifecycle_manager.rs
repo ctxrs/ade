@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::{anyhow, bail, Result};
 use ctx_core::ids::SandboxInstanceId;
 use ctx_core::models::SandboxSubstrate;
+use serde::Serialize;
 
 use super::avf_linux_vm::{
     probe_helper, AvfLinuxSharedVmLifecycleState, AvfLinuxSharedVmStartOutcome,
@@ -14,7 +15,7 @@ use super::{
     UbuntuSandboxSubstrate,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct SubstrateLifecycleRecord {
     pub(crate) substrate: SandboxSubstrate,
     pub(crate) startup_selection: Option<SubstrateStartupSelection>,
@@ -30,6 +31,24 @@ pub(crate) struct SharedSubstrateLifecycleManager<'a> {
 impl<'a> SharedSubstrateLifecycleManager<'a> {
     pub(crate) fn new(data_root: &'a Path) -> Self {
         Self { data_root }
+    }
+
+    pub(crate) fn read_shared_runtime_lifecycle(
+        &self,
+        settings: &ContainerExecutionSettings,
+    ) -> Result<SubstrateLifecycleRecord> {
+        let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime);
+        substrate.ensure_enabled()?;
+        if !substrate.is_shared_vm_backed() {
+            bail!(
+                "shared substrate lifecycle manager only supports the shared VM container runtime"
+            );
+        }
+
+        let sandbox_instance_id = SandboxInstanceId(uuid::Uuid::nil());
+        let orchestrator = SharedVmLifecycleOrchestrator::new(self.data_root);
+        let state = orchestrator.workspace_runtime_state(sandbox_instance_id)?;
+        current_lifecycle_record_from_state(substrate.substrate, &state)
     }
 
     pub(crate) async fn ensure_shared_runtime_ready(
@@ -48,15 +67,12 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
         let sandbox_instance_id = SandboxInstanceId(uuid::Uuid::nil());
         let orchestrator = SharedVmLifecycleOrchestrator::new(self.data_root);
         let state = orchestrator.workspace_runtime_state(sandbox_instance_id)?;
-        let startup_selection = startup_selection_from_state(&state)?;
+        let current = current_lifecycle_record_from_state(substrate.substrate, &state)?;
+        let startup_selection = current
+            .startup_selection
+            .ok_or_else(|| anyhow!("shared VM substrate startup selection is unavailable"))?;
         if matches!(startup_selection, SubstrateStartupSelection::Reuse) {
-            return Ok(SubstrateLifecycleRecord {
-                substrate: substrate.substrate,
-                startup_selection: Some(startup_selection),
-                startup_outcome: Some(SubstrateStartupOutcome::Reuse),
-                shutdown_outcome: map_shutdown_outcome(state.last_stop_outcome),
-                simulated: state.simulated,
-            });
+            return Ok(current);
         }
 
         let started = orchestrator
@@ -135,15 +151,12 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
 
         let orchestrator = SharedVmLifecycleOrchestrator::new(self.data_root);
         let state = orchestrator.workspace_runtime_state(sandbox_instance_id)?;
-        let startup_selection = startup_selection_from_state(&state)?;
+        let current = current_lifecycle_record_from_state(substrate.substrate, &state)?;
+        let startup_selection = current
+            .startup_selection
+            .ok_or_else(|| anyhow!("shared VM substrate startup selection is unavailable"))?;
         if matches!(startup_selection, SubstrateStartupSelection::Reuse) {
-            return Ok(SubstrateLifecycleRecord {
-                substrate: substrate.substrate,
-                startup_selection: Some(startup_selection),
-                startup_outcome: Some(SubstrateStartupOutcome::Reuse),
-                shutdown_outcome: map_shutdown_outcome(state.last_stop_outcome),
-                simulated: state.simulated,
-            });
+            return Ok(current);
         }
 
         let started = orchestrator
@@ -157,6 +170,32 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
             simulated: started.simulated,
         })
     }
+}
+
+fn current_lifecycle_record_from_state(
+    substrate: SandboxSubstrate,
+    state: &AvfLinuxSharedVmState,
+) -> Result<SubstrateLifecycleRecord> {
+    let startup_selection = startup_selection_from_state(state)?;
+    let startup_outcome = if matches!(
+        (state.state, startup_selection),
+        (
+            AvfLinuxSharedVmLifecycleState::Running,
+            SubstrateStartupSelection::Reuse
+        )
+    ) {
+        Some(SubstrateStartupOutcome::Reuse)
+    } else {
+        map_startup_outcome(state.last_start_outcome)
+    };
+
+    Ok(SubstrateLifecycleRecord {
+        substrate,
+        startup_selection: Some(startup_selection),
+        startup_outcome,
+        shutdown_outcome: map_shutdown_outcome(state.last_stop_outcome),
+        simulated: state.simulated,
+    })
 }
 
 fn startup_selection_from_state(

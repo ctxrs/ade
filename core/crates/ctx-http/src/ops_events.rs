@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 use tokio::time::MissedTickBehavior;
 
 use crate::logs;
+use crate::workspace_runtime::SubstrateLifecycleRecord;
 
 const OPS_LOG_PREFIX: &str = "ops-events-";
 const OPS_LOG_SUFFIX: &str = ".jsonl";
@@ -87,6 +88,29 @@ impl OpsEvent {
             meta: None,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct SubstrateLifecycleOpsEventContext {
+    pub source: &'static str,
+    pub workspace_id: Option<String>,
+}
+
+pub fn substrate_lifecycle_observed_event(
+    record: &SubstrateLifecycleRecord,
+    context: SubstrateLifecycleOpsEventContext,
+) -> OpsEvent {
+    let mut event = OpsEvent::new("info", "substrate_lifecycle_observed");
+    event.meta = Some(serde_json::json!({
+        "source": context.source,
+        "workspace_id": context.workspace_id,
+        "substrate": record.substrate,
+        "startup_selection": record.startup_selection,
+        "startup_outcome": record.startup_outcome,
+        "shutdown_outcome": record.shutdown_outcome,
+        "simulated": record.simulated,
+    }));
+    event
 }
 
 #[derive(Clone)]

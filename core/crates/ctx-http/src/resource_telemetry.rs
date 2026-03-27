@@ -16,6 +16,7 @@ use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use crate::resource_utilization::{
     ProviderMemoryRollup, ResourceProcess, ResourceProcesses, SystemSnapshot,
 };
+use crate::workspace_runtime::SubstrateLifecycleRecord;
 
 const RESOURCE_LOG_PREFIX: &str = "resource-util-";
 const RESOURCE_LOG_SUFFIX: &str = ".jsonl";
@@ -66,6 +67,8 @@ struct ResourceTelemetryEvent {
     processes: ResourceProcesses,
     provider_sessions: HashMap<String, u64>,
     provider_memory_rollups: Vec<ProviderMemoryRollup>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shared_substrate_lifecycle: Option<SubstrateLifecycleRecord>,
 }
 
 pub fn spawn_resource_telemetry(state: Arc<AppState>) {
@@ -115,6 +118,10 @@ async fn sample_once(
     };
 
     let provider_sessions = provider_session_counts(state).await;
+    let shared_substrate_lifecycle =
+        crate::workspace_runtime::selected_shared_substrate_lifecycle(&state.core.data_root)
+            .ok()
+            .flatten();
     let processes = trim_processes(processes, cfg.child_limit);
     let event = ResourceTelemetryEvent {
         occurred_at: Utc::now(),
@@ -123,6 +130,7 @@ async fn sample_once(
         processes: processes.clone(),
         provider_sessions: provider_sessions.clone(),
         provider_memory_rollups,
+        shared_substrate_lifecycle: shared_substrate_lifecycle.clone(),
     };
 
     append_local_log(&state.core.data_root, &event, cfg).await?;
@@ -139,6 +147,7 @@ async fn sample_once(
         &system,
         &processes,
         &provider_sessions,
+        shared_substrate_lifecycle.as_ref(),
     );
     Ok(())
 }
@@ -215,6 +224,7 @@ fn export_remote_metrics(
     system: &SystemSnapshot,
     processes: &ResourceProcesses,
     provider_sessions: &HashMap<String, u64>,
+    shared_substrate_lifecycle: Option<&SubstrateLifecycleRecord>,
 ) {
     let labels = HashMap::new();
     perf.export_remote_metric(PerfMetric {
@@ -302,6 +312,57 @@ fn export_remote_metrics(
             labels,
         });
     }
+
+    if let Some(record) = shared_substrate_lifecycle {
+        let mut base_labels = HashMap::new();
+        if let Some(substrate) = serde_label(&record.substrate) {
+            base_labels.insert("substrate".to_string(), substrate);
+        }
+
+        perf.export_remote_metric(PerfMetric {
+            name: "ctx.substrate.simulated".to_string(),
+            kind: PerfMetricKind::Gauge,
+            unit: "bool".to_string(),
+            value: if record.simulated { 1.0 } else { 0.0 },
+            labels: base_labels.clone(),
+        });
+
+        if let Some(startup_selection) = record.startup_selection.as_ref().and_then(serde_label) {
+            let mut labels = base_labels.clone();
+            labels.insert("startup_selection".to_string(), startup_selection);
+            perf.export_remote_metric(PerfMetric {
+                name: "ctx.substrate.startup_selection".to_string(),
+                kind: PerfMetricKind::Gauge,
+                unit: "state".to_string(),
+                value: 1.0,
+                labels,
+            });
+        }
+
+        if let Some(startup_outcome) = record.startup_outcome.as_ref().and_then(serde_label) {
+            let mut labels = base_labels.clone();
+            labels.insert("startup_outcome".to_string(), startup_outcome);
+            perf.export_remote_metric(PerfMetric {
+                name: "ctx.substrate.startup_outcome".to_string(),
+                kind: PerfMetricKind::Gauge,
+                unit: "state".to_string(),
+                value: 1.0,
+                labels,
+            });
+        }
+
+        if let Some(shutdown_outcome) = record.shutdown_outcome.as_ref().and_then(serde_label) {
+            let mut labels = base_labels;
+            labels.insert("shutdown_outcome".to_string(), shutdown_outcome);
+            perf.export_remote_metric(PerfMetric {
+                name: "ctx.substrate.shutdown_outcome".to_string(),
+                kind: PerfMetricKind::Gauge,
+                unit: "state".to_string(),
+                value: 1.0,
+                labels,
+            });
+        }
+    }
 }
 
 #[derive(Default)]
@@ -309,6 +370,13 @@ struct ProviderAggregate {
     cpu_pct: f64,
     mem_bytes: u64,
     process_count: u64,
+}
+
+fn serde_label<T: Serialize>(value: &T) -> Option<String> {
+    serde_json::to_value(value)
+        .ok()?
+        .as_str()
+        .map(ToString::to_string)
 }
 
 async fn append_local_log(

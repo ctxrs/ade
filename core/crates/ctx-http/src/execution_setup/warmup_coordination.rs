@@ -40,11 +40,15 @@ pub(crate) trait SharedWarmupOperations: Send + Sync {
 #[derive(Clone)]
 pub(crate) struct DefaultWarmupOperations {
     data_root: PathBuf,
+    ops_events: crate::ops_events::OpsEvents,
 }
 
 impl DefaultWarmupOperations {
-    pub(crate) fn new(data_root: PathBuf) -> Self {
-        Self { data_root }
+    pub(crate) fn new(data_root: PathBuf, ops_events: crate::ops_events::OpsEvents) -> Self {
+        Self {
+            data_root,
+            ops_events,
+        }
     }
 }
 
@@ -73,12 +77,36 @@ impl SharedWarmupOperations for DefaultWarmupOperations {
             &settings.container,
             Some(observer.as_ref()),
         )
-        .await
+        .await?;
+        if let Some(record) = harness_runtime::selected_shared_substrate_lifecycle(&self.data_root)?
+        {
+            self.ops_events
+                .emit(crate::ops_events::substrate_lifecycle_observed_event(
+                    &record,
+                    crate::ops_events::SubstrateLifecycleOpsEventContext {
+                        source: "runtime_prewarm_launch_ready",
+                        workspace_id: None,
+                    },
+                ));
+        }
+        Ok(())
     }
 
     async fn warm_builder(&self, observer: Arc<dyn HarnessSetupObserver>) -> Result<()> {
         observer.on_phase(HarnessSetupPhase::ImageLoad, "warming container builder");
-        crate::container_builder::ensure_builder_ready(&self.data_root).await
+        crate::container_builder::ensure_builder_ready(&self.data_root).await?;
+        if let Some(record) = harness_runtime::selected_shared_substrate_lifecycle(&self.data_root)?
+        {
+            self.ops_events
+                .emit(crate::ops_events::substrate_lifecycle_observed_event(
+                    &record,
+                    crate::ops_events::SubstrateLifecycleOpsEventContext {
+                        source: "builder_prewarm",
+                        workspace_id: None,
+                    },
+                ));
+        }
+        Ok(())
     }
 }
 
