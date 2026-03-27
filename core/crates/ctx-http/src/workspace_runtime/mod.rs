@@ -249,7 +249,19 @@ pub(crate) fn launch_ready_gap_message(
 ) -> String {
     match runtime_kind {
         ContainerRuntimeKind::NativeContainer => {
-            format!("runtime prewarm completed but runtime target '{runtime_target}' is not launch-ready")
+            if !vm_ready {
+                format!(
+                    "runtime prewarm completed but local sandbox runtime is not launch-ready for '{runtime_target}'"
+                )
+            } else if !image_ready {
+                format!(
+                    "runtime prewarm completed but launch image for '{runtime_target}' is not present in the local sandbox runtime"
+                )
+            } else {
+                format!(
+                    "runtime prewarm completed but runtime target '{runtime_target}' is not launch-ready"
+                )
+            }
         }
         ContainerRuntimeKind::SharedVmContainer => {
             if !vm_ready {
@@ -263,6 +275,40 @@ pub(crate) fn launch_ready_gap_message(
             } else {
                 format!("runtime prewarm completed but runtime target '{runtime_target}' is not launch-ready")
             }
+        }
+    }
+}
+
+pub(crate) fn launch_ready_detail_message(runtime_kind: &ContainerRuntimeKind) -> &'static str {
+    match runtime_kind {
+        ContainerRuntimeKind::NativeContainer => "local sandbox runtime and launch image are ready",
+        ContainerRuntimeKind::SharedVmContainer => "shared VM substrate and launch image are ready",
+    }
+}
+
+pub(crate) fn runtime_prewarm_ready_message(
+    runtime_kind: &ContainerRuntimeKind,
+    launch_ready: bool,
+) -> &'static str {
+    if launch_ready {
+        return launch_ready_detail_message(runtime_kind);
+    }
+
+    match runtime_kind {
+        ContainerRuntimeKind::NativeContainer => "local sandbox runtime and launch image are ready",
+        ContainerRuntimeKind::SharedVmContainer => {
+            "shared VM runtime artifacts are ready; launch image loads when the shared VM starts"
+        }
+    }
+}
+
+pub(crate) fn workspace_launch_ready_message(runtime_kind: &ContainerRuntimeKind) -> &'static str {
+    match runtime_kind {
+        ContainerRuntimeKind::NativeContainer => {
+            "workspace sandbox is ready in the local sandbox runtime"
+        }
+        ContainerRuntimeKind::SharedVmContainer => {
+            "workspace sandbox is ready on the shared VM substrate"
         }
     }
 }

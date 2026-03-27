@@ -45,6 +45,18 @@ const JOB_LOG_CAP: usize = 400;
 const JOB_HISTORY_CAP: usize = 128;
 const LAUNCH_EVENT_CHANNEL_CAP: usize = 256;
 
+fn runtime_prewarm_ready_phase_message(
+    runtime_requested: bool,
+    runtime_kind: &crate::settings::ContainerRuntimeKind,
+    launch_ready: bool,
+) -> &'static str {
+    if runtime_requested {
+        harness_runtime::runtime_prewarm_ready_message(runtime_kind, launch_ready)
+    } else {
+        "container builder is ready"
+    }
+}
+
 fn lock_or_recover<'a, T>(mutex: &'a StdMutex<T>, name: &str) -> std::sync::MutexGuard<'a, T> {
     match mutex.lock() {
         Ok(guard) => guard,
@@ -52,6 +64,48 @@ fn lock_or_recover<'a, T>(mutex: &'a StdMutex<T>, name: &str) -> std::sync::Mute
             tracing::warn!(mutex = name, "mutex poisoned; recovering");
             poisoned.into_inner()
         }
+    }
+}
+
+#[cfg(test)]
+mod ready_message_tests {
+    use super::runtime_prewarm_ready_phase_message;
+    use crate::settings::ContainerRuntimeKind;
+
+    #[test]
+    fn runtime_prewarm_ready_phase_message_uses_runtime_specific_semantics() {
+        assert_eq!(
+            runtime_prewarm_ready_phase_message(
+                true,
+                &ContainerRuntimeKind::SharedVmContainer,
+                false,
+            ),
+            "shared VM runtime artifacts are ready; launch image loads when the shared VM starts"
+        );
+        assert_eq!(
+            runtime_prewarm_ready_phase_message(
+                true,
+                &ContainerRuntimeKind::SharedVmContainer,
+                true,
+            ),
+            "shared VM substrate and launch image are ready"
+        );
+        assert_eq!(
+            runtime_prewarm_ready_phase_message(true, &ContainerRuntimeKind::NativeContainer, true,),
+            "local sandbox runtime and launch image are ready"
+        );
+    }
+
+    #[test]
+    fn runtime_prewarm_ready_phase_message_preserves_builder_message() {
+        assert_eq!(
+            runtime_prewarm_ready_phase_message(
+                false,
+                &ContainerRuntimeKind::SharedVmContainer,
+                false,
+            ),
+            "container builder is ready"
+        );
     }
 }
 
@@ -476,7 +530,13 @@ impl ExecutionSetupCoordinator {
                         &settings.container,
                     )
                     .await;
-                    self.emit_phase(&job, HarnessSetupPhase::Ready, "workspace runtime is ready");
+                    self.emit_phase(
+                        &job,
+                        HarnessSetupPhase::Ready,
+                        harness_runtime::workspace_launch_ready_message(
+                            &settings.container.runtime,
+                        ),
+                    );
                 }
                 let terminal = job.mark_terminal(ExecutionLaunchState::Ready, None);
                 if let Some(completed) = terminal.completed_phase {
@@ -578,41 +638,41 @@ impl ExecutionSetupCoordinator {
 
         match run_result {
             Ok(()) => {
-                    if shared_job.runtime_requested() {
-                        if shared_job.requires_launch_ready_runtime() {
-                            match harness_runtime::selected_runtime_launch_readiness_state(
-                                &self.data_root,
-                                &settings.container,
-                            )
-                            .await
-                            {
-                                Ok((true, true)) => {}
-                                Ok((vm_ready, image_ready)) => {
-                                    self.finish_runtime_prewarm_error(
-                                        shared_job,
-                                        job,
-                                        launch_started,
-                                        anyhow::anyhow!(harness_runtime::launch_ready_gap_message(
-                                            settings.container.runtime,
-                                            &runtime_target,
-                                            vm_ready,
-                                            image_ready,
-                                        )),
-                                    )
-                                    .await;
-                                    return;
-                                }
-                                Err(err) => {
-                                    self.finish_runtime_prewarm_error(
-                                        shared_job,
-                                        job,
-                                        launch_started,
-                                        err,
-                                    )
-                                    .await;
-                                    return;
-                                }
+                if shared_job.runtime_requested() {
+                    if shared_job.requires_launch_ready_runtime() {
+                        match harness_runtime::selected_runtime_launch_readiness_state(
+                            &self.data_root,
+                            &settings.container,
+                        )
+                        .await
+                        {
+                            Ok((true, true)) => {}
+                            Ok((vm_ready, image_ready)) => {
+                                self.finish_runtime_prewarm_error(
+                                    shared_job,
+                                    job,
+                                    launch_started,
+                                    anyhow::anyhow!(harness_runtime::launch_ready_gap_message(
+                                        settings.container.runtime,
+                                        &runtime_target,
+                                        vm_ready,
+                                        image_ready,
+                                    )),
+                                )
+                                .await;
+                                return;
                             }
+                            Err(err) => {
+                                self.finish_runtime_prewarm_error(
+                                    shared_job,
+                                    job,
+                                    launch_started,
+                                    err,
+                                )
+                                .await;
+                                return;
+                            }
+                        }
                     } else {
                         match self.startup_runtime_state(&settings.container).await {
                             Ok((machine_ready, image_present)) => {
@@ -658,27 +718,12 @@ impl ExecutionSetupCoordinator {
                     }
                 }
                 if !matches!(settings.mode, ExecutionMode::Host) {
-                    let ready_message = if shared_job.runtime_requested() {
-                        if shared_job.requires_launch_ready_runtime() {
-                            if matches!(
-                                settings.container.runtime,
-                                crate::settings::ContainerRuntimeKind::SharedVmContainer
-                            ) {
-                                "sandbox VM substrate and image are launch-ready"
-                            } else {
-                                "sandbox runtime is launch-ready"
-                            }
-                        } else if matches!(
-                            settings.container.runtime,
-                            crate::settings::ContainerRuntimeKind::SharedVmContainer
-                        ) {
-                            "sandbox runtime artifacts are ready"
-                        } else {
-                            "container runtime is ready"
-                        }
-                    } else {
-                        "container builder is ready"
-                    };
+                    let runtime_kind = &settings.container.runtime;
+                    let ready_message = runtime_prewarm_ready_phase_message(
+                        shared_job.runtime_requested(),
+                        runtime_kind,
+                        shared_job.requires_launch_ready_runtime(),
+                    );
                     self.emit_phase(&job, HarnessSetupPhase::Ready, ready_message);
                 }
                 if let Some(terminal) = shared_job.complete_ready() {
