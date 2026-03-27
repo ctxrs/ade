@@ -62,6 +62,26 @@ impl HarnessRuntimeManager {
         }
     }
 
+    pub(crate) async fn save_or_stop_selected_shared_substrate(
+        &self,
+    ) -> Result<Option<SubstrateLifecycleRecord>> {
+        if !matches!(
+            selected_sandbox_command_backend(&self.data_root),
+            Ok(SandboxCommandBackend::SharedVmContainer)
+        ) {
+            return Ok(None);
+        }
+
+        let settings = ContainerExecutionSettings {
+            runtime: ContainerRuntimeKind::SharedVmContainer,
+            ..ContainerExecutionSettings::default()
+        };
+        SharedSubstrateLifecycleManager::new(&self.data_root)
+            .save_or_stop_shared_runtime(&settings)
+            .await
+            .map(Some)
+    }
+
     pub async fn prepare(
         &self,
         workspace: &Workspace,

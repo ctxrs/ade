@@ -76,6 +76,42 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
             .await
     }
 
+    pub(crate) async fn save_or_stop_shared_runtime(
+        &self,
+        settings: &ContainerExecutionSettings,
+    ) -> Result<SubstrateLifecycleRecord> {
+        let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime);
+        substrate.ensure_enabled()?;
+        if !substrate.is_shared_vm_backed() {
+            bail!(
+                "shared substrate lifecycle manager only supports the shared VM container runtime"
+            );
+        }
+
+        let sandbox_instance_id = SandboxInstanceId(uuid::Uuid::nil());
+        let orchestrator = SharedVmLifecycleOrchestrator::new(self.data_root);
+        let state = orchestrator.workspace_runtime_state(sandbox_instance_id)?;
+        if matches!(
+            state.state,
+            AvfLinuxSharedVmLifecycleState::Missing | AvfLinuxSharedVmLifecycleState::Stopped
+        ) {
+            return Ok(SubstrateLifecycleRecord {
+                substrate: substrate.substrate,
+                startup_outcome: None,
+                shutdown_outcome: map_shutdown_outcome(state.last_stop_outcome),
+                simulated: state.simulated,
+            });
+        }
+
+        let stopped = orchestrator.save_or_stop_shared_runtime()?;
+        Ok(SubstrateLifecycleRecord {
+            substrate: substrate.substrate,
+            startup_outcome: None,
+            shutdown_outcome: map_shutdown_outcome(stopped.last_stop_outcome),
+            simulated: stopped.simulated,
+        })
+    }
+
     async fn ensure_shared_vm_runtime_ready(
         &self,
         sandbox_instance_id: SandboxInstanceId,

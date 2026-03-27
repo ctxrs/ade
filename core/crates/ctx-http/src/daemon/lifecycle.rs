@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use anyhow::Result;
 use chrono::Utc;
 
 use ctx_providers::adapters::{ProviderAdapter, ProviderRestartMode};
@@ -191,9 +192,35 @@ pub(crate) async fn shutdown_provider_adapters(state: &Arc<AppState>, reason: &s
     }
 }
 
+pub(crate) async fn shutdown_shared_substrate(
+    state: &Arc<AppState>,
+    reason: &str,
+) -> Result<Option<crate::workspace_runtime::SubstrateLifecycleRecord>> {
+    let Some(record) = state
+        .execution
+        .harness
+        .save_or_stop_selected_shared_substrate()
+        .await?
+    else {
+        return Ok(None);
+    };
+
+    tracing::info!(
+        shutdown_reason = reason,
+        substrate = ?record.substrate,
+        shutdown_outcome = ?record.shutdown_outcome,
+        simulated = record.simulated,
+        "shared substrate save-or-stop requested for daemon shutdown"
+    );
+    Ok(Some(record))
+}
+
 async fn trigger_daemon_shutdown(state: Arc<AppState>, reason: &str) {
     tracing::info!("daemon shutdown requested: {reason}");
     shutdown_provider_adapters(&state, reason).await;
+    if let Err(err) = shutdown_shared_substrate(&state, reason).await {
+        tracing::warn!("failed to save-or-stop shared substrate during daemon shutdown: {err:#}");
+    }
     let _ = state.core.shutdown_tx.send(());
 }
 

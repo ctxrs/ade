@@ -5,7 +5,7 @@ use ctx_core::ids::{SandboxInstanceId, WorkspaceId, WorktreeId};
 
 use super::avf_linux_vm::{
     ensure_guest_worktree_from_host_copy as ensure_avf_linux_guest_worktree_from_host_copy,
-    workspace_vm_state as avf_linux_workspace_vm_state, AvfLinuxSharedVmState,
+    stop_shared_vm, workspace_vm_state as avf_linux_workspace_vm_state, AvfLinuxSharedVmState,
 };
 use super::{
     avf_linux_runtime_state, container_image_present, ensure_avf_linux_shared_vm_ready_with_observer,
@@ -82,6 +82,10 @@ impl<'a> SharedVmLifecycleOrchestrator<'a> {
         sandbox_instance_id: SandboxInstanceId,
     ) -> Result<AvfLinuxSharedVmState> {
         avf_linux_workspace_vm_state(self.data_root, WorkspaceId(sandbox_instance_id.0))
+    }
+
+    pub(crate) fn save_or_stop_shared_runtime(&self) -> Result<AvfLinuxSharedVmState> {
+        stop_shared_vm(self.data_root)
     }
 
     pub(crate) async fn launch_readiness_state(

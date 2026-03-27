@@ -175,8 +175,6 @@ pub(crate) fn start_workspace_vm(
     start_shared_vm(&vm_data_root, runtime)
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
 pub(crate) fn stop_shared_vm(data_root: &Path) -> Result<AvfLinuxSharedVmState> {
     invoke_helper_json(&["stop-workspace-vm", &data_root.to_string_lossy()])
 }
