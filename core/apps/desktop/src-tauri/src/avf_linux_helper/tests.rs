@@ -73,7 +73,9 @@ fn resolve_avf_vm_sizing_defaults_to_host_logical_cpu_count_and_reserved_memory(
     assert_eq!(sizing.cpu_count, 12);
     assert_eq!(sizing.memory_size_bytes, gibibytes(28));
     assert!(sizing.policy_note.contains("host logical CPU count"));
-    assert!(sizing.policy_note.contains("host RAM minus 4096 MiB reserve"));
+    assert!(sizing
+        .policy_note
+        .contains("host RAM minus 4096 MiB reserve"));
 }
 
 #[test]
@@ -177,7 +179,9 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
     assert!(user_data.contains(".ctx-avf-data-disk-ready"));
     assert!(user_data.contains("\"$mount_root/system/containerd\""));
     assert!(user_data.contains("\"$mount_root/system/buildkit\""));
-    assert!(user_data.contains("mount --bind \"$mount_root/system/containerd\" /var/lib/containerd"));
+    assert!(
+        user_data.contains("mount --bind \"$mount_root/system/containerd\" /var/lib/containerd")
+    );
     assert!(user_data.contains("mount --bind \"$mount_root/system/buildkit\" /var/lib/buildkit"));
     assert!(user_data.contains("StandardOutput=journal+console"));
     assert!(user_data.contains("starting guest-agent"));
@@ -302,8 +306,7 @@ fn resolve_shared_vm_data_disk_growth_decision_returns_no_action_when_guest_free
 }
 
 #[test]
-fn resolve_shared_vm_data_disk_growth_decision_grows_when_guest_free_is_low_and_host_has_budget()
-{
+fn resolve_shared_vm_data_disk_growth_decision_grows_when_guest_free_is_low_and_host_has_budget() {
     let decision = resolve_shared_vm_data_disk_growth_decision(
         SHARED_VM_INITIAL_DATA_DISK_BYTES,
         gibibytes(1),
@@ -498,7 +501,10 @@ fn persist_shared_vm_owner_error_state_marks_vm_error_and_clears_owner_processes
     let persisted = load_state(&state_path)
         .expect("load state")
         .expect("persisted state");
-    assert!(matches!(persisted.state, AvfLinuxSharedVmLifecycleState::Error));
+    assert!(matches!(
+        persisted.state,
+        AvfLinuxSharedVmLifecycleState::Error
+    ));
     assert!(persisted.relay_pid.is_none());
     assert!(persisted.guest_agent_pid.is_none());
     assert_eq!(
@@ -541,15 +547,15 @@ fn shared_vm_state_marks_missing_owner_with_memory_pressure_request_as_error() {
         },
     )
     .expect("persist running state");
-    request_shared_vm_memory_pressure_stop(
-        &temp,
-        "watchdog requested an emergency stop",
-    )
-    .expect("request emergency stop");
+    request_shared_vm_memory_pressure_stop(&temp, "watchdog requested an emergency stop")
+        .expect("request emergency stop");
 
     let response = shared_vm_state(&temp).expect("shared vm state");
 
-    assert!(matches!(response.state, AvfLinuxSharedVmLifecycleState::Error));
+    assert!(matches!(
+        response.state,
+        AvfLinuxSharedVmLifecycleState::Error
+    ));
     assert!(response.transition_status.is_none());
     assert!(response
         .notes
@@ -618,13 +624,18 @@ fn shared_vm_guest_readiness_args_include_bridge_probe() {
 #[test]
 fn cold_boot_timeout_extends_when_rootfs_is_materialized() {
     assert_eq!(
-        real_guest_exec_ready_timeout_for_rootfs_materialization(None),
+        real_guest_exec_ready_timeout_for_start(None, true),
         default_real_guest_exec_ready_timeout()
     );
     assert_eq!(
-        real_guest_exec_ready_timeout_for_rootfs_materialization(Some(
-            "copied rootfs image into helper-managed writable path"
-        )),
+        real_guest_exec_ready_timeout_for_start(
+            Some("copied rootfs image into helper-managed writable path"),
+            true
+        ),
+        cold_boot_real_guest_exec_ready_timeout()
+    );
+    assert_eq!(
+        real_guest_exec_ready_timeout_for_start(None, false),
         cold_boot_real_guest_exec_ready_timeout()
     );
 }
@@ -700,7 +711,11 @@ fn resetting_writable_runtime_state_removes_only_derived_files() {
     for path in [&control_socket, &guest_agent_socket, &saved_state, &rootfs] {
         assert!(!path.exists(), "{} should be removed", path.display());
     }
-    assert!(data_disk.exists(), "{} should be preserved", data_disk.display());
+    assert!(
+        data_disk.exists(),
+        "{} should be preserved",
+        data_disk.display()
+    );
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 
@@ -1002,8 +1017,11 @@ fn shared_vm_relay_restores_blocking_mode_for_nonblocking_clients() {
 
         let payload = vec![b'x'; AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD];
         for _ in 0..2048 {
-            write_exec_frame(&mut guest_server, &AvfLinuxExecFrame::Stdout(payload.clone()))
-                .expect("write stdout frame burst");
+            write_exec_frame(
+                &mut guest_server,
+                &AvfLinuxExecFrame::Stdout(payload.clone()),
+            )
+            .expect("write stdout frame burst");
         }
         write_exec_frame(
             &mut guest_server,
@@ -1190,6 +1208,76 @@ fn non_pty_guest_exec_cli_forwards_piped_stdin_into_capture_path() {
         "imported\n"
     );
     assert!(stderr.is_empty());
+    server.join().expect("server thread");
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(unix)]
+#[test]
+fn guest_exec_capture_returns_exit_and_stderr_when_guest_exits_early_during_streamed_stdin() {
+    use std::io::Cursor;
+    use std::os::unix::net::UnixListener;
+    use std::thread;
+
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-cli-early-exit-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+    let socket_path = temp.join("shared-vm-control.sock");
+    let listener = UnixListener::bind(&socket_path).expect("bind control socket");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept control socket");
+        let request = read_exec_frame(&mut stream)
+            .expect("read request")
+            .expect("request frame");
+        let request = match request {
+            AvfLinuxExecFrame::Request(request) => request,
+            other => panic!("expected request frame, got {other:?}"),
+        };
+        assert_eq!(request.command, "/usr/bin/tar");
+        assert_eq!(request.cwd, "/");
+
+        let stdin = read_exec_frame(&mut stream)
+            .expect("read first stdin frame")
+            .expect("stdin frame");
+        assert!(matches!(stdin, AvfLinuxExecFrame::Stdin(_)));
+
+        write_exec_frame(
+            &mut stream,
+            &AvfLinuxExecFrame::Stderr(b"tar: Unexpected EOF in archive\n".to_vec()),
+        )
+        .expect("write stderr frame");
+        write_exec_frame(
+            &mut stream,
+            &AvfLinuxExecFrame::Exit(AvfLinuxExecExit { exit_code: 2 }),
+        )
+        .expect("write exit frame");
+    });
+
+    let mut stdin = Cursor::new(vec![b'x'; AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD * 4]);
+    let result = run_guest_exec_capture(
+        &socket_path,
+        Path::new("/"),
+        "/usr/bin/tar",
+        &["-xpf".to_string(), "-".to_string()],
+        None,
+        HashMap::new(),
+        Some(&mut stdin),
+    )
+    .expect("capture path should surface the guest exit instead of a broken pipe");
+
+    assert_eq!(result.exit_code, 2);
+    assert!(result.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(result.stderr).expect("stderr utf8"),
+        "tar: Unexpected EOF in archive\n"
+    );
+
     server.join().expect("server thread");
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }

@@ -72,8 +72,7 @@ pub(super) fn shared_vm_state(data_root: &Path) -> Result<AvfLinuxSharedVmStateR
             if let Some(pid) = state.guest_agent_pid.take() {
                 stop_shared_vm_server(pid);
             }
-            let memory_pressure_note =
-                shared_vm_memory_pressure_stop_requested_note(data_root)?;
+            let memory_pressure_note = shared_vm_memory_pressure_stop_requested_note(data_root)?;
             state.state = if memory_pressure_note.is_some() {
                 AvfLinuxSharedVmLifecycleState::Error
             } else {
@@ -261,8 +260,9 @@ pub(super) fn start_shared_vm(
         vec!["persisting AVF runtime paths before starting the shared VM owner".to_string()];
     persist_state(&state_path, &state)?;
 
-    let readiness_timeout = real_guest_exec_ready_timeout_for_rootfs_materialization(
+    let readiness_timeout = real_guest_exec_ready_timeout_for_start(
         rootfs_materialization_note.as_deref(),
+        saved_state_path.exists(),
     );
     let (relay_pid, guest_agent_pid, simulated, mut notes) = if cfg!(test) {
         (
@@ -427,10 +427,7 @@ pub(super) fn clear_shared_vm_shutdown_request(data_root: &Path) {
     }
 }
 
-pub(super) fn request_shared_vm_memory_pressure_stop(
-    data_root: &Path,
-    note: &str,
-) -> Result<()> {
+pub(super) fn request_shared_vm_memory_pressure_stop(data_root: &Path, note: &str) -> Result<()> {
     let path = shared_vm_memory_pressure_request_path(data_root);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;

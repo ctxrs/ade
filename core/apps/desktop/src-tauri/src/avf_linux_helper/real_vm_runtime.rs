@@ -116,10 +116,8 @@ pub(super) fn resolve_shared_vm_memory_balloon_action(
 ) -> SharedVmMemoryBalloonAction {
     let ceiling_bytes = align_down_to_mebibyte(ceiling_bytes.max(MEBIBYTE_BYTES));
     let floor_bytes = align_down_to_mebibyte(floor_bytes.max(MEBIBYTE_BYTES)).min(ceiling_bytes);
-    let current_target_bytes = align_down_to_mebibyte(current_target_bytes).clamp(
-        floor_bytes,
-        ceiling_bytes,
-    );
+    let current_target_bytes =
+        align_down_to_mebibyte(current_target_bytes).clamp(floor_bytes, ceiling_bytes);
 
     if host_available_bytes < SHARED_VM_HOST_MEMORY_EMERGENCY_BYTES {
         if current_target_bytes <= floor_bytes {
@@ -548,7 +546,10 @@ fn guest_mount_available_bytes(data_root: &Path, mount_path: &str) -> Result<u64
             stderr: result.stderr.clone(),
         },
     )?;
-    parse_single_u64_output(&result.stdout, &format!("guest free bytes for {mount_path}"))
+    parse_single_u64_output(
+        &result.stdout,
+        &format!("guest free bytes for {mount_path}"),
+    )
 }
 
 #[cfg(unix)]
@@ -601,10 +602,7 @@ fn guest_data_disk_device_path(data_root: &Path) -> Result<String> {
         &control_socket,
         Path::new("/"),
         "/bin/sh",
-        &[
-            "-lc".to_string(),
-            "findmnt -n -o SOURCE /ctx".to_string(),
-        ],
+        &["-lc".to_string(), "findmnt -n -o SOURCE /ctx".to_string()],
         Some("root"),
         HashMap::new(),
         None,
@@ -844,8 +842,7 @@ fn maybe_adjust_shared_vm_memory(
     }
     resource_state.next_memory_check_at = now + SHARED_VM_MEMORY_POLL_INTERVAL;
 
-    let current_target_bytes =
-        shared_vm_memory_target_bytes_on_queue(queue, virtual_machine)?;
+    let current_target_bytes = shared_vm_memory_target_bytes_on_queue(queue, virtual_machine)?;
     let host_available_bytes = host_available_memory_bytes(resource_state.host_port)?;
     let guest_available_bytes = if host_available_bytes < SHARED_VM_HOST_MEMORY_RESERVE_BYTES {
         None
@@ -1190,10 +1187,9 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
     let min_memory = unsafe { VZVirtualMachineConfiguration::minimumAllowedMemorySize() };
     let max_memory = unsafe { VZVirtualMachineConfiguration::maximumAllowedMemorySize() };
     let sizing = resolved_avf_vm_sizing_for_host(min_cpu, max_cpu, min_memory, max_memory)?;
-    let memory_floor_bytes = align_down_to_mebibyte(
-        SHARED_VM_MIN_DEFAULT_MEMORY_BYTES.max(min_memory),
-    )
-    .min(sizing.memory_size_bytes);
+    let memory_floor_bytes =
+        align_down_to_mebibyte(SHARED_VM_MIN_DEFAULT_MEMORY_BYTES.max(min_memory))
+            .min(sizing.memory_size_bytes);
     let _watchdog_pid = spawn_shared_vm_memory_watchdog(data_root, std::process::id())
         .context("spawning shared AVF Linux VM memory watchdog")?;
     let mut resource_state =
@@ -1610,10 +1606,11 @@ pub(super) fn cold_boot_real_guest_exec_ready_timeout() -> Duration {
     Duration::from_secs(90)
 }
 
-pub(super) fn real_guest_exec_ready_timeout_for_rootfs_materialization(
+pub(super) fn real_guest_exec_ready_timeout_for_start(
     rootfs_materialization_note: Option<&str>,
+    saved_state_exists: bool,
 ) -> Duration {
-    if rootfs_materialization_note.is_some() {
+    if rootfs_materialization_note.is_some() || !saved_state_exists {
         cold_boot_real_guest_exec_ready_timeout()
     } else {
         default_real_guest_exec_ready_timeout()

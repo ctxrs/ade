@@ -6,6 +6,11 @@ pub(super) struct GuestExecCaptureResult {
     pub(super) stderr: Vec<u8>,
 }
 
+enum GuestExecTerminalFrame {
+    Exit(AvfLinuxExecExit),
+    Error(AvfLinuxExecError),
+}
+
 pub(super) fn guest_directory_exists(data_root: &Path, guest_path: &Path) -> Result<bool> {
     let result = run_guest_exec_capture(
         &shared_vm_control_socket_path(data_root),
@@ -392,6 +397,36 @@ pub(super) fn run_guest_exec_capture(
     write_exec_frame(&mut stream, &AvfLinuxExecFrame::Request(request))
         .context("writing AVF Linux guest exec capture request")?;
 
+    let mut response_stream = stream
+        .try_clone()
+        .context("cloning shared VM control stream for capture response")?;
+    let response_thread = std::thread::spawn(move || -> Result<_> {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        loop {
+            match read_exec_frame(&mut response_stream)
+                .context("reading AVF Linux guest exec capture frame")?
+            {
+                Some(AvfLinuxExecFrame::Stdout(bytes)) => stdout.extend_from_slice(&bytes),
+                Some(AvfLinuxExecFrame::Stderr(bytes)) => stderr.extend_from_slice(&bytes),
+                Some(AvfLinuxExecFrame::Exit(exit)) => {
+                    return Ok((GuestExecTerminalFrame::Exit(exit), stdout, stderr));
+                }
+                Some(AvfLinuxExecFrame::Error(error)) => {
+                    return Ok((GuestExecTerminalFrame::Error(error), stdout, stderr));
+                }
+                Some(
+                    AvfLinuxExecFrame::Request(_)
+                    | AvfLinuxExecFrame::Stdin(_)
+                    | AvfLinuxExecFrame::CloseStdin
+                    | AvfLinuxExecFrame::Resize(_),
+                ) => bail!("received unexpected frame while waiting for guest exec result"),
+                None => bail!("shared VM control socket closed before guest exec exit"),
+            }
+        }
+    });
+
+    let mut stdin_error = None;
     if let Some(reader) = stdin_reader {
         let mut buf = [0u8; AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD];
         loop {
@@ -401,51 +436,56 @@ pub(super) fn run_guest_exec_capture(
             if read == 0 {
                 break;
             }
-            write_exec_frame(&mut stream, &AvfLinuxExecFrame::Stdin(buf[..read].to_vec()))
-                .context("writing AVF Linux guest exec stdin frame")?;
+            if let Err(err) =
+                write_exec_frame(&mut stream, &AvfLinuxExecFrame::Stdin(buf[..read].to_vec()))
+                    .context("writing AVF Linux guest exec stdin frame")
+            {
+                stdin_error = Some(err);
+                break;
+            }
         }
     }
-    write_exec_frame(&mut stream, &AvfLinuxExecFrame::CloseStdin)
-        .context("closing AVF Linux guest exec stdin")?;
+    if stdin_error.is_none() {
+        if let Err(err) = write_exec_frame(&mut stream, &AvfLinuxExecFrame::CloseStdin)
+            .context("closing AVF Linux guest exec stdin")
+        {
+            stdin_error = Some(err);
+        }
+    }
 
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    loop {
-        match read_exec_frame(&mut stream).context("reading AVF Linux guest exec capture frame")? {
-            Some(AvfLinuxExecFrame::Stdout(bytes)) => stdout.extend_from_slice(&bytes),
-            Some(AvfLinuxExecFrame::Stderr(bytes)) => stderr.extend_from_slice(&bytes),
-            Some(AvfLinuxExecFrame::Exit(exit)) => {
-                return Ok(GuestExecCaptureResult {
-                    exit_code: exit.exit_code,
-                    stdout,
-                    stderr,
-                });
+    let (terminal, stdout, stderr) = response_thread
+        .join()
+        .map_err(|_| anyhow::anyhow!("guest exec response reader thread panicked"))??;
+
+    if let Some(err) = stdin_error {
+        if !is_ignorable_guest_exec_stdin_write_error(&err) {
+            return Err(err);
+        }
+    }
+
+    match terminal {
+        GuestExecTerminalFrame::Exit(exit) => Ok(GuestExecCaptureResult {
+            exit_code: exit.exit_code,
+            stdout,
+            stderr,
+        }),
+        GuestExecTerminalFrame::Error(error) => {
+            let stderr_text = String::from_utf8_lossy(&stderr).trim().to_string();
+            let stdout_text = String::from_utf8_lossy(&stdout).trim().to_string();
+            let extra = [stderr_text, stdout_text]
+                .into_iter()
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if extra.is_empty() {
+                bail!("guest exec failed: {} ({})", error.message, error.code);
             }
-            Some(AvfLinuxExecFrame::Error(error)) => {
-                let stderr_text = String::from_utf8_lossy(&stderr).trim().to_string();
-                let stdout_text = String::from_utf8_lossy(&stdout).trim().to_string();
-                let extra = [stderr_text, stdout_text]
-                    .into_iter()
-                    .filter(|value| !value.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if extra.is_empty() {
-                    bail!("guest exec failed: {} ({})", error.message, error.code);
-                }
-                bail!(
-                    "guest exec failed: {} ({})\n{}",
-                    error.message,
-                    error.code,
-                    extra
-                );
-            }
-            Some(
-                AvfLinuxExecFrame::Request(_)
-                | AvfLinuxExecFrame::Stdin(_)
-                | AvfLinuxExecFrame::CloseStdin
-                | AvfLinuxExecFrame::Resize(_),
-            ) => bail!("received unexpected frame while waiting for guest exec result"),
-            None => bail!("shared VM control socket closed before guest exec exit"),
+            bail!(
+                "guest exec failed: {} ({})\n{}",
+                error.message,
+                error.code,
+                extra
+            );
         }
     }
 }
@@ -465,6 +505,17 @@ pub(super) fn run_guest_exec_capture(
 
 pub(super) fn format_guest_exec_output(output: &[u8]) -> String {
     String::from_utf8_lossy(output).trim().to_string()
+}
+
+fn is_ignorable_guest_exec_stdin_write_error(err: &anyhow::Error) -> bool {
+    err.chain()
+        .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .is_some_and(|io_err| {
+            matches!(
+                io_err.kind(),
+                std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+            )
+        })
 }
 
 pub(super) fn ensure_guest_exec_success(
