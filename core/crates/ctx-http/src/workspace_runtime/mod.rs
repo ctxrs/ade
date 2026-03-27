@@ -68,6 +68,8 @@ pub(crate) use self::avf_linux_vm::helper_path as avf_linux_helper_path;
 pub(crate) use self::avf_linux_vm::override_managed_avf_linux_runtime_source_for_test;
 pub(crate) use self::avf_linux_vm::run_guest_exec_capture as run_avf_linux_guest_exec_capture;
 #[cfg(test)]
+pub(crate) use self::avf_linux_vm::TestManagedAvfLinuxRuntimeSourceGuard;
+#[cfg(test)]
 pub(crate) use self::avf_linux_vm::AVF_LINUX_HELPER_PATH_ENV;
 use self::avf_linux_vm::{
     ensure_shared_vm_ready_with_observer as ensure_avf_linux_shared_vm_ready_with_observer,

@@ -17,7 +17,8 @@ use crate::ops_events::OpsEvents;
 use crate::perf_telemetry::PerfTelemetry;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode, ExecutionSettings, Settings};
 use crate::test_support::{
-    wait_for_execution_launch_terminal, write_running_container_sandbox_cli_shim,
+    install_test_managed_avf_linux_runtime_source, wait_for_execution_launch_terminal,
+    write_avf_linux_lifecycle_helper, write_running_container_sandbox_cli_shim,
     TrackedExecutionLaunch,
 };
 
@@ -344,6 +345,11 @@ async fn install_test_managed_harness_image_source(
     (guard, server)
 }
 
+#[cfg(windows)]
+#[expect(
+    dead_code,
+    reason = "legacy Windows-only AVF helper fixture kept until the shared lifecycle helper is ported"
+)]
 fn write_avf_linux_helper_shim(dir: &Path) -> PathBuf {
     let path = dir.join(if cfg!(windows) {
         "ctx-avf-linux-helper-test.cmd"
@@ -393,6 +399,11 @@ fn write_avf_linux_helper_shim(dir: &Path) -> PathBuf {
     path
 }
 
+#[cfg(windows)]
+#[expect(
+    dead_code,
+    reason = "legacy Windows-only AVF helper fixture kept until the shared lifecycle helper is ported"
+)]
 fn avf_runtime_archive_bytes() -> Vec<u8> {
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     {
@@ -410,12 +421,22 @@ fn avf_runtime_archive_bytes() -> Vec<u8> {
     encoder.finish().expect("finish gzip encoder")
 }
 
+#[cfg(windows)]
+#[expect(
+    dead_code,
+    reason = "legacy Windows-only AVF helper fixture kept until the shared lifecycle helper is ported"
+)]
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hex::encode(hasher.finalize())
 }
 
+#[cfg(windows)]
+#[expect(
+    dead_code,
+    reason = "legacy Windows-only AVF helper fixture kept until the shared lifecycle helper is ported"
+)]
 async fn make_test_managed_avf_linux_runtime_source() -> (
     crate::bundled_assets::ManagedRuntimeSource,
     Vec<JoinHandle<()>>,
@@ -1903,14 +1924,12 @@ async fn runtime_prewarm_errors_when_only_startup_artifacts_were_warmed() {
 async fn compute_prewarm_gate_keeps_avf_runtime_needing_prewarm_until_launch_ready() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
-    let helper_path = write_avf_linux_helper_shim(data_dir.path());
+    let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
     let _helper = EnvVarGuard::set(
         crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
         &helper_path.to_string_lossy(),
     );
-    let (runtime_source, servers) = make_test_managed_avf_linux_runtime_source().await;
-    let _runtime =
-        crate::harness_runtime::override_managed_avf_linux_runtime_source_for_test(runtime_source);
+    let (_runtime_fixture, servers) = install_test_managed_avf_linux_runtime_source().await;
     let settings = ExecutionSettings {
         mode: ExecutionMode::Sandbox,
         container: crate::settings::ContainerExecutionSettings {
@@ -1953,14 +1972,12 @@ async fn compute_prewarm_gate_keeps_avf_runtime_needing_prewarm_until_launch_rea
 async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtime() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
-    let helper_path = write_avf_linux_helper_shim(data_dir.path());
+    let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
     let _helper = EnvVarGuard::set(
         crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
         &helper_path.to_string_lossy(),
     );
-    let (runtime_source, servers) = make_test_managed_avf_linux_runtime_source().await;
-    let _runtime =
-        crate::harness_runtime::override_managed_avf_linux_runtime_source_for_test(runtime_source);
+    let (_runtime_fixture, servers) = install_test_managed_avf_linux_runtime_source().await;
     let coordinator = test_coordinator(data_dir.path().to_path_buf());
     let settings = ExecutionSettings {
         mode: ExecutionMode::Sandbox,
@@ -2012,23 +2029,12 @@ async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtim
 async fn runtime_prewarm_launch_ready_scope_starts_shared_vm_for_avf_linux_runtime() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
-    let helper_path = write_avf_linux_helper_shim(data_dir.path());
+    let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
     let _helper = EnvVarGuard::set(
         crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
         &helper_path.to_string_lossy(),
     );
-    let (runtime_source, servers) = make_test_managed_avf_linux_runtime_source().await;
-    let _runtime =
-        crate::harness_runtime::override_managed_avf_linux_runtime_source_for_test(runtime_source);
-    let image_bytes = b"ctx-harness-image".to_vec();
-    let (image_url, image_server) =
-        spawn_static_http_server_with_suffix(image_bytes.clone(), "ctx-harness.tar").await;
-    let _image = crate::bundled_assets::override_managed_ctx_harness_image_source_for_test(
-        crate::bundled_assets::ManagedArtifactSource {
-            uri: image_url,
-            sha256: hex::encode(Sha256::digest(&image_bytes)),
-        },
-    );
+    let (_runtime_fixture, servers) = install_test_managed_avf_linux_runtime_source().await;
     let coordinator = test_coordinator(data_dir.path().to_path_buf());
     let settings = ExecutionSettings {
         mode: ExecutionMode::Sandbox,
@@ -2080,7 +2086,6 @@ async fn runtime_prewarm_launch_ready_scope_starts_shared_vm_for_avf_linux_runti
     for server in servers {
         server.abort();
     }
-    image_server.abort();
 }
 
 #[cfg(unix)]
@@ -2764,7 +2769,7 @@ async fn startup_prewarm_enters_shared_runtime_warmup_when_machine_is_not_ready(
 async fn startup_prewarm_uses_launch_ready_scope_for_avf_linux_runtime() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
-    let helper_path = write_avf_linux_helper_shim(data_dir.path());
+    let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
     let _helper = EnvVarGuard::set(
         crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
         &helper_path.to_string_lossy(),
