@@ -193,6 +193,35 @@ fn write_ready_runtime_sandbox_cli_shim(dir: &Path) -> PathBuf {
     path
 }
 
+fn write_logging_ready_runtime_sandbox_cli_shim(dir: &Path) -> (PathBuf, PathBuf) {
+    let path = dir.join(if cfg!(windows) {
+        "sandbox-cli-ready-runtime-logging-test.cmd"
+    } else {
+        "sandbox-cli-ready-runtime-logging-test.sh"
+    });
+    let log_path = dir.join("sandbox-cli-ready-runtime.log");
+    let script = if cfg!(windows) {
+        format!(
+            "@echo off\r\nset \"LOG_PATH={log_path}\"\r\necho %*>>\"%LOG_PATH%\"\r\nif \"%1\"==\"info\" (\r\n  echo {{}}\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"image\" if \"%2\"==\"inspect\" exit /b 0\r\n>&2 echo unexpected sandbox CLI invocation: %*\r\nexit /b 1\r\n",
+            log_path = log_path.display()
+        )
+    } else {
+        format!(
+            "#!/bin/sh\nlog_path=\"{log_path}\"\nprintf '%s\\n' \"$*\" >> \"$log_path\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+            log_path = log_path.display()
+        )
+    };
+    std::fs::write(&path, script).expect("write logging ready runtime sandbox CLI shim");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod logging ready runtime sandbox CLI shim");
+    }
+    (path, log_path)
+}
+
 fn with_workspace_volume_support(script: String) -> String {
     script.replace(
         "if [ \"$1\" = \"container\" ]",
@@ -223,6 +252,19 @@ async fn save_test_execution_settings(data_root: &Path, execution: ExecutionSett
         .await
         .expect("save settings");
     store.close().await;
+}
+
+fn count_matching_lines(contents: &str, needle: &str) -> usize {
+    contents
+        .lines()
+        .filter(|line| line.contains(needle))
+        .count()
+}
+
+async fn run_startup_prewarm_with_timeout(coordinator: &Arc<ExecutionSetupCoordinator>) {
+    tokio::time::timeout(QUICK_ASYNC_TEST_TIMEOUT, coordinator.run_startup_prewarm())
+        .await
+        .expect("timed out running startup prewarm");
 }
 
 async fn spawn_static_http_server_with_suffix(
@@ -1046,7 +1088,7 @@ async fn startup_prewarm_backfills_metadata_when_runtime_is_already_ready() {
 
     let ops = Arc::new(RecordingStartupWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    coordinator.run_startup_prewarm().await;
+    run_startup_prewarm_with_timeout(&coordinator).await;
 
     let snapshot = coordinator.startup_status().await;
     assert_eq!(snapshot.state, StartupPrewarmState::Ready);
@@ -1094,7 +1136,7 @@ async fn startup_prewarm_preserves_existing_ready_timestamp_when_reusing_ready_r
 
     let ops = Arc::new(RecordingStartupWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    coordinator.run_startup_prewarm().await;
+    run_startup_prewarm_with_timeout(&coordinator).await;
 
     let snapshot = coordinator.startup_status().await;
     assert_eq!(snapshot.state, StartupPrewarmState::Ready);
@@ -1110,6 +1152,41 @@ async fn startup_prewarm_preserves_existing_ready_timestamp_when_reusing_ready_r
         .expect("read prewarm metadata")
         .expect("expected prewarm metadata");
     assert_eq!(metadata.ready_at, "2026-03-20T00:00:00Z");
+}
+
+#[tokio::test]
+async fn startup_prewarm_reuses_initial_runtime_probe_for_gate_checks() {
+    let _serial = env_var_test_lock().lock().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let (sandbox_cli_path, log_path) =
+        write_logging_ready_runtime_sandbox_cli_shim(data_dir.path());
+    let _sandbox_cli = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+    let _sandbox_cli_path = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    save_test_execution_settings(data_dir.path(), sandbox_execution_settings()).await;
+
+    let ops = Arc::new(RecordingStartupWarmupOperations::default());
+    let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
+    run_startup_prewarm_with_timeout(&coordinator).await;
+
+    let snapshot = coordinator.startup_status().await;
+    assert_eq!(snapshot.state, StartupPrewarmState::Ready);
+    assert!(!snapshot.needs_prewarm);
+    assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
+
+    let log = std::fs::read_to_string(&log_path).expect("read sandbox CLI invocation log");
+    assert_eq!(
+        count_matching_lines(&log, "info"),
+        1,
+        "expected one engine readiness probe:\n{log}"
+    );
+    assert_eq!(
+        count_matching_lines(&log, "image inspect"),
+        1,
+        "expected one image presence probe:\n{log}"
+    );
 }
 
 #[tokio::test]

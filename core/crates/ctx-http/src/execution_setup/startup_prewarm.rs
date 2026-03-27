@@ -97,7 +97,14 @@ impl ExecutionSetupCoordinator {
             };
         }
 
-        let gate = match self.compute_prewarm_gate(&exec.container).await {
+        let gate = match self
+            .compute_prewarm_gate_with_runtime_state(
+                &exec.container,
+                initial_machine_ready,
+                initial_image_present,
+            )
+            .await
+        {
             Ok(gate) => gate,
             Err(err) => {
                 let message = format_error_chain(&err);
