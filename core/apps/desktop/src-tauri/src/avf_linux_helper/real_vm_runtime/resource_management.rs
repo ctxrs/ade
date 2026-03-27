@@ -193,6 +193,7 @@ pub(super) struct SharedVmResourceState {
     next_memory_check_at: std::time::Instant,
     memory_ceiling_bytes: u64,
     memory_floor_bytes: u64,
+    memory_controller_decision_trace: SharedVmMemoryControllerDecisionTrace,
 }
 
 #[cfg(target_os = "macos")]
@@ -205,7 +206,40 @@ impl SharedVmResourceState {
             next_memory_check_at: std::time::Instant::now(),
             memory_ceiling_bytes,
             memory_floor_bytes,
+            memory_controller_decision_trace: SharedVmMemoryControllerDecisionTrace::new(),
         }
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct SharedVmMemoryControllerDecisionTrace {
+    trace_id: String,
+    epoch_millis: u64,
+    next_sequence: u64,
+}
+
+#[cfg(target_os = "macos")]
+impl SharedVmMemoryControllerDecisionTrace {
+    fn new() -> Self {
+        let epoch_millis = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        {
+            Ok(duration) => duration.as_millis().min(u128::from(u64::MAX)) as u64,
+            Err(_) => 0,
+        };
+        Self {
+            trace_id: format!(
+                "shared-vm-memory-controller-{}-{}",
+                std::process::id(),
+                epoch_millis
+            ),
+            epoch_millis,
+            next_sequence: 0,
+        }
+    }
+
+    fn next_sequence(&mut self) -> u64 {
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        self.next_sequence
     }
 }
 
@@ -448,6 +482,137 @@ fn request_shared_vm_memory_target_bytes_on_queue(
 }
 
 #[cfg(target_os = "macos")]
+fn shared_vm_memory_controller_decision_reason(
+    action: &SharedVmMemoryBalloonAction,
+    guest_probe_ready: bool,
+    current_target_bytes: u64,
+    ceiling_bytes: u64,
+    floor_bytes: u64,
+    guest_available_bytes: Option<u64>,
+    host_available_bytes: u64,
+) -> &'static str {
+    match action {
+        SharedVmMemoryBalloonAction::NoAction => {
+            if !guest_probe_ready {
+                "guest_probe_not_ready"
+            } else if host_available_bytes < SHARED_VM_HOST_MEMORY_RESERVE_BYTES
+                && current_target_bytes <= floor_bytes
+            {
+                "at_floor_while_host_below_reserve"
+            } else if let Some(guest_available_bytes) = guest_available_bytes {
+                if guest_available_bytes >= SHARED_VM_GUEST_MEMORY_GROW_THRESHOLD_BYTES {
+                    "guest_memory_above_growth_threshold"
+                } else if current_target_bytes >= ceiling_bytes {
+                    "at_memory_ceiling"
+                } else if host_available_bytes
+                    <= SHARED_VM_HOST_MEMORY_RESERVE_BYTES + SHARED_VM_MEMORY_BALLOON_STEP_BYTES
+                {
+                    "host_growth_budget_exhausted"
+                } else {
+                    "no_action"
+                }
+            } else {
+                "guest_memory_unavailable"
+            }
+        }
+        SharedVmMemoryBalloonAction::Reclaim { aggressive, .. } => {
+            if *aggressive {
+                "host_memory_emergency"
+            } else {
+                "host_memory_below_reserve"
+            }
+        }
+        SharedVmMemoryBalloonAction::Grow { .. } => "guest_memory_below_growth_threshold",
+        SharedVmMemoryBalloonAction::EmergencyStop { .. } => "host_memory_emergency_at_floor",
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn append_shared_vm_memory_controller_decision_event(
+    data_root: &Path,
+    resource_state: &mut SharedVmResourceState,
+    guest_probe_ready: bool,
+    current_target_bytes: u64,
+    host_available_bytes: u64,
+    guest_available_bytes: Option<u64>,
+    action: &SharedVmMemoryBalloonAction,
+) {
+    let ceiling_bytes =
+        align_down_to_mebibyte(resource_state.memory_ceiling_bytes.max(MEBIBYTE_BYTES));
+    let floor_bytes = align_down_to_mebibyte(resource_state.memory_floor_bytes.max(MEBIBYTE_BYTES))
+        .min(ceiling_bytes);
+    let current_target_bytes =
+        align_down_to_mebibyte(current_target_bytes).clamp(floor_bytes, ceiling_bytes);
+    let reason = shared_vm_memory_controller_decision_reason(
+        action,
+        guest_probe_ready,
+        current_target_bytes,
+        ceiling_bytes,
+        floor_bytes,
+        guest_available_bytes,
+        host_available_bytes,
+    );
+    let (action_name, new_target_bytes, aggressive) = match action {
+        SharedVmMemoryBalloonAction::NoAction => ("no_action", None, None),
+        SharedVmMemoryBalloonAction::Reclaim {
+            new_target_bytes,
+            aggressive,
+            ..
+        } => ("reclaim", Some(*new_target_bytes), Some(*aggressive)),
+        SharedVmMemoryBalloonAction::Grow {
+            new_target_bytes, ..
+        } => ("grow", Some(*new_target_bytes), None),
+        SharedVmMemoryBalloonAction::EmergencyStop {
+            current_target_bytes,
+            ..
+        } => ("emergency_stop", Some(*current_target_bytes), None),
+    };
+    let sequence = resource_state.memory_controller_decision_trace.next_sequence();
+    let new_target_bytes = new_target_bytes
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_string());
+    let guest_available_bytes = guest_available_bytes
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_string());
+    let aggressive = aggressive
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_string());
+    let event = format!(
+        concat!(
+            "{{\"event\":\"ControllerDecisionEvent\",\"version\":1,",
+            "\"trace_id\":\"{}\",\"epoch\":{},\"sequence\":{},",
+            "\"action\":\"{}\",\"reason\":\"{}\",",
+            "\"context\":{{",
+            "\"current_target_bytes\":{},\"new_target_bytes\":{},",
+            "\"floor_bytes\":{},\"ceiling_bytes\":{},",
+            "\"host_available_bytes\":{},\"guest_available_bytes\":{},",
+            "\"guest_probe_ready\":{},\"aggressive\":{},",
+            "\"host_memory_reserve_bytes\":{},\"host_memory_emergency_bytes\":{},",
+            "\"guest_memory_grow_threshold_bytes\":{},\"memory_balloon_step_bytes\":{}",
+            "}}}}"
+        ),
+        resource_state.memory_controller_decision_trace.trace_id,
+        resource_state.memory_controller_decision_trace.epoch_millis,
+        sequence,
+        action_name,
+        reason,
+        current_target_bytes,
+        new_target_bytes,
+        floor_bytes,
+        ceiling_bytes,
+        host_available_bytes,
+        guest_available_bytes,
+        guest_probe_ready,
+        aggressive,
+        SHARED_VM_HOST_MEMORY_RESERVE_BYTES,
+        SHARED_VM_HOST_MEMORY_EMERGENCY_BYTES,
+        SHARED_VM_GUEST_MEMORY_GROW_THRESHOLD_BYTES,
+        SHARED_VM_MEMORY_BALLOON_STEP_BYTES,
+    );
+    let _ = append_shared_vm_log_line(data_root, &event);
+}
+
+#[cfg(target_os = "macos")]
 pub(super) fn maybe_grow_shared_vm_data_disk(
     queue: &DispatchQueue,
     virtual_machine: &Retained<VZVirtualMachine>,
@@ -562,14 +727,24 @@ pub(super) fn maybe_adjust_shared_vm_memory(
         } else {
             guest_memory_available_bytes(queue, virtual_machine).ok()
         };
-
-    match resolve_shared_vm_memory_balloon_action(
+    let action = resolve_shared_vm_memory_balloon_action(
         current_target_bytes,
         resource_state.memory_ceiling_bytes,
         resource_state.memory_floor_bytes,
         guest_available_bytes,
         host_available_bytes,
-    ) {
+    );
+    append_shared_vm_memory_controller_decision_event(
+        data_root,
+        resource_state,
+        guest_probe_ready,
+        current_target_bytes,
+        host_available_bytes,
+        guest_available_bytes,
+        &action,
+    );
+
+    match action {
         SharedVmMemoryBalloonAction::NoAction => Ok(()),
         SharedVmMemoryBalloonAction::Reclaim {
             new_target_bytes,
