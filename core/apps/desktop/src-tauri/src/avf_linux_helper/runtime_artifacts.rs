@@ -1,5 +1,10 @@
 use super::*;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct StagedBootKernelMetadata {
+    source_gzip_sha256: String,
+}
+
 pub(super) fn default_shared_vm_kernel_cmdline() -> String {
     ensure_required_shared_vm_kernel_cmdline_tokens(format!(
         "console=hvc0 root=LABEL={SHARED_VM_ROOTFS_LABEL} rootwait rw"
@@ -28,6 +33,67 @@ pub(super) fn path_has_gzip_magic(path: &Path) -> Result<bool> {
     Ok(read == 2 && magic == [0x1f, 0x8b])
 }
 
+fn staged_boot_kernel_metadata_path(staged_kernel_path: &Path) -> PathBuf {
+    staged_kernel_path.with_extension("metadata.json")
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    let mut file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .with_context(|| format!("reading {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn read_staged_boot_kernel_metadata(
+    staged_kernel_path: &Path,
+) -> Result<Option<StagedBootKernelMetadata>> {
+    let metadata_path = staged_boot_kernel_metadata_path(staged_kernel_path);
+    if !metadata_path.is_file() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&metadata_path)
+        .with_context(|| format!("reading {}", metadata_path.display()))?;
+    let parsed = serde_json::from_str::<StagedBootKernelMetadata>(&raw)
+        .with_context(|| format!("parsing {}", metadata_path.display()))?;
+    Ok(Some(parsed))
+}
+
+fn write_staged_boot_kernel_metadata(
+    staged_kernel_path: &Path,
+    metadata: &StagedBootKernelMetadata,
+) -> Result<()> {
+    let metadata_path = staged_boot_kernel_metadata_path(staged_kernel_path);
+    let tmp_path = metadata_path.with_extension("metadata.json.tmp");
+    let raw = serde_json::to_vec_pretty(metadata)?;
+    fs::write(&tmp_path, raw).with_context(|| format!("writing {}", tmp_path.display()))?;
+    fs::rename(&tmp_path, &metadata_path).with_context(|| {
+        format!(
+            "staging boot kernel metadata {} -> {}",
+            tmp_path.display(),
+            metadata_path.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn remove_staged_boot_kernel_metadata(staged_kernel_path: &Path) -> Result<()> {
+    let metadata_path = staged_boot_kernel_metadata_path(staged_kernel_path);
+    if metadata_path.is_file() {
+        fs::remove_file(&metadata_path)
+            .with_context(|| format!("removing {}", metadata_path.display()))?;
+    }
+    Ok(())
+}
+
 pub(super) fn materialize_bootable_kernel_image(
     data_root: &Path,
     kernel_path: &Path,
@@ -40,6 +106,32 @@ pub(super) fn materialize_bootable_kernel_image(
     fs::create_dir_all(&boot_root).with_context(|| format!("creating {}", boot_root.display()))?;
     let staged_kernel_path = shared_vm_boot_kernel_path(data_root);
     let staged_kernel_tmp_path = staged_kernel_path.with_extension("tmp");
+    let source_gzip_sha256 = sha256_file(kernel_path)?;
+
+    if staged_kernel_path.is_file() {
+        if read_staged_boot_kernel_metadata(&staged_kernel_path)?
+            .is_some_and(|metadata| metadata.source_gzip_sha256 == source_gzip_sha256)
+        {
+            return Ok((
+                staged_kernel_path.clone(),
+                Some(format!(
+                    "reused staged decompressed kernel image {} for {}",
+                    staged_kernel_path.display(),
+                    kernel_path.display()
+                )),
+            ));
+        }
+    }
+
+    if staged_kernel_path.exists() {
+        fs::remove_file(&staged_kernel_path)
+            .with_context(|| format!("removing {}", staged_kernel_path.display()))?;
+    }
+    remove_staged_boot_kernel_metadata(&staged_kernel_path)?;
+    if staged_kernel_tmp_path.exists() {
+        fs::remove_file(&staged_kernel_tmp_path)
+            .with_context(|| format!("removing {}", staged_kernel_tmp_path.display()))?;
+    }
 
     let source_file =
         File::open(kernel_path).with_context(|| format!("opening {}", kernel_path.display()))?;
@@ -65,6 +157,10 @@ pub(super) fn materialize_bootable_kernel_image(
             staged_kernel_path.display()
         )
     })?;
+    write_staged_boot_kernel_metadata(
+        &staged_kernel_path,
+        &StagedBootKernelMetadata { source_gzip_sha256 },
+    )?;
     Ok((
         staged_kernel_path.clone(),
         Some(format!(
@@ -163,7 +259,6 @@ pub(super) fn materialize_writable_rootfs_image(
     let source_rootfs_canonical = source_rootfs
         .canonicalize()
         .with_context(|| format!("canonicalizing {}", source_rootfs.display()))?;
-
     let note = clone_or_copy_rootfs_image(&source_rootfs_canonical, &staged_rootfs_tmp)?;
     fs::rename(&staged_rootfs_tmp, &staged_rootfs_path).with_context(|| {
         format!(

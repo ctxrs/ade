@@ -59,6 +59,10 @@ impl ExecutionSetupCoordinator {
             .startup_runtime_state(&exec.container)
             .await
             .unwrap_or((false, false));
+        let previous_last_success_at = {
+            let inner = self.inner.lock().await;
+            inner.startup.last_success_at.clone()
+        };
 
         if !harness_runtime::local_runtime_available(&self.data_root, &exec.container.runtime) {
             let snapshot = StartupPrewarmSnapshot {
@@ -117,6 +121,15 @@ impl ExecutionSetupCoordinator {
             }
         };
         if !gate.needs_prewarm {
+            let last_success_at = self
+                .ensure_ready_startup_prewarm_metadata(
+                    &target,
+                    &gate,
+                    &attempted_at,
+                    previous_last_success_at.clone(),
+                )
+                .await
+                .or_else(|| Some(attempted_at.clone()));
             let snapshot = StartupPrewarmSnapshot {
                 state: StartupPrewarmState::Ready,
                 target_image: target,
@@ -126,7 +139,7 @@ impl ExecutionSetupCoordinator {
                 image_ref_changed: gate.image_ref_changed,
                 bundled_image_digest_changed: gate.bundled_image_digest_changed,
                 last_attempt_at: Some(attempted_at),
-                last_success_at: Some(format_ts(Utc::now())),
+                last_success_at,
                 error: None,
             };
             self.set_startup_snapshot(snapshot).await;
@@ -264,13 +277,24 @@ impl ExecutionSetupCoordinator {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) async fn compute_prewarm_gate(
         &self,
         settings: &crate::settings::ContainerExecutionSettings,
     ) -> Result<PrewarmGate> {
+        let (machine_ready, image_present) = self.startup_runtime_state(settings).await?;
+        self.compute_prewarm_gate_with_runtime_state(settings, machine_ready, image_present)
+            .await
+    }
+
+    async fn compute_prewarm_gate_with_runtime_state(
+        &self,
+        settings: &crate::settings::ContainerExecutionSettings,
+        machine_ready: bool,
+        image_present: bool,
+    ) -> Result<PrewarmGate> {
         let target = harness_runtime::runtime_prewarm_target(settings);
         let metadata = read_prewarm_metadata(&self.data_root).await?;
-        let (machine_ready, image_present) = self.startup_runtime_state(settings).await?;
         let bundled_image_fingerprint = match settings.runtime {
             crate::settings::ContainerRuntimeKind::NativeContainer => {
                 bundled_image_fingerprint(&target).await?
@@ -354,6 +378,54 @@ impl ExecutionSetupCoordinator {
         store.close().await;
         let exec = loaded.execution.unwrap_or_default();
         Ok(harness_runtime::runtime_prewarm_target(&exec.container))
+    }
+
+    async fn ensure_ready_startup_prewarm_metadata(
+        &self,
+        target: &str,
+        gate: &PrewarmGate,
+        attempted_at: &str,
+        previous_last_success_at: Option<String>,
+    ) -> Option<String> {
+        let existing = match read_prewarm_metadata(&self.data_root).await {
+            Ok(metadata) => metadata,
+            Err(err) => {
+                tracing::warn!(
+                    image = target,
+                    error = %format_error_chain(&err),
+                    "failed to read startup prewarm metadata while reporting reused readiness"
+                );
+                return previous_last_success_at;
+            }
+        };
+        if let Some(metadata) = existing.as_ref() {
+            if metadata.image_ref == target
+                && !gate.image_ref_changed
+                && !gate.bundled_image_digest_changed
+            {
+                return Some(metadata.ready_at.clone());
+            }
+        }
+
+        let metadata = StartupPrewarmMetadata {
+            image_ref: target.to_string(),
+            bundled_image_fingerprint: gate.bundled_image_fingerprint.clone(),
+            ready_at: attempted_at.to_string(),
+        };
+        if let Err(err) = write_prewarm_metadata(&self.data_root, &metadata).await {
+            let message = format_error_chain(&err);
+            tracing::warn!(
+                image = target,
+                error = %message,
+                "failed to backfill startup prewarm metadata for an already-ready runtime"
+            );
+            let mut event = OpsEvent::new("warn", "execution.startup_prewarm_metadata_error");
+            event.meta = Some(json!({"image": target, "error": message}));
+            self.ops_events.emit(event);
+            return previous_last_success_at;
+        }
+
+        Some(metadata.ready_at)
     }
 
     pub(crate) async fn refresh_startup_prewarm_metadata_after_successful_container_launch(

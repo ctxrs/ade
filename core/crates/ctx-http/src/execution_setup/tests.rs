@@ -1033,6 +1033,86 @@ async fn spawned_startup_prewarm_respects_sandbox_cli_env_test_lock() {
 }
 
 #[tokio::test]
+async fn startup_prewarm_backfills_metadata_when_runtime_is_already_ready() {
+    let _serial = env_var_test_lock().lock().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(data_dir.path());
+    let _sandbox_cli = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+    let _sandbox_cli_path = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    save_test_execution_settings(data_dir.path(), sandbox_execution_settings()).await;
+
+    let ops = Arc::new(RecordingStartupWarmupOperations::default());
+    let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
+    coordinator.run_startup_prewarm().await;
+
+    let snapshot = coordinator.startup_status().await;
+    assert_eq!(snapshot.state, StartupPrewarmState::Ready);
+    assert!(!snapshot.needs_prewarm);
+    assert!(snapshot.machine_ready);
+    assert!(snapshot.image_present);
+    assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
+
+    let metadata = read_prewarm_metadata(data_dir.path())
+        .await
+        .expect("read prewarm metadata")
+        .expect("expected prewarm metadata");
+    assert_eq!(
+        metadata.image_ref,
+        crate::harness_runtime::default_container_image()
+    );
+    assert_eq!(metadata.bundled_image_fingerprint, None);
+    assert_eq!(
+        snapshot.last_success_at.as_deref(),
+        Some(metadata.ready_at.as_str())
+    );
+}
+
+#[tokio::test]
+async fn startup_prewarm_preserves_existing_ready_timestamp_when_reusing_ready_runtime() {
+    let _serial = env_var_test_lock().lock().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(data_dir.path());
+    let _sandbox_cli = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+    let _sandbox_cli_path = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    save_test_execution_settings(data_dir.path(), sandbox_execution_settings()).await;
+    write_prewarm_metadata(
+        data_dir.path(),
+        &StartupPrewarmMetadata {
+            image_ref: crate::harness_runtime::default_container_image().to_string(),
+            bundled_image_fingerprint: None,
+            ready_at: "2026-03-20T00:00:00Z".to_string(),
+        },
+    )
+    .await
+    .expect("write existing prewarm metadata");
+
+    let ops = Arc::new(RecordingStartupWarmupOperations::default());
+    let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
+    coordinator.run_startup_prewarm().await;
+
+    let snapshot = coordinator.startup_status().await;
+    assert_eq!(snapshot.state, StartupPrewarmState::Ready);
+    assert!(!snapshot.needs_prewarm);
+    assert_eq!(
+        snapshot.last_success_at.as_deref(),
+        Some("2026-03-20T00:00:00Z")
+    );
+    assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
+
+    let metadata = read_prewarm_metadata(data_dir.path())
+        .await
+        .expect("read prewarm metadata")
+        .expect("expected prewarm metadata");
+    assert_eq!(metadata.ready_at, "2026-03-20T00:00:00Z");
+}
+
+#[tokio::test]
 async fn startup_prewarm_keeps_existing_metadata_when_machine_stays_down() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");

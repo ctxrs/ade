@@ -1,5 +1,8 @@
 use super::*;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use serde_yaml::Value;
+use std::io::Write;
 
 fn git(args: &[&str], cwd: &Path) {
     let status = std::process::Command::new("git")
@@ -23,6 +26,13 @@ fn wait_for_child_exit(child: &mut std::process::Child, timeout: Duration) -> bo
 
 fn gibibytes(value: u64) -> u64 {
     value * 1024 * 1024 * 1024
+}
+
+fn write_gzip_file(path: &Path, bytes: &[u8]) {
+    let file = File::create(path).expect("create gzip file");
+    let mut encoder = GzEncoder::new(file, Compression::default());
+    encoder.write_all(bytes).expect("write gzip payload");
+    encoder.finish().expect("finish gzip payload");
 }
 
 #[test]
@@ -312,6 +322,84 @@ fn materialize_writable_rootfs_image_preserves_small_rootfs_size() {
     );
     let note = note.expect("copy note");
     assert!(note.contains("copied rootfs image"));
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn materialize_bootable_kernel_image_reports_reuse_for_matching_staged_kernel() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-kernel-reuse-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+    let kernel_path = temp.join("Image.gz");
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder
+        .write_all(b"kernel-v1")
+        .expect("write gz kernel payload");
+    let gz_bytes = encoder.finish().expect("finish gz payload");
+    fs::write(&kernel_path, gz_bytes).expect("write gz kernel");
+
+    let (first_path, first_note) =
+        materialize_bootable_kernel_image(&temp, &kernel_path).expect("materialize kernel");
+    assert_eq!(first_path, shared_vm_boot_kernel_path(&temp));
+    assert!(first_note
+        .expect("initial materialization note")
+        .contains("decompressed gzipped kernel image"));
+    let first_modified = fs::metadata(&first_path)
+        .expect("first kernel metadata")
+        .modified()
+        .expect("first kernel modified time");
+
+    std::thread::sleep(Duration::from_millis(20));
+    let (second_path, second_note) =
+        materialize_bootable_kernel_image(&temp, &kernel_path).expect("reuse kernel");
+    assert_eq!(second_path, shared_vm_boot_kernel_path(&temp));
+    assert!(second_note
+        .expect("reuse note")
+        .contains("reused staged decompressed kernel image"));
+    let second_modified = fs::metadata(&second_path)
+        .expect("second kernel metadata")
+        .modified()
+        .expect("second kernel modified time");
+    assert_eq!(second_modified, first_modified);
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn materialize_bootable_kernel_image_rebuilds_when_source_changes() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-kernel-refresh-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+    let kernel_path = temp.join("Image.gz");
+    write_gzip_file(&kernel_path, b"kernel-v1");
+
+    let (staged_kernel, first_note) =
+        materialize_bootable_kernel_image(&temp, &kernel_path).expect("materialize kernel");
+    assert!(first_note.is_some());
+
+    write_gzip_file(&kernel_path, b"kernel-version-two");
+    let (_, second_note) =
+        materialize_bootable_kernel_image(&temp, &kernel_path).expect("refresh kernel");
+
+    assert!(second_note.is_some());
+    assert_eq!(
+        fs::read(&staged_kernel).expect("read refreshed staged kernel"),
+        b"kernel-version-two"
+    );
+    let metadata_path = shared_vm_boot_kernel_path(&temp).with_extension("metadata.json");
+    let metadata = fs::read_to_string(&metadata_path).expect("read staged kernel metadata");
+    assert!(metadata.contains("source_gzip_sha256"));
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 
