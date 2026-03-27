@@ -151,6 +151,7 @@ impl AppState {
             perf_telemetry.clone(),
             ops_events.clone(),
         ));
+        #[cfg(not(test))]
         execution_setup.spawn_startup_prewarm();
         let workspace_active_snapshot = Arc::new(WorkspaceActiveSnapshotHub::new());
         let web_sessions = Arc::new(WebSessionManager::new());

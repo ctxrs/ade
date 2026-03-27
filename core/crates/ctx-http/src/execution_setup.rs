@@ -375,7 +375,7 @@ impl ExecutionSetupCoordinator {
             Ok(())
         } else {
             async {
-                let join_shared_runtime = self.prewarm.runtime_is_running(&settings, true).await;
+                let join_shared_runtime = self.prewarm.runtime_is_running(&settings, false).await;
 
                 if join_shared_runtime {
                     let reusable_container_exists = self
@@ -404,7 +404,7 @@ impl ExecutionSetupCoordinator {
 
                     let joined_shared_runtime = match self
                         .prewarm
-                        .attach_runtime_if_running(&settings, true, Some(&observer))
+                        .attach_runtime_if_running(&settings, false, Some(&observer))
                         .await
                     {
                         Ok(joined) => joined,

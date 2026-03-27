@@ -630,9 +630,6 @@ mod tests {
     use super::*;
     use std::fs;
     use std::process::Command as StdCommand;
-    use std::sync::{Mutex, OnceLock};
-
-    static SANDBOX_CLI_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     fn git(args: &[&str], cwd: &Path) {
         let status = StdCommand::new("git")
@@ -691,10 +688,9 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_workspace_root_from_host_copy_fails_when_host_workspace_is_missing() {
-        let _env_lock = SANDBOX_CLI_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
+        let _env_lock = crate::test_support::sandbox_cli_env_test_lock()
             .lock()
-            .expect("lock sandbox cli env");
+            .await;
         let temp = tempfile::tempdir().expect("tempdir");
         let log_path = temp.path().join("sandbox-cli.log");
         let cli_path = temp.path().join("fake-sandbox-cli.sh");
@@ -751,10 +747,9 @@ mod tests {
 
     #[tokio::test]
     async fn stream_dir_to_container_uses_tar_exec_instead_of_container_cp() {
-        let _env_lock = SANDBOX_CLI_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
+        let _env_lock = crate::test_support::sandbox_cli_env_test_lock()
             .lock()
-            .expect("lock sandbox cli env");
+            .await;
         let temp = tempfile::tempdir().expect("tempdir");
         let log_path = temp.path().join("sandbox-cli.log");
         let cli_path = temp.path().join("fake-sandbox-cli.sh");

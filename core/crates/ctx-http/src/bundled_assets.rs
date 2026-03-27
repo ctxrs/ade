@@ -435,7 +435,7 @@ fn managed_source_is_resolved(uri: &str) -> bool {
 
 fn sha256_is_resolved(sha256: &str) -> bool {
     let trimmed = sha256.trim();
-    !trimmed.is_empty() && !(trimmed.len() == 64 && trimmed.bytes().all(|byte| byte == b'0'))
+    !(trimmed.is_empty() || (trimmed.len() == 64 && trimmed.bytes().all(|byte| byte == b'0')))
 }
 
 pub fn bundled_provider_command(provider_id: &str) -> Option<BundledCommand> {

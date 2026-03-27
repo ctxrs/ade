@@ -277,6 +277,32 @@ async fn install_test_managed_machine_cache_source(
     (guard, server)
 }
 
+async fn install_test_managed_harness_image_source(
+    body: Vec<u8>,
+) -> (
+    crate::bundled_assets::TestManagedCtxHarnessImageSourceGuard,
+    JoinHandle<()>,
+) {
+    let digest = {
+        let mut hasher = Sha256::new();
+        hasher.update(&body);
+        hex::encode(hasher.finalize())
+    };
+    let (url, server) = spawn_static_http_server_with_suffix(body, "ctx-harness.tar").await;
+    let guard = crate::bundled_assets::override_managed_ctx_harness_image_source_for_test(
+        bundled_assets::ManagedArtifactSource {
+            uri: url,
+            sha256: digest,
+        },
+    );
+    (guard, server)
+}
+
+struct TestManagedAvfLinuxRuntimeFixtureGuard {
+    _runtime: super::avf_linux_vm::TestManagedAvfLinuxRuntimeSourceGuard,
+    _image: crate::bundled_assets::TestManagedCtxHarnessImageSourceGuard,
+}
+
 fn avf_runtime_archive_bytes() -> Vec<u8> {
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     {
@@ -296,10 +322,8 @@ fn avf_runtime_archive_bytes() -> Vec<u8> {
     encoder.finish().expect("finish AVF runtime gzip")
 }
 
-async fn install_test_managed_avf_linux_runtime_source() -> (
-    super::avf_linux_vm::TestManagedAvfLinuxRuntimeSourceGuard,
-    Vec<JoinHandle<()>>,
-) {
+async fn install_test_managed_avf_linux_runtime_source(
+) -> (TestManagedAvfLinuxRuntimeFixtureGuard, Vec<JoinHandle<()>>) {
     let archive_bytes = avf_runtime_archive_bytes();
     let kernel_bytes = b"kernel".to_vec();
     let initrd_bytes = b"initrd".to_vec();
@@ -324,6 +348,8 @@ async fn install_test_managed_avf_linux_runtime_source() -> (
         "container-stack.tar.gz",
     )
     .await;
+    let (image_guard, image_server) =
+        install_test_managed_harness_image_source(b"ctx-harness-image".to_vec()).await;
     let source = bundled_assets::ManagedRuntimeSource {
         uri: archive_url,
         sha256: hex::encode(Sha256::digest(&archive_bytes)),
@@ -369,10 +395,13 @@ async fn install_test_managed_avf_linux_runtime_source() -> (
         .into_iter()
         .collect(),
     };
-    let guard =
+    let runtime_guard =
         crate::workspace_runtime::override_managed_avf_linux_runtime_source_for_test(source);
     (
-        guard,
+        TestManagedAvfLinuxRuntimeFixtureGuard {
+            _runtime: runtime_guard,
+            _image: image_guard,
+        },
         vec![
             archive_server,
             kernel_server,
@@ -380,6 +409,7 @@ async fn install_test_managed_avf_linux_runtime_source() -> (
             guest_agent_server,
             egress_proxy_server,
             container_stack_server,
+            image_server,
         ],
     )
 }
@@ -597,6 +627,10 @@ case "$subcmd" in
           [ -d "$(container_dir "$container_name")" ] || exit 1
           state=$(cat "$(container_state_file "$container_name")" 2>/dev/null || printf 'false')
           printf '%s\n' "$state"
+        elif [ $# -eq 1 ]; then
+          container_name="$1"
+          [ -d "$(container_dir "$container_name")" ] || exit 1
+          printf '[]\n'
         else
           echo "unexpected sandbox CLI container inspect command: $*" >&2
           exit 1
@@ -975,7 +1009,7 @@ async fn prepare_reuses_running_workspace_container_without_front_loading_image_
     std::fs::write(
             &sandbox_cli_path,
             format!(
-                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  echo 'transient image store failure' >&2\n  exit 125\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"{volume}\",\"Destination\":\"{workspace_root}\"}}]}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"rm\" ] && [ \"$2\" = \"-f\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'transient image store failure' >&2\n  exit 125\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"{volume}\",\"Destination\":\"{workspace_root}\"}}]}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"rm\" ] && [ \"$2\" = \"-f\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
                 log = log_path.display(),
                 container = container_name,
                 volume = volume_name,

@@ -6,18 +6,23 @@ mod guest_control;
 mod resource_management;
 
 use self::guest_control::service_real_shared_vm_control_clients;
-pub(super) use self::guest_control::{
-    is_transient_guest_control_connect_nserror, relay_shared_vm_control_client,
-};
+pub(super) use self::guest_control::{run_owner_guest_exec_capture, shared_vm_owner_guest_probe_ready};
 use self::resource_management::{
     align_down_to_mebibyte, host_available_memory_bytes, maybe_adjust_shared_vm_memory,
     maybe_grow_shared_vm_data_disk, SharedVmResourceState,
 };
 pub(super) use self::resource_management::{
-    resolve_shared_vm_data_disk_growth_decision, resolve_shared_vm_memory_balloon_action,
     resolve_shared_vm_memory_watchdog_exit_action, resolve_shared_vm_memory_watchdog_sample_action,
-    SharedVmDataDiskGrowthDecision, SharedVmMemoryBalloonAction, SharedVmMemoryWatchdogExitAction,
-    SharedVmMemoryWatchdogSampleAction,
+    SharedVmMemoryWatchdogExitAction, SharedVmMemoryWatchdogSampleAction,
+};
+#[cfg(test)]
+pub(super) use self::guest_control::{
+    is_transient_guest_control_connect_nserror, relay_shared_vm_control_client,
+};
+#[cfg(test)]
+pub(super) use self::resource_management::{
+    resolve_shared_vm_data_disk_growth_decision, resolve_shared_vm_memory_balloon_action,
+    SharedVmDataDiskGrowthDecision, SharedVmMemoryBalloonAction,
 };
 
 #[cfg(target_os = "macos")]
@@ -59,68 +64,6 @@ fn close_guest_exec_stdin_best_effort(writer: &Arc<Mutex<File>>) {
         return;
     };
     let _ = write_exec_frame(&mut *guard, &AvfLinuxExecFrame::CloseStdin);
-}
-
-#[cfg(all(target_os = "macos", unix))]
-fn socket_timeout_to_timeval(timeout: Option<Duration>) -> libc::timeval {
-    match timeout {
-        Some(timeout) => libc::timeval {
-            tv_sec: timeout.as_secs().min(libc::time_t::MAX as u64) as libc::time_t,
-            tv_usec: timeout.subsec_micros() as libc::suseconds_t,
-        },
-        None => libc::timeval {
-            tv_sec: 0,
-            tv_usec: 0,
-        },
-    }
-}
-
-#[cfg(all(target_os = "macos", unix))]
-fn configure_guest_control_socket_timeout(socket: &File, timeout: Option<Duration>) -> Result<()> {
-    use std::os::fd::AsRawFd;
-
-    let fd = socket.as_raw_fd();
-    let timeout = socket_timeout_to_timeval(timeout);
-    let optlen = std::mem::size_of::<libc::timeval>() as libc::socklen_t;
-    for (option, direction) in [(libc::SO_RCVTIMEO, "read"), (libc::SO_SNDTIMEO, "write")] {
-        let status = unsafe {
-            libc::setsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                option,
-                (&timeout as *const libc::timeval).cast(),
-                optlen,
-            )
-        };
-        if status != 0 {
-            return Err(std::io::Error::last_os_error()).with_context(|| {
-                format!("configuring shared AVF Linux guest control {direction} timeout")
-            });
-        }
-    }
-    Ok(())
-}
-
-#[cfg(all(target_os = "macos", unix))]
-fn run_owner_guest_exec_capture(
-    queue: &DispatchQueue,
-    virtual_machine: &Retained<VZVirtualMachine>,
-    cwd: &Path,
-    command: &str,
-    args: &[String],
-    user: Option<&str>,
-    env: HashMap<String, String>,
-) -> Result<GuestExecCaptureResult> {
-    let mut socket = guest_control::connect_shared_vm_guest_control_socket(queue, virtual_machine)?;
-    configure_guest_control_socket_timeout(
-        &socket,
-        Some(SHARED_VM_READINESS_GUEST_EXEC_IO_TIMEOUT),
-    )?;
-    run_guest_exec_capture_over_connected_stream(&mut socket, cwd, command, args, user, env)
-}
-
-pub(super) fn shared_vm_owner_guest_probe_ready(data_root: &Path) -> bool {
-    shared_vm_guest_control_ready_path(data_root).is_file()
 }
 
 const SHARED_VM_READINESS_PHASE_PREFIX: &str = "[ctx-avf-linux] readiness phase ";
@@ -894,6 +837,7 @@ pub(super) fn shared_vm_guest_readiness_args() -> Vec<String> {
         String::from("-lc"),
         format!(
             "set -e; ctx_uptime_ms() {{ awk '{{print int($1 * 1000)}}' /proc/uptime; }}; ctx_run_phase() {{ phase=\"$1\"; shift; start_ms=$(ctx_uptime_ms); if timeout --kill-after=1s --preserve-status {phase_timeout_seconds}s \"$@\"; then end_ms=$(ctx_uptime_ms); echo \"{phase_prefix}${{phase}} ok in $((end_ms-start_ms))ms\" >&2; else status=$?; end_ms=$(ctx_uptime_ms); echo \"{phase_prefix}${{phase}} failed with exit $status after $((end_ms-start_ms))ms\" >&2; return $status; fi; }}; ctx_run_phase containerd systemctl is-active --quiet {containerd_service}; ctx_run_phase buildkit systemctl is-active --quiet {buildkit_service}; ctx_run_phase nerdctl sh -lc '{nerdctl_bin} version >/dev/null 2>&1'; ctx_run_phase buildctl sh -lc '{buildctl_bin} --addr {buildkit_socket} debug workers >/dev/null 2>&1'; ctx_run_phase bridge-probe sh -lc 'probe_bridge=ctxavfbr0; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true; if ! ip link add name \"$probe_bridge\" type bridge >/tmp/ctx-avf-bridge-probe.out 2>/tmp/ctx-avf-bridge-probe.err; then cat /tmp/ctx-avf-bridge-probe.out >&2 || true; cat /tmp/ctx-avf-bridge-probe.err >&2 || true; echo \"[ctx-avf-linux] bridge_probe_failed\" >&2; exit 41; fi; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true'",
+            "set -e; ctx_uptime_ms() {{ awk '{{print int($1 * 1000)}}' /proc/uptime; }}; ctx_run_phase() {{ phase=\"$1\"; shift; start_ms=$(ctx_uptime_ms); if timeout --kill-after=1s --preserve-status {phase_timeout_seconds}s \"$@\"; then end_ms=$(ctx_uptime_ms); echo \"{phase_prefix}${{phase}} ok in $((end_ms-start_ms))ms\" >&2; else status=$?; end_ms=$(ctx_uptime_ms); echo \"{phase_prefix}${{phase}} failed with exit $status after $((end_ms-start_ms))ms\" >&2; return $status; fi; }}; ctx_run_phase containerd systemctl is-active --quiet {containerd_service}; ctx_run_phase buildkit systemctl is-active --quiet {buildkit_service}; ctx_run_phase nerdctl sh -lc '{nerdctl_bin} version >/dev/null 2>&1'; ctx_run_phase buildctl sh -lc '{buildctl_bin} --addr {buildkit_socket} debug workers >/dev/null 2>&1'; ctx_run_phase bridge-probe sh -lc 'probe_bridge=ctxavfbr0; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true; if ! ip link add name \"$probe_bridge\" type bridge >/tmp/ctx-avf-bridge-probe.out 2>/tmp/ctx-avf-bridge-probe.err; then cat /tmp/ctx-avf-bridge-probe.out >&2 || true; cat /tmp/ctx-avf-bridge-probe.err >&2 || true; echo \"[ctx-avf-linux] bridge_probe_failed\" >&2; exit 41; fi; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true'",
             containerd_service = SHARED_VM_CONTAINERD_SERVICE_NAME,
             buildkit_service = SHARED_VM_BUILDKIT_SERVICE_NAME,
             nerdctl_bin = SHARED_VM_GUEST_NERDCTL_BIN,
@@ -942,6 +886,7 @@ pub(super) fn wait_for_real_guest_exec_ready(
     let mut attempts = 0_u32;
     while std::time::Instant::now() < deadline {
         attempts += 1;
+        match run_guest_exec_capture_with_socket_timeout(
         match run_guest_exec_capture_with_socket_timeout(
             &control_socket,
             Path::new("/"),

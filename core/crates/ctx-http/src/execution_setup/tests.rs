@@ -8,7 +8,7 @@ use chrono::Utc;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::{Barrier, Semaphore};
+use tokio::sync::{Barrier, Notify, Semaphore};
 use tokio::task::JoinHandle;
 
 use crate::execution_setup::warmup_coordination::SharedWarmupOperations;
@@ -178,9 +178,9 @@ fn write_ready_runtime_sandbox_cli_shim(dir: &Path) -> PathBuf {
         "sandbox-cli-ready-runtime-test.sh"
     });
     let script = if cfg!(windows) {
-        "@echo off\r\nif \"%1\"==\"info\" (\r\n  echo {}\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"image\" if \"%2\"==\"exists\" exit /b 0\r\n>&2 echo unexpected sandbox CLI invocation: %*\r\nexit /b 1\r\n"
+        "@echo off\r\nif \"%1\"==\"info\" (\r\n  echo {}\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"image\" if \"%2\"==\"inspect\" exit /b 0\r\n>&2 echo unexpected sandbox CLI invocation: %*\r\nexit /b 1\r\n"
     } else {
-        "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  printf '{}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n"
+        "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  printf '{}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n"
     };
     std::fs::write(&path, script).expect("write ready runtime sandbox CLI shim");
     #[cfg(unix)]
@@ -443,6 +443,8 @@ struct BlockingWarmupOperations {
     builder_runs: AtomicUsize,
     runtime_release: Semaphore,
     builder_release: Semaphore,
+    runtime_notify: Notify,
+    builder_notify: Notify,
 }
 
 impl Default for BlockingWarmupOperations {
@@ -452,6 +454,8 @@ impl Default for BlockingWarmupOperations {
             builder_runs: AtomicUsize::new(0),
             runtime_release: Semaphore::new(0),
             builder_release: Semaphore::new(0),
+            runtime_notify: Notify::new(),
+            builder_notify: Notify::new(),
         }
     }
 }
@@ -460,10 +464,11 @@ impl BlockingWarmupOperations {
     async fn wait_for_runtime_runs(&self, expected: usize) {
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
+                let notified = self.runtime_notify.notified();
                 if self.runtime_runs.load(Ordering::SeqCst) >= expected {
                     break;
                 }
-                tokio::task::yield_now().await;
+                notified.await;
             }
         })
         .await
@@ -473,10 +478,11 @@ impl BlockingWarmupOperations {
     async fn wait_for_builder_runs(&self, expected: usize) {
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
+                let notified = self.builder_notify.notified();
                 if self.builder_runs.load(Ordering::SeqCst) >= expected {
                     break;
                 }
-                tokio::task::yield_now().await;
+                notified.await;
             }
         })
         .await
@@ -530,6 +536,7 @@ impl SharedWarmupOperations for BlockingWarmupOperations {
         observer: Arc<dyn HarnessSetupObserver>,
     ) -> Result<()> {
         self.runtime_runs.fetch_add(1, Ordering::SeqCst);
+        self.runtime_notify.notify_waiters();
         observer.on_phase(HarnessSetupPhase::MachineCheck, "warming runtime");
         self.runtime_release
             .acquire()
@@ -545,6 +552,7 @@ impl SharedWarmupOperations for BlockingWarmupOperations {
         observer: Arc<dyn HarnessSetupObserver>,
     ) -> Result<()> {
         self.runtime_runs.fetch_add(1, Ordering::SeqCst);
+        self.runtime_notify.notify_waiters();
         observer.on_phase(
             HarnessSetupPhase::MachineStartOrInit,
             "warming launch-ready runtime",
@@ -559,6 +567,7 @@ impl SharedWarmupOperations for BlockingWarmupOperations {
 
     async fn warm_builder(&self, observer: Arc<dyn HarnessSetupObserver>) -> Result<()> {
         self.builder_runs.fetch_add(1, Ordering::SeqCst);
+        self.builder_notify.notify_waiters();
         observer.on_phase(HarnessSetupPhase::ImageLoad, "warming builder");
         self.builder_release
             .acquire()
@@ -1087,7 +1096,7 @@ async fn startup_prewarm_does_not_record_success_for_stale_loaded_default_image(
     let sandbox_cli_path = data_dir.path().join("sandbox-cli.sh");
     std::fs::write(
         &sandbox_cli_path,
-        "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  printf '{}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+        "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  printf '{}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
     )
     .expect("write sandbox CLI shim");
     std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
@@ -1200,7 +1209,7 @@ async fn successful_workspace_launch_writes_missing_prewarm_metadata() {
     std::fs::write(
         &sandbox_cli_path,
         with_native_runtime_ready(with_workspace_volume_support(format!(
-            "#!/bin/sh\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             started = machine_started.display(),
             image_present = image_present.display(),
             container = container_name,
@@ -1323,7 +1332,7 @@ async fn successful_workspace_launch_refresh_clears_stale_prewarm_metadata() {
     std::fs::write(
         &sandbox_cli_path,
         with_native_runtime_ready(with_workspace_volume_support(format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             started = machine_started.display(),
             image_present = image_present.display(),
@@ -1454,7 +1463,7 @@ async fn successful_workspace_launch_refreshes_prewarm_metadata_when_image_ref_c
     std::fs::write(
         &sandbox_cli_path,
         with_native_runtime_ready(with_workspace_volume_support(format!(
-            "#!/bin/sh\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             started = machine_started.display(),
             image_present = image_present.display(),
             container = container_name,
@@ -1545,7 +1554,7 @@ async fn workspace_override_image_does_not_clobber_startup_prewarm_metadata() {
     std::fs::write(
         &sandbox_cli_path,
         with_native_runtime_ready(with_workspace_volume_support(format!(
-            "#!/bin/sh\nSTARTED=\"{started}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ] && [ \"$4\" = \"{override_image}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nSTARTED=\"{started}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{override_image}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             started = machine_started.display(),
             container = container_name,
             override_image = override_image,
@@ -1649,21 +1658,18 @@ async fn runtime_prewarm_reuses_background_all_job_and_waits_for_builder_tail_wh
 
     ops.release_builder();
 
-    let ready = tokio::time::timeout(BACKGROUND_TEST_TIMEOUT, async {
-        loop {
-            let latest = coordinator
-                .launch_status(&background.job_id)
-                .await
-                .expect("missing shared prewarm job");
-            if latest.state == ExecutionLaunchState::Ready {
-                break latest;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("shared all prewarm wait timed out");
+    let ready = wait_for_execution_launch_terminal(
+        &coordinator,
+        &background.job_id,
+        BACKGROUND_TEST_TIMEOUT,
+    )
+    .await;
 
+    assert_eq!(
+        ready.state,
+        ExecutionLaunchState::Ready,
+        "expected shared all prewarm to finish ready, got terminal snapshot: {ready:#?}"
+    );
     assert_eq!(ready.job_id, background.job_id);
     assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
 }
@@ -1884,7 +1890,7 @@ async fn workspace_launch_waits_for_running_startup_prewarm_without_duplicate_ru
     std::fs::write(
             &sandbox_cli_path,
             with_native_runtime_ready(with_workspace_volume_support(format!(
-                "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+                "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'sandbox runtime unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
                 log = log_path.display(),
                 started = machine_started.display(),
                 container = container_name,
@@ -1982,7 +1988,7 @@ async fn workspace_launch_reuses_active_runtime_prewarm_without_second_image_loa
     std::fs::write(
         &sandbox_cli_path,
         with_native_runtime_ready(with_workspace_volume_support(format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nLOAD_RELEASE=\"{load_release}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  while [ ! -f \"$LOAD_RELEASE\" ]; do\n    sleep 0.05\n  done\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nLOAD_RELEASE=\"{load_release}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  while [ ! -f \"$LOAD_RELEASE\" ]; do\n    sleep 0.05\n  done\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             load_release = load_release.display(),
             image_present = image_present.display(),
@@ -2090,7 +2096,7 @@ async fn workspace_launch_reuses_startup_prewarm_without_second_image_load_when_
     std::fs::write(
         &sandbox_cli_path,
         with_native_runtime_ready(with_workspace_volume_support(format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nLOAD_RELEASE=\"{load_release}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  while [ ! -f \"$LOAD_RELEASE\" ]; do\n    sleep 0.05\n  done\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nLOAD_RELEASE=\"{load_release}\"\nIMAGE_PRESENT=\"{image_present}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  while [ ! -f \"$LOAD_RELEASE\" ]; do\n    sleep 0.05\n  done\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             load_release = load_release.display(),
             image_present = image_present.display(),
@@ -2217,21 +2223,14 @@ async fn builder_prewarm_reuses_background_all_job() {
     ops.wait_for_builder_runs(1).await;
     ops.release_builder();
 
-    let ready = tokio::time::timeout(BACKGROUND_TEST_TIMEOUT, async {
-        loop {
-            let latest = coordinator
-                .launch_status(&background.job_id)
-                .await
-                .expect("missing shared prewarm job");
-            if latest.state == ExecutionLaunchState::Ready {
-                break latest;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("timed out waiting for shared all/builder prewarm readiness");
+    let ready = wait_for_execution_launch_terminal(
+        &coordinator,
+        &background.job_id,
+        BACKGROUND_TEST_TIMEOUT,
+    )
+    .await;
 
+    assert_eq!(ready.state, ExecutionLaunchState::Ready);
     assert_eq!(ready.job_id, background.job_id);
     assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
     assert_eq!(ops.builder_runs.load(Ordering::SeqCst), 1);
@@ -2484,20 +2483,9 @@ async fn builder_only_prewarm_skips_runtime_warmup_and_runtime_availability() {
 
     ops.release_builder();
 
-    let terminal = tokio::time::timeout(BACKGROUND_TEST_TIMEOUT, async {
-        loop {
-            let latest = coordinator
-                .launch_status(&snapshot.job_id)
-                .await
-                .expect("missing builder-only prewarm job");
-            if latest.state == ExecutionLaunchState::Ready {
-                break latest;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("timed out waiting for builder-only prewarm readiness");
+    let terminal =
+        wait_for_execution_launch_terminal(&coordinator, &snapshot.job_id, BACKGROUND_TEST_TIMEOUT)
+            .await;
 
     assert_eq!(terminal.state, ExecutionLaunchState::Ready);
     assert!(terminal.logs.iter().any(|line| {
@@ -2605,23 +2593,9 @@ async fn workspace_launch_is_not_blocked_by_background_runtime_prewarm_job() {
         )
         .await;
 
-    let ready = tokio::time::timeout(BACKGROUND_TEST_TIMEOUT, async {
-        loop {
-            let latest = coordinator
-                .launch_status(&launch.job_id)
-                .await
-                .expect("missing workspace launch job");
-            if latest.state == ExecutionLaunchState::Ready {
-                break latest;
-            }
-            if latest.state == ExecutionLaunchState::Error {
-                panic!("workspace launch failed unexpectedly: {:?}", latest.error);
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("timed out waiting for workspace launch readiness");
+    let ready =
+        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, BACKGROUND_TEST_TIMEOUT)
+            .await;
 
     let background_snapshot = coordinator
         .launch_status(&background.job_id)
@@ -2664,7 +2638,7 @@ async fn workspace_launch_reuses_existing_container_without_waiting_for_startup_
     std::fs::write(
         &sandbox_cli_path,
         with_workspace_volume_support(format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             container = container_name,
         )),

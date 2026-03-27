@@ -10,7 +10,8 @@ use std::time::Duration;
 
 #[cfg(test)]
 use crate::execution_setup::{
-    ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionSetupCoordinator,
+    ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionLaunchStreamEvent,
+    ExecutionSetupCoordinator,
 };
 
 /// Tests that mutate workspace-runtime-related process globals, or that execute
@@ -33,18 +34,56 @@ pub(crate) async fn wait_for_execution_launch_terminal(
     timeout: Duration,
 ) -> ExecutionLaunchSnapshot {
     tokio::time::timeout(timeout, async {
+        let (initial, mut rx) = coordinator
+            .subscribe_launch(job_id)
+            .await
+            .expect("missing launch job");
+        if matches!(
+            initial.state,
+            ExecutionLaunchState::Ready | ExecutionLaunchState::Error
+        ) {
+            return initial;
+        }
+
         loop {
-            let latest = coordinator
-                .launch_status(job_id)
-                .await
-                .expect("missing launch job");
-            if matches!(
-                latest.state,
-                ExecutionLaunchState::Ready | ExecutionLaunchState::Error
-            ) {
-                break latest;
+            match rx.recv().await {
+                Ok(ExecutionLaunchStreamEvent::LaunchComplete { snapshot })
+                | Ok(ExecutionLaunchStreamEvent::LaunchError { snapshot }) => break snapshot,
+                Ok(ExecutionLaunchStreamEvent::LaunchSnapshot { snapshot })
+                    if matches!(
+                        snapshot.state,
+                        ExecutionLaunchState::Ready | ExecutionLaunchState::Error
+                    ) =>
+                {
+                    break snapshot;
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    let latest = coordinator
+                        .launch_status(job_id)
+                        .await
+                        .expect("missing launch job");
+                    if matches!(
+                        latest.state,
+                        ExecutionLaunchState::Ready | ExecutionLaunchState::Error
+                    ) {
+                        break latest;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    let latest = coordinator
+                        .launch_status(job_id)
+                        .await
+                        .expect("missing launch job");
+                    if matches!(
+                        latest.state,
+                        ExecutionLaunchState::Ready | ExecutionLaunchState::Error
+                    ) {
+                        break latest;
+                    }
+                    panic!("launch stream closed before terminal state");
+                }
             }
-            tokio::task::yield_now().await;
         }
     })
     .await
@@ -95,7 +134,7 @@ pub(crate) fn write_running_container_sandbox_cli_shim(
     std::fs::write(
         &path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  echo 'transient image store failure' >&2\n  exit 125\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  suffix=${{2#ctx-harness-}}\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"ctx-ws-%s\",\"Destination\":\"/ctx/ws\"}}]}}]\\n' \"$suffix\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'transient image store failure' >&2\n  exit 125\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"inspect\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"volume\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"inspect\" ] && [ \"$2\" = \"{container}\" ]; then\n  suffix=${{2#ctx-harness-}}\n  printf '[{{\"Mounts\":[{{\"Type\":\"volume\",\"Name\":\"ctx-ws-%s\",\"Destination\":\"/ctx/ws\"}}]}}]\\n' \"$suffix\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
             container = container_name,
         ),

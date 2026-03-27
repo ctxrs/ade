@@ -162,6 +162,7 @@ fn container_settings(image: &str) -> ExecutionSettings {
         mode: ExecutionMode::Sandbox,
         ..ExecutionSettings::default()
     };
+    settings.container.runtime = crate::settings::ContainerRuntimeKind::NativeContainer;
     settings.container.image = Some(image.to_string());
     settings
 }

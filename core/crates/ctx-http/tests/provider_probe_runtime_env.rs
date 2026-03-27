@@ -1229,9 +1229,13 @@ async fn provider_options_probe_uses_workspace_runtime_context_for_container_mod
     );
     assert_eq!(
         body.get("probe_error").and_then(serde_json::Value::as_str),
-        Some(
-            "provider status reflects the host environment and does not verify target 'container'",
-        ),
-        "expected canonical probe_error alongside target mismatch diagnostic: {body:#?}"
+        Some("provider is not ready until required dependencies are installed: codex-cli"),
+        "expected canonical missing-dependency probe_error alongside target mismatch diagnostic: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/usability/reason_code")
+            .and_then(serde_json::Value::as_str),
+        Some("missing_dependency"),
+        "expected unusable provider status to stay actionable in container mode: {body:#?}"
     );
 }

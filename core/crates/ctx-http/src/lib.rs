@@ -83,7 +83,7 @@ pub mod fault_injection {
 mod tests {
     use std::collections::HashMap;
     use std::path::Path;
-    use std::sync::Arc;
+    use std::sync::{Arc, OnceLock};
     use std::time::Duration;
 
     use axum::body::{to_bytes, Body};
@@ -180,11 +180,17 @@ mod tests {
         crate::test_support::sandbox_cli_env_test_lock()
     }
 
+    fn home_env_test_lock() -> &'static tokio::sync::Mutex<()> {
+        static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
+
     #[tokio::test]
     async fn daemon_golden_path_with_fake_provider() {
+        let _serial = home_env_test_lock().lock().await;
         let git_repo = setup_git_repo().await;
         let home = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", home.path());
+        let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
         let data_dir = tempfile::tempdir().unwrap();
         let stores = StoreManager::open(data_dir.path()).await.unwrap();
@@ -282,9 +288,10 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_http_and_ws_streaming() {
+        let _serial = home_env_test_lock().lock().await;
         let git_repo = setup_git_repo().await;
         let home = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", home.path());
+        let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
         let data_dir = tempfile::tempdir().unwrap();
         let stores = StoreManager::open(data_dir.path()).await.unwrap();
@@ -513,9 +520,10 @@ mod tests {
 
     #[tokio::test]
     async fn create_session_rejects_unknown_provider_id() {
+        let _serial = home_env_test_lock().lock().await;
         let git_repo = setup_git_repo().await;
         let home = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", home.path());
+        let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
         let data_dir = tempfile::tempdir().unwrap();
         let stores = StoreManager::open(data_dir.path()).await.unwrap();
@@ -575,8 +583,9 @@ mod tests {
 
     #[tokio::test]
     async fn web_session_routes_are_registered() {
+        let _serial = home_env_test_lock().lock().await;
         let home = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", home.path());
+        let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
         let data_dir = tempfile::tempdir().unwrap();
         let stores = StoreManager::open(data_dir.path()).await.unwrap();
@@ -618,9 +627,10 @@ mod tests {
 
     #[tokio::test]
     async fn execution_launch_start_and_status_host_mode() {
+        let _serial = home_env_test_lock().lock().await;
         let git_repo = setup_git_repo().await;
         let home = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", home.path());
+        let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
         let data_dir = tempfile::tempdir().unwrap();
         let stores = StoreManager::open(data_dir.path()).await.unwrap();
@@ -705,7 +715,7 @@ mod tests {
         let _serial = sandbox_cli_env_test_lock().lock().await;
         let _sandbox_cli = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
         let home = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", home.path());
+        let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
         let data_dir = tempfile::tempdir().unwrap();
         let stores = StoreManager::open(data_dir.path()).await.unwrap();
@@ -769,9 +779,10 @@ mod tests {
 
     #[tokio::test]
     async fn execution_launch_start_returns_bad_request_when_execution_settings_fail() {
+        let _serial = home_env_test_lock().lock().await;
         let git_repo = setup_git_repo().await;
         let home = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", home.path());
+        let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
         let data_dir = tempfile::tempdir().unwrap();
         let stores = StoreManager::open(data_dir.path()).await.unwrap();
@@ -819,9 +830,10 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_workspace_container_returns_bad_request_when_execution_settings_fail() {
+        let _serial = home_env_test_lock().lock().await;
         let git_repo = setup_git_repo().await;
         let home = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", home.path());
+        let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
         let data_dir = tempfile::tempdir().unwrap();
         let stores = StoreManager::open(data_dir.path()).await.unwrap();
@@ -866,8 +878,9 @@ mod tests {
 
     #[tokio::test]
     async fn cors_preflight_allows_archived_endpoint_for_tauri_origin() {
+        let _serial = home_env_test_lock().lock().await;
         let home = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", home.path());
+        let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
         let data_dir = tempfile::tempdir().unwrap();
         let stores = StoreManager::open(data_dir.path()).await.unwrap();
         let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
@@ -916,8 +929,9 @@ mod tests {
 
     #[tokio::test]
     async fn cors_preflight_allows_health_endpoint_for_tauri_localhost_origin() {
+        let _serial = home_env_test_lock().lock().await;
         let home = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", home.path());
+        let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
         let data_dir = tempfile::tempdir().unwrap();
         let stores = StoreManager::open(data_dir.path()).await.unwrap();
         let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =

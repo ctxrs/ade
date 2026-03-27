@@ -142,6 +142,68 @@ pub(crate) fn connect_shared_vm_guest_control_socket(
 }
 
 #[cfg(all(target_os = "macos", unix))]
+fn socket_timeout_to_timeval(timeout: Option<Duration>) -> libc::timeval {
+    match timeout {
+        Some(timeout) => libc::timeval {
+            tv_sec: timeout.as_secs().min(libc::time_t::MAX as u64) as libc::time_t,
+            tv_usec: timeout.subsec_micros() as libc::suseconds_t,
+        },
+        None => libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        },
+    }
+}
+
+#[cfg(all(target_os = "macos", unix))]
+fn configure_guest_control_socket_timeout(socket: &File, timeout: Option<Duration>) -> Result<()> {
+    use std::os::fd::AsRawFd;
+
+    let fd = socket.as_raw_fd();
+    let timeout = socket_timeout_to_timeval(timeout);
+    let optlen = std::mem::size_of::<libc::timeval>() as libc::socklen_t;
+    for (option, direction) in [(libc::SO_RCVTIMEO, "read"), (libc::SO_SNDTIMEO, "write")] {
+        let status = unsafe {
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                option,
+                (&timeout as *const libc::timeval).cast(),
+                optlen,
+            )
+        };
+        if status != 0 {
+            return Err(std::io::Error::last_os_error()).with_context(|| {
+                format!("configuring shared AVF Linux guest control {direction} timeout")
+            });
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", unix))]
+pub(super) fn run_owner_guest_exec_capture(
+    queue: &DispatchQueue,
+    virtual_machine: &Retained<VZVirtualMachine>,
+    cwd: &Path,
+    command: &str,
+    args: &[String],
+    user: Option<&str>,
+    env: HashMap<String, String>,
+) -> Result<GuestExecCaptureResult> {
+    let mut socket = connect_shared_vm_guest_control_socket(queue, virtual_machine)?;
+    configure_guest_control_socket_timeout(
+        &socket,
+        Some(SHARED_VM_READINESS_GUEST_EXEC_IO_TIMEOUT),
+    )?;
+    run_guest_exec_capture_over_connected_stream(&mut socket, cwd, command, args, user, env)
+}
+
+pub(super) fn shared_vm_owner_guest_probe_ready(data_root: &Path) -> bool {
+    shared_vm_guest_control_ready_path(data_root).is_file()
+}
+
+#[cfg(all(target_os = "macos", unix))]
 pub(crate) fn relay_shared_vm_control_client(client: UnixStream, guest: File) -> Result<()> {
     // The listener itself stays nonblocking so the owner loop can poll `accept()`, but the
     // per-client relay must switch back to blocking mode before proxying framed exec traffic.
