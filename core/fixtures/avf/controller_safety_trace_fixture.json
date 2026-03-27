@@ -1,7 +1,24 @@
 {
-  "schema_version": 1,
-  "fixture_id": "controller_safety_foundation_v1",
+  "schema_version": 2,
+  "fixture_id": "controller_safety_foundation_v2",
   "contract_ref": "controller_safety_contract.md",
+  "contract_version": 2,
+  "required_step_output_keys": [
+    "step_index",
+    "action",
+    "target_bytes_before",
+    "target_bytes_after",
+    "pressure_state_before",
+    "pressure_state_after",
+    "reason_codes",
+    "emergency_path",
+    "invariants_passed"
+  ],
+  "gate_pass_requirements": {
+    "all_cases_must_pass": true,
+    "exact_expected_output_match": true,
+    "canonical_json_repeat_match": true
+  },
   "cases": [
     {
       "case_id": "stable_hold_band",
@@ -39,8 +56,11 @@
             "under_pressure": false
           },
           "expected": {
+            "step_index": 0,
             "action": "hold",
+            "target_bytes_before": 8589934592,
             "target_bytes_after": 8589934592,
+            "pressure_state_before": "balanced",
             "pressure_state_after": "balanced",
             "reason_codes": [
               "stable_band"
@@ -72,8 +92,11 @@
             "under_pressure": false
           },
           "expected": {
+            "step_index": 1,
             "action": "hold",
+            "target_bytes_before": 8589934592,
             "target_bytes_after": 8589934592,
+            "pressure_state_before": "balanced",
             "pressure_state_after": "balanced",
             "reason_codes": [
               "stable_band"
@@ -123,8 +146,11 @@
             "under_pressure": true
           },
           "expected": {
+            "step_index": 0,
             "action": "hold",
+            "target_bytes_before": 8589934592,
             "target_bytes_after": 8589934592,
+            "pressure_state_before": "balanced",
             "pressure_state_after": "guest_protected",
             "reason_codes": [
               "guest_pressure_blocks_shrink"
@@ -156,8 +182,11 @@
             "under_pressure": false
           },
           "expected": {
+            "step_index": 1,
             "action": "shrink",
+            "target_bytes_before": 8589934592,
             "target_bytes_after": 8053063680,
+            "pressure_state_before": "guest_protected",
             "pressure_state_after": "host_reclaim",
             "reason_codes": [
               "host_pressure_reclaim"
@@ -206,8 +235,11 @@
             "under_pressure": true
           },
           "expected": {
+            "step_index": 0,
             "action": "emergency_shrink",
+            "target_bytes_before": 9663676416,
             "target_bytes_after": 6442450944,
+            "pressure_state_before": "host_reclaim",
             "pressure_state_after": "emergency",
             "reason_codes": [
               "host_emergency"
