@@ -1249,28 +1249,28 @@
       "os": "macos",
       "arch": "aarch64",
       "variant": "default",
-      "version": "ubuntu-noble-arm64-0ade3ab45292",
+      "version": "ubuntu-noble-arm64-45e7ab394479",
       "bin": "rootfs.raw",
       "helpers": {
         "kernel": {
-          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-0ade3ab45292/macos/aarch64/sha256-bcbef77faa333bd932252db5ff32177c111b0b95cc55e37af50745509433bd3a/kernel",
+          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-45e7ab394479/macos/aarch64/sha256-bcbef77faa333bd932252db5ff32177c111b0b95cc55e37af50745509433bd3a/kernel",
           "sha256": "bcbef77faa333bd932252db5ff32177c111b0b95cc55e37af50745509433bd3a"
         },
         "initrd": {
-          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-0ade3ab45292/macos/aarch64/sha256-b7c4eed8e19caf883a5bc923429c0d7c84d7194ad988315c515ce8820046ba09/initrd",
+          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-45e7ab394479/macos/aarch64/sha256-b7c4eed8e19caf883a5bc923429c0d7c84d7194ad988315c515ce8820046ba09/initrd",
           "sha256": "b7c4eed8e19caf883a5bc923429c0d7c84d7194ad988315c515ce8820046ba09"
         },
         "guest-agent": {
-          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-0ade3ab45292/macos/aarch64/sha256-08f732e93e2ee4e8e3be9fb621f18c57a55d627c2796ffa899c6bd86223efd11/guest-agent",
-          "sha256": "08f732e93e2ee4e8e3be9fb621f18c57a55d627c2796ffa899c6bd86223efd11"
+          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-45e7ab394479/macos/aarch64/sha256-9eb246658dd2dc965b7690d0e313cc7522c04ecda4a27c17e1ed01d918c747f3/guest-agent",
+          "sha256": "9eb246658dd2dc965b7690d0e313cc7522c04ecda4a27c17e1ed01d918c747f3"
         },
         "egress-proxy": {
-          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-0ade3ab45292/macos/aarch64/sha256-eb315abe5d52b34a5a7fbede7ec612524ca5649df5fe6540f6608adf0bd759e8/egress-proxy",
+          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-45e7ab394479/macos/aarch64/sha256-eb315abe5d52b34a5a7fbede7ec612524ca5649df5fe6540f6608adf0bd759e8/egress-proxy",
           "sha256": "eb315abe5d52b34a5a7fbede7ec612524ca5649df5fe6540f6608adf0bd759e8"
         },
         "container-stack": {
-          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-0ade3ab45292/macos/aarch64/sha256-2c4b97312acd41c4dfe80db6e82592367b3862b5db4c51ce67a6d79bf6ee00ee/container-stack.tar.gz",
-          "sha256": "2c4b97312acd41c4dfe80db6e82592367b3862b5db4c51ce67a6d79bf6ee00ee"
+          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-45e7ab394479/macos/aarch64/sha256-b3bbebec6f2c538a8a955bdb77a371f5467dd27d35d84cd60fe3ea82f9ec1d45/container-stack.tar.gz",
+          "sha256": "b3bbebec6f2c538a8a955bdb77a371f5467dd27d35d84cd60fe3ea82f9ec1d45"
         }
       },
       "sources": [
@@ -1280,8 +1280,8 @@
         },
         {
           "source_type": "ci",
-          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-0ade3ab45292/macos/aarch64/sha256-9808094825a65be6bb8203291f47f754678b59b2253a8edae1538eaa5d93688c/rootfs.raw.zst",
-          "sha256": "9808094825a65be6bb8203291f47f754678b59b2253a8edae1538eaa5d93688c"
+          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-45e7ab394479/macos/aarch64/sha256-1a94ef05e038a61a8fc33aae60d735b6d39f8579bb305fb195da9ef69cd52e54/rootfs.raw.zst",
+          "sha256": "1a94ef05e038a61a8fc33aae60d735b6d39f8579bb305fb195da9ef69cd52e54"
         }
       ]
     },

@@ -5,7 +5,7 @@
   "runtimes": [
     {
       "id": "avf-linux-guest",
-      "version": "ubuntu-noble-arm64-0ade3ab45292",
+      "version": "ubuntu-noble-arm64-45e7ab394479",
       "os": "macos",
       "arch": "aarch64",
       "sha256": "0ade3ab4529204da7250bb140fbedf8f04947fd80516fddbfe0c277244a5604c",
