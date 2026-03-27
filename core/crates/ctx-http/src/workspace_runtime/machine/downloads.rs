@@ -35,6 +35,11 @@ fn resolve_managed_artifact_download_url_with_base(url: &str, base_url: &str) ->
         if normalized_path.is_empty() {
             anyhow::bail!("managed artifact locked URL is missing a path: {url}");
         }
+        if normalized_path.starts_with("runtimes/avf-linux-guest/") {
+            anyhow::bail!(
+                "managed AVF runtime source is unresolved in runtime lock; expected an immutable published URL instead of {url}"
+            );
+        }
         return Ok(updates::join_url(base_url, &format!("/{normalized_path}")));
     }
     Ok(url.to_string())
@@ -706,15 +711,15 @@ mod tests {
     }
 
     #[test]
-    fn resolve_managed_artifact_download_url_rewrites_locked_scheme() {
+    fn resolve_managed_artifact_download_url_rewrites_non_avf_locked_scheme() {
         let resolved = resolve_managed_artifact_download_url_with_base(
-            "locked://runtimes/avf-linux-guest/macos/aarch64/rootfs.raw.zst",
+            "locked://providers/codex/macos/aarch64",
             "https://api.ctx.rs/functions/v1/",
         )
         .expect("resolve locked uri");
         assert_eq!(
             resolved,
-            "https://api.ctx.rs/functions/v1/runtimes/avf-linux-guest/macos/aarch64/rootfs.raw.zst"
+            "https://api.ctx.rs/functions/v1/providers/codex/macos/aarch64"
         );
     }
 
@@ -726,6 +731,16 @@ mod tests {
         )
         .expect_err("empty locked path should fail");
         assert!(format!("{err:#}").contains("missing a path"));
+    }
+
+    #[test]
+    fn resolve_managed_artifact_download_url_rejects_unresolved_avf_locked_scheme() {
+        let err = resolve_managed_artifact_download_url_with_base(
+            "locked://runtimes/avf-linux-guest/macos/aarch64/rootfs.raw.zst",
+            "https://api.ctx.rs/functions/v1",
+        )
+        .expect_err("unresolved AVF locked path should fail");
+        assert!(format!("{err:#}").contains("managed AVF runtime source is unresolved"));
     }
 
     async fn read_http_request(socket: &mut tokio::net::TcpStream) -> String {

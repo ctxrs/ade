@@ -69,10 +69,11 @@ pub(crate) use self::avf_linux_vm::run_guest_exec_capture as run_avf_linux_guest
 #[cfg(test)]
 pub(crate) use self::avf_linux_vm::AVF_LINUX_HELPER_PATH_ENV;
 use self::avf_linux_vm::{
+    ensure_shared_vm_ready_with_observer as ensure_avf_linux_shared_vm_ready_with_observer,
     ensure_workspace_vm_ready_with_observer as ensure_avf_linux_workspace_vm_ready_with_observer,
     prefetch_runtime_with_observer as prefetch_avf_linux_runtime_with_observer,
     runtime_available as avf_linux_runtime_available, runtime_state as avf_linux_runtime_state,
-    runtime_target_label as avf_linux_runtime_target_label,
+    runtime_target_label as avf_linux_runtime_target_label, AvfLinuxSharedVmLifecycleState,
     workspace_vm_data_root as avf_linux_workspace_vm_data_root,
     workspace_vm_state as avf_linux_workspace_vm_state,
 };
@@ -179,6 +180,46 @@ pub(crate) async fn prewarm_selected_runtime_with_observer(
         }
         ContainerRuntimeKind::SharedVmContainer => {
             prefetch_avf_linux_runtime_with_observer(data_root, settings, observer).await
+        }
+    }
+}
+
+pub(crate) async fn prewarm_selected_runtime_for_launch_with_observer(
+    data_root: &Path,
+    settings: &ContainerExecutionSettings,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<()> {
+    match settings.runtime {
+        ContainerRuntimeKind::NativeContainer => {
+            prewarm_selected_runtime_with_observer(data_root, settings, observer).await
+        }
+        ContainerRuntimeKind::SharedVmContainer => {
+            ensure_avf_linux_shared_vm_ready_with_observer(data_root, settings, observer)
+                .await
+                .map(|_| ())
+        }
+    }
+}
+
+pub(crate) async fn selected_runtime_launch_ready(
+    data_root: &Path,
+    settings: &ContainerExecutionSettings,
+) -> Result<bool> {
+    match settings.runtime {
+        ContainerRuntimeKind::NativeContainer => {
+            let (machine_ready, image_present) = selected_runtime_state(data_root, settings).await?;
+            Ok(machine_ready && image_present)
+        }
+        ContainerRuntimeKind::SharedVmContainer => {
+            let (helper_ready, runtime_ready) = avf_linux_runtime_state(data_root)?;
+            if !helper_ready || !runtime_ready {
+                return Ok(false);
+            }
+            let shared_vm_state = avf_linux_workspace_vm_state(data_root, WorkspaceId(uuid::Uuid::nil()))?;
+            Ok(matches!(
+                shared_vm_state.state,
+                AvfLinuxSharedVmLifecycleState::Running
+            ))
         }
     }
 }

@@ -7,6 +7,7 @@ import {
   installProvider,
   listProviderAuthImportCandidates,
   listProviders,
+  startRuntimePrewarm,
 } from "../../api/client";
 import {
   type ProviderInstallProgressSession,
@@ -32,6 +33,7 @@ vi.mock("../../api/client", () => ({
   installTitleGenerationLocal: vi.fn(),
   listProviderAuthImportCandidates: vi.fn(),
   listProviders: vi.fn(),
+  startRuntimePrewarm: vi.fn(),
   updateSettings: vi.fn(),
 }));
 
@@ -222,6 +224,8 @@ describe("useWorkspaceSetupProvisioning", () => {
       .mockResolvedValue([] as never);
     vi.mocked(getSettings)
       .mockResolvedValue(configuredTitlingSettings as never);
+    vi.mocked(startRuntimePrewarm)
+      .mockResolvedValue({ job_id: "prewarm-1" } as never);
 
     const currentStepKeyRef = { current: "container" as const };
     const setRoutePlan = vi.fn();
@@ -288,6 +292,57 @@ describe("useWorkspaceSetupProvisioning", () => {
     expect(listProviders).toHaveBeenCalledTimes(1);
     expect(getSettings).toHaveBeenCalledTimes(1);
     expect(setRoutePlanningBusy).toHaveBeenCalledTimes(2);
+    expect(startRuntimePrewarm).toHaveBeenCalledTimes(1);
+    expect(startRuntimePrewarm).toHaveBeenCalledWith("launch_ready");
+  });
+
+  it("does not start sandbox warmup for host selections", async () => {
+    vi.mocked(listProviderAuthImportCandidates)
+      .mockResolvedValue({ candidates: [] } as never);
+    vi.mocked(listProviders)
+      .mockResolvedValue([] as never);
+    vi.mocked(getSettings)
+      .mockResolvedValue(configuredTitlingSettings as never);
+
+    const currentStepKeyRef = { current: "container" as const };
+    const setRoutePlan = vi.fn();
+    const setRoutePlanningBusy = vi.fn();
+    const invalidateRoutePlan = vi.fn();
+    const connectDaemonForImport = vi.fn(async () => {});
+
+    let latest: ReturnType<typeof useWorkspaceSetupProvisioning> | null = null;
+
+    const Harness = () => {
+      latest = useWorkspaceSetupProvisioning({
+        currentStepKeyRef,
+        selections: {
+          location: "local",
+          container: "host",
+        },
+        routePlan: null,
+        setRoutePlan,
+        setRoutePlanningBusy,
+        invalidateRoutePlan,
+        desktopApp: true,
+        effectiveTarget: deriveWorkspaceSetupEffectiveTarget("local", {
+          remoteHostInput: "",
+          remotePortInput: "4399",
+          remoteDataDirInput: "",
+        }),
+        remoteStatus: "connected",
+        remoteStatusRef: { current: "connected" },
+        connectDaemonForImport,
+      });
+      return null;
+    };
+
+    render(createElement(Harness));
+
+    await act(async () => {
+      await latest!.ensureRoutePlanForSelection("host");
+    });
+
+    expect(startRuntimePrewarm).not.toHaveBeenCalled();
   });
 
   it("ignores old refresh completions after the provisioning scope switches", async () => {

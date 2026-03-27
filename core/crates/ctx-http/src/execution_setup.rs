@@ -67,17 +67,22 @@ pub enum ExecutionSetupJobKind {
 pub enum RuntimePrewarmScope {
     #[default]
     Runtime,
+    LaunchReady,
     Builder,
     All,
 }
 
 impl RuntimePrewarmScope {
     fn includes_runtime(self) -> bool {
-        matches!(self, Self::Runtime | Self::All)
+        matches!(self, Self::Runtime | Self::LaunchReady | Self::All)
     }
 
     fn includes_builder(self) -> bool {
         matches!(self, Self::Builder | Self::All)
+    }
+
+    fn requires_launch_ready_runtime(self) -> bool {
+        matches!(self, Self::LaunchReady | Self::All)
     }
 }
 
@@ -370,35 +375,9 @@ impl ExecutionSetupCoordinator {
             Ok(())
         } else {
             async {
-                let runtime_prewarm_running = self.prewarm.runtime_is_running(&settings).await;
-                let shared_runtime_can_make_runtime_ready = if runtime_prewarm_running {
-                    match self.startup_runtime_state(&settings.container).await {
-                        Ok((machine_ready, _)) => machine_ready,
-                        Err(err) => {
-                            observer.on_log(
-                                HarnessSetupPhase::MachineCheck,
-                                HarnessSetupLogLevel::Warn,
-                                &format!(
-                                    "failed to inspect local sandbox runtime before deciding whether to join shared warmup: {}",
-                                    format_error_chain(&err)
-                                ),
-                            );
-                            false
-                        }
-                    }
-                } else {
-                    false
-                };
-                let join_shared_runtime = if runtime_prewarm_running {
-                    let inner = self.inner.lock().await;
-                    shared_runtime_can_make_runtime_ready
-                        && (inner.startup.state != StartupPrewarmState::Running
-                            || inner.startup.machine_ready)
-                } else {
-                    false
-                };
+                let join_shared_runtime = self.prewarm.runtime_is_running(&settings, true).await;
 
-                if runtime_prewarm_running {
+                if join_shared_runtime {
                     let reusable_container_exists = self
                         .harness
                         .workspace_container_exists(workspace.id)
@@ -423,35 +402,33 @@ impl ExecutionSetupCoordinator {
                         .await
                         .context("sandbox runtime unavailable and execution mode is sandbox")?;
 
-                    let joined_shared_runtime = if join_shared_runtime {
-                        match self
-                            .prewarm
-                            .attach_runtime_if_running(&settings, Some(&observer))
-                            .await
-                        {
-                            Ok(joined) => joined,
-                            Err(err) => {
-                                observer.on_log(
-                                    HarnessSetupPhase::MachineStartOrInit,
-                                    HarnessSetupLogLevel::Warn,
-                                    &format!(
-                                        "shared runtime warmup failed, continuing with direct launch: {}",
-                                        format_error_chain(&err)
-                                    ),
-                                );
-                                false
-                            }
+                    let joined_shared_runtime = match self
+                        .prewarm
+                        .attach_runtime_if_running(&settings, true, Some(&observer))
+                        .await
+                    {
+                        Ok(joined) => joined,
+                        Err(err) => {
+                            observer.on_log(
+                                HarnessSetupPhase::MachineStartOrInit,
+                                HarnessSetupLogLevel::Warn,
+                                &format!(
+                                    "shared runtime warmup failed, continuing with direct launch: {}",
+                                    format_error_chain(&err)
+                                ),
+                            );
+                            false
                         }
-                    } else {
-                        false
                     };
 
                     if joined_shared_runtime {
-                        let (machine_ready, image_present) = self
-                            .startup_runtime_state(&settings.container)
-                            .await
-                            .context("failed to inspect container runtime after shared warmup")?;
-                        if machine_ready && image_present {
+                        let launch_ready = harness_runtime::selected_runtime_launch_ready(
+                            &self.data_root,
+                            &settings.container,
+                        )
+                        .await
+                        .context("failed to inspect container runtime after shared warmup")?;
+                        if launch_ready {
                             return self
                                 .harness
                                 .ensure_workspace_container_after_runtime_ready_with_observer(
@@ -562,7 +539,11 @@ impl ExecutionSetupCoordinator {
                 let _artifact_warmup = self.harness.begin_prewarm_artifact_activity();
                 match self
                     .prewarm
-                    .ensure_runtime(&settings, Some(&observer))
+                    .ensure_runtime(
+                        &settings,
+                        shared_job.requires_launch_ready_runtime(),
+                        Some(&observer),
+                    )
                     .await
                 {
                     Ok(()) => {
@@ -595,38 +576,80 @@ impl ExecutionSetupCoordinator {
         match run_result {
             Ok(()) => {
                 if shared_job.runtime_requested() {
-                    match self.startup_runtime_state(&settings.container).await {
-                        Ok((machine_ready, image_present)) => {
-                            if !machine_ready || !image_present {
-                                let message = if machine_ready {
-                                    format!(
-                                        "runtime prewarm completed but runtime target '{runtime_target}' is still unavailable in the local sandbox runtime"
-                                    )
-                                } else {
-                                    format!(
-                                        "runtime prewarm downloaded startup artifacts for '{runtime_target}', but the local sandbox runtime still needs first-launch startup"
-                                    )
-                                };
+                    if shared_job.requires_launch_ready_runtime() {
+                        match harness_runtime::selected_runtime_launch_ready(
+                            &self.data_root,
+                            &settings.container,
+                        )
+                        .await
+                        {
+                            Ok(true) => {}
+                            Ok(false) => {
                                 self.finish_runtime_prewarm_error(
                                     shared_job,
                                     job,
                                     launch_started,
-                                    anyhow::anyhow!(message),
+                                    anyhow::anyhow!(
+                                        "runtime prewarm completed but runtime target '{runtime_target}' is not launch-ready"
+                                    ),
+                                )
+                                .await;
+                                return;
+                            }
+                            Err(err) => {
+                                self.finish_runtime_prewarm_error(
+                                    shared_job,
+                                    job,
+                                    launch_started,
+                                    err,
                                 )
                                 .await;
                                 return;
                             }
                         }
-                        Err(err) => {
-                            self.finish_runtime_prewarm_error(shared_job, job, launch_started, err)
+                    } else {
+                        match self.startup_runtime_state(&settings.container).await {
+                            Ok((machine_ready, image_present)) => {
+                                if !machine_ready || !image_present {
+                                    let message = if machine_ready {
+                                        format!(
+                                            "runtime prewarm completed but runtime target '{runtime_target}' is still unavailable in the local sandbox runtime"
+                                        )
+                                    } else {
+                                        format!(
+                                            "runtime prewarm downloaded startup artifacts for '{runtime_target}', but the local sandbox runtime still needs first-launch startup"
+                                        )
+                                    };
+                                    self.finish_runtime_prewarm_error(
+                                        shared_job,
+                                        job,
+                                        launch_started,
+                                        anyhow::anyhow!(message),
+                                    )
+                                    .await;
+                                    return;
+                                }
+                            }
+                            Err(err) => {
+                                self.finish_runtime_prewarm_error(
+                                    shared_job,
+                                    job,
+                                    launch_started,
+                                    err,
+                                )
                                 .await;
-                            return;
+                                return;
+                            }
                         }
                     }
                 }
                 if !matches!(settings.mode, ExecutionMode::Host) {
                     let ready_message = if shared_job.runtime_requested() {
-                        "container runtime is ready"
+                        if shared_job.requires_launch_ready_runtime() {
+                            "sandbox runtime is launch-ready"
+                        } else {
+                            "container runtime is ready"
+                        }
                     } else {
                         "container builder is ready"
                     };

@@ -23,8 +23,9 @@ pub(super) fn indent_cloud_init_block(content: &str, spaces: usize) -> String {
 
 pub(super) fn render_shared_vm_guest_agent_service() -> String {
     format!(
-        "[Unit]\nDescription=ctx AVF Linux Guest Agent\n\n[Service]\nType=simple\nEnvironment=RUST_BACKTRACE=1\nExecStartPre=/bin/sh -lc 'echo \"[ctx-avf-linux] starting guest-agent\" >/dev/hvc0'\nExecStart=/bin/sh -lc 'exec /usr/local/bin/ctx-avf-linux-guest-agent'\nStandardOutput=journal+console\nStandardError=journal+console\nRestart=always\nRestartSec=1\n\n[Install]\nWantedBy=multi-user.target\n# {}\n",
-        SHARED_VM_GUEST_AGENT_SERVICE_NAME
+        "[Unit]\nDescription=ctx AVF Linux Guest Agent\nAfter={data_disk_service}\nRequires={data_disk_service}\n\n[Service]\nType=simple\nEnvironment=RUST_BACKTRACE=1\nExecStartPre=/bin/sh -lc 'echo \"[ctx-avf-linux] starting guest-agent\" >/dev/hvc0'\nExecStart=/bin/sh -lc 'exec /usr/local/bin/ctx-avf-linux-guest-agent'\nStandardOutput=journal+console\nStandardError=journal+console\nRestart=always\nRestartSec=1\n\n[Install]\nWantedBy=multi-user.target\n# {guest_agent_service}\n",
+        data_disk_service = SHARED_VM_DATA_DISK_SERVICE_NAME,
+        guest_agent_service = SHARED_VM_GUEST_AGENT_SERVICE_NAME,
     )
 }
 
@@ -41,25 +42,29 @@ pub(super) fn render_shared_vm_host_data_mount_service(host_data_root: &Path) ->
     )
 }
 
-pub(super) fn render_shared_vm_grow_rootfs_script() -> String {
-    "#!/bin/sh\nset -eu\nroot_device=\"$(findmnt -n -o SOURCE /)\"\nif [ -z \"$root_device\" ]; then\n  echo \"[ctx-avf-linux] could not determine root device\" >/dev/hvc0\n  exit 1\nfi\nroot_device=\"$(readlink -f \"$root_device\" 2>/dev/null || printf '%s' \"$root_device\")\"\ncase \"$root_device\" in\n  /dev/*) ;;\n  *)\n    echo \"[ctx-avf-linux] unsupported root device $root_device\" >/dev/hvc0\n    exit 1\n    ;;\nesac\nif ! command -v growpart >/dev/null 2>&1; then\n  echo \"[ctx-avf-linux] missing growpart\" >/dev/hvc0\n  exit 1\nfi\nif ! command -v resize2fs >/dev/null 2>&1; then\n  echo \"[ctx-avf-linux] missing resize2fs\" >/dev/hvc0\n  exit 1\nfi\ndisk_name=\"$(lsblk -nro PKNAME \"$root_device\" | head -n1)\"\npart_number=\"$(lsblk -nro PARTN \"$root_device\" | head -n1)\"\nif [ -z \"$disk_name\" ] || [ -z \"$part_number\" ]; then\n  echo \"[ctx-avf-linux] could not resolve parent disk for $root_device\" >/dev/hvc0\n  exit 1\nfi\ngrow_output=\"\"\ngrow_status=0\nif ! grow_output=\"$(growpart \"/dev/$disk_name\" \"$part_number\" 2>&1)\"; then\n  grow_status=$?\nfi\nif [ \"$grow_status\" -ne 0 ]; then\n  case \"$grow_output\" in\n    *NOCHANGE:*)\n      printf '%s\\n' \"$grow_output\" >/dev/hvc0\n      ;;\n    *)\n      printf '%s\\n' \"$grow_output\" >/dev/hvc0\n      exit \"$grow_status\"\n      ;;\n  esac\nelif [ -n \"$grow_output\" ]; then\n  printf '%s\\n' \"$grow_output\" >/dev/hvc0\nfi\nresize2fs \"$root_device\" >/dev/hvc0 2>&1\n".to_string()
+pub(super) fn render_shared_vm_data_disk_script() -> String {
+    format!(
+        "#!/bin/sh\nset -eu\nmount_root='/ctx'\nstaging_mount='/mnt/ctx-data'\ndata_label='{data_label}'\nmarker_name='.ctx-avf-data-disk-ready'\ncopy_tree_if_present() {{\n  src=\"$1\"\n  dst=\"$2\"\n  if [ ! -d \"$src\" ]; then\n    return 0\n  fi\n  if [ -z \"$(ls -A \"$src\" 2>/dev/null || true)\" ]; then\n    return 0\n  fi\n  mkdir -p \"$dst\"\n  tar -C \"$src\" -cf - . | tar -C \"$dst\" -xf -\n}}\nroot_device=\"$(findmnt -n -o SOURCE /)\"\nif [ -z \"$root_device\" ]; then\n  echo \"[ctx-avf-linux] could not determine root device\" >/dev/hvc0\n  exit 1\nfi\nroot_device=\"$(readlink -f \"$root_device\" 2>/dev/null || printf '%s' \"$root_device\")\"\nroot_disk=\"$(lsblk -nro PKNAME \"$root_device\" | head -n1)\"\nif [ -z \"$root_disk\" ]; then\n  echo \"[ctx-avf-linux] could not resolve parent disk for $root_device\" >/dev/hvc0\n  exit 1\nfi\ndata_device=\"$(lsblk -dnbo NAME,SIZE,RO,TYPE | awk -v root_disk=\"$root_disk\" '$4 == \"disk\" && $1 != root_disk && $3 == 0 && $2 >= 1073741824 {{ print \"/dev/\" $1; exit }}')\"\nif [ -z \"$data_device\" ]; then\n  echo \"[ctx-avf-linux] could not locate writable data disk\" >/dev/hvc0\n  exit 1\nfi\nmkdir -p \"$mount_root\" \"$staging_mount\"\nif ! blkid -s TYPE -o value \"$data_device\" >/dev/null 2>&1; then\n  mkfs.ext4 -F -L \"$data_label\" \"$data_device\" >/dev/hvc0 2>&1\nfi\ncurrent_mount_source=\"$(findmnt -n -o SOURCE \"$mount_root\" 2>/dev/null || true)\"\nif [ -n \"$current_mount_source\" ] && [ \"$current_mount_source\" != \"$data_device\" ]; then\n  umount \"$mount_root\" >/dev/null 2>&1 || true\n  current_mount_source=\"\"\nfi\nif [ \"$current_mount_source\" != \"$data_device\" ]; then\n  mountpoint -q \"$staging_mount\" || mount \"$data_device\" \"$staging_mount\"\n  if [ ! -f \"$staging_mount/$marker_name\" ]; then\n    copy_tree_if_present \"$mount_root\" \"$staging_mount\"\n    copy_tree_if_present /var/lib/containerd \"$staging_mount/system/containerd\"\n    copy_tree_if_present /var/lib/buildkit \"$staging_mount/system/buildkit\"\n    printf 'ready\\n' > \"$staging_mount/$marker_name\"\n  fi\n  mkdir -p \"$staging_mount/ws/worktrees\" \"$staging_mount/home\" \"$staging_mount/cache\" \"$staging_mount/tmp\" \"$staging_mount/system/containerd\" \"$staging_mount/system/buildkit\"\n  mount --move \"$staging_mount\" \"$mount_root\"\nfi\nmkdir -p \"$mount_root/ws/worktrees\" \"$mount_root/home\" \"$mount_root/cache\" \"$mount_root/tmp\" \"$mount_root/system/containerd\" \"$mount_root/system/buildkit\" /var/lib/containerd /var/lib/buildkit\necho \"[ctx-avf-linux] mounted data disk $data_device at $mount_root\" >/dev/hvc0\nmountpoint -q /var/lib/containerd || mount --bind \"$mount_root/system/containerd\" /var/lib/containerd\nmountpoint -q /var/lib/buildkit || mount --bind \"$mount_root/system/buildkit\" /var/lib/buildkit\n",
+        data_label = SHARED_VM_DATA_DISK_LABEL,
+    )
 }
 
-pub(super) fn render_shared_vm_grow_rootfs_service() -> String {
+pub(super) fn render_shared_vm_data_disk_service() -> String {
     format!(
-        "[Unit]\nDescription=ctx AVF Root Filesystem Growth\nAfter=local-fs.target\nBefore={containerd_service} {buildkit_service} {guest_agent_service}\n\n[Service]\nType=oneshot\nExecStart=/bin/sh -lc 'exec {script_path}'\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target\n# {service_name}\n",
+        "[Unit]\nDescription=ctx AVF Data Disk Setup\nAfter=local-fs.target\nBefore={containerd_service} {buildkit_service} {guest_agent_service}\n\n[Service]\nType=oneshot\nExecStart=/bin/sh -lc 'exec {script_path}'\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target\n# {service_name}\n",
         containerd_service = SHARED_VM_CONTAINERD_SERVICE_NAME,
         buildkit_service = SHARED_VM_BUILDKIT_SERVICE_NAME,
         guest_agent_service = SHARED_VM_GUEST_AGENT_SERVICE_NAME,
-        script_path = SHARED_VM_GROW_ROOTFS_INSTALL_PATH,
-        service_name = SHARED_VM_GROW_ROOTFS_SERVICE_NAME,
+        script_path = SHARED_VM_DATA_DISK_INSTALL_PATH,
+        service_name = SHARED_VM_DATA_DISK_SERVICE_NAME,
     )
 }
 
 pub(super) fn render_shared_vm_containerd_service() -> String {
     format!(
-        "[Unit]\nDescription=containerd Container Runtime\nAfter=network-online.target local-fs.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStartPre=/bin/sh -lc 'mkdir -p /run/containerd /var/lib/containerd'\nExecStart=/usr/local/bin/containerd\nRestart=always\nRestartSec=1\nKillMode=process\nDelegate=yes\n\n[Install]\nWantedBy=multi-user.target\n# {}\n",
-        SHARED_VM_CONTAINERD_SERVICE_NAME
+        "[Unit]\nDescription=containerd Container Runtime\nAfter=network-online.target local-fs.target {data_disk_service}\nWants=network-online.target\nRequires={data_disk_service}\n\n[Service]\nType=simple\nExecStartPre=/bin/sh -lc 'mkdir -p /run/containerd /var/lib/containerd'\nExecStart=/usr/local/bin/containerd\nRestart=always\nRestartSec=1\nKillMode=process\nDelegate=yes\n\n[Install]\nWantedBy=multi-user.target\n# {containerd_service}\n",
+        data_disk_service = SHARED_VM_DATA_DISK_SERVICE_NAME,
+        containerd_service = SHARED_VM_CONTAINERD_SERVICE_NAME,
     )
 }
 
@@ -113,6 +118,8 @@ pub(super) fn render_shared_vm_cloud_init_meta_data(
         seed_material.extend_from_slice(egress_proxy_bytes);
     }
     seed_material.extend_from_slice(container_stack_sha256.as_bytes());
+    seed_material.extend_from_slice(render_shared_vm_data_disk_script().as_bytes());
+    seed_material.extend_from_slice(render_shared_vm_data_disk_service().as_bytes());
     seed_material.extend_from_slice(render_shared_vm_guest_agent_service().as_bytes());
     seed_material.extend_from_slice(render_shared_vm_containerd_service().as_bytes());
     seed_material.extend_from_slice(render_shared_vm_buildkit_service().as_bytes());
@@ -131,8 +138,8 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
     let guest_agent_service = indent_cloud_init_block(&render_shared_vm_guest_agent_service(), 6);
     let host_data_service =
         indent_cloud_init_block(&render_shared_vm_host_data_mount_service(data_root), 6);
-    let grow_rootfs_script = indent_cloud_init_block(&render_shared_vm_grow_rootfs_script(), 6);
-    let grow_rootfs_service = indent_cloud_init_block(&render_shared_vm_grow_rootfs_service(), 6);
+    let data_disk_script = indent_cloud_init_block(&render_shared_vm_data_disk_script(), 6);
+    let data_disk_service = indent_cloud_init_block(&render_shared_vm_data_disk_service(), 6);
     let containerd_service = indent_cloud_init_block(&render_shared_vm_containerd_service(), 6);
     let buildkit_service = indent_cloud_init_block(&render_shared_vm_buildkit_service(), 6);
     let install_script = indent_cloud_init_block(
@@ -156,16 +163,18 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
     ));
     write_files.push_str(&egress_proxy_block.unwrap_or_default());
     write_files.push_str(&format!(
-        "  - path: {grow_rootfs_install_path}\n    permissions: '0755'\n    content: |\n{grow_rootfs_script}\n",
-        grow_rootfs_install_path = SHARED_VM_GROW_ROOTFS_INSTALL_PATH,
+        "  - path: {data_disk_install_path}\n    permissions: '0755'\n    content: |\n{data_disk_script}\n",
+        data_disk_install_path = SHARED_VM_DATA_DISK_INSTALL_PATH,
+        data_disk_script = data_disk_script,
     ));
     write_files.push_str(&format!(
         "  - path: {install_path}\n    permissions: '0755'\n    content: |\n{install_script}\n",
         install_path = SHARED_VM_GUEST_CONTAINER_STACK_INSTALL_PATH,
     ));
     write_files.push_str(&format!(
-        "  - path: /etc/systemd/system/{grow_rootfs_service_name}\n    permissions: '0644'\n    content: |\n{grow_rootfs_service}\n",
-        grow_rootfs_service_name = SHARED_VM_GROW_ROOTFS_SERVICE_NAME,
+        "  - path: /etc/systemd/system/{data_disk_service_name}\n    permissions: '0644'\n    content: |\n{data_disk_service}\n",
+        data_disk_service_name = SHARED_VM_DATA_DISK_SERVICE_NAME,
+        data_disk_service = data_disk_service,
     ));
     write_files.push_str(&format!(
         "  - path: /etc/systemd/system/{host_data_service_name}\n    permissions: '0644'\n    content: |\n{host_data_service}\n",
@@ -191,10 +200,10 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
         ),
         4,
     );
-    let enable_grow_rootfs_cmd = indent_cloud_init_block(
+    let enable_data_disk_cmd = indent_cloud_init_block(
         &format!(
-            "systemctl enable --now {grow_rootfs_service_name} >/dev/hvc0 2>&1 || (systemctl status {grow_rootfs_service_name} --no-pager >/dev/hvc0 2>&1; exit 1)",
-            grow_rootfs_service_name = SHARED_VM_GROW_ROOTFS_SERVICE_NAME,
+            "systemctl enable --now {data_disk_service_name} >/dev/hvc0 2>&1 || (systemctl status {data_disk_service_name} --no-pager >/dev/hvc0 2>&1; exit 1)",
+            data_disk_service_name = SHARED_VM_DATA_DISK_SERVICE_NAME,
         ),
         4,
     );
@@ -234,10 +243,10 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
         4,
     );
     format!(
-        "#cloud-config\nwrite_files:\n{write_files}runcmd:\n  - [ systemctl, daemon-reload ]\n  - |\n{enable_grow_rootfs_cmd}\n  - |\n{enable_host_data_cmd}\n  - |\n{prepare_guest_agent_cmd}\n  - |\n{install_container_stack_cmd}\n  - |\n{enable_containerd_cmd}\n  - |\n{enable_buildkit_cmd}\n  - |\n{enable_guest_agent_cmd}\n",
+        "#cloud-config\nwrite_files:\n{write_files}runcmd:\n  - [ systemctl, daemon-reload ]\n  - |\n{enable_host_data_cmd}\n  - |\n{enable_data_disk_cmd}\n  - |\n{prepare_guest_agent_cmd}\n  - |\n{install_container_stack_cmd}\n  - |\n{enable_containerd_cmd}\n  - |\n{enable_buildkit_cmd}\n  - |\n{enable_guest_agent_cmd}\n",
         prepare_guest_agent_cmd = prepare_guest_agent_cmd,
-        enable_grow_rootfs_cmd = enable_grow_rootfs_cmd,
         enable_host_data_cmd = enable_host_data_cmd,
+        enable_data_disk_cmd = enable_data_disk_cmd,
         install_container_stack_cmd = install_container_stack_cmd,
         enable_containerd_cmd = enable_containerd_cmd,
         enable_buildkit_cmd = enable_buildkit_cmd,

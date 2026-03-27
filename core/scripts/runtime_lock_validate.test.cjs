@@ -140,6 +140,9 @@ const makeFixture = () => {
 };
 
 const makeV2Sources = (sourceType) => [{ source_type: sourceType, uri: `locked://${sourceType}`, sha256: "0".repeat(64) }];
+const makeResolvedSource = (uri, sha256 = "a".repeat(64), sourceType = "ci") => [
+  { source_type: sourceType, uri, sha256 },
+];
 
 const makeV2Component = ({ kind, id, os, arch, sourceType, ...rest }) => ({
   kind,
@@ -153,10 +156,11 @@ const makeV2Component = ({ kind, id, os, arch, sourceType, ...rest }) => ({
 });
 
 const makeAvfHelperMetadata = () => ({
-  kernel: { uri: "locked://kernel", sha256: "1".repeat(64) },
-  initrd: { uri: "locked://initrd", sha256: "2".repeat(64) },
-  "guest-agent": { uri: "locked://guest-agent", sha256: "3".repeat(64) },
-  "egress-proxy": { uri: "locked://egress-proxy", sha256: "4".repeat(64) },
+  kernel: { uri: "https://example.test/avf/kernel", sha256: "1".repeat(64) },
+  initrd: { uri: "https://example.test/avf/initrd", sha256: "2".repeat(64) },
+  "guest-agent": { uri: "https://example.test/avf/guest-agent", sha256: "3".repeat(64) },
+  "egress-proxy": { uri: "https://example.test/avf/egress-proxy", sha256: "4".repeat(64) },
+  "container-stack": { uri: "https://example.test/avf/container-stack.tar.gz", sha256: "5".repeat(64) },
 });
 
 test("runtime lock v1 validation accepts required host + linux entries", () => {
@@ -410,6 +414,7 @@ test("runtime lock v2 accepts macos/host AVF guest runtime with a single host-ar
   fs.writeFileSync(path.join(avfRuntimeRoot, "helpers", "initrd"), "initrd\n", "utf8");
   fs.writeFileSync(path.join(avfRuntimeRoot, "helpers", "guest-agent"), "agent\n", "utf8");
   fs.writeFileSync(path.join(avfRuntimeRoot, "helpers", "egress-proxy"), "proxy\n", "utf8");
+  fs.writeFileSync(path.join(avfRuntimeRoot, "helpers", "container-stack.tar.gz"), "stack\n", "utf8");
 
   const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, "utf8"));
   manifest.runtimes = [
@@ -446,7 +451,7 @@ test("runtime lock v2 accepts macos/host AVF guest runtime with a single host-ar
         id: "avf-linux-guest",
         os: "macos",
         arch: "host",
-        sourceType: "ci",
+        sources: makeResolvedSource("https://example.test/avf/rootfs.raw.zst"),
         helpers: makeAvfHelperMetadata(),
       }),
     ],
@@ -469,6 +474,7 @@ test("runtime lock v2 rejects bundled AVF runtime missing helper payloads", () =
   fs.writeFileSync(path.join(avfRuntimeRoot, "helpers", "kernel"), "kernel\n", "utf8");
   fs.writeFileSync(path.join(avfRuntimeRoot, "helpers", "initrd"), "initrd\n", "utf8");
   fs.writeFileSync(path.join(avfRuntimeRoot, "helpers", "egress-proxy"), "proxy\n", "utf8");
+  fs.writeFileSync(path.join(avfRuntimeRoot, "helpers", "container-stack.tar.gz"), "stack\n", "utf8");
 
   const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, "utf8"));
   manifest.runtimes = [
@@ -505,7 +511,7 @@ test("runtime lock v2 rejects bundled AVF runtime missing helper payloads", () =
         id: "avf-linux-guest",
         os: "macos",
         arch: "host",
-        sourceType: "ci",
+        sources: makeResolvedSource("https://example.test/avf/rootfs.raw.zst"),
         helpers: makeAvfHelperMetadata(),
       }),
     ],
@@ -549,7 +555,7 @@ test("runtime lock v2 rejects thin AVF runtime components missing helper metadat
         id: "avf-linux-guest",
         os: "macos",
         arch: "host",
-        sourceType: "ci",
+        sources: makeResolvedSource("https://example.test/avf/rootfs.raw.zst"),
       }),
     ],
   });
@@ -561,6 +567,57 @@ test("runtime lock v2 rejects thin AVF runtime components missing helper metadat
   });
   assert.equal(result.ok, false);
   assert.match(result.errors.join("\n"), /missing AVF helper metadata/);
+});
+
+test("runtime lock v2 rejects unresolved AVF managed source placeholders for required targets", () => {
+  const fixture = makeFixture();
+  const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, "utf8"));
+  manifest.runtimes = [];
+  writeJson(fixture.manifestPath, manifest);
+
+  writeJson(fixture.lockPath, {
+    version: 2,
+    profiles: {
+      parity: { allowed_source_types: ["ci", "vendor"] },
+      override: { allowed_source_types: ["ci", "vendor", "local"] },
+      "source-all": { allowed_source_types: ["local"] },
+    },
+    required: {
+      targets: {
+        provider: [],
+        runtime: ["macos/host"],
+        image: [],
+      },
+      provider_ids: [],
+      runtime_ids: ["avf-linux-guest"],
+      image_ids: [],
+    },
+    components: [
+      makeV2Component({
+        kind: "runtime",
+        id: "avf-linux-guest",
+        os: "macos",
+        arch: "host",
+        sources: makeV2Sources("ci"),
+        helpers: {
+          kernel: { uri: "locked://kernel", sha256: "0".repeat(64) },
+          initrd: { uri: "locked://initrd", sha256: "0".repeat(64) },
+          "guest-agent": { uri: "locked://guest-agent", sha256: "0".repeat(64) },
+          "egress-proxy": { uri: "locked://egress-proxy", sha256: "0".repeat(64) },
+          "container-stack": { uri: "locked://container-stack", sha256: "0".repeat(64) },
+        },
+      }),
+    ],
+  });
+
+  const result = validateRuntimeLock({
+    lockPath: fixture.lockPath,
+    manifestPath: fixture.manifestPath,
+    profile: "parity",
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join("\n"), /AVF managed source/);
+  assert.match(result.errors.join("\n"), /missing runtime bundle entry/);
 });
 
 test("runtime lock v2 accepts a thin bundle when required runtimes use managed sources", () => {

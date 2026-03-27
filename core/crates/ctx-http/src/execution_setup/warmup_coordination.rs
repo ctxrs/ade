@@ -28,6 +28,12 @@ pub(crate) trait SharedWarmupOperations: Send + Sync {
         observer: Arc<dyn HarnessSetupObserver>,
     ) -> Result<()>;
 
+    async fn warm_runtime_launch_ready(
+        &self,
+        settings: ExecutionSettings,
+        observer: Arc<dyn HarnessSetupObserver>,
+    ) -> Result<()>;
+
     async fn warm_builder(&self, observer: Arc<dyn HarnessSetupObserver>) -> Result<()>;
 }
 
@@ -50,6 +56,19 @@ impl SharedWarmupOperations for DefaultWarmupOperations {
         observer: Arc<dyn HarnessSetupObserver>,
     ) -> Result<()> {
         harness_runtime::prewarm_selected_runtime_with_observer(
+            &self.data_root,
+            &settings.container,
+            Some(observer.as_ref()),
+        )
+        .await
+    }
+
+    async fn warm_runtime_launch_ready(
+        &self,
+        settings: ExecutionSettings,
+        observer: Arc<dyn HarnessSetupObserver>,
+    ) -> Result<()> {
+        harness_runtime::prewarm_selected_runtime_for_launch_with_observer(
             &self.data_root,
             &settings.container,
             Some(observer.as_ref()),
@@ -85,7 +104,8 @@ impl LaunchPrewarmCoordinator {
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<()> {
         if scope.includes_runtime() {
-            self.ensure_runtime(settings, observer).await?;
+            self.ensure_runtime(settings, scope.requires_launch_ready_runtime(), observer)
+                .await?;
         }
         if scope.includes_builder() {
             self.ensure_builder(observer).await?;
@@ -96,27 +116,22 @@ impl LaunchPrewarmCoordinator {
     pub(crate) async fn ensure_runtime(
         &self,
         settings: &ExecutionSettings,
+        requires_launch_ready: bool,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<()> {
-        let key = SharedWarmupKey::Runtime {
-            image: harness_runtime::resolve_container_image(&settings.container),
-        };
-        let task = self.runtime_task(key, settings.clone()).await;
+        let task = self
+            .runtime_task(settings.clone(), requires_launch_ready)
+            .await;
         task.attach(observer).await
     }
 
     pub(crate) async fn attach_runtime_if_running(
         &self,
         settings: &ExecutionSettings,
+        requires_launch_ready: bool,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<bool> {
-        let key = SharedWarmupKey::Runtime {
-            image: harness_runtime::resolve_container_image(&settings.container),
-        };
-        let task = {
-            let tasks = self.inner.tasks.lock().await;
-            tasks.get(&key).cloned()
-        };
+        let task = self.runtime_task_if_running(settings, requires_launch_ready).await;
         let Some(task) = task else {
             return Ok(false);
         };
@@ -124,12 +139,15 @@ impl LaunchPrewarmCoordinator {
         Ok(true)
     }
 
-    pub(crate) async fn runtime_is_running(&self, settings: &ExecutionSettings) -> bool {
-        let key = SharedWarmupKey::Runtime {
-            image: harness_runtime::resolve_container_image(&settings.container),
-        };
+    pub(crate) async fn runtime_is_running(
+        &self,
+        settings: &ExecutionSettings,
+        requires_launch_ready: bool,
+    ) -> bool {
         let tasks = self.inner.tasks.lock().await;
-        tasks.contains_key(&key)
+        runtime_task_keys(settings, requires_launch_ready)
+            .iter()
+            .any(|key| tasks.contains_key(key))
     }
 
     pub(crate) async fn ensure_builder(
@@ -142,9 +160,17 @@ impl LaunchPrewarmCoordinator {
 
     async fn runtime_task(
         &self,
-        key: SharedWarmupKey,
         settings: ExecutionSettings,
+        requires_launch_ready: bool,
     ) -> Arc<SharedWarmupTask> {
+        if let Some(existing) = self
+            .runtime_task_if_running(&settings, requires_launch_ready)
+            .await
+        {
+            return existing;
+        }
+
+        let key = exact_runtime_task_key(&settings, requires_launch_ready);
         {
             let tasks = self.inner.tasks.lock().await;
             if let Some(existing) = tasks.get(&key) {
@@ -160,6 +186,20 @@ impl LaunchPrewarmCoordinator {
         tasks.insert(key.clone(), Arc::clone(&task));
         self.spawn_runtime_task(Arc::clone(&task), key, settings);
         task
+    }
+
+    async fn runtime_task_if_running(
+        &self,
+        settings: &ExecutionSettings,
+        requires_launch_ready: bool,
+    ) -> Option<Arc<SharedWarmupTask>> {
+        let tasks = self.inner.tasks.lock().await;
+        for key in runtime_task_keys(settings, requires_launch_ready) {
+            if let Some(existing) = tasks.get(&key) {
+                return Some(Arc::clone(existing));
+            }
+        }
+        None
     }
 
     async fn builder_task(&self) -> Arc<SharedWarmupTask> {
@@ -192,9 +232,7 @@ impl LaunchPrewarmCoordinator {
             let observer: Arc<dyn HarnessSetupObserver> =
                 Arc::new(SharedWarmupObserver::new(Arc::clone(&task)));
             let result = coordinator
-                .inner
-                .operations
-                .warm_runtime(settings, observer)
+                .warm_runtime_with_key(&key, settings, observer)
                 .await
                 .map_err(|err| super::format_error_chain(&err));
             task.finish(result);
@@ -228,12 +266,33 @@ impl LaunchPrewarmCoordinator {
             tasks.remove(key);
         }
     }
+
+    async fn warm_runtime_with_key(
+        &self,
+        key: &SharedWarmupKey,
+        settings: ExecutionSettings,
+        observer: Arc<dyn HarnessSetupObserver>,
+    ) -> Result<()> {
+        match key {
+            SharedWarmupKey::Runtime { .. } => {
+                self.inner.operations.warm_runtime(settings, observer).await
+            }
+            SharedWarmupKey::LaunchReady { .. } => {
+                self.inner
+                    .operations
+                    .warm_runtime_launch_ready(settings, observer)
+                    .await
+            }
+            SharedWarmupKey::Builder => anyhow::bail!("builder key is not a runtime warmup task"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum PrewarmLaunchJobKey {
-    Runtime { image: String },
-    All { image: String },
+    Runtime { target: String },
+    LaunchReady { target: String },
+    All { target: String },
     Builder,
 }
 
@@ -241,10 +300,13 @@ impl PrewarmLaunchJobKey {
     pub(crate) fn for_request(settings: &ExecutionSettings, scope: RuntimePrewarmScope) -> Self {
         match scope {
             RuntimePrewarmScope::Runtime => Self::Runtime {
-                image: harness_runtime::resolve_container_image(&settings.container),
+                target: harness_runtime::runtime_prewarm_target(&settings.container),
+            },
+            RuntimePrewarmScope::LaunchReady => Self::LaunchReady {
+                target: harness_runtime::runtime_prewarm_target(&settings.container),
             },
             RuntimePrewarmScope::All => Self::All {
-                image: harness_runtime::resolve_container_image(&settings.container),
+                target: harness_runtime::runtime_prewarm_target(&settings.container),
             },
             RuntimePrewarmScope::Builder => Self::Builder,
         }
@@ -262,24 +324,42 @@ impl PrewarmJobRegistry {
         settings: &ExecutionSettings,
         requested_scope: RuntimePrewarmScope,
     ) -> Option<Arc<SharedPrewarmLaunchJob>> {
+        let target = harness_runtime::runtime_prewarm_target(&settings.container);
         match requested_scope {
             RuntimePrewarmScope::Runtime => {
-                let image = harness_runtime::resolve_container_image(&settings.container);
                 self.running
                     .get(&PrewarmLaunchJobKey::All {
-                        image: image.clone(),
+                        target: target.clone(),
                     })
                     .cloned()
                     .or_else(|| {
                         self.running
-                            .get(&PrewarmLaunchJobKey::Runtime { image })
+                            .get(&PrewarmLaunchJobKey::LaunchReady {
+                                target: target.clone(),
+                            })
+                            .cloned()
+                    })
+                    .or_else(|| {
+                        self.running
+                            .get(&PrewarmLaunchJobKey::Runtime { target })
                             .cloned()
                     })
             }
+            RuntimePrewarmScope::LaunchReady => self
+                .running
+                .get(&PrewarmLaunchJobKey::All {
+                    target: target.clone(),
+                })
+                .cloned()
+                .or_else(|| {
+                    self.running
+                        .get(&PrewarmLaunchJobKey::LaunchReady { target })
+                        .cloned()
+                }),
             RuntimePrewarmScope::All => self
                 .running
                 .get(&PrewarmLaunchJobKey::All {
-                    image: harness_runtime::resolve_container_image(&settings.container),
+                    target,
                 })
                 .cloned(),
             RuntimePrewarmScope::Builder => self
@@ -289,7 +369,7 @@ impl PrewarmJobRegistry {
                 .or_else(|| {
                     self.running
                         .get(&PrewarmLaunchJobKey::All {
-                            image: harness_runtime::resolve_container_image(&settings.container),
+                            target,
                         })
                         .cloned()
                 }),
@@ -375,6 +455,10 @@ impl SharedPrewarmLaunchJob {
         self.scope.includes_runtime()
     }
 
+    pub(crate) fn requires_launch_ready_runtime(&self) -> bool {
+        self.scope.requires_launch_ready_runtime()
+    }
+
     pub(crate) fn complete_ready(&self) -> Option<LaunchTerminalMutation> {
         self.complete(ExecutionLaunchState::Ready, None)
     }
@@ -415,8 +499,42 @@ struct LaunchPrewarmCoordinatorInner {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum SharedWarmupKey {
-    Runtime { image: String },
+    Runtime { target: String },
+    LaunchReady { target: String },
     Builder,
+}
+
+fn exact_runtime_task_key(
+    settings: &ExecutionSettings,
+    requires_launch_ready: bool,
+) -> SharedWarmupKey {
+    let target = harness_runtime::runtime_prewarm_target(&settings.container);
+    if requires_launch_ready {
+        SharedWarmupKey::LaunchReady { target }
+    } else {
+        SharedWarmupKey::Runtime { target }
+    }
+}
+
+fn runtime_task_keys(
+    settings: &ExecutionSettings,
+    requires_launch_ready: bool,
+) -> Vec<SharedWarmupKey> {
+    let target = harness_runtime::runtime_prewarm_target(&settings.container);
+    if requires_launch_ready {
+        vec![
+            SharedWarmupKey::LaunchReady {
+                target: target.clone(),
+            },
+        ]
+    } else {
+        vec![
+            SharedWarmupKey::LaunchReady {
+                target: target.clone(),
+            },
+            SharedWarmupKey::Runtime { target },
+        ]
+    }
 }
 
 #[derive(Debug, Clone)]

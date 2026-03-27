@@ -16,6 +16,10 @@ pub(super) fn shared_vm_rootfs_path(data_root: &Path) -> PathBuf {
     shared_vm_disk_root(data_root).join(SHARED_VM_ROOTFS_FILE)
 }
 
+pub(super) fn shared_vm_data_disk_path(data_root: &Path) -> PathBuf {
+    shared_vm_disk_root(data_root).join(SHARED_VM_DATA_DISK_FILE)
+}
+
 pub(super) fn shared_vm_guest_agent_helper_path(runtime_root: &Path) -> PathBuf {
     runtime_root
         .join("helpers")
@@ -70,6 +74,10 @@ pub(super) fn shared_vm_mac_address_path(data_root: &Path) -> PathBuf {
 
 pub(super) fn shared_vm_shutdown_request_path(data_root: &Path) -> PathBuf {
     shared_vm_root(data_root).join(SHARED_VM_SHUTDOWN_REQUEST_FILE)
+}
+
+pub(super) fn shared_vm_memory_pressure_request_path(data_root: &Path) -> PathBuf {
+    shared_vm_root(data_root).join(SHARED_VM_MEMORY_PRESSURE_REQUEST_FILE)
 }
 
 pub(super) fn shared_vm_guest_console_log_path(data_root: &Path) -> PathBuf {

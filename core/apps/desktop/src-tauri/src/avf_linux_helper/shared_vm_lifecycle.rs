@@ -72,11 +72,26 @@ pub(super) fn shared_vm_state(data_root: &Path) -> Result<AvfLinuxSharedVmStateR
             if let Some(pid) = state.guest_agent_pid.take() {
                 stop_shared_vm_server(pid);
             }
-            state.state = AvfLinuxSharedVmLifecycleState::Stopped;
+            let memory_pressure_note =
+                shared_vm_memory_pressure_stop_requested_note(data_root)?;
+            state.state = if memory_pressure_note.is_some() {
+                AvfLinuxSharedVmLifecycleState::Error
+            } else {
+                AvfLinuxSharedVmLifecycleState::Stopped
+            };
             state.updated_at = Some(now_timestamp_string());
             state.last_stopped_at = state.updated_at.clone();
-            state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Stopped);
-            state.notes = vec![if state.simulated {
+            state.transition_status = if memory_pressure_note.is_some() {
+                None
+            } else {
+                Some(AvfLinuxSharedVmTransitionStatus::Stopped)
+            };
+            state.notes = vec![if let Some(note) = memory_pressure_note {
+                clear_shared_vm_memory_pressure_stop_request(data_root);
+                format!(
+                    "shared VM owner exited after an emergency host-memory stop request: {note}"
+                )
+            } else if state.simulated {
                 "shared VM relay or simulated guest-agent process was not alive; marking the scaffolded VM stopped"
                     .to_string()
             } else {
@@ -112,6 +127,7 @@ pub(super) fn start_shared_vm(
     }
     let _ = prepare_runtime_layout(data_root)?;
     clear_shared_vm_shutdown_request(data_root);
+    clear_shared_vm_memory_pressure_stop_request(data_root);
     let state_path = shared_vm_state_path(data_root);
     let mut state = load_state(&state_path)?.unwrap_or_else(default_stopped_state);
     let saved_state_path = shared_vm_saved_state_path(data_root);
@@ -148,6 +164,7 @@ pub(super) fn start_shared_vm(
         materialize_bootable_kernel_image(data_root, kernel_path)?;
     let (staged_rootfs_image, rootfs_materialization_note) =
         materialize_writable_rootfs_image(data_root, rootfs_image)?;
+    let (data_disk_image, data_disk_materialization_note) = materialize_data_disk_image(data_root)?;
 
     let native_validation_note = if cfg!(test) {
         None
@@ -156,6 +173,7 @@ pub(super) fn start_shared_vm(
             validate_real_avf_linux_vm_configuration(
                 data_root,
                 &staged_rootfs_image,
+                &data_disk_image,
                 &boot_kernel_path,
                 initrd_path,
                 &kernel_cmdline,
@@ -205,6 +223,9 @@ pub(super) fn start_shared_vm(
             state.notes.push(note);
         }
         if let Some(note) = rootfs_materialization_note.clone() {
+            state.notes.push(note);
+        }
+        if let Some(note) = data_disk_materialization_note.clone() {
             state.notes.push(note);
         }
         state.notes.push(real_vm_support_note.clone());
@@ -299,6 +320,9 @@ pub(super) fn start_shared_vm(
     if let Some(note) = rootfs_materialization_note {
         notes.push(note);
     }
+    if let Some(note) = data_disk_materialization_note {
+        notes.push(note);
+    }
     if let Some(note) = native_validation_note {
         notes.push(note);
     }
@@ -366,6 +390,7 @@ pub(super) fn stop_shared_vm(data_root: &Path) -> Result<AvfLinuxSharedVmStateRe
         stop_shared_vm_server(pid);
     }
     clear_shared_vm_shutdown_request(data_root);
+    clear_shared_vm_memory_pressure_stop_request(data_root);
     let control_socket = shared_vm_control_socket_path(data_root);
     if control_socket.exists() {
         let _ = fs::remove_file(&control_socket);
@@ -397,6 +422,35 @@ pub(super) fn request_shared_vm_shutdown(data_root: &Path) -> Result<()> {
 
 pub(super) fn clear_shared_vm_shutdown_request(data_root: &Path) {
     let path = shared_vm_shutdown_request_path(data_root);
+    if path.exists() {
+        let _ = fs::remove_file(path);
+    }
+}
+
+pub(super) fn request_shared_vm_memory_pressure_stop(
+    data_root: &Path,
+    note: &str,
+) -> Result<()> {
+    let path = shared_vm_memory_pressure_request_path(data_root);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    fs::write(&path, note).with_context(|| format!("writing {}", path.display()))
+}
+
+pub(super) fn shared_vm_memory_pressure_stop_requested_note(
+    data_root: &Path,
+) -> Result<Option<String>> {
+    let path = shared_vm_memory_pressure_request_path(data_root);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(Some(raw.trim().to_string()))
+}
+
+pub(super) fn clear_shared_vm_memory_pressure_stop_request(data_root: &Path) {
+    let path = shared_vm_memory_pressure_request_path(data_root);
     if path.exists() {
         let _ = fs::remove_file(path);
     }

@@ -44,6 +44,7 @@ sysinfo.workspace = true
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 tower = { version = "0.5", features = ["util"] }
 flate2 = "1"
+zstd = "0.13"
 tar = "0.4"
 bzip2 = "0.5"
 zip = "2"

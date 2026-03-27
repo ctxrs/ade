@@ -52,6 +52,8 @@ test("prepare_avf_linux_guest_runtime.sh resolves official Ubuntu inputs in dry-
   assert.match(output, /helpers\/egress-proxy/);
   assert.match(output, /helpers\/container-stack\.tar\.gz/);
   assert.match(output, /container_stack_version=v2\.2\.1/);
+  assert.match(output, /container_stack_mode=curated-nerdctl-subset/);
+  assert.match(output, /container_stack_inventory=.*bin\/buildctl.*bin\/buildkitd.*bin\/containerd.*libexec\/cni\/bridge/);
   assert.match(output, /nerdctl-full-2\.2\.1-linux-arm64\.tar\.gz/);
   assert.match(output, /container_stack_sha256_url=.*\/SHA256SUMS/);
   assert.match(output, /rootfs_sha256_url=.*\/SHA256SUMS/);

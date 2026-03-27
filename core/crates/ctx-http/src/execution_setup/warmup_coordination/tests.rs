@@ -10,10 +10,13 @@ use crate::settings::{ExecutionMode, ExecutionSettings};
 #[derive(Default)]
 struct FakeWarmupOperations {
     runtime_runs: AtomicUsize,
+    launch_ready_runs: AtomicUsize,
     builder_runs: AtomicUsize,
     runtime_release: Notify,
+    launch_ready_release: Notify,
     builder_release: Notify,
     runtime_block: bool,
+    launch_ready_block: bool,
     builder_block: bool,
 }
 
@@ -25,9 +28,16 @@ impl FakeWarmupOperations {
         }
     }
 
+    fn blocking_launch_ready() -> Self {
+        Self {
+            launch_ready_block: true,
+            ..Self::default()
+        }
+    }
+
     fn blocking_runtime_and_builder() -> Self {
         Self {
-            runtime_block: true,
+            launch_ready_block: true,
             builder_block: true,
             ..Self::default()
         }
@@ -71,8 +81,25 @@ impl FakeWarmupOperations {
         .expect("timed out waiting for builder runs");
     }
 
+    async fn wait_for_launch_ready_runs(&self, expected: usize) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if self.launch_ready_runs.load(Ordering::SeqCst) >= expected {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for launch-ready runs");
+    }
+
     fn release_runtime(&self) {
         self.runtime_release.notify_waiters();
+    }
+
+    fn release_launch_ready(&self) {
+        self.launch_ready_release.notify_waiters();
     }
 
     fn release_builder(&self) {
@@ -100,6 +127,19 @@ impl SharedWarmupOperations for FakeWarmupOperations {
         });
         if self.runtime_block {
             self.runtime_release.notified().await;
+        }
+        Ok(())
+    }
+
+    async fn warm_runtime_launch_ready(
+        &self,
+        _settings: ExecutionSettings,
+        observer: Arc<dyn HarnessSetupObserver>,
+    ) -> Result<()> {
+        self.launch_ready_runs.fetch_add(1, Ordering::SeqCst);
+        observer.on_phase(HarnessSetupPhase::MachineStartOrInit, "warming launch-ready runtime");
+        if self.launch_ready_block {
+            self.launch_ready_release.notified().await;
         }
         Ok(())
     }
@@ -235,6 +275,7 @@ async fn runtime_scope_does_not_invoke_builder_warmup() {
         .expect("runtime scope should succeed");
 
     assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
+    assert_eq!(ops.launch_ready_runs.load(Ordering::SeqCst), 0);
     assert_eq!(ops.builder_runs.load(Ordering::SeqCst), 0);
 }
 
@@ -330,7 +371,7 @@ async fn foreground_runtime_request_finishes_before_background_all_builder_work(
             .await
     });
 
-    ops.wait_for_runtime_runs(1).await;
+    ops.wait_for_launch_ready_runs(1).await;
 
     let foreground_coordinator = coordinator.clone();
     let foreground_settings = settings.clone();
@@ -341,8 +382,9 @@ async fn foreground_runtime_request_finishes_before_background_all_builder_work(
     });
 
     ops.expect_runtime_runs_below(2).await;
+    assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
 
-    ops.release_runtime();
+    ops.release_launch_ready();
     ops.wait_for_builder_runs(1).await;
 
     tokio::time::timeout(Duration::from_secs(1), foreground)
@@ -396,6 +438,11 @@ fn prewarm_job_registry_matches_compatible_jobs_by_scope_and_image() {
         .find_compatible(&settings, RuntimePrewarmScope::Builder)
         .expect("builder request should prefer exact builder job");
     assert!(Arc::ptr_eq(&builder_match, &builder_job));
+
+    let launch_ready_match = registry
+        .find_compatible(&settings, RuntimePrewarmScope::LaunchReady)
+        .expect("launch-ready request should reuse matching all-scope job");
+    assert!(Arc::ptr_eq(&launch_ready_match, &all_job));
 
     let all_match = registry
         .find_compatible(&settings, RuntimePrewarmScope::All)
@@ -454,6 +501,7 @@ fn shared_prewarm_launch_job_terminal_completion_is_idempotent() {
     );
 
     assert!(job.runtime_requested());
+    assert!(!job.requires_launch_ready_runtime());
     assert!(!job.builder_requested());
     assert!(job.complete_ready().is_some());
 
@@ -469,4 +517,44 @@ fn shared_prewarm_launch_job_terminal_completion_is_idempotent() {
     let snapshot_after = job.snapshot();
     assert_eq!(snapshot_after.state, ExecutionLaunchState::Ready);
     assert!(snapshot_after.error.is_none());
+}
+
+#[tokio::test]
+async fn runtime_scope_reuses_running_launch_ready_task_for_same_target() {
+    let ops = Arc::new(FakeWarmupOperations::blocking_launch_ready());
+    let coordinator = LaunchPrewarmCoordinator::new(ops.clone());
+    let settings = container_settings("ghcr.io/ctxrs/ctx-harness:test");
+
+    let background_coordinator = coordinator.clone();
+    let background_settings = settings.clone();
+    let background = tokio::spawn(async move {
+        background_coordinator
+            .ensure_scope(&background_settings, RuntimePrewarmScope::LaunchReady, None)
+            .await
+    });
+
+    ops.wait_for_launch_ready_runs(1).await;
+
+    let foreground_coordinator = coordinator.clone();
+    let foreground_settings = settings.clone();
+    let foreground = tokio::spawn(async move {
+        foreground_coordinator
+            .ensure_scope(&foreground_settings, RuntimePrewarmScope::Runtime, None)
+            .await
+    });
+
+    ops.expect_runtime_runs_below(1).await;
+    ops.release_launch_ready();
+
+    foreground
+        .await
+        .expect("foreground runtime wait failed")
+        .expect("foreground runtime wait errored");
+    background
+        .await
+        .expect("background launch-ready wait failed")
+        .expect("background launch-ready wait errored");
+
+    assert_eq!(ops.launch_ready_runs.load(Ordering::SeqCst), 1);
+    assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
 }

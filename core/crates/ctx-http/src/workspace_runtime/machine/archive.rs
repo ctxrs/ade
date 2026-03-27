@@ -8,6 +8,8 @@ fn managed_artifact_extension(uri: &str) -> &'static str {
     let path_lc = path.to_ascii_lowercase();
     if path_lc.ends_with(".tar.gz") {
         "tar.gz"
+    } else if path_lc.ends_with(".zst") {
+        "zst"
     } else if path_lc.ends_with(".tgz") {
         "tgz"
     } else if path_lc.ends_with(".tar") {
@@ -65,6 +67,33 @@ fn extract_zip_to_dir(zip_path: &Path, out_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+fn extract_zstd_to_dir(archive_path: &Path, source_uri: &str, out_dir: &Path) -> Result<()> {
+    let source_path = Url::parse(source_uri)
+        .ok()
+        .map(|parsed| parsed.path().to_string())
+        .unwrap_or_else(|| source_uri.to_string());
+    let file_name = Path::new(&source_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("unable to derive zstd output filename from {source_uri}"))?;
+    let output_name = file_name
+        .strip_suffix(".zst")
+        .filter(|name| !name.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("zstd archive path must end with a concrete filename: {source_uri}"))?;
+    let dest = out_dir.join(output_name);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let input =
+        std::fs::File::open(archive_path).with_context(|| format!("open {}", archive_path.display()))?;
+    let mut decoder = zstd::stream::read::Decoder::new(input).context("parsing zstd archive")?;
+    let mut output =
+        std::fs::File::create(&dest).with_context(|| format!("create {}", dest.display()))?;
+    std::io::copy(&mut decoder, &mut output).context("extract zstd archive")?;
+    Ok(())
+}
+
 pub(crate) fn extract_archive_to_dir(
     archive_path: &Path,
     source_uri: &str,
@@ -73,6 +102,7 @@ pub(crate) fn extract_archive_to_dir(
     let kind = managed_artifact_extension(source_uri);
     match kind {
         "zip" => extract_zip_to_dir(archive_path, out_dir),
+        "zst" => extract_zstd_to_dir(archive_path, source_uri, out_dir),
         "tar.gz" | "tgz" => {
             let archive_file = std::fs::File::open(archive_path)
                 .with_context(|| format!("open {}", archive_path.display()))?;
@@ -108,4 +138,41 @@ pub(crate) fn resolve_single_extracted_root(extract_dir: &Path) -> Result<PathBu
         return Ok(extract_dir.to_path_buf());
     }
     Ok(dirs.remove(0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn managed_artifact_extension_recognizes_zstd_archives() {
+        assert_eq!(
+            managed_artifact_extension("https://example.test/rootfs.raw.zst"),
+            "zst"
+        );
+    }
+
+    #[test]
+    fn extract_archive_to_dir_writes_single_file_zstd_payload() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let archive_path = temp.path().join("rootfs.raw.zst");
+        let extracted_dir = temp.path().join("extract");
+        std::fs::create_dir_all(&extracted_dir).expect("create extract dir");
+        let compressed = zstd::stream::encode_all(&b"rootfs payload"[..], 1)
+            .expect("encode zstd payload");
+        std::fs::write(&archive_path, compressed).expect("write zstd archive");
+
+        extract_archive_to_dir(
+            &archive_path,
+            "https://example.test/runtime/rootfs.raw.zst",
+            &extracted_dir,
+        )
+        .expect("extract zstd archive");
+
+        let extracted = extracted_dir.join("rootfs.raw");
+        assert_eq!(
+            std::fs::read(&extracted).expect("read extracted rootfs"),
+            b"rootfs payload"
+        );
+    }
 }

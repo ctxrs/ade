@@ -63,12 +63,13 @@ use objc2_virtualization::{
     VZDirectorySharingDeviceConfiguration, VZDiskImageCachingMode,
     VZDiskImageStorageDeviceAttachment, VZDiskImageSynchronizationMode, VZFileSerialPortAttachment,
     VZGenericMachineIdentifier, VZGenericPlatformConfiguration, VZLinuxBootLoader, VZMACAddress,
-    VZMemoryBalloonDeviceConfiguration, VZNATNetworkDeviceAttachment, VZNetworkDeviceConfiguration,
-    VZSerialPortConfiguration, VZSharedDirectory, VZSingleDirectoryShare,
-    VZSocketDeviceConfiguration, VZStorageDeviceConfiguration, VZVirtioBlockDeviceConfiguration,
-    VZVirtioConsoleDeviceSerialPortConfiguration, VZVirtioFileSystemDeviceConfiguration,
-    VZVirtioNetworkDeviceConfiguration, VZVirtioSocketConnection, VZVirtioSocketDevice,
-    VZVirtioSocketDeviceConfiguration, VZVirtioTraditionalMemoryBalloonDeviceConfiguration,
+    VZMemoryBalloonDevice, VZMemoryBalloonDeviceConfiguration, VZNATNetworkDeviceAttachment,
+    VZNetworkDeviceConfiguration, VZSerialPortConfiguration, VZSharedDirectory,
+    VZSingleDirectoryShare, VZSocketDeviceConfiguration, VZStorageDeviceConfiguration,
+    VZVirtioBlockDeviceConfiguration, VZVirtioConsoleDeviceSerialPortConfiguration,
+    VZVirtioFileSystemDeviceConfiguration, VZVirtioNetworkDeviceConfiguration,
+    VZVirtioSocketConnection, VZVirtioSocketDevice, VZVirtioSocketDeviceConfiguration,
+    VZVirtioTraditionalMemoryBalloonDevice, VZVirtioTraditionalMemoryBalloonDeviceConfiguration,
     VZVirtualMachine, VZVirtualMachineConfiguration, VZVirtualMachineState,
 };
 use portable_pty::{CommandBuilder as PtyCommandBuilder, NativePtySystem, PtySize, PtySystem};
@@ -101,6 +102,7 @@ const SHARED_VM_GUEST_AGENT_SOCKET_FILE: &str = "shared-vm-guest-agent.sock";
 const SHARED_VM_KERNEL_CMDLINE_FILE: &str = "kernel-cmdline";
 const SHARED_VM_SAVED_STATE_FILE: &str = "saved-machine-state.vzvmsave";
 const SHARED_VM_SHUTDOWN_REQUEST_FILE: &str = "shutdown-request";
+const SHARED_VM_MEMORY_PRESSURE_REQUEST_FILE: &str = "memory-pressure-request";
 const GUEST_WORKTREES_DIR: &str = "worktrees";
 const GUEST_WORKTREE_METADATA_FILE: &str = "worktree.json";
 const GUEST_WORKTREE_SHADOW_DIR: &str = "shadow-root";
@@ -123,13 +125,15 @@ const SHARED_VM_BOOT_DIR: &str = "boot";
 const SHARED_VM_BOOT_KERNEL_FILE: &str = "kernel";
 const SHARED_VM_DISK_DIR: &str = "disk";
 const SHARED_VM_ROOTFS_FILE: &str = "rootfs.raw";
+const SHARED_VM_DATA_DISK_FILE: &str = "data.raw";
 const SHARED_VM_MACHINE_IDENTIFIER_FILE: &str = "machine-identifier.bin";
 const SHARED_VM_MAC_ADDRESS_FILE: &str = "mac-address.txt";
 const SHARED_VM_GUEST_CONSOLE_LOG_FILE: &str = "guest-console.log";
 const SHARED_VM_DATA_ROOT_SHARE_TAG: &str = "ctx-data-root";
 const SHARED_VM_HOST_DATA_SERVICE_NAME: &str = "ctx-avf-host-data.service";
-const SHARED_VM_GROW_ROOTFS_SERVICE_NAME: &str = "ctx-avf-grow-rootfs.service";
-const SHARED_VM_GROW_ROOTFS_INSTALL_PATH: &str = "/usr/local/lib/ctx/ctx-avf-grow-rootfs.sh";
+const SHARED_VM_DATA_DISK_LABEL: &str = "ctx-avf-data";
+const SHARED_VM_DATA_DISK_SERVICE_NAME: &str = "ctx-avf-data-disk.service";
+const SHARED_VM_DATA_DISK_INSTALL_PATH: &str = "/usr/local/lib/ctx/ctx-avf-data-disk.sh";
 const SHARED_VM_CONTAINERD_SERVICE_NAME: &str = "containerd.service";
 const SHARED_VM_BUILDKIT_SERVICE_NAME: &str = "buildkit.service";
 const SHARED_VM_PAYLOADS_DIR: &str = "payloads";
@@ -140,10 +144,31 @@ const SHARED_VM_GUEST_CONTAINER_STACK_MARKER_PATH: &str =
 const SHARED_VM_GUEST_NERDCTL_BIN: &str = "/usr/local/bin/nerdctl";
 const SHARED_VM_GUEST_BUILDKITCTL_BIN: &str = "/usr/local/bin/buildctl";
 const SHARED_VM_GUEST_BUILDKIT_SOCKET: &str = "unix:///run/buildkit/buildkitd.sock";
+const SHARED_VM_CPU_COUNT_ENV: &str = "CTX_AVF_LINUX_CPU_COUNT";
+const SHARED_VM_MEMORY_CEILING_BYTES_ENV: &str = "CTX_AVF_LINUX_MEMORY_CEILING_BYTES";
+const SHARED_VM_HOST_MEMORY_RESERVE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const SHARED_VM_MIN_DEFAULT_MEMORY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const SHARED_VM_INITIAL_DATA_DISK_BYTES: u64 = 12 * 1024 * 1024 * 1024;
+const SHARED_VM_HOST_DISK_RESERVE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const SHARED_VM_DATA_DISK_GROWTH_THRESHOLD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const SHARED_VM_DATA_DISK_CRITICAL_FREE_BYTES: u64 = 512 * 1024 * 1024;
+const SHARED_VM_DATA_DISK_GROWTH_STEP_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const SHARED_VM_MEMORY_BALLOON_STEP_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const SHARED_VM_GUEST_MEMORY_GROW_THRESHOLD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const SHARED_VM_HOST_MEMORY_EMERGENCY_BYTES: u64 = 1024 * 1024 * 1024;
+const SHARED_VM_MEMORY_WATCHDOG_CONFIRMATION_POLLS: u32 = 2;
+#[cfg(target_os = "macos")]
+const SHARED_VM_MEMORY_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(target_os = "macos")]
+const SHARED_VM_MEMORY_WATCHDOG_POLL_INTERVAL: std::time::Duration =
+    std::time::Duration::from_secs(2);
+const SHARED_VM_MEMORY_WATCHDOG_EXIT_GRACE: Duration = Duration::from_secs(8);
 #[cfg(target_os = "macos")]
 const SHARED_VM_GUEST_CONTROL_VSOCK_PORT: u32 = 47001;
 #[cfg(target_os = "macos")]
 const SHARED_VM_CONTROL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+#[cfg(target_os = "macos")]
+const SHARED_VM_DATA_DISK_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 const GUEST_EXEC_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const GUEST_EXEC_CONNECT_RETRY_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(100);
@@ -154,7 +179,6 @@ const AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD: usize = 1024;
 const GUEST_EXEC_TTY_RESIZE_POLL_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(100);
 const SHARED_VM_SHUTDOWN_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
-const SHARED_VM_MIN_WRITABLE_ROOTFS_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 const DEFAULT_PTY_COLS: u16 = 80;
 const DEFAULT_PTY_ROWS: u16 = 24;
 const REQUIRED_SHARED_VM_KERNEL_CMDLINE_TOKENS: &[&str] =
@@ -397,6 +421,12 @@ fn run() -> Result<()> {
             ensure_no_extra_args(args)?;
             run_shared_vm(&data_root)
         }
+        Some("watch-shared-vm-memory") | Some("watch-workspace-vm-memory") => {
+            let data_root = required_path_arg(args.next(), "data_root")?;
+            let owner_pid = required_u32_arg(args.next(), "owner_pid")?;
+            ensure_no_extra_args(args)?;
+            run_shared_vm_memory_watchdog(&data_root, owner_pid)
+        }
         Some("guest-exec") => {
             let mut data_root = None;
             let mut workspace_id = None;
@@ -485,7 +515,7 @@ fn run() -> Result<()> {
         }
         Some(other) => bail!("unsupported ctx-avf-linux-helper command: {other}"),
         None => bail!(
-            "usage: ctx-avf-linux-helper <probe|prepare-runtime-layout|workspace-vm-state|start-workspace-vm|stop-workspace-vm|prepare-guest-worktree|serve-workspace-vm|serve-guest-agent|run-workspace-vm|guest-exec|shared-vm-exec> ..."
+            "usage: ctx-avf-linux-helper <probe|prepare-runtime-layout|workspace-vm-state|start-workspace-vm|stop-workspace-vm|prepare-guest-worktree|serve-workspace-vm|serve-guest-agent|run-workspace-vm|watch-workspace-vm-memory|guest-exec|shared-vm-exec> ..."
         ),
     }
 }
@@ -513,6 +543,12 @@ fn required_string_arg(value: Option<String>, name: &str) -> Result<String> {
         bail!("argument `{name}` is empty");
     }
     Ok(trimmed.to_string())
+}
+
+fn required_u32_arg(value: Option<String>, name: &str) -> Result<u32> {
+    let raw = required_string_arg(value, name)?;
+    raw.parse::<u32>()
+        .with_context(|| format!("parsing argument `{name}` as a u32"))
 }
 
 fn ensure_no_extra_args(mut args: impl Iterator<Item = String>) -> Result<()> {

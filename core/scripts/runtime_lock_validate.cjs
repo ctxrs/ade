@@ -14,8 +14,19 @@ const defaultOverridesPath = path.join(coreRoot, "..", ".ctx", "local", "runtime
 const PROFILE_VALUES = new Set(["parity", "override", "source-all"]);
 const SOURCE_TYPES = new Set(["ci", "vendor", "local"]);
 const COMPONENT_KINDS = new Set(["provider", "runtime", "image", "machine_cache"]);
+const AVF_RUNTIME_ID = "avf-linux-guest";
 
 const isNonEmptyString = (value) => typeof value === "string" && value.trim().length > 0;
+const isPlaceholderSha256 = (value) =>
+  isNonEmptyString(value)
+  && value.trim().length === 64
+  && value.trim().split("").every((char) => char === "0");
+const isResolvedManagedUri = (value) => isNonEmptyString(value) && !value.trim().startsWith("locked://");
+const isResolvedManagedSha256 = (value) => isNonEmptyString(value) && !isPlaceholderSha256(value);
+const isAvfRuntimeComponent = (component) =>
+  component
+  && component.kind === "runtime"
+  && component.id === AVF_RUNTIME_ID;
 
 const readJson = (filePath, errors, label) => {
   try {
@@ -288,9 +299,29 @@ const componentHasManagedDownloadSource = ({ component, allowedSourceTypes }) =>
     }
     const uri = String(source?.uri || "").trim();
     const sha256 = String(source?.sha256 || "").trim();
+    if (isAvfRuntimeComponent(component) && (!isResolvedManagedUri(uri) || !isResolvedManagedSha256(sha256))) {
+      continue;
+    }
     if (uri && sha256) return true;
   }
   return false;
+};
+
+const validateResolvedAvfManagedSources = ({ component, label, errors }) => {
+  if (!isAvfRuntimeComponent(component)) return;
+  const managedSources = Array.isArray(component.sources)
+    ? component.sources.filter((source) => String(source?.source_type || "").trim() !== "local")
+    : [];
+  if (managedSources.length === 0) {
+    errors.push(`runtime lock missing managed AVF runtime source for ${label}`);
+    return;
+  }
+  for (const source of managedSources) {
+    const sourceType = String(source?.source_type || "").trim() || "unknown";
+    if (!isResolvedManagedUri(source?.uri) || !isResolvedManagedSha256(source?.sha256)) {
+      errors.push(`runtime lock AVF managed source ${sourceType} for ${label} must use a published uri + non-placeholder sha256`);
+    }
+  }
 };
 
 const applyOverridesToManifest = ({ manifest, overrides, hostOs, hostArch, errors }) => {
@@ -470,11 +501,12 @@ const validateManifestEntries = ({
     ["initrd", path.join("helpers", "initrd")],
     ["guest-agent", path.join("helpers", "guest-agent")],
     ["egress-proxy", path.join("helpers", "egress-proxy")],
+    ["container-stack", path.join("helpers", "container-stack.tar.gz")],
   ];
   const hasCompleteAvfHelperMetadata = (component) =>
     avfHelperChecks.every(([helperName]) => {
       const helper = component?.helpers?.[helperName];
-      return isNonEmptyString(helper?.uri) && isNonEmptyString(helper?.sha256);
+      return isResolvedManagedUri(helper?.uri) && isResolvedManagedSha256(helper?.sha256);
     });
 
   for (const providerId of providerIds) {
@@ -504,6 +536,13 @@ const validateManifestEntries = ({
       );
       const runtimeComponent =
         requiredComponentMap instanceof Map ? requiredComponentMap.get(runtimeComponentKey) : null;
+      if (runtimeId === AVF_RUNTIME_ID && runtimeComponent) {
+        validateResolvedAvfManagedSources({
+          component: runtimeComponent,
+          label: `${runtimeId} (${target.label})`,
+          errors,
+        });
+      }
       const managedRuntimeAvailable = componentHasManagedDownloadSource({
         component: runtimeComponent,
         allowedSourceTypes,

@@ -10,6 +10,10 @@ fn git(args: &[&str], cwd: &Path) {
     assert!(status.success(), "git {:?} failed", args);
 }
 
+fn gibibytes(value: u64) -> u64 {
+    value * 1024 * 1024 * 1024
+}
+
 #[test]
 fn parse_guest_exec_env_rejects_reserved_helper_keys() {
     let err = parse_guest_exec_env(&["CTX_AVF_SECRET=1".to_string()])
@@ -54,6 +58,63 @@ fn runtime_with_guest_agent_can_enable_real_vm_path() {
 }
 
 #[test]
+fn resolve_avf_vm_sizing_defaults_to_host_logical_cpu_count_and_reserved_memory() {
+    let sizing = resolve_avf_vm_sizing(
+        1,
+        16,
+        gibibytes(2),
+        gibibytes(64),
+        12,
+        gibibytes(32),
+        None,
+        None,
+    );
+
+    assert_eq!(sizing.cpu_count, 12);
+    assert_eq!(sizing.memory_size_bytes, gibibytes(28));
+    assert!(sizing.policy_note.contains("host logical CPU count"));
+    assert!(sizing.policy_note.contains("host RAM minus 4096 MiB reserve"));
+}
+
+#[test]
+fn resolve_avf_vm_sizing_clamps_defaults_to_avf_limits_and_memory_floor() {
+    let sizing = resolve_avf_vm_sizing(
+        2,
+        8,
+        gibibytes(2),
+        gibibytes(64),
+        32,
+        gibibytes(6),
+        None,
+        None,
+    );
+
+    assert_eq!(sizing.cpu_count, 8);
+    assert_eq!(sizing.memory_size_bytes, gibibytes(4));
+}
+
+#[test]
+fn resolve_avf_vm_sizing_applies_debug_overrides() {
+    let sizing = resolve_avf_vm_sizing(
+        1,
+        8,
+        gibibytes(2),
+        gibibytes(10),
+        4,
+        gibibytes(32),
+        Some(6),
+        Some(gibibytes(12) + 1234),
+    );
+
+    assert_eq!(sizing.cpu_count, 6);
+    assert_eq!(sizing.memory_size_bytes, gibibytes(10));
+    assert!(sizing.policy_note.contains(SHARED_VM_CPU_COUNT_ENV));
+    assert!(sizing
+        .policy_note
+        .contains(SHARED_VM_MEMORY_CEILING_BYTES_ENV));
+}
+
+#[test]
 fn stage_shadow_root_from_host_workspace_copies_standalone_repo() {
     let temp = PathBuf::from("/tmp").join(format!(
         "ctxavf-shadow-copy-{}-{}",
@@ -94,13 +155,13 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
     assert!(user_data.contains("#cloud-config"));
     assert!(user_data.contains("/usr/local/bin/ctx-avf-linux-guest-agent"));
     assert!(user_data.contains("/usr/local/bin/ctx-egress-proxy"));
-    assert!(user_data.contains(SHARED_VM_GROW_ROOTFS_INSTALL_PATH));
+    assert!(user_data.contains(SHARED_VM_DATA_DISK_INSTALL_PATH));
     assert!(user_data.contains("/usr/local/lib/ctx/ctx-avf-install-container-stack.sh"));
-    assert!(user_data.contains(SHARED_VM_GROW_ROOTFS_SERVICE_NAME));
+    assert!(user_data.contains(SHARED_VM_DATA_DISK_SERVICE_NAME));
     assert!(user_data.contains(SHARED_VM_GUEST_AGENT_SERVICE_NAME));
     assert!(user_data.contains(SHARED_VM_CONTAINERD_SERVICE_NAME));
     assert!(user_data.contains(SHARED_VM_BUILDKIT_SERVICE_NAME));
-    assert!(user_data.contains("systemctl enable --now ctx-avf-grow-rootfs.service"));
+    assert!(user_data.contains("systemctl enable --now ctx-avf-data-disk.service"));
     assert!(user_data.contains(&format!(
         "systemctl enable --now {service_name}",
         service_name = SHARED_VM_HOST_DATA_SERVICE_NAME
@@ -108,11 +169,19 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
     assert!(user_data.contains("systemctl enable --now ctx-avf-linux-guest-agent.service"));
     assert!(user_data.contains("systemctl enable --now containerd.service"));
     assert!(user_data.contains("systemctl enable --now buildkit.service"));
+    assert!(user_data.contains("mount_root='/ctx'"));
+    assert!(user_data.contains("\"$mount_root/ws/worktrees\""));
+    assert!(user_data.contains("\"$mount_root/home\""));
+    assert!(user_data.contains("\"$mount_root/cache\""));
+    assert!(user_data.contains("\"$mount_root/tmp\""));
+    assert!(user_data.contains("mount --bind \"$mount_root/system/containerd\" /var/lib/containerd"));
+    assert!(user_data.contains("mount --bind \"$mount_root/system/buildkit\" /var/lib/buildkit"));
     assert!(user_data.contains("StandardOutput=journal+console"));
     assert!(user_data.contains("starting guest-agent"));
     assert!(user_data.contains("preparing ctx-avf-linux-guest-agent.service"));
     assert!(user_data.contains("systemctl status ctx-avf-linux-guest-agent.service --no-pager"));
     assert!(user_data.contains("/tmp/runtime/helpers/container-stack.tar.gz"));
+    assert!(!user_data.contains("ctx-avf-grow-rootfs.service"));
     let parsed: Value = serde_yaml::from_str(&user_data).expect("cloud-init YAML should parse");
     let runcmd = parsed["runcmd"]
         .as_sequence()
@@ -130,6 +199,9 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
             service_name = SHARED_VM_HOST_DATA_SERVICE_NAME
         ))
         .expect("host-data enable command");
+    let data_disk_enable_index = user_data
+        .find("systemctl enable --now ctx-avf-data-disk.service")
+        .expect("data-disk enable command");
     assert!(runcmd[3]
         .as_str()
         .expect("prepare guest-agent step should be a string")
@@ -140,6 +212,12 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
         .contains(SHARED_VM_GUEST_CONTAINER_STACK_INSTALL_PATH));
     assert!(
         host_data_enable_index
+            < user_data
+                .find("preparing ctx-avf-linux-guest-agent.service")
+                .expect("prepare guest-agent command")
+    );
+    assert!(
+        data_disk_enable_index
             < user_data
                 .find("preparing ctx-avf-linux-guest-agent.service")
                 .expect("prepare guest-agent command")
@@ -155,7 +233,7 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
 }
 
 #[test]
-fn materialize_writable_rootfs_image_expands_small_rootfs() {
+fn materialize_writable_rootfs_image_preserves_small_rootfs_size() {
     let temp = PathBuf::from("/tmp").join(format!(
         "ctxavf-rootfs-grow-{}-{}",
         std::process::id(),
@@ -178,10 +256,303 @@ fn materialize_writable_rootfs_image_expands_small_rootfs() {
     assert_eq!(staged_rootfs, shared_vm_rootfs_path(&temp));
     assert_eq!(
         fs::metadata(&staged_rootfs).expect("rootfs metadata").len(),
-        SHARED_VM_MIN_WRITABLE_ROOTFS_BYTES
+        1024 * 1024
     );
-    let note = note.expect("growth note");
-    assert!(note.contains("expanded writable AVF Linux rootfs"));
+    let note = note.expect("copy note");
+    assert!(note.contains("copied rootfs image"));
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn materialize_data_disk_image_initializes_sparse_guest_data_disk() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-data-disk-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+
+    let (data_disk, note) = materialize_data_disk_image(&temp).expect("materialize data disk");
+
+    assert_eq!(data_disk, shared_vm_data_disk_path(&temp));
+    assert_eq!(
+        fs::metadata(&data_disk).expect("data-disk metadata").len(),
+        SHARED_VM_INITIAL_DATA_DISK_BYTES
+    );
+    let note = note.expect("data-disk note");
+    assert!(note.contains("initialized sparse AVF Linux data disk"));
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn resolve_shared_vm_data_disk_growth_decision_returns_no_action_when_guest_free_is_healthy() {
+    let decision = resolve_shared_vm_data_disk_growth_decision(
+        SHARED_VM_INITIAL_DATA_DISK_BYTES,
+        SHARED_VM_DATA_DISK_GROWTH_THRESHOLD_BYTES,
+        gibibytes(64),
+    );
+
+    assert_eq!(decision, SharedVmDataDiskGrowthDecision::NoAction);
+}
+
+#[test]
+fn resolve_shared_vm_data_disk_growth_decision_grows_when_guest_free_is_low_and_host_has_budget()
+{
+    let decision = resolve_shared_vm_data_disk_growth_decision(
+        SHARED_VM_INITIAL_DATA_DISK_BYTES,
+        gibibytes(1),
+        gibibytes(64),
+    );
+
+    assert_eq!(
+        decision,
+        SharedVmDataDiskGrowthDecision::Grow {
+            new_size_bytes: SHARED_VM_INITIAL_DATA_DISK_BYTES
+                + SHARED_VM_DATA_DISK_GROWTH_STEP_BYTES,
+            additional_bytes: SHARED_VM_DATA_DISK_GROWTH_STEP_BYTES,
+        }
+    );
+}
+
+#[test]
+fn resolve_shared_vm_data_disk_growth_decision_blocks_when_host_reserve_would_be_breached() {
+    let decision = resolve_shared_vm_data_disk_growth_decision(
+        SHARED_VM_INITIAL_DATA_DISK_BYTES,
+        gibibytes(1),
+        SHARED_VM_HOST_DISK_RESERVE_BYTES,
+    );
+
+    assert_eq!(
+        decision,
+        SharedVmDataDiskGrowthDecision::HostReserveBlocked {
+            available_host_bytes: SHARED_VM_HOST_DISK_RESERVE_BYTES,
+            reserve_bytes: SHARED_VM_HOST_DISK_RESERVE_BYTES,
+            requested_additional_bytes: SHARED_VM_DATA_DISK_GROWTH_STEP_BYTES,
+        }
+    );
+}
+
+#[test]
+fn resolve_shared_vm_memory_balloon_action_reclaims_under_host_pressure() {
+    let action = resolve_shared_vm_memory_balloon_action(
+        gibibytes(16),
+        gibibytes(16),
+        gibibytes(4),
+        Some(gibibytes(8)),
+        gibibytes(3),
+    );
+
+    assert_eq!(
+        action,
+        SharedVmMemoryBalloonAction::Reclaim {
+            new_target_bytes: gibibytes(14),
+            available_host_bytes: gibibytes(3),
+            aggressive: false,
+        }
+    );
+}
+
+#[test]
+fn resolve_shared_vm_memory_balloon_action_grows_under_guest_pressure() {
+    let action = resolve_shared_vm_memory_balloon_action(
+        gibibytes(8),
+        gibibytes(16),
+        gibibytes(4),
+        Some(gibibytes(1)),
+        gibibytes(10),
+    );
+
+    assert_eq!(
+        action,
+        SharedVmMemoryBalloonAction::Grow {
+            new_target_bytes: gibibytes(10),
+            available_host_bytes: gibibytes(10),
+            guest_available_bytes: gibibytes(1),
+        }
+    );
+}
+
+#[test]
+fn resolve_shared_vm_memory_balloon_action_requests_emergency_stop_at_floor() {
+    let action = resolve_shared_vm_memory_balloon_action(
+        gibibytes(4),
+        gibibytes(16),
+        gibibytes(4),
+        Some(gibibytes(1)),
+        gibibytes(0),
+    );
+
+    assert_eq!(
+        action,
+        SharedVmMemoryBalloonAction::EmergencyStop {
+            available_host_bytes: gibibytes(0),
+            current_target_bytes: gibibytes(4),
+            floor_bytes: gibibytes(4),
+        }
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn persist_shared_vm_owner_error_state_marks_vm_error_and_clears_owner_processes() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-owner-error-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+    let state_path = temp.join("shared-vm-state.json");
+    let mut state = PersistedSharedVmState {
+        state: AvfLinuxSharedVmLifecycleState::Running,
+        runtime_root: Some(temp.join("runtime")),
+        rootfs_image: Some(temp.join("rootfs.raw")),
+        kernel_path: Some(temp.join("kernel")),
+        initrd_path: Some(temp.join("initrd")),
+        runtime_version: Some("test-runtime".to_string()),
+        updated_at: None,
+        last_started_at: Some("started".to_string()),
+        last_saved_at: Some("saved".to_string()),
+        last_stopped_at: None,
+        transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+        relay_pid: Some(101),
+        guest_agent_pid: Some(202),
+        simulated: false,
+        notes: vec!["running".to_string()],
+    };
+
+    persist_shared_vm_owner_error_state(
+        &state_path,
+        &mut state,
+        "disk growth blocked by host reserve".to_string(),
+    )
+    .expect("persist owner error state");
+
+    assert!(matches!(state.state, AvfLinuxSharedVmLifecycleState::Error));
+    assert!(!state.simulated);
+    assert!(state.updated_at.is_some());
+    assert_eq!(state.last_stopped_at, state.updated_at);
+    assert!(state.transition_status.is_none());
+    assert!(state.relay_pid.is_none());
+    assert!(state.guest_agent_pid.is_none());
+    assert_eq!(
+        state.notes,
+        vec!["disk growth blocked by host reserve".to_string()]
+    );
+
+    let persisted = load_state(&state_path)
+        .expect("load state")
+        .expect("persisted state");
+    assert!(matches!(persisted.state, AvfLinuxSharedVmLifecycleState::Error));
+    assert!(persisted.relay_pid.is_none());
+    assert!(persisted.guest_agent_pid.is_none());
+    assert_eq!(
+        persisted.notes,
+        vec!["disk growth blocked by host reserve".to_string()]
+    );
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn shared_vm_state_marks_missing_owner_with_memory_pressure_request_as_error() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-memory-request-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    prepare_runtime_layout(&temp).expect("prepare runtime layout");
+    let state_path = shared_vm_state_path(&temp);
+    persist_state(
+        &state_path,
+        &PersistedSharedVmState {
+            state: AvfLinuxSharedVmLifecycleState::Running,
+            runtime_root: None,
+            rootfs_image: None,
+            kernel_path: None,
+            initrd_path: None,
+            runtime_version: None,
+            updated_at: Some(now_timestamp_string()),
+            last_started_at: None,
+            last_saved_at: None,
+            last_stopped_at: None,
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            relay_pid: Some(999_999),
+            guest_agent_pid: None,
+            simulated: false,
+            notes: vec!["running".to_string()],
+        },
+    )
+    .expect("persist running state");
+    request_shared_vm_memory_pressure_stop(
+        &temp,
+        "watchdog requested an emergency stop",
+    )
+    .expect("request emergency stop");
+
+    let response = shared_vm_state(&temp).expect("shared vm state");
+
+    assert!(matches!(response.state, AvfLinuxSharedVmLifecycleState::Error));
+    assert!(response.transition_status.is_none());
+    assert!(response
+        .notes
+        .iter()
+        .any(|note| note.contains("watchdog requested an emergency stop")));
+    assert!(
+        !shared_vm_memory_pressure_request_path(&temp).exists(),
+        "request file should be cleared once state is updated"
+    );
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn start_shared_vm_materializes_rootfs_and_data_disk_layout() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-start-layout-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    let runtime_root = temp.join("runtime");
+    let helpers_root = runtime_root.join("helpers");
+    fs::create_dir_all(&helpers_root).expect("create helpers root");
+    let source_rootfs = temp.join("source-rootfs.raw");
+    fs::write(&source_rootfs, b"rootfs").expect("write rootfs");
+    let kernel_path = helpers_root.join("kernel");
+    fs::write(&kernel_path, b"kernel").expect("write kernel");
+    let initrd_path = helpers_root.join("initrd");
+    fs::write(&initrd_path, b"initrd").expect("write initrd");
+
+    let started = start_shared_vm(
+        &temp,
+        &runtime_root,
+        &source_rootfs,
+        &kernel_path,
+        &initrd_path,
+        "test-runtime".to_string(),
+    )
+    .expect("start shared vm");
+
+    assert!(matches!(
+        started.state,
+        AvfLinuxSharedVmLifecycleState::Running
+    ));
+    assert!(started.simulated);
+    assert!(shared_vm_rootfs_path(&temp).exists());
+    assert!(shared_vm_data_disk_path(&temp).exists());
+    assert!(started
+        .notes
+        .iter()
+        .any(|note| note.contains("AVF Linux data disk")));
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 
@@ -240,10 +611,15 @@ fn cloud_init_enables_host_data_before_touching_host_payload() {
             service_name = SHARED_VM_HOST_DATA_SERVICE_NAME
         ))
         .expect("host-data enable command");
+    let data_disk_enable_index = user_data
+        .find("systemctl enable --now ctx-avf-data-disk.service")
+        .expect("data-disk enable command");
     let prepare_guest_agent_index = user_data
         .find("preparing ctx-avf-linux-guest-agent.service")
         .expect("prepare guest-agent command");
     assert!(daemon_reload_index < host_data_enable_index);
+    assert!(host_data_enable_index < data_disk_enable_index);
+    assert!(data_disk_enable_index < prepare_guest_agent_index);
     assert!(host_data_enable_index < prepare_guest_agent_index);
 }
 
@@ -261,16 +637,20 @@ fn resetting_writable_runtime_state_removes_only_derived_files() {
     let guest_agent_socket = shared_vm_guest_agent_socket_path(&temp);
     let saved_state = shared_vm_saved_state_path(&temp);
     let rootfs = shared_vm_rootfs_path(&temp);
+    let data_disk = shared_vm_data_disk_path(&temp);
     for path in [&control_socket, &guest_agent_socket, &saved_state, &rootfs] {
         fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
         fs::write(path, b"x").expect("seed file");
     }
+    fs::create_dir_all(data_disk.parent().expect("data-disk parent")).expect("create parent");
+    fs::write(&data_disk, b"x").expect("seed data-disk");
 
     reset_writable_shared_vm_runtime_state(&temp).expect("reset runtime state");
 
     for path in [&control_socket, &guest_agent_socket, &saved_state, &rootfs] {
         assert!(!path.exists(), "{} should be removed", path.display());
     }
+    assert!(data_disk.exists(), "{} should be preserved", data_disk.display());
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 

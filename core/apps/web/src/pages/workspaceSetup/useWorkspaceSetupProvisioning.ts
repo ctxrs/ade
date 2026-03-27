@@ -16,6 +16,7 @@ import {
   getTitleGenerationLocalStatus,
   importProviderAuthCandidates,
   installTitleGenerationLocal,
+  startRuntimePrewarm,
   updateSettings,
 } from "../../api/client";
 import {
@@ -128,6 +129,7 @@ export function useWorkspaceSetupProvisioning({
   const titlingInstallObserverRef = useRef<{ installId: string; stop: () => void } | null>(null);
   const titlingInstallStateRef = useRef<LocalInstallState | null>(null);
   const previousTargetKeyRef = useRef<string | null>(null);
+  const sandboxWarmupTargetKeyRef = useRef<string | null>(null);
 
   const selectedDaemonTargetKey = effectiveTarget?.targetKey ?? null;
   const remoteTarget = effectiveTarget?.kind === "remote" ? effectiveTarget : null;
@@ -250,6 +252,7 @@ export function useWorkspaceSetupProvisioning({
   const resetProvisioningState = useCallback(() => {
     resetProviderProvisioningState();
     clearTitlingInstallObserver();
+    sandboxWarmupTargetKeyRef.current = null;
     commitProvisioningMachineState(createInitialWorkspaceSetupProvisioningMachineState());
     setTitlingProbeBusy(false);
     setTitlingProbeError(null);
@@ -702,6 +705,35 @@ export function useWorkspaceSetupProvisioning({
     selections.location,
   ]);
 
+  const ensureSandboxWarmupForRouteScope = useCallback(async (
+    location: "local" | "remote",
+    routeScope: WorkspaceSetupRouteScope,
+  ): Promise<void> => {
+    if (!desktopApp || location !== "local" || routeScope.containerSelection !== "sandbox") {
+      if (location !== "local" || routeScope.containerSelection !== "sandbox") {
+        sandboxWarmupTargetKeyRef.current = null;
+      }
+      return;
+    }
+    const routeKey = serializeWorkspaceSetupRouteScope(routeScope);
+    if (sandboxWarmupTargetKeyRef.current === routeKey) {
+      return;
+    }
+    sandboxWarmupTargetKeyRef.current = routeKey;
+    try {
+      await connectDaemonForImport("local");
+      await startRuntimePrewarm("launch_ready");
+    } catch (error) {
+      if (sandboxWarmupTargetKeyRef.current === routeKey) {
+        sandboxWarmupTargetKeyRef.current = null;
+      }
+      throw error;
+    }
+  }, [
+    connectDaemonForImport,
+    desktopApp,
+  ]);
+
   const ensureRoutePlanForSelection = useCallback(async (
     containerSelectionOverride?: string,
   ): Promise<WizardRoutePlan | null> => {
@@ -720,17 +752,23 @@ export function useWorkspaceSetupProvisioning({
         requestedRouteScope,
       )
     ) {
+      await ensureSandboxWarmupForRouteScope(location, requestedRouteScope);
       return currentPlan;
     }
 
     setRoutePlanningBusy(true);
     try {
       const nextState = await refreshProvisioningForRouteScope(location, requestedRouteScope, "ensure_route_plan");
-      return nextState?.routePlan ?? null;
+      const nextRoutePlan = nextState?.routePlan ?? null;
+      if (nextRoutePlan) {
+        await ensureSandboxWarmupForRouteScope(location, requestedRouteScope);
+      }
+      return nextRoutePlan;
     } finally {
       setRoutePlanningBusy(false);
     }
   }, [
+    ensureSandboxWarmupForRouteScope,
     effectiveTarget,
     refreshProvisioningForRouteScope,
     routePlan,
@@ -850,6 +888,12 @@ export function useWorkspaceSetupProvisioning({
     resetProvisioningState();
     resetRoutePlan();
   }, [resetProvisioningState, resetRoutePlan, selectedDaemonTargetKey]);
+
+  useEffect(() => {
+    if (selections.location !== "local" || (selections.container ?? "").trim() !== "sandbox") {
+      sandboxWarmupTargetKeyRef.current = null;
+    }
+  }, [selections.container, selections.location]);
 
   useEffect(() => {
     if (!selectedDaemonTargetKey || !canProbeTitling) {

@@ -225,7 +225,7 @@ fn select_managed_runtime_source_supports_avf_guest_helper_payloads() {
         os: "macos".to_string(),
         arch: "aarch64".to_string(),
         variant: Some("default".to_string()),
-        version: Some("locked".to_string()),
+        version: Some("ubuntu-noble-arm64-test".to_string()),
         bin: Some("rootfs.raw".to_string()),
         helpers: HashMap::from([
             (
@@ -250,6 +250,13 @@ fn select_managed_runtime_source_supports_avf_guest_helper_payloads() {
                 },
             ),
             (
+                "guest-agent".to_string(),
+                RuntimeLockHelperSource {
+                    uri: Some("https://example.test/guest-agent".to_string()),
+                    sha256: Some("5555".to_string()),
+                },
+            ),
+            (
                 "container-stack".to_string(),
                 RuntimeLockHelperSource {
                     uri: Some("https://example.test/container-stack".to_string()),
@@ -268,7 +275,7 @@ fn select_managed_runtime_source_supports_avf_guest_helper_payloads() {
     let source = select_managed_runtime_source(&component, &allowed).expect("runtime source");
     assert_eq!(source.uri, "https://example.test/rootfs.raw.zst");
     assert_eq!(source.sha256, "abcd");
-    assert_eq!(source.version, "locked");
+    assert_eq!(source.version, "ubuntu-noble-arm64-test");
     assert_eq!(source.bin, "rootfs.raw");
     assert_eq!(
         source
@@ -294,10 +301,83 @@ fn select_managed_runtime_source_supports_avf_guest_helper_payloads() {
     assert_eq!(
         source
             .helpers
+            .get("guest-agent")
+            .map(|helper| helper.uri.as_str()),
+        Some("https://example.test/guest-agent")
+    );
+    assert_eq!(
+        source
+            .helpers
             .get("container-stack")
             .map(|helper| helper.uri.as_str()),
         Some("https://example.test/container-stack")
     );
+}
+
+#[test]
+fn select_managed_runtime_source_rejects_unresolved_avf_placeholder_payloads() {
+    let component = RuntimeLockComponent {
+        kind: "runtime".to_string(),
+        id: "avf-linux-guest".to_string(),
+        os: "macos".to_string(),
+        arch: "aarch64".to_string(),
+        variant: Some("default".to_string()),
+        version: Some("locked".to_string()),
+        bin: Some("rootfs.raw".to_string()),
+        helpers: HashMap::from([
+            (
+                "kernel".to_string(),
+                RuntimeLockHelperSource {
+                    uri: Some("locked://runtimes/avf-linux-guest/macos/aarch64/kernel".to_string()),
+                    sha256: Some("0".repeat(64)),
+                },
+            ),
+            (
+                "initrd".to_string(),
+                RuntimeLockHelperSource {
+                    uri: Some("locked://runtimes/avf-linux-guest/macos/aarch64/initrd".to_string()),
+                    sha256: Some("0".repeat(64)),
+                },
+            ),
+            (
+                "guest-agent".to_string(),
+                RuntimeLockHelperSource {
+                    uri: Some(
+                        "locked://runtimes/avf-linux-guest/macos/aarch64/guest-agent".to_string()
+                    ),
+                    sha256: Some("0".repeat(64)),
+                },
+            ),
+            (
+                "egress-proxy".to_string(),
+                RuntimeLockHelperSource {
+                    uri: Some(
+                        "locked://runtimes/avf-linux-guest/macos/aarch64/egress-proxy".to_string()
+                    ),
+                    sha256: Some("0".repeat(64)),
+                },
+            ),
+            (
+                "container-stack".to_string(),
+                RuntimeLockHelperSource {
+                    uri: Some(
+                        "locked://runtimes/avf-linux-guest/macos/aarch64/container-stack"
+                            .to_string()
+                    ),
+                    sha256: Some("0".repeat(64)),
+                },
+            ),
+        ]),
+        sources: vec![RuntimeLockSource {
+            source_type: "ci".to_string(),
+            uri: Some("locked://runtimes/avf-linux-guest/macos/aarch64/rootfs.raw.zst".to_string()),
+            sha256: Some("0".repeat(64)),
+        }],
+    };
+    let mut allowed = HashSet::new();
+    allowed.insert("ci".to_string());
+
+    assert!(select_managed_runtime_source(&component, &allowed).is_none());
 }
 
 #[test]

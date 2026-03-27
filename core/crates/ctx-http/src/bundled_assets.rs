@@ -11,6 +11,14 @@ const EFFECTIVE_MANIFEST_FILENAME: &str = "runtime_manifest.effective.json";
 const MANIFEST_VERSION: u32 = 1;
 const RUNTIME_LOCK_FILENAME: &str = "runtime_lock.v2.json";
 const RUNTIME_LOCK_VERSION: u32 = 2;
+const AVF_LINUX_GUEST_RUNTIME_ID: &str = "avf-linux-guest";
+const AVF_REQUIRED_HELPERS: &[&str] = &[
+    "kernel",
+    "initrd",
+    "guest-agent",
+    "egress-proxy",
+    "container-stack",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BundledAssetsManifest {
@@ -355,6 +363,12 @@ fn select_managed_source(
         if uri.is_empty() || sha256.is_empty() {
             return None;
         }
+        if component.kind == "runtime"
+            && component.id == AVF_LINUX_GUEST_RUNTIME_ID
+            && (!managed_source_is_resolved(uri) || !sha256_is_resolved(sha256))
+        {
+            return None;
+        }
         Some(ManagedArtifactSource {
             uri: uri.to_string(),
             sha256: sha256.to_string(),
@@ -386,6 +400,11 @@ fn select_managed_runtime_source(
         if uri.is_empty() || sha256.is_empty() {
             continue;
         }
+        if component.id == AVF_LINUX_GUEST_RUNTIME_ID
+            && (!managed_source_is_resolved(uri) || !sha256_is_resolved(sha256))
+        {
+            continue;
+        }
         helpers.insert(
             name.to_string(),
             ManagedArtifactSource {
@@ -394,6 +413,13 @@ fn select_managed_runtime_source(
             },
         );
     }
+    if component.id == AVF_LINUX_GUEST_RUNTIME_ID
+        && AVF_REQUIRED_HELPERS
+            .iter()
+            .any(|helper| !helpers.contains_key(*helper))
+    {
+        return None;
+    }
     Some(ManagedRuntimeSource {
         uri: source.uri,
         sha256: source.sha256,
@@ -401,6 +427,16 @@ fn select_managed_runtime_source(
         bin: bin.to_string(),
         helpers,
     })
+}
+
+fn managed_source_is_resolved(uri: &str) -> bool {
+    !uri.trim().starts_with("locked://")
+}
+
+fn sha256_is_resolved(sha256: &str) -> bool {
+    let trimmed = sha256.trim();
+    !trimmed.is_empty()
+        && !(trimmed.len() == 64 && trimmed.bytes().all(|byte| byte == b'0'))
 }
 
 pub fn bundled_provider_command(provider_id: &str) -> Option<BundledCommand> {

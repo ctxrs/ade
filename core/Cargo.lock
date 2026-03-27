@@ -1518,6 +1518,7 @@ dependencies = [
  "which",
  "x25519-dalek",
  "zip",
+ "zstd",
 ]
 
 [[package]]

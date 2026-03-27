@@ -11,6 +11,7 @@ arch=""
 release_dir="https://cloud-images.ubuntu.com/releases/noble/release"
 kernel_cmdline="console=hvc0 root=LABEL=cloudimg-rootfs rootwait rw"
 container_stack_version="${NERDCTL_VERSION:-v2.2.1}"
+container_stack_mode="curated-nerdctl-subset"
 force=0
 dry_run=0
 auto_built_guest_helpers=0
@@ -189,6 +190,10 @@ container_stack_filename() {
   printf 'nerdctl-full-%s-linux-%s.tar.gz' "${version#v}" "$asset_arch"
 }
 
+curated_container_stack_inventory() {
+  printf '%s' 'bin/buildctl,bin/buildkitd,bin/containerd,bin/containerd-shim-runc-v2,bin/ctr,bin/nerdctl,bin/runc,libexec/cni/bridge,libexec/cni/firewall,libexec/cni/host-local,libexec/cni/loopback,libexec/cni/portmap,libexec/cni/tuning'
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --output-dir)
@@ -282,10 +287,12 @@ fi
 container_stack_name="$(container_stack_filename "$container_stack_version" "$container_stack_arch")"
 container_stack_url="https://github.com/containerd/nerdctl/releases/download/${container_stack_version}/${container_stack_name}"
 container_stack_sha256_url="https://github.com/containerd/nerdctl/releases/download/${container_stack_version}/SHA256SUMS"
+container_stack_curator="${repo_root}/scripts/curate_avf_container_stack.sh"
 
 if [[ -n "$container_stack_path" ]]; then
   [[ -f "$container_stack_path" ]] || die "container stack archive does not exist: $container_stack_path"
 fi
+[[ -f "$container_stack_curator" ]] || die "container stack curator script does not exist: $container_stack_curator"
 
 runtime_dir="$(cd "$(dirname "$runtime_dir")" && pwd)/$(basename "$runtime_dir")"
 if [[ -e "$runtime_dir" ]]; then
@@ -330,6 +337,8 @@ rootfs_url=$rootfs_url
 kernel_url=$kernel_url
 initrd_url=$initrd_url
 container_stack_version=$container_stack_version
+container_stack_mode=$container_stack_mode
+container_stack_inventory=$(curated_container_stack_inventory)
 container_stack_path=$runtime_dir/helpers/container-stack.tar.gz
 container_stack_url=$container_stack_url
 container_stack_sha256_url=$container_stack_sha256_url
@@ -357,7 +366,8 @@ initrd_path="$tmp_root/$initrd_name"
 rootfs_sha256_sums="$tmp_root/SHA256SUMS"
 unpacked_sha256_sums="$tmp_root/unpacked.SHA256SUMS"
 container_stack_sha256_sums="$tmp_root/nerdctl-full.SHA256SUMS"
-container_stack_archive="$tmp_root/$container_stack_name"
+container_stack_archive_raw="$tmp_root/$container_stack_name"
+container_stack_archive_curated="$tmp_root/container-stack.curated.tar.gz"
 
 mkdir -p "$runtime_dir/helpers"
 
@@ -368,16 +378,16 @@ download_file "$rootfs_url" "$rootfs_qcow"
 download_file "$kernel_url" "$kernel_path"
 download_file "$initrd_url" "$initrd_path"
 if [[ -n "$container_stack_path" ]]; then
-  cp -p "$container_stack_path" "$container_stack_archive"
+  cp -p "$container_stack_path" "$container_stack_archive_raw"
 else
-  download_file "$container_stack_url" "$container_stack_archive"
+  download_file "$container_stack_url" "$container_stack_archive_raw"
 fi
 
 for item in \
   "$rootfs_sha256_sums:$rootfs_name:$rootfs_qcow" \
   "$unpacked_sha256_sums:$kernel_name:$kernel_path" \
   "$unpacked_sha256_sums:$initrd_name:$initrd_path" \
-  "$container_stack_sha256_sums:$container_stack_name:$container_stack_archive"
+  "$container_stack_sha256_sums:$container_stack_name:$container_stack_archive_raw"
 do
   item_sums="${item%%:*}"
   item_rest="${item#*:}"
@@ -389,13 +399,17 @@ do
   [[ "$actual" == "$expected" ]] || die "sha256 mismatch for $item_name"
 done
 
+bash "$container_stack_curator" \
+  --input "$container_stack_archive_raw" \
+  --output "$container_stack_archive_curated"
+
 rootfs_image="$tmp_root/rootfs.raw"
 "$qemu_img_bin" convert -f qcow2 -O raw "$rootfs_qcow" "$rootfs_image"
 
 rootfs_raw_sha256="$(sha256_file "$rootfs_image")"
 kernel_sha256="$(sha256_file "$kernel_path")"
 initrd_sha256="$(sha256_file "$initrd_path")"
-container_stack_sha256="$(sha256_file "$container_stack_archive")"
+container_stack_sha256="$(sha256_file "$container_stack_archive_curated")"
 runtime_version="ubuntu-noble-${ubuntu_arch}-${rootfs_raw_sha256:0:12}"
 
 install -m 0644 "$kernel_path" "$runtime_dir/helpers/kernel"
@@ -403,7 +417,7 @@ install -m 0644 "$initrd_path" "$runtime_dir/helpers/initrd"
 printf '%s\n' "$kernel_cmdline" > "$runtime_dir/helpers/kernel-cmdline"
 install -m 0755 "$guest_agent_path" "$runtime_dir/helpers/guest-agent"
 install -m 0755 "$egress_proxy_path" "$runtime_dir/helpers/egress-proxy"
-install -m 0644 "$container_stack_archive" "$runtime_dir/helpers/container-stack.tar.gz"
+install -m 0644 "$container_stack_archive_curated" "$runtime_dir/helpers/container-stack.tar.gz"
 cp -c "$rootfs_image" "$runtime_dir/rootfs.raw" 2>/dev/null || cp -p "$rootfs_image" "$runtime_dir/rootfs.raw"
 
 cat > "$runtime_dir/version.txt" <<EOF
@@ -425,6 +439,8 @@ container-stack-version=$container_stack_version
 container-stack-archive=$container_stack_name
 container-stack-source=$container_stack_url
 container-stack-sha256=$container_stack_sha256
+container-stack-mode=$container_stack_mode
+container-stack-inventory=$(curated_container_stack_inventory)
 EOF
 
 cat <<EOF

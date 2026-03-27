@@ -34,8 +34,9 @@ pub(crate) use self::helper_wrappers::{
     workspace_vm_state,
 };
 pub(crate) use self::runtime_bootstrap::{
-    ensure_guest_worktree_from_host_copy, ensure_workspace_vm_ready_with_observer,
-    prefetch_runtime_with_observer, runtime_available, runtime_state,
+    ensure_guest_worktree_from_host_copy, ensure_shared_vm_ready_with_observer,
+    ensure_workspace_vm_ready_with_observer, prefetch_runtime_with_observer, runtime_available,
+    runtime_state,
 };
 pub(crate) use self::runtime_install::runtime_target_label;
 use self::runtime_install::*;

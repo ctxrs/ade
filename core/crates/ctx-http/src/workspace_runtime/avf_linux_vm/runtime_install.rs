@@ -156,6 +156,8 @@ fn managed_artifact_extension(uri: &str) -> &'static str {
     let path_lc = path.to_ascii_lowercase();
     if path_lc.ends_with(".tar.gz") {
         "tar.gz"
+    } else if path_lc.ends_with(".zst") {
+        "zst"
     } else if path_lc.ends_with(".tgz") {
         "tgz"
     } else if path_lc.ends_with(".tar") {
@@ -715,5 +717,27 @@ async fn explicit_staged_avf_linux_guest_runtime_dir_must_be_ready() {
         err.to_string()
             .contains("explicit staged AVF Linux guest runtime dir is incomplete or not ready"),
         "unexpected error: {err:#}"
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn managed_avf_linux_archive_path_preserves_zstd_extension() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = bundled_assets::ManagedRuntimeSource {
+        uri: "https://example.test/runtimes/avf-linux-guest/rootfs.raw.zst".to_string(),
+        sha256: "a".repeat(64),
+        version: "ubuntu-noble-arm64-test".to_string(),
+        bin: "rootfs.raw".to_string(),
+        helpers: HashMap::new(),
+    };
+
+    let archive_path = managed_avf_linux_archive_path(temp.path(), &source);
+    assert_eq!(
+        archive_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .expect("zst extension"),
+        "zst"
     );
 }

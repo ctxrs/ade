@@ -214,10 +214,21 @@ export type ExecutionLaunchStreamEvent =
   | { type: "launch_complete"; snapshot: ExecutionLaunchSnapshot }
   | { type: "launch_error"; snapshot: ExecutionLaunchSnapshot };
 
+export type RuntimePrewarmScope = "runtime" | "launch_ready" | "builder" | "all";
+
 export const startExecutionLaunch = (workspaceId: string) =>
   apiAny<ExecutionLaunchSnapshot>("/api/execution/launch/start", {
     method: "POST",
     body: JSON.stringify({ workspace_id: workspaceId }),
+  });
+
+export const startRuntimePrewarm = (prewarmScope: RuntimePrewarmScope) =>
+  apiAny<ExecutionLaunchSnapshot>("/api/execution/launch/start", {
+    method: "POST",
+    body: JSON.stringify({
+      kind: "startup_prewarm",
+      prewarm_scope: prewarmScope,
+    }),
   });
 
 export const startWorkspaceSetupLaunchHandoff = (workspaceId: string) =>
