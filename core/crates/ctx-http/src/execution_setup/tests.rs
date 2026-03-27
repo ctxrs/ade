@@ -1986,7 +1986,8 @@ async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtim
     );
     assert!(terminal.logs.iter().any(|line| {
         line.phase == HarnessSetupPhase::Ready
-            && line.message == "sandbox runtime artifacts are ready"
+            && line.message
+                == "shared VM runtime artifacts are ready; launch image loads when the shared VM starts"
     }));
     let runtime_state = coordinator
         .startup_runtime_state(&settings.container)
@@ -2052,7 +2053,8 @@ async fn runtime_prewarm_launch_ready_scope_starts_shared_vm_for_avf_linux_runti
         terminal.logs
     );
     assert!(terminal.logs.iter().any(|line| {
-        line.phase == HarnessSetupPhase::Ready && line.message == "sandbox runtime is launch-ready"
+        line.phase == HarnessSetupPhase::Ready
+            && line.message == "shared VM substrate and launch image are ready"
     }));
     let launch_ready =
         crate::harness_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
@@ -2668,7 +2670,8 @@ async fn runtime_prewarm_launch_ready_scope_starts_native_runtime_before_loading
 
     assert_eq!(terminal.state, ExecutionLaunchState::Ready);
     assert!(terminal.logs.iter().any(|line| {
-        line.phase == HarnessSetupPhase::Ready && line.message == "sandbox runtime is launch-ready"
+        line.phase == HarnessSetupPhase::Ready
+            && line.message == "local sandbox runtime and launch image are ready"
     }));
     let launch_ready =
         crate::harness_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
