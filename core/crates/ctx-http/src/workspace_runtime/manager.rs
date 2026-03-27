@@ -606,7 +606,7 @@ impl HarnessRuntimeManager {
             daemon_host,
             daemon_port,
             observer,
-            readiness: _readiness,
+            readiness,
         } = request;
         let name = format!("ctx-harness-{}", workspace.id.0);
         let image = resolve_container_image(settings);
@@ -731,8 +731,16 @@ impl HarnessRuntimeManager {
                 );
             }
         } else {
-            self.ensure_container_image_ready(settings, observer)
-                .await?;
+            let requires_front_loaded_image_readiness = !(settings.runtime
+                == ContainerRuntimeKind::NativeContainer
+                && readiness == ContainerReadinessState::RuntimeReady);
+            // Native runtime-ready callers only arrive after launch readiness has already
+            // established image presence. Shared-VM runtime-ready still needs the managed
+            // image load path before container creation.
+            if requires_front_loaded_image_readiness {
+                self.ensure_container_image_ready(settings, observer)
+                    .await?;
+            }
             observe_phase(
                 observer,
                 HarnessSetupPhase::ContainerStartOrCreate,
