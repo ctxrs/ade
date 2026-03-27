@@ -24,6 +24,13 @@ pub(super) use self::guest_control::shared_vm_owner_guest_probe_ready;
 pub(super) use self::guest_control::{
     is_transient_guest_control_connect_nserror, relay_shared_vm_control_client,
 };
+#[cfg(test)]
+pub(super) use self::resource_management::{
+    replay_shared_vm_controller_safety_trace, shared_vm_controller_safety_trace_canonical_json,
+    SharedVmControllerSafetyHostPressureState, SharedVmControllerSafetyPressureState,
+    SharedVmControllerSafetyReplayDecision, SharedVmControllerSafetyReplayPhase,
+    SharedVmControllerSafetyReplayState, SharedVmControllerSafetyReplayStep,
+};
 pub(super) use self::owner::{run_shared_vm, run_shared_vm_memory_watchdog};
 pub(super) use self::processes::{
     spawn_guest_agent_server, spawn_real_shared_vm_owner, spawn_shared_vm_server,

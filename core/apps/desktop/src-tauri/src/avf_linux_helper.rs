@@ -77,6 +77,13 @@ use self::avf_linux_exec_protocol::{
     read_exec_frame, write_exec_frame, AvfLinuxExecError, AvfLinuxExecExit, AvfLinuxExecFrame,
     AvfLinuxExecRequest, AvfLinuxExecResize,
 };
+#[cfg(test)]
+use self::real_vm_runtime::{
+    replay_shared_vm_controller_safety_trace, shared_vm_controller_safety_trace_canonical_json,
+    SharedVmControllerSafetyHostPressureState, SharedVmControllerSafetyPressureState,
+    SharedVmControllerSafetyReplayDecision, SharedVmControllerSafetyReplayPhase,
+    SharedVmControllerSafetyReplayState, SharedVmControllerSafetyReplayStep,
+};
 use self::cloud_init::*;
 use self::control::*;
 use self::guest_exec::*;
