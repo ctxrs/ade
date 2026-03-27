@@ -6,6 +6,14 @@ use crate::settings::ContainerRuntimeKind;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub(crate) enum SubstrateStartupSelection {
+    Reuse,
+    Restore,
+    ColdBoot,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum SubstrateStartupOutcome {
     Reuse,
     Restore,

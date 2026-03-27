@@ -5,17 +5,19 @@ use ctx_core::ids::SandboxInstanceId;
 use ctx_core::models::SandboxSubstrate;
 
 use super::avf_linux_vm::{
-    AvfLinuxSharedVmLifecycleState, AvfLinuxSharedVmStartOutcome, AvfLinuxSharedVmState,
-    AvfLinuxSharedVmStopOutcome,
+    probe_helper, AvfLinuxSharedVmLifecycleState, AvfLinuxSharedVmStartOutcome,
+    AvfLinuxSharedVmState, AvfLinuxSharedVmStopOutcome,
 };
 use super::{
     ContainerExecutionSettings, HarnessSetupObserver, SharedVmLifecycleOrchestrator,
-    SubstrateShutdownOutcome, SubstrateStartupOutcome, UbuntuSandboxSubstrate,
+    SubstrateShutdownOutcome, SubstrateStartupOutcome, SubstrateStartupSelection,
+    UbuntuSandboxSubstrate,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SubstrateLifecycleRecord {
     pub(crate) substrate: SandboxSubstrate,
+    pub(crate) startup_selection: Option<SubstrateStartupSelection>,
     pub(crate) startup_outcome: Option<SubstrateStartupOutcome>,
     pub(crate) shutdown_outcome: Option<SubstrateShutdownOutcome>,
     pub(crate) simulated: bool,
@@ -46,9 +48,11 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
         let sandbox_instance_id = SandboxInstanceId(uuid::Uuid::nil());
         let orchestrator = SharedVmLifecycleOrchestrator::new(self.data_root);
         let state = orchestrator.workspace_runtime_state(sandbox_instance_id)?;
-        if matches!(state.state, AvfLinuxSharedVmLifecycleState::Running) {
+        let startup_selection = startup_selection_from_state(&state)?;
+        if matches!(startup_selection, SubstrateStartupSelection::Reuse) {
             return Ok(SubstrateLifecycleRecord {
                 substrate: substrate.substrate,
+                startup_selection: Some(startup_selection),
                 startup_outcome: Some(SubstrateStartupOutcome::Reuse),
                 shutdown_outcome: map_shutdown_outcome(state.last_stop_outcome),
                 simulated: state.simulated,
@@ -60,6 +64,7 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
             .await?;
         Ok(SubstrateLifecycleRecord {
             substrate: substrate.substrate,
+            startup_selection: Some(startup_selection),
             startup_outcome: Some(startup_outcome_from_state(&started)?),
             shutdown_outcome: map_shutdown_outcome(started.last_stop_outcome),
             simulated: started.simulated,
@@ -97,6 +102,7 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
         ) {
             return Ok(SubstrateLifecycleRecord {
                 substrate: substrate.substrate,
+                startup_selection: None,
                 startup_outcome: None,
                 shutdown_outcome: map_shutdown_outcome(state.last_stop_outcome),
                 simulated: state.simulated,
@@ -106,6 +112,7 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
         let stopped = orchestrator.save_or_stop_shared_runtime()?;
         Ok(SubstrateLifecycleRecord {
             substrate: substrate.substrate,
+            startup_selection: None,
             startup_outcome: None,
             shutdown_outcome: map_shutdown_outcome(stopped.last_stop_outcome),
             simulated: stopped.simulated,
@@ -128,9 +135,11 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
 
         let orchestrator = SharedVmLifecycleOrchestrator::new(self.data_root);
         let state = orchestrator.workspace_runtime_state(sandbox_instance_id)?;
-        if matches!(state.state, AvfLinuxSharedVmLifecycleState::Running) {
+        let startup_selection = startup_selection_from_state(&state)?;
+        if matches!(startup_selection, SubstrateStartupSelection::Reuse) {
             return Ok(SubstrateLifecycleRecord {
                 substrate: substrate.substrate,
+                startup_selection: Some(startup_selection),
                 startup_outcome: Some(SubstrateStartupOutcome::Reuse),
                 shutdown_outcome: map_shutdown_outcome(state.last_stop_outcome),
                 simulated: state.simulated,
@@ -142,11 +151,43 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
             .await?;
         Ok(SubstrateLifecycleRecord {
             substrate: substrate.substrate,
+            startup_selection: Some(startup_selection),
             startup_outcome: Some(startup_outcome_from_state(&started)?),
             shutdown_outcome: map_shutdown_outcome(started.last_stop_outcome),
             simulated: started.simulated,
         })
     }
+}
+
+fn startup_selection_from_state(
+    state: &AvfLinuxSharedVmState,
+) -> Result<SubstrateStartupSelection> {
+    let restore_supported = if state.saved_state_exists {
+        shared_vm_restore_supported()?
+    } else {
+        false
+    };
+    Ok(startup_selection_from_state_with_restore_support(
+        state,
+        restore_supported,
+    ))
+}
+
+fn startup_selection_from_state_with_restore_support(
+    state: &AvfLinuxSharedVmState,
+    restore_supported: bool,
+) -> SubstrateStartupSelection {
+    if matches!(state.state, AvfLinuxSharedVmLifecycleState::Running) {
+        return SubstrateStartupSelection::Reuse;
+    }
+    if state.saved_state_exists && restore_supported {
+        return SubstrateStartupSelection::Restore;
+    }
+    SubstrateStartupSelection::ColdBoot
+}
+
+fn shared_vm_restore_supported() -> Result<bool> {
+    Ok(probe_helper()?.save_restore_supported)
 }
 
 fn startup_outcome_from_state(state: &AvfLinuxSharedVmState) -> Result<SubstrateStartupOutcome> {
@@ -183,5 +224,80 @@ fn map_shutdown_outcome(
         AvfLinuxSharedVmStopOutcome::ColdStopAfterSaveFailure => {
             Some(SubstrateShutdownOutcome::ColdStopAfterSaveFailure)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_state(
+        state: AvfLinuxSharedVmLifecycleState,
+        saved_state_exists: bool,
+    ) -> AvfLinuxSharedVmState {
+        let vm_root = std::path::PathBuf::from("/tmp/ctx-shared-vm");
+        let logs_root = vm_root.join("logs");
+        let state_path = vm_root.join("shared-vm-state.json");
+        AvfLinuxSharedVmState {
+            protocol_version: 1,
+            protocol_schema: "ctx.avf_linux_helper.v1".to_string(),
+            state,
+            vm_root,
+            logs_root,
+            state_path,
+            log_path: None,
+            saved_state_path: None,
+            saved_state_exists,
+            runtime_root: None,
+            rootfs_image: None,
+            kernel_path: None,
+            initrd_path: None,
+            runtime_version: None,
+            runtime_shape_digest: None,
+            updated_at: None,
+            last_started_at: None,
+            last_saved_at: None,
+            last_stopped_at: None,
+            transition_status: None,
+            last_start_outcome: None,
+            last_stop_outcome: None,
+            last_restore_error: None,
+            last_save_error: None,
+            simulated: true,
+            notes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn startup_selection_prefers_reuse_for_running_vm() {
+        let state = sample_state(AvfLinuxSharedVmLifecycleState::Running, true);
+        assert_eq!(
+            startup_selection_from_state_with_restore_support(&state, true),
+            SubstrateStartupSelection::Reuse
+        );
+    }
+
+    #[test]
+    fn startup_selection_prefers_restore_when_saved_state_is_supported() {
+        let state = sample_state(AvfLinuxSharedVmLifecycleState::Stopped, true);
+        assert_eq!(
+            startup_selection_from_state_with_restore_support(&state, true),
+            SubstrateStartupSelection::Restore
+        );
+    }
+
+    #[test]
+    fn startup_selection_falls_back_to_cold_boot_without_restore_support() {
+        let state = sample_state(AvfLinuxSharedVmLifecycleState::Stopped, true);
+        assert_eq!(
+            startup_selection_from_state_with_restore_support(&state, false),
+            SubstrateStartupSelection::ColdBoot
+        );
+
+        let missing_state = sample_state(AvfLinuxSharedVmLifecycleState::Missing, false);
+        assert_eq!(
+            startup_selection_from_state_with_restore_support(&missing_state, true),
+            SubstrateStartupSelection::ColdBoot
+        );
     }
 }

@@ -140,7 +140,8 @@ pub(crate) use self::lifecycle_manager::{
     SharedSubstrateLifecycleManager, SubstrateLifecycleRecord,
 };
 pub(crate) use self::substrate::{
-    SubstrateShutdownOutcome, SubstrateStartupOutcome, UbuntuSandboxSubstrate,
+    SubstrateShutdownOutcome, SubstrateStartupOutcome, SubstrateStartupSelection,
+    UbuntuSandboxSubstrate,
 };
 
 pub(crate) fn local_runtime_available(data_root: &Path, runtime: &ContainerRuntimeKind) -> bool {
