@@ -528,6 +528,82 @@ fn shared_vm_memory_controller_decision_reason(
 }
 
 #[cfg(target_os = "macos")]
+fn shared_vm_memory_controller_reason_codes(reason: &str) -> &'static [&'static str] {
+    match reason {
+        "host_memory_emergency" | "host_memory_emergency_at_floor" => &["host_emergency"],
+        "host_memory_below_reserve"
+        | "at_floor_while_host_below_reserve"
+        | "host_growth_budget_exhausted" => &["host_pressure_reclaim"],
+        "guest_memory_below_growth_threshold" | "at_memory_ceiling" => &["guest_demand_grow"],
+        _ => &["stable_band"],
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn shared_vm_host_pressure_state_name(host_available_bytes: u64) -> &'static str {
+    if host_available_bytes < SHARED_VM_HOST_MEMORY_EMERGENCY_BYTES {
+        "emergency"
+    } else if host_available_bytes < SHARED_VM_HOST_MEMORY_RESERVE_BYTES {
+        "elevated"
+    } else {
+        "normal"
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn shared_vm_memory_pressure_state_before(
+    host_available_bytes: u64,
+    guest_available_bytes: Option<u64>,
+) -> &'static str {
+    if host_available_bytes < SHARED_VM_HOST_MEMORY_EMERGENCY_BYTES {
+        "emergency"
+    } else if host_available_bytes < SHARED_VM_HOST_MEMORY_RESERVE_BYTES {
+        "host_reclaim"
+    } else if guest_available_bytes
+        .map(|value| value < SHARED_VM_GUEST_MEMORY_GROW_THRESHOLD_BYTES)
+        .unwrap_or(false)
+    {
+        "guest_protected"
+    } else {
+        "balanced"
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn shared_vm_memory_pressure_state_after(
+    action: &SharedVmMemoryBalloonAction,
+    reason: &str,
+    host_available_bytes: u64,
+    guest_available_bytes: Option<u64>,
+) -> &'static str {
+    match action {
+        SharedVmMemoryBalloonAction::Reclaim {
+            aggressive: true, ..
+        }
+        | SharedVmMemoryBalloonAction::EmergencyStop { .. } => "emergency",
+        SharedVmMemoryBalloonAction::Reclaim { .. } => "host_reclaim",
+        SharedVmMemoryBalloonAction::Grow { .. } => "guest_protected",
+        SharedVmMemoryBalloonAction::NoAction => {
+            if matches!(
+                reason,
+                "host_memory_emergency" | "host_memory_emergency_at_floor"
+            ) {
+                "emergency"
+            } else if matches!(
+                reason,
+                "host_memory_below_reserve"
+                    | "at_floor_while_host_below_reserve"
+                    | "host_growth_budget_exhausted"
+            ) {
+                "host_reclaim"
+            } else {
+                shared_vm_memory_pressure_state_before(host_available_bytes, guest_available_bytes)
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn append_shared_vm_memory_controller_decision_event(
     data_root: &Path,
     resource_state: &mut SharedVmResourceState,
@@ -567,10 +643,21 @@ fn append_shared_vm_memory_controller_decision_event(
             ..
         } => ("emergency_stop", Some(*current_target_bytes), None),
     };
+    let target_bytes_after = new_target_bytes.unwrap_or(current_target_bytes);
     let sequence = resource_state.memory_controller_decision_trace.next_sequence();
     let new_target_bytes = new_target_bytes
         .map(|value| value.to_string())
         .unwrap_or_else(|| "null".to_string());
+    let reason_codes = shared_vm_memory_controller_reason_codes(reason)
+        .iter()
+        .map(|code| format!("\"{code}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    let pressure_state_before =
+        shared_vm_memory_pressure_state_before(host_available_bytes, guest_available_bytes);
+    let pressure_state_after =
+        shared_vm_memory_pressure_state_after(action, reason, host_available_bytes, guest_available_bytes);
+    let host_pressure_state = shared_vm_host_pressure_state_name(host_available_bytes);
     let guest_available_bytes = guest_available_bytes
         .map(|value| value.to_string())
         .unwrap_or_else(|| "null".to_string());
@@ -580,8 +667,13 @@ fn append_shared_vm_memory_controller_decision_event(
     let event = format!(
         concat!(
             "{{\"event\":\"ControllerDecisionEvent\",\"version\":1,",
-            "\"trace_id\":\"{}\",\"epoch\":{},\"sequence\":{},",
-            "\"action\":\"{}\",\"reason\":\"{}\",",
+            "\"schema_version\":1,",
+            "\"trace_id\":\"{}\",\"epoch\":{},\"epoch_id\":{},\"sequence\":{},\"decision_seq\":{},",
+            "\"action\":\"{}\",\"reason\":\"{}\",\"reason_codes\":[{}],",
+            "\"target_bytes_before\":{},\"target_bytes_after\":{},",
+            "\"pressure_state_before\":\"{}\",\"pressure_state_after\":\"{}\",",
+            "\"host\":{{\"pressure_state\":\"{}\",\"available_bytes\":{}}},",
+            "\"guest\":{{\"available_bytes\":{}}},",
             "\"context\":{{",
             "\"current_target_bytes\":{},\"new_target_bytes\":{},",
             "\"floor_bytes\":{},\"ceiling_bytes\":{},",
@@ -593,9 +685,19 @@ fn append_shared_vm_memory_controller_decision_event(
         ),
         resource_state.memory_controller_decision_trace.trace_id,
         resource_state.memory_controller_decision_trace.epoch_millis,
+        resource_state.memory_controller_decision_trace.epoch_millis,
+        sequence,
         sequence,
         action_name,
         reason,
+        reason_codes,
+        current_target_bytes,
+        target_bytes_after,
+        pressure_state_before,
+        pressure_state_after,
+        host_pressure_state,
+        host_available_bytes,
+        guest_available_bytes,
         current_target_bytes,
         new_target_bytes,
         floor_bytes,
