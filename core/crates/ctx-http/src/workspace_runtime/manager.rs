@@ -2,7 +2,10 @@ use super::*;
 
 impl HarnessRuntimeManager {
     pub fn new(data_root: PathBuf) -> Self {
-        Self::new_with_ops_events(data_root.clone(), crate::ops_events::OpsEvents::new(data_root))
+        Self::new_with_ops_events(
+            data_root.clone(),
+            crate::ops_events::OpsEvents::new(data_root),
+        )
     }
 
     pub fn new_with_ops_events(
@@ -357,11 +360,7 @@ impl HarnessRuntimeManager {
             let sandbox_instance_id =
                 ctx_core::models::sandbox_instance_id_for_workspace(workspace.id);
             let record = SharedSubstrateLifecycleManager::new(&self.data_root)
-                .ensure_workspace_runtime_ready(
-                    sandbox_instance_id,
-                    &settings.container,
-                    observer,
-                )
+                .ensure_workspace_runtime_ready(sandbox_instance_id, &settings.container, observer)
                 .await
                 .context("shared VM substrate is unavailable")?;
             self.emit_substrate_lifecycle_ops_event(

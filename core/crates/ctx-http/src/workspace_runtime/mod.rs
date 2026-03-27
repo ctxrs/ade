@@ -104,7 +104,9 @@ pub use self::image::{
 use self::image::{
     ensure_managed_default_container_image_tar_with_source, managed_default_image_install_lock,
 };
-pub(crate) use self::lifecycle_manager::SharedSubstrateLifecycleManager;
+pub(crate) use self::lifecycle_manager::{
+    SharedSubstrateLifecycleManager, SubstrateLifecycleRecord,
+};
 use self::machine::sandbox_machine_name;
 use self::machine::{
     download_managed_artifact, ManagedArtifactDownloadReporter, ManagedDownloadAggregate,

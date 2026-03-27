@@ -428,8 +428,14 @@ struct PersistedGuestWorktreeState {
     base_commit_sha: String,
     branch_name: String,
     updated_at: String,
+    #[serde(default = "default_persisted_guest_worktree_simulated")]
     simulated: bool,
+    #[serde(default)]
     notes: Vec<String>,
+}
+
+fn default_persisted_guest_worktree_simulated() -> bool {
+    true
 }
 
 fn supported_guest_identity() -> PersistedGuestIdentity {

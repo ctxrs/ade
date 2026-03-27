@@ -683,7 +683,9 @@ async fn shutdown_provider_adapters_requests_immediate_restart_for_all_adapters(
 #[cfg(target_os = "macos")]
 #[tokio::test]
 async fn shutdown_shared_substrate_requests_save_or_stop_when_shared_backend_available() {
-    let _serial = crate::test_support::sandbox_cli_env_test_lock().lock().await;
+    let _serial = crate::test_support::sandbox_cli_env_test_lock()
+        .lock()
+        .await;
     let temp = tempdir().unwrap();
     let stores = StoreManager::open(temp.path()).await.unwrap();
     let providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
@@ -700,7 +702,7 @@ async fn shutdown_shared_substrate_requests_save_or_stop_when_shared_backend_ava
         &helper_path.to_string_lossy(),
     );
 
-    let record = shutdown_shared_substrate(&state, "test shutdown")
+    let record = crate::daemon::lifecycle::shutdown_shared_substrate(&state, "test shutdown")
         .await
         .expect("shared substrate shutdown")
         .expect("shared substrate record");

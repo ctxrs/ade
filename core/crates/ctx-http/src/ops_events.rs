@@ -91,12 +91,12 @@ impl OpsEvent {
 }
 
 #[derive(Debug, Clone)]
-pub struct SubstrateLifecycleOpsEventContext {
+pub(crate) struct SubstrateLifecycleOpsEventContext {
     pub source: &'static str,
     pub workspace_id: Option<String>,
 }
 
-pub fn substrate_lifecycle_observed_event(
+pub(crate) fn substrate_lifecycle_observed_event(
     record: &SubstrateLifecycleRecord,
     context: SubstrateLifecycleOpsEventContext,
 ) -> OpsEvent {

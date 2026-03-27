@@ -96,6 +96,8 @@ fn load_guest_worktree_state_defaults_missing_guest_identity_to_supported_shape(
         .expect("guest worktree state present");
 
     assert_eq!(persisted.guest_identity, supported_guest_identity());
+    assert!(persisted.simulated);
+    assert!(persisted.notes.is_empty());
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 

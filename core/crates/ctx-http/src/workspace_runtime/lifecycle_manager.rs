@@ -37,7 +37,7 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
         &self,
         settings: &ContainerExecutionSettings,
     ) -> Result<SubstrateLifecycleRecord> {
-        let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime);
+        let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime.clone());
         substrate.ensure_enabled()?;
         if !substrate.is_shared_vm_backed() {
             bail!(
@@ -101,7 +101,7 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
         &self,
         settings: &ContainerExecutionSettings,
     ) -> Result<SubstrateLifecycleRecord> {
-        let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime);
+        let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime.clone());
         substrate.ensure_enabled()?;
         if !substrate.is_shared_vm_backed() {
             bail!(
