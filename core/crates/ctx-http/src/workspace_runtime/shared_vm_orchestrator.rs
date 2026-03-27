@@ -35,10 +35,9 @@ impl<'a> SharedVmLifecycleOrchestrator<'a> {
         &self,
         settings: &ContainerExecutionSettings,
         observer: Option<&dyn HarnessSetupObserver>,
-    ) -> Result<()> {
+    ) -> Result<AvfLinuxSharedVmState> {
         ensure_avf_linux_shared_vm_ready_with_observer(self.data_root, settings, observer)
             .await
-            .map(|_| ())
     }
 
     pub(crate) async fn ensure_workspace_runtime_ready(
@@ -46,7 +45,7 @@ impl<'a> SharedVmLifecycleOrchestrator<'a> {
         sandbox_instance_id: SandboxInstanceId,
         settings: &ContainerExecutionSettings,
         observer: Option<&dyn HarnessSetupObserver>,
-    ) -> Result<()> {
+    ) -> Result<AvfLinuxSharedVmState> {
         ensure_avf_linux_workspace_vm_ready_with_observer(
             self.data_root,
             WorkspaceId(sandbox_instance_id.0),
@@ -54,7 +53,6 @@ impl<'a> SharedVmLifecycleOrchestrator<'a> {
             observer,
         )
         .await
-        .map(|_| ())
     }
 
     pub(crate) async fn ensure_host_materialization_root(

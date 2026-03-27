@@ -47,6 +47,7 @@ use url::Url;
 mod avf_linux_vm;
 mod container;
 mod image;
+mod lifecycle_manager;
 mod machine;
 mod manager;
 mod materialization;
@@ -69,8 +70,8 @@ pub(crate) use self::avf_linux_vm::helper_path as avf_linux_helper_path;
 pub(crate) use self::avf_linux_vm::{
     ensure_shared_vm_ready_with_observer as ensure_avf_linux_shared_vm_ready_with_observer,
     ensure_workspace_vm_ready_with_observer as ensure_avf_linux_workspace_vm_ready_with_observer,
-    prefetch_runtime_with_observer as prefetch_avf_linux_runtime_with_observer,
-    workspace_vm_data_root as avf_linux_workspace_vm_data_root, AvfLinuxSharedVmLifecycleState,
+    prefetch_runtime_with_observer as prefetch_avf_linux_runtime_with_observer, AvfLinuxSharedVmLifecycleState,
+    workspace_vm_data_root as avf_linux_workspace_vm_data_root,
 };
 #[cfg(test)]
 pub(crate) use self::avf_linux_vm::override_managed_avf_linux_runtime_source_for_test;
@@ -135,7 +136,12 @@ pub(crate) use self::shared_vm_orchestrator::SharedVmLifecycleOrchestrator;
 pub(crate) use self::materialization::{
     materialize_sandbox_worktree, SandboxWorktreeMaterialization,
 };
-pub(crate) use self::substrate::UbuntuSandboxSubstrate;
+pub(crate) use self::lifecycle_manager::{
+    SharedSubstrateLifecycleManager, SubstrateLifecycleRecord,
+};
+pub(crate) use self::substrate::{
+    SubstrateShutdownOutcome, SubstrateStartupOutcome, UbuntuSandboxSubstrate,
+};
 
 pub(crate) fn local_runtime_available(data_root: &Path, runtime: &ContainerRuntimeKind) -> bool {
     match runtime {
@@ -210,7 +216,7 @@ pub(crate) async fn prewarm_selected_runtime_for_launch_with_observer(
             .await
         }
         ContainerRuntimeKind::SharedVmContainer => {
-            SharedVmLifecycleOrchestrator::new(data_root)
+            SharedSubstrateLifecycleManager::new(data_root)
                 .ensure_shared_runtime_ready(settings, observer)
                 .await?;
             let image = resolve_container_image(settings);
@@ -412,9 +418,10 @@ pub(crate) async fn ensure_builder_backend_launch_ready_with_observer(
                 runtime: ContainerRuntimeKind::SharedVmContainer,
                 ..ContainerExecutionSettings::default()
             };
-            SharedVmLifecycleOrchestrator::new(data_root)
+            SharedSubstrateLifecycleManager::new(data_root)
                 .ensure_shared_runtime_ready(&settings, observer)
                 .await
+                .map(|_| ())
         }
     }
 }

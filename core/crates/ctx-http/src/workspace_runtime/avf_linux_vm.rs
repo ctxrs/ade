@@ -97,6 +97,24 @@ pub(crate) enum AvfLinuxSharedVmTransitionStatus {
     Missing,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AvfLinuxSharedVmStartOutcome {
+    AlreadyRunning,
+    ColdBoot,
+    Restored,
+    ColdBootAfterRestoreFailure,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AvfLinuxSharedVmStopOutcome {
+    SavedStateWritten,
+    ColdStop,
+    ColdStopAfterSaveFailure,
+    ColdStopSaveUnsupported,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct AvfLinuxRuntimeLayout {
     pub protocol_version: u32,
@@ -134,6 +152,8 @@ pub(crate) struct AvfLinuxSharedVmState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_shape_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_started_at: Option<String>,
@@ -143,6 +163,14 @@ pub(crate) struct AvfLinuxSharedVmState {
     pub last_stopped_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition_status: Option<AvfLinuxSharedVmTransitionStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_start_outcome: Option<AvfLinuxSharedVmStartOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_stop_outcome: Option<AvfLinuxSharedVmStopOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_restore_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_save_error: Option<String>,
     #[serde(default)]
     pub simulated: bool,
     #[serde(default)]

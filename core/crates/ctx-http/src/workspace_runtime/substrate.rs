@@ -1,7 +1,25 @@
 use anyhow::{anyhow, Result};
 use ctx_core::models::{SandboxBinding, SandboxGuestIdentity, SandboxSubstrate};
+use serde::{Deserialize, Serialize};
 
 use crate::settings::ContainerRuntimeKind;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SubstrateStartupOutcome {
+    Reuse,
+    Restore,
+    ColdBoot,
+    ColdBootAfterRestoreFailure,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SubstrateShutdownOutcome {
+    Saved,
+    ColdStop,
+    ColdStopAfterSaveFailure,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct UbuntuSandboxSubstrate {

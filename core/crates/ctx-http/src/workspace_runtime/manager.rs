@@ -311,7 +311,7 @@ impl HarnessRuntimeManager {
         let proxy_host = if substrate.is_shared_vm_backed() {
             let sandbox_instance_id =
                 ctx_core::models::sandbox_instance_id_for_workspace(workspace.id);
-            SharedVmLifecycleOrchestrator::new(&self.data_root)
+            SharedSubstrateLifecycleManager::new(&self.data_root)
                 .ensure_workspace_runtime_ready(
                     sandbox_instance_id,
                     &settings.container,
@@ -579,7 +579,7 @@ impl HarnessRuntimeManager {
         if substrate.is_shared_vm_backed() {
             let sandbox_instance_id =
                 ctx_core::models::sandbox_instance_id_for_workspace(workspace.id);
-            SharedVmLifecycleOrchestrator::new(&self.data_root)
+            SharedSubstrateLifecycleManager::new(&self.data_root)
                 .ensure_workspace_runtime_ready(sandbox_instance_id, settings, observer)
                 .await?;
         }
