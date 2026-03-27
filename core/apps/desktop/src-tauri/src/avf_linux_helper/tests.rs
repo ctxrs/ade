@@ -1,6 +1,7 @@
 use super::*;
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use serde::Deserialize;
 use serde_yaml::Value;
 use std::io::Write;
 
@@ -33,6 +34,154 @@ fn write_gzip_file(path: &Path, bytes: &[u8]) {
     let mut encoder = GzEncoder::new(file, Compression::default());
     encoder.write_all(bytes).expect("write gzip payload");
     encoder.finish().expect("finish gzip payload");
+}
+
+const CONTROLLER_SAFETY_PREFLIGHT_FIXTURE: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../fixtures/avf/controller_safety_trace_fixture.json"
+));
+
+#[derive(Debug, Deserialize)]
+struct ControllerSafetyFixture {
+    gate_pass_requirements: ControllerSafetyGatePassRequirements,
+    cases: Vec<ControllerSafetyFixtureCase>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ControllerSafetyGatePassRequirements {
+    all_cases_must_pass: bool,
+    exact_expected_output_match: bool,
+    canonical_json_repeat_match: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ControllerSafetyFixtureCase {
+    case_id: String,
+    initial_state: ControllerSafetyInitialState,
+    required_invariants: Vec<String>,
+    steps: Vec<ControllerSafetyFixtureStep>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ControllerSafetyInitialState {
+    target_bytes: u64,
+    floor_bytes: u64,
+    ceiling_bytes: u64,
+    pressure_state: String,
+    cooldown_remaining_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ControllerSafetyFixtureStep {
+    step_index: u64,
+    time_since_start_ms: u64,
+    time_since_last_step_ms: u64,
+    phase: String,
+    host: ControllerSafetyFixtureHost,
+    guest: ControllerSafetyFixtureGuest,
+    expected: ControllerSafetyExpectedDecision,
+}
+
+#[derive(Debug, Deserialize)]
+struct ControllerSafetyFixtureHost {
+    available_bytes: u64,
+    pressure_state: String,
+    compressor_delta_bytes: u64,
+    pageout_delta_bytes: u64,
+    swap_delta_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ControllerSafetyFixtureGuest {
+    working_set_bytes: u64,
+    reclaimable_bytes: u64,
+    available_bytes: u64,
+    swap_bytes: u64,
+    under_pressure: bool,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+struct ControllerSafetyExpectedDecision {
+    step_index: u64,
+    action: String,
+    target_bytes_before: u64,
+    target_bytes_after: u64,
+    pressure_state_before: String,
+    pressure_state_after: String,
+    reason_codes: Vec<String>,
+    emergency_path: bool,
+    invariants_passed: Vec<String>,
+}
+
+fn load_controller_safety_preflight_fixture() -> ControllerSafetyFixture {
+    serde_json::from_str(CONTROLLER_SAFETY_PREFLIGHT_FIXTURE)
+        .expect("controller-safety preflight fixture should parse")
+}
+
+fn controller_safety_replay_state(
+    initial_state: &ControllerSafetyInitialState,
+) -> SharedVmControllerSafetyReplayState {
+    SharedVmControllerSafetyReplayState {
+        target_bytes: initial_state.target_bytes,
+        floor_bytes: initial_state.floor_bytes,
+        ceiling_bytes: initial_state.ceiling_bytes,
+        pressure_state: SharedVmControllerSafetyPressureState::try_from(
+            initial_state.pressure_state.as_str(),
+        )
+        .expect("fixture pressure state"),
+        cooldown_remaining_ms: initial_state.cooldown_remaining_ms,
+    }
+}
+
+fn controller_safety_replay_steps(
+    steps: &[ControllerSafetyFixtureStep],
+) -> Vec<SharedVmControllerSafetyReplayStep> {
+    steps.iter()
+        .map(|step| SharedVmControllerSafetyReplayStep {
+            step_index: step.step_index,
+            time_since_start_ms: step.time_since_start_ms,
+            time_since_last_step_ms: step.time_since_last_step_ms,
+            phase: SharedVmControllerSafetyReplayPhase::try_from(step.phase.as_str())
+                .expect("fixture replay phase"),
+            host_available_bytes: step.host.available_bytes,
+            host_pressure_state: SharedVmControllerSafetyHostPressureState::try_from(
+                step.host.pressure_state.as_str(),
+            )
+            .expect("fixture host pressure state"),
+            host_compressor_delta_bytes: step.host.compressor_delta_bytes,
+            host_pageout_delta_bytes: step.host.pageout_delta_bytes,
+            host_swap_delta_bytes: step.host.swap_delta_bytes,
+            guest_working_set_bytes: step.guest.working_set_bytes,
+            guest_reclaimable_bytes: step.guest.reclaimable_bytes,
+            guest_available_bytes: step.guest.available_bytes,
+            guest_swap_bytes: step.guest.swap_bytes,
+            guest_under_pressure: step.guest.under_pressure,
+        })
+        .collect()
+}
+
+fn normalize_controller_safety_decision(
+    decision: &SharedVmControllerSafetyReplayDecision,
+) -> ControllerSafetyExpectedDecision {
+    ControllerSafetyExpectedDecision {
+        step_index: decision.step_index,
+        action: decision.action.to_string(),
+        target_bytes_before: decision.target_bytes_before,
+        target_bytes_after: decision.target_bytes_after,
+        pressure_state_before: decision.pressure_state_before.to_string(),
+        pressure_state_after: decision.pressure_state_after.to_string(),
+        reason_codes: decision
+            .reason_codes
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
+        emergency_path: decision.emergency_path,
+        invariants_passed: decision
+            .invariants_passed
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
+    }
 }
 
 #[test]
@@ -692,6 +841,72 @@ fn resolve_shared_vm_memory_watchdog_exit_action_models_sigterm_and_sigkill_esca
         resolve_shared_vm_memory_watchdog_exit_action(false, false),
         SharedVmMemoryWatchdogExitAction::EscalateToSigkill
     );
+}
+
+#[test]
+fn controller_safety_preflight_replays_fixture_cases_with_expected_outputs() {
+    let fixture = load_controller_safety_preflight_fixture();
+    assert!(fixture.gate_pass_requirements.all_cases_must_pass);
+    assert!(fixture.gate_pass_requirements.exact_expected_output_match);
+
+    for case in &fixture.cases {
+        let decisions = replay_shared_vm_controller_safety_trace(
+            &controller_safety_replay_state(&case.initial_state),
+            &controller_safety_replay_steps(&case.steps),
+        );
+
+        assert_eq!(
+            decisions.len(),
+            case.steps.len(),
+            "case {} should emit one decision per replay step",
+            case.case_id
+        );
+
+        for (decision, step) in decisions.iter().zip(&case.steps) {
+            let normalized = normalize_controller_safety_decision(decision);
+            assert_eq!(
+                normalized, step.expected,
+                "case {} step {} normalized output mismatch",
+                case.case_id, step.step_index
+            );
+        }
+
+        let actual_invariants = decisions
+            .iter()
+            .flat_map(|decision| decision.invariants_passed.iter().copied())
+            .collect::<std::collections::BTreeSet<_>>();
+        let required_invariants = case
+            .required_invariants
+            .iter()
+            .filter(|value| value.as_str() != "trace_replay_deterministic")
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(
+            required_invariants.is_subset(&actual_invariants),
+            "case {} should satisfy required invariants: expected {required_invariants:?}, got {actual_invariants:?}",
+            case.case_id
+        );
+    }
+}
+
+#[test]
+fn controller_safety_preflight_repeat_replay_is_deterministic() {
+    let fixture = load_controller_safety_preflight_fixture();
+    assert!(fixture.gate_pass_requirements.canonical_json_repeat_match);
+
+    for case in &fixture.cases {
+        let initial_state = controller_safety_replay_state(&case.initial_state);
+        let steps = controller_safety_replay_steps(&case.steps);
+        let first = replay_shared_vm_controller_safety_trace(&initial_state, &steps);
+        let second = replay_shared_vm_controller_safety_trace(&initial_state, &steps);
+
+        assert_eq!(
+            shared_vm_controller_safety_trace_canonical_json(&first),
+            shared_vm_controller_safety_trace_canonical_json(&second),
+            "case {} canonical replay trace should be deterministic",
+            case.case_id
+        );
+    }
 }
 
 #[cfg(target_os = "macos")]
