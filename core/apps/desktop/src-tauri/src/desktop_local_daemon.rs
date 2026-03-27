@@ -1,6 +1,6 @@
 use super::*;
 use crate::desktop_daemon::{
-    daemon_data_dir, daemon_health, desktop_dev_instance_id, existing_local_daemon_matches,
+    daemon_data_dir, daemon_health, existing_local_daemon_matches,
     existing_local_daemon_matches_or_absent, normalize_daemon_pid, probe_daemon_health,
     probe_local_daemon_health_with_retry, read_daemon_auth_with_retry, resolve_env_local_daemon,
     resolve_existing_local_daemon, spawn_and_validate_local_daemon, SpawnedLocalDaemonReady,

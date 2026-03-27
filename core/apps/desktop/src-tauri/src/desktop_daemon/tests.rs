@@ -4,7 +4,12 @@ use super::path_env::{
     DAEMON_PATH_SENTINEL_BEGIN, DAEMON_PATH_SENTINEL_END, LOCAL_DAEMON_PATH_PROBE_END,
     LOCAL_DAEMON_PATH_PROBE_START,
 };
+use super::launch::{daemon_env_unset_args, strip_automation_env};
+use super::resources::{
+    configured_bundle_dir, select_bundle_dir_path, select_optional_bin_path,
+};
 use super::*;
+use crate::desktop_ssh::normalized_ssh_config_override;
 use crate::desktop_local_daemon::{
     apply_validated_local_connection, connect_local_with_sources, lock_local_connect_gate,
 };
@@ -45,10 +50,10 @@ impl Drop for EnvVarGuard {
 #[test]
 fn ssh_config_override_normalization() {
     assert_eq!(
-        normalized_ssh_config_override(" /tmp/ctx-fixture-ssh-config "),
+        normalized_ssh_config_override(Some(" /tmp/ctx-fixture-ssh-config ")),
         Some("/tmp/ctx-fixture-ssh-config".to_string())
     );
-    assert_eq!(normalized_ssh_config_override("   "), None);
+    assert_eq!(normalized_ssh_config_override(Some("   ")), None);
 }
 
 #[test]

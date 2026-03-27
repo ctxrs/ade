@@ -1,4 +1,6 @@
 use super::*;
+use super::diagnostics::ssh_log_snippet;
+use super::login_relay::is_loopback_host_name;
 #[cfg(test)]
 use std::cell::Cell;
 

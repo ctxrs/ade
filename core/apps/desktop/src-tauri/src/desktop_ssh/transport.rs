@@ -101,7 +101,7 @@ fn is_ssh_pattern(value: &str) -> bool {
         || trimmed.contains(']')
 }
 
-pub(super) fn normalized_ssh_config_override(value: Option<&str>) -> Option<String> {
+pub(in super::super) fn normalized_ssh_config_override(value: Option<&str>) -> Option<String> {
     normalize_optional_text(value)
 }
 
@@ -112,7 +112,7 @@ fn ssh_config_override_path() -> Option<String> {
         .and_then(|raw| normalized_ssh_config_override(Some(raw)))
 }
 
-pub(super) fn new_ssh_command() -> Command {
+pub(in super::super) fn new_ssh_command() -> Command {
     let mut cmd = Command::new("ssh");
     if let Some(path) = ssh_config_override_path() {
         cmd.arg("-F").arg(path);
