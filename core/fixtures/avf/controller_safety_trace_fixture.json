@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "fixture_id": "controller_safety_foundation_v1",
+  "contract_ref": "controller_safety_contract.md",
+  "cases": [
+    {
+      "case_id": "stable_hold_band",
+      "description": "Stable host and guest conditions should keep the controller steady and avoid oscillation.",
+      "initial_state": {
+        "target_bytes": 8589934592,
+        "floor_bytes": 4294967296,
+        "ceiling_bytes": 12884901888,
+        "pressure_state": "balanced",
+        "cooldown_remaining_ms": 0
+      },
+      "required_invariants": [
+        "target_within_bounds",
+        "stable_inputs_no_oscillation",
+        "trace_replay_deterministic"
+      ],
+      "steps": [
+        {
+          "step_index": 0,
+          "time_since_start_ms": 0,
+          "time_since_last_step_ms": 0,
+          "phase": "warm_idle",
+          "host": {
+            "available_bytes": 25769803776,
+            "pressure_state": "normal",
+            "compressor_delta_bytes": 0,
+            "pageout_delta_bytes": 0,
+            "swap_delta_bytes": 0
+          },
+          "guest": {
+            "working_set_bytes": 5368709120,
+            "reclaimable_bytes": 1073741824,
+            "available_bytes": 2147483648,
+            "swap_bytes": 0,
+            "under_pressure": false
+          },
+          "expected": {
+            "action": "hold",
+            "target_bytes_after": 8589934592,
+            "pressure_state_after": "balanced",
+            "reason_codes": [
+              "stable_band"
+            ],
+            "emergency_path": false,
+            "invariants_passed": [
+              "target_within_bounds",
+              "stable_inputs_no_oscillation"
+            ]
+          }
+        },
+        {
+          "step_index": 1,
+          "time_since_start_ms": 1000,
+          "time_since_last_step_ms": 1000,
+          "phase": "hold",
+          "host": {
+            "available_bytes": 25635594240,
+            "pressure_state": "normal",
+            "compressor_delta_bytes": 0,
+            "pageout_delta_bytes": 0,
+            "swap_delta_bytes": 0
+          },
+          "guest": {
+            "working_set_bytes": 5389680640,
+            "reclaimable_bytes": 1056964608,
+            "available_bytes": 2113929216,
+            "swap_bytes": 0,
+            "under_pressure": false
+          },
+          "expected": {
+            "action": "hold",
+            "target_bytes_after": 8589934592,
+            "pressure_state_after": "balanced",
+            "reason_codes": [
+              "stable_band"
+            ],
+            "emergency_path": false,
+            "invariants_passed": [
+              "target_within_bounds",
+              "stable_inputs_no_oscillation"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "guest_pressure_blocks_reclaim",
+      "description": "Non-emergency host pressure must not trigger reclaim while the guest is already under pressure.",
+      "initial_state": {
+        "target_bytes": 8589934592,
+        "floor_bytes": 4294967296,
+        "ceiling_bytes": 12884901888,
+        "pressure_state": "balanced",
+        "cooldown_remaining_ms": 0
+      },
+      "required_invariants": [
+        "target_within_bounds",
+        "non_emergency_guest_pressure_blocks_shrink",
+        "trace_replay_deterministic"
+      ],
+      "steps": [
+        {
+          "step_index": 0,
+          "time_since_start_ms": 0,
+          "time_since_last_step_ms": 0,
+          "phase": "hold",
+          "host": {
+            "available_bytes": 11811160064,
+            "pressure_state": "elevated",
+            "compressor_delta_bytes": 268435456,
+            "pageout_delta_bytes": 0,
+            "swap_delta_bytes": 0
+          },
+          "guest": {
+            "working_set_bytes": 7180648448,
+            "reclaimable_bytes": 402653184,
+            "available_bytes": 268435456,
+            "swap_bytes": 134217728,
+            "under_pressure": true
+          },
+          "expected": {
+            "action": "hold",
+            "target_bytes_after": 8589934592,
+            "pressure_state_after": "guest_protected",
+            "reason_codes": [
+              "guest_pressure_blocks_shrink"
+            ],
+            "emergency_path": false,
+            "invariants_passed": [
+              "target_within_bounds",
+              "non_emergency_guest_pressure_blocks_shrink"
+            ]
+          }
+        },
+        {
+          "step_index": 1,
+          "time_since_start_ms": 1000,
+          "time_since_last_step_ms": 1000,
+          "phase": "release",
+          "host": {
+            "available_bytes": 11274289152,
+            "pressure_state": "elevated",
+            "compressor_delta_bytes": 335544320,
+            "pageout_delta_bytes": 0,
+            "swap_delta_bytes": 0
+          },
+          "guest": {
+            "working_set_bytes": 6442450944,
+            "reclaimable_bytes": 1073741824,
+            "available_bytes": 1073741824,
+            "swap_bytes": 134217728,
+            "under_pressure": false
+          },
+          "expected": {
+            "action": "shrink",
+            "target_bytes_after": 8053063680,
+            "pressure_state_after": "host_reclaim",
+            "reason_codes": [
+              "host_pressure_reclaim"
+            ],
+            "emergency_path": false,
+            "invariants_passed": [
+              "target_within_bounds"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "host_emergency_forces_explicit_path",
+      "description": "Emergency host pressure must take the explicit emergency path even if the guest is also stressed.",
+      "initial_state": {
+        "target_bytes": 9663676416,
+        "floor_bytes": 4294967296,
+        "ceiling_bytes": 12884901888,
+        "pressure_state": "host_reclaim",
+        "cooldown_remaining_ms": 0
+      },
+      "required_invariants": [
+        "target_within_bounds",
+        "emergency_path_explicit",
+        "trace_replay_deterministic"
+      ],
+      "steps": [
+        {
+          "step_index": 0,
+          "time_since_start_ms": 0,
+          "time_since_last_step_ms": 0,
+          "phase": "host_pressure",
+          "host": {
+            "available_bytes": 4294967296,
+            "pressure_state": "emergency",
+            "compressor_delta_bytes": 805306368,
+            "pageout_delta_bytes": 268435456,
+            "swap_delta_bytes": 268435456
+          },
+          "guest": {
+            "working_set_bytes": 7516192768,
+            "reclaimable_bytes": 268435456,
+            "available_bytes": 268435456,
+            "swap_bytes": 268435456,
+            "under_pressure": true
+          },
+          "expected": {
+            "action": "emergency_shrink",
+            "target_bytes_after": 6442450944,
+            "pressure_state_after": "emergency",
+            "reason_codes": [
+              "host_emergency"
+            ],
+            "emergency_path": true,
+            "invariants_passed": [
+              "target_within_bounds",
+              "emergency_path_explicit"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
