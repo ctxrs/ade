@@ -260,7 +260,10 @@ mod tests {
             "mode": "host",
             "container": {
                 "runtime": "native_container",
-                "mount_mode": "disk_isolated"
+                "mount_mode": "disk_isolated",
+                "network_mode": "all",
+                "allowlist": [],
+                "image": null
             }
         });
         let binding = test_binding(SandboxRuntimeFamily::NativeContainer, Some(raw.to_string()));
@@ -278,7 +281,10 @@ mod tests {
             "mode": "sandbox",
             "container": {
                 "runtime": "shared_vm_container",
-                "mount_mode": "disk_isolated"
+                "mount_mode": "disk_isolated",
+                "network_mode": "all",
+                "allowlist": [],
+                "image": null
             }
         });
         let binding = test_binding(SandboxRuntimeFamily::NativeContainer, Some(raw.to_string()));

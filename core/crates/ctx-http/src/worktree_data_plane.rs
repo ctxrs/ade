@@ -390,7 +390,10 @@ mod tests {
                         "mode": "host",
                         "container": {
                             "runtime": "native_container",
-                            "mount_mode": "disk_isolated"
+                            "mount_mode": "disk_isolated",
+                            "network_mode": "all",
+                            "allowlist": [],
+                            "image": null
                         }
                     })
                     .to_string(),
