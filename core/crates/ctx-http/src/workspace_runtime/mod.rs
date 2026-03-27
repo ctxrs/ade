@@ -25,7 +25,6 @@ use crate::network_allowlist;
 #[cfg(test)]
 use crate::resource_utilization::SystemSnapshot;
 #[cfg(test)]
-#[cfg(test)]
 use crate::settings::{
     normalize_container_machine_idle_shutdown_seconds, ContainerMachineMemoryProfile,
 };
@@ -55,11 +54,11 @@ mod network_policy_transition;
 #[cfg(test)]
 mod reclaim_unit_tests;
 mod sandbox_cli;
-mod shared_vm_orchestrator;
 #[cfg(test)]
 mod sandbox_machine_lifecycle;
 #[cfg(test)]
 mod sandbox_machine_recovery;
+mod shared_vm_orchestrator;
 mod substrate;
 
 static AVF_DAEMON_GATEWAY_PROXIES: OnceLock<StdMutex<HashMap<u16, tokio::task::JoinHandle<()>>>> =
@@ -67,12 +66,6 @@ static AVF_DAEMON_GATEWAY_PROXIES: OnceLock<StdMutex<HashMap<u16, tokio::task::J
 
 pub(crate) use self::avf_linux_vm::build_guest_exec_command as build_avf_linux_guest_exec_command;
 pub(crate) use self::avf_linux_vm::helper_path as avf_linux_helper_path;
-pub(crate) use self::avf_linux_vm::{
-    ensure_shared_vm_ready_with_observer as ensure_avf_linux_shared_vm_ready_with_observer,
-    ensure_workspace_vm_ready_with_observer as ensure_avf_linux_workspace_vm_ready_with_observer,
-    prefetch_runtime_with_observer as prefetch_avf_linux_runtime_with_observer, AvfLinuxSharedVmLifecycleState,
-    workspace_vm_data_root as avf_linux_workspace_vm_data_root,
-};
 #[cfg(test)]
 pub(crate) use self::avf_linux_vm::override_managed_avf_linux_runtime_source_for_test;
 pub(crate) use self::avf_linux_vm::run_guest_exec_capture as run_avf_linux_guest_exec_capture;
@@ -80,6 +73,12 @@ pub(crate) use self::avf_linux_vm::run_guest_exec_capture as run_avf_linux_guest
 pub(crate) use self::avf_linux_vm::TestManagedAvfLinuxRuntimeSourceGuard;
 #[cfg(test)]
 pub(crate) use self::avf_linux_vm::AVF_LINUX_HELPER_PATH_ENV;
+pub(crate) use self::avf_linux_vm::{
+    ensure_shared_vm_ready_with_observer as ensure_avf_linux_shared_vm_ready_with_observer,
+    ensure_workspace_vm_ready_with_observer as ensure_avf_linux_workspace_vm_ready_with_observer,
+    prefetch_runtime_with_observer as prefetch_avf_linux_runtime_with_observer,
+    workspace_vm_data_root as avf_linux_workspace_vm_data_root, AvfLinuxSharedVmLifecycleState,
+};
 use self::avf_linux_vm::{
     runtime_available as avf_linux_runtime_available, runtime_state as avf_linux_runtime_state,
     runtime_target_label as avf_linux_runtime_target_label,
@@ -105,6 +104,7 @@ pub use self::image::{
 use self::image::{
     ensure_managed_default_container_image_tar_with_source, managed_default_image_install_lock,
 };
+pub(crate) use self::lifecycle_manager::SharedSubstrateLifecycleManager;
 use self::machine::sandbox_machine_name;
 use self::machine::{
     download_managed_artifact, ManagedArtifactDownloadReporter, ManagedDownloadAggregate,
@@ -117,6 +117,7 @@ use self::machine::{
     sandbox_machine_temp_root, seed_shared_sandbox_machine_cache,
     seed_shared_sandbox_machine_cache_best_effort,
 };
+pub(crate) use self::materialization::materialize_sandbox_worktree;
 use self::network_policy_transition::apply_container_network_policy;
 #[cfg(test)]
 use self::sandbox_cli::sandbox_cli_binary_path;
@@ -133,12 +134,6 @@ use self::sandbox_machine_recovery::{
     run_sandbox_machine_init, sandbox_machine_present, sandbox_machine_singleflight_lock,
 };
 pub(crate) use self::shared_vm_orchestrator::SharedVmLifecycleOrchestrator;
-pub(crate) use self::materialization::{
-    materialize_sandbox_worktree, SandboxWorktreeMaterialization,
-};
-pub(crate) use self::lifecycle_manager::{
-    SharedSubstrateLifecycleManager, SubstrateLifecycleRecord,
-};
 pub(crate) use self::substrate::{
     SubstrateShutdownOutcome, SubstrateStartupOutcome, SubstrateStartupSelection,
     UbuntuSandboxSubstrate,
@@ -258,7 +253,7 @@ pub(crate) async fn selected_runtime_launch_readiness_state(
     data_root: &Path,
     settings: &ContainerExecutionSettings,
 ) -> Result<(bool, bool)> {
-    let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime);
+    let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime.clone());
     match substrate.substrate {
         ctx_core::models::SandboxSubstrate::NativeContainer => {
             selected_runtime_state(data_root, settings).await
@@ -277,10 +272,14 @@ pub(crate) fn launch_ready_gap_message(
     vm_ready: bool,
     image_ready: bool,
 ) -> String {
-    UbuntuSandboxSubstrate::from_runtime_kind(runtime_kind)
-        .launch_ready_gap_message(runtime_target, vm_ready, image_ready)
+    UbuntuSandboxSubstrate::from_runtime_kind(runtime_kind).launch_ready_gap_message(
+        runtime_target,
+        vm_ready,
+        image_ready,
+    )
 }
 
+#[cfg(test)]
 pub(crate) fn launch_ready_detail_message(runtime_kind: &ContainerRuntimeKind) -> &'static str {
     UbuntuSandboxSubstrate::from_runtime_kind(runtime_kind.clone()).launch_ready_detail_message()
 }

@@ -20,7 +20,6 @@ impl Store {
                    host_projection_root,
                    created_at
                )
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(worktree_id) DO UPDATE SET
                    workspace_id = excluded.workspace_id,
@@ -40,7 +39,9 @@ impl Store {
         .bind(binding.workspace_id.0.to_string())
         .bind(binding.sandbox_instance_id.0.to_string())
         .bind(sandbox_substrate_to_str(&binding.substrate))
-        .bind(sandbox_guest_platform_to_str(binding.guest_identity.platform))
+        .bind(sandbox_guest_platform_to_str(
+            binding.guest_identity.platform,
+        ))
         .bind(sandbox_isolation_kind_to_str(
             binding.guest_identity.isolation_kind,
         ))

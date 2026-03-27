@@ -1,18 +1,16 @@
+use super::launch::{daemon_env_unset_args, strip_automation_env};
 use super::path_env::{
     build_effective_daemon_path, extract_shell_path, parse_local_daemon_path_probe_output,
     probe_local_daemon_path_via_shell, read_login_shell_path, resolve_daemon_path_env,
     DAEMON_PATH_SENTINEL_BEGIN, DAEMON_PATH_SENTINEL_END, LOCAL_DAEMON_PATH_PROBE_END,
     LOCAL_DAEMON_PATH_PROBE_START,
 };
-use super::launch::{daemon_env_unset_args, strip_automation_env};
-use super::resources::{
-    configured_bundle_dir, select_bundle_dir_path, select_optional_bin_path,
-};
+use super::resources::{configured_bundle_dir, select_bundle_dir_path, select_optional_bin_path};
 use super::*;
-use crate::desktop_ssh::normalized_ssh_config_override;
 use crate::desktop_local_daemon::{
     apply_validated_local_connection, connect_local_with_sources, lock_local_connect_gate,
 };
+use crate::desktop_ssh::normalized_ssh_config_override;
 use std::sync::{Mutex, OnceLock};
 
 static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();

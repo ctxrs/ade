@@ -8,7 +8,8 @@ use super::avf_linux_vm::{
     stop_shared_vm, workspace_vm_state as avf_linux_workspace_vm_state, AvfLinuxSharedVmState,
 };
 use super::{
-    avf_linux_runtime_state, container_image_present, ensure_avf_linux_shared_vm_ready_with_observer,
+    avf_linux_runtime_state, container_image_present,
+    ensure_avf_linux_shared_vm_ready_with_observer,
     ensure_avf_linux_workspace_vm_ready_with_observer, prefetch_avf_linux_runtime_with_observer,
     resolve_container_image, AvfLinuxSharedVmLifecycleState, ContainerExecutionSettings,
     HarnessSetupObserver,
@@ -36,8 +37,7 @@ impl<'a> SharedVmLifecycleOrchestrator<'a> {
         settings: &ContainerExecutionSettings,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<AvfLinuxSharedVmState> {
-        ensure_avf_linux_shared_vm_ready_with_observer(self.data_root, settings, observer)
-            .await
+        ensure_avf_linux_shared_vm_ready_with_observer(self.data_root, settings, observer).await
     }
 
     pub(crate) async fn ensure_workspace_runtime_ready(

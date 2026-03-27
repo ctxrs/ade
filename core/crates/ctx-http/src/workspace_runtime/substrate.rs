@@ -126,12 +126,8 @@ impl UbuntuSandboxSubstrate {
 
     pub(crate) fn launch_ready_detail_message(self) -> &'static str {
         match self.substrate {
-            SandboxSubstrate::NativeContainer => {
-                "local sandbox runtime and launch image are ready"
-            }
-            SandboxSubstrate::SharedVmContainer => {
-                "shared VM substrate and launch image are ready"
-            }
+            SandboxSubstrate::NativeContainer => "local sandbox runtime and launch image are ready",
+            SandboxSubstrate::SharedVmContainer => "shared VM substrate and launch image are ready",
         }
     }
 

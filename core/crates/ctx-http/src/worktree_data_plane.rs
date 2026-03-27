@@ -6,7 +6,7 @@ use ctx_core::models::{SandboxBinding, Workspace, Worktree};
 use crate::daemon::AppState;
 use crate::disk_isolated;
 use crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT;
-use crate::settings::{ContainerMountMode, ContainerRuntimeKind, ExecutionMode, ExecutionSettings};
+use crate::settings::{ContainerMountMode, ExecutionMode, ExecutionSettings};
 
 #[derive(Debug, Clone)]
 pub(crate) struct WorktreeDataPlane {
@@ -204,9 +204,7 @@ mod tests {
     use crate::daemon::AppState;
     use chrono::Utc;
     use ctx_core::ids::{SandboxInstanceId, WorkspaceId, WorktreeId};
-    use ctx_core::models::{
-        ExecutionEnvironment, SandboxGuestIdentity, SandboxSubstrate, VcsKind,
-    };
+    use ctx_core::models::{ExecutionEnvironment, SandboxGuestIdentity, SandboxSubstrate, VcsKind};
     use ctx_store::StoreManager;
     use std::collections::HashMap;
     use std::sync::Arc;

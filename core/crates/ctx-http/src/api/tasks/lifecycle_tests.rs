@@ -185,9 +185,7 @@ async fn archive_task_only_dematerializes_sandbox_state() {
         .upsert_sandbox_binding(SandboxBinding {
             worktree_id: worktree.id,
             workspace_id: workspace.id,
-            sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(
-                workspace.id,
-            ),
+            sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(workspace.id),
             substrate: SandboxSubstrate::SharedVmContainer,
             guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
             profile: SandboxProfile::Standard,
@@ -333,9 +331,7 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
         .upsert_sandbox_binding(SandboxBinding {
             worktree_id: worktree.id,
             workspace_id: workspace.id,
-            sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(
-                workspace.id,
-            ),
+            sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(workspace.id),
             substrate: SandboxSubstrate::NativeContainer,
             guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
             profile: SandboxProfile::Standard,
@@ -504,9 +500,7 @@ async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {
         .upsert_sandbox_binding(SandboxBinding {
             worktree_id: worktree.id,
             workspace_id: workspace.id,
-            sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(
-                workspace.id,
-            ),
+            sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(workspace.id),
             substrate: SandboxSubstrate::NativeContainer,
             guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
             profile: SandboxProfile::Standard,

@@ -88,8 +88,8 @@ fn validate_sandbox_binding_execution_settings(
         ));
     }
 
-    let expected_runtime = crate::workspace_runtime::UbuntuSandboxSubstrate::from_binding(binding)?
-        .runtime_kind();
+    let expected_runtime =
+        crate::workspace_runtime::UbuntuSandboxSubstrate::from_binding(binding)?.runtime_kind();
     if settings.container.runtime != expected_runtime {
         let observed = match settings.container.runtime {
             crate::settings::ContainerRuntimeKind::NativeContainer => "native_container",
@@ -190,10 +190,7 @@ mod tests {
                 "image": "registry.example/sandbox:v1"
             }
         });
-        let binding = test_binding(
-            SandboxSubstrate::SharedVmContainer,
-            Some(raw.to_string()),
-        );
+        let binding = test_binding(SandboxSubstrate::SharedVmContainer, Some(raw.to_string()));
 
         let parsed = sandbox_execution_settings_from_binding(&binding).expect("parse binding");
 
@@ -259,10 +256,7 @@ mod tests {
                 }
             }
         });
-        let binding = test_binding(
-            SandboxSubstrate::SharedVmContainer,
-            Some(raw.to_string()),
-        );
+        let binding = test_binding(SandboxSubstrate::SharedVmContainer, Some(raw.to_string()));
 
         let err = sandbox_execution_settings_from_binding(&binding)
             .expect_err("unknown schema version should fail");

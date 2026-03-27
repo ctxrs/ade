@@ -42,8 +42,10 @@ fn read_daemon_auth_if_present(data_dir: &Path) -> Result<Option<DaemonAuthFile>
     match std::fs::read(&path) {
         Ok(bytes) => Ok(Some(parse_daemon_auth(&bytes, &path)?)),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(anyhow::Error::new(err)
-            .context(format!("reading daemon auth file {}", path.display()))),
+        Err(err) => {
+            Err(anyhow::Error::new(err)
+                .context(format!("reading daemon auth file {}", path.display())))
+        }
     }
 }
 

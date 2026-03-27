@@ -114,7 +114,8 @@ impl HarnessRuntimeManager {
         settings: &ExecutionSettings,
         daemon_url: &str,
     ) -> Result<HarnessExecutionPlan> {
-        let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.container.runtime);
+        let substrate =
+            UbuntuSandboxSubstrate::from_runtime_kind(settings.container.runtime.clone());
         substrate.ensure_enabled()?;
         let mut env_overrides = HashMap::new();
         env_overrides.insert(
@@ -207,10 +208,8 @@ impl HarnessRuntimeManager {
         if substrate.is_shared_vm_backed() {
             let sandbox_instance_id =
                 ctx_core::models::sandbox_instance_id_for_workspace(workspace.id);
-            let workspace_vm =
-                SharedVmLifecycleOrchestrator::new(&self.data_root).workspace_runtime_state(
-                    sandbox_instance_id,
-                )?;
+            let workspace_vm = SharedVmLifecycleOrchestrator::new(&self.data_root)
+                .workspace_runtime_state(sandbox_instance_id)?;
             env_overrides.insert(
                 "CTX_AVF_WORKSPACE_VM_ROOT".to_string(),
                 workspace_vm.vm_root.to_string_lossy().to_string(),
@@ -351,7 +350,8 @@ impl HarnessRuntimeManager {
         if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(());
         }
-        let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.container.runtime);
+        let substrate =
+            UbuntuSandboxSubstrate::from_runtime_kind(settings.container.runtime.clone());
         substrate.ensure_enabled()?;
         let proxy_host = if substrate.is_shared_vm_backed() {
             let sandbox_instance_id =
@@ -414,7 +414,7 @@ impl HarnessRuntimeManager {
         settings: &ContainerExecutionSettings,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<()> {
-        let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime);
+        let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime.clone());
         substrate.ensure_enabled()?;
         if substrate.is_shared_vm_backed() {
             SharedVmLifecycleOrchestrator::new(&self.data_root)
@@ -624,7 +624,7 @@ impl HarnessRuntimeManager {
     ) -> Result<HarnessContainer> {
         self.ensure_container_machine_ready(settings, observer)
             .await?;
-        let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime);
+        let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime.clone());
         substrate.ensure_enabled()?;
         if substrate.is_shared_vm_backed() {
             let sandbox_instance_id =

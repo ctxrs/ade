@@ -627,7 +627,10 @@ pub(in crate::api) async fn cleanup_task_worktrees(
             }
             if let Some(host_materialization_root) = binding.host_materialization_root.as_deref() {
                 let host_materialization_root = PathBuf::from(host_materialization_root);
-                if tokio::fs::metadata(&host_materialization_root).await.is_ok() {
+                if tokio::fs::metadata(&host_materialization_root)
+                    .await
+                    .is_ok()
+                {
                     if let Err(err) = tokio::fs::remove_dir_all(&host_materialization_root)
                         .await
                         .with_context(|| {

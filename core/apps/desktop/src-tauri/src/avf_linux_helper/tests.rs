@@ -1301,6 +1301,7 @@ fn stop_shared_vm_clears_guest_control_ready_marker() {
         &shared_vm_state_path(&temp),
         &PersistedSharedVmState {
             state: AvfLinuxSharedVmLifecycleState::Running,
+            guest_identity: supported_guest_identity(),
             runtime_root: None,
             rootfs_image: None,
             kernel_path: None,

@@ -26,7 +26,10 @@ pub(crate) async fn materialize_sandbox_worktree(
     effective: &ExecutionSettings,
 ) -> Result<Option<SandboxWorktreeMaterialization>> {
     if !matches!(effective.mode, ExecutionMode::Sandbox)
-        || !matches!(effective.container.mount_mode, ContainerMountMode::DiskIsolated)
+        || !matches!(
+            effective.container.mount_mode,
+            ContainerMountMode::DiskIsolated
+        )
     {
         return Ok(None);
     }
@@ -46,7 +49,7 @@ pub(crate) async fn materialize_sandbox_worktree(
         .ensure_workspace_container(workspace, effective, &state.core.daemon_url)
         .await?;
 
-    let substrate = UbuntuSandboxSubstrate::from_runtime_kind(effective.container.runtime);
+    let substrate = UbuntuSandboxSubstrate::from_runtime_kind(effective.container.runtime.clone());
     substrate.ensure_enabled()?;
 
     let branch_name = worktree
