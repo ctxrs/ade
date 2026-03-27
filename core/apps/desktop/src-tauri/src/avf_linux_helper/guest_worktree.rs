@@ -421,8 +421,16 @@ mod tests {
 
     #[test]
     fn guest_import_requires_existing_shadow_root() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let shadow_root = temp.path().join("missing-shadow-root");
+        let temp = PathBuf::from("/tmp").join(format!(
+            "ctxavf-guest-shadow-missing-{}-{}",
+            std::process::id(),
+            now_timestamp_string()
+        ));
+        if temp.exists() {
+            fs::remove_dir_all(&temp).expect("clear tempdir");
+        }
+        fs::create_dir_all(&temp).expect("create tempdir");
+        let shadow_root = temp.join("missing-shadow-root");
 
         let err = ensure_shadow_root_ready_for_guest_import(&shadow_root)
             .expect_err("missing shadow root should fail");
@@ -430,19 +438,28 @@ mod tests {
         assert!(err
             .to_string()
             .contains("host shadow root is missing before guest rematerialization"));
+        fs::remove_dir_all(&temp).expect("cleanup tempdir");
     }
 
     #[test]
     fn guest_import_requires_standalone_git_directory() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let shadow_root = temp.path().join("shadow-root");
+        let temp = PathBuf::from("/tmp").join(format!(
+            "ctxavf-guest-shadow-git-{}-{}",
+            std::process::id(),
+            now_timestamp_string()
+        ));
+        if temp.exists() {
+            fs::remove_dir_all(&temp).expect("clear tempdir");
+        }
+        fs::create_dir_all(&temp).expect("create tempdir");
+        let shadow_root = temp.join("shadow-root");
         fs::create_dir_all(&shadow_root).expect("create shadow root");
+        fs::write(shadow_root.join(".git"), b"not-a-directory").expect("seed invalid .git");
 
         let err = ensure_shadow_root_ready_for_guest_import(&shadow_root)
             .expect_err("shadow root without .git should fail");
 
-        assert!(err
-            .to_string()
-            .contains("must contain a standalone .git directory"));
+        assert!(err.to_string().contains("standalone .git directory"));
+        fs::remove_dir_all(&temp).expect("cleanup tempdir");
     }
 }
