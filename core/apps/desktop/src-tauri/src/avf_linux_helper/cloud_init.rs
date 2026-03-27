@@ -109,6 +109,23 @@ pub(super) fn hash_shared_vm_seed_component(bytes: &[u8]) -> String {
     format!("{hash:016x}")
 }
 
+pub(super) fn shared_vm_cloud_init_seed_digest(
+    meta_data: &str,
+    user_data: &str,
+    network_config: &str,
+) -> String {
+    let mut seed_material =
+        Vec::with_capacity(meta_data.len() + user_data.len() + network_config.len());
+    seed_material.extend_from_slice(meta_data.as_bytes());
+    seed_material.extend_from_slice(user_data.as_bytes());
+    seed_material.extend_from_slice(network_config.as_bytes());
+    hash_shared_vm_seed_component(&seed_material)
+}
+
+fn shared_vm_cloud_init_seed_digest_path(data_root: &Path) -> PathBuf {
+    shared_vm_cloud_init_root(data_root).join(".seed-digest")
+}
+
 pub(super) fn render_shared_vm_cloud_init_meta_data(
     data_root: &Path,
     guest_agent_bytes: &[u8],
@@ -329,13 +346,7 @@ pub(super) fn stage_shared_vm_cloud_init_seed(
     stage_shared_vm_runtime_payload(&container_stack_runtime_path, &container_stack_payload_path)?;
     let container_stack_sha256 = sha256_hex_file(&container_stack_payload_path)?;
     let image_path = shared_vm_cloud_init_image_path(data_root);
-    if preserve_existing_image && image_path.is_file() {
-        return Ok(Some(image_path));
-    }
-
     let seed_root = shared_vm_cloud_init_root(data_root);
-    fs::remove_dir_all(&seed_root).ok();
-    fs::create_dir_all(&seed_root).with_context(|| format!("creating {}", seed_root.display()))?;
     let guest_agent_bytes = fs::read(&guest_agent_path)
         .with_context(|| format!("reading {}", guest_agent_path.display()))?;
     let egress_proxy_bytes = if egress_proxy_path.is_file() {
@@ -346,32 +357,41 @@ pub(super) fn stage_shared_vm_cloud_init_seed(
     } else {
         None
     };
-    fs::write(
-        shared_vm_cloud_init_meta_data_path(data_root),
-        render_shared_vm_cloud_init_meta_data(
-            data_root,
-            &guest_agent_bytes,
-            egress_proxy_bytes.as_deref(),
-            &container_stack_sha256,
-        ),
-    )
-    .with_context(|| {
+    let meta_data = render_shared_vm_cloud_init_meta_data(
+        data_root,
+        &guest_agent_bytes,
+        egress_proxy_bytes.as_deref(),
+        &container_stack_sha256,
+    );
+    let user_data = render_shared_vm_cloud_init_user_data(
+        data_root,
+        &guest_agent_bytes,
+        egress_proxy_bytes.as_deref(),
+        &container_stack_payload_path,
+        &container_stack_sha256,
+    );
+    let network_config = render_shared_vm_cloud_init_network_config();
+    let seed_digest = shared_vm_cloud_init_seed_digest(&meta_data, &user_data, &network_config);
+    let seed_digest_path = shared_vm_cloud_init_seed_digest_path(data_root);
+    if preserve_existing_image
+        && image_path.is_file()
+        && fs::read_to_string(&seed_digest_path)
+            .ok()
+            .map(|value| value.trim() == seed_digest)
+            .unwrap_or(false)
+    {
+        return Ok(Some(image_path));
+    }
+
+    fs::remove_dir_all(&seed_root).ok();
+    fs::create_dir_all(&seed_root).with_context(|| format!("creating {}", seed_root.display()))?;
+    fs::write(shared_vm_cloud_init_meta_data_path(data_root), &meta_data).with_context(|| {
         format!(
             "writing {}",
             shared_vm_cloud_init_meta_data_path(data_root).display()
         )
     })?;
-    fs::write(
-        shared_vm_cloud_init_user_data_path(data_root),
-        render_shared_vm_cloud_init_user_data(
-            data_root,
-            &guest_agent_bytes,
-            egress_proxy_bytes.as_deref(),
-            &container_stack_payload_path,
-            &container_stack_sha256,
-        ),
-    )
-    .with_context(|| {
+    fs::write(shared_vm_cloud_init_user_data_path(data_root), &user_data).with_context(|| {
         format!(
             "writing {}",
             shared_vm_cloud_init_user_data_path(data_root).display()
@@ -379,7 +399,7 @@ pub(super) fn stage_shared_vm_cloud_init_seed(
     })?;
     fs::write(
         shared_vm_cloud_init_network_config_path(data_root),
-        render_shared_vm_cloud_init_network_config(),
+        &network_config,
     )
     .with_context(|| {
         format!(
@@ -387,6 +407,8 @@ pub(super) fn stage_shared_vm_cloud_init_seed(
             shared_vm_cloud_init_network_config_path(data_root).display()
         )
     })?;
+    fs::write(&seed_digest_path, format!("{seed_digest}\n"))
+        .with_context(|| format!("writing {}", seed_digest_path.display()))?;
 
     fs::remove_file(&image_path).ok();
     let image = std::fs::OpenOptions::new()

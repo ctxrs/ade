@@ -146,8 +146,13 @@ pub(crate) async fn ensure_shared_vm_ready_with_observer(
     settings: &ContainerExecutionSettings,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<AvfLinuxSharedVmState> {
-    ensure_workspace_vm_ready_with_observer(data_root, WorkspaceId(uuid::Uuid::nil()), settings, observer)
-        .await
+    ensure_workspace_vm_ready_with_observer(
+        data_root,
+        WorkspaceId(uuid::Uuid::nil()),
+        settings,
+        observer,
+    )
+    .await
 }
 
 pub(crate) async fn ensure_guest_worktree_from_host_copy(

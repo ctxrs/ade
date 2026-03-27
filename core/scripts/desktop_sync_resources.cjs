@@ -104,6 +104,9 @@ const resolveBundledRuntimeIds = (runtimeIds) => {
   return [...new Set(ids)].sort();
 };
 
+const shouldBundleLinuxCtxMcpRuntime = (platform = process.platform) =>
+  platform === "darwin" || platform === "linux";
+
 const readCargoPackageVersion = (cargoTomlPath) => {
   if (!fs.existsSync(cargoTomlPath)) {
     throw new Error(`missing Cargo.toml for version lookup: ${cargoTomlPath}`);
@@ -1035,7 +1038,7 @@ const syncBundles = () => {
       "desktop_sync_resources: skipping remote daemon bundle build (CTX_BUNDLE_REMOTE_DAEMONS=0)",
     );
   }
-  if (process.platform === "darwin") {
+  if (shouldBundleLinuxCtxMcpRuntime()) {
     bundleLinuxCtxMcpRuntime(destBundleDir);
   }
 
@@ -1230,6 +1233,7 @@ if (require.main === module) {
       buildLinuxCtxMcpContainerArgs,
       buildRemoteDaemonContainerArgs,
       resetBundleDir,
+      shouldBundleLinuxCtxMcpRuntime,
       writePlaceholderBundleManifest,
       writeEffectiveBundleManifest,
     },

@@ -290,8 +290,11 @@ fn bundled_avf_runtime_requires_helper_payloads() {
     fs::write(helpers_dir.join("kernel"), "kernel").expect("write kernel");
     fs::write(helpers_dir.join("initrd"), "initrd").expect("write initrd");
     fs::write(helpers_dir.join("egress-proxy"), "proxy").expect("write proxy");
-    fs::write(helpers_dir.join("container-stack.tar.gz"), "container-stack")
-        .expect("write container stack");
+    fs::write(
+        helpers_dir.join("container-stack.tar.gz"),
+        "container-stack",
+    )
+    .expect("write container stack");
     fs::write(
         temp.join("manifest.json"),
         format!(
@@ -375,7 +378,7 @@ fn bundled_avf_runtime_requires_helper_payloads() {
 }
 
 #[test]
-fn thin_bundle_avf_runtime_entry_accepts_managed_runtime_source_without_bundled_root() {
+fn thin_bundle_avf_runtime_entry_rejects_unresolved_managed_runtime_source_without_bundled_root() {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("unix epoch")
@@ -479,7 +482,13 @@ fn thin_bundle_avf_runtime_entry_accepts_managed_runtime_source_without_bundled_
     )
     .expect("write runtime lock");
 
-    enforce_desktop_parity_bundle_preflight(Some(&temp))
-        .expect("managed AVF runtime source should satisfy thin-bundle preflight even without bundled runtime root");
+    let err = enforce_desktop_parity_bundle_preflight(Some(&temp))
+        .expect_err("placeholder AVF managed source should not satisfy thin-bundle preflight");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("runtime lock missing AVF helper metadata")
+            || rendered.contains("missing runtime root dir"),
+        "expected unresolved AVF managed source failure, got: {rendered}"
+    );
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }

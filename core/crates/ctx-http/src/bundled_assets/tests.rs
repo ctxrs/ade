@@ -343,7 +343,7 @@ fn select_managed_runtime_source_rejects_unresolved_avf_placeholder_payloads() {
                 "guest-agent".to_string(),
                 RuntimeLockHelperSource {
                     uri: Some(
-                        "locked://runtimes/avf-linux-guest/macos/aarch64/guest-agent".to_string()
+                        "locked://runtimes/avf-linux-guest/macos/aarch64/guest-agent".to_string(),
                     ),
                     sha256: Some("0".repeat(64)),
                 },
@@ -352,7 +352,7 @@ fn select_managed_runtime_source_rejects_unresolved_avf_placeholder_payloads() {
                 "egress-proxy".to_string(),
                 RuntimeLockHelperSource {
                     uri: Some(
-                        "locked://runtimes/avf-linux-guest/macos/aarch64/egress-proxy".to_string()
+                        "locked://runtimes/avf-linux-guest/macos/aarch64/egress-proxy".to_string(),
                     ),
                     sha256: Some("0".repeat(64)),
                 },
@@ -362,7 +362,7 @@ fn select_managed_runtime_source_rejects_unresolved_avf_placeholder_payloads() {
                 RuntimeLockHelperSource {
                     uri: Some(
                         "locked://runtimes/avf-linux-guest/macos/aarch64/container-stack"
-                            .to_string()
+                            .to_string(),
                     ),
                     sha256: Some("0".repeat(64)),
                 },

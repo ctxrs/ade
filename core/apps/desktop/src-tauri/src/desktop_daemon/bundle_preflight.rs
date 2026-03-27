@@ -191,18 +191,29 @@ fn lock_component_has_managed_source(
         if !allowed_sources.is_empty() && !allowed_sources.contains(source_type) {
             return false;
         }
-        source
+        let Some(uri) = source
             .uri
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .is_some()
-            && source
-                .sha256
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .is_some()
+        else {
+            return false;
+        };
+        let Some(sha256) = source
+            .sha256
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return false;
+        };
+        if component.kind == "runtime"
+            && component.id == "avf-linux-guest"
+            && (!managed_source_is_resolved(uri) || !sha256_is_resolved(sha256))
+        {
+            return false;
+        }
+        true
     })
 }
 
@@ -239,17 +250,38 @@ fn find_required_component<'a>(
     })
 }
 
-fn helper_metadata_complete(helper: Option<&RuntimeLockComponentHelper>) -> bool {
-    helper
+fn managed_source_is_resolved(uri: &str) -> bool {
+    !uri.trim().starts_with("locked://")
+}
+
+fn sha256_is_resolved(sha256: &str) -> bool {
+    let trimmed = sha256.trim();
+    !trimmed.is_empty() && !(trimmed.len() == 64 && trimmed.bytes().all(|byte| byte == b'0'))
+}
+
+fn helper_metadata_complete(
+    helper: Option<&RuntimeLockComponentHelper>,
+    require_resolved: bool,
+) -> bool {
+    let Some(uri) = helper
         .and_then(|helper| helper.uri.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .is_some()
-        && helper
-            .and_then(|helper| helper.sha256.as_deref())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_some()
+    else {
+        return false;
+    };
+    let Some(sha256) = helper
+        .and_then(|helper| helper.sha256.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+    if require_resolved {
+        managed_source_is_resolved(uri) && sha256_is_resolved(sha256)
+    } else {
+        true
+    }
 }
 
 fn avf_helper_names_and_paths() -> [(&'static str, &'static str); 5] {
@@ -263,11 +295,11 @@ fn avf_helper_names_and_paths() -> [(&'static str, &'static str); 5] {
 }
 
 fn avf_helper_metadata_complete(component: &RuntimeLockComponent) -> bool {
-    helper_metadata_complete(component.helpers.kernel.as_ref())
-        && helper_metadata_complete(component.helpers.initrd.as_ref())
-        && helper_metadata_complete(component.helpers.guest_agent.as_ref())
-        && helper_metadata_complete(component.helpers.egress_proxy.as_ref())
-        && helper_metadata_complete(component.helpers.container_stack.as_ref())
+    helper_metadata_complete(component.helpers.kernel.as_ref(), true)
+        && helper_metadata_complete(component.helpers.initrd.as_ref(), true)
+        && helper_metadata_complete(component.helpers.guest_agent.as_ref(), true)
+        && helper_metadata_complete(component.helpers.egress_proxy.as_ref(), true)
+        && helper_metadata_complete(component.helpers.container_stack.as_ref(), true)
 }
 
 fn normalize_target_token(raw: &str, host_value: &str) -> Option<String> {

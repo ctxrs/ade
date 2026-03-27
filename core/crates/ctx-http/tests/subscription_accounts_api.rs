@@ -1219,9 +1219,7 @@ echo "https://claude.ai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.clau
         .expect("start claude login request");
     assert_eq!(start_resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let body: ErrorResp = start_resp.json().await.expect("start error body");
-    assert!(body
-        .error
-        .contains("fell back to manual code entry"));
+    assert!(body.error.contains("fell back to manual code entry"));
 }
 
 // The real desktop/browser lane still needs OS automation, but the tests below

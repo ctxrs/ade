@@ -14,9 +14,7 @@ import type {
 import {
   getSettings,
   getTitleGenerationLocalStatus,
-  importProviderAuthCandidates,
   installTitleGenerationLocal,
-  startRuntimePrewarm,
   updateSettings,
 } from "../../api/client";
 import {
@@ -64,6 +62,9 @@ import {
 } from "./workflowTypes";
 import { withTimeout } from "./promiseTimeout";
 import { useWorkspaceSetupProviderProvisioning } from "./useWorkspaceSetupProviderProvisioning";
+import { advanceWorkspaceSetupAuthImportStep } from "./advanceWorkspaceSetupAuthImportStep";
+import { ensureWorkspaceSetupSandboxWarmup } from "./ensureWorkspaceSetupSandboxWarmup";
+import { buildTitlingSummaryValue, isTitlingRemoteValid } from "./workspaceSetupTitlingSummary";
 
 const TITLING_PROBE_TIMEOUT_MS = 2_000;
 
@@ -708,28 +709,9 @@ export function useWorkspaceSetupProvisioning({
   const ensureSandboxWarmupForRouteScope = useCallback(async (
     location: "local" | "remote",
     routeScope: WorkspaceSetupRouteScope,
-  ): Promise<void> => {
-    if (!desktopApp || location !== "local" || routeScope.containerSelection !== "sandbox") {
-      if (location !== "local" || routeScope.containerSelection !== "sandbox") {
-        sandboxWarmupTargetKeyRef.current = null;
-      }
-      return;
-    }
-    const routeKey = serializeWorkspaceSetupRouteScope(routeScope);
-    if (sandboxWarmupTargetKeyRef.current === routeKey) {
-      return;
-    }
-    sandboxWarmupTargetKeyRef.current = routeKey;
-    try {
-      await connectDaemonForImport("local");
-      await startRuntimePrewarm("launch_ready");
-    } catch (error) {
-      if (sandboxWarmupTargetKeyRef.current === routeKey) {
-        sandboxWarmupTargetKeyRef.current = null;
-      }
-      throw error;
-    }
-  }, [
+  ): Promise<void> => ensureWorkspaceSetupSandboxWarmup(
+    { desktopApp, location, routeScope, sandboxWarmupTargetKeyRef, connectDaemonForImport },
+  ), [
     connectDaemonForImport,
     desktopApp,
   ]);
@@ -779,61 +761,36 @@ export function useWorkspaceSetupProvisioning({
 
   const advanceFromAuthImportStep = async (
     options?: { clearSelections?: boolean },
-  ): Promise<WizardRoutePlan | null> => {
-    if (authImportBusy) return null;
-    const selectionSnapshot = options?.clearSelections ? {} : authImportSelected;
-    if (options?.clearSelections) {
-      setAuthImportSelected({});
-    }
-    const candidateIds = authImportCandidates
-      .filter((candidate) => selectionSnapshot[candidate.id])
-      .map((candidate) => candidate.id);
-    if (candidateIds.length) {
-      setAuthImportBusy(true);
-      setAuthImportError(null);
-      try {
-        await connectDaemonForImport();
-        const response = await importProviderAuthCandidates(candidateIds);
-        const acceptableStatuses = new Set(["imported", "updated", "already_imported"]);
-        const failures = (response.results ?? [])
-          .filter((result) => !acceptableStatuses.has(result.status))
-          .map((result) => {
-            const label = authImportCandidates.find((candidate) => candidate.id === result.candidate_id)?.provider_label
-              ?? result.provider_id;
-            const detail = (result.message ?? `Import status: ${result.status}`).trim();
-            return `${label}: ${detail}`;
-          });
-        if (failures.length > 0) {
-          setAuthImportError(`Some auth imports did not apply. ${failures.join(" ; ")}`);
-          setAuthImportBusy(false);
-          return null;
-        }
-      } catch (error) {
-        setAuthImportError(messageFromError(error));
-        setAuthImportBusy(false);
-        return null;
-      }
-      setAuthImportBusy(false);
-    }
-    await ensureTitlingProbeForCurrentTarget();
-    if (currentStepKeyRef.current !== "auth-import") return null;
-    return getCurrentRoutePlan();
-  };
+  ): Promise<WizardRoutePlan | null> => advanceWorkspaceSetupAuthImportStep(
+    {
+      authImportBusy,
+      authImportSelected,
+      setAuthImportSelected,
+      authImportCandidates,
+      setAuthImportBusy,
+      setAuthImportError,
+      connectDaemonForImport,
+      ensureTitlingProbeForCurrentTarget,
+      currentStepKeyRef,
+      getCurrentRoutePlan,
+    },
+    options,
+  );
 
-  const titlingRemoteValid = titlingRemoteBaseUrl.trim() !== ""
-    && titlingRemoteApiKey.trim() !== ""
-    && titlingRemoteModel.trim() !== "";
-  const titlingSummaryValue = titlingMode === "skip"
-    ? "Skipped (fallback titles)"
-    : titlingMode === "remote"
-      ? `Configured remote (${titlingRemoteModel.trim() || "model pending"})`
-      : titlingMode === "local"
-        ? (titlingLocalStatus?.ready
-          ? "Configured local (ready)"
-          : "Configured local (install pending; fallback until ready)")
-      : titlingConfiguredReady
-          ? (titlingExistingSettings?.mode === "local" ? "Configured local (ready)" : "Configured remote")
-        : "Not configured";
+  const titlingRemoteValid = isTitlingRemoteValid(
+    titlingRemoteBaseUrl,
+    titlingRemoteApiKey,
+    titlingRemoteModel,
+  );
+  const titlingSummaryValue = buildTitlingSummaryValue({
+    titlingMode,
+    titlingRemoteBaseUrl,
+    titlingRemoteApiKey,
+    titlingRemoteModel,
+    titlingConfiguredReady,
+    titlingLocalStatus,
+    titlingExistingSettings,
+  });
 
   useEffect(() => {
     titlingInstallStateRef.current = titlingLocalInstall;

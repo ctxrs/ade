@@ -33,8 +33,6 @@ use std::fs::File;
 use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
-#[cfg(all(target_os = "macos", unix))]
-use std::os::fd::FromRawFd;
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -63,14 +61,13 @@ use objc2_virtualization::{
     VZDirectorySharingDeviceConfiguration, VZDiskImageCachingMode,
     VZDiskImageStorageDeviceAttachment, VZDiskImageSynchronizationMode, VZFileSerialPortAttachment,
     VZGenericMachineIdentifier, VZGenericPlatformConfiguration, VZLinuxBootLoader, VZMACAddress,
-    VZMemoryBalloonDevice, VZMemoryBalloonDeviceConfiguration, VZNATNetworkDeviceAttachment,
-    VZNetworkDeviceConfiguration, VZSerialPortConfiguration, VZSharedDirectory,
-    VZSingleDirectoryShare, VZSocketDeviceConfiguration, VZStorageDeviceConfiguration,
-    VZVirtioBlockDeviceConfiguration, VZVirtioConsoleDeviceSerialPortConfiguration,
-    VZVirtioFileSystemDeviceConfiguration, VZVirtioNetworkDeviceConfiguration,
-    VZVirtioSocketConnection, VZVirtioSocketDevice, VZVirtioSocketDeviceConfiguration,
-    VZVirtioTraditionalMemoryBalloonDevice, VZVirtioTraditionalMemoryBalloonDeviceConfiguration,
-    VZVirtualMachine, VZVirtualMachineConfiguration, VZVirtualMachineState,
+    VZMemoryBalloonDeviceConfiguration, VZNATNetworkDeviceAttachment, VZNetworkDeviceConfiguration,
+    VZSerialPortConfiguration, VZSharedDirectory, VZSingleDirectoryShare,
+    VZSocketDeviceConfiguration, VZStorageDeviceConfiguration, VZVirtioBlockDeviceConfiguration,
+    VZVirtioConsoleDeviceSerialPortConfiguration, VZVirtioFileSystemDeviceConfiguration,
+    VZVirtioNetworkDeviceConfiguration, VZVirtioSocketDeviceConfiguration,
+    VZVirtioTraditionalMemoryBalloonDeviceConfiguration, VZVirtualMachine,
+    VZVirtualMachineConfiguration, VZVirtualMachineState,
 };
 use portable_pty::{CommandBuilder as PtyCommandBuilder, NativePtySystem, PtySize, PtySystem};
 use serde::{Deserialize, Serialize};

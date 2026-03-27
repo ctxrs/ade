@@ -17,6 +17,14 @@ pub(crate) fn configure_runtime_mcp_command(
     if !mcp_enabled(provider_env) || !provider_env_targets_linux_sandbox(provider_env) {
         return Ok(());
     }
+    if provider_env
+        .get(CTX_MCP_COMMAND_ENV)
+        .map(String::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+    {
+        return Ok(());
+    }
 
     let bundled =
         bundled_assets::bundled_runtime_for(CTX_MCP_RUNTIME_ID, "linux", std::env::consts::ARCH)
@@ -74,27 +82,51 @@ fn stage_linux_sandbox_mcp_runtime(
         return Ok(staged_path);
     }
 
-    std::fs::copy(&bundled.bin, &staged_path).with_context(|| {
+    let staged_tmp = runtime_dir.join(format!(
+        ".{}.tmp-{}-{}",
+        file_name.to_string_lossy(),
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default(),
+    ));
+
+    std::fs::copy(&bundled.bin, &staged_tmp).with_context(|| {
         format!(
             "staging linux sandbox ctx-mcp runtime from {} to {}",
             bundled.bin.display(),
-            staged_path.display()
+            staged_tmp.display()
         )
     })?;
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&staged_path)
-            .with_context(|| format!("stat staged ctx-mcp runtime {}", staged_path.display()))?
+        let mut perms = std::fs::metadata(&staged_tmp)
+            .with_context(|| format!("stat staged ctx-mcp runtime {}", staged_tmp.display()))?
             .permissions();
         perms.set_mode(0o755);
-        std::fs::set_permissions(&staged_path, perms).with_context(|| {
+        std::fs::set_permissions(&staged_tmp, perms).with_context(|| {
             format!(
                 "marking staged linux sandbox ctx-mcp runtime executable at {}",
-                staged_path.display()
+                staged_tmp.display()
             )
         })?;
+    }
+
+    if let Err(err) = std::fs::rename(&staged_tmp, &staged_path) {
+        if staged_path.exists() {
+            let _ = std::fs::remove_file(&staged_tmp);
+            return Ok(staged_path);
+        }
+        return Err(err).with_context(|| {
+            format!(
+                "finalizing staged linux sandbox ctx-mcp runtime {} -> {}",
+                staged_tmp.display(),
+                staged_path.display()
+            )
+        });
     }
 
     Ok(staged_path)
@@ -187,6 +219,31 @@ mod tests {
         configure_runtime_mcp_command(&mut provider_env, data_root.path())
             .expect("disabled mcp should not error");
         assert!(!provider_env.contains_key(CTX_MCP_COMMAND_ENV));
+    }
+
+    #[test]
+    fn configure_runtime_mcp_command_preserves_existing_command() {
+        let _guard = bundled_assets_manifest_test_lock()
+            .lock()
+            .expect("bundled assets manifest test lock poisoned");
+        let data_root = tempfile::tempdir().expect("data root");
+        let mut provider_env = HashMap::from([
+            (
+                "CTX_HARNESS_CONTAINER_ID".to_string(),
+                "ctx-harness-123".to_string(),
+            ),
+            (
+                CTX_MCP_COMMAND_ENV.to_string(),
+                "/usr/local/bin/ctx-mcp".to_string(),
+            ),
+        ]);
+
+        configure_runtime_mcp_command(&mut provider_env, data_root.path())
+            .expect("existing ctx mcp command should be preserved");
+        assert_eq!(
+            provider_env.get(CTX_MCP_COMMAND_ENV).map(String::as_str),
+            Some("/usr/local/bin/ctx-mcp")
+        );
     }
 
     #[test]

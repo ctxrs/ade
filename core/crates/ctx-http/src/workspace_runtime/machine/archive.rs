@@ -76,17 +76,21 @@ fn extract_zstd_to_dir(archive_path: &Path, source_uri: &str, out_dir: &Path) ->
         .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| !name.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("unable to derive zstd output filename from {source_uri}"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("unable to derive zstd output filename from {source_uri}")
+        })?;
     let output_name = file_name
         .strip_suffix(".zst")
         .filter(|name| !name.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("zstd archive path must end with a concrete filename: {source_uri}"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("zstd archive path must end with a concrete filename: {source_uri}")
+        })?;
     let dest = out_dir.join(output_name);
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
-    let input =
-        std::fs::File::open(archive_path).with_context(|| format!("open {}", archive_path.display()))?;
+    let input = std::fs::File::open(archive_path)
+        .with_context(|| format!("open {}", archive_path.display()))?;
     let mut decoder = zstd::stream::read::Decoder::new(input).context("parsing zstd archive")?;
     let mut output =
         std::fs::File::create(&dest).with_context(|| format!("create {}", dest.display()))?;
@@ -158,8 +162,8 @@ mod tests {
         let archive_path = temp.path().join("rootfs.raw.zst");
         let extracted_dir = temp.path().join("extract");
         std::fs::create_dir_all(&extracted_dir).expect("create extract dir");
-        let compressed = zstd::stream::encode_all(&b"rootfs payload"[..], 1)
-            .expect("encode zstd payload");
+        let compressed =
+            zstd::stream::encode_all(&b"rootfs payload"[..], 1).expect("encode zstd payload");
         std::fs::write(&archive_path, compressed).expect("write zstd archive");
 
         extract_archive_to_dir(

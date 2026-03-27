@@ -20,6 +20,12 @@ test("resolveBundledRuntimeIds dedupes and sorts bundle runtime identifiers", ()
   );
 });
 
+test("linux ctx-mcp runtime bundling stays enabled on desktop platforms with Linux sandboxes", () => {
+  assert.equal(__desktopSyncResourcesTestHooks.shouldBundleLinuxCtxMcpRuntime("darwin"), true);
+  assert.equal(__desktopSyncResourcesTestHooks.shouldBundleLinuxCtxMcpRuntime("linux"), true);
+  assert.equal(__desktopSyncResourcesTestHooks.shouldBundleLinuxCtxMcpRuntime("win32"), false);
+});
+
 test("stageAvfLinuxGuestRuntime leaves the bundle untouched when no guest artifact is present", () => {
   const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bundle-"));
   const staged = stageAvfLinuxGuestRuntime(bundleDir);
@@ -27,7 +33,7 @@ test("stageAvfLinuxGuestRuntime leaves the bundle untouched when no guest artifa
   assert.equal(fs.existsSync(path.join(bundleDir, "runtimes", "avf-linux-guest")), false);
 });
 
-test("thin bundle parity accepts managed AVF runtime metadata from runtime lock", () => {
+test("thin bundle parity rejects unresolved managed AVF runtime metadata from runtime lock", () => {
   const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bundle-runtime-lock-"));
   try {
     fs.writeFileSync(
@@ -76,11 +82,14 @@ test("thin bundle parity accepts managed AVF runtime metadata from runtime lock"
       "utf8",
     );
 
-    assert.doesNotThrow(() => {
-      __desktopSyncResourcesTestHooks.assertRuntimeTargetsAvailable(bundleDir, "avf-linux-guest", [
-        { os: hostManifestOs, arch: hostManifestArch },
-      ]);
-    });
+    assert.throws(
+      () => {
+        __desktopSyncResourcesTestHooks.assertRuntimeTargetsAvailable(bundleDir, "avf-linux-guest", [
+          { os: hostManifestOs, arch: hostManifestArch },
+        ]);
+      },
+      /bundle\/runtime lock missing avf-linux-guest runtime targets/,
+    );
   } finally {
     fs.rmSync(bundleDir, { recursive: true, force: true });
   }

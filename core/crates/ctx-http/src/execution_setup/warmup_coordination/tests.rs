@@ -137,7 +137,10 @@ impl SharedWarmupOperations for FakeWarmupOperations {
         observer: Arc<dyn HarnessSetupObserver>,
     ) -> Result<()> {
         self.launch_ready_runs.fetch_add(1, Ordering::SeqCst);
-        observer.on_phase(HarnessSetupPhase::MachineStartOrInit, "warming launch-ready runtime");
+        observer.on_phase(
+            HarnessSetupPhase::MachineStartOrInit,
+            "warming launch-ready runtime",
+        );
         if self.launch_ready_block {
             self.launch_ready_release.notified().await;
         }

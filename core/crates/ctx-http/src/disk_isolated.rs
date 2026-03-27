@@ -23,7 +23,7 @@ fn host_tar_stream_command(src_root: &Path) -> Result<Option<Command>> {
     #[cfg(target_os = "macos")]
     let mut tar_cmd = {
         let mut cmd = Command::new("bsdtar");
-        cmd.arg("--format=ustar").arg("--no-mac-metadata");
+        cmd.arg("--format=pax").arg("--no-mac-metadata");
         cmd
     };
     #[cfg(not(target_os = "macos"))]
@@ -583,15 +583,10 @@ pub async fn ensure_workspace_root_from_host_copy(
 
     let host_workspace_root = Path::new(&workspace.root_path);
     if !host_workspace_root.exists() {
-        ensure_empty_container_root(data_root, &container_id, &dest_root)
-            .await
-            .with_context(|| {
-                format!(
-                    "preparing empty sandbox workspace root because host workspace root is unavailable: {}",
-                    host_workspace_root.display()
-                )
-            })?;
-        return Ok(dest_root);
+        anyhow::bail!(
+            "host workspace root is unavailable for sandbox materialization: {}",
+            host_workspace_root.display()
+        );
     }
 
     let (copy_root, _staging_guard) =
@@ -695,7 +690,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure_workspace_root_from_host_copy_uses_empty_root_when_host_workspace_is_missing() {
+    async fn ensure_workspace_root_from_host_copy_fails_when_host_workspace_is_missing() {
         let _env_lock = SANDBOX_CLI_ENV_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
@@ -734,21 +729,18 @@ mod tests {
             vcs_kind: Some(ctx_core::models::VcsKind::Git),
         };
 
-        let resolved = ensure_workspace_root_from_host_copy(temp.path(), &workspace)
+        let err = ensure_workspace_root_from_host_copy(temp.path(), &workspace)
             .await
-            .expect("resolve workspace root");
-        assert_eq!(
-            resolved,
-            PathBuf::from(crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT)
-        );
+            .expect_err("missing host workspace should fail");
+        assert!(format!("{err:#}").contains("host workspace root is unavailable"));
 
         let log = fs::read_to_string(&log_path).expect("read sandbox cli log");
-        assert!(log.contains("chmod 0777"));
-        assert!(log.contains("find \"$1\" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +"));
-        assert!(log.contains("id -u"));
-        assert!(log.contains("id -g"));
-        assert!(log.contains("exec --interactive --user root"));
-        assert!(log.contains("chown 502:20 /ctx/ws"));
+        assert!(!log.contains("chmod 0777"));
+        assert!(!log.contains("find \"$1\" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +"));
+        assert!(!log.contains("id -u"));
+        assert!(!log.contains("id -g"));
+        assert!(!log.contains("exec --interactive --user root"));
+        assert!(!log.contains("chown 502:20 /ctx/ws"));
         assert!(!log.contains(" cp "));
 
         match old_cli {
@@ -811,10 +803,9 @@ mod tests {
         #[cfg(target_os = "macos")]
         {
             assert_eq!(program, "bsdtar");
-            assert!(args.starts_with(&[
-                "--format=ustar".to_string(),
-                "--no-mac-metadata".to_string(),
-            ]));
+            assert!(
+                args.starts_with(&["--format=pax".to_string(), "--no-mac-metadata".to_string(),])
+            );
         }
         #[cfg(not(target_os = "macos"))]
         {

@@ -274,6 +274,43 @@ fn materialize_writable_rootfs_image_preserves_small_rootfs_size() {
 }
 
 #[test]
+fn shared_vm_cloud_init_seed_digest_changes_when_payload_inputs_change() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-cloud-init-seed-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+    let guest_agent_bytes = b"guest-agent-v1";
+    let meta_v1 = render_shared_vm_cloud_init_meta_data(guest_agent_bytes, None, "sha-one");
+    let user_v1 = render_shared_vm_cloud_init_user_data(
+        &temp,
+        guest_agent_bytes,
+        None,
+        &temp.join("payloads").join("container-stack.tar.gz"),
+        "sha-one",
+    );
+    let network = render_shared_vm_cloud_init_network_config();
+    let digest_v1 = shared_vm_cloud_init_seed_digest(&meta_v1, &user_v1, &network);
+
+    let meta_v2 = render_shared_vm_cloud_init_meta_data(guest_agent_bytes, None, "sha-two");
+    let user_v2 = render_shared_vm_cloud_init_user_data(
+        &temp,
+        guest_agent_bytes,
+        None,
+        &temp.join("payloads").join("container-stack.tar.gz"),
+        "sha-two",
+    );
+    let digest_v2 = shared_vm_cloud_init_seed_digest(&meta_v2, &user_v2, &network);
+
+    assert_ne!(digest_v1, digest_v2);
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
 fn materialize_data_disk_image_initializes_sparse_guest_data_disk() {
     let temp = PathBuf::from("/tmp").join(format!(
         "ctxavf-data-disk-{}-{}",

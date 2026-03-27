@@ -131,7 +131,9 @@ impl LaunchPrewarmCoordinator {
         requires_launch_ready: bool,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<bool> {
-        let task = self.runtime_task_if_running(settings, requires_launch_ready).await;
+        let task = self
+            .runtime_task_if_running(settings, requires_launch_ready)
+            .await;
         let Some(task) = task else {
             return Ok(false);
         };
@@ -326,25 +328,24 @@ impl PrewarmJobRegistry {
     ) -> Option<Arc<SharedPrewarmLaunchJob>> {
         let target = harness_runtime::runtime_prewarm_target(&settings.container);
         match requested_scope {
-            RuntimePrewarmScope::Runtime => {
-                self.running
-                    .get(&PrewarmLaunchJobKey::All {
-                        target: target.clone(),
-                    })
-                    .cloned()
-                    .or_else(|| {
-                        self.running
-                            .get(&PrewarmLaunchJobKey::LaunchReady {
-                                target: target.clone(),
-                            })
-                            .cloned()
-                    })
-                    .or_else(|| {
-                        self.running
-                            .get(&PrewarmLaunchJobKey::Runtime { target })
-                            .cloned()
-                    })
-            }
+            RuntimePrewarmScope::Runtime => self
+                .running
+                .get(&PrewarmLaunchJobKey::All {
+                    target: target.clone(),
+                })
+                .cloned()
+                .or_else(|| {
+                    self.running
+                        .get(&PrewarmLaunchJobKey::LaunchReady {
+                            target: target.clone(),
+                        })
+                        .cloned()
+                })
+                .or_else(|| {
+                    self.running
+                        .get(&PrewarmLaunchJobKey::Runtime { target })
+                        .cloned()
+                }),
             RuntimePrewarmScope::LaunchReady => self
                 .running
                 .get(&PrewarmLaunchJobKey::All {
@@ -358,9 +359,7 @@ impl PrewarmJobRegistry {
                 }),
             RuntimePrewarmScope::All => self
                 .running
-                .get(&PrewarmLaunchJobKey::All {
-                    target,
-                })
+                .get(&PrewarmLaunchJobKey::All { target })
                 .cloned(),
             RuntimePrewarmScope::Builder => self
                 .running
@@ -368,9 +367,7 @@ impl PrewarmJobRegistry {
                 .cloned()
                 .or_else(|| {
                     self.running
-                        .get(&PrewarmLaunchJobKey::All {
-                            target,
-                        })
+                        .get(&PrewarmLaunchJobKey::All { target })
                         .cloned()
                 }),
         }
@@ -522,11 +519,9 @@ fn runtime_task_keys(
 ) -> Vec<SharedWarmupKey> {
     let target = harness_runtime::runtime_prewarm_target(&settings.container);
     if requires_launch_ready {
-        vec![
-            SharedWarmupKey::LaunchReady {
-                target: target.clone(),
-            },
-        ]
+        vec![SharedWarmupKey::LaunchReady {
+            target: target.clone(),
+        }]
     } else {
         vec![
             SharedWarmupKey::LaunchReady {
