@@ -171,6 +171,32 @@ sha256_file() {
   fi
 }
 
+compute_runtime_version_suffix() {
+  local ubuntu_arch="$1"
+  local rootfs_sha="$2"
+  local kernel_sha="$3"
+  local initrd_sha="$4"
+  local guest_agent_sha="$5"
+  local egress_proxy_sha="$6"
+  local container_stack_sha="$7"
+  local kernel_cmdline_value="$8"
+  local combined
+  combined="$(printf '%s\n' \
+    "ubuntu_arch=$ubuntu_arch" \
+    "rootfs=$rootfs_sha" \
+    "kernel=$kernel_sha" \
+    "initrd=$initrd_sha" \
+    "guest_agent=$guest_agent_sha" \
+    "egress_proxy=$egress_proxy_sha" \
+    "container_stack=$container_stack_sha" \
+    "kernel_cmdline=$kernel_cmdline_value")"
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "$(printf '%s' "$combined" | sha256sum | awk '{print substr(tolower($1), 1, 12)}')"
+  else
+    printf '%s' "$(printf '%s' "$combined" | shasum -a 256 | awk '{print substr(tolower($1), 1, 12)}')"
+  fi
+}
+
 lookup_expected_sha256() {
   local sums_file="$1"
   local filename="$2"
@@ -348,6 +374,8 @@ container_stack_url=$container_stack_url
 container_stack_sha256_url=$container_stack_sha256_url
 rootfs_sha256_url=$rootfs_sha256_url
 unpacked_sha256_url=$unpacked_sha256_url
+runtime_version_strategy=artifact-digests
+runtime_version_inputs=rootfs,kernel,initrd,guest-agent,egress-proxy,container-stack,kernel-cmdline
 EOF
   exit 0
 fi
@@ -413,8 +441,21 @@ rootfs_image="$tmp_root/rootfs.raw"
 rootfs_raw_sha256="$(sha256_file "$rootfs_image")"
 kernel_sha256="$(sha256_file "$kernel_path")"
 initrd_sha256="$(sha256_file "$initrd_path")"
+guest_agent_sha256="$(sha256_file "$guest_agent_path")"
+egress_proxy_sha256="$(sha256_file "$egress_proxy_path")"
 container_stack_sha256="$(sha256_file "$container_stack_archive_curated")"
-runtime_version="ubuntu-noble-${ubuntu_arch}-${rootfs_raw_sha256:0:12}"
+runtime_version_suffix="$(
+  compute_runtime_version_suffix \
+    "$ubuntu_arch" \
+    "$rootfs_raw_sha256" \
+    "$kernel_sha256" \
+    "$initrd_sha256" \
+    "$guest_agent_sha256" \
+    "$egress_proxy_sha256" \
+    "$container_stack_sha256" \
+    "$kernel_cmdline"
+)"
+runtime_version="ubuntu-noble-${ubuntu_arch}-${runtime_version_suffix}"
 
 install -m 0644 "$kernel_path" "$runtime_dir/helpers/kernel"
 install -m 0644 "$initrd_path" "$runtime_dir/helpers/initrd"
@@ -436,6 +477,8 @@ source-initrd=$initrd_url
 rootfs-sha256=$rootfs_raw_sha256
 kernel-sha256=$kernel_sha256
 initrd-sha256=$initrd_sha256
+guest-agent-sha256=$guest_agent_sha256
+egress-proxy-sha256=$egress_proxy_sha256
 kernel-cmdline=$kernel_cmdline
 rootfs-format=raw
 guest-agent-preinstalled=false

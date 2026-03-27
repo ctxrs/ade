@@ -610,7 +610,15 @@ impl ExecutionSetupCoordinator {
                     } else {
                         match self.startup_runtime_state(&settings.container).await {
                             Ok((machine_ready, image_present)) => {
-                                if !machine_ready || !image_present {
+                                let ready = match settings.container.runtime {
+                                    crate::settings::ContainerRuntimeKind::NativeContainer => {
+                                        machine_ready && image_present
+                                    }
+                                    crate::settings::ContainerRuntimeKind::SharedVmContainer => {
+                                        image_present
+                                    }
+                                };
+                                if !ready {
                                     let message = if machine_ready {
                                         format!(
                                             "runtime prewarm completed but runtime target '{runtime_target}' is still unavailable in the local sandbox runtime"
@@ -647,6 +655,11 @@ impl ExecutionSetupCoordinator {
                     let ready_message = if shared_job.runtime_requested() {
                         if shared_job.requires_launch_ready_runtime() {
                             "sandbox runtime is launch-ready"
+                        } else if matches!(
+                            settings.container.runtime,
+                            crate::settings::ContainerRuntimeKind::SharedVmContainer
+                        ) {
+                            "sandbox runtime artifacts are ready"
                         } else {
                             "container runtime is ready"
                         }

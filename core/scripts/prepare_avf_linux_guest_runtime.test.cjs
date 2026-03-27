@@ -58,6 +58,11 @@ test("prepare_avf_linux_guest_runtime.sh resolves official Ubuntu inputs in dry-
   assert.match(output, /container_stack_sha256_url=.*\/SHA256SUMS/);
   assert.match(output, /rootfs_sha256_url=.*\/SHA256SUMS/);
   assert.match(output, /unpacked_sha256_url=.*\/unpacked\/SHA256SUMS/);
+  assert.match(output, /runtime_version_strategy=artifact-digests/);
+  assert.match(
+    output,
+    /runtime_version_inputs=rootfs,kernel,initrd,guest-agent,egress-proxy,container-stack,kernel-cmdline/,
+  );
 
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });

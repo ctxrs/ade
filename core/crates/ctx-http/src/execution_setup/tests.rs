@@ -1700,7 +1700,7 @@ async fn runtime_prewarm_errors_when_only_startup_artifacts_were_warmed() {
 }
 
 #[tokio::test]
-async fn compute_prewarm_gate_marks_avf_linux_runtime_ready() {
+async fn compute_prewarm_gate_keeps_avf_runtime_needing_prewarm_until_launch_ready() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_helper_shim(data_dir.path());
@@ -1731,18 +1731,18 @@ async fn compute_prewarm_gate_marks_avf_linux_runtime_ready() {
         .compute_prewarm_gate(&settings.container)
         .await
         .expect("compute AVF prewarm gate");
-    assert!(gate.machine_ready);
+    assert!(!gate.machine_ready);
     assert!(gate.image_present);
     assert!(!gate.image_ref_changed);
     assert!(!gate.bundled_image_digest_changed);
-    assert!(!gate.needs_prewarm);
+    assert!(gate.needs_prewarm);
     assert_eq!(gate.bundled_image_fingerprint, None);
 
     let runtime_state = coordinator
         .startup_runtime_state(&settings.container)
         .await
         .expect("read AVF runtime state");
-    assert_eq!(runtime_state, (true, true));
+    assert_eq!(runtime_state, (false, true));
 
     for server in servers {
         server.abort();
@@ -1779,13 +1779,14 @@ async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtim
 
     assert_eq!(terminal.state, ExecutionLaunchState::Ready);
     assert!(terminal.logs.iter().any(|line| {
-        line.phase == HarnessSetupPhase::Ready && line.message == "container runtime is ready"
+        line.phase == HarnessSetupPhase::Ready
+            && line.message == "sandbox runtime artifacts are ready"
     }));
     let runtime_state = coordinator
         .startup_runtime_state(&settings.container)
         .await
         .expect("read AVF runtime state");
-    assert_eq!(runtime_state, (true, true));
+    assert_eq!(runtime_state, (false, true));
     let launch_ready =
         crate::harness_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
             .await
@@ -1840,6 +1841,18 @@ async fn runtime_prewarm_launch_ready_scope_starts_shared_vm_for_avf_linux_runti
         launch_ready,
         "launch-ready scope should boot the shared AVF VM"
     );
+    let runtime_state = coordinator
+        .startup_runtime_state(&settings.container)
+        .await
+        .expect("read AVF startup runtime state");
+    assert_eq!(runtime_state, (true, true));
+    let gate = coordinator
+        .compute_prewarm_gate(&settings.container)
+        .await
+        .expect("compute AVF prewarm gate");
+    assert!(gate.machine_ready);
+    assert!(gate.image_present);
+    assert!(!gate.needs_prewarm);
 
     for server in servers {
         server.abort();
@@ -2519,6 +2532,44 @@ async fn startup_prewarm_enters_shared_runtime_warmup_when_machine_is_not_ready(
     assert_eq!(
         *ops.steps.lock().unwrap_or_else(|err| err.into_inner()),
         vec!["runtime"]
+    );
+}
+
+#[tokio::test]
+async fn startup_prewarm_uses_launch_ready_scope_for_avf_linux_runtime() {
+    let _serial = env_var_test_lock().lock().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let helper_path = write_avf_linux_helper_shim(data_dir.path());
+    let _helper = EnvVarGuard::set(
+        crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
+        &helper_path.to_string_lossy(),
+    );
+    save_test_execution_settings(
+        data_dir.path(),
+        ExecutionSettings {
+            mode: ExecutionMode::Sandbox,
+            container: crate::settings::ContainerExecutionSettings {
+                runtime: ContainerRuntimeKind::SharedVmContainer,
+                ..Default::default()
+            },
+        },
+    )
+    .await;
+
+    let ops = Arc::new(RecordingStartupWarmupOperations::default());
+    let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
+
+    coordinator.run_startup_prewarm().await;
+
+    let snapshot = coordinator.startup_status().await;
+    assert_eq!(snapshot.state, StartupPrewarmState::Ready);
+    assert!(snapshot.needs_prewarm);
+    assert!(!snapshot.machine_ready);
+    assert!(!snapshot.image_present);
+    assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        *ops.steps.lock().unwrap_or_else(|err| err.into_inner()),
+        vec!["launch_ready"]
     );
 }
 
