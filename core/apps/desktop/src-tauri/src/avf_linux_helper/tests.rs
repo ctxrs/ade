@@ -174,6 +174,9 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
     assert!(user_data.contains("\"$mount_root/home\""));
     assert!(user_data.contains("\"$mount_root/cache\""));
     assert!(user_data.contains("\"$mount_root/tmp\""));
+    assert!(user_data.contains(".ctx-avf-data-disk-ready"));
+    assert!(user_data.contains("\"$mount_root/system/containerd\""));
+    assert!(user_data.contains("\"$mount_root/system/buildkit\""));
     assert!(user_data.contains("mount --bind \"$mount_root/system/containerd\" /var/lib/containerd"));
     assert!(user_data.contains("mount --bind \"$mount_root/system/buildkit\" /var/lib/buildkit"));
     assert!(user_data.contains("StandardOutput=journal+console"));
@@ -392,6 +395,53 @@ fn resolve_shared_vm_memory_balloon_action_requests_emergency_stop_at_floor() {
             current_target_bytes: gibibytes(4),
             floor_bytes: gibibytes(4),
         }
+    );
+}
+
+#[test]
+fn resolve_shared_vm_memory_watchdog_sample_action_requires_confirmed_emergency_pressure() {
+    let first = resolve_shared_vm_memory_watchdog_sample_action(0, gibibytes(0));
+    assert_eq!(
+        first,
+        SharedVmMemoryWatchdogSampleAction::NoAction {
+            next_consecutive_emergency_samples: 1,
+        }
+    );
+
+    let second = resolve_shared_vm_memory_watchdog_sample_action(1, gibibytes(0));
+    assert_eq!(
+        second,
+        SharedVmMemoryWatchdogSampleAction::RequestStop {
+            next_consecutive_emergency_samples: 2,
+            available_host_bytes: gibibytes(0),
+        }
+    );
+}
+
+#[test]
+fn resolve_shared_vm_memory_watchdog_sample_action_resets_after_host_recovers() {
+    let action = resolve_shared_vm_memory_watchdog_sample_action(1, gibibytes(2));
+    assert_eq!(
+        action,
+        SharedVmMemoryWatchdogSampleAction::NoAction {
+            next_consecutive_emergency_samples: 0,
+        }
+    );
+}
+
+#[test]
+fn resolve_shared_vm_memory_watchdog_exit_action_models_sigterm_and_sigkill_escalation() {
+    assert_eq!(
+        resolve_shared_vm_memory_watchdog_exit_action(true, false),
+        SharedVmMemoryWatchdogExitAction::OwnerExitedAfterRequest
+    );
+    assert_eq!(
+        resolve_shared_vm_memory_watchdog_exit_action(false, true),
+        SharedVmMemoryWatchdogExitAction::OwnerExitedAfterSigterm
+    );
+    assert_eq!(
+        resolve_shared_vm_memory_watchdog_exit_action(false, false),
+        SharedVmMemoryWatchdogExitAction::EscalateToSigkill
     );
 }
 

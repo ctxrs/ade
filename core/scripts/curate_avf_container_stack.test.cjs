@@ -57,20 +57,56 @@ test("curate_avf_container_stack.sh keeps the required guest stack subset only",
     .trim()
     .split("\n")
     .filter(Boolean)
+    .filter((entry) => !entry.endsWith("/"))
     .sort();
 
-  for (const entry of requiredEntries) {
-    assert.ok(
-      listing.includes(`./${entry}`),
-      `expected curated archive to keep ${entry}`,
-    );
+  assert.deepEqual(
+    listing,
+    requiredEntries.map((entry) => `./${entry}`).sort(),
+    "expected curated archive to contain exactly the required guest stack inventory",
+  );
+
+  fs.rmSync(tmpRoot, { recursive: true, force: true });
+});
+
+test("curate_avf_container_stack.sh fails closed when a required entry is missing", () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-avf-curate-stack-missing-"));
+  const sourceRoot = path.join(tmpRoot, "source");
+  const inputArchive = path.join(tmpRoot, "nerdctl-full.tar.gz");
+  const outputArchive = path.join(tmpRoot, "container-stack.tar.gz");
+  const presentEntries = [
+    "bin/buildctl",
+    "bin/buildkitd",
+    "bin/containerd",
+    "bin/containerd-shim-runc-v2",
+    "bin/ctr",
+    "bin/nerdctl",
+    "libexec/cni/bridge",
+    "libexec/cni/firewall",
+    "libexec/cni/host-local",
+    "libexec/cni/loopback",
+    "libexec/cni/portmap",
+    "libexec/cni/tuning",
+  ];
+
+  for (const entry of presentEntries) {
+    const fullPath = path.join(sourceRoot, entry);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, `${entry}\n`, { mode: 0o755 });
   }
-  for (const entry of extraEntries) {
-    assert.ok(
-      !listing.includes(`./${entry}`),
-      `expected curated archive to drop ${entry}`,
-    );
-  }
+
+  execFileSync("tar", ["-czf", inputArchive, "-C", sourceRoot, "."], {
+    stdio: "inherit",
+  });
+
+  assert.throws(
+    () =>
+      execFileSync("bash", [scriptPath, "--input", inputArchive, "--output", outputArchive], {
+        stdio: "pipe",
+        encoding: "utf8",
+      }),
+    /required container-stack entry is missing: bin\/runc/,
+  );
 
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
