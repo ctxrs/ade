@@ -165,13 +165,14 @@ pub(crate) fn apply_data_plane_to_execution_settings(
     let mut settings = base.clone();
     settings.mode = data_plane.execution_mode.clone();
     if let Some(binding) = data_plane.binding.as_ref() {
-        if let Some(raw) = binding.execution_settings_json.as_deref() {
-            return serde_json::from_str::<ExecutionSettings>(raw).map_err(|err| {
-                anyhow!(
-                    "sandbox binding {} had invalid execution settings snapshot: {err:#}",
-                    binding.worktree_id.0
-                )
-            });
+        if binding.execution_settings_json.is_some() {
+            return crate::api::tasks::execution::sandbox_execution_settings_from_binding(binding)
+                .map_err(|err| {
+                    anyhow!(
+                        "sandbox binding {} had invalid execution settings snapshot: {err:#}",
+                        binding.worktree_id.0
+                    )
+                });
         }
         settings.mode = ExecutionMode::Sandbox;
         settings.container.runtime = binding_runtime_kind(binding);
@@ -319,5 +320,53 @@ mod tests {
             applied.container.mount_mode,
             ContainerMountMode::DiskIsolated
         );
+    }
+
+    #[test]
+    fn binding_snapshot_with_unknown_schema_version_fails_closed() {
+        let data_plane = WorktreeDataPlane {
+            binding: Some(SandboxBinding {
+                worktree_id: WorktreeId(Uuid::new_v4()),
+                workspace_id: WorkspaceId(Uuid::new_v4()),
+                runtime_family: SandboxRuntimeFamily::SharedVmContainer,
+                profile: ctx_core::models::SandboxProfile::Standard,
+                live_workspace_root: "/ctx/ws".to_string(),
+                live_worktree_root: "/ctx/wt".to_string(),
+                execution_settings_json: Some(
+                    serde_json::json!({
+                        "schema_version": 99,
+                        "execution_settings": {
+                            "mode": "sandbox",
+                            "container": {
+                                "runtime": "shared_vm_container",
+                                "mount_mode": "disk_isolated"
+                            }
+                        }
+                    })
+                    .to_string(),
+                ),
+                container_name: Some("ctx-harness-test".to_string()),
+                host_projection_root: None,
+                created_at: Utc::now(),
+            }),
+            workspace: Workspace {
+                id: WorkspaceId(Uuid::new_v4()),
+                name: "ws".to_string(),
+                root_path: "/host/ws".to_string(),
+                created_at: Utc::now(),
+                vcs_kind: None,
+            },
+            execution_mode: ExecutionMode::Sandbox,
+            live_workspace_root: PathBuf::from("/ctx/ws"),
+            live_worktree_root: PathBuf::from("/ctx/wt"),
+        };
+
+        let err =
+            apply_data_plane_to_execution_settings(&ExecutionSettings::default(), &data_plane)
+                .expect_err("unknown binding schema version should fail closed");
+
+        assert!(err
+            .to_string()
+            .contains("unsupported sandbox binding execution settings schema version 99"));
     }
 }

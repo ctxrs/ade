@@ -195,6 +195,7 @@ pub(super) fn materialize_guest_worktree_from_shadow_root(
     host_shadow_root: &Path,
     guest_root: &Path,
 ) -> Result<()> {
+    ensure_shadow_root_ready_for_guest_import(host_shadow_root)?;
     let control_socket = shared_vm_control_socket_path(data_root);
     let guest_root_parent = guest_root.parent().ok_or_else(|| {
         anyhow::anyhow!(
@@ -314,6 +315,25 @@ pub(super) fn materialize_guest_worktree_from_shadow_root(
     Ok(())
 }
 
+pub(super) fn ensure_shadow_root_ready_for_guest_import(host_shadow_root: &Path) -> Result<()> {
+    if !host_shadow_root.is_dir() {
+        bail!(
+            "host shadow root is missing before guest rematerialization: {}",
+            host_shadow_root.display()
+        );
+    }
+    let dotgit = host_shadow_root.join(".git");
+    let dotgit_meta =
+        fs::metadata(&dotgit).with_context(|| format!("reading {}", dotgit.display()))?;
+    if !dotgit_meta.is_dir() {
+        bail!(
+            "host shadow root {} must contain a standalone .git directory before guest rematerialization",
+            host_shadow_root.display()
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn best_effort_remove_git_worktree(host_workspace_root: &Path, host_shadow_root: &Path) {
     let _ = Command::new("git")
         .arg("-C")
@@ -393,4 +413,36 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn guest_import_requires_existing_shadow_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let shadow_root = temp.path().join("missing-shadow-root");
+
+        let err = ensure_shadow_root_ready_for_guest_import(&shadow_root)
+            .expect_err("missing shadow root should fail");
+
+        assert!(err
+            .to_string()
+            .contains("host shadow root is missing before guest rematerialization"));
+    }
+
+    #[test]
+    fn guest_import_requires_standalone_git_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let shadow_root = temp.path().join("shadow-root");
+        fs::create_dir_all(&shadow_root).expect("create shadow root");
+
+        let err = ensure_shadow_root_ready_for_guest_import(&shadow_root)
+            .expect_err("shadow root without .git should fail");
+
+        assert!(err
+            .to_string()
+            .contains("must contain a standalone .git directory"));
+    }
 }
