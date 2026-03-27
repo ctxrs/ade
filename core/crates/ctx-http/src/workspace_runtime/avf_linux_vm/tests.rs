@@ -1,5 +1,10 @@
 use super::*;
 use super::helper_wrappers::stop_shared_vm;
+use crate::settings::{ContainerExecutionSettings, ContainerRuntimeKind};
+use crate::workspace_runtime::{
+    SharedSubstrateLifecycleManager, SubstrateShutdownOutcome, SubstrateStartupOutcome,
+    SubstrateStartupSelection,
+};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -181,6 +186,269 @@ else:
     helper
 }
 
+fn install_bundled_runtime_fixture(dir: &Path) -> (EnvGuard, EnvGuard) {
+    let bundle_root = dir.join("bundle");
+    let runtime_root = bundle_root
+        .join("runtimes")
+        .join("avf-linux-guest")
+        .join(format!(
+            "{}/{}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ));
+    let helpers_root = runtime_root.join("helpers");
+    std::fs::create_dir_all(&helpers_root).expect("create bundled runtime helpers");
+    std::fs::write(runtime_root.join("rootfs.raw"), b"rootfs").expect("write bundled rootfs");
+    std::fs::write(helpers_root.join("kernel"), b"kernel").expect("write bundled kernel");
+    std::fs::write(helpers_root.join("initrd"), b"initrd").expect("write bundled initrd");
+    std::fs::write(helpers_root.join("guest-agent"), b"guest-agent")
+        .expect("write bundled guest agent");
+    std::fs::write(helpers_root.join("egress-proxy"), b"egress-proxy")
+        .expect("write bundled egress proxy");
+    std::fs::write(helpers_root.join("container-stack.tar.gz"), b"container-stack")
+        .expect("write bundled container stack");
+
+    let manifest_path = bundle_root.join("manifest.json");
+    std::fs::create_dir_all(manifest_path.parent().expect("bundle manifest parent"))
+        .expect("create bundled manifest parent");
+    std::fs::write(
+        &manifest_path,
+        serde_json::json!({
+            "runtimes": [{
+                "id": AVF_LINUX_GUEST_RUNTIME_ID,
+                "os": std::env::consts::OS,
+                "arch": std::env::consts::ARCH,
+                "version": "bundled-runtime",
+                "root": format!(
+                    "runtimes/{}/{}/{}",
+                    AVF_LINUX_GUEST_RUNTIME_ID,
+                    std::env::consts::OS,
+                    std::env::consts::ARCH
+                ),
+                "bin": "rootfs.raw"
+            }],
+            "providers": [],
+            "images": [],
+            "daemons": []
+        })
+        .to_string(),
+    )
+    .expect("write bundled manifest");
+    let bundle_dir = EnvGuard::set("CTX_BUNDLE_DIR", bundle_root.to_str().unwrap());
+    let bundle_manifest = EnvGuard::set("CTX_BUNDLE_MANIFEST", manifest_path.to_str().unwrap());
+    (bundle_dir, bundle_manifest)
+}
+
+fn write_stateful_lifecycle_helper(dir: &Path) -> (PathBuf, PathBuf) {
+    let helper = dir.join("ctx-avf-linux-helper");
+    let log_path = dir.join("shared-vm-lifecycle.log");
+    let log_path_literal = log_path.display().to_string().replace('\\', "\\\\");
+    let script = r#"#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+
+PROTOCOL_VERSION = 1
+PROTOCOL_SCHEMA = "ctx.avf_linux_helper.v1"
+STATE_FILE = "helper-shared-vm-state.json"
+STATE_JSON = "shared-vm-state.json"
+STATE_LOG = "shared-vm.log"
+LOG_PATH = pathlib.Path("__LOG_PATH__")
+
+def start_scenario():
+    return os.environ.get("CTX_TEST_AVF_START_SCENARIO", "cold_boot")
+
+def stop_mode():
+    return os.environ.get("CTX_TEST_AVF_STOP_MODE", "saved")
+
+def restore_supported():
+    raw = os.environ.get("CTX_TEST_AVF_RESTORE_SUPPORTED", "1").strip().lower()
+    return raw not in ("0", "false", "no")
+
+def vm_root(data_root: str) -> pathlib.Path:
+    return pathlib.Path(data_root) / "avf-linux-vm" / "shared-vm"
+
+def helper_state_path(data_root: str) -> pathlib.Path:
+    return pathlib.Path(data_root) / STATE_FILE
+
+def seed_state():
+    scenario = start_scenario()
+    if scenario == "reuse":
+        return {
+            "state": "running",
+            "saved_state_exists": False,
+            "last_start_outcome": "already_running",
+        }
+    if scenario in ("restore", "restore_failure"):
+        return {
+            "state": "stopped",
+            "saved_state_exists": True,
+            "last_stop_outcome": "saved_state_written",
+        }
+    return {
+        "state": "stopped",
+        "saved_state_exists": False,
+    }
+
+def load_state(data_root: str):
+    path = helper_state_path(data_root)
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    state = seed_state()
+    save_state(data_root, state)
+    return state
+
+def save_state(data_root: str, state):
+    path = helper_state_path(data_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+def payload(data_root: str, state):
+    root = vm_root(data_root)
+    logs_root = root / "logs"
+    result = {
+        "protocol_version": PROTOCOL_VERSION,
+        "protocol_schema": PROTOCOL_SCHEMA,
+        "state": state["state"],
+        "vm_root": str(root),
+        "logs_root": str(logs_root),
+        "state_path": str(root / STATE_JSON),
+        "log_path": str(root / STATE_LOG),
+        "saved_state_exists": bool(state.get("saved_state_exists", False)),
+        "simulated": True,
+        "notes": [f"scenario:{start_scenario()}"],
+    }
+    if state.get("saved_state_exists"):
+        result["saved_state_path"] = str(root / "saved-machine-state.vzvmsave")
+    for key in (
+        "runtime_root",
+        "rootfs_image",
+        "kernel_path",
+        "initrd_path",
+        "runtime_version",
+        "transition_status",
+        "last_start_outcome",
+        "last_stop_outcome",
+        "last_restore_error",
+        "last_save_error",
+    ):
+        value = state.get(key)
+        if value is not None:
+            result[key] = value
+    return result
+
+def log_invocation():
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with LOG_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(" ".join(sys.argv[1:]) + "\n")
+
+log_invocation()
+cmd = sys.argv[1]
+if cmd == "probe":
+    print(json.dumps({
+        "protocol_version": PROTOCOL_VERSION,
+        "protocol_schema": PROTOCOL_SCHEMA,
+        "helper_version": "stateful-test-helper",
+        "host_os": "macos",
+        "host_arch": "aarch64",
+        "supported": True,
+        "save_restore_supported": restore_supported(),
+        "rosetta_supported": True,
+        "notes": ["ready"],
+    }))
+elif cmd == "prepare-runtime-layout":
+    data_root = sys.argv[2]
+    root = vm_root(data_root)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "logs").mkdir(exist_ok=True)
+    load_state(data_root)
+    print(json.dumps({
+        "protocol_version": PROTOCOL_VERSION,
+        "protocol_schema": PROTOCOL_SCHEMA,
+        "vm_root": str(root),
+        "logs_root": str(root / "logs"),
+        "state_path": str(root / STATE_JSON),
+        "layout_status": "prepared",
+        "notes": [],
+    }))
+elif cmd == "shared-vm-state" or cmd == "workspace-vm-state":
+    data_root = sys.argv[2]
+    print(json.dumps(payload(data_root, load_state(data_root))))
+elif cmd == "start-shared-vm" or cmd == "start-workspace-vm":
+    data_root = sys.argv[2]
+    runtime_root, rootfs_image, kernel_path, initrd_path, runtime_version = sys.argv[3:8]
+    state = load_state(data_root)
+    scenario = start_scenario()
+    if scenario == "restore":
+        outcome = "restored"
+        restore_error = None
+    elif scenario == "restore_failure":
+        outcome = "cold_boot_after_restore_failure"
+        restore_error = "restore failed"
+    elif scenario == "reuse":
+        outcome = "already_running"
+        restore_error = None
+    else:
+        outcome = "cold_boot"
+        restore_error = None
+    state.update({
+        "state": "running",
+        "saved_state_exists": False,
+        "runtime_root": runtime_root,
+        "rootfs_image": rootfs_image,
+        "kernel_path": kernel_path,
+        "initrd_path": initrd_path,
+        "runtime_version": runtime_version,
+        "transition_status": "scaffolded",
+        "last_start_outcome": outcome,
+        "last_restore_error": restore_error,
+    })
+    save_state(data_root, state)
+    print(json.dumps(payload(data_root, state)))
+elif cmd == "stop-shared-vm" or cmd == "stop-workspace-vm":
+    data_root = sys.argv[2]
+    state = load_state(data_root)
+    mode = stop_mode()
+    if mode == "unsupported":
+        stop_outcome = "cold_stop_save_unsupported"
+        save_error = None
+        saved_state_exists = False
+    elif mode == "failure":
+        stop_outcome = "cold_stop_after_save_failure"
+        save_error = "save failed"
+        saved_state_exists = False
+    else:
+        stop_outcome = "saved_state_written"
+        save_error = None
+        saved_state_exists = True
+    state.update({
+        "state": "stopped",
+        "saved_state_exists": saved_state_exists,
+        "transition_status": "stopped",
+        "last_stop_outcome": stop_outcome,
+        "last_save_error": save_error,
+    })
+    save_state(data_root, state)
+    print(json.dumps(payload(data_root, state)))
+else:
+    print(f"unsupported command: {cmd}", file=sys.stderr)
+    sys.exit(1)
+"#
+    .replace("__LOG_PATH__", &log_path_literal);
+    std::fs::write(&helper, script).expect("write stateful lifecycle helper");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&helper)
+            .expect("stateful lifecycle helper metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&helper, perms).expect("chmod stateful lifecycle helper");
+    }
+    (helper, log_path)
+}
+
 fn write_guest_exec_helper(dir: &Path) -> (PathBuf, PathBuf) {
     let helper = dir.join("ctx-avf-linux-helper");
     let capture_file = dir.join("guest-exec-capture.json");
@@ -360,6 +628,11 @@ fn runtime_archive_bytes() -> Vec<u8> {
     std::fs::write(root.join("helpers").join("egress-proxy"), b"egress-proxy\n")
         .expect("write egress proxy");
     std::fs::write(
+        root.join("helpers").join("container-stack.tar.gz"),
+        b"container-stack\n",
+    )
+    .expect("write container stack");
+    std::fs::write(
         root.join("version.txt"),
         "version=managed-runtime\nubuntu-release=noble\nubuntu-arch=arm64\n",
     )
@@ -417,6 +690,13 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+fn shared_vm_settings() -> ContainerExecutionSettings {
+    ContainerExecutionSettings {
+        runtime: ContainerRuntimeKind::SharedVmContainer,
+        ..ContainerExecutionSettings::default()
+    }
 }
 
 #[test]
@@ -481,6 +761,13 @@ async fn managed_avf_linux_runtime_downloads_archive_and_helpers() {
                     sha256: helper_sha.clone(),
                 },
             ),
+            (
+                AVF_LINUX_CONTAINER_STACK_HELPER.to_string(),
+                bundled_assets::ManagedArtifactSource {
+                    uri: helper_url.to_string(),
+                    sha256: helper_sha.clone(),
+                },
+            ),
         ]),
     };
 
@@ -512,6 +799,7 @@ async fn managed_avf_linux_runtime_downloads_archive_and_helpers() {
         .as_ref()
         .expect("egress proxy helper should exist");
     assert!(egress_proxy_path.exists());
+    assert!(runtime.container_stack_path.exists());
 
     let archive_path = runtime_assets::managed_avf_linux_archive_path(temp.path(), &source);
     assert!(archive_path.exists());
@@ -538,6 +826,10 @@ async fn managed_avf_linux_runtime_downloads_archive_and_helpers() {
     );
     assert_eq!(
         tokio::fs::read(egress_proxy_path).await.unwrap(),
+        helper_bytes
+    );
+    assert_eq!(
+        tokio::fs::read(&runtime.container_stack_path).await.unwrap(),
         helper_bytes
     );
 
@@ -576,6 +868,14 @@ async fn managed_avf_linux_runtime_downloads_archive_and_helpers() {
             .mode()
             & 0o777;
         assert_eq!(egress_proxy_mode, 0o755);
+
+        let container_stack_mode = tokio::fs::metadata(&runtime.container_stack_path)
+            .await
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(container_stack_mode, 0o644);
     }
 }
 
@@ -599,11 +899,13 @@ async fn ensure_avf_linux_runtime_prefers_bundled_guest_runtime_over_managed_sou
     let initrd_path = helpers_root.join("initrd");
     let guest_agent_path = helpers_root.join("guest-agent");
     let egress_proxy_path = helpers_root.join("egress-proxy");
+    let container_stack_path = helpers_root.join("container-stack.tar.gz");
     std::fs::write(&rootfs_path, b"rootfs").unwrap();
     std::fs::write(&kernel_path, b"kernel").unwrap();
     std::fs::write(&initrd_path, b"initrd").unwrap();
     std::fs::write(&guest_agent_path, b"guest-agent").unwrap();
     std::fs::write(&egress_proxy_path, b"egress-proxy").unwrap();
+    std::fs::write(&container_stack_path, b"container-stack").unwrap();
     let manifest_path = bundle_root.join("manifest.json");
     std::fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
     std::fs::write(
@@ -667,6 +969,7 @@ async fn ensure_avf_linux_runtime_prefers_bundled_guest_runtime_over_managed_sou
         runtime.egress_proxy_path.as_deref(),
         Some(egress_proxy_path.as_path())
     );
+    assert_eq!(runtime.container_stack_path, container_stack_path);
 }
 
 #[test]
@@ -691,6 +994,7 @@ fn helper_lifecycle_commands_round_trip_structured_state() {
         initrd_path: temp.path().join("runtime/helpers/initrd"),
         guest_agent_path: Some(temp.path().join("runtime/helpers/guest-agent")),
         egress_proxy_path: Some(temp.path().join("runtime/helpers/egress-proxy")),
+        container_stack_path: temp.path().join("runtime/helpers/container-stack.tar.gz"),
         version: "test-runtime".to_string(),
         managed: false,
     };
@@ -715,6 +1019,171 @@ fn helper_lifecycle_commands_round_trip_structured_state() {
     assert_eq!(
         state_after_stop.state,
         AvfLinuxSharedVmLifecycleState::Stopped
+    );
+}
+
+#[tokio::test]
+async fn shared_substrate_lifecycle_manager_reports_cold_boot_startup() {
+    let _helper_lock = helper_env_test_lock().lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let (helper, log_path) = write_stateful_lifecycle_helper(temp.path());
+    let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
+    let (_bundle_dir, _bundle_manifest) = install_bundled_runtime_fixture(temp.path());
+    let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "cold_boot");
+
+    let record = SharedSubstrateLifecycleManager::new(temp.path())
+        .ensure_shared_runtime_ready(&shared_vm_settings(), None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        record.startup_selection,
+        Some(SubstrateStartupSelection::ColdBoot)
+    );
+    assert_eq!(
+        record.startup_outcome,
+        Some(SubstrateStartupOutcome::ColdBoot)
+    );
+    let log = std::fs::read_to_string(log_path).unwrap();
+    assert!(
+        log.lines().any(|line| line.starts_with("start-workspace-vm ")),
+        "expected cold boot start invocation in log:\n{log}"
+    );
+}
+
+#[tokio::test]
+async fn shared_substrate_lifecycle_manager_reuses_running_vm_without_start() {
+    let _helper_lock = helper_env_test_lock().lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let (helper, log_path) = write_stateful_lifecycle_helper(temp.path());
+    let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
+    let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "reuse");
+
+    let record = SharedSubstrateLifecycleManager::new(temp.path())
+        .ensure_shared_runtime_ready(&shared_vm_settings(), None)
+        .await
+        .unwrap();
+
+    assert_eq!(record.startup_selection, Some(SubstrateStartupSelection::Reuse));
+    assert_eq!(record.startup_outcome, Some(SubstrateStartupOutcome::Reuse));
+    let log = std::fs::read_to_string(log_path).unwrap();
+    assert!(
+        !log.lines()
+            .any(|line| line.starts_with("start-workspace-vm ")),
+        "reuse path should not start the VM:\n{log}"
+    );
+}
+
+#[tokio::test]
+async fn shared_substrate_lifecycle_manager_reports_restore_startup() {
+    let _helper_lock = helper_env_test_lock().lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let (helper, _log_path) = write_stateful_lifecycle_helper(temp.path());
+    let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
+    let (_bundle_dir, _bundle_manifest) = install_bundled_runtime_fixture(temp.path());
+    let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "restore");
+    let _restore_supported = EnvGuard::set("CTX_TEST_AVF_RESTORE_SUPPORTED", "1");
+
+    let record = SharedSubstrateLifecycleManager::new(temp.path())
+        .ensure_shared_runtime_ready(&shared_vm_settings(), None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        record.startup_selection,
+        Some(SubstrateStartupSelection::Restore)
+    );
+    assert_eq!(
+        record.startup_outcome,
+        Some(SubstrateStartupOutcome::Restore)
+    );
+}
+
+#[tokio::test]
+async fn shared_substrate_lifecycle_manager_reports_restore_failure_as_cold_boot_after_restore_failure(
+) {
+    let _helper_lock = helper_env_test_lock().lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let (helper, _log_path) = write_stateful_lifecycle_helper(temp.path());
+    let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
+    let (_bundle_dir, _bundle_manifest) = install_bundled_runtime_fixture(temp.path());
+    let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "restore_failure");
+    let _restore_supported = EnvGuard::set("CTX_TEST_AVF_RESTORE_SUPPORTED", "1");
+
+    let record = SharedSubstrateLifecycleManager::new(temp.path())
+        .ensure_shared_runtime_ready(&shared_vm_settings(), None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        record.startup_selection,
+        Some(SubstrateStartupSelection::Restore)
+    );
+    assert_eq!(
+        record.startup_outcome,
+        Some(SubstrateStartupOutcome::ColdBootAfterRestoreFailure)
+    );
+}
+
+#[tokio::test]
+async fn shared_substrate_lifecycle_manager_reports_saved_shutdown() {
+    let _helper_lock = helper_env_test_lock().lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let (helper, log_path) = write_stateful_lifecycle_helper(temp.path());
+    let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
+    let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "reuse");
+    let _stop_mode = EnvGuard::set("CTX_TEST_AVF_STOP_MODE", "saved");
+
+    let record = SharedSubstrateLifecycleManager::new(temp.path())
+        .save_or_stop_shared_runtime(&shared_vm_settings())
+        .await
+        .unwrap();
+
+    assert_eq!(record.shutdown_outcome, Some(SubstrateShutdownOutcome::Saved));
+    let log = std::fs::read_to_string(log_path).unwrap();
+    assert!(
+        log.lines().any(|line| line.starts_with("stop-workspace-vm ")),
+        "expected save-or-stop invocation in log:\n{log}"
+    );
+}
+
+#[tokio::test]
+async fn shared_substrate_lifecycle_manager_maps_unsupported_save_to_cold_stop() {
+    let _helper_lock = helper_env_test_lock().lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let (helper, _log_path) = write_stateful_lifecycle_helper(temp.path());
+    let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
+    let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "reuse");
+    let _stop_mode = EnvGuard::set("CTX_TEST_AVF_STOP_MODE", "unsupported");
+
+    let record = SharedSubstrateLifecycleManager::new(temp.path())
+        .save_or_stop_shared_runtime(&shared_vm_settings())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        record.shutdown_outcome,
+        Some(SubstrateShutdownOutcome::ColdStop)
+    );
+}
+
+#[tokio::test]
+async fn shared_substrate_lifecycle_manager_reports_cold_stop_after_save_failure() {
+    let _helper_lock = helper_env_test_lock().lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let (helper, _log_path) = write_stateful_lifecycle_helper(temp.path());
+    let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
+    let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "reuse");
+    let _stop_mode = EnvGuard::set("CTX_TEST_AVF_STOP_MODE", "failure");
+
+    let record = SharedSubstrateLifecycleManager::new(temp.path())
+        .save_or_stop_shared_runtime(&shared_vm_settings())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        record.shutdown_outcome,
+        Some(SubstrateShutdownOutcome::ColdStopAfterSaveFailure)
     );
 }
 
