@@ -166,7 +166,7 @@ pub(crate) fn apply_data_plane_to_execution_settings(
     settings.mode = data_plane.execution_mode.clone();
     if let Some(binding) = data_plane.binding.as_ref() {
         if binding.execution_settings_json.is_some() {
-            return crate::api::tasks::execution::sandbox_execution_settings_from_binding(binding)
+            return crate::api::tasks::sandbox_execution_settings_from_binding(binding)
                 .map_err(|err| {
                     anyhow!(
                         "sandbox binding {} had invalid execution settings snapshot: {err:#}",

@@ -109,6 +109,32 @@ fn container_machine_memory_profiles_apply_expected_floors_and_caps() {
     );
 }
 
+#[test]
+fn launch_ready_gap_message_distinguishes_shared_vm_substrate_from_image() {
+    assert_eq!(
+        launch_ready_gap_message(
+            ContainerRuntimeKind::SharedVmContainer,
+            "avf-linux",
+            false,
+            false,
+        ),
+        "runtime prewarm completed but shared VM substrate for 'avf-linux' is not launch-ready"
+    );
+    assert_eq!(
+        launch_ready_gap_message(
+            ContainerRuntimeKind::SharedVmContainer,
+            "avf-linux",
+            true,
+            false,
+        ),
+        "runtime prewarm completed but launch image for 'avf-linux' is not present in the shared VM runtime"
+    );
+    assert_eq!(
+        launch_ready_gap_message(ContainerRuntimeKind::NativeContainer, "docker", false, false),
+        "runtime prewarm completed but runtime target 'docker' is not launch-ready"
+    );
+}
+
 fn sample_workspace(tmp: &TempDir) -> Workspace {
     Workspace {
         id: WorkspaceId::new(),

@@ -17,6 +17,9 @@ pub(super) fn build_probe() -> AvfLinuxHelperProbe {
         notes.push(
             "Apple silicon host detected; save/restore and Rosetta-backed Linux guests are available when the runtime and VM configuration support them".to_string(),
         );
+        notes.push(
+            "probe save/restore support is host-level only; the actual AVF VM configuration may still reject save/restore at validation or runtime".to_string(),
+        );
     } else {
         notes.push(
             "Intel Mac host detected; save/restore is expected to remain unavailable".to_string(),

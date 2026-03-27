@@ -209,23 +209,60 @@ pub(crate) async fn selected_runtime_launch_ready(
     data_root: &Path,
     settings: &ContainerExecutionSettings,
 ) -> Result<bool> {
+    let (vm_ready, image_ready) =
+        selected_runtime_launch_readiness_state(data_root, settings).await?;
+    Ok(vm_ready && image_ready)
+}
+
+pub(crate) async fn selected_runtime_launch_readiness_state(
+    data_root: &Path,
+    settings: &ContainerExecutionSettings,
+) -> Result<(bool, bool)> {
     match settings.runtime {
-        ContainerRuntimeKind::NativeContainer => {
-            let (machine_ready, image_present) =
-                selected_runtime_state(data_root, settings).await?;
-            Ok(machine_ready && image_present)
-        }
+        ContainerRuntimeKind::NativeContainer => selected_runtime_state(data_root, settings).await,
         ContainerRuntimeKind::SharedVmContainer => {
             let (helper_ready, runtime_ready) = avf_linux_runtime_state(data_root)?;
             if !helper_ready || !runtime_ready {
-                return Ok(false);
+                return Ok((false, false));
             }
             let shared_vm_state =
                 avf_linux_workspace_vm_state(data_root, WorkspaceId(uuid::Uuid::nil()))?;
-            Ok(matches!(
+            let vm_ready = matches!(
                 shared_vm_state.state,
                 AvfLinuxSharedVmLifecycleState::Running
-            ) && container_image_present(data_root, &resolve_container_image(settings)).await?)
+            );
+            let image_ready = if vm_ready {
+                container_image_present(data_root, &resolve_container_image(settings)).await?
+            } else {
+                false
+            };
+            Ok((vm_ready, image_ready))
+        }
+    }
+}
+
+pub(crate) fn launch_ready_gap_message(
+    runtime_kind: ContainerRuntimeKind,
+    runtime_target: &str,
+    vm_ready: bool,
+    image_ready: bool,
+) -> String {
+    match runtime_kind {
+        ContainerRuntimeKind::NativeContainer => {
+            format!("runtime prewarm completed but runtime target '{runtime_target}' is not launch-ready")
+        }
+        ContainerRuntimeKind::SharedVmContainer => {
+            if !vm_ready {
+                format!(
+                    "runtime prewarm completed but shared VM substrate for '{runtime_target}' is not launch-ready"
+                )
+            } else if !image_ready {
+                format!(
+                    "runtime prewarm completed but launch image for '{runtime_target}' is not present in the shared VM runtime"
+                )
+            } else {
+                format!("runtime prewarm completed but runtime target '{runtime_target}' is not launch-ready")
+            }
         }
     }
 }

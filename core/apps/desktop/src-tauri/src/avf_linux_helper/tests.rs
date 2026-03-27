@@ -10,6 +10,17 @@ fn git(args: &[&str], cwd: &Path) {
     assert!(status.success(), "git {:?} failed", args);
 }
 
+fn wait_for_child_exit(child: &mut std::process::Child, timeout: Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if child.try_wait().expect("poll child exit").is_some() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    child.try_wait().expect("poll child exit").is_some()
+}
+
 fn gibibytes(value: u64) -> u64 {
     value * 1024 * 1024 * 1024
 }
@@ -518,6 +529,7 @@ fn persist_shared_vm_owner_error_state_marks_vm_error_and_clears_owner_processes
         kernel_path: Some(temp.join("kernel")),
         initrd_path: Some(temp.join("initrd")),
         runtime_version: Some("test-runtime".to_string()),
+        runtime_shape_digest: None,
         updated_at: None,
         last_started_at: Some("started".to_string()),
         last_saved_at: Some("saved".to_string()),
@@ -585,9 +597,10 @@ fn shared_vm_state_marks_missing_owner_with_memory_pressure_request_as_error() {
             kernel_path: None,
             initrd_path: None,
             runtime_version: None,
+            runtime_shape_digest: None,
             updated_at: Some(now_timestamp_string()),
             last_started_at: None,
-            last_saved_at: None,
+            last_saved_at: Some(now_timestamp_string()),
             last_stopped_at: None,
             transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
             relay_pid: Some(999_999),
@@ -663,6 +676,234 @@ fn start_shared_vm_materializes_rootfs_and_data_disk_layout() {
         .notes
         .iter()
         .any(|note| note.contains("shared VM start reached launch-ready")));
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(unix)]
+#[test]
+fn start_shared_vm_forces_restart_when_runtime_changes_while_vm_is_live() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-start-runtime-restart-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    prepare_runtime_layout(&temp).expect("prepare runtime layout");
+
+    let runtime_root = temp.join("runtime-next");
+    let helpers_root = runtime_root.join("helpers");
+    fs::create_dir_all(&helpers_root).expect("create helpers root");
+    let source_rootfs = temp.join("source-rootfs.raw");
+    fs::write(&source_rootfs, b"rootfs").expect("write rootfs");
+    let kernel_path = helpers_root.join("kernel");
+    fs::write(&kernel_path, b"kernel").expect("write kernel");
+    let initrd_path = helpers_root.join("initrd");
+    fs::write(&initrd_path, b"initrd-next").expect("write initrd");
+
+    let mut relay = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("spawn relay placeholder");
+    let mut guest = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("spawn guest placeholder");
+
+    persist_state(
+        &shared_vm_state_path(&temp),
+        &PersistedSharedVmState {
+            state: AvfLinuxSharedVmLifecycleState::Running,
+            runtime_root: Some(temp.join("runtime-prev")),
+            rootfs_image: Some(shared_vm_rootfs_path(&temp)),
+            kernel_path: Some(temp.join("kernel-prev")),
+            initrd_path: Some(temp.join("initrd-prev")),
+            runtime_version: Some("runtime-prev".to_string()),
+            runtime_shape_digest: None,
+            updated_at: Some(now_timestamp_string()),
+            last_started_at: Some(now_timestamp_string()),
+            last_saved_at: None,
+            last_stopped_at: None,
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            relay_pid: Some(relay.id()),
+            guest_agent_pid: Some(guest.id()),
+            simulated: true,
+            notes: vec!["simulated running state".to_string()],
+        },
+    )
+    .expect("persist running state");
+    for path in [
+        shared_vm_control_socket_path(&temp),
+        shared_vm_guest_agent_socket_path(&temp),
+        shared_vm_guest_control_ready_path(&temp),
+        shared_vm_saved_state_path(&temp),
+    ] {
+        fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
+        fs::write(&path, b"x").expect("seed derived state");
+    }
+
+    let started = start_shared_vm(
+        &temp,
+        &runtime_root,
+        &source_rootfs,
+        &kernel_path,
+        &initrd_path,
+        "runtime-next".to_string(),
+    )
+    .expect("restart shared vm after runtime change");
+
+    assert!(matches!(
+        started.state,
+        AvfLinuxSharedVmLifecycleState::Running
+    ));
+    assert!(started
+        .notes
+        .iter()
+        .any(|note| { note.contains("forcing a stop before restart") }));
+    assert!(!started
+        .notes
+        .iter()
+        .any(|note| { note.contains("shared VM start reused an already-running") }));
+    assert_eq!(started.runtime_version.as_deref(), Some("runtime-next"));
+    assert_eq!(
+        started.runtime_root.as_deref(),
+        Some(runtime_root.as_path())
+    );
+    let persisted = load_state(&shared_vm_state_path(&temp))
+        .expect("load persisted state")
+        .expect("persisted shared vm state");
+    assert!(persisted.last_saved_at.is_none());
+    for path in [
+        shared_vm_control_socket_path(&temp),
+        shared_vm_guest_agent_socket_path(&temp),
+        shared_vm_guest_control_ready_path(&temp),
+        shared_vm_saved_state_path(&temp),
+    ] {
+        assert!(
+            !path.exists(),
+            "{} should be cleared before restart",
+            path.display()
+        );
+    }
+    assert!(wait_for_child_exit(&mut relay, Duration::from_secs(2)));
+    assert!(wait_for_child_exit(&mut guest, Duration::from_secs(2)));
+
+    let _ = relay.kill();
+    let _ = guest.kill();
+    let _ = relay.wait();
+    let _ = guest.wait();
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(unix)]
+#[test]
+fn start_shared_vm_forces_restart_when_runtime_digest_changes_with_same_version() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-start-runtime-digest-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    prepare_runtime_layout(&temp).expect("prepare runtime layout");
+
+    let runtime_root = temp.join("runtime-stable");
+    let helpers_root = runtime_root.join("helpers");
+    fs::create_dir_all(&helpers_root).expect("create helpers root");
+    let source_rootfs_v1 = temp.join("source-rootfs-v1.raw");
+    fs::write(&source_rootfs_v1, b"rootfs-v1").expect("write source rootfs v1");
+    let source_rootfs_v2 = temp.join("source-rootfs-v2.raw");
+    fs::write(&source_rootfs_v2, b"rootfs-v2").expect("write source rootfs v2");
+    let kernel_path = helpers_root.join("kernel");
+    fs::write(&kernel_path, b"kernel").expect("write kernel");
+    let initrd_path = helpers_root.join("initrd");
+    fs::write(&initrd_path, b"initrd").expect("write initrd");
+    fs::create_dir_all(
+        shared_vm_rootfs_path(&temp)
+            .parent()
+            .expect("rootfs parent"),
+    )
+    .expect("create rootfs parent");
+    fs::write(shared_vm_rootfs_path(&temp), b"stale-rootfs").expect("seed staged rootfs");
+
+    let mut relay = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("spawn relay placeholder");
+    let mut guest = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("spawn guest placeholder");
+
+    persist_state(
+        &shared_vm_state_path(&temp),
+        &PersistedSharedVmState {
+            state: AvfLinuxSharedVmLifecycleState::Running,
+            runtime_root: Some(runtime_root.clone()),
+            rootfs_image: Some(shared_vm_rootfs_path(&temp)),
+            kernel_path: Some(shared_vm_boot_kernel_path(&temp)),
+            initrd_path: Some(initrd_path.clone()),
+            runtime_version: Some("runtime-stable".to_string()),
+            runtime_shape_digest: Some(shared_vm_runtime_shape_digest(
+                &runtime_root,
+                &source_rootfs_v1,
+                &kernel_path,
+                &initrd_path,
+                "runtime-stable",
+            )),
+            updated_at: Some(now_timestamp_string()),
+            last_started_at: Some(now_timestamp_string()),
+            last_saved_at: None,
+            last_stopped_at: None,
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            relay_pid: Some(relay.id()),
+            guest_agent_pid: Some(guest.id()),
+            simulated: true,
+            notes: vec!["simulated running state".to_string()],
+        },
+    )
+    .expect("persist running state");
+
+    let started = start_shared_vm(
+        &temp,
+        &runtime_root,
+        &source_rootfs_v2,
+        &kernel_path,
+        &initrd_path,
+        "runtime-stable".to_string(),
+    )
+    .expect("restart shared vm after runtime digest change");
+
+    assert!(matches!(
+        started.state,
+        AvfLinuxSharedVmLifecycleState::Running
+    ));
+    assert!(started
+        .notes
+        .iter()
+        .any(|note| note.contains("forcing a stop before restart")));
+    assert!(!started
+        .notes
+        .iter()
+        .any(|note| { note.contains("shared VM start reused an already-running") }));
+    assert_eq!(started.runtime_version.as_deref(), Some("runtime-stable"));
+    assert_eq!(
+        started.runtime_root.as_deref(),
+        Some(runtime_root.as_path())
+    );
+    assert_eq!(
+        fs::read(shared_vm_rootfs_path(&temp)).expect("read staged rootfs"),
+        b"rootfs-v2"
+    );
+    assert!(wait_for_child_exit(&mut relay, Duration::from_secs(2)));
+    assert!(wait_for_child_exit(&mut guest, Duration::from_secs(2)));
+
+    let _ = relay.kill();
+    let _ = guest.kill();
+    let _ = relay.wait();
+    let _ = guest.wait();
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 

@@ -578,38 +578,41 @@ impl ExecutionSetupCoordinator {
 
         match run_result {
             Ok(()) => {
-                if shared_job.runtime_requested() {
-                    if shared_job.requires_launch_ready_runtime() {
-                        match harness_runtime::selected_runtime_launch_ready(
-                            &self.data_root,
-                            &settings.container,
-                        )
-                        .await
-                        {
-                            Ok(true) => {}
-                            Ok(false) => {
-                                self.finish_runtime_prewarm_error(
-                                    shared_job,
-                                    job,
-                                    launch_started,
-                                    anyhow::anyhow!(
-                                        "runtime prewarm completed but runtime target '{runtime_target}' is not launch-ready"
-                                    ),
-                                )
-                                .await;
-                                return;
+                    if shared_job.runtime_requested() {
+                        if shared_job.requires_launch_ready_runtime() {
+                            match harness_runtime::selected_runtime_launch_readiness_state(
+                                &self.data_root,
+                                &settings.container,
+                            )
+                            .await
+                            {
+                                Ok((true, true)) => {}
+                                Ok((vm_ready, image_ready)) => {
+                                    self.finish_runtime_prewarm_error(
+                                        shared_job,
+                                        job,
+                                        launch_started,
+                                        anyhow::anyhow!(harness_runtime::launch_ready_gap_message(
+                                            settings.container.runtime,
+                                            &runtime_target,
+                                            vm_ready,
+                                            image_ready,
+                                        )),
+                                    )
+                                    .await;
+                                    return;
+                                }
+                                Err(err) => {
+                                    self.finish_runtime_prewarm_error(
+                                        shared_job,
+                                        job,
+                                        launch_started,
+                                        err,
+                                    )
+                                    .await;
+                                    return;
+                                }
                             }
-                            Err(err) => {
-                                self.finish_runtime_prewarm_error(
-                                    shared_job,
-                                    job,
-                                    launch_started,
-                                    err,
-                                )
-                                .await;
-                                return;
-                            }
-                        }
                     } else {
                         match self.startup_runtime_state(&settings.container).await {
                             Ok((machine_ready, image_present)) => {
@@ -657,7 +660,14 @@ impl ExecutionSetupCoordinator {
                 if !matches!(settings.mode, ExecutionMode::Host) {
                     let ready_message = if shared_job.runtime_requested() {
                         if shared_job.requires_launch_ready_runtime() {
-                            "sandbox runtime is launch-ready"
+                            if matches!(
+                                settings.container.runtime,
+                                crate::settings::ContainerRuntimeKind::SharedVmContainer
+                            ) {
+                                "sandbox VM substrate and image are launch-ready"
+                            } else {
+                                "sandbox runtime is launch-ready"
+                            }
                         } else if matches!(
                             settings.container.runtime,
                             crate::settings::ContainerRuntimeKind::SharedVmContainer

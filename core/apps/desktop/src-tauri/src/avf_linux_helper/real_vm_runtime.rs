@@ -80,6 +80,22 @@ pub(super) fn format_duration_ms(duration: Duration) -> String {
     format!("{} ms", duration.as_millis())
 }
 
+fn describe_saved_state_path_context(save_path: &Path) -> String {
+    let mut details = vec![format!("save_path={}", save_path.display())];
+    if let Some(parent) = save_path.parent() {
+        details.push(format!("parent={}", parent.display()));
+        details.push(format!("parent_exists={}", parent.exists()));
+        match fs::metadata(parent) {
+            Ok(metadata) => details.push(format!(
+                "parent_readonly={}",
+                metadata.permissions().readonly()
+            )),
+            Err(err) => details.push(format!("parent_metadata_error={err}")),
+        }
+    }
+    details.join(", ")
+}
+
 pub(super) fn extract_shared_vm_readiness_phase_lines(stdout: &[u8], stderr: &[u8]) -> Vec<String> {
     [stdout, stderr]
         .into_iter()
@@ -164,7 +180,15 @@ pub(super) fn shutdown_real_shared_vm_for_exit(
                             ));
                         }
                     }
-                    let _ = fs::remove_file(&save_path);
+                    if let Err(err) = fs::remove_file(&save_path) {
+                        if err.kind() != std::io::ErrorKind::NotFound {
+                            notes.push(format!(
+                                "failed to clear stale workspace VM save path {}: {err:#}; {}",
+                                save_path.display(),
+                                describe_saved_state_path_context(&save_path)
+                            ));
+                        }
+                    }
                     match save_virtual_machine_state_on_queue(
                         queue,
                         virtual_machine_ptr,
@@ -177,9 +201,11 @@ pub(super) fn shutdown_real_shared_vm_for_exit(
                                 save_path.display()
                             ));
                         }
-                        Err(err) => {
-                            notes.push(format!("saving workspace VM state failed: {err:#}"))
-                        }
+                        Err(err) => notes.push(format!(
+                            "saving workspace VM state to {} failed: {err:#}; {}",
+                            save_path.display(),
+                            describe_saved_state_path_context(&save_path)
+                        )),
                     }
                 }
                 Ok(other) => notes.push(format!(
@@ -326,8 +352,9 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
                 append_shared_vm_log_line(
                     data_root,
                     &format!(
-                        "restoring saved workspace VM state from {} failed; falling back to a cold boot: {err:#}",
-                        saved_state_path.display()
+                        "restoring saved workspace VM state from {} failed; falling back to a cold boot: {err:#}; {}",
+                        saved_state_path.display(),
+                        describe_saved_state_path_context(&saved_state_path)
                     ),
                 )?;
                 let _ = fs::remove_file(&saved_state_path);
@@ -369,6 +396,17 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
             ),
         )?;
     }
+    append_shared_vm_log_line(
+        data_root,
+        &format!(
+            "shared AVF Linux VM owner startup path: {}",
+            if restored_from_saved_state {
+                "restore-hit"
+            } else {
+                "cold-boot"
+            }
+        ),
+    )?;
 
     let min_cpu = unsafe { VZVirtualMachineConfiguration::minimumAllowedCPUCount() };
     let max_cpu = unsafe { VZVirtualMachineConfiguration::maximumAllowedCPUCount() };

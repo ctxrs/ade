@@ -17,6 +17,7 @@ mod creation;
 mod execution;
 mod handlers;
 pub(in crate::api) use creation::*;
+pub(crate) use execution::sandbox_execution_settings_from_binding;
 pub(in crate::api) use execution::*;
 pub(in crate::api) use handlers::*;
 
