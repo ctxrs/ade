@@ -415,6 +415,28 @@ const avfGuestRuntimeReady = (runtimeDir, fsImpl = fs) => {
   }
 };
 
+const readAvfGuestRuntimeVersion = (runtimeDir, fsImpl = fs) => {
+  try {
+    const versionPath = path.join(runtimeDir, "version.txt");
+    if (!fsImpl.existsSync(versionPath) || !fsImpl.statSync(versionPath).isFile()) {
+      return "";
+    }
+    const contents = String(fsImpl.readFileSync(versionPath, "utf8") || "");
+    const lines = contents
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (lines.length === 0) return "";
+    const explicit = lines.find((line) => line.startsWith("version="));
+    if (explicit) {
+      return explicit.slice("version=".length).trim();
+    }
+    return lines[0];
+  } catch {
+    return "";
+  }
+};
+
 const defaultAutomationAvfGuestRuntimeDir = (platform = process.platform) => {
   if (platform === "darwin") {
     return path.join(os.homedir(), "Library", "Caches", "ctx-desktop-e2e", "avf-linux-guest-runtime");
@@ -426,8 +448,150 @@ const defaultAutomationAvfGuestRuntimeDir = (platform = process.platform) => {
   return path.join(os.homedir(), ".cache", "ctx-desktop-e2e", "avf-linux-guest-runtime");
 };
 
+const expectedManagedAvfGuestRuntimeVersion = ({
+  platform = process.platform,
+  arch = process.arch,
+  fsImpl = fs,
+} = {}) => {
+  const runtimeLockPath = path.join(resolveBundlesDir(), "runtime_lock.v2.json");
+  if (!fsImpl.existsSync(runtimeLockPath)) {
+    return "";
+  }
+  try {
+    const runtimeLock = JSON.parse(fsImpl.readFileSync(runtimeLockPath, "utf8"));
+    const component = findManagedComponent(
+      runtimeLock,
+      "runtime",
+      "avf-linux-guest",
+      normalizeDesktopOs(platform),
+      normalizeDesktopArch(arch),
+    );
+    return String(component?.version || "").trim();
+  } catch {
+    return "";
+  }
+};
+
+const managedDownloadSource = (component) => {
+  const sources = Array.isArray(component?.sources) ? component.sources : [];
+  return sources.find((source) => {
+    const sourceType = String(source?.source_type || "").trim();
+    if (!sourceType || sourceType === "local") return false;
+    return String(source?.uri || "").trim() && String(source?.sha256 || "").trim();
+  }) || null;
+};
+
+const resolveManagedAvfGuestRuntimeComponent = ({
+  platform = process.platform,
+  arch = process.arch,
+  fsImpl = fs,
+} = {}) => {
+  const runtimeLockPath = path.join(resolveBundlesDir(), "runtime_lock.v2.json");
+  if (!fsImpl.existsSync(runtimeLockPath)) {
+    throw new Error(
+      `runtime lock missing at ${runtimeLockPath}; run pnpm -C core desktop:prep:release`,
+    );
+  }
+  const runtimeLock = JSON.parse(fsImpl.readFileSync(runtimeLockPath, "utf8"));
+  const component = findManagedComponent(
+    runtimeLock,
+    "runtime",
+    "avf-linux-guest",
+    normalizeDesktopOs(platform),
+    normalizeDesktopArch(arch),
+  );
+  if (!component) {
+    throw new Error(
+      `runtime lock missing managed AVF guest runtime source for ${normalizeDesktopOs(platform)}/${normalizeDesktopArch(arch)}; run pnpm -C core desktop:prep:release`,
+    );
+  }
+  const rootfsSource = managedDownloadSource(component);
+  if (!rootfsSource) {
+    throw new Error(
+      `runtime lock missing managed AVF guest runtime source for ${normalizeDesktopOs(platform)}/${normalizeDesktopArch(arch)}; run pnpm -C core desktop:prep:release`,
+    );
+  }
+  for (const helperName of ["kernel", "initrd", "guest-agent", "egress-proxy", "container-stack"]) {
+    const helper = component.helpers?.[helperName];
+    if (!String(helper?.uri || "").trim() || !String(helper?.sha256 || "").trim()) {
+      throw new Error(
+        `runtime lock missing AVF helper metadata for ${helperName} (${normalizeDesktopOs(platform)}/${normalizeDesktopArch(arch)}); run pnpm -C core desktop:prep:release`,
+      );
+    }
+  }
+  return { component, rootfsSource };
+};
+
+const checkedSpawnSync = (spawnSyncImpl, cmd, args, options = {}) => {
+  const result = spawnSyncImpl(cmd, args, { encoding: "utf8", ...options });
+  if (result.status === 0) return result;
+  const stderr = String(result.stderr || "").trim();
+  const stdout = String(result.stdout || "").trim();
+  const detail = [stderr, stdout].filter(Boolean).join("\n");
+  throw new Error(`${cmd} ${args.join(" ")} failed${detail ? `: ${detail}` : ""}`);
+};
+
+const sha256File = (filePath, { spawnSyncImpl = spawnSync } = {}) => {
+  const result = checkedSpawnSync(spawnSyncImpl, "shasum", ["-a", "256", filePath]);
+  return String(result.stdout || "")
+    .trim()
+    .split(/\s+/)[0] || "";
+};
+
+const materializeManagedAvfGuestRuntime = ({
+  runtimeDir,
+  component,
+  rootfsSource,
+  fsImpl = fs,
+  spawnSyncImpl = spawnSync,
+  log = console.error,
+} = {}) => {
+  const tempDir = `${runtimeDir}.tmp-${process.pid}-${Date.now().toString(36)}`;
+  fsImpl.rmSync(tempDir, { recursive: true, force: true });
+  fsImpl.mkdirSync(path.join(tempDir, "helpers"), { recursive: true });
+  const rootfsArchivePath = path.join(tempDir, "rootfs.raw.zst");
+  const rootfsPath = path.join(tempDir, "rootfs.raw");
+  const downloadPlan = [
+    { uri: String(rootfsSource.uri || "").trim(), sha256: String(rootfsSource.sha256 || "").trim(), path: rootfsArchivePath },
+    { uri: String(component.helpers.kernel.uri || "").trim(), sha256: String(component.helpers.kernel.sha256 || "").trim(), path: path.join(tempDir, "helpers", "kernel") },
+    { uri: String(component.helpers.initrd.uri || "").trim(), sha256: String(component.helpers.initrd.sha256 || "").trim(), path: path.join(tempDir, "helpers", "initrd") },
+    { uri: String(component.helpers["guest-agent"].uri || "").trim(), sha256: String(component.helpers["guest-agent"].sha256 || "").trim(), path: path.join(tempDir, "helpers", "guest-agent") },
+    { uri: String(component.helpers["egress-proxy"].uri || "").trim(), sha256: String(component.helpers["egress-proxy"].sha256 || "").trim(), path: path.join(tempDir, "helpers", "egress-proxy") },
+    { uri: String(component.helpers["container-stack"].uri || "").trim(), sha256: String(component.helpers["container-stack"].sha256 || "").trim(), path: path.join(tempDir, "helpers", "container-stack.tar.gz") },
+  ];
+  try {
+    for (const artifact of downloadPlan) {
+      checkedSpawnSync(spawnSyncImpl, "curl", ["-fsSL", "--retry", "4", "-o", artifact.path, artifact.uri], {
+        stdio: "inherit",
+      });
+      const actualSha = sha256File(artifact.path, { spawnSyncImpl });
+      if (actualSha !== artifact.sha256) {
+        throw new Error(
+          `downloaded AVF runtime artifact sha256 mismatch for ${artifact.path}: expected ${artifact.sha256}, found ${actualSha || "missing"}`,
+        );
+      }
+    }
+    checkedSpawnSync(spawnSyncImpl, "zstd", ["-d", "-f", rootfsArchivePath, "-o", rootfsPath], {
+      stdio: "inherit",
+    });
+    fsImpl.rmSync(rootfsArchivePath, { force: true });
+    fsImpl.writeFileSync(
+      path.join(tempDir, "version.txt"),
+      `version=${String(component.version || "").trim()}\nmanaged-source=runtime_lock\n`,
+      "utf8",
+    );
+    fsImpl.rmSync(runtimeDir, { recursive: true, force: true });
+    fsImpl.renameSync(tempDir, runtimeDir);
+    log(`[wdio] CTX_AVF_LINUX_GUEST_RUNTIME_DIR materialized from runtime lock ${component.version}`);
+  } catch (error) {
+    fsImpl.rmSync(tempDir, { recursive: true, force: true });
+    throw error;
+  }
+};
+
 const ensureAutomationAvfLinuxGuestRuntime = ({
   platform = process.platform,
+  arch = process.arch,
   runsContainerScenarios = RUNS_CONTAINER_SCENARIOS,
   env = process.env,
   fsImpl = fs,
@@ -443,34 +607,39 @@ const ensureAutomationAvfLinuxGuestRuntime = ({
     env.CTX_AVF_LINUX_GUEST_RUNTIME_DIR || env.CTX_AUTOMATION_AVF_LINUX_GUEST_RUNTIME_DIR || "",
   ).trim();
   const runtimeDir = path.resolve(configured || defaultAutomationAvfGuestRuntimeDir(platform));
-  if (avfGuestRuntimeReady(runtimeDir, fsImpl)) {
+  const { component, rootfsSource } = resolveManagedAvfGuestRuntimeComponent({ platform, arch, fsImpl });
+  const expectedVersion = String(component.version || "").trim();
+  const runtimeVersion = readAvfGuestRuntimeVersion(runtimeDir, fsImpl);
+  const runtimeMatchesExpectedVersion = !expectedVersion || runtimeVersion === expectedVersion;
+  if (avfGuestRuntimeReady(runtimeDir, fsImpl) && runtimeMatchesExpectedVersion) {
     env.CTX_AVF_LINUX_GUEST_RUNTIME_DIR = runtimeDir;
     log(`[wdio] CTX_AVF_LINUX_GUEST_RUNTIME_DIR=${runtimeDir}`);
     return runtimeDir;
   }
-
-  fsImpl.mkdirSync(path.dirname(runtimeDir), { recursive: true });
-  const args = [
-    path.join(coreRoot, "scripts", "prepare_avf_linux_guest_runtime.sh"),
-    "--output-dir",
-    runtimeDir,
-  ];
-  if (fsImpl.existsSync(runtimeDir)) {
-    args.push("--force");
-  }
-  const result = spawnSyncImpl("bash", args, {
-    cwd: coreRoot,
-    env: { ...env },
-    stdio: "inherit",
-  });
-  if (result.status !== 0) {
-    throw new Error(
-      `failed to prepare local AVF Linux guest runtime for desktop automation (${result.status ?? "unknown"})`,
+  if (avfGuestRuntimeReady(runtimeDir, fsImpl) && !runtimeMatchesExpectedVersion) {
+    log(
+      `[wdio] refreshing stale AVF Linux guest runtime at ${runtimeDir} (expected ${expectedVersion || "unknown"}, found ${runtimeVersion || "missing"})`,
     );
   }
+
+  fsImpl.mkdirSync(path.dirname(runtimeDir), { recursive: true });
+  materializeManagedAvfGuestRuntime({
+    runtimeDir,
+    component,
+    rootfsSource,
+    fsImpl,
+    spawnSyncImpl,
+    log,
+  });
   if (!avfGuestRuntimeReady(runtimeDir, fsImpl)) {
     throw new Error(
       `prepared AVF Linux guest runtime is incomplete at ${runtimeDir}; expected ${avfGuestRuntimeRequiredPaths(runtimeDir).join(", ")}`,
+    );
+  }
+  const preparedVersion = readAvfGuestRuntimeVersion(runtimeDir, fsImpl);
+  if (expectedVersion && preparedVersion !== expectedVersion) {
+    throw new Error(
+      `prepared AVF Linux guest runtime version mismatch at ${runtimeDir}; expected ${expectedVersion}, found ${preparedVersion || "missing"}`,
     );
   }
   env.CTX_AVF_LINUX_GUEST_RUNTIME_DIR = runtimeDir;
@@ -1795,6 +1964,8 @@ exports.__cnSharedBackendTestHooks = cnSharedBackendTestHooks;
 exports.__desktopAutomationConfigTestHooks = {
   ensureAutomationAvfLinuxGuestRuntime,
   ensureBundledContainerAssets,
+  expectedManagedAvfGuestRuntimeVersion,
+  readAvfGuestRuntimeVersion,
   resolveMochaTimeoutMs,
   commandMatchesScopedAppProcess,
 };

@@ -80,6 +80,10 @@ pub(super) fn shared_vm_memory_pressure_request_path(data_root: &Path) -> PathBu
     shared_vm_root(data_root).join(SHARED_VM_MEMORY_PRESSURE_REQUEST_FILE)
 }
 
+pub(super) fn shared_vm_start_lock_path(data_root: &Path) -> PathBuf {
+    shared_vm_root(data_root).join(SHARED_VM_START_LOCK_FILE)
+}
+
 pub(super) fn shared_vm_guest_console_log_path(data_root: &Path) -> PathBuf {
     shared_vm_logs_root(data_root).join(SHARED_VM_GUEST_CONSOLE_LOG_FILE)
 }

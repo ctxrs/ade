@@ -52,8 +52,44 @@ const resolveFixtureHost = ({ hostOs = desktopOs(), hostArch = desktopArch() } =
   hostArch,
 });
 
+const managedRuntimeShaByFilename = {
+  "rootfs.raw.zst": "0".repeat(64),
+  kernel: "1".repeat(64),
+  initrd: "2".repeat(64),
+  "guest-agent": "3".repeat(64),
+  "egress-proxy": "4".repeat(64),
+  "container-stack.tar.gz": "5".repeat(64),
+};
+
+const makeManagedRuntimeSpawnSync = (runtimeDir) => (cmd, args) => {
+  if (cmd === "curl") {
+    const outputPath = args[4];
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(outputPath, `${path.basename(outputPath)}\n`, "utf8");
+    return { status: 0, stdout: "", stderr: "" };
+  }
+  if (cmd === "shasum") {
+    const filePath = args[2];
+    const basename = path.basename(filePath);
+    const sha = managedRuntimeShaByFilename[basename];
+    assert.ok(sha, `unexpected sha request for ${basename}`);
+    return { status: 0, stdout: `${sha}  ${filePath}\n`, stderr: "" };
+  }
+  if (cmd === "zstd") {
+    const outputPath = args[4];
+    fs.writeFileSync(outputPath, "rootfs\n", "utf8");
+    return { status: 0, stdout: "", stderr: "" };
+  }
+  assert.fail(`unexpected command ${cmd} ${args.join(" ")}`);
+};
+
 const writeAvfRuntimeBundle = (bundleDir, options = {}) => {
-  const { includeGuestAgent = true, includeContainerStack = true, ...hostOverride } = options;
+  const {
+    includeGuestAgent = true,
+    includeContainerStack = true,
+    version = "test",
+    ...hostOverride
+  } = options;
   const { hostOs, hostArch } = resolveFixtureHost(hostOverride);
   const runtimeRootRel = path.join("runtimes", "avf-linux-guest", hostOs, hostArch, "dev");
   const runtimeRoot = path.join(bundleDir, runtimeRootRel);
@@ -68,6 +104,7 @@ const writeAvfRuntimeBundle = (bundleDir, options = {}) => {
   if (includeContainerStack) {
     fs.writeFileSync(path.join(runtimeRoot, "helpers", "container-stack.tar.gz"), "container-stack\n", "utf8");
   }
+  fs.writeFileSync(path.join(runtimeRoot, "version.txt"), `version=${version}\n`, "utf8");
   fs.writeFileSync(
     path.join(bundleDir, "manifest.json"),
     JSON.stringify(
@@ -118,7 +155,7 @@ const writeAvfRuntimeBundle = (bundleDir, options = {}) => {
             os: hostOs,
             arch: hostArch,
             variant: "default",
-            version: "test",
+            version,
             sources: [{ source_type: "ci", uri: "locked://runtime", sha256: "0".repeat(64) }],
             helpers: {
               kernel: { uri: "locked://kernel", sha256: "1".repeat(64) },
@@ -151,7 +188,12 @@ const writeAvfRuntimeBundle = (bundleDir, options = {}) => {
 };
 
 const writeThinBundleManifestAndRuntimeLock = (bundleDir, options = {}) => {
-  const { includeGuestAgent = true, includeContainerStack = true, ...hostOverride } = options;
+  const {
+    includeGuestAgent = true,
+    includeContainerStack = true,
+    version = "test",
+    ...hostOverride
+  } = options;
   const { hostOs, hostArch } = resolveFixtureHost(hostOverride);
   fs.writeFileSync(
     path.join(bundleDir, "manifest.json"),
@@ -196,7 +238,7 @@ const writeThinBundleManifestAndRuntimeLock = (bundleDir, options = {}) => {
             os: hostOs,
             arch: hostArch,
             variant: "default",
-            version: "test",
+            version,
             sources: [{ source_type: "ci", uri: "locked://runtime", sha256: "0".repeat(64) }],
             helpers,
           },
@@ -335,10 +377,12 @@ test("wdio AVF container preflight rejects a thin bundle missing managed AVF hel
 });
 
 test("wdio automation AVF runtime prep reuses an existing prepared runtime directory", async () => {
+  const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-bundle-"));
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-avf-runtime-"));
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
   const logs = [];
   try {
+    writeThinBundleManifestAndRuntimeLock(bundleDir, { hostOs: "macos", hostArch: "aarch64", version: "test" });
     fs.mkdirSync(path.join(runtimeDir, "helpers"), { recursive: true });
     fs.writeFileSync(path.join(runtimeDir, "rootfs.raw"), "rootfs\n", "utf8");
     fs.writeFileSync(path.join(runtimeDir, "helpers", "kernel"), "kernel\n", "utf8");
@@ -346,8 +390,10 @@ test("wdio automation AVF runtime prep reuses an existing prepared runtime direc
     fs.writeFileSync(path.join(runtimeDir, "helpers", "guest-agent"), "guest-agent\n", "utf8");
     fs.writeFileSync(path.join(runtimeDir, "helpers", "egress-proxy"), "egress-proxy\n", "utf8");
     fs.writeFileSync(path.join(runtimeDir, "helpers", "container-stack.tar.gz"), "container-stack\n", "utf8");
+    fs.writeFileSync(path.join(runtimeDir, "version.txt"), "version=test\n", "utf8");
     await withEnv(
       {
+        CTX_BUNDLE_DIR: bundleDir,
         CTX_AVF_LINUX_GUEST_RUNTIME_DIR: runtimeDir,
         CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
       },
@@ -360,7 +406,7 @@ test("wdio automation AVF runtime prep reuses an existing prepared runtime direc
           log: (line) => logs.push(line),
           spawnSyncImpl: () => {
             spawnCalled = true;
-            return { status: 0 };
+            return { status: 0, stdout: "", stderr: "" };
           },
         });
         assert.equal(resolved, runtimeDir);
@@ -370,6 +416,62 @@ test("wdio automation AVF runtime prep reuses an existing prepared runtime direc
     );
     assert.ok(logs.some((line) => line.includes("CTX_AVF_LINUX_GUEST_RUNTIME_DIR")));
   } finally {
+    fs.rmSync(bundleDir, { recursive: true, force: true });
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("wdio automation AVF runtime prep refreshes a stale prepared runtime directory when the version drifts", async () => {
+  const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-bundle-"));
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-avf-runtime-"));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
+  const logs = [];
+  try {
+    writeThinBundleManifestAndRuntimeLock(bundleDir, {
+      hostOs: "macos",
+      hostArch: "aarch64",
+      version: "expected-version",
+    });
+    fs.mkdirSync(path.join(runtimeDir, "helpers"), { recursive: true });
+    fs.writeFileSync(path.join(runtimeDir, "rootfs.raw"), "rootfs\n", "utf8");
+    fs.writeFileSync(path.join(runtimeDir, "helpers", "kernel"), "kernel\n", "utf8");
+    fs.writeFileSync(path.join(runtimeDir, "helpers", "initrd"), "initrd\n", "utf8");
+    fs.writeFileSync(path.join(runtimeDir, "helpers", "guest-agent"), "guest-agent\n", "utf8");
+    fs.writeFileSync(path.join(runtimeDir, "helpers", "egress-proxy"), "egress-proxy\n", "utf8");
+    fs.writeFileSync(path.join(runtimeDir, "helpers", "container-stack.tar.gz"), "container-stack\n", "utf8");
+    fs.writeFileSync(path.join(runtimeDir, "version.txt"), "version=stale-version\n", "utf8");
+    await withEnv(
+      {
+        CTX_BUNDLE_DIR: bundleDir,
+        CTX_AVF_LINUX_GUEST_RUNTIME_DIR: runtimeDir,
+        CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
+      },
+      (mod) => {
+        const commands = [];
+        const resolved = mod.__desktopAutomationConfigTestHooks.ensureAutomationAvfLinuxGuestRuntime({
+          platform: "darwin",
+          runsContainerScenarios: true,
+          env: process.env,
+          log: (line) => logs.push(line),
+          spawnSyncImpl: (cmd, args, options) => {
+            commands.push([cmd, ...args]);
+            return makeManagedRuntimeSpawnSync(runtimeDir)(cmd, args, options);
+          },
+        });
+        assert.equal(resolved, runtimeDir);
+        assert.equal(process.env.CTX_AVF_LINUX_GUEST_RUNTIME_DIR, runtimeDir);
+        assert.ok(commands.some((entry) => entry[0] === "curl"));
+        assert.ok(commands.some((entry) => entry[0] === "zstd"));
+        assert.equal(
+          mod.__desktopAutomationConfigTestHooks.readAvfGuestRuntimeVersion(runtimeDir),
+          "expected-version",
+        );
+      },
+    );
+    assert.ok(logs.some((line) => line.includes("refreshing stale AVF Linux guest runtime")));
+  } finally {
+    fs.rmSync(bundleDir, { recursive: true, force: true });
     fs.rmSync(runtimeDir, { recursive: true, force: true });
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
@@ -378,39 +480,39 @@ test("wdio automation AVF runtime prep reuses an existing prepared runtime direc
 test("wdio automation AVF runtime prep prepares and exports a missing runtime directory", async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-avf-runtime-parent-"));
   const runtimeDir = path.join(tempRoot, "runtime");
+  const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-bundle-"));
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
   try {
+    writeThinBundleManifestAndRuntimeLock(bundleDir, {
+      hostOs: "macos",
+      hostArch: "aarch64",
+      version: "expected-version",
+    });
     await withEnv(
       {
+        CTX_BUNDLE_DIR: bundleDir,
         CTX_AVF_LINUX_GUEST_RUNTIME_DIR: null,
         CTX_AUTOMATION_AVF_LINUX_GUEST_RUNTIME_DIR: runtimeDir,
         CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
       },
       (mod) => {
-        let preparedPath = null;
         const resolved = mod.__desktopAutomationConfigTestHooks.ensureAutomationAvfLinuxGuestRuntime({
           platform: "darwin",
           runsContainerScenarios: true,
           env: process.env,
-          spawnSyncImpl: (_cmd, args) => {
-            preparedPath = args[2];
-            fs.mkdirSync(path.join(preparedPath, "helpers"), { recursive: true });
-            fs.writeFileSync(path.join(preparedPath, "rootfs.raw"), "rootfs\n", "utf8");
-            fs.writeFileSync(path.join(preparedPath, "helpers", "kernel"), "kernel\n", "utf8");
-            fs.writeFileSync(path.join(preparedPath, "helpers", "initrd"), "initrd\n", "utf8");
-            fs.writeFileSync(path.join(preparedPath, "helpers", "guest-agent"), "guest-agent\n", "utf8");
-            fs.writeFileSync(path.join(preparedPath, "helpers", "egress-proxy"), "egress-proxy\n", "utf8");
-            fs.writeFileSync(path.join(preparedPath, "helpers", "container-stack.tar.gz"), "container-stack\n", "utf8");
-            return { status: 0 };
-          },
+          spawnSyncImpl: makeManagedRuntimeSpawnSync(runtimeDir),
           log: () => {},
         });
-        assert.equal(preparedPath, runtimeDir);
         assert.equal(resolved, runtimeDir);
         assert.equal(process.env.CTX_AVF_LINUX_GUEST_RUNTIME_DIR, runtimeDir);
+        assert.equal(
+          mod.__desktopAutomationConfigTestHooks.readAvfGuestRuntimeVersion(runtimeDir),
+          "expected-version",
+        );
       },
     );
   } finally {
+    fs.rmSync(bundleDir, { recursive: true, force: true });
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(stateDir, { recursive: true, force: true });
   }

@@ -606,7 +606,7 @@ impl HarnessRuntimeManager {
             daemon_host,
             daemon_port,
             observer,
-            readiness,
+            readiness: _readiness,
         } = request;
         let name = format!("ctx-harness-{}", workspace.id.0);
         let image = resolve_container_image(settings);
@@ -731,10 +731,8 @@ impl HarnessRuntimeManager {
                 );
             }
         } else {
-            if readiness == ContainerReadinessState::MachineReady {
-                self.ensure_container_image_ready(settings, observer)
-                    .await?;
-            }
+            self.ensure_container_image_ready(settings, observer)
+                .await?;
             observe_phase(
                 observer,
                 HarnessSetupPhase::ContainerStartOrCreate,

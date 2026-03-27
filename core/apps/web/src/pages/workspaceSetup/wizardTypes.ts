@@ -38,6 +38,7 @@ export type HarnessInstallProviderRow = {
   healthy: boolean;
   installSupported: boolean;
   installRunning: boolean;
+  blocked?: boolean;
   installId?: string;
   installTarget?: InstallTarget;
   installSizeBytes?: number | null;

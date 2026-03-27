@@ -345,6 +345,65 @@ describe("useWorkspaceSetupProvisioning", () => {
     expect(startRuntimePrewarm).not.toHaveBeenCalled();
   });
 
+  it("does not fail route planning when speculative sandbox warmup fails", async () => {
+    vi.mocked(listProviderAuthImportCandidates)
+      .mockResolvedValue({ candidates: [] } as never);
+    vi.mocked(listProviders)
+      .mockResolvedValue([] as never);
+    vi.mocked(getSettings)
+      .mockResolvedValue(configuredTitlingSettings as never);
+    vi.mocked(startRuntimePrewarm)
+      .mockRejectedValue(new Error("warmup failed"));
+
+    const currentStepKeyRef = { current: "container" as const };
+    const setRoutePlan = vi.fn();
+    const setRoutePlanningBusy = vi.fn();
+    const invalidateRoutePlan = vi.fn();
+    const connectDaemonForImport = vi.fn(async () => {});
+
+    let latest: ReturnType<typeof useWorkspaceSetupProvisioning> | null = null;
+
+    const Harness = () => {
+      latest = useWorkspaceSetupProvisioning({
+        currentStepKeyRef,
+        selections: {
+          location: "local",
+          container: "sandbox",
+        },
+        routePlan: null,
+        setRoutePlan,
+        setRoutePlanningBusy,
+        invalidateRoutePlan,
+        desktopApp: true,
+        effectiveTarget: deriveWorkspaceSetupEffectiveTarget("local", {
+          remoteHostInput: "",
+          remotePortInput: "4399",
+          remoteDataDirInput: "",
+        }),
+        remoteStatus: "connected",
+        remoteStatusRef: { current: "connected" },
+        connectDaemonForImport,
+      });
+      return null;
+    };
+
+    render(createElement(Harness));
+
+    let routePlan: WizardRoutePlan | null = null;
+    await act(async () => {
+      routePlan = await latest!.ensureRoutePlanForSelection("sandbox");
+    });
+
+    expect(routePlan).toEqual({
+      targetKey: expect.stringContaining("\"sandbox\""),
+      containerSelection: "sandbox",
+      includeHarnessDownloads: false,
+      includeAuthImport: false,
+      includeTitling: false,
+    });
+    expect(startRuntimePrewarm).toHaveBeenCalledWith("launch_ready");
+  });
+
   it("ignores old refresh completions after the provisioning scope switches", async () => {
     const localAuth = deferred<{ candidates: Array<Record<string, string>> }>();
     const localHarness = deferred<Array<Record<string, unknown>>>();

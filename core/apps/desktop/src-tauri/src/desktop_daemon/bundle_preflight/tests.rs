@@ -163,7 +163,7 @@ fn thin_bundle_runtime_requirement_accepts_managed_runtime_source() {
 }}"#,
             os = std::env::consts::OS,
             arch = std::env::consts::ARCH,
-            sha = "0".repeat(64),
+            sha = "1".repeat(64),
         ),
     )
     .expect("write runtime lock");
@@ -231,7 +231,7 @@ fn thin_bundle_avf_runtime_requires_helper_metadata() {
       "sources": [
         {{
           "source_type": "ci",
-          "uri": "locked://runtime/avf-linux-guest/{os}/{arch}",
+          "uri": "https://example.invalid/runtime/avf-linux-guest/{os}/{arch}.tar.zst",
           "sha256": "{sha}"
         }}
       ]
@@ -240,7 +240,7 @@ fn thin_bundle_avf_runtime_requires_helper_metadata() {
 }}"#,
             os = std::env::consts::OS,
             arch = std::env::consts::ARCH,
-            sha = "0".repeat(64),
+            sha = "1".repeat(64),
         ),
     )
     .expect("write runtime lock");
@@ -350,7 +350,7 @@ fn bundled_avf_runtime_requires_helper_payloads() {
       "sources": [
         {{
           "source_type": "ci",
-          "uri": "locked://runtime/avf-linux-guest/{os}/{arch}",
+          "uri": "https://example.invalid/runtime/avf-linux-guest/{os}/{arch}",
           "sha256": "{sha}"
         }}
       ],
@@ -366,7 +366,7 @@ fn bundled_avf_runtime_requires_helper_payloads() {
 }}"#,
             os = host_os,
             arch = host_arch,
-            sha = "0".repeat(64),
+            sha = "1".repeat(64),
         ),
     )
     .expect("write runtime lock");

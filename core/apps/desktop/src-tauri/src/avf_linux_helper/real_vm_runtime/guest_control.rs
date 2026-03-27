@@ -182,7 +182,7 @@ fn configure_guest_control_socket_timeout(socket: &File, timeout: Option<Duratio
 }
 
 #[cfg(all(target_os = "macos", unix))]
-pub(super) fn run_owner_guest_exec_capture(
+pub(in super::super) fn run_owner_guest_exec_capture(
     queue: &DispatchQueue,
     virtual_machine: &Retained<VZVirtualMachine>,
     cwd: &Path,
@@ -199,7 +199,7 @@ pub(super) fn run_owner_guest_exec_capture(
     run_guest_exec_capture_over_connected_stream(&mut socket, cwd, command, args, user, env)
 }
 
-pub(super) fn shared_vm_owner_guest_probe_ready(data_root: &Path) -> bool {
+pub(in super::super) fn shared_vm_owner_guest_probe_ready(data_root: &Path) -> bool {
     shared_vm_guest_control_ready_path(data_root).is_file()
 }
 

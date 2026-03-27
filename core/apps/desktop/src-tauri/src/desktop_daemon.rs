@@ -27,6 +27,13 @@ const AVF_LINUX_HELPER_PATH_ENV: &str = "CTX_AVF_LINUX_HELPER_PATH";
 const DESKTOP_BUNDLE_DIR_ENV: &str = "CTX_BUNDLE_DIR";
 const DESKTOP_DAEMON_BIN_NAME: &str = "ctx-daemon";
 const AVF_GUEST_GATEWAY_HOST: &str = "192.168.64.1";
+const DAEMON_AUTOMATION_ENV_BLOCKLIST: &[&str] = &[
+    "AUTOMATION_LIBRARY_PATH",
+    "AUTOMATION_PORT",
+    "REMOTE_WEBDRIVER_URL",
+    "TAURI_DRIVER_PORT",
+    "TEST_RUNNER_BACKEND_PORT",
+];
 
 fn normalized_ssh_config_override(value: &str) -> Option<String> {
     let trimmed = value.trim();
@@ -62,6 +69,21 @@ fn avf_guest_gateway_bind(local_port: u16) -> Option<String> {
             Some(bind_addr)
         }
         Err(_) => None,
+    }
+}
+
+fn daemon_env_unset_args() -> Vec<std::ffi::OsString> {
+    let mut args = Vec::with_capacity(DAEMON_AUTOMATION_ENV_BLOCKLIST.len() * 2);
+    for key in DAEMON_AUTOMATION_ENV_BLOCKLIST {
+        args.push("-u".into());
+        args.push((*key).into());
+    }
+    args
+}
+
+fn strip_automation_env(cmd: &mut Command) {
+    for key in DAEMON_AUTOMATION_ENV_BLOCKLIST {
+        cmd.env_remove(key);
     }
 }
 
@@ -762,10 +784,13 @@ fn spawn_daemon_with_mode(
                 cmd.arg("--setenv").arg(format!("{key}={value}"));
             }
         }
+        cmd.arg("/usr/bin/env");
+        cmd.args(daemon_env_unset_args());
         cmd.arg(&ctx_bin);
         cmd
     } else {
         let mut cmd = Command::new(&ctx_bin);
+        strip_automation_env(&mut cmd);
         if let Some(path_env) = resolved_path_env.as_ref() {
             cmd.env("PATH", path_env);
         }

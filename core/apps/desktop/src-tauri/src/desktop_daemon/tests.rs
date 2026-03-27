@@ -52,6 +52,61 @@ fn ssh_config_override_normalization() {
 }
 
 #[test]
+fn daemon_env_unset_args_match_blocklist() {
+    let rendered = daemon_env_unset_args()
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rendered,
+        vec![
+            "-u".to_string(),
+            "AUTOMATION_LIBRARY_PATH".to_string(),
+            "-u".to_string(),
+            "AUTOMATION_PORT".to_string(),
+            "-u".to_string(),
+            "REMOTE_WEBDRIVER_URL".to_string(),
+            "-u".to_string(),
+            "TAURI_DRIVER_PORT".to_string(),
+            "-u".to_string(),
+            "TEST_RUNNER_BACKEND_PORT".to_string(),
+        ]
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn strip_automation_env_removes_desktop_driver_vars_from_local_daemon_children() {
+    let _guard = env_lock().lock().expect("env lock poisoned");
+    let _automation_library_path = EnvVarGuard::set("AUTOMATION_LIBRARY_PATH", "/tmp/bindings");
+    let _automation_port = EnvVarGuard::set("AUTOMATION_PORT", "17643");
+    let _remote_webdriver_url = EnvVarGuard::set("REMOTE_WEBDRIVER_URL", "http://127.0.0.1:3000");
+    let _tauri_driver_port = EnvVarGuard::set("TAURI_DRIVER_PORT", "4444");
+    let _test_runner_backend_port = EnvVarGuard::set("TEST_RUNNER_BACKEND_PORT", "3000");
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c").arg(
+        "printf '%s|%s|%s|%s|%s' \
+         \"$AUTOMATION_LIBRARY_PATH\" \
+         \"$AUTOMATION_PORT\" \
+         \"$REMOTE_WEBDRIVER_URL\" \
+         \"$TAURI_DRIVER_PORT\" \
+         \"$TEST_RUNNER_BACKEND_PORT\"",
+    );
+    strip_automation_env(&mut cmd);
+    let output = cmd.output().expect("run env-strip probe");
+    assert!(
+        output.status.success(),
+        "env-strip probe failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "||||",
+        "local daemon children should not inherit desktop automation driver env"
+    );
+}
+
+#[test]
 fn select_optional_bin_path_prefers_bundled_avf_helper_for_macos_debug_bundles() {
     let bundled = PathBuf::from("/tmp/ctx.app/Contents/Resources/ctx-avf-linux-helper");
     let dev = PathBuf::from("/tmp/dev-bin/ctx-avf-linux-helper");

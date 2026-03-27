@@ -302,7 +302,6 @@ struct TestManagedAvfLinuxRuntimeFixtureGuard {
     _runtime: super::avf_linux_vm::TestManagedAvfLinuxRuntimeSourceGuard,
     _image: crate::bundled_assets::TestManagedCtxHarnessImageSourceGuard,
 }
-
 fn avf_runtime_archive_bytes() -> Vec<u8> {
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     {
@@ -630,7 +629,7 @@ case "$subcmd" in
         elif [ $# -eq 1 ]; then
           container_name="$1"
           [ -d "$(container_dir "$container_name")" ] || exit 1
-          printf '[]\n'
+          printf '[{{}}]\n'
         else
           echo "unexpected sandbox CLI container inspect command: $*" >&2
           exit 1
@@ -2369,6 +2368,8 @@ async fn prepare_returns_avf_linux_vm_plan_after_workspace_vm_and_container_read
     let helper_path = write_avf_linux_lifecycle_helper(temp.path());
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
+    let (_image_guard, image_server) =
+        install_test_managed_harness_image_source(b"ctx-harness-image".to_vec()).await;
     let workspace = sample_workspace(&temp);
     let worktree = sample_worktree(&temp, workspace.id);
     let settings = ExecutionSettings {
@@ -2434,6 +2435,7 @@ async fn prepare_returns_avf_linux_vm_plan_after_workspace_vm_and_container_read
     for server in servers {
         server.abort();
     }
+    image_server.abort();
 }
 
 #[cfg(unix)]
@@ -2445,6 +2447,8 @@ async fn container_status_reports_running_avf_workspace_container() {
     let helper_path = write_avf_linux_lifecycle_helper(temp.path());
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
+    let (_image_guard, image_server) =
+        install_test_managed_harness_image_source(b"ctx-harness-image".to_vec()).await;
     let workspace = sample_workspace(&temp);
     let worktree = sample_worktree(&temp, workspace.id);
     let settings = ExecutionSettings {
@@ -2475,6 +2479,7 @@ async fn container_status_reports_running_avf_workspace_container() {
     for server in servers {
         server.abort();
     }
+    image_server.abort();
 }
 
 #[cfg(unix)]
@@ -2486,6 +2491,8 @@ async fn ensure_workspace_container_starts_avf_workspace_vm() {
     let helper_path = write_avf_linux_lifecycle_helper(temp.path());
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
+    let (_image_guard, image_server) =
+        install_test_managed_harness_image_source(b"ctx-harness-image".to_vec()).await;
     let workspace = sample_workspace(&temp);
     let settings = ExecutionSettings {
         mode: ExecutionMode::Sandbox,
@@ -2512,6 +2519,7 @@ async fn ensure_workspace_container_starts_avf_workspace_vm() {
     for server in servers {
         server.abort();
     }
+    image_server.abort();
 }
 
 #[cfg(unix)]
@@ -2523,6 +2531,8 @@ async fn ensure_workspace_container_for_worktree_keeps_avf_workspace_container_r
     let helper_path = write_avf_linux_lifecycle_helper(temp.path());
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
+    let (_image_guard, image_server) =
+        install_test_managed_harness_image_source(b"ctx-harness-image".to_vec()).await;
     let workspace = sample_workspace(&temp);
     let worktree = sample_worktree(&temp, workspace.id);
     let settings = ExecutionSettings {
@@ -2555,6 +2565,7 @@ async fn ensure_workspace_container_for_worktree_keeps_avf_workspace_container_r
     for server in servers {
         server.abort();
     }
+    image_server.abort();
 }
 
 #[cfg(unix)]
@@ -2626,6 +2637,15 @@ async fn ensure_workspace_container_after_runtime_ready_starts_avf_workspace_vm(
     let helper_path = write_avf_linux_lifecycle_helper(temp.path());
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
+    let image_bytes = b"ctx-harness-image".to_vec();
+    let (image_url, image_server) =
+        spawn_static_http_server_with_suffix(image_bytes.clone(), "ctx-harness.tar").await;
+    let _image_guard = bundled_assets::override_managed_ctx_harness_image_source_for_test(
+        bundled_assets::ManagedArtifactSource {
+            uri: image_url,
+            sha256: hex::encode(Sha256::digest(&image_bytes)),
+        },
+    );
     let workspace = sample_workspace(&temp);
     let settings = ExecutionSettings {
         mode: ExecutionMode::Sandbox,
@@ -2657,10 +2677,21 @@ async fn ensure_workspace_container_after_runtime_ready_starts_avf_workspace_vm(
         state.state,
         super::avf_linux_vm::AvfLinuxSharedVmLifecycleState::Running
     );
+    let log_path = temp.path().join(format!(
+        "managed/vms/avf-linux/{}/{}/shared/sandbox-cli-invocations.log",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
+    let log = std::fs::read_to_string(&log_path).expect("read AVF sandbox CLI invocation log");
+    assert!(
+        log.contains("load -i"),
+        "runtime-ready path should still load the managed harness image before run: {log}"
+    );
 
     for server in servers {
         server.abort();
     }
+    image_server.abort();
 }
 
 #[cfg(unix)]
@@ -2672,6 +2703,8 @@ async fn stop_container_removes_avf_workspace_container() {
     let helper_path = write_avf_linux_lifecycle_helper(temp.path());
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
+    let (_image_guard, image_server) =
+        install_test_managed_harness_image_source(b"ctx-harness-image".to_vec()).await;
     let workspace = sample_workspace(&temp);
     let worktree = sample_worktree(&temp, workspace.id);
     let settings = ExecutionSettings {
@@ -2706,6 +2739,7 @@ async fn stop_container_removes_avf_workspace_container() {
     for server in servers {
         server.abort();
     }
+    image_server.abort();
 }
 
 #[test]

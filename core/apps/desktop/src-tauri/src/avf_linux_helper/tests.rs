@@ -285,7 +285,7 @@ fn shared_vm_cloud_init_seed_digest_changes_when_payload_inputs_change() {
     }
     fs::create_dir_all(&temp).expect("create tempdir");
     let guest_agent_bytes = b"guest-agent-v1";
-    let meta_v1 = render_shared_vm_cloud_init_meta_data(guest_agent_bytes, None, "sha-one");
+    let meta_v1 = render_shared_vm_cloud_init_meta_data(&temp, guest_agent_bytes, None, "sha-one");
     let user_v1 = render_shared_vm_cloud_init_user_data(
         &temp,
         guest_agent_bytes,
@@ -296,7 +296,7 @@ fn shared_vm_cloud_init_seed_digest_changes_when_payload_inputs_change() {
     let network = render_shared_vm_cloud_init_network_config();
     let digest_v1 = shared_vm_cloud_init_seed_digest(&meta_v1, &user_v1, &network);
 
-    let meta_v2 = render_shared_vm_cloud_init_meta_data(guest_agent_bytes, None, "sha-two");
+    let meta_v2 = render_shared_vm_cloud_init_meta_data(&temp, guest_agent_bytes, None, "sha-two");
     let user_v2 = render_shared_vm_cloud_init_user_data(
         &temp,
         guest_agent_bytes,
@@ -308,6 +308,16 @@ fn shared_vm_cloud_init_seed_digest_changes_when_payload_inputs_change() {
 
     assert_ne!(digest_v1, digest_v2);
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn default_shared_vm_kernel_cmdline_targets_runtime_rootfs_label() {
+    let cmdline = default_shared_vm_kernel_cmdline();
+
+    assert!(cmdline.contains("console=hvc0"));
+    assert!(cmdline.contains("root=LABEL=cloudimg-rootfs"));
+    assert!(cmdline.contains("rootwait"));
+    assert!(cmdline.contains("rw"));
 }
 
 #[test]
@@ -697,6 +707,14 @@ fn readiness_phase_summary_strips_helper_prefix() {
 #[test]
 fn cold_boot_timeout_extends_when_rootfs_is_materialized() {
     assert_eq!(
+        default_real_guest_exec_ready_timeout(),
+        Duration::from_secs(30)
+    );
+    assert_eq!(
+        cold_boot_real_guest_exec_ready_timeout(),
+        Duration::from_secs(600)
+    );
+    assert_eq!(
         real_guest_exec_ready_timeout_for_start(None, true),
         default_real_guest_exec_ready_timeout()
     );
@@ -806,6 +824,59 @@ fn resetting_writable_runtime_state_removes_only_derived_files() {
 }
 
 #[test]
+fn shared_vm_start_lock_times_out_while_live_holder_exists() {
+    let temp = std::env::temp_dir().join(format!(
+        "ctx-avf-start-lock-timeout-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(shared_vm_root(&temp)).expect("create shared vm root");
+    fs::write(
+        shared_vm_start_lock_path(&temp),
+        format!("{}\n", std::process::id()),
+    )
+    .expect("seed live start lock");
+
+    let err = acquire_shared_vm_start_lock(&temp, Duration::from_millis(100))
+        .expect_err("live holder should block acquisition");
+    assert!(err
+        .to_string()
+        .contains("timed out waiting for shared VM start lock"));
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn shared_vm_start_lock_replaces_stale_holder() {
+    let temp = std::env::temp_dir().join(format!(
+        "ctx-avf-start-lock-stale-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(shared_vm_root(&temp)).expect("create shared vm root");
+    fs::write(shared_vm_start_lock_path(&temp), "999999\n").expect("seed stale start lock");
+
+    let guard = acquire_shared_vm_start_lock(&temp, Duration::from_secs(1))
+        .expect("stale holder should be replaced");
+    let raw = fs::read_to_string(shared_vm_start_lock_path(&temp)).expect("read lock");
+    assert_eq!(
+        parse_shared_vm_start_lock_pid(&raw),
+        Some(std::process::id())
+    );
+    drop(guard);
+    assert!(
+        !shared_vm_start_lock_path(&temp).exists(),
+        "lock should be removed when guard drops"
+    );
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
 fn cloud_init_meta_data_changes_when_guest_payload_changes() {
     let first = render_shared_vm_cloud_init_meta_data(
         Path::new("/tmp/a"),
@@ -909,6 +980,68 @@ fn shared_vm_owner_guest_probe_ready_requires_guest_control_marker() {
     }
     fs::write(&marker, b"ready").expect("write ready marker");
     assert!(shared_vm_owner_guest_probe_ready(&temp));
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(all(target_os = "macos", unix))]
+#[test]
+fn wait_for_real_guest_exec_ready_succeeds_without_guest_control_marker() {
+    use std::thread;
+
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctx-avf-real-ready-no-marker-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+    let listener = bind_shared_vm_control_listener(&temp).expect("bind control socket");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept control socket");
+        let frame = read_exec_frame(&mut stream)
+            .expect("read request")
+            .expect("request frame");
+        let request = match frame {
+            AvfLinuxExecFrame::Request(request) => request,
+            other => panic!("expected request frame, got {other:?}"),
+        };
+        assert_eq!(request.command, "/bin/sh");
+        assert_eq!(request.cwd, "/");
+        assert_eq!(request.user.as_deref(), Some("root"));
+        write_exec_frame(
+            &mut stream,
+            &AvfLinuxExecFrame::Stderr(
+                b"[ctx-avf-linux] readiness phase containerd ok in 10ms\n[ctx-avf-linux] readiness phase buildkit ok in 11ms\n"
+                    .to_vec(),
+            ),
+        )
+        .expect("write readiness phases");
+        write_exec_frame(
+            &mut stream,
+            &AvfLinuxExecFrame::Exit(AvfLinuxExecExit { exit_code: 0 }),
+        )
+        .expect("write exit frame");
+    });
+
+    let readiness =
+        wait_for_real_guest_exec_ready(&temp, Duration::from_secs(1)).expect("guest ready");
+    assert_eq!(readiness.attempts, 1);
+    assert_eq!(
+        readiness.phase_lines,
+        vec![
+            "[ctx-avf-linux] readiness phase containerd ok in 10ms".to_string(),
+            "[ctx-avf-linux] readiness phase buildkit ok in 11ms".to_string(),
+        ]
+    );
+    assert!(!shared_vm_owner_guest_probe_ready(&temp));
+
+    server.join().expect("server thread");
+    let control_socket = shared_vm_control_socket_path(&temp);
+    if control_socket.exists() {
+        fs::remove_file(&control_socket).expect("cleanup control socket");
+    }
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 

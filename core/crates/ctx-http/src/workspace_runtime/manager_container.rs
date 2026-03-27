@@ -160,10 +160,7 @@ impl HarnessRuntimeManager {
                 );
             }
         } else {
-            if readiness == ContainerReadinessState::MachineReady {
-                self.ensure_container_image_ready(settings, observer)
-                    .await?;
-            }
+            self.ensure_container_image_ready(settings, observer).await?;
             observe_phase(
                 observer,
                 HarnessSetupPhase::ContainerStartOrCreate,

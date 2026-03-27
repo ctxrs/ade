@@ -375,6 +375,9 @@ impl ExecutionSetupCoordinator {
             Ok(())
         } else {
             async {
+                // Any compatible runtime prewarm can still save duplicate image work.
+                // We check launch readiness after the join before deciding which launch path
+                // to take.
                 let join_shared_runtime = self.prewarm.runtime_is_running(&settings, false).await;
 
                 if join_shared_runtime {

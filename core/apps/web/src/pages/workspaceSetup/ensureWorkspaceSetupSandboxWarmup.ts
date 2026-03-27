@@ -39,6 +39,9 @@ export async function ensureWorkspaceSetupSandboxWarmup({
     if (sandboxWarmupTargetKeyRef.current === routeKey) {
       sandboxWarmupTargetKeyRef.current = null;
     }
-    throw error;
+    // Route planning should not be blocked by speculative sandbox warmup.
+    // Actual workspace launch remains the authoritative readiness gate and
+    // surfaces actionable errors if the runtime cannot start.
+    console.warn("workspace setup sandbox warmup failed", error);
   }
 }

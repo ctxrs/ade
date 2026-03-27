@@ -1,5 +1,75 @@
 use super::*;
 
+#[derive(Debug)]
+pub(super) struct SharedVmStartLockGuard {
+    path: PathBuf,
+}
+
+impl Drop for SharedVmStartLockGuard {
+    fn drop(&mut self) {
+        if self.path.exists() {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+pub(super) fn parse_shared_vm_start_lock_pid(raw: &str) -> Option<u32> {
+    raw.trim().parse::<u32>().ok().filter(|pid| *pid > 0)
+}
+
+fn try_acquire_shared_vm_start_lock(data_root: &Path) -> Result<Option<SharedVmStartLockGuard>> {
+    let lock_path = shared_vm_start_lock_path(data_root);
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    match std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&lock_path)
+    {
+        Ok(mut file) => {
+            writeln!(file, "{}", std::process::id())
+                .with_context(|| format!("writing {}", lock_path.display()))?;
+            Ok(Some(SharedVmStartLockGuard { path: lock_path }))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            let holder_pid = fs::read_to_string(&lock_path)
+                .ok()
+                .and_then(|raw| parse_shared_vm_start_lock_pid(&raw));
+            let stale_holder = match holder_pid {
+                Some(pid) => !shared_vm_server_process_alive(pid),
+                None => true,
+            };
+            if stale_holder {
+                fs::remove_file(&lock_path)
+                    .with_context(|| format!("removing stale {}", lock_path.display()))?;
+            }
+            Ok(None)
+        }
+        Err(err) => Err(err).with_context(|| format!("opening {}", lock_path.display())),
+    }
+}
+
+pub(super) fn acquire_shared_vm_start_lock(
+    data_root: &Path,
+    timeout: Duration,
+) -> Result<SharedVmStartLockGuard> {
+    let lock_path = shared_vm_start_lock_path(data_root);
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if let Some(guard) = try_acquire_shared_vm_start_lock(data_root)? {
+            return Ok(guard);
+        }
+        if std::time::Instant::now() >= deadline {
+            bail!(
+                "timed out waiting for shared VM start lock {}",
+                lock_path.display()
+            );
+        }
+        std::thread::sleep(SHARED_VM_START_LOCK_POLL_INTERVAL);
+    }
+}
+
 pub(super) fn prepare_runtime_layout(data_root: &Path) -> Result<AvfLinuxRuntimeLayout> {
     let vm_root = shared_vm_root(data_root);
     let logs_root = shared_vm_logs_root(data_root);
@@ -128,6 +198,10 @@ pub(super) fn start_shared_vm(
     let _ = prepare_runtime_layout(data_root)?;
     clear_shared_vm_shutdown_request(data_root);
     clear_shared_vm_memory_pressure_stop_request(data_root);
+    let _start_lock_guard = acquire_shared_vm_start_lock(
+        data_root,
+        cold_boot_real_guest_exec_ready_timeout() + Duration::from_secs(30),
+    )?;
     let state_path = shared_vm_state_path(data_root);
     let mut state = load_state(&state_path)?.unwrap_or_else(default_stopped_state);
     let saved_state_path = shared_vm_saved_state_path(data_root);

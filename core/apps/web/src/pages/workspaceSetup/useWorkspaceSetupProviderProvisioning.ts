@@ -156,6 +156,7 @@ export function useWorkspaceSetupProviderProvisioning({
       healthy: isReadyVisibleHarnessProviderStatus(provider),
       installSupported,
       installRunning: providerDetailFlag(provider.details, "install_running"),
+      blocked: provider.usability.usable === false && provider.usability.status === "blocked",
       installId: provider.details?.install_id,
       installTarget,
       installSizeBytes: providerInstallSizeBytes(provider),

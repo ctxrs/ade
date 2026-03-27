@@ -5,24 +5,25 @@ mod guest_control;
 #[path = "real_vm_runtime/resource_management.rs"]
 mod resource_management;
 
+use self::guest_control::run_owner_guest_exec_capture;
 use self::guest_control::service_real_shared_vm_control_clients;
-pub(super) use self::guest_control::{run_owner_guest_exec_capture, shared_vm_owner_guest_probe_ready};
-use self::resource_management::{
-    align_down_to_mebibyte, host_available_memory_bytes, maybe_adjust_shared_vm_memory,
-    maybe_grow_shared_vm_data_disk, SharedVmResourceState,
-};
-pub(super) use self::resource_management::{
-    resolve_shared_vm_memory_watchdog_exit_action, resolve_shared_vm_memory_watchdog_sample_action,
-    SharedVmMemoryWatchdogExitAction, SharedVmMemoryWatchdogSampleAction,
-};
+pub(super) use self::guest_control::shared_vm_owner_guest_probe_ready;
 #[cfg(test)]
 pub(super) use self::guest_control::{
     is_transient_guest_control_connect_nserror, relay_shared_vm_control_client,
+};
+use self::resource_management::{
+    align_down_to_mebibyte, host_available_memory_bytes, maybe_adjust_shared_vm_memory,
+    maybe_grow_shared_vm_data_disk, SharedVmResourceState,
 };
 #[cfg(test)]
 pub(super) use self::resource_management::{
     resolve_shared_vm_data_disk_growth_decision, resolve_shared_vm_memory_balloon_action,
     SharedVmDataDiskGrowthDecision, SharedVmMemoryBalloonAction,
+};
+pub(super) use self::resource_management::{
+    resolve_shared_vm_memory_watchdog_exit_action, resolve_shared_vm_memory_watchdog_sample_action,
+    SharedVmMemoryWatchdogExitAction, SharedVmMemoryWatchdogSampleAction,
 };
 
 #[cfg(target_os = "macos")]
@@ -417,9 +418,12 @@ pub(super) fn run_shared_vm(data_root: &Path) -> Result<()> {
         }
         let vm_state = virtual_machine_state_on_queue(&queue, virtual_machine_ptr)?;
         if vm_state == VZVirtualMachineState::Running {
-            if let Err(err) =
-                maybe_grow_shared_vm_data_disk(&queue, &virtual_machine, data_root, &mut resource_state)
-            {
+            if let Err(err) = maybe_grow_shared_vm_data_disk(
+                &queue,
+                &virtual_machine,
+                data_root,
+                &mut resource_state,
+            ) {
                 let shutdown_note =
                     shutdown_real_shared_vm_for_exit(&queue, &virtual_machine, data_root);
                 let note = format!(
@@ -645,27 +649,30 @@ fn spawn_real_shared_vm_owner_once(data_root: &Path, readiness_timeout: Duration
             format_duration_ms(control_socket_wait_started_at.elapsed())
         ),
     )?;
-    let guest_control_ready_wait_started_at = std::time::Instant::now();
     let remaining_after_control_socket =
         readiness_timeout.saturating_sub(owner_started_at.elapsed());
-    wait_for_guest_control_ready_marker(data_root, remaining_after_control_socket)?;
-    append_shared_vm_log_line(
-        data_root,
-        &format!(
-            "shared AVF Linux guest control ready marker became available in {} after owner spawn",
-            format_duration_ms(guest_control_ready_wait_started_at.elapsed())
-        ),
-    )?;
-    let remaining_after_guest_control_ready =
-        readiness_timeout.saturating_sub(owner_started_at.elapsed());
-    let readiness =
-        match wait_for_real_guest_exec_ready(data_root, remaining_after_guest_control_ready) {
-            Ok(report) => report,
-            Err(err) => {
-                stop_shared_vm_server(child.id());
-                return Err(err);
-            }
-        };
+    let readiness = match wait_for_real_guest_exec_ready(data_root, remaining_after_control_socket)
+    {
+        Ok(report) => report,
+        Err(err) => {
+            stop_shared_vm_server(child.id());
+            return Err(err);
+        }
+    };
+    if shared_vm_owner_guest_probe_ready(data_root) {
+        append_shared_vm_log_line(
+            data_root,
+            &format!(
+                "shared AVF Linux guest control ready marker was present by the time guest exec readiness succeeded after {}",
+                format_duration_ms(owner_started_at.elapsed())
+            ),
+        )?;
+    } else {
+        append_shared_vm_log_line(
+            data_root,
+            "shared AVF Linux guest exec readiness succeeded before the guest control ready marker was observed; using guest exec readiness as the launch gate",
+        )?;
+    }
     for phase_line in &readiness.phase_lines {
         append_shared_vm_log_line(data_root, phase_line)?;
     }
@@ -813,6 +820,7 @@ pub(super) fn wait_for_guest_agent_socket(data_root: &Path) -> Result<()> {
     )
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn wait_for_guest_control_ready_marker(
     data_root: &Path,
     timeout: Duration,
@@ -837,7 +845,6 @@ pub(super) fn shared_vm_guest_readiness_args() -> Vec<String> {
         String::from("-lc"),
         format!(
             "set -e; ctx_uptime_ms() {{ awk '{{print int($1 * 1000)}}' /proc/uptime; }}; ctx_run_phase() {{ phase=\"$1\"; shift; start_ms=$(ctx_uptime_ms); if timeout --kill-after=1s --preserve-status {phase_timeout_seconds}s \"$@\"; then end_ms=$(ctx_uptime_ms); echo \"{phase_prefix}${{phase}} ok in $((end_ms-start_ms))ms\" >&2; else status=$?; end_ms=$(ctx_uptime_ms); echo \"{phase_prefix}${{phase}} failed with exit $status after $((end_ms-start_ms))ms\" >&2; return $status; fi; }}; ctx_run_phase containerd systemctl is-active --quiet {containerd_service}; ctx_run_phase buildkit systemctl is-active --quiet {buildkit_service}; ctx_run_phase nerdctl sh -lc '{nerdctl_bin} version >/dev/null 2>&1'; ctx_run_phase buildctl sh -lc '{buildctl_bin} --addr {buildkit_socket} debug workers >/dev/null 2>&1'; ctx_run_phase bridge-probe sh -lc 'probe_bridge=ctxavfbr0; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true; if ! ip link add name \"$probe_bridge\" type bridge >/tmp/ctx-avf-bridge-probe.out 2>/tmp/ctx-avf-bridge-probe.err; then cat /tmp/ctx-avf-bridge-probe.out >&2 || true; cat /tmp/ctx-avf-bridge-probe.err >&2 || true; echo \"[ctx-avf-linux] bridge_probe_failed\" >&2; exit 41; fi; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true'",
-            "set -e; ctx_uptime_ms() {{ awk '{{print int($1 * 1000)}}' /proc/uptime; }}; ctx_run_phase() {{ phase=\"$1\"; shift; start_ms=$(ctx_uptime_ms); if timeout --kill-after=1s --preserve-status {phase_timeout_seconds}s \"$@\"; then end_ms=$(ctx_uptime_ms); echo \"{phase_prefix}${{phase}} ok in $((end_ms-start_ms))ms\" >&2; else status=$?; end_ms=$(ctx_uptime_ms); echo \"{phase_prefix}${{phase}} failed with exit $status after $((end_ms-start_ms))ms\" >&2; return $status; fi; }}; ctx_run_phase containerd systemctl is-active --quiet {containerd_service}; ctx_run_phase buildkit systemctl is-active --quiet {buildkit_service}; ctx_run_phase nerdctl sh -lc '{nerdctl_bin} version >/dev/null 2>&1'; ctx_run_phase buildctl sh -lc '{buildctl_bin} --addr {buildkit_socket} debug workers >/dev/null 2>&1'; ctx_run_phase bridge-probe sh -lc 'probe_bridge=ctxavfbr0; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true; if ! ip link add name \"$probe_bridge\" type bridge >/tmp/ctx-avf-bridge-probe.out 2>/tmp/ctx-avf-bridge-probe.err; then cat /tmp/ctx-avf-bridge-probe.out >&2 || true; cat /tmp/ctx-avf-bridge-probe.err >&2 || true; echo \"[ctx-avf-linux] bridge_probe_failed\" >&2; exit 41; fi; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true'",
             containerd_service = SHARED_VM_CONTAINERD_SERVICE_NAME,
             buildkit_service = SHARED_VM_BUILDKIT_SERVICE_NAME,
             nerdctl_bin = SHARED_VM_GUEST_NERDCTL_BIN,
@@ -859,7 +866,12 @@ pub(super) fn default_real_guest_exec_ready_timeout() -> Duration {
 }
 
 pub(super) fn cold_boot_real_guest_exec_ready_timeout() -> Duration {
-    Duration::from_secs(90)
+    // Fresh Ubuntu cloud-image boots can spend several minutes in first-boot
+    // cloud-init before the guest agent service is enabled and able to publish the
+    // guest-control ready marker. Keep the cold-boot budget aligned with that real
+    // first-run contract until the guest image is slimmed and preprovisioned enough
+    // to move readiness materially earlier.
+    Duration::from_secs(600)
 }
 
 pub(super) fn real_guest_exec_ready_timeout_for_start(
@@ -886,7 +898,6 @@ pub(super) fn wait_for_real_guest_exec_ready(
     let mut attempts = 0_u32;
     while std::time::Instant::now() < deadline {
         attempts += 1;
-        match run_guest_exec_capture_with_socket_timeout(
         match run_guest_exec_capture_with_socket_timeout(
             &control_socket,
             Path::new("/"),

@@ -198,9 +198,9 @@ pub(crate) async fn prewarm_selected_runtime_for_launch_with_observer(
             .await
         }
         ContainerRuntimeKind::SharedVmContainer => {
-            ensure_avf_linux_shared_vm_ready_with_observer(data_root, settings, observer)
-                .await
-                .map(|_| ())
+            ensure_avf_linux_shared_vm_ready_with_observer(data_root, settings, observer).await?;
+            let image = resolve_container_image(settings);
+            prefetch_container_image_with_observer(data_root, &image, observer).await
         }
     }
 }
@@ -225,7 +225,7 @@ pub(crate) async fn selected_runtime_launch_ready(
             Ok(matches!(
                 shared_vm_state.state,
                 AvfLinuxSharedVmLifecycleState::Running
-            ))
+            ) && container_image_present(data_root, &resolve_container_image(settings)).await?)
         }
     }
 }

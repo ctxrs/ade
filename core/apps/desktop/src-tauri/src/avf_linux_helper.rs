@@ -100,6 +100,7 @@ const SHARED_VM_KERNEL_CMDLINE_FILE: &str = "kernel-cmdline";
 const SHARED_VM_SAVED_STATE_FILE: &str = "saved-machine-state.vzvmsave";
 const SHARED_VM_SHUTDOWN_REQUEST_FILE: &str = "shutdown-request";
 const SHARED_VM_MEMORY_PRESSURE_REQUEST_FILE: &str = "memory-pressure-request";
+const SHARED_VM_START_LOCK_FILE: &str = "start.lock";
 const GUEST_WORKTREES_DIR: &str = "worktrees";
 const GUEST_WORKTREE_METADATA_FILE: &str = "worktree.json";
 const GUEST_WORKTREE_SHADOW_DIR: &str = "shadow-root";
@@ -117,7 +118,7 @@ const SHARED_VM_CLOUD_INIT_USER_DATA_FILE: &str = "user-data";
 const SHARED_VM_CLOUD_INIT_NETWORK_CONFIG_FILE: &str = "network-config";
 const SHARED_VM_CLOUD_INIT_IMAGE_FILE: &str = "cidata.img";
 const SHARED_VM_GUEST_AGENT_SERVICE_NAME: &str = "ctx-avf-linux-guest-agent.service";
-const SHARED_VM_ROOTFS_LABEL: &str = "ctx-avf-linux";
+const SHARED_VM_ROOTFS_LABEL: &str = "cloudimg-rootfs";
 const SHARED_VM_BOOT_DIR: &str = "boot";
 const SHARED_VM_BOOT_KERNEL_FILE: &str = "kernel";
 const SHARED_VM_DISK_DIR: &str = "disk";
@@ -161,6 +162,7 @@ const SHARED_VM_MEMORY_POLL_INTERVAL: std::time::Duration = std::time::Duration:
 const SHARED_VM_MEMORY_WATCHDOG_POLL_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(2);
 const SHARED_VM_MEMORY_WATCHDOG_EXIT_GRACE: Duration = Duration::from_secs(8);
+const SHARED_VM_START_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const SHARED_VM_READINESS_PHASE_TIMEOUT_SECONDS: u64 = 10;
 const SHARED_VM_READINESS_GUEST_EXEC_IO_TIMEOUT: Duration =
     Duration::from_secs(SHARED_VM_READINESS_PHASE_TIMEOUT_SECONDS + 5);
