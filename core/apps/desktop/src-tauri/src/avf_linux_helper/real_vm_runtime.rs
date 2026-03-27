@@ -1775,7 +1775,7 @@ pub(super) fn wait_for_real_guest_exec_ready(
     let mut attempts = 0_u32;
     while std::time::Instant::now() < deadline {
         attempts += 1;
-        match run_guest_exec_capture(
+        match run_guest_exec_capture_with_socket_timeout(
             &control_socket,
             Path::new("/"),
             "/bin/sh",
@@ -1783,6 +1783,7 @@ pub(super) fn wait_for_real_guest_exec_ready(
             Some("root"),
             HashMap::new(),
             None,
+            Some(SHARED_VM_READINESS_GUEST_EXEC_IO_TIMEOUT),
         ) {
             Ok(result) if result.exit_code == 0 => {
                 return Ok(SharedVmGuestReadinessReport {

@@ -165,6 +165,8 @@ const SHARED_VM_MEMORY_WATCHDOG_POLL_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(2);
 const SHARED_VM_MEMORY_WATCHDOG_EXIT_GRACE: Duration = Duration::from_secs(8);
 const SHARED_VM_READINESS_PHASE_TIMEOUT_SECONDS: u64 = 10;
+const SHARED_VM_READINESS_GUEST_EXEC_IO_TIMEOUT: Duration =
+    Duration::from_secs(SHARED_VM_READINESS_PHASE_TIMEOUT_SECONDS + 5);
 #[cfg(target_os = "macos")]
 const SHARED_VM_GUEST_CONTROL_VSOCK_PORT: u32 = 47001;
 #[cfg(target_os = "macos")]

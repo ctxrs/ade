@@ -481,6 +481,20 @@ pub(super) fn run_guest_exec_cli(
 }
 
 #[cfg(unix)]
+fn configure_shared_vm_control_stream_timeout(
+    stream: &UnixStream,
+    timeout: Option<Duration>,
+) -> Result<()> {
+    stream
+        .set_read_timeout(timeout)
+        .context("configuring shared VM control stream read timeout")?;
+    stream
+        .set_write_timeout(timeout)
+        .context("configuring shared VM control stream write timeout")?;
+    Ok(())
+}
+
+#[cfg(unix)]
 pub(super) fn run_guest_exec_capture(
     control_socket: &Path,
     cwd: &Path,
@@ -490,6 +504,29 @@ pub(super) fn run_guest_exec_capture(
     env: HashMap<String, String>,
     stdin_reader: Option<&mut dyn Read>,
 ) -> Result<GuestExecCaptureResult> {
+    run_guest_exec_capture_with_socket_timeout(
+        control_socket,
+        cwd,
+        command,
+        args,
+        user,
+        env,
+        stdin_reader,
+        None,
+    )
+}
+
+#[cfg(unix)]
+pub(super) fn run_guest_exec_capture_with_socket_timeout(
+    control_socket: &Path,
+    cwd: &Path,
+    command: &str,
+    args: &[String],
+    user: Option<&str>,
+    env: HashMap<String, String>,
+    stdin_reader: Option<&mut dyn Read>,
+    socket_timeout: Option<Duration>,
+) -> Result<GuestExecCaptureResult> {
     if command.trim().is_empty() {
         bail!("guest exec command must not be empty");
     }
@@ -498,6 +535,7 @@ pub(super) fn run_guest_exec_capture(
     }
 
     let mut stream = connect_shared_vm_control_socket(control_socket)?;
+    configure_shared_vm_control_stream_timeout(&stream, socket_timeout)?;
     let request = AvfLinuxExecRequest::new(
         command,
         args.to_vec(),
@@ -514,6 +552,7 @@ pub(super) fn run_guest_exec_capture(
     let mut response_stream = stream
         .try_clone()
         .context("cloning shared VM control stream for capture response")?;
+    configure_shared_vm_control_stream_timeout(&response_stream, socket_timeout)?;
     let response_thread = std::thread::spawn(move || -> Result<_> {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();

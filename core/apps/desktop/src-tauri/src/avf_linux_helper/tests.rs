@@ -1016,6 +1016,55 @@ fn guest_exec_capture_reports_explicit_error_frames() {
 
 #[cfg(all(target_os = "macos", unix))]
 #[test]
+fn guest_exec_capture_with_socket_timeout_fails_when_server_never_responds() {
+    use std::os::unix::net::UnixListener;
+    use std::thread;
+
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-capture-timeout-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+    let socket_path = temp.join("shared-vm-control.sock");
+    let listener = UnixListener::bind(&socket_path).expect("bind control socket");
+    let server = thread::spawn(move || {
+        let (_stream, _) = listener.accept().expect("accept control socket");
+        thread::sleep(Duration::from_millis(300));
+    });
+
+    let result = run_guest_exec_capture_with_socket_timeout(
+        &socket_path,
+        Path::new("/"),
+        "/usr/bin/true",
+        &[],
+        Some("root"),
+        HashMap::new(),
+        None,
+        Some(Duration::from_millis(100)),
+    );
+    let err = match result {
+        Ok(_) => panic!("capture should time out when the server never responds"),
+        Err(err) => err,
+    };
+
+    let rendered = format!("{err:#}");
+    assert!(
+        rendered.contains("timed out")
+            || rendered.contains("deadline")
+            || rendered.contains("Resource temporarily unavailable")
+            || rendered.contains("operation would block")
+    );
+
+    server.join().expect("server thread");
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(all(target_os = "macos", unix))]
+#[test]
 fn shared_vm_relay_turns_truncated_guest_frames_into_explicit_error_frames() {
     use std::os::fd::{FromRawFd, IntoRawFd};
     use std::thread;
