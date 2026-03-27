@@ -21,10 +21,12 @@ pub(super) fn indent_cloud_init_block(content: &str, spaces: usize) -> String {
         .join("\n")
 }
 
-pub(super) fn render_shared_vm_guest_agent_service() -> String {
+pub(super) fn render_shared_vm_guest_agent_service(ready_marker_path: &Path) -> String {
+    let escaped_ready_marker = shell_escape_single_quotes(&ready_marker_path.display().to_string());
     format!(
-        "[Unit]\nDescription=ctx AVF Linux Guest Agent\nAfter={data_disk_service}\nRequires={data_disk_service}\n\n[Service]\nType=simple\nEnvironment=RUST_BACKTRACE=1\nExecStartPre=/bin/sh -lc 'echo \"[ctx-avf-linux] starting guest-agent\" >/dev/hvc0'\nExecStart=/bin/sh -lc 'exec /usr/local/bin/ctx-avf-linux-guest-agent'\nStandardOutput=journal+console\nStandardError=journal+console\nRestart=always\nRestartSec=1\n\n[Install]\nWantedBy=multi-user.target\n# {guest_agent_service}\n",
+        "[Unit]\nDescription=ctx AVF Linux Guest Agent\nAfter={data_disk_service}\nRequires={data_disk_service}\n\n[Service]\nType=simple\nEnvironment=RUST_BACKTRACE=1\nExecStartPre=/bin/sh -lc 'rm -f '\\''{ready_marker}'\\'' && echo \"[ctx-avf-linux] starting guest-agent\" >/dev/hvc0'\nExecStart=/bin/sh -lc 'export CTX_AVF_GUEST_CONTROL_READY_MARKER='\\''{ready_marker}'\\''; exec /usr/local/bin/ctx-avf-linux-guest-agent'\nStandardOutput=journal+console\nStandardError=journal+console\nRestart=always\nRestartSec=1\n\n[Install]\nWantedBy=multi-user.target\n# {guest_agent_service}\n",
         data_disk_service = SHARED_VM_DATA_DISK_SERVICE_NAME,
+        ready_marker = escaped_ready_marker,
         guest_agent_service = SHARED_VM_GUEST_AGENT_SERVICE_NAME,
     )
 }
@@ -108,6 +110,7 @@ pub(super) fn hash_shared_vm_seed_component(bytes: &[u8]) -> String {
 }
 
 pub(super) fn render_shared_vm_cloud_init_meta_data(
+    data_root: &Path,
     guest_agent_bytes: &[u8],
     egress_proxy_bytes: Option<&[u8]>,
     container_stack_sha256: &str,
@@ -120,7 +123,10 @@ pub(super) fn render_shared_vm_cloud_init_meta_data(
     seed_material.extend_from_slice(container_stack_sha256.as_bytes());
     seed_material.extend_from_slice(render_shared_vm_data_disk_script().as_bytes());
     seed_material.extend_from_slice(render_shared_vm_data_disk_service().as_bytes());
-    seed_material.extend_from_slice(render_shared_vm_guest_agent_service().as_bytes());
+    seed_material.extend_from_slice(
+        render_shared_vm_guest_agent_service(&shared_vm_guest_control_ready_path(data_root))
+            .as_bytes(),
+    );
     seed_material.extend_from_slice(render_shared_vm_containerd_service().as_bytes());
     seed_material.extend_from_slice(render_shared_vm_buildkit_service().as_bytes());
     let seed_hash = hash_shared_vm_seed_component(&seed_material);
@@ -135,7 +141,10 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
     container_stack_sha256: &str,
 ) -> String {
     let guest_agent_b64 = indent_cloud_init_block(&wrap_cloud_init_base64(guest_agent_bytes), 6);
-    let guest_agent_service = indent_cloud_init_block(&render_shared_vm_guest_agent_service(), 6);
+    let guest_agent_service = indent_cloud_init_block(
+        &render_shared_vm_guest_agent_service(&shared_vm_guest_control_ready_path(data_root)),
+        6,
+    );
     let host_data_service =
         indent_cloud_init_block(&render_shared_vm_host_data_mount_service(data_root), 6);
     let data_disk_script = indent_cloud_init_block(&render_shared_vm_data_disk_script(), 6);
@@ -340,6 +349,7 @@ pub(super) fn stage_shared_vm_cloud_init_seed(
     fs::write(
         shared_vm_cloud_init_meta_data_path(data_root),
         render_shared_vm_cloud_init_meta_data(
+            data_root,
             &guest_agent_bytes,
             egress_proxy_bytes.as_deref(),
             &container_stack_sha256,

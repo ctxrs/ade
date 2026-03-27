@@ -185,6 +185,9 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
     assert!(user_data.contains("mount --bind \"$mount_root/system/buildkit\" /var/lib/buildkit"));
     assert!(user_data.contains("StandardOutput=journal+console"));
     assert!(user_data.contains("starting guest-agent"));
+    assert!(user_data.contains("CTX_AVF_GUEST_CONTROL_READY_MARKER"));
+    assert!(user_data.contains("/tmp/managed/vms/avf-linux"));
+    assert!(user_data.contains("guest-control-ready"));
     assert!(user_data.contains("preparing ctx-avf-linux-guest-agent.service"));
     assert!(user_data.contains("systemctl status ctx-avf-linux-guest-agent.service --no-pager"));
     assert!(user_data.contains("/tmp/runtime/helpers/container-stack.tar.gz"));
@@ -726,10 +729,17 @@ fn resetting_writable_runtime_state_removes_only_derived_files() {
     }
     let control_socket = shared_vm_control_socket_path(&temp);
     let guest_agent_socket = shared_vm_guest_agent_socket_path(&temp);
+    let ready_marker = shared_vm_guest_control_ready_path(&temp);
     let saved_state = shared_vm_saved_state_path(&temp);
     let rootfs = shared_vm_rootfs_path(&temp);
     let data_disk = shared_vm_data_disk_path(&temp);
-    for path in [&control_socket, &guest_agent_socket, &saved_state, &rootfs] {
+    for path in [
+        &control_socket,
+        &guest_agent_socket,
+        &ready_marker,
+        &saved_state,
+        &rootfs,
+    ] {
         fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
         fs::write(path, b"x").expect("seed file");
     }
@@ -738,7 +748,13 @@ fn resetting_writable_runtime_state_removes_only_derived_files() {
 
     reset_writable_shared_vm_runtime_state(&temp).expect("reset runtime state");
 
-    for path in [&control_socket, &guest_agent_socket, &saved_state, &rootfs] {
+    for path in [
+        &control_socket,
+        &guest_agent_socket,
+        &ready_marker,
+        &saved_state,
+        &rootfs,
+    ] {
         assert!(!path.exists(), "{} should be removed", path.display());
     }
     assert!(
@@ -752,11 +768,13 @@ fn resetting_writable_runtime_state_removes_only_derived_files() {
 #[test]
 fn cloud_init_meta_data_changes_when_guest_payload_changes() {
     let first = render_shared_vm_cloud_init_meta_data(
+        Path::new("/tmp/a"),
         b"guest-agent-a",
         Some(b"egress-proxy-a"),
         "container-stack-a",
     );
     let second = render_shared_vm_cloud_init_meta_data(
+        Path::new("/tmp/b"),
         b"guest-agent-b",
         Some(b"egress-proxy-b"),
         "container-stack-b",
@@ -784,6 +802,53 @@ fn transient_guest_control_connect_nserrors_retry() {
         "SomeOtherDomain",
         libc::ECONNRESET as isize
     ));
+}
+
+#[test]
+fn wait_for_guest_control_ready_marker_observes_marker_creation() {
+    let temp = std::env::temp_dir().join(format!(
+        "ctx-avf-ready-marker-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+    let marker = shared_vm_guest_control_ready_path(&temp);
+    let marker_for_thread = marker.clone();
+    let writer = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        if let Some(parent) = marker_for_thread.parent() {
+            fs::create_dir_all(parent).expect("create marker parent");
+        }
+        fs::write(&marker_for_thread, b"ready").expect("write ready marker");
+    });
+
+    wait_for_guest_control_ready_marker(&temp, Duration::from_secs(1))
+        .expect("marker should become ready");
+    writer.join().expect("writer thread");
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn wait_for_guest_control_ready_marker_times_out_without_marker() {
+    let temp = std::env::temp_dir().join(format!(
+        "ctx-avf-ready-marker-timeout-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+
+    let err = wait_for_guest_control_ready_marker(&temp, Duration::from_millis(100))
+        .expect_err("missing marker should time out");
+    assert!(err
+        .to_string()
+        .contains("timed out waiting for guest control ready marker"));
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 
 #[cfg(unix)]

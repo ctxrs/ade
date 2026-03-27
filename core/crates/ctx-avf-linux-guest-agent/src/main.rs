@@ -1,11 +1,13 @@
 mod protocol;
 
 #[cfg(target_os = "linux")]
-use std::fs::File;
+use std::fs::{self, File};
 #[cfg(target_os = "linux")]
 use std::io::{Read, Write};
 #[cfg(target_os = "linux")]
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+#[cfg(target_os = "linux")]
+use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::process::{Command, Stdio};
 #[cfg(target_os = "linux")]
@@ -32,6 +34,8 @@ const DEFAULT_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/s
 #[cfg(target_os = "linux")]
 const VSOCK_LISTENER_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 #[cfg(target_os = "linux")]
+const GUEST_CONTROL_READY_MARKER_ENV: &str = "CTX_AVF_GUEST_CONTROL_READY_MARKER";
+#[cfg(target_os = "linux")]
 const DEFAULT_PTY_COLS: u16 = 80;
 #[cfg(target_os = "linux")]
 const DEFAULT_PTY_ROWS: u16 = 24;
@@ -54,7 +58,10 @@ fn main() -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn serve() -> Result<()> {
+    let ready_marker = guest_control_ready_marker_path();
+    clear_guest_control_ready_marker(ready_marker.as_deref());
     loop {
+        clear_guest_control_ready_marker(ready_marker.as_deref());
         let listener = match wait_for_vsock_listener(GUEST_VSOCK_PORT) {
             Ok(listener) => listener,
             Err(err) => {
@@ -63,6 +70,7 @@ fn serve() -> Result<()> {
                 continue;
             }
         };
+        announce_guest_control_ready(ready_marker.as_deref(), GUEST_VSOCK_PORT);
         loop {
             match accept_vsock_connection(&listener) {
                 Ok(conn) => {
@@ -77,12 +85,48 @@ fn serve() -> Result<()> {
                     continue;
                 }
                 Err(err) => {
+                    clear_guest_control_ready_marker(ready_marker.as_deref());
                     eprintln!("guest-agent accept failed, recreating listener: {err:#}");
                     break;
                 }
             }
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn guest_control_ready_marker_path() -> Option<PathBuf> {
+    std::env::var_os(GUEST_CONTROL_READY_MARKER_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+#[cfg(target_os = "linux")]
+fn clear_guest_control_ready_marker(path: Option<&Path>) {
+    if let Some(path) = path {
+        let _ = fs::remove_file(path);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn announce_guest_control_ready(path: Option<&Path>, port: u32) {
+    if let Some(path) = path {
+        if let Some(parent) = path.parent() {
+            if let Err(err) = fs::create_dir_all(parent) {
+                eprintln!(
+                    "guest-agent failed to create ready-marker parent {}: {err}",
+                    parent.display()
+                );
+            }
+        }
+        if let Err(err) = fs::write(path, format!("listening:{port}\n")) {
+            eprintln!(
+                "guest-agent failed to publish ready marker {}: {err}",
+                path.display()
+            );
+        }
+    }
+    eprintln!("guest-agent listening on AF_VSOCK port {port}");
 }
 
 #[cfg(target_os = "linux")]

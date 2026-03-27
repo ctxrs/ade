@@ -129,6 +129,7 @@ const SHARED_VM_DATA_DISK_FILE: &str = "data.raw";
 const SHARED_VM_MACHINE_IDENTIFIER_FILE: &str = "machine-identifier.bin";
 const SHARED_VM_MAC_ADDRESS_FILE: &str = "mac-address.txt";
 const SHARED_VM_GUEST_CONSOLE_LOG_FILE: &str = "guest-console.log";
+const SHARED_VM_GUEST_CONTROL_READY_FILE: &str = "guest-control-ready";
 const SHARED_VM_DATA_ROOT_SHARE_TAG: &str = "ctx-data-root";
 const SHARED_VM_HOST_DATA_SERVICE_NAME: &str = "ctx-avf-host-data.service";
 const SHARED_VM_DATA_DISK_LABEL: &str = "ctx-avf-data";

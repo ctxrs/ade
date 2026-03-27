@@ -175,9 +175,7 @@ pub(super) fn materialize_writable_rootfs_image(
     Ok((staged_rootfs_path, Some(note)))
 }
 
-pub(super) fn materialize_data_disk_image(
-    data_root: &Path,
-) -> Result<(PathBuf, Option<String>)> {
+pub(super) fn materialize_data_disk_image(data_root: &Path) -> Result<(PathBuf, Option<String>)> {
     let disk_root = shared_vm_disk_root(data_root);
     fs::create_dir_all(&disk_root).with_context(|| format!("creating {}", disk_root.display()))?;
     let data_disk_path = shared_vm_data_disk_path(data_root);

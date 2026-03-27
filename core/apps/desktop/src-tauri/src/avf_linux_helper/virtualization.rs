@@ -262,8 +262,10 @@ pub(super) fn validate_real_avf_linux_vm_configuration(
             data_storage_attachment.as_super(),
         )
     };
-    let storage_devices: Retained<NSArray<VZStorageDeviceConfiguration>> =
-        NSArray::from_slice(&[root_storage_device.as_super(), data_storage_device.as_super()]);
+    let storage_devices: Retained<NSArray<VZStorageDeviceConfiguration>> = NSArray::from_slice(&[
+        root_storage_device.as_super(),
+        data_storage_device.as_super(),
+    ]);
 
     let nat_attachment = unsafe { VZNATNetworkDeviceAttachment::new() };
     let network_device = unsafe { VZVirtioNetworkDeviceConfiguration::new() };

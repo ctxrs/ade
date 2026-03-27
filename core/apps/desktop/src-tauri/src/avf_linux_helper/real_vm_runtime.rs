@@ -1535,13 +1535,27 @@ fn spawn_real_shared_vm_owner_once(data_root: &Path, readiness_timeout: Duration
             format_duration_ms(control_socket_wait_started_at.elapsed())
         ),
     )?;
-    let readiness = match wait_for_real_guest_exec_ready(data_root, readiness_timeout) {
-        Ok(report) => report,
-        Err(err) => {
-            stop_shared_vm_server(child.id());
-            return Err(err);
-        }
-    };
+    let guest_control_ready_wait_started_at = std::time::Instant::now();
+    let remaining_after_control_socket =
+        readiness_timeout.saturating_sub(owner_started_at.elapsed());
+    wait_for_guest_control_ready_marker(data_root, remaining_after_control_socket)?;
+    append_shared_vm_log_line(
+        data_root,
+        &format!(
+            "shared AVF Linux guest control ready marker became available in {} after owner spawn",
+            format_duration_ms(guest_control_ready_wait_started_at.elapsed())
+        ),
+    )?;
+    let remaining_after_guest_control_ready =
+        readiness_timeout.saturating_sub(owner_started_at.elapsed());
+    let readiness =
+        match wait_for_real_guest_exec_ready(data_root, remaining_after_guest_control_ready) {
+            Ok(report) => report,
+            Err(err) => {
+                stop_shared_vm_server(child.id());
+                return Err(err);
+            }
+        };
     for phase_line in &readiness.phase_lines {
         append_shared_vm_log_line(data_root, phase_line)?;
     }
@@ -1570,6 +1584,7 @@ pub(super) fn reset_writable_shared_vm_runtime_state(data_root: &Path) -> Result
     for path in [
         shared_vm_control_socket_path(data_root),
         shared_vm_guest_agent_socket_path(data_root),
+        shared_vm_guest_control_ready_path(data_root),
         shared_vm_saved_state_path(data_root),
         shared_vm_rootfs_path(data_root),
     ] {
@@ -1685,6 +1700,24 @@ pub(super) fn wait_for_guest_agent_socket(data_root: &Path) -> Result<()> {
     bail!(
         "timed out waiting for guest-agent control socket {}",
         socket_path.display()
+    )
+}
+
+pub(super) fn wait_for_guest_control_ready_marker(
+    data_root: &Path,
+    timeout: Duration,
+) -> Result<()> {
+    let marker_path = shared_vm_guest_control_ready_path(data_root);
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if marker_path.exists() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    bail!(
+        "timed out waiting for guest control ready marker {}",
+        marker_path.display()
     )
 }
 
