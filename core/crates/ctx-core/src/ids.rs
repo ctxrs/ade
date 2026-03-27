@@ -55,6 +55,7 @@ macro_rules! id_type {
 }
 
 id_type!(WorkspaceId);
+id_type!(SandboxInstanceId);
 id_type!(TaskId);
 id_type!(WorktreeId);
 id_type!(SessionId);

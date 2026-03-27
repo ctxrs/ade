@@ -100,6 +100,9 @@ pub(crate) async fn resolve_worktree_data_plane(
         .ok_or_else(|| anyhow!("workspace not found for worktree"))?;
     let store = state.store_for_workspace(worktree.workspace_id).await?;
     let binding = store.get_sandbox_binding(worktree.id).await?;
+    if let Some(binding) = binding.as_ref() {
+        ensure_supported_sandbox_instance_mapping(binding)?;
+    }
     if binding.is_none() {
         let sessions = store.list_sessions_for_worktree(worktree.id).await?;
         if sessions.iter().any(|session| {
@@ -158,6 +161,7 @@ pub(crate) fn apply_data_plane_to_execution_settings(
     let mut settings = base.clone();
     settings.mode = data_plane.execution_mode.clone();
     if let Some(binding) = data_plane.binding.as_ref() {
+        ensure_supported_sandbox_instance_mapping(binding)?;
         let substrate = crate::workspace_runtime::UbuntuSandboxSubstrate::from_binding(binding)?;
         if binding.execution_settings_json.is_some() {
             return crate::api::tasks::sandbox_execution_settings_from_binding(binding).map_err(
@@ -180,11 +184,26 @@ pub(crate) fn apply_data_plane_to_execution_settings(
     Ok(settings)
 }
 
+fn ensure_supported_sandbox_instance_mapping(binding: &SandboxBinding) -> Result<()> {
+    if binding.uses_workspace_mapped_sandbox_instance() {
+        return Ok(());
+    }
+
+    let expected = binding.expected_sandbox_instance_id();
+    Err(anyhow!(
+        "sandbox binding {} maps workspace {} to unsupported sandbox_instance_id {}; expected {}",
+        binding.worktree_id.0,
+        binding.workspace_id.0,
+        binding.sandbox_instance_id.0,
+        expected.0
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::daemon::AppState;
     use chrono::Utc;
-    use ctx_core::ids::{WorkspaceId, WorktreeId};
+    use ctx_core::ids::{SandboxInstanceId, WorkspaceId, WorktreeId};
     use ctx_core::models::{
         ExecutionEnvironment, SandboxGuestIdentity, SandboxSubstrate, VcsKind,
     };
@@ -198,6 +217,7 @@ mod tests {
 
     #[test]
     fn binding_snapshot_overrides_mutated_workspace_defaults() {
+        let binding_workspace_id = WorkspaceId(Uuid::new_v4());
         let snapshot = ExecutionSettings {
             mode: ExecutionMode::Sandbox,
             container: crate::settings::ContainerExecutionSettings {
@@ -211,7 +231,10 @@ mod tests {
         let data_plane = WorktreeDataPlane {
             binding: Some(SandboxBinding {
                 worktree_id: WorktreeId(Uuid::new_v4()),
-                workspace_id: WorkspaceId(Uuid::new_v4()),
+                workspace_id: binding_workspace_id,
+                sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(
+                    binding_workspace_id,
+                ),
                 substrate: SandboxSubstrate::SharedVmContainer,
                 guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
                 profile: ctx_core::models::SandboxProfile::Standard,
@@ -327,10 +350,14 @@ mod tests {
 
     #[test]
     fn binding_snapshot_with_unknown_schema_version_fails_closed() {
+        let binding_workspace_id = WorkspaceId(Uuid::new_v4());
         let data_plane = WorktreeDataPlane {
             binding: Some(SandboxBinding {
                 worktree_id: WorktreeId(Uuid::new_v4()),
-                workspace_id: WorkspaceId(Uuid::new_v4()),
+                workspace_id: binding_workspace_id,
+                sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(
+                    binding_workspace_id,
+                ),
                 substrate: SandboxSubstrate::SharedVmContainer,
                 guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
                 profile: ctx_core::models::SandboxProfile::Standard,
@@ -375,10 +402,14 @@ mod tests {
 
     #[test]
     fn binding_snapshot_with_host_mode_fails_closed() {
+        let binding_workspace_id = WorkspaceId(Uuid::new_v4());
         let data_plane = WorktreeDataPlane {
             binding: Some(SandboxBinding {
                 worktree_id: WorktreeId(Uuid::new_v4()),
-                workspace_id: WorkspaceId(Uuid::new_v4()),
+                workspace_id: binding_workspace_id,
+                sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(
+                    binding_workspace_id,
+                ),
                 substrate: SandboxSubstrate::NativeContainer,
                 guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
                 profile: ctx_core::models::SandboxProfile::Standard,
@@ -419,6 +450,43 @@ mod tests {
 
         assert!(format!("{err:#}")
             .contains("sandbox binding execution settings snapshot must keep mode=sandbox"));
+    }
+
+    #[test]
+    fn binding_snapshot_with_non_workspace_mapped_sandbox_instance_fails_closed() {
+        let binding_workspace_id = WorkspaceId(Uuid::new_v4());
+        let data_plane = WorktreeDataPlane {
+            binding: Some(SandboxBinding {
+                worktree_id: WorktreeId(Uuid::new_v4()),
+                workspace_id: binding_workspace_id,
+                sandbox_instance_id: SandboxInstanceId(Uuid::new_v4()),
+                substrate: SandboxSubstrate::NativeContainer,
+                guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
+                profile: ctx_core::models::SandboxProfile::Standard,
+                live_workspace_root: "/ctx/ws".to_string(),
+                live_worktree_root: "/ctx/wt".to_string(),
+                execution_settings_json: None,
+                container_name: Some("ctx-harness-test".to_string()),
+                host_materialization_root: None,
+                created_at: Utc::now(),
+            }),
+            workspace: Workspace {
+                id: WorkspaceId(Uuid::new_v4()),
+                name: "ws".to_string(),
+                root_path: "/host/ws".to_string(),
+                created_at: Utc::now(),
+                vcs_kind: None,
+            },
+            execution_mode: ExecutionMode::Sandbox,
+            live_workspace_root: PathBuf::from("/ctx/ws"),
+            live_worktree_root: PathBuf::from("/ctx/wt"),
+        };
+
+        let err =
+            apply_data_plane_to_execution_settings(&ExecutionSettings::default(), &data_plane)
+                .expect_err("non-workspace-mapped sandbox instance should fail closed");
+
+        assert!(format!("{err:#}").contains("unsupported sandbox_instance_id"));
     }
 
     #[tokio::test]

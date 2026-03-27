@@ -160,9 +160,11 @@ impl HarnessRuntimeManager {
         }
 
         if substrate.is_shared_vm_backed() {
+            let sandbox_instance_id =
+                ctx_core::models::sandbox_instance_id_for_workspace(workspace.id);
             let workspace_vm =
                 SharedVmLifecycleOrchestrator::new(&self.data_root).workspace_runtime_state(
-                    workspace.id,
+                    sandbox_instance_id,
                 )?;
             env_overrides.insert(
                 "CTX_AVF_WORKSPACE_VM_ROOT".to_string(),
@@ -307,8 +309,14 @@ impl HarnessRuntimeManager {
         let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.container.runtime);
         substrate.ensure_enabled()?;
         let proxy_host = if substrate.is_shared_vm_backed() {
+            let sandbox_instance_id =
+                ctx_core::models::sandbox_instance_id_for_workspace(workspace.id);
             SharedVmLifecycleOrchestrator::new(&self.data_root)
-                .ensure_workspace_runtime_ready(workspace.id, &settings.container, observer)
+                .ensure_workspace_runtime_ready(
+                    sandbox_instance_id,
+                    &settings.container,
+                    observer,
+                )
                 .await
                 .context("shared VM substrate is unavailable")?;
             AVF_GUEST_HOST_GATEWAY
@@ -569,8 +577,10 @@ impl HarnessRuntimeManager {
         let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime);
         substrate.ensure_enabled()?;
         if substrate.is_shared_vm_backed() {
+            let sandbox_instance_id =
+                ctx_core::models::sandbox_instance_id_for_workspace(workspace.id);
             SharedVmLifecycleOrchestrator::new(&self.data_root)
-                .ensure_workspace_runtime_ready(workspace.id, settings, observer)
+                .ensure_workspace_runtime_ready(sandbox_instance_id, settings, observer)
                 .await?;
         }
         self.ensure_container_after_machine_ready(EnsureContainerRequest {

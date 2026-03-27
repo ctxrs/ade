@@ -7,6 +7,7 @@ impl Store {
             r#"INSERT INTO sandbox_bindings (
                    worktree_id,
                    workspace_id,
+                   sandbox_instance_id,
                    runtime_family,
                    guest_platform,
                    isolation_kind,
@@ -19,9 +20,11 @@ impl Store {
                    host_projection_root,
                    created_at
                )
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(worktree_id) DO UPDATE SET
                    workspace_id = excluded.workspace_id,
+                   sandbox_instance_id = excluded.sandbox_instance_id,
                    runtime_family = excluded.runtime_family,
                    guest_platform = excluded.guest_platform,
                    isolation_kind = excluded.isolation_kind,
@@ -35,6 +38,7 @@ impl Store {
         )
         .bind(binding.worktree_id.0.to_string())
         .bind(binding.workspace_id.0.to_string())
+        .bind(binding.sandbox_instance_id.0.to_string())
         .bind(sandbox_substrate_to_str(&binding.substrate))
         .bind(sandbox_guest_platform_to_str(binding.guest_identity.platform))
         .bind(sandbox_isolation_kind_to_str(
@@ -59,7 +63,7 @@ impl Store {
     ) -> Result<Option<SandboxBinding>> {
         let row = self
             .query(
-                r#"SELECT worktree_id, workspace_id, runtime_family, guest_platform,
+                r#"SELECT worktree_id, workspace_id, sandbox_instance_id, runtime_family, guest_platform,
                           isolation_kind, guest_runtime, profile, live_workspace_root,
                           live_worktree_root, execution_settings_json, container_name,
                           host_projection_root, created_at

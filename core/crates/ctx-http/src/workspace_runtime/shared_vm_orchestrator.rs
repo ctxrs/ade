@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use ctx_core::ids::{WorkspaceId, WorktreeId};
+use ctx_core::ids::{SandboxInstanceId, WorkspaceId, WorktreeId};
 
 use super::avf_linux_vm::{
     ensure_guest_worktree_from_host_copy as ensure_avf_linux_guest_worktree_from_host_copy,
@@ -43,13 +43,13 @@ impl<'a> SharedVmLifecycleOrchestrator<'a> {
 
     pub(crate) async fn ensure_workspace_runtime_ready(
         &self,
-        workspace_id: WorkspaceId,
+        sandbox_instance_id: SandboxInstanceId,
         settings: &ContainerExecutionSettings,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<()> {
         ensure_avf_linux_workspace_vm_ready_with_observer(
             self.data_root,
-            workspace_id,
+            WorkspaceId(sandbox_instance_id.0),
             settings,
             observer,
         )
@@ -59,7 +59,7 @@ impl<'a> SharedVmLifecycleOrchestrator<'a> {
 
     pub(crate) async fn ensure_host_materialization_root(
         &self,
-        workspace_id: WorkspaceId,
+        sandbox_instance_id: SandboxInstanceId,
         worktree_id: WorktreeId,
         host_workspace_root: &Path,
         base_commit_sha: &str,
@@ -68,7 +68,7 @@ impl<'a> SharedVmLifecycleOrchestrator<'a> {
     ) -> Result<PathBuf> {
         let guest_worktree = ensure_avf_linux_guest_worktree_from_host_copy(
             self.data_root,
-            workspace_id,
+            WorkspaceId(sandbox_instance_id.0),
             worktree_id,
             host_workspace_root,
             base_commit_sha,
@@ -81,9 +81,9 @@ impl<'a> SharedVmLifecycleOrchestrator<'a> {
 
     pub(crate) fn workspace_runtime_state(
         &self,
-        workspace_id: WorkspaceId,
+        sandbox_instance_id: SandboxInstanceId,
     ) -> Result<AvfLinuxSharedVmState> {
-        avf_linux_workspace_vm_state(self.data_root, workspace_id)
+        avf_linux_workspace_vm_state(self.data_root, WorkspaceId(sandbox_instance_id.0))
     }
 
     pub(crate) async fn launch_readiness_state(

@@ -172,6 +172,10 @@ impl SandboxGuestIdentity {
     }
 }
 
+pub fn sandbox_instance_id_for_workspace(workspace_id: WorkspaceId) -> SandboxInstanceId {
+    SandboxInstanceId(workspace_id.0)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxProfile {
@@ -184,6 +188,7 @@ pub enum SandboxProfile {
 pub struct SandboxBinding {
     pub worktree_id: WorktreeId,
     pub workspace_id: WorkspaceId,
+    pub sandbox_instance_id: SandboxInstanceId,
     #[serde(alias = "runtime_family")]
     pub substrate: SandboxSubstrate,
     #[serde(default)]
@@ -203,6 +208,16 @@ pub struct SandboxBinding {
     )]
     pub host_materialization_root: Option<String>,
     pub created_at: DateTime<Utc>,
+}
+
+impl SandboxBinding {
+    pub fn expected_sandbox_instance_id(&self) -> SandboxInstanceId {
+        sandbox_instance_id_for_workspace(self.workspace_id)
+    }
+
+    pub fn uses_workspace_mapped_sandbox_instance(&self) -> bool {
+        self.sandbox_instance_id == self.expected_sandbox_instance_id()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

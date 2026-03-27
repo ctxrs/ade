@@ -236,6 +236,7 @@ pub(super) fn parse_sandbox_profile(value: &str) -> SandboxProfile {
 pub(super) fn map_sandbox_binding(row: SqliteRow) -> Option<SandboxBinding> {
     let worktree_id: String = row.try_get("worktree_id").ok()?;
     let workspace_id: String = row.try_get("workspace_id").ok()?;
+    let sandbox_instance_id: String = row.try_get("sandbox_instance_id").ok()?;
     let runtime_family: String = row.try_get("runtime_family").ok()?;
     let guest_platform: String = row.try_get("guest_platform").ok()?;
     let isolation_kind: String = row.try_get("isolation_kind").ok()?;
@@ -245,6 +246,7 @@ pub(super) fn map_sandbox_binding(row: SqliteRow) -> Option<SandboxBinding> {
     Some(SandboxBinding {
         worktree_id: WorktreeId(uuid::Uuid::parse_str(&worktree_id).ok()?),
         workspace_id: WorkspaceId(uuid::Uuid::parse_str(&workspace_id).ok()?),
+        sandbox_instance_id: SandboxInstanceId(uuid::Uuid::parse_str(&sandbox_instance_id).ok()?),
         substrate: parse_sandbox_substrate(&runtime_family),
         guest_identity: SandboxGuestIdentity {
             platform: parse_sandbox_guest_platform(&guest_platform),

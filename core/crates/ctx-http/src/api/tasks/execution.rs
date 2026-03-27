@@ -52,6 +52,16 @@ struct VersionedSandboxBindingExecutionSettings {
 pub(crate) fn sandbox_execution_settings_from_binding(
     binding: &SandboxBinding,
 ) -> anyhow::Result<ExecutionSettings> {
+    if !binding.uses_workspace_mapped_sandbox_instance() {
+        let expected = ctx_core::models::sandbox_instance_id_for_workspace(binding.workspace_id);
+        return Err(anyhow::anyhow!(
+            "sandbox binding {} maps workspace {} to unsupported sandbox_instance_id {}; expected {}",
+            binding.worktree_id.0,
+            binding.workspace_id.0,
+            binding.sandbox_instance_id.0,
+            expected.0
+        ));
+    }
     let substrate = crate::workspace_runtime::UbuntuSandboxSubstrate::from_binding(binding)?;
     if let Some(raw) = binding.execution_settings_json.as_deref() {
         return parse_sandbox_binding_execution_settings(raw)
@@ -141,7 +151,7 @@ mod tests {
     use crate::settings::{ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind};
     use crate::workspace_config::{self, ExecutionConfigUpdate};
     use chrono::Utc;
-    use ctx_core::ids::{WorkspaceId, WorktreeId};
+    use ctx_core::ids::{SandboxInstanceId, WorkspaceId, WorktreeId};
     use ctx_core::models::{
         ExecutionEnvironment, SandboxGuestIdentity, SandboxProfile, SandboxSubstrate, VcsKind,
     };
@@ -151,9 +161,11 @@ mod tests {
     use uuid::Uuid;
 
     fn test_binding(substrate: SandboxSubstrate, raw: Option<String>) -> SandboxBinding {
+        let workspace_id = WorkspaceId(Uuid::new_v4());
         SandboxBinding {
             worktree_id: WorktreeId(Uuid::new_v4()),
-            workspace_id: WorkspaceId(Uuid::new_v4()),
+            workspace_id,
+            sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(workspace_id),
             substrate,
             guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
             profile: SandboxProfile::Standard,
@@ -301,6 +313,27 @@ mod tests {
             .contains("sandbox binding execution settings snapshot runtime shared_vm_container does not match binding substrate native_container"));
     }
 
+    #[test]
+    fn binding_snapshot_rejects_non_workspace_mapped_sandbox_instance() {
+        let raw = serde_json::json!({
+            "mode": "sandbox",
+            "container": {
+                "runtime": "native_container",
+                "mount_mode": "disk_isolated",
+                "network_mode": "all",
+                "allowlist": [],
+                "image": null
+            }
+        });
+        let mut binding = test_binding(SandboxSubstrate::NativeContainer, Some(raw.to_string()));
+        binding.sandbox_instance_id = SandboxInstanceId(Uuid::new_v4());
+
+        let err = sandbox_execution_settings_from_binding(&binding)
+            .expect_err("non-workspace-mapped sandbox instance should fail closed");
+
+        assert!(format!("{err:#}").contains("unsupported sandbox_instance_id"));
+    }
+
     #[tokio::test]
     async fn resolve_existing_worktree_execution_uses_binding_snapshot_after_workspace_defaults_change(
     ) {
@@ -379,6 +412,9 @@ mod tests {
             .upsert_sandbox_binding(SandboxBinding {
                 worktree_id: worktree.id,
                 workspace_id: workspace.id,
+                sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(
+                    workspace.id,
+                ),
                 substrate: SandboxSubstrate::SharedVmContainer,
                 guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
                 profile: SandboxProfile::Standard,

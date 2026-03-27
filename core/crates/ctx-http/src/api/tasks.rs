@@ -78,6 +78,7 @@ pub(in crate::api) async fn materialize_sandbox_binding_for_worktree(
     Ok(Some(SandboxBinding {
         worktree_id: worktree.id,
         workspace_id: workspace.id,
+        sandbox_instance_id: materialization.sandbox_instance_id,
         substrate: materialization.substrate.substrate,
         guest_identity: materialization.substrate.guest_identity,
         profile: SandboxProfile::Standard,

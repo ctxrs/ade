@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use ctx_core::models::{Workspace, Worktree};
+use ctx_core::ids::SandboxInstanceId;
+use ctx_core::models::{sandbox_instance_id_for_workspace, Workspace, Worktree};
 use ctx_fs::worktrees::standaloneize_worktree_git_dir;
 
 use crate::daemon::AppState;
@@ -11,6 +12,7 @@ use super::{SharedVmLifecycleOrchestrator, UbuntuSandboxSubstrate};
 
 #[derive(Debug, Clone)]
 pub(crate) struct SandboxWorktreeMaterialization {
+    pub(crate) sandbox_instance_id: SandboxInstanceId,
     pub(crate) substrate: UbuntuSandboxSubstrate,
     pub(crate) live_worktree_root: PathBuf,
     pub(crate) host_materialization_root: Option<PathBuf>,
@@ -57,7 +59,7 @@ pub(crate) async fn materialize_sandbox_worktree(
         Some(
             SharedVmLifecycleOrchestrator::new(&state.core.data_root)
                 .ensure_host_materialization_root(
-                    workspace.id,
+                    sandbox_instance_id_for_workspace(workspace.id),
                     worktree.id,
                     canonical_root,
                     &worktree.base_commit_sha,
@@ -83,6 +85,7 @@ pub(crate) async fn materialize_sandbox_worktree(
     .await?;
 
     Ok(Some(SandboxWorktreeMaterialization {
+        sandbox_instance_id: sandbox_instance_id_for_workspace(workspace.id),
         substrate,
         live_worktree_root,
         host_materialization_root,
