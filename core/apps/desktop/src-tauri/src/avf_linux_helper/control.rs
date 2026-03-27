@@ -335,9 +335,6 @@ pub(super) fn run_guest_agent_exec_request(
     });
 
     let status = child.wait().context("waiting for guest-agent child")?;
-    if let Some(handle) = stdin_thread {
-        let _ = handle.join();
-    }
     if let Some(handle) = stdout_thread {
         let _ = handle.join();
     }
@@ -352,6 +349,7 @@ pub(super) fn run_guest_agent_exec_request(
         &AvfLinuxExecFrame::Exit(AvfLinuxExecExit { exit_code }),
     )
     .context("writing guest-agent exit frame")?;
+    let _ = stdin_thread;
     Ok(())
 }
 

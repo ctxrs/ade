@@ -3234,8 +3234,8 @@ fn bundle_dir_mount_policy_matches_platform_expectations() {
         return;
     }
 
-    // Sandbox-machine platforms cannot reliably mount non-home host paths (for example
-    // /Applications in macOS release installs).
+    // Sandbox-machine platforms cannot bind-mount raw host bundle paths into guest containers,
+    // even when the path is under the host user's home directory.
     if cfg!(target_os = "macos") || cfg!(target_os = "windows") {
         assert!(!should_mount_bundle_dir_in_container(Path::new(
             "/Applications/ctx.app/Contents/Resources/bundles"
@@ -3246,7 +3246,7 @@ fn bundle_dir_mount_policy_matches_platform_expectations() {
             "HOME"
         };
         if let Some(home) = std::env::var_os(home_var).map(PathBuf::from) {
-            assert!(should_mount_bundle_dir_in_container(
+            assert!(!should_mount_bundle_dir_in_container(
                 &home.join("ctx-bundles")
             ));
         }

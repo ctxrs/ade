@@ -75,14 +75,10 @@ pub(super) fn should_mount_bundle_dir_in_container(bundle_dir: &Path) -> bool {
         return true;
     }
     if cfg!(target_os = "macos") || cfg!(target_os = "windows") {
-        let home_var = if cfg!(target_os = "windows") {
-            "USERPROFILE"
-        } else {
-            "HOME"
-        };
-        if let Some(home) = std::env::var_os(home_var).map(PathBuf::from) {
-            return bundle_dir.starts_with(home);
-        }
+        tracing::debug!(
+            "sandbox-machine runtime cannot bind-mount CTX_BUNDLE_DIR host paths into guest containers: {}",
+            bundle_dir.display()
+        );
         return false;
     }
     true

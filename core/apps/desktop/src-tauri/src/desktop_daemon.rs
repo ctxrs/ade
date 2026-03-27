@@ -24,6 +24,7 @@ use path_env::{resolve_daemon_path_env, resolve_local_daemon_path_env};
 
 const SSH_CONFIG_OVERRIDE_ENV: &str = "CTX_DESKTOP_SSH_CONFIG_PATH";
 const AVF_LINUX_HELPER_PATH_ENV: &str = "CTX_AVF_LINUX_HELPER_PATH";
+const DESKTOP_BUNDLE_DIR_ENV: &str = "CTX_BUNDLE_DIR";
 const DESKTOP_DAEMON_BIN_NAME: &str = "ctx-daemon";
 const AVF_GUEST_GATEWAY_HOST: &str = "192.168.64.1";
 
@@ -492,7 +493,13 @@ fn resolve_optional_bin(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
     } else {
         None
     };
-    select_optional_bin_path(name, bundled, dev, cfg!(debug_assertions), cfg!(target_os = "macos"))
+    select_optional_bin_path(
+        name,
+        bundled,
+        dev,
+        cfg!(debug_assertions),
+        cfg!(target_os = "macos"),
+    )
 }
 
 fn path_matches_current_platform_binary(path: &Path) -> bool {
@@ -547,13 +554,36 @@ fn dev_bundle_dir() -> Option<PathBuf> {
     }
 }
 
+fn configured_bundle_dir() -> Option<PathBuf> {
+    let raw = std::env::var(DESKTOP_BUNDLE_DIR_ENV).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(trimmed);
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn select_bundle_dir_path(
+    configured: Option<PathBuf>,
+    bundled: Option<PathBuf>,
+    dev: Option<PathBuf>,
+) -> Option<PathBuf> {
+    configured.or(bundled).or(dev)
+}
+
 fn desktop_bundle_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
-    app.path()
+    let bundled = app
+        .path()
         .resource_dir()
         .ok()
         .map(|p| p.join("bundles"))
-        .filter(|p| p.exists())
-        .or_else(dev_bundle_dir)
+        .filter(|p| p.exists());
+    select_bundle_dir_path(configured_bundle_dir(), bundled, dev_bundle_dir())
 }
 
 #[cfg(target_os = "linux")]
@@ -668,13 +698,7 @@ fn spawn_daemon_with_mode(
             candidates.into_iter().find(|c| c.exists())
         })
         .or_else(dev_web_dist);
-    let bundle_dir = app
-        .path()
-        .resource_dir()
-        .ok()
-        .map(|p| p.join("bundles"))
-        .filter(|p| p.exists())
-        .or_else(dev_bundle_dir);
+    let bundle_dir = desktop_bundle_dir(app);
     let resolved_path_env = resolve_local_daemon_path_env();
 
     // Container-mode Codex sessions need a CODEX_HOME available inside the Linux harness.

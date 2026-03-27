@@ -18,10 +18,12 @@ use anyhow::{bail, Result};
 use portable_pty::{CommandBuilder as PtyCommandBuilder, NativePtySystem, PtySize, PtySystem};
 
 #[cfg(any(target_os = "linux", test))]
+use crate::protocol::AvfLinuxExecFrame;
+#[cfg(any(target_os = "linux", test))]
 use crate::protocol::{read_exec_frame, write_exec_frame};
 #[cfg(target_os = "linux")]
 use crate::protocol::{AvfLinuxExecError, AvfLinuxExecExit};
-use crate::protocol::{AvfLinuxExecFrame, AvfLinuxExecRequest, AVF_LINUX_EXEC_PROTOCOL_VERSION};
+use crate::protocol::{AvfLinuxExecRequest, AVF_LINUX_EXEC_PROTOCOL_VERSION};
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const GUEST_VSOCK_PORT: u32 = 47001;

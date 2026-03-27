@@ -1132,6 +1132,138 @@ fn non_pty_guest_exec_cli_writes_captured_output() {
 
 #[cfg(unix)]
 #[test]
+fn non_pty_guest_exec_cli_streams_output_before_stdin_eof() {
+    use std::io::Read;
+    use std::os::unix::net::UnixListener;
+    use std::sync::{mpsc, Arc, Condvar, Mutex};
+    use std::thread;
+    use std::time::Duration;
+
+    #[derive(Default)]
+    struct ReaderState {
+        sent_payload: bool,
+        allow_eof: bool,
+    }
+
+    struct GateReader {
+        state: Arc<(Mutex<ReaderState>, Condvar)>,
+    }
+
+    impl Read for GateReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let (lock, cv) = &*self.state;
+            let mut state = lock.lock().expect("lock gated reader state");
+            if !state.sent_payload {
+                let payload = b"session.open\n";
+                buf[..payload.len()].copy_from_slice(payload);
+                state.sent_payload = true;
+                return Ok(payload.len());
+            }
+            while !state.allow_eof {
+                state = cv.wait(state).expect("wait for EOF gate");
+            }
+            Ok(0)
+        }
+    }
+
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-cli-streaming-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+    let socket_path = temp.join("shared-vm-control.sock");
+    let listener = UnixListener::bind(&socket_path).expect("bind control socket");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept control socket");
+        let request = read_exec_frame(&mut stream)
+            .expect("read request")
+            .expect("request frame");
+        let request = match request {
+            AvfLinuxExecFrame::Request(request) => request,
+            other => panic!("expected request frame, got {other:?}"),
+        };
+        assert_eq!(request.command, "/usr/bin/codex-crp");
+        assert!(!request.pty);
+
+        let stdin = read_exec_frame(&mut stream)
+            .expect("read stdin frame")
+            .expect("stdin frame");
+        let AvfLinuxExecFrame::Stdin(stdin) = stdin else {
+            panic!("expected stdin frame");
+        };
+        assert_eq!(stdin, b"session.open\n".to_vec());
+
+        write_exec_frame(
+            &mut stream,
+            &AvfLinuxExecFrame::Stdout(b"session.opened\n".to_vec()),
+        )
+        .expect("write stdout frame");
+        write_exec_frame(
+            &mut stream,
+            &AvfLinuxExecFrame::Exit(AvfLinuxExecExit { exit_code: 0 }),
+        )
+        .expect("write exit frame");
+    });
+
+    let gate = Arc::new((Mutex::new(ReaderState::default()), Condvar::new()));
+    let reader = GateReader {
+        state: Arc::clone(&gate),
+    };
+    let (result_tx, result_rx) = mpsc::channel();
+    let socket_path_for_client = socket_path.clone();
+    let worker = thread::spawn(move || {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let result = run_guest_exec_cli_with_streaming_stdin(
+            &socket_path_for_client,
+            Path::new("/"),
+            "/usr/bin/codex-crp",
+            &[],
+            None,
+            HashMap::new(),
+            Some(Box::new(reader)),
+            &mut stdout,
+            &mut stderr,
+        );
+        result_tx
+            .send((result, stdout, stderr))
+            .expect("send streaming exec result");
+    });
+
+    let (result, stdout, stderr) = match result_rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(result) => result,
+        Err(err) => {
+            let (lock, cv) = &*gate;
+            let mut state = lock.lock().expect("lock EOF gate after timeout");
+            state.allow_eof = true;
+            cv.notify_all();
+            panic!("timed out waiting for streaming exec result: {err}");
+        }
+    };
+
+    let (lock, cv) = &*gate;
+    let mut state = lock.lock().expect("lock EOF gate");
+    state.allow_eof = true;
+    cv.notify_all();
+    drop(state);
+
+    worker.join().expect("streaming exec worker");
+    assert_eq!(result.expect("streaming exec should succeed"), 0);
+    assert_eq!(
+        String::from_utf8(stdout).expect("stdout utf8"),
+        "session.opened\n"
+    );
+    assert!(stderr.is_empty());
+    server.join().expect("server thread");
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(unix)]
+#[test]
 fn non_pty_guest_exec_cli_forwards_piped_stdin_into_capture_path() {
     use std::io::Cursor;
     use std::os::unix::net::UnixListener;
@@ -1428,4 +1560,53 @@ fn shared_vm_control_connection_proxies_to_guest_agent() {
     relay.join().expect("relay thread");
     agent.join().expect("agent thread");
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(unix)]
+#[test]
+fn guest_agent_exec_emits_exit_without_waiting_for_close_stdin() {
+    use std::os::unix::net::UnixStream;
+    use std::thread;
+    use std::time::Duration;
+
+    let (mut client, server) = UnixStream::pair().expect("unix stream pair");
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("set client read timeout");
+    let relay = thread::spawn(move || {
+        handle_guest_agent_control_connection(Path::new("/tmp"), server)
+            .expect("handle guest-agent control connection");
+    });
+
+    write_exec_frame(
+        &mut client,
+        &AvfLinuxExecFrame::Request(AvfLinuxExecRequest::new(
+            "/bin/sh",
+            vec!["-lc".to_string(), "printf ready".to_string()],
+            "/",
+            None,
+            HashMap::new(),
+            false,
+        )),
+    )
+    .expect("write client request");
+
+    let stdout = read_exec_frame(&mut client)
+        .expect("read stdout frame")
+        .expect("stdout frame");
+    let stdout = match stdout {
+        AvfLinuxExecFrame::Stdout(bytes) => bytes,
+        other => panic!("expected stdout frame, got {other:?}"),
+    };
+    assert_eq!(stdout, b"ready".to_vec());
+
+    let exit = read_exec_frame(&mut client)
+        .expect("read exit frame")
+        .expect("exit frame");
+    assert_eq!(
+        exit,
+        AvfLinuxExecFrame::Exit(AvfLinuxExecExit { exit_code: 0 })
+    );
+
+    relay.join().expect("guest-agent relay thread");
 }

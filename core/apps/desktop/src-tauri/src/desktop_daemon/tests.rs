@@ -68,9 +68,56 @@ fn select_optional_bin_path_prefers_bundled_avf_helper_for_macos_debug_bundles()
     let bundled_mcp = PathBuf::from("/tmp/bundle/ctx-mcp");
     let dev_mcp = PathBuf::from("/tmp/dev-bin/ctx-mcp");
     assert_eq!(
-        select_optional_bin_path("ctx-mcp", Some(bundled_mcp), Some(dev_mcp.clone()), true, true),
+        select_optional_bin_path(
+            "ctx-mcp",
+            Some(bundled_mcp),
+            Some(dev_mcp.clone()),
+            true,
+            true
+        ),
         Some(dev_mcp)
     );
+}
+
+#[test]
+fn select_bundle_dir_path_prefers_configured_override() {
+    let configured = PathBuf::from("/tmp/configured-bundle");
+    let bundled = PathBuf::from("/tmp/bundled-bundle");
+    let dev = PathBuf::from("/tmp/dev-bundle");
+    assert_eq!(
+        select_bundle_dir_path(
+            Some(configured.clone()),
+            Some(bundled.clone()),
+            Some(dev.clone()),
+        ),
+        Some(configured)
+    );
+    assert_eq!(
+        select_bundle_dir_path(None, Some(bundled.clone()), Some(dev.clone())),
+        Some(bundled)
+    );
+    assert_eq!(
+        select_bundle_dir_path(None, None, Some(dev.clone())),
+        Some(dev)
+    );
+}
+
+#[test]
+fn configured_bundle_dir_uses_existing_ctx_bundle_dir_override() {
+    let _guard = env_lock().lock().expect("env lock poisoned");
+    let temp = std::env::temp_dir().join(format!("ctx-bundle-dir-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp).expect("create temp bundle dir");
+    let _bundle_dir = EnvVarGuard::set(DESKTOP_BUNDLE_DIR_ENV, temp.as_os_str());
+    assert_eq!(configured_bundle_dir(), Some(temp.clone()));
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[test]
+fn configured_bundle_dir_ignores_missing_ctx_bundle_dir_override() {
+    let _guard = env_lock().lock().expect("env lock poisoned");
+    let missing = std::env::temp_dir().join(format!("ctx-missing-bundle-{}", uuid::Uuid::new_v4()));
+    let _bundle_dir = EnvVarGuard::set(DESKTOP_BUNDLE_DIR_ENV, missing.as_os_str());
+    assert_eq!(configured_bundle_dir(), None);
 }
 
 #[test]

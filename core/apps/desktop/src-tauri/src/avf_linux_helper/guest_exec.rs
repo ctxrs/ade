@@ -307,13 +307,12 @@ pub(super) fn run_guest_exec_cli(
     }
 
     let stdin = std::io::stdin();
-    let mut stdin_lock = stdin.lock();
-    let stdin_reader = if unsafe { libc::isatty(stdin_lock.as_raw_fd()) } == 1 {
+    let stdin_reader = if unsafe { libc::isatty(stdin.as_raw_fd()) } == 1 {
         None
     } else {
-        Some(&mut stdin_lock as &mut dyn Read)
+        Some(Box::new(stdin) as Box<dyn Read + Send>)
     };
-    run_guest_exec_cli_with_capture_stdin(
+    run_guest_exec_cli_with_streaming_stdin(
         control_socket,
         cwd,
         command,
@@ -327,6 +326,121 @@ pub(super) fn run_guest_exec_cli(
 }
 
 #[cfg(unix)]
+pub(super) fn run_guest_exec_cli_with_streaming_stdin(
+    control_socket: &Path,
+    cwd: &Path,
+    command: &str,
+    args: &[String],
+    user: Option<&str>,
+    env: HashMap<String, String>,
+    stdin_reader: Option<Box<dyn Read + Send>>,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<i32> {
+    if command.trim().is_empty() {
+        bail!("guest exec command must not be empty");
+    }
+    if cwd.as_os_str().is_empty() {
+        bail!("guest exec cwd must not be empty");
+    }
+
+    let mut stream = connect_shared_vm_control_socket(control_socket)?;
+    let request = AvfLinuxExecRequest::new(
+        command,
+        args.to_vec(),
+        cwd.display().to_string(),
+        user.map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
+        env,
+        false,
+    );
+    write_exec_frame(&mut stream, &AvfLinuxExecFrame::Request(request))
+        .context("writing AVF Linux guest exec request")?;
+
+    let writer =
+        Arc::new(Mutex::new(stream.try_clone().context(
+            "cloning shared VM control stream for stdin forwarding",
+        )?));
+    let _stdin_forwarder = if let Some(mut reader) = stdin_reader {
+        let writer = Arc::clone(&writer);
+        Some(std::thread::spawn(move || {
+            let mut buf = [0u8; AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => {
+                        let Ok(mut guard) = writer.lock() else {
+                            return;
+                        };
+                        let _ = write_exec_frame(&mut *guard, &AvfLinuxExecFrame::CloseStdin);
+                        return;
+                    }
+                    Ok(n) => {
+                        let Ok(mut guard) = writer.lock() else {
+                            return;
+                        };
+                        if write_exec_frame(
+                            &mut *guard,
+                            &AvfLinuxExecFrame::Stdin(buf[..n].to_vec()),
+                        )
+                        .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    Err(_) => {
+                        let Ok(mut guard) = writer.lock() else {
+                            return;
+                        };
+                        let _ = write_exec_frame(&mut *guard, &AvfLinuxExecFrame::CloseStdin);
+                        return;
+                    }
+                }
+            }
+        }))
+    } else {
+        write_exec_frame(
+            &mut *writer
+                .lock()
+                .map_err(|_| anyhow::anyhow!("guest exec writer mutex poisoned"))?,
+            &AvfLinuxExecFrame::CloseStdin,
+        )
+        .context("closing AVF Linux guest exec stdin")?;
+        None
+    };
+
+    loop {
+        match read_exec_frame(&mut stream).context("reading AVF Linux guest exec response")? {
+            Some(AvfLinuxExecFrame::Stdout(bytes)) => {
+                stdout
+                    .write_all(&bytes)
+                    .and_then(|_| stdout.flush())
+                    .context("writing guest stdout")?;
+            }
+            Some(AvfLinuxExecFrame::Stderr(bytes)) => {
+                stderr
+                    .write_all(&bytes)
+                    .and_then(|_| stderr.flush())
+                    .context("writing guest stderr")?;
+            }
+            Some(AvfLinuxExecFrame::Exit(AvfLinuxExecExit { exit_code })) => return Ok(exit_code),
+            Some(AvfLinuxExecFrame::Error(AvfLinuxExecError { code, message })) => {
+                bail!("{code}: {message}");
+            }
+            Some(other) => {
+                bail!("received unexpected AVF Linux exec frame: {other:?}");
+            }
+            None => {
+                bail!(
+                    "shared VM control socket {} closed before sending an exit frame",
+                    control_socket.display()
+                );
+            }
+        }
+    }
+}
+
+#[cfg(all(unix, test))]
 pub(super) fn run_guest_exec_cli_with_capture_stdin(
     control_socket: &Path,
     cwd: &Path,
