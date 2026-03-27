@@ -175,13 +175,15 @@ const SHARED_VM_DATA_DISK_POLL_INTERVAL: std::time::Duration = std::time::Durati
 const GUEST_EXEC_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const GUEST_EXEC_CONNECT_RETRY_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(100);
+const AVF_VM_COMPLETION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+const AVF_VM_SAVE_RESTORE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 // Real shared-VM guest control transport still truncates streamed stdin around the
 // 4 KiB-class frame budget during live `tar -xf -` imports, so keep payload chunks
 // well below that empirical limit on both sides of the relay.
 const AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD: usize = 1024;
 const GUEST_EXEC_TTY_RESIZE_POLL_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(100);
-const SHARED_VM_SHUTDOWN_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
+const SHARED_VM_SHUTDOWN_WAIT_TIMEOUT: Duration = Duration::from_secs(135);
 const DEFAULT_PTY_COLS: u16 = 80;
 const DEFAULT_PTY_ROWS: u16 = 24;
 const REQUIRED_SHARED_VM_KERNEL_CMDLINE_TOKENS: &[&str] =

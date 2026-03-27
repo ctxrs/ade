@@ -925,6 +925,51 @@ fn start_shared_vm_materializes_rootfs_and_data_disk_layout() {
 }
 
 #[test]
+fn start_shared_vm_clears_stale_guest_control_ready_marker_before_launch() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-start-clears-ready-marker-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    let runtime_root = temp.join("runtime");
+    let helpers_root = runtime_root.join("helpers");
+    fs::create_dir_all(&helpers_root).expect("create helpers root");
+    let source_rootfs = temp.join("source-rootfs.raw");
+    fs::write(&source_rootfs, b"rootfs").expect("write rootfs");
+    let kernel_path = helpers_root.join("kernel");
+    fs::write(&kernel_path, b"kernel").expect("write kernel");
+    let initrd_path = helpers_root.join("initrd");
+    fs::write(&initrd_path, b"initrd").expect("write initrd");
+    let ready_marker = shared_vm_guest_control_ready_path(&temp);
+    fs::create_dir_all(ready_marker.parent().expect("marker parent"))
+        .expect("create marker parent");
+    fs::write(&ready_marker, b"ready").expect("seed ready marker");
+
+    let started = start_shared_vm(
+        &temp,
+        &runtime_root,
+        &source_rootfs,
+        &kernel_path,
+        &initrd_path,
+        "test-runtime".to_string(),
+    )
+    .expect("start shared vm");
+
+    assert!(matches!(
+        started.state,
+        AvfLinuxSharedVmLifecycleState::Running
+    ));
+    assert!(
+        !ready_marker.exists(),
+        "stale guest-control ready marker should be removed before launch"
+    );
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
 fn start_shared_vm_surfaces_saved_state_downgrade_when_restore_is_unavailable() {
     let temp = PathBuf::from("/tmp").join(format!(
         "ctxavf-start-saved-state-downgrade-{}-{}",
@@ -1163,6 +1208,61 @@ fn stop_shared_vm_discards_stale_saved_state_and_reports_cold_stop() {
         .notes
         .iter()
         .any(|note| note.contains("discarded stale workspace VM saved state")));
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn stop_shared_vm_clears_guest_control_ready_marker() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-stop-clears-ready-marker-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    prepare_runtime_layout(&temp).expect("prepare runtime layout");
+    let ready_marker = shared_vm_guest_control_ready_path(&temp);
+    fs::create_dir_all(ready_marker.parent().expect("marker parent"))
+        .expect("create marker parent");
+    fs::write(&ready_marker, b"ready").expect("seed ready marker");
+    persist_state(
+        &shared_vm_state_path(&temp),
+        &PersistedSharedVmState {
+            state: AvfLinuxSharedVmLifecycleState::Running,
+            runtime_root: None,
+            rootfs_image: None,
+            kernel_path: None,
+            initrd_path: None,
+            runtime_version: None,
+            runtime_shape_digest: None,
+            updated_at: Some(now_timestamp_string()),
+            last_started_at: Some(now_timestamp_string()),
+            last_saved_at: None,
+            last_stopped_at: None,
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::ColdBoot),
+            last_stop_outcome: None,
+            last_restore_error: None,
+            last_save_error: None,
+            relay_pid: None,
+            guest_agent_pid: None,
+            simulated: true,
+            notes: vec!["running".to_string()],
+        },
+    )
+    .expect("persist running state");
+
+    let stopped = stop_shared_vm(&temp).expect("stop shared vm");
+
+    assert!(matches!(
+        stopped.state,
+        AvfLinuxSharedVmLifecycleState::Stopped
+    ));
+    assert!(
+        !ready_marker.exists(),
+        "guest-control ready marker should be removed on stop"
+    );
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 
@@ -1590,6 +1690,13 @@ fn cloud_init_enables_host_data_before_touching_host_payload() {
     assert!(host_data_enable_index < data_disk_enable_index);
     assert!(data_disk_enable_index < prepare_guest_agent_index);
     assert!(host_data_enable_index < prepare_guest_agent_index);
+}
+
+#[test]
+fn avf_vm_save_restore_timeout_exceeds_default_completion_timeout() {
+    assert!(AVF_VM_SAVE_RESTORE_TIMEOUT > AVF_VM_COMPLETION_TIMEOUT);
+    assert!(AVF_VM_COMPLETION_TIMEOUT > GUEST_EXEC_CONNECT_TIMEOUT);
+    assert!(SHARED_VM_SHUTDOWN_WAIT_TIMEOUT > AVF_VM_SAVE_RESTORE_TIMEOUT);
 }
 
 #[test]

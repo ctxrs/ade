@@ -202,6 +202,18 @@ pub(super) fn discard_stale_saved_state_for_cold_stop(data_root: &Path) -> Optio
     }
 }
 
+fn clear_shared_vm_transient_artifacts(data_root: &Path) {
+    for path in [
+        shared_vm_control_socket_path(data_root),
+        shared_vm_guest_agent_socket_path(data_root),
+        shared_vm_guest_control_ready_path(data_root),
+    ] {
+        if path.exists() {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
 pub(super) fn start_shared_vm(
     data_root: &Path,
     runtime_root: &Path,
@@ -409,6 +421,7 @@ pub(super) fn start_shared_vm(
     if let Some(pid) = state.guest_agent_pid.take() {
         stop_shared_vm_server(pid);
     }
+    clear_shared_vm_transient_artifacts(data_root);
     state.runtime_root = Some(runtime_root.to_path_buf());
     state.rootfs_image = Some(staged_rootfs_image.clone());
     state.kernel_path = Some(boot_kernel_path.clone());
@@ -607,14 +620,7 @@ pub(super) fn stop_shared_vm(data_root: &Path) -> Result<AvfLinuxSharedVmStateRe
             request_shared_vm_shutdown(data_root)?;
             if wait_for_process_exit(owner_pid, SHARED_VM_SHUTDOWN_WAIT_TIMEOUT) {
                 clear_shared_vm_shutdown_request(data_root);
-                let control_socket = shared_vm_control_socket_path(data_root);
-                if control_socket.exists() {
-                    let _ = fs::remove_file(&control_socket);
-                }
-                let guest_agent_socket = shared_vm_guest_agent_socket_path(data_root);
-                if guest_agent_socket.exists() {
-                    let _ = fs::remove_file(&guest_agent_socket);
-                }
+                clear_shared_vm_transient_artifacts(data_root);
                 let response = shared_vm_state(data_root)?;
                 if matches!(response.state, AvfLinuxSharedVmLifecycleState::Stopped) {
                     return Ok(response);
@@ -630,14 +636,7 @@ pub(super) fn stop_shared_vm(data_root: &Path) -> Result<AvfLinuxSharedVmStateRe
     }
     clear_shared_vm_shutdown_request(data_root);
     clear_shared_vm_memory_pressure_stop_request(data_root);
-    let control_socket = shared_vm_control_socket_path(data_root);
-    if control_socket.exists() {
-        let _ = fs::remove_file(&control_socket);
-    }
-    let guest_agent_socket = shared_vm_guest_agent_socket_path(data_root);
-    if guest_agent_socket.exists() {
-        let _ = fs::remove_file(&guest_agent_socket);
-    }
+    clear_shared_vm_transient_artifacts(data_root);
     state.state = AvfLinuxSharedVmLifecycleState::Stopped;
     state.updated_at = Some(now_timestamp_string());
     state.last_saved_at = None;
