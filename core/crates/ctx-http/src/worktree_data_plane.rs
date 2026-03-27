@@ -166,13 +166,14 @@ pub(crate) fn apply_data_plane_to_execution_settings(
     settings.mode = data_plane.execution_mode.clone();
     if let Some(binding) = data_plane.binding.as_ref() {
         if binding.execution_settings_json.is_some() {
-            return crate::api::tasks::sandbox_execution_settings_from_binding(binding)
-                .map_err(|err| {
+            return crate::api::tasks::sandbox_execution_settings_from_binding(binding).map_err(
+                |err| {
                     anyhow!(
                         "sandbox binding {} had invalid execution settings snapshot: {err:#}",
                         binding.worktree_id.0
                     )
-                });
+                },
+            );
         }
         settings.mode = ExecutionMode::Sandbox;
         settings.container.runtime = binding_runtime_kind(binding);
@@ -187,8 +188,13 @@ pub(crate) fn apply_data_plane_to_execution_settings(
 
 #[cfg(test)]
 mod tests {
+    use crate::daemon::AppState;
     use chrono::Utc;
     use ctx_core::ids::{WorkspaceId, WorktreeId};
+    use ctx_core::models::{ExecutionEnvironment, VcsKind};
+    use ctx_store::StoreManager;
+    use std::collections::HashMap;
+    use std::sync::Arc;
     use uuid::Uuid;
 
     use super::*;
@@ -365,8 +371,131 @@ mod tests {
             apply_data_plane_to_execution_settings(&ExecutionSettings::default(), &data_plane)
                 .expect_err("unknown binding schema version should fail closed");
 
+        assert!(format!("{err:#}")
+            .contains("unsupported sandbox binding execution settings schema version 99"));
+    }
+
+    #[test]
+    fn binding_snapshot_with_host_mode_fails_closed() {
+        let data_plane = WorktreeDataPlane {
+            binding: Some(SandboxBinding {
+                worktree_id: WorktreeId(Uuid::new_v4()),
+                workspace_id: WorkspaceId(Uuid::new_v4()),
+                runtime_family: SandboxRuntimeFamily::NativeContainer,
+                profile: ctx_core::models::SandboxProfile::Standard,
+                live_workspace_root: "/ctx/ws".to_string(),
+                live_worktree_root: "/ctx/wt".to_string(),
+                execution_settings_json: Some(
+                    serde_json::json!({
+                        "mode": "host",
+                        "container": {
+                            "runtime": "native_container",
+                            "mount_mode": "disk_isolated"
+                        }
+                    })
+                    .to_string(),
+                ),
+                container_name: Some("ctx-harness-test".to_string()),
+                host_projection_root: None,
+                created_at: Utc::now(),
+            }),
+            workspace: Workspace {
+                id: WorkspaceId(Uuid::new_v4()),
+                name: "ws".to_string(),
+                root_path: "/host/ws".to_string(),
+                created_at: Utc::now(),
+                vcs_kind: None,
+            },
+            execution_mode: ExecutionMode::Sandbox,
+            live_workspace_root: PathBuf::from("/ctx/ws"),
+            live_worktree_root: PathBuf::from("/ctx/wt"),
+        };
+
+        let err =
+            apply_data_plane_to_execution_settings(&ExecutionSettings::default(), &data_plane)
+                .expect_err("host-mode binding snapshot should fail closed");
+
+        assert!(format!("{err:#}")
+            .contains("sandbox binding execution settings snapshot must keep mode=sandbox"));
+    }
+
+    #[tokio::test]
+    async fn resolve_worktree_data_plane_rejects_sandbox_session_without_binding() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repo_root = temp.path().join("repo");
+        std::fs::create_dir_all(&repo_root).expect("create repo root");
+        let state = Arc::new(AppState::new(
+            temp.path().to_path_buf(),
+            StoreManager::open(temp.path()).await.expect("open stores"),
+            HashMap::new(),
+            "http://127.0.0.1:4310".to_string(),
+            None,
+        ));
+        let workspace = state
+            .global_store()
+            .create_workspace(
+                "ws".to_string(),
+                repo_root.to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .expect("create workspace");
+        let store = state
+            .store_for_workspace(workspace.id)
+            .await
+            .expect("workspace store");
+        let task = store
+            .create_task(workspace.id, "task".to_string(), None)
+            .await
+            .expect("create task");
+        let worktree_root = temp.path().join("managed-worktree");
+        std::fs::create_dir_all(&worktree_root).expect("create managed root");
+        let worktree = store
+            .insert_worktree(Worktree {
+                id: WorktreeId(Uuid::new_v4()),
+                workspace_id: workspace.id,
+                root_path: worktree_root.to_string_lossy().to_string(),
+                base_commit_sha: "abc123".to_string(),
+                git_branch: Some("ctx/test".to_string()),
+                vcs_kind: Some(VcsKind::Git),
+                base_revision: Some("abc123".to_string()),
+                vcs_ref: Some("ctx/test".to_string()),
+                created_at: Utc::now(),
+                bootstrap_status: None,
+                bootstrap_started_at: None,
+                bootstrap_finished_at: None,
+                bootstrap_exit_code: None,
+                bootstrap_timeout_sec: None,
+                bootstrap_error: None,
+                bootstrap_log_path: None,
+                bootstrap_log_truncated: None,
+                bootstrap_command: None,
+                bootstrap_script_path: None,
+            })
+            .await
+            .expect("insert worktree");
+        store
+            .create_session(
+                task.id,
+                workspace.id,
+                worktree.id,
+                ExecutionEnvironment::Sandbox,
+                "fake".to_string(),
+                "model".to_string(),
+                "session".to_string(),
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("create sandbox session");
+
+        let err = resolve_worktree_data_plane(&state, &worktree)
+            .await
+            .expect_err("sandbox session without binding must fail closed");
+
         assert!(err
             .to_string()
-            .contains("unsupported sandbox binding execution settings schema version 99"));
+            .contains("sandbox binding is missing for sandbox worktree"));
     }
 }

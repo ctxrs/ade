@@ -1,5 +1,6 @@
 use super::*;
 use crate::daemon::AppState;
+use crate::settings::{ContainerRuntimeKind, ExecutionMode, ExecutionSettings, Settings};
 use ctx_core::models::VcsKind;
 use ctx_store::{Store, StoreManager};
 use std::collections::HashMap;
@@ -41,6 +42,39 @@ async fn test_state(data_root: &StdPath) -> Arc<AppState> {
         "http://127.0.0.1:4310".to_string(),
         None,
     ))
+}
+
+fn sandbox_execution_settings(runtime: ContainerRuntimeKind) -> ExecutionSettings {
+    let mut settings = ExecutionSettings {
+        mode: ExecutionMode::Sandbox,
+        ..ExecutionSettings::default()
+    };
+    settings.container.runtime = runtime;
+    settings.container.mount_mode = crate::settings::ContainerMountMode::DiskIsolated;
+    settings
+}
+
+async fn save_execution_settings(state: &Arc<AppState>, execution: ExecutionSettings) {
+    crate::settings::save_settings(
+        state.global_store(),
+        &Settings {
+            execution: Some(execution),
+            ..Settings::default()
+        },
+    )
+    .await
+    .expect("save settings");
+}
+
+async fn save_test_execution_settings(
+    state: &Arc<AppState>,
+    execution: crate::settings::ExecutionSettings,
+) {
+    let mut settings = crate::settings::Settings::default();
+    settings.execution = Some(execution);
+    crate::settings::save_settings(state.global_store(), &settings)
+        .await
+        .expect("save runtime settings");
 }
 
 struct EnvVarGuard {
@@ -113,6 +147,41 @@ async fn insert_managed_worktree(
         .await
         .expect("insert worktree");
     (worktree, managed_root)
+}
+
+async fn upsert_sandbox_binding_snapshot(
+    store: &Store,
+    workspace: &Workspace,
+    worktree: &Worktree,
+    execution: &ExecutionSettings,
+    host_projection_root: Option<&StdPath>,
+) {
+    let runtime_family = match execution.container.runtime {
+        ContainerRuntimeKind::NativeContainer => SandboxRuntimeFamily::NativeContainer,
+        ContainerRuntimeKind::SharedVmContainer => SandboxRuntimeFamily::SharedVmContainer,
+    };
+    store
+        .upsert_sandbox_binding(SandboxBinding {
+            worktree_id: worktree.id,
+            workspace_id: workspace.id,
+            runtime_family,
+            profile: SandboxProfile::Standard,
+            live_workspace_root: crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+            live_worktree_root: crate::disk_isolated::container_worktree_root(worktree.id)
+                .to_string_lossy()
+                .to_string(),
+            execution_settings_json: Some(
+                serde_json::to_string(execution).expect("serialize sandbox binding snapshot"),
+            ),
+            container_name: Some(crate::harness_runtime::workspace_container_name(
+                workspace.id,
+            )),
+            host_projection_root: host_projection_root
+                .map(|path| path.to_string_lossy().to_string()),
+            created_at: Utc::now(),
+        })
+        .await
+        .expect("upsert sandbox binding");
 }
 
 #[tokio::test]
@@ -244,6 +313,538 @@ async fn archive_task_only_dematerializes_sandbox_state() {
     assert!(
         tokio::fs::metadata(&host_projection_root).await.is_err(),
         "archive should remove the AVF host projection root"
+    );
+}
+
+#[tokio::test]
+async fn unarchive_task_reuses_binding_snapshot_after_runtime_default_changes() {
+    let _serial = crate::test_support::sandbox_cli_env_test_lock()
+        .lock()
+        .await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo_root = temp.path().join("repo");
+    std::fs::create_dir_all(&repo_root).expect("create repo root");
+    let base_commit = init_git_workspace(&repo_root);
+    let state = test_state(temp.path()).await;
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            "ws".to_string(),
+            repo_root.to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .expect("create workspace");
+    let store = state
+        .store_for_workspace(workspace.id)
+        .await
+        .expect("workspace store");
+    let task = store
+        .create_task(workspace.id, "task".to_string(), None)
+        .await
+        .expect("create task");
+    state
+        .global_store()
+        .upsert_workspace_task_index(task.id, workspace.id)
+        .await
+        .expect("upsert task index");
+    let (worktree, managed_root) = insert_managed_worktree(
+        &store,
+        temp.path(),
+        &workspace,
+        task.id,
+        &repo_root,
+        &base_commit,
+    )
+    .await;
+    state
+        .global_store()
+        .upsert_workspace_worktree_index(worktree.id, workspace.id)
+        .await
+        .expect("upsert worktree index");
+    store
+        .set_task_primary_worktree(task.id, worktree.id)
+        .await
+        .expect("set primary worktree");
+
+    let native_settings = sandbox_execution_settings(ContainerRuntimeKind::NativeContainer);
+    save_execution_settings(&state, native_settings.clone()).await;
+    upsert_sandbox_binding_snapshot(&store, &workspace, &worktree, &native_settings, None).await;
+
+    let log_path = temp.path().join("sandbox-cli.log");
+    let sandbox_cli_path = crate::test_support::write_running_container_sandbox_cli_shim(
+        temp.path(),
+        &log_path,
+        &crate::harness_runtime::workspace_container_name(workspace.id),
+    );
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+
+    let Json(_) = archive_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
+        .await
+        .expect("archive task");
+
+    let shared_vm_settings = sandbox_execution_settings(ContainerRuntimeKind::SharedVmContainer);
+    save_execution_settings(&state, shared_vm_settings).await;
+
+    let Json(unarchived_task) =
+        unarchive_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
+            .await
+            .expect("unarchive task");
+    assert!(
+        unarchived_task.archived_at.is_none(),
+        "task should be active after unarchive"
+    );
+    assert!(
+        tokio::fs::metadata(&managed_root).await.is_ok(),
+        "canonical managed worktree root should remain attached after unarchive"
+    );
+
+    let binding = store
+        .get_sandbox_binding(worktree.id)
+        .await
+        .expect("load sandbox binding")
+        .expect("sandbox binding exists after unarchive");
+    assert_eq!(
+        binding.runtime_family,
+        SandboxRuntimeFamily::NativeContainer
+    );
+    let rebound = sandbox_execution_settings_from_binding(&binding)
+        .expect("binding snapshot should remain valid after unarchive");
+    assert_eq!(rebound.mode, ExecutionMode::Sandbox);
+    assert_eq!(
+        rebound.container.runtime,
+        ContainerRuntimeKind::NativeContainer
+    );
+
+    let resolved = resolve_existing_worktree_execution(&state, &store, &workspace, worktree.id)
+        .await
+        .expect("resolve existing worktree execution");
+    assert_eq!(
+        resolved.execution_environment(),
+        ExecutionEnvironment::Sandbox
+    );
+    assert_eq!(
+        resolved.effective.container.runtime,
+        ContainerRuntimeKind::NativeContainer,
+        "persisted binding snapshot should override changed workspace runtime defaults"
+    );
+}
+
+#[tokio::test]
+async fn unarchive_task_fails_closed_for_corrupt_host_mode_binding_snapshot() {
+    let _serial = crate::test_support::sandbox_cli_env_test_lock()
+        .lock()
+        .await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo_root = temp.path().join("repo");
+    std::fs::create_dir_all(&repo_root).expect("create repo root");
+    let base_commit = init_git_workspace(&repo_root);
+    let state = test_state(temp.path()).await;
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            "ws".to_string(),
+            repo_root.to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .expect("create workspace");
+    let store = state
+        .store_for_workspace(workspace.id)
+        .await
+        .expect("workspace store");
+    let task = store
+        .create_task(workspace.id, "task".to_string(), None)
+        .await
+        .expect("create task");
+    state
+        .global_store()
+        .upsert_workspace_task_index(task.id, workspace.id)
+        .await
+        .expect("upsert task index");
+    let (worktree, _) = insert_managed_worktree(
+        &store,
+        temp.path(),
+        &workspace,
+        task.id,
+        &repo_root,
+        &base_commit,
+    )
+    .await;
+    state
+        .global_store()
+        .upsert_workspace_worktree_index(worktree.id, workspace.id)
+        .await
+        .expect("upsert worktree index");
+    store
+        .set_task_primary_worktree(task.id, worktree.id)
+        .await
+        .expect("set primary worktree");
+
+    let native_settings = sandbox_execution_settings(ContainerRuntimeKind::NativeContainer);
+    save_execution_settings(&state, native_settings).await;
+    store
+        .upsert_sandbox_binding(SandboxBinding {
+            worktree_id: worktree.id,
+            workspace_id: workspace.id,
+            runtime_family: SandboxRuntimeFamily::NativeContainer,
+            profile: SandboxProfile::Standard,
+            live_workspace_root: crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+            live_worktree_root: crate::disk_isolated::container_worktree_root(worktree.id)
+                .to_string_lossy()
+                .to_string(),
+            execution_settings_json: Some(
+                serde_json::json!({
+                    "mode": "host",
+                    "container": {
+                        "runtime": "native_container",
+                        "mount_mode": "disk_isolated"
+                    }
+                })
+                .to_string(),
+            ),
+            container_name: Some(crate::harness_runtime::workspace_container_name(
+                workspace.id,
+            )),
+            host_projection_root: None,
+            created_at: Utc::now(),
+        })
+        .await
+        .expect("upsert corrupt sandbox binding");
+
+    let log_path = temp.path().join("sandbox-cli.log");
+    let sandbox_cli_path = crate::test_support::write_running_container_sandbox_cli_shim(
+        temp.path(),
+        &log_path,
+        &crate::harness_runtime::workspace_container_name(workspace.id),
+    );
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+
+    let Json(_) = archive_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
+        .await
+        .expect("archive task");
+
+    let err = unarchive_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
+        .await
+        .expect_err("corrupt host-mode binding snapshot should fail closed on unarchive");
+    assert_eq!(err, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        store
+            .get_task(task.id)
+            .await
+            .expect("reload task")
+            .expect("task exists")
+            .archived_at
+            .is_some(),
+        "task should remain archived after failed unarchive rematerialization"
+    );
+}
+
+#[tokio::test]
+async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtime() {
+    let _serial = crate::test_support::sandbox_cli_env_test_lock()
+        .lock()
+        .await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo_root = temp.path().join("repo");
+    std::fs::create_dir_all(&repo_root).expect("create repo root");
+    let base_commit = init_git_workspace(&repo_root);
+    let state = test_state(temp.path()).await;
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            "ws".to_string(),
+            repo_root.to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .expect("create workspace");
+    let store = state
+        .store_for_workspace(workspace.id)
+        .await
+        .expect("workspace store");
+    let task = store
+        .create_task(workspace.id, "task".to_string(), None)
+        .await
+        .expect("create task");
+    state
+        .global_store()
+        .upsert_workspace_task_index(task.id, workspace.id)
+        .await
+        .expect("upsert task index");
+    let (worktree, managed_root) = insert_managed_worktree(
+        &store,
+        temp.path(),
+        &workspace,
+        task.id,
+        &repo_root,
+        &base_commit,
+    )
+    .await;
+    state
+        .global_store()
+        .upsert_workspace_worktree_index(worktree.id, workspace.id)
+        .await
+        .expect("upsert worktree index");
+    store
+        .set_task_primary_worktree(task.id, worktree.id)
+        .await
+        .expect("set primary worktree");
+
+    let persisted_snapshot = crate::settings::ExecutionSettings {
+        mode: crate::settings::ExecutionMode::Sandbox,
+        container: crate::settings::ContainerExecutionSettings {
+            runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+            network_mode: crate::settings::ContainerNetworkMode::Allowlist,
+            allowlist: vec!["github.com".to_string()],
+            image: Some("registry.example/sandbox:v1".to_string()),
+            ..crate::settings::ContainerExecutionSettings::default()
+        },
+    };
+    store
+        .upsert_sandbox_binding(SandboxBinding {
+            worktree_id: worktree.id,
+            workspace_id: workspace.id,
+            runtime_family: SandboxRuntimeFamily::NativeContainer,
+            profile: SandboxProfile::Standard,
+            live_workspace_root: crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+            live_worktree_root: crate::disk_isolated::container_worktree_root(worktree.id)
+                .to_string_lossy()
+                .to_string(),
+            execution_settings_json: Some(
+                serde_json::to_string(&persisted_snapshot).expect("serialize binding snapshot"),
+            ),
+            container_name: Some(crate::harness_runtime::workspace_container_name(
+                workspace.id,
+            )),
+            host_projection_root: None,
+            created_at: Utc::now(),
+        })
+        .await
+        .expect("insert sandbox binding");
+
+    let log_path = temp.path().join("sandbox-cli.log");
+    let sandbox_cli_path = crate::test_support::write_running_container_sandbox_cli_shim(
+        temp.path(),
+        &log_path,
+        &crate::harness_runtime::workspace_container_name(workspace.id),
+    );
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+
+    let Json(_) = archive_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
+        .await
+        .expect("archive task");
+    tokio::fs::remove_dir_all(&managed_root)
+        .await
+        .expect("remove managed root after archive");
+
+    save_test_execution_settings(
+        &state,
+        crate::settings::ExecutionSettings {
+            mode: crate::settings::ExecutionMode::Sandbox,
+            container: crate::settings::ContainerExecutionSettings {
+                runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
+                network_mode: crate::settings::ContainerNetworkMode::All,
+                allowlist: Vec::new(),
+                image: Some("registry.example/sandbox:v2".to_string()),
+                ..crate::settings::ContainerExecutionSettings::default()
+            },
+        },
+    )
+    .await;
+
+    let Json(unarchived_task) =
+        unarchive_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
+            .await
+            .expect("unarchive task");
+
+    assert!(
+        unarchived_task.archived_at.is_none(),
+        "task should no longer be archived after unarchive_task"
+    );
+    assert!(
+        tokio::fs::metadata(&managed_root).await.is_ok(),
+        "unarchive should recreate the canonical managed worktree root"
+    );
+    assert!(
+        branch_exists(
+            &repo_root,
+            worktree.git_branch.as_deref().expect("branch name"),
+        )
+        .await
+        .expect("check branch"),
+        "unarchive should keep the existing managed worktree branch attached"
+    );
+
+    let current_effective =
+        crate::execution_effective::effective_execution_settings(&state, workspace.id)
+            .await
+            .expect("load current effective settings");
+    assert_eq!(
+        current_effective.container.runtime,
+        crate::settings::ContainerRuntimeKind::SharedVmContainer,
+        "workspace defaults should now point at the new runtime"
+    );
+
+    let binding = store
+        .get_sandbox_binding(worktree.id)
+        .await
+        .expect("load rematerialized binding")
+        .expect("binding should remain present after unarchive");
+    assert_eq!(
+        binding.runtime_family,
+        SandboxRuntimeFamily::NativeContainer
+    );
+    let parsed = crate::api::tasks::sandbox_execution_settings_from_binding(&binding)
+        .expect("parse rematerialized binding snapshot");
+    assert_eq!(
+        parsed.container.runtime,
+        crate::settings::ContainerRuntimeKind::NativeContainer,
+        "rematerialized binding must preserve the original runtime snapshot"
+    );
+    assert_eq!(
+        parsed.container.network_mode,
+        crate::settings::ContainerNetworkMode::Allowlist
+    );
+    assert_eq!(parsed.container.allowlist, vec!["github.com".to_string()]);
+    assert_eq!(
+        parsed.container.image,
+        Some("registry.example/sandbox:v1".to_string())
+    );
+}
+
+#[tokio::test]
+async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {
+    let _serial = crate::test_support::sandbox_cli_env_test_lock()
+        .lock()
+        .await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo_root = temp.path().join("repo");
+    std::fs::create_dir_all(&repo_root).expect("create repo root");
+    let base_commit = init_git_workspace(&repo_root);
+    let state = test_state(temp.path()).await;
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            "ws".to_string(),
+            repo_root.to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .expect("create workspace");
+    let store = state
+        .store_for_workspace(workspace.id)
+        .await
+        .expect("workspace store");
+    let task = store
+        .create_task(workspace.id, "task".to_string(), None)
+        .await
+        .expect("create task");
+    state
+        .global_store()
+        .upsert_workspace_task_index(task.id, workspace.id)
+        .await
+        .expect("upsert task index");
+    let (worktree, managed_root) = insert_managed_worktree(
+        &store,
+        temp.path(),
+        &workspace,
+        task.id,
+        &repo_root,
+        &base_commit,
+    )
+    .await;
+    state
+        .global_store()
+        .upsert_workspace_worktree_index(worktree.id, workspace.id)
+        .await
+        .expect("upsert worktree index");
+    store
+        .set_task_primary_worktree(task.id, worktree.id)
+        .await
+        .expect("set primary worktree");
+    store
+        .upsert_sandbox_binding(SandboxBinding {
+            worktree_id: worktree.id,
+            workspace_id: workspace.id,
+            runtime_family: SandboxRuntimeFamily::NativeContainer,
+            profile: SandboxProfile::Standard,
+            live_workspace_root: crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+            live_worktree_root: crate::disk_isolated::container_worktree_root(worktree.id)
+                .to_string_lossy()
+                .to_string(),
+            execution_settings_json: Some(
+                serde_json::json!({
+                    "mode": "host",
+                    "container": {
+                        "runtime": "native_container",
+                        "mount_mode": "disk_isolated"
+                    }
+                })
+                .to_string(),
+            ),
+            container_name: Some(crate::harness_runtime::workspace_container_name(
+                workspace.id,
+            )),
+            host_projection_root: None,
+            created_at: Utc::now(),
+        })
+        .await
+        .expect("insert corrupt sandbox binding");
+
+    let log_path = temp.path().join("sandbox-cli.log");
+    let sandbox_cli_path = crate::test_support::write_running_container_sandbox_cli_shim(
+        temp.path(),
+        &log_path,
+        &crate::harness_runtime::workspace_container_name(workspace.id),
+    );
+    let _sandbox_cli = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+
+    let Json(_) = archive_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
+        .await
+        .expect("archive task");
+
+    let status = unarchive_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
+        .await
+        .expect_err("corrupt binding snapshot should fail closed");
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        store
+            .get_task(task.id)
+            .await
+            .expect("load task after failed unarchive")
+            .expect("task should still exist")
+            .archived_at
+            .is_some(),
+        "failed unarchive should leave the task archived"
+    );
+    assert!(
+        tokio::fs::metadata(&managed_root).await.is_ok(),
+        "failed unarchive should not destroy the canonical managed worktree root"
+    );
+    assert!(
+        store
+            .get_sandbox_binding(worktree.id)
+            .await
+            .expect("load binding after failed unarchive")
+            .is_some(),
+        "failed unarchive should preserve the persisted binding row for repair"
     );
 }
 
