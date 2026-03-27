@@ -805,6 +805,7 @@ pub(crate) async fn ensure_worktree_attached(
     base_commit_sha: &str,
     branch_name: &str,
 ) -> anyhow::Result<()> {
+    let workspace_root = workspace_root.as_ref();
     let worktree_path = worktree_path.as_ref();
     if let Some(parent) = worktree_path.parent() {
         tokio::fs::create_dir_all(parent)
@@ -812,18 +813,41 @@ pub(crate) async fn ensure_worktree_attached(
             .context("creating worktree parent dir")?;
     }
 
-    if tokio::fs::metadata(worktree_path).await.is_ok() {
-        if is_git_worktree(worktree_path).await.unwrap_or(false) {
-            return Ok(());
+    let mut prune_stale_registration = false;
+    match tokio::fs::metadata(worktree_path).await {
+        Ok(metadata) => {
+            if is_git_worktree(worktree_path).await.unwrap_or(false) {
+                return Ok(());
+            }
+            if metadata.is_dir() {
+                tokio::fs::remove_dir_all(worktree_path)
+                    .await
+                    .context("removing stale worktree dir")?;
+            } else {
+                tokio::fs::remove_file(worktree_path)
+                    .await
+                    .context("removing stale worktree file")?;
+            }
         }
-        tokio::fs::remove_dir_all(worktree_path)
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            // Missing managed roots can still remain registered in `git worktree list`.
+            // Prune those stale registrations before reattaching the canonical path.
+            prune_stale_registration = true;
+        }
+        Err(err) => {
+            return Err(err).context("reading managed worktree root metadata");
+        }
+    }
+
+    if prune_stale_registration {
+        prune_worktrees(workspace_root)
             .await
-            .context("removing stale worktree dir")?;
+            .context("pruning stale managed worktree registrations")?;
     }
 
     let mut cmd = Command::new("git");
     cmd.arg("-C")
-        .arg(workspace_root.as_ref())
+        .arg(workspace_root)
         .arg("worktree")
         .arg("add")
         .arg(worktree_path);

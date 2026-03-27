@@ -47,8 +47,10 @@ async fn save_test_execution_settings(
     state: &Arc<AppState>,
     execution: crate::settings::ExecutionSettings,
 ) {
-    let mut settings = crate::settings::Settings::default();
-    settings.execution = Some(execution);
+    let settings = crate::settings::Settings {
+        execution: Some(execution),
+        ..Default::default()
+    };
     crate::settings::save_settings(state.global_store(), &settings)
         .await
         .expect("save runtime settings");

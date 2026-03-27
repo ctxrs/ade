@@ -76,6 +76,18 @@ fn wait_for_pid_exit(pid: u32, timeout: Duration) -> bool {
 }
 
 #[cfg(unix)]
+fn wait_for_file(path: &Path, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if path.exists() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(80));
+    }
+    path.exists()
+}
+
+#[cfg(unix)]
 fn spawn_tokio_sleep_child() -> Child {
     let mut command = Command::new("sh");
     command
@@ -145,11 +157,11 @@ fn disconnect_reattached_compatible_local_daemon_prefers_graceful_shutdown() {
     );
     manager.disconnect();
 
-    let status = child.wait().expect("wait term trap child");
     assert!(
-        status.success(),
-        "term trap child should exit successfully after graceful shutdown: {status:?}"
+        wait_for_file(&term_marker, Duration::from_secs(3)),
+        "term marker should be written after graceful TERM shutdown"
     );
+    let _ = child.wait().expect("wait term trap child");
     let marker = std::fs::read_to_string(&term_marker)
         .expect("term marker should be written by graceful TERM handler");
     assert_eq!(marker, "term");

@@ -1,8 +1,17 @@
-use super::*;
 use super::diagnostics::ssh_log_snippet;
 use super::login_relay::is_loopback_host_name;
+use super::*;
 #[cfg(test)]
 use std::cell::Cell;
+
+type DaemonHealthClientCache =
+    std::sync::Mutex<std::collections::HashMap<u64, reqwest::blocking::Client>>;
+
+fn daemon_health_clients() -> &'static DaemonHealthClientCache {
+    static DAEMON_HEALTH_CLIENTS: std::sync::OnceLock<DaemonHealthClientCache> =
+        std::sync::OnceLock::new();
+    DAEMON_HEALTH_CLIENTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct DaemonHealthCompatibility {
@@ -301,6 +310,9 @@ thread_local! {
 
 #[cfg(test)]
 fn reset_daemon_health_client_build_count() {
+    if let Ok(mut clients) = daemon_health_clients().lock() {
+        clients.clear();
+    }
     DAEMON_HEALTH_CLIENT_BUILD_COUNT.with(|count| count.set(0));
 }
 
@@ -310,13 +322,8 @@ fn daemon_health_client_build_count() -> usize {
 }
 
 fn daemon_health_client(timeout: Duration) -> Result<reqwest::blocking::Client> {
-    static DAEMON_HEALTH_CLIENTS: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<u64, reqwest::blocking::Client>>,
-    > = std::sync::OnceLock::new();
     let timeout_key = timeout.as_millis() as u64;
-    let clients = DAEMON_HEALTH_CLIENTS
-        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    let mut guard = clients
+    let mut guard = daemon_health_clients()
         .lock()
         .map_err(|err| anyhow!("daemon health client cache poisoned: {err}"))?;
     if let Some(existing) = guard.get(&timeout_key) {

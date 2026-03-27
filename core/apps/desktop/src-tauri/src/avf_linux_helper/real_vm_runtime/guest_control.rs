@@ -4,6 +4,42 @@ use objc2_virtualization::{VZVirtioSocketConnection, VZVirtioSocketDevice};
 #[cfg(all(target_os = "macos", unix))]
 use std::os::fd::FromRawFd;
 
+#[cfg(unix)]
+fn io_error_is_benign(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::UnexpectedEof
+            | std::io::ErrorKind::NotConnected
+            | std::io::ErrorKind::WouldBlock
+            | std::io::ErrorKind::TimedOut
+    )
+}
+
+#[cfg(unix)]
+fn write_exec_error_frame_best_effort(
+    writer: &mut impl Write,
+    code: &str,
+    message: impl Into<String>,
+) {
+    let _ = write_exec_frame(
+        writer,
+        &AvfLinuxExecFrame::Error(AvfLinuxExecError {
+            code: code.to_string(),
+            message: message.into(),
+        }),
+    );
+}
+
+#[cfg(unix)]
+fn close_guest_exec_stdin_best_effort(writer: &Arc<Mutex<File>>) {
+    let Ok(mut guard) = writer.lock() else {
+        return;
+    };
+    let _ = write_exec_frame(&mut *guard, &AvfLinuxExecFrame::CloseStdin);
+}
+
 #[cfg(target_os = "macos")]
 #[derive(Debug)]
 enum SharedVmGuestControlConnectOutcome {
