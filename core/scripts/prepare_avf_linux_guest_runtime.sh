@@ -5,6 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 runtime_dir=""
 guest_agent_path=""
 egress_proxy_path=""
+guest_agent_override=0
+egress_proxy_override=0
 container_stack_path=""
 target_root=""
 arch=""
@@ -202,10 +204,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --guest-agent)
       guest_agent_path="${2:-}"
+      guest_agent_override=1
       shift 2
       ;;
     --egress-proxy)
       egress_proxy_path="${2:-}"
+      egress_proxy_override=1
       shift 2
       ;;
     --arch)
@@ -267,7 +271,7 @@ if [[ -z "$egress_proxy_path" ]]; then
   egress_proxy_path="$(discover_egress_proxy "$target" || true)"
 fi
 
-if [[ -z "$guest_agent_path" || -z "$egress_proxy_path" ]]; then
+if [[ "$guest_agent_override" -eq 0 || "$egress_proxy_override" -eq 0 ]]; then
   build_guest_helpers "$target"
   auto_built_guest_helpers=1
 fi
