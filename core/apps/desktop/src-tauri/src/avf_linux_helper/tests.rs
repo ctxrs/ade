@@ -854,6 +854,27 @@ fn wait_for_guest_control_ready_marker_times_out_without_marker() {
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 
+#[test]
+fn shared_vm_owner_guest_probe_ready_requires_guest_control_marker() {
+    let temp = std::env::temp_dir().join(format!(
+        "ctx-avf-owner-probe-ready-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+    assert!(!shared_vm_owner_guest_probe_ready(&temp));
+    let marker = shared_vm_guest_control_ready_path(&temp);
+    if let Some(parent) = marker.parent() {
+        fs::create_dir_all(parent).expect("create marker parent");
+    }
+    fs::write(&marker, b"ready").expect("write ready marker");
+    assert!(shared_vm_owner_guest_probe_ready(&temp));
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
 #[cfg(unix)]
 #[test]
 fn guest_exec_relays_request_over_shared_vm_control_socket() {

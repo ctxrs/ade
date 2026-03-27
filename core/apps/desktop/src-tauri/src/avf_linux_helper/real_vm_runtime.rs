@@ -99,6 +99,10 @@ fn run_owner_guest_exec_capture(
     run_guest_exec_capture_over_connected_stream(&mut socket, cwd, command, args, user, env)
 }
 
+pub(super) fn shared_vm_owner_guest_probe_ready(data_root: &Path) -> bool {
+    shared_vm_guest_control_ready_path(data_root).is_file()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum SharedVmDataDiskGrowthDecision {
     NoAction,
@@ -861,6 +865,9 @@ fn maybe_grow_shared_vm_data_disk(
     data_root: &Path,
     resource_state: &mut SharedVmResourceState,
 ) -> Result<()> {
+    if !shared_vm_owner_guest_probe_ready(data_root) {
+        return Ok(());
+    }
     let now = std::time::Instant::now();
     if now < resource_state.next_data_disk_check_at {
         return Ok(());
@@ -951,6 +958,7 @@ fn maybe_adjust_shared_vm_memory(
     resource_state: &mut SharedVmResourceState,
 ) -> Result<()> {
     let virtual_machine_ptr = &**virtual_machine as *const VZVirtualMachine;
+    let guest_probe_ready = shared_vm_owner_guest_probe_ready(data_root);
     let now = std::time::Instant::now();
     if now < resource_state.next_memory_check_at {
         return Ok(());
@@ -959,11 +967,12 @@ fn maybe_adjust_shared_vm_memory(
 
     let current_target_bytes = shared_vm_memory_target_bytes_on_queue(queue, virtual_machine_ptr)?;
     let host_available_bytes = host_available_memory_bytes(resource_state.host_port)?;
-    let guest_available_bytes = if host_available_bytes < SHARED_VM_HOST_MEMORY_RESERVE_BYTES {
-        None
-    } else {
-        guest_memory_available_bytes(queue, virtual_machine).ok()
-    };
+    let guest_available_bytes =
+        if !guest_probe_ready || host_available_bytes < SHARED_VM_HOST_MEMORY_RESERVE_BYTES {
+            None
+        } else {
+            guest_memory_available_bytes(queue, virtual_machine).ok()
+        };
 
     match resolve_shared_vm_memory_balloon_action(
         current_target_bytes,
@@ -978,7 +987,9 @@ fn maybe_adjust_shared_vm_memory(
             available_host_bytes,
             aggressive,
         } => {
-            compact_guest_memory_best_effort(queue, virtual_machine);
+            if guest_probe_ready {
+                compact_guest_memory_best_effort(queue, virtual_machine);
+            }
             request_shared_vm_memory_target_bytes_on_queue(
                 queue,
                 virtual_machine_ptr,
