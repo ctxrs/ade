@@ -1928,17 +1928,14 @@ dependencies = [
 
 [[package]]
 name = "codex-crp"
-version = "0.114.0-ctx.1"
+version = "0.0.0-ctx.6"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
  "clap",
- "codex-app-server-client",
- "codex-app-server-protocol",
  "codex-arg0",
  "codex-core",
- "codex-feedback",
  "codex-protocol",
  "codex-utils-cli",
  "pretty_assertions",

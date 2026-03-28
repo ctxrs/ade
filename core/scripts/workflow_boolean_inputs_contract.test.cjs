@@ -33,6 +33,14 @@ test("release preflight uses a typed boolean override input", () => {
   assert.match(text, /1\|true\|yes\|on/);
 });
 
+test("release preflight provisions the native sandbox CLI before the linux-arm critical lane", () => {
+  const text = workflowText("release-preflight.yml");
+  assert.match(
+    text,
+    /name:\s+Install Linux sandbox runtime CLI[\s\S]*run:\s+\.\/*scripts\/install_linux_sandbox_runtime_cli\.sh --require-reachable[\s\S]*name:\s+Run linux-arm critical provider lane/s,
+  );
+});
+
 test("release supabase uses typed updater drill booleans", () => {
   const text = workflowText("release-supabase.yml");
   assert.match(text, /run_updater_e2e_drill:[\s\S]*type: boolean/);

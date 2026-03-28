@@ -1,6 +1,5 @@
 #![deny(clippy::print_stdout)]
 
-mod app_server_runtime;
 mod protocol;
 
 use crate::protocol::CrpChannel;
@@ -57,7 +56,6 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::ExecCommandEndEvent;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_protocol::protocol::ExecOutputStream;
 use codex_protocol::protocol::FileChange;
@@ -121,9 +119,6 @@ enum RuntimeCommand {
 
 const DATA_PLANE_BUFFER_CAPACITY: usize = 256;
 const TOOL_OUTPUT_CHUNK_BYTES: usize = 8 * 1024;
-const TOOL_OUTPUT_EMIT_MAX_BYTES: usize = 64 * 1024;
-const TOOL_OUTPUT_EMIT_MAX_CHUNKS: usize = 64;
-const TOOL_OUTPUT_COMPLETION_MAX_BYTES: usize = 8 * 1024;
 
 // Optional debug dump of raw Codex internal events (EventMsg) before any CRP mapping.
 //
@@ -294,7 +289,6 @@ struct TurnState {
     // Codex can emit multiple reasoning items per turn, and each item can have multiple summary blocks.
     // Key by (item_id, summary_index) to avoid cross-item bleed that causes title/body duplication.
     reasoning_summaries: HashMap<(String, i64), ReasoningSummaryState>,
-    exec_output_budgets: HashMap<String, ExecOutputBudget>,
     emitted_final: bool,
     completed: bool,
 }
@@ -307,68 +301,10 @@ impl TurnState {
             reasoning_item_id: None,
             current_summary_index: 0,
             reasoning_summaries: HashMap::new(),
-            exec_output_budgets: HashMap::new(),
             emitted_final: false,
             completed: false,
         }
     }
-}
-
-#[derive(Default)]
-struct ExecOutputBudget {
-    emitted_bytes: usize,
-    emitted_chunks: usize,
-}
-
-fn bounded_exec_output_chunk<'a>(
-    turn: &'a mut TurnState,
-    tool_call_id: &str,
-    chunk: &'a [u8],
-) -> Option<&'a [u8]> {
-    let budget = turn
-        .exec_output_budgets
-        .entry(tool_call_id.to_string())
-        .or_default();
-    if budget.emitted_bytes >= TOOL_OUTPUT_EMIT_MAX_BYTES
-        || budget.emitted_chunks >= TOOL_OUTPUT_EMIT_MAX_CHUNKS
-    {
-        return None;
-    }
-    let remaining = TOOL_OUTPUT_EMIT_MAX_BYTES - budget.emitted_bytes;
-    let emit_len = remaining.min(chunk.len());
-    if emit_len == 0 {
-        return None;
-    }
-    budget.emitted_bytes += emit_len;
-    budget.emitted_chunks += 1;
-    Some(&chunk[..emit_len])
-}
-
-fn truncate_utf8(text: &str, max_bytes: usize) -> String {
-    if text.len() <= max_bytes {
-        return text.to_string();
-    }
-    let mut end = max_bytes;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text[..end].to_string()
-}
-
-fn bounded_exec_completion_output(ev: &ExecCommandEndEvent) -> serde_json::Value {
-    json!({
-        "stdout": truncate_utf8(&ev.stdout, TOOL_OUTPUT_COMPLETION_MAX_BYTES),
-        "stderr": truncate_utf8(&ev.stderr, TOOL_OUTPUT_COMPLETION_MAX_BYTES),
-        "aggregated_output": truncate_utf8(&ev.aggregated_output, TOOL_OUTPUT_COMPLETION_MAX_BYTES),
-        "formatted_output": truncate_utf8(&ev.formatted_output, TOOL_OUTPUT_COMPLETION_MAX_BYTES),
-        "exit_code": ev.exit_code,
-        "duration_ms": ev.duration.as_millis(),
-        "command": ev.command,
-        "cwd": ev.cwd,
-        "source": ev.source,
-        "process_id": ev.process_id,
-        "interaction_input": ev.interaction_input,
-    })
 }
 
 #[derive(Default, Debug)]
@@ -930,14 +866,6 @@ async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()>
         .parse_overrides()
         .map_err(|err| anyhow::anyhow!(err))?;
 
-    app_server_runtime::run_main(&cli_kv_overrides, arg0_paths).await
-}
-
-#[allow(dead_code)]
-async fn run_legacy_runtime(
-    cli_kv_overrides: &[(String, toml::Value)],
-    arg0_paths: Arg0DispatchPaths,
-) -> anyhow::Result<()> {
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
     tokio::spawn(read_commands(cmd_tx));
 
@@ -1458,85 +1386,6 @@ async fn handle_command(
                 .entry(sub_id.clone())
                 .or_insert_with(|| TurnState::new(sub_id));
         }
-        CrpCommand::SessionSetModel {
-            session_id,
-            model_id,
-        } => {
-            let Some(session_state) = session.as_mut() else {
-                warn!("session.set_model ignored: no active session");
-                return Ok(());
-            };
-            if let Some(expected) = session_id.as_deref()
-                && expected != session_state.tracker.session_id
-            {
-                warn!(%expected, "session.set_model ignored: session_id mismatch");
-                return Ok(());
-            }
-
-            let Some(requested_model_id) = model_id
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-            else {
-                warn!("session.set_model ignored: missing model_id");
-                return Ok(());
-            };
-
-            let (next_model, next_effort) = split_model_and_effort(&requested_model_id);
-            let result = session_state
-                .thread
-                .submit(Op::OverrideTurnContext {
-                    cwd: None,
-                    approval_policy: None,
-                    sandbox_policy: None,
-                    windows_sandbox_level: None,
-                    model: Some(next_model.clone()),
-                    effort: Some(next_effort.clone()),
-                    summary: None,
-                    service_tier: None,
-                    collaboration_mode: None,
-                    personality: None,
-                })
-                .await;
-
-            match result {
-                Ok(_) => {
-                    session_state.default_model = next_model;
-                    session_state.default_effort = next_effort;
-                    if router
-                        .send_control(CrpEvent::SessionNotice {
-                            session_id: session_state.tracker.session_id.clone(),
-                            turn_id: None,
-                            code: "session_model_updated".to_string(),
-                            severity: Some("info".to_string()),
-                            message: Some(format!("session model updated to {requested_model_id}")),
-                            details: Some(json!({ "model_id": requested_model_id })),
-                            transient: Some(false),
-                        })
-                        .is_err()
-                    {
-                        warn!("failed to send session_model_updated notice");
-                    }
-                }
-                Err(err) => {
-                    if router
-                        .send_control(CrpEvent::SessionNotice {
-                            session_id: session_state.tracker.session_id.clone(),
-                            turn_id: None,
-                            code: "session_model_update_failed".to_string(),
-                            severity: Some("error".to_string()),
-                            message: Some(format!(
-                                "failed to update session model to {requested_model_id}: {err}"
-                            )),
-                            details: Some(json!({ "model_id": requested_model_id })),
-                            transient: Some(false),
-                        })
-                        .is_err()
-                    {
-                        warn!("failed to send session_model_update_failed notice");
-                    }
-                }
-            }
-        }
         CrpCommand::ModelsList { config } => {
             let config = config.unwrap_or(CrpSessionConfig {
                 cwd: None,
@@ -1629,8 +1478,6 @@ async fn load_config_from_crp(
     arg0_paths: Arg0DispatchPaths,
 ) -> anyhow::Result<Config> {
     let session_effort = session_config.reasoning_effort.clone();
-    let developer_instructions =
-        normalize_ctx_system_prompt_append(std::env::var("CTX_SYSTEM_PROMPT_APPEND").ok());
     let (model_override, effort_override) = session_config
         .model
         .as_deref()
@@ -1652,7 +1499,7 @@ async fn load_config_from_crp(
         js_repl_node_module_dirs: None,
         zsh_path: None,
         base_instructions: None,
-        developer_instructions,
+        developer_instructions: None,
         personality: session_config.personality,
         compact_prompt: None,
         include_apply_patch_tool: None,
@@ -1678,11 +1525,6 @@ async fn load_config_from_crp(
     }
 
     Ok(config)
-}
-
-fn normalize_ctx_system_prompt_append(raw: Option<String>) -> Option<String> {
-    raw.map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 fn split_model_and_effort(model: &str) -> (String, Option<ReasoningEffort>) {
@@ -2881,10 +2723,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                 ExecOutputStream::Stdout => CrpToolOutputStream::Stdout,
                 ExecOutputStream::Stderr => CrpToolOutputStream::Stderr,
             };
-            let Some(chunk_bytes) = bounded_exec_output_chunk(turn, &ev.call_id, &ev.chunk) else {
-                return Vec::new();
-            };
-            let chunk = base64::engine::general_purpose::STANDARD.encode(chunk_bytes);
+            let chunk = base64::engine::general_purpose::STANDARD.encode(&ev.chunk);
             vec![(
                 CrpChannel::Data,
                 CrpEvent::ToolOutputDelta {
@@ -2898,12 +2737,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
         }
         EventMsg::TerminalInteraction(ev) => {
             let turn = ensure_turn(tracker, &event.id);
-            let Some(chunk_bytes) =
-                bounded_exec_output_chunk(turn, &ev.call_id, ev.stdin.as_bytes())
-            else {
-                return Vec::new();
-            };
-            let chunk = base64::engine::general_purpose::STANDARD.encode(chunk_bytes);
+            let chunk = base64::engine::general_purpose::STANDARD.encode(ev.stdin.as_bytes());
             vec![(
                 CrpChannel::Data,
                 CrpEvent::ToolOutputDelta {
@@ -2917,7 +2751,6 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
         }
         EventMsg::ExecCommandEnd(ev) => {
             let turn = ensure_turn(tracker, &event.id);
-            turn.exec_output_budgets.remove(&ev.call_id);
             let input_preview = exec_input_preview(
                 &ev.command,
                 &ev.parsed_cmd,
@@ -2937,7 +2770,19 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
             } else {
                 Some(format!("exit_code: {exit_code}"))
             };
-            let output = bounded_exec_completion_output(&ev);
+            let output = json!({
+                "stdout": ev.stdout,
+                "stderr": ev.stderr,
+                "aggregated_output": ev.aggregated_output,
+                "formatted_output": ev.formatted_output,
+                "exit_code": ev.exit_code,
+                "duration_ms": ev.duration.as_millis(),
+                "command": ev.command,
+                "cwd": ev.cwd,
+                "source": ev.source,
+                "process_id": ev.process_id,
+                "interaction_input": ev.interaction_input,
+            });
             vec![(
                 CrpChannel::Control,
                 CrpEvent::ToolCompleted {
@@ -3180,7 +3025,6 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         session_id,
                         turn_id: turn.turn_id.clone(),
                         status: CrpTurnStatus::Success,
-                        context_window: None,
                         error: None,
                     },
                 ));
@@ -3202,7 +3046,6 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         session_id,
                         turn_id: turn.turn_id.clone(),
                         status,
-                        context_window: None,
                         error: None,
                     },
                 )]
@@ -3221,7 +3064,6 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         session_id,
                         turn_id: turn.turn_id.clone(),
                         status: CrpTurnStatus::Error,
-                        context_window: None,
                         error: Some(error),
                     },
                 )]
@@ -3248,7 +3090,6 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         session_id,
                         turn_id: turn.turn_id.clone(),
                         status: CrpTurnStatus::Error,
-                        context_window: None,
                         error: Some(error),
                     },
                 )]
@@ -3365,7 +3206,6 @@ mod tests {
     use codex_protocol::protocol::TurnCompleteEvent;
     use codex_protocol::protocol::TurnStartedEvent;
     use pretty_assertions::assert_eq;
-    use std::collections::HashMap;
     use std::path::PathBuf;
 
     #[test]
@@ -3641,199 +3481,6 @@ mod tests {
     }
 
     #[test]
-    fn exec_output_deltas_are_bounded_per_tool_call() {
-        let mut tracker = TurnTracker::new("session-1".to_string());
-        let turn_id = "turn-1".to_string();
-        let call_id = "tool-1".to_string();
-        let cwd = PathBuf::from("/tmp");
-
-        let mut mapped = Vec::new();
-        mapped.extend(map_codex_event(
-            &mut tracker,
-            Event {
-                id: turn_id.clone(),
-                msg: EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
-                    call_id: call_id.clone(),
-                    process_id: None,
-                    turn_id: turn_id.clone(),
-                    command: vec![
-                        "python3".to_string(),
-                        "-c".to_string(),
-                        "print('x')".to_string(),
-                    ],
-                    cwd: cwd.clone(),
-                    parsed_cmd: Vec::<ParsedCommand>::new(),
-                    source: ExecCommandSource::Agent,
-                    interaction_input: None,
-                }),
-            },
-        ));
-
-        let large_chunk = vec![b'a'; TOOL_OUTPUT_EMIT_MAX_BYTES / 2 + 1024];
-        for _ in 0..3 {
-            mapped.extend(map_codex_event(
-                &mut tracker,
-                Event {
-                    id: turn_id.clone(),
-                    msg: EventMsg::ExecCommandOutputDelta(ExecCommandOutputDeltaEvent {
-                        call_id: call_id.clone(),
-                        stream: ExecOutputStream::Stdout,
-                        chunk: large_chunk.clone(),
-                    }),
-                },
-            ));
-        }
-
-        mapped.extend(map_codex_event(
-            &mut tracker,
-            Event {
-                id: turn_id.clone(),
-                msg: EventMsg::ExecCommandEnd(ExecCommandEndEvent {
-                    call_id,
-                    process_id: None,
-                    turn_id,
-                    command: vec![
-                        "python3".to_string(),
-                        "-c".to_string(),
-                        "print('x')".to_string(),
-                    ],
-                    cwd,
-                    parsed_cmd: Vec::<ParsedCommand>::new(),
-                    source: ExecCommandSource::Agent,
-                    interaction_input: None,
-                    stdout: "done".to_string(),
-                    stderr: String::new(),
-                    aggregated_output: "done".to_string(),
-                    exit_code: 0,
-                    duration: std::time::Duration::from_millis(5),
-                    formatted_output: "done".to_string(),
-                    status: ExecCommandStatus::Completed,
-                }),
-            },
-        ));
-
-        let emitted: Vec<Vec<u8>> = mapped
-            .iter()
-            .filter_map(|(_, event)| match event {
-                CrpEvent::ToolOutputDelta { chunk, .. } => Some(
-                    base64::engine::general_purpose::STANDARD
-                        .decode(chunk)
-                        .expect("tool output delta must decode"),
-                ),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(emitted.len(), 2);
-        let total_bytes: usize = emitted.iter().map(Vec::len).sum();
-        assert_eq!(total_bytes, TOOL_OUTPUT_EMIT_MAX_BYTES);
-        assert_eq!(emitted[0].len(), TOOL_OUTPUT_EMIT_MAX_BYTES / 2 + 1024);
-        assert_eq!(
-            emitted[1].len(),
-            TOOL_OUTPUT_EMIT_MAX_BYTES - emitted[0].len()
-        );
-        assert!(
-            mapped
-                .iter()
-                .any(|(_, event)| matches!(event, CrpEvent::ToolCompleted { .. }))
-        );
-    }
-
-    #[test]
-    fn exec_output_deltas_are_bounded_by_chunk_count() {
-        let mut tracker = TurnTracker::new("session-1".to_string());
-        let turn_id = "turn-1".to_string();
-        let call_id = "tool-1".to_string();
-        let cwd = PathBuf::from("/tmp");
-
-        let _ = map_codex_event(
-            &mut tracker,
-            Event {
-                id: turn_id.clone(),
-                msg: EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
-                    call_id: call_id.clone(),
-                    process_id: None,
-                    turn_id: turn_id.clone(),
-                    command: vec!["printf".to_string(), "x".to_string()],
-                    cwd: cwd.clone(),
-                    parsed_cmd: Vec::<ParsedCommand>::new(),
-                    source: ExecCommandSource::Agent,
-                    interaction_input: None,
-                }),
-            },
-        );
-
-        let mut mapped = Vec::new();
-        for _ in 0..(TOOL_OUTPUT_EMIT_MAX_CHUNKS + 10) {
-            mapped.extend(map_codex_event(
-                &mut tracker,
-                Event {
-                    id: turn_id.clone(),
-                    msg: EventMsg::ExecCommandOutputDelta(ExecCommandOutputDeltaEvent {
-                        call_id: call_id.clone(),
-                        stream: ExecOutputStream::Stdout,
-                        chunk: b"x".to_vec(),
-                    }),
-                },
-            ));
-        }
-
-        let emitted_count = mapped
-            .iter()
-            .filter(|(_, event)| matches!(event, CrpEvent::ToolOutputDelta { .. }))
-            .count();
-        assert_eq!(emitted_count, TOOL_OUTPUT_EMIT_MAX_CHUNKS);
-    }
-
-    #[test]
-    fn exec_completion_output_is_bounded() {
-        let mut tracker = TurnTracker::new("session-1".to_string());
-        let turn_id = "turn-1".to_string();
-        let call_id = "tool-1".to_string();
-        let cwd = PathBuf::from("/tmp");
-        let long_output = "x".repeat(TOOL_OUTPUT_COMPLETION_MAX_BYTES + 1024);
-
-        let mapped = map_codex_event(
-            &mut tracker,
-            Event {
-                id: turn_id,
-                msg: EventMsg::ExecCommandEnd(ExecCommandEndEvent {
-                    call_id,
-                    process_id: None,
-                    turn_id: "turn-1".to_string(),
-                    command: vec!["printf".to_string(), "x".to_string()],
-                    cwd,
-                    parsed_cmd: Vec::<ParsedCommand>::new(),
-                    source: ExecCommandSource::Agent,
-                    interaction_input: None,
-                    stdout: long_output.clone(),
-                    stderr: long_output.clone(),
-                    aggregated_output: long_output.clone(),
-                    exit_code: 0,
-                    duration: std::time::Duration::from_millis(5),
-                    formatted_output: long_output,
-                    status: ExecCommandStatus::Completed,
-                }),
-            },
-        );
-
-        let (_, CrpEvent::ToolCompleted { output, .. }) = mapped
-            .into_iter()
-            .next()
-            .expect("expected tool.completed event")
-        else {
-            panic!("expected tool.completed event");
-        };
-        let output = output.expect("tool.completed should include output");
-        for key in ["stdout", "stderr", "aggregated_output", "formatted_output"] {
-            let value = output
-                .get(key)
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("");
-            assert_eq!(value.len(), TOOL_OUTPUT_COMPLETION_MAX_BYTES);
-        }
-    }
-
-    #[test]
     fn data_plane_overflow_emits_session_gap() {
         let (control_tx, mut control_rx) = mpsc::unbounded_channel();
         let (data_tx, _data_rx) = mpsc::channel(1);
@@ -3916,48 +3563,6 @@ mod tests {
                     argument_hint: None,
                 }
             ]
-        );
-    }
-
-    #[test]
-    fn normalize_ctx_system_prompt_append_trims_and_drops_empty_values() {
-        assert_eq!(
-            normalize_ctx_system_prompt_append(Some("  follow the repo rules  ".to_string())),
-            Some("follow the repo rules".to_string())
-        );
-        assert_eq!(
-            normalize_ctx_system_prompt_append(Some("   ".to_string())),
-            None
-        );
-        assert_eq!(normalize_ctx_system_prompt_append(None), None);
-    }
-
-    #[test]
-    fn mcp_server_to_toml_preserves_tool_timeout() {
-        let value = mcp_server_to_toml(CrpMcpServerConfig {
-            command: Some("ctx-mcp".to_string()),
-            args: Some(vec!["--stdio".to_string()]),
-            env: Some(HashMap::from([(
-                "CTX_DAEMON_URL".to_string(),
-                "http://127.0.0.1:3000".to_string(),
-            )])),
-            env_vars: None,
-            cwd: None,
-            url: None,
-            http_headers: None,
-            env_http_headers: None,
-            enabled_tools: None,
-            disabled_tools: None,
-            tool_timeout_sec: Some(7200.0),
-        })
-        .expect("stdio mcp server should serialize");
-
-        let table = value
-            .as_table()
-            .expect("mcp server override should serialize as a TOML table");
-        assert_eq!(
-            table.get("tool_timeout_sec"),
-            Some(&toml::Value::Float(7200.0))
         );
     }
 
