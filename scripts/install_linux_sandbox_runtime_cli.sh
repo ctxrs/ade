@@ -186,13 +186,32 @@ install_rootful_wrapper() {
 #!/usr/bin/env bash
 set -euo pipefail
 filtered_args=()
-for arg in "\$@"; do
-  case "\$arg" in
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
     --userns=keep-id)
+      shift
+      continue
+      ;;
+    --network=slirp4netns:allow_host_loopback=true|--net=slirp4netns:allow_host_loopback=true)
+      shift
+      continue
+      ;;
+    --network|--net)
+      if [[ "\${2:-}" == "slirp4netns:allow_host_loopback=true" ]]; then
+        shift 2
+        continue
+      fi
+      filtered_args+=("\$1")
+      shift
+      if [[ \$# -gt 0 ]]; then
+        filtered_args+=("\$1")
+        shift
+      fi
       continue
       ;;
     *)
-      filtered_args+=("\$arg")
+      filtered_args+=("\$1")
+      shift
       ;;
   esac
 done
