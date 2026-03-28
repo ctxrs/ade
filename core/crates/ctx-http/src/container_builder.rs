@@ -275,6 +275,7 @@ mod tests {
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
 
+        let _process_env = crate::test_support::process_env_test_lock().lock().await;
         let _serial = crate::test_support::sandbox_cli_env_test_lock()
             .lock()
             .await;

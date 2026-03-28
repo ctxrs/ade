@@ -22,10 +22,17 @@ use tokio::net::TcpListener;
 #[cfg(test)]
 use tokio::task::JoinHandle;
 
-/// Tests that mutate workspace-runtime-related process globals, or that execute
-/// launch/prewarm/runtime flows which can observe those globals, must hold
-/// this lock for the full lifetime of the test and drain any spawned
-/// background work before returning.
+/// Tests that mutate process-global environment or manifest override state
+/// must hold this lock for the full lifetime of the test.
+pub(crate) fn process_env_test_lock() -> &'static AsyncMutex<()> {
+    static LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| AsyncMutex::new(()))
+}
+
+/// Workspace-runtime tests historically used a sandbox-specific name for the
+/// shared sandbox-runtime lock. Keep that lock separate from the broader
+/// process-env lock so long-lived runtime jobs are not queued behind unrelated
+/// bundle/env tests.
 pub(crate) fn sandbox_cli_env_test_lock() -> &'static AsyncMutex<()> {
     static LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| AsyncMutex::new(()))

@@ -55,6 +55,10 @@ fn env_var_test_lock() -> &'static tokio::sync::Mutex<()> {
     crate::test_support::sandbox_cli_env_test_lock()
 }
 
+fn process_env_test_lock() -> &'static tokio::sync::Mutex<()> {
+    crate::test_support::process_env_test_lock()
+}
+
 const BACKGROUND_TEST_TIMEOUT: Duration = Duration::from_secs(10);
 const QUICK_ASYNC_TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -1265,6 +1269,7 @@ async fn startup_prewarm_keeps_existing_metadata_when_machine_stays_down() {
 async fn startup_prewarm_does_not_record_success_for_stale_loaded_default_image() {
     use std::os::unix::fs::PermissionsExt;
 
+    let _process_env = process_env_test_lock().lock().await;
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let bundle_dir = data_dir.path().join("bundle");
@@ -1361,6 +1366,7 @@ async fn startup_prewarm_does_not_record_success_for_stale_loaded_default_image(
 async fn successful_workspace_launch_writes_missing_prewarm_metadata() {
     use std::os::unix::fs::PermissionsExt;
 
+    let _process_env = process_env_test_lock().lock().await;
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let workspace_root = data_dir.path().join("ws");
@@ -1471,6 +1477,7 @@ async fn successful_workspace_launch_writes_missing_prewarm_metadata() {
 async fn successful_workspace_launch_refresh_clears_stale_prewarm_metadata() {
     use std::os::unix::fs::PermissionsExt;
 
+    let _process_env = process_env_test_lock().lock().await;
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let workspace_root = data_dir.path().join("ws");
@@ -1605,6 +1612,7 @@ async fn successful_workspace_launch_refresh_clears_stale_prewarm_metadata() {
 async fn successful_workspace_launch_refreshes_prewarm_metadata_when_image_ref_changes() {
     use std::os::unix::fs::PermissionsExt;
 
+    let _process_env = process_env_test_lock().lock().await;
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let workspace_root = data_dir.path().join("ws");
@@ -2609,6 +2617,7 @@ async fn runtime_prewarm_emits_initial_log_before_runtime_work_completes() {
 async fn runtime_prewarm_launch_ready_scope_starts_native_runtime_before_loading_image() {
     use std::os::unix::fs::PermissionsExt;
 
+    let _process_env = process_env_test_lock().lock().await;
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let bundle_dir = data_dir.path().join("bundle");

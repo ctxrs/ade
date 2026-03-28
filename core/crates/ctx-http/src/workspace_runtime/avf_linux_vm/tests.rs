@@ -1,6 +1,6 @@
-use super::*;
 use super::helper_wrappers::{shared_vm_state, start_shared_vm, stop_shared_vm};
 use super::runtime_install as runtime_assets;
+use super::*;
 use crate::settings::{ContainerExecutionSettings, ContainerRuntimeKind};
 use crate::workspace_runtime::{
     SharedSubstrateLifecycleManager, SubstrateShutdownOutcome, SubstrateStartupOutcome,
@@ -36,6 +36,10 @@ impl Drop for EnvGuard {
 
 fn helper_env_test_lock() -> &'static tokio::sync::Mutex<()> {
     crate::test_support::sandbox_cli_env_test_lock()
+}
+
+fn process_env_test_lock() -> &'static tokio::sync::Mutex<()> {
+    crate::test_support::process_env_test_lock()
 }
 
 fn write_probe_helper(dir: &Path) -> PathBuf {
@@ -206,8 +210,11 @@ fn install_bundled_runtime_fixture(dir: &Path) -> (EnvGuard, EnvGuard) {
         .expect("write bundled guest agent");
     std::fs::write(helpers_root.join("egress-proxy"), b"egress-proxy")
         .expect("write bundled egress proxy");
-    std::fs::write(helpers_root.join("container-stack.tar.gz"), b"container-stack")
-        .expect("write bundled container stack");
+    std::fs::write(
+        helpers_root.join("container-stack.tar.gz"),
+        b"container-stack",
+    )
+    .expect("write bundled container stack");
 
     let manifest_path = bundle_root.join("manifest.json");
     std::fs::create_dir_all(manifest_path.parent().expect("bundle manifest parent"))
@@ -462,6 +469,7 @@ fn write_guest_exec_helper(dir: &Path) -> (PathBuf, PathBuf) {
             r#"#!/usr/bin/env python3
 import json
 import pathlib
+import shutil
 import sys
 
 PROTOCOL_VERSION = 1
@@ -524,15 +532,31 @@ elif cmd == "start-shared-vm" or cmd == "start-workspace-vm":
         "simulated": True,
         "notes": ["guest exec ready"],
     }}))
+elif cmd == "shared-vm-state" or cmd == "workspace-vm-state":
+    data_root = sys.argv[2]
+    root = pathlib.Path(data_root) / "avf-linux-vm" / "shared-vm"
+    print(json.dumps({{
+        "protocol_version": PROTOCOL_VERSION,
+        "protocol_schema": PROTOCOL_SCHEMA,
+        "state": "missing",
+        "vm_root": str(root),
+        "logs_root": str(root / "logs"),
+        "state_path": str(root / "shared-vm-state.json"),
+        "saved_state_exists": False,
+        "simulated": True,
+        "notes": [],
+    }}))
 elif cmd == "prepare-guest-worktree":
     data_root = sys.argv[2]
     workspace_id = sys.argv[3]
     worktree_id = sys.argv[4]
+    host_workspace_root = pathlib.Path(sys.argv[5])
     branch_name = sys.argv[7]
     root = worktree_root(data_root, workspace_id, worktree_id)
     shadow = root / "shadow-root"
-    shadow.mkdir(parents=True, exist_ok=True)
-    (shadow / ".git").mkdir(exist_ok=True)
+    if shadow.exists():
+        shutil.rmtree(shadow)
+    shutil.copytree(host_workspace_root, shadow, dirs_exist_ok=True)
     metadata_path = root / "worktree.json"
     payload = {{
         "protocol_version": PROTOCOL_VERSION,
@@ -549,6 +573,49 @@ elif cmd == "prepare-guest-worktree":
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     metadata_path.write_text(json.dumps(payload), encoding="utf-8")
     print(json.dumps(payload))
+elif cmd == "exec":
+    args = sys.argv[2:]
+    container_name = ""
+    cwd = ""
+    env = {{}}
+    interactive = False
+    idx = 0
+    while idx < len(args):
+        arg = args[idx]
+        if arg == "--interactive":
+            interactive = True
+            idx += 1
+        elif arg == "--tty":
+            idx += 1
+        elif arg == "--user":
+            idx += 2
+        elif arg == "--workdir":
+            cwd = args[idx + 1]
+            idx += 2
+        else:
+            break
+    if idx >= len(args):
+        raise SystemExit("missing sandbox exec container name")
+    container_name = args[idx]
+    idx += 1
+    while idx < len(args) and args[idx] == "--env":
+        key, value = args[idx + 1].split("=", 1)
+        env[key] = value
+        idx += 2
+    if idx >= len(args):
+        raise SystemExit("missing sandbox exec command")
+    command = args[idx]
+    passthrough = args[idx + 1:]
+    payload = {{
+        "interactive": interactive,
+        "container_name": container_name,
+        "cwd": cwd,
+        "command": command,
+        "args": passthrough,
+        "env": env,
+    }}
+    CAPTURE_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print("guest-exec-ok")
 elif cmd == "guest-exec":
     args = sys.argv[2:]
     data_root = ""
@@ -641,17 +708,13 @@ fn runtime_archive_bytes() -> Vec<u8> {
     )
     .expect("write version metadata");
 
-    let archive_path = temp.path().join("runtime.tar.gz");
-    let status = std::process::Command::new("tar")
-        .arg("-czf")
-        .arg(&archive_path)
-        .arg("-C")
-        .arg(temp.path())
-        .arg("avf-linux-runtime")
-        .status()
-        .expect("spawn tar");
-    assert!(status.success(), "tar should succeed");
-    std::fs::read(&archive_path).expect("read archive")
+    let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut archive = tar::Builder::new(encoder);
+    archive
+        .append_dir_all("avf-linux-runtime", &root)
+        .expect("append runtime dir to tar archive");
+    let encoder = archive.into_inner().expect("finalize tar archive");
+    encoder.finish().expect("finish tar.gz archive")
 }
 
 async fn spawn_static_http_server(
@@ -726,7 +789,7 @@ async fn managed_avf_linux_runtime_downloads_archive_and_helpers() {
 
     let helper_bytes = b"#!/bin/sh\nexit 0\n".to_vec();
     let helper_sha = sha256_hex(&helper_bytes);
-    let (helper_url, helper_server_handle) = spawn_static_http_server(helper_bytes.clone(), 4)
+    let (helper_url, helper_server_handle) = spawn_static_http_server(helper_bytes.clone(), 5)
         .await
         .unwrap();
 
@@ -832,7 +895,9 @@ async fn managed_avf_linux_runtime_downloads_archive_and_helpers() {
         helper_bytes
     );
     assert_eq!(
-        tokio::fs::read(&runtime.container_stack_path).await.unwrap(),
+        tokio::fs::read(&runtime.container_stack_path)
+            .await
+            .unwrap(),
         helper_bytes
     );
 
@@ -884,6 +949,7 @@ async fn managed_avf_linux_runtime_downloads_archive_and_helpers() {
 
 #[tokio::test]
 async fn ensure_avf_linux_runtime_prefers_bundled_guest_runtime_over_managed_source() {
+    let _process_env = process_env_test_lock().lock().await;
     let _helper_lock = helper_env_test_lock().lock().await;
     let temp = tempfile::tempdir().unwrap();
     let bundle_root = temp.path().join("bundle");
@@ -1029,6 +1095,7 @@ fn helper_lifecycle_commands_round_trip_structured_state() {
 
 #[tokio::test]
 async fn shared_substrate_lifecycle_manager_reports_cold_boot_startup() {
+    let _process_env = process_env_test_lock().lock().await;
     let _helper_lock = helper_env_test_lock().lock().await;
     let temp = tempfile::tempdir().unwrap();
     let (helper, log_path) = write_stateful_lifecycle_helper(temp.path());
@@ -1051,7 +1118,8 @@ async fn shared_substrate_lifecycle_manager_reports_cold_boot_startup() {
     );
     let log = std::fs::read_to_string(log_path).unwrap();
     assert!(
-        log.lines().any(|line| line.starts_with("start-workspace-vm ")),
+        log.lines()
+            .any(|line| line.starts_with("start-workspace-vm ")),
         "expected cold boot start invocation in log:\n{log}"
     );
 }
@@ -1069,7 +1137,10 @@ async fn shared_substrate_lifecycle_manager_reuses_running_vm_without_start() {
         .await
         .unwrap();
 
-    assert_eq!(record.startup_selection, Some(SubstrateStartupSelection::Reuse));
+    assert_eq!(
+        record.startup_selection,
+        Some(SubstrateStartupSelection::Reuse)
+    );
     assert_eq!(record.startup_outcome, Some(SubstrateStartupOutcome::Reuse));
     let log = std::fs::read_to_string(log_path).unwrap();
     assert!(
@@ -1081,6 +1152,7 @@ async fn shared_substrate_lifecycle_manager_reuses_running_vm_without_start() {
 
 #[tokio::test]
 async fn shared_substrate_lifecycle_manager_reports_restore_startup() {
+    let _process_env = process_env_test_lock().lock().await;
     let _helper_lock = helper_env_test_lock().lock().await;
     let temp = tempfile::tempdir().unwrap();
     let (helper, _log_path) = write_stateful_lifecycle_helper(temp.path());
@@ -1107,6 +1179,7 @@ async fn shared_substrate_lifecycle_manager_reports_restore_startup() {
 #[tokio::test]
 async fn shared_substrate_lifecycle_manager_reports_restore_failure_as_cold_boot_after_restore_failure(
 ) {
+    let _process_env = process_env_test_lock().lock().await;
     let _helper_lock = helper_env_test_lock().lock().await;
     let temp = tempfile::tempdir().unwrap();
     let (helper, _log_path) = write_stateful_lifecycle_helper(temp.path());
@@ -1144,10 +1217,14 @@ async fn shared_substrate_lifecycle_manager_reports_saved_shutdown() {
         .await
         .unwrap();
 
-    assert_eq!(record.shutdown_outcome, Some(SubstrateShutdownOutcome::Saved));
+    assert_eq!(
+        record.shutdown_outcome,
+        Some(SubstrateShutdownOutcome::Saved)
+    );
     let log = std::fs::read_to_string(log_path).unwrap();
     assert!(
-        log.lines().any(|line| line.starts_with("stop-workspace-vm ")),
+        log.lines()
+            .any(|line| line.starts_with("stop-workspace-vm ")),
         "expected save-or-stop invocation in log:\n{log}"
     );
 }
@@ -1192,12 +1269,16 @@ async fn shared_substrate_lifecycle_manager_reports_cold_stop_after_save_failure
     );
 }
 
-#[test]
-fn helper_prepare_guest_worktree_round_trips_structured_state() {
-    let _serial = helper_env_test_lock().blocking_lock();
+#[tokio::test]
+async fn helper_prepare_guest_worktree_round_trips_structured_state() {
+    let _serial = helper_env_test_lock().lock().await;
     let temp = tempfile::tempdir().unwrap();
     let (helper, capture_path) = write_guest_exec_helper(temp.path());
     let _guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
+    let _sandbox_cli = EnvGuard::set(
+        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        helper.to_str().unwrap(),
+    );
 
     let workspace_id = WorkspaceId::new();
     let worktree_id = WorktreeId::new();
@@ -1227,7 +1308,7 @@ fn helper_prepare_guest_worktree_round_trips_structured_state() {
     let state = workspace_vm_state(temp.path(), workspace_id).unwrap();
     assert_eq!(state.state, AvfLinuxSharedVmLifecycleState::Missing);
 
-    let output = futures::executor::block_on(run_guest_exec_capture(
+    let output = run_guest_exec_capture(
         temp.path(),
         workspace_id,
         worktree_id,
@@ -1240,7 +1321,8 @@ fn helper_prepare_guest_worktree_round_trips_structured_state() {
         ]),
         None,
         false,
-    ))
+    )
+    .await
     .unwrap();
     assert!(output.status.success());
     assert_eq!(
@@ -1250,8 +1332,11 @@ fn helper_prepare_guest_worktree_round_trips_structured_state() {
 
     let captured: serde_json::Value =
         serde_json::from_slice(&std::fs::read(capture_path).unwrap()).unwrap();
-    assert_eq!(captured["workspace_id"], workspace_id.0.to_string());
-    assert_eq!(captured["worktree_id"], worktree_id.0.to_string());
+    assert_eq!(captured["interactive"], true);
+    assert_eq!(
+        captured["container_name"],
+        format!("ctx-harness-{}", workspace_id.0)
+    );
     assert_eq!(captured["cwd"], host_root.display().to_string());
     assert_eq!(captured["command"], "python3");
     assert_eq!(captured["args"], serde_json::json!(["-c", "print('ok')"]));
@@ -1265,6 +1350,10 @@ async fn run_guest_exec_capture_invokes_helper_with_expected_args() {
     let temp = tempfile::tempdir().unwrap();
     let (helper, capture_path) = write_guest_exec_helper(temp.path());
     let _guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
+    let _sandbox_cli = EnvGuard::set(
+        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        helper.to_str().unwrap(),
+    );
 
     let workspace_id = WorkspaceId::new();
     let worktree_id = WorktreeId::new();
@@ -1298,9 +1387,11 @@ async fn run_guest_exec_capture_invokes_helper_with_expected_args() {
 
     let captured: serde_json::Value =
         serde_json::from_slice(&tokio::fs::read(capture_path).await.unwrap()).unwrap();
-    assert_eq!(captured["workspace_id"], workspace_id.0.to_string());
-    assert_eq!(captured["worktree_id"], worktree_id.0.to_string());
-    assert_eq!(captured["guest_root"], host_root.display().to_string());
+    assert_eq!(captured["interactive"], true);
+    assert_eq!(
+        captured["container_name"],
+        format!("ctx-harness-{}", workspace_id.0)
+    );
     assert_eq!(captured["cwd"], host_root.display().to_string());
     assert_eq!(captured["command"], "python3");
     assert_eq!(captured["args"], serde_json::json!(["-c", "print('ok')"]));

@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+#[cfg(not(test))]
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
@@ -251,8 +252,32 @@ fn resolve_bundle_args(root: &Path, args: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn load_manifest() -> Option<BundledAssetsManifest> {
-    #[cfg(test)]
+fn read_manifest_from_root(root: &Path) -> Option<BundledAssetsManifest> {
+    let path = manifest_path(root);
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let parsed: BundledAssetsManifest = match serde_json::from_str(&raw) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            tracing::warn!(
+                "failed to parse bundled assets manifest {}: {err}",
+                path.display()
+            );
+            return None;
+        }
+    };
+    if parsed.version != MANIFEST_VERSION {
+        tracing::warn!(
+            "unsupported bundled assets manifest version {} (expected {})",
+            parsed.version,
+            MANIFEST_VERSION
+        );
+        return None;
+    }
+    Some(parsed)
+}
+
+#[cfg(test)]
+fn load_manifest_for_tests() -> Option<BundledAssetsManifest> {
     if let Some((_, manifest)) = test_manifest_override()
         .lock()
         .expect("test bundled assets manifest override lock poisoned")
@@ -261,58 +286,69 @@ fn load_manifest() -> Option<BundledAssetsManifest> {
         return Some(manifest);
     }
 
-    static MANIFEST: OnceLock<Option<BundledAssetsManifest>> = OnceLock::new();
-    let res = MANIFEST.get_or_init(|| {
-        let root = bundle_dir()?;
-        let path = manifest_path(&root);
-        let raw = std::fs::read_to_string(&path).ok()?;
-        let parsed: BundledAssetsManifest = match serde_json::from_str(&raw) {
-            Ok(parsed) => parsed,
-            Err(err) => {
-                tracing::warn!(
-                    "failed to parse bundled assets manifest {}: {err}",
-                    path.display()
-                );
-                return None;
-            }
-        };
-        if parsed.version != MANIFEST_VERSION {
-            tracing::warn!(
-                "unsupported bundled assets manifest version {} (expected {})",
-                parsed.version,
-                MANIFEST_VERSION
-            );
+    let root = bundle_dir()?;
+    read_manifest_from_root(&root)
+}
+
+fn load_manifest() -> Option<BundledAssetsManifest> {
+    #[cfg(test)]
+    {
+        load_manifest_for_tests()
+    }
+
+    #[cfg(not(test))]
+    {
+        static MANIFEST: OnceLock<Option<BundledAssetsManifest>> = OnceLock::new();
+        let res = MANIFEST.get_or_init(|| {
+            let root = bundle_dir()?;
+            read_manifest_from_root(&root)
+        });
+        res.clone()
+    }
+}
+
+fn read_runtime_lock_from_root(root: &Path) -> Option<RuntimeLockV2> {
+    let path = runtime_lock_path(root);
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let parsed: RuntimeLockV2 = match serde_json::from_str(&raw) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            tracing::warn!("failed to parse runtime lock {}: {err}", path.display());
             return None;
         }
-        Some(parsed)
-    });
-    res.clone()
+    };
+    if parsed.version != RUNTIME_LOCK_VERSION {
+        tracing::warn!(
+            "unsupported runtime lock version {} (expected {})",
+            parsed.version,
+            RUNTIME_LOCK_VERSION
+        );
+        return None;
+    }
+    Some(parsed)
+}
+
+#[cfg(test)]
+fn load_runtime_lock_for_tests() -> Option<RuntimeLockV2> {
+    let root = bundle_dir()?;
+    read_runtime_lock_from_root(&root)
 }
 
 fn load_runtime_lock() -> Option<RuntimeLockV2> {
-    static LOCK: OnceLock<Option<RuntimeLockV2>> = OnceLock::new();
-    let res = LOCK.get_or_init(|| {
-        let root = bundle_dir()?;
-        let path = runtime_lock_path(&root);
-        let raw = std::fs::read_to_string(&path).ok()?;
-        let parsed: RuntimeLockV2 = match serde_json::from_str(&raw) {
-            Ok(parsed) => parsed,
-            Err(err) => {
-                tracing::warn!("failed to parse runtime lock {}: {err}", path.display());
-                return None;
-            }
-        };
-        if parsed.version != RUNTIME_LOCK_VERSION {
-            tracing::warn!(
-                "unsupported runtime lock version {} (expected {})",
-                parsed.version,
-                RUNTIME_LOCK_VERSION
-            );
-            return None;
-        }
-        Some(parsed)
-    });
-    res.clone()
+    #[cfg(test)]
+    {
+        load_runtime_lock_for_tests()
+    }
+
+    #[cfg(not(test))]
+    {
+        static LOCK: OnceLock<Option<RuntimeLockV2>> = OnceLock::new();
+        let res = LOCK.get_or_init(|| {
+            let root = bundle_dir()?;
+            read_runtime_lock_from_root(&root)
+        });
+        res.clone()
+    }
 }
 
 fn active_runtime_profile() -> &'static str {
@@ -685,9 +721,8 @@ fn test_manifest_override() -> &'static std::sync::Mutex<Option<(PathBuf, Bundle
 }
 
 #[cfg(test)]
-pub(crate) fn bundled_assets_manifest_test_lock() -> &'static std::sync::Mutex<()> {
-    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+pub(crate) fn bundled_assets_manifest_test_lock() -> &'static tokio::sync::Mutex<()> {
+    crate::test_support::process_env_test_lock()
 }
 
 #[cfg(test)]

@@ -146,9 +146,7 @@ mod tests {
 
     #[test]
     fn configure_runtime_mcp_command_stages_linux_runtime_for_sandbox_env() {
-        let _guard = bundled_assets_manifest_test_lock()
-            .lock()
-            .expect("bundled assets manifest test lock poisoned");
+        let _guard = bundled_assets_manifest_test_lock().blocking_lock();
         let bundle_root = tempfile::tempdir().expect("bundle root");
         let runtime_root = bundle_root
             .path()
@@ -204,9 +202,7 @@ mod tests {
 
     #[test]
     fn configure_runtime_mcp_command_skips_when_disabled() {
-        let _guard = bundled_assets_manifest_test_lock()
-            .lock()
-            .expect("bundled assets manifest test lock poisoned");
+        let _guard = bundled_assets_manifest_test_lock().blocking_lock();
         let data_root = tempfile::tempdir().expect("data root");
         let mut provider_env = HashMap::from([
             (
@@ -223,9 +219,7 @@ mod tests {
 
     #[test]
     fn configure_runtime_mcp_command_preserves_existing_command() {
-        let _guard = bundled_assets_manifest_test_lock()
-            .lock()
-            .expect("bundled assets manifest test lock poisoned");
+        let _guard = bundled_assets_manifest_test_lock().blocking_lock();
         let data_root = tempfile::tempdir().expect("data root");
         let mut provider_env = HashMap::from([
             (
@@ -248,9 +242,7 @@ mod tests {
 
     #[test]
     fn configure_runtime_mcp_command_fails_closed_without_linux_runtime() {
-        let _guard = bundled_assets_manifest_test_lock()
-            .lock()
-            .expect("bundled assets manifest test lock poisoned");
+        let _guard = bundled_assets_manifest_test_lock().blocking_lock();
         let data_root = tempfile::tempdir().expect("data root");
         let mut provider_env = HashMap::from([(
             "CTX_HARNESS_CONTAINER_ID".to_string(),

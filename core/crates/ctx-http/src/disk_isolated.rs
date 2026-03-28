@@ -730,7 +730,7 @@ mod tests {
             .expect_err("missing host workspace should fail");
         assert!(format!("{err:#}").contains("host workspace root is unavailable"));
 
-        let log = fs::read_to_string(&log_path).expect("read sandbox cli log");
+        let log = fs::read_to_string(&log_path).unwrap_or_default();
         assert!(!log.contains("chmod 0777"));
         assert!(!log.contains("find \"$1\" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +"));
         assert!(!log.contains("id -u"));

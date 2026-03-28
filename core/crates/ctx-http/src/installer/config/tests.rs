@@ -1,11 +1,8 @@
 use super::*;
-use std::sync::{Mutex, OnceLock};
 use tempfile::tempdir;
 
-static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-fn env_lock() -> &'static Mutex<()> {
-    ENV_LOCK.get_or_init(|| Mutex::new(()))
+fn env_lock() -> &'static tokio::sync::Mutex<()> {
+    crate::test_support::process_env_test_lock()
 }
 
 struct EnvVarGuard {
@@ -46,7 +43,7 @@ impl Drop for EnvVarGuard {
 
 #[test]
 fn bundled_only_mode_errors_when_bundled_command_missing() {
-    let _guard = env_lock().lock().expect("lock env");
+    let _guard = env_lock().blocking_lock();
     let temp = tempdir().expect("tempdir");
     let _bundle_dir = EnvVarGuard::set("CTX_BUNDLE_DIR", &temp.path().to_string_lossy());
     let _strict = EnvVarGuard::set("CTX_E2E_BUNDLED_ONLY", "1");
@@ -80,7 +77,7 @@ fn bundled_only_mode_errors_when_bundled_command_missing() {
 
 #[test]
 fn bundled_only_provider_scope_defaults_to_all_when_empty() {
-    let _guard = env_lock().lock().expect("lock env");
+    let _guard = env_lock().blocking_lock();
     let _bundle_dir = EnvVarGuard::unset("CTX_BUNDLE_DIR");
     let _strict = EnvVarGuard::set("CTX_E2E_BUNDLED_ONLY", "1");
     let _providers = EnvVarGuard::set("CTX_E2E_BUNDLED_ONLY_PROVIDERS", " , ");
@@ -90,7 +87,7 @@ fn bundled_only_provider_scope_defaults_to_all_when_empty() {
 
 #[test]
 fn bundled_only_mode_can_be_disabled() {
-    let _guard = env_lock().lock().expect("lock env");
+    let _guard = env_lock().blocking_lock();
     let _bundle_dir = EnvVarGuard::unset("CTX_BUNDLE_DIR");
     let _strict = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY");
     let _providers = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY_PROVIDERS");
@@ -99,7 +96,7 @@ fn bundled_only_mode_can_be_disabled() {
 
 #[test]
 fn bundle_dir_alone_does_not_force_bundled_only_mode() {
-    let _guard = env_lock().lock().expect("lock env");
+    let _guard = env_lock().blocking_lock();
     let temp = tempdir().expect("tempdir");
     let _bundle_dir = EnvVarGuard::set("CTX_BUNDLE_DIR", &temp.path().to_string_lossy());
     let _strict = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY");
@@ -112,7 +109,7 @@ fn bundle_dir_alone_does_not_force_bundled_only_mode() {
 fn resolve_runtime_provider_command_preserves_raw_bundle_symlink_paths() {
     use std::os::unix::fs::symlink;
 
-    let _guard = env_lock().lock().expect("lock env");
+    let _guard = env_lock().blocking_lock();
     let temp = tempdir().expect("tempdir");
     let bundle_target = temp.path().join("bundle-target");
     let bundle_link = temp.path().join("bundle-link");
@@ -266,7 +263,7 @@ fn migration_rewrites_stale_kimi_managed_args_in_target_buckets() {
 
 #[test]
 fn resolve_runtime_provider_command_for_target_prefers_target_bucket() {
-    let _guard = env_lock().lock().expect("lock env");
+    let _guard = env_lock().blocking_lock();
     let _bundle_dir = EnvVarGuard::unset("CTX_BUNDLE_DIR");
     let _strict = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY");
     let _providers = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY_PROVIDERS");
@@ -346,7 +343,7 @@ fn resolve_runtime_provider_command_for_target_prefers_target_bucket() {
 
 #[test]
 fn resolve_runtime_provider_command_for_target_does_not_use_bundled_seed_for_container() {
-    let _guard = env_lock().lock().expect("lock env");
+    let _guard = env_lock().blocking_lock();
     let temp = tempdir().expect("tempdir");
     let bundle_dir = temp.path().join("bundle");
     let bundle_bin = bundle_dir.join("bin");

@@ -3403,6 +3403,7 @@ fn bundle_dir_mount_policy_matches_platform_expectations() {
 
 #[test]
 fn build_mounts_only_includes_bundle_dir_when_shareable() {
+    let _process_env = crate::test_support::process_env_test_lock().blocking_lock();
     let tmp = tempfile::tempdir().expect("tempdir");
     let bundle_dir = tmp.path().join("bundles");
     std::fs::create_dir_all(&bundle_dir).expect("create bundle dir");

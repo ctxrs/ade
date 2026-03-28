@@ -8,7 +8,7 @@ mod owner;
 mod processes;
 #[path = "real_vm_runtime/readiness.rs"]
 mod readiness;
-#[path = "real_vm_runtime/resource_management.rs"]
+#[path = "real_vm_runtime/resource_management/mod.rs"]
 mod resource_management;
 #[path = "real_vm_runtime/shutdown.rs"]
 mod shutdown;
@@ -23,13 +23,6 @@ pub(super) use self::guest_control::shared_vm_owner_guest_probe_ready;
 #[cfg(test)]
 pub(super) use self::guest_control::{
     is_transient_guest_control_connect_nserror, relay_shared_vm_control_client,
-};
-#[cfg(test)]
-pub(super) use self::resource_management::{
-    replay_shared_vm_controller_safety_trace, shared_vm_controller_safety_trace_canonical_json,
-    SharedVmControllerSafetyHostPressureState, SharedVmControllerSafetyPressureState,
-    SharedVmControllerSafetyReplayDecision, SharedVmControllerSafetyReplayPhase,
-    SharedVmControllerSafetyReplayState, SharedVmControllerSafetyReplayStep,
 };
 pub(super) use self::owner::{run_shared_vm, run_shared_vm_memory_watchdog};
 pub(super) use self::processes::{
@@ -49,6 +42,13 @@ pub(super) use self::readiness::{
 use self::resource_management::{
     align_down_to_mebibyte, host_available_memory_bytes, maybe_adjust_shared_vm_memory,
     maybe_grow_shared_vm_data_disk, SharedVmResourceState,
+};
+#[cfg(test)]
+pub(super) use self::resource_management::{
+    replay_shared_vm_controller_safety_trace, shared_vm_controller_safety_trace_canonical_json,
+    SharedVmControllerSafetyHostPressureState, SharedVmControllerSafetyPressureState,
+    SharedVmControllerSafetyReplayDecision, SharedVmControllerSafetyReplayPhase,
+    SharedVmControllerSafetyReplayState, SharedVmControllerSafetyReplayStep,
 };
 #[cfg(test)]
 pub(super) use self::resource_management::{
