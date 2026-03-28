@@ -118,7 +118,18 @@ install_rootful_wrapper() {
   cat > "${tmp_dir}/ctx-rootful-nerdctl" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-exec sudo --non-interactive "${nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" "\$@"
+filtered_args=()
+for arg in "\$@"; do
+  case "\$arg" in
+    --userns=keep-id)
+      continue
+      ;;
+    *)
+      filtered_args+=("\$arg")
+      ;;
+  esac
+done
+exec sudo --non-interactive "${nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" "\${filtered_args[@]}"
 EOF
   ensure_sudo_prefix
   if [[ -w "/usr/local/bin" || "$(id -u)" -eq 0 ]]; then
