@@ -19,7 +19,8 @@ require_reachable=0
 system_containerd_address="/run/containerd/containerd.sock"
 system_containerd_namespace="default"
 rootful_wrapper_path="/usr/local/bin/ctx-rootful-nerdctl"
-cni_bridge_plugin_path="/opt/cni/bin/bridge"
+cni_plugin_dir="/opt/cni/bin"
+cni_bridge_plugin_path="${cni_plugin_dir}/bridge"
 case "${1:-}" in
   "")
     ;;
@@ -75,6 +76,71 @@ run_with_optional_sudo() {
     "$@"
   else
     sudo "$@"
+  fi
+}
+
+resolve_cni_plugin_source_dir() {
+  local candidate
+  for candidate in \
+    "/usr/lib/cni" \
+    "/usr/libexec/cni" \
+    "${cni_plugin_dir}"
+  do
+    if [[ -x "${candidate}/bridge" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+sync_cni_plugins_into_expected_dir() {
+  local source_dir="$1"
+  local plugin_path
+  local plugin_name
+
+  ensure_sudo_prefix
+  run_with_optional_sudo mkdir -p "${cni_plugin_dir}"
+  shopt -s nullglob
+  for plugin_path in "${source_dir}"/*; do
+    plugin_name="$(basename "${plugin_path}")"
+    run_with_optional_sudo ln -sf "${plugin_path}" "${cni_plugin_dir}/${plugin_name}"
+  done
+  shopt -u nullglob
+}
+
+ensure_cni_bridge_plugin() {
+  local source_dir=""
+
+  if [[ -x "${cni_bridge_plugin_path}" ]]; then
+    return 0
+  fi
+  if source_dir="$(resolve_cni_plugin_source_dir)"; then
+    if [[ "${source_dir}" != "${cni_plugin_dir}" ]]; then
+      sync_cni_plugins_into_expected_dir "${source_dir}"
+    fi
+    if [[ -x "${cni_bridge_plugin_path}" ]]; then
+      return 0
+    fi
+  fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "error: CNI bridge plugin is missing at ${cni_bridge_plugin_path} and apt-get is unavailable on this runner" >&2
+    exit 1
+  fi
+  ensure_sudo_prefix
+  run_with_optional_sudo apt-get update
+  run_with_optional_sudo apt-get install -y containernetworking-plugins
+  source_dir="$(resolve_cni_plugin_source_dir || true)"
+  if [[ -z "${source_dir}" ]]; then
+    echo "error: installed containernetworking-plugins but could not locate a bridge plugin source directory" >&2
+    exit 1
+  fi
+  if [[ "${source_dir}" != "${cni_plugin_dir}" ]]; then
+    sync_cni_plugins_into_expected_dir "${source_dir}"
+  fi
+  if [[ ! -x "${cni_bridge_plugin_path}" ]]; then
+    echo "error: CNI bridge plugin is still missing after install: ${cni_bridge_plugin_path}" >&2
+    exit 1
   fi
 }
 
@@ -171,23 +237,11 @@ ensure_containerd_reachable() {
     run_with_optional_sudo apt-get update
     run_with_optional_sudo apt-get install -y containerd
   fi
-  if [[ ! -x "${cni_bridge_plugin_path}" ]]; then
-    if ! command -v apt-get >/dev/null 2>&1; then
-      echo "error: CNI bridge plugin is missing at ${cni_bridge_plugin_path} and apt-get is unavailable on this runner" >&2
-      exit 1
-    fi
-    ensure_sudo_prefix
-    run_with_optional_sudo apt-get update
-    run_with_optional_sudo apt-get install -y containernetworking-plugins
-  fi
+  ensure_cni_bridge_plugin
   ensure_sudo_prefix
   if ! run_with_optional_sudo systemctl enable --now containerd.service; then
     run_with_optional_sudo systemctl status containerd.service --no-pager || true
     echo "error: failed to start containerd.service on this runner" >&2
-    exit 1
-  fi
-  if [[ ! -x "${cni_bridge_plugin_path}" ]]; then
-    echo "error: CNI bridge plugin is still missing after install: ${cni_bridge_plugin_path}" >&2
     exit 1
   fi
   local attempt
