@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 async fn save_test_execution_settings(data_root: &Path, execution: ExecutionSettings) {
     let db_dir = data_root.join("db");
     std::fs::create_dir_all(&db_dir).expect("create db dir");
@@ -19,6 +20,7 @@ async fn save_test_execution_settings(data_root: &Path, execution: ExecutionSett
     store.close().await;
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 async fn write_invalid_test_execution_settings(data_root: &Path, settings_json: &str) {
     let db_dir = data_root.join("db");
     std::fs::create_dir_all(&db_dir).expect("create db dir");

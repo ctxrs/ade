@@ -47,7 +47,7 @@ const AVF_EXEC_STREAM_FRAME_MAX_PAYLOAD: usize = 1024;
 fn main() -> Result<()> {
     #[cfg(target_os = "linux")]
     {
-        return serve();
+        serve()
     }
 
     #[cfg(not(target_os = "linux"))]

@@ -293,6 +293,7 @@ pub(in crate::workspace_runtime) fn kill_ctx_managed_sandbox_helper_processes(
     outcome
 }
 
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 pub(super) fn cleanup_ctx_managed_sandbox_helper_processes(
     data_root: &Path,
     machine_name: &str,

@@ -44,10 +44,12 @@ fn sandbox_machine_heartbeat_interval() -> Duration {
     }
 }
 
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 fn default_sandbox_machine_memory_mb() -> u32 {
     container_machine_memory_mb(&ContainerExecutionSettings::default())
 }
 
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 async fn configured_sandbox_machine_memory_mb(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
@@ -142,6 +144,7 @@ pub(super) fn sandbox_machine_temp_state_paths(
     paths
 }
 
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 fn clear_stale_sandbox_machine_temp_state(
     data_root: &Path,
     machine_name: &str,
@@ -217,6 +220,7 @@ fn format_heartbeat_elapsed(duration: Duration) -> String {
     }
 }
 
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 async fn wait_for_sandbox_machine_ready(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
@@ -492,6 +496,7 @@ pub(super) async fn initialize_sandbox_machine(
     best_effort_start_machine_after_init(data_root, machine_name, observer, last_err).await
 }
 
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 pub(super) async fn ensure_sandbox_machine_running_with_observer(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
