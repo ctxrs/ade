@@ -132,10 +132,17 @@ ensure_containerd_reachable() {
     echo "error: failed to start containerd.service on this runner" >&2
     exit 1
   fi
-  if ! "${nerdctl_path}" info >/dev/null 2>&1; then
-    echo "error: nerdctl is installed but the native sandbox runtime is not reachable after starting containerd.service" >&2
-    exit 1
-  fi
+  local attempt
+  for attempt in $(seq 1 15); do
+    if "${nerdctl_path}" info >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  run_with_optional_sudo systemctl status containerd.service --no-pager || true
+  "${nerdctl_path}" info || true
+  echo "error: nerdctl is installed but the native sandbox runtime is not reachable after starting containerd.service" >&2
+  exit 1
 }
 
 if ! command -v nerdctl >/dev/null 2>&1; then
