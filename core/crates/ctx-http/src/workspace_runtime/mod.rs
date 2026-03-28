@@ -137,7 +137,8 @@ use self::sandbox_machine_recovery::{
 };
 pub(crate) use self::shared_vm_orchestrator::SharedVmLifecycleOrchestrator;
 pub(crate) use self::substrate::{
-    SubstrateShutdownOutcome, SubstrateStartupOutcome, SubstrateStartupSelection,
+    SubstrateShutdownOutcome, SubstrateShutdownReason, SubstrateStartupOutcome,
+    SubstrateStartupReason, SubstrateStartupSelection,
     UbuntuSandboxSubstrate,
 };
 

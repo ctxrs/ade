@@ -316,7 +316,7 @@ fn export_remote_metrics(
     if let Some(record) = shared_substrate_lifecycle {
         let mut base_labels = HashMap::new();
         if let Some(substrate) = serde_label(&record.substrate) {
-            base_labels.insert("substrate".to_string(), substrate);
+            base_labels.insert("substrate_kind".to_string(), substrate);
         }
 
         perf.export_remote_metric(PerfMetric {
@@ -342,6 +342,9 @@ fn export_remote_metrics(
         if let Some(startup_outcome) = record.startup_outcome.as_ref().and_then(serde_label) {
             let mut labels = base_labels.clone();
             labels.insert("startup_outcome".to_string(), startup_outcome);
+            if let Some(startup_reason) = record.startup_reason.as_ref().and_then(serde_label) {
+                labels.insert("startup_reason".to_string(), startup_reason);
+            }
             perf.export_remote_metric(PerfMetric {
                 name: "ctx.substrate.startup_outcome".to_string(),
                 kind: PerfMetricKind::Gauge,
@@ -354,6 +357,9 @@ fn export_remote_metrics(
         if let Some(shutdown_outcome) = record.shutdown_outcome.as_ref().and_then(serde_label) {
             let mut labels = base_labels;
             labels.insert("shutdown_outcome".to_string(), shutdown_outcome);
+            if let Some(shutdown_reason) = record.shutdown_reason.as_ref().and_then(serde_label) {
+                labels.insert("shutdown_reason".to_string(), shutdown_reason);
+            }
             perf.export_remote_metric(PerfMetric {
                 name: "ctx.substrate.shutdown_outcome".to_string(),
                 kind: PerfMetricKind::Gauge,

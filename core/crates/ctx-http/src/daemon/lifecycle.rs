@@ -209,6 +209,9 @@ pub(crate) async fn shutdown_shared_substrate(
         shutdown_reason = reason,
         substrate = ?record.substrate,
         shutdown_outcome = ?record.shutdown_outcome,
+        shutdown_detail = ?record.shutdown_reason,
+        save_error_present = record.save_error_present,
+        saved_state_written_on_shutdown = record.saved_state_written_on_shutdown,
         simulated = record.simulated,
         "shared substrate save-or-stop requested for daemon shutdown"
     );

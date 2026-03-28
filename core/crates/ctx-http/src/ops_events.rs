@@ -104,10 +104,16 @@ pub(crate) fn substrate_lifecycle_observed_event(
     event.meta = Some(serde_json::json!({
         "source": context.source,
         "workspace_id": context.workspace_id,
-        "substrate": record.substrate,
+        "substrate_kind": record.substrate,
         "startup_selection": record.startup_selection,
         "startup_outcome": record.startup_outcome,
+        "startup_reason": record.startup_reason,
         "shutdown_outcome": record.shutdown_outcome,
+        "shutdown_reason": record.shutdown_reason,
+        "restore_attempted": record.restore_attempted,
+        "restore_error_present": record.restore_error_present,
+        "save_error_present": record.save_error_present,
+        "saved_state_written_on_shutdown": record.saved_state_written_on_shutdown,
         "simulated": record.simulated,
     }));
     event

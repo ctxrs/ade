@@ -11,8 +11,8 @@ use super::avf_linux_vm::{
 };
 use super::{
     ContainerExecutionSettings, HarnessSetupObserver, SharedVmLifecycleOrchestrator,
-    SubstrateShutdownOutcome, SubstrateStartupOutcome, SubstrateStartupSelection,
-    UbuntuSandboxSubstrate,
+    SubstrateShutdownOutcome, SubstrateShutdownReason, SubstrateStartupOutcome,
+    SubstrateStartupReason, SubstrateStartupSelection, UbuntuSandboxSubstrate,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -20,7 +20,13 @@ pub(crate) struct SubstrateLifecycleRecord {
     pub(crate) substrate: SandboxSubstrate,
     pub(crate) startup_selection: Option<SubstrateStartupSelection>,
     pub(crate) startup_outcome: Option<SubstrateStartupOutcome>,
+    pub(crate) startup_reason: Option<SubstrateStartupReason>,
     pub(crate) shutdown_outcome: Option<SubstrateShutdownOutcome>,
+    pub(crate) shutdown_reason: Option<SubstrateShutdownReason>,
+    pub(crate) restore_attempted: bool,
+    pub(crate) restore_error_present: bool,
+    pub(crate) save_error_present: bool,
+    pub(crate) saved_state_written_on_shutdown: bool,
     pub(crate) simulated: bool,
 }
 
@@ -78,13 +84,12 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
         let started = orchestrator
             .ensure_shared_runtime_ready(settings, observer)
             .await?;
-        Ok(SubstrateLifecycleRecord {
-            substrate: substrate.substrate,
-            startup_selection: Some(startup_selection),
-            startup_outcome: Some(startup_outcome_from_state(&started)?),
-            shutdown_outcome: map_shutdown_outcome(started.last_stop_outcome),
-            simulated: started.simulated,
-        })
+        Ok(build_lifecycle_record(
+            substrate.substrate,
+            Some(startup_selection),
+            Some(startup_outcome_from_state(&started)?),
+            &started,
+        ))
     }
 
     pub(crate) async fn ensure_workspace_runtime_ready(
@@ -116,23 +121,21 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
             state.state,
             AvfLinuxSharedVmLifecycleState::Missing | AvfLinuxSharedVmLifecycleState::Stopped
         ) {
-            return Ok(SubstrateLifecycleRecord {
-                substrate: substrate.substrate,
-                startup_selection: None,
-                startup_outcome: None,
-                shutdown_outcome: map_shutdown_outcome(state.last_stop_outcome),
-                simulated: state.simulated,
-            });
+            return Ok(build_lifecycle_record(
+                substrate.substrate,
+                None,
+                None,
+                &state,
+            ));
         }
 
         let stopped = orchestrator.save_or_stop_shared_runtime()?;
-        Ok(SubstrateLifecycleRecord {
-            substrate: substrate.substrate,
-            startup_selection: None,
-            startup_outcome: None,
-            shutdown_outcome: map_shutdown_outcome(stopped.last_stop_outcome),
-            simulated: stopped.simulated,
-        })
+        Ok(build_lifecycle_record(
+            substrate.substrate,
+            None,
+            None,
+            &stopped,
+        ))
     }
 
     async fn ensure_shared_vm_runtime_ready(
@@ -162,13 +165,12 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
         let started = orchestrator
             .ensure_workspace_runtime_ready(sandbox_instance_id, settings, observer)
             .await?;
-        Ok(SubstrateLifecycleRecord {
-            substrate: substrate.substrate,
-            startup_selection: Some(startup_selection),
-            startup_outcome: Some(startup_outcome_from_state(&started)?),
-            shutdown_outcome: map_shutdown_outcome(started.last_stop_outcome),
-            simulated: started.simulated,
-        })
+        Ok(build_lifecycle_record(
+            substrate.substrate,
+            Some(startup_selection),
+            Some(startup_outcome_from_state(&started)?),
+            &started,
+        ))
     }
 }
 
@@ -189,13 +191,12 @@ fn current_lifecycle_record_from_state(
         map_startup_outcome(state.last_start_outcome)
     };
 
-    Ok(SubstrateLifecycleRecord {
+    Ok(build_lifecycle_record(
         substrate,
-        startup_selection: Some(startup_selection),
+        Some(startup_selection),
         startup_outcome,
-        shutdown_outcome: map_shutdown_outcome(state.last_stop_outcome),
-        simulated: state.simulated,
-    })
+        state,
+    ))
 }
 
 fn startup_selection_from_state(
@@ -244,9 +245,9 @@ fn map_startup_outcome(
     match outcome? {
         AvfLinuxSharedVmStartOutcome::AlreadyRunning => Some(SubstrateStartupOutcome::Reuse),
         AvfLinuxSharedVmStartOutcome::Restored => Some(SubstrateStartupOutcome::Restore),
-        AvfLinuxSharedVmStartOutcome::ColdBoot => Some(SubstrateStartupOutcome::ColdBoot),
-        AvfLinuxSharedVmStartOutcome::ColdBootAfterRestoreFailure => {
-            Some(SubstrateStartupOutcome::ColdBootAfterRestoreFailure)
+        AvfLinuxSharedVmStartOutcome::ColdBoot
+        | AvfLinuxSharedVmStartOutcome::ColdBootAfterRestoreFailure => {
+            Some(SubstrateStartupOutcome::ColdBoot)
         }
     }
 }
@@ -263,6 +264,72 @@ fn map_shutdown_outcome(
         AvfLinuxSharedVmStopOutcome::ColdStopAfterSaveFailure => {
             Some(SubstrateShutdownOutcome::ColdStopAfterSaveFailure)
         }
+    }
+}
+
+fn map_startup_reason(
+    outcome: Option<AvfLinuxSharedVmStartOutcome>,
+) -> Option<SubstrateStartupReason> {
+    match outcome? {
+        AvfLinuxSharedVmStartOutcome::ColdBootAfterRestoreFailure => {
+            Some(SubstrateStartupReason::RestoreFailed)
+        }
+        AvfLinuxSharedVmStartOutcome::AlreadyRunning
+        | AvfLinuxSharedVmStartOutcome::Restored
+        | AvfLinuxSharedVmStartOutcome::ColdBoot => None,
+    }
+}
+
+fn map_shutdown_reason(
+    outcome: Option<AvfLinuxSharedVmStopOutcome>,
+) -> Option<SubstrateShutdownReason> {
+    match outcome? {
+        AvfLinuxSharedVmStopOutcome::ColdStopSaveUnsupported => {
+            Some(SubstrateShutdownReason::SaveUnsupported)
+        }
+        AvfLinuxSharedVmStopOutcome::ColdStopAfterSaveFailure => {
+            Some(SubstrateShutdownReason::SaveFailed)
+        }
+        AvfLinuxSharedVmStopOutcome::SavedStateWritten
+        | AvfLinuxSharedVmStopOutcome::ColdStop => None,
+    }
+}
+
+fn restore_attempted(state: &AvfLinuxSharedVmState) -> bool {
+    matches!(
+        state.last_start_outcome,
+        Some(
+            AvfLinuxSharedVmStartOutcome::Restored
+                | AvfLinuxSharedVmStartOutcome::ColdBootAfterRestoreFailure
+        )
+    )
+}
+
+fn saved_state_written_on_shutdown(state: &AvfLinuxSharedVmState) -> bool {
+    matches!(
+        state.last_stop_outcome,
+        Some(AvfLinuxSharedVmStopOutcome::SavedStateWritten)
+    )
+}
+
+fn build_lifecycle_record(
+    substrate: SandboxSubstrate,
+    startup_selection: Option<SubstrateStartupSelection>,
+    startup_outcome: Option<SubstrateStartupOutcome>,
+    state: &AvfLinuxSharedVmState,
+) -> SubstrateLifecycleRecord {
+    SubstrateLifecycleRecord {
+        substrate,
+        startup_selection,
+        startup_outcome,
+        startup_reason: map_startup_reason(state.last_start_outcome),
+        shutdown_outcome: map_shutdown_outcome(state.last_stop_outcome),
+        shutdown_reason: map_shutdown_reason(state.last_stop_outcome),
+        restore_attempted: restore_attempted(state),
+        restore_error_present: state.last_restore_error.is_some(),
+        save_error_present: state.last_save_error.is_some(),
+        saved_state_written_on_shutdown: saved_state_written_on_shutdown(state),
+        simulated: state.simulated,
     }
 }
 

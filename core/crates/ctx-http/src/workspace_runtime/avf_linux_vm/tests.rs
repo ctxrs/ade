@@ -3,8 +3,8 @@ use super::runtime_install as runtime_assets;
 use super::*;
 use crate::settings::{ContainerExecutionSettings, ContainerRuntimeKind};
 use crate::workspace_runtime::{
-    SharedSubstrateLifecycleManager, SubstrateShutdownOutcome, SubstrateStartupOutcome,
-    SubstrateStartupSelection,
+    SharedSubstrateLifecycleManager, SubstrateShutdownOutcome, SubstrateShutdownReason,
+    SubstrateStartupOutcome, SubstrateStartupReason, SubstrateStartupSelection,
 };
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1116,6 +1116,9 @@ async fn shared_substrate_lifecycle_manager_reports_cold_boot_startup() {
         record.startup_outcome,
         Some(SubstrateStartupOutcome::ColdBoot)
     );
+    assert_eq!(record.startup_reason, None);
+    assert!(!record.restore_attempted);
+    assert!(!record.restore_error_present);
     let log = std::fs::read_to_string(log_path).unwrap();
     assert!(
         log.lines()
@@ -1142,6 +1145,9 @@ async fn shared_substrate_lifecycle_manager_reuses_running_vm_without_start() {
         Some(SubstrateStartupSelection::Reuse)
     );
     assert_eq!(record.startup_outcome, Some(SubstrateStartupOutcome::Reuse));
+    assert_eq!(record.startup_reason, None);
+    assert!(!record.restore_attempted);
+    assert!(!record.restore_error_present);
     let log = std::fs::read_to_string(log_path).unwrap();
     assert!(
         !log.lines()
@@ -1174,10 +1180,13 @@ async fn shared_substrate_lifecycle_manager_reports_restore_startup() {
         record.startup_outcome,
         Some(SubstrateStartupOutcome::Restore)
     );
+    assert_eq!(record.startup_reason, None);
+    assert!(record.restore_attempted);
+    assert!(!record.restore_error_present);
 }
 
 #[tokio::test]
-async fn shared_substrate_lifecycle_manager_reports_restore_failure_as_cold_boot_after_restore_failure(
+async fn shared_substrate_lifecycle_manager_normalizes_restore_failure_to_cold_boot_with_reason(
 ) {
     let _process_env = process_env_test_lock().lock().await;
     let _helper_lock = helper_env_test_lock().lock().await;
@@ -1199,8 +1208,14 @@ async fn shared_substrate_lifecycle_manager_reports_restore_failure_as_cold_boot
     );
     assert_eq!(
         record.startup_outcome,
-        Some(SubstrateStartupOutcome::ColdBootAfterRestoreFailure)
+        Some(SubstrateStartupOutcome::ColdBoot)
     );
+    assert_eq!(
+        record.startup_reason,
+        Some(SubstrateStartupReason::RestoreFailed)
+    );
+    assert!(record.restore_attempted);
+    assert!(record.restore_error_present);
 }
 
 #[tokio::test]
@@ -1221,6 +1236,9 @@ async fn shared_substrate_lifecycle_manager_reports_saved_shutdown() {
         record.shutdown_outcome,
         Some(SubstrateShutdownOutcome::Saved)
     );
+    assert_eq!(record.shutdown_reason, None);
+    assert!(!record.save_error_present);
+    assert!(record.saved_state_written_on_shutdown);
     let log = std::fs::read_to_string(log_path).unwrap();
     assert!(
         log.lines()
@@ -1247,6 +1265,12 @@ async fn shared_substrate_lifecycle_manager_maps_unsupported_save_to_cold_stop()
         record.shutdown_outcome,
         Some(SubstrateShutdownOutcome::ColdStop)
     );
+    assert_eq!(
+        record.shutdown_reason,
+        Some(SubstrateShutdownReason::SaveUnsupported)
+    );
+    assert!(!record.save_error_present);
+    assert!(!record.saved_state_written_on_shutdown);
 }
 
 #[tokio::test]
@@ -1267,6 +1291,12 @@ async fn shared_substrate_lifecycle_manager_reports_cold_stop_after_save_failure
         record.shutdown_outcome,
         Some(SubstrateShutdownOutcome::ColdStopAfterSaveFailure)
     );
+    assert_eq!(
+        record.shutdown_reason,
+        Some(SubstrateShutdownReason::SaveFailed)
+    );
+    assert!(record.save_error_present);
+    assert!(!record.saved_state_written_on_shutdown);
 }
 
 #[tokio::test]

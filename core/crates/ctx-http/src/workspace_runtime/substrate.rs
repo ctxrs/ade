@@ -18,7 +18,12 @@ pub(crate) enum SubstrateStartupOutcome {
     Reuse,
     Restore,
     ColdBoot,
-    ColdBootAfterRestoreFailure,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SubstrateStartupReason {
+    RestoreFailed,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -27,6 +32,13 @@ pub(crate) enum SubstrateShutdownOutcome {
     Saved,
     ColdStop,
     ColdStopAfterSaveFailure,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SubstrateShutdownReason {
+    SaveUnsupported,
+    SaveFailed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

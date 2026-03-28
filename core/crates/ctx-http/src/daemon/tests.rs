@@ -711,6 +711,9 @@ async fn shutdown_shared_substrate_requests_save_or_stop_when_shared_backend_ava
         record.shutdown_outcome,
         Some(crate::workspace_runtime::SubstrateShutdownOutcome::Saved)
     );
+    assert_eq!(record.shutdown_reason, None);
+    assert!(!record.save_error_present);
+    assert!(record.saved_state_written_on_shutdown);
 
     let log = std::fs::read_to_string(log_path).expect("read helper log");
     assert!(
