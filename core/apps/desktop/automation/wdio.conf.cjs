@@ -276,7 +276,7 @@ const resolveAppExecutablePath = (appPath) => {
 };
 
 const resolveAppResourcesBinPrefix = (appPath) => {
-  const bundleDir = process.platform === "darwin" ? resolveMacAppBundleDir(appPath) : null;
+  const bundleDir = resolveMacAppBundleDir(appPath);
   if (bundleDir) {
     return path.resolve(bundleDir, "Contents", "Resources", "bin");
   }

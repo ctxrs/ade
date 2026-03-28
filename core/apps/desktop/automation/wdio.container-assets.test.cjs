@@ -401,6 +401,7 @@ test("wdio automation AVF runtime prep reuses an existing prepared runtime direc
         let spawnCalled = false;
         const resolved = mod.__desktopAutomationConfigTestHooks.ensureAutomationAvfLinuxGuestRuntime({
           platform: "darwin",
+          arch: "arm64",
           runsContainerScenarios: true,
           env: process.env,
           log: (line) => logs.push(line),
@@ -451,6 +452,7 @@ test("wdio automation AVF runtime prep refreshes a stale prepared runtime direct
         const commands = [];
         const resolved = mod.__desktopAutomationConfigTestHooks.ensureAutomationAvfLinuxGuestRuntime({
           platform: "darwin",
+          arch: "arm64",
           runsContainerScenarios: true,
           env: process.env,
           log: (line) => logs.push(line),
@@ -498,6 +500,7 @@ test("wdio automation AVF runtime prep prepares and exports a missing runtime di
       (mod) => {
         const resolved = mod.__desktopAutomationConfigTestHooks.ensureAutomationAvfLinuxGuestRuntime({
           platform: "darwin",
+          arch: "arm64",
           runsContainerScenarios: true,
           env: process.env,
           spawnSyncImpl: makeManagedRuntimeSpawnSync(runtimeDir),
