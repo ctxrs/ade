@@ -3,9 +3,9 @@ use super::network_policy_transition::transparent_proxy_policy;
 use super::sandbox_machine_recovery::ensure_sandbox_machine_running_with_observer;
 use super::sandbox_machine_recovery::{
     collect_ctx_managed_sandbox_helper_pids,
-    collect_ctx_managed_sandbox_helper_pids_from_ps_output,
-    initialize_sandbox_machine, is_ctx_managed_sandbox_helper_process_command,
-    kill_ctx_managed_sandbox_helper_processes, literal_pkill_pattern, looks_like_missing_machine_error,
+    collect_ctx_managed_sandbox_helper_pids_from_ps_output, initialize_sandbox_machine,
+    is_ctx_managed_sandbox_helper_process_command, kill_ctx_managed_sandbox_helper_processes,
+    literal_pkill_pattern, looks_like_missing_machine_error,
     looks_like_recoverable_machine_start_error,
     looks_like_running_but_unreachable_machine_start_error, sandbox_machine_temp_state_paths,
 };
