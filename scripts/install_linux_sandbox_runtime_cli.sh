@@ -84,7 +84,6 @@ install_nerdctl() {
   local url="https://github.com/containerd/nerdctl/releases/download/${version}/nerdctl-${version_trimmed}-linux-${arch}.tar.gz"
   local tmp_dir
   tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "${tmp_dir}"' RETURN
 
   echo "installing nerdctl ${version} for linux/${arch} from ${url}"
   curl -fsSL "${url}" -o "${tmp_dir}/nerdctl.tar.gz"
@@ -96,6 +95,7 @@ install_nerdctl() {
   else
     sudo install -m 0755 "${tmp_dir}/nerdctl" /usr/local/bin/nerdctl
   fi
+  rm -rf "${tmp_dir}"
 }
 
 resolve_nerdctl_path() {
@@ -115,7 +115,6 @@ install_rootful_wrapper() {
   local nerdctl_path="$1"
   local tmp_dir
   tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "${tmp_dir}"' RETURN
   cat > "${tmp_dir}/ctx-rootful-nerdctl" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -127,6 +126,7 @@ EOF
   else
     sudo install -m 0755 "${tmp_dir}/ctx-rootful-nerdctl" "${rootful_wrapper_path}"
   fi
+  rm -rf "${tmp_dir}"
 }
 
 resolve_reachable_cli_path() {
