@@ -858,7 +858,8 @@ fn controller_safety_preflight_replays_fixture_cases_with_expected_outputs() {
         let decisions = replay_shared_vm_controller_safety_trace(
             &controller_safety_replay_state(&case.initial_state),
             &controller_safety_replay_steps(&case.steps),
-        );
+        )
+        .expect("controller-safety fixture replay");
 
         assert_eq!(
             decisions.len(),
@@ -902,8 +903,10 @@ fn controller_safety_preflight_repeat_replay_is_deterministic() {
     for case in &fixture.cases {
         let initial_state = controller_safety_replay_state(&case.initial_state);
         let steps = controller_safety_replay_steps(&case.steps);
-        let first = replay_shared_vm_controller_safety_trace(&initial_state, &steps);
-        let second = replay_shared_vm_controller_safety_trace(&initial_state, &steps);
+        let first = replay_shared_vm_controller_safety_trace(&initial_state, &steps)
+            .expect("first controller-safety replay");
+        let second = replay_shared_vm_controller_safety_trace(&initial_state, &steps)
+            .expect("second controller-safety replay");
 
         assert_eq!(
             shared_vm_controller_safety_trace_canonical_json(&first),

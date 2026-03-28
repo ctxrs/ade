@@ -158,7 +158,7 @@ impl SharedVmControllerSafetyReplayDecision {
 pub(in super::super::super) fn replay_shared_vm_controller_safety_trace(
     initial_state: &SharedVmControllerSafetyReplayState,
     steps: &[SharedVmControllerSafetyReplayStep],
-) -> Vec<SharedVmControllerSafetyReplayDecision> {
+) -> Result<Vec<SharedVmControllerSafetyReplayDecision>> {
     let mut state = initial_state.clone();
     steps
         .iter()
@@ -190,7 +190,7 @@ fn shared_vm_controller_safety_canonical_json_strings(values: &[&'static str]) -
 fn replay_shared_vm_controller_safety_step(
     state: &mut SharedVmControllerSafetyReplayState,
     step: &SharedVmControllerSafetyReplayStep,
-) -> SharedVmControllerSafetyReplayDecision {
+) -> Result<SharedVmControllerSafetyReplayDecision> {
     let ceiling_bytes = align_down_to_mebibyte(state.ceiling_bytes.max(MEBIBYTE_BYTES));
     let floor_bytes =
         align_down_to_mebibyte(state.floor_bytes.max(MEBIBYTE_BYTES)).min(ceiling_bytes);
@@ -281,7 +281,7 @@ fn replay_shared_vm_controller_safety_step(
                                 guest_available_bytes,
                             ),
                         )
-                        .expect("controller-safety replay pressure state")
+                        .context("controller-safety replay pressure state")?
                     };
                 let (action, target_bytes_after, emergency_path) =
                     shared_vm_controller_safety_normalize_balloon_action(
@@ -315,7 +315,7 @@ fn replay_shared_vm_controller_safety_step(
     state.ceiling_bytes = ceiling_bytes;
     state.pressure_state = pressure_state_after;
 
-    SharedVmControllerSafetyReplayDecision {
+    Ok(SharedVmControllerSafetyReplayDecision {
         step_index: step.step_index,
         action,
         target_bytes_before,
@@ -325,7 +325,7 @@ fn replay_shared_vm_controller_safety_step(
         reason_codes,
         emergency_path,
         invariants_passed,
-    }
+    })
 }
 
 fn shared_vm_controller_safety_emergency_target_bytes(
