@@ -87,6 +87,11 @@ pub(crate) fn sandbox_cli_env_for_data_root(data_root: &Path) -> Result<HashMap<
         "HOME".to_string(),
         sandbox_home.to_string_lossy().to_string(),
     );
+    env.insert(
+        "CONTAINERD_ADDRESS".to_string(),
+        "/run/containerd/containerd.sock".to_string(),
+    );
+    env.insert("CONTAINERD_NAMESPACE".to_string(), "default".to_string());
     let tmp = sandbox_tmp_root.to_string_lossy().to_string();
     env.insert("TMPDIR".to_string(), tmp.clone());
     env.insert("TMP".to_string(), tmp.clone());

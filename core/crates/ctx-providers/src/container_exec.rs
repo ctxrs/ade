@@ -303,6 +303,11 @@ fn sandbox_cli_env_for_data_root(data_root: &str) -> HashMap<String, String> {
             "HOME".to_string(),
             sandbox_home.to_string_lossy().to_string(),
         ),
+        (
+            "CONTAINERD_ADDRESS".to_string(),
+            "/run/containerd/containerd.sock".to_string(),
+        ),
+        ("CONTAINERD_NAMESPACE".to_string(), "default".to_string()),
         ("TMPDIR".to_string(), tmp.clone()),
         ("TMP".to_string(), tmp.clone()),
         ("TEMP".to_string(), tmp),
@@ -366,6 +371,14 @@ mod tests {
         assert_eq!(
             env.get("XDG_DATA_HOME").map(PathBuf::from),
             Some(temp.path().join("sandbox").join("xdg").join("data"))
+        );
+        assert_eq!(
+            env.get("CONTAINERD_ADDRESS").map(String::as_str),
+            Some("/run/containerd/containerd.sock")
+        );
+        assert_eq!(
+            env.get("CONTAINERD_NAMESPACE").map(String::as_str),
+            Some("default")
         );
     }
 

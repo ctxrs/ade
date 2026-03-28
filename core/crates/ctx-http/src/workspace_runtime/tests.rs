@@ -1267,6 +1267,14 @@ fn sandbox_cli_invocation_sets_paths_under_sandbox_root() {
         PathBuf::from(tmpdir),
         tmp.path().join("sandbox").join("tmp")
     );
+    assert_eq!(
+        inv.env.get("CONTAINERD_ADDRESS").map(String::as_str),
+        Some("/run/containerd/containerd.sock")
+    );
+    assert_eq!(
+        inv.env.get("CONTAINERD_NAMESPACE").map(String::as_str),
+        Some("default")
+    );
 }
 
 #[test]

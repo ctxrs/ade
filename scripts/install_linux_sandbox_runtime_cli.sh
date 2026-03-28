@@ -16,6 +16,8 @@ EOF
 }
 
 require_reachable=0
+system_containerd_address="/run/containerd/containerd.sock"
+system_containerd_namespace="default"
 case "${1:-}" in
   "")
     ;;
@@ -110,7 +112,7 @@ resolve_nerdctl_path() {
 
 ensure_containerd_reachable() {
   local nerdctl_path="$1"
-  if "${nerdctl_path}" info >/dev/null 2>&1; then
+  if CONTAINERD_ADDRESS="${system_containerd_address}" CONTAINERD_NAMESPACE="${system_containerd_namespace}" "${nerdctl_path}" info >/dev/null 2>&1; then
     return 0
   fi
   if ! command -v systemctl >/dev/null 2>&1; then
@@ -134,13 +136,13 @@ ensure_containerd_reachable() {
   fi
   local attempt
   for attempt in $(seq 1 15); do
-    if "${nerdctl_path}" info >/dev/null 2>&1; then
+    if CONTAINERD_ADDRESS="${system_containerd_address}" CONTAINERD_NAMESPACE="${system_containerd_namespace}" "${nerdctl_path}" info >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
   done
   run_with_optional_sudo systemctl status containerd.service --no-pager || true
-  "${nerdctl_path}" info || true
+  CONTAINERD_ADDRESS="${system_containerd_address}" CONTAINERD_NAMESPACE="${system_containerd_namespace}" "${nerdctl_path}" info || true
   echo "error: nerdctl is installed but the native sandbox runtime is not reachable after starting containerd.service" >&2
   exit 1
 }
