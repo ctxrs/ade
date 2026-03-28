@@ -64,11 +64,19 @@ test("linux-arm lanes source repo-owned local adapters from the workspace before
   );
   assert.match(
     script,
+    /if \[\[ "\$\{CTX_BUNDLE_BUILD_CODEX_CRP:-0\}" == "0" \]\]; then[\s\S]*bundled_only_provider_csv="\$\(csv_remove_provider "\$\{bundled_only_provider_csv\}" "codex"\)"/,
+  );
+  assert.match(
+    script,
     /source local adapters from the workspace while external lane/,
   );
   assert.match(
     script,
     /providers continue using their managed archive paths/,
+  );
+  assert.match(
+    script,
+    /enforcing bundled-only runtime resolution for: \$\{CTX_E2E_BUNDLED_ONLY_PROVIDERS\}/,
   );
 });
 

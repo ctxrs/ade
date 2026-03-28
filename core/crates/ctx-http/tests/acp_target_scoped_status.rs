@@ -18,11 +18,13 @@ use ctx_providers::adapters::{
 };
 use ctx_providers::events::NormalizedEvent;
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct EnvGuard {
     key: &'static str,
     prev: Option<String>,
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 impl EnvGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let prev = std::env::var(key).ok();
@@ -31,6 +33,7 @@ impl EnvGuard {
     }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         if let Some(value) = self.prev.take() {
@@ -41,6 +44,7 @@ impl Drop for EnvGuard {
     }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn helper_env_test_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
@@ -50,6 +54,7 @@ fn write_runtime_fixture(path: &Path) {
     std::fs::write(path, "#!/bin/sh\nexit 0\n").expect("write runtime fixture");
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn write_avf_probe_helper(path: &Path) {
     std::fs::write(
         path,

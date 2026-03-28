@@ -297,7 +297,11 @@ if (changed) {
 
   export CTX_BUNDLE_DIR="${bundle_dir}"
   export CTX_E2E_BUNDLED_ONLY="1"
-  export CTX_E2E_BUNDLED_ONLY_PROVIDERS="${first_pass_providers}"
+  local bundled_only_provider_csv="${CTX_E2E_BUNDLED_ONLY_PROVIDERS:-${first_pass_providers}}"
+  if [[ "${CTX_BUNDLE_BUILD_CODEX_CRP:-0}" == "0" ]]; then
+    bundled_only_provider_csv="$(csv_remove_provider "${bundled_only_provider_csv}" "codex")"
+  fi
+  export CTX_E2E_BUNDLED_ONLY_PROVIDERS="${bundled_only_provider_csv}"
   export CTX_E2E_CARGO_TARGET_DIR="${cargo_target_dir}"
   export CARGO_TARGET_DIR="${cargo_target_dir}"
   export CTX_E2E_CARGO_HOME="${cargo_home_dir}"
