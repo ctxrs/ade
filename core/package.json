@@ -103,7 +103,7 @@
     "crp:claude": "bash -lc '../scripts/build_claude_crp.sh'",
     "source:file-size:report": "node scripts/source_file_size_guard.cjs",
     "source:file-size:enforce": "node scripts/source_file_size_guard.cjs --enforce",
-    "verify:quick": "pnpm source:file-size:enforce && pnpm -C apps/web lint && CARGO_TARGET_DIR=${CTX_VERIFY_CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/verify-quick-$(basename \"$(git rev-parse --git-dir)\")} turbo run rust:fmt rust:panic-traps rust:clippy rust:test supabase:migrations:check supabase:functions:check typecheck any:enforce --filter=ctx-monorepo --filter=ctx-web --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only --log-order=grouped --concurrency=4 --ui=stream --cache=${TURBO_CACHE_MODE:-local:rw}",
+    "verify:quick": "pnpm source:file-size:enforce && pnpm -C apps/web lint && CARGO_TARGET_DIR=${CTX_VERIFY_CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/verify-quick-$(basename \"$(git rev-parse --git-dir)\")} turbo run rust:fmt rust:panic-traps rust:clippy rust:test supabase:migrations:check supabase:functions:check typecheck any:enforce --filter=ctx-monorepo --filter=ctx-web --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only --log-order=grouped --concurrency=${CTX_VERIFY_TURBO_CONCURRENCY:-4} --ui=stream --cache=${TURBO_CACHE_MODE:-local:rw}",
     "verify:merge:local": "pnpm verify:quick && pnpm verify:desktop-smoke",
     "verify:merge:ci": "pnpm verify:quick && pnpm verify:desktop:provider-auth-matrix:required",
     "pull-mintlify": "bash -lc '../scripts/mintlify/pull-subtree.sh'",
