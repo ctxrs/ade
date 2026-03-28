@@ -74,6 +74,7 @@ exit 1
 }
 
 #[cfg(unix)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn write_avf_probe_helper(path: &Path) {
     write_executable(
         path,
