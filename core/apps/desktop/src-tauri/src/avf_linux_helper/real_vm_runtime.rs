@@ -36,9 +36,12 @@ pub(super) use self::processes::{
     spawn_guest_agent_server, spawn_real_shared_vm_owner, spawn_shared_vm_server,
 };
 pub(super) use self::readiness::{
-    cold_boot_real_guest_exec_ready_timeout, default_real_guest_exec_ready_timeout,
-    extract_shared_vm_readiness_phase_lines, format_duration_ms,
+    cold_boot_real_guest_exec_ready_timeout, format_duration_ms,
     real_guest_exec_ready_timeout_for_start, reset_writable_shared_vm_runtime_state,
+};
+#[cfg(test)]
+pub(super) use self::readiness::{
+    default_real_guest_exec_ready_timeout, extract_shared_vm_readiness_phase_lines,
     shared_vm_guest_readiness_args, shared_vm_readiness_failure_requires_writable_rootfs_reset,
     summarize_shared_vm_readiness_phase_lines, wait_for_guest_control_ready_marker,
     wait_for_real_guest_exec_ready,
@@ -57,5 +60,5 @@ pub(super) use self::resource_management::{
     SharedVmMemoryWatchdogExitAction, SharedVmMemoryWatchdogSampleAction,
 };
 pub(super) use self::shutdown::describe_saved_state_path_context;
-#[cfg(target_os = "macos")]
+#[cfg(all(test, target_os = "macos"))]
 pub(super) use self::shutdown::persist_shared_vm_owner_error_state;
