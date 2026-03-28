@@ -19,6 +19,7 @@ require_reachable=0
 system_containerd_address="/run/containerd/containerd.sock"
 system_containerd_namespace="default"
 rootful_wrapper_path="/usr/local/bin/ctx-rootful-nerdctl"
+cni_bridge_plugin_path="/opt/cni/bin/bridge"
 case "${1:-}" in
   "")
     ;;
@@ -170,10 +171,23 @@ ensure_containerd_reachable() {
     run_with_optional_sudo apt-get update
     run_with_optional_sudo apt-get install -y containerd
   fi
+  if [[ ! -x "${cni_bridge_plugin_path}" ]]; then
+    if ! command -v apt-get >/dev/null 2>&1; then
+      echo "error: CNI bridge plugin is missing at ${cni_bridge_plugin_path} and apt-get is unavailable on this runner" >&2
+      exit 1
+    fi
+    ensure_sudo_prefix
+    run_with_optional_sudo apt-get update
+    run_with_optional_sudo apt-get install -y containernetworking-plugins
+  fi
   ensure_sudo_prefix
   if ! run_with_optional_sudo systemctl enable --now containerd.service; then
     run_with_optional_sudo systemctl status containerd.service --no-pager || true
     echo "error: failed to start containerd.service on this runner" >&2
+    exit 1
+  fi
+  if [[ ! -x "${cni_bridge_plugin_path}" ]]; then
+    echo "error: CNI bridge plugin is still missing after install: ${cni_bridge_plugin_path}" >&2
     exit 1
   fi
   local attempt
