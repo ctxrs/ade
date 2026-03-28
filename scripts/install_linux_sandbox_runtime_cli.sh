@@ -222,6 +222,7 @@ ensure_containerd_reachable() {
   local reachable_cli_path
   reachable_cli_path="$(resolve_reachable_cli_path "${nerdctl_path}")"
   if CONTAINERD_ADDRESS="${system_containerd_address}" CONTAINERD_NAMESPACE="${system_containerd_namespace}" "${reachable_cli_path}" info >/dev/null 2>&1; then
+    ensure_cni_bridge_plugin
     return 0
   fi
   if ! command -v systemctl >/dev/null 2>&1; then
