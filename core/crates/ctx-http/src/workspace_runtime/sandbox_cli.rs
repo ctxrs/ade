@@ -190,10 +190,8 @@ pub fn container_runtime_available(data_root: &Path) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SandboxCommandBackend {
     NativeContainer,
-    #[cfg_attr(
-        not(target_os = "macos"),
-        expect(dead_code, reason = "shared VM backend is only constructed on macOS")
-    )]
+    // EXCEPTION: dead-code — this backend is only constructed on the macOS AVF shared-VM path.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     SharedVmContainer,
 }
 
