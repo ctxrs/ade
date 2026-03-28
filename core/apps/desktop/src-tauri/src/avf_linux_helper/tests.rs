@@ -757,6 +757,11 @@ fn resolve_shared_vm_memory_balloon_action_reclaims_under_host_pressure() {
 }
 
 #[test]
+fn runtime_guest_exec_timeout_exceeds_readiness_timeout() {
+    assert!(SHARED_VM_RUNTIME_GUEST_EXEC_IO_TIMEOUT > SHARED_VM_READINESS_GUEST_EXEC_IO_TIMEOUT);
+}
+
+#[test]
 fn resolve_shared_vm_memory_balloon_action_grows_under_guest_pressure() {
     let action = resolve_shared_vm_memory_balloon_action(
         gibibytes(8),

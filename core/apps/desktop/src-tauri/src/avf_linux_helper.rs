@@ -173,6 +173,7 @@ const SHARED_VM_START_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const SHARED_VM_READINESS_PHASE_TIMEOUT_SECONDS: u64 = 10;
 const SHARED_VM_READINESS_GUEST_EXEC_IO_TIMEOUT: Duration =
     Duration::from_secs(SHARED_VM_READINESS_PHASE_TIMEOUT_SECONDS + 5);
+const SHARED_VM_RUNTIME_GUEST_EXEC_IO_TIMEOUT: Duration = Duration::from_secs(120);
 #[cfg(target_os = "macos")]
 const SHARED_VM_GUEST_CONTROL_VSOCK_PORT: u32 = 47001;
 #[cfg(target_os = "macos")]

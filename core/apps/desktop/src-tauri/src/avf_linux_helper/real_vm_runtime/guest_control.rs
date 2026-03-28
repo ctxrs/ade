@@ -228,10 +228,7 @@ pub(in super::super) fn run_owner_guest_exec_capture(
     env: HashMap<String, String>,
 ) -> Result<GuestExecCaptureResult> {
     let mut socket = connect_shared_vm_guest_control_socket(queue, virtual_machine)?;
-    configure_guest_control_socket_timeout(
-        &socket,
-        Some(SHARED_VM_READINESS_GUEST_EXEC_IO_TIMEOUT),
-    )?;
+    configure_guest_control_socket_timeout(&socket, Some(SHARED_VM_RUNTIME_GUEST_EXEC_IO_TIMEOUT))?;
     run_guest_exec_capture_over_connected_stream(&mut socket, cwd, command, args, user, env)
 }
 
