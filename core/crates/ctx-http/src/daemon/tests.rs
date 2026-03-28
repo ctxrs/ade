@@ -7,7 +7,7 @@ use ctx_providers::adapters::{
 };
 use ctx_store::manager::WorkspaceStoreAccessKind;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex as StdMutex;
 use std::time::Instant;
 use tempfile::tempdir;
