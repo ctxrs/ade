@@ -138,8 +138,7 @@ use self::sandbox_machine_recovery::{
 pub(crate) use self::shared_vm_orchestrator::SharedVmLifecycleOrchestrator;
 pub(crate) use self::substrate::{
     SubstrateShutdownOutcome, SubstrateShutdownReason, SubstrateStartupOutcome,
-    SubstrateStartupReason, SubstrateStartupSelection,
-    UbuntuSandboxSubstrate,
+    SubstrateStartupReason, SubstrateStartupSelection, UbuntuSandboxSubstrate,
 };
 
 pub(crate) fn local_runtime_available(data_root: &Path, runtime: &ContainerRuntimeKind) -> bool {

@@ -1186,8 +1186,7 @@ async fn shared_substrate_lifecycle_manager_reports_restore_startup() {
 }
 
 #[tokio::test]
-async fn shared_substrate_lifecycle_manager_normalizes_restore_failure_to_cold_boot_with_reason(
-) {
+async fn shared_substrate_lifecycle_manager_normalizes_restore_failure_to_cold_boot_with_reason() {
     let _process_env = process_env_test_lock().lock().await;
     let _helper_lock = helper_env_test_lock().lock().await;
     let temp = tempfile::tempdir().unwrap();

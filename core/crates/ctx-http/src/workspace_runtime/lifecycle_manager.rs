@@ -290,8 +290,9 @@ fn map_shutdown_reason(
         AvfLinuxSharedVmStopOutcome::ColdStopAfterSaveFailure => {
             Some(SubstrateShutdownReason::SaveFailed)
         }
-        AvfLinuxSharedVmStopOutcome::SavedStateWritten
-        | AvfLinuxSharedVmStopOutcome::ColdStop => None,
+        AvfLinuxSharedVmStopOutcome::SavedStateWritten | AvfLinuxSharedVmStopOutcome::ColdStop => {
+            None
+        }
     }
 }
 
