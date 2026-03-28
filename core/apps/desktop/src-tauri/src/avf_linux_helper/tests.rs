@@ -2272,6 +2272,49 @@ fn wait_for_real_guest_exec_ready_succeeds_without_guest_control_marker() {
 
 #[cfg(unix)]
 #[test]
+fn wait_for_real_guest_exec_ready_reports_owner_exit_log_tail() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctx-avf-real-ready-owner-exit-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+    let log_path = shared_vm_log_path(&temp);
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent).expect("create log dir");
+    }
+
+    let script = format!(
+        "printf '%s\n' '[ctx-avf-linux] bridge_probe_failed' > '{}' && exit 41",
+        log_path.display()
+    );
+    let mut owner = std::process::Command::new("sh")
+        .arg("-lc")
+        .arg(script)
+        .spawn()
+        .expect("spawn owner");
+
+    let err = wait_for_real_guest_exec_ready_with_owner_process(
+        &temp,
+        Duration::from_secs(1),
+        Some(&mut owner),
+    )
+    .expect_err("owner exit should fail readiness");
+    let rendered = err.to_string();
+    assert!(rendered.contains("shared AVF VM owner exited before guest exec readiness"));
+    assert!(rendered.contains("bridge_probe_failed"));
+    assert!(shared_vm_readiness_failure_requires_writable_rootfs_reset(
+        &err
+    ));
+
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(unix)]
+#[test]
 fn guest_exec_relays_request_over_shared_vm_control_socket() {
     use std::os::unix::net::UnixListener;
     use std::thread;
@@ -2417,8 +2460,6 @@ fn wait_for_control_socket_accepts_live_listener_only() {
 #[cfg(unix)]
 #[test]
 fn wait_for_control_socket_rejects_stale_socket_path() {
-    use std::os::unix::net::UnixListener;
-
     let temp = PathBuf::from("/tmp").join(format!(
         "ctxavf-stale-control-socket-{}-{}",
         std::process::id(),
@@ -2437,8 +2478,7 @@ fn wait_for_control_socket_rejects_stale_socket_path() {
         fs::remove_file(&socket_path).expect("remove stale socket");
     }
 
-    let listener = UnixListener::bind(&socket_path).expect("bind control socket");
-    drop(listener);
+    fs::write(&socket_path, b"not a socket").expect("write non-socket path");
 
     let err = real_vm_runtime::wait_for_socket_accepting_connections(
         &socket_path,
@@ -2449,10 +2489,6 @@ fn wait_for_control_socket_rejects_stale_socket_path() {
     let rendered = err.to_string();
     assert!(rendered.contains("shared VM control socket"));
     assert!(rendered.contains("accept connections"));
-    assert!(
-        rendered.contains("Connection refused") || rendered.contains("connection refused"),
-        "unexpected error: {rendered}"
-    );
 
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }

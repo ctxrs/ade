@@ -3,7 +3,7 @@ use super::readiness::{
     cold_boot_real_guest_exec_ready_timeout, format_duration_ms,
     reset_writable_shared_vm_runtime_state,
     shared_vm_readiness_failure_requires_writable_rootfs_reset,
-    summarize_shared_vm_readiness_phase_lines, wait_for_real_guest_exec_ready,
+    summarize_shared_vm_readiness_phase_lines, wait_for_real_guest_exec_ready_with_owner_process,
 };
 use super::*;
 
@@ -47,7 +47,7 @@ fn spawn_real_shared_vm_owner_once(data_root: &Path, readiness_timeout: Duration
     let log_file_err = log_file
         .try_clone()
         .with_context(|| format!("cloning {}", log_path.display()))?;
-    let child = Command::new(current_exe)
+    let mut child = Command::new(current_exe)
         .arg("run-workspace-vm")
         .arg(data_root)
         .stdin(Stdio::null())
@@ -67,8 +67,11 @@ fn spawn_real_shared_vm_owner_once(data_root: &Path, readiness_timeout: Duration
     )?;
     let remaining_after_control_socket =
         readiness_timeout.saturating_sub(owner_started_at.elapsed());
-    let readiness = match wait_for_real_guest_exec_ready(data_root, remaining_after_control_socket)
-    {
+    let readiness = match wait_for_real_guest_exec_ready_with_owner_process(
+        data_root,
+        remaining_after_control_socket,
+        Some(&mut child),
+    ) {
         Ok(report) => report,
         Err(err) => {
             stop_shared_vm_server(child.id());

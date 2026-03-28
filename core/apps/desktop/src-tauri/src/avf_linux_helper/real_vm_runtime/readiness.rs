@@ -138,9 +138,40 @@ pub(in super::super) fn real_guest_exec_ready_timeout_for_start(
 }
 
 #[cfg(unix)]
-pub(in super::super) fn wait_for_real_guest_exec_ready(
+fn shared_vm_readiness_owner_exit_error(
+    data_root: &Path,
+    status: std::process::ExitStatus,
+) -> anyhow::Error {
+    let log_path = shared_vm_log_path(data_root);
+    let log_tail = match fs::read_to_string(&log_path) {
+        Ok(contents) => {
+            let tail = contents
+                .lines()
+                .rev()
+                .take(20)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n");
+            if tail.is_empty() {
+                format!("shared-vm log {} is empty", log_path.display())
+            } else {
+                format!("shared-vm log tail from {}:\n{}", log_path.display(), tail)
+            }
+        }
+        Err(err) => format!("unable to read shared-vm log {}: {err}", log_path.display()),
+    };
+    anyhow::anyhow!(
+        "shared AVF VM owner exited before guest exec readiness with status {status}; {log_tail}"
+    )
+}
+
+#[cfg(unix)]
+pub(in super::super) fn wait_for_real_guest_exec_ready_with_owner_process(
     data_root: &Path,
     timeout: Duration,
+    mut owner_process: Option<&mut std::process::Child>,
 ) -> Result<SharedVmGuestReadinessReport> {
     let control_socket = shared_vm_control_socket_path(data_root);
     let started_at = std::time::Instant::now();
@@ -149,6 +180,14 @@ pub(in super::super) fn wait_for_real_guest_exec_ready(
     let readiness_args = shared_vm_guest_readiness_args();
     let mut attempts = 0_u32;
     while std::time::Instant::now() < deadline {
+        if let Some(owner_process) = owner_process.as_deref_mut() {
+            if let Some(status) = owner_process
+                .try_wait()
+                .context("polling shared AVF VM owner process")?
+            {
+                return Err(shared_vm_readiness_owner_exit_error(data_root, status));
+            }
+        }
         attempts += 1;
         match run_guest_exec_capture_with_socket_timeout(
             &control_socket,
@@ -186,6 +225,14 @@ pub(in super::super) fn wait_for_real_guest_exec_ready(
         }
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
+    if let Some(owner_process) = owner_process.as_deref_mut() {
+        if let Some(status) = owner_process
+            .try_wait()
+            .context("polling shared AVF VM owner process")?
+        {
+            return Err(shared_vm_readiness_owner_exit_error(data_root, status));
+        }
+    }
     let timeout_message = format!(
         "timed out waiting for real AVF guest exec readiness via {} after {} attempt(s) over {}",
         control_socket.display(),
@@ -196,6 +243,27 @@ pub(in super::super) fn wait_for_real_guest_exec_ready(
         Some(err) => Err(err.context(timeout_message)),
         None => Err(anyhow::anyhow!(timeout_message)),
     }
+}
+
+#[cfg(not(unix))]
+pub(in super::super) fn wait_for_real_guest_exec_ready_with_owner_process(
+    _data_root: &Path,
+    _timeout: Duration,
+    _owner_process: Option<&mut std::process::Child>,
+) -> Result<SharedVmGuestReadinessReport> {
+    Ok(SharedVmGuestReadinessReport {
+        attempts: 0,
+        elapsed: Duration::ZERO,
+        phase_lines: Vec::new(),
+    })
+}
+
+#[cfg(unix)]
+pub(in super::super) fn wait_for_real_guest_exec_ready(
+    data_root: &Path,
+    timeout: Duration,
+) -> Result<SharedVmGuestReadinessReport> {
+    wait_for_real_guest_exec_ready_with_owner_process(data_root, timeout, None)
 }
 
 #[cfg(not(unix))]
