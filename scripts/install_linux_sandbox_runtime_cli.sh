@@ -18,6 +18,7 @@ EOF
 require_reachable=0
 system_containerd_address="/run/containerd/containerd.sock"
 system_containerd_namespace="default"
+rootful_wrapper_path="/usr/local/bin/ctx-rootful-nerdctl"
 case "${1:-}" in
   "")
     ;;
@@ -110,9 +111,39 @@ resolve_nerdctl_path() {
   exit 1
 }
 
+install_rootful_wrapper() {
+  local nerdctl_path="$1"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' RETURN
+  cat > "${tmp_dir}/ctx-rootful-nerdctl" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+exec sudo --non-interactive "${nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" "\$@"
+EOF
+  ensure_sudo_prefix
+  if [[ -w "/usr/local/bin" || "$(id -u)" -eq 0 ]]; then
+    install -m 0755 "${tmp_dir}/ctx-rootful-nerdctl" "${rootful_wrapper_path}"
+  else
+    sudo install -m 0755 "${tmp_dir}/ctx-rootful-nerdctl" "${rootful_wrapper_path}"
+  fi
+}
+
+resolve_reachable_cli_path() {
+  local nerdctl_path="$1"
+  if [[ "$(id -u)" -eq 0 ]]; then
+    printf '%s\n' "${nerdctl_path}"
+    return 0
+  fi
+  install_rootful_wrapper "${nerdctl_path}"
+  printf '%s\n' "${rootful_wrapper_path}"
+}
+
 ensure_containerd_reachable() {
   local nerdctl_path="$1"
-  if CONTAINERD_ADDRESS="${system_containerd_address}" CONTAINERD_NAMESPACE="${system_containerd_namespace}" "${nerdctl_path}" info >/dev/null 2>&1; then
+  local reachable_cli_path
+  reachable_cli_path="$(resolve_reachable_cli_path "${nerdctl_path}")"
+  if CONTAINERD_ADDRESS="${system_containerd_address}" CONTAINERD_NAMESPACE="${system_containerd_namespace}" "${reachable_cli_path}" info >/dev/null 2>&1; then
     return 0
   fi
   if ! command -v systemctl >/dev/null 2>&1; then
@@ -136,13 +167,13 @@ ensure_containerd_reachable() {
   fi
   local attempt
   for attempt in $(seq 1 15); do
-    if CONTAINERD_ADDRESS="${system_containerd_address}" CONTAINERD_NAMESPACE="${system_containerd_namespace}" "${nerdctl_path}" info >/dev/null 2>&1; then
+    if CONTAINERD_ADDRESS="${system_containerd_address}" CONTAINERD_NAMESPACE="${system_containerd_namespace}" "${reachable_cli_path}" info >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
   done
   run_with_optional_sudo systemctl status containerd.service --no-pager || true
-  CONTAINERD_ADDRESS="${system_containerd_address}" CONTAINERD_NAMESPACE="${system_containerd_namespace}" "${nerdctl_path}" info || true
+  CONTAINERD_ADDRESS="${system_containerd_address}" CONTAINERD_NAMESPACE="${system_containerd_namespace}" "${reachable_cli_path}" info || true
   echo "error: nerdctl is installed but the native sandbox runtime is not reachable after starting containerd.service" >&2
   exit 1
 }
@@ -158,4 +189,7 @@ echo "nerdctl ready: ${nerdctl_path}"
 if [[ "${require_reachable}" == "1" ]]; then
   ensure_containerd_reachable "${nerdctl_path}"
   echo "nerdctl info: reachable"
+  if [[ -x "${rootful_wrapper_path}" ]]; then
+    echo "rootful nerdctl wrapper ready: ${rootful_wrapper_path}"
+  fi
 fi
