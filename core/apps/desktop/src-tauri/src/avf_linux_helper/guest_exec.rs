@@ -717,7 +717,9 @@ fn is_ignorable_guest_exec_stdin_write_error(err: &anyhow::Error) -> bool {
         .is_some_and(|io_err| {
             matches!(
                 io_err.kind(),
-                std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+                std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::NotConnected
             )
         })
 }
