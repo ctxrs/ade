@@ -136,7 +136,8 @@ fn controller_safety_replay_state(
 fn controller_safety_replay_steps(
     steps: &[ControllerSafetyFixtureStep],
 ) -> Vec<SharedVmControllerSafetyReplayStep> {
-    steps.iter()
+    steps
+        .iter()
         .map(|step| SharedVmControllerSafetyReplayStep {
             step_index: step.step_index,
             time_since_start_ms: step.time_since_start_ms,
@@ -2370,6 +2371,89 @@ fn guest_exec_relays_request_over_shared_vm_control_socket() {
 
     assert_eq!(exit_code, 7);
     server.join().expect("server thread");
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(unix)]
+#[test]
+fn wait_for_control_socket_accepts_live_listener_only() {
+    use std::os::unix::net::UnixListener;
+    use std::thread;
+
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-control-socket-wait-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+
+    let socket_path = shared_vm_control_socket_path(&temp);
+    if let Some(parent) = socket_path.parent() {
+        fs::create_dir_all(parent).expect("socket dir");
+    }
+    if socket_path.exists() {
+        fs::remove_file(&socket_path).expect("remove stale socket");
+    }
+
+    let listener = UnixListener::bind(&socket_path).expect("bind control socket");
+    let accept_thread = thread::spawn(move || {
+        let (_stream, _) = listener.accept().expect("accept control connection");
+    });
+
+    real_vm_runtime::wait_for_socket_accepting_connections(
+        &socket_path,
+        Duration::from_millis(250),
+        "shared VM control socket",
+    )
+    .expect("live listener should satisfy control socket wait");
+
+    accept_thread.join().expect("accept thread");
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(unix)]
+#[test]
+fn wait_for_control_socket_rejects_stale_socket_path() {
+    use std::os::unix::net::UnixListener;
+
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-stale-control-socket-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+
+    let socket_path = shared_vm_control_socket_path(&temp);
+    if let Some(parent) = socket_path.parent() {
+        fs::create_dir_all(parent).expect("socket dir");
+    }
+    if socket_path.exists() {
+        fs::remove_file(&socket_path).expect("remove stale socket");
+    }
+
+    let listener = UnixListener::bind(&socket_path).expect("bind control socket");
+    drop(listener);
+
+    let err = real_vm_runtime::wait_for_socket_accepting_connections(
+        &socket_path,
+        Duration::from_millis(150),
+        "shared VM control socket",
+    )
+    .expect_err("stale socket path should not satisfy control socket wait");
+    let rendered = err.to_string();
+    assert!(rendered.contains("shared VM control socket"));
+    assert!(rendered.contains("accept connections"));
+    assert!(
+        rendered.contains("Connection refused") || rendered.contains("connection refused"),
+        "unexpected error: {rendered}"
+    );
+
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 

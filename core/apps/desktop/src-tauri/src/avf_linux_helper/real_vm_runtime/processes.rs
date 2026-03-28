@@ -182,32 +182,47 @@ pub(in super::super) fn spawn_guest_agent_server(data_root: &Path) -> Result<u32
     Ok(child.id())
 }
 
-pub(in super::super) fn wait_for_control_socket(data_root: &Path) -> Result<()> {
-    let socket_path = shared_vm_control_socket_path(data_root);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+pub(in super::super) fn wait_for_socket_accepting_connections(
+    socket_path: &Path,
+    timeout: Duration,
+    socket_label: &str,
+) -> Result<()> {
+    let deadline = std::time::Instant::now() + timeout;
+    let mut last_connect_error = None;
     while std::time::Instant::now() < deadline {
-        if socket_path.exists() {
-            return Ok(());
+        match std::os::unix::net::UnixStream::connect(socket_path) {
+            Ok(_) => return Ok(()),
+            Err(err) => last_connect_error = Some(err),
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+    if let Some(err) = last_connect_error {
+        bail!(
+            "timed out waiting for {} {} to accept connections: {}",
+            socket_label,
+            socket_path.display(),
+            err
+        );
+    }
     bail!(
-        "timed out waiting for shared VM control socket {}",
+        "timed out waiting for {} {} to accept connections",
+        socket_label,
         socket_path.display()
     )
 }
 
+pub(in super::super) fn wait_for_control_socket(data_root: &Path) -> Result<()> {
+    wait_for_socket_accepting_connections(
+        &shared_vm_control_socket_path(data_root),
+        std::time::Duration::from_secs(2),
+        "shared VM control socket",
+    )
+}
+
 pub(in super::super) fn wait_for_guest_agent_socket(data_root: &Path) -> Result<()> {
-    let socket_path = shared_vm_guest_agent_socket_path(data_root);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    while std::time::Instant::now() < deadline {
-        if socket_path.exists() {
-            return Ok(());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-    bail!(
-        "timed out waiting for guest-agent control socket {}",
-        socket_path.display()
+    wait_for_socket_accepting_connections(
+        &shared_vm_guest_agent_socket_path(data_root),
+        std::time::Duration::from_secs(2),
+        "guest-agent control socket",
     )
 }
