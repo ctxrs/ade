@@ -37,7 +37,7 @@ test("release preflight provisions the native sandbox CLI before the linux-arm c
   const text = workflowText("release-preflight.yml");
   assert.match(
     text,
-    /name:\s+Install Linux sandbox runtime CLI[\s\S]*run:\s+\.\/*scripts\/install_linux_sandbox_runtime_cli\.sh --require-reachable[\s\S]*name:\s+Run linux-arm critical provider lane/s,
+    /name:\s+Install Linux sandbox runtime CLI[\s\S]*install_linux_sandbox_runtime_cli\.sh --require-reachable[\s\S]*CTX_HARNESS_SANDBOX_CLI_PATH[\s\S]*name:\s+Run linux-arm critical provider lane/s,
   );
 });
 

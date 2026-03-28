@@ -87,15 +87,29 @@ install_nerdctl() {
   fi
 }
 
+resolve_nerdctl_path() {
+  if command -v nerdctl >/dev/null 2>&1; then
+    command -v nerdctl
+    return 0
+  fi
+  if [[ -x "/usr/local/bin/nerdctl" ]]; then
+    printf '%s\n' "/usr/local/bin/nerdctl"
+    return 0
+  fi
+  echo "error: nerdctl was not found after install" >&2
+  exit 1
+}
+
 if ! command -v nerdctl >/dev/null 2>&1; then
   install_nerdctl "$(detect_arch)"
 fi
 
-echo "nerdctl ready: $(command -v nerdctl)"
-nerdctl --version
+nerdctl_path="$(resolve_nerdctl_path)"
+echo "nerdctl ready: ${nerdctl_path}"
+"${nerdctl_path}" --version
 
 if [[ "${require_reachable}" == "1" ]]; then
-  if ! nerdctl info >/dev/null 2>&1; then
+  if ! "${nerdctl_path}" info >/dev/null 2>&1; then
     echo "error: nerdctl is installed but the native sandbox runtime is not reachable; ensure containerd is running on this runner" >&2
     exit 1
   fi
