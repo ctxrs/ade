@@ -66,6 +66,14 @@ ensure_sudo_prefix() {
   fi
 }
 
+run_with_optional_sudo() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
 install_nerdctl() {
   local arch="$1"
   local version="${NERDCTL_VERSION:-v2.2.1}"
@@ -100,6 +108,36 @@ resolve_nerdctl_path() {
   exit 1
 }
 
+ensure_containerd_reachable() {
+  local nerdctl_path="$1"
+  if "${nerdctl_path}" info >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! command -v systemctl >/dev/null 2>&1; then
+    echo "error: nerdctl is installed but the native sandbox runtime is not reachable and systemctl is unavailable" >&2
+    exit 1
+  fi
+  if ! command -v containerd >/dev/null 2>&1; then
+    if ! command -v apt-get >/dev/null 2>&1; then
+      echo "error: containerd is missing and apt-get is unavailable on this runner" >&2
+      exit 1
+    fi
+    ensure_sudo_prefix
+    run_with_optional_sudo apt-get update
+    run_with_optional_sudo apt-get install -y containerd
+  fi
+  ensure_sudo_prefix
+  if ! run_with_optional_sudo systemctl enable --now containerd.service; then
+    run_with_optional_sudo systemctl status containerd.service --no-pager || true
+    echo "error: failed to start containerd.service on this runner" >&2
+    exit 1
+  fi
+  if ! "${nerdctl_path}" info >/dev/null 2>&1; then
+    echo "error: nerdctl is installed but the native sandbox runtime is not reachable after starting containerd.service" >&2
+    exit 1
+  fi
+}
+
 if ! command -v nerdctl >/dev/null 2>&1; then
   install_nerdctl "$(detect_arch)"
 fi
@@ -109,9 +147,6 @@ echo "nerdctl ready: ${nerdctl_path}"
 "${nerdctl_path}" --version
 
 if [[ "${require_reachable}" == "1" ]]; then
-  if ! "${nerdctl_path}" info >/dev/null 2>&1; then
-    echo "error: nerdctl is installed but the native sandbox runtime is not reachable; ensure containerd is running on this runner" >&2
-    exit 1
-  fi
+  ensure_containerd_reachable "${nerdctl_path}"
   echo "nerdctl info: reachable"
 fi
