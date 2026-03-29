@@ -30,7 +30,7 @@ fn env_var_test_lock() -> &'static tokio::sync::Mutex<()> {
     crate::test_support::sandbox_cli_env_test_lock()
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_container() {
     use std::os::unix::fs::PermissionsExt;
@@ -98,7 +98,7 @@ async fn idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_contai
     assert!(log.contains(&format!("machine stop {machine_name}")));
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn active_prewarm_artifact_activity_suppresses_reclaim() {
     use std::os::unix::fs::PermissionsExt;

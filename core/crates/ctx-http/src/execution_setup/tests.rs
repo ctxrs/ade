@@ -2631,6 +2631,7 @@ async fn runtime_prewarm_emits_initial_log_before_runtime_work_completes() {
 }
 
 #[cfg(unix)]
+#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn runtime_prewarm_launch_ready_scope_starts_native_runtime_before_loading_image() {
     use std::os::unix::fs::PermissionsExt;

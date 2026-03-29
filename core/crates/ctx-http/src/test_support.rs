@@ -434,6 +434,16 @@ PATHS
   exec /bin/sh -c "$translated_script" "$@"
 }}
 
+should_short_circuit_network_policy_script() {{
+  script="$1"
+  case "$script" in
+    *ctx-egress-proxy*|*iptables*|*pid_file=*)
+      return 0
+      ;;
+  esac
+  return 1
+}}
+
 if [ "$1" = "info" ]; then
   printf '{{}}\\n'
   exit 0
@@ -642,6 +652,9 @@ $2"
   mkdir -p "$host_workdir"
   if [ "$command" = "/bin/sh" ] && [ "$1" = "-lc" ]; then
     script="$2"
+    if should_short_circuit_network_policy_script "$script"; then
+      exit 0
+    fi
     (
       cd "$host_workdir" || exit 1
       if [ -n "$env_args" ]; then

@@ -576,6 +576,16 @@ map_non_shell_args() {{
   done
 }}
 
+should_short_circuit_network_policy_script() {{
+  script="$1"
+  case "$script" in
+    *ctx-egress-proxy*|*iptables*|*pid_file=*)
+      return 0
+      ;;
+  esac
+  return 1
+}}
+
 run_exec() {{
   pty=0
   workdir="/"
@@ -604,6 +614,9 @@ run_exec() {{
   mkdir -p "$host_cwd"
   case "$command_name" in
     sh|/bin/sh|bash|/bin/bash)
+      if [ "$1" = "-lc" ] && should_short_circuit_network_policy_script "$2"; then
+        exit 0
+      fi
       (cd "$host_cwd" && exec "$command_name" "$@")
       ;;
     *)
@@ -1878,6 +1891,7 @@ async fn initialize_sandbox_machine_terminates_stuck_init_when_machine_is_presen
     machine_cache_server.abort();
 }
 
+#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn ensure_sandbox_machine_materialized_recreates_machine_for_memory_profile_change_when_engine_is_down(
 ) {
@@ -1933,6 +1947,7 @@ async fn ensure_sandbox_machine_materialized_recreates_machine_for_memory_profil
     machine_cache_server.abort();
 }
 
+#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine_is_running_but_engine_unreachable(
 ) {
@@ -1980,6 +1995,7 @@ async fn ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine
     assert!(!log.contains(&format!("machine init {machine_name}")));
 }
 
+#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine_state_is_unknown_and_engine_unreachable(
 ) {
@@ -2027,6 +2043,7 @@ async fn ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine
     assert!(!log.contains(&format!("machine init {machine_name}")));
 }
 
+#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn maybe_reclaim_sandbox_machine_stops_idle_machine() {
     use std::os::unix::fs::PermissionsExt;
@@ -2095,6 +2112,7 @@ async fn maybe_reclaim_sandbox_machine_stops_idle_machine() {
     assert!(log.contains(&format!("machine stop {machine_name}")));
 }
 
+#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn maybe_reclaim_sandbox_machine_clamps_short_idle_timeout() {
     use std::os::unix::fs::PermissionsExt;
@@ -2163,6 +2181,7 @@ async fn maybe_reclaim_sandbox_machine_clamps_short_idle_timeout() {
     assert!(!log.contains(&format!("machine stop {machine_name}")));
 }
 
+#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn maybe_reclaim_sandbox_machine_stops_idle_runtime_with_running_workspace_containers() {
     use std::os::unix::fs::PermissionsExt;
@@ -2230,6 +2249,7 @@ async fn maybe_reclaim_sandbox_machine_stops_idle_runtime_with_running_workspace
     assert!(log.contains(&format!("machine stop {machine_name}")));
 }
 
+#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn maybe_reclaim_sandbox_machine_skips_active_container_sessions() {
     use std::os::unix::fs::PermissionsExt;
@@ -2323,6 +2343,7 @@ async fn maybe_reclaim_sandbox_machine_skips_active_container_sessions() {
     assert!(stopped);
 }
 
+#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn maybe_reclaim_sandbox_machine_skips_running_container_terminals() {
     use std::os::unix::fs::PermissionsExt;

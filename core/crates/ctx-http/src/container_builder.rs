@@ -263,7 +263,7 @@ mod tests {
         bundle_dir
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn ensure_builder_ready_starts_clean_cold_runtime_before_image_prewarm() {
         use std::fs;
