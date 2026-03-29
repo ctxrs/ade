@@ -58,3 +58,18 @@ test("release supabase uses repo-configurable Linux runner labels", () => {
   assert.match(text, /const linuxX64Runner = String\(process\.env\.RELEASE_RUNNER_LINUX_X64 \|\| ""\)\.trim\(\);/);
   assert.match(text, /const linuxArm64Runner = String\(process\.env\.RELEASE_RUNNER_LINUX_ARM64 \|\| ""\)\.trim\(\);/);
 });
+
+test("linux bundle workflows preserve AVF runtime targets instead of rewriting them to linux", () => {
+  const dependencyBundlesText = workflowText("dependency-bundles.yml");
+  const releaseSupabaseText = workflowText("release-supabase.yml");
+
+  for (const text of [dependencyBundlesText, releaseSupabaseText]) {
+    assert.doesNotMatch(text, /lock\.required\.targets\.runtime = \["linux\/x86_64"\];/);
+    assert.doesNotMatch(text, /lock\.required\.targets\.runtime = \["linux\/aarch64"\];/);
+  }
+
+  assert.match(dependencyBundlesText, /lock\.required\.targets\.image = \["linux\/x86_64"\];/);
+  assert.match(dependencyBundlesText, /lock\.required\.targets\.image = \["linux\/aarch64"\];/);
+  assert.match(releaseSupabaseText, /lock\.required\.targets\.image = \["linux\/x86_64"\];/);
+  assert.match(releaseSupabaseText, /lock\.required\.targets\.image = \["linux\/aarch64"\];/);
+});
