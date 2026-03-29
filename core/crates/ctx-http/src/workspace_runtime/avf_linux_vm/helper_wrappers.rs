@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) fn helper_path() -> Result<PathBuf> {
-    if !cfg!(target_os = "macos") {
+    if !cfg!(target_os = "macos") && !cfg!(test) {
         bail!("AVF Linux VM runtime is only supported on macOS");
     }
     let value = std::env::var(AVF_LINUX_HELPER_PATH_ENV)
