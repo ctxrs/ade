@@ -1,4 +1,5 @@
 #![allow(clippy::await_holding_lock)]
+#![cfg(target_os = "macos")]
 
 use super::*;
 use std::time::{Duration, Instant};

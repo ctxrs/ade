@@ -120,7 +120,9 @@ pub async fn run_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
     use std::path::PathBuf;
+    #[cfg(target_os = "macos")]
     use tempfile::tempdir;
 
     fn make_shell_command(script: &str) -> Command {
@@ -206,11 +208,13 @@ mod tests {
         assert!(out.status.success());
     }
 
+    #[cfg(target_os = "macos")]
     struct EnvVarGuard {
         key: &'static str,
         prev: Option<String>,
     }
 
+    #[cfg(target_os = "macos")]
     impl EnvVarGuard {
         fn set(key: &'static str, value: &str) -> Self {
             let prev = std::env::var(key).ok();
@@ -219,6 +223,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     impl Drop for EnvVarGuard {
         fn drop(&mut self) {
             if let Some(prev) = self.prev.take() {
@@ -229,7 +234,7 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     fn write_default_harness_bundle(root: &Path) -> PathBuf {
         use std::fs;
         use std::os::unix::fs::PermissionsExt;

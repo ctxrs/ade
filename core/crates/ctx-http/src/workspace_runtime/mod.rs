@@ -642,15 +642,6 @@ pub(crate) async fn ensure_avf_guest_gateway_proxy_for_test(
 }
 
 #[cfg(test)]
-fn sandbox_machine_pressure_idle_grace() -> Duration {
-    if cfg!(test) {
-        Duration::from_millis(100)
-    } else {
-        Duration::from_secs(60)
-    }
-}
-
-#[cfg(test)]
 fn detected_host_memory_mb() -> Option<u32> {
     #[cfg(test)]
     if let Ok(raw) = std::env::var("CTX_TEST_HOST_MEMORY_MB") {

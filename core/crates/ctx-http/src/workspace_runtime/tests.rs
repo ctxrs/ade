@@ -11,7 +11,10 @@ use super::sandbox_machine_recovery::{
 };
 use super::*;
 use chrono::Utc;
-use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
+#[cfg(target_os = "macos")]
+use ctx_core::ids::TaskId;
+use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
+#[cfg(target_os = "macos")]
 use ctx_core::models::ExecutionEnvironment;
 use ctx_store::StoreManager;
 use sha2::{Digest, Sha256};
@@ -228,6 +231,7 @@ async fn runtime_manager(tmp: &TempDir) -> HarnessRuntimeManager {
     HarnessRuntimeManager::new(tmp.path().to_path_buf())
 }
 
+#[cfg(target_os = "macos")]
 async fn create_session_with_environment(
     stores: &StoreManager,
     root: &std::path::Path,

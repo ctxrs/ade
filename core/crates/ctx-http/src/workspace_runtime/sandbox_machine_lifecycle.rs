@@ -196,6 +196,7 @@ impl HarnessRuntimeManager {
         anyhow::bail!("sandbox machine rm -f failed: {combined}");
     }
 
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) async fn ensure_sandbox_machine_materialized(
         &self,
         settings: &ContainerExecutionSettings,
@@ -509,6 +510,7 @@ impl HarnessRuntimeManager {
         }
     }
 
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) async fn maybe_reclaim_sandbox_machine(
         &self,
         settings: &ContainerExecutionSettings,
@@ -544,8 +546,13 @@ impl HarnessRuntimeManager {
             u64::from(settings.machine.host_pressure_swap_threshold_mb) * 1024 * 1024;
         let host_pressure =
             swap_threshold_bytes > 0 && system.swap_used_bytes >= swap_threshold_bytes;
-        let should_stop = idle_for >= idle_timeout
-            || (host_pressure && idle_for >= sandbox_machine_pressure_idle_grace());
+        let pressure_idle_grace = if cfg!(test) {
+            Duration::from_millis(100)
+        } else {
+            Duration::from_secs(60)
+        };
+        let should_stop =
+            idle_for >= idle_timeout || (host_pressure && idle_for >= pressure_idle_grace);
         if !should_stop {
             return Ok(false);
         }
@@ -580,6 +587,7 @@ impl HarnessRuntimeManager {
         Ok(stopped)
     }
 
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     async fn should_defer_reclaim_for_active_container_runtime(
         &self,
         stores: &StoreManager,
