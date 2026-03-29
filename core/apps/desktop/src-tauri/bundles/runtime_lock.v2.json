@@ -28,7 +28,7 @@
     "targets": {
       "provider": [],
       "runtime": [
-        "macos/host"
+        "macos/aarch64"
       ],
       "image": [
         "linux/aarch64",
@@ -1282,48 +1282,6 @@
           "source_type": "ci",
           "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-45e7ab394479/macos/aarch64/sha256-1a94ef05e038a61a8fc33aae60d735b6d39f8579bb305fb195da9ef69cd52e54/rootfs.raw.zst",
           "sha256": "1a94ef05e038a61a8fc33aae60d735b6d39f8579bb305fb195da9ef69cd52e54"
-        }
-      ]
-    },
-    {
-      "kind": "runtime",
-      "id": "avf-linux-guest",
-      "os": "macos",
-      "arch": "x86_64",
-      "variant": "default",
-      "version": "locked",
-      "bin": "rootfs.raw",
-      "helpers": {
-        "kernel": {
-          "uri": "locked://runtimes/avf-linux-guest/macos/x86_64/kernel",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-        },
-        "initrd": {
-          "uri": "locked://runtimes/avf-linux-guest/macos/x86_64/initrd",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-        },
-        "guest-agent": {
-          "uri": "locked://runtimes/avf-linux-guest/macos/x86_64/guest-agent",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-        },
-        "egress-proxy": {
-          "uri": "locked://runtimes/avf-linux-guest/macos/x86_64/egress-proxy",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-        },
-        "container-stack": {
-          "uri": "locked://runtimes/avf-linux-guest/macos/x86_64/container-stack",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-        }
-      },
-      "sources": [
-        {
-          "source_type": "local",
-          "build": "desktop:prep"
-        },
-        {
-          "source_type": "ci",
-          "uri": "locked://runtimes/avf-linux-guest/macos/x86_64/rootfs.raw.zst",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
         }
       ]
     },

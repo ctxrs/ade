@@ -12,6 +12,8 @@ const {
 
 const hostManifestOs = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
 const hostManifestArch = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch;
+const avfManifestOs = "macos";
+const avfManifestArch = "aarch64";
 
 test("resolveBundledRuntimeIds dedupes and sorts bundle runtime identifiers", () => {
   assert.deepEqual(
@@ -53,7 +55,7 @@ test("thin bundle parity rejects unresolved managed AVF runtime metadata from ru
             machine_cache_ids: [],
             targets: {
               provider: [],
-              runtime: ["macos/host"],
+              runtime: ["macos/aarch64"],
               image: [],
               machine_cache: [],
             },
@@ -62,8 +64,8 @@ test("thin bundle parity rejects unresolved managed AVF runtime metadata from ru
             {
               kind: "runtime",
               id: "avf-linux-guest",
-              os: hostManifestOs,
-              arch: hostManifestArch,
+              os: avfManifestOs,
+              arch: avfManifestArch,
               variant: "default",
               version: "test",
               sources: [{ source_type: "ci", uri: "locked://runtime", sha256: "0".repeat(64) }],
@@ -85,7 +87,7 @@ test("thin bundle parity rejects unresolved managed AVF runtime metadata from ru
     assert.throws(
       () => {
         __desktopSyncResourcesTestHooks.assertRuntimeTargetsAvailable(bundleDir, "avf-linux-guest", [
-          { os: hostManifestOs, arch: hostManifestArch },
+          { os: avfManifestOs, arch: avfManifestArch },
         ]);
       },
       /bundle\/runtime lock missing avf-linux-guest runtime targets/,
@@ -115,7 +117,7 @@ test("thin bundle parity rejects AVF runtime metadata missing helper payloads", 
             machine_cache_ids: [],
             targets: {
               provider: [],
-              runtime: ["macos/host"],
+              runtime: ["macos/aarch64"],
               image: [],
               machine_cache: [],
             },
@@ -124,8 +126,8 @@ test("thin bundle parity rejects AVF runtime metadata missing helper payloads", 
             {
               kind: "runtime",
               id: "avf-linux-guest",
-              os: hostManifestOs,
-              arch: hostManifestArch,
+              os: avfManifestOs,
+              arch: avfManifestArch,
               variant: "default",
               version: "test",
               sources: [{ source_type: "ci", uri: "locked://runtime", sha256: "0".repeat(64) }],

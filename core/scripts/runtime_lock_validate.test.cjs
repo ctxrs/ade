@@ -12,6 +12,8 @@ const writeJson = (filePath, value) => {
 
 const hostOs = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
 const hostArch = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch;
+const avfHostOs = "macos";
+const avfHostArch = "aarch64";
 const secondaryLinuxArch = hostArch === "aarch64" ? "x86_64" : "aarch64";
 const linuxTargetsForFixture = [...new Set([hostArch, secondaryLinuxArch])];
 
@@ -405,7 +407,7 @@ test("runtime lock v2 accepts managed required images without bundled image tar 
   assert.deepEqual(result.errors, []);
 });
 
-test("runtime lock v2 accepts macos/host AVF guest runtime with a single host-arch manifest entry", () => {
+test("runtime lock v2 accepts explicit macos/aarch64 AVF guest runtime targets", () => {
   const fixture = makeFixture();
   const avfRuntimeRoot = path.join(fixture.dir, "runtimes", "avf-linux-guest");
   fs.mkdirSync(path.join(avfRuntimeRoot, "helpers"), { recursive: true });
@@ -420,8 +422,8 @@ test("runtime lock v2 accepts macos/host AVF guest runtime with a single host-ar
   manifest.runtimes = [
     {
       id: "avf-linux-guest",
-      os: "macos",
-      arch: hostArch,
+      os: avfHostOs,
+      arch: avfHostArch,
       root: avfRuntimeRoot,
       bin: "rootfs.raw",
     },
@@ -438,7 +440,7 @@ test("runtime lock v2 accepts macos/host AVF guest runtime with a single host-ar
     required: {
       targets: {
         provider: [],
-        runtime: ["macos/host"],
+        runtime: ["macos/aarch64"],
         image: [],
       },
       provider_ids: [],
@@ -449,8 +451,8 @@ test("runtime lock v2 accepts macos/host AVF guest runtime with a single host-ar
       makeV2Component({
         kind: "runtime",
         id: "avf-linux-guest",
-        os: "macos",
-        arch: "host",
+        os: avfHostOs,
+        arch: avfHostArch,
         sources: makeResolvedSource("https://example.test/avf/rootfs.raw.zst"),
         helpers: makeAvfHelperMetadata(),
       }),
@@ -480,8 +482,8 @@ test("runtime lock v2 rejects bundled AVF runtime missing helper payloads", () =
   manifest.runtimes = [
     {
       id: "avf-linux-guest",
-      os: "macos",
-      arch: hostArch,
+      os: avfHostOs,
+      arch: avfHostArch,
       root: avfRuntimeRoot,
       bin: "rootfs.raw",
     },
@@ -498,7 +500,7 @@ test("runtime lock v2 rejects bundled AVF runtime missing helper payloads", () =
     required: {
       targets: {
         provider: [],
-        runtime: ["macos/host"],
+        runtime: ["macos/aarch64"],
         image: [],
       },
       provider_ids: [],
@@ -509,8 +511,8 @@ test("runtime lock v2 rejects bundled AVF runtime missing helper payloads", () =
       makeV2Component({
         kind: "runtime",
         id: "avf-linux-guest",
-        os: "macos",
-        arch: "host",
+        os: avfHostOs,
+        arch: avfHostArch,
         sources: makeResolvedSource("https://example.test/avf/rootfs.raw.zst"),
         helpers: makeAvfHelperMetadata(),
       }),
@@ -542,7 +544,7 @@ test("runtime lock v2 rejects thin AVF runtime components missing helper metadat
     required: {
       targets: {
         provider: [],
-        runtime: ["macos/host"],
+        runtime: ["macos/aarch64"],
         image: [],
       },
       provider_ids: [],
@@ -553,8 +555,8 @@ test("runtime lock v2 rejects thin AVF runtime components missing helper metadat
       makeV2Component({
         kind: "runtime",
         id: "avf-linux-guest",
-        os: "macos",
-        arch: "host",
+        os: avfHostOs,
+        arch: avfHostArch,
         sources: makeResolvedSource("https://example.test/avf/rootfs.raw.zst"),
       }),
     ],
@@ -585,7 +587,7 @@ test("runtime lock v2 rejects unresolved AVF managed source placeholders for req
     required: {
       targets: {
         provider: [],
-        runtime: ["macos/host"],
+        runtime: ["macos/aarch64"],
         image: [],
       },
       provider_ids: [],
@@ -596,8 +598,8 @@ test("runtime lock v2 rejects unresolved AVF managed source placeholders for req
       makeV2Component({
         kind: "runtime",
         id: "avf-linux-guest",
-        os: "macos",
-        arch: "host",
+        os: avfHostOs,
+        arch: avfHostArch,
         sources: makeV2Sources("ci"),
         helpers: {
           kernel: { uri: "locked://kernel", sha256: "0".repeat(64) },
@@ -661,4 +663,21 @@ test("runtime lock v2 accepts a thin bundle when required runtimes use managed s
   });
   assert.equal(result.ok, true);
   assert.deepEqual(result.errors, []);
+});
+
+test("shipped runtime lock only requires Apple Silicon AVF parity targets", () => {
+  const shippedLock = JSON.parse(
+    fs.readFileSync(
+      path.join(__dirname, "..", "apps", "desktop", "src-tauri", "bundles", "runtime_lock.v2.json"),
+      "utf8",
+    ),
+  );
+
+  assert.deepEqual(shippedLock.required?.targets?.runtime, ["macos/aarch64"]);
+
+  const avfTargets = shippedLock.components
+    .filter((component) => component.kind === "runtime" && component.id === "avf-linux-guest")
+    .map((component) => `${component.os}/${component.arch}`);
+
+  assert.deepEqual(avfTargets, ["macos/aarch64"]);
 });
