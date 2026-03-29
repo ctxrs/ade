@@ -1933,9 +1933,15 @@ async fn compute_prewarm_gate_keeps_avf_runtime_needing_prewarm_until_launch_rea
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(data_dir.path());
     let _helper = EnvVarGuard::set(
         crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
         &helper_path.to_string_lossy(),
+    );
+    let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+    let _sandbox_cli_path = EnvVarGuard::set(
+        crate::harness_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        &sandbox_cli_path.to_string_lossy(),
     );
     let (_runtime_fixture, servers) = install_test_managed_avf_linux_runtime_source().await;
     let settings = ExecutionSettings {
@@ -1981,9 +1987,15 @@ async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtim
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(data_dir.path());
     let _helper = EnvVarGuard::set(
         crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
         &helper_path.to_string_lossy(),
+    );
+    let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+    let _sandbox_cli_path = EnvVarGuard::set(
+        crate::harness_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        &sandbox_cli_path.to_string_lossy(),
     );
     let (_runtime_fixture, servers) = install_test_managed_avf_linux_runtime_source().await;
     let coordinator = test_coordinator(data_dir.path().to_path_buf());
@@ -2038,9 +2050,15 @@ async fn runtime_prewarm_launch_ready_scope_starts_shared_vm_for_avf_linux_runti
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(data_dir.path());
     let _helper = EnvVarGuard::set(
         crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
         &helper_path.to_string_lossy(),
+    );
+    let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+    let _sandbox_cli_path = EnvVarGuard::set(
+        crate::harness_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        &sandbox_cli_path.to_string_lossy(),
     );
     let (_runtime_fixture, servers) = install_test_managed_avf_linux_runtime_source().await;
     let coordinator = test_coordinator(data_dir.path().to_path_buf());

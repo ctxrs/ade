@@ -339,7 +339,7 @@ pub(crate) fn write_avf_linux_lifecycle_helper(dir: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
     let path = dir.join("ctx-avf-linux-helper-runtime-manager-test.sh");
-    let sandbox_cli_path = dir.join("ctx-avf-linux-sandbox-cli-runtime-manager-test.sh");
+    let sandbox_cli_path = avf_linux_runtime_manager_test_sandbox_cli_path(dir);
     let host_os = std::env::consts::OS;
     let host_arch = std::env::consts::ARCH;
     let sandbox_cli_script = format!(
@@ -696,4 +696,8 @@ exit 1
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
         .expect("chmod AVF Linux helper shim");
     path
+}
+
+pub(crate) fn avf_linux_runtime_manager_test_sandbox_cli_path(dir: &Path) -> PathBuf {
+    dir.join("ctx-avf-linux-sandbox-cli-runtime-manager-test.sh")
 }

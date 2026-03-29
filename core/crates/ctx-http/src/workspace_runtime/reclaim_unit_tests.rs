@@ -55,6 +55,7 @@ async fn idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_contai
         "CTX_HARNESS_SANDBOX_CLI_PATH",
         &sandbox_cli_path.to_string_lossy(),
     );
+    let _available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     {
         let mut last_activity = manager
             .last_activity
@@ -122,6 +123,7 @@ async fn active_prewarm_artifact_activity_suppresses_reclaim() {
         "CTX_HARNESS_SANDBOX_CLI_PATH",
         &sandbox_cli_path.to_string_lossy(),
     );
+    let _available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     {
         let mut last_activity = manager
             .last_activity

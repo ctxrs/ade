@@ -217,12 +217,6 @@ mod tests {
             std::env::set_var(key, value);
             Self { key, prev }
         }
-
-        fn unset(key: &'static str) -> Self {
-            let prev = std::env::var(key).ok();
-            std::env::remove_var(key);
-            Self { key, prev }
-        }
     }
 
     impl Drop for EnvVarGuard {
@@ -306,7 +300,7 @@ mod tests {
             crate::harness_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
             &sandbox_cli_path.to_string_lossy(),
         );
-        let _test_override = EnvVarGuard::unset("CTX_TEST_SANDBOX_CLI_AVAILABLE");
+        let _test_override = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
 
         ensure_builder_ready(temp.path())
             .await
