@@ -13,5 +13,6 @@ test("macOS AVF exhaustive workflow stays manual+scheduled and targets the dedic
   assert.match(text, /runs-on:\s*\n\s+group:\s*ctx-avf\s*\n\s+labels:\s*ctx-avf-mac-mini/);
   assert.match(text, /Run helper-focused AVF tests/);
   assert.match(text, /Run AVF Linux smoke \(required\)/);
+  assert.match(text, /--restore-smoke required/);
   assert.match(text, /core\/scripts\/avf_linux_ci_smoke\.sh/);
 });

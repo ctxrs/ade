@@ -13,3 +13,10 @@ test("avf smoke resolves Cargo target roots from cargo metadata", () => {
   assert.match(text, /guest_target_root="\$\{CARGO_TARGET_DIR:-\$\(cargo_target_dir "\$\{repo_root\}\/Cargo\.toml"\)\}"/);
   assert.doesNotMatch(text, /helper_target_root="\$\{CARGO_TARGET_DIR:-\$\{repo_root\}\/apps\/desktop\/src-tauri\/target\}"/);
 });
+
+test("avf smoke supports explicitly skipping restore coverage when the caller only wants guest-exec smoke", () => {
+  assert.match(text, /--restore-smoke MODE/);
+  assert.match(text, /restore_smoke_mode="required"/);
+  assert.match(text, /required\|skip/);
+  assert.match(text, /workspace VM save\/restore smoke disabled by --restore-smoke skip/);
+});
