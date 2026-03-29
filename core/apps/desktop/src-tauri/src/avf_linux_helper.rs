@@ -173,6 +173,10 @@ const SHARED_VM_CONTROL_POLL_INTERVAL: std::time::Duration = std::time::Duration
 #[cfg(target_os = "macos")]
 const SHARED_VM_DATA_DISK_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 const GUEST_EXEC_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+#[cfg(target_os = "macos")]
+const VM_LIFECYCLE_COMPLETION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+#[cfg(target_os = "macos")]
+const VM_SAVE_RESTORE_COMPLETION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 const GUEST_EXEC_CONNECT_RETRY_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(100);
 // Real shared-VM guest control transport still truncates streamed stdin around the

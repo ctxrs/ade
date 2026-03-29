@@ -606,7 +606,7 @@ pub(super) fn start_virtual_machine_on_queue(
             (&*virtual_machine).startWithCompletionHandler(&completion);
         }
     });
-    match receiver.recv_timeout(GUEST_EXEC_CONNECT_TIMEOUT) {
+    match receiver.recv_timeout(VM_LIFECYCLE_COMPLETION_TIMEOUT) {
         Ok(Ok(())) => Ok(()),
         Ok(Err(err)) => Err(err).context("shared AVF Linux VM start"),
         Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -622,6 +622,7 @@ pub(super) fn start_virtual_machine_on_queue(
 pub(super) fn run_vm_completion_on_queue<F>(
     queue: &DispatchQueue,
     label: &str,
+    timeout: std::time::Duration,
     invoke: F,
 ) -> Result<()>
 where
@@ -640,7 +641,7 @@ where
         });
         invoke(&completion);
     });
-    match receiver.recv_timeout(GUEST_EXEC_CONNECT_TIMEOUT) {
+    match receiver.recv_timeout(timeout) {
         Ok(Ok(())) => Ok(()),
         Ok(Err(err)) => Err(err).context(label.to_string()),
         Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -658,12 +659,17 @@ pub(super) fn pause_virtual_machine_on_queue(
     virtual_machine: *const VZVirtualMachine,
 ) -> Result<()> {
     let virtual_machine_addr = virtual_machine as usize;
-    run_vm_completion_on_queue(queue, "shared AVF Linux VM pause", move |completion| {
-        let virtual_machine = unsafe { &*(virtual_machine_addr as *const VZVirtualMachine) };
-        unsafe {
-            virtual_machine.pauseWithCompletionHandler(completion);
-        }
-    })
+    run_vm_completion_on_queue(
+        queue,
+        "shared AVF Linux VM pause",
+        VM_LIFECYCLE_COMPLETION_TIMEOUT,
+        move |completion| {
+            let virtual_machine = unsafe { &*(virtual_machine_addr as *const VZVirtualMachine) };
+            unsafe {
+                virtual_machine.pauseWithCompletionHandler(completion);
+            }
+        },
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -672,12 +678,17 @@ pub(super) fn resume_virtual_machine_on_queue(
     virtual_machine: *const VZVirtualMachine,
 ) -> Result<()> {
     let virtual_machine_addr = virtual_machine as usize;
-    run_vm_completion_on_queue(queue, "shared AVF Linux VM resume", move |completion| {
-        let virtual_machine = unsafe { &*(virtual_machine_addr as *const VZVirtualMachine) };
-        unsafe {
-            virtual_machine.resumeWithCompletionHandler(completion);
-        }
-    })
+    run_vm_completion_on_queue(
+        queue,
+        "shared AVF Linux VM resume",
+        VM_LIFECYCLE_COMPLETION_TIMEOUT,
+        move |completion| {
+            let virtual_machine = unsafe { &*(virtual_machine_addr as *const VZVirtualMachine) };
+            unsafe {
+                virtual_machine.resumeWithCompletionHandler(completion);
+            }
+        },
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -686,12 +697,17 @@ pub(super) fn stop_virtual_machine_on_queue(
     virtual_machine: *const VZVirtualMachine,
 ) -> Result<()> {
     let virtual_machine_addr = virtual_machine as usize;
-    run_vm_completion_on_queue(queue, "shared AVF Linux VM stop", move |completion| {
-        let virtual_machine = unsafe { &*(virtual_machine_addr as *const VZVirtualMachine) };
-        unsafe {
-            virtual_machine.stopWithCompletionHandler(completion);
-        }
-    })
+    run_vm_completion_on_queue(
+        queue,
+        "shared AVF Linux VM stop",
+        VM_LIFECYCLE_COMPLETION_TIMEOUT,
+        move |completion| {
+            let virtual_machine = unsafe { &*(virtual_machine_addr as *const VZVirtualMachine) };
+            unsafe {
+                virtual_machine.stopWithCompletionHandler(completion);
+            }
+        },
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -734,13 +750,18 @@ pub(super) fn save_virtual_machine_state_on_queue(
 ) -> Result<()> {
     let virtual_machine_addr = virtual_machine as usize;
     let save_path = save_path.to_path_buf();
-    run_vm_completion_on_queue(queue, "shared AVF Linux VM save", move |completion| {
-        let virtual_machine = unsafe { &*(virtual_machine_addr as *const VZVirtualMachine) };
-        let save_url = file_url_for_path(&save_path);
-        unsafe {
-            virtual_machine.saveMachineStateToURL_completionHandler(&save_url, completion);
-        }
-    })
+    run_vm_completion_on_queue(
+        queue,
+        "shared AVF Linux VM save",
+        VM_SAVE_RESTORE_COMPLETION_TIMEOUT,
+        move |completion| {
+            let virtual_machine = unsafe { &*(virtual_machine_addr as *const VZVirtualMachine) };
+            let save_url = file_url_for_path(&save_path);
+            unsafe {
+                virtual_machine.saveMachineStateToURL_completionHandler(&save_url, completion);
+            }
+        },
+    )
 }
 
 #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
@@ -760,13 +781,18 @@ pub(super) fn restore_virtual_machine_state_on_queue(
 ) -> Result<()> {
     let virtual_machine_addr = virtual_machine as usize;
     let save_path = save_path.to_path_buf();
-    run_vm_completion_on_queue(queue, "shared AVF Linux VM restore", move |completion| {
-        let virtual_machine = unsafe { &*(virtual_machine_addr as *const VZVirtualMachine) };
-        let save_url = file_url_for_path(&save_path);
-        unsafe {
-            virtual_machine.restoreMachineStateFromURL_completionHandler(&save_url, completion);
-        }
-    })
+    run_vm_completion_on_queue(
+        queue,
+        "shared AVF Linux VM restore",
+        VM_SAVE_RESTORE_COMPLETION_TIMEOUT,
+        move |completion| {
+            let virtual_machine = unsafe { &*(virtual_machine_addr as *const VZVirtualMachine) };
+            let save_url = file_url_for_path(&save_path);
+            unsafe {
+                virtual_machine.restoreMachineStateFromURL_completionHandler(&save_url, completion);
+            }
+        },
+    )
 }
 
 #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]

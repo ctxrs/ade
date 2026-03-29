@@ -903,6 +903,13 @@ fn shared_vm_state_surfaces_explicit_start_and_stop_outcomes() {
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn vm_save_restore_timeout_exceeds_guest_exec_connect_timeout() {
+    assert!(VM_LIFECYCLE_COMPLETION_TIMEOUT > GUEST_EXEC_CONNECT_TIMEOUT);
+    assert!(VM_SAVE_RESTORE_COMPLETION_TIMEOUT > VM_LIFECYCLE_COMPLETION_TIMEOUT);
+}
+
 #[test]
 fn start_shared_vm_materializes_rootfs_and_data_disk_layout() {
     let temp = PathBuf::from("/tmp").join(format!(
