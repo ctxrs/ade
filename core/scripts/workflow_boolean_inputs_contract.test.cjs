@@ -29,7 +29,11 @@ test("publish claude-crp workflow uses a typed boolean publish input", () => {
 test("release preflight uses a typed boolean override input", () => {
   const text = workflowText("release-preflight.yml");
   assert.match(text, /linux_arm_critical_override:[\s\S]*type: boolean/);
-  assert.ok(!text.includes("type: choice"));
+  assert.match(
+    text,
+    /avf_restore_smoke_mode:[\s\S]*type: choice[\s\S]*options:[\s\S]*-\s+skip[\s\S]*-\s+required/
+  );
+  assert.equal((text.match(/type:\s+choice/g) || []).length, 1);
   assert.match(text, /1\|true\|yes\|on/);
 });
 
