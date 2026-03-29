@@ -52,6 +52,29 @@ fn shared_vm_control_socket_root_is_user_scoped() {
 }
 
 #[test]
+fn shared_vm_saved_state_path_uses_host_private_root_outside_guest_share() {
+    let data_root = PathBuf::from("/tmp").join(format!(
+        "ctxavf-saved-state-root-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    let host_private_root = shared_vm_host_private_root(&data_root);
+    let saved_state_path = shared_vm_saved_state_path(&data_root);
+
+    assert!(
+        !saved_state_path.starts_with(&data_root),
+        "saved state should live outside the guest-shared data root"
+    );
+    assert_eq!(
+        saved_state_path,
+        host_private_root.join(SHARED_VM_SAVED_STATE_FILE)
+    );
+    assert!(saved_state_path
+        .components()
+        .any(|component| component.as_os_str() == ".ctx-avf-host-private"));
+}
+
+#[test]
 fn runtime_without_guest_agent_stays_simulated() {
     let temp = PathBuf::from("/tmp").join(format!(
         "ctxavf-capability-{}-{}",
