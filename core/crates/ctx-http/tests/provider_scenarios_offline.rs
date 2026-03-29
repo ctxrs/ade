@@ -42,6 +42,18 @@ impl Drop for EnvGuard {
     }
 }
 
+async fn configure_hermetic_codex_home() -> (tempfile::TempDir, EnvGuard) {
+    let codex_home = tempfile::tempdir().unwrap();
+    tokio::fs::write(
+        codex_home.path().join("auth.json"),
+        br#"{"OPENAI_API_KEY":"test-key"}"#,
+    )
+    .await
+    .unwrap();
+    let guard = EnvGuard::set("CTX_CODEX_HOME", &codex_home.path().to_string_lossy());
+    (codex_home, guard)
+}
+
 async fn fixture_model_id_for_provider(
     app: &axum::Router,
     workspace_id: uuid::Uuid,
@@ -303,14 +315,7 @@ async fn provider_scenarios_offline_crp_fixtures() {
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
-    let codex_home = tempfile::tempdir().unwrap();
-    tokio::fs::write(
-        codex_home.path().join("auth.json"),
-        br#"{"OPENAI_API_KEY":"test-key"}"#,
-    )
-    .await
-    .unwrap();
-    let _guard_codex_home = EnvGuard::set("CTX_CODEX_HOME", &codex_home.path().to_string_lossy());
+    let (_codex_home, _guard_codex_home) = configure_hermetic_codex_home().await;
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
     let providers = common::crp_fixture_runtime::build_crp_fixture_providers(
@@ -400,14 +405,7 @@ async fn provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
-    let codex_home = tempfile::tempdir().unwrap();
-    tokio::fs::write(
-        codex_home.path().join("auth.json"),
-        br#"{"OPENAI_API_KEY":"test-key"}"#,
-    )
-    .await
-    .unwrap();
-    let _guard_codex_home = EnvGuard::set("CTX_CODEX_HOME", &codex_home.path().to_string_lossy());
+    let (_codex_home, _guard_codex_home) = configure_hermetic_codex_home().await;
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
     let providers = common::crp_fixture_runtime::build_crp_fixture_providers(
@@ -513,6 +511,7 @@ async fn provider_scenarios_offline_crp_fixtures_persist_context_window_metrics(
         eprintln!("skipping: storage guard would trip on low-disk test host");
         return;
     }
+    let (_codex_home, _guard_codex_home) = configure_hermetic_codex_home().await;
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
     let provider_ids: &[&str] = &["codex", "claude-crp"];
