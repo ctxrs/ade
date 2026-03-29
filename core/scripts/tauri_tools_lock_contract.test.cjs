@@ -8,7 +8,7 @@ test("tauri tools lock has complete pinned entries", async () => {
   const { lock } = mod.loadLock(mod.DEFAULT_LOCK_PATH);
   assert.equal(lock.schema_version, 1);
   assert.ok(Array.isArray(lock.entries));
-  assert.ok(lock.entries.length >= 4);
+  assert.ok(lock.entries.length >= 6);
 
   const seen = new Set();
   for (const entry of lock.entries) {
@@ -30,4 +30,6 @@ test("tauri tools lock has complete pinned entries", async () => {
   assert.ok(seen.has("apprun-arm64"));
   assert.ok(seen.has("linuxdeploy-x64"));
   assert.ok(seen.has("linuxdeploy-arm64"));
+  assert.ok(seen.has("linuxdeploy-plugin-appimage-x64"));
+  assert.ok(seen.has("linuxdeploy-plugin-appimage-arm64"));
 });

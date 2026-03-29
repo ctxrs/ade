@@ -92,3 +92,11 @@ test("linux tauri release container reuses staged bundles instead of remateriali
   assert.match(text, /CTX_BUNDLE_REMOTE_DAEMONS=0/);
   assert.match(text, /pnpm -C core\/apps\/desktop run build -- --bundles appimage/);
 });
+
+test("non-linux release-stage tauri builds reuse staged bundles instead of rematerializing them", () => {
+  const text = workflowText("release-supabase.yml");
+  assert.match(
+    text,
+    /if \[\[ "\$RELEASE_PLATFORM" == macos-\* \]\]; then[\s\S]*CTX_DESKTOP_SYNC_BUNDLES=0 CTX_BUNDLE_REMOTE_DAEMONS=0 pnpm -C core\/apps\/desktop run build -- --bundles app[\s\S]*else[\s\S]*CTX_DESKTOP_SYNC_BUNDLES=0 CTX_BUNDLE_REMOTE_DAEMONS=0 pnpm -C core\/apps\/desktop run build/s,
+  );
+});
