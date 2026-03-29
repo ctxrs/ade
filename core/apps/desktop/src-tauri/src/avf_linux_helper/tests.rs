@@ -42,6 +42,15 @@ fn parse_guest_exec_env_rejects_reserved_helper_keys() {
     assert!(err.to_string().contains("reserved"));
 }
 
+#[cfg(unix)]
+#[test]
+fn shared_vm_control_socket_root_is_user_scoped() {
+    assert_eq!(
+        shared_vm_control_socket_root(),
+        PathBuf::from("/tmp").join(format!("ctxavf-uid-{}", unsafe { libc::geteuid() }))
+    );
+}
+
 #[test]
 fn runtime_without_guest_agent_stays_simulated() {
     let temp = PathBuf::from("/tmp").join(format!(

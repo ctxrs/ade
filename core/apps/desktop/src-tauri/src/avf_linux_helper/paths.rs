@@ -143,7 +143,17 @@ pub(super) fn shared_vm_guest_agent_socket_path(data_root: &Path) -> PathBuf {
 }
 
 pub(super) fn shared_vm_control_socket_root() -> PathBuf {
-    PathBuf::from("/tmp").join("ctxavf")
+    PathBuf::from("/tmp").join(shared_vm_control_socket_root_name())
+}
+
+#[cfg(unix)]
+fn shared_vm_control_socket_root_name() -> String {
+    format!("ctxavf-uid-{}", unsafe { libc::geteuid() })
+}
+
+#[cfg(not(unix))]
+fn shared_vm_control_socket_root_name() -> &'static str {
+    "ctxavf"
 }
 
 pub(super) fn short_hash(path: &Path) -> String {
