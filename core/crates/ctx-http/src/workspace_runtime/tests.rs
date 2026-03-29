@@ -12,10 +12,13 @@ use super::sandbox_machine_recovery::{
 use super::*;
 use chrono::Utc;
 #[cfg(target_os = "macos")]
+use ctx_core::ids::SessionId;
+#[cfg(target_os = "macos")]
 use ctx_core::ids::TaskId;
-use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{WorkspaceId, WorktreeId};
 #[cfg(target_os = "macos")]
 use ctx_core::models::ExecutionEnvironment;
+#[cfg(target_os = "macos")]
 use ctx_store::StoreManager;
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicBool, Ordering};

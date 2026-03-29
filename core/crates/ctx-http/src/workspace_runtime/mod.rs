@@ -24,22 +24,22 @@ use crate::bundled_assets;
 use crate::network_allowlist;
 #[cfg(test)]
 use crate::resource_utilization::SystemSnapshot;
+#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
+use crate::settings::normalize_container_machine_idle_shutdown_seconds;
 #[cfg(test)]
-use crate::settings::{
-    normalize_container_machine_idle_shutdown_seconds, ContainerMachineMemoryProfile,
-};
+use crate::settings::ContainerMachineMemoryProfile;
 use crate::settings::{
     ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind,
     ExecutionMode, ExecutionSettings,
 };
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use crate::terminals::TerminalManager;
 use crate::updates;
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use ctx_core::ids::SessionId;
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use ctx_core::models::ExecutionEnvironment;
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use ctx_store::StoreManager;
 use url::Url;
 
