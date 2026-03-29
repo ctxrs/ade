@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::bundled_assets;
 use crate::network_allowlist;
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use crate::resource_utilization::SystemSnapshot;
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use crate::settings::normalize_container_machine_idle_shutdown_seconds;
