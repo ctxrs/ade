@@ -1,5 +1,7 @@
+#[cfg(target_os = "macos")]
 use super::guest_control::service_real_shared_vm_control_clients;
 use super::processes::spawn_shared_vm_memory_watchdog;
+#[cfg(target_os = "macos")]
 use super::shutdown::{
     persist_shared_vm_owner_error_state, shared_vm_start_outcome_log_label,
     shutdown_real_shared_vm_for_exit,

@@ -1,5 +1,6 @@
 use super::super::*;
 use super::parse_single_u64_output;
+#[cfg(target_os = "macos")]
 use super::state::SharedVmResourceState;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
