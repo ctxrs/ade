@@ -78,7 +78,7 @@ test("release supabase release-stage jobs consume the merged desktop bundle arti
   const text = workflowText("release-supabase.yml");
   assert.match(text, /name:\s+Download merged desktop bundle resources \(current run\)[\s\S]*name:\s+desktop-bundles-linux-merged/s);
   assert.match(text, /name:\s+Download merged desktop bundle resources \(source run\)[\s\S]*name:\s+desktop-bundles-linux-merged[\s\S]*run-id:\s+\$\{\{\s*env\.RELEASE_STAGE_SOURCE_RUN_ID\s*\}\}/s);
-  assert.match(text, /name:\s+Stage merged desktop bundle resources[\s\S]*src_dir="\$RUNNER_TEMP\/desktop-bundles-linux-merged"[\s\S]*dest_dir="core\/apps\/desktop\/src-tauri\/bundles"[\s\S]*test -f "\$dest_dir\/manifest\.json"/s);
+  assert.match(text, /name:\s+Stage merged desktop bundle resources[\s\S]*src_dir="\$RUNNER_TEMP\/desktop-bundles-linux-merged"[\s\S]*dest_dir="core\/apps\/desktop\/src-tauri\/bundles"[\s\S]*"\$dest_dir\/daemons"[\s\S]*"\$dest_dir\/runtime_manifest\.effective\.json"[\s\S]*test -f "\$dest_dir\/manifest\.json"[\s\S]*test -f "\$dest_dir\/runtime_lock\.v1\.json"[\s\S]*test -f "\$dest_dir\/runtime_lock\.v2\.json"/s);
 });
 
 test("release supabase prep desktop release resources uses an absolute cargo target dir", () => {
