@@ -650,11 +650,15 @@ $2"
     host_workdir="$(container_rootfs "$container")"
   fi
   mkdir -p "$host_workdir"
+  case "$command" in
+    sh|/bin/sh|bash|/bin/bash)
+      if ( [ "$1" = "-c" ] || [ "$1" = "-lc" ] ) && should_short_circuit_network_policy_script "$2"; then
+        exit 0
+      fi
+      ;;
+  esac
   if [ "$command" = "/bin/sh" ] && [ "$1" = "-lc" ]; then
     script="$2"
-    if should_short_circuit_network_policy_script "$script"; then
-      exit 0
-    fi
     (
       cd "$host_workdir" || exit 1
       if [ -n "$env_args" ]; then

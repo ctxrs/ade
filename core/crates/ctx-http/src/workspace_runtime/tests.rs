@@ -621,7 +621,7 @@ run_exec() {{
   mkdir -p "$host_cwd"
   case "$command_name" in
     sh|/bin/sh|bash|/bin/bash)
-      if [ "$1" = "-lc" ] && should_short_circuit_network_policy_script "$2"; then
+      if ( [ "$1" = "-c" ] || [ "$1" = "-lc" ] ) && should_short_circuit_network_policy_script "$2"; then
         exit 0
       fi
       (cd "$host_cwd" && exec "$command_name" "$@")
@@ -1007,6 +1007,37 @@ fn write_ready_runtime_sandbox_cli_shim(dir: &Path) -> PathBuf {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
         .expect("chmod ready runtime sandbox CLI shim");
     path
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn ready_runtime_sandbox_cli_short_circuits_network_cleanup_scripts_for_sh_c() {
+    let _serial = env_var_test_lock().lock().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let _helper_path = write_avf_linux_lifecycle_helper(temp.path());
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(temp.path());
+    let _sandbox_cli_available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+    let _sandbox_cli_path = EnvGuard::set(
+        crate::harness_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        &sandbox_cli_path.to_string_lossy(),
+    );
+
+    let mut cmd = sandbox_container_command(temp.path()).expect("sandbox container command");
+    cmd.arg("exec")
+        .arg("--user")
+        .arg("0")
+        .arg("ctx-harness-network-cleanup")
+        .arg("sh")
+        .arg("-c")
+        .arg("iptables -t nat -F OUTPUT");
+    let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT)
+        .await
+        .expect("run fake network cleanup");
+    assert!(
+        output.status.success(),
+        "fake AVF sandbox CLI should short-circuit host network cleanup scripts: {}",
+        command_output_message(&output)
+    );
 }
 
 #[tokio::test]
