@@ -85,3 +85,10 @@ test("release supabase prep desktop release resources uses an absolute cargo tar
   const text = workflowText("release-supabase.yml");
   assert.match(text, /CTX_DESKTOP_SYNC_BUNDLES=0 CARGO_TARGET_DIR="\$PWD\/core\/target" node core\/scripts\/desktop_sync_resources\.cjs --profile release/);
 });
+
+test("linux tauri release container reuses staged bundles instead of rematerializing them", () => {
+  const text = fs.readFileSync(path.join(repoRoot, "scripts", "release_linux_tauri_bundle_in_container.sh"), "utf8");
+  assert.match(text, /CTX_DESKTOP_SYNC_BUNDLES=0/);
+  assert.match(text, /CTX_BUNDLE_REMOTE_DAEMONS=0/);
+  assert.match(text, /pnpm -C core\/apps\/desktop run build -- --bundles appimage/);
+});
