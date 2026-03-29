@@ -1,11 +1,14 @@
 use super::super::*;
 use super::memory_policy::{
     align_down_to_mebibyte, resolve_shared_vm_memory_balloon_action,
-    shared_vm_host_pressure_state_name, shared_vm_memory_controller_decision_reason,
-    shared_vm_memory_controller_reason_codes, shared_vm_memory_pressure_state_after,
-    shared_vm_memory_pressure_state_before, SharedVmMemoryBalloonAction, MEBIBYTE_BYTES,
+    shared_vm_memory_controller_decision_reason, shared_vm_memory_controller_reason_codes,
+    shared_vm_memory_pressure_state_after, shared_vm_memory_pressure_state_before,
+    SharedVmMemoryBalloonAction, MEBIBYTE_BYTES,
 };
 use super::parse_single_u64_output;
+#[cfg(target_os = "macos")]
+use super::memory_policy::shared_vm_host_pressure_state_name;
+#[cfg(target_os = "macos")]
 use super::state::SharedVmResourceState;
 #[cfg(target_os = "macos")]
 use objc2::rc::Retained;

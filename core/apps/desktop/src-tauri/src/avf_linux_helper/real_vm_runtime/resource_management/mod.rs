@@ -16,11 +16,13 @@ fn parse_single_u64_output(stdout: &[u8], context: &str) -> Result<u64> {
         .with_context(|| format!("parsing `{raw}` as an integer for {context}"))
 }
 
+#[cfg(target_os = "macos")]
 pub(super) use self::data_disk::maybe_grow_shared_vm_data_disk;
 #[cfg(test)]
 pub(in super::super) use self::data_disk::{
     resolve_shared_vm_data_disk_growth_decision, SharedVmDataDiskGrowthDecision,
 };
+#[cfg(target_os = "macos")]
 pub(super) use self::memory_controller::{
     host_available_memory_bytes, maybe_adjust_shared_vm_memory,
 };
@@ -29,6 +31,7 @@ pub(super) use self::memory_policy::align_down_to_mebibyte;
 pub(in super::super) use self::memory_policy::{
     resolve_shared_vm_memory_balloon_action, SharedVmMemoryBalloonAction,
 };
+#[cfg(target_os = "macos")]
 pub(super) use self::state::SharedVmResourceState;
 pub(in super::super) use self::watchdog::{
     resolve_shared_vm_memory_watchdog_exit_action, resolve_shared_vm_memory_watchdog_sample_action,

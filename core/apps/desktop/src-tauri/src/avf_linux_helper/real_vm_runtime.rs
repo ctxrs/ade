@@ -18,7 +18,9 @@ unsafe extern "C" {
     fn mach_host_self() -> libc::mach_port_t;
 }
 
+#[cfg(all(target_os = "macos", unix))]
 use self::guest_control::run_owner_guest_exec_capture;
+#[cfg(target_os = "macos")]
 pub(super) use self::guest_control::shared_vm_owner_guest_probe_ready;
 #[cfg(test)]
 pub(super) use self::guest_control::{
@@ -41,9 +43,11 @@ pub(super) use self::readiness::{
     summarize_shared_vm_readiness_phase_lines, wait_for_guest_control_ready_marker,
     wait_for_real_guest_exec_ready, wait_for_real_guest_exec_ready_with_owner_process,
 };
+use self::resource_management::align_down_to_mebibyte;
+#[cfg(target_os = "macos")]
 use self::resource_management::{
-    align_down_to_mebibyte, host_available_memory_bytes, maybe_adjust_shared_vm_memory,
-    maybe_grow_shared_vm_data_disk, SharedVmResourceState,
+    host_available_memory_bytes, maybe_adjust_shared_vm_memory, maybe_grow_shared_vm_data_disk,
+    SharedVmResourceState,
 };
 #[cfg(test)]
 pub(super) use self::resource_management::{
