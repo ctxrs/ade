@@ -6,8 +6,10 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use axum::http::{Method, StatusCode};
-use ctx_core::models::DiffUnavailableReason;
-use ctx_http::git_status::{emit_worktree_vcs_snapshot_for_worktree, run_git_status_watcher};
+use ctx_core::models::{DiffUnavailableReason, WorktreeVcsFreshness};
+use ctx_http::git_status::{
+    emit_worktree_vcs_snapshot_for_worktree, refresh_worktree_vcs_summary, run_git_status_watcher,
+};
 use serde_json::Value;
 use tokio::process::Command;
 
@@ -245,6 +247,79 @@ async fn worktree_vcs_snapshot_recovers_when_repo_is_reinitialized() {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn worktree_vcs_snapshot_noop_emit_preserves_freshness() {
+    let _guard = worktree_vcs_snapshot_test_lock().lock().await;
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let task = common::create_task(&app, ws.id.0, "noop-fresh").await;
+    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let worktree = state
+        .store_for_worktree(session.worktree_id)
+        .await
+        .expect("store for worktree")
+        .get_worktree(session.worktree_id)
+        .await
+        .expect("load worktree")
+        .expect("worktree should exist");
+
+    let mut next_active = HashSet::new();
+    next_active.insert(worktree.id);
+    state
+        .workspaces
+        .update_worktree_vcs_activity(&HashSet::new(), &next_active)
+        .await;
+
+    refresh_worktree_vcs_summary(state.clone(), worktree.clone())
+        .await
+        .expect("seed fresh snapshot");
+
+    let seeded = state
+        .get_worktree_vcs_snapshot(worktree.id)
+        .await
+        .expect("seeded snapshot should exist");
+    assert_eq!(seeded.freshness, WorktreeVcsFreshness::Fresh);
+
+    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, false)
+        .await
+        .expect("noop emit should succeed");
+
+    let cached = state
+        .get_worktree_vcs_snapshot(worktree.id)
+        .await
+        .expect("cached snapshot should remain present");
+    assert_eq!(
+        cached.freshness,
+        WorktreeVcsFreshness::Fresh,
+        "noop emit should preserve cached fresh snapshot"
+    );
+
+    let published = state
+        .workspaces
+        .workspace_active_snapshot
+        .active_snapshot(ws.id, 10)
+        .await
+        .worktree_vcs_snapshots
+        .into_iter()
+        .find(|candidate| candidate.worktree_id == worktree.id)
+        .expect("active snapshot should include worktree snapshot");
+    assert_eq!(
+        published.freshness,
+        WorktreeVcsFreshness::Fresh,
+        "noop emit should preserve published fresh snapshot"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

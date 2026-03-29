@@ -108,6 +108,15 @@ fn snapshot_fingerprint(snapshot: &WorktreeVcsSnapshot) -> String {
     serde_json::to_string(&copy).unwrap_or_default()
 }
 
+fn snapshot_substantive_fingerprint(snapshot: &WorktreeVcsSnapshot) -> String {
+    let mut copy = snapshot.clone();
+    copy.rev = 0;
+    copy.emitted_at_ms = 0;
+    copy.compute_state = WorktreeVcsComputeState::Ready;
+    copy.freshness = WorktreeVcsFreshness::Fresh;
+    serde_json::to_string(&copy).unwrap_or_default()
+}
+
 fn build_touched_files(entries: &[WorktreeVcsTouchedFile]) -> WorktreeVcsTouchedFiles {
     let total_count = entries.len() as i64;
     let truncated = entries.len() > WORKTREE_VCS_TOUCHED_FILES_CAP;
@@ -692,18 +701,19 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
             Err(err) => return Err(err),
         };
     let touched_files = build_touched_files(&diff_entries);
-    let (cached_summary, cached_available, cached_unavailable_reason) = {
+    let (cached_snapshot, cached_summary, cached_available, cached_unavailable_reason) = {
         let cache = state.workspaces.worktree_vcs_snapshots.lock().await;
         cache
             .get(&worktree.id)
             .map(|entry| {
                 (
+                    Some(entry.value.snapshot.clone()),
                     entry.value.snapshot.summary.clone(),
                     entry.value.snapshot.available,
                     entry.value.snapshot.unavailable_reason.clone(),
                 )
             })
-            .unwrap_or((WorktreeVcsSummary::default(), true, None))
+            .unwrap_or((None, WorktreeVcsSummary::default(), true, None))
     };
     let compute_state = if active {
         WorktreeVcsComputeState::Computing
@@ -715,7 +725,7 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
             WorktreeVcsComputeState::Computing
         }
     };
-    let snapshot = build_worktree_vcs_snapshot_from_parts(
+    let mut snapshot = build_worktree_vcs_snapshot_from_parts(
         state,
         worktree,
         git_status,
@@ -727,6 +737,16 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
         cached_unavailable_reason,
     )
     .await?;
+    if active
+        && cached_snapshot.as_ref().is_some_and(|previous| {
+            previous.freshness == WorktreeVcsFreshness::Fresh
+                && snapshot_substantive_fingerprint(previous)
+                    == snapshot_substantive_fingerprint(&snapshot)
+        })
+    {
+        snapshot.compute_state = WorktreeVcsComputeState::Ready;
+        snapshot.freshness = WorktreeVcsFreshness::Fresh;
+    }
     let mut published = false;
     if let Some(snapshot) = upsert_worktree_vcs_snapshot(state, snapshot, force_emit, None).await {
         if active {
