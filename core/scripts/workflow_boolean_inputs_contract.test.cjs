@@ -73,3 +73,15 @@ test("linux bundle workflows preserve AVF runtime targets instead of rewriting t
   assert.match(releaseSupabaseText, /lock\.required\.targets\.image = \["linux\/x86_64"\];/);
   assert.match(releaseSupabaseText, /lock\.required\.targets\.image = \["linux\/aarch64"\];/);
 });
+
+test("release supabase release-stage jobs consume the merged desktop bundle artifact", () => {
+  const text = workflowText("release-supabase.yml");
+  assert.match(text, /name:\s+Download merged desktop bundle resources \(current run\)[\s\S]*name:\s+desktop-bundles-linux-merged/s);
+  assert.match(text, /name:\s+Download merged desktop bundle resources \(source run\)[\s\S]*name:\s+desktop-bundles-linux-merged[\s\S]*run-id:\s+\$\{\{\s*env\.RELEASE_STAGE_SOURCE_RUN_ID\s*\}\}/s);
+  assert.match(text, /name:\s+Stage merged desktop bundle resources[\s\S]*src_dir="\$RUNNER_TEMP\/desktop-bundles-linux-merged"[\s\S]*dest_dir="core\/apps\/desktop\/src-tauri\/bundles"[\s\S]*test -f "\$dest_dir\/manifest\.json"/s);
+});
+
+test("release supabase prep desktop release resources uses an absolute cargo target dir", () => {
+  const text = workflowText("release-supabase.yml");
+  assert.match(text, /CTX_DESKTOP_SYNC_BUNDLES=0 CARGO_TARGET_DIR="\$PWD\/core\/target" node core\/scripts\/desktop_sync_resources\.cjs --profile release/);
+});
