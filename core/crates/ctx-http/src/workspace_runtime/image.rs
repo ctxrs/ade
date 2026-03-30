@@ -228,6 +228,39 @@ pub(super) async fn ensure_container_image_available(
     );
 }
 
+pub(super) async fn force_reload_default_container_image(
+    data_root: &Path,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<()> {
+    let image_tar = if let Some(tar) =
+        bundled_assets::bundled_ctx_harness_image_tar(DEFAULT_CONTAINER_IMAGE)
+    {
+        observe_log(
+            observer,
+            HarnessSetupPhase::ImageLoad,
+            HarnessSetupLogLevel::Info,
+            &format!(
+                "reloading default harness image from bundled tar {}",
+                tar.display()
+            ),
+        );
+        tar
+    } else {
+        let managed_tar = ensure_managed_default_container_image_tar(data_root, observer).await?;
+        observe_log(
+            observer,
+            HarnessSetupPhase::ImageLoad,
+            HarnessSetupLogLevel::Info,
+            &format!(
+                "reloading default harness image from managed cache {}",
+                managed_tar.display()
+            ),
+        );
+        managed_tar
+    };
+    load_container_image_tar(data_root, &image_tar, DEFAULT_CONTAINER_IMAGE, observer).await
+}
+
 fn managed_default_container_image_tar_path(data_root: &Path, sha256: &str) -> PathBuf {
     data_root
         .join("managed")

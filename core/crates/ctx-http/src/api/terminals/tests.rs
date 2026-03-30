@@ -1,7 +1,11 @@
-use super::{infer_terminal_worktree, resolve_container_terminal_cwd, resolve_terminal_host_root};
+use super::{
+    container_terminal_env, infer_terminal_worktree, resolve_container_terminal_cwd,
+    resolve_terminal_host_root,
+};
 use crate::daemon::AppState;
 use crate::disk_isolated;
 use crate::settings::ExecutionMode;
+use crate::workspace_runtime::{CONTAINER_TERMINAL_HOME, CONTAINER_TERMINAL_USER};
 use crate::worktree_data_plane::{sandbox_worktree_root, WorktreeDataPlane};
 use chrono::Utc;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
@@ -247,4 +251,21 @@ async fn infer_terminal_worktree_returns_not_found_for_unknown_task_without_fall
     .expect_err("unknown explicit task target should 404");
 
     assert_eq!(err.0, axum::http::StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn container_terminal_env_sets_ctx_user_identity() {
+    let env = container_terminal_env();
+    assert_eq!(
+        env.get("HOME").map(String::as_str),
+        Some(CONTAINER_TERMINAL_HOME)
+    );
+    assert_eq!(
+        env.get("USER").map(String::as_str),
+        Some(CONTAINER_TERMINAL_USER)
+    );
+    assert_eq!(
+        env.get("LOGNAME").map(String::as_str),
+        Some(CONTAINER_TERMINAL_USER)
+    );
 }

@@ -38,9 +38,15 @@ RUN apt-get update && \
       iptables \
       libc-bin \
       netbase \
+      sudo \
       tar \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/ctx-egress-proxy /usr/local/bin/ctx-egress-proxy
+
+RUN groupadd --system ctx-user && \
+    useradd --system --gid ctx-user --home-dir /home/example-user --create-home --shell /bin/bash ctx-user && \
+    printf 'ctx-user ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/ctx-user && \
+    chmod 0440 /etc/sudoers.d/ctx-user
 
 CMD ["/bin/sh", "-lc", "while true; do sleep 100000; done"]

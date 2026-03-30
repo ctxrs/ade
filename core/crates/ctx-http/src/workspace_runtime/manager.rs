@@ -745,126 +745,179 @@ impl HarnessRuntimeManager {
             }
         }
 
-        let exists = if recreate {
-            false
-        } else {
-            container_exists(&self.data_root, &name).await?
-        };
+        let mut recreate_for_terminal_contract = false;
+        loop {
+            let exists = if recreate || recreate_for_terminal_contract {
+                false
+            } else {
+                container_exists(&self.data_root, &name).await?
+            };
 
-        if exists {
-            let running = container_running(&self.data_root, &name)
-                .await?
-                .unwrap_or(false);
-            if !running {
+            if exists {
+                let running = container_running(&self.data_root, &name)
+                    .await?
+                    .unwrap_or(false);
+                if !running {
+                    observe_phase(
+                        observer,
+                        HarnessSetupPhase::ContainerStartOrCreate,
+                        "starting existing workspace container",
+                    );
+                    let mut cmd = sandbox_container_command(&self.data_root)?;
+                    cmd.arg("start").arg(&name);
+                    let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        let combined = format!("{stderr}\n{stdout}").trim().to_string();
+                        if combined.is_empty() {
+                            anyhow::bail!(
+                                "container start failed for {name} (status: {})",
+                                output.status
+                            );
+                        }
+                        anyhow::bail!("container start failed for {name}: {combined}");
+                    }
+                } else {
+                    observe_log(
+                        observer,
+                        HarnessSetupPhase::ContainerCheck,
+                        HarnessSetupLogLevel::Info,
+                        "workspace container already running",
+                    );
+                }
+            } else {
+                let requires_front_loaded_image_readiness = !(settings.runtime
+                    == ContainerRuntimeKind::NativeContainer
+                    && readiness == ContainerReadinessState::RuntimeReady);
+                // Native runtime-ready callers only arrive after launch readiness has already
+                // established image presence. Shared-VM runtime-ready still needs the managed
+                // image load path before container creation.
+                if requires_front_loaded_image_readiness {
+                    self.ensure_container_image_ready(settings, observer)
+                        .await?;
+                }
                 observe_phase(
                     observer,
                     HarnessSetupPhase::ContainerStartOrCreate,
-                    "starting existing workspace container",
+                    "creating workspace container",
                 );
                 let mut cmd = sandbox_container_command(&self.data_root)?;
-                cmd.arg("start").arg(&name);
+                cmd.arg("run").arg("-d").arg("--name").arg(&name);
+                cmd.arg("--hostname")
+                    .arg(workspace_container_hostname(workspace));
+                if should_use_keep_id_userns() {
+                    cmd.arg("--userns=keep-id");
+                }
+                if let Some(user) = container_user() {
+                    cmd.arg("--user").arg(user);
+                }
+                sandbox_cli::append_sandbox_container_launch_network_args(&mut cmd, settings);
+                for mount in &mount_plan.mounts {
+                    cmd.arg("--mount").arg(mount);
+                }
+                cmd.arg(&image);
+                cmd.arg("/bin/sh")
+                    .arg("-c")
+                    .arg("while true; do sleep 100000; done");
                 let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     let combined = format!("{stderr}\n{stdout}").trim().to_string();
-                    if combined.is_empty() {
-                        anyhow::bail!(
-                            "container start failed for {name} (status: {})",
-                            output.status
-                        );
-                    }
-                    anyhow::bail!("container start failed for {name}: {combined}");
-                }
-            } else {
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::ContainerCheck,
-                    HarnessSetupLogLevel::Info,
-                    "workspace container already running",
-                );
-            }
-        } else {
-            let requires_front_loaded_image_readiness = !(settings.runtime
-                == ContainerRuntimeKind::NativeContainer
-                && readiness == ContainerReadinessState::RuntimeReady);
-            // Native runtime-ready callers only arrive after launch readiness has already
-            // established image presence. Shared-VM runtime-ready still needs the managed
-            // image load path before container creation.
-            if requires_front_loaded_image_readiness {
-                self.ensure_container_image_ready(settings, observer)
-                    .await?;
-            }
-            observe_phase(
-                observer,
-                HarnessSetupPhase::ContainerStartOrCreate,
-                "creating workspace container",
-            );
-            let mut cmd = sandbox_container_command(&self.data_root)?;
-            cmd.arg("run").arg("-d").arg("--name").arg(&name);
-            if should_use_keep_id_userns() {
-                cmd.arg("--userns=keep-id");
-            }
-            if let Some(user) = container_user() {
-                cmd.arg("--user").arg(user);
-            }
-            sandbox_cli::append_sandbox_container_launch_network_args(&mut cmd, settings);
-            for mount in &mount_plan.mounts {
-                cmd.arg("--mount").arg(mount);
-            }
-            cmd.arg(&image);
-            cmd.arg("/bin/sh")
-                .arg("-c")
-                .arg("while true; do sleep 100000; done");
-            let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                let combined = format!("{stderr}\n{stdout}").trim().to_string();
-                let combined_lower = combined.to_ascii_lowercase();
-                let can_adopt_existing = combined_lower.contains("name-store error")
-                    || combined_lower.contains("already used by id");
-                if can_adopt_existing && container_exists(&self.data_root, &name).await? {
-                    observe_log(
-                        observer,
-                        HarnessSetupPhase::ContainerStartOrCreate,
-                        HarnessSetupLogLevel::Warn,
-                        "container create reported an existing name; adopting the existing workspace container",
-                    );
-                    let running = container_running(&self.data_root, &name)
-                        .await?
-                        .unwrap_or(false);
-                    if !running {
+                    let combined_lower = combined.to_ascii_lowercase();
+                    let can_adopt_existing = combined_lower.contains("name-store error")
+                        || combined_lower.contains("already used by id");
+                    if can_adopt_existing && container_exists(&self.data_root, &name).await? {
                         observe_log(
                             observer,
                             HarnessSetupPhase::ContainerStartOrCreate,
-                            HarnessSetupLogLevel::Info,
-                            "adopted workspace container is stopped; starting it",
+                            HarnessSetupLogLevel::Warn,
+                            "container create reported an existing name; adopting the existing workspace container",
                         );
-                        let mut start = sandbox_container_command(&self.data_root)?;
-                        start.arg("start").arg(&name);
-                        let output = command_output_with_timeout(start, SANDBOX_OP_TIMEOUT).await?;
-                        if !output.status.success() {
-                            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                            let combined = format!("{stderr}\n{stdout}").trim().to_string();
-                            if combined.is_empty() {
-                                anyhow::bail!(
-                                    "container start failed for {name} (status: {})",
-                                    output.status
-                                );
+                        let running = container_running(&self.data_root, &name)
+                            .await?
+                            .unwrap_or(false);
+                        if !running {
+                            observe_log(
+                                observer,
+                                HarnessSetupPhase::ContainerStartOrCreate,
+                                HarnessSetupLogLevel::Info,
+                                "adopted workspace container is stopped; starting it",
+                            );
+                            let mut start = sandbox_container_command(&self.data_root)?;
+                            start.arg("start").arg(&name);
+                            let output =
+                                command_output_with_timeout(start, SANDBOX_OP_TIMEOUT).await?;
+                            if !output.status.success() {
+                                let stderr =
+                                    String::from_utf8_lossy(&output.stderr).trim().to_string();
+                                let stdout =
+                                    String::from_utf8_lossy(&output.stdout).trim().to_string();
+                                let combined = format!("{stderr}\n{stdout}").trim().to_string();
+                                if combined.is_empty() {
+                                    anyhow::bail!(
+                                        "container start failed for {name} (status: {})",
+                                        output.status
+                                    );
+                                }
+                                anyhow::bail!("container start failed for {name}: {combined}");
                             }
-                            anyhow::bail!("container start failed for {name}: {combined}");
                         }
+                    } else if combined.is_empty() {
+                        anyhow::bail!(
+                            "container run failed for {name} (status: {})",
+                            output.status
+                        );
+                    } else {
+                        anyhow::bail!("container run failed for {name}: {combined}");
                     }
-                } else if combined.is_empty() {
-                    anyhow::bail!(
-                        "container run failed for {name} (status: {})",
-                        output.status
-                    );
-                } else {
-                    anyhow::bail!("container run failed for {name}: {combined}");
                 }
+            }
+
+            match sync_container_terminal_identity(&self.data_root, &name).await {
+                Ok(()) => break,
+                Err(err) if container_terminal_identity_missing_sudo(&err) => {
+                    if recreate_for_terminal_contract {
+                        return Err(err.context(
+                            "workspace container still lacks terminal sudo support after recreation",
+                        ));
+                    }
+                    if is_default_container_image(&image) {
+                        observe_log(
+                            observer,
+                            HarnessSetupPhase::ImageLoad,
+                            HarnessSetupLogLevel::Info,
+                            "reloading the default harness image to apply the terminal identity contract",
+                        );
+                        force_reload_default_container_image(&self.data_root, observer).await?;
+                    }
+                    observe_log(
+                        observer,
+                        HarnessSetupPhase::ContainerStartOrCreate,
+                        HarnessSetupLogLevel::Info,
+                        "workspace container predates the terminal identity contract; recreating",
+                    );
+                    let mut cmd = sandbox_container_command(&self.data_root)?;
+                    cmd.arg("rm").arg("-f").arg(&name);
+                    let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        let combined = format!("{stderr}\n{stdout}").trim().to_string();
+                        if combined.is_empty() {
+                            anyhow::bail!(
+                                "container rm failed for {name} while refreshing terminal identity contract (status: {})",
+                                output.status
+                            );
+                        }
+                        anyhow::bail!(
+                            "container rm failed for {name} while refreshing terminal identity contract: {combined}"
+                        );
+                    }
+                    recreate_for_terminal_contract = true;
+                }
+                Err(err) => return Err(err),
             }
         }
 

@@ -1,5 +1,12 @@
 use super::*;
 
+pub(crate) const CONTAINER_TERMINAL_USER: &str = "ctx-user";
+pub(crate) const CONTAINER_TERMINAL_HOME: &str = "/home/example-user";
+
+const CONTAINER_HOSTNAME_SUFFIX: &str = "-container";
+const MAX_CONTAINER_HOSTNAME_LEN: usize = 63;
+const CONTAINER_TERMINAL_SUDO_MISSING_SENTINEL: &str = "__CTX_CONTAINER_TERMINAL_SUDO_MISSING__";
+
 pub(super) fn container_data_root(data_root: &Path, workspace_id: WorkspaceId) -> PathBuf {
     data_root
         .join("containers")
@@ -112,6 +119,50 @@ pub(super) fn rewrite_daemon_url_for_avf_guest(daemon_url: &str) -> String {
     rewrite_daemon_url_for_container(daemon_url, AVF_GUEST_HOST_GATEWAY)
 }
 
+pub(crate) fn workspace_container_hostname(workspace: &Workspace) -> String {
+    let max_base_len = MAX_CONTAINER_HOSTNAME_LEN - CONTAINER_HOSTNAME_SUFFIX.len();
+    let mut slug = String::with_capacity(workspace.name.len().min(max_base_len));
+    let mut last_was_dash = false;
+    for ch in workspace.name.trim().chars() {
+        let normalized = if ch.is_ascii_alphanumeric() {
+            Some(ch.to_ascii_lowercase())
+        } else {
+            None
+        };
+        match normalized {
+            Some(value) => {
+                slug.push(value);
+                last_was_dash = false;
+            }
+            None if !slug.is_empty() && !last_was_dash => {
+                slug.push('-');
+                last_was_dash = true;
+            }
+            None => {}
+        }
+        if slug.len() >= max_base_len {
+            break;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    if slug.is_empty() {
+        slug.push_str("workspace");
+    }
+    if slug.len() > max_base_len {
+        slug.truncate(max_base_len);
+        while slug.ends_with('-') {
+            slug.pop();
+        }
+        if slug.is_empty() {
+            slug.push_str("workspace");
+            slug.truncate(max_base_len);
+        }
+    }
+    format!("{slug}{CONTAINER_HOSTNAME_SUFFIX}")
+}
+
 pub(super) fn daemon_port_from_url(daemon_url: &str) -> Option<u16> {
     Url::parse(daemon_url).ok()?.port_or_known_default()
 }
@@ -205,10 +256,20 @@ pub(super) async fn verify_disk_isolated_container_mounts(
 }
 
 #[cfg(unix)]
-pub(super) fn container_user() -> Option<String> {
+pub(super) fn current_container_uid_gid() -> Option<(u32, u32)> {
     let uid = unsafe { libc::geteuid() };
     let gid = unsafe { libc::getegid() };
-    Some(format!("{uid}:{gid}"))
+    Some((uid, gid))
+}
+
+#[cfg(not(unix))]
+pub(super) fn current_container_uid_gid() -> Option<(u32, u32)> {
+    None
+}
+
+#[cfg(unix)]
+pub(super) fn container_user() -> Option<String> {
+    current_container_uid_gid().map(|(uid, gid)| format!("{uid}:{gid}"))
 }
 
 #[cfg(not(unix))]
@@ -216,6 +277,135 @@ pub(super) fn container_user() -> Option<String> {
     None
 }
 
+pub(super) fn container_terminal_identity_missing_sudo(err: &anyhow::Error) -> bool {
+    err.to_string()
+        .contains(CONTAINER_TERMINAL_SUDO_MISSING_SENTINEL)
+}
+
+pub(super) async fn sync_container_terminal_identity(
+    data_root: &Path,
+    container_name: &str,
+) -> Result<()> {
+    let mut cmd = sandbox_container_command(data_root)?;
+    cmd.arg("exec")
+        .arg("--user")
+        .arg("0")
+        .arg("--env")
+        .arg(format!(
+            "CTX_CONTAINER_TERMINAL_USER={CONTAINER_TERMINAL_USER}"
+        ))
+        .arg("--env")
+        .arg(format!(
+            "CTX_CONTAINER_TERMINAL_HOME={CONTAINER_TERMINAL_HOME}"
+        ));
+    if let Some((uid, gid)) = current_container_uid_gid() {
+        cmd.arg("--env")
+            .arg(format!("CTX_CONTAINER_TERMINAL_UID={uid}"))
+            .arg("--env")
+            .arg(format!("CTX_CONTAINER_TERMINAL_GID={gid}"));
+    }
+    cmd.arg(container_name)
+        .arg("/bin/sh")
+        .arg("-lc")
+        .arg(
+            "set -eu\n\
+user=\"$CTX_CONTAINER_TERMINAL_USER\"\n\
+home=\"$CTX_CONTAINER_TERMINAL_HOME\"\n\
+shell=\"/bin/bash\"\n\
+uid=\"${CTX_CONTAINER_TERMINAL_UID:-}\"\n\
+gid=\"${CTX_CONTAINER_TERMINAL_GID:-}\"\n\
+if [ ! -x /usr/bin/sudo ]; then\n\
+  echo \"__CTX_CONTAINER_TERMINAL_SUDO_MISSING__\" >&2\n\
+  exit 91\n\
+fi\n\
+mkdir -p \"$home\"\n\
+if [ -n \"$gid\" ]; then\n\
+  group_tmp=\"$(mktemp)\"\n\
+  awk -F: -v group=\"$user\" -v gid=\"$gid\" '\n\
+BEGIN { updated = 0 }\n\
+$1 == group { print group \":x:\" gid \":\"; updated = 1; next }\n\
+{ print }\n\
+END { if (!updated) print group \":x:\" gid \":\" }\n\
+' /etc/group > \"$group_tmp\"\n\
+  cat \"$group_tmp\" > /etc/group\n\
+  rm -f \"$group_tmp\"\n\
+fi\n\
+if [ -n \"$uid\" ] && [ -n \"$gid\" ]; then\n\
+  passwd_tmp=\"$(mktemp)\"\n\
+  awk -F: -v user=\"$user\" -v uid=\"$uid\" -v gid=\"$gid\" -v home=\"$home\" -v shell=\"$shell\" '\n\
+BEGIN { updated = 0 }\n\
+$1 == user { print user \":x:\" uid \":\" gid \"::\" home \":\" shell; updated = 1; next }\n\
+{ print }\n\
+END { if (!updated) print user \":x:\" uid \":\" gid \"::\" home \":\" shell }\n\
+' /etc/passwd > \"$passwd_tmp\"\n\
+  cat \"$passwd_tmp\" > /etc/passwd\n\
+  rm -f \"$passwd_tmp\"\n\
+  chown \"$uid:$gid\" \"$home\"\n\
+fi\n\
+install -d -m 0755 /etc/sudoers.d\n\
+printf '%s ALL=(ALL) NOPASSWD:ALL\\n' \"$user\" > \"/etc/sudoers.d/$user\"\n\
+chmod 0440 \"/etc/sudoers.d/$user\"\n",
+        );
+    let out = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let combined = command_output_message(&out);
+    if combined.is_empty() {
+        anyhow::bail!(
+            "container terminal identity sync failed for {container_name} (status: {})",
+            out.status
+        );
+    }
+    anyhow::bail!("container terminal identity sync failed for {container_name}: {combined}");
+}
+
 pub(super) fn should_use_keep_id_userns() -> bool {
     cfg!(target_os = "linux")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn workspace_named(name: &str) -> Workspace {
+        Workspace {
+            id: WorkspaceId::new(),
+            name: name.to_string(),
+            root_path: "/tmp/workspace".to_string(),
+            created_at: Utc::now(),
+            vcs_kind: None,
+        }
+    }
+
+    #[test]
+    fn workspace_container_hostname_uses_workspace_name_slug() {
+        let workspace = workspace_named("ctx-monorepo");
+        assert_eq!(
+            workspace_container_hostname(&workspace),
+            "ctx-monorepo-container"
+        );
+    }
+
+    #[test]
+    fn workspace_container_hostname_sanitizes_and_bounds_length() {
+        let workspace = workspace_named("  Ctx Monorepo !!! Alpha Beta Gamma Delta Epsilon Zeta ");
+        let hostname = workspace_container_hostname(&workspace);
+        assert!(hostname.ends_with("-container"));
+        assert!(hostname.len() <= MAX_CONTAINER_HOSTNAME_LEN);
+        assert_eq!(
+            hostname,
+            "ctx-monorepo-alpha-beta-gamma-delta-epsilon-zeta-container"
+        );
+    }
+
+    #[test]
+    fn workspace_container_hostname_falls_back_when_name_is_unusable() {
+        let workspace = workspace_named("___");
+        assert_eq!(
+            workspace_container_hostname(&workspace),
+            "workspace-container"
+        );
+    }
 }
