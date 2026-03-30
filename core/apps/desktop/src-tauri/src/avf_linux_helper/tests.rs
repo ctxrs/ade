@@ -1049,7 +1049,7 @@ fn shared_vm_state_marks_missing_owner_with_memory_pressure_request_as_error() {
             last_started_at: None,
             last_saved_at: Some(now_timestamp_string()),
             last_stopped_at: None,
-            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Ready),
             last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::Restored),
             last_stop_outcome: Some(AvfLinuxSharedVmStopOutcome::SavedStateWritten),
             last_restore_error: None,
@@ -2306,6 +2306,112 @@ fn wait_for_real_guest_exec_ready_succeeds_without_guest_control_marker() {
     if control_socket.exists() {
         fs::remove_file(&control_socket).expect("cleanup control socket");
     }
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(all(target_os = "macos", unix))]
+#[test]
+fn wait_for_real_guest_launch_ready_requires_guest_control_marker() {
+    use std::thread;
+
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctx-avf-launch-ready-marker-required-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+    let listener = bind_shared_vm_control_listener(&temp).expect("bind control socket");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept control socket");
+        let frame = read_exec_frame(&mut stream)
+            .expect("read request")
+            .expect("request frame");
+        let request = match frame {
+            AvfLinuxExecFrame::Request(request) => request,
+            other => panic!("expected request frame, got {other:?}"),
+        };
+        assert_eq!(request.command, "/bin/sh");
+        write_exec_frame(
+            &mut stream,
+            &AvfLinuxExecFrame::Exit(AvfLinuxExecExit { exit_code: 0 }),
+        )
+        .expect("write exit frame");
+    });
+
+    let err = wait_for_real_guest_launch_ready_with_owner_process(
+        &temp,
+        Duration::from_millis(250),
+        None,
+    )
+    .expect_err("launch readiness should require the guest control ready marker");
+    assert!(err
+        .to_string()
+        .contains("guest control ready marker"));
+
+    server.join().expect("server thread");
+    let control_socket = shared_vm_control_socket_path(&temp);
+    if control_socket.exists() {
+        fs::remove_file(&control_socket).expect("cleanup control socket");
+    }
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn shared_vm_exec_requires_launch_ready_transition() {
+    let temp = std::env::temp_dir().join(format!(
+        "ctx-avf-shared-exec-launch-ready-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    prepare_runtime_layout(&temp).expect("prepare runtime layout");
+    let current_pid = std::process::id();
+    persist_state(
+        &shared_vm_state_path(&temp),
+        &PersistedSharedVmState {
+            state: AvfLinuxSharedVmLifecycleState::Running,
+            guest_identity: supported_guest_identity(),
+            runtime_root: None,
+            rootfs_image: None,
+            kernel_path: None,
+            initrd_path: None,
+            runtime_version: None,
+            runtime_shape_digest: None,
+            updated_at: Some(now_timestamp_string()),
+            last_started_at: Some(now_timestamp_string()),
+            last_saved_at: None,
+            last_stopped_at: None,
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::ColdBoot),
+            last_stop_outcome: None,
+            last_restore_error: None,
+            last_save_error: None,
+            relay_pid: Some(current_pid),
+            guest_agent_pid: Some(current_pid),
+            simulated: true,
+            notes: vec!["starting".to_string()],
+        },
+    )
+    .expect("persist running scaffolded state");
+
+    let err = shared_vm_exec(
+        &temp,
+        Path::new("/"),
+        "/usr/bin/true",
+        &[],
+        Some("root"),
+        false,
+        &[],
+    )
+    .expect_err("shared vm exec should require a launch-ready transition");
+    assert!(err
+        .to_string()
+        .contains("must be launch-ready before shared-vm-exec"));
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 

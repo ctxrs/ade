@@ -94,6 +94,7 @@ pub(crate) enum AvfLinuxRuntimeLayoutStatus {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AvfLinuxSharedVmTransitionStatus {
     Scaffolded,
+    Ready,
     Stopped,
     AlreadyStopped,
     Missing,
@@ -213,4 +214,12 @@ pub(crate) struct AvfLinuxGuestRuntime {
     pub container_stack_path: PathBuf,
     pub version: String,
     pub managed: bool,
+}
+
+pub(crate) fn shared_vm_is_launch_ready(state: &AvfLinuxSharedVmState) -> bool {
+    matches!(state.state, AvfLinuxSharedVmLifecycleState::Running)
+        && matches!(
+            state.transition_status,
+            Some(AvfLinuxSharedVmTransitionStatus::Ready)
+        )
 }

@@ -234,6 +234,7 @@ enum AvfLinuxRuntimeLayoutStatus {
 #[serde(rename_all = "snake_case")]
 enum AvfLinuxSharedVmTransitionStatus {
     Scaffolded,
+    Ready,
     Stopped,
     AlreadyStopped,
     Missing,

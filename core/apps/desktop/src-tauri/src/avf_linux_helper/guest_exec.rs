@@ -11,6 +11,29 @@ enum GuestExecTerminalFrame {
     Error(AvfLinuxExecError),
 }
 
+pub(super) fn ensure_shared_vm_launch_ready_for_operation(
+    shared_vm: &AvfLinuxSharedVmStateResponse,
+    operation: &str,
+) -> Result<()> {
+    if !matches!(shared_vm.state, AvfLinuxSharedVmLifecycleState::Running) {
+        bail!(
+            "shared AVF Linux VM must be running before {operation} (state={:?})",
+            shared_vm.state
+        );
+    }
+    if !matches!(
+        shared_vm.transition_status,
+        Some(AvfLinuxSharedVmTransitionStatus::Ready)
+    ) {
+        bail!(
+            "shared AVF Linux VM must be launch-ready before {operation} (state={:?}, transition_status={:?})",
+            shared_vm.state,
+            shared_vm.transition_status
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn guest_directory_exists(data_root: &Path, guest_path: &Path) -> Result<bool> {
     let result = run_guest_exec_capture(
         &shared_vm_control_socket_path(data_root),
@@ -42,12 +65,7 @@ pub(super) fn guest_exec(
     args: &[String],
 ) -> Result<i32> {
     let shared_vm = shared_vm_state(data_root)?;
-    if !matches!(shared_vm.state, AvfLinuxSharedVmLifecycleState::Running) {
-        bail!(
-            "shared AVF Linux VM must be running before guest exec (state={:?})",
-            shared_vm.state
-        );
-    }
+    ensure_shared_vm_launch_ready_for_operation(&shared_vm, "guest exec")?;
 
     let metadata_path = shared_vm_worktree_metadata_path(data_root, workspace_id, worktree_id);
     let Some(worktree) = load_guest_worktree_state(&metadata_path)? else {
@@ -111,12 +129,7 @@ pub(super) fn shared_vm_exec(
     args: &[String],
 ) -> Result<i32> {
     let shared_vm = shared_vm_state(data_root)?;
-    if !matches!(shared_vm.state, AvfLinuxSharedVmLifecycleState::Running) {
-        bail!(
-            "shared AVF Linux VM must be running before shared-vm-exec (state={:?})",
-            shared_vm.state
-        );
-    }
+    ensure_shared_vm_launch_ready_for_operation(&shared_vm, "shared-vm-exec")?;
 
     let control_socket = shared_vm_control_socket_path(data_root);
     let guest_env = parse_guest_exec_env(env)?;

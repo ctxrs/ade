@@ -95,7 +95,7 @@ pub(crate) async fn ensure_workspace_vm_ready_with_observer(
             state.state
         ),
     );
-    if matches!(state.state, AvfLinuxSharedVmLifecycleState::Running) {
+    if shared_vm_is_launch_ready(&state) {
         observe_log(
             observer,
             HarnessSetupPhase::MachineCheck,
@@ -106,6 +106,17 @@ pub(crate) async fn ensure_workspace_vm_ready_with_observer(
             ),
         );
         return Ok(state);
+    }
+    if matches!(state.state, AvfLinuxSharedVmLifecycleState::Running) {
+        observe_log(
+            observer,
+            HarnessSetupPhase::MachineCheck,
+            HarnessSetupLogLevel::Info,
+            &format!(
+                "AVF Linux workspace VM for workspace {} is running but not yet launch-ready (transition_status={:?}); restarting before reuse",
+                workspace_id.0, state.transition_status
+            ),
+        );
     }
 
     observe_phase(

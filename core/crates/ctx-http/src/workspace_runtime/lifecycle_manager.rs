@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use super::avf_linux_vm::{
     probe_helper, AvfLinuxSharedVmLifecycleState, AvfLinuxSharedVmStartOutcome,
-    AvfLinuxSharedVmState, AvfLinuxSharedVmStopOutcome,
+    AvfLinuxSharedVmState, AvfLinuxSharedVmStopOutcome, shared_vm_is_launch_ready,
 };
 use super::{
     ContainerExecutionSettings, HarnessSetupObserver, SharedVmLifecycleOrchestrator,
@@ -179,13 +179,9 @@ fn current_lifecycle_record_from_state(
     state: &AvfLinuxSharedVmState,
 ) -> Result<SubstrateLifecycleRecord> {
     let startup_selection = startup_selection_from_state(state)?;
-    let startup_outcome = if matches!(
-        (state.state, startup_selection),
-        (
-            AvfLinuxSharedVmLifecycleState::Running,
-            SubstrateStartupSelection::Reuse
-        )
-    ) {
+    let startup_outcome = if matches!(startup_selection, SubstrateStartupSelection::Reuse)
+        && shared_vm_is_launch_ready(state)
+    {
         Some(SubstrateStartupOutcome::Reuse)
     } else {
         map_startup_outcome(state.last_start_outcome)
@@ -217,7 +213,7 @@ fn startup_selection_from_state_with_restore_support(
     state: &AvfLinuxSharedVmState,
     restore_supported: bool,
 ) -> SubstrateStartupSelection {
-    if matches!(state.state, AvfLinuxSharedVmLifecycleState::Running) {
+    if shared_vm_is_launch_ready(state) {
         return SubstrateStartupSelection::Reuse;
     }
     if state.saved_state_exists && restore_supported {

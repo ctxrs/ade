@@ -3,7 +3,7 @@ use super::readiness::{
     cold_boot_real_guest_exec_ready_timeout, format_duration_ms,
     reset_writable_shared_vm_runtime_state,
     shared_vm_readiness_failure_requires_writable_rootfs_reset,
-    summarize_shared_vm_readiness_phase_lines, wait_for_real_guest_exec_ready_with_owner_process,
+    summarize_shared_vm_readiness_phase_lines, wait_for_real_guest_launch_ready_with_owner_process,
 };
 use super::*;
 
@@ -67,7 +67,7 @@ fn spawn_real_shared_vm_owner_once(data_root: &Path, readiness_timeout: Duration
     )?;
     let remaining_after_control_socket =
         readiness_timeout.saturating_sub(owner_started_at.elapsed());
-    let readiness = match wait_for_real_guest_exec_ready_with_owner_process(
+    let readiness = match wait_for_real_guest_launch_ready_with_owner_process(
         data_root,
         remaining_after_control_socket,
         Some(&mut child),
@@ -78,20 +78,14 @@ fn spawn_real_shared_vm_owner_once(data_root: &Path, readiness_timeout: Duration
             return Err(err);
         }
     };
-    if shared_vm_owner_guest_probe_ready(data_root) {
-        append_shared_vm_log_line(
-            data_root,
-            &format!(
-                "shared AVF Linux guest control ready marker was present by the time guest exec readiness succeeded after {}",
-                format_duration_ms(owner_started_at.elapsed())
-            ),
-        )?;
-    } else {
-        append_shared_vm_log_line(
-            data_root,
-            "shared AVF Linux guest exec readiness succeeded before the guest control ready marker was observed; using guest exec readiness as the launch gate",
-        )?;
-    }
+    debug_assert!(shared_vm_owner_guest_probe_ready(data_root));
+    append_shared_vm_log_line(
+        data_root,
+        &format!(
+            "shared AVF Linux guest control ready marker was observed before launch-ready completed after {}",
+            format_duration_ms(owner_started_at.elapsed())
+        ),
+    )?;
     for phase_line in &readiness.phase_lines {
         append_shared_vm_log_line(data_root, phase_line)?;
     }

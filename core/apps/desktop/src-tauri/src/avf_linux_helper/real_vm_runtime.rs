@@ -42,6 +42,7 @@ pub(super) use self::readiness::{
     shared_vm_guest_readiness_args, shared_vm_readiness_failure_requires_writable_rootfs_reset,
     summarize_shared_vm_readiness_phase_lines, wait_for_guest_control_ready_marker,
     wait_for_real_guest_exec_ready, wait_for_real_guest_exec_ready_with_owner_process,
+    wait_for_real_guest_launch_ready_with_owner_process,
 };
 use self::resource_management::align_down_to_mebibyte;
 #[cfg(target_os = "macos")]

@@ -263,11 +263,16 @@ pub(super) fn start_shared_vm(
     let mut guest_alive = state
         .guest_agent_pid
         .is_some_and(shared_vm_server_process_alive);
+    let launch_ready_for_reuse = matches!(
+        state.transition_status,
+        Some(AvfLinuxSharedVmTransitionStatus::Ready)
+    );
     let mut already_running = if state.simulated {
         owner_alive && guest_alive
     } else {
         owner_alive
     };
+    already_running &= launch_ready_for_reuse;
     if already_running && runtime_shape_changed {
         let restart_note =
             "requested AVF runtime differs from the running shared VM; forcing a stop before restart"
@@ -289,11 +294,16 @@ pub(super) fn start_shared_vm(
         guest_alive = state
             .guest_agent_pid
             .is_some_and(shared_vm_server_process_alive);
+        let launch_ready_for_reuse = matches!(
+            state.transition_status,
+            Some(AvfLinuxSharedVmTransitionStatus::Ready)
+        );
         already_running = if state.simulated {
             owner_alive && guest_alive
         } else {
             owner_alive
         };
+        already_running &= launch_ready_for_reuse;
     }
     let mut stale_saved_state_note = None;
     if runtime_shape_changed && saved_state_path.exists() {
@@ -365,7 +375,7 @@ pub(super) fn start_shared_vm(
         if runtime_shape_changed {
             state.last_saved_at = None;
         }
-        state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Scaffolded);
+        state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Ready);
         state.last_start_outcome = Some(AvfLinuxSharedVmStartOutcome::AlreadyRunning);
         state.last_restore_error = None;
         state.notes = vec![if state.simulated {
@@ -430,12 +440,13 @@ pub(super) fn start_shared_vm(
     state.initrd_path = Some(initrd_path.to_path_buf());
     state.runtime_version = Some(runtime_version.clone());
     state.runtime_shape_digest = Some(requested_runtime_shape_digest.clone());
+    state.state = AvfLinuxSharedVmLifecycleState::Starting;
     state.updated_at = Some(now_timestamp_string());
     state.last_started_at = None;
     if runtime_shape_changed {
         state.last_saved_at = None;
     }
-    state.transition_status = None;
+    state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Scaffolded);
     state.last_start_outcome = None;
     state.last_restore_error = None;
     state.relay_pid = None;
@@ -546,7 +557,7 @@ pub(super) fn start_shared_vm(
     state.runtime_shape_digest = Some(requested_runtime_shape_digest);
     state.updated_at = Some(now_timestamp_string());
     state.last_started_at = state.updated_at.clone();
-    state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Scaffolded);
+    state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Ready);
     state.last_start_outcome = Some(start_outcome);
     state.last_restore_error = restore_error;
     state.relay_pid = relay_pid;

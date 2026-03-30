@@ -287,8 +287,16 @@ def seed_state():
     if scenario == "reuse":
         return {
             "state": "running",
+            "transition_status": "ready",
             "saved_state_exists": False,
             "last_start_outcome": "already_running",
+        }
+    if scenario == "running_not_ready":
+        return {
+            "state": "running",
+            "transition_status": "scaffolded",
+            "saved_state_exists": False,
+            "last_start_outcome": "cold_boot",
         }
     if scenario in ("restore", "restore_failure"):
         return {
@@ -410,7 +418,7 @@ elif cmd == "start-shared-vm" or cmd == "start-workspace-vm":
         "kernel_path": kernel_path,
         "initrd_path": initrd_path,
         "runtime_version": runtime_version,
-        "transition_status": "scaffolded",
+        "transition_status": "ready",
         "last_start_outcome": outcome,
         "last_restore_error": restore_error,
     })
@@ -1153,6 +1161,37 @@ async fn shared_substrate_lifecycle_manager_reuses_running_vm_without_start() {
         !log.lines()
             .any(|line| line.starts_with("start-workspace-vm ")),
         "reuse path should not start the VM:\n{log}"
+    );
+}
+
+#[tokio::test]
+async fn shared_substrate_lifecycle_manager_restarts_running_vm_until_launch_ready() {
+    let _process_env = process_env_test_lock().lock().await;
+    let _helper_lock = helper_env_test_lock().lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let (helper, log_path) = write_stateful_lifecycle_helper(temp.path());
+    let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
+    let (_bundle_dir, _bundle_manifest) = install_bundled_runtime_fixture(temp.path());
+    let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "running_not_ready");
+
+    let record = SharedSubstrateLifecycleManager::new(temp.path())
+        .ensure_shared_runtime_ready(&shared_vm_settings(), None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        record.startup_selection,
+        Some(SubstrateStartupSelection::ColdBoot)
+    );
+    assert_eq!(
+        record.startup_outcome,
+        Some(SubstrateStartupOutcome::ColdBoot)
+    );
+    let log = std::fs::read_to_string(log_path).unwrap();
+    assert!(
+        log.lines()
+            .any(|line| line.starts_with("start-workspace-vm ")),
+        "running-but-not-ready state should be restarted instead of reused:\n{log}"
     );
 }
 

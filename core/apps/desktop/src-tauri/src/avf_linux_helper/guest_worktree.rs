@@ -9,12 +9,10 @@ pub(super) fn prepare_guest_worktree(
     branch_name: &str,
 ) -> Result<AvfLinuxGuestWorktreeResponse> {
     let shared_vm = shared_vm_state(data_root)?;
-    if !matches!(shared_vm.state, AvfLinuxSharedVmLifecycleState::Running) {
-        bail!(
-            "shared AVF Linux VM must be running before preparing guest worktrees (state={:?})",
-            shared_vm.state
-        );
-    }
+    super::guest_exec::ensure_shared_vm_launch_ready_for_operation(
+        &shared_vm,
+        "preparing guest worktrees",
+    )?;
     if !host_workspace_root.is_dir() {
         bail!(
             "host workspace root does not exist: {}",

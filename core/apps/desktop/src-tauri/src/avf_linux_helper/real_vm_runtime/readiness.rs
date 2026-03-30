@@ -245,6 +245,41 @@ pub(in super::super) fn wait_for_real_guest_exec_ready_with_owner_process(
     }
 }
 
+#[cfg(unix)]
+pub(crate) fn wait_for_real_guest_launch_ready_with_owner_process(
+    data_root: &Path,
+    timeout: Duration,
+    owner_process: Option<&mut std::process::Child>,
+) -> Result<SharedVmGuestReadinessReport> {
+    let started_at = std::time::Instant::now();
+    let readiness = wait_for_real_guest_exec_ready_with_owner_process(
+        data_root,
+        timeout,
+        owner_process,
+    )?;
+    let marker_timeout = timeout.saturating_sub(started_at.elapsed());
+    wait_for_guest_control_ready_marker(data_root, marker_timeout).with_context(|| {
+        format!(
+            "guest exec readiness succeeded but the guest control ready marker did not appear within {}",
+            format_duration_ms(timeout)
+        )
+    })?;
+    Ok(readiness)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn wait_for_real_guest_launch_ready_with_owner_process(
+    _data_root: &Path,
+    _timeout: Duration,
+    _owner_process: Option<&mut std::process::Child>,
+) -> Result<SharedVmGuestReadinessReport> {
+    Ok(SharedVmGuestReadinessReport {
+        attempts: 0,
+        elapsed: Duration::ZERO,
+        phase_lines: Vec::new(),
+    })
+}
+
 #[cfg(not(unix))]
 pub(in super::super) fn wait_for_real_guest_exec_ready_with_owner_process(
     _data_root: &Path,
