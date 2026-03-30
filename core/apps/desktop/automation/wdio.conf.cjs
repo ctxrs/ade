@@ -935,7 +935,7 @@ const ensureBundledContainerAssets = (options = {}) => {
 
   const hostOs = normalizeDesktopOs(options.platform);
   const hostArch = normalizeDesktopArch(options.arch);
-  const requiresBundledAvfRuntime = hostOs === "macos";
+  const requiresBundledAvfRuntime = hostOs === "macos" && hostArch === "aarch64";
   if (requiresBundledAvfRuntime) {
     const avfGuestRuntime = runtimes.find((entry) =>
       entry

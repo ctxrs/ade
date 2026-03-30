@@ -345,6 +345,31 @@ test("wdio AVF container preflight accepts a thin bundle with managed AVF/image 
   }
 });
 
+test("wdio container preflight does not require managed AVF runtime metadata on macOS x64", async () => {
+  const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-avf-assets-"));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
+  try {
+    writeThinBundleManifestAndRuntimeLock(bundleDir, { hostOs: "macos", hostArch: "aarch64" });
+    await withEnv(
+      {
+        CTX_BUNDLE_DIR: bundleDir,
+        CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
+      },
+      (mod) => {
+        assert.doesNotThrow(() => {
+          mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets({
+            platform: "darwin",
+            arch: "x64",
+          });
+        });
+      },
+    );
+  } finally {
+    fs.rmSync(bundleDir, { recursive: true, force: true });
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("wdio AVF container preflight rejects a thin bundle missing managed AVF helper metadata on macOS", async () => {
   const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-avf-assets-"));
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
