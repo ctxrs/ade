@@ -79,6 +79,11 @@ pub(crate) async fn ensure_workspace_vm_ready_with_observer(
             runtime.container_stack_path.display()
         ),
     );
+    observe_phase(
+        observer,
+        HarnessSetupPhase::MachineCheck,
+        "checking AVF Linux workspace VM state",
+    );
 
     let vm_data_root = workspace_vm_data_root(data_root, workspace_id);
     let layout = prepare_runtime_layout(&vm_data_root)?;

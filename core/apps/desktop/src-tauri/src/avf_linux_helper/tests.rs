@@ -485,9 +485,21 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
     assert!(user_data.contains("mount --bind \"$mount_root/system/buildkit\" /var/lib/buildkit"));
     assert!(user_data.contains("StandardOutput=journal+console"));
     assert!(user_data.contains("starting guest-agent"));
+    assert!(user_data.contains("ensuring vsock kernel modules are loaded"));
+    assert!(user_data.contains("/usr/sbin/modprobe vsock"));
+    assert!(user_data.contains("/usr/sbin/modprobe vmw_vsock_virtio_transport_common"));
+    assert!(user_data.contains("/usr/sbin/modprobe vmw_vsock_virtio_transport"));
     assert!(user_data.contains("CTX_AVF_GUEST_CONTROL_READY_MARKER"));
     assert!(user_data.contains("/tmp/managed/vms/avf-linux"));
     assert!(user_data.contains("guest-control-ready"));
+    assert!(user_data.contains(&format!(
+        "After={} {}",
+        SHARED_VM_DATA_DISK_SERVICE_NAME, SHARED_VM_HOST_DATA_SERVICE_NAME
+    )));
+    assert!(user_data.contains(&format!(
+        "Requires={} {}",
+        SHARED_VM_DATA_DISK_SERVICE_NAME, SHARED_VM_HOST_DATA_SERVICE_NAME
+    )));
     assert!(user_data.contains("preparing ctx-avf-linux-guest-agent.service"));
     assert!(user_data.contains("systemctl status ctx-avf-linux-guest-agent.service --no-pager"));
     assert!(user_data.contains("/tmp/runtime/helpers/container-stack.tar.gz"));

@@ -34,6 +34,22 @@ impl Drop for EnvGuard {
     }
 }
 
+#[derive(Default)]
+struct RecordingObserver {
+    phases: std::sync::Mutex<Vec<(HarnessSetupPhase, String)>>,
+}
+
+impl HarnessSetupObserver for RecordingObserver {
+    fn on_phase(&self, phase: HarnessSetupPhase, message: &str) {
+        self.phases
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push((phase, message.to_string()));
+    }
+
+    fn on_log(&self, _phase: HarnessSetupPhase, _level: HarnessSetupLogLevel, _message: &str) {}
+}
+
 fn helper_env_test_lock() -> &'static tokio::sync::Mutex<()> {
     crate::test_support::sandbox_cli_env_test_lock()
 }
@@ -785,6 +801,45 @@ fn helper_probe_uses_configured_helper_binary() {
     assert_eq!(probe.helper_version, "test-helper");
     assert_eq!(probe.host_os, "macos");
     assert_eq!(probe.host_arch, "aarch64");
+}
+
+#[tokio::test]
+async fn ensure_workspace_vm_ready_reports_machine_check_after_runtime_download() {
+    let _serial = helper_env_test_lock().lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let helper = write_lifecycle_helper(temp.path());
+    let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
+    let (_bundle_root_guard, _bundle_manifest_guard) = install_bundled_runtime_fixture(temp.path());
+    let observer = std::sync::Arc::new(RecordingObserver::default());
+
+    ensure_workspace_vm_ready_with_observer(
+        temp.path(),
+        WorkspaceId::new(),
+        &shared_vm_settings(),
+        Some(&*observer),
+    )
+    .await
+    .unwrap();
+
+    let phases = observer
+        .phases
+        .lock()
+        .unwrap_or_else(|poisoned: std::sync::PoisonError<_>| poisoned.into_inner())
+        .clone();
+    assert!(
+        phases.iter().any(|(phase, message)| {
+            *phase == HarnessSetupPhase::MachineCheck
+                && message == "checking AVF Linux workspace VM state"
+        }),
+        "expected a machine-check phase after runtime preparation, saw: {phases:?}"
+    );
+    assert!(
+        phases.iter().any(|(phase, message)| {
+            *phase == HarnessSetupPhase::MachineStartOrInit
+                && message == "starting AVF Linux workspace VM"
+        }),
+        "expected a machine-start phase after machine-check, saw: {phases:?}"
+    );
 }
 
 #[tokio::test]

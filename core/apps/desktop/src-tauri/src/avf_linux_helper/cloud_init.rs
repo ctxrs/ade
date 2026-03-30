@@ -22,11 +22,20 @@ pub(super) fn indent_cloud_init_block(content: &str, spaces: usize) -> String {
 }
 
 pub(super) fn render_shared_vm_guest_agent_service(ready_marker_path: &Path) -> String {
-    let escaped_ready_marker = shell_escape_single_quotes(&ready_marker_path.display().to_string());
+    let prepare_script = shell_escape_single_quotes(&format!(
+        "rm -f '{ready_marker}' && echo \"[ctx-avf-linux] starting guest-agent\" >/dev/hvc0 && echo \"[ctx-avf-linux] ensuring vsock kernel modules are loaded\" >/dev/hvc0 && /usr/sbin/modprobe vsock >/dev/hvc0 2>&1 && /usr/sbin/modprobe vmw_vsock_virtio_transport_common >/dev/hvc0 2>&1 && /usr/sbin/modprobe vmw_vsock_virtio_transport >/dev/hvc0 2>&1",
+        ready_marker = ready_marker_path.display(),
+    ));
+    let start_script = shell_escape_single_quotes(&format!(
+        "export CTX_AVF_GUEST_CONTROL_READY_MARKER='{ready_marker}'; exec /usr/local/bin/ctx-avf-linux-guest-agent",
+        ready_marker = ready_marker_path.display(),
+    ));
     format!(
-        "[Unit]\nDescription=ctx AVF Linux Guest Agent\nAfter={data_disk_service}\nRequires={data_disk_service}\n\n[Service]\nType=simple\nEnvironment=RUST_BACKTRACE=1\nExecStartPre=/bin/sh -lc 'rm -f '\\''{ready_marker}'\\'' && echo \"[ctx-avf-linux] starting guest-agent\" >/dev/hvc0'\nExecStart=/bin/sh -lc 'export CTX_AVF_GUEST_CONTROL_READY_MARKER='\\''{ready_marker}'\\''; exec /usr/local/bin/ctx-avf-linux-guest-agent'\nStandardOutput=journal+console\nStandardError=journal+console\nRestart=always\nRestartSec=1\n\n[Install]\nWantedBy=multi-user.target\n# {guest_agent_service}\n",
+        "[Unit]\nDescription=ctx AVF Linux Guest Agent\nAfter={data_disk_service} {host_data_service}\nRequires={data_disk_service} {host_data_service}\n\n[Service]\nType=simple\nEnvironment=RUST_BACKTRACE=1\nExecStartPre=/bin/sh -lc '{prepare_script}'\nExecStart=/bin/sh -lc '{start_script}'\nStandardOutput=journal+console\nStandardError=journal+console\nRestart=always\nRestartSec=1\n\n[Install]\nWantedBy=multi-user.target\n# {guest_agent_service}\n",
         data_disk_service = SHARED_VM_DATA_DISK_SERVICE_NAME,
-        ready_marker = escaped_ready_marker,
+        host_data_service = SHARED_VM_HOST_DATA_SERVICE_NAME,
+        prepare_script = prepare_script,
+        start_script = start_script,
         guest_agent_service = SHARED_VM_GUEST_AGENT_SERVICE_NAME,
     )
 }
