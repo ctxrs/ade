@@ -418,16 +418,16 @@ fn host_relevant_targets(
     all_targets: &[RuntimeTarget],
     fallback: &[RuntimeTarget],
 ) -> Vec<RuntimeTarget> {
+    if all_targets.is_empty() {
+        return fallback.to_vec();
+    }
     let mut out = Vec::<RuntimeTarget>::new();
     for target in all_targets {
         if fallback.contains(target) && !out.contains(target) {
             out.push(target.clone());
         }
     }
-    if !out.is_empty() {
-        return out;
-    }
-    fallback.to_vec()
+    out
 }
 
 fn bundle_manifest_path(bundle_dir: &Path) -> PathBuf {
