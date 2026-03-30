@@ -114,6 +114,14 @@ test("release supabase publish restore accepts both src-tauri and core target bu
   );
 });
 
+test("release supabase linux release payload upload includes the current core target bundle root", () => {
+  const text = workflowText("release-supabase.yml");
+  assert.match(
+    text,
+    /if \[\[ ! -s "\$\{appimage\}\.sig" \]\]; then[\s\S]*name:\s+Upload release payload[\s\S]*core\/apps\/desktop\/src-tauri\/target\/release\/bundle[\s\S]*core\/target\/release\/bundle[\s\S]*core\/target\/release\/ctx/s,
+  );
+});
+
 test("linux tauri release container reuses staged bundles instead of rematerializing them", () => {
   const text = fs.readFileSync(path.join(repoRoot, "scripts", "release_linux_tauri_bundle_in_container.sh"), "utf8");
   assert.match(text, /CTX_DESKTOP_SYNC_BUNDLES=0/);
@@ -126,5 +134,17 @@ test("non-linux release-stage tauri builds reuse staged bundles instead of remat
   assert.match(
     text,
     /if \[\[ "\$RELEASE_PLATFORM" == macos-\* \]\]; then[\s\S]*CTX_DESKTOP_SYNC_BUNDLES=0 CTX_BUNDLE_REMOTE_DAEMONS=0 pnpm -C core\/apps\/desktop run build -- --bundles app[\s\S]*else[\s\S]*CTX_DESKTOP_SYNC_BUNDLES=0 CTX_BUNDLE_REMOTE_DAEMONS=0 pnpm -C core\/apps\/desktop run build/s,
+  );
+});
+
+test("mac updater smoke reuses staged bundles instead of rematerializing them", () => {
+  const text = workflowText("release-supabase.yml");
+  assert.match(
+    text,
+    /name:\s+Updater desktop apply smoke \(macOS tier1\)[\s\S]*CTX_DESKTOP_SYNC_BUNDLES=0 CTX_BUNDLE_REMOTE_DAEMONS=0 CARGO_TARGET_DIR="\$\{CTX_E2E_CARGO_TARGET_DIR\}" pnpm -C core\/apps\/desktop run build -- --debug --bundles app -- --features automation/s,
+  );
+  assert.match(
+    text,
+    /name:\s+Updater desktop apply smoke \(macOS variant\)[\s\S]*CTX_DESKTOP_SYNC_BUNDLES=0 CTX_BUNDLE_REMOTE_DAEMONS=0 CARGO_TARGET_DIR="\$\{CTX_E2E_CARGO_TARGET_DIR\}" pnpm -C core\/apps\/desktop run build -- --debug --bundles app -- --features automation/s,
   );
 });
