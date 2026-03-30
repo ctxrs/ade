@@ -94,6 +94,22 @@ test("release supabase mac runtime-install smoke uses the bundled ctx-daemon pat
   );
 });
 
+test("release supabase publish restore accepts both src-tauri and core target bundle roots", () => {
+  const text = workflowText("release-supabase.yml");
+  assert.match(
+    text,
+    /name:\s+Upload release payload[\s\S]*core\/apps\/desktop\/src-tauri\/target\/release\/bundle[\s\S]*core\/target\/release\/bundle/s,
+  );
+  assert.match(
+    text,
+    /name:\s+Restore staged release payload[\s\S]*core\/apps\/desktop\/src-tauri\/target\/release\/bundle[\s\S]*apps\/desktop\/src-tauri\/target\/release\/bundle[\s\S]*core\/target\/release\/bundle[\s\S]*target\/release\/bundle/s,
+  );
+  assert.match(
+    text,
+    /name:\s+Restore staged release payload \(mac variant\)[\s\S]*core\/apps\/desktop\/src-tauri\/target\/release\/bundle[\s\S]*apps\/desktop\/src-tauri\/target\/release\/bundle[\s\S]*core\/target\/release\/bundle[\s\S]*target\/release\/bundle/s,
+  );
+});
+
 test("linux tauri release container reuses staged bundles instead of rematerializing them", () => {
   const text = fs.readFileSync(path.join(repoRoot, "scripts", "release_linux_tauri_bundle_in_container.sh"), "utf8");
   assert.match(text, /CTX_DESKTOP_SYNC_BUNDLES=0/);
