@@ -86,6 +86,14 @@ test("release supabase prep desktop release resources uses an absolute cargo tar
   assert.match(text, /CTX_DESKTOP_SYNC_BUNDLES=0 CARGO_TARGET_DIR="\$PWD\/core\/target" node core\/scripts\/desktop_sync_resources\.cjs --profile release/);
 });
 
+test("release supabase mac runtime-install smoke uses the bundled ctx-daemon path", () => {
+  const text = workflowText("release-supabase.yml");
+  assert.match(
+    text,
+    /name:\s+Pre-notary runtime-install smoke[\s\S]*bundled_daemon="\$app_path\/Contents\/MacOS\/ctx-daemon"[\s\S]*scripts\/release_runtime_install_smoke\.sh[\s\S]*--daemon-bin "\$daemon_bin"/s,
+  );
+});
+
 test("linux tauri release container reuses staged bundles instead of rematerializing them", () => {
   const text = fs.readFileSync(path.join(repoRoot, "scripts", "release_linux_tauri_bundle_in_container.sh"), "utf8");
   assert.match(text, /CTX_DESKTOP_SYNC_BUNDLES=0/);
