@@ -119,6 +119,17 @@ test("release supabase preserves AVF helper virtualization entitlements in the f
   );
 });
 
+test("release supabase validates release-stage replay sources against prereq artifacts on the same SHA", () => {
+  const text = workflowText("release-supabase.yml");
+  assert.match(text, /name:\s+resolve release-stage source run/);
+  assert.match(text, /REQUESTED_RUN_ID:\s*\$\{\{\s*needs\.resolve-build-matrix\.outputs\.release_stage_source_run_id\s*\}\}/);
+  assert.match(text, /TARGET_SHA:\s*\$\{\{\s*github\.sha\s*\}\}/);
+  assert.match(text, /const requiredArtifacts = new Set\(\[[\s\S]*"web-dist"[\s\S]*"desktop-bundles-linux-merged"[\s\S]*daemon-sidecars-\$\{platform\}/s);
+  assert.match(text, /Replay mode only supports prereq reuse from the same source commit\./);
+  assert.match(text, /Use a completed release run for the same SHA that produced prereq artifacts, or rerun Release \(Supabase Storage\) without release_stage_source_run_id\./);
+  assert.match(text, /RELEASE_STAGE_SOURCE_RUN_ID:\s*\$\{\{\s*needs\.resolve-release-stage-source\.outputs\.run_id\s*\}\}/);
+});
+
 test("release supabase publish restore accepts both src-tauri and core target bundle roots", () => {
   const text = workflowText("release-supabase.yml");
   assert.match(
