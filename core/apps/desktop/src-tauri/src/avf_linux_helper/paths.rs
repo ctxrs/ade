@@ -60,8 +60,16 @@ pub(super) fn shared_vm_log_path(data_root: &Path) -> PathBuf {
     shared_vm_logs_root(data_root).join(SHARED_VM_LOG_FILE)
 }
 
+pub(super) fn shared_vm_host_private_root(data_root: &Path) -> PathBuf {
+    data_root
+        .parent()
+        .unwrap_or(data_root)
+        .join(".ctx-avf-host-private")
+        .join(short_hash(data_root))
+}
+
 pub(super) fn shared_vm_saved_state_path(data_root: &Path) -> PathBuf {
-    shared_vm_root(data_root).join(SHARED_VM_SAVED_STATE_FILE)
+    shared_vm_host_private_root(data_root).join(SHARED_VM_SAVED_STATE_FILE)
 }
 
 pub(super) fn shared_vm_machine_identifier_path(data_root: &Path) -> PathBuf {
@@ -143,7 +151,17 @@ pub(super) fn shared_vm_guest_agent_socket_path(data_root: &Path) -> PathBuf {
 }
 
 pub(super) fn shared_vm_control_socket_root() -> PathBuf {
-    PathBuf::from("/tmp").join("ctxavf")
+    PathBuf::from("/tmp").join(shared_vm_control_socket_root_name())
+}
+
+#[cfg(unix)]
+fn shared_vm_control_socket_root_name() -> String {
+    format!("ctxavf-uid-{}", unsafe { libc::geteuid() })
+}
+
+#[cfg(not(unix))]
+fn shared_vm_control_socket_root_name() -> &'static str {
+    "ctxavf"
 }
 
 pub(super) fn short_hash(path: &Path) -> String {

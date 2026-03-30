@@ -180,6 +180,7 @@ pub(super) fn shared_vm_state(data_root: &Path) -> Result<AvfLinuxSharedVmStateR
     }
     Ok(map_state_response(
         persisted.as_ref(),
+        data_root,
         vm_root,
         logs_root,
         state_path,

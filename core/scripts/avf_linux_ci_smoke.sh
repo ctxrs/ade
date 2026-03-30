@@ -6,6 +6,7 @@ artifact_dir=""
 runtime_arch=""
 prepared_runtime_dir=""
 real_exec_mode="best-effort"
+restore_smoke_mode="required"
 
 if [[ -d "${HOME}/.cargo/bin" ]]; then
   export PATH="${HOME}/.cargo/bin:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
@@ -30,6 +31,7 @@ Options:
   --runtime-arch ARCH    Guest runtime arch: x86_64 or arm64 (default: host arch)
   --prepared-runtime DIR Reuse an already prepared AVF guest runtime instead of downloading one
   --real-exec MODE       one of: best-effort, required, skip (default: best-effort)
+  --restore-smoke MODE   one of: required, skip (default: required)
   -h, --help             Show this help
 EOF
 }
@@ -122,6 +124,10 @@ while [[ $# -gt 0 ]]; do
       real_exec_mode="${2:-}"
       shift 2
       ;;
+    --restore-smoke)
+      restore_smoke_mode="${2:-}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -138,6 +144,11 @@ artifact_dir="$(mkdir -p "$artifact_dir" && cd "$artifact_dir" && pwd)"
 case "$real_exec_mode" in
   best-effort|required|skip) ;;
   *) die "unsupported --real-exec mode: $real_exec_mode" ;;
+esac
+
+case "$restore_smoke_mode" in
+  required|skip) ;;
+  *) die "unsupported --restore-smoke mode: $restore_smoke_mode" ;;
 esac
 
 if [[ -z "$runtime_arch" ]]; then
@@ -523,6 +534,12 @@ EOF
         set -e
 
         if [[ "$pty_status" -eq 0 ]]; then
+          if [[ "$restore_smoke_mode" == "skip" ]]; then
+            real_exec_status="passed"
+            real_exec_reason="workspace VM booted and both guest-exec smoke probes succeeded"
+            restore_status="skipped"
+            restore_reason="workspace VM save/restore smoke disabled by --restore-smoke skip"
+          else
           set +e
           "$helper_bin" stop-workspace-vm "$data_root" >"$stop1_json"
           stop1_status=$?
@@ -612,6 +629,7 @@ EOF
           else
             restore_reason="first workspace-vm stop failed with status ${stop1_status}"
             real_exec_reason="workspace VM stop/save failed after the first guest exec"
+          fi
           fi
         else
           real_exec_reason="PTY guest-exec failed with status ${pty_status}"

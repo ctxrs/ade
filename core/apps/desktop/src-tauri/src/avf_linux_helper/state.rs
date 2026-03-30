@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) fn map_state_response(
     persisted: Option<&PersistedSharedVmState>,
+    data_root: &Path,
     vm_root: PathBuf,
     logs_root: PathBuf,
     state_path: PathBuf,
@@ -10,7 +11,7 @@ pub(super) fn map_state_response(
     let state = persisted
         .map(|state| state.state)
         .unwrap_or(AvfLinuxSharedVmLifecycleState::Missing);
-    let saved_state_path = vm_root.join(SHARED_VM_SAVED_STATE_FILE);
+    let saved_state_path = shared_vm_saved_state_path(data_root);
     AvfLinuxSharedVmStateResponse {
         protocol_version: HELPER_PROTOCOL_VERSION,
         protocol_schema: HELPER_PROTOCOL_SCHEMA,
