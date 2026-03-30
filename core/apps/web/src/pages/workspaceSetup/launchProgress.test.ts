@@ -127,7 +127,22 @@ describe("launchProgress", () => {
     expect(formatLaunchRemaining(remainingMs)).toBe("4:00 remaining");
   });
 
-  it("does not locally count down non-download eta from a stale snapshot", () => {
+  it("keeps a fixed non-download eta while the snapshot is still fresh", () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      current_phase: "machine_start_or_init" as const,
+      current_step_label: "waiting for local sandbox runtime readiness",
+      active_download: null,
+      eta_ms: 18000,
+    };
+    const remainingMs = launchEtaRemainingMs(
+      snapshot,
+      Date.parse("2026-03-10T00:00:09.000Z"),
+    );
+    expect(formatLaunchRemaining(remainingMs)).toBe("18s remaining");
+  });
+
+  it("shows estimating when a non-download eta snapshot has gone stale", () => {
     const snapshot = {
       ...baseSnapshot(),
       current_phase: "machine_start_or_init" as const,
@@ -139,7 +154,7 @@ describe("launchProgress", () => {
       snapshot,
       Date.parse("2026-03-10T00:00:19.000Z"),
     );
-    expect(formatLaunchRemaining(remainingMs)).toBe("18s remaining");
+    expect(formatLaunchRemaining(remainingMs)).toBe("Estimating remaining…");
   });
 
   it("shows estimating when a running non-download snapshot has no remaining eta", () => {

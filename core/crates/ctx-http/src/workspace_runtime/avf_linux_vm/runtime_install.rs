@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+use std::sync::Arc;
 
 impl AvfLinuxGuestRuntime {
     pub(super) fn from_source(
@@ -309,9 +311,42 @@ pub(crate) async fn ensure_managed_avf_linux_guest_runtime_with_override(
         return Ok(runtime);
     }
 
-    let _install_guard = managed_avf_linux_install_lock().lock().await;
+    let install_lock = managed_avf_linux_install_lock();
+    let (waited_for_existing_install, install_guard) = match install_lock.try_lock() {
+        Ok(guard) => {
+            observe_phase(
+                observer,
+                HarnessSetupPhase::ArtifactDownload,
+                "preparing managed AVF Linux guest runtime artifacts",
+            );
+            (false, guard)
+        }
+        Err(_) => {
+            observe_phase(
+                observer,
+                HarnessSetupPhase::ArtifactDownload,
+                "waiting for managed AVF Linux guest runtime preparation",
+            );
+            observe_log(
+                observer,
+                HarnessSetupPhase::ArtifactDownload,
+                HarnessSetupLogLevel::Info,
+                "waiting for another launch to finish preparing the managed AVF Linux guest runtime",
+            );
+            (true, install_lock.lock().await)
+        }
+    };
+    let _install_guard = install_guard;
     let runtime = AvfLinuxGuestRuntime::from_source(data_root, &source)?;
     if avf_linux_runtime_is_ready(&runtime) {
+        if waited_for_existing_install {
+            observe_log(
+                observer,
+                HarnessSetupPhase::ArtifactDownload,
+                HarnessSetupLogLevel::Info,
+                "managed AVF Linux guest runtime became ready while waiting for shared preparation",
+            );
+        }
         return Ok(runtime);
     }
 
@@ -628,6 +663,30 @@ fn write_staged_runtime(runtime_root: &Path, version: &str) {
 }
 
 #[cfg(test)]
+#[derive(Default)]
+struct RecordingObserver {
+    phases: StdMutex<Vec<(HarnessSetupPhase, String)>>,
+    logs: StdMutex<Vec<(HarnessSetupPhase, HarnessSetupLogLevel, String)>>,
+}
+
+#[cfg(test)]
+impl HarnessSetupObserver for RecordingObserver {
+    fn on_phase(&self, phase: HarnessSetupPhase, message: &str) {
+        self.phases
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push((phase, message.to_string()));
+    }
+
+    fn on_log(&self, phase: HarnessSetupPhase, level: HarnessSetupLogLevel, message: &str) {
+        self.logs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push((phase, level, message.to_string()));
+    }
+}
+
+#[cfg(test)]
 #[tokio::test]
 async fn ensure_managed_avf_linux_guest_runtime_prefers_explicit_staged_dir() {
     let _serial = crate::test_support::sandbox_cli_env_test_lock()
@@ -718,6 +777,71 @@ async fn explicit_staged_avf_linux_guest_runtime_dir_must_be_ready() {
             .contains("explicit staged AVF Linux guest runtime dir is incomplete or not ready"),
         "unexpected error: {err:#}"
     );
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn ensure_managed_avf_linux_guest_runtime_reports_artifact_wait_before_shared_install_lock() {
+    let _serial = crate::test_support::sandbox_cli_env_test_lock()
+        .lock()
+        .await;
+    let _install_guard = managed_avf_linux_install_lock().lock().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let observer = Arc::new(RecordingObserver::default());
+    let source = bundled_assets::ManagedRuntimeSource {
+        uri: "https://example.test/runtimes/avf-linux-guest/rootfs.raw.zst".to_string(),
+        sha256: "a".repeat(64),
+        version: "ubuntu-noble-arm64-test".to_string(),
+        bin: "rootfs.raw".to_string(),
+        helpers: HashMap::new(),
+    };
+
+    let task = tokio::spawn({
+        let data_root = temp.path().to_path_buf();
+        let observer = observer.clone();
+        async move {
+            let _ = ensure_managed_avf_linux_guest_runtime_with_override(
+                &data_root,
+                Some(&source),
+                Some(&*observer),
+                None,
+            )
+            .await;
+        }
+    });
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            let saw_phase = observer
+                .phases
+                .lock()
+                .unwrap_or_else(|poisoned: std::sync::PoisonError<_>| poisoned.into_inner())
+                .iter()
+                .any(|(phase, message)| {
+                    *phase == HarnessSetupPhase::ArtifactDownload
+                        && message == "waiting for managed AVF Linux guest runtime preparation"
+                });
+            let saw_log = observer
+                .logs
+                .lock()
+                .unwrap_or_else(|poisoned: std::sync::PoisonError<_>| poisoned.into_inner())
+                .iter()
+                .any(|(phase, level, message): &(HarnessSetupPhase, HarnessSetupLogLevel, String)| {
+                    *phase == HarnessSetupPhase::ArtifactDownload
+                        && *level == HarnessSetupLogLevel::Info
+                        && message.contains("waiting for another launch")
+                });
+            if saw_phase && saw_log {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("observer should report artifact wait before acquiring shared install lock");
+
+    task.abort();
+    let _ = task.await;
 }
 
 #[cfg(test)]

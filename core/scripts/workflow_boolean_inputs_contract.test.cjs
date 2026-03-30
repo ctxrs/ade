@@ -98,6 +98,27 @@ test("release supabase mac runtime-install smoke uses the bundled ctx-daemon pat
   );
 });
 
+test("release supabase preserves AVF helper virtualization entitlements in the final shipped mac app", () => {
+  const text = workflowText("release-supabase.yml");
+  assert.match(
+    text,
+    /helper_entitlements="core\/apps\/desktop\/src-tauri\/ctx-avf-linux-helper\.entitlements"/,
+  );
+  assert.match(text, /assert_virtualization_entitlement\(\) \{/);
+  assert.match(
+    text,
+    /codesign_with_retry --force --sign "\$identity" --options runtime --entitlements "\$helper_entitlements" --timestamp "\$helper_bin"/,
+  );
+  assert.match(
+    text,
+    /codesign_with_retry --force --sign "\$identity" --options runtime --timestamp "\$app_path"/,
+  );
+  assert.doesNotMatch(
+    text,
+    /codesign_with_retry --force --deep --sign "\$identity" --options runtime --timestamp "\$app_path"/,
+  );
+});
+
 test("release supabase publish restore accepts both src-tauri and core target bundle roots", () => {
   const text = workflowText("release-supabase.yml");
   assert.match(

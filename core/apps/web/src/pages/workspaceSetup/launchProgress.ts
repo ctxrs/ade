@@ -6,6 +6,7 @@ import type {
 } from "../../api/client";
 
 const LAUNCH_LOG_MAX = 400;
+const NON_DOWNLOAD_ETA_STALE_AFTER_MS = 10_000;
 
 export type WorkspaceSetupLaunchLogLine = ExecutionLaunchLogLine & {
   phaseLabel: string;
@@ -128,10 +129,16 @@ export const launchEtaRemainingMs = (
   if (snapshot.state === "ready") return 0;
   if (snapshot.state === "error") return null;
   if (snapshot.eta_ms === null || snapshot.eta_ms === undefined) return null;
+  const updatedAt = parseUtcMs(snapshot.updated_at);
   if (!snapshot.active_download) {
+    if (
+      updatedAt !== null
+      && nowMs - updatedAt > NON_DOWNLOAD_ETA_STALE_AFTER_MS
+    ) {
+      return null;
+    }
     return snapshot.eta_ms > 0 ? snapshot.eta_ms : null;
   }
-  const updatedAt = parseUtcMs(snapshot.updated_at);
   if (updatedAt === null) return Math.max(0, snapshot.eta_ms);
   return Math.max(0, snapshot.eta_ms - Math.max(0, nowMs - updatedAt));
 };
