@@ -141,10 +141,10 @@ test("mac updater smoke reuses staged bundles instead of rematerializing them", 
   const text = workflowText("release-supabase.yml");
   assert.match(
     text,
-    /name:\s+Updater desktop apply smoke \(macOS tier1\)[\s\S]*CTX_DESKTOP_SYNC_BUNDLES=0 CTX_BUNDLE_REMOTE_DAEMONS=0 CARGO_TARGET_DIR="\$\{CTX_E2E_CARGO_TARGET_DIR\}" pnpm -C core\/apps\/desktop run build -- --debug --bundles app -- --features automation/s,
+    /name:\s+Updater desktop apply smoke \(macOS tier1\)[\s\S]*CTX_DESKTOP_APP_PATH:\s*\$\{\{\s*runner\.temp\s*\}\}\/ctx-e2e-cargo\/debug\/bundle\/macos[\s\S]*CTX_DESKTOP_SYNC_BUNDLES=0 CTX_BUNDLE_REMOTE_DAEMONS=0 CARGO_TARGET_DIR="\$\{CTX_E2E_CARGO_TARGET_DIR\}" pnpm -C core\/apps\/desktop run build -- --debug --bundles app -- --features automation/s,
   );
   assert.match(
     text,
-    /name:\s+Updater desktop apply smoke \(macOS variant\)[\s\S]*CTX_DESKTOP_SYNC_BUNDLES=0 CTX_BUNDLE_REMOTE_DAEMONS=0 CARGO_TARGET_DIR="\$\{CTX_E2E_CARGO_TARGET_DIR\}" pnpm -C core\/apps\/desktop run build -- --debug --bundles app -- --features automation/s,
+    /name:\s+Updater desktop apply smoke \(macOS variant\)[\s\S]*CTX_DESKTOP_APP_PATH:\s*\$\{\{\s*runner\.temp\s*\}\}\/ctx-e2e-cargo\/debug\/bundle\/macos[\s\S]*CTX_DESKTOP_SYNC_BUNDLES=0 CTX_BUNDLE_REMOTE_DAEMONS=0 CARGO_TARGET_DIR="\$\{CTX_E2E_CARGO_TARGET_DIR\}" pnpm -C core\/apps\/desktop run build -- --debug --bundles app -- --features automation/s,
   );
 });
