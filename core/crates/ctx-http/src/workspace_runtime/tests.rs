@@ -586,7 +586,7 @@ map_non_shell_args() {{
 should_short_circuit_network_policy_script() {{
   script="$1"
   case "$script" in
-    *ctx-egress-proxy*|*iptables*|*pid_file=*)
+    *ctx-egress-proxy*|*iptables*|*pid_file=*|*CTX_CONTAINER_TERMINAL_USER*|*CTX_CONTAINER_TERMINAL_HOME*|*sudoers.d/*)
       return 0
       ;;
   esac
@@ -781,6 +781,7 @@ case "$subcmd" in
       case "$1" in
         -d) shift ;;
         --name) container_name="$2"; shift 2 ;;
+        --hostname) shift 2 ;;
         --userns=*) shift ;;
         --user) shift 2 ;;
         --network) shift 2 ;;
@@ -2531,6 +2532,7 @@ async fn maybe_reclaim_sandbox_machine_skips_running_container_terminals() {
                 cli_env: HashMap::new(),
                 container_name: "ctx-harness-terminal".to_string(),
                 workdir: "/workspace".to_string(),
+                user: None,
             }),
             shared_vm_container: None,
         })
@@ -2919,6 +2921,18 @@ async fn shared_vm_container_launch_omits_slirp_network_flag() {
     assert!(
         run_line.contains("--add-host host.containers.internal:host-gateway"),
         "shared VM run should keep host gateway mapping: {run_line}"
+    );
+    assert!(
+        run_line.contains("--hostname ws-container"),
+        "shared VM run should use the human-readable workspace hostname: {run_line}"
+    );
+    assert!(
+        log.lines().any(|line| {
+            line.contains("exec --user 0")
+                && line.contains("CTX_CONTAINER_TERMINAL_USER=ctx-user")
+                && line.contains("ctx-harness-")
+        }),
+        "shared VM prepare should synchronize the terminal identity inside the container: {log}"
     );
 
     for server in servers {

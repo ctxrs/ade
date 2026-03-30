@@ -93,6 +93,7 @@ pub struct NativeContainerTerminalSpec {
     pub cli_env: HashMap<String, String>,
     pub container_name: String,
     pub workdir: String,
+    pub user: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +102,7 @@ pub struct SharedVmContainerTerminalSpec {
     pub data_root: PathBuf,
     pub workspace_id: WorkspaceId,
     pub workdir: String,
+    pub user: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -378,6 +380,10 @@ impl TerminalManager {
             cmd.arg(native_container.workdir.clone());
             cmd.arg("--env");
             cmd.arg("TERM=xterm-256color");
+            if let Some(user) = native_container.user.as_ref() {
+                cmd.arg("--user");
+                cmd.arg(user.clone());
+            }
             for (key, value) in &req.env {
                 cmd.arg("--env");
                 cmd.arg(format!("{key}={value}"));
@@ -415,6 +421,10 @@ impl TerminalManager {
             cmd.arg(shared_vm_container.workdir.clone());
             cmd.arg("--env");
             cmd.arg("TERM=xterm-256color");
+            if let Some(user) = shared_vm_container.user.as_ref() {
+                cmd.arg("--user");
+                cmd.arg(user.clone());
+            }
             for (key, value) in &req.env {
                 cmd.arg("--env");
                 cmd.arg(format!("{key}={value}"));

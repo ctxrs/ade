@@ -94,11 +94,12 @@ pub(crate) use self::container::AVF_GUEST_HOST_GATEWAY;
 #[cfg(test)]
 use self::container::{bind_mount, should_mount_bundle_dir_in_container};
 use self::container::{
-    build_mounts, container_data_root, container_user, daemon_port_from_url, proxy_runtime_path,
-    proxy_runtime_root, rewrite_daemon_url_for_avf_guest, rewrite_daemon_url_for_container,
-    should_use_keep_id_userns, verify_disk_isolated_container_mounts,
+    build_mounts, container_data_root, container_terminal_identity_missing_sudo, container_user,
+    daemon_port_from_url, proxy_runtime_path, proxy_runtime_root, rewrite_daemon_url_for_avf_guest,
+    rewrite_daemon_url_for_container, should_use_keep_id_userns, sync_container_terminal_identity,
+    verify_disk_isolated_container_mounts, workspace_container_hostname,
 };
-use self::image::ensure_container_image_available;
+pub(crate) use self::container::{CONTAINER_TERMINAL_HOME, CONTAINER_TERMINAL_USER};
 pub(crate) use self::image::resolve_container_image;
 pub use self::image::{
     bundled_default_container_image_tar, container_image_present, container_image_status,
@@ -106,6 +107,7 @@ pub use self::image::{
     prefetch_container_image_with_observer, prefetch_container_startup_artifacts_with_observer,
     ContainerImageStatus,
 };
+use self::image::{ensure_container_image_available, force_reload_default_container_image};
 #[cfg(test)]
 use self::image::{
     ensure_managed_default_container_image_tar_with_source, managed_default_image_install_lock,

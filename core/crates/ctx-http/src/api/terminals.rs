@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 
@@ -58,6 +59,23 @@ fn default_shell() -> String {
     {
         std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
     }
+}
+
+fn container_terminal_env() -> HashMap<String, String> {
+    HashMap::from([
+        (
+            "HOME".to_string(),
+            crate::workspace_runtime::CONTAINER_TERMINAL_HOME.to_string(),
+        ),
+        (
+            "USER".to_string(),
+            crate::workspace_runtime::CONTAINER_TERMINAL_USER.to_string(),
+        ),
+        (
+            "LOGNAME".to_string(),
+            crate::workspace_runtime::CONTAINER_TERMINAL_USER.to_string(),
+        ),
+    ])
 }
 
 async fn infer_terminal_worktree(
@@ -540,6 +558,7 @@ pub(super) async fn create_workspace_terminal(
                         cli_env: inv.env,
                         container_name: harness_runtime::workspace_container_name(workspace_id),
                         workdir: cwd.to_string_lossy().to_string(),
+                        user: Some(crate::workspace_runtime::CONTAINER_TERMINAL_USER.to_string()),
                     }),
                     None,
                 )
@@ -609,6 +628,7 @@ pub(super) async fn create_workspace_terminal(
                         data_root: state.core.data_root.clone(),
                         workspace_id,
                         workdir: cwd.to_string_lossy().to_string(),
+                        user: Some(crate::workspace_runtime::CONTAINER_TERMINAL_USER.to_string()),
                     }),
                 )
             }
@@ -628,7 +648,11 @@ pub(super) async fn create_workspace_terminal(
             shell,
             cols: None,
             rows: None,
-            env: std::collections::HashMap::new(),
+            env: if container_mode {
+                container_terminal_env()
+            } else {
+                HashMap::new()
+            },
             native_container,
             shared_vm_container,
         })
