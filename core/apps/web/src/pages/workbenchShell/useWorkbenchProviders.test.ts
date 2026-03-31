@@ -194,6 +194,27 @@ beforeEach(() => {
   });
 });
 
+describe("useWorkbenchProviders bootstrap state", () => {
+  it("reports ready after the initial provider bootstrap resolves", async () => {
+    vi.mocked(getProvidersBootstrap).mockResolvedValue(makeBootstrap({ codex: baseOptions("codex") }) as never);
+
+    let hookValue: HookValue | null = null;
+    render(
+      createElement(WorkbenchProvidersHarness, {
+        workspaceId: "ws-test",
+        onChange: (value) => {
+          hookValue = value;
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(hookValue?.bootstrapState).toBe("ready");
+      expect(hookValue?.bootstrapError).toBeNull();
+    });
+  });
+});
+
 describe("shouldHydrateProviderModels", () => {
   it("requests hydration for claude subscription auth when models are missing", () => {
     expect(shouldHydrateProviderModels("claude-crp", baseOptions("claude-crp"))).toBe(true);

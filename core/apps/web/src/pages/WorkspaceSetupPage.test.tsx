@@ -57,6 +57,34 @@ const {
   trackWorkspaceLaunchCompletedMock: vi.fn(),
 }));
 const getInstallMock = vi.hoisted(() => vi.fn());
+const navigateMock = vi.hoisted(() => vi.fn());
+const waitForWorkspaceBootstrapBeforeNavigationMock = vi.hoisted(() => vi.fn(async () => undefined));
+
+const createDeferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+  };
+});
+
+vi.mock("./workspaceBootstrapGate", async () => {
+  const actual = await vi.importActual<typeof import("./workspaceBootstrapGate")>("./workspaceBootstrapGate");
+  return {
+    ...actual,
+    waitForWorkspaceBootstrapBeforeNavigation: waitForWorkspaceBootstrapBeforeNavigationMock,
+  };
+});
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
@@ -282,6 +310,9 @@ describe("WorkspaceSetupPage", () => {
     trackWizardCompletedMock.mockReset();
     trackWizardAbandonedMock.mockReset();
     trackWorkspaceLaunchCompletedMock.mockReset();
+    navigateMock.mockReset();
+    waitForWorkspaceBootstrapBeforeNavigationMock.mockReset();
+    waitForWorkspaceBootstrapBeforeNavigationMock.mockResolvedValue(undefined);
     vi.mocked(buildExecutionLaunchWsUrl).mockReturnValue("ws://127.0.0.1:1/launch");
     vi.mocked(isDesktopApp).mockReturnValue(false);
     vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({ candidates: [] });
@@ -618,6 +649,82 @@ describe("WorkspaceSetupPage", () => {
     trace.disconnect();
     expect(trace.seen[0]).toBe("location");
     expect(trace.seen.slice(1)).not.toContain("location");
+  });
+
+  it("waits for workspace bootstrap before navigating into the workbench", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
+    vi.mocked(listProviders).mockResolvedValue([
+      providerStatusFixture({
+        provider_id: "codex",
+        installed: true,
+        health: "ok",
+        details: { install_supported: "true" },
+        usability: {
+          usable: true,
+          status: "ready",
+          blocking_provider_ids: [],
+          recommended_action: "none",
+        },
+      }),
+    ] as never);
+    const bootstrapDeferred = createDeferred<undefined>();
+    waitForWorkspaceBootstrapBeforeNavigationMock.mockReturnValueOnce(bootstrapDeferred.promise);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-container-sandbox"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-source-new"));
+    fireEvent.change(screen.getByTestId("wizard-workspace-name"), {
+      target: { value: "sandbox-bootstrap-gate" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("network");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-network-full"));
+
+    await waitFor(() => {
+      expect(["setup", "merge-queue"]).toContain(wizardStepKey());
+    });
+    if (wizardStepKey() === "setup") {
+      fireEvent.click(screen.getByTestId("wizard-next"));
+      await waitFor(() => {
+        expect(wizardStepKey()).toBe("merge-queue");
+      });
+    }
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("confirm");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-create"));
+
+    await waitFor(() => {
+      expect(createWorkspace).toHaveBeenCalled();
+      expect(startWorkspaceSetupLaunchHandoff).toHaveBeenCalled();
+      expect(waitForWorkspaceBootstrapBeforeNavigationMock).toHaveBeenCalledWith("ws_test");
+    });
+    expect(navigateMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      bootstrapDeferred.resolve(undefined);
+      await bootstrapDeferred.promise;
+    });
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/workspaces/ws_test", { replace: true });
+    });
   });
 
   it("keeps cancel enabled for active harness installs after scan completes", async () => {

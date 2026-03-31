@@ -50,6 +50,7 @@ import {
   startWorkspaceSetupLaunchHandoff,
   waitForLaunchHandoffTerminal,
 } from "./launchHandoff";
+import { waitForWorkspaceBootstrapBeforeNavigation } from "../workspaceBootstrapGate";
 import type {
   RoutePlanInsertionStep,
   WorkspaceSetupEffectiveTarget,
@@ -604,6 +605,7 @@ export function useWorkspaceSetupCreate({
       } catch {
         // best-effort only; do not block workspace creation if recents persistence fails
       }
+      await waitForWorkspaceBootstrapBeforeNavigation(workspaceId);
       if (pendingRouteLaunch) {
         trackWorkspaceLaunchCompleted({
           ...pendingRouteLaunch,

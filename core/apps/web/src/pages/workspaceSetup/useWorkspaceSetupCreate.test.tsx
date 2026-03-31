@@ -38,6 +38,10 @@ const launcherRecentsMocks = vi.hoisted(() => ({
   upsertLauncherRecent: vi.fn(),
 }));
 
+const workspaceBootstrapGateMocks = vi.hoisted(() => ({
+  waitForWorkspaceBootstrapBeforeNavigation: vi.fn(async () => undefined),
+}));
+
 vi.mock("../../api/client", () => ({
   createWorkspace: apiMocks.createWorkspace,
   deleteWorkspace: apiMocks.deleteWorkspace,
@@ -71,6 +75,11 @@ vi.mock("../../utils/analytics", () => ({
 
 vi.mock("../../state/launcherRecentsStore", () => ({
   upsertLauncherRecent: launcherRecentsMocks.upsertLauncherRecent,
+}));
+
+vi.mock("../workspaceBootstrapGate", () => ({
+  waitForWorkspaceBootstrapBeforeNavigation:
+    workspaceBootstrapGateMocks.waitForWorkspaceBootstrapBeforeNavigation,
 }));
 
 const remoteEffectiveTarget = deriveWorkspaceSetupEffectiveTarget("remote", {
@@ -189,6 +198,8 @@ describe("useWorkspaceSetupCreate", () => {
     launchHandoffMocks.startWorkspaceSetupLaunchHandoff.mockResolvedValue(baseLaunchSnapshot);
     launchHandoffMocks.waitForLaunchHandoffTerminal.mockResolvedValue(undefined);
     launcherRecentsMocks.upsertLauncherRecent.mockResolvedValue(undefined);
+    workspaceBootstrapGateMocks.waitForWorkspaceBootstrapBeforeNavigation.mockReset();
+    workspaceBootstrapGateMocks.waitForWorkspaceBootstrapBeforeNavigation.mockResolvedValue(undefined);
   });
 
   it("continues remote create when onboarding refresh discovers optional harness downloads", async () => {
@@ -224,6 +235,9 @@ describe("useWorkspaceSetupCreate", () => {
       start_remote: true,
       remote_data_dir: "/tmp/ctx-remote",
     });
+    expect(
+      workspaceBootstrapGateMocks.waitForWorkspaceBootstrapBeforeNavigation,
+    ).toHaveBeenCalledWith("ws-1");
     expect(navigate).toHaveBeenCalledWith("/workspaces/ws-1", { replace: true });
     expect(wizardCompletedRef.current).toBe(true);
     expect(trackWizardCompleted).toHaveBeenCalledWith({

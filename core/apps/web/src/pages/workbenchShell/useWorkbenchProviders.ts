@@ -112,10 +112,13 @@ export function useWorkbenchProviders({
     defaultProviderId,
     providerInstallsById,
     providerOptions,
+    bootstrapState: onboarding.bootstrapState,
+    bootstrapError: onboarding.bootstrapError,
     installAllBusy,
     installProviderFromMenu,
     cancelProviderInstallFromMenu,
     installAllProvidersFromMenu,
     ensureProviderAuthSummary,
+    refreshBootstrap: onboarding.refreshBootstrap,
   };
 }

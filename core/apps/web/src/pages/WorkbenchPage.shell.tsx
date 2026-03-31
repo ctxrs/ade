@@ -46,6 +46,7 @@ import { useWorkbenchE2EBridge } from "./workbenchShell/useWorkbenchE2EBridge";
 import { useWorkbenchComposerHarnessAuth } from "./workbenchShell/useWorkbenchComposerHarnessAuth";
 import type { OptimisticFocus } from "./WorkbenchPage.types";
 import { appendSegment } from "./WorkbenchPage.utils";
+import { resolveWorkspaceBootstrapGateState } from "./workspaceBootstrapGate";
 
 export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate();
@@ -164,11 +165,14 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     defaultProviderId,
     providerInstallsById,
     providerOptions,
+    bootstrapState: providerBootstrapState,
+    bootstrapError: providerBootstrapError,
     installAllBusy,
     installProviderFromMenu,
     cancelProviderInstallFromMenu,
     installAllProvidersFromMenu,
     ensureProviderAuthSummary,
+    refreshBootstrap,
   } = useWorkbenchProviders({
     workspaceId,
     setDraftHarness,
@@ -749,7 +753,12 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     [sidebarCollapsed, sidebarWidth],
   );
 
-  if (!workbenchSnap.hydrated) {
+  const workspaceBootstrapGateState = resolveWorkspaceBootstrapGateState({
+    workbenchHydrated: workbenchSnap.hydrated,
+    providerBootstrapState,
+  });
+
+  if (workspaceBootstrapGateState === "loading") {
     return (
       <div
         className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${activeTaskController.diffResizing ? "wb-root-diff-resizing" : ""} ${activeTaskController.terminalResizing ? "wb-root-terminal-resizing" : ""} ${!useHtmlTopbar ? "wb-root-native-titlebar" : ""}`}
@@ -764,7 +773,43 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         <div className="wb-main">
           <div className="wb-center">
             <div className="wb-muted" style={{ padding: 16 }}>
-              Loading workspace layout…
+              Loading workspace...
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (workspaceBootstrapGateState === "error") {
+    return (
+      <div
+        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${activeTaskController.diffResizing ? "wb-root-diff-resizing" : ""} ${activeTaskController.terminalResizing ? "wb-root-terminal-resizing" : ""} ${!useHtmlTopbar ? "wb-root-native-titlebar" : ""}`}
+        style={rootStyle}
+      >
+        <WorktreeBootstrapSnackbar />
+        {archiveCleanupSnackbar}
+        {transcriptNoticeSnackbar}
+        {desktopStorageNoticeSnackbar}
+        {topbar}
+        <div className="wb-main">
+          <div className="wb-center">
+            <div style={{ maxWidth: 480, padding: 16 }}>
+              <div>Failed to load workspace.</div>
+              {providerBootstrapError ? (
+                <div className="wb-muted" style={{ paddingTop: 8 }}>
+                  {providerBootstrapError}
+                </div>
+              ) : null}
+              <button
+                style={{ marginTop: 12 }}
+                onClick={() => {
+                  void refreshBootstrap();
+                }}
+                type="button"
+              >
+                Retry workspace load
+              </button>
             </div>
           </div>
         </div>

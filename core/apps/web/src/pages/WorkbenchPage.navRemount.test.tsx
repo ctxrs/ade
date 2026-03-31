@@ -13,6 +13,7 @@ const taskId2 = "task-2";
 const sessionId = "session-1";
 const sessionId2 = "session-2";
 const worktreeId = "worktree-1";
+type WorkbenchBootstrapState = "idle" | "loading" | "ready" | "error";
 
 const baseIso = "2024-01-01T00:00:00.000Z";
 
@@ -121,6 +122,9 @@ let navToken = 0;
 let activeTab: WorkbenchTab | null = null;
 let activeTaskId = taskId;
 let activeSessionId: string | null = sessionId;
+let workbenchHydrated = true;
+let workbenchProviderBootstrapState: WorkbenchBootstrapState = "ready";
+let workbenchProviderBootstrapError: string | null = null;
 const focusNewTaskSpy = vi.fn();
 const focusTaskSpy = vi.fn(
   (nextTaskId: string, nextSessionId?: string | null, opts?: { source?: string }) => {
@@ -173,6 +177,9 @@ const { useOpenSessionMock } = vi.hoisted(() => ({
 const { sessionViewMountSpy, sessionViewUnmountSpy } = vi.hoisted(() => ({
   sessionViewMountSpy: vi.fn(),
   sessionViewUnmountSpy: vi.fn(),
+}));
+const { refreshWorkbenchBootstrapSpy } = vi.hoisted(() => ({
+  refreshWorkbenchBootstrapSpy: vi.fn(async () => undefined),
 }));
 const getInstallMock = vi.hoisted(() =>
   vi.fn(async (_installId?: string): Promise<{ install_id?: string; last_event?: unknown }> => ({})),
@@ -327,7 +334,7 @@ vi.mock("../workbench/store", () => ({
   useWorkbenchShellSnapshot: () => ({
     workspaceId,
     windowId: "window-1",
-    hydrated: true,
+    hydrated: workbenchHydrated,
     warnings: [],
     window: {
       v: 1,
@@ -339,6 +346,23 @@ vi.mock("../workbench/store", () => ({
   useActiveWorkbenchIds: () => ({ taskId: activeTaskId, sessionId: activeSessionId }),
   useNewTaskDraft: () => ({ value: { text: "", modeId: "default" }, setValue: vi.fn() }),
   useWorkbenchDraft: () => ({ value: { text: "", modeId: "default" }, updatedAtMs: 0, setValue: vi.fn() }),
+}));
+
+vi.mock("./workbenchShell/useWorkbenchProviders", () => ({
+  useWorkbenchProviders: () => ({
+    providersById: {},
+    defaultProviderId: "codex",
+    providerInstallsById: {},
+    providerOptions: {},
+    bootstrapState: workbenchProviderBootstrapState,
+    bootstrapError: workbenchProviderBootstrapError,
+    installAllBusy: false,
+    installProviderFromMenu: vi.fn(),
+    cancelProviderInstallFromMenu: vi.fn(),
+    installAllProvidersFromMenu: vi.fn(),
+    ensureProviderAuthSummary: vi.fn(async () => undefined),
+    refreshBootstrap: refreshWorkbenchBootstrapSpy,
+  }),
 }));
 
 vi.mock("../components/WorkbenchComposer", () => ({
@@ -401,6 +425,9 @@ beforeEach(() => {
   activeTab = { id: `tab-${taskId}`, kind: "task", ref: { taskId, sessionId } };
   activeTaskId = taskId;
   activeSessionId = sessionId;
+  workbenchHydrated = true;
+  workbenchProviderBootstrapState = "ready";
+  workbenchProviderBootstrapError = null;
   sessionSnap = buildSessionSnap();
   workspaceSnapshotSnap = buildWorkspaceSnapshotSnap();
   trackWorkbenchPanelToggledMock.mockReset();
@@ -433,6 +460,7 @@ beforeEach(() => {
   workspaceSnapshotStoreMock.getSessionHeadsSnapshot.mockReturnValue({});
   workspaceSnapshotStoreMock.setForegroundTaskId.mockReset();
   workspaceSnapshotStoreMock.setSubscribedSessions.mockReset();
+  refreshWorkbenchBootstrapSpy.mockReset();
   sessionViewMountSpy.mockReset();
   sessionViewUnmountSpy.mockReset();
 });
@@ -461,6 +489,37 @@ function getTaskRow(title: string) {
   if (!row) throw new Error(`Missing task row for ${title}`);
   return row;
 }
+
+describe("WorkbenchPage bootstrap gate", () => {
+  it("shows Loading workspace... while provider bootstrap is still loading", async () => {
+    workbenchProviderBootstrapState = "loading";
+
+    renderWorkbenchPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Loading workspace...")).toBeInTheDocument();
+      expect(screen.queryByTestId("session-view-mock")).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows an explicit bootstrap error and retries on request", async () => {
+    workbenchProviderBootstrapState = "error";
+    workbenchProviderBootstrapError = "bootstrap failed";
+
+    renderWorkbenchPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Failed to load workspace.")).toBeInTheDocument();
+      expect(screen.getByText("bootstrap failed")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry workspace load" }));
+
+    await waitFor(() => {
+      expect(refreshWorkbenchBootstrapSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+});
 
 describe("WorkbenchPage task rename selection", () => {
   it("renders only the active session slot for the selected task", async () => {

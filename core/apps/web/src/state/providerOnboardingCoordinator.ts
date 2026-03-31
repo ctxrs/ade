@@ -16,6 +16,7 @@ import { computeInstallPct, parseInstallTarget } from "../utils/providerInstallU
 import { isReadyVisibleHarnessProviderStatus } from "../utils/providerInventory";
 import {
   EMPTY_PROVIDERS_BOOTSTRAP,
+  hasCachedProvidersBootstrapForScope,
   loadHostProvidersBootstrap,
   loadProvidersBootstrap,
   refreshHostProvidersBootstrap,
@@ -62,6 +63,7 @@ import {
 export { resolveProviderOptionsUpdate } from "./providersBootstrapStore";
 
 export type ProviderAuthSummaryTrigger = "passive" | "explicit";
+export type ProviderOnboardingBootstrapState = "idle" | "loading" | "ready" | "error";
 
 export type ProviderOnboardingInstallState = {
   installId: string;
@@ -74,6 +76,8 @@ export type ProviderOnboardingInstallState = {
 
 export type ProviderOnboardingSnapshot = {
   bootstrap: ProvidersBootstrapResponse;
+  bootstrapState: ProviderOnboardingBootstrapState;
+  bootstrapError: string | null;
   providersById: Record<string, ProviderStatus>;
   installsById: Record<string, ProviderOnboardingInstallState>;
 };
@@ -83,6 +87,8 @@ const EMPTY_INSTALLS_BY_ID: Record<string, ProviderOnboardingInstallState> = {};
 
 const EMPTY_PROVIDER_ONBOARDING_SNAPSHOT: ProviderOnboardingSnapshot = Object.freeze({
   bootstrap: EMPTY_PROVIDERS_BOOTSTRAP,
+  bootstrapState: "idle",
+  bootstrapError: null,
   providersById: EMPTY_PROVIDERS_BY_ID,
   installsById: EMPTY_INSTALLS_BY_ID,
 });
@@ -111,6 +117,9 @@ const providerOnboardingByScope = new Map<string, ProviderOnboardingEntry>();
 const foregroundRefreshScopeKeys = new Set<string>();
 
 let foregroundRefreshListenersInstalled = false;
+
+const toErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
 
 const sameProviderInstallState = (
   lhs: ProviderOnboardingInstallState | undefined,
@@ -296,6 +305,7 @@ const workspaceOwnerScopeFromOwner = (
 
 const buildSnapshot = (ownerScope: OwnerScope): ProviderOnboardingSnapshot => {
   const bootstrap = getProvidersBootstrapSnapshotForScope(ownerScope);
+  const bootstrapState = hasCachedProvidersBootstrapForScope(ownerScope) ? "ready" : "idle";
   const providersById = toProvidersById(bootstrap.providers);
   const installsById = providerInstallsFromSnapshot(
     getProviderInstallProgressSnapshotForScope(ownerScope),
@@ -303,6 +313,8 @@ const buildSnapshot = (ownerScope: OwnerScope): ProviderOnboardingSnapshot => {
   );
   return {
     bootstrap,
+    bootstrapState,
+    bootstrapError: null,
     providersById,
     installsById,
   };
@@ -345,6 +357,10 @@ const updateEntrySnapshot = (
   if (entry.disposed) return;
 
   const nextBootstrap = getProvidersBootstrapSnapshotForScope(entry.ownerScope);
+  const nextBootstrapState = hasCachedProvidersBootstrapForScope(entry.ownerScope)
+    ? "ready"
+    : entry.snapshot.bootstrapState;
+  const nextBootstrapError = nextBootstrapState === "ready" ? null : entry.snapshot.bootstrapError;
   const nextProvidersById = toProvidersById(nextBootstrap.providers);
   const nextInstallsById = providerInstallsFromSnapshot(
     installProgressSnapshot ?? getProviderInstallProgressSnapshotForScope(entry.ownerScope),
@@ -353,6 +369,8 @@ const updateEntrySnapshot = (
 
   if (
     entry.snapshot.bootstrap === nextBootstrap
+    && entry.snapshot.bootstrapState === nextBootstrapState
+    && entry.snapshot.bootstrapError === nextBootstrapError
     && sameProviderInstallStateMap(entry.snapshot.installsById, nextInstallsById)
   ) {
     return;
@@ -360,8 +378,29 @@ const updateEntrySnapshot = (
 
   entry.snapshot = {
     bootstrap: nextBootstrap,
+    bootstrapState: nextBootstrapState,
+    bootstrapError: nextBootstrapError,
     providersById: nextProvidersById,
     installsById: nextInstallsById,
+  };
+  emit(entry);
+};
+
+const setEntryBootstrapState = (
+  entry: ProviderOnboardingEntry,
+  bootstrapState: ProviderOnboardingBootstrapState,
+  bootstrapError: string | null,
+): void => {
+  if (
+    entry.snapshot.bootstrapState === bootstrapState
+    && entry.snapshot.bootstrapError === bootstrapError
+  ) {
+    return;
+  }
+  entry.snapshot = {
+    ...entry.snapshot,
+    bootstrapState,
+    bootstrapError,
   };
   emit(entry);
 };
@@ -782,6 +821,36 @@ export const useProviderOnboardingCoordinator = ({
     ),
   );
 
+  const runBootstrapRequest = useCallback(
+    async (mode: "load" | "refresh"): Promise<ProvidersBootstrapResponse> => {
+      if (!ownerScope) {
+        throw createMissingProviderOwnerScopeError();
+      }
+      const entry = getOrCreateEntry(ownerScope);
+      if (entry.snapshot.bootstrapState !== "ready" || mode === "refresh") {
+        setEntryBootstrapState(entry, "loading", null);
+      }
+      try {
+        const result = mode === "refresh"
+          ? await refreshProviderOnboardingBootstrap(workspaceId)
+          : await loadProviderOnboardingBootstrap(workspaceId);
+        const current = providerOnboardingByScope.get(entry.scopeKey);
+        if (current) {
+          setEntryBootstrapState(current, "ready", null);
+        }
+        return result;
+      } catch (error) {
+        const current = providerOnboardingByScope.get(entry.scopeKey);
+        if (current) {
+          setEntryBootstrapState(current, "error", toErrorMessage(error));
+        }
+        onLoadError?.(error);
+        throw error;
+      }
+    },
+    [onLoadError, ownerScope, workspaceId],
+  );
+
   useEffect(() => {
     if (!enabled || !ownerScope) return;
     return retainEntry(ownerScope);
@@ -789,18 +858,16 @@ export const useProviderOnboardingCoordinator = ({
 
   useEffect(() => {
     if (!enabled || !ownerScope) return;
-    loadProviderOnboardingBootstrap(workspaceId).catch((error) => {
-      onLoadError?.(error);
-    });
-  }, [enabled, onLoadError, ownerScope, ownerScopeKey, workspaceId]);
+    runBootstrapRequest("load").catch(() => {});
+  }, [enabled, ownerScope, ownerScopeKey, runBootstrapRequest]);
 
   const loadBootstrap = useCallback(
-    () => ownerScope ? loadProviderOnboardingBootstrap(workspaceId) : Promise.reject(createMissingProviderOwnerScopeError()),
-    [ownerScope, ownerScopeKey, workspaceId],
+    () => runBootstrapRequest("load"),
+    [runBootstrapRequest],
   );
   const refreshBootstrap = useCallback(
-    () => ownerScope ? refreshProviderOnboardingBootstrap(workspaceId) : Promise.reject(createMissingProviderOwnerScopeError()),
-    [ownerScope, ownerScopeKey, workspaceId],
+    () => runBootstrapRequest("refresh"),
+    [runBootstrapRequest],
   );
   const ensureAuthSummary = useCallback(
     (providerId: string, opts?: { force?: boolean; trigger?: ProviderAuthSummaryTrigger }) =>
