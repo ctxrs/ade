@@ -83,7 +83,7 @@ pub(crate) use self::avf_linux_vm::{
     ensure_shared_vm_ready_with_observer as ensure_avf_linux_shared_vm_ready_with_observer,
     ensure_workspace_vm_ready_with_observer as ensure_avf_linux_workspace_vm_ready_with_observer,
     prefetch_runtime_with_observer as prefetch_avf_linux_runtime_with_observer,
-    workspace_vm_data_root as avf_linux_workspace_vm_data_root, AvfLinuxSharedVmLifecycleState,
+    workspace_vm_data_root as avf_linux_workspace_vm_data_root,
 };
 use self::avf_linux_vm::{
     runtime_available as avf_linux_runtime_available, runtime_state as avf_linux_runtime_state,
@@ -222,11 +222,9 @@ pub(crate) async fn prewarm_selected_runtime_for_launch_with_observer(
             .await
         }
         ContainerRuntimeKind::SharedVmContainer => {
-            SharedSubstrateLifecycleManager::new(data_root)
-                .ensure_shared_runtime_ready(settings, observer)
-                .await?;
-            let image = resolve_container_image(settings);
-            prefetch_container_image_with_observer(data_root, &image, observer).await
+            SharedVmLifecycleOrchestrator::new(data_root)
+                .prefetch_runtime(settings, observer)
+                .await
         }
     }
 }

@@ -5,12 +5,33 @@ const { spawnSync, spawn } = require("child_process");
 const os = require("os");
 const { resolveBoolishFlag } = require("../../../scripts/lib/boolish.cjs");
 
-const automationTmpDir = String(process.env.CTX_AUTOMATION_TMPDIR || "").trim();
-if (automationTmpDir) {
-  process.env.TMPDIR = automationTmpDir;
-  process.env.TMP = automationTmpDir;
-  process.env.TEMP = automationTmpDir;
-}
+const resolveConfiguredPath = (rawValue) => {
+  const configured = String(rawValue || "").trim();
+  if (!configured) return "";
+  return path.isAbsolute(configured) ? configured : path.resolve(configured);
+};
+
+const resolveVolatileRoot = () => {
+  return resolveConfiguredPath(process.env.CTX_VOLATILE_ROOT)
+    || path.join(os.homedir(), ".ctx", "volatile");
+};
+
+const resolveVolatileSubdir = (envName, fallbackSegments) => {
+  return resolveConfiguredPath(process.env[envName])
+    || path.join(resolveVolatileRoot(), ...fallbackSegments);
+};
+
+const AUTOMATION_ARTIFACTS_ROOT = resolveVolatileSubdir("CTX_VOLATILE_ARTIFACTS_DIR", ["artifacts"]);
+const resolveAutomationTmpRoot = () => {
+  return resolveConfiguredPath(process.env.CTX_AUTOMATION_TMPDIR || process.env.CTX_E2E_TMPDIR)
+    || resolveVolatileSubdir("CTX_VOLATILE_TMPDIR", ["tmp"]);
+};
+
+const automationTmpDir = resolveAutomationTmpRoot();
+fs.mkdirSync(automationTmpDir, { recursive: true });
+process.env.TMPDIR = automationTmpDir;
+process.env.TMP = automationTmpDir;
+process.env.TEMP = automationTmpDir;
 
 const { waitTestRunnerBackendReady } = require("@crabnebula/test-runner-backend");
 const { waitTauriDriverReady } = require("@crabnebula/tauri-driver");
@@ -476,14 +497,7 @@ const readAvfGuestRuntimeVersion = (runtimeDir, fsImpl = fs) => {
 };
 
 const defaultAutomationAvfGuestRuntimeDir = (platform = process.platform) => {
-  if (platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Caches", "ctx-desktop-e2e", "avf-linux-guest-runtime");
-  }
-  if (platform === "win32") {
-    const base = String(process.env.LOCALAPPDATA || os.tmpdir()).trim() || os.tmpdir();
-    return path.join(base, "ctx-desktop-e2e", "avf-linux-guest-runtime");
-  }
-  return path.join(os.homedir(), ".cache", "ctx-desktop-e2e", "avf-linux-guest-runtime");
+  return path.join(AUTOMATION_ARTIFACTS_ROOT, "ctx-desktop-e2e", "avf-linux-guest-runtime");
 };
 
 const expectedManagedAvfGuestRuntimeVersion = ({
@@ -1075,7 +1089,7 @@ const startExternalDaemon = async () => {
     throw new Error(`ctx binary not found at ${CTX_BIN} (run pnpm -C core desktop:prep)`);
   }
   daemonPort = await pickUnusedPort();
-  daemonDataDir = fs.mkdtempSync(path.join(os.tmpdir(), `ctx-desktop-e2e-${daemonPort}-`));
+  daemonDataDir = fs.mkdtempSync(path.join(automationTmpDir, `ctx-desktop-e2e-${daemonPort}-`));
   daemonLogPath = path.join(daemonDataDir, "daemon.log");
   const baseUrl = `http://127.0.0.1:${daemonPort}`;
 
@@ -1824,7 +1838,7 @@ exports.config = {
         fs.mkdirSync(internalDaemonDataDir, { recursive: true });
         internalDaemonDataDir = canonicalPath(internalDaemonDataDir);
       } else {
-        internalDaemonDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-desktop-e2e-app-daemon-"));
+        internalDaemonDataDir = fs.mkdtempSync(path.join(automationTmpDir, "ctx-desktop-e2e-app-daemon-"));
         internalDaemonDataDir = canonicalPath(internalDaemonDataDir);
       }
       if (internalDaemonDataDir) {

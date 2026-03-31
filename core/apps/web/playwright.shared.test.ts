@@ -14,6 +14,11 @@ const restoreEnv = () => {
   delete process.env.CTX_E2E_ARGOS;
   delete process.env.ARGOS_TOKEN;
   delete process.env.CTX_E2E_REPORTER;
+  delete process.env.CTX_VOLATILE_ROOT;
+  delete process.env.CTX_VOLATILE_TARGETS_DIR;
+  delete process.env.CTX_VOLATILE_TMPDIR;
+  delete process.env.CTX_E2E_TMPDIR;
+  delete process.env.CTX_E2E_DATA_DIR;
 };
 
 const getReporterTuples = (reporter: unknown): ReporterTuple[] => {
@@ -68,7 +73,7 @@ describe("createCtxPlaywrightConfig", () => {
     delete process.env.CARGO_TARGET_DIR;
 
     const resolved = resolvePlaywrightCargoTargetDir(process.env);
-    expect(resolved).toContain(path.join(".cache", "cargo", "ctx-monorepo"));
+    expect(resolved).toContain(path.join(".ctx", "volatile", "targets", "ctx-e2e"));
     expect(resolved).toContain("e2e-");
     expect(resolved).not.toContain("ctx-e2e-cargo-");
   });
@@ -79,5 +84,18 @@ describe("createCtxPlaywrightConfig", () => {
     const webServer = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
     expect(webServer?.env?.CTX_E2E_CARGO_TARGET_DIR).toBe(resolvePlaywrightCargoTargetDir(process.env));
     expect(webServer?.env?.CARGO_TARGET_DIR).toBe(resolvePlaywrightCargoTargetDir(process.env));
+  });
+
+  it("defaults e2e tmp and data dirs under the volatile tmp root", async () => {
+    restoreEnv();
+    const config = await createCtxPlaywrightConfig("all");
+    const webServer = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
+    const expectedPrefix = path.join(".ctx", "volatile", "tmp", "ctx-e2e-all-");
+
+    expect(String(webServer?.env?.CTX_E2E_DATA_DIR)).toContain(expectedPrefix);
+    expect(webServer?.env?.CTX_E2E_TMPDIR).toBe(webServer?.env?.CTX_E2E_DATA_DIR);
+    expect(webServer?.env?.TMPDIR).toBe(webServer?.env?.CTX_E2E_TMPDIR);
+    expect(webServer?.env?.TMP).toBe(webServer?.env?.CTX_E2E_TMPDIR);
+    expect(webServer?.env?.TEMP).toBe(webServer?.env?.CTX_E2E_TMPDIR);
   });
 });

@@ -3,19 +3,28 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
 CORE_DIR="${ROOT}/core"
-DEFAULT_CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${HOME}/.cache/cargo/ctx-monorepo/$(basename "$(git -C "${CORE_DIR}" rev-parse --git-dir)")}"
+VOLATILE_ROOT="${CTX_VOLATILE_ROOT:-${HOME}/.ctx/volatile}"
+VOLATILE_TARGETS_DIR="${CTX_VOLATILE_TARGETS_DIR:-${VOLATILE_ROOT}/targets}"
+VOLATILE_ARTIFACTS_DIR="${CTX_VOLATILE_ARTIFACTS_DIR:-${VOLATILE_ROOT}/artifacts}"
+
+resolve_ctx_scope_key() {
+  local repo_dir="$1"
+  local git_dir_basename=""
+  git_dir_basename="$(basename "$(git -C "${repo_dir}" rev-parse --git-dir 2>/dev/null || printf '')")"
+  if [[ -n "${git_dir_basename}" && "${git_dir_basename}" != ".git" ]]; then
+    printf '%s' "${git_dir_basename}"
+    return
+  fi
+  basename "$(git -C "${repo_dir}" rev-parse --show-toplevel 2>/dev/null || printf '%s' "${repo_dir}")"
+}
+
+CTX_SCOPE_KEY="$(resolve_ctx_scope_key "${CORE_DIR}")"
+DEFAULT_CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${CTX_SHARED_CARGO_TARGET_DIR:-${VOLATILE_TARGETS_DIR}/ctx-monorepo/${CTX_SCOPE_KEY}}}"
 
 SCENARIOS="${CTX_AUTOMATION_SCENARIOS:-local-import}"
 INFISICAL_ENV="${INFISICAL_ENV:-dev}"
 INFISICAL_PROJECT_ID="${INFISICAL_PROJECT_ID:-}"
-DEFAULT_AUTOMATION_TMP_BASE_DIR="${CTX_AUTOMATION_TMP_BASE_DIR:-}"
-if [[ -z "${DEFAULT_AUTOMATION_TMP_BASE_DIR}" ]]; then
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    DEFAULT_AUTOMATION_TMP_BASE_DIR="${HOME}/Library/Caches/ctx-desktop-e2e"
-  else
-    DEFAULT_AUTOMATION_TMP_BASE_DIR="${HOME}/.cache/ctx-desktop-e2e"
-  fi
-fi
+DEFAULT_AUTOMATION_TMP_BASE_DIR="${CTX_AUTOMATION_TMP_BASE_DIR:-${VOLATILE_ARTIFACTS_DIR}/ctx-desktop-e2e}"
 mkdir -p "${DEFAULT_AUTOMATION_TMP_BASE_DIR}"
 AUTOMATION_TMPDIR_CREATED=0
 if [[ -n "${CTX_AUTOMATION_TMPDIR:-}" ]]; then
@@ -108,6 +117,8 @@ if [[ "$(uname -s)" == "Darwin" && -z "${CN_API_KEY:-}" && "${INFISICAL_HELP_BYP
 	      env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
 	      CARGO_TARGET_DIR="${DEFAULT_CARGO_TARGET_DIR}" \
 	      TMPDIR="${AUTOMATION_TMPDIR}" \
+	      TMP="${AUTOMATION_TMPDIR}" \
+	      TEMP="${AUTOMATION_TMPDIR}" \
 	      CTX_AUTOMATION_TMPDIR="${AUTOMATION_TMPDIR}" \
 	      CTX_AUTOMATION_CN_BACKEND_LOG="${CTX_AUTOMATION_CN_BACKEND_LOG}" \
 	      CTX_AUTOMATION_CN_DRIVER_LOG="${CTX_AUTOMATION_CN_DRIVER_LOG}" \
@@ -118,6 +129,8 @@ if [[ "$(uname -s)" == "Darwin" && -z "${CN_API_KEY:-}" && "${INFISICAL_HELP_BYP
 	    env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
 	    CARGO_TARGET_DIR="${DEFAULT_CARGO_TARGET_DIR}" \
 	    TMPDIR="${AUTOMATION_TMPDIR}" \
+	    TMP="${AUTOMATION_TMPDIR}" \
+	    TEMP="${AUTOMATION_TMPDIR}" \
 	    CTX_AUTOMATION_TMPDIR="${AUTOMATION_TMPDIR}" \
 	    CTX_AUTOMATION_CN_BACKEND_LOG="${CTX_AUTOMATION_CN_BACKEND_LOG}" \
 	    CTX_AUTOMATION_CN_DRIVER_LOG="${CTX_AUTOMATION_CN_DRIVER_LOG}" \
@@ -131,6 +144,8 @@ if [[ "${#ARGS[@]}" -gt 0 ]]; then
 	run_wdio env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
 	  CARGO_TARGET_DIR="${DEFAULT_CARGO_TARGET_DIR}" \
 	  TMPDIR="${AUTOMATION_TMPDIR}" \
+	  TMP="${AUTOMATION_TMPDIR}" \
+	  TEMP="${AUTOMATION_TMPDIR}" \
 	  CTX_AUTOMATION_TMPDIR="${AUTOMATION_TMPDIR}" \
 	  CTX_AUTOMATION_CN_BACKEND_LOG="${CTX_AUTOMATION_CN_BACKEND_LOG}" \
 	  CTX_AUTOMATION_CN_DRIVER_LOG="${CTX_AUTOMATION_CN_DRIVER_LOG}" \
@@ -140,6 +155,8 @@ fi
 run_wdio env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
   CARGO_TARGET_DIR="${DEFAULT_CARGO_TARGET_DIR}" \
   TMPDIR="${AUTOMATION_TMPDIR}" \
+  TMP="${AUTOMATION_TMPDIR}" \
+  TEMP="${AUTOMATION_TMPDIR}" \
   CTX_AUTOMATION_TMPDIR="${AUTOMATION_TMPDIR}" \
   CTX_AUTOMATION_CN_BACKEND_LOG="${CTX_AUTOMATION_CN_BACKEND_LOG}" \
   CTX_AUTOMATION_CN_DRIVER_LOG="${CTX_AUTOMATION_CN_DRIVER_LOG}" \

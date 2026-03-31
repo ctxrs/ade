@@ -19,6 +19,34 @@ const hasValue = (value?: string) => Boolean(value?.trim());
 
 const repoHash = crypto.createHash("sha1").update(path.resolve(__dirname, "../..")).digest("hex").slice(0, 10);
 
+const resolveConfiguredPath = (configured: string) => {
+  return path.isAbsolute(configured)
+    ? configured
+    : path.resolve(__dirname, "../..", configured);
+};
+
+const resolveVolatileRoot = (env: NodeJS.ProcessEnv) => {
+  const configured = String(env.CTX_VOLATILE_ROOT ?? "").trim();
+  if (configured) {
+    return resolveConfiguredPath(configured);
+  }
+  return path.join(os.homedir(), ".ctx", "volatile");
+};
+
+const resolveVolatileSubdir = (
+  env: NodeJS.ProcessEnv,
+  envNames: string[],
+  fallbackSegments: string[],
+) => {
+  for (const envName of envNames) {
+    const configured = String(env[envName] ?? "").trim();
+    if (configured) {
+      return resolveConfiguredPath(configured);
+    }
+  }
+  return path.join(resolveVolatileRoot(env), ...fallbackSegments);
+};
+
 const resolveWorkers = (defaultWorkers: number | undefined) => {
   const raw = String(process.env.CTX_E2E_WORKERS ?? process.env.PW_WORKERS ?? "").trim();
   if (!raw) return defaultWorkers;
@@ -38,11 +66,13 @@ const resolveWebServerStdio = () => {
 export const resolvePlaywrightCargoTargetDir = (env: NodeJS.ProcessEnv) => {
   const configured = String(env.CTX_E2E_CARGO_TARGET_DIR ?? env.CARGO_TARGET_DIR ?? "").trim();
   if (configured) {
-    return path.isAbsolute(configured)
-      ? configured
-      : path.resolve(__dirname, "../..", configured);
+    return resolveConfiguredPath(configured);
   }
-  return path.join(os.homedir(), ".cache", "cargo", "ctx-monorepo", `e2e-${repoHash}`);
+  return path.join(
+    resolveVolatileSubdir(env, ["CTX_VOLATILE_TARGETS_DIR"], ["targets"]),
+    "ctx-e2e",
+    `e2e-${repoHash}`,
+  );
 };
 
 const resolvePort = async (reuseExistingServer: boolean): Promise<number> => {
@@ -92,9 +122,14 @@ export async function createCtxPlaywrightConfig(
   const baseURL = `http://${HOST}:${PORT}`;
   const readinessURL = `${baseURL}/api/health`;
 
-  const dataDir =
-    process.env.CTX_E2E_DATA_DIR ?? `${os.tmpdir()}/ctx-e2e-${profileSlug}-${process.pid}`;
+  const defaultTmpDir = path.join(
+    resolveVolatileSubdir(process.env, ["CTX_E2E_TMPDIR", "CTX_VOLATILE_TMPDIR"], ["tmp"]),
+    `ctx-e2e-${profileSlug}-${process.pid}`,
+  );
+  const tmpDir = process.env.CTX_E2E_TMPDIR ?? process.env.CTX_E2E_DATA_DIR ?? defaultTmpDir;
+  const dataDir = process.env.CTX_E2E_DATA_DIR ?? tmpDir;
   const AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
+  process.env.CTX_E2E_TMPDIR ??= tmpDir;
   process.env.CTX_E2E_DATA_DIR ??= dataDir;
   process.env.CTX_E2E_AUTH_TOKEN ??= AUTH_TOKEN;
   const defaultBundleDir = path.resolve(__dirname, "../desktop/src-tauri/bundles");
@@ -131,6 +166,7 @@ export async function createCtxPlaywrightConfig(
   const webServerEnv = {
     ...process.env,
     CTX_E2E_DATA_DIR: dataDir,
+    CTX_E2E_TMPDIR: tmpDir,
     CTX_E2E_AUTH_TOKEN: AUTH_TOKEN,
     CTX_E2E_SKIP_WEB_BUILD: skipWebBuild ? "1" : "0",
     CTX_E2E_HOST: HOST,
@@ -138,6 +174,9 @@ export async function createCtxPlaywrightConfig(
     CTX_DOCS_MIRROR_BIN: docsMirrorBin,
     CTX_E2E_CARGO_TARGET_DIR: cargoTargetDir,
     CARGO_TARGET_DIR: cargoTargetDir,
+    TMPDIR: tmpDir,
+    TMP: tmpDir,
+    TEMP: tmpDir,
     CTX_EXECUTION_MODE: "host",
     CTX_SHOW_FAKE_PROVIDER: "1",
     CTX_DEV_MODE: "1",

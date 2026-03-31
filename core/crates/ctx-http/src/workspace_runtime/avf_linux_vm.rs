@@ -223,3 +223,10 @@ pub(crate) fn shared_vm_is_launch_ready(state: &AvfLinuxSharedVmState) -> bool {
             Some(AvfLinuxSharedVmTransitionStatus::Ready)
         )
 }
+
+pub(crate) fn shared_vm_start_in_progress(state: &AvfLinuxSharedVmState) -> bool {
+    matches!(
+        state.state,
+        AvfLinuxSharedVmLifecycleState::Starting | AvfLinuxSharedVmLifecycleState::Running
+    ) && !shared_vm_is_launch_ready(state)
+}

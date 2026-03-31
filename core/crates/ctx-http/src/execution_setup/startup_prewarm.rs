@@ -355,10 +355,7 @@ impl ExecutionSetupCoordinator {
             crate::settings::ContainerRuntimeKind::SharedVmContainer => {
                 let (_, runtime_ready) =
                     harness_runtime::selected_runtime_state(&self.data_root, settings).await?;
-                let launch_ready =
-                    harness_runtime::selected_runtime_launch_ready(&self.data_root, settings)
-                        .await?;
-                Ok((launch_ready, runtime_ready))
+                Ok((runtime_ready, runtime_ready))
             }
         }
     }
@@ -368,7 +365,7 @@ impl ExecutionSetupCoordinator {
         let scope = match exec.container.runtime {
             crate::settings::ContainerRuntimeKind::NativeContainer => RuntimePrewarmScope::Runtime,
             crate::settings::ContainerRuntimeKind::SharedVmContainer => {
-                RuntimePrewarmScope::LaunchReady
+                RuntimePrewarmScope::Runtime
             }
         };
         self.prewarm.ensure_scope(exec, scope, None).await

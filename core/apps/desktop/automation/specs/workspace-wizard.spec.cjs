@@ -2079,6 +2079,10 @@ describe("launcher workspace wizard (e2e)", () => {
     const dest = path.join(localBase, "new-sandbox-first-run");
     const appOpenObservedAt = String(process.env.CTX_AUTOMATION_APP_OPEN_OBSERVED_AT || new Date().toISOString());
     const scenarioStartedAt = new Date().toISOString();
+    const confirmDelayMs = Number.parseInt(
+      String(process.env.CTX_AUTOMATION_FIRST_RUN_CONFIRM_DELAY_MS || "0"),
+      10,
+    );
     let createClickedAt = null;
     let workspaceDetectedAt = null;
     const id = await runWizardScenario({
@@ -2090,6 +2094,9 @@ describe("launcher workspace wizard (e2e)", () => {
       setupHook: "",
       mergeQueue: { kind: "skip" },
       beforeCreate: async () => {
+        if (Number.isFinite(confirmDelayMs) && confirmDelayMs > 0) {
+          await browser.pause(confirmDelayMs);
+        }
         createClickedAt = new Date().toISOString();
       },
       onWorkspaceRouteDetected: async ({ detectedAt }) => {
@@ -2129,6 +2136,7 @@ describe("launcher workspace wizard (e2e)", () => {
       workspace_root_path: String(ws?.root_path || ""),
       execution_environment: "sandbox",
       network_mode: "llm_only",
+      confirm_delay_ms: Number.isFinite(confirmDelayMs) ? Math.max(confirmDelayMs, 0) : 0,
       harness_running: true,
       terminal_cwd_prefix: "/ctx/ws",
       timing,

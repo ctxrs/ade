@@ -1,5 +1,10 @@
 use super::*;
 
+const EXISTING_SHARED_VM_START_WAIT_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(630);
+const EXISTING_SHARED_VM_START_POLL_INTERVAL: std::time::Duration =
+    std::time::Duration::from_millis(250);
+
 pub(crate) fn runtime_available() -> bool {
     probe_helper().map(|probe| probe.supported).unwrap_or(false)
 }
@@ -112,16 +117,27 @@ pub(crate) async fn ensure_workspace_vm_ready_with_observer(
         );
         return Ok(state);
     }
-    if matches!(state.state, AvfLinuxSharedVmLifecycleState::Running) {
+    if shared_vm_start_in_progress(&state) {
         observe_log(
             observer,
             HarnessSetupPhase::MachineCheck,
             HarnessSetupLogLevel::Info,
             &format!(
-                "AVF Linux workspace VM for workspace {} is running but not yet launch-ready (transition_status={:?}); restarting before reuse",
-                workspace_id.0, state.transition_status
+                "AVF Linux workspace VM for workspace {} already has an in-flight startup (state={:?}, transition_status={:?}); waiting for it to finish",
+                workspace_id.0, state.state, state.transition_status
             ),
         );
+        observe_phase(
+            observer,
+            HarnessSetupPhase::MachineStartOrInit,
+            "waiting for AVF Linux workspace VM startup to finish",
+        );
+        return wait_for_existing_workspace_vm_launch_ready_with_observer(
+            data_root,
+            workspace_id,
+            observer,
+        )
+        .await;
     }
 
     observe_phase(
@@ -169,6 +185,50 @@ pub(crate) async fn ensure_shared_vm_ready_with_observer(
         observer,
     )
     .await
+}
+
+async fn wait_for_existing_workspace_vm_launch_ready_with_observer(
+    data_root: &Path,
+    workspace_id: WorkspaceId,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<AvfLinuxSharedVmState> {
+    let deadline = tokio::time::Instant::now() + EXISTING_SHARED_VM_START_WAIT_TIMEOUT;
+    loop {
+        let state = workspace_vm_state(data_root, workspace_id)?;
+        if shared_vm_is_launch_ready(&state) {
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineStartOrInit,
+                HarnessSetupLogLevel::Info,
+                &format!(
+                    "AVF Linux workspace VM startup finished for workspace {} and is now launch-ready",
+                    workspace_id.0
+                ),
+            );
+            return Ok(state);
+        }
+
+        if !shared_vm_start_in_progress(&state) {
+            bail!(
+                "AVF Linux workspace VM startup ended before becoming launch-ready for workspace {} (state={:?}, transition_status={:?}, notes={})",
+                workspace_id.0,
+                state.state,
+                state.transition_status,
+                state.notes.join(" | ")
+            );
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            bail!(
+                "timed out waiting for in-flight AVF Linux workspace VM startup to become launch-ready for workspace {} (state={:?}, transition_status={:?})",
+                workspace_id.0,
+                state.state,
+                state.transition_status
+            );
+        }
+
+        tokio::time::sleep(EXISTING_SHARED_VM_START_POLL_INTERVAL).await;
+    }
 }
 
 pub(crate) async fn ensure_guest_worktree_from_host_copy(

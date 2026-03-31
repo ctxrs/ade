@@ -24,7 +24,7 @@ if [[ "$#" -ge 5 && "$1" == "-C" && "$2" == "apps/desktop" && "$3" == "exec" && 
 fi
 
 if [[ "$#" -ge 4 && "$1" == "-C" && "$2" == "apps/desktop" && "$3" == "exec" && "$4" == "wdio" ]]; then
-  printf '%s' "\${TMPDIR:-}" > "${capturePath}"
+  printf '%s\\n%s\\n%s\\n%s' "\${TMPDIR:-}" "\${TMP:-}" "\${TEMP:-}" "\${CARGO_TARGET_DIR:-}" > "${capturePath}"
   exit 0
 fi
 
@@ -66,19 +66,29 @@ function runDesktopSmoke(envOverrides = {}) {
     },
   });
 
-  const capturedTmpdir = fs.existsSync(capturePath)
-    ? fs.readFileSync(capturePath, "utf8").trim()
-    : "";
-  return { result, tempRoot, tmpBaseDir, capturedTmpdir };
+  const [tmpdir = "", tmp = "", temp = "", cargoTargetDir = ""] = fs.existsSync(capturePath)
+    ? fs.readFileSync(capturePath, "utf8").split(/\r?\n/)
+    : [];
+  return {
+    result,
+    tempRoot,
+    tmpBaseDir,
+    capturedEnv: {
+      tmpdir: tmpdir.trim(),
+      tmp: tmp.trim(),
+      temp: temp.trim(),
+      cargoTargetDir: cargoTargetDir.trim(),
+    },
+  };
 }
 
 test("desktop smoke removes auto-created tmp dirs by default", () => {
-  const { result, tmpBaseDir, capturedTmpdir } = runDesktopSmoke();
+  const { result, tmpBaseDir, capturedEnv } = runDesktopSmoke();
 
   assert.equal(result.status, 0, `script should succeed: ${result.stderr || result.stdout}`);
-  assert.ok(capturedTmpdir, "expected fake wdio run to capture TMPDIR");
+  assert.ok(capturedEnv.tmpdir, "expected fake wdio run to capture TMPDIR");
   assert.equal(
-    fs.existsSync(capturedTmpdir),
+    fs.existsSync(capturedEnv.tmpdir),
     false,
     "auto-created automation tmpdir should be removed after the run",
   );
@@ -93,15 +103,39 @@ test("desktop smoke removes auto-created tmp dirs by default", () => {
 });
 
 test("desktop smoke preserves auto-created tmp dirs when explicitly requested", () => {
-  const { result, capturedTmpdir } = runDesktopSmoke({
+  const { result, capturedEnv } = runDesktopSmoke({
     CTX_AUTOMATION_KEEP_TMPDIR: "1",
   });
 
   assert.equal(result.status, 0, `script should succeed: ${result.stderr || result.stdout}`);
-  assert.ok(capturedTmpdir, "expected fake wdio run to capture TMPDIR");
+  assert.ok(capturedEnv.tmpdir, "expected fake wdio run to capture TMPDIR");
   assert.equal(
-    fs.existsSync(capturedTmpdir),
+    fs.existsSync(capturedEnv.tmpdir),
     true,
     "CTX_AUTOMATION_KEEP_TMPDIR=1 should preserve the auto-created tmpdir",
+  );
+});
+
+test("desktop smoke defaults automation tmp and cargo target under CTX_VOLATILE_ROOT", () => {
+  const volatileRoot = path.join(os.tmpdir(), "ctx-volatile-test-root");
+  const { result, capturedEnv } = runDesktopSmoke({
+    CTX_VOLATILE_ROOT: volatileRoot,
+    CTX_AUTOMATION_TMP_BASE_DIR: "",
+    CARGO_TARGET_DIR: "",
+  });
+
+  assert.equal(result.status, 0, `script should succeed: ${result.stderr || result.stdout}`);
+  assert.ok(capturedEnv.tmpdir, "expected fake wdio run to capture TMPDIR");
+  assert.ok(
+    capturedEnv.tmpdir.startsWith(
+      path.join(volatileRoot, "artifacts", "ctx-desktop-e2e", "ctx-desktop-e2e-tmp."),
+    ),
+    `expected TMPDIR under volatile artifacts root, got ${capturedEnv.tmpdir}`,
+  );
+  assert.equal(capturedEnv.tmp, capturedEnv.tmpdir);
+  assert.equal(capturedEnv.temp, capturedEnv.tmpdir);
+  assert.equal(
+    capturedEnv.cargoTargetDir,
+    path.join(volatileRoot, "targets", "ctx-monorepo", "ctx-monorepo"),
   );
 });

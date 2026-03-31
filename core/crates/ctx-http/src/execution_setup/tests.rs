@@ -1929,7 +1929,7 @@ async fn runtime_prewarm_errors_when_only_startup_artifacts_were_warmed() {
 }
 
 #[tokio::test]
-async fn compute_prewarm_gate_keeps_avf_runtime_needing_prewarm_until_launch_ready() {
+async fn compute_prewarm_gate_treats_prefetched_avf_runtime_as_ready_without_vm_boot() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
@@ -1964,18 +1964,18 @@ async fn compute_prewarm_gate_keeps_avf_runtime_needing_prewarm_until_launch_rea
         .compute_prewarm_gate(&settings.container)
         .await
         .expect("compute AVF prewarm gate");
-    assert!(!gate.machine_ready);
+    assert!(gate.machine_ready);
     assert!(gate.image_present);
     assert!(!gate.image_ref_changed);
     assert!(!gate.bundled_image_digest_changed);
-    assert!(gate.needs_prewarm);
+    assert!(!gate.needs_prewarm);
     assert_eq!(gate.bundled_image_fingerprint, None);
 
     let runtime_state = coordinator
         .startup_runtime_state(&settings.container)
         .await
         .expect("read AVF runtime state");
-    assert_eq!(runtime_state, (false, true));
+    assert_eq!(runtime_state, (true, true));
 
     for server in servers {
         server.abort();
@@ -2030,7 +2030,7 @@ async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtim
         .startup_runtime_state(&settings.container)
         .await
         .expect("read AVF runtime state");
-    assert_eq!(runtime_state, (false, true));
+    assert_eq!(runtime_state, (true, true));
     let launch_ready =
         crate::harness_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
             .await
@@ -2046,7 +2046,7 @@ async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtim
 }
 
 #[tokio::test]
-async fn runtime_prewarm_launch_ready_scope_starts_shared_vm_for_avf_linux_runtime() {
+async fn runtime_prewarm_launch_ready_scope_prefetches_artifacts_without_starting_shared_vm() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
@@ -2086,16 +2086,14 @@ async fn runtime_prewarm_launch_ready_scope_starts_shared_vm_for_avf_linux_runti
     );
     assert!(terminal.logs.iter().any(|line| {
         line.phase == HarnessSetupPhase::Ready
-            && line.message == "shared VM substrate and launch image are ready"
+            && line.message
+                == "shared VM runtime artifacts are ready; launch image loads when the shared VM starts"
     }));
     let launch_ready =
         crate::harness_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
             .await
             .expect("read AVF launch-ready state");
-    assert!(
-        launch_ready,
-        "launch-ready scope should boot the shared AVF VM"
-    );
+    assert!(!launch_ready, "AVF prewarm should not boot the shared VM");
     let runtime_state = coordinator
         .startup_runtime_state(&settings.container)
         .await
@@ -2794,7 +2792,7 @@ async fn startup_prewarm_enters_shared_runtime_warmup_when_machine_is_not_ready(
 }
 
 #[tokio::test]
-async fn startup_prewarm_uses_launch_ready_scope_for_avf_linux_runtime() {
+async fn startup_prewarm_uses_runtime_scope_for_avf_linux_runtime() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
@@ -2827,7 +2825,7 @@ async fn startup_prewarm_uses_launch_ready_scope_for_avf_linux_runtime() {
     assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
     assert_eq!(
         *ops.steps.lock().unwrap_or_else(|err| err.into_inner()),
-        vec!["launch_ready"]
+        vec!["runtime"]
     );
 }
 

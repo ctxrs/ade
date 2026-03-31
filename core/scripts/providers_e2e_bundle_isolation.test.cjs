@@ -101,14 +101,23 @@ test("linux-arm lanes keep sandbox runtime bundling out of the default host-mode
   );
 });
 
-test("endpoint bundle defaults use a home-shareable cache root", () => {
+test("endpoint bundle defaults use the machine-local volatile root", () => {
   const script = fs.readFileSync(scriptPath, "utf8");
 
-  assert.match(script, /default_e2e_bundle_root\(\)/);
-  assert.match(script, /Library\/Caches\/ctx-e2e/);
+  assert.match(script, /volatile_root="\$\{CTX_VOLATILE_ROOT:-\$\{HOME\}\/\.ctx\/volatile\}"/);
+  assert.match(script, /volatile_targets_dir="\$\{CTX_VOLATILE_TARGETS_DIR:-\$\{volatile_root\}\/targets\}"/);
+  assert.match(script, /volatile_artifacts_dir="\$\{CTX_VOLATILE_ARTIFACTS_DIR:-\$\{volatile_root\}\/artifacts\}"/);
   assert.match(
     script,
     /bundle_dir="\$\{CTX_E2E_BUNDLE_DIR:-\$\{cache_root\}\/bundles-\$\{cache_key\}\}"/,
+  );
+  assert.match(
+    script,
+    /bundle_build_dir="\$\{CTX_E2E_BUNDLE_BUILD_DIR:-\$\{volatile_artifacts_dir\}\/ctx-e2e-build\/\$\{cache_key\}\}"/,
+  );
+  assert.match(
+    script,
+    /default_cargo_target_dir="\$\{CTX_E2E_CARGO_TARGET_DIR:-\$\{volatile_targets_dir\}\/ctx-e2e\/\$\{suite\}\}"/,
   );
 });
 

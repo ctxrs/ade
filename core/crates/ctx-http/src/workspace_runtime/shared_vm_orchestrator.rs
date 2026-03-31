@@ -5,14 +5,14 @@ use ctx_core::ids::{SandboxInstanceId, WorkspaceId, WorktreeId};
 
 use super::avf_linux_vm::{
     ensure_guest_worktree_from_host_copy as ensure_avf_linux_guest_worktree_from_host_copy,
-    stop_shared_vm, workspace_vm_state as avf_linux_workspace_vm_state, AvfLinuxSharedVmState,
+    shared_vm_is_launch_ready, stop_shared_vm, workspace_vm_state as avf_linux_workspace_vm_state,
+    AvfLinuxSharedVmState,
 };
 use super::{
     avf_linux_runtime_state, container_image_present,
     ensure_avf_linux_shared_vm_ready_with_observer,
     ensure_avf_linux_workspace_vm_ready_with_observer, prefetch_avf_linux_runtime_with_observer,
-    resolve_container_image, AvfLinuxSharedVmLifecycleState, ContainerExecutionSettings,
-    HarnessSetupObserver,
+    resolve_container_image, ContainerExecutionSettings, HarnessSetupObserver,
 };
 
 pub(crate) struct SharedVmLifecycleOrchestrator<'a> {
@@ -98,10 +98,7 @@ impl<'a> SharedVmLifecycleOrchestrator<'a> {
         }
         let shared_vm_state =
             avf_linux_workspace_vm_state(self.data_root, WorkspaceId(uuid::Uuid::nil()))?;
-        let substrate_ready = matches!(
-            shared_vm_state.state,
-            AvfLinuxSharedVmLifecycleState::Running
-        );
+        let substrate_ready = shared_vm_is_launch_ready(&shared_vm_state);
         let image_ready = if substrate_ready {
             container_image_present(self.data_root, &resolve_container_image(settings)).await?
         } else {

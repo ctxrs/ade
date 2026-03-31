@@ -13,9 +13,15 @@ http_tests_dir="${repo_root}/crates/ctx-http/tests"
 providers_tests_dir="${repo_root}/crates/ctx-providers/tests"
 bundle_script="${repo_root}/../scripts/ensure_bundled_harnesses.sh"
 preflight_script="${repo_root}/scripts/desktop_e2e_preflight.cjs"
-default_cargo_target_dir="${CTX_E2E_CARGO_TARGET_DIR:-/tmp/ctx-e2e-cargo-${suite}}"
+volatile_root="${CTX_VOLATILE_ROOT:-${HOME}/.ctx/volatile}"
+volatile_targets_dir="${CTX_VOLATILE_TARGETS_DIR:-${volatile_root}/targets}"
+volatile_artifacts_dir="${CTX_VOLATILE_ARTIFACTS_DIR:-${volatile_root}/artifacts}"
+volatile_tmp_dir="${CTX_VOLATILE_TMPDIR:-${volatile_root}/tmp}"
+default_cargo_target_dir="${CTX_E2E_CARGO_TARGET_DIR:-${volatile_targets_dir}/ctx-e2e/${suite}}"
+default_e2e_tmp_dir="${CTX_E2E_TMPDIR:-${volatile_tmp_dir}/ctx-e2e-${suite}-${$}}"
 
 mkdir -p \
+  "${default_e2e_tmp_dir}" \
   "${default_cargo_target_dir}" \
   "${default_cargo_target_dir}/debug" \
   "${default_cargo_target_dir}/debug/deps" \
@@ -26,6 +32,10 @@ mkdir -p \
 
 export CTX_E2E_CARGO_TARGET_DIR="${default_cargo_target_dir}"
 export CARGO_TARGET_DIR="${default_cargo_target_dir}"
+export CTX_E2E_TMPDIR="${default_e2e_tmp_dir}"
+export TMPDIR="${default_e2e_tmp_dir}"
+export TMP="${default_e2e_tmp_dir}"
+export TEMP="${default_e2e_tmp_dir}"
 
 run_preflight() {
   local suite_id="$1"
@@ -120,15 +130,7 @@ default_e2e_bundle_root() {
     printf '%s' "${CTX_E2E_BUNDLE_ROOT}"
     return
   fi
-  if [[ "${OSTYPE:-}" == darwin* ]]; then
-    printf '%s' "${HOME}/Library/Caches/ctx-e2e"
-    return
-  fi
-  if [[ -n "${XDG_CACHE_HOME:-}" ]]; then
-    printf '%s' "${XDG_CACHE_HOME}/ctx-e2e"
-    return
-  fi
-  printf '%s' "${HOME}/.cache/ctx-e2e"
+  printf '%s' "${volatile_artifacts_dir}/ctx-e2e"
 }
 
 ensure_endpoint_ui_bundles() {
@@ -148,9 +150,9 @@ ensure_endpoint_ui_bundles() {
   local first_pass_providers="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,cline,copilot,gemini,goose,openhands,qwen,pi,opencode,mistral,droid,kimi}"
   local matrix_json="${CTX_BUNDLE_MATRIX_JSON:-${repo_root}/crates/ctx-http/src/provider_matrix.json}"
   local canonical_runtime_lock="${repo_root}/apps/desktop/src-tauri/bundles/runtime_lock.v2.json"
-  local bundle_build_dir="${CTX_E2E_BUNDLE_BUILD_DIR:-/tmp/ctx-e2e-bundle-build-${cache_key}}"
-  local cargo_target_dir="${CTX_E2E_CARGO_TARGET_DIR:-/tmp/ctx-e2e-cargo-${cache_key}}"
-  local cargo_home_dir="${CTX_E2E_CARGO_HOME:-/tmp/ctx-e2e-cargo-home-${cache_key}}"
+  local bundle_build_dir="${CTX_E2E_BUNDLE_BUILD_DIR:-${volatile_artifacts_dir}/ctx-e2e-build/${cache_key}}"
+  local cargo_target_dir="${CTX_E2E_CARGO_TARGET_DIR:-${volatile_targets_dir}/ctx-e2e/${cache_key}}"
+  local cargo_home_dir="${CTX_E2E_CARGO_HOME:-${volatile_artifacts_dir}/ctx-e2e-cargo-home/${cache_key}}"
 
   local bundle_skip_images="${CTX_E2E_ENDPOINT_SKIP_BUNDLE_IMAGES:-0}"
   local bundle_harness_image="${CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-1}"

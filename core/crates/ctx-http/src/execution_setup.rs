@@ -642,7 +642,12 @@ impl ExecutionSetupCoordinator {
         match run_result {
             Ok(()) => {
                 if shared_job.runtime_requested() {
-                    if shared_job.requires_launch_ready_runtime() {
+                    let requires_launch_ready_runtime = shared_job.requires_launch_ready_runtime()
+                        && !matches!(
+                            settings.container.runtime,
+                            crate::settings::ContainerRuntimeKind::SharedVmContainer
+                        );
+                    if requires_launch_ready_runtime {
                         match harness_runtime::selected_runtime_launch_readiness_state(
                             &self.data_root,
                             &settings.container,
@@ -725,7 +730,11 @@ impl ExecutionSetupCoordinator {
                     let ready_message = runtime_prewarm_ready_phase_message(
                         shared_job.runtime_requested(),
                         runtime_kind,
-                        shared_job.requires_launch_ready_runtime(),
+                        shared_job.requires_launch_ready_runtime()
+                            && !matches!(
+                                settings.container.runtime,
+                                crate::settings::ContainerRuntimeKind::SharedVmContainer
+                            ),
                     );
                     self.emit_phase(&job, HarnessSetupPhase::Ready, ready_message);
                 }

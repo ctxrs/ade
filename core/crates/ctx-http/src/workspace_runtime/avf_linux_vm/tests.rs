@@ -313,6 +313,7 @@ def seed_state():
             "transition_status": "scaffolded",
             "saved_state_exists": False,
             "last_start_outcome": "cold_boot",
+            "state_poll_count": 0,
         }
     if scenario in ("restore", "restore_failure"):
         return {
@@ -408,7 +409,14 @@ elif cmd == "prepare-runtime-layout":
     }))
 elif cmd == "shared-vm-state" or cmd == "workspace-vm-state":
     data_root = sys.argv[2]
-    print(json.dumps(payload(data_root, load_state(data_root))))
+    state = load_state(data_root)
+    if start_scenario() == "running_not_ready" and state.get("transition_status") == "scaffolded":
+        poll_count = int(state.get("state_poll_count", 0)) + 1
+        state["state_poll_count"] = poll_count
+        if poll_count >= 2:
+            state["transition_status"] = "ready"
+        save_state(data_root, state)
+    print(json.dumps(payload(data_root, state)))
 elif cmd == "start-shared-vm" or cmd == "start-workspace-vm":
     data_root = sys.argv[2]
     runtime_root, rootfs_image, kernel_path, initrd_path, runtime_version = sys.argv[3:8]
@@ -1220,7 +1228,7 @@ async fn shared_substrate_lifecycle_manager_reuses_running_vm_without_start() {
 }
 
 #[tokio::test]
-async fn shared_substrate_lifecycle_manager_restarts_running_vm_until_launch_ready() {
+async fn shared_substrate_lifecycle_manager_joins_running_vm_until_launch_ready() {
     let _process_env = process_env_test_lock().lock().await;
     let _helper_lock = helper_env_test_lock().lock().await;
     let temp = tempfile::tempdir().unwrap();
@@ -1244,9 +1252,9 @@ async fn shared_substrate_lifecycle_manager_restarts_running_vm_until_launch_rea
     );
     let log = std::fs::read_to_string(log_path).unwrap();
     assert!(
-        log.lines()
+        !log.lines()
             .any(|line| line.starts_with("start-workspace-vm ")),
-        "running-but-not-ready state should be restarted instead of reused:\n{log}"
+        "running-but-not-ready state should be joined instead of restarted:\n{log}"
     );
 }
 
