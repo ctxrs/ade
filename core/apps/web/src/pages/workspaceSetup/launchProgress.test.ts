@@ -166,54 +166,211 @@ describe("launchProgress", () => {
     expect(launchElapsedMs(snapshot, Date.parse("2026-03-10T00:00:25.000Z"))).toBeNull();
   });
 
-  it("counts down remaining time from the latest snapshot timestamp", () => {
+  it("uses aggregate bucket budgets for artifact preparation without live download telemetry", () => {
     const remainingMs = launchEtaRemainingMs(
-      baseSnapshot(),
+      {
+        ...baseSnapshot(),
+        active_download: null,
+        phases: [
+          {
+            phase: "artifact_download" as const,
+            started_at: "2026-03-10T00:00:00.000Z",
+            finished_at: null,
+            elapsed_ms: null,
+          },
+        ],
+      },
       Date.parse("2026-03-10T00:00:09.000Z"),
     );
-    expect(formatLaunchRemaining(remainingMs)).toBe("4:00 remaining");
+    expect(remainingMs).toBe(62_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("1m 2s est. remaining");
   });
 
-  it("keeps a fixed non-download eta while the snapshot is still fresh", () => {
+  it("keeps artifact bucket elapsed time across artifact_download to machine_check", () => {
     const snapshot = {
       ...baseSnapshot(),
-      current_phase: "machine_start_or_init" as const,
-      current_step_label: "waiting for local sandbox runtime readiness",
+      current_phase: "machine_check" as const,
+      current_step_label: "checking AVF Linux workspace VM state",
       active_download: null,
-      eta_ms: 18000,
+      phases: [
+        {
+          phase: "artifact_download" as const,
+          started_at: "2026-03-10T00:00:00.000Z",
+          finished_at: "2026-03-10T00:00:20.000Z",
+          elapsed_ms: 20000,
+        },
+        {
+          phase: "machine_check" as const,
+          started_at: "2026-03-10T00:00:20.000Z",
+          finished_at: null,
+          elapsed_ms: null,
+        },
+      ],
     };
     const remainingMs = launchEtaRemainingMs(
       snapshot,
-      Date.parse("2026-03-10T00:00:09.000Z"),
+      Date.parse("2026-03-10T00:00:23.000Z"),
     );
-    expect(formatLaunchRemaining(remainingMs)).toBe("18s remaining");
+    expect(remainingMs).toBe(48_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("48s est. remaining");
   });
 
-  it("shows estimating when a non-download eta snapshot has gone stale", () => {
+  it("uses live download telemetry plus downstream buckets while a download is active", () => {
     const snapshot = {
       ...baseSnapshot(),
-      current_phase: "machine_start_or_init" as const,
-      current_step_label: "waiting for local sandbox runtime readiness",
-      active_download: null,
-      eta_ms: 18000,
+      updated_at: "2026-03-10T00:00:04.000Z",
+      active_download: {
+        artifact: "Ubuntu guest runtime",
+        downloaded_bytes: 40,
+        total_bytes: 100,
+        bytes_per_sec: 10,
+      },
     };
     const remainingMs = launchEtaRemainingMs(
       snapshot,
-      Date.parse("2026-03-10T00:00:19.000Z"),
+      Date.parse("2026-03-10T00:00:06.000Z"),
     );
-    expect(formatLaunchRemaining(remainingMs)).toBe("Estimating remaining…");
+    expect(remainingMs).toBe(35_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("35s est. remaining");
   });
 
-  it("shows estimating when a running non-download snapshot has no remaining eta", () => {
+  it("uses aggregate remaining for shared VM startup", () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      current_phase: "machine_start_or_init" as const,
+      current_step_label: "starting AVF Linux workspace VM",
+      active_download: null,
+      phases: [
+        {
+          phase: "machine_start_or_init" as const,
+          started_at: "2026-03-10T00:00:20.000Z",
+          finished_at: null,
+          elapsed_ms: null,
+        },
+      ],
+    };
+    const remainingMs = launchEtaRemainingMs(
+      snapshot,
+      Date.parse("2026-03-10T00:00:25.000Z"),
+    );
+    expect(remainingMs).toBe(26_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("26s est. remaining");
+  });
+
+  it("uses total launch budget when a running snapshot has no current phase", () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      current_phase: null,
+      current_step_label: "",
+      active_download: null,
+      phases: [],
+    };
+    const remainingMs = launchEtaRemainingMs(
+      snapshot,
+      Date.parse("2026-03-10T00:00:05.000Z"),
+    );
+    expect(remainingMs).toBe(66_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("1m 6s est. remaining");
+  });
+
+  it("uses total launch budget when a running snapshot has an unmapped phase", () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      current_phase: "ready" as const,
+      state: "running" as const,
+      current_step_label: "performing future backend phase",
+      active_download: null,
+      phases: [],
+    };
+    const remainingMs = launchEtaRemainingMs(
+      snapshot,
+      Date.parse("2026-03-10T00:00:10.000Z"),
+    );
+    expect(remainingMs).toBe(61_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("1m 1s est. remaining");
+  });
+
+  it("still uses live download telemetry when phase is absent but download progress is active", () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      current_phase: null,
+      current_step_label: "",
+      active_download: {
+        artifact: "Ubuntu guest runtime",
+        downloaded_bytes: 40,
+        total_bytes: 100,
+        bytes_per_sec: 10,
+      },
+    };
+    const remainingMs = launchEtaRemainingMs(
+      snapshot,
+      Date.parse("2026-03-10T00:00:06.000Z"),
+    );
+    expect(remainingMs).toBe(35_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("35s est. remaining");
+  });
+
+  it("uses aggregate remaining for sandbox setup across grouped phases", () => {
     const snapshot = {
       ...baseSnapshot(),
       current_phase: "image_load" as const,
       current_step_label: "loading harness image into local sandbox runtime",
       active_download: null,
-      eta_ms: 0,
+      phases: [
+        {
+          phase: "image_check" as const,
+          started_at: "2026-03-10T00:00:50.000Z",
+          finished_at: "2026-03-10T00:00:52.000Z",
+          elapsed_ms: 2000,
+        },
+        {
+          phase: "image_load" as const,
+          started_at: "2026-03-10T00:00:52.000Z",
+          finished_at: null,
+          elapsed_ms: null,
+        },
+      ],
     };
-    expect(formatLaunchRemaining(launchEtaRemainingMs(snapshot, Date.now()))).toBe(
-      "Estimating remaining…",
+    const remainingMs = launchEtaRemainingMs(
+      snapshot,
+      Date.parse("2026-03-10T00:00:59.000Z"),
     );
+    expect(remainingMs).toBe(3_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("3s est. remaining");
+  });
+
+  it("shows finishing up once the aggregate budget is exhausted but launch is still running", () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      current_phase: "runtime_network_setup" as const,
+      current_step_label: "finalizing local sandbox runtime network",
+      active_download: null,
+      phases: [
+        {
+          phase: "image_check" as const,
+          started_at: "2026-03-10T00:00:50.000Z",
+          finished_at: "2026-03-10T00:00:52.000Z",
+          elapsed_ms: 2000,
+        },
+        {
+          phase: "image_load" as const,
+          started_at: "2026-03-10T00:00:52.000Z",
+          finished_at: "2026-03-10T00:00:58.000Z",
+          elapsed_ms: 6000,
+        },
+        {
+          phase: "runtime_network_setup" as const,
+          started_at: "2026-03-10T00:00:58.000Z",
+          finished_at: null,
+          elapsed_ms: null,
+        },
+      ],
+    };
+    const remainingMs = launchEtaRemainingMs(
+      snapshot,
+      Date.parse("2026-03-10T00:01:05.000Z"),
+    );
+    expect(remainingMs).toBe(0);
+    expect(formatLaunchRemaining(remainingMs)).toBe("Finishing up…");
   });
 });

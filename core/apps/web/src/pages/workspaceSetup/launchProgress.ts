@@ -6,7 +6,16 @@ import type {
 } from "../../api/client";
 
 const LAUNCH_LOG_MAX = 400;
-const NON_DOWNLOAD_ETA_STALE_AFTER_MS = 10_000;
+const ARTIFACT_ACQUISITION_PREPARATION_MS = 40_000;
+const SHARED_VM_STARTUP_MS = 19_000;
+const SANDBOX_SETUP_MS = 12_000;
+const TOTAL_LAUNCH_BUDGET_MS =
+  ARTIFACT_ACQUISITION_PREPARATION_MS + SHARED_VM_STARTUP_MS + SANDBOX_SETUP_MS;
+
+type LaunchEtaBucket =
+  | "artifact_acquisition_preparation"
+  | "shared_vm_startup"
+  | "sandbox_setup";
 
 export type WorkspaceSetupLaunchLogLine = ExecutionLaunchLogLine & {
   phaseLabel: string;
@@ -135,6 +144,108 @@ export const formatLaunchTime = (ts: string): string => {
   return date.toLocaleTimeString([], { hour12: false });
 };
 
+const etaBucketForPhase = (
+  phase?: ExecutionLaunchPhase | null,
+): LaunchEtaBucket | null => {
+  switch (phase) {
+    case "artifact_download":
+    case "machine_check":
+      return "artifact_acquisition_preparation";
+    case "machine_start_or_init":
+      return "shared_vm_startup";
+    case "image_check":
+    case "image_load":
+    case "container_check":
+    case "container_start_or_create":
+    case "runtime_network_setup":
+      return "sandbox_setup";
+    default:
+      return null;
+  }
+};
+
+const etaBucketBudgetMs = (bucket: LaunchEtaBucket): number => {
+  switch (bucket) {
+    case "artifact_acquisition_preparation":
+      return ARTIFACT_ACQUISITION_PREPARATION_MS;
+    case "shared_vm_startup":
+      return SHARED_VM_STARTUP_MS;
+    case "sandbox_setup":
+      return SANDBOX_SETUP_MS;
+  }
+};
+
+const remainingDownstreamBucketBudgetMs = (bucket: LaunchEtaBucket): number => {
+  switch (bucket) {
+    case "artifact_acquisition_preparation":
+      return SHARED_VM_STARTUP_MS + SANDBOX_SETUP_MS;
+    case "shared_vm_startup":
+      return SANDBOX_SETUP_MS;
+    case "sandbox_setup":
+      return 0;
+  }
+};
+
+const bucketStartedAtMs = (
+  snapshot: ExecutionLaunchSnapshot,
+  currentBucket: LaunchEtaBucket,
+): number | null => {
+  const currentPhase = snapshot.current_phase;
+  if (!currentPhase) {
+    return parseUtcMs(snapshot.started_at) ?? parseUtcMs(snapshot.created_at);
+  }
+  let currentIndex = -1;
+  for (let i = snapshot.phases.length - 1; i >= 0; i -= 1) {
+    if (snapshot.phases[i].phase === currentPhase) {
+      currentIndex = i;
+      break;
+    }
+  }
+  if (currentIndex < 0) {
+    return parseUtcMs(snapshot.started_at) ?? parseUtcMs(snapshot.created_at);
+  }
+
+  let startedAtMs = parseUtcMs(snapshot.phases[currentIndex].started_at);
+  for (let i = currentIndex - 1; i >= 0; i -= 1) {
+    if (etaBucketForPhase(snapshot.phases[i].phase) !== currentBucket) {
+      break;
+    }
+    const candidateStartedAtMs = parseUtcMs(snapshot.phases[i].started_at);
+    if (candidateStartedAtMs !== null) {
+      startedAtMs = candidateStartedAtMs;
+    }
+  }
+  return startedAtMs ?? parseUtcMs(snapshot.started_at) ?? parseUtcMs(snapshot.created_at);
+};
+
+const liveDownloadRemainingMs = (
+  snapshot: ExecutionLaunchSnapshot,
+  nowMs: number,
+): number | null => {
+  const download = snapshot.active_download;
+  if (!download) return null;
+  const totalBytes = download.total_bytes;
+  const bytesPerSec = download.bytes_per_sec;
+  if (
+    totalBytes === null
+    || totalBytes === undefined
+    || bytesPerSec === null
+    || bytesPerSec === undefined
+    || bytesPerSec <= 0
+  ) {
+    return null;
+  }
+  const baseRemainingMs = Math.max(
+    0,
+    Math.floor(
+      (Math.max(0, totalBytes - download.downloaded_bytes) * 1000) / bytesPerSec,
+    ),
+  );
+  const updatedAtMs = parseUtcMs(snapshot.updated_at);
+  if (updatedAtMs === null) return baseRemainingMs;
+  return Math.max(0, baseRemainingMs - Math.max(0, nowMs - updatedAtMs));
+};
+
 export const launchEtaRemainingMs = (
   snapshot: ExecutionLaunchSnapshot | null,
   nowMs: number,
@@ -142,32 +253,43 @@ export const launchEtaRemainingMs = (
   if (!snapshot) return null;
   if (snapshot.state === "ready") return 0;
   if (snapshot.state === "error") return null;
-  if (snapshot.eta_ms === null || snapshot.eta_ms === undefined) return null;
-  const updatedAt = parseUtcMs(snapshot.updated_at);
-  if (!snapshot.active_download) {
-    if (
-      updatedAt !== null
-      && nowMs - updatedAt > NON_DOWNLOAD_ETA_STALE_AFTER_MS
-    ) {
-      return null;
+  const currentBucket = etaBucketForPhase(snapshot.current_phase);
+  if (!currentBucket) {
+    const downloadRemainingMs = liveDownloadRemainingMs(snapshot, nowMs);
+    if (downloadRemainingMs !== null) {
+      return downloadRemainingMs + SHARED_VM_STARTUP_MS + SANDBOX_SETUP_MS;
     }
-    return snapshot.eta_ms > 0 ? snapshot.eta_ms : null;
+
+    const launchElapsed = launchElapsedMs(snapshot, nowMs);
+    if (launchElapsed === null) return TOTAL_LAUNCH_BUDGET_MS;
+    return Math.max(0, TOTAL_LAUNCH_BUDGET_MS - launchElapsed);
   }
-  if (updatedAt === null) return Math.max(0, snapshot.eta_ms);
-  return Math.max(0, snapshot.eta_ms - Math.max(0, nowMs - updatedAt));
+
+  const downstreamRemainingMs = remainingDownstreamBucketBudgetMs(currentBucket);
+  if (currentBucket === "artifact_acquisition_preparation") {
+    const downloadRemainingMs = liveDownloadRemainingMs(snapshot, nowMs);
+    if (downloadRemainingMs !== null) {
+      return downloadRemainingMs + downstreamRemainingMs;
+    }
+  }
+
+  const startedAtMs = bucketStartedAtMs(snapshot, currentBucket);
+  if (startedAtMs === null) return downstreamRemainingMs;
+  const elapsedMs = Math.max(0, nowMs - startedAtMs);
+  const currentBucketRemainingMs = Math.max(
+    0,
+    etaBucketBudgetMs(currentBucket) - elapsedMs,
+  );
+  return currentBucketRemainingMs + downstreamRemainingMs;
 };
 
 export const formatLaunchRemaining = (ms: number | null): string => {
-  if (ms === null || !Number.isFinite(ms) || ms < 0) return "Estimating remaining…";
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  if (ms === null || !Number.isFinite(ms) || ms <= 0) return "Finishing up…";
+  const totalSeconds = Math.max(1, Math.ceil(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")} remaining`;
-  }
   if (minutes > 0) {
-    return `${minutes}:${String(seconds).padStart(2, "0")} remaining`;
+    return `${minutes}m ${seconds}s est. remaining`;
   }
-  return `${seconds}s remaining`;
+  return `${seconds}s est. remaining`;
 };
