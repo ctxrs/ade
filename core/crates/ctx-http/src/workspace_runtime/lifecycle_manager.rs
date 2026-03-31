@@ -6,8 +6,8 @@ use ctx_core::models::SandboxSubstrate;
 use serde::Serialize;
 
 use super::avf_linux_vm::{
-    probe_helper, AvfLinuxSharedVmLifecycleState, AvfLinuxSharedVmStartOutcome,
-    AvfLinuxSharedVmState, AvfLinuxSharedVmStopOutcome, shared_vm_is_launch_ready,
+    probe_helper, shared_vm_is_launch_ready, AvfLinuxSharedVmLifecycleState,
+    AvfLinuxSharedVmStartOutcome, AvfLinuxSharedVmState, AvfLinuxSharedVmStopOutcome,
 };
 use super::{
     ContainerExecutionSettings, HarnessSetupObserver, SharedVmLifecycleOrchestrator,
@@ -333,6 +333,7 @@ fn build_lifecycle_record(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workspace_runtime::avf_linux_vm::AvfLinuxSharedVmTransitionStatus;
 
     fn sample_state(
         state: AvfLinuxSharedVmLifecycleState,
@@ -361,7 +362,8 @@ mod tests {
             last_started_at: None,
             last_saved_at: None,
             last_stopped_at: None,
-            transition_status: None,
+            transition_status: matches!(state, AvfLinuxSharedVmLifecycleState::Running)
+                .then_some(AvfLinuxSharedVmTransitionStatus::Ready),
             last_start_outcome: None,
             last_stop_outcome: None,
             last_restore_error: None,

@@ -156,3 +156,49 @@ test("curate_avf_container_stack.sh produces deterministic archives", () => {
 
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
+
+test("curate_avf_container_stack.sh produces identical archives from identical inputs in different source roots", () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-avf-curate-stack-cross-root-"));
+  const inputArchiveA = path.join(tmpRoot, "nerdctl-full-a.tar.gz");
+  const inputArchiveB = path.join(tmpRoot, "nerdctl-full-b.tar.gz");
+  const outputArchiveA = path.join(tmpRoot, "container-stack-a.tar.gz");
+  const outputArchiveB = path.join(tmpRoot, "container-stack-b.tar.gz");
+  const requiredEntries = [
+    "bin/buildctl",
+    "bin/buildkitd",
+    "bin/containerd",
+    "bin/containerd-shim-runc-v2",
+    "bin/ctr",
+    "bin/nerdctl",
+    "bin/runc",
+    "libexec/cni/bridge",
+    "libexec/cni/firewall",
+    "libexec/cni/host-local",
+    "libexec/cni/loopback",
+    "libexec/cni/portmap",
+    "libexec/cni/tuning",
+  ];
+
+  for (const suffix of ["a", "b"]) {
+    const sourceRoot = path.join(tmpRoot, `source-${suffix}`);
+    for (const entry of requiredEntries) {
+      const fullPath = path.join(sourceRoot, entry);
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+      fs.writeFileSync(fullPath, `${entry}\n`, { mode: 0o755 });
+    }
+    execFileSync("tar", ["-czf", suffix === "a" ? inputArchiveA : inputArchiveB, "-C", sourceRoot, "."], {
+      stdio: "inherit",
+    });
+  }
+
+  execFileSync("bash", [scriptPath, "--input", inputArchiveA, "--output", outputArchiveA], {
+    stdio: "inherit",
+  });
+  execFileSync("bash", [scriptPath, "--input", inputArchiveB, "--output", outputArchiveB], {
+    stdio: "inherit",
+  });
+
+  assert.equal(fs.readFileSync(outputArchiveA).equals(fs.readFileSync(outputArchiveB)), true);
+
+  fs.rmSync(tmpRoot, { recursive: true, force: true });
+});

@@ -159,7 +159,10 @@ fn bind_vsock_listener(port: u32) -> Result<OwnedFd> {
         svm_cid: libc::VMADDR_CID_ANY,
         svm_zero: [0; 4],
     };
-    eprintln!("guest-agent binding AF_VSOCK listener fd {} on port {port}", listener.as_raw_fd());
+    eprintln!(
+        "guest-agent binding AF_VSOCK listener fd {} on port {port}",
+        listener.as_raw_fd()
+    );
     let bind_rc = unsafe {
         libc::bind(
             listener.as_raw_fd(),

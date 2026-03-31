@@ -6,6 +6,16 @@ toolchain="${CTX_AVF_GUEST_AGENT_TOOLCHAIN:-stable-aarch64-apple-darwin}"
 cargo_home_bin="${HOME}/.cargo/bin"
 default_path="${cargo_home_bin}:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 target_root="${CTX_AVF_GUEST_HELPER_TARGET_ROOT:-}"
+encoded_rustflags="${CARGO_ENCODED_RUSTFLAGS:-}"
+
+append_encoded_rustflag() {
+  local flag="$1"
+  if [[ -n "${encoded_rustflags}" ]]; then
+    encoded_rustflags+=$'\x1f'"${flag}"
+  else
+    encoded_rustflags="${flag}"
+  fi
+}
 
 cargo_target_dir() {
   local manifest="$1"
@@ -58,6 +68,13 @@ if [[ -z "${target_root}" ]]; then
   target_root="${CARGO_TARGET_DIR:-$(cargo_target_dir "${repo_root}/Cargo.toml")}"
 fi
 
+if [[ -n "${HOME:-}" ]]; then
+  append_encoded_rustflag "--remap-path-prefix=${HOME}=/ctx-home"
+fi
+if [[ "${repo_root}" != "${HOME:-}"* ]]; then
+  append_encoded_rustflag "--remap-path-prefix=${repo_root}=/ctx-workspace"
+fi
+
 targets=(
   "aarch64-unknown-linux-gnu"
   "x86_64-unknown-linux-gnu"
@@ -104,7 +121,7 @@ for target in "${targets[@]}"; do
     if ((${#extra_args[@]} > 0)); then
       cargo_cmd+=("${extra_args[@]}")
     fi
-    CARGO_TARGET_DIR="${target_root}" "${cargo_cmd[@]}"
+    CARGO_TARGET_DIR="${target_root}" CARGO_ENCODED_RUSTFLAGS="${encoded_rustflags}" "${cargo_cmd[@]}"
   done
 done
 

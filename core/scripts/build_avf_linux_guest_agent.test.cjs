@@ -17,6 +17,7 @@ test("build_avf_linux_guest_agent.sh defaults guest helpers to the cargo metadat
   const fakeHome = path.join(tmpRoot, "home");
   const cargoBinDir = path.join(fakeHome, ".cargo", "bin");
   const targetRoot = path.join(tmpRoot, "cargo-target");
+  const rustflagsReport = path.join(tmpRoot, "encoded-rustflags.txt");
 
   writeExecutable(
     path.join(cargoBinDir, "cargo"),
@@ -44,6 +45,7 @@ test("build_avf_linux_guest_agent.sh defaults guest helpers to the cargo metadat
       "  shift 2",
       "  [ \"${1:-}\" = \"cargo\" ] || { echo \"expected cargo after rustup run\" >&2; exit 1; }",
       "  [ \"${2:-}\" = \"zigbuild\" ] || { echo \"expected zigbuild after rustup run cargo\" >&2; exit 1; }",
+      "  printf '%s' \"${CARGO_ENCODED_RUSTFLAGS:-}\" > \"$FAKE_ENCODED_RUSTFLAGS_REPORT\"",
       "  shift 2",
       "  package=\"\"",
       "  target=\"\"",
@@ -92,6 +94,7 @@ test("build_avf_linux_guest_agent.sh defaults guest helpers to the cargo metadat
       HOME: fakeHome,
       PATH: `/usr/bin:/bin:/usr/sbin:/sbin`,
       FAKE_TARGET_ROOT: targetRoot,
+      FAKE_ENCODED_RUSTFLAGS_REPORT: rustflagsReport,
     },
   });
 
@@ -102,6 +105,8 @@ test("build_avf_linux_guest_agent.sh defaults guest helpers to the cargo metadat
   assert.ok(fs.existsSync(expectedEgressProxy));
   assert.match(output, new RegExp(expectedGuestAgent.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(output, new RegExp(expectedEgressProxy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  const encodedRustflags = fs.readFileSync(rustflagsReport, "utf8");
+  assert.match(encodedRustflags, new RegExp(`--remap-path-prefix=${fakeHome.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=\\/ctx-home`));
 
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });

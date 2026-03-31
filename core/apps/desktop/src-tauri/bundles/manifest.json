@@ -1,16 +1,25 @@
 {
   "version": 1,
-  "generated_at": "2026-03-31T06:09:40Z",
+  "generated_at": "2026-03-31T12:15:40Z",
   "providers": [],
   "runtimes": [
     {
       "id": "avf-linux-guest",
-      "version": "ubuntu-noble-arm64-a9ad7428b6da",
+      "version": "ubuntu-noble-arm64-7185e4e8e612",
       "os": "macos",
       "arch": "aarch64",
       "sha256": "0ade3ab4529204da7250bb140fbedf8f04947fd80516fddbfe0c277244a5604c",
-      "root": "runtimes/avf-linux-guest/macos/aarch64/ubuntu-noble-arm64-a9ad7428b6da",
+      "root": "runtimes/avf-linux-guest/macos/aarch64/ubuntu-noble-arm64-7185e4e8e612",
       "bin": "rootfs.raw"
+    },
+    {
+      "id": "ctx-mcp",
+      "version": "0.1.0",
+      "os": "linux",
+      "arch": "aarch64",
+      "sha256": "97a4f21ac84ef6b0508a528f0cb92dbca6fe8bc3b26e8067b3ee4a3c1bbf8e32",
+      "root": "runtimes/ctx-mcp/linux/aarch64/0.1.0",
+      "bin": "ctx-mcp"
     },
     {
       "id": "node",
@@ -23,5 +32,21 @@
       "npm_cli": "lib/node_modules/npm/bin/npm-cli.js"
     }
   ],
-  "images": []
+  "images": [],
+  "daemons": [
+    {
+      "id": "ctx-daemon",
+      "os": "linux",
+      "arch": "aarch64",
+      "sha256": "c4e72c465a91895c6b9025ea42203ff66c0c38e6e970284ec73a511ccea9298a",
+      "bin": "daemons/ctx-daemon-linux-aarch64"
+    },
+    {
+      "id": "ctx-daemon",
+      "os": "linux",
+      "arch": "x86_64",
+      "sha256": "e110d2ce293682d42297c3152991005f2ea9d9a78e38d6d783c22e7313d47552",
+      "bin": "daemons/ctx-daemon-linux-x86_64"
+    }
+  ]
 }

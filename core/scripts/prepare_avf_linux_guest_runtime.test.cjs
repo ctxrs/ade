@@ -7,6 +7,10 @@ const { execFileSync } = require("child_process");
 
 const scriptPath = path.join(__dirname, "prepare_avf_linux_guest_runtime.sh");
 
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 test("prepare_avf_linux_guest_runtime.sh resolves official Ubuntu inputs in dry-run mode", () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-avf-runtime-"));
   const runtimeDir = path.join(tmpRoot, "runtime");
@@ -107,7 +111,7 @@ test("prepare_avf_linux_guest_runtime.sh auto-builds guest helpers into the reso
     },
   );
 
-  assert.match(output, new RegExp(`target_root=${targetRoot.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}`));
+  assert.match(output, new RegExp(`target_root=${escapeRegex(targetRoot)}`));
   assert.match(output, /auto_built_guest_helpers=1/);
   assert.match(output, /guest_agent=.*ctx-avf-linux-guest-agent/);
   assert.match(output, /egress_proxy=.*ctx-egress-proxy/);
@@ -115,6 +119,77 @@ test("prepare_avf_linux_guest_runtime.sh auto-builds guest helpers into the reso
     fs.existsSync(path.join(targetRoot, "aarch64-unknown-linux-gnu", "release", "ctx-avf-linux-guest-agent")),
   );
   assert.ok(fs.existsSync(path.join(targetRoot, "aarch64-unknown-linux-gnu", "release", "ctx-egress-proxy")));
+
+  fs.rmSync(tmpRoot, { recursive: true, force: true });
+});
+
+test("prepare_avf_linux_guest_runtime.sh isolates auto-built guest helpers from stale cargo target outputs", () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-avf-runtime-isolated-build-"));
+  const runtimeDir = path.join(tmpRoot, "runtime");
+  const staleTargetRoot = path.join(tmpRoot, "stale-target-root");
+  const staleReleaseDir = path.join(staleTargetRoot, "aarch64-unknown-linux-gnu", "release");
+  const buildScript = path.join(tmpRoot, "fake-build.sh");
+  const buildReport = path.join(tmpRoot, "build-root.txt");
+  fs.mkdirSync(staleReleaseDir, { recursive: true });
+  fs.writeFileSync(path.join(staleReleaseDir, "ctx-avf-linux-guest-agent"), "stale-guest-agent\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(staleReleaseDir, "ctx-egress-proxy"), "stale-egress-proxy\n", { mode: 0o755 });
+  fs.writeFileSync(
+    buildScript,
+    [
+      "#!/bin/sh",
+      "set -eu",
+      "target=\"${CTX_AVF_GUEST_HELPER_TARGETS:?}\"",
+      "root=\"${CTX_AVF_GUEST_HELPER_TARGET_ROOT:?}\"",
+      "report=\"${CTX_AVF_TEST_BUILD_REPORT:?}\"",
+      "mkdir -p \"$root/$target/release\"",
+      "printf '%s\\n' \"$root\" > \"$report\"",
+      "printf '#!/bin/sh\\necho fresh-guest-agent\\n' > \"$root/$target/release/ctx-avf-linux-guest-agent\"",
+      "printf '#!/bin/sh\\necho fresh-egress-proxy\\n' > \"$root/$target/release/ctx-egress-proxy\"",
+      "chmod 755 \"$root/$target/release/ctx-avf-linux-guest-agent\" \"$root/$target/release/ctx-egress-proxy\"",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+
+  const output = execFileSync(
+    "bash",
+    [
+      scriptPath,
+      "--dry-run",
+      "--output-dir",
+      runtimeDir,
+      "--arch",
+      "arm64",
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CARGO_TARGET_DIR: staleTargetRoot,
+        CTX_AVF_BUILD_AVF_LINUX_GUEST_HELPERS_SCRIPT: buildScript,
+        CTX_AVF_TEST_BUILD_REPORT: buildReport,
+      },
+    },
+  );
+
+  const isolatedTargetRoot = fs.readFileSync(buildReport, "utf8").trim();
+  const targetRootLine = output.match(/^target_root=(.+)$/m);
+  const guestAgentLine = output.match(/^guest_agent=(.+)$/m);
+  const egressProxyLine = output.match(/^egress_proxy=(.+)$/m);
+  assert.notEqual(isolatedTargetRoot, staleTargetRoot);
+  assert.ok(targetRootLine);
+  assert.ok(guestAgentLine);
+  assert.ok(egressProxyLine);
+  assert.equal(path.normalize(targetRootLine[1]), path.normalize(isolatedTargetRoot));
+  assert.equal(
+    path.normalize(guestAgentLine[1]),
+    path.normalize(path.join(isolatedTargetRoot, "aarch64-unknown-linux-gnu", "release", "ctx-avf-linux-guest-agent")),
+  );
+  assert.equal(
+    path.normalize(egressProxyLine[1]),
+    path.normalize(path.join(isolatedTargetRoot, "aarch64-unknown-linux-gnu", "release", "ctx-egress-proxy")),
+  );
+  assert.doesNotMatch(output, new RegExp(`guest_agent=${escapeRegex(path.join(staleReleaseDir, "ctx-avf-linux-guest-agent"))}`));
+  assert.doesNotMatch(output, new RegExp(`egress_proxy=${escapeRegex(path.join(staleReleaseDir, "ctx-egress-proxy"))}`));
 
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });

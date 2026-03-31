@@ -9,6 +9,7 @@ guest_agent_override=0
 egress_proxy_override=0
 container_stack_path=""
 target_root=""
+helper_build_tmp_root=""
 arch=""
 release_dir="https://cloud-images.ubuntu.com/releases/noble/release"
 kernel_cmdline="console=hvc0 root=LABEL=cloudimg-rootfs rootwait rw"
@@ -45,6 +46,18 @@ die() {
   exit 1
 }
 
+cleanup() {
+  if [[ -n "${helper_build_tmp_root}" ]]; then
+    chmod -R u+rwX "${helper_build_tmp_root}" 2>/dev/null || true
+    rm -rf "${helper_build_tmp_root}"
+  fi
+  if [[ -n "${tmp_root:-}" ]]; then
+    chmod -R u+rwX "${tmp_root}" 2>/dev/null || true
+    rm -rf "${tmp_root}"
+  fi
+}
+trap cleanup EXIT
+
 need_cmd() {
   local cmd="$1"
   command -v "$cmd" >/dev/null 2>&1 || die "missing required command: $cmd"
@@ -64,17 +77,6 @@ resolve_qemu_img() {
     fi
   fi
   return 1
-}
-
-cargo_target_dir() {
-  local manifest="$1"
-  cargo metadata --manifest-path "$manifest" --format-version 1 --no-deps | node -e '
-const fs = require("node:fs");
-const input = JSON.parse(fs.readFileSync(0, "utf8"));
-const dir = typeof input.target_directory === "string" ? input.target_directory.trim() : "";
-if (!dir) process.exit(1);
-process.stdout.write(dir);
-'
 }
 
 normalize_arch() {
@@ -279,14 +281,18 @@ fi
 ubuntu_arch="$(ubuntu_image_arch "$arch")"
 container_stack_arch="$(container_stack_asset_arch "$arch")"
 target="$(guest_agent_target "$arch")"
-target_root="${CTX_AVF_GUEST_HELPER_TARGET_ROOT:-}"
-if [[ -z "$target_root" && ( -z "$guest_agent_path" || -z "$egress_proxy_path" ) ]]; then
-  need_cmd cargo
-  need_cmd node
-  target_root="$(cargo_target_dir "${repo_root}/Cargo.toml")"
+needs_guest_helper_build=0
+if [[ "$guest_agent_override" -eq 0 || "$egress_proxy_override" -eq 0 ]]; then
+  needs_guest_helper_build=1
 fi
+target_root="${CTX_AVF_GUEST_HELPER_TARGET_ROOT:-}"
 if [[ -z "$target_root" ]]; then
-  target_root="${repo_root}/target"
+  if [[ "$needs_guest_helper_build" -eq 1 ]]; then
+    helper_build_tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/ctx-avf-guest-helper-target.XXXXXX")"
+    target_root="$helper_build_tmp_root"
+  else
+    target_root="${CARGO_TARGET_DIR:-${repo_root}/target}"
+  fi
 fi
 
 if [[ -z "$guest_agent_path" ]]; then
@@ -386,11 +392,6 @@ if ! qemu_img_bin="$(resolve_qemu_img)"; then
 fi
 
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/ctx-avf-linux-guest-runtime.XXXXXX")"
-cleanup() {
-  chmod -R u+rwX "$tmp_root" 2>/dev/null || true
-  rm -rf "$tmp_root"
-}
-trap cleanup EXIT
 
 rootfs_qcow="$tmp_root/$rootfs_name"
 kernel_path="$tmp_root/$kernel_name"

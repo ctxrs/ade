@@ -826,11 +826,17 @@ async fn ensure_managed_avf_linux_guest_runtime_reports_artifact_wait_before_sha
                 .lock()
                 .unwrap_or_else(|poisoned: std::sync::PoisonError<_>| poisoned.into_inner())
                 .iter()
-                .any(|(phase, level, message): &(HarnessSetupPhase, HarnessSetupLogLevel, String)| {
-                    *phase == HarnessSetupPhase::ArtifactDownload
-                        && *level == HarnessSetupLogLevel::Info
-                        && message.contains("waiting for another launch")
-                });
+                .any(
+                    |(phase, level, message): &(
+                        HarnessSetupPhase,
+                        HarnessSetupLogLevel,
+                        String,
+                    )| {
+                        *phase == HarnessSetupPhase::ArtifactDownload
+                            && *level == HarnessSetupLogLevel::Info
+                            && message.contains("waiting for another launch")
+                    },
+                );
             if saw_phase && saw_log {
                 break;
             }
