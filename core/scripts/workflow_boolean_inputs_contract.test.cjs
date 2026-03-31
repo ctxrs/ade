@@ -204,7 +204,7 @@ test("release supabase publishes the AVF Linux guest runtime before the shipped-
   );
   assert.match(
     text,
-    /- name:\s+Publish AVF Linux guest runtime \(macOS arm64\)[\s\S]*runtime_dir="\$RUNNER_TEMP\/ctx-avf-linux-guest-runtime"[\s\S]*prepare_avf_linux_guest_runtime\.sh[\s\S]*avf_runtime_lock_freshness\.cjs[\s\S]*avf_runtime_publish_supabase\.sh[\s\S]*--publish/s,
+    /- name:\s+Publish AVF Linux guest runtime \(macOS arm64\)[\s\S]*runtime_dir="\$RUNNER_TEMP\/ctx-avf-linux-guest-runtime"[\s\S]*prepare_avf_linux_guest_runtime\.sh[\s\S]*avf_runtime_lock_freshness\.cjs[\s\S]*--allow-managed-runtime[\s\S]*avf_runtime_publish_supabase\.sh[\s\S]*--publish/s,
   );
   assert.match(
     text,

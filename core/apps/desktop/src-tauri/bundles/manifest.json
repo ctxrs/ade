@@ -5,11 +5,11 @@
   "runtimes": [
     {
       "id": "avf-linux-guest",
-      "version": "ubuntu-noble-arm64-12f63cc4eea7",
+      "version": "ubuntu-noble-arm64-a9ad7428b6da",
       "os": "macos",
       "arch": "aarch64",
       "sha256": "0ade3ab4529204da7250bb140fbedf8f04947fd80516fddbfe0c277244a5604c",
-      "root": "runtimes/avf-linux-guest/macos/aarch64/ubuntu-noble-arm64-12f63cc4eea7",
+      "root": "runtimes/avf-linux-guest/macos/aarch64/ubuntu-noble-arm64-a9ad7428b6da",
       "bin": "rootfs.raw"
     },
     {
