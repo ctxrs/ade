@@ -2,7 +2,9 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-toolchain="${CTX_AVF_GUEST_AGENT_TOOLCHAIN:-stable-aarch64-apple-darwin}"
+# Keep AVF guest-helper builds on an explicit Rust toolchain so the prepared
+# runtime version is reproducible across local machines and CI runners.
+toolchain="${CTX_AVF_GUEST_AGENT_TOOLCHAIN:-1.94.1}"
 cargo_home_bin="${HOME}/.cargo/bin"
 default_path="${cargo_home_bin}:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 target_root="${CTX_AVF_GUEST_HELPER_TARGET_ROOT:-}"
@@ -110,6 +112,7 @@ packages=(
 extra_args=("$@")
 
 for target in "${targets[@]}"; do
+  rustup toolchain install "${toolchain}" --profile minimal --no-self-update >/dev/null
   rustup target add --toolchain "${toolchain}" "${target}" >/dev/null
   for package in "${packages[@]}"; do
     cargo_cmd=(

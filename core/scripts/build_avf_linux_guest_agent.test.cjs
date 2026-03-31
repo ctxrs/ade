@@ -18,6 +18,7 @@ test("build_avf_linux_guest_agent.sh defaults guest helpers to the cargo metadat
   const cargoBinDir = path.join(fakeHome, ".cargo", "bin");
   const targetRoot = path.join(tmpRoot, "cargo-target");
   const rustflagsReport = path.join(tmpRoot, "encoded-rustflags.txt");
+  const rustupReport = path.join(tmpRoot, "rustup-report.txt");
 
   writeExecutable(
     path.join(cargoBinDir, "cargo"),
@@ -38,6 +39,10 @@ test("build_avf_linux_guest_agent.sh defaults guest helpers to the cargo metadat
     [
       "#!/bin/sh",
       "set -eu",
+      "printf '%s\\n' \"$*\" >> \"$FAKE_RUSTUP_REPORT\"",
+      "if [ \"${1:-}\" = \"toolchain\" ] && [ \"${2:-}\" = \"install\" ]; then",
+      "  exit 0",
+      "fi",
       "if [ \"${1:-}\" = \"target\" ] && [ \"${2:-}\" = \"add\" ]; then",
       "  exit 0",
       "fi",
@@ -95,6 +100,7 @@ test("build_avf_linux_guest_agent.sh defaults guest helpers to the cargo metadat
       PATH: `/usr/bin:/bin:/usr/sbin:/sbin`,
       FAKE_TARGET_ROOT: targetRoot,
       FAKE_ENCODED_RUSTFLAGS_REPORT: rustflagsReport,
+      FAKE_RUSTUP_REPORT: rustupReport,
     },
   });
 
@@ -107,6 +113,9 @@ test("build_avf_linux_guest_agent.sh defaults guest helpers to the cargo metadat
   assert.match(output, new RegExp(expectedEgressProxy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   const encodedRustflags = fs.readFileSync(rustflagsReport, "utf8");
   assert.match(encodedRustflags, new RegExp(`--remap-path-prefix=${fakeHome.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=\\/ctx-home`));
+  const rustupCalls = fs.readFileSync(rustupReport, "utf8");
+  assert.match(rustupCalls, /toolchain install 1\.94\.1 --profile minimal --no-self-update/);
+  assert.match(rustupCalls, /target add --toolchain 1\.94\.1 aarch64-unknown-linux-gnu/);
 
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });

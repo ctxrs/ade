@@ -1,15 +1,15 @@
 {
   "version": 1,
-  "generated_at": "2026-03-31T12:15:40Z",
+  "generated_at": "2026-03-31T13:51:05Z",
   "providers": [],
   "runtimes": [
     {
       "id": "avf-linux-guest",
-      "version": "ubuntu-noble-arm64-7185e4e8e612",
+      "version": "ubuntu-noble-arm64-313b9a54b702",
       "os": "macos",
       "arch": "aarch64",
       "sha256": "0ade3ab4529204da7250bb140fbedf8f04947fd80516fddbfe0c277244a5604c",
-      "root": "runtimes/avf-linux-guest/macos/aarch64/ubuntu-noble-arm64-7185e4e8e612",
+      "root": "runtimes/avf-linux-guest/macos/aarch64/ubuntu-noble-arm64-313b9a54b702",
       "bin": "rootfs.raw"
     },
     {
