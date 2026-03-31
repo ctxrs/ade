@@ -1463,6 +1463,81 @@ describe("useHarnessAuthenticationController", () => {
     expect(vi.mocked(selectProviderHarnessSource)).not.toHaveBeenCalled();
   });
 
+  it("moves browser-auth status to finalizing while reconciliation is pending", async () => {
+    let controller: Controller | null = null;
+    const deferredRefresh = deferred<ProvidersBootstrapResponse>();
+    const refreshedBootstrap = makeBootstrap({
+      cursor_accounts: {
+        active_account_id: "cursor-acct-1",
+        accounts: [
+          {
+            id: "cursor-acct-1",
+            label: "Cursor OAuth",
+            kind: "oauth-token",
+            email: "cursor@example.com",
+            created_at: "2026-03-11T00:00:00Z",
+          },
+        ],
+      },
+    });
+
+    vi.mocked(startCursorLogin).mockResolvedValue({
+      login_id: "cursor-login-1",
+      auth_url: "https://cursor.com/login/device?code=test",
+    });
+    vi.mocked(getCursorLogin).mockResolvedValue({
+      login_id: "cursor-login-1",
+      auth_url: "https://cursor.com/login/device?code=test",
+      status: "success",
+      account_id: "cursor-acct-1",
+    });
+    vi.mocked(openExternalLink).mockResolvedValue(true);
+    vi.mocked(refreshProvidersBootstrap)
+      .mockImplementationOnce(async () => deferredRefresh.promise)
+      .mockImplementationOnce(async () => setBootstrapSnapshot("ws-test", refreshedBootstrap));
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("cursor");
+      controller?.patchHarnessAuthModal({
+        stage: "subscription",
+        subscription_label: "Cursor Login",
+      });
+    });
+
+    let submitPromise: Promise<void> | undefined;
+    await act(async () => {
+      submitPromise = controller?.submitHarnessSubscriptionModal();
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(startCursorLogin)).toHaveBeenCalledTimes(1);
+    });
+
+    await waitFor(() => {
+      expect(requireController(controller).harnessAuthModal?.subscription_phase).toBe("finalizing");
+      expect(requireController(controller).harnessAuthModal?.subscription_status).toBe("Finalizing sign-in...");
+    });
+
+    deferredRefresh.resolve(refreshedBootstrap);
+
+    await act(async () => {
+      await submitPromise;
+    });
+
+    expect(requireController(controller).harnessAuthModal).toBeNull();
+    expect(requireController(controller).providerError).toBeNull();
+  });
+
   it("starts Kimi sign-in by opening the browser and surfaces auth state while polling", async () => {
     let controller: Controller | null = null;
     const loginPoll = deferred<{

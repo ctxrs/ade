@@ -58,6 +58,8 @@ export type SettingsSectionComponentId =
   | "dev_tools"
   | "legacy";
 
+export type HarnessAuthSubscriptionPhase = "editing" | "awaiting_browser" | "finalizing";
+
 export type HarnessAuthModalState = {
   provider_id: string;
   stage: "choose" | "subscription" | "api_key";
@@ -82,6 +84,7 @@ export type HarnessAuthModalState = {
   subscription_google_accounts_json: string;
   subscription_device_code?: string | null;
   subscription_auth_url: string | null;
+  subscription_phase?: HarnessAuthSubscriptionPhase;
   subscription_status: string | null;
   subscription_busy: boolean;
   api_key_busy: boolean;

@@ -148,6 +148,17 @@ describe("HarnessAuthenticationSection Claude subscription submit", () => {
     expect(subscriptionPrimaryActionLabel(modal)).toBe("Start sign-in");
   });
 
+  it("shows finalizing state for browser-auth providers during reconciliation", () => {
+    const modal = baseModal({
+      provider_id: "cursor",
+      subscription_busy: true,
+      subscription_phase: "finalizing",
+    });
+
+    expect(canSubmitSubscriptionModal(modal)).toBe(false);
+    expect(subscriptionPrimaryActionLabel(modal)).toBe("Finalizing...");
+  });
+
   it("auto-starts browser sign-in from stage 1 for codex, claude, gemini, kimi, cursor, amp, copilot, and auggie", () => {
     expect(shouldAutoStartSubscriptionFlow("codex")).toBe(true);
     expect(shouldAutoStartSubscriptionFlow("claude-crp")).toBe(true);

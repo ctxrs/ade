@@ -1,4 +1,4 @@
-import { useEffect, useRef, type CSSProperties } from "react";
+import type { CSSProperties } from "react";
 import { Ellipsis } from "lucide-react";
 import {
   DropdownMenu,
@@ -19,7 +19,10 @@ import {
   installErrorSummary,
 } from "../../../utils/providerInstallUi";
 import { buildHarnessAuthRows } from "../harnessAuthRows";
-import { useHarnessAuthenticationController } from "../hooks/useHarnessAuthenticationController";
+import {
+  useHarnessAuthenticationController,
+  type HarnessAuthenticationController,
+} from "../hooks/useHarnessAuthenticationController";
 import {
   HarnessAuthenticationModal,
   type HarnessAuthenticationModalHarness,
@@ -36,16 +39,17 @@ type HarnessAuthenticationSectionProps = {
   workspaceId: string | null;
   active: boolean;
   modalOnly?: boolean;
-  openProviderId?: string | null;
-  onModalClosed?: (providerId: string | null) => void;
 };
-export function HarnessAuthenticationSection({
-  workspaceId,
-  active,
+
+type HarnessAuthenticationSectionViewProps = {
+  controller: HarnessAuthenticationController;
+  modalOnly?: boolean;
+};
+
+export function HarnessAuthenticationSectionView({
+  controller,
   modalOnly = false,
-  openProviderId,
-  onModalClosed,
-}: HarnessAuthenticationSectionProps) {
+}: HarnessAuthenticationSectionViewProps) {
   const {
     providers,
     installs,
@@ -94,10 +98,7 @@ export function HarnessAuthenticationSection({
     supportsHarnessEndpointConfig,
     supportsHarnessSubscriptionAuth,
     harnessEndpointRequiresBaseUrl,
-  } = useHarnessAuthenticationController({
-    workspaceId,
-    enabled: active,
-  });
+  } = controller;
 
   const visibleProviders = providers
     .filter((provider) => isVisibleHarnessProviderStatus(provider))
@@ -120,35 +121,6 @@ export function HarnessAuthenticationSection({
     HarnessAuthenticationModalHarness
   >(harnesses.map((entry) => [entry.id, entry]));
   const activeModalHarness = harnessAuthModal ? harnessDisplayById.get(harnessAuthModal.provider_id) : undefined;
-  const lastModalProviderIdRef = useRef<string | null>(null);
-  const suppressReopenProviderIdRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!active) return;
-    if (!openProviderId) return;
-    if (!harnessAuthModal && openProviderId === lastModalProviderIdRef.current) return;
-    if (openProviderId === suppressReopenProviderIdRef.current) return;
-    if (harnessAuthModal?.provider_id === openProviderId) return;
-    openHarnessAuthModal(openProviderId);
-  }, [active, harnessAuthModal?.provider_id, openHarnessAuthModal, openProviderId]);
-
-  useEffect(() => {
-    if (!openProviderId || openProviderId !== suppressReopenProviderIdRef.current) {
-      suppressReopenProviderIdRef.current = null;
-    }
-  }, [openProviderId]);
-
-  useEffect(() => {
-    if (harnessAuthModal) {
-      lastModalProviderIdRef.current = harnessAuthModal.provider_id;
-      return;
-    }
-    if (!lastModalProviderIdRef.current) return;
-    const closedProviderId = lastModalProviderIdRef.current;
-    lastModalProviderIdRef.current = null;
-    suppressReopenProviderIdRef.current = closedProviderId;
-    onModalClosed?.(closedProviderId);
-  }, [harnessAuthModal, onModalClosed]);
 
   return (
     <>
@@ -560,5 +532,23 @@ export function HarnessAuthenticationSection({
 
       {providerError ? <div className="settings-banner settings-banner-error">{providerError}</div> : null}
     </>
+  );
+}
+
+export function HarnessAuthenticationSection({
+  workspaceId,
+  active,
+  modalOnly = false,
+}: HarnessAuthenticationSectionProps) {
+  const controller = useHarnessAuthenticationController({
+    workspaceId,
+    enabled: active,
+  });
+
+  return (
+    <HarnessAuthenticationSectionView
+      controller={controller}
+      modalOnly={modalOnly}
+    />
   );
 }

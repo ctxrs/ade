@@ -149,7 +149,7 @@ describe("launchProgress", () => {
   it("returns null when launch-level start timestamps are unavailable", () => {
     const snapshot = {
       ...baseSnapshot(),
-      started_at: null,
+      started_at: "",
       created_at: "",
       current_phase: "machine_start_or_init" as const,
       phases: [

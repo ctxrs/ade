@@ -89,7 +89,7 @@ type UseHarnessAuthenticationControllerArgs = {
   enabled: boolean;
 };
 
-type HarnessAuthenticationController = {
+export type HarnessAuthenticationController = {
   providers: ProviderStatus[];
   installs: Record<string, InstallSession>;
   installBusy: string | null;
@@ -193,6 +193,9 @@ export function useHarnessAuthenticationController({
     finishOperation: finishHarnessAuthModalOperation,
     hasActiveOperation: hasActiveHarnessAuthModalOperation,
     patchHarnessAuthModalForOperation,
+    markAwaitingBrowserForOperation,
+    markFinalizingForOperation,
+    failSubscriptionFlowForOperation,
     closeHarnessAuthModalForOperation,
   } = useHarnessAuthModalController();
   const [installBusy, setInstallBusy] = useState<string | null>(null);
@@ -711,6 +714,7 @@ export function useHarnessAuthenticationController({
     const flow = startHarnessAuthModalOperation("subscription-flow");
     patchHarnessAuthModalForOperation(flow, {
       stage: "subscription",
+      subscription_phase: "editing",
       subscription_busy: true,
       subscription_status: "Starting subscription flow...",
     });
@@ -721,6 +725,9 @@ export function useHarnessAuthenticationController({
         workspaceId,
         flow,
         patchHarnessAuthModalForOperation,
+        markAwaitingBrowserForOperation,
+        markFinalizingForOperation,
+        failSubscriptionFlowForOperation,
         closeHarnessAuthModalForOperation,
         setProviderError,
         refreshBootstrapAfterMutation: refreshProviderSlicesAfterMutation,
@@ -745,7 +752,10 @@ export function useHarnessAuthenticationController({
     harnessAuthModal,
     closeHarnessAuthModalForOperation,
     finishHarnessAuthModalOperation,
+    failSubscriptionFlowForOperation,
     hasActiveHarnessAuthModalOperation,
+    markAwaitingBrowserForOperation,
+    markFinalizingForOperation,
     openCodexAuthUrl,
     patchHarnessAuthModalForOperation,
     refreshAmpAccounts,

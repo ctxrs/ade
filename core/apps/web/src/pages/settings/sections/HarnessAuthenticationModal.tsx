@@ -40,6 +40,9 @@ export function canSubmitSubscriptionModal(modal: HarnessAuthModalState): boolea
 }
 
 export function subscriptionPrimaryActionLabel(modal: HarnessAuthModalState): string {
+  if (modal.subscription_phase === "finalizing") {
+    return "Finalizing...";
+  }
   if (modal.provider_id === "claude-crp") {
     if (modal.subscription_busy) {
       return modal.subscription_token.trim() ? "Saving..." : "Waiting...";

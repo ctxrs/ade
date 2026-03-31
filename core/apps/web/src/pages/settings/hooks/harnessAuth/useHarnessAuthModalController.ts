@@ -27,6 +27,19 @@ type HarnessAuthModalStateController = {
     operation: HarnessAuthModalOperation,
     patch: Partial<HarnessAuthModalState>,
   ) => boolean;
+  markAwaitingBrowserForOperation: (
+    operation: HarnessAuthModalOperation,
+    status: string,
+    patch?: Partial<HarnessAuthModalState>,
+  ) => boolean;
+  markFinalizingForOperation: (
+    operation: HarnessAuthModalOperation,
+    status?: string,
+  ) => boolean;
+  failSubscriptionFlowForOperation: (
+    operation: HarnessAuthModalOperation,
+    status: string,
+  ) => boolean;
   closeHarnessAuthModalForOperation: (operation: HarnessAuthModalOperation) => boolean;
 };
 
@@ -63,6 +76,7 @@ const createInitialHarnessAuthModal = (providerId: string): HarnessAuthModalStat
     subscription_google_accounts_json: "",
     subscription_device_code: null,
     subscription_auth_url: null,
+    subscription_phase: "editing",
     subscription_status: null,
     subscription_busy: false,
     api_key_busy: false,
@@ -114,6 +128,41 @@ export function useHarnessAuthModalController(): HarnessAuthModalStateController
     [],
   );
 
+  const markAwaitingBrowserForOperation = useCallback(
+    (
+      operation: HarnessAuthModalOperation,
+      status: string,
+      patch: Partial<HarnessAuthModalState> = {},
+    ): boolean =>
+      patchHarnessAuthModalForOperation(operation, {
+        subscription_phase: "awaiting_browser",
+        subscription_status: status,
+        subscription_busy: true,
+        ...patch,
+      }),
+    [patchHarnessAuthModalForOperation],
+  );
+
+  const markFinalizingForOperation = useCallback(
+    (operation: HarnessAuthModalOperation, status = "Finalizing sign-in..."): boolean =>
+      patchHarnessAuthModalForOperation(operation, {
+        subscription_phase: "finalizing",
+        subscription_status: status,
+        subscription_busy: true,
+      }),
+    [patchHarnessAuthModalForOperation],
+  );
+
+  const failSubscriptionFlowForOperation = useCallback(
+    (operation: HarnessAuthModalOperation, status: string): boolean =>
+      patchHarnessAuthModalForOperation(operation, {
+        subscription_phase: "editing",
+        subscription_status: status,
+        subscription_busy: false,
+      }),
+    [patchHarnessAuthModalForOperation],
+  );
+
   const closeHarnessAuthModalForOperation = useCallback((operation: HarnessAuthModalOperation): boolean => {
     if (!operation.isCurrent()) return false;
     closeHarnessAuthModal();
@@ -133,6 +182,9 @@ export function useHarnessAuthModalController(): HarnessAuthModalStateController
     finishOperation,
     hasActiveOperation,
     patchHarnessAuthModalForOperation,
+    markAwaitingBrowserForOperation,
+    markFinalizingForOperation,
+    failSubscriptionFlowForOperation,
     closeHarnessAuthModalForOperation,
   };
 }

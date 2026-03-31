@@ -93,6 +93,19 @@ type SubscriptionFlowDeps = {
     operation: HarnessAuthModalOperation,
     patch: Partial<HarnessAuthModalState>,
   ) => boolean;
+  markAwaitingBrowserForOperation: (
+    operation: HarnessAuthModalOperation,
+    status: string,
+    patch?: Partial<HarnessAuthModalState>,
+  ) => boolean;
+  markFinalizingForOperation: (
+    operation: HarnessAuthModalOperation,
+    status?: string,
+  ) => boolean;
+  failSubscriptionFlowForOperation: (
+    operation: HarnessAuthModalOperation,
+    status: string,
+  ) => boolean;
   closeHarnessAuthModalForOperation: (operation: HarnessAuthModalOperation) => boolean;
   setProviderError: Dispatch<SetStateAction<string | null>>;
   refreshBootstrapAfterMutation: (providerId?: string) => Promise<void>;
@@ -113,13 +126,6 @@ type SubscriptionFlowDeps = {
   ) => Promise<void>;
 };
 
-const setFlowStatus = (
-  deps: Pick<SubscriptionFlowDeps, "flow" | "patchHarnessAuthModalForOperation">,
-  status: string,
-): void => {
-  deps.patchHarnessAuthModalForOperation(deps.flow, { subscription_status: status });
-};
-
 const setCurrentProviderError = (
   deps: Pick<SubscriptionFlowDeps, "flow" | "setProviderError">,
   message: string,
@@ -131,11 +137,12 @@ const setCurrentProviderError = (
 const finalizeSuccessfulSubscription = async (
   deps: Pick<
     SubscriptionFlowDeps,
-    "closeHarnessAuthModalForOperation" | "flow" | "selectSubscriptionSourceIfSupported"
+    "closeHarnessAuthModalForOperation" | "flow" | "markFinalizingForOperation" | "selectSubscriptionSourceIfSupported"
   >,
   providerId: string,
 ): Promise<void> => {
   if (!deps.flow.isCurrent()) return;
+  deps.markFinalizingForOperation(deps.flow);
   await deps.selectSubscriptionSourceIfSupported(providerId);
   deps.closeHarnessAuthModalForOperation(deps.flow);
 };
@@ -300,10 +307,7 @@ const runBrowserSubscriptionFlow = async (
       deps.flow.throwIfCancelled();
     }
 
-    setFlowStatus(
-      deps,
-      definition.waitingMessage,
-    );
+    deps.markAwaitingBrowserForOperation(deps.flow, definition.waitingMessage);
 
     const outcome = await waitForBrowserLoginOutcome({
       flow: deps.flow,
@@ -333,32 +337,38 @@ const runBrowserSubscriptionFlow = async (
       intervalMs: definition.pollIntervalMs,
     });
 
-    await refreshAccountsAfterFlow(deps.flow, definition.refreshAccounts);
-
-    if (!deps.flow.isCurrent()) return;
-
     if (outcome.status === "success") {
+      deps.markFinalizingForOperation(deps.flow);
+      await refreshAccountsAfterFlow(deps.flow, definition.refreshAccounts);
+      if (!deps.flow.isCurrent()) return;
       await deps.refreshBootstrapAfterMutation(definition.providerId);
       if (!deps.flow.isCurrent()) return;
       await finalizeSuccessfulSubscription(deps, definition.providerId);
       return;
     }
 
+    await refreshAccountsAfterFlow(deps.flow, definition.refreshAccounts);
+
+    if (!deps.flow.isCurrent()) return;
+
     if (outcome.error && outcome.error.trim()) {
       deps.setProviderError(outcome.error);
     }
 
     if (outcome.status === "failed") {
-      setFlowStatus(deps, outcome.error?.trim() || "Sign-in failed. Retry.");
+      deps.failSubscriptionFlowForOperation(deps.flow, outcome.error?.trim() || "Sign-in failed. Retry.");
       return;
     }
 
     if (outcome.status === "timeout") {
-      setFlowStatus(deps, outcome.error?.trim() || definition.timeoutMessage);
+      deps.failSubscriptionFlowForOperation(deps.flow, outcome.error?.trim() || definition.timeoutMessage);
       return;
     }
 
-    setFlowStatus(deps, "Still waiting for completion. Keep this dialog open or retry.");
+    deps.failSubscriptionFlowForOperation(
+      deps.flow,
+      "Still waiting for completion. Keep this dialog open or retry.",
+    );
   } finally {
     if (!reservedWindowUsed) {
       closeReservedBrowserWindow(reservedWindow);
@@ -377,30 +387,37 @@ const runCodexSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<voi
   });
   deps.flow.throwIfCancelled();
 
-  setFlowStatus(
-    deps,
+  deps.markAwaitingBrowserForOperation(
+    deps.flow,
     "Waiting for browser sign-in to complete. You can close this dialog after finishing auth.",
   );
 
   const outcome = await waitForCodexLoginOutcome(login.account_id, deps.flow);
-  await refreshAccountsAfterFlow(deps.flow, deps.refreshCodexAccounts);
-
-  if (!deps.flow.isCurrent()) return;
 
   if (outcome === "success") {
+    deps.markFinalizingForOperation(deps.flow);
+    await refreshAccountsAfterFlow(deps.flow, deps.refreshCodexAccounts);
+    if (!deps.flow.isCurrent()) return;
     await deps.refreshBootstrapAfterMutation("codex");
     if (!deps.flow.isCurrent()) return;
     await finalizeSuccessfulSubscription(deps, "codex");
     return;
   }
 
+  await refreshAccountsAfterFlow(deps.flow, deps.refreshCodexAccounts);
+
+  if (!deps.flow.isCurrent()) return;
+
   if (outcome === "failed") {
-    setFlowStatus(deps, "Sign-in failed. Please retry or use the callback completion flow.");
+    deps.failSubscriptionFlowForOperation(
+      deps.flow,
+      "Sign-in failed. Please retry or use the callback completion flow.",
+    );
     return;
   }
 
-  setFlowStatus(
-    deps,
+  deps.failSubscriptionFlowForOperation(
+    deps.flow,
     "Still waiting for callback completion. Continue in Harness Subscriptions if needed.",
   );
 };
@@ -580,6 +597,6 @@ export const runHarnessSubscriptionFlow = async (deps: SubscriptionFlowDeps): Pr
     }
     const message = messageFromError(error);
     setCurrentProviderError(deps, message);
-    setFlowStatus(deps, "Subscription flow failed. Check error details below.");
+    deps.failSubscriptionFlowForOperation(deps.flow, "Subscription flow failed. Check error details below.");
   }
 };

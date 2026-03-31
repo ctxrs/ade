@@ -18,11 +18,12 @@ import { type DraftHarness, type WorkbenchModeId } from "../components/Workbench
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { isDesktopApp } from "../utils/desktop";
 import { copyTextToClipboard } from "../utils/clipboard";
+import { hasConfiguredHarnessAuth } from "../utils/providerAuthStatus";
 import { useDictationController } from "../utils/useDictationController";
 import { NEW_TASK_DRAFT_KEY, useActiveWorkbenchIds, useNewTaskDraft, useWorkbenchShellSnapshot, useWorkbenchStore } from "../workbench/store";
 import { useWorkspaceActiveSnapshotSnapshot, useWorkspaceActiveSnapshotStore } from "../state/workspaceActiveSnapshotStore";
-import { hasConfiguredHarnessAuth } from "../utils/providerAuthStatus";
-import { HarnessAuthenticationSection } from "./settings/sections/HarnessAuthenticationSection";
+import { useHarnessAuthenticationController } from "./settings/hooks/useHarnessAuthenticationController";
+import { HarnessAuthenticationSectionView } from "./settings/sections/HarnessAuthenticationSection";
 import { useWorkbenchDragDropAttachments } from "./workbenchShell/useWorkbenchDragDropAttachments";
 import {
   collectSelectableHarnessProviderIds,
@@ -42,6 +43,7 @@ import { useWorkbenchTaskCreation } from "./workbenchShell/useWorkbenchTaskCreat
 import { useWorkbenchTaskListController } from "./workbenchShell/useWorkbenchTaskListController";
 import { useWorkbenchActiveTaskController } from "./workbenchShell/useWorkbenchActiveTaskController";
 import { useWorkbenchE2EBridge } from "./workbenchShell/useWorkbenchE2EBridge";
+import { useWorkbenchComposerHarnessAuth } from "./workbenchShell/useWorkbenchComposerHarnessAuth";
 import type { OptimisticFocus } from "./WorkbenchPage.types";
 import { appendSegment } from "./WorkbenchPage.utils";
 
@@ -100,10 +102,12 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [draftHarness, setDraftHarness] = useState<DraftHarness | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
-  const [harnessAuthModalProviderId, setHarnessAuthModalProviderId] = useState<string | null>(null);
-  const [pendingHarnessSelectionProviderId, setPendingHarnessSelectionProviderId] = useState<string | null>(null);
   const prefetchedProviderOptionsRef = useRef<Set<string>>(new Set());
   const initialHarnessSelectionResolvedRef = useRef(false);
+  const composerHarnessAuth = useHarnessAuthenticationController({
+    workspaceId,
+    enabled: true,
+  });
 
   const focusNewTask = useCallback(() => {
     workbenchStore.focusNewTask();
@@ -183,27 +187,13 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     });
   }, []);
 
-  const requestHarnessAuthFromComposer = useCallback((providerId: string) => {
-    setPendingHarnessSelectionProviderId(providerId);
-    setHarnessAuthModalProviderId(providerId);
-  }, []);
-
-  const onComposerHarnessAuthModalClosed = useCallback(
-    (providerId: string | null) => {
-      setHarnessAuthModalProviderId(null);
-      if (!providerId) return;
-      if (pendingHarnessSelectionProviderId !== providerId) return;
-      setPendingHarnessSelectionProviderId(null);
-      void ensureProviderAuthSummary(providerId, { force: true })
-        .then((opts) => {
-          const resolved = opts ?? providerOptions[providerId];
-          if (!hasConfiguredHarnessAuth(providerId, resolved)) return;
-          setSingleDraftHarness(providerId);
-        })
-        .catch(() => {});
-    },
-    [ensureProviderAuthSummary, pendingHarnessSelectionProviderId, providerOptions, setSingleDraftHarness],
-  );
+  const { requestHarnessAuthFromComposer } = useWorkbenchComposerHarnessAuth({
+    activeTaskId,
+    controller: composerHarnessAuth,
+    ensureProviderAuthSummary,
+    providerOptions,
+    setSingleDraftHarness,
+  });
 
   const { dropActive } = useWorkbenchDragDropAttachments({
     scopeElement: newComposerElement,
@@ -355,12 +345,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       // ignore
     }
   }, [activeTaskId, providerOptions, selectedDraftProviderId, workspaceId]);
-
-  useEffect(() => {
-    if (!activeTaskId) return;
-    setHarnessAuthModalProviderId(null);
-    setPendingHarnessSelectionProviderId(null);
-  }, [activeTaskId]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -733,6 +717,13 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     </div>
   ) : null;
 
+  const composerHarnessAuthModal = (
+    <HarnessAuthenticationSectionView
+      controller={composerHarnessAuth}
+      modalOnly
+    />
+  );
+
   const onSidebarResizerMouseDown = useCallback(
     (event: React.MouseEvent) => {
       event.preventDefault();
@@ -765,6 +756,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         style={rootStyle}
       >
         <WorktreeBootstrapSnackbar />
+        {composerHarnessAuthModal}
         {archiveCleanupSnackbar}
         {transcriptNoticeSnackbar}
         {desktopStorageNoticeSnackbar}
@@ -792,15 +784,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       {desktopStorageNoticeSnackbar}
       {topbar}
 
-      {!activeTaskId ? (
-        <HarnessAuthenticationSection
-          workspaceId={workspaceId}
-          active={true}
-          modalOnly
-          openProviderId={harnessAuthModalProviderId}
-          onModalClosed={onComposerHarnessAuthModalClosed}
-        />
-      ) : null}
+      {composerHarnessAuthModal}
 
       {workbenchSnap.warnings.length > 0 && (
         <div className="banner" style={{ margin: "8px 12px 0" }}>
