@@ -77,7 +77,13 @@ const DEFAULT_DRIVER_PORT = process.platform === "darwin"
   : 4444;
 const TAURI_DRIVER_PORT = parsePort(process.env.TAURI_DRIVER_PORT, DEFAULT_DRIVER_PORT);
 const TEST_BACKEND_PORT = parsePort(process.env.TAURI_TEST_BACKEND_PORT, 3000);
-const MACOS_CN_BACKEND_PORT = parsePort(process.env.CTX_AUTOMATION_CN_BACKEND_PORT, 3000);
+const FIXED_MACOS_CN_BACKEND_PORT = 3000;
+const REQUESTED_MACOS_CN_BACKEND_PORT = parsePort(
+  process.env.CTX_AUTOMATION_CN_BACKEND_PORT,
+  FIXED_MACOS_CN_BACKEND_PORT,
+);
+const HAS_EXPLICIT_MACOS_CN_BACKEND_PORT =
+  String(process.env.CTX_AUTOMATION_CN_BACKEND_PORT || "").trim().length > 0;
 if (!String(process.env.TAURI_DRIVER_PORT || "").trim()) {
   // WDIO forks workers that reload this config; pin the chosen dynamic port for all children.
   process.env.TAURI_DRIVER_PORT = String(TAURI_DRIVER_PORT);
@@ -190,6 +196,7 @@ const CONTAINER_SCENARIO_TOKENS = new Set([
   "provider",
   "remote-container",
   "local-clone-sandbox",
+  "local-avf-first-run",
   "local-new-host",
   "local-new-sandbox",
   "local-codex-smoke",
@@ -246,6 +253,11 @@ const ALLOW_PREP_APP_PROCESS_SWEEP = resolveBoolishFlag(
   false,
   "CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP",
 );
+const SHIPPED_APP_MODE = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_SHIPPED_APP,
+  false,
+  "CTX_AUTOMATION_SHIPPED_APP",
+);
 
 let daemonProcess = null;
 let daemonDataDir = null;
@@ -275,6 +287,21 @@ const resolveAppExecutablePath = (appPath) => {
   return appPath;
 };
 
+const resolveWdioApplicationPath = (appPath) => {
+  const normalized = path.resolve(appPath);
+  if (process.platform !== "darwin") {
+    return normalized;
+  }
+  const bundleDir = resolveMacAppBundleDir(normalized);
+  if (bundleDir) {
+    return path.resolve(bundleDir, "Contents", "MacOS", "ctx");
+  }
+  if (normalized.endsWith(".app")) {
+    return path.resolve(normalized, "Contents", "MacOS", "ctx");
+  }
+  return normalized;
+};
+
 const resolveAppResourcesBinPrefix = (appPath) => {
   const bundleDir = resolveMacAppBundleDir(appPath);
   if (bundleDir) {
@@ -282,6 +309,16 @@ const resolveAppResourcesBinPrefix = (appPath) => {
   }
   return path.resolve(path.dirname(appPath), "bin");
 };
+
+const resolveAppBundlesDir = (appPath) => {
+  const bundleDir = resolveMacAppBundleDir(appPath);
+  if (bundleDir) {
+    return path.resolve(bundleDir, "Contents", "Resources", "bundles");
+  }
+  return "";
+};
+
+const USING_SHIPPED_APP_MODE = process.platform === "darwin" && SHIPPED_APP_MODE;
 
 function canonicalPath(p) {
   const raw = String(p || "").trim();
@@ -386,6 +423,7 @@ const killStaleAutomationHelpers = () => {
 };
 
 const ensureDesktopDevBinDir = () => {
+  if (USING_SHIPPED_APP_MODE) return;
   const configured = String(process.env.CTX_DESKTOP_DEV_BIN_DIR || "").trim();
   if (configured) return;
   const defaultBinName = process.platform === "win32" ? "ctx.exe" : "ctx";
@@ -907,6 +945,9 @@ const resolveBundlesDir = () => {
   if (configured) {
     return path.resolve(configured);
   }
+  if (USING_SHIPPED_APP_MODE) {
+    return resolveAppBundlesDir(APP_PATH);
+  }
   return BUNDLES_DIR;
 };
 
@@ -949,20 +990,28 @@ const ensureBundledContainerAssets = (options = {}) => {
     );
     if (avfGuestRuntime) {
       const runtimeRoot = path.join(bundlesDir, avfGuestRuntime.root);
-      const requiredPaths = [
-        path.join(runtimeRoot, avfGuestRuntime.bin),
-        path.join(runtimeRoot, "helpers", "kernel"),
-        path.join(runtimeRoot, "helpers", "initrd"),
-        path.join(runtimeRoot, "helpers", "guest-agent"),
-        path.join(runtimeRoot, "helpers", "egress-proxy"),
-        path.join(runtimeRoot, "helpers", "container-stack.tar.gz"),
-      ];
-      for (const requiredPath of requiredPaths) {
-        if (!fs.existsSync(requiredPath)) {
-          throw new Error(
-            `bundled AVF guest runtime asset missing at ${requiredPath}; run pnpm -C core desktop:prep:release`,
-          );
+      if (fs.existsSync(runtimeRoot) && fs.statSync(runtimeRoot).isDirectory()) {
+        const requiredPaths = [
+          path.join(runtimeRoot, avfGuestRuntime.bin),
+          path.join(runtimeRoot, "helpers", "kernel"),
+          path.join(runtimeRoot, "helpers", "initrd"),
+          path.join(runtimeRoot, "helpers", "guest-agent"),
+          path.join(runtimeRoot, "helpers", "egress-proxy"),
+          path.join(runtimeRoot, "helpers", "container-stack.tar.gz"),
+        ];
+        for (const requiredPath of requiredPaths) {
+          if (!fs.existsSync(requiredPath)) {
+            throw new Error(
+              `bundled AVF guest runtime asset missing at ${requiredPath}; run pnpm -C core desktop:prep:release`,
+            );
+          }
         }
+      } else if (USING_SHIPPED_APP_MODE) {
+        assertManagedAvfRuntimeComponent(runtimeLock, hostOs, hostArch);
+      } else {
+        throw new Error(
+          `bundled AVF guest runtime directory missing at ${runtimeRoot}; run pnpm -C core desktop:prep:release`,
+        );
       }
     } else {
       assertManagedAvfRuntimeComponent(runtimeLock, hostOs, hostArch);
@@ -1054,6 +1103,7 @@ const startExternalDaemon = async () => {
 };
 
 const buildAppIfMissing = () => {
+  if (USING_SHIPPED_APP_MODE) return;
   if (SKIP_APP_BUILD) return;
   const appPathLooksLikeBundle = process.platform === "darwin" && APP_PATH.endsWith(".app");
   const darwinBundles = String(process.env.CTX_AUTOMATION_TAURI_BUNDLES || "app").trim() || "app";
@@ -1325,7 +1375,9 @@ const spawnCnBackendProcess = (host, port, { detached = false } = {}) => {
       detached,
       env: {
         ...process.env,
+        TAURI_TEST_BACKEND_PORT: String(port),
         TEST_RUNNER_BACKEND_PORT: String(port),
+        CTX_AUTOMATION_CN_BACKEND_PORT: String(port),
       },
     },
   );
@@ -1610,7 +1662,7 @@ exports.config = {
         implicit: 0,
       },
       "tauri:options": {
-        application: APP_PATH,
+        application: resolveWdioApplicationPath(APP_PATH),
       },
     },
   ],
@@ -1619,6 +1671,14 @@ exports.config = {
   automationProtocol: "webdriver",
   beforeSession: () => {
     process.env.CTX_AUTOMATION_WORKSPACE_PATH = WORKSPACE_PATH;
+  },
+  before: async (_capabilities, _specs, browser) => {
+    if (process.platform === "darwin") {
+      await browser.getWindowHandle();
+      if (!process.env.CTX_AUTOMATION_APP_OPEN_OBSERVED_AT) {
+        process.env.CTX_AUTOMATION_APP_OPEN_OBSERVED_AT = new Date().toISOString();
+      }
+    }
   },
   onPrepare: async () => {
     // Debug breadcrumb for remote-start behavior in automation logs.
@@ -1629,13 +1689,28 @@ exports.config = {
     console.error(`[wdio] app path=${APP_PATH}`);
     activeTauriDriverPort = TAURI_DRIVER_PORT;
     console.error(
-      `[wdio] ports driver(requested)=${String(TAURI_DRIVER_PORT)} driver(effective)=${String(activeTauriDriverPort)} backend(requested)=${String(TEST_BACKEND_PORT)}`,
+      `[wdio] ports driver(requested)=${String(TAURI_DRIVER_PORT)} driver(effective)=${String(activeTauriDriverPort)} backend(requested)=${isDarwin ? String(HAS_EXPLICIT_MACOS_CN_BACKEND_PORT ? REQUESTED_MACOS_CN_BACKEND_PORT : FIXED_MACOS_CN_BACKEND_PORT) : String(TEST_BACKEND_PORT)} backend(effective)=${isDarwin ? String(FIXED_MACOS_CN_BACKEND_PORT) : String(TEST_BACKEND_PORT)}`,
     );
     if (isDarwin && !process.env.CN_API_KEY) {
       throw new Error(
         "CN_API_KEY is required for CrabNebula WebDriver on macOS. " +
           "Load it from Infisical in core/ (core/.infisical.json), or run `pnpm -C core verify:desktop-smoke` which loads Infisical by default.",
       );
+    }
+    if (USING_SHIPPED_APP_MODE) {
+      if (USE_EXTERNAL_DAEMON) {
+        throw new Error("CTX_AUTOMATION_SHIPPED_APP=1 does not allow CTX_AUTOMATION_USE_EXTERNAL_DAEMON=1.");
+      }
+      if (INTERNAL_DAEMON_DATA_DIR_OVERRIDE) {
+        throw new Error(
+          "CTX_AUTOMATION_SHIPPED_APP=1 does not allow CTX_AUTOMATION_INTERNAL_DAEMON_DATA_DIR; the shipped app must use the real ~/.ctx data dir.",
+        );
+      }
+      if (String(process.env.CTX_BUNDLE_DIR || "").trim()) {
+        throw new Error(
+          "CTX_AUTOMATION_SHIPPED_APP=1 does not allow CTX_BUNDLE_DIR overrides; validate the installed app bundle instead.",
+        );
+      }
     }
     if (ALLOW_PREP_APP_PROCESS_SWEEP) {
       // Automation builds disable single-instance mode; only use global app sweeps when explicitly requested.
@@ -1646,14 +1721,14 @@ exports.config = {
     }
     stopStaleSystemdScope();
 
-    if (!SKIP_PREP_RELEASE) {
+    if (!SKIP_PREP_RELEASE && !USING_SHIPPED_APP_MODE) {
       ensureAutomationAvfLinuxGuestRuntime();
     }
 
     // Container-mode provider smoke needs a fully-bundled release-style resource set
     // (Linux provider binaries + harness image tars). Keep the app build in debug mode
     // for the automation plugin, but sync release resources.
-    if (!SKIP_PREP_RELEASE) {
+    if (!SKIP_PREP_RELEASE && !USING_SHIPPED_APP_MODE) {
       const prepEnv = { ...process.env };
       delete prepEnv.NODE_OPTIONS;
       const prepRelease = spawnSync("pnpm", ["-C", CORE_ROOT, "desktop:prep:release"], {
@@ -1666,8 +1741,14 @@ exports.config = {
         throw new Error("pnpm -C core desktop:prep:release failed");
       }
     }
-    if (!process.env.CTX_BUNDLE_DIR) {
+    if (!process.env.CTX_BUNDLE_DIR && !USING_SHIPPED_APP_MODE) {
       process.env.CTX_BUNDLE_DIR = BUNDLES_DIR;
+    }
+    if (USING_SHIPPED_APP_MODE) {
+      delete process.env.CTX_BUNDLE_DIR;
+      delete process.env.CTX_DESKTOP_DEV_BIN_DIR;
+      delete process.env.CTX_DESKTOP_START_PATH;
+      console.error(`[wdio] shipped-app mode using bundled resources at ${resolveBundlesDir()}`);
     }
     // Debug desktop binaries resolve local daemon executables from this directory.
     ensureDesktopDevBinDir();
@@ -1676,7 +1757,9 @@ exports.config = {
     }
 
     // Launch the app directly into the wizard route to reduce test flakiness.
-    process.env.CTX_DESKTOP_START_PATH = "/workspace-setup";
+    if (!USING_SHIPPED_APP_MODE) {
+      process.env.CTX_DESKTOP_START_PATH = "/workspace-setup";
+    }
     const codexOauthFlowEnabled = resolveBoolishFlag(
       process.env.CTX_AUTOMATION_CODEX_OAUTH_ENABLE,
       false,
@@ -1733,7 +1816,10 @@ exports.config = {
       // Ensure we validate the real launcher path: the app must spawn/connect its own daemon.
       delete process.env.CTX_DESKTOP_DAEMON_URL;
       delete process.env.CTX_DESKTOP_DAEMON_TOKEN;
-      if (INTERNAL_DAEMON_DATA_DIR_OVERRIDE) {
+      if (USING_SHIPPED_APP_MODE) {
+        delete process.env.CTX_DESKTOP_DAEMON_DATA_DIR;
+        internalDaemonDataDir = null;
+      } else if (INTERNAL_DAEMON_DATA_DIR_OVERRIDE) {
         internalDaemonDataDir = path.resolve(INTERNAL_DAEMON_DATA_DIR_OVERRIDE);
         fs.mkdirSync(internalDaemonDataDir, { recursive: true });
         internalDaemonDataDir = canonicalPath(internalDaemonDataDir);
@@ -1741,7 +1827,11 @@ exports.config = {
         internalDaemonDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-desktop-e2e-app-daemon-"));
         internalDaemonDataDir = canonicalPath(internalDaemonDataDir);
       }
-      process.env.CTX_DESKTOP_DAEMON_DATA_DIR = internalDaemonDataDir;
+      if (internalDaemonDataDir) {
+        process.env.CTX_DESKTOP_DAEMON_DATA_DIR = internalDaemonDataDir;
+      } else {
+        delete process.env.CTX_DESKTOP_DAEMON_DATA_DIR;
+      }
     }
 
     buildAppIfMissing();
@@ -1749,10 +1839,23 @@ exports.config = {
     ensureAppExecutable();
 
     if (isDarwin) {
-      activeTestBackendPort = MACOS_CN_BACKEND_PORT;
-      if (TEST_BACKEND_PORT !== MACOS_CN_BACKEND_PORT) {
+      activeTestBackendPort = FIXED_MACOS_CN_BACKEND_PORT;
+      if (TEST_BACKEND_PORT !== FIXED_MACOS_CN_BACKEND_PORT) {
         console.error(
-          `[wdio] macOS backend currently binds ${MACOS_CN_BACKEND_PORT}; ignoring requested TAURI_TEST_BACKEND_PORT=${TEST_BACKEND_PORT}`,
+          `[wdio] macOS backend currently binds ${FIXED_MACOS_CN_BACKEND_PORT}; ignoring requested TAURI_TEST_BACKEND_PORT=${TEST_BACKEND_PORT}`,
+        );
+      }
+      if (
+        HAS_EXPLICIT_MACOS_CN_BACKEND_PORT
+        && REQUESTED_MACOS_CN_BACKEND_PORT !== FIXED_MACOS_CN_BACKEND_PORT
+      ) {
+        console.error(
+          `[wdio] CrabNebula backend currently binds fixed port ${FIXED_MACOS_CN_BACKEND_PORT} on macOS; ignoring requested CTX_AUTOMATION_CN_BACKEND_PORT=${REQUESTED_MACOS_CN_BACKEND_PORT}`,
+        );
+      }
+      if (!SHARED_CN_BACKEND) {
+        console.error(
+          `[wdio] using dedicated CrabNebula backend on fixed macOS port ${activeTestBackendPort} for non-shared automation`,
         );
       }
       const backendHost = "127.0.0.1";

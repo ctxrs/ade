@@ -55,6 +55,7 @@ pub(in super::super) fn reset_writable_shared_vm_runtime_state(data_root: &Path)
         shared_vm_control_socket_path(data_root),
         shared_vm_guest_agent_socket_path(data_root),
         shared_vm_guest_control_ready_path(data_root),
+        shared_vm_guest_control_failed_path(data_root),
         shared_vm_saved_state_path(data_root),
         shared_vm_rootfs_path(data_root),
     ] {
@@ -78,17 +79,60 @@ pub(in super::super) fn wait_for_guest_control_ready_marker(
     timeout: Duration,
 ) -> Result<()> {
     let marker_path = shared_vm_guest_control_ready_path(data_root);
+    let failure_path = shared_vm_guest_control_failed_path(data_root);
+    let guest_agent_log_path = shared_vm_guest_agent_log_path(data_root);
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
         if marker_path.exists() {
             return Ok(());
         }
+        if failure_path.exists() {
+            let failure = fs::read_to_string(&failure_path)
+                .ok()
+                .map(|contents| contents.trim().to_string())
+                .filter(|contents| !contents.is_empty())
+                .unwrap_or_else(|| {
+                    format!(
+                        "guest-control failure marker {} is present but empty",
+                        failure_path.display()
+                    )
+                });
+            bail!(
+                "guest control failed before ready marker: {}; {}",
+                failure,
+                render_shared_vm_guest_agent_log_tail(&guest_agent_log_path)
+            );
+        }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     bail!(
-        "timed out waiting for guest control ready marker {}",
-        marker_path.display()
+        "timed out waiting for guest control ready marker {}; {}",
+        marker_path.display(),
+        render_shared_vm_guest_agent_log_tail(&guest_agent_log_path)
     )
+}
+
+#[cfg(unix)]
+fn render_shared_vm_guest_agent_log_tail(log_path: &Path) -> String {
+    match fs::read_to_string(log_path) {
+        Ok(contents) => {
+            let tail = contents
+                .lines()
+                .rev()
+                .take(20)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n");
+            if tail.is_empty() {
+                format!("guest-agent log {} is empty", log_path.display())
+            } else {
+                format!("guest-agent log tail from {}:\n{}", log_path.display(), tail)
+            }
+        }
+        Err(err) => format!("unable to read guest-agent log {}: {err}", log_path.display()),
+    }
 }
 
 #[cfg(unix)]
@@ -294,6 +338,7 @@ pub(in super::super) fn wait_for_real_guest_exec_ready_with_owner_process(
 }
 
 #[cfg(unix)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(in super::super) fn wait_for_real_guest_exec_ready(
     data_root: &Path,
     timeout: Duration,
@@ -302,6 +347,7 @@ pub(in super::super) fn wait_for_real_guest_exec_ready(
 }
 
 #[cfg(not(unix))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(in super::super) fn wait_for_real_guest_exec_ready(
     _data_root: &Path,
     _timeout: Duration,

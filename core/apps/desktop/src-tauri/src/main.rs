@@ -31,7 +31,6 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::{Row, SqlitePool};
 use tauri::Emitter;
 use tauri::Manager;
-#[cfg(feature = "automation")]
 use tauri_plugin_automation::init as automation_init;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -79,6 +78,11 @@ fn main() {
         .manage(WorkspaceWindowRegistry::default())
         .manage(DesktopMenuStateCache::default())
         .manage(DesktopStorage::default());
+
+    // EXCEPTION: ship the minimal automation runtime in the real desktop binary so
+    // release CI can drive the exact app users install. Broader automation-only
+    // behavior remains gated behind `feature = "automation"`.
+    builder = builder.plugin(automation_init());
 
     // Keep single-instance behavior for normal desktop usage. Automation builds need
     // isolated instances so tests don't attach to a long-running interactive app.
@@ -185,11 +189,6 @@ fn main() {
                 registry.unregister_window(window.label());
             }
         });
-
-    #[cfg(feature = "automation")]
-    {
-        builder = builder.plugin(automation_init());
-    }
 
     #[cfg(feature = "stt")]
     {

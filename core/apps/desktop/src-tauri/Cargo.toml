@@ -35,7 +35,7 @@ sha2 = "0.10"
 shell-words = "1.1.1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 tauri = { version = "2.9.5", features = [] }
-tauri-plugin-automation = { version = "0.1.1", optional = true }
+tauri-plugin-automation = "0.1.1"
 tauri-plugin-deep-link = "2.4.5"
 tauri-plugin-dialog = "2.4.2"
 tauri-plugin-notification = "2.3.3"
@@ -114,7 +114,7 @@ objc2-virtualization = { version = "0.3.2", default-features = false, features =
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
-automation = ["tauri-plugin-automation"]
+automation = []
 stt = ["tauri-plugin-stt"]
 
 [patch.crates-io]

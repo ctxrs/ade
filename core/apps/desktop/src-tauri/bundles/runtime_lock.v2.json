@@ -1249,28 +1249,28 @@
       "os": "macos",
       "arch": "aarch64",
       "variant": "default",
-      "version": "ubuntu-noble-arm64-45e7ab394479",
+      "version": "ubuntu-noble-arm64-f024c70f1f22",
       "bin": "rootfs.raw",
       "helpers": {
         "kernel": {
-          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-45e7ab394479/macos/aarch64/sha256-bcbef77faa333bd932252db5ff32177c111b0b95cc55e37af50745509433bd3a/kernel",
+          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-f024c70f1f22/macos/aarch64/sha256-bcbef77faa333bd932252db5ff32177c111b0b95cc55e37af50745509433bd3a/kernel",
           "sha256": "bcbef77faa333bd932252db5ff32177c111b0b95cc55e37af50745509433bd3a"
         },
         "initrd": {
-          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-45e7ab394479/macos/aarch64/sha256-b7c4eed8e19caf883a5bc923429c0d7c84d7194ad988315c515ce8820046ba09/initrd",
+          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-f024c70f1f22/macos/aarch64/sha256-b7c4eed8e19caf883a5bc923429c0d7c84d7194ad988315c515ce8820046ba09/initrd",
           "sha256": "b7c4eed8e19caf883a5bc923429c0d7c84d7194ad988315c515ce8820046ba09"
         },
         "guest-agent": {
-          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-45e7ab394479/macos/aarch64/sha256-9eb246658dd2dc965b7690d0e313cc7522c04ecda4a27c17e1ed01d918c747f3/guest-agent",
-          "sha256": "9eb246658dd2dc965b7690d0e313cc7522c04ecda4a27c17e1ed01d918c747f3"
+          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-f024c70f1f22/macos/aarch64/sha256-c23c664f8ff19e76925b4270d6374de1830239481686ead9fddf5c1853eff6c2/guest-agent",
+          "sha256": "c23c664f8ff19e76925b4270d6374de1830239481686ead9fddf5c1853eff6c2"
         },
         "egress-proxy": {
-          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-45e7ab394479/macos/aarch64/sha256-eb315abe5d52b34a5a7fbede7ec612524ca5649df5fe6540f6608adf0bd759e8/egress-proxy",
+          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-f024c70f1f22/macos/aarch64/sha256-eb315abe5d52b34a5a7fbede7ec612524ca5649df5fe6540f6608adf0bd759e8/egress-proxy",
           "sha256": "eb315abe5d52b34a5a7fbede7ec612524ca5649df5fe6540f6608adf0bd759e8"
         },
         "container-stack": {
-          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-45e7ab394479/macos/aarch64/sha256-b3bbebec6f2c538a8a955bdb77a371f5467dd27d35d84cd60fe3ea82f9ec1d45/container-stack.tar.gz",
-          "sha256": "b3bbebec6f2c538a8a955bdb77a371f5467dd27d35d84cd60fe3ea82f9ec1d45"
+          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-f024c70f1f22/macos/aarch64/sha256-500135f0a1431213a4d70b2827f5ff21a503d0ed9e9ca62971437ac320124538/container-stack.tar.gz",
+          "sha256": "500135f0a1431213a4d70b2827f5ff21a503d0ed9e9ca62971437ac320124538"
         }
       },
       "sources": [
@@ -1280,7 +1280,7 @@
         },
         {
           "source_type": "ci",
-          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-45e7ab394479/macos/aarch64/sha256-1a94ef05e038a61a8fc33aae60d735b6d39f8579bb305fb195da9ef69cd52e54/rootfs.raw.zst",
+          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/runtimes/avf-linux-guest/ubuntu-noble-arm64-f024c70f1f22/macos/aarch64/sha256-1a94ef05e038a61a8fc33aae60d735b6d39f8579bb305fb195da9ef69cd52e54/rootfs.raw.zst",
           "sha256": "1a94ef05e038a61a8fc33aae60d735b6d39f8579bb305fb195da9ef69cd52e54"
         }
       ]
@@ -1299,8 +1299,8 @@
         },
         {
           "source_type": "ci",
-          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/images/ctx-harness/ubuntu-24.04/linux/aarch64/sha256-029598ff0765a76bcd305ebc8a9db68b014e322e6f1f90d73e3611c7875bb0e6/ctx-harness-linux-aarch64.tar",
-          "sha256": "029598ff0765a76bcd305ebc8a9db68b014e322e6f1f90d73e3611c7875bb0e6"
+          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/images/ctx-harness/ubuntu-24.04/linux/aarch64/sha256-8cdc4e075e5fa99ba7b1f324a235af8be4d235219f9c1b81731df57ee2b7932e/ctx-harness-linux-aarch64.tar",
+          "sha256": "8cdc4e075e5fa99ba7b1f324a235af8be4d235219f9c1b81731df57ee2b7932e"
         }
       ]
     },
@@ -1318,8 +1318,8 @@
         },
         {
           "source_type": "ci",
-          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/images/ctx-harness/ubuntu-24.04/linux/x86_64/sha256-c9c88aa67baab9d746a2f592084d343c2bf9f8a12a49c929d3675f7aaf3ab264/ctx-harness-linux-x86_64.tar",
-          "sha256": "c9c88aa67baab9d746a2f592084d343c2bf9f8a12a49c929d3675f7aaf3ab264"
+          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/images/ctx-harness/ubuntu-24.04/linux/x86_64/sha256-0763800612d41f8fcaab29677807da1537ab71a291f9e5085595ea6c15a37696/ctx-harness-linux-x86_64.tar",
+          "sha256": "0763800612d41f8fcaab29677807da1537ab71a291f9e5085595ea6c15a37696"
         }
       ]
     }

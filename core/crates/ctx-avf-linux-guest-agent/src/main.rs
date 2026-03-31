@@ -59,6 +59,14 @@ fn main() -> Result<()> {
 #[cfg(target_os = "linux")]
 fn serve() -> Result<()> {
     let ready_marker = guest_control_ready_marker_path();
+    eprintln!(
+        "guest-agent starting serve loop (ready_marker={})",
+        ready_marker
+            .as_deref()
+            .map(Path::display)
+            .map(|display| display.to_string())
+            .unwrap_or_else(|| "<unset>".to_string())
+    );
     clear_guest_control_ready_marker(ready_marker.as_deref());
     loop {
         clear_guest_control_ready_marker(ready_marker.as_deref());
@@ -131,6 +139,7 @@ fn announce_guest_control_ready(path: Option<&Path>, port: u32) {
 
 #[cfg(target_os = "linux")]
 fn bind_vsock_listener(port: u32) -> Result<OwnedFd> {
+    eprintln!("guest-agent creating AF_VSOCK listener socket on port {port}");
     let fd = unsafe { libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM, 0) };
     if fd < 0 {
         bail!(
@@ -139,6 +148,10 @@ fn bind_vsock_listener(port: u32) -> Result<OwnedFd> {
         );
     }
     let listener = unsafe { OwnedFd::from_raw_fd(fd) };
+    eprintln!(
+        "guest-agent created AF_VSOCK listener fd {} for port {port}",
+        listener.as_raw_fd()
+    );
     let addr = libc::sockaddr_vm {
         svm_family: libc::AF_VSOCK as libc::sa_family_t,
         svm_reserved1: 0,
@@ -146,6 +159,7 @@ fn bind_vsock_listener(port: u32) -> Result<OwnedFd> {
         svm_cid: libc::VMADDR_CID_ANY,
         svm_zero: [0; 4],
     };
+    eprintln!("guest-agent binding AF_VSOCK listener fd {} on port {port}", listener.as_raw_fd());
     let bind_rc = unsafe {
         libc::bind(
             listener.as_raw_fd(),
@@ -159,6 +173,11 @@ fn bind_vsock_listener(port: u32) -> Result<OwnedFd> {
             std::io::Error::last_os_error()
         );
     }
+    eprintln!(
+        "guest-agent bound AF_VSOCK listener fd {} on port {port}",
+        listener.as_raw_fd()
+    );
+    eprintln!("guest-agent enabling listen() on AF_VSOCK port {port}");
     let listen_rc = unsafe { libc::listen(listener.as_raw_fd(), 128) };
     if listen_rc != 0 {
         bail!(
@@ -166,6 +185,7 @@ fn bind_vsock_listener(port: u32) -> Result<OwnedFd> {
             std::io::Error::last_os_error()
         );
     }
+    eprintln!("guest-agent listen() succeeded on AF_VSOCK port {port}");
     Ok(listener)
 }
 

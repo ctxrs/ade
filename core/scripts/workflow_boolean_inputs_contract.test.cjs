@@ -180,3 +180,85 @@ test("mac updater smoke reuses staged bundles instead of rematerializing them", 
     /name:\s+Updater desktop apply smoke \(macOS variant\)[\s\S]*CTX_DESKTOP_APP_PATH:\s*\$\{\{\s*runner\.temp\s*\}\}\/ctx-e2e-cargo\/debug\/bundle\/macos[\s\S]*CTX_DESKTOP_SYNC_BUNDLES=0 CTX_BUNDLE_REMOTE_DAEMONS=0 CARGO_TARGET_DIR="\$\{CTX_E2E_CARGO_TARGET_DIR\}" pnpm -C core\/apps\/desktop run build -- --debug --bundles app -- --features automation/s,
   );
 });
+
+test("release supabase publishes the AVF Linux guest runtime before the shipped-app first-run gate", () => {
+  const text = workflowText("release-supabase.yml");
+  assert.match(text, /- name:\s+Rust toolchain \(AVF runtime publish\)/);
+  assert.match(
+    text,
+    /- name:\s+Publish AVF Linux guest runtime \(macOS arm64\)[\s\S]*runtime_dir="\$RUNNER_TEMP\/ctx-avf-linux-guest-runtime"[\s\S]*prepare_avf_linux_guest_runtime\.sh[\s\S]*avf_runtime_lock_freshness\.cjs[\s\S]*avf_runtime_publish_supabase\.sh[\s\S]*--publish/s,
+  );
+  assert.match(
+    text,
+    /- name:\s+Probe published AVF Linux guest runtime URLs \(macOS arm64\)[\s\S]*runtime_lock\.v2\.json[\s\S]*rootfs\.raw\.zst[\s\S]*curl -fsSIL --retry 3 --retry-delay 1 "\$url"/s,
+  );
+});
+
+test("release supabase validates managed ctx-harness freshness on Linux release lanes", () => {
+  const text = workflowText("release-supabase.yml");
+  assert.match(
+    text,
+    /- name:\s+Ensure Docker daemon is available \(ctx-harness freshness\)[\s\S]*sudo systemctl start docker \|\| sudo service docker start[\s\S]*docker version/s,
+  );
+  assert.match(
+    text,
+    /- name:\s+Setup Buildx \(ctx-harness freshness\)[\s\S]*docker\/setup-buildx-action@v3[\s\S]*driver:\s*docker-container/s,
+  );
+  assert.match(
+    text,
+    /- name:\s+Validate managed ctx-harness image freshness \(linux\)[\s\S]*ctx_harness_publish_supabase\.sh[\s\S]*--lock core\/apps\/desktop\/src-tauri\/bundles\/runtime_lock\.v2\.json[\s\S]*--check-only/s,
+  );
+  assert.match(
+    text,
+    /- name:\s+Probe published ctx-harness image URL \(linux\)[\s\S]*entry\.kind === "image"[\s\S]*entry\.id === "ctx-harness"[\s\S]*curl -fsSIL --retry 3 --retry-delay 1 "\$url"/s,
+  );
+});
+
+test("release supabase runs a shipped-app first-run workspace gate on the Mac mini", () => {
+  const text = workflowText("release-supabase.yml");
+  const block = text.match(/mac-first-run-workspace-create:[\s\S]*?\n  verify-manifest:/)?.[0] || "";
+  const runBlock = block.match(
+    /- name:\s+Real first-run workspace create smoke \(macOS shipped app\)[\s\S]*?(?=\n\s*- name:|\n\s*verify-manifest:|$)/,
+  )?.[0] || "";
+  assert.match(text, /mac-first-run-workspace-create:/);
+  assert.match(
+    block,
+    /mac-first-run-workspace-create:[\s\S]*runs-on:[\s\S]*group:\s*ctx-avf[\s\S]*labels:\s*ctx-avf-mac-mini/s,
+  );
+  assert.match(
+    block,
+    /name:\s+Install shipped macOS app \(first run\)[\s\S]*find "\$stage_root" -type f -name '\*\.dmg'[\s\S]*ditto "\$app_src" "\$dest_app"/s,
+  );
+  assert.match(
+    block,
+    /name:\s+Prepare current-source AVF runtime \(first run\)[\s\S]*prepare_avf_linux_guest_runtime\.sh[\s\S]*--output-dir "\$RUNNER_TEMP\/ctx-avf-linux-guest-runtime"/s,
+  );
+  assert.match(
+    block,
+    /name:\s+Validate CN_API_KEY secret \(mac first run\)[\s\S]*missing required GitHub secret CN_API_KEY for shipped-app macOS first-run smoke/s,
+  );
+  assert.match(
+    block,
+    /name:\s+Verify bundled AVF runtime freshness \(first run\)[\s\S]*CTX_FIRST_RUN_BUNDLE_DIR[\s\S]*node core\/scripts\/avf_runtime_lock_freshness\.cjs[\s\S]*--bundle-dir "\$\{CTX_FIRST_RUN_BUNDLE_DIR\}"[\s\S]*--allow-managed-runtime[\s\S]*--runtime-dir "\$RUNNER_TEMP\/ctx-avf-linux-guest-runtime"/s,
+  );
+  assert.match(
+    block,
+    /name:\s+Wipe local ctx state \(first run\)[\s\S]*pkill -f 'ctx-cnb-cli' \|\| true[\s\S]*pkill -f 'ctx-tdrv-cli' \|\| true[\s\S]*pkill -f 'WebKitWebDriver' \|\| true[\s\S]*pkill -f '\/Contents\/MacOS\/ctx\$' \|\| true[\s\S]*pkill -f '\/Contents\/Resources\/bin\/ctx-daemon' \|\| true[\s\S]*pkill -f '\/Contents\/Resources\/bin\/ctx-avf-linux-helper' \|\| true[\s\S]*pkill -f '\/Contents\/Resources\/bin\/ctx-mcp' \|\| true/s,
+  );
+  assert.match(
+    runBlock,
+    /name:\s+Real first-run workspace create smoke \(macOS shipped app\)[\s\S]*CTX_AUTOMATION_SHIPPED_APP:\s*"1"[\s\S]*CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE:\s*"1"[\s\S]*CTX_AUTOMATION_SKIP_APP_BUILD:\s*"1"[\s\S]*CTX_AUTOMATION_CN_SHARED_BACKEND:\s*"0"[\s\S]*CTX_AUTOMATION_SCENARIOS:\s*local-avf-first-run[\s\S]*CTX_AUTOMATION_FIRST_RUN_REPORT_PATH:\s*\$\{\{\s*runner\.temp\s*\}\}\/ctx-first-run-local-sandbox-report\.json[\s\S]*CTX_AUTOMATION_CN_BACKEND_LOG:\s*\$\{\{\s*runner\.temp\s*\}\}\/ctx-cn-test-runner-backend\.log[\s\S]*CTX_AUTOMATION_CN_DRIVER_LOG:\s*\$\{\{\s*runner\.temp\s*\}\}\/ctx-cn-tauri-driver\.log[\s\S]*CN_API_KEY:\s*\$\{\{\s*secrets\.CN_API_KEY\s*\}\}[\s\S]*CTX_DESKTOP_APP_PATH="\$APP_PATH"[\s\S]*pnpm -C core\/apps\/desktop run test:automation:first-run-local-sandbox/s,
+  );
+});
+
+test("verify-manifest waits for the shipped-app first-run Mac mini gate", () => {
+  const text = workflowText("release-supabase.yml");
+  assert.match(
+    text,
+    /verify-manifest:[\s\S]*needs:[\s\S]*- mac-first-run-workspace-create[\s\S]*- publish-release[\s\S]*- resolve-build-matrix/s,
+  );
+  assert.match(
+    text,
+    /needs\.mac-first-run-workspace-create\.result == 'success' \|\| needs\.mac-first-run-workspace-create\.result == 'skipped'/,
+  );
+});

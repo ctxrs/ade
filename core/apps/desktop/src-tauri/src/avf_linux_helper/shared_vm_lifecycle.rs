@@ -209,6 +209,7 @@ fn clear_shared_vm_transient_artifacts(data_root: &Path) {
         shared_vm_control_socket_path(data_root),
         shared_vm_guest_agent_socket_path(data_root),
         shared_vm_guest_control_ready_path(data_root),
+        shared_vm_guest_control_failed_path(data_root),
     ] {
         if path.exists() {
             let _ = fs::remove_file(path);

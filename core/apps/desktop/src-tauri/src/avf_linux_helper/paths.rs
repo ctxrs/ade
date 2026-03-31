@@ -100,6 +100,14 @@ pub(super) fn shared_vm_guest_control_ready_path(data_root: &Path) -> PathBuf {
     shared_vm_root(data_root).join(SHARED_VM_GUEST_CONTROL_READY_FILE)
 }
 
+pub(super) fn shared_vm_guest_control_failed_path(data_root: &Path) -> PathBuf {
+    shared_vm_root(data_root).join(SHARED_VM_GUEST_CONTROL_FAILED_FILE)
+}
+
+pub(super) fn shared_vm_guest_agent_log_path(data_root: &Path) -> PathBuf {
+    shared_vm_logs_root(data_root).join(SHARED_VM_GUEST_AGENT_LOG_FILE)
+}
+
 pub(super) fn shared_vm_kernel_cmdline_path(runtime_root: &Path) -> PathBuf {
     runtime_root
         .join("helpers")

@@ -25,6 +25,10 @@ else
   AUTOMATION_TMPDIR_CREATED=1
 fi
 mkdir -p "${AUTOMATION_TMPDIR}"
+DEFAULT_CN_BACKEND_LOG="${AUTOMATION_TMPDIR}/crabnebula-backend.log"
+DEFAULT_CN_DRIVER_LOG="${AUTOMATION_TMPDIR}/tauri-driver.log"
+CTX_AUTOMATION_CN_BACKEND_LOG="${CTX_AUTOMATION_CN_BACKEND_LOG:-${DEFAULT_CN_BACKEND_LOG}}"
+CTX_AUTOMATION_CN_DRIVER_LOG="${CTX_AUTOMATION_CN_DRIVER_LOG:-${DEFAULT_CN_DRIVER_LOG}}"
 mkdir -p \
   "${DEFAULT_CARGO_TARGET_DIR}" \
   "${DEFAULT_CARGO_TARGET_DIR}/debug" \
@@ -62,6 +66,16 @@ cleanup_automation_tmpdir() {
 
 trap cleanup_automation_tmpdir EXIT
 
+run_wdio() {
+  local status=0
+  "$@" || status=$?
+  if [[ "${status}" -ne 0 ]]; then
+    echo "[desktop-smoke] CrabNebula backend log: ${CTX_AUTOMATION_CN_BACKEND_LOG}" >&2
+    echo "[desktop-smoke] CrabNebula driver log: ${CTX_AUTOMATION_CN_DRIVER_LOG}" >&2
+  fi
+  return "${status}"
+}
+
 # Accept optional leading `--` from package scripts and pass through remaining args.
 ARGS=("$@")
 if [[ "${#ARGS[@]}" -gt 0 && "${ARGS[0]}" == "--" ]]; then
@@ -89,20 +103,24 @@ if [[ "$(uname -s)" == "Darwin" && -z "${CN_API_KEY:-}" && "${INFISICAL_HELP_BYP
   : "${INFISICAL_PROJECT_ID:?Set INFISICAL_PROJECT_ID to load automation credentials from Infisical}"
   INFISICAL_RUN_ARGS=(run --env "${INFISICAL_ENV}" --projectId "${INFISICAL_PROJECT_ID}" --)
   ensure_desktop_automation_deps
-  if [[ "${#ARGS[@]}" -gt 0 ]]; then
-	    infisical "${INFISICAL_RUN_ARGS[@]}" \
+	  if [[ "${#ARGS[@]}" -gt 0 ]]; then
+	    run_wdio infisical "${INFISICAL_RUN_ARGS[@]}" \
 	      env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
 	      CARGO_TARGET_DIR="${DEFAULT_CARGO_TARGET_DIR}" \
 	      TMPDIR="${AUTOMATION_TMPDIR}" \
 	      CTX_AUTOMATION_TMPDIR="${AUTOMATION_TMPDIR}" \
+	      CTX_AUTOMATION_CN_BACKEND_LOG="${CTX_AUTOMATION_CN_BACKEND_LOG}" \
+	      CTX_AUTOMATION_CN_DRIVER_LOG="${CTX_AUTOMATION_CN_DRIVER_LOG}" \
 	      pnpm -C apps/desktop exec wdio run automation/wdio.conf.cjs "${ARGS[@]}"
-    exit $?
+	    exit $?
   fi
-	  infisical "${INFISICAL_RUN_ARGS[@]}" \
+	  run_wdio infisical "${INFISICAL_RUN_ARGS[@]}" \
 	    env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
 	    CARGO_TARGET_DIR="${DEFAULT_CARGO_TARGET_DIR}" \
 	    TMPDIR="${AUTOMATION_TMPDIR}" \
 	    CTX_AUTOMATION_TMPDIR="${AUTOMATION_TMPDIR}" \
+	    CTX_AUTOMATION_CN_BACKEND_LOG="${CTX_AUTOMATION_CN_BACKEND_LOG}" \
+	    CTX_AUTOMATION_CN_DRIVER_LOG="${CTX_AUTOMATION_CN_DRIVER_LOG}" \
 	    pnpm -C apps/desktop exec wdio run automation/wdio.conf.cjs
   exit $?
 fi
@@ -110,16 +128,20 @@ fi
 cd "${CORE_DIR}"
 ensure_desktop_automation_deps
 if [[ "${#ARGS[@]}" -gt 0 ]]; then
-	env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
+	run_wdio env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
 	  CARGO_TARGET_DIR="${DEFAULT_CARGO_TARGET_DIR}" \
 	  TMPDIR="${AUTOMATION_TMPDIR}" \
 	  CTX_AUTOMATION_TMPDIR="${AUTOMATION_TMPDIR}" \
+	  CTX_AUTOMATION_CN_BACKEND_LOG="${CTX_AUTOMATION_CN_BACKEND_LOG}" \
+	  CTX_AUTOMATION_CN_DRIVER_LOG="${CTX_AUTOMATION_CN_DRIVER_LOG}" \
 	  pnpm -C apps/desktop exec wdio run automation/wdio.conf.cjs "${ARGS[@]}"
   exit $?
 fi
-env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
+run_wdio env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
   CARGO_TARGET_DIR="${DEFAULT_CARGO_TARGET_DIR}" \
   TMPDIR="${AUTOMATION_TMPDIR}" \
   CTX_AUTOMATION_TMPDIR="${AUTOMATION_TMPDIR}" \
+  CTX_AUTOMATION_CN_BACKEND_LOG="${CTX_AUTOMATION_CN_BACKEND_LOG}" \
+  CTX_AUTOMATION_CN_DRIVER_LOG="${CTX_AUTOMATION_CN_DRIVER_LOG}" \
   pnpm -C apps/desktop exec wdio run automation/wdio.conf.cjs
 exit $?

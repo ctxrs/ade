@@ -21,22 +21,46 @@ pub(super) fn indent_cloud_init_block(content: &str, spaces: usize) -> String {
         .join("\n")
 }
 
-pub(super) fn render_shared_vm_guest_agent_service(ready_marker_path: &Path) -> String {
+pub(super) fn render_shared_vm_guest_agent_launcher_script(
+    ready_marker_path: &Path,
+    failure_marker_path: &Path,
+    guest_agent_log_path: &Path,
+) -> String {
+    let ready_marker = shell_escape_single_quotes(&ready_marker_path.display().to_string());
+    let failure_marker = shell_escape_single_quotes(&failure_marker_path.display().to_string());
+    let guest_agent_log = shell_escape_single_quotes(&guest_agent_log_path.display().to_string());
+    format!(
+        "#!/bin/sh\nset -eu\nready_marker='{ready_marker}'\nfailure_marker='{failure_marker}'\nlog_path='{guest_agent_log}'\nagent_bin='/usr/local/bin/ctx-avf-linux-guest-agent'\nready_timeout_sec={ready_timeout_sec}\nlog() {{\n  message=\"$1\"\n  printf '%s\\n' \"$message\" >> \"$log_path\"\n  printf '%s\\n' \"$message\" >/dev/hvc0\n}}\nfail() {{\n  message=\"$1\"\n  rm -f \"$ready_marker\"\n  printf '%s\\n' \"$message\" > \"$failure_marker\"\n  log \"$message\"\n  exit 1\n}}\nmkdir -p \"$(dirname \"$ready_marker\")\" \"$(dirname \"$failure_marker\")\" \"$(dirname \"$log_path\")\"\n: > \"$log_path\"\nrm -f \"$ready_marker\" \"$failure_marker\"\nlog \"[ctx-avf-linux] guest-agent launcher starting\"\nif [ ! -x \"$agent_bin\" ]; then\n  fail \"[ctx-avf-linux] guest-agent binary missing or not executable: $agent_bin\"\nfi\nprobe_path=\"${{ready_marker}}.probe\"\nif ! touch \"$probe_path\" >/dev/null 2>&1; then\n  fail \"[ctx-avf-linux] guest-agent ready-marker parent is not writable: $(dirname \"$ready_marker\")\"\nfi\nrm -f \"$probe_path\"\nif [ ! -e /dev/vsock ]; then\n  log \"[ctx-avf-linux] /dev/vsock is not present before guest-agent exec\"\nfi\nCTX_AVF_GUEST_CONTROL_READY_MARKER=\"$ready_marker\" \"$agent_bin\" >> \"$log_path\" 2>&1 &\nagent_pid=$!\nlog \"[ctx-avf-linux] guest-agent started as pid $agent_pid; waiting for ready marker\"\nremaining=\"$ready_timeout_sec\"\nwhile [ \"$remaining\" -gt 0 ]; do\n  if [ -f \"$ready_marker\" ]; then\n    log \"[ctx-avf-linux] guest-agent published ready marker\"\n    wait \"$agent_pid\"\n    status=$?\n    fail \"[ctx-avf-linux] guest-agent exited after ready with status $status\"\n  fi\n  if ! kill -0 \"$agent_pid\" 2>/dev/null; then\n    status=1\n    wait \"$agent_pid\" || status=$?\n    fail \"[ctx-avf-linux] guest-agent exited before ready with status $status\"\n  fi\n  sleep 1\n  remaining=$((remaining - 1))\ndone\nkill \"$agent_pid\" >/dev/null 2>&1 || true\nwait \"$agent_pid\" >/dev/null 2>&1 || true\nfail \"[ctx-avf-linux] guest-agent did not publish ready marker within {ready_timeout_sec}s\"\n",
+        ready_timeout_sec = SHARED_VM_GUEST_AGENT_READY_TIMEOUT_SECONDS,
+    )
+}
+
+pub(super) fn render_shared_vm_guest_agent_service(
+    ready_marker_path: &Path,
+    failure_marker_path: &Path,
+    guest_agent_log_path: &Path,
+) -> String {
     let prepare_script = shell_escape_single_quotes(&format!(
         "rm -f '{ready_marker}' && echo \"[ctx-avf-linux] starting guest-agent\" >/dev/hvc0 && echo \"[ctx-avf-linux] ensuring vsock kernel modules are loaded\" >/dev/hvc0 && /usr/sbin/modprobe vsock >/dev/hvc0 2>&1 && /usr/sbin/modprobe vmw_vsock_virtio_transport_common >/dev/hvc0 2>&1 && /usr/sbin/modprobe vmw_vsock_virtio_transport >/dev/hvc0 2>&1",
         ready_marker = ready_marker_path.display(),
     ));
-    let start_script = shell_escape_single_quotes(&format!(
-        "export CTX_AVF_GUEST_CONTROL_READY_MARKER='{ready_marker}'; exec /usr/local/bin/ctx-avf-linux-guest-agent",
-        ready_marker = ready_marker_path.display(),
-    ));
+    let launcher_script = render_shared_vm_guest_agent_launcher_script(
+        ready_marker_path,
+        failure_marker_path,
+        guest_agent_log_path,
+    );
     format!(
-        "[Unit]\nDescription=ctx AVF Linux Guest Agent\nAfter={data_disk_service} {host_data_service}\nRequires={data_disk_service} {host_data_service}\n\n[Service]\nType=simple\nEnvironment=RUST_BACKTRACE=1\nExecStartPre=/bin/sh -lc '{prepare_script}'\nExecStart=/bin/sh -lc '{start_script}'\nStandardOutput=journal+console\nStandardError=journal+console\nRestart=always\nRestartSec=1\n\n[Install]\nWantedBy=multi-user.target\n# {guest_agent_service}\n",
+        "[Unit]\nDescription=ctx AVF Linux Guest Agent\nAfter={data_disk_service} {host_data_service}\nRequires={data_disk_service} {host_data_service}\n\n[Service]\nType=simple\nEnvironment=RUST_BACKTRACE=1\nExecStartPre=/bin/sh -lc '{prepare_script}'\nExecStart={launcher_path}\nStandardOutput=journal+console\nStandardError=journal+console\nRestart=no\n\n[Install]\nWantedBy=multi-user.target\n# {guest_agent_service}\n# guest-agent-launcher\n{launcher_script_comment}",
         data_disk_service = SHARED_VM_DATA_DISK_SERVICE_NAME,
         host_data_service = SHARED_VM_HOST_DATA_SERVICE_NAME,
         prepare_script = prepare_script,
-        start_script = start_script,
+        launcher_path = SHARED_VM_GUEST_AGENT_LAUNCHER_PATH,
         guest_agent_service = SHARED_VM_GUEST_AGENT_SERVICE_NAME,
+        launcher_script_comment = launcher_script
+            .lines()
+            .map(|line| format!("# {line}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
     )
 }
 
@@ -150,8 +174,12 @@ pub(super) fn render_shared_vm_cloud_init_meta_data(
     seed_material.extend_from_slice(render_shared_vm_data_disk_script().as_bytes());
     seed_material.extend_from_slice(render_shared_vm_data_disk_service().as_bytes());
     seed_material.extend_from_slice(
-        render_shared_vm_guest_agent_service(&shared_vm_guest_control_ready_path(data_root))
-            .as_bytes(),
+        render_shared_vm_guest_agent_service(
+            &shared_vm_guest_control_ready_path(data_root),
+            &shared_vm_guest_control_failed_path(data_root),
+            &shared_vm_guest_agent_log_path(data_root),
+        )
+        .as_bytes(),
     );
     seed_material.extend_from_slice(render_shared_vm_containerd_service().as_bytes());
     seed_material.extend_from_slice(render_shared_vm_buildkit_service().as_bytes());
@@ -168,7 +196,19 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
 ) -> String {
     let guest_agent_b64 = indent_cloud_init_block(&wrap_cloud_init_base64(guest_agent_bytes), 6);
     let guest_agent_service = indent_cloud_init_block(
-        &render_shared_vm_guest_agent_service(&shared_vm_guest_control_ready_path(data_root)),
+        &render_shared_vm_guest_agent_service(
+            &shared_vm_guest_control_ready_path(data_root),
+            &shared_vm_guest_control_failed_path(data_root),
+            &shared_vm_guest_agent_log_path(data_root),
+        ),
+        6,
+    );
+    let guest_agent_launcher = indent_cloud_init_block(
+        &render_shared_vm_guest_agent_launcher_script(
+            &shared_vm_guest_control_ready_path(data_root),
+            &shared_vm_guest_control_failed_path(data_root),
+            &shared_vm_guest_agent_log_path(data_root),
+        ),
         6,
     );
     let host_data_service =
@@ -195,6 +235,10 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
     let mut write_files = String::new();
     write_files.push_str(&format!(
         "  - path: /usr/local/bin/ctx-avf-linux-guest-agent\n    permissions: '0755'\n    encoding: b64\n    content: |\n{guest_agent_b64}\n"
+    ));
+    write_files.push_str(&format!(
+        "  - path: {launcher_path}\n    permissions: '0755'\n    content: |\n{guest_agent_launcher}\n",
+        launcher_path = SHARED_VM_GUEST_AGENT_LAUNCHER_PATH,
     ));
     write_files.push_str(&egress_proxy_block.unwrap_or_default());
     write_files.push_str(&format!(
@@ -229,8 +273,9 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
     ));
     let prepare_guest_agent_cmd = indent_cloud_init_block(
         &format!(
-            "echo \"[ctx-avf-linux] preparing {guest_agent_service_name}\" >/dev/hvc0\nls -l /usr/local/bin/ctx-avf-linux-guest-agent >/dev/hvc0 2>&1\nls -l /etc/systemd/system/{guest_agent_service_name} >/dev/hvc0 2>&1\nls -l '{container_stack_host_path}' >/dev/hvc0 2>&1",
+            "echo \"[ctx-avf-linux] preparing {guest_agent_service_name}\" >/dev/hvc0\nls -l /usr/local/bin/ctx-avf-linux-guest-agent >/dev/hvc0 2>&1\nls -l {launcher_path} >/dev/hvc0 2>&1\nls -l /etc/systemd/system/{guest_agent_service_name} >/dev/hvc0 2>&1\nls -l '{container_stack_host_path}' >/dev/hvc0 2>&1",
             guest_agent_service_name = SHARED_VM_GUEST_AGENT_SERVICE_NAME,
+            launcher_path = SHARED_VM_GUEST_AGENT_LAUNCHER_PATH,
             container_stack_host_path = escaped_container_stack_host_path,
         ),
         4,

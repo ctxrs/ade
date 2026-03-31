@@ -110,3 +110,49 @@ test("curate_avf_container_stack.sh fails closed when a required entry is missin
 
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
+
+test("curate_avf_container_stack.sh produces deterministic archives", () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-avf-curate-stack-deterministic-"));
+  const sourceRoot = path.join(tmpRoot, "source");
+  const inputArchive = path.join(tmpRoot, "nerdctl-full.tar.gz");
+  const outputArchiveA = path.join(tmpRoot, "container-stack-a.tar.gz");
+  const outputArchiveB = path.join(tmpRoot, "container-stack-b.tar.gz");
+  const requiredEntries = [
+    "bin/buildctl",
+    "bin/buildkitd",
+    "bin/containerd",
+    "bin/containerd-shim-runc-v2",
+    "bin/ctr",
+    "bin/nerdctl",
+    "bin/runc",
+    "libexec/cni/bridge",
+    "libexec/cni/firewall",
+    "libexec/cni/host-local",
+    "libexec/cni/loopback",
+    "libexec/cni/portmap",
+    "libexec/cni/tuning",
+  ];
+
+  for (const entry of requiredEntries) {
+    const fullPath = path.join(sourceRoot, entry);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, `${entry}\n`, { mode: 0o755 });
+  }
+
+  execFileSync("tar", ["-czf", inputArchive, "-C", sourceRoot, "."], {
+    stdio: "inherit",
+  });
+  execFileSync("bash", [scriptPath, "--input", inputArchive, "--output", outputArchiveA], {
+    stdio: "inherit",
+  });
+  execFileSync("bash", [scriptPath, "--input", inputArchive, "--output", outputArchiveB], {
+    stdio: "inherit",
+  });
+
+  const hashA = execFileSync("shasum", ["-a", "256", outputArchiveA], { encoding: "utf8" }).split(" ")[0];
+  const hashB = execFileSync("shasum", ["-a", "256", outputArchiveB], { encoding: "utf8" }).split(" ")[0];
+  assert.equal(hashA, hashB);
+  assert.equal(fs.readFileSync(outputArchiveA).equals(fs.readFileSync(outputArchiveB)), true);
+
+  fs.rmSync(tmpRoot, { recursive: true, force: true });
+});

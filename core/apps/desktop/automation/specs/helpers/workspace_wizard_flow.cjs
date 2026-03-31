@@ -86,6 +86,7 @@ const RETRIABLE_WEBDRIVER_ERROR_PATTERNS = [
 ];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+const isoNow = () => new Date().toISOString();
 
 const shouldRetryWebdriverTransportError = (error) => {
   const text = String(error || "");
@@ -2155,10 +2156,16 @@ const runWizardScenario = async (scenario) => {
 
   let afterSource;
   try {
-    const transition = await waitForSourceExitOrWorkspaceRoute();
-    if (transition.kind === "workspace") {
-      return await finalizeWizardSuccess(transition.workspaceId);
-    }
+      const transition = await waitForSourceExitOrWorkspaceRoute();
+      if (transition.kind === "workspace") {
+        if (typeof scenario.onWorkspaceRouteDetected === "function") {
+          await scenario.onWorkspaceRouteDetected({
+            workspaceId: transition.workspaceId,
+            detectedAt: isoNow(),
+          });
+        }
+        return await finalizeWizardSuccess(transition.workspaceId);
+      }
     afterSource = transition.step;
   } catch (error) {
     const sourceDiag = await browser.execute(() => {
@@ -2197,6 +2204,12 @@ const runWizardScenario = async (scenario) => {
       }
       const transition = await waitForSourceExitOrWorkspaceRoute(30000);
       if (transition.kind === "workspace") {
+        if (typeof scenario.onWorkspaceRouteDetected === "function") {
+          await scenario.onWorkspaceRouteDetected({
+            workspaceId: transition.workspaceId,
+            detectedAt: isoNow(),
+          });
+        }
         return await finalizeWizardSuccess(transition.workspaceId);
       }
       current = transition.step;
@@ -2322,6 +2335,12 @@ const runWizardScenario = async (scenario) => {
     ? REMOTE_LAUNCH_TIMEOUT_MS
     : (scenario.container && scenario.container !== "host" ? CONTAINER_LAUNCH_TIMEOUT_MS : 120000);
   const id = await waitForWorkspaceRoute(workspaceRouteTimeoutMs);
+  if (typeof scenario.onWorkspaceRouteDetected === "function") {
+    await scenario.onWorkspaceRouteDetected({
+      workspaceId: id,
+      detectedAt: isoNow(),
+    });
+  }
   return await finalizeWizardSuccess(id);
 };
 

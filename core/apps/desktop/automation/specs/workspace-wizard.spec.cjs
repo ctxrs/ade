@@ -69,10 +69,24 @@ const RETRIABLE_WEBDRIVER_ERROR_PATTERNS = [
   "Error: Timeout",
 ];
 const ACP_BRIDGE_PROVIDER_ID = "acp-crp-bridge";
+const FIRST_RUN_REPORT_PATH = String(process.env.CTX_AUTOMATION_FIRST_RUN_REPORT_PATH || "").trim();
 const ACP_BRIDGE_INVALID_PATTERNS = [
   /ACP bridge runtime is not configured or invalid/i,
   /runtime command is not configured for provider 'acp-crp-bridge'/i,
 ];
+
+const toMs = (startIso, endIso) => {
+  const start = Date.parse(String(startIso || ""));
+  const end = Date.parse(String(endIso || ""));
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return end - start;
+};
+
+const writeJsonReport = (reportPath, payload) => {
+  if (!reportPath) return;
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+  fs.writeFileSync(reportPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+};
 
 const shouldRetryWebdriverTransportError = (error) => {
   const text = String(error || "");
@@ -2057,6 +2071,68 @@ describe("launcher workspace wizard (e2e)", () => {
       throw new Error(`expected running host execution harness, got: ${JSON.stringify(container)}`);
     }
     await assertWorkspaceTerminalCwdPrefix(id, ws.root_path);
+  });
+
+  it("local AVF first-run sandbox works end-to-end", async function () {
+    if (!scenarioEnabled("local-avf-first-run", ["local", "sandbox"])) this.skip();
+    this.timeout(780000);
+    const dest = path.join(localBase, "new-sandbox-first-run");
+    const appOpenObservedAt = String(process.env.CTX_AUTOMATION_APP_OPEN_OBSERVED_AT || new Date().toISOString());
+    const scenarioStartedAt = new Date().toISOString();
+    let createClickedAt = null;
+    let workspaceDetectedAt = null;
+    const id = await runWizardScenario({
+      location: "local",
+      container: "sandbox",
+      network: "providers",
+      downloadHarnesses: false,
+      source: { kind: "new", destPath: dest, workspaceName: "sandbox-first-run" },
+      setupHook: "",
+      mergeQueue: { kind: "skip" },
+      beforeCreate: async () => {
+        createClickedAt = new Date().toISOString();
+      },
+      onWorkspaceRouteDetected: async ({ detectedAt }) => {
+        workspaceDetectedAt = detectedAt;
+      },
+    });
+
+    await assertConnectedLocalAndListening();
+    const ws = await getWorkspace(id);
+    await assertLocalWorkspaceConfig(id, {
+      environment: "sandbox",
+      networkMode: "llm_only",
+      mergeQueueEnabled: false,
+    });
+    const container = await getWorkspaceHarnessContainer(id);
+    if (!container || !container.running) {
+      throw new Error(`expected running sandbox environment, got: ${JSON.stringify(container)}`);
+    }
+    await assertWorkspaceTerminalCwdPrefix(id, "/ctx/ws");
+    const sandboxReadyAt = new Date().toISOString();
+    const timing = {
+      app_open_to_create_click_ms: toMs(appOpenObservedAt, createClickedAt),
+      app_open_to_workspace_detected_ms: toMs(appOpenObservedAt, workspaceDetectedAt),
+      app_open_to_sandbox_ready_ms: toMs(appOpenObservedAt, sandboxReadyAt),
+      create_click_to_sandbox_ready_ms: toMs(createClickedAt, sandboxReadyAt),
+    };
+    console.error(`[workspace-wizard] local-avf-first-run timing ${JSON.stringify(timing)}`);
+    writeJsonReport(FIRST_RUN_REPORT_PATH, {
+      scenario: "local-avf-first-run",
+      app_path: String(process.env.CTX_DESKTOP_APP_PATH || ""),
+      app_open_observed_at: appOpenObservedAt,
+      scenario_started_at: scenarioStartedAt,
+      create_clicked_at: createClickedAt,
+      workspace_detected_at: workspaceDetectedAt,
+      sandbox_ready_at: sandboxReadyAt,
+      workspace_id: id,
+      workspace_root_path: String(ws?.root_path || ""),
+      execution_environment: "sandbox",
+      network_mode: "llm_only",
+      harness_running: true,
+      terminal_cwd_prefix: "/ctx/ws",
+      timing,
+    });
   });
 
   it("local sandbox works end-to-end", async function () {

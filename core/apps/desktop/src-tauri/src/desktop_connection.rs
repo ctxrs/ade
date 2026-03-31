@@ -56,6 +56,8 @@ pub(super) fn desktop_disconnect(state: tauri::State<ConnectionManager>) -> Resu
     Ok(())
 }
 
+#[cfg_attr(not(feature = "automation"), allow(dead_code))]
+#[cfg_attr(not(feature = "automation"), allow(dead_code))]
 fn demo_commands_enabled() -> bool {
     fn parse_boolish(value: &str) -> Option<bool> {
         match value.trim().to_ascii_lowercase().as_str() {

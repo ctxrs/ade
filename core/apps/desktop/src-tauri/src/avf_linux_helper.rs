@@ -135,11 +135,15 @@ const SHARED_VM_MACHINE_IDENTIFIER_FILE: &str = "machine-identifier.bin";
 const SHARED_VM_MAC_ADDRESS_FILE: &str = "mac-address.txt";
 const SHARED_VM_GUEST_CONSOLE_LOG_FILE: &str = "guest-console.log";
 const SHARED_VM_GUEST_CONTROL_READY_FILE: &str = "guest-control-ready";
+const SHARED_VM_GUEST_CONTROL_FAILED_FILE: &str = "guest-control-failed";
+const SHARED_VM_GUEST_AGENT_LOG_FILE: &str = "guest-agent.log";
 const SHARED_VM_DATA_ROOT_SHARE_TAG: &str = "ctx-data-root";
 const SHARED_VM_HOST_DATA_SERVICE_NAME: &str = "ctx-avf-host-data.service";
 const SHARED_VM_DATA_DISK_LABEL: &str = "ctx-avf-data";
 const SHARED_VM_DATA_DISK_SERVICE_NAME: &str = "ctx-avf-data-disk.service";
 const SHARED_VM_DATA_DISK_INSTALL_PATH: &str = "/usr/local/lib/ctx/ctx-avf-data-disk.sh";
+const SHARED_VM_GUEST_AGENT_LAUNCHER_PATH: &str =
+    "/usr/local/lib/ctx/ctx-avf-linux-guest-agent-launch.sh";
 const SHARED_VM_CONTAINERD_SERVICE_NAME: &str = "containerd.service";
 const SHARED_VM_BUILDKIT_SERVICE_NAME: &str = "buildkit.service";
 const SHARED_VM_PAYLOADS_DIR: &str = "payloads";
@@ -174,6 +178,7 @@ const SHARED_VM_READINESS_PHASE_TIMEOUT_SECONDS: u64 = 10;
 const SHARED_VM_READINESS_GUEST_EXEC_IO_TIMEOUT: Duration =
     Duration::from_secs(SHARED_VM_READINESS_PHASE_TIMEOUT_SECONDS + 5);
 const SHARED_VM_RUNTIME_GUEST_EXEC_IO_TIMEOUT: Duration = Duration::from_secs(120);
+const SHARED_VM_GUEST_AGENT_READY_TIMEOUT_SECONDS: u64 = 60;
 #[cfg(target_os = "macos")]
 const SHARED_VM_GUEST_CONTROL_VSOCK_PORT: u32 = 47001;
 #[cfg(target_os = "macos")]

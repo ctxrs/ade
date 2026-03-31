@@ -61,6 +61,7 @@ function createPrepSteps({
   desktopVersion,
   syncBundles = process.env.CTX_DESKTOP_SYNC_BUNDLES || (mode === "dev" ? "0" : "1"),
   platform = process.platform,
+  arch = process.arch,
 }) {
   const config = PREP_MODES[mode];
   const release = config.cargoProfile === "release";
@@ -82,6 +83,11 @@ function createPrepSteps({
     CARGO_TARGET_DIR: cargoTargetDir,
   };
   const steps = [];
+  const shouldPrepareAvfGuestRuntime =
+    platform === "darwin" && arch === "arm64" && syncBundles !== "0";
+  const avfGuestRuntimeDir = shouldPrepareAvfGuestRuntime
+    ? path.join(cargoTargetDir, "desktop-avf-linux-guest-runtime")
+    : null;
 
   if (config.checkVersions) {
     steps.push({
@@ -119,12 +125,30 @@ function createPrepSteps({
     });
   }
 
+  if (shouldPrepareAvfGuestRuntime) {
+    steps.push({
+      command: "bash",
+      args: [
+        "scripts/prepare_avf_linux_guest_runtime.sh",
+        "--output-dir",
+        avfGuestRuntimeDir,
+        "--arch",
+        "arm64",
+        "--force",
+      ],
+      env: baseEnv,
+    });
+  }
+
   steps.push({
     command: "node",
     args: ["scripts/desktop_sync_resources.cjs", "--profile", config.syncProfile],
     env: {
       ...baseEnv,
       CTX_DESKTOP_SYNC_BUNDLES: syncBundles,
+      ...(avfGuestRuntimeDir
+        ? { CTX_AVF_LINUX_GUEST_RUNTIME_DIR: avfGuestRuntimeDir }
+        : {}),
     },
   });
 
@@ -150,6 +174,7 @@ function main(argv = process.argv) {
     mode,
     cargoTargetDir,
     desktopVersion,
+    arch: process.arch,
   });
   for (const step of steps) {
     runStep(step);

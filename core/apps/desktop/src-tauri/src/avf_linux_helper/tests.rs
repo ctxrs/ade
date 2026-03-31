@@ -490,8 +490,15 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
     assert!(user_data.contains("/usr/sbin/modprobe vmw_vsock_virtio_transport_common"));
     assert!(user_data.contains("/usr/sbin/modprobe vmw_vsock_virtio_transport"));
     assert!(user_data.contains("CTX_AVF_GUEST_CONTROL_READY_MARKER"));
+    assert!(user_data.contains(SHARED_VM_GUEST_AGENT_LAUNCHER_PATH));
     assert!(user_data.contains("/tmp/managed/vms/avf-linux"));
     assert!(user_data.contains("guest-control-ready"));
+    assert!(user_data.contains("guest-control-failed"));
+    assert!(user_data.contains("guest-agent.log"));
+    assert!(user_data.contains("guest-agent launcher starting"));
+    assert!(user_data.contains("guest-agent started as pid"));
+    assert!(user_data.contains("guest-agent did not publish ready marker within"));
+    assert!(user_data.contains("guest-agent exited before ready"));
     assert!(user_data.contains(&format!(
         "After={} {}",
         SHARED_VM_DATA_DISK_SERVICE_NAME, SHARED_VM_HOST_DATA_SERVICE_NAME
@@ -502,6 +509,7 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
     )));
     assert!(user_data.contains("preparing ctx-avf-linux-guest-agent.service"));
     assert!(user_data.contains("systemctl status ctx-avf-linux-guest-agent.service --no-pager"));
+    assert!(user_data.contains("Restart=no"));
     assert!(user_data.contains("/tmp/runtime/helpers/container-stack.tar.gz"));
     assert!(!user_data.contains("ctx-avf-grow-rootfs.service"));
     let parsed: Value = serde_yaml::from_str(&user_data).expect("cloud-init YAML should parse");
@@ -1121,7 +1129,7 @@ fn shared_vm_state_marks_missing_owner_as_cold_stop_and_clears_stale_save_metada
             last_started_at: Some("started".to_string()),
             last_saved_at: Some("saved".to_string()),
             last_stopped_at: None,
-            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Ready),
             last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::ColdBoot),
             last_stop_outcome: Some(AvfLinuxSharedVmStopOutcome::SavedStateWritten),
             last_restore_error: None,
@@ -1289,9 +1297,11 @@ fn start_shared_vm_clears_stale_guest_control_ready_marker_before_launch() {
     let initrd_path = helpers_root.join("initrd");
     fs::write(&initrd_path, b"initrd").expect("write initrd");
     let ready_marker = shared_vm_guest_control_ready_path(&temp);
+    let failed_marker = shared_vm_guest_control_failed_path(&temp);
     fs::create_dir_all(ready_marker.parent().expect("marker parent"))
         .expect("create marker parent");
     fs::write(&ready_marker, b"ready").expect("seed ready marker");
+    fs::write(&failed_marker, b"failed").expect("seed failed marker");
 
     let started = start_shared_vm(
         &temp,
@@ -1310,6 +1320,10 @@ fn start_shared_vm_clears_stale_guest_control_ready_marker_before_launch() {
     assert!(
         !ready_marker.exists(),
         "stale guest-control ready marker should be removed before launch"
+    );
+    assert!(
+        !failed_marker.exists(),
+        "stale guest-control failure marker should be removed before launch"
     );
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
@@ -1452,7 +1466,7 @@ fn start_shared_vm_marks_already_running_path_explicitly() {
             last_started_at: Some(now_timestamp_string()),
             last_saved_at: Some("older-save".to_string()),
             last_stopped_at: None,
-            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Ready),
             last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::ColdBoot),
             last_stop_outcome: Some(AvfLinuxSharedVmStopOutcome::SavedStateWritten),
             last_restore_error: Some("old restore error".to_string()),
@@ -1524,7 +1538,7 @@ fn stop_shared_vm_discards_stale_saved_state_and_reports_cold_stop() {
             last_started_at: Some(now_timestamp_string()),
             last_saved_at: Some("old-save".to_string()),
             last_stopped_at: None,
-            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Ready),
             last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::ColdBoot),
             last_stop_outcome: None,
             last_restore_error: None,
@@ -1571,9 +1585,11 @@ fn stop_shared_vm_clears_guest_control_ready_marker() {
     }
     prepare_runtime_layout(&temp).expect("prepare runtime layout");
     let ready_marker = shared_vm_guest_control_ready_path(&temp);
+    let failed_marker = shared_vm_guest_control_failed_path(&temp);
     fs::create_dir_all(ready_marker.parent().expect("marker parent"))
         .expect("create marker parent");
     fs::write(&ready_marker, b"ready").expect("seed ready marker");
+    fs::write(&failed_marker, b"failed").expect("seed failure marker");
     persist_state(
         &shared_vm_state_path(&temp),
         &PersistedSharedVmState {
@@ -1589,7 +1605,7 @@ fn stop_shared_vm_clears_guest_control_ready_marker() {
             last_started_at: Some(now_timestamp_string()),
             last_saved_at: None,
             last_stopped_at: None,
-            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Ready),
             last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::ColdBoot),
             last_stop_outcome: None,
             last_restore_error: None,
@@ -1611,6 +1627,10 @@ fn stop_shared_vm_clears_guest_control_ready_marker() {
     assert!(
         !ready_marker.exists(),
         "guest-control ready marker should be removed on stop"
+    );
+    assert!(
+        !failed_marker.exists(),
+        "guest-control failure marker should be removed on stop"
     );
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
@@ -1656,7 +1676,7 @@ fn stop_shared_vm_discards_stale_saved_state_on_cold_stop() {
             last_started_at: Some(now_timestamp_string()),
             last_saved_at: Some("older-save".to_string()),
             last_stopped_at: None,
-            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Ready),
             last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::Restored),
             last_stop_outcome: Some(AvfLinuxSharedVmStopOutcome::SavedStateWritten),
             last_restore_error: None,
@@ -1744,7 +1764,7 @@ fn start_shared_vm_forces_restart_when_runtime_changes_while_vm_is_live() {
             last_started_at: Some(now_timestamp_string()),
             last_saved_at: None,
             last_stopped_at: None,
-            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Ready),
             last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::AlreadyRunning),
             last_stop_outcome: None,
             last_restore_error: None,
@@ -1881,7 +1901,7 @@ fn start_shared_vm_forces_restart_when_runtime_digest_changes_with_same_version(
             last_started_at: Some(now_timestamp_string()),
             last_saved_at: None,
             last_stopped_at: None,
-            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Ready),
             last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::AlreadyRunning),
             last_stop_outcome: None,
             last_restore_error: None,
@@ -2235,6 +2255,49 @@ fn wait_for_guest_control_ready_marker_times_out_without_marker() {
     assert!(err
         .to_string()
         .contains("timed out waiting for guest control ready marker"));
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
+fn wait_for_guest_control_ready_marker_surfaces_failure_marker_and_log_tail() {
+    let temp = std::env::temp_dir().join(format!(
+        "ctx-avf-ready-marker-failure-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(shared_vm_logs_root(&temp)).expect("create logs root");
+    let failure_marker = shared_vm_guest_control_failed_path(&temp);
+    let guest_agent_log = shared_vm_guest_agent_log_path(&temp);
+    let failure_marker_for_thread = failure_marker.clone();
+    let guest_agent_log_for_thread = guest_agent_log.clone();
+    let writer = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        if let Some(parent) = failure_marker_for_thread.parent() {
+            fs::create_dir_all(parent).expect("create marker parent");
+        }
+        fs::write(
+            &guest_agent_log_for_thread,
+            b"[ctx-avf-linux] guest-agent launcher starting\n[ctx-avf-linux] guest-agent exited before ready with status 1\n",
+        )
+        .expect("write guest agent log");
+        fs::write(
+            &failure_marker_for_thread,
+            b"[ctx-avf-linux] guest-agent exited before ready with status 1\n",
+        )
+        .expect("write failure marker");
+    });
+
+    let err = wait_for_guest_control_ready_marker(&temp, Duration::from_secs(1))
+        .expect_err("failure marker should fail readiness");
+    let rendered = err.to_string();
+    assert!(rendered.contains("guest control failed before ready marker"));
+    assert!(rendered.contains("guest-agent exited before ready with status 1"));
+    assert!(rendered.contains("guest-agent log tail"));
+
+    writer.join().expect("writer thread");
     fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 

@@ -89,7 +89,38 @@ while IFS= read -r relative_path; do
   cp -p "$source_path" "$destination_path"
 done < <(curated_entries)
 
+find "$curated_root" -exec touch -h -t 197001010000 {} +
+archive_entries="$tmp_root/archive-entries.txt"
+(cd "$curated_root" && LC_ALL=C find . -print | LC_ALL=C sort > "$archive_entries")
+
 mkdir -p "$(dirname "$output_archive")"
 rm -f "$output_archive"
-tar -czf "$output_archive" -C "$curated_root" .
-
+if tar --version 2>/dev/null | grep -qi "bsdtar"; then
+  COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 \
+    tar \
+      --format gnutar \
+      --uid 0 \
+      --gid 0 \
+      --numeric-owner \
+      --options gzip:timestamp=0 \
+      --no-recursion \
+      -czf "$output_archive" \
+      -C "$curated_root" \
+      -T "$archive_entries"
+else
+  need_cmd gzip
+  plain_archive="$tmp_root/container-stack.curated.tar"
+  tar \
+    --sort=name \
+    --mtime='@0' \
+    --owner=0 \
+    --group=0 \
+    --numeric-owner \
+    --format=gnu \
+    --no-recursion \
+    -cf "$plain_archive" \
+    -C "$curated_root" \
+    -T "$archive_entries"
+  gzip -n -f "$plain_archive"
+  mv "$plain_archive.gz" "$output_archive"
+fi
