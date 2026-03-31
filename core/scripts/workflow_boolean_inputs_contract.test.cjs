@@ -130,6 +130,20 @@ test("release supabase validates release-stage replay sources against prereq art
   assert.match(text, /RELEASE_STAGE_SOURCE_RUN_ID:\s*\$\{\{\s*needs\.resolve-release-stage-source\.outputs\.run_id\s*\}\}/);
 });
 
+test("release supabase requires same-SHA dependency bundles", () => {
+  const text = workflowText("release-supabase.yml");
+  assert.match(text, /resolve dependency bundles source run/);
+  assert.match(
+    text,
+    /dependency bundle run \$\{requestedRunIdRaw\} targets \$\{run\.head_sha \|\| "unknown"\}, but release target is \$\{targetSha\}\. Release requires same-SHA dependency bundles\./,
+  );
+  assert.match(
+    text,
+    /no successful dependency-bundles run with required artifacts was found for target SHA \$\{targetSha\} on branch \$\{defaultBranch\}; trigger dependency-bundles for this SHA or set dependency_bundle_source_run_id to a same-SHA run explicitly\./,
+  );
+  assert.doesNotMatch(text, /using compatible run .* relying on downstream runtime-lock validation/);
+});
+
 test("release supabase publish restore accepts both src-tauri and core target bundle roots", () => {
   const text = workflowText("release-supabase.yml");
   assert.match(
