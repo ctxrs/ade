@@ -234,13 +234,64 @@ describe("launchProgress", () => {
     expect(formatLaunchRemaining(remainingMs)).toBe("35s est. remaining");
   });
 
-  it("uses aggregate remaining for shared VM startup", () => {
+  it("does not skip artifact preparation just because the current phase reports shared VM startup", () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      current_phase: "machine_start_or_init" as const,
+      current_step_label: "starting AVF Linux workspace VM",
+      active_download: null,
+      phases: [],
+    };
+    const remainingMs = launchEtaRemainingMs(
+      snapshot,
+      Date.parse("2026-03-10T00:00:25.000Z"),
+    );
+    expect(remainingMs).toBe(71_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("1m 11s est. remaining");
+  });
+
+  it("keeps charging the artifact bucket until artifact preparation is actually complete", () => {
     const snapshot = {
       ...baseSnapshot(),
       current_phase: "machine_start_or_init" as const,
       current_step_label: "starting AVF Linux workspace VM",
       active_download: null,
       phases: [
+        {
+          phase: "artifact_download" as const,
+          started_at: "2026-03-10T00:00:00.000Z",
+          finished_at: null,
+          elapsed_ms: null,
+        },
+        {
+          phase: "machine_start_or_init" as const,
+          started_at: "2026-03-10T00:00:20.000Z",
+          finished_at: null,
+          elapsed_ms: null,
+        },
+      ],
+    };
+    const remainingMs = launchEtaRemainingMs(
+      snapshot,
+      Date.parse("2026-03-10T00:00:25.000Z"),
+    );
+    expect(remainingMs).toBe(46_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("46s est. remaining");
+  });
+
+  it("switches to shared VM startup only after artifact preparation completes", () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      current_phase: "machine_start_or_init" as const,
+      current_step_label: "starting AVF Linux workspace VM",
+      active_download: null,
+      phases: [
+        {
+          phase: "artifact_download" as const,
+          started_at: "2026-03-10T00:00:00.000Z",
+          finished_at: "2026-03-10T00:00:20.000Z",
+          elapsed_ms: 20_000,
+        },
         {
           phase: "machine_start_or_init" as const,
           started_at: "2026-03-10T00:00:20.000Z",

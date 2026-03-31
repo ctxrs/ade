@@ -17,6 +17,12 @@ type LaunchEtaBucket =
   | "shared_vm_startup"
   | "sandbox_setup";
 
+const LAUNCH_ETA_BUCKET_ORDER: LaunchEtaBucket[] = [
+  "artifact_acquisition_preparation",
+  "shared_vm_startup",
+  "sandbox_setup",
+];
+
 export type WorkspaceSetupLaunchLogLine = ExecutionLaunchLogLine & {
   phaseLabel: string;
   timeLabel: string;
@@ -186,36 +192,77 @@ const remainingDownstreamBucketBudgetMs = (bucket: LaunchEtaBucket): number => {
   }
 };
 
+const phaseFinishedAtMs = (phase: ExecutionLaunchPhaseStatus): number | null => {
+  const completedAt =
+    "completed_at" in phase && typeof phase.completed_at === "string"
+      ? phase.completed_at
+      : "finished_at" in phase && typeof phase.finished_at === "string"
+        ? phase.finished_at
+        : null;
+  return parseUtcMs(completedAt);
+};
+
+const bucketHasStarted = (
+  snapshot: ExecutionLaunchSnapshot,
+  bucket: LaunchEtaBucket,
+): boolean => {
+  if (etaBucketForPhase(snapshot.current_phase) === bucket) return true;
+  return snapshot.phases.some((phase) => etaBucketForPhase(phase.phase) === bucket);
+};
+
+const bucketHasExplicitCompletion = (
+  snapshot: ExecutionLaunchSnapshot,
+  bucket: LaunchEtaBucket,
+): boolean => {
+  return snapshot.phases.some((phase) => {
+    if (etaBucketForPhase(phase.phase) !== bucket) return false;
+    return phaseFinishedAtMs(phase) !== null || phase.status === "completed";
+  });
+};
+
+const hasStartedLaterBucket = (
+  snapshot: ExecutionLaunchSnapshot,
+  bucket: LaunchEtaBucket,
+): boolean => {
+  const bucketIndex = LAUNCH_ETA_BUCKET_ORDER.indexOf(bucket);
+  if (bucketIndex < 0) return false;
+  for (let i = bucketIndex + 1; i < LAUNCH_ETA_BUCKET_ORDER.length; i += 1) {
+    if (bucketHasStarted(snapshot, LAUNCH_ETA_BUCKET_ORDER[i])) return true;
+  }
+  return false;
+};
+
+const bucketIsComplete = (
+  snapshot: ExecutionLaunchSnapshot,
+  bucket: LaunchEtaBucket,
+): boolean => {
+  if (!bucketHasStarted(snapshot, bucket)) return false;
+  return bucketHasExplicitCompletion(snapshot, bucket) || hasStartedLaterBucket(snapshot, bucket);
+};
+
+const currentEtaBucket = (
+  snapshot: ExecutionLaunchSnapshot,
+): LaunchEtaBucket | null => {
+  for (const bucket of LAUNCH_ETA_BUCKET_ORDER) {
+    if (!bucketIsComplete(snapshot, bucket)) return bucket;
+  }
+  return null;
+};
+
 const bucketStartedAtMs = (
   snapshot: ExecutionLaunchSnapshot,
-  currentBucket: LaunchEtaBucket,
+  bucket: LaunchEtaBucket,
 ): number | null => {
-  const currentPhase = snapshot.current_phase;
-  if (!currentPhase) {
-    return parseUtcMs(snapshot.started_at) ?? parseUtcMs(snapshot.created_at);
-  }
-  let currentIndex = -1;
-  for (let i = snapshot.phases.length - 1; i >= 0; i -= 1) {
-    if (snapshot.phases[i].phase === currentPhase) {
-      currentIndex = i;
-      break;
+  let earliestStartedAtMs: number | null = null;
+  for (const phase of snapshot.phases) {
+    if (etaBucketForPhase(phase.phase) !== bucket) continue;
+    const startedAtMs = parseUtcMs(phase.started_at);
+    if (startedAtMs === null) continue;
+    if (earliestStartedAtMs === null || startedAtMs < earliestStartedAtMs) {
+      earliestStartedAtMs = startedAtMs;
     }
   }
-  if (currentIndex < 0) {
-    return parseUtcMs(snapshot.started_at) ?? parseUtcMs(snapshot.created_at);
-  }
-
-  let startedAtMs = parseUtcMs(snapshot.phases[currentIndex].started_at);
-  for (let i = currentIndex - 1; i >= 0; i -= 1) {
-    if (etaBucketForPhase(snapshot.phases[i].phase) !== currentBucket) {
-      break;
-    }
-    const candidateStartedAtMs = parseUtcMs(snapshot.phases[i].started_at);
-    if (candidateStartedAtMs !== null) {
-      startedAtMs = candidateStartedAtMs;
-    }
-  }
-  return startedAtMs ?? parseUtcMs(snapshot.started_at) ?? parseUtcMs(snapshot.created_at);
+  return earliestStartedAtMs;
 };
 
 const liveDownloadRemainingMs = (
@@ -253,7 +300,7 @@ export const launchEtaRemainingMs = (
   if (!snapshot) return null;
   if (snapshot.state === "ready") return 0;
   if (snapshot.state === "error") return null;
-  const currentBucket = etaBucketForPhase(snapshot.current_phase);
+  const currentBucket = currentEtaBucket(snapshot);
   if (!currentBucket) {
     const downloadRemainingMs = liveDownloadRemainingMs(snapshot, nowMs);
     if (downloadRemainingMs !== null) {
@@ -266,20 +313,19 @@ export const launchEtaRemainingMs = (
   }
 
   const downstreamRemainingMs = remainingDownstreamBucketBudgetMs(currentBucket);
-  if (currentBucket === "artifact_acquisition_preparation") {
-    const downloadRemainingMs = liveDownloadRemainingMs(snapshot, nowMs);
-    if (downloadRemainingMs !== null) {
-      return downloadRemainingMs + downstreamRemainingMs;
-    }
-  }
-
   const startedAtMs = bucketStartedAtMs(snapshot, currentBucket);
-  if (startedAtMs === null) return downstreamRemainingMs;
-  const elapsedMs = Math.max(0, nowMs - startedAtMs);
+  const elapsedMs = startedAtMs === null ? 0 : Math.max(0, nowMs - startedAtMs);
   const currentBucketRemainingMs = Math.max(
     0,
     etaBucketBudgetMs(currentBucket) - elapsedMs,
   );
+  if (currentBucket === "artifact_acquisition_preparation") {
+    const downloadRemainingMs = liveDownloadRemainingMs(snapshot, nowMs);
+    if (downloadRemainingMs !== null) {
+      return Math.max(downloadRemainingMs, currentBucketRemainingMs) + downstreamRemainingMs;
+    }
+  }
+
   return currentBucketRemainingMs + downstreamRemainingMs;
 };
 
