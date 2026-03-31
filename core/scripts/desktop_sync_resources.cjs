@@ -11,6 +11,11 @@ const args = process.argv.slice(2);
 const profileIdx = args.indexOf("--profile");
 const profile = profileIdx !== -1 ? args[profileIdx + 1] : "debug";
 const syncBundlesEnabled = resolveBoolishFlag(process.env.CTX_DESKTOP_SYNC_BUNDLES, true, "CTX_DESKTOP_SYNC_BUNDLES");
+const allowManagedAvfRuntimeMissingLocalPayload = resolveBoolishFlag(
+  process.env.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD,
+  false,
+  "CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD",
+);
 
 const coreRoot = path.resolve(__dirname, "..");
 const desktopTauriRoot = path.join(coreRoot, "apps", "desktop", "src-tauri");
@@ -259,9 +264,15 @@ const writeEffectiveBundleManifest = (
     profile: profileValue,
     overridesPath: process.env.CTX_RUNTIME_OVERRIDES_PATH || defaultRuntimeOverridesPath,
   });
-  if (!validation.ok) {
+  const filteredErrors = filterManagedAvfLocalPayloadErrors({
+    errors: validation.errors,
+    bundleDir,
+    hostOs: hostManifestOs,
+    hostArch: hostManifestArch,
+  });
+  if (filteredErrors.length > 0) {
     throw new Error(
-      `runtime lock validation failed while writing ${EFFECTIVE_MANIFEST_FILENAME}: ${validation.errors.join("; ")}`,
+      `runtime lock validation failed while writing ${EFFECTIVE_MANIFEST_FILENAME}: ${filteredErrors.join("; ")}`,
     );
   }
   const effectiveManifestPath = path.join(bundleDir, EFFECTIVE_MANIFEST_FILENAME);
@@ -271,6 +282,36 @@ const writeEffectiveBundleManifest = (
     "utf8",
   );
   return effectiveManifestPath;
+};
+
+const isManagedAvfLocalPayloadValidationError = (error, hostOs, hostArch) => {
+  const label = `${AVF_LINUX_GUEST_RUNTIME_ID} (${hostOs}/${hostArch})`;
+  const text = String(error || "");
+  return (
+    text.startsWith(`runtime root ${label} missing directory:`)
+    || text.startsWith(`runtime bin ${label} missing file:`)
+    || text.startsWith(`runtime helper ${AVF_LINUX_GUEST_RUNTIME_ID}/`)
+  );
+};
+
+const filterManagedAvfLocalPayloadErrors = ({
+  errors,
+  bundleDir = destBundleDir,
+  hostOs = hostManifestOs,
+  hostArch = hostManifestArch,
+  allowManagedRuntime = allowManagedAvfRuntimeMissingLocalPayload,
+} = {}) => {
+  const list = Array.isArray(errors) ? errors : [];
+  if (!allowManagedRuntime || list.length === 0 || hostOs !== "macos") {
+    return list;
+  }
+  try {
+    const lock = readRuntimeLock(bundleDir);
+    assertManagedAvfRuntimeComponent(lock, hostOs, hostArch);
+  } catch {
+    return list;
+  }
+  return list.filter((error) => !isManagedAvfLocalPayloadValidationError(error, hostOs, hostArch));
 };
 
 const assertRuntimeTargetsAvailable = (bundleDir, runtimeId, targets) => {
@@ -1231,10 +1272,11 @@ if (require.main === module) {
     __desktopSyncResourcesTestHooks: {
       assertRuntimeTargetsAvailable,
       buildLinuxCtxMcpContainerArgs,
-      buildRemoteDaemonContainerArgs,
-      resetBundleDir,
-      shouldBundleLinuxCtxMcpRuntime,
-      writePlaceholderBundleManifest,
+    buildRemoteDaemonContainerArgs,
+    filterManagedAvfLocalPayloadErrors,
+    resetBundleDir,
+    shouldBundleLinuxCtxMcpRuntime,
+    writePlaceholderBundleManifest,
       writeEffectiveBundleManifest,
     },
     copySidecarBinary,

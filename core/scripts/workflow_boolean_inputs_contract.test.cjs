@@ -187,11 +187,11 @@ test("mac updater smoke reuses staged bundles instead of rematerializing them", 
   const text = workflowText("release-supabase.yml");
   assert.match(
     text,
-    /name:\s+Updater desktop apply smoke \(macOS tier1\)[\s\S]*CTX_DESKTOP_APP_PATH:\s*\$\{\{\s*runner\.temp\s*\}\}\/ctx-e2e-cargo\/debug\/bundle\/macos[\s\S]*CTX_DESKTOP_SYNC_BUNDLES=0 CTX_BUNDLE_REMOTE_DAEMONS=0 CARGO_TARGET_DIR="\$\{CTX_E2E_CARGO_TARGET_DIR\}" pnpm -C core\/apps\/desktop run build -- --debug --bundles app -- --features automation/s,
+    /name:\s+Updater desktop apply smoke \(macOS tier1\)[\s\S]*CTX_DESKTOP_APP_PATH:\s*\$\{\{\s*runner\.temp\s*\}\}\/ctx-e2e-cargo\/debug\/bundle\/macos[\s\S]*CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD:\s*"1"[\s\S]*CTX_DESKTOP_SYNC_BUNDLES=0 CTX_BUNDLE_REMOTE_DAEMONS=0 CARGO_TARGET_DIR="\$\{CTX_E2E_CARGO_TARGET_DIR\}" pnpm -C core\/apps\/desktop run build -- --debug --bundles app -- --features automation/s,
   );
   assert.match(
     text,
-    /name:\s+Updater desktop apply smoke \(macOS variant\)[\s\S]*CTX_DESKTOP_APP_PATH:\s*\$\{\{\s*runner\.temp\s*\}\}\/ctx-e2e-cargo\/debug\/bundle\/macos[\s\S]*CTX_DESKTOP_SYNC_BUNDLES=0 CTX_BUNDLE_REMOTE_DAEMONS=0 CARGO_TARGET_DIR="\$\{CTX_E2E_CARGO_TARGET_DIR\}" pnpm -C core\/apps\/desktop run build -- --debug --bundles app -- --features automation/s,
+    /name:\s+Updater desktop apply smoke \(macOS variant\)[\s\S]*CTX_DESKTOP_APP_PATH:\s*\$\{\{\s*runner\.temp\s*\}\}\/ctx-e2e-cargo\/debug\/bundle\/macos[\s\S]*CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD:\s*"1"[\s\S]*CTX_DESKTOP_SYNC_BUNDLES=0 CTX_BUNDLE_REMOTE_DAEMONS=0 CARGO_TARGET_DIR="\$\{CTX_E2E_CARGO_TARGET_DIR\}" pnpm -C core\/apps\/desktop run build -- --debug --bundles app -- --features automation/s,
   );
 });
 
@@ -200,7 +200,7 @@ test("release supabase publishes the AVF Linux guest runtime before the shipped-
   assert.match(text, /- name:\s+Rust toolchain \(AVF runtime publish\)/);
   assert.match(
     text,
-    /- name:\s+Install AVF runtime publish toolchain \(macOS arm64\)[\s\S]*command -v zig[\s\S]*brew install zig[\s\S]*command -v cargo-zigbuild[\s\S]*cargo install cargo-zigbuild --locked/s,
+    /- name:\s+Install AVF runtime publish toolchain \(macOS arm64\)[\s\S]*command -v zig[\s\S]*brew install zig[\s\S]*command -v qemu-img[\s\S]*brew install qemu[\s\S]*command -v cargo-zigbuild[\s\S]*cargo install cargo-zigbuild --locked/s,
   );
   assert.match(
     text,
