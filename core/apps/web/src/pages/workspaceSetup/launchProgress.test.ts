@@ -4,6 +4,7 @@ import {
   currentLaunchStepLabel,
   formatLaunchRemaining,
   formatLaunchTime,
+  launchElapsedMs,
   launchEtaRemainingMs,
   mergeLaunchLogs,
 } from "./launchProgress";
@@ -117,6 +118,52 @@ describe("launchProgress", () => {
 
   it("prefers the current step label over the coarse phase label", () => {
     expect(currentLaunchStepLabel(baseSnapshot())).toBe("Downloading required artifacts");
+  });
+
+  it("uses launch started_at for elapsed time so the timer does not reset per phase", () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      started_at: "2026-03-10T00:00:00.000Z",
+      current_phase: "machine_start_or_init" as const,
+      phases: [
+        {
+          phase: "artifact_download" as const,
+          status: "completed" as const,
+          started_at: "2026-03-10T00:00:00.000Z",
+          completed_at: "2026-03-10T00:00:20.000Z",
+          elapsed_ms: 20000,
+        },
+        {
+          phase: "machine_start_or_init" as const,
+          status: "running" as const,
+          started_at: "2026-03-10T00:00:20.000Z",
+          completed_at: null,
+          elapsed_ms: 5000,
+        },
+      ],
+    };
+
+    expect(launchElapsedMs(snapshot, Date.parse("2026-03-10T00:00:25.000Z"))).toBe(25000);
+  });
+
+  it("returns null when launch-level start timestamps are unavailable", () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      started_at: null,
+      created_at: "",
+      current_phase: "machine_start_or_init" as const,
+      phases: [
+        {
+          phase: "machine_start_or_init" as const,
+          status: "running" as const,
+          started_at: "2026-03-10T00:00:20.000Z",
+          completed_at: null,
+          elapsed_ms: 5000,
+        },
+      ],
+    };
+
+    expect(launchElapsedMs(snapshot, Date.parse("2026-03-10T00:00:25.000Z"))).toBeNull();
   });
 
   it("counts down remaining time from the latest snapshot timestamp", () => {

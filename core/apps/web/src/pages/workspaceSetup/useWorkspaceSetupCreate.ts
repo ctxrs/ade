@@ -29,9 +29,8 @@ import {
   currentLaunchStepLabel as deriveCurrentLaunchStepLabel,
   formatLaunchElapsed,
   formatLaunchRemaining,
+  launchElapsedMs,
   launchEtaRemainingMs,
-  parseUtcMs,
-  phaseEntryForCurrent,
   type WorkspaceSetupLaunchLogLine,
 } from "./launchProgress";
 import type { WizardStepKey } from "./wizardFlow";
@@ -630,16 +629,8 @@ export function useWorkspaceSetupCreate({
     }
   };
 
-  const currentLaunchPhaseEntry = launchSnapshot ? phaseEntryForCurrent(launchSnapshot) : null;
   const currentLaunchElapsed = (() => {
-    if (!launchSnapshot) return "0s";
-    const elapsedMs = currentLaunchPhaseEntry?.elapsed_ms ?? null;
-    if (elapsedMs !== null && elapsedMs !== undefined) {
-      return formatLaunchElapsed(elapsedMs);
-    }
-    const started = parseUtcMs(currentLaunchPhaseEntry?.started_at);
-    if (started === null) return "0s";
-    return formatLaunchElapsed(Date.now() - started);
+    return formatLaunchElapsed(launchElapsedMs(launchSnapshot, Date.now()));
   })();
   const currentLaunchStepLabel = deriveCurrentLaunchStepLabel(launchSnapshot);
   const currentLaunchEtaLabel = launchSnapshot?.state === "ready"

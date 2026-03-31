@@ -114,6 +114,20 @@ export const formatLaunchElapsed = (ms: number | null): string => {
   return `${minutes}m ${seconds}s`;
 };
 
+export const launchElapsedMs = (
+  snapshot: ExecutionLaunchSnapshot | null,
+  nowMs: number,
+): number | null => {
+  if (!snapshot) return null;
+
+  const startedAt = parseUtcMs(snapshot.started_at) ?? parseUtcMs(snapshot.created_at);
+  if (startedAt !== null) {
+    return Math.max(0, nowMs - startedAt);
+  }
+
+  return null;
+};
+
 export const formatLaunchTime = (ts: string): string => {
   const value = parseUtcMs(ts);
   if (value === null) return ts;
