@@ -200,6 +200,10 @@ test("release supabase publishes the AVF Linux guest runtime before the shipped-
   assert.match(text, /- name:\s+Rust toolchain \(AVF runtime publish\)/);
   assert.match(
     text,
+    /- name:\s+Install AVF runtime publish toolchain \(macOS arm64\)[\s\S]*command -v zig[\s\S]*brew install zig[\s\S]*command -v cargo-zigbuild[\s\S]*cargo install cargo-zigbuild --locked/s,
+  );
+  assert.match(
+    text,
     /- name:\s+Publish AVF Linux guest runtime \(macOS arm64\)[\s\S]*runtime_dir="\$RUNNER_TEMP\/ctx-avf-linux-guest-runtime"[\s\S]*prepare_avf_linux_guest_runtime\.sh[\s\S]*avf_runtime_lock_freshness\.cjs[\s\S]*avf_runtime_publish_supabase\.sh[\s\S]*--publish/s,
   );
   assert.match(
