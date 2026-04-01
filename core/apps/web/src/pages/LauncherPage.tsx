@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   applyDaemonDesktopConnection,
+  type ExecutionLaunchSnapshot,
   getHealth,
   getWorkspaceExecutionConfig,
   idToString,
@@ -25,6 +26,15 @@ import {
   type LauncherExecutionEnvironment,
   type LauncherRecentEntry,
 } from "../state/launcherRecentsStore";
+import {
+  startWorkspaceSetupLaunchHandoff,
+  waitForLaunchHandoffTerminal,
+} from "./workspaceSetup/launchHandoff";
+import {
+  currentLaunchStepLabel,
+  formatLaunchRemaining,
+  launchEtaRemainingMs,
+} from "./workspaceSetup/launchProgress";
 
 function applyConnection(info: DesktopConnectionInfo) {
   applyDaemonDesktopConnection(info);
@@ -114,6 +124,23 @@ async function resolveWorkspaceByPath(rootPath: string): Promise<ResolvedWorkspa
   }
 }
 
+async function resolveWorkspaceByPathWithRetry(
+  rootPath: string,
+  timeoutMs: number,
+): Promise<ResolvedWorkspace | null> {
+  const started = Date.now();
+  let lastErr: unknown = null;
+  while (Date.now() - started < timeoutMs) {
+    try {
+      return await resolveWorkspaceByPath(rootPath);
+    } catch (e) {
+      lastErr = e;
+    }
+    await sleepMs(200);
+  }
+  throw lastErr ?? new Error("Timed out resolving workspace.");
+}
+
 async function loadWorkspaceExecutionEnvironment(
   workspaceId: string,
 ): Promise<LauncherExecutionEnvironment | undefined> {
@@ -126,12 +153,66 @@ async function loadWorkspaceExecutionEnvironment(
   }
 }
 
+function withEllipsis(value: string): string {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  if (/[.!?…]$/.test(trimmed)) return trimmed;
+  return `${trimmed}...`;
+}
+
+function sandboxLaunchProgressLabel(
+  snapshot: ExecutionLaunchSnapshot | null,
+  nowMs: number,
+  fallbackDetail: string | null,
+): string {
+  if (!snapshot) {
+    const fallback = String(fallbackDetail || "").trim();
+    return fallback || "Preparing sandbox...";
+  }
+
+  if (snapshot.state === "ready") return "Opening workspace...";
+  if (snapshot.state === "error") return "Sandbox launch failed";
+
+  let baseLabel: string;
+  switch (snapshot.current_phase) {
+    case "artifact_download":
+      baseLabel = "Downloading runtime...";
+      break;
+    case "machine_check":
+      baseLabel = "Checking sandbox...";
+      break;
+    case "machine_start_or_init":
+      baseLabel = "Restarting VM...";
+      break;
+    case "image_check":
+    case "image_load":
+    case "container_check":
+    case "container_start_or_create":
+    case "runtime_network_setup":
+      baseLabel = "Preparing sandbox...";
+      break;
+    default:
+      baseLabel = withEllipsis(currentLaunchStepLabel(snapshot));
+      break;
+  }
+
+  const etaRemainingMs = launchEtaRemainingMs(snapshot, nowMs);
+  if (etaRemainingMs !== null && etaRemainingMs > 0) {
+    return `${baseLabel} (${formatLaunchRemaining(etaRemainingMs)})`;
+  }
+  return baseLabel;
+}
+
 export default function LauncherPage() {
   const navigate = useNavigate();
   const [connection, setConnection] = useState<DesktopConnectionInfo | null>(null);
   const [recents, setRecents] = useState<LauncherRecentEntry[]>([]);
   const [busy, setBusy] = useState(false);
+  const [openingRecentKey, setOpeningRecentKey] = useState<string | null>(null);
+  const [busyDetail, setBusyDetail] = useState<string | null>(null);
+  const [launchSnapshot, setLaunchSnapshot] = useState<ExecutionLaunchSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [launchNowMs, setLaunchNowMs] = useState(() => Date.now());
 
   const isDesktop = isDesktopApp();
 
@@ -189,25 +270,71 @@ export default function LauncherPage() {
     };
   }, [busy, isDesktop]);
 
-  const connectLocalAndOpen = async (rootPath?: string, executionEnvironment?: LauncherExecutionEnvironment) => {
-    setError(null);
-    setBusy(true);
+  useEffect(() => {
+    if (!busy || !openingRecentKey) return undefined;
+    setLaunchNowMs(Date.now());
+    const intervalId = window.setInterval(() => {
+      setLaunchNowMs(Date.now());
+    }, 1000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [busy, openingRecentKey]);
+
+  const prepareSandboxWorkspace = async (workspaceId: string) => {
+    setLaunchSnapshot(null);
+    setBusyDetail("Preparing sandbox...");
+    const initial = await startWorkspaceSetupLaunchHandoff(workspaceId);
+    setLaunchSnapshot(initial);
+    await waitForLaunchHandoffTerminal(initial, {
+      applySnapshot: (snapshot) => {
+        setLaunchSnapshot(snapshot);
+      },
+      appendLines: () => {},
+    });
+  };
+
+  const resetBusyState = () => {
+    setBusy(false);
+    setOpeningRecentKey(null);
+    setBusyDetail(null);
+    setLaunchSnapshot(null);
+  };
+
+  const connectLocalAndOpen = async (
+    rootPath?: string,
+    executionEnvironment?: LauncherExecutionEnvironment,
+    openingKey?: string,
+  ) => {
     try {
+      setBusyDetail("Connecting daemon...");
       const info = await desktopConnectLocal();
       setConnection(info);
       applyConnection(info);
       // Avoid landing on workspaces while the daemon is still booting.
+      setBusyDetail("Waiting for daemon...");
       await waitForDaemonReady(15000);
       if (rootPath) {
-        const resolvedWorkspace = await resolveWorkspaceByPath(rootPath);
+        setBusyDetail("Finding workspace...");
+        const resolvedWorkspace = await resolveWorkspaceByPathWithRetry(rootPath, 5000);
         if (!resolvedWorkspace) {
           setError("Workspace not found for this path. Re-create it from New Workspace.");
           navigate("/workspace-setup");
           return;
         }
+        let resolvedExecutionEnvironment = executionEnvironment;
+        if (!resolvedExecutionEnvironment) {
+          setBusyDetail("Loading settings...");
+          resolvedExecutionEnvironment = await loadWorkspaceExecutionEnvironment(resolvedWorkspace.workspaceId)
+            .catch(() => undefined);
+        }
+        if (resolvedExecutionEnvironment === "sandbox") {
+          if (openingKey) setOpeningRecentKey(openingKey);
+          await prepareSandboxWorkspace(resolvedWorkspace.workspaceId);
+        } else {
+          setOpeningRecentKey(null);
+        }
         try {
-          const resolvedExecutionEnvironment =
-            executionEnvironment ?? await loadWorkspaceExecutionEnvironment(resolvedWorkspace.workspaceId);
           await upsertLauncherRecent({
             kind: "local",
             label: resolvedWorkspace.label,
@@ -225,16 +352,20 @@ export default function LauncherPage() {
     } catch (e: unknown) {
       setError(errorMessage(e));
     } finally {
-      setBusy(false);
+      resetBusyState();
     }
   };
 
   const onOpenRecent = async (r: LauncherRecentEntry) => {
+    const recentKey = recentRenderKey(r);
     setError(null);
     setBusy(true);
+    setOpeningRecentKey(r.execution_environment === "sandbox" ? recentKey : null);
+    setBusyDetail(r.kind === "local" ? "Connecting daemon..." : "Connecting remote...");
+    setLaunchSnapshot(null);
     try {
       if (r.kind === "local") {
-        await connectLocalAndOpen(r.root_path, r.execution_environment);
+        await connectLocalAndOpen(r.root_path, r.execution_environment, recentKey);
         return;
       }
       const info = await desktopConnectSsh({
@@ -247,15 +378,29 @@ export default function LauncherPage() {
       setConnection(info);
       applyConnection(info);
       // Avoid landing on workspaces while the daemon is still booting / tunnel is coming up.
+      setBusyDetail("Waiting for remote...");
       await waitForDaemonReady(15000);
       const targetWorkspaceRootPath = String(r.workspace_root_path ?? "").trim();
+      setBusyDetail("Finding workspace...");
       const resolvedWorkspace = targetWorkspaceRootPath
-        ? await resolveWorkspaceByPath(targetWorkspaceRootPath)
+        ? await resolveWorkspaceByPathWithRetry(targetWorkspaceRootPath, 5000)
         : null;
       if (targetWorkspaceRootPath && !resolvedWorkspace) {
         setError("Workspace not found on the connected host for this path. Re-create it from New Workspace.");
         navigate("/workspace-setup");
         return;
+      }
+      let resolvedExecutionEnvironment = r.execution_environment;
+      if (resolvedWorkspace && !resolvedExecutionEnvironment) {
+        setBusyDetail("Loading settings...");
+        resolvedExecutionEnvironment = await loadWorkspaceExecutionEnvironment(resolvedWorkspace.workspaceId)
+          .catch(() => undefined);
+      }
+      if (resolvedWorkspace && resolvedExecutionEnvironment === "sandbox") {
+        setOpeningRecentKey(recentKey);
+        await prepareSandboxWorkspace(resolvedWorkspace.workspaceId);
+      } else {
+        setOpeningRecentKey(null);
       }
       try {
         await upsertLauncherRecent({
@@ -264,6 +409,7 @@ export default function LauncherPage() {
             ? {
                 label: resolvedWorkspace.label,
                 workspace_root_path: resolvedWorkspace.rootPath,
+                execution_environment: resolvedExecutionEnvironment,
               }
             : {}),
           updated_at_ms: Date.now(),
@@ -275,13 +421,15 @@ export default function LauncherPage() {
     } catch (e: unknown) {
       setError(errorMessage(e));
     } finally {
-      setBusy(false);
+      resetBusyState();
     }
   };
 
   const onNewWorkspace = () => {
     navigate("/workspace-setup");
   };
+
+  const displayRecents = recents.slice(0, 8);
 
   return (
     <div className="launcher-shell launcher-shell--crt">
@@ -306,9 +454,13 @@ export default function LauncherPage() {
               <strong>Recent Workspaces</strong>
             </div>
             <div className="launcher-recents-list">
-              {recents.slice(0, 8).map((r) => {
+              {displayRecents.map((r) => {
                 const key = recentRenderKey(r);
                 const location = recentLocationDisplay(r);
+                const rowOpening = busy && openingRecentKey === key;
+                const openingStatus = rowOpening
+                  ? sandboxLaunchProgressLabel(launchSnapshot, launchNowMs, busyDetail)
+                  : null;
                 return (
                   <button
                     type="button"
@@ -318,11 +470,18 @@ export default function LauncherPage() {
                     disabled={busy}
                   >
                     <span className="launcher-recent-name">{r.label}</span>
-                    <span className="launcher-recent-location" title={location.title}>{location.label}</span>
+                    {rowOpening ? (
+                      <span className="launcher-recent-inline-status" role="status" aria-live="polite">
+                        <span className="launcher-spinner" aria-hidden="true" />
+                        <span>{openingStatus}</span>
+                      </span>
+                    ) : (
+                      <span className="launcher-recent-location" title={location.title}>{location.label}</span>
+                    )}
                   </button>
                 );
               })}
-              {recents.length === 0 && <div className="launcher-empty">No recent workspaces yet.</div>}
+              {displayRecents.length === 0 && <div className="launcher-empty">No recent workspaces yet.</div>}
             </div>
           </section>
         </div>

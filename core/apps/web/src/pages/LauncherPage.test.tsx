@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LauncherPage from "./LauncherPage";
 import { loadLauncherRecents, upsertLauncherRecent } from "../state/launcherRecentsStore";
 import {
@@ -16,6 +16,10 @@ import {
   desktopSetDockRecentLocalWorkspaces,
   isDesktopApp,
 } from "../utils/desktop";
+import {
+  startWorkspaceSetupLaunchHandoff,
+  waitForLaunchHandoffTerminal,
+} from "./workspaceSetup/launchHandoff";
 
 const navigateMock = vi.hoisted(() => vi.fn());
 
@@ -57,10 +61,17 @@ vi.mock("../state/launcherRecentsStore", () => ({
   upsertLauncherRecent: vi.fn(),
 }));
 
+vi.mock("./workspaceSetup/launchHandoff", () => ({
+  startWorkspaceSetupLaunchHandoff: vi.fn(),
+  waitForLaunchHandoffTerminal: vi.fn(),
+}));
+
 describe("LauncherPage recents", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
     navigateMock.mockReset();
+    window.history.pushState({}, "", "/");
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(desktopGetConnection).mockResolvedValue({ kind: "none" });
     vi.mocked(desktopSetDockRecentLocalWorkspaces).mockResolvedValue();
@@ -72,11 +83,28 @@ describe("LauncherPage recents", () => {
       is_repo: true,
     })) as never);
     vi.mocked(getWorkspaceExecutionConfig).mockResolvedValue({ environment: "host" } as never);
+    vi.mocked(startWorkspaceSetupLaunchHandoff).mockResolvedValue({
+      job_id: "job-ready",
+      workspace_id: "ws-test",
+      kind: "workspace_launch",
+      state: "ready",
+      created_at: "2026-03-31T00:00:00Z",
+      started_at: "2026-03-31T00:00:00Z",
+      updated_at: "2026-03-31T00:00:01Z",
+      finished_at: "2026-03-31T00:00:01Z",
+      phases: [],
+      logs: [],
+    } as never);
+    vi.mocked(waitForLaunchHandoffTerminal).mockResolvedValue(undefined);
     vi.mocked(getHealth).mockResolvedValue({
       daemon_version: "0.0.0-test",
       compatibility: { desktop_exact_version: "0.0.0-test", mobile_api_min: 1, mobile_api_max: 1 },
     } as never);
     vi.mocked(idToString).mockImplementation((value: unknown) => String(value ?? ""));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("renders recents loaded from launcher recents store", async () => {
@@ -236,8 +264,8 @@ describe("LauncherPage recents", () => {
     });
   });
 
-  it("opens local sandbox recents directly into the workspace", async () => {
-    vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
+  it("prepares local sandbox recents before opening the workspace", async () => {
+    vi.mocked(loadLauncherRecents).mockResolvedValue([
       {
         kind: "local",
         label: "sealed-local",
@@ -264,6 +292,8 @@ describe("LauncherPage recents", () => {
     fireEvent.click(await screen.findByRole("button", { name: /sealed-local/i }));
 
     await waitFor(() => {
+      expect(startWorkspaceSetupLaunchHandoff).toHaveBeenCalledWith("ws-container");
+      expect(waitForLaunchHandoffTerminal).toHaveBeenCalled();
       expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
         kind: "local",
         label: "Sealed Local",
@@ -316,8 +346,8 @@ describe("LauncherPage recents", () => {
     });
   });
 
-  it("opens remote sandbox recents directly into the workspace after SSH connect", async () => {
-    vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
+  it("prepares remote sandbox recents before opening the workspace after SSH connect", async () => {
+    vi.mocked(loadLauncherRecents).mockResolvedValue([
       {
         kind: "ssh",
         label: "sealed-remote",
@@ -347,6 +377,8 @@ describe("LauncherPage recents", () => {
     fireEvent.click(await screen.findByRole("button", { name: /sealed-remote/i }));
 
     await waitFor(() => {
+      expect(startWorkspaceSetupLaunchHandoff).toHaveBeenCalledWith("ws-remote-container");
+      expect(waitForLaunchHandoffTerminal).toHaveBeenCalled();
       expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
         kind: "ssh",
         label: "Sealed Remote",
@@ -356,6 +388,147 @@ describe("LauncherPage recents", () => {
       }));
       expect(navigateMock).toHaveBeenCalledWith("/workspaces/ws-remote-container", { replace: true });
     });
+  });
+
+  it("shows a visible pending state while preparing a sandbox recent", async () => {
+    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-03-31T00:00:20Z"));
+    try {
+      let resolveLaunch: (() => void) | null = null;
+      vi.mocked(loadLauncherRecents).mockResolvedValue([
+        {
+          kind: "local",
+          label: "pending-sandbox",
+          root_path: "/Users/example-user/.ctx/workspaces/staging/workspace-pending",
+          execution_environment: "sandbox",
+          updated_at_ms: 25,
+        },
+      ]);
+      vi.mocked(desktopConnectLocal).mockResolvedValue({
+        kind: "local",
+        base_url: "http://127.0.0.1:4399",
+        token: "test-token",
+      } as never);
+      vi.mocked(listWorkspaces).mockResolvedValue([
+        {
+          id: "ws-pending",
+          name: "Pending Sandbox",
+          root_path: "/Users/example-user/.ctx/workspaces/staging/workspace-pending",
+        },
+      ] as never);
+      vi.mocked(startWorkspaceSetupLaunchHandoff).mockResolvedValue({
+        job_id: "job-running",
+        workspace_id: "ws-pending",
+        kind: "workspace_launch",
+        state: "running",
+        created_at: "2026-03-31T00:00:00Z",
+        started_at: "2026-03-31T00:00:00Z",
+        current_phase: "machine_start_or_init",
+        current_step_label: "Restarting shared VM",
+        phases: [
+          {
+            phase: "artifact_download",
+            status: "completed",
+            started_at: "2026-03-31T00:00:00Z",
+            completed_at: "2026-03-31T00:00:04Z",
+          },
+          {
+            phase: "machine_start_or_init",
+            status: "running",
+            started_at: "2026-03-31T00:00:04Z",
+          },
+        ],
+        logs: [],
+      } as never);
+      vi.mocked(waitForLaunchHandoffTerminal).mockImplementation(() => new Promise<void>((resolve) => {
+        resolveLaunch = resolve;
+      }));
+
+      render(<LauncherPage />);
+
+      fireEvent.click(await screen.findByRole("button", { name: /pending-sandbox/i }));
+
+      expect(await screen.findByRole("status")).toHaveTextContent("Restarting VM... (15s est. remaining)");
+      expect(screen.queryByText("Local sandbox")).not.toBeInTheDocument();
+
+      resolveLaunch?.();
+
+      await waitFor(() => {
+        expect(navigateMock).toHaveBeenCalledWith("/workspaces/ws-pending", { replace: true });
+      });
+    } finally {
+      dateNowSpy.mockRestore();
+    }
+  });
+
+  it("keeps host recents on their normal row copy while reopening", async () => {
+    vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
+      {
+        kind: "local",
+        label: "host-fast",
+        root_path: "/tmp/host-fast",
+        execution_environment: "host",
+        updated_at_ms: 50,
+      },
+    ]);
+    vi.mocked(desktopConnectLocal).mockImplementation(() => new Promise((resolve) => {
+      resolve({
+        kind: "local",
+        base_url: "http://127.0.0.1:4399",
+        token: "test-token",
+      });
+    }) as never);
+
+    render(<LauncherPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /host-fast/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("/tmp/host-fast (Host)")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("retries transient workspace lookup failures when reopening a recent", async () => {
+    vi.mocked(loadLauncherRecents).mockResolvedValue([
+      {
+        kind: "local",
+        label: "retry-sandbox",
+        root_path: "/Users/example-user/.ctx/workspaces/staging/workspace-retry",
+        execution_environment: "sandbox",
+        updated_at_ms: 25,
+      },
+    ]);
+    vi.mocked(desktopConnectLocal).mockResolvedValue({
+      kind: "local",
+      base_url: "http://127.0.0.1:4399",
+      token: "test-token",
+    } as never);
+    vi.mocked(listWorkspaces)
+      .mockRejectedValueOnce(new Error("500"))
+      .mockResolvedValueOnce([
+        {
+          id: "ws-retry",
+          name: "Retry Sandbox",
+          root_path: "/Users/example-user/.ctx/workspaces/staging/workspace-retry",
+        },
+      ] as never)
+      .mockResolvedValue([
+        {
+          id: "ws-retry",
+          name: "Retry Sandbox",
+          root_path: "/Users/example-user/.ctx/workspaces/staging/workspace-retry",
+        },
+      ] as never);
+
+    render(<LauncherPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /retry-sandbox/i }));
+
+    await waitFor(() => {
+      expect(startWorkspaceSetupLaunchHandoff).toHaveBeenCalledWith("ws-retry");
+      expect(navigateMock).toHaveBeenCalledWith("/workspaces/ws-retry", { replace: true });
+    });
+    expect(screen.queryByText(/^500$/)).not.toBeInTheDocument();
   });
 
   it("routes to wizard when a local recent path is not registered as a workspace", async () => {

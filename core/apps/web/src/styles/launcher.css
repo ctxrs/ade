@@ -282,6 +282,10 @@
   50% { opacity: 0; }
 }
 
+@keyframes launcher-spin {
+  to { transform: rotate(360deg); }
+}
+
 .launcher-meta {
   min-height: 14px;
 }
@@ -387,6 +391,20 @@
   white-space: nowrap;
 }
 
+.launcher-recent-inline-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--launcher-text);
+  font-size: 12px;
+  justify-self: end;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .launcher-recent-location {
   color: var(--launcher-muted);
   font-size: 12px;
@@ -397,6 +415,15 @@
   white-space: nowrap;
   text-align: right;
   justify-self: end;
+}
+
+.launcher-spinner {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid color-mix(in srgb, var(--launcher-muted) 65%, transparent);
+  border-top-color: var(--launcher-text);
+  border-radius: 999px;
+  animation: launcher-spin 0.9s linear infinite;
 }
 
 .launcher-empty {

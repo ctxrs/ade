@@ -118,6 +118,18 @@ const readWorkspaceId = (response) => {
   return workspaceId;
 };
 
+const readRepoStagingPath = async () => {
+  const response = await daemonJson("GET", "/api/repo/staging_path");
+  if (response.status !== 200) {
+    throw new Error(`repo staging path failed: ${JSON.stringify(response)}`);
+  }
+  const stagingPath = String(response?.payload?.path || "").trim();
+  if (!stagingPath) {
+    throw new Error(`repo staging path missing from response: ${JSON.stringify(response || null)}`);
+  }
+  return stagingPath;
+};
+
 const seedLauncherRecents = async (entries) => {
   await tauriInvoke("desktop_storage_batch", {
     ops: [
@@ -393,6 +405,73 @@ describe("recent workspace open automation", () => {
 
     await openLauncher("local-container-seeded");
     await clickLauncherRecent("Recent Container Workspace");
+    await waitForWorkspaceRoute(workspaceId);
+  });
+
+  it("reopens managed staging sandbox recents with visible pending state", async () => {
+    await openLauncher("local-staging-container");
+    await tauriInvoke("desktop_disconnect").catch(() => {});
+    await tauriInvoke("desktop_connect_local");
+
+    const stagingRoot = await readRepoStagingPath();
+    initGitRepo(stagingRoot);
+    cleanups.push(() => {
+      fs.rmSync(stagingRoot, { recursive: true, force: true });
+    });
+
+    const createWorkspaceResp = await daemonJson("POST", "/api/workspaces", {
+      root_path: stagingRoot,
+      name: "Managed Staging Sandbox",
+    });
+    if (createWorkspaceResp.status !== 200 && createWorkspaceResp.status !== 201) {
+      throw new Error(`workspace creation failed: ${JSON.stringify(createWorkspaceResp)}`);
+    }
+    const workspaceId = readWorkspaceId(createWorkspaceResp);
+
+    const updateConfigResp = await daemonJson(
+      "POST",
+      `/api/workspaces/${workspaceId}/execution_config`,
+      { environment: "sandbox" },
+    );
+    if (updateConfigResp.status !== 200) {
+      throw new Error(`execution config update failed: ${JSON.stringify(updateConfigResp)}`);
+    }
+
+    const recentLabel = path.basename(stagingRoot);
+    await seedLauncherRecents([
+      {
+        kind: "local",
+        label: recentLabel,
+        root_path: stagingRoot,
+        execution_environment: "sandbox",
+        updated_at_ms: Date.now(),
+      },
+    ]);
+
+    await openLauncher("local-staging-container-seeded");
+    await clickLauncherRecent(recentLabel);
+    await browser.waitUntil(
+      async () => await browser.execute((expectedLabel) => {
+        const buttons = Array.from(document.querySelectorAll(".launcher-recent-item"));
+        const row = buttons.find((node) => String(node.textContent || "").includes(String(expectedLabel)));
+        if (!(row instanceof HTMLElement)) return false;
+        const status = row.querySelector(".launcher-recent-inline-status");
+        if (!(status instanceof HTMLElement)) return false;
+        const text = String(status.textContent || "");
+        return (
+          text.includes("Preparing sandbox")
+          || text.includes("Restarting VM")
+          || text.includes("Checking sandbox")
+        );
+      }, recentLabel),
+      { timeout: 30000, timeoutMsg: "expected launcher pending state while reopening sandbox recent" },
+    );
+    const launcherError = await browser.execute(
+      () => String(document.querySelector(".launcher-error")?.textContent || "").trim(),
+    );
+    if (launcherError === "500") {
+      throw new Error("launcher surfaced a raw 500 while reopening a managed staging sandbox recent");
+    }
     await waitForWorkspaceRoute(workspaceId);
   });
 
