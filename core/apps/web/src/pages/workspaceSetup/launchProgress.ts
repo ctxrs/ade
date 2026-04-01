@@ -208,7 +208,7 @@ const bucketHasIncompletePhase = (
 ): boolean => {
   return snapshot.phases.some((phase) => {
     if (etaBucketForPhase(phase.phase) !== bucket) return false;
-    return phaseFinishedAtMs(phase) === null && phase.status !== "completed";
+    return phaseFinishedAtMs(phase) === null;
   });
 };
 

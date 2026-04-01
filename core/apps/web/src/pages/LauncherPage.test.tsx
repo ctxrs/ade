@@ -393,7 +393,7 @@ describe("LauncherPage recents", () => {
   it("shows a visible pending state while preparing a sandbox recent", async () => {
     const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-03-31T00:00:20Z"));
     try {
-      let resolveLaunch: (() => void) | null = null;
+      let resolveLaunch!: () => void;
       vi.mocked(loadLauncherRecents).mockResolvedValue([
         {
           kind: "local",
@@ -427,19 +427,17 @@ describe("LauncherPage recents", () => {
         phases: [
           {
             phase: "artifact_download",
-            status: "completed",
             started_at: "2026-03-31T00:00:00Z",
-            completed_at: "2026-03-31T00:00:04Z",
+            finished_at: "2026-03-31T00:00:04Z",
           },
           {
             phase: "machine_start_or_init",
-            status: "running",
             started_at: "2026-03-31T00:00:04Z",
           },
         ],
         logs: [],
       } as never);
-      vi.mocked(waitForLaunchHandoffTerminal).mockImplementation(() => new Promise<void>((resolve) => {
+      vi.mocked(waitForLaunchHandoffTerminal).mockImplementation(() => new Promise<void>((resolve: () => void) => {
         resolveLaunch = resolve;
       }));
 
@@ -450,7 +448,7 @@ describe("LauncherPage recents", () => {
       expect(await screen.findByRole("status")).toHaveTextContent("Restarting VM... (15s est. remaining)");
       expect(screen.queryByText("Local sandbox")).not.toBeInTheDocument();
 
-      resolveLaunch?.();
+      resolveLaunch();
 
       await waitFor(() => {
         expect(navigateMock).toHaveBeenCalledWith("/workspaces/ws-pending", { replace: true });

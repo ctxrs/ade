@@ -2281,13 +2281,20 @@ async fn session_head_materialization_refreshes_when_projection_rev_changes_with
     );
 
     let pool = SqlitePool::connect(&sqlite_url(&db_path)).await.unwrap();
-    let materialized_head_rev: i64 = sqlx::query_scalar(
-        "SELECT head_rev FROM session_head_materializations WHERE session_id = ? AND head_kind = 'archived'",
-    )
-    .bind(session.id.0.to_string())
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let mut materialized_head_rev = -1_i64;
+    for _ in 0..20 {
+        materialized_head_rev = sqlx::query_scalar(
+            "SELECT head_rev FROM session_head_materializations WHERE session_id = ? AND head_kind = 'archived'",
+        )
+        .bind(session.id.0.to_string())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        if materialized_head_rev == refreshed.projection_rev {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     pool.close().await;
 
     assert_eq!(materialized_head_rev, refreshed.projection_rev);
