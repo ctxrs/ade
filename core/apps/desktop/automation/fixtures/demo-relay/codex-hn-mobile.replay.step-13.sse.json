@@ -1,191 +1,47 @@
 [
   {
-    "delay_ms": 189,
-    "chunk": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"gen-1774111930-xe5VXRCi9ljDRERdDBmI\",\"object\":\"response\",\"created_at\":1774111930,\"model\":\"openai/gpt-5.4-20260305\",\"status\":\"in_progress\",\"completed_at\":null,\"output\":[],\"error\":null,\"incomplete_details\":null},\"sequence_number\":0}\n\n"
-  },
-  {
-    "delay_ms": 2,
-    "chunk": "data: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"gen-1774111930-xe5VXRCi9ljDRERdDBmI\",\"object\":\"response\",\"created_at\":1774111930,\"model\":\"openai/gpt-5.4-20260305\",\"status\":\"in_progress\",\"completed_at\":null,\"output\":[],\"error\":null,\"incomplete_details\":null},\"sequence_number\":1}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"msg_tmp_lsw49ad1bs\",\"type\":\"message\",\"status\":\"in_progress\",\"role\":\"assistant\",\"content\":[],\"phase\":\"commentary\"},\"sequence_number\":2}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.content_part.added\",\"output_index\":0,\"item_id\":\"msg_tmp_lsw49ad1bs\",\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\",\"annotations\":[],\"logprobs\":[]},\"sequence_number\":3}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_tmp_lsw49ad1bs\",\"content_index\":0,\"delta\":\"Build\",\"logprobs\":[],\"sequence_number\":4}\n\n"
-  },
-  {
-    "delay_ms": 47,
-    "chunk": "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_tmp_lsw49ad1bs\",\"content_index\":0,\"delta\":\" needed\",\"logprobs\":[],\"sequence_number\":5}\n\n"
+    "delay_ms": 520,
+    "chunk": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"gen-muted-domains-step-13\",\"object\":\"response\",\"created_at\":1775000013,\"model\":\"openai/gpt-5.4-20260305\",\"status\":\"in_progress\",\"completed_at\":null,\"output\":[],\"error\":null,\"incomplete_details\":null},\"sequence_number\":0}\n\n"
   },
   {
     "delay_ms": 6,
-    "chunk": "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_tmp_lsw49ad1bs\",\"content_index\":0,\"delta\":\" local\",\"logprobs\":[],\"sequence_number\":6}\n\n"
+    "chunk": "data: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"gen-muted-domains-step-13\",\"object\":\"response\",\"created_at\":1775000013,\"model\":\"openai/gpt-5.4-20260305\",\"status\":\"in_progress\",\"completed_at\":null,\"output\":[],\"error\":null,\"incomplete_details\":null},\"sequence_number\":1}\n\n"
   },
   {
     "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_tmp_lsw49ad1bs\",\"content_index\":0,\"delta\":\" deps\",\"logprobs\":[],\"sequence_number\":7}\n\n"
+    "chunk": "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"msg_step_13\",\"type\":\"message\",\"status\":\"in_progress\",\"role\":\"assistant\",\"content\":[],\"phase\":\"commentary\"},\"sequence_number\":2}\n\n"
   },
   {
     "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_tmp_lsw49ad1bs\",\"content_index\":0,\"delta\":\",\",\"logprobs\":[],\"sequence_number\":8}\n\n"
+    "chunk": "data: {\"type\":\"response.content_part.added\",\"output_index\":0,\"item_id\":\"msg_step_13\",\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\",\"annotations\":[],\"logprobs\":[]},\"sequence_number\":3}\n\n"
+  },
+  {
+    "delay_ms": 16,
+    "chunk": "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_step_13\",\"content_index\":0,\"delta\":\"Preview is up. I’m moving on to the short demo recording.\",\"logprobs\":[],\"sequence_number\":4}\n\n"
   },
   {
     "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_tmp_lsw49ad1bs\",\"content_index\":0,\"delta\":\" so\",\"logprobs\":[],\"sequence_number\":9}\n\n"
-  },
-  {
-    "delay_ms": 35,
-    "chunk": "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_tmp_lsw49ad1bs\",\"content_index\":0,\"delta\":\" I\",\"logprobs\":[],\"sequence_number\":10}\n\n"
+    "chunk": "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"msg_step_13\",\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Preview is up. I’m moving on to the short demo recording.\",\"annotations\":[],\"logprobs\":[]}],\"phase\":\"commentary\"},\"sequence_number\":5}\n\n"
   },
   {
     "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_tmp_lsw49ad1bs\",\"content_index\":0,\"delta\":\"\u2019m\",\"logprobs\":[],\"sequence_number\":11}\n\n"
+    "chunk": "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"fc_step_13\",\"type\":\"function_call\",\"status\":\"in_progress\",\"call_id\":\"call_step_13\",\"name\":\"write_stdin\",\"arguments\":\"\"},\"sequence_number\":6}\n\n"
   },
   {
-    "delay_ms": 3,
-    "chunk": "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_tmp_lsw49ad1bs\",\"content_index\":0,\"delta\":\" installing\",\"logprobs\":[],\"sequence_number\":12}\n\n"
-  },
-  {
-    "delay_ms": 40,
-    "chunk": "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_tmp_lsw49ad1bs\",\"content_index\":0,\"delta\":\" them\",\"logprobs\":[],\"sequence_number\":13}\n\n"
-  },
-  {
-    "delay_ms": 39,
-    "chunk": "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_tmp_lsw49ad1bs\",\"content_index\":0,\"delta\":\" and\",\"logprobs\":[],\"sequence_number\":14}\n\n"
-  },
-  {
-    "delay_ms": 12,
-    "chunk": "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_tmp_lsw49ad1bs\",\"content_index\":0,\"delta\":\" rer\",\"logprobs\":[],\"sequence_number\":15}\n\n"
-  },
-  {
-    "delay_ms": 6,
-    "chunk": "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_tmp_lsw49ad1bs\",\"content_index\":0,\"delta\":\"unning\",\"logprobs\":[],\"sequence_number\":16}\n\n"
+    "delay_ms": 18,
+    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_step_13\",\"delta\":\"{\\\"session_id\\\":91001,\\\"chars\\\":\\\"\\\",\\\"yield_time_ms\\\":1000,\\\"max_output_tokens\\\":16000}\",\"sequence_number\":7}\n\n"
   },
   {
     "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_tmp_lsw49ad1bs\",\"content_index\":0,\"delta\":\" validation\",\"logprobs\":[],\"sequence_number\":17}\n\n"
+    "chunk": "data: {\"type\":\"response.function_call_arguments.done\",\"output_index\":1,\"item_id\":\"fc_step_13\",\"name\":\"write_stdin\",\"arguments\":\"{\\\"session_id\\\":91001,\\\"chars\\\":\\\"\\\",\\\"yield_time_ms\\\":1000,\\\"max_output_tokens\\\":16000}\",\"sequence_number\":8}\n\n"
   },
   {
     "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_tmp_lsw49ad1bs\",\"content_index\":0,\"delta\":\".\",\"logprobs\":[],\"sequence_number\":18}\n\n"
-  },
-  {
-    "delay_ms": 134,
-    "chunk": "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"fc_tmp_pbpa1akaqcs\",\"type\":\"function_call\",\"status\":\"in_progress\",\"call_id\":\"call_KYMQC7gF1bMmnYQhepFto9JN\",\"name\":\"write_stdin\",\"arguments\":\"\"},\"sequence_number\":19}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"{\\\"\",\"sequence_number\":20}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"session\",\"sequence_number\":21}\n\n"
-  },
-  {
-    "delay_ms": 4,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"_id\",\"sequence_number\":22}\n\n"
-  },
-  {
-    "delay_ms": 170,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"\\\":\",\"sequence_number\":23}\n\n"
-  },
-  {
-    "delay_ms": 8,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"824\",\"sequence_number\":24}\n\n"
-  },
-  {
-    "delay_ms": 1,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"15\",\"sequence_number\":25}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\",\\\"\",\"sequence_number\":26}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"chars\",\"sequence_number\":27}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"\\\":\\\"\\\",\\\"\",\"sequence_number\":28}\n\n"
-  },
-  {
-    "delay_ms": 7,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"yield\",\"sequence_number\":29}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"_time\",\"sequence_number\":30}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"_ms\",\"sequence_number\":31}\n\n"
-  },
-  {
-    "delay_ms": 8,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"\\\":\",\"sequence_number\":32}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"100\",\"sequence_number\":33}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"0\",\"sequence_number\":34}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\",\\\"\",\"sequence_number\":35}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"max\",\"sequence_number\":36}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"_output\",\"sequence_number\":37}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"_tokens\",\"sequence_number\":38}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"\\\":\",\"sequence_number\":39}\n\n"
-  },
-  {
-    "delay_ms": 7,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"160\",\"sequence_number\":40}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"00\",\"sequence_number\":41}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"delta\":\"}\",\"sequence_number\":42}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.done\",\"output_index\":1,\"item_id\":\"fc_tmp_pbpa1akaqcs\",\"name\":\"write_stdin\",\"arguments\":\"{\\\"session_id\\\":82415,\\\"chars\\\":\\\"\\\",\\\"yield_time_ms\\\":1000,\\\"max_output_tokens\\\":16000}\",\"sequence_number\":45}\n\n"
+    "chunk": "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"fc_step_13\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_step_13\",\"name\":\"write_stdin\",\"arguments\":\"{\\\"session_id\\\":91001,\\\"chars\\\":\\\"\\\",\\\"yield_time_ms\\\":1000,\\\"max_output_tokens\\\":16000}\"},\"sequence_number\":9}\n\n"
   },
   {
     "delay_ms": 2,
-    "chunk": "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"fc_tmp_pbpa1akaqcs\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_KYMQC7gF1bMmnYQhepFto9JN\",\"name\":\"write_stdin\",\"arguments\":\"{\\\"session_id\\\":82415,\\\"chars\\\":\\\"\\\",\\\"yield_time_ms\\\":1000,\\\"max_output_tokens\\\":16000}\"},\"sequence_number\":46}\n\n"
-  },
-  {
-    "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"msg_tmp_lsw49ad1bs\",\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Build needed local deps, so I\u2019m installing them and rerunning validation.\",\"annotations\":[],\"logprobs\":[]}],\"phase\":\"commentary\"},\"sequence_number\":47}\n\n"
-  },
-  {
-    "delay_ms": 14,
-    "chunk": "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"gen-1774111930-xe5VXRCi9ljDRERdDBmI\",\"object\":\"response\",\"created_at\":1774111930,\"model\":\"openai/gpt-5.4-20260305\",\"status\":\"completed\",\"completed_at\":1774111931,\"output\":[{\"id\":\"msg_tmp_lsw49ad1bs\",\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"Build needed local deps, so I\u2019m installing them and rerunning validation.\",\"annotations\":[],\"logprobs\":[]}],\"phase\":\"commentary\"},{\"id\":\"fc_tmp_pbpa1akaqcs\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_KYMQC7gF1bMmnYQhepFto9JN\",\"name\":\"write_stdin\",\"arguments\":\"{\\\"session_id\\\":82415,\\\"chars\\\":\\\"\\\",\\\"yield_time_ms\\\":1000,\\\"max_output_tokens\\\":16000}\"}],\"error\":null,\"incomplete_details\":null},\"sequence_number\":48}\n\n"
+    "chunk": "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"gen-muted-domains-step-13\",\"object\":\"response\",\"created_at\":1775000013,\"model\":\"openai/gpt-5.4-20260305\",\"status\":\"completed\",\"completed_at\":1775000014,\"output\":[{\"id\":\"msg_step_13\",\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Preview is up. I’m moving on to the short demo recording.\",\"annotations\":[],\"logprobs\":[]}],\"phase\":\"commentary\"},{\"id\":\"fc_step_13\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_step_13\",\"name\":\"write_stdin\",\"arguments\":\"{\\\"session_id\\\":91001,\\\"chars\\\":\\\"\\\",\\\"yield_time_ms\\\":1000,\\\"max_output_tokens\\\":16000}\"}],\"error\":null,\"incomplete_details\":null},\"sequence_number\":10}\n\n"
   },
   {
     "delay_ms": 0,

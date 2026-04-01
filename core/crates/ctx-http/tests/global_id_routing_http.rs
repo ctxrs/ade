@@ -159,6 +159,40 @@ async fn artifact_route_is_session_scoped() {
 }
 
 #[tokio::test]
+async fn quicktime_artifact_upload_is_accepted() {
+    let (_data_dir, state, server) = setup_state().await;
+    let repo = common::init_git_repo(&[("README.md", "a")]).await;
+    let workspace = create_workspace_session(&state, "a", repo.path()).await;
+
+    let artifact_path = repo.path().join("artifact.mov");
+    tokio::fs::write(&artifact_path, b"quicktime-body")
+        .await
+        .unwrap();
+
+    let resp = server
+        .client
+        .post(format!(
+            "{}/api/sessions/{}/artifacts",
+            server.base_url, workspace.session_id.0
+        ))
+        .json(&json!({
+            "artifacts": [
+                {
+                    "absolute_file_path": artifact_path.to_string_lossy().to_string(),
+                    "mime_type": "video/quicktime"
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let artifacts: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(artifacts[0]["mime_type"].as_str(), Some("video/quicktime"));
+    assert_eq!(artifacts[0]["name"].as_str(), Some("artifact.mov"));
+}
+
+#[tokio::test]
 async fn message_delete_route_is_session_scoped() {
     let (_data_dir, state, server) = setup_state().await;
     let repo_a = common::init_git_repo(&[("README.md", "a")]).await;

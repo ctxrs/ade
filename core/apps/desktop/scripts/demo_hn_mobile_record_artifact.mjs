@@ -205,7 +205,7 @@ function ensurePlaywrightCoreRuntime(runtimeDir) {
   ], { cwd: REPO_ROOT });
 }
 
-function buildPlaywrightRunner() {
+export function buildPlaywrightRunner() {
   return `import { cpSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { chromium } from "playwright-core";
@@ -238,19 +238,21 @@ const pageVideo = page.video();
 
 await page.goto(pathToFileURL(wrapperPath).href, { waitUntil: "load" });
 const appFrame = page.frameLocator("iframe.demo-phone-screen");
+const hnFrame = appFrame.frameLocator("iframe.hn-page-frame");
 await appFrame.locator("iframe.hn-page-frame").waitFor({ state: "visible", timeout: 30_000 });
-await appFrame.frameLocator("iframe.hn-page-frame").locator("#hnmain").waitFor({ state: "visible", timeout: 30_000 });
+await hnFrame.locator('[data-muted-domains-input="true"]').waitFor({ state: "visible", timeout: 30_000 });
 await page.waitForTimeout(900);
-await appFrame.locator('[data-save-current-page="true"]').click();
-await appFrame.locator('[data-save-current-page="true"][aria-pressed="true"]').waitFor({ state: "visible", timeout: 30_000 });
-await page.waitForTimeout(650);
-await appFrame.locator('[data-open-saved-sheet="true"]').click();
-await appFrame.locator('[data-saved-entry-id]').first().waitFor({ state: "visible", timeout: 30_000 });
-await page.waitForTimeout(950);
-await appFrame.locator('[data-saved-entry-id]').first().click();
-await appFrame.locator('[data-saved-sheet="true"]').waitFor({ state: "hidden", timeout: 30_000 });
-await appFrame.frameLocator("iframe.hn-page-frame").locator("#hnmain").waitFor({ state: "visible", timeout: 30_000 });
-await page.waitForTimeout(1700);
+await hnFrame.locator('[data-muted-domains-input="true"]').fill("x.com");
+await page.waitForTimeout(750);
+await hnFrame.locator('input[type="submit"][value="update"]').click();
+await hnFrame.locator('[data-muted-domains-input="true"]').waitFor({ state: "visible", timeout: 30_000 });
+await page.waitForTimeout(600);
+await hnFrame.locator("body").evaluate((body) => {
+  body.ownerDocument.defaultView.location.href = "/proxy/hn/news?ctxDemoMockFrontPage=1";
+});
+await hnFrame.locator("tr.athing").first().waitFor({ state: "visible", timeout: 30_000 });
+await hnFrame.locator("#ctx-muted-domains-toast").waitFor({ state: "visible", timeout: 30_000 });
+await page.waitForTimeout(2100);
 
 await context.close();
 await browser.close();
@@ -284,7 +286,7 @@ async function main() {
     previewProc.stdout.pipe(previewLog, { end: false });
     previewProc.stderr.pipe(previewLog, { end: false });
 
-    const previewUrl = `http://127.0.0.1:${options.port}`;
+    const previewUrl = `http://127.0.0.1:${options.port}?demoPath=${encodeURIComponent("/proxy/hn/user?id=ADE_TEST_ACCOUNT&ctxDemoMockFrontPage=1")}`;
     await waitForHttpOk(previewUrl, { timeoutMs: 60_000, label: "hn-mobile preview" });
 
     ensurePlaywrightCoreRuntime(runtimeDir);

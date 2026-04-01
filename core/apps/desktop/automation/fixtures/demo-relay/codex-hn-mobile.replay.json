@@ -9,7 +9,7 @@
       "request_match": {
         "path": "/v1/responses",
         "body_includes": [
-          "Add saved pages and attach a short recording."
+          "Build a Hacker News iOS app as a Tauri wrapper. Add a new muted domains feature in Settings, then record a short demo video."
         ]
       },
       "request_context": {

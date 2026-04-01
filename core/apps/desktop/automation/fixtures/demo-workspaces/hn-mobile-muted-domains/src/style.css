@@ -1,0 +1,83 @@
+:root {
+  color: #111;
+  background: #fff;
+  --hn-screen-height: 100vh;
+  --hn-safe-top: max(0px, env(safe-area-inset-top));
+  --hn-safe-right: max(0px, env(safe-area-inset-right));
+  --hn-safe-bottom: max(0px, env(safe-area-inset-bottom));
+  --hn-safe-left: max(0px, env(safe-area-inset-left));
+  font-family:
+    "SF Pro Display",
+    "Inter",
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: var(--hn-screen-height);
+  margin: 0;
+  min-width: 320px;
+  min-height: var(--hn-screen-height);
+  overflow: hidden;
+  background: #fff;
+}
+
+button,
+iframe {
+  font: inherit;
+}
+
+button {
+  border: 0;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: var(--hn-screen-height);
+  background: #fff;
+}
+
+.hn-mobile-app {
+  position: fixed;
+  inset: 0;
+  background: #fff;
+}
+
+.hn-mobile-loading {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: #8b3f0a;
+  background: #fff;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.hn-page-frame {
+  position: absolute;
+  top: var(--hn-safe-top);
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: calc(100% - var(--hn-safe-top));
+  border: 0;
+  display: block;
+  background: #fff;
+}

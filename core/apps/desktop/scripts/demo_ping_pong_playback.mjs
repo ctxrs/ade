@@ -249,6 +249,60 @@ function buildPlaybackAppEnv(setupManifest, workspaceRoot, authToken, tauriTarge
   };
 }
 
+const TRUTHY_DETAIL_FLAGS = new Set(["1", "true", "yes", "on"]);
+
+function providerDetailFlag(details, key) {
+  const raw = details && typeof details === "object" ? details[key] : null;
+  return TRUTHY_DETAIL_FLAGS.has(String(raw ?? "").trim().toLowerCase());
+}
+
+export function selectInstallableVisibleHarnessProviderIds(providerStatuses) {
+  const statuses = Array.isArray(providerStatuses) ? providerStatuses : [];
+  return statuses
+    .filter((status) => status && typeof status.provider_id === "string")
+    .filter((status) => status.details?.provider_kind !== "dependency")
+    .filter((status) => !providerDetailFlag(status.details, "ui_hidden"))
+    .filter((status) => providerDetailFlag(status.details, "install_supported"))
+    .filter((status) => status.installed !== true)
+    .map((status) => status.provider_id)
+    .sort((left, right) => left.localeCompare(right));
+}
+
+export async function installVisibleHarnessProvidersAndWait(baseUrl, token, target = "host") {
+  const query = `?target=${encodeURIComponent(target)}`;
+  const before = await api(baseUrl, token, "GET", `/api/providers${query}`);
+  const pendingBefore = selectInstallableVisibleHarnessProviderIds(before);
+  if (pendingBefore.length === 0) {
+    return {
+      before,
+      requested_provider_ids: [],
+      after: before,
+    };
+  }
+
+  const installStarts = await api(baseUrl, token, "POST", `/api/providers/install_all${query}`, {});
+  const requestedProviderIds = Array.isArray(installStarts)
+    ? installStarts
+      .map((entry) => String(entry?.provider_id || "").trim())
+      .filter((providerId) => providerId.length > 0)
+    : [];
+
+  const after = await waitFor(async () => {
+    const statuses = await api(baseUrl, token, "GET", `/api/providers${query}`);
+    return selectInstallableVisibleHarnessProviderIds(statuses).length === 0 ? statuses : null;
+  }, {
+    timeoutMs: 10 * 60_000,
+    intervalMs: 2_000,
+    label: `visible harness installs for target=${target}`,
+  });
+
+  return {
+    before,
+    requested_provider_ids: requestedProviderIds,
+    after,
+  };
+}
+
 function buildCnBackendEnv(appEnv, effectiveBackendPort) {
   return {
     ...process.env,
@@ -1060,6 +1114,9 @@ async function startSetupProcess(options) {
     dataDir: daemon.dataDir,
   });
 
+  const visibleHarnessInstalls = options.installVisibleHarnesses
+    ? await installVisibleHarnessProvidersAndWait(auth.daemonUrl, auth.authToken, "host")
+    : null;
   const providerStatusBefore = await getProviderStatus(auth.daemonUrl, auth.authToken, "codex", "host");
   const install = providerStatusBefore.installed
     ? null
@@ -1090,6 +1147,7 @@ async function startSetupProcess(options) {
 
   const manifest = {
     fixture,
+    visible_harness_installs: visibleHarnessInstalls,
     provider_status_before: providerStatusBefore,
     install,
     provider_status_after_install: providerStatusAfterInstall,

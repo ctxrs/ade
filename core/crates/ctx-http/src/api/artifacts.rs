@@ -176,18 +176,6 @@ fn infer_artifact_mime_type(path: &StdPath, override_value: Option<String>) -> S
         .to_string()
 }
 
-fn artifact_is_quicktime(path: &StdPath, mime_type: &str) -> bool {
-    let ext = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    if ext == "mov" {
-        return true;
-    }
-    mime_type.trim().eq_ignore_ascii_case("video/quicktime")
-}
-
 fn parse_range_header(range: Option<&HeaderValue>, size: u64) -> Option<(u64, u64)> {
     let header = range?.to_str().ok()?.trim().to_string();
     let range = header.strip_prefix("bytes=")?;
@@ -425,17 +413,6 @@ pub(super) async fn set_session_artifacts(
 
         let name = normalize_artifact_name(artifact.name, &path);
         let mime_type = infer_artifact_mime_type(&path, artifact.mime_type);
-        if artifact_is_quicktime(&path, &mime_type) {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: format!(
-                        "artifact {} uses .mov/video/quicktime; mp4 or webm supported, .mov not supported",
-                        idx + 1
-                    ),
-                }),
-            ));
-        }
         let bytes = meta.len() as i64;
         let created_at = Utc::now();
 

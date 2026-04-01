@@ -1,0 +1,25 @@
+[package]
+name = "hn_mobile"
+version = "0.1.0"
+description = "A deterministic Tauri mobile demo workspace"
+authors = ["ctx"]
+license = "MIT"
+repository = "https://github.com/ctxrs/hn-mobile"
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "hn_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.3", features = [] }
+
+[dependencies]
+log = "0.4"
+tauri = { version = "2.9.5", features = [] }
+tauri-plugin-log = "2"
+
+[workspace]

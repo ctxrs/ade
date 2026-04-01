@@ -7,6 +7,7 @@ import {
   buildAutomationAppIfNeeded,
   captureArtifactsPaneState,
   captureDiffPaneState,
+  installVisibleHarnessProvidersAndWait,
   openArtifactsPane,
   openDiffPane,
   prepareAutomationAppForLaunch,
@@ -20,25 +21,57 @@ import {
   waitForDiffPane,
   connectBrowser,
 } from "./demo_ping_pong_playback.mjs";
-import { api, sleep, waitFor } from "./demo_lib.mjs";
+import { api, installProviderAndWait, sleep, waitFor } from "./demo_lib.mjs";
+import { inferVideoArtifactMimeType } from "./demo_video_artifacts.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../../..");
 const DEMO_APP_PRODUCT_NAME = "ctx-demo";
-const DEFAULT_PROMPT = "Add saved pages and attach a short recording.";
-const DEFAULT_SESSION_ARTIFACT_PATH = path.resolve(REPO_ROOT, "core/apps/desktop/automation/fixtures/demo-artifacts/hn-mobile-saved-stories.mp4");
-const DEFAULT_EXPECTED_FINAL_APP_PATH = path.resolve(
+const DEFAULT_PROMPT = "Build a Hacker News iOS app as a Tauri wrapper. Add a new muted domains feature in Settings, then record a short demo video.";
+const DEFAULT_SESSION_ARTIFACT_PATH = path.resolve(
   REPO_ROOT,
-  "core/apps/desktop/automation/fixtures/demo-workspaces/hn-mobile-saved-stories/src/app.js",
+  "core/apps/desktop/automation/fixtures/demo-artifacts/hn-muted-domains-apple-official-mock.mov",
 );
+const DEFAULT_EXPECTED_FINAL_WORKSPACE_PATH = path.resolve(
+  REPO_ROOT,
+  "core/apps/desktop/automation/fixtures/demo-workspaces/hn-mobile-muted-domains",
+);
+const DEFAULT_DIFF_FILE_PATH = "src/hn_enhancer.js";
+const DEFAULT_SECONDARY_DIFF_FILE_PATH = "hn_proxy.js";
+const EXPECTED_FINAL_WORKSPACE_DIFF_FILES = Object.freeze([
+  "src/app.js",
+  "src/style.css",
+  "src/hn_enhancer.js",
+  "src/viewport.js",
+  "vite.config.js",
+  "hn_proxy.js",
+]);
+const HARNESS_LABEL_TO_PROVIDER_ID = Object.freeze({
+  "Claude Code": "claude-crp",
+  Codex: "codex",
+  "Qwen Code": "qwen",
+  Cursor: "cursor",
+  Pi: "pi",
+  Amp: "amp",
+  Droid: "droid",
+  Gemini: "gemini",
+  Goose: "goose",
+  Copilot: "copilot",
+  OpenCode: "opencode",
+  OpenHands: "openhands",
+  Cline: "cline",
+  "Mistral Vibe": "mistral",
+  Auggie: "auggie",
+  Kimi: "kimi",
+});
 const PROMPT_CHARACTER_DELAY_MS = 10;
 const HARNESS_MENU_DWELL_MS = 460;
 const HARNESS_SELECTED_DWELL_MS = 280;
 const POST_HARNESS_DWELL_MS = 120;
 const POST_PROMPT_DWELL_MS = 100;
 const RESPONSE_PRE_DIFF_DWELL_MS = 900;
-const DIFF_PANE_DWELL_MS = 2400;
+const PRIMARY_DIFF_PANE_DWELL_MS = 1700;
+const SECONDARY_DIFF_PANE_DWELL_MS = 1300;
 const POST_ARTIFACT_ATTACH_DWELL_MS = 250;
-const ARTIFACT_PANE_DWELL_MS = 2600;
 
 function runChecked(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -99,10 +132,13 @@ function parseArgs(argv) {
     fixturePath: path.resolve(REPO_ROOT, "core/apps/desktop/automation/fixtures/demo-hn-mobile-fixture.json"),
     relayScenarioPath: path.resolve(REPO_ROOT, "core/apps/desktop/automation/fixtures/demo-relay/codex-hn-mobile.replay.json"),
     sessionArtifactPath: null,
-    expectedFinalAppPath: DEFAULT_EXPECTED_FINAL_APP_PATH,
+    expectedFinalWorkspacePath: DEFAULT_EXPECTED_FINAL_WORKSPACE_PATH,
+    diffFilePath: DEFAULT_DIFF_FILE_PATH,
+    secondaryDiffFilePath: DEFAULT_SECONDARY_DIFF_FILE_PATH,
     recordVideoOut: null,
     recordFps: 12,
     captureMilestones: false,
+    installVisibleHarnesses: true,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -148,8 +184,14 @@ function parseArgs(argv) {
     } else if (arg === "--session-artifact") {
       options.sessionArtifactPath = path.resolve(next);
       index += 1;
-    } else if (arg === "--expected-final-app") {
-      options.expectedFinalAppPath = path.resolve(next);
+    } else if (arg === "--expected-final-workspace") {
+      options.expectedFinalWorkspacePath = path.resolve(next);
+      index += 1;
+    } else if (arg === "--diff-file") {
+      options.diffFilePath = next;
+      index += 1;
+    } else if (arg === "--secondary-diff-file") {
+      options.secondaryDiffFilePath = next;
       index += 1;
     } else if (arg === "--harness-label") {
       options.harnessLabel = next;
@@ -368,6 +410,154 @@ async function selectHarness(browser, harnessLabel) {
   await sleep(HARNESS_SELECTED_DWELL_MS);
 }
 
+async function openHarnessMenu(browser) {
+  await browser.execute(() => {
+    const trigger = document.querySelector(".wb-switcher-harness");
+    if (!(trigger instanceof HTMLButtonElement)) {
+      throw new Error("harness trigger not found");
+    }
+    trigger.click();
+  });
+  await browser.waitUntil(
+    async () =>
+      await browser.execute(() => Boolean(document.querySelector(".wb-harness-menu .wb-harness-row"))),
+    {
+      timeout: 10_000,
+      timeoutMsg: "harness menu did not open",
+    },
+  );
+}
+
+async function closeHarnessMenu(browser) {
+  const menuOpen = await browser.execute(() => Boolean(document.querySelector(".wb-harness-menu")));
+  if (!menuOpen) {
+    return;
+  }
+  await browser.execute(() => {
+    const trigger = document.querySelector(".wb-switcher-harness");
+    if (!(trigger instanceof HTMLButtonElement)) {
+      throw new Error("harness trigger not found");
+    }
+    trigger.click();
+  });
+  await browser.waitUntil(
+    async () =>
+      !(await browser.execute(() => Boolean(document.querySelector(".wb-harness-menu")))),
+    {
+      timeout: 10_000,
+      timeoutMsg: "harness menu did not close",
+    },
+  );
+}
+
+async function captureVisibleHarnessRows(browser) {
+  return browser.execute(() => {
+    const list = document.querySelector(".wb-harness-list");
+    if (!(list instanceof HTMLElement)) {
+      return [];
+    }
+    const listRect = list.getBoundingClientRect();
+    return Array.from(list.querySelectorAll(".wb-harness-row"))
+      .map((row) => {
+        if (!(row instanceof HTMLElement)) {
+          return null;
+        }
+        const rect = row.getBoundingClientRect();
+        const label = row.querySelector(".wb-harness-name")?.textContent?.trim() ?? "";
+        const installButton = row.querySelector(".wb-harness-install");
+        const isVisible =
+          label.length > 0
+          && rect.height > 0
+          && rect.bottom > listRect.top
+          && rect.top < listRect.bottom;
+        if (!isVisible) {
+          return null;
+        }
+        return {
+          label,
+          hasInstallButton: installButton instanceof HTMLButtonElement,
+          installDisabled: installButton instanceof HTMLButtonElement ? installButton.disabled : false,
+        };
+      })
+      .filter(Boolean);
+  });
+}
+
+export function visibleHarnessRowsNeedInstall(rows) {
+  return Array.isArray(rows) && rows.some((row) => row?.hasInstallButton);
+}
+
+function resolveHarnessProviderId(label) {
+  const normalizedLabel = String(label || "").trim();
+  return HARNESS_LABEL_TO_PROVIDER_ID[normalizedLabel] || null;
+}
+
+async function waitForVisibleHarnessRowsInstalled(browser, timeout = 30_000) {
+  await browser.waitUntil(async () => {
+    const rows = await captureVisibleHarnessRows(browser);
+    return rows.length > 0 && !visibleHarnessRowsNeedInstall(rows);
+  }, {
+    timeout,
+    timeoutMsg: "visible harness rows still showed Install after preinstall",
+  });
+}
+
+async function preinstallVisibleHarnesses(browser, baseUrl, authToken, artifactDir) {
+  await openHarnessMenu(browser);
+  const beforeRows = await captureVisibleHarnessRows(browser);
+  writeJson(path.join(artifactDir, "visible-harness-rows-before-install.json"), beforeRows);
+
+  const labelsNeedingInstall = [...new Set(
+    beforeRows
+      .filter((row) => row.hasInstallButton)
+      .map((row) => row.label),
+  )];
+  if (labelsNeedingInstall.length === 0) {
+    await closeHarnessMenu(browser);
+    return [];
+  }
+
+  const unresolvedLabels = labelsNeedingInstall.filter((label) => !resolveHarnessProviderId(label));
+  if (unresolvedLabels.length > 0) {
+    throw new Error(`unable to map visible harness labels to provider ids: ${unresolvedLabels.join(", ")}`);
+  }
+
+  await closeHarnessMenu(browser);
+
+  const installs = [];
+  for (const label of labelsNeedingInstall) {
+    const providerId = resolveHarnessProviderId(label);
+    installs.push({
+      label,
+      provider_id: providerId,
+      install: await installProviderAndWait(baseUrl, authToken, providerId, {
+        target: "host",
+        timeoutMs: 20 * 60_000,
+        pollMs: 2_000,
+      }),
+    });
+  }
+  writeJson(path.join(artifactDir, "visible-harness-installs.json"), installs);
+
+  await sleep(1_500);
+  await openHarnessMenu(browser);
+  try {
+    await waitForVisibleHarnessRowsInstalled(browser);
+  } catch (error) {
+    await closeHarnessMenu(browser);
+    await browser.refresh();
+    await focusNewTask(browser);
+    await ensureNewTaskVisible(browser, artifactDir);
+    await sleep(1_000);
+    await openHarnessMenu(browser);
+    await waitForVisibleHarnessRowsInstalled(browser);
+  }
+  const afterRows = await captureVisibleHarnessRows(browser);
+  writeJson(path.join(artifactDir, "visible-harness-rows-after-install.json"), afterRows);
+  await closeHarnessMenu(browser);
+  return installs;
+}
+
 async function setComposerValue(browser, value) {
   return browser.execute((nextValue) => {
     const textarea = document.querySelector("textarea.wb-new-composer-textarea");
@@ -517,11 +707,47 @@ async function waitForWorkspaceDiff(worktreeRoot) {
   });
 }
 
-function seedExpectedWorkspaceDiff(worktreeRoot, expectedFinalAppPath) {
-  if (!existsSync(expectedFinalAppPath)) {
-    throw new Error(`expected final app file does not exist: ${expectedFinalAppPath}`);
+function seedExpectedWorkspaceDiff(
+  worktreeRoot,
+  expectedFinalWorkspacePath,
+  relativePaths = EXPECTED_FINAL_WORKSPACE_DIFF_FILES,
+) {
+  if (!existsSync(expectedFinalWorkspacePath)) {
+    throw new Error(`expected final workspace does not exist: ${expectedFinalWorkspacePath}`);
   }
-  copyFileSync(expectedFinalAppPath, path.join(worktreeRoot, "src/app.js"));
+
+  for (const relativePath of relativePaths) {
+    const sourcePath = path.join(expectedFinalWorkspacePath, relativePath);
+    if (!existsSync(sourcePath)) {
+      throw new Error(`expected final workspace file does not exist: ${sourcePath}`);
+    }
+
+    const destinationPath = path.join(worktreeRoot, relativePath);
+    mkdirSync(path.dirname(destinationPath), { recursive: true });
+    copyFileSync(sourcePath, destinationPath);
+  }
+}
+
+export function computeArtifactPlaybackTimeoutMs(durationSeconds) {
+  if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
+    return Math.max(12_000, Math.ceil((durationSeconds + 1.5) * 1000));
+  }
+  return 20_000;
+}
+
+async function readArtifactVideoState(browser) {
+  return browser.execute(() => {
+    const video = document.querySelector(".wb-artifact-video");
+    if (!(video instanceof HTMLVideoElement)) {
+      return null;
+    }
+    return {
+      currentTime: video.currentTime,
+      duration: Number.isFinite(video.duration) ? video.duration : null,
+      paused: video.paused,
+      ended: video.ended,
+    };
+  });
 }
 
 async function waitForArtifactVideoPlayback(browser) {
@@ -531,6 +757,36 @@ async function waitForArtifactVideoPlayback(browser) {
   }, {
     timeout: 30_000,
     timeoutMsg: "artifact video preview did not start playing in time",
+  });
+}
+
+async function openArtifactsPaneAndWait(browser, attempts = 2) {
+  let lastError = null;
+  let lastToggleResult = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    lastToggleResult = await openArtifactsPane(browser);
+    try {
+      await waitForArtifactsPane(browser);
+      return lastToggleResult;
+    } catch (error) {
+      lastError = error;
+      await sleep(300);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("artifacts pane did not open in time");
+}
+
+async function waitForArtifactVideoCompletion(browser) {
+  const initialState = await readArtifactVideoState(browser);
+  const timeout = computeArtifactPlaybackTimeoutMs(initialState?.duration ?? null);
+  await browser.waitUntil(async () => {
+    const state = await readArtifactVideoState(browser);
+    if (!state) return false;
+    if (state.ended) return true;
+    return Number.isFinite(state.duration) && state.duration > 0 && state.currentTime >= state.duration - 0.15;
+  }, {
+    timeout,
+    timeoutMsg: "artifact video preview did not finish in time",
   });
 }
 
@@ -544,7 +800,7 @@ async function attachSessionArtifact(baseUrl, token, sessionId, artifactPath) {
       {
         absolute_file_path: artifactPath,
         name: path.basename(artifactPath),
-        mime_type: "video/mp4",
+        mime_type: inferVideoArtifactMimeType(artifactPath),
       },
     ],
   });
@@ -567,7 +823,10 @@ async function main() {
   let recordingStartedAt = 0;
 
   try {
-    const setup = await startSetupProcess(options);
+    const setup = await startSetupProcess({
+      ...options,
+      installVisibleHarnesses: false,
+    });
     relayServer = setup.relay.server;
     daemonProc = setup.daemon.proc;
     const setupManifest = setup.manifest;
@@ -575,6 +834,13 @@ async function main() {
     const baseUrl = setupManifest.daemon.url;
     const workspaceId = setupManifest.fixture.workspace_id;
     await api(baseUrl, authToken, "POST", `/api/workspaces/${workspaceId}/providers/codex/verify`, {});
+    if (options.installVisibleHarnesses) {
+      writeJson(
+        path.join(options.artifactDir, "visible-harness-install-all.json"),
+        await installVisibleHarnessProvidersAndWait(baseUrl, authToken, "host"),
+      );
+      options.installVisibleHarnesses = false;
+    }
 
     buildAutomationAppIfNeeded(options.appPath, options.skipBuild, options.tauriTargetDir);
     const launchAppPath = prepareAutomationAppForLaunch(options.appPath, options.artifactDir);
@@ -602,6 +868,12 @@ async function main() {
     await focusNewTask(browser);
     await ensureNewTaskVisible(browser, options.artifactDir);
     await clearDraftHarness(browser);
+    if (options.installVisibleHarnesses) {
+      await preinstallVisibleHarnesses(browser, baseUrl, authToken, options.artifactDir);
+      await focusNewTask(browser);
+      await ensureNewTaskVisible(browser, options.artifactDir);
+      await clearDraftHarness(browser);
+    }
     if (options.recordVideoOut) {
       recordingStartedAt = Date.now();
       videoCapture = startBrowserFrameCapture(browser, options.artifactDir, options.recordFps);
@@ -649,7 +921,7 @@ async function main() {
       task.id,
     );
     await sleep(RESPONSE_PRE_DIFF_DWELL_MS);
-    seedExpectedWorkspaceDiff(worktreeRoot, options.expectedFinalAppPath);
+    seedExpectedWorkspaceDiff(worktreeRoot, options.expectedFinalWorkspacePath);
     const workspaceDiff = await waitForWorkspaceDiff(worktreeRoot);
     writeJson(path.join(options.artifactDir, "workspace-diff-detected.json"), {
       worktree_root: worktreeRoot,
@@ -660,28 +932,43 @@ async function main() {
     const diffToggleResult = await openDiffPane(browser);
     writeJson(path.join(options.artifactDir, "diff-toggle-result.json"), diffToggleResult);
     await waitForDiffPane(browser);
-    await openDiffFile(browser, "src/app.js");
+    await openDiffFile(browser, options.diffFilePath);
     writeJson(path.join(options.artifactDir, "diff-pane-state.json"), await captureDiffPaneState(browser));
-    writeJson(path.join(options.artifactDir, "opened-diff-file-state.json"), await captureOpenedDiffFileState(browser, "src/app.js"));
+    writeJson(
+      path.join(options.artifactDir, "opened-diff-file-state.json"),
+      await captureOpenedDiffFileState(browser, options.diffFilePath),
+    );
     if (videoCapture && options.captureMilestones) {
       await captureMilestone(browser, options.artifactDir, recordingStartedAt, "diff-file-open");
     }
-    await sleep(DIFF_PANE_DWELL_MS);
+    await sleep(PRIMARY_DIFF_PANE_DWELL_MS);
+
+    if (options.secondaryDiffFilePath) {
+      await openDiffFile(browser, options.secondaryDiffFilePath);
+      writeJson(
+        path.join(options.artifactDir, "opened-secondary-diff-file-state.json"),
+        await captureOpenedDiffFileState(browser, options.secondaryDiffFilePath),
+      );
+      if (videoCapture && options.captureMilestones) {
+        await captureMilestone(browser, options.artifactDir, recordingStartedAt, "secondary-diff-file-open");
+      }
+      await sleep(SECONDARY_DIFF_PANE_DWELL_MS);
+    }
 
     const attachedArtifacts = await attachSessionArtifact(baseUrl, authToken, session.id, options.sessionArtifactPath);
     writeJson(path.join(options.artifactDir, "attached-artifacts.json"), attachedArtifacts);
     await sleep(POST_ARTIFACT_ATTACH_DWELL_MS);
 
-    const artifactsToggleResult = await openArtifactsPane(browser);
+    const artifactsToggleResult = await openArtifactsPaneAndWait(browser);
     writeJson(path.join(options.artifactDir, "artifacts-toggle-result.json"), artifactsToggleResult);
-    await waitForArtifactsPane(browser);
     await waitForArtifactVideoPlayback(browser);
     writeJson(path.join(options.artifactDir, "artifacts-pane-state.json"), await captureArtifactsPaneState(browser));
     if (videoCapture && options.captureMilestones) {
       await captureMilestone(browser, options.artifactDir, recordingStartedAt, "artifact-video-playing");
     }
     if (options.recordVideoOut) {
-      await sleep(ARTIFACT_PANE_DWELL_MS);
+      await waitForArtifactVideoCompletion(browser);
+      await sleep(250);
       const captureSummary = await videoCapture.stop();
       videoCapture = null;
       mkdirSync(path.dirname(options.recordVideoOut), { recursive: true });

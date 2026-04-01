@@ -1,0 +1,12 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "url": "http://127.0.0.1:1420/?demoSeedMutedStories=1",
+        "title": "HN Mobile",
+        "resizable": true
+      }
+    ]
+  }
+}

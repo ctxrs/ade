@@ -16,6 +16,7 @@ import {
   waitForHttpOk,
 } from "./demo_lib.mjs";
 import { findBundledProviderRuntime, seedProviderRuntimeConfig } from "./demo_ping_pong_playback.mjs";
+import { inferVideoArtifactMimeType } from "./demo_video_artifacts.mjs";
 
 const SCRIPT_DIR = path.dirname(new URL(import.meta.url).pathname);
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "../../../..");
@@ -210,7 +211,7 @@ async function maybeAttachArtifact(baseUrl, token, sessionId, artifactPath) {
       {
         absolute_file_path: artifactPath,
         name: path.basename(artifactPath),
-        mime_type: "video/mp4",
+        mime_type: inferVideoArtifactMimeType(artifactPath),
       },
     ],
   });
