@@ -106,8 +106,6 @@
     "verify:quick": "pnpm source:file-size:enforce && pnpm -C apps/web lint && CARGO_TARGET_DIR=${CTX_VERIFY_CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/verify-quick-$(basename \"$(git rev-parse --git-dir)\")} turbo run rust:fmt rust:panic-traps rust:clippy rust:test supabase:migrations:check supabase:functions:check typecheck any:enforce --filter=ctx-monorepo --filter=ctx-web --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only --log-order=grouped --concurrency=${CTX_VERIFY_TURBO_CONCURRENCY:-4} --ui=stream --cache=${TURBO_CACHE_MODE:-local:rw}",
     "verify:merge:local": "pnpm verify:quick && pnpm verify:desktop-smoke",
     "verify:merge:ci": "pnpm verify:quick && pnpm verify:desktop:provider-auth-matrix:required",
-    "pull-mintlify": "bash -lc '../scripts/mintlify/pull-subtree.sh'",
-    "push-mintlify": "bash -lc '../scripts/mintlify/push-subtree.sh'",
     "verify:e2e": "pnpm test:e2e:premerge",
     "verify:e2e:release": "pnpm test:e2e:release && pnpm verify:e2e:updater:smoke:native",
     "test:updates:failure-safety": "bash scripts/test_updates_failure_safety.sh",

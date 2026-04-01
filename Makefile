@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help dev verify-quick verify-merge-local verify-merge-ci verify-nightly verify-release mintlify-pull mintlify-push desktop-profile-build desktop-profile-launch desktop-profile-dev
+.PHONY: help dev verify-quick verify-merge-local verify-merge-ci verify-nightly verify-release desktop-profile-build desktop-profile-launch desktop-profile-dev
 
 PNPM ?= pnpm
 PROFILE ?= dev
@@ -26,8 +26,6 @@ help:
 	@echo "  verify-merge-ci         Run CI merge confidence (pnpm -C core verify:merge:ci)"
 	@echo "  verify-nightly          Run nightly verification (pnpm -C core verify:nightly)"
 	@echo "  verify-release          Run release verification (pnpm -C core verify:release)"
-	@echo "  mintlify-pull           Pull Mintlify editor changes into mintlify-docs/"
-	@echo "  mintlify-push           Push mintlify-docs/ to the mirror repo"
 	@echo "  desktop-profile-build   Build named desktop profile (PROFILE=<name>)"
 	@echo "  desktop-profile-launch  Build + launch named desktop profile (PROFILE=<name>)"
 	@echo "  desktop-profile-dev     Run profile-scoped tauri+web hot-reload loop (PROFILE=<name>)"
@@ -49,12 +47,6 @@ verify-nightly:
 
 verify-release:
 	$(PNPM) -C core verify:release
-
-mintlify-pull:
-	./scripts/mintlify/pull-subtree.sh
-
-mintlify-push:
-	./scripts/mintlify/push-subtree.sh
 
 desktop-profile-build:
 	@set -euo pipefail; \

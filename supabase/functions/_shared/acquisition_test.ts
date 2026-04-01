@@ -7,7 +7,7 @@ import {
 } from "./acquisition.ts";
 
 Deno.test("normalizeReferrerDomain extracts a bounded hostname", () => {
-  assertEquals(normalizeReferrerDomain("https://docs.ctx.rs/install?x=1"), "docs.ctx.rs");
+  assertEquals(normalizeReferrerDomain("https://ctx.rs/install?x=1"), "ctx.rs");
   assertEquals(normalizeReferrerDomain("WWW.Example.COM"), "www.example.com");
   assertEquals(normalizeReferrerDomain(""), null);
   assertEquals(normalizeReferrerDomain("::::"), null);
