@@ -221,11 +221,10 @@ pub(crate) async fn prewarm_selected_runtime_for_launch_with_observer(
             )
             .await
         }
-        ContainerRuntimeKind::SharedVmContainer => {
-            SharedVmLifecycleOrchestrator::new(data_root)
-                .prefetch_runtime(settings, observer)
-                .await
-        }
+        ContainerRuntimeKind::SharedVmContainer => SharedVmLifecycleOrchestrator::new(data_root)
+            .ensure_shared_runtime_ready(settings, observer)
+            .await
+            .map(|_| ()),
     }
 }
 

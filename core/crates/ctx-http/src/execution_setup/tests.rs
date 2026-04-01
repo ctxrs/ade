@@ -381,12 +381,12 @@ fn write_avf_linux_helper_shim(dir: &Path) -> PathBuf {
     }
     let script = if cfg!(windows) {
         format!(
-            "@echo off\r\nif \"%1\"==\"probe\" (\r\n  echo {{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"helper_version\":\"0.0.0-test\",\"host_os\":\"macos\",\"host_arch\":\"aarch64\",\"supported\":true,\"save_restore_supported\":true,\"rosetta_supported\":true,\"notes\":[\"test helper\"]}}\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"prepare-runtime-layout\" (\r\n  set \"DATA_ROOT=%2\"\r\n  set \"VM_ROOT=%DATA_ROOT%/managed/vms/avf-linux/macos/aarch64/shared\"\r\n  set \"LOGS_ROOT=%VM_ROOT%/logs\"\r\n  if not exist \"%LOGS_ROOT%\" mkdir \"%LOGS_ROOT%\"\r\n  echo {{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"vm_root\":\"%VM_ROOT%\",\"logs_root\":\"%LOGS_ROOT%\",\"state_path\":\"%VM_ROOT%/shared-vm-state.json\",\"layout_status\":\"prepared\",\"notes\":[\"layout ready\"]}}\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"shared-vm-state\" goto shared_vm_state\r\nif \"%1\"==\"workspace-vm-state\" goto shared_vm_state\r\n:shared_vm_state\r\n  set \"DATA_ROOT=%2\"\r\n  set \"VM_ROOT=%DATA_ROOT%/managed/vms/avf-linux/macos/aarch64/shared\"\r\n  set \"LOGS_ROOT=%VM_ROOT%/logs\"\r\n  set \"STATUS=stopped\"\r\n  if exist \"%VM_ROOT%/helper-status.txt\" set /p STATUS=<\"%VM_ROOT%/helper-status.txt\"\r\n  if \"%STATUS%\"==\"running\" (\r\n    set \"RUNTIME_VERSION=\"\r\n    if exist \"%VM_ROOT%/runtime-version.txt\" set /p RUNTIME_VERSION=<\"%VM_ROOT%/runtime-version.txt\"\r\n    echo {{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"running\",\"vm_root\":\"%VM_ROOT%\",\"logs_root\":\"%LOGS_ROOT%\",\"state_path\":\"%VM_ROOT%/shared-vm-state.json\",\"log_path\":\"%LOGS_ROOT%/shared-vm.log\",\"runtime_version\":\"%RUNTIME_VERSION%\",\"transition_status\":\"scaffolded\",\"last_start_outcome\":\"already_running\",\"simulated\":true,\"notes\":[\"state ready\"]}}\r\n    exit /b 0\r\n  )\r\n  echo {{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"%STATUS%\",\"vm_root\":\"%VM_ROOT%\",\"logs_root\":\"%LOGS_ROOT%\",\"state_path\":\"%VM_ROOT%/shared-vm-state.json\",\"log_path\":\"%LOGS_ROOT%/shared-vm.log\",\"simulated\":true,\"notes\":[\"state ready\"]}}\r\n  exit /b 0\r\nif \"%1\"==\"start-shared-vm\" goto start_shared_vm\r\nif \"%1\"==\"start-workspace-vm\" goto start_shared_vm\r\n:start_shared_vm\r\n  set \"DATA_ROOT=%2\"\r\n  set \"VM_ROOT=%DATA_ROOT%/managed/vms/avf-linux/macos/aarch64/shared\"\r\n  set \"LOGS_ROOT=%VM_ROOT%/logs\"\r\n  if not exist \"%LOGS_ROOT%\" mkdir \"%LOGS_ROOT%\"\r\n  >\"%VM_ROOT%/helper-status.txt\" echo running\r\n  >\"%VM_ROOT%/runtime-version.txt\" echo %7\r\n  echo {{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"running\",\"vm_root\":\"%VM_ROOT%\",\"logs_root\":\"%LOGS_ROOT%\",\"state_path\":\"%VM_ROOT%/shared-vm-state.json\",\"log_path\":\"%LOGS_ROOT%/shared-vm.log\",\"runtime_root\":\"%3\",\"rootfs_image\":\"%4\",\"kernel_path\":\"%5\",\"initrd_path\":\"%6\",\"runtime_version\":\"%7\",\"transition_status\":\"scaffolded\",\"last_start_outcome\":\"cold_boot\",\"simulated\":true,\"notes\":[\"scaffolded\"]}}\r\n  exit /b 0\r\nif \"%1\"==\"shared-vm-exec\" (\r\n  set \"DATA_ROOT=\"\r\n  set \"SHARED_COMMAND=\"\r\n  :shared_exec_parse\r\n  if \"%2\"==\"\" goto shared_exec_run\r\n  if \"%2\"==\"--data-root\" (\r\n    set \"DATA_ROOT=%3\"\r\n    shift\r\n    shift\r\n    goto shared_exec_parse\r\n  )\r\n  if \"%2\"==\"--command\" (\r\n    set \"SHARED_COMMAND=%3\"\r\n    shift\r\n    shift\r\n    goto shared_exec_parse\r\n  )\r\n  if \"%2\"==\"--cwd\" (\r\n    shift\r\n    shift\r\n    goto shared_exec_parse\r\n  )\r\n  if \"%2\"==\"--user\" (\r\n    shift\r\n    shift\r\n    goto shared_exec_parse\r\n  )\r\n  if \"%2\"==\"--env\" (\r\n    shift\r\n    shift\r\n    goto shared_exec_parse\r\n  )\r\n  if \"%2\"==\"--\" (\r\n    shift\r\n    goto shared_exec_run\r\n  )\r\n  >&2 echo unexpected shared-vm-exec arg: %2\r\n  exit /b 1\r\n  :shared_exec_run\r\n  if \"%SHARED_COMMAND%\"==\"sandbox-cli\" goto run_sandbox_cli\r\n  if \"%SHARED_COMMAND%\"==\"/usr/local/bin/nerdctl\" goto run_sandbox_cli\r\n  \"%SHARED_COMMAND%\" %*\r\n  exit /b %errorlevel%\r\n  :run_sandbox_cli\r\n  \"{sandbox_cli_path}\" \"%DATA_ROOT%\" %*\r\n  exit /b %errorlevel%\r\n)\r\n>&2 echo unexpected helper invocation: %*\r\nexit /b 1\r\n",
+            "@echo off\r\nif \"%1\"==\"probe\" (\r\n  echo {{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"helper_version\":\"0.0.0-test\",\"host_os\":\"macos\",\"host_arch\":\"aarch64\",\"supported\":true,\"save_restore_supported\":true,\"rosetta_supported\":true,\"notes\":[\"test helper\"]}}\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"prepare-runtime-layout\" (\r\n  set \"DATA_ROOT=%2\"\r\n  set \"VM_ROOT=%DATA_ROOT%/managed/vms/avf-linux/macos/aarch64/shared\"\r\n  set \"LOGS_ROOT=%VM_ROOT%/logs\"\r\n  if not exist \"%LOGS_ROOT%\" mkdir \"%LOGS_ROOT%\"\r\n  echo {{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"vm_root\":\"%VM_ROOT%\",\"logs_root\":\"%LOGS_ROOT%\",\"state_path\":\"%VM_ROOT%/shared-vm-state.json\",\"layout_status\":\"prepared\",\"notes\":[\"layout ready\"]}}\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"shared-vm-state\" goto shared_vm_state\r\nif \"%1\"==\"workspace-vm-state\" goto shared_vm_state\r\n:shared_vm_state\r\n  set \"DATA_ROOT=%2\"\r\n  set \"VM_ROOT=%DATA_ROOT%/managed/vms/avf-linux/macos/aarch64/shared\"\r\n  set \"LOGS_ROOT=%VM_ROOT%/logs\"\r\n  set \"STATUS=stopped\"\r\n  if exist \"%VM_ROOT%/helper-status.txt\" set /p STATUS=<\"%VM_ROOT%/helper-status.txt\"\r\n  if \"%STATUS%\"==\"running\" (\r\n    set \"RUNTIME_VERSION=\"\r\n    if exist \"%VM_ROOT%/runtime-version.txt\" set /p RUNTIME_VERSION=<\"%VM_ROOT%/runtime-version.txt\"\r\n    echo {{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"running\",\"vm_root\":\"%VM_ROOT%\",\"logs_root\":\"%LOGS_ROOT%\",\"state_path\":\"%VM_ROOT%/shared-vm-state.json\",\"log_path\":\"%LOGS_ROOT%/shared-vm.log\",\"runtime_version\":\"%RUNTIME_VERSION%\",\"transition_status\":\"ready\",\"last_start_outcome\":\"already_running\",\"simulated\":true,\"notes\":[\"state ready\"]}}\r\n    exit /b 0\r\n  )\r\n  echo {{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"%STATUS%\",\"vm_root\":\"%VM_ROOT%\",\"logs_root\":\"%LOGS_ROOT%\",\"state_path\":\"%VM_ROOT%/shared-vm-state.json\",\"log_path\":\"%LOGS_ROOT%/shared-vm.log\",\"simulated\":true,\"notes\":[\"state ready\"]}}\r\n  exit /b 0\r\nif \"%1\"==\"start-shared-vm\" goto start_shared_vm\r\nif \"%1\"==\"start-workspace-vm\" goto start_shared_vm\r\n:start_shared_vm\r\n  set \"DATA_ROOT=%2\"\r\n  set \"VM_ROOT=%DATA_ROOT%/managed/vms/avf-linux/macos/aarch64/shared\"\r\n  set \"LOGS_ROOT=%VM_ROOT%/logs\"\r\n  if not exist \"%LOGS_ROOT%\" mkdir \"%LOGS_ROOT%\"\r\n  >\"%VM_ROOT%/helper-status.txt\" echo running\r\n  >\"%VM_ROOT%/runtime-version.txt\" echo %7\r\n  echo {{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"running\",\"vm_root\":\"%VM_ROOT%\",\"logs_root\":\"%LOGS_ROOT%\",\"state_path\":\"%VM_ROOT%/shared-vm-state.json\",\"log_path\":\"%LOGS_ROOT%/shared-vm.log\",\"runtime_root\":\"%3\",\"rootfs_image\":\"%4\",\"kernel_path\":\"%5\",\"initrd_path\":\"%6\",\"runtime_version\":\"%7\",\"transition_status\":\"ready\",\"last_start_outcome\":\"cold_boot\",\"simulated\":true,\"notes\":[\"launch ready\"]}}\r\n  exit /b 0\r\nif \"%1\"==\"shared-vm-exec\" (\r\n  set \"DATA_ROOT=\"\r\n  set \"SHARED_COMMAND=\"\r\n  :shared_exec_parse\r\n  if \"%2\"==\"\" goto shared_exec_run\r\n  if \"%2\"==\"--data-root\" (\r\n    set \"DATA_ROOT=%3\"\r\n    shift\r\n    shift\r\n    goto shared_exec_parse\r\n  )\r\n  if \"%2\"==\"--command\" (\r\n    set \"SHARED_COMMAND=%3\"\r\n    shift\r\n    shift\r\n    goto shared_exec_parse\r\n  )\r\n  if \"%2\"==\"--cwd\" (\r\n    shift\r\n    shift\r\n    goto shared_exec_parse\r\n  )\r\n  if \"%2\"==\"--user\" (\r\n    shift\r\n    shift\r\n    goto shared_exec_parse\r\n  )\r\n  if \"%2\"==\"--env\" (\r\n    shift\r\n    shift\r\n    goto shared_exec_parse\r\n  )\r\n  if \"%2\"==\"--\" (\r\n    shift\r\n    goto shared_exec_run\r\n  )\r\n  >&2 echo unexpected shared-vm-exec arg: %2\r\n  exit /b 1\r\n  :shared_exec_run\r\n  if \"%SHARED_COMMAND%\"==\"sandbox-cli\" goto run_sandbox_cli\r\n  if \"%SHARED_COMMAND%\"==\"/usr/local/bin/nerdctl\" goto run_sandbox_cli\r\n  \"%SHARED_COMMAND%\" %*\r\n  exit /b %errorlevel%\r\n  :run_sandbox_cli\r\n  \"{sandbox_cli_path}\" \"%DATA_ROOT%\" %*\r\n  exit /b %errorlevel%\r\n)\r\n>&2 echo unexpected helper invocation: %*\r\nexit /b 1\r\n",
             sandbox_cli_path = sandbox_cli_path.display()
         )
     } else {
         format!(
-            "#!/bin/sh\ncmd=\"$1\"\nshift\ncase \"$cmd\" in\nprobe)\n  printf '%s\\n' '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"helper_version\":\"0.0.0-test\",\"host_os\":\"macos\",\"host_arch\":\"aarch64\",\"supported\":true,\"save_restore_supported\":true,\"rosetta_supported\":true,\"notes\":[\"test helper\"]}}'\n  exit 0\n  ;;\nprepare-runtime-layout)\n  data_root=\"$1\"\n  vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n  logs_root=\"$vm_root/logs\"\n  state_path=\"$vm_root/shared-vm-state.json\"\n  mkdir -p \"$logs_root\"\n  printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"layout_status\":\"prepared\",\"notes\":[\"layout ready\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\"\n  exit 0\n  ;;\nshared-vm-state|workspace-vm-state)\n  data_root=\"$1\"\n  vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n  logs_root=\"$vm_root/logs\"\n  state_path=\"$vm_root/shared-vm-state.json\"\n  log_path=\"$logs_root/shared-vm.log\"\n  status_file=\"$vm_root/helper-status.txt\"\n  version_file=\"$vm_root/runtime-version.txt\"\n  state=$(cat \"$status_file\" 2>/dev/null || printf 'stopped')\n  runtime_version=$(cat \"$version_file\" 2>/dev/null || true)\n  if [ \"$state\" = \"running\" ]; then\n    printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"running\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"runtime_version\":\"%s\",\"transition_status\":\"scaffolded\",\"last_start_outcome\":\"already_running\",\"simulated\":true,\"notes\":[\"state ready\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\" \"$runtime_version\"\n  else\n    printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"%s\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"simulated\":true,\"notes\":[\"state ready\"]}}\\n' \"$state\" \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\"\n  fi\n  exit 0\n  ;;\nstart-shared-vm|start-workspace-vm)\n  data_root=\"$1\"\n  runtime_root=\"$2\"\n  rootfs_image=\"$3\"\n  kernel_path=\"$4\"\n  initrd_path=\"$5\"\n  runtime_version=\"$6\"\n  vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n  logs_root=\"$vm_root/logs\"\n  state_path=\"$vm_root/shared-vm-state.json\"\n  log_path=\"$logs_root/shared-vm.log\"\n  mkdir -p \"$logs_root\"\n  printf 'running' > \"$vm_root/helper-status.txt\"\n  printf '%s' \"$runtime_version\" > \"$vm_root/runtime-version.txt\"\n  printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"running\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"runtime_root\":\"%s\",\"rootfs_image\":\"%s\",\"kernel_path\":\"%s\",\"initrd_path\":\"%s\",\"runtime_version\":\"%s\",\"transition_status\":\"scaffolded\",\"last_start_outcome\":\"cold_boot\",\"simulated\":true,\"notes\":[\"scaffolded\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\" \"$runtime_root\" \"$rootfs_image\" \"$kernel_path\" \"$initrd_path\" \"$runtime_version\"\n  exit 0\n  ;;\nshared-vm-exec)\n  data_root=\"\"\n  shared_command=\"\"\n  while [ $# -gt 0 ]; do\n    case \"$1\" in\n      --data-root) data_root=\"$2\"; shift 2 ;;\n      --command) shared_command=\"$2\"; shift 2 ;;\n      --cwd) shift 2 ;;\n      --user) shift 2 ;;\n      --env)\n        kv=\"$2\"\n        key=$(printf '%s' \"$kv\" | sed 's/=.*//')\n        value=$(printf '%s' \"$kv\" | sed 's/^[^=]*=//')\n        export \"$key=$value\"\n        shift 2\n        ;;\n      --) shift; break ;;\n      *) echo \"unexpected shared-vm-exec arg: $1\" >&2; exit 1 ;;\n    esac\n  done\n  if [ \"$shared_command\" = \"sandbox-cli\" ] || [ \"$shared_command\" = \"/usr/local/bin/nerdctl\" ]; then\n    exec \"{sandbox_cli_path}\" \"$data_root\" \"$@\"\n  fi\n  exec \"$shared_command\" \"$@\"\n  ;;\nesac\necho \"unexpected helper invocation: $cmd $*\" >&2\nexit 1\n",
+            "#!/bin/sh\ncmd=\"$1\"\nshift\ncase \"$cmd\" in\nprobe)\n  printf '%s\\n' '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"helper_version\":\"0.0.0-test\",\"host_os\":\"macos\",\"host_arch\":\"aarch64\",\"supported\":true,\"save_restore_supported\":true,\"rosetta_supported\":true,\"notes\":[\"test helper\"]}}'\n  exit 0\n  ;;\nprepare-runtime-layout)\n  data_root=\"$1\"\n  vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n  logs_root=\"$vm_root/logs\"\n  state_path=\"$vm_root/shared-vm-state.json\"\n  mkdir -p \"$logs_root\"\n  printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"layout_status\":\"prepared\",\"notes\":[\"layout ready\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\"\n  exit 0\n  ;;\nshared-vm-state|workspace-vm-state)\n  data_root=\"$1\"\n  vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n  logs_root=\"$vm_root/logs\"\n  state_path=\"$vm_root/shared-vm-state.json\"\n  log_path=\"$logs_root/shared-vm.log\"\n  status_file=\"$vm_root/helper-status.txt\"\n  version_file=\"$vm_root/runtime-version.txt\"\n  state=$(cat \"$status_file\" 2>/dev/null || printf 'stopped')\n  runtime_version=$(cat \"$version_file\" 2>/dev/null || true)\n  if [ \"$state\" = \"running\" ]; then\n    printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"running\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"runtime_version\":\"%s\",\"transition_status\":\"ready\",\"last_start_outcome\":\"already_running\",\"simulated\":true,\"notes\":[\"state ready\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\" \"$runtime_version\"\n  else\n    printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"%s\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"simulated\":true,\"notes\":[\"state ready\"]}}\\n' \"$state\" \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\"\n  fi\n  exit 0\n  ;;\nstart-shared-vm|start-workspace-vm)\n  data_root=\"$1\"\n  runtime_root=\"$2\"\n  rootfs_image=\"$3\"\n  kernel_path=\"$4\"\n  initrd_path=\"$5\"\n  runtime_version=\"$6\"\n  vm_root=\"$data_root/managed/vms/avf-linux/{host_os}/{host_arch}/shared\"\n  logs_root=\"$vm_root/logs\"\n  state_path=\"$vm_root/shared-vm-state.json\"\n  log_path=\"$logs_root/shared-vm.log\"\n  mkdir -p \"$logs_root\"\n  printf 'running' > \"$vm_root/helper-status.txt\"\n  printf '%s' \"$runtime_version\" > \"$vm_root/runtime-version.txt\"\n  printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"running\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"runtime_root\":\"%s\",\"rootfs_image\":\"%s\",\"kernel_path\":\"%s\",\"initrd_path\":\"%s\",\"runtime_version\":\"%s\",\"transition_status\":\"ready\",\"last_start_outcome\":\"cold_boot\",\"simulated\":true,\"notes\":[\"launch ready\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\" \"$runtime_root\" \"$rootfs_image\" \"$kernel_path\" \"$initrd_path\" \"$runtime_version\"\n  exit 0\n  ;;\nshared-vm-exec)\n  data_root=\"\"\n  shared_command=\"\"\n  while [ $# -gt 0 ]; do\n    case \"$1\" in\n      --data-root) data_root=\"$2\"; shift 2 ;;\n      --command) shared_command=\"$2\"; shift 2 ;;\n      --cwd) shift 2 ;;\n      --user) shift 2 ;;\n      --env)\n        kv=\"$2\"\n        key=$(printf '%s' \"$kv\" | sed 's/=.*//')\n        value=$(printf '%s' \"$kv\" | sed 's/^[^=]*=//')\n        export \"$key=$value\"\n        shift 2\n        ;;\n      --) shift; break ;;\n      *) echo \"unexpected shared-vm-exec arg: $1\" >&2; exit 1 ;;\n    esac\n  done\n  if [ \"$shared_command\" = \"sandbox-cli\" ] || [ \"$shared_command\" = \"/usr/local/bin/nerdctl\" ]; then\n    exec \"{sandbox_cli_path}\" \"$data_root\" \"$@\"\n  fi\n  exec \"$shared_command\" \"$@\"\n  ;;\nesac\necho \"unexpected helper invocation: $cmd $*\" >&2\nexit 1\n",
             host_os = std::env::consts::OS,
             host_arch = std::env::consts::ARCH,
             sandbox_cli_path = sandbox_cli_path.display(),
@@ -530,10 +530,12 @@ async fn make_test_managed_avf_linux_runtime_source() -> (
 
 struct BlockingWarmupOperations {
     runtime_runs: AtomicUsize,
+    launch_ready_runs: AtomicUsize,
     builder_runs: AtomicUsize,
     runtime_release: Semaphore,
     builder_release: Semaphore,
     runtime_notify: Notify,
+    launch_ready_notify: Notify,
     builder_notify: Notify,
 }
 
@@ -541,10 +543,12 @@ impl Default for BlockingWarmupOperations {
     fn default() -> Self {
         Self {
             runtime_runs: AtomicUsize::new(0),
+            launch_ready_runs: AtomicUsize::new(0),
             builder_runs: AtomicUsize::new(0),
             runtime_release: Semaphore::new(0),
             builder_release: Semaphore::new(0),
             runtime_notify: Notify::new(),
+            launch_ready_notify: Notify::new(),
             builder_notify: Notify::new(),
         }
     }
@@ -577,6 +581,20 @@ impl BlockingWarmupOperations {
         })
         .await
         .expect("timed out waiting for builder runs");
+    }
+
+    async fn wait_for_launch_ready_runs(&self, expected: usize) {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let notified = self.launch_ready_notify.notified();
+                if self.launch_ready_runs.load(Ordering::SeqCst) >= expected {
+                    break;
+                }
+                notified.await;
+            }
+        })
+        .await
+        .expect("timed out waiting for launch-ready runs");
     }
 
     fn release_runtime(&self) {
@@ -642,7 +660,9 @@ impl SharedWarmupOperations for BlockingWarmupOperations {
         observer: Arc<dyn HarnessSetupObserver>,
     ) -> Result<()> {
         self.runtime_runs.fetch_add(1, Ordering::SeqCst);
+        self.launch_ready_runs.fetch_add(1, Ordering::SeqCst);
         self.runtime_notify.notify_waiters();
+        self.launch_ready_notify.notify_waiters();
         observer.on_phase(
             HarnessSetupPhase::MachineStartOrInit,
             "warming launch-ready runtime",
@@ -1929,7 +1949,64 @@ async fn runtime_prewarm_errors_when_only_startup_artifacts_were_warmed() {
 }
 
 #[tokio::test]
-async fn compute_prewarm_gate_treats_prefetched_avf_runtime_as_ready_without_vm_boot() {
+async fn runtime_prewarm_launch_ready_request_reuses_running_runtime_job_and_promotes_scope() {
+    let _serial = env_var_test_lock().lock().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(data_dir.path());
+    let _sandbox_cli = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+    let _sandbox_cli_path = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let ops = Arc::new(BlockingWarmupOperations::default());
+    let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
+    let settings = sandbox_execution_settings();
+
+    let background = coordinator
+        .start_runtime_prewarm(settings.clone(), RuntimePrewarmScope::Runtime)
+        .await;
+    ops.wait_for_runtime_runs(1).await;
+
+    let promoted = coordinator
+        .start_runtime_prewarm(settings, RuntimePrewarmScope::LaunchReady)
+        .await;
+
+    assert_eq!(promoted.job_id, background.job_id);
+    {
+        let inner = coordinator.inner.lock().await;
+        assert_eq!(inner.launch_jobs.len(), 1);
+        assert_eq!(inner.launch_history.len(), 1);
+    }
+
+    ops.release_runtime();
+    ops.wait_for_launch_ready_runs(1).await;
+
+    let still_running = coordinator
+        .launch_status(&background.job_id)
+        .await
+        .expect("missing promoted prewarm job");
+    assert_eq!(still_running.state, ExecutionLaunchState::Running);
+
+    ops.release_runtime();
+
+    let ready = wait_for_execution_launch_terminal(
+        &coordinator,
+        &background.job_id,
+        BACKGROUND_TEST_TIMEOUT,
+    )
+    .await;
+
+    assert_eq!(ready.state, ExecutionLaunchState::Ready);
+    assert!(ready.logs.iter().any(|line| {
+        line.phase == HarnessSetupPhase::Ready
+            && line.message == "local sandbox runtime and launch image are ready"
+    }));
+    assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 2);
+    assert_eq!(ops.launch_ready_runs.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn compute_prewarm_gate_keeps_prefetched_avf_runtime_unready_without_vm_boot() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
@@ -1964,18 +2041,18 @@ async fn compute_prewarm_gate_treats_prefetched_avf_runtime_as_ready_without_vm_
         .compute_prewarm_gate(&settings.container)
         .await
         .expect("compute AVF prewarm gate");
-    assert!(gate.machine_ready);
-    assert!(gate.image_present);
+    assert!(!gate.machine_ready);
+    assert!(!gate.image_present);
     assert!(!gate.image_ref_changed);
     assert!(!gate.bundled_image_digest_changed);
-    assert!(!gate.needs_prewarm);
+    assert!(gate.needs_prewarm);
     assert_eq!(gate.bundled_image_fingerprint, None);
 
     let runtime_state = coordinator
         .startup_runtime_state(&settings.container)
         .await
         .expect("read AVF runtime state");
-    assert_eq!(runtime_state, (true, true));
+    assert_eq!(runtime_state, (false, false));
 
     for server in servers {
         server.abort();
@@ -2029,8 +2106,13 @@ async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtim
     let runtime_state = coordinator
         .startup_runtime_state(&settings.container)
         .await
-        .expect("read AVF runtime state");
-    assert_eq!(runtime_state, (true, true));
+        .expect("read AVF startup state");
+    assert_eq!(runtime_state, (false, false));
+    let artifact_state =
+        crate::harness_runtime::selected_runtime_state(data_dir.path(), &settings.container)
+            .await
+            .expect("read AVF runtime artifact state");
+    assert_eq!(artifact_state, (true, true));
     let launch_ready =
         crate::harness_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
             .await
@@ -2046,7 +2128,7 @@ async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtim
 }
 
 #[tokio::test]
-async fn runtime_prewarm_launch_ready_scope_prefetches_artifacts_without_starting_shared_vm() {
+async fn runtime_prewarm_launch_ready_scope_starts_shared_vm_and_reports_launch_ready() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
@@ -2086,14 +2168,16 @@ async fn runtime_prewarm_launch_ready_scope_prefetches_artifacts_without_startin
     );
     assert!(terminal.logs.iter().any(|line| {
         line.phase == HarnessSetupPhase::Ready
-            && line.message
-                == "shared VM runtime artifacts are ready; launch image loads when the shared VM starts"
+            && line.message == "shared VM substrate and launch image are ready"
     }));
     let launch_ready =
         crate::harness_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
             .await
             .expect("read AVF launch-ready state");
-    assert!(!launch_ready, "AVF prewarm should not boot the shared VM");
+    assert!(
+        launch_ready,
+        "AVF launch-ready prewarm should boot the shared VM"
+    );
     let runtime_state = coordinator
         .startup_runtime_state(&settings.container)
         .await
@@ -2792,7 +2876,7 @@ async fn startup_prewarm_enters_shared_runtime_warmup_when_machine_is_not_ready(
 }
 
 #[tokio::test]
-async fn startup_prewarm_uses_runtime_scope_for_avf_linux_runtime() {
+async fn startup_prewarm_uses_runtime_scope_for_sandbox_mode_avf_linux_runtime() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
@@ -2804,6 +2888,44 @@ async fn startup_prewarm_uses_runtime_scope_for_avf_linux_runtime() {
         data_dir.path(),
         ExecutionSettings {
             mode: ExecutionMode::Sandbox,
+            container: crate::settings::ContainerExecutionSettings {
+                runtime: ContainerRuntimeKind::SharedVmContainer,
+                ..Default::default()
+            },
+        },
+    )
+    .await;
+
+    let ops = Arc::new(RecordingStartupWarmupOperations::default());
+    let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
+
+    coordinator.run_startup_prewarm().await;
+
+    let snapshot = coordinator.startup_status().await;
+    assert_eq!(snapshot.state, StartupPrewarmState::Ready);
+    assert!(snapshot.needs_prewarm);
+    assert!(!snapshot.machine_ready);
+    assert!(!snapshot.image_present);
+    assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        *ops.steps.lock().unwrap_or_else(|err| err.into_inner()),
+        vec!["runtime"]
+    );
+}
+
+#[tokio::test]
+async fn startup_prewarm_uses_runtime_scope_for_host_mode_avf_linux_runtime() {
+    let _serial = env_var_test_lock().lock().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
+    let _helper = EnvVarGuard::set(
+        crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
+        &helper_path.to_string_lossy(),
+    );
+    save_test_execution_settings(
+        data_dir.path(),
+        ExecutionSettings {
+            mode: ExecutionMode::Host,
             container: crate::settings::ContainerExecutionSettings {
                 runtime: ContainerRuntimeKind::SharedVmContainer,
                 ..Default::default()

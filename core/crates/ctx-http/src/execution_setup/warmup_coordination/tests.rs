@@ -453,12 +453,38 @@ fn prewarm_job_registry_matches_compatible_jobs_by_scope_and_image() {
         .expect("all-scope request should match all-scope job");
     assert!(Arc::ptr_eq(&all_match, &all_job));
 
-    assert!(
-        registry
-            .find_compatible(&other_settings, RuntimePrewarmScope::All)
-            .is_none(),
-        "runtime-only job for another image should not satisfy all-scope requests"
-    );
+    let promoted_other_match = registry
+        .find_compatible(&other_settings, RuntimePrewarmScope::All)
+        .expect("all-scope request should reuse matching runtime job for the same image");
+    assert!(Arc::ptr_eq(&promoted_other_match, &other_runtime_job));
+}
+
+#[test]
+fn prewarm_job_registry_promotes_runtime_jobs_for_launch_ready_and_builder_requests() {
+    let settings = container_settings("ghcr.io/ctxrs/ctx-harness:test");
+    let runtime_job = Arc::new(SharedPrewarmLaunchJob::new(
+        "job-runtime".to_string(),
+        &settings,
+        RuntimePrewarmScope::Runtime,
+    ));
+
+    let mut registry = PrewarmJobRegistry::default();
+    registry.insert(Arc::clone(&runtime_job));
+
+    let launch_ready_match = registry
+        .find_compatible(&settings, RuntimePrewarmScope::LaunchReady)
+        .expect("launch-ready request should reuse matching runtime job");
+    assert!(Arc::ptr_eq(&launch_ready_match, &runtime_job));
+
+    let builder_match = registry
+        .find_compatible(&settings, RuntimePrewarmScope::Builder)
+        .expect("builder request should reuse matching runtime job");
+    assert!(Arc::ptr_eq(&builder_match, &runtime_job));
+
+    let all_match = registry
+        .find_compatible(&settings, RuntimePrewarmScope::All)
+        .expect("all-scope request should reuse matching runtime job");
+    assert!(Arc::ptr_eq(&all_match, &runtime_job));
 }
 
 #[test]
@@ -521,6 +547,26 @@ fn shared_prewarm_launch_job_terminal_completion_is_idempotent() {
     let snapshot_after = job.snapshot();
     assert_eq!(snapshot_after.state, ExecutionLaunchState::Ready);
     assert!(snapshot_after.error.is_none());
+}
+
+#[test]
+fn shared_prewarm_launch_job_scope_requests_merge_monotonically() {
+    let settings = container_settings("ghcr.io/ctxrs/ctx-harness:test");
+    let job = SharedPrewarmLaunchJob::new(
+        "job-scope".to_string(),
+        &settings,
+        RuntimePrewarmScope::Runtime,
+    );
+
+    assert!(job.request_scope(RuntimePrewarmScope::Builder));
+    assert!(job.runtime_requested());
+    assert!(job.builder_requested());
+    assert!(!job.requires_launch_ready_runtime());
+
+    assert!(job.request_scope(RuntimePrewarmScope::LaunchReady));
+    assert!(job.runtime_requested());
+    assert!(job.builder_requested());
+    assert!(job.requires_launch_ready_runtime());
 }
 
 #[tokio::test]

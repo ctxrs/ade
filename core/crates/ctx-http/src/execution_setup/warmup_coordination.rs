@@ -343,12 +343,82 @@ impl PrewarmLaunchJobKey {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RequestedPrewarmScope {
+    runtime: bool,
+    launch_ready: bool,
+    builder: bool,
+}
+
+impl RequestedPrewarmScope {
+    fn from_runtime_prewarm_scope(scope: RuntimePrewarmScope) -> Self {
+        Self {
+            runtime: scope.includes_runtime(),
+            launch_ready: scope.requires_launch_ready_runtime(),
+            builder: scope.includes_builder(),
+        }
+    }
+
+    fn merge_request(&mut self, scope: RuntimePrewarmScope) {
+        let requested = Self::from_runtime_prewarm_scope(scope);
+        self.runtime |= requested.runtime;
+        self.launch_ready |= requested.launch_ready;
+        self.builder |= requested.builder;
+    }
+
+    pub(crate) fn runtime_requested(self) -> bool {
+        self.runtime
+    }
+
+    pub(crate) fn requires_launch_ready_runtime(self) -> bool {
+        self.launch_ready
+    }
+
+    pub(crate) fn builder_requested(self) -> bool {
+        self.builder
+    }
+
+    fn is_satisfied(self, runtime_ready: bool, launch_ready: bool, builder_ready: bool) -> bool {
+        let runtime_satisfied = if self.launch_ready {
+            launch_ready
+        } else if self.runtime {
+            runtime_ready || launch_ready
+        } else {
+            true
+        };
+        let builder_satisfied = !self.builder || builder_ready;
+        runtime_satisfied && builder_satisfied
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct PrewarmJobRegistry {
     running: HashMap<PrewarmLaunchJobKey, Arc<SharedPrewarmLaunchJob>>,
 }
 
 impl PrewarmJobRegistry {
+    fn runtime_job_for_target(&self, target: &str) -> Option<Arc<SharedPrewarmLaunchJob>> {
+        self.running
+            .get(&PrewarmLaunchJobKey::All {
+                target: target.to_string(),
+            })
+            .cloned()
+            .or_else(|| {
+                self.running
+                    .get(&PrewarmLaunchJobKey::LaunchReady {
+                        target: target.to_string(),
+                    })
+                    .cloned()
+            })
+            .or_else(|| {
+                self.running
+                    .get(&PrewarmLaunchJobKey::Runtime {
+                        target: target.to_string(),
+                    })
+                    .cloned()
+            })
+    }
+
     pub(crate) fn find_compatible(
         &self,
         settings: &ExecutionSettings,
@@ -356,48 +426,14 @@ impl PrewarmJobRegistry {
     ) -> Option<Arc<SharedPrewarmLaunchJob>> {
         let target = harness_runtime::runtime_prewarm_target(&settings.container);
         match requested_scope {
-            RuntimePrewarmScope::Runtime => self
-                .running
-                .get(&PrewarmLaunchJobKey::All {
-                    target: target.clone(),
-                })
-                .cloned()
-                .or_else(|| {
-                    self.running
-                        .get(&PrewarmLaunchJobKey::LaunchReady {
-                            target: target.clone(),
-                        })
-                        .cloned()
-                })
-                .or_else(|| {
-                    self.running
-                        .get(&PrewarmLaunchJobKey::Runtime { target })
-                        .cloned()
-                }),
-            RuntimePrewarmScope::LaunchReady => self
-                .running
-                .get(&PrewarmLaunchJobKey::All {
-                    target: target.clone(),
-                })
-                .cloned()
-                .or_else(|| {
-                    self.running
-                        .get(&PrewarmLaunchJobKey::LaunchReady { target })
-                        .cloned()
-                }),
-            RuntimePrewarmScope::All => self
-                .running
-                .get(&PrewarmLaunchJobKey::All { target })
-                .cloned(),
+            RuntimePrewarmScope::Runtime
+            | RuntimePrewarmScope::LaunchReady
+            | RuntimePrewarmScope::All => self.runtime_job_for_target(&target),
             RuntimePrewarmScope::Builder => self
                 .running
                 .get(&PrewarmLaunchJobKey::Builder)
                 .cloned()
-                .or_else(|| {
-                    self.running
-                        .get(&PrewarmLaunchJobKey::All { target })
-                        .cloned()
-                }),
+                .or_else(|| self.runtime_job_for_target(&target)),
         }
     }
 
@@ -430,12 +466,12 @@ impl PrewarmJobRegistry {
 #[derive(Debug)]
 struct SharedPrewarmLaunchJobState {
     terminal: bool,
+    requested_scope: RequestedPrewarmScope,
 }
 
 #[derive(Debug)]
 pub(crate) struct SharedPrewarmLaunchJob {
     key: PrewarmLaunchJobKey,
-    scope: RuntimePrewarmScope,
     job: Arc<LaunchJob>,
     state: StdMutex<SharedPrewarmLaunchJobState>,
 }
@@ -454,9 +490,11 @@ impl SharedPrewarmLaunchJob {
         seed_runtime_prewarm_initial_state(job.as_ref(), settings);
         Self {
             key: PrewarmLaunchJobKey::for_request(settings, scope),
-            scope,
             job,
-            state: StdMutex::new(SharedPrewarmLaunchJobState { terminal: false }),
+            state: StdMutex::new(SharedPrewarmLaunchJobState {
+                terminal: false,
+                requested_scope: RequestedPrewarmScope::from_runtime_prewarm_scope(scope),
+            }),
         }
     }
 
@@ -472,20 +510,71 @@ impl SharedPrewarmLaunchJob {
         self.job.snapshot()
     }
 
+    pub(crate) fn request_scope(&self, scope: RuntimePrewarmScope) -> bool {
+        let mut shared = match self.state.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if shared.terminal {
+            return false;
+        }
+        shared.requested_scope.merge_request(scope);
+        true
+    }
+
+    pub(crate) fn requested_scope(&self) -> RequestedPrewarmScope {
+        let shared = match self.state.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        shared.requested_scope
+    }
+
+    #[cfg(test)]
     pub(crate) fn builder_requested(&self) -> bool {
-        self.scope.includes_builder()
+        self.requested_scope().builder_requested()
     }
 
+    #[cfg(test)]
     pub(crate) fn runtime_requested(&self) -> bool {
-        self.scope.includes_runtime()
+        self.requested_scope().runtime_requested()
     }
 
+    #[cfg(test)]
     pub(crate) fn requires_launch_ready_runtime(&self) -> bool {
-        self.scope.requires_launch_ready_runtime()
+        self.requested_scope().requires_launch_ready_runtime()
     }
 
     pub(crate) fn complete_ready(&self) -> Option<LaunchTerminalMutation> {
         self.complete(ExecutionLaunchState::Ready, None)
+    }
+
+    pub(crate) fn reserve_ready_completion_if_scope_satisfied(
+        &self,
+        runtime_ready: bool,
+        launch_ready: bool,
+        builder_ready: bool,
+    ) -> Option<RequestedPrewarmScope> {
+        {
+            let mut shared = match self.state.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            if shared.terminal
+                || !shared
+                    .requested_scope
+                    .is_satisfied(runtime_ready, launch_ready, builder_ready)
+            {
+                None
+            } else {
+                shared.terminal = true;
+                Some(shared.requested_scope)
+            }
+        }
+    }
+
+    pub(crate) fn mark_reserved_ready_terminal(&self) -> LaunchTerminalMutation {
+        self.job.mark_terminal(ExecutionLaunchState::Ready, None)
     }
 
     pub(crate) fn complete_error(&self, message: String) -> Option<LaunchTerminalMutation> {

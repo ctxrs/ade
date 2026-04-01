@@ -12,7 +12,8 @@ use super::{
     avf_linux_runtime_state, container_image_present,
     ensure_avf_linux_shared_vm_ready_with_observer,
     ensure_avf_linux_workspace_vm_ready_with_observer, prefetch_avf_linux_runtime_with_observer,
-    resolve_container_image, ContainerExecutionSettings, HarnessSetupObserver,
+    prefetch_container_image_with_observer, resolve_container_image, ContainerExecutionSettings,
+    HarnessSetupObserver,
 };
 
 pub(crate) struct SharedVmLifecycleOrchestrator<'a> {
@@ -37,7 +38,12 @@ impl<'a> SharedVmLifecycleOrchestrator<'a> {
         settings: &ContainerExecutionSettings,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<AvfLinuxSharedVmState> {
-        ensure_avf_linux_shared_vm_ready_with_observer(self.data_root, settings, observer).await
+        let state =
+            ensure_avf_linux_shared_vm_ready_with_observer(self.data_root, settings, observer)
+                .await?;
+        let image = resolve_container_image(settings);
+        prefetch_container_image_with_observer(self.data_root, &image, observer).await?;
+        Ok(state)
     }
 
     pub(crate) async fn ensure_workspace_runtime_ready(

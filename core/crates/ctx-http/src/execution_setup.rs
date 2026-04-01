@@ -37,8 +37,8 @@ use progress::{
     write_prewarm_metadata, LaunchObserver,
 };
 use warmup_coordination::{
-    DefaultWarmupOperations, LaunchPrewarmCoordinator, PrewarmJobRegistry, SharedPrewarmLaunchJob,
-    SharedWarmupOperations,
+    DefaultWarmupOperations, LaunchPrewarmCoordinator, PrewarmJobRegistry, RequestedPrewarmScope,
+    SharedPrewarmLaunchJob, SharedWarmupOperations,
 };
 
 const JOB_LOG_CAP: usize = 400;
@@ -356,8 +356,12 @@ impl ExecutionSetupCoordinator {
         let (shared_job, snapshot) = {
             let mut inner = self.inner.lock().await;
             if let Some(existing) = inner.prewarm_jobs.find_compatible(&settings, scope) {
-                let snapshot = existing.snapshot();
-                return snapshot;
+                if existing.request_scope(scope) {
+                    return existing.snapshot();
+                }
+                inner
+                    .prewarm_jobs
+                    .remove_if_current(existing.key(), &existing);
             }
 
             let job = Arc::new(SharedPrewarmLaunchJob::new(
@@ -593,160 +597,100 @@ impl ExecutionSetupCoordinator {
         };
         let is_host_mode = matches!(settings.mode, ExecutionMode::Host);
         let runtime_target = harness_runtime::runtime_prewarm_target(&settings.container);
-        let run_result = if is_host_mode {
-            Ok(())
-        } else if shared_job.runtime_requested() {
-            if !harness_runtime::local_runtime_available(
-                &self.data_root,
-                &settings.container.runtime,
-            ) {
-                Err(anyhow::anyhow!("local sandbox runtime unavailable"))
-            } else {
-                let _artifact_warmup = self.harness.begin_prewarm_artifact_activity();
-                match self
-                    .prewarm
-                    .ensure_runtime(
-                        &settings,
-                        shared_job.requires_launch_ready_runtime(),
-                        Some(&observer),
-                    )
-                    .await
-                {
-                    Ok(()) => {
-                        if shared_job.builder_requested() {
-                            match self.wait_for_builder_completion(observer.clone()).await {
-                                Ok(()) => {}
-                                Err(err) => {
-                                    return self
-                                        .finish_runtime_prewarm_error(
-                                            shared_job,
-                                            job,
-                                            launch_started,
-                                            err,
-                                        )
-                                        .await
-                                }
-                            }
-                        }
-                        Ok(())
-                    }
-                    Err(err) => Err(err),
+        if is_host_mode {
+            if let Some(terminal) = shared_job.complete_ready() {
+                if let Some(completed) = terminal.completed_phase {
+                    self.record_phase_metric(completed.phase, completed.elapsed_ms, "ready");
                 }
+                let _ = job.tx.send(ExecutionLaunchStreamEvent::LaunchComplete {
+                    snapshot: terminal.snapshot.clone(),
+                });
+                self.record_launch_metric(launch_started.elapsed().as_millis() as u64, "ready");
             }
-        } else if shared_job.builder_requested() {
-            self.prewarm.ensure_builder(Some(&observer)).await
-        } else {
-            Ok(())
-        };
+            self.clear_running_prewarm(&shared_job).await;
+            return;
+        }
+
+        let run_result: Result<RequestedPrewarmScope> = async {
+            let mut runtime_ready = false;
+            let mut launch_ready = false;
+            let mut builder_ready = false;
+
+            loop {
+                let requested_scope = shared_job.requested_scope();
+                if requested_scope.requires_launch_ready_runtime() && !launch_ready {
+                    if !harness_runtime::local_runtime_available(
+                        &self.data_root,
+                        &settings.container.runtime,
+                    ) {
+                        return Err(anyhow::anyhow!("local sandbox runtime unavailable"));
+                    }
+                    let _artifact_warmup = self.harness.begin_prewarm_artifact_activity();
+                    self.prewarm
+                        .ensure_runtime(&settings, true, Some(&observer))
+                        .await?;
+                    self.validate_runtime_prewarm_completion(&settings, &runtime_target, true)
+                        .await?;
+                    runtime_ready = true;
+                    launch_ready = true;
+                    continue;
+                }
+
+                if requested_scope.runtime_requested() && !runtime_ready {
+                    if !harness_runtime::local_runtime_available(
+                        &self.data_root,
+                        &settings.container.runtime,
+                    ) {
+                        return Err(anyhow::anyhow!("local sandbox runtime unavailable"));
+                    }
+                    let _artifact_warmup = self.harness.begin_prewarm_artifact_activity();
+                    self.prewarm
+                        .ensure_runtime(&settings, false, Some(&observer))
+                        .await?;
+                    self.validate_runtime_prewarm_completion(&settings, &runtime_target, false)
+                        .await?;
+                    runtime_ready = true;
+                    continue;
+                }
+
+                if requested_scope.builder_requested() && !builder_ready {
+                    self.wait_for_builder_completion(observer.clone()).await?;
+                    builder_ready = true;
+                    continue;
+                }
+
+                if let Some(requested_scope) = shared_job
+                    .reserve_ready_completion_if_scope_satisfied(
+                        runtime_ready,
+                        launch_ready,
+                        builder_ready,
+                    )
+                {
+                    return Ok(requested_scope);
+                }
+
+                tokio::task::yield_now().await;
+            }
+        }
+        .await;
 
         match run_result {
-            Ok(()) => {
-                if shared_job.runtime_requested() {
-                    let requires_launch_ready_runtime = shared_job.requires_launch_ready_runtime()
-                        && !matches!(
-                            settings.container.runtime,
-                            crate::settings::ContainerRuntimeKind::SharedVmContainer
-                        );
-                    if requires_launch_ready_runtime {
-                        match harness_runtime::selected_runtime_launch_readiness_state(
-                            &self.data_root,
-                            &settings.container,
-                        )
-                        .await
-                        {
-                            Ok((true, true)) => {}
-                            Ok((vm_ready, image_ready)) => {
-                                self.finish_runtime_prewarm_error(
-                                    shared_job,
-                                    job,
-                                    launch_started,
-                                    anyhow::anyhow!(harness_runtime::launch_ready_gap_message(
-                                        settings.container.runtime,
-                                        &runtime_target,
-                                        vm_ready,
-                                        image_ready,
-                                    )),
-                                )
-                                .await;
-                                return;
-                            }
-                            Err(err) => {
-                                self.finish_runtime_prewarm_error(
-                                    shared_job,
-                                    job,
-                                    launch_started,
-                                    err,
-                                )
-                                .await;
-                                return;
-                            }
-                        }
-                    } else {
-                        match self.startup_runtime_state(&settings.container).await {
-                            Ok((machine_ready, image_present)) => {
-                                let ready = match settings.container.runtime {
-                                    crate::settings::ContainerRuntimeKind::NativeContainer => {
-                                        machine_ready && image_present
-                                    }
-                                    crate::settings::ContainerRuntimeKind::SharedVmContainer => {
-                                        image_present
-                                    }
-                                };
-                                if !ready {
-                                    let message = if machine_ready {
-                                        format!(
-                                            "runtime prewarm completed but runtime target '{runtime_target}' is still unavailable in the local sandbox runtime"
-                                        )
-                                    } else {
-                                        format!(
-                                            "runtime prewarm downloaded startup artifacts for '{runtime_target}', but the local sandbox runtime still needs first-launch startup"
-                                        )
-                                    };
-                                    self.finish_runtime_prewarm_error(
-                                        shared_job,
-                                        job,
-                                        launch_started,
-                                        anyhow::anyhow!(message),
-                                    )
-                                    .await;
-                                    return;
-                                }
-                            }
-                            Err(err) => {
-                                self.finish_runtime_prewarm_error(
-                                    shared_job,
-                                    job,
-                                    launch_started,
-                                    err,
-                                )
-                                .await;
-                                return;
-                            }
-                        }
-                    }
+            Ok(requested_scope) => {
+                let runtime_kind = &settings.container.runtime;
+                let ready_message = runtime_prewarm_ready_phase_message(
+                    requested_scope.runtime_requested(),
+                    runtime_kind,
+                    requested_scope.requires_launch_ready_runtime(),
+                );
+                self.emit_phase(&job, HarnessSetupPhase::Ready, ready_message);
+                let terminal = shared_job.mark_reserved_ready_terminal();
+                if let Some(completed) = terminal.completed_phase {
+                    self.record_phase_metric(completed.phase, completed.elapsed_ms, "ready");
                 }
-                if !matches!(settings.mode, ExecutionMode::Host) {
-                    let runtime_kind = &settings.container.runtime;
-                    let ready_message = runtime_prewarm_ready_phase_message(
-                        shared_job.runtime_requested(),
-                        runtime_kind,
-                        shared_job.requires_launch_ready_runtime()
-                            && !matches!(
-                                settings.container.runtime,
-                                crate::settings::ContainerRuntimeKind::SharedVmContainer
-                            ),
-                    );
-                    self.emit_phase(&job, HarnessSetupPhase::Ready, ready_message);
-                }
-                if let Some(terminal) = shared_job.complete_ready() {
-                    if let Some(completed) = terminal.completed_phase {
-                        self.record_phase_metric(completed.phase, completed.elapsed_ms, "ready");
-                    }
-                    let _ = job.tx.send(ExecutionLaunchStreamEvent::LaunchComplete {
-                        snapshot: terminal.snapshot.clone(),
-                    });
-                    self.record_launch_metric(launch_started.elapsed().as_millis() as u64, "ready");
-                }
+                let _ = job.tx.send(ExecutionLaunchStreamEvent::LaunchComplete {
+                    snapshot: terminal.snapshot.clone(),
+                });
+                self.record_launch_metric(launch_started.elapsed().as_millis() as u64, "ready");
             }
             Err(err) => {
                 self.finish_runtime_prewarm_error(shared_job, job, launch_started, err)
@@ -756,6 +700,45 @@ impl ExecutionSetupCoordinator {
         }
 
         self.clear_running_prewarm(&shared_job).await;
+    }
+
+    async fn validate_runtime_prewarm_completion(
+        &self,
+        settings: &ExecutionSettings,
+        runtime_target: &str,
+        requires_launch_ready_runtime: bool,
+    ) -> Result<()> {
+        if requires_launch_ready_runtime {
+            match harness_runtime::selected_runtime_launch_readiness_state(
+                &self.data_root,
+                &settings.container,
+            )
+            .await
+            {
+                Ok((true, true)) => Ok(()),
+                Ok((vm_ready, image_ready)) => {
+                    Err(anyhow::anyhow!(harness_runtime::launch_ready_gap_message(
+                        settings.container.runtime.clone(),
+                        runtime_target,
+                        vm_ready,
+                        image_ready,
+                    )))
+                }
+                Err(err) => Err(err),
+            }
+        } else {
+            match harness_runtime::selected_runtime_state(&self.data_root, &settings.container).await
+            {
+                Ok((machine_ready, image_present)) if machine_ready && image_present => Ok(()),
+                Ok((machine_ready, _image_present)) if machine_ready => Err(anyhow::anyhow!(
+                    "runtime prewarm completed but runtime target '{runtime_target}' is still unavailable in the local sandbox runtime"
+                )),
+                Ok((_machine_ready, _image_present)) => Err(anyhow::anyhow!(
+                    "runtime prewarm downloaded startup artifacts for '{runtime_target}', but the local sandbox runtime still needs first-launch startup"
+                )),
+                Err(err) => Err(err),
+            }
+        }
     }
 
     async fn finish_runtime_prewarm_error(

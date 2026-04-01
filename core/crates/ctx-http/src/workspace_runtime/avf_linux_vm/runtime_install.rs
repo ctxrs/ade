@@ -1,6 +1,15 @@
 use super::*;
-#[cfg(test)]
-use std::sync::Arc;
+use std::time::Instant;
+
+fn emit_runtime_install_info(observer: Option<&dyn HarnessSetupObserver>, message: &str) {
+    tracing::info!(component = "avf_runtime_install", "{message}");
+    observe_log(
+        observer,
+        HarnessSetupPhase::ArtifactDownload,
+        HarnessSetupLogLevel::Info,
+        message,
+    );
+}
 
 impl AvfLinuxGuestRuntime {
     pub(super) fn from_source(
@@ -287,6 +296,7 @@ pub(crate) async fn ensure_managed_avf_linux_guest_runtime_with_override(
     observer: Option<&dyn HarnessSetupObserver>,
     download_aggregate: Option<ManagedDownloadAggregate>,
 ) -> Result<AvfLinuxGuestRuntime> {
+    let install_started = Instant::now();
     if source_override.is_none() {
         if let Some(runtime) = staged_avf_linux_guest_runtime()? {
             return Ok(runtime);
@@ -312,6 +322,7 @@ pub(crate) async fn ensure_managed_avf_linux_guest_runtime_with_override(
     }
 
     let install_lock = managed_avf_linux_install_lock();
+    let lock_wait_started = Instant::now();
     let (waited_for_existing_install, install_guard) = match install_lock.try_lock() {
         Ok(guard) => {
             observe_phase(
@@ -337,23 +348,28 @@ pub(crate) async fn ensure_managed_avf_linux_guest_runtime_with_override(
         }
     };
     let _install_guard = install_guard;
+    if waited_for_existing_install {
+        emit_runtime_install_info(
+            observer,
+            &format!(
+                "shared AVF Linux runtime preparation wait finished in {} ms",
+                lock_wait_started.elapsed().as_millis()
+            ),
+        );
+    }
     let runtime = AvfLinuxGuestRuntime::from_source(data_root, &source)?;
     if avf_linux_runtime_is_ready(&runtime) {
         if waited_for_existing_install {
-            observe_log(
+            emit_runtime_install_info(
                 observer,
-                HarnessSetupPhase::ArtifactDownload,
-                HarnessSetupLogLevel::Info,
                 "managed AVF Linux guest runtime became ready while waiting for shared preparation",
             );
         }
         return Ok(runtime);
     }
 
-    observe_log(
+    emit_runtime_install_info(
         observer,
-        HarnessSetupPhase::ArtifactDownload,
-        HarnessSetupLogLevel::Info,
         &format!(
             "installing managed AVF Linux guest runtime {}",
             runtime.version
@@ -390,6 +406,14 @@ pub(crate) async fn ensure_managed_avf_linux_guest_runtime_with_override(
         fs::create_dir_all(parent)
             .await
             .with_context(|| format!("creating {}", parent.display()))?;
+        let archive_download_started = Instant::now();
+        emit_runtime_install_info(
+            observer,
+            &format!(
+                "starting managed AVF Linux runtime archive download for {}",
+                runtime.version
+            ),
+        );
         download_managed_artifact(
             &source.uri,
             &partial_archive,
@@ -408,6 +432,13 @@ pub(crate) async fn ensure_managed_avf_linux_guest_runtime_with_override(
             "managed AVF Linux guest runtime archive",
         )
         .await?;
+        emit_runtime_install_info(
+            observer,
+            &format!(
+                "managed AVF Linux runtime archive download finished in {} ms",
+                archive_download_started.elapsed().as_millis()
+            ),
+        );
     }
 
     let Some(parent) = runtime.runtime_root.parent() else {
@@ -436,6 +467,14 @@ pub(crate) async fn ensure_managed_avf_linux_guest_runtime_with_override(
     let archive_for_extract = final_archive.clone();
     let uri_for_extract = source.uri.clone();
     let extract_dir_for_extract = extract_dir.clone();
+    let extract_started = Instant::now();
+    emit_runtime_install_info(
+        observer,
+        &format!(
+            "extracting managed AVF Linux runtime archive for {}",
+            runtime.version
+        ),
+    );
     tokio::task::spawn_blocking(move || {
         extract_archive_to_dir(
             &archive_for_extract,
@@ -451,7 +490,22 @@ pub(crate) async fn ensure_managed_avf_linux_guest_runtime_with_override(
     })
     .await
     .context("joining managed AVF Linux extraction root task")??;
+    emit_runtime_install_info(
+        observer,
+        &format!(
+            "managed AVF Linux runtime archive extract finished in {} ms",
+            extract_started.elapsed().as_millis()
+        ),
+    );
 
+    let materialize_started = Instant::now();
+    emit_runtime_install_info(
+        observer,
+        &format!(
+            "materializing managed AVF Linux runtime {} into place",
+            runtime.version
+        ),
+    );
     if runtime.runtime_root.exists() {
         let _ = fs::remove_dir_all(&runtime.runtime_root).await;
     }
@@ -465,8 +519,23 @@ pub(crate) async fn ensure_managed_avf_linux_guest_runtime_with_override(
             )
         })?;
     let _ = fs::remove_dir_all(&staging_dir).await;
+    emit_runtime_install_info(
+        observer,
+        &format!(
+            "managed AVF Linux runtime materialization finished in {} ms",
+            materialize_started.elapsed().as_millis()
+        ),
+    );
 
     let mut helper_downloads = Vec::new();
+    let helper_downloads_started = Instant::now();
+    emit_runtime_install_info(
+        observer,
+        &format!(
+            "verifying and downloading managed AVF Linux helpers for {}",
+            runtime.version
+        ),
+    );
     for (helper_name, label) in [
         (AVF_LINUX_KERNEL_HELPER, "Linux kernel"),
         (AVF_LINUX_INITRD_HELPER, "Linux initrd"),
@@ -527,6 +596,13 @@ pub(crate) async fn ensure_managed_avf_linux_guest_runtime_with_override(
     for result in futures::future::join_all(helper_downloads).await {
         result?;
     }
+    emit_runtime_install_info(
+        observer,
+        &format!(
+            "managed AVF Linux helper verification/download finished in {} ms",
+            helper_downloads_started.elapsed().as_millis()
+        ),
+    );
 
     if !runtime.rootfs_image.exists() {
         bail!(
@@ -580,6 +656,14 @@ pub(crate) async fn ensure_managed_avf_linux_guest_runtime_with_override(
         }
     }
     mark_managed_avf_linux_runtime_ready(&runtime.runtime_root).await?;
+    emit_runtime_install_info(
+        observer,
+        &format!(
+            "managed AVF Linux guest runtime {} is fully ready after {} ms total",
+            runtime.version,
+            install_started.elapsed().as_millis()
+        ),
+    );
     Ok(runtime)
 }
 
@@ -618,256 +702,4 @@ pub(crate) fn override_managed_avf_linux_runtime_source_for_test(
 }
 
 #[cfg(test)]
-struct EnvGuard {
-    key: &'static str,
-    prev: Option<String>,
-}
-
-#[cfg(test)]
-impl EnvGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let prev = std::env::var(key).ok();
-        std::env::set_var(key, value);
-        Self { key, prev }
-    }
-}
-
-#[cfg(test)]
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        if let Some(value) = self.prev.take() {
-            std::env::set_var(self.key, value);
-        } else {
-            std::env::remove_var(self.key);
-        }
-    }
-}
-
-#[cfg(test)]
-fn write_staged_runtime(runtime_root: &Path, version: &str) {
-    std::fs::create_dir_all(runtime_root.join("helpers")).expect("create staged runtime helpers");
-    std::fs::write(runtime_root.join("rootfs.raw"), b"rootfs").expect("write staged rootfs");
-    std::fs::write(runtime_root.join("version.txt"), version).expect("write staged version");
-    for helper in [
-        AVF_LINUX_KERNEL_HELPER,
-        AVF_LINUX_INITRD_HELPER,
-        AVF_LINUX_GUEST_AGENT_HELPER,
-        AVF_LINUX_EGRESS_PROXY_HELPER,
-        AVF_LINUX_CONTAINER_STACK_HELPER,
-    ] {
-        let helper_path =
-            managed_avf_linux_helper_path(runtime_root, helper).expect("staged helper path");
-        std::fs::write(helper_path, helper.as_bytes())
-            .unwrap_or_else(|err| panic!("write staged helper {helper}: {err}"));
-    }
-}
-
-#[cfg(test)]
-#[derive(Default)]
-struct RecordingObserver {
-    phases: StdMutex<Vec<(HarnessSetupPhase, String)>>,
-    logs: StdMutex<Vec<(HarnessSetupPhase, HarnessSetupLogLevel, String)>>,
-}
-
-#[cfg(test)]
-impl HarnessSetupObserver for RecordingObserver {
-    fn on_phase(&self, phase: HarnessSetupPhase, message: &str) {
-        self.phases
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push((phase, message.to_string()));
-    }
-
-    fn on_log(&self, phase: HarnessSetupPhase, level: HarnessSetupLogLevel, message: &str) {
-        self.logs
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push((phase, level, message.to_string()));
-    }
-}
-
-#[cfg(test)]
-#[tokio::test]
-async fn ensure_managed_avf_linux_guest_runtime_prefers_explicit_staged_dir() {
-    let _serial = crate::test_support::sandbox_cli_env_test_lock()
-        .lock()
-        .await;
-    let temp = tempfile::tempdir().expect("tempdir");
-    let runtime_root = temp.path().join("runtime");
-    write_staged_runtime(&runtime_root, "staged-override");
-    let _runtime_dir = EnvGuard::set(
-        AVF_LINUX_GUEST_RUNTIME_DIR_ENV,
-        runtime_root.to_str().expect("runtime root utf8"),
-    );
-    let _source =
-        override_managed_avf_linux_runtime_source_for_test(bundled_assets::ManagedRuntimeSource {
-            uri: "locked://runtimes/avf-linux-guest/macos/aarch64/rootfs.raw.zst".to_string(),
-            sha256: "0".repeat(64),
-            version: "lock-version".to_string(),
-            bin: "rootfs.raw".to_string(),
-            helpers: HashMap::from([
-                (
-                    AVF_LINUX_KERNEL_HELPER.to_string(),
-                    bundled_assets::ManagedArtifactSource {
-                        uri: "locked://kernel".to_string(),
-                        sha256: "1".repeat(64),
-                    },
-                ),
-                (
-                    AVF_LINUX_INITRD_HELPER.to_string(),
-                    bundled_assets::ManagedArtifactSource {
-                        uri: "locked://initrd".to_string(),
-                        sha256: "2".repeat(64),
-                    },
-                ),
-                (
-                    AVF_LINUX_GUEST_AGENT_HELPER.to_string(),
-                    bundled_assets::ManagedArtifactSource {
-                        uri: "locked://guest-agent".to_string(),
-                        sha256: "3".repeat(64),
-                    },
-                ),
-                (
-                    AVF_LINUX_EGRESS_PROXY_HELPER.to_string(),
-                    bundled_assets::ManagedArtifactSource {
-                        uri: "locked://egress-proxy".to_string(),
-                        sha256: "4".repeat(64),
-                    },
-                ),
-                (
-                    AVF_LINUX_CONTAINER_STACK_HELPER.to_string(),
-                    bundled_assets::ManagedArtifactSource {
-                        uri: "locked://container-stack".to_string(),
-                        sha256: "5".repeat(64),
-                    },
-                ),
-            ]),
-        });
-
-    let runtime = ensure_managed_avf_linux_guest_runtime(temp.path(), None, None)
-        .await
-        .expect("staged runtime should be used before lock download");
-
-    assert_eq!(runtime.runtime_root, runtime_root);
-    assert_eq!(runtime.version, "staged-override");
-    assert!(!runtime.managed);
-}
-
-#[cfg(test)]
-#[tokio::test]
-async fn explicit_staged_avf_linux_guest_runtime_dir_must_be_ready() {
-    let _serial = crate::test_support::sandbox_cli_env_test_lock()
-        .lock()
-        .await;
-    let temp = tempfile::tempdir().expect("tempdir");
-    let runtime_root = temp.path().join("runtime");
-    std::fs::create_dir_all(runtime_root.join("helpers")).expect("create staged helpers");
-    std::fs::write(runtime_root.join("rootfs.raw"), b"rootfs").expect("write staged rootfs");
-    let _runtime_dir = EnvGuard::set(
-        AVF_LINUX_GUEST_RUNTIME_DIR_ENV,
-        runtime_root.to_str().expect("runtime root utf8"),
-    );
-
-    let err = ensure_managed_avf_linux_guest_runtime(temp.path(), None, None)
-        .await
-        .expect_err("incomplete staged runtime should fail closed");
-
-    assert!(
-        err.to_string()
-            .contains("explicit staged AVF Linux guest runtime dir is incomplete or not ready"),
-        "unexpected error: {err:#}"
-    );
-}
-
-#[cfg(test)]
-#[tokio::test]
-async fn ensure_managed_avf_linux_guest_runtime_reports_artifact_wait_before_shared_install_lock() {
-    let _serial = crate::test_support::sandbox_cli_env_test_lock()
-        .lock()
-        .await;
-    let _install_guard = managed_avf_linux_install_lock().lock().await;
-    let temp = tempfile::tempdir().expect("tempdir");
-    let observer = Arc::new(RecordingObserver::default());
-    let source = bundled_assets::ManagedRuntimeSource {
-        uri: "https://example.test/runtimes/avf-linux-guest/rootfs.raw.zst".to_string(),
-        sha256: "a".repeat(64),
-        version: "ubuntu-noble-arm64-test".to_string(),
-        bin: "rootfs.raw".to_string(),
-        helpers: HashMap::new(),
-    };
-
-    let task = tokio::spawn({
-        let data_root = temp.path().to_path_buf();
-        let observer = observer.clone();
-        async move {
-            let _ = ensure_managed_avf_linux_guest_runtime_with_override(
-                &data_root,
-                Some(&source),
-                Some(&*observer),
-                None,
-            )
-            .await;
-        }
-    });
-
-    tokio::time::timeout(std::time::Duration::from_secs(1), async {
-        loop {
-            let saw_phase = observer
-                .phases
-                .lock()
-                .unwrap_or_else(|poisoned: std::sync::PoisonError<_>| poisoned.into_inner())
-                .iter()
-                .any(|(phase, message)| {
-                    *phase == HarnessSetupPhase::ArtifactDownload
-                        && message == "waiting for managed AVF Linux guest runtime preparation"
-                });
-            let saw_log = observer
-                .logs
-                .lock()
-                .unwrap_or_else(|poisoned: std::sync::PoisonError<_>| poisoned.into_inner())
-                .iter()
-                .any(
-                    |(phase, level, message): &(
-                        HarnessSetupPhase,
-                        HarnessSetupLogLevel,
-                        String,
-                    )| {
-                        *phase == HarnessSetupPhase::ArtifactDownload
-                            && *level == HarnessSetupLogLevel::Info
-                            && message.contains("waiting for another launch")
-                    },
-                );
-            if saw_phase && saw_log {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("observer should report artifact wait before acquiring shared install lock");
-
-    task.abort();
-    let _ = task.await;
-}
-
-#[cfg(test)]
-#[test]
-fn managed_avf_linux_archive_path_preserves_zstd_extension() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let source = bundled_assets::ManagedRuntimeSource {
-        uri: "https://example.test/runtimes/avf-linux-guest/rootfs.raw.zst".to_string(),
-        sha256: "a".repeat(64),
-        version: "ubuntu-noble-arm64-test".to_string(),
-        bin: "rootfs.raw".to_string(),
-        helpers: HashMap::new(),
-    };
-
-    let archive_path = managed_avf_linux_archive_path(temp.path(), &source);
-    assert_eq!(
-        archive_path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .expect("zst extension"),
-        "zst"
-    );
-}
+mod tests;

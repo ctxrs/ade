@@ -345,6 +345,59 @@ describe("useWorkspaceSetupProvisioning", () => {
     expect(startRuntimePrewarm).not.toHaveBeenCalled();
   });
 
+  it("does not start sandbox warmup for remote selections", async () => {
+    vi.mocked(listProviderAuthImportCandidates)
+      .mockResolvedValue({ candidates: [] } as never);
+    vi.mocked(listProviders)
+      .mockResolvedValue([] as never);
+    vi.mocked(getSettings)
+      .mockResolvedValue(configuredTitlingSettings as never);
+
+    const currentStepKeyRef = { current: "container" as const };
+    const setRoutePlan = vi.fn();
+    const setRoutePlanningBusy = vi.fn();
+    const invalidateRoutePlan = vi.fn();
+    const connectDaemonForImport = vi.fn(async () => {});
+    const effectiveTarget = deriveWorkspaceSetupEffectiveTarget("remote", {
+      remoteHostInput: "alice@builder.internal",
+      remotePortInput: "4400",
+      remoteDataDirInput: "/srv/ctx-remote",
+    });
+    if (!effectiveTarget) {
+      throw new Error("Expected a remote workspace setup target.");
+    }
+
+    let latest: ReturnType<typeof useWorkspaceSetupProvisioning> | null = null;
+
+    const Harness = () => {
+      latest = useWorkspaceSetupProvisioning({
+        currentStepKeyRef,
+        selections: {
+          location: "remote",
+          container: "sandbox",
+        },
+        routePlan: null,
+        setRoutePlan,
+        setRoutePlanningBusy,
+        invalidateRoutePlan,
+        desktopApp: true,
+        effectiveTarget,
+        remoteStatus: "connected",
+        remoteStatusRef: { current: "connected" },
+        connectDaemonForImport,
+      });
+      return null;
+    };
+
+    render(createElement(Harness));
+
+    await act(async () => {
+      await latest!.ensureRoutePlanForSelection("sandbox");
+    });
+
+    expect(startRuntimePrewarm).not.toHaveBeenCalled();
+  });
+
   it("does not fail route planning when speculative sandbox warmup fails", async () => {
     vi.mocked(listProviderAuthImportCandidates)
       .mockResolvedValue({ candidates: [] } as never);

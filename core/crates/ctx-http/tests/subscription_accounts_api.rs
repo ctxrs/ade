@@ -1043,6 +1043,7 @@ async fn claude_subscription_accounts_crud_round_trip() {
 
 #[tokio::test]
 async fn claude_login_setup_token_path_succeeds_when_cli_invokes_browser_shim() {
+    let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
@@ -1144,6 +1145,7 @@ echo "ZXY987654321"
 
 #[tokio::test]
 async fn claude_login_start_does_not_fail_on_manual_copy_code_fallback() {
+    let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(

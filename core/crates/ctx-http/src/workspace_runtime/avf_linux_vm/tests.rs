@@ -218,7 +218,9 @@ fn install_bundled_runtime_fixture(dir: &Path) -> (EnvGuard, EnvGuard) {
             std::env::consts::ARCH
         ));
     let helpers_root = runtime_root.join("helpers");
+    let images_root = bundle_root.join("images");
     std::fs::create_dir_all(&helpers_root).expect("create bundled runtime helpers");
+    std::fs::create_dir_all(&images_root).expect("create bundled images");
     std::fs::write(runtime_root.join("rootfs.raw"), b"rootfs").expect("write bundled rootfs");
     std::fs::write(helpers_root.join("kernel"), b"kernel").expect("write bundled kernel");
     std::fs::write(helpers_root.join("initrd"), b"initrd").expect("write bundled initrd");
@@ -231,6 +233,9 @@ fn install_bundled_runtime_fixture(dir: &Path) -> (EnvGuard, EnvGuard) {
         b"container-stack",
     )
     .expect("write bundled container stack");
+    std::fs::write(images_root.join("ctx-harness.tar"), b"ctx-harness-image")
+        .expect("write bundled image tar");
+    let default_image = crate::harness_runtime::default_container_image();
 
     let manifest_path = bundle_root.join("manifest.json");
     std::fs::create_dir_all(manifest_path.parent().expect("bundle manifest parent"))
@@ -254,7 +259,15 @@ fn install_bundled_runtime_fixture(dir: &Path) -> (EnvGuard, EnvGuard) {
                 "bin": "rootfs.raw"
             }],
             "providers": [],
-            "images": [],
+            "images": [{
+                "id": "ctx-harness",
+                "version": "bundled-image",
+                "os": "linux",
+                "arch": std::env::consts::ARCH,
+                "sha256": "bundled-image-sha256",
+                "tar": "images/ctx-harness.tar",
+                "image": default_image,
+            }],
             "daemons": []
         })
         .to_string(),
@@ -489,6 +502,29 @@ else:
         std::fs::set_permissions(&helper, perms).expect("chmod stateful lifecycle helper");
     }
     (helper, log_path)
+}
+
+fn write_ready_runtime_sandbox_cli_shim(dir: &Path) -> PathBuf {
+    let sandbox_cli_path = dir.join("sandbox-cli.sh");
+    let marker_path = dir.join("image-present");
+    std::fs::write(
+        &sandbox_cli_path,
+        format!(
+            "#!/bin/sh\nset -eu\nmarker='{}'\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"inspect\" ]; then\n  if [ -f \"$marker\" ]; then\n    printf '[{{}}]\\n'\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$marker\"\n  printf 'Loaded image\\n'\n  exit 0\nfi\necho \"unexpected sandbox CLI invocation: $*\" >&2\nexit 1\n",
+            marker_path.display()
+        ),
+    )
+    .expect("write sandbox CLI shim");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&sandbox_cli_path)
+            .expect("sandbox cli metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&sandbox_cli_path, perms).expect("chmod sandbox cli shim");
+    }
+    sandbox_cli_path
 }
 
 fn write_guest_exec_helper(dir: &Path) -> (PathBuf, PathBuf) {
@@ -1170,7 +1206,12 @@ async fn shared_substrate_lifecycle_manager_reports_cold_boot_startup() {
     let _helper_lock = helper_env_test_lock().lock().await;
     let temp = tempfile::tempdir().unwrap();
     let (helper, log_path) = write_stateful_lifecycle_helper(temp.path());
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(temp.path());
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
+    let _sandbox_cli_guard = EnvGuard::set(
+        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        sandbox_cli_path.to_str().unwrap(),
+    );
     let (_bundle_dir, _bundle_manifest) = install_bundled_runtime_fixture(temp.path());
     let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "cold_boot");
 
@@ -1233,7 +1274,12 @@ async fn shared_substrate_lifecycle_manager_joins_running_vm_until_launch_ready(
     let _helper_lock = helper_env_test_lock().lock().await;
     let temp = tempfile::tempdir().unwrap();
     let (helper, log_path) = write_stateful_lifecycle_helper(temp.path());
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(temp.path());
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
+    let _sandbox_cli_guard = EnvGuard::set(
+        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        sandbox_cli_path.to_str().unwrap(),
+    );
     let (_bundle_dir, _bundle_manifest) = install_bundled_runtime_fixture(temp.path());
     let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "running_not_ready");
 
@@ -1264,7 +1310,12 @@ async fn shared_substrate_lifecycle_manager_reports_restore_startup() {
     let _helper_lock = helper_env_test_lock().lock().await;
     let temp = tempfile::tempdir().unwrap();
     let (helper, _log_path) = write_stateful_lifecycle_helper(temp.path());
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(temp.path());
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
+    let _sandbox_cli_guard = EnvGuard::set(
+        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        sandbox_cli_path.to_str().unwrap(),
+    );
     let (_bundle_dir, _bundle_manifest) = install_bundled_runtime_fixture(temp.path());
     let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "restore");
     let _restore_supported = EnvGuard::set("CTX_TEST_AVF_RESTORE_SUPPORTED", "1");
@@ -1293,7 +1344,12 @@ async fn shared_substrate_lifecycle_manager_normalizes_restore_failure_to_cold_b
     let _helper_lock = helper_env_test_lock().lock().await;
     let temp = tempfile::tempdir().unwrap();
     let (helper, _log_path) = write_stateful_lifecycle_helper(temp.path());
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(temp.path());
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
+    let _sandbox_cli_guard = EnvGuard::set(
+        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        sandbox_cli_path.to_str().unwrap(),
+    );
     let (_bundle_dir, _bundle_manifest) = install_bundled_runtime_fixture(temp.path());
     let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "restore_failure");
     let _restore_supported = EnvGuard::set("CTX_TEST_AVF_RESTORE_SUPPORTED", "1");
