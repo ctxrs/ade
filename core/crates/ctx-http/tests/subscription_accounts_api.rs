@@ -1143,7 +1143,7 @@ echo "ZXY987654321"
 }
 
 #[tokio::test]
-async fn claude_login_start_rejects_manual_copy_code_fallback() {
+async fn claude_login_start_does_not_fail_on_manual_copy_code_fallback() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
@@ -1217,16 +1217,101 @@ echo "https://claude.ai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.clau
         .send()
         .await
         .expect("start claude login request");
-    assert_eq!(start_resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    let error_body: serde_json::Value = start_resp.json().await.expect("error body");
-    assert!(error_body["error"]
-        .as_str()
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
+    assert!(!start_body.login_id.is_empty());
+    assert_eq!(
+        start_body.auth_url.as_deref(),
+        Some("https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fcallback&state=test")
+    );
+
+    let status =
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
+    assert_eq!(status.status, "failed");
+    assert!(status.account_id.is_none());
+    assert!(status
+        .error
+        .as_deref()
         .unwrap_or_default()
-        .contains("fell back to manual code entry"));
+        .contains("completed but no setup token was detected"));
+}
+
+#[tokio::test]
+async fn claude_login_start_returns_pending_without_initial_auth_url() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let script_path = write_mock_claude_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+sleep 30
+"#,
+    )
+    .await;
+    let mut cfg = AgentServerConfigFile {
+        providers: HashMap::new(),
+        provider_login_commands: HashMap::new(),
+        managed_installs: HashMap::new(),
+        managed_provider_targets: HashMap::new(),
+        managed_install_targets: HashMap::new(),
+    };
+    cfg.provider_login_commands.insert(
+        "claude-cli".to_string(),
+        AgentServerCommand {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![],
+            dependencies: vec![],
+            managed: None,
+        },
+    );
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save agent config");
+
+    let start_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({ "label": "Claude setup-token" }))
+        .send()
+        .await
+        .expect("start claude login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
+    assert!(!start_body.login_id.is_empty());
+    assert!(start_body.auth_url.is_none());
+
+    let status_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/{}",
+        server.base_url, start_body.login_id
+    );
+    let status_resp = server
+        .client
+        .get(status_url)
+        .send()
+        .await
+        .expect("claude login status request");
+    assert_eq!(status_resp.status(), StatusCode::OK);
+    let status: ClaudeLoginStatusResponse =
+        status_resp.json().await.expect("claude login status body");
+    assert_eq!(status.status, "pending");
+    assert!(status.account_id.is_none());
+    assert!(status.error.is_none());
 }
 
 // The real desktop/browser lane still needs OS automation, but the tests below
-// are transcript-focused mock-runtime checks rather than full browser coverage.
+// are process-contract checks rather than full browser coverage.
 #[tokio::test]
 #[ignore = "Claude subscription login requires full OS automation for truthful coverage; excluded from verify:quick until that lane exists"]
 async fn claude_login_start_returns_pending_setup_token_session() {

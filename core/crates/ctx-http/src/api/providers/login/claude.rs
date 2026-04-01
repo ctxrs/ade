@@ -3,14 +3,11 @@ use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::sync::Mutex as StdMutex;
 use tokio::sync::oneshot;
 
-const CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT: Duration = Duration::from_secs(8);
 const CLAUDE_LOGIN_URL_SETTLE_WAIT: Duration = Duration::from_millis(500);
 const CLAUDE_LOGIN_COMPLETION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const CLAUDE_LOGIN_EXIT_GRACE_WAIT: Duration = Duration::from_millis(400);
 const CLAUDE_BROWSER_OPEN_MARKER: &str = "CTX_CLAUDE_AUTH_URL:";
 const CLAUDE_BROWSER_AUTH_TIER: &str = "provider-browser-auth";
-const CLAUDE_UNSUPPORTED_MANUAL_FALLBACK_ERROR: &str =
-    "Claude setup-token fell back to manual code entry, which ctx does not support. Browser launch likely failed before Claude could receive the localhost callback.";
 
 #[cfg(test)]
 mod tests;
@@ -43,11 +40,6 @@ struct ClaudeLoginSpawn {
     killer: Arc<StdMutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
     browser_open_capture_path: PathBuf,
     browser_open_shim_dir: tempfile::TempDir,
-}
-
-fn claude_login_hit_unsupported_manual_fallback(text: &str) -> bool {
-    text.to_ascii_lowercase()
-        .contains("browser didn't open? use the url below to sign in")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -467,7 +459,7 @@ async fn start_claude_login_process(state: &Arc<AppState>) -> anyhow::Result<Cla
     let runtime = resolve_claude_login_runtime(state).await?;
     let ClaudeLoginSpawn {
         line_rx: mut rx,
-        mut exit_rx,
+        exit_rx,
         killer,
         browser_open_capture_path,
         browser_open_shim_dir,
@@ -475,8 +467,14 @@ async fn start_claude_login_process(state: &Arc<AppState>) -> anyhow::Result<Cla
 
     let mut buffered_lines = Vec::new();
     let mut auth_url = None;
-    let mut hit_unsupported_manual_fallback = false;
     let mut transcript = String::new();
+    // We only wait briefly here so `login/start` can return a best-effort
+    // `auth_url` when Claude or the browser-open shim emits one quickly.
+    //
+    // This observation window is advisory UI enrichment only. The authoritative
+    // success/failure contract for Claude setup-token is the child process
+    // outcome plus setup-token capture in `monitor_claude_login(...)`, not any
+    // particular Claude transcript line.
     let hard_deadline = Instant::now() + CLAUDE_LOGIN_URL_WAIT;
     let mut settle_deadline: Option<Instant> = None;
     loop {
@@ -497,8 +495,6 @@ async fn start_claude_login_process(state: &Arc<AppState>) -> anyhow::Result<Cla
             Ok(Some(line)) => {
                 transcript.push_str(&line);
                 transcript.push('\n');
-                hit_unsupported_manual_fallback |=
-                    claude_login_hit_unsupported_manual_fallback(&line);
                 buffered_lines.push(line);
                 upgrade_claude_auth_url_from_capture_path(
                     &mut auth_url,
@@ -520,12 +516,6 @@ async fn start_claude_login_process(state: &Arc<AppState>) -> anyhow::Result<Cla
         }
     }
     upgrade_claude_auth_url_from_capture_path(&mut auth_url, &browser_open_capture_path);
-
-    if hit_unsupported_manual_fallback {
-        let _ = kill_claude_login_process(Arc::clone(&killer)).await;
-        let _ = tokio::time::timeout(CLAUDE_LOGIN_EXIT_GRACE_WAIT, &mut exit_rx).await;
-        bail!(CLAUDE_UNSUPPORTED_MANUAL_FALLBACK_ERROR);
-    }
 
     Ok(ClaudeLoginProcess {
         line_rx: rx,
@@ -614,15 +604,11 @@ async fn monitor_claude_login(
     let mut transcript = String::new();
     let mut observed_auth_url = login.auth_url.clone();
     let mut output_closed = false;
-    let auth_url_deadline = Instant::now() + CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT;
-    let mut completion_deadline = observed_auth_url
-        .as_ref()
-        .map(|_| Instant::now() + CLAUDE_LOGIN_COMPLETION_TIMEOUT);
+    let completion_deadline = Instant::now() + CLAUDE_LOGIN_COMPLETION_TIMEOUT;
     let mut exit_result: Option<anyhow::Result<portable_pty::ExitStatus>> = None;
     let mut terminal_error: Option<String> = None;
 
     for line in std::mem::take(&mut login.buffered_lines) {
-        let had_auth_url = observed_auth_url.is_some();
         append_claude_login_line(
             &state,
             &login_id,
@@ -635,13 +621,6 @@ async fn monitor_claude_login(
             &mut observed_auth_url,
             &login.browser_open_capture_path,
         );
-        if claude_login_hit_unsupported_manual_fallback(&transcript) {
-            terminal_error = Some(CLAUDE_UNSUPPORTED_MANUAL_FALLBACK_ERROR.to_string());
-            break;
-        }
-        if !had_auth_url && observed_auth_url.is_some() {
-            completion_deadline = Some(Instant::now() + CLAUDE_LOGIN_COMPLETION_TIMEOUT);
-        }
     }
 
     while terminal_error.is_none() {
@@ -649,14 +628,15 @@ async fn monitor_claude_login(
             &mut observed_auth_url,
             &login.browser_open_capture_path,
         );
-        let deadline = completion_deadline.unwrap_or(auth_url_deadline);
-        let remaining = deadline.saturating_duration_since(Instant::now());
+        // Claude CLI transcript text is advisory only. The process can launch
+        // the browser successfully and still print fallback/help prose later,
+        // so we keep the session alive until the child exits or the overall
+        // completion timeout is reached.
+        let remaining = completion_deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            terminal_error = Some(if observed_auth_url.is_some() {
-                "claude setup-token timed out waiting for browser sign-in completion".to_string()
-            } else {
-                "claude setup-token did not emit an authentication URL".to_string()
-            });
+            terminal_error = Some(
+                "claude setup-token timed out waiting for browser sign-in completion".to_string(),
+            );
             break;
         }
         let timeout_future = tokio::time::sleep(remaining);
@@ -666,7 +646,6 @@ async fn monitor_claude_login(
             maybe_line = login.line_rx.recv(), if !output_closed => {
                 match maybe_line {
                     Some(line) => {
-                        let had_auth_url = observed_auth_url.is_some();
                         append_claude_login_line(
                             &state,
                             &login_id,
@@ -679,13 +658,6 @@ async fn monitor_claude_login(
                             &mut observed_auth_url,
                             &login.browser_open_capture_path,
                         );
-                        if claude_login_hit_unsupported_manual_fallback(&transcript) {
-                            terminal_error = Some(CLAUDE_UNSUPPORTED_MANUAL_FALLBACK_ERROR.to_string());
-                            break;
-                        }
-                        if !had_auth_url && observed_auth_url.is_some() {
-                            completion_deadline = Some(Instant::now() + CLAUDE_LOGIN_COMPLETION_TIMEOUT);
-                        }
                     }
                     None => {
                         output_closed = true;
@@ -700,11 +672,8 @@ async fn monitor_claude_login(
                 break;
             }
             _ = &mut timeout_future => {
-                terminal_error = Some(if observed_auth_url.is_some() {
-                    "claude setup-token timed out waiting for browser sign-in completion".to_string()
-                } else {
-                    "claude setup-token did not emit an authentication URL".to_string()
-                });
+                terminal_error =
+                    Some("claude setup-token timed out waiting for browser sign-in completion".to_string());
                 break;
             }
         }
