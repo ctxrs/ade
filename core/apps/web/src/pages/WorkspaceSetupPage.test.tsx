@@ -875,6 +875,25 @@ describe("WorkspaceSetupPage", () => {
     expect(screen.queryByTestId("wizard-remote-password-once")).not.toBeInTheDocument();
   });
 
+  it("renders remote daemon endpoint overrides on the remote location step", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+
+    fireEvent.click(screen.getByTestId("wizard-option-location-remote"));
+
+    const portInput = await screen.findByTestId("wizard-remote-port");
+    const dataDirInput = await screen.findByTestId("wizard-remote-data-dir");
+    expect(portInput).toHaveValue("4399");
+    expect(dataDirInput).toHaveValue("");
+
+    fireEvent.change(portInput, { target: { value: "44099" } });
+    fireEvent.change(dataDirInput, { target: { value: "/tmp/ctx-remote-sandbox" } });
+
+    expect(portInput).toHaveValue("44099");
+    expect(dataDirInput).toHaveValue("/tmp/ctx-remote-sandbox");
+  });
+
   it("keeps remote verification and source-step flow cold before create", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);

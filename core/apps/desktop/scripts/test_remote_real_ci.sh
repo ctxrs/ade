@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../../../.. && pwd)"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 ARTIFACT_DIR="${CTX_REMOTE_CI_ARTIFACT_DIR:-${ROOT}/core/apps/desktop/automation/artifacts/remote-contracts/${RUN_ID}}"
+RUN_HOST="${CTX_REMOTE_CI_RUN_HOST:-1}"
 RUN_CONTAINER="${CTX_REMOTE_CI_RUN_CONTAINER:-1}"
 STRICT_REQUIRED="${CTX_AUTOMATION_REMOTE_STRICT:-1}"
 ALLOW_SKIP="${CTX_AUTOMATION_REMOTE_ALLOW_SKIP:-0}"
@@ -13,13 +14,14 @@ DRY_RUN=0
 usage() {
   cat <<'USAGE'
 usage:
-  test_remote_real_ci.sh [--artifacts-dir DIR] [--run-container 1|0] [--dry-run]
+  test_remote_real_ci.sh [--artifacts-dir DIR] [--run-host 1|0] [--run-container 1|0] [--dry-run]
 
 Runs the remote host bootstrap contract and, optionally, the remote container
 contract against the configured remote fixture contract.
 
 important env:
   CTX_REMOTE_CI_ARTIFACT_DIR
+  CTX_REMOTE_CI_RUN_HOST=1|0
   CTX_REMOTE_CI_RUN_CONTAINER=1|0
   CTX_AUTOMATION_REMOTE_STRICT=1|0
   CTX_AUTOMATION_REMOTE_ALLOW_SKIP=1|0
@@ -39,6 +41,14 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       ARTIFACT_DIR="$2"
+      shift 2
+      ;;
+    --run-host)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --run-host requires 1 or 0" >&2
+        exit 2
+      fi
+      RUN_HOST="$2"
       shift 2
       ;;
     --run-container)
@@ -65,12 +75,25 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "${RUN_HOST}" != "0" && "${RUN_HOST}" != "1" ]]; then
+  echo "error: --run-host must be 1 or 0" >&2
+  exit 2
+fi
+
 if [[ "${RUN_CONTAINER}" != "0" && "${RUN_CONTAINER}" != "1" ]]; then
   echo "error: --run-container must be 1 or 0" >&2
   exit 2
 fi
 
 mkdir -p "${ARTIFACT_DIR}"
+
+if [[ -z "${CTX_DESKTOP_SSH_CONFIG_PATH:-}" ]]; then
+  if [[ -n "${CTX_AUTOMATION_REMOTE_CONTAINER_FIXTURE_SSH_CONFIG:-}" ]]; then
+    export CTX_DESKTOP_SSH_CONFIG_PATH="${CTX_AUTOMATION_REMOTE_CONTAINER_FIXTURE_SSH_CONFIG}"
+  elif [[ -n "${CTX_AUTOMATION_REMOTE_FIXTURE_SSH_CONFIG:-}" ]]; then
+    export CTX_DESKTOP_SSH_CONFIG_PATH="${CTX_AUTOMATION_REMOTE_FIXTURE_SSH_CONFIG}"
+  fi
+fi
 
 HOST_DIR="${ARTIFACT_DIR}/remote-host"
 CONTAINER_DIR="${ARTIFACT_DIR}/remote-container"
@@ -131,6 +154,41 @@ sanitize_summary_value() {
   printf '%s' "${1:-}" | tr '\t\r\n' '   '
 }
 
+tail_supports_pid_flag() {
+  tail --help 2>&1 | grep -q -- '--pid'
+}
+
+stream_log_until_pid_exits() {
+  local cmd_pid="$1"
+  local log_file="$2"
+
+  if tail_supports_pid_flag; then
+    tail -n +1 -f --pid="${cmd_pid}" "${log_file}" || true
+    return 0
+  fi
+
+  local next_line=1
+  while kill -0 "${cmd_pid}" >/dev/null 2>&1; do
+    if [[ -f "${log_file}" ]]; then
+      local total_lines="0"
+      total_lines="$(wc -l <"${log_file}" 2>/dev/null || printf '0')"
+      if [[ "${total_lines}" -ge "${next_line}" ]]; then
+        sed -n "${next_line},${total_lines}p" "${log_file}" || true
+        next_line=$((total_lines + 1))
+      fi
+    fi
+    sleep 1
+  done
+
+  if [[ -f "${log_file}" ]]; then
+    local total_lines="0"
+    total_lines="$(wc -l <"${log_file}" 2>/dev/null || printf '0')"
+    if [[ "${total_lines}" -ge "${next_line}" ]]; then
+      sed -n "${next_line},${total_lines}p" "${log_file}" || true
+    fi
+  fi
+}
+
 classify_report() {
   local report_path="$1"
   local allow_skip="$2"
@@ -181,7 +239,7 @@ run_lane() {
       "${cmd[@]}"
     ) >"${wdio_log}" 2>&1 &
     local cmd_pid="$!"
-    tail -n +1 -f --pid="${cmd_pid}" "${wdio_log}" || true
+    stream_log_until_pid_exits "${cmd_pid}" "${wdio_log}"
     wait "${cmd_pid}"
     local cmd_exit="$?"
     set -e
@@ -231,22 +289,34 @@ run_lane() {
 
 run_preflight
 
-host_report="${HOST_DIR}/contract-report.json"
-host_first_turn="${HOST_DIR}/first-turn.json"
-run_lane \
-  "remote-host" \
-  "${HOST_DIR}" \
-  "${host_report}" \
-  env \
-  "CTX_AUTOMATION_REMOTE_STRICT=${STRICT_REQUIRED}" \
-  "CTX_AUTOMATION_REMOTE_ALLOW_SKIP=${ALLOW_SKIP}" \
-  "CTX_AUTOMATION_REMOTE_AUTH_TEST_MODE=${CTX_AUTOMATION_REMOTE_AUTH_TEST_MODE:-key}" \
-  "CTX_AUTOMATION_REMOTE_EXPECT_CONNECT_FAILURE=0" \
-  "CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS=${REQUIRE_FIRST_TURN_SUCCESS}" \
-  "CTX_REMOTE_BOOTSTRAP_CONTRACT_REPORT=${host_report}" \
-  "CTX_REMOTE_BOOTSTRAP_FIRST_TURN_REPORT=${host_first_turn}" \
-  pnpm -C "${ROOT}/core/apps/desktop" test:automation:remote-bootstrap
-host_status=$?
+host_status=0
+if [[ "${RUN_HOST}" == "1" ]]; then
+  host_report="${HOST_DIR}/contract-report.json"
+  host_first_turn="${HOST_DIR}/first-turn.json"
+  run_lane \
+    "remote-host" \
+    "${HOST_DIR}" \
+    "${host_report}" \
+    env \
+    "CARGO_TARGET_DIR=${ROOT}/core/target" \
+    "CTX_AUTOMATION_REMOTE_STRICT=${STRICT_REQUIRED}" \
+    "CTX_AUTOMATION_REMOTE_ALLOW_SKIP=${ALLOW_SKIP}" \
+    "CTX_AUTOMATION_REMOTE_AUTH_TEST_MODE=${CTX_AUTOMATION_REMOTE_AUTH_TEST_MODE:-key}" \
+    "CTX_AUTOMATION_REMOTE_EXPECT_CONNECT_FAILURE=0" \
+    "CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS=${REQUIRE_FIRST_TURN_SUCCESS}" \
+    "CTX_REMOTE_BOOTSTRAP_CONTRACT_REPORT=${host_report}" \
+    "CTX_REMOTE_BOOTSTRAP_FIRST_TURN_REPORT=${host_first_turn}" \
+    pnpm -C "${ROOT}/core/apps/desktop" test:automation:remote-bootstrap
+  host_status=$?
+else
+  printf "%s\t%s\t%s\t%s\t%s\n" \
+    "remote-host" \
+    "skipped" \
+    "0" \
+    "${HOST_DIR}" \
+    "disabled by run_host=0" >>"${SUMMARY_TSV}"
+  echo "[remote-contracts] remote-host: skipped (disabled by run_host=0)" >&2
+fi
 
 container_status=0
 if [[ "${RUN_CONTAINER}" == "1" ]]; then
@@ -256,6 +326,7 @@ if [[ "${RUN_CONTAINER}" == "1" ]]; then
     "${CONTAINER_DIR}" \
     "${container_report}" \
     env \
+    "CARGO_TARGET_DIR=${ROOT}/core/target" \
     "CTX_AUTOMATION_REMOTE_STRICT=${STRICT_REQUIRED}" \
     "CTX_AUTOMATION_REMOTE_ALLOW_SKIP=${ALLOW_SKIP}" \
     "CTX_AUTOMATION_SCENARIOS=${CTX_AUTOMATION_SCENARIOS:-remote-new-sandbox}" \
@@ -272,6 +343,7 @@ fi
   echo "summary_tsv=${SUMMARY_TSV}"
   echo "host_status=${host_status}"
   echo "container_status=${container_status}"
+  echo "run_host=${RUN_HOST}"
   echo "run_container=${RUN_CONTAINER}"
   echo "strict_required=${STRICT_REQUIRED}"
   echo "allow_skip=${ALLOW_SKIP}"

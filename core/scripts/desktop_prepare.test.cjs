@@ -45,7 +45,7 @@ test("desktop_prepare release mode builds web, checks versions, and syncs releas
     "--release",
   ]);
   assert.equal(steps[2].env.CTX_DESKTOP_SKIP_TAURI_BUILD, "1");
-  assert.deepEqual(steps[3].args, ["-C", "apps/web", "build"]);
+  assert.deepEqual(steps[3].args, ["-C", "apps/web", "exec", "vite", "build"]);
   assert.equal(steps[3].env.VITE_CTX_APP_VERSION, "0.22.0");
   assert.deepEqual(steps[4].args, [
     "scripts/prepare_avf_linux_guest_runtime.sh",
@@ -95,4 +95,34 @@ test("desktop_prepare skips AVF guest runtime prep outside darwin arm64 release 
     Object.prototype.hasOwnProperty.call(steps.at(-1).env, "CTX_AVF_LINUX_GUEST_RUNTIME_DIR"),
     false,
   );
+});
+
+test("desktop_prepare skips AVF guest runtime prep when managed AVF metadata is allowed to satisfy prep", () => {
+  const previous = process.env.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD;
+  process.env.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD = "1";
+  try {
+    const steps = createPrepSteps({
+      mode: "release-build",
+      cargoTargetDir: "/tmp/cargo-target",
+      desktopVersion: "0.22.0",
+      platform: "darwin",
+      arch: "arm64",
+    });
+
+    assert.equal(
+      steps.some((step) => step.args.includes("scripts/prepare_avf_linux_guest_runtime.sh")),
+      false,
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(steps.at(-1).env, "CTX_AVF_LINUX_GUEST_RUNTIME_DIR"),
+      false,
+    );
+    assert.equal(steps.at(-1).env.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD, "1");
+  } finally {
+    if (previous === undefined) {
+      delete process.env.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD;
+    } else {
+      process.env.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD = previous;
+    }
+  }
 });

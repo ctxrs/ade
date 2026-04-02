@@ -9,6 +9,8 @@ const TAURI_CARGO = path.join(ROOT, "src-tauri", "Cargo.toml");
 const TAURI_MAIN = path.join(ROOT, "src-tauri", "src", "main.rs");
 const PACKAGE_JSON = path.join(ROOT, "package.json");
 const WDIO_CONF = path.join(ROOT, "automation", "wdio.conf.cjs");
+const REMOTE_REAL_CI_WRAPPER = path.join(ROOT, "scripts", "test_remote_real_ci.sh");
+const REMOTE_DOCKER_WRAPPER = path.join(ROOT, "scripts", "test_remote_docker_contracts.sh");
 const DESKTOP_SMOKE_WRAPPER = path.join(REPO_ROOT, "scripts", "desktop_smoke_with_infisical.sh");
 
 test("production desktop build keeps automation runtime available", () => {
@@ -69,4 +71,65 @@ test("desktop smoke wrapper preserves CrabNebula backend and driver logs by defa
   assert.match(wrapper, /CTX_AUTOMATION_CN_DRIVER_LOG="\$\{CTX_AUTOMATION_CN_DRIVER_LOG:-\$\{DEFAULT_CN_DRIVER_LOG\}\}"/);
   assert.match(wrapper, /\[desktop-smoke\] CrabNebula backend log: \$\{CTX_AUTOMATION_CN_BACKEND_LOG\}/);
   assert.match(wrapper, /\[desktop-smoke\] CrabNebula driver log: \$\{CTX_AUTOMATION_CN_DRIVER_LOG\}/);
+});
+
+test("remote real CI wrapper forwards the shared cargo target dir into both WDIO lanes", () => {
+  const wrapper = fs.readFileSync(REMOTE_REAL_CI_WRAPPER, "utf8");
+  const forwardedTargetDir = /"CARGO_TARGET_DIR=\$\{ROOT\}\/core\/target"/g;
+  assert.equal(wrapper.match(forwardedTargetDir)?.length, 2);
+});
+
+test("remote real CI wrapper can skip the synthetic bootstrap lane when run_host is disabled", () => {
+  const wrapper = fs.readFileSync(REMOTE_REAL_CI_WRAPPER, "utf8");
+  assert.match(wrapper, /RUN_HOST="\$\{CTX_REMOTE_CI_RUN_HOST:-1\}"/);
+  assert.match(wrapper, /--run-host\)/);
+  assert.match(
+    wrapper,
+    /if \[\[ "\$\{RUN_HOST\}" == "1" \]\]; then[\s\S]*test:automation:remote-bootstrap[\s\S]*else[\s\S]*disabled by run_host=0/s,
+  );
+});
+
+test("remote real CI wrapper bridges fixture SSH config into the real desktop app", () => {
+  const wrapper = fs.readFileSync(REMOTE_REAL_CI_WRAPPER, "utf8");
+  assert.match(
+    wrapper,
+    /if \[\[ -z "\$\{CTX_DESKTOP_SSH_CONFIG_PATH:-\}" \]\]; then[\s\S]*CTX_AUTOMATION_REMOTE_CONTAINER_FIXTURE_SSH_CONFIG[\s\S]*CTX_AUTOMATION_REMOTE_FIXTURE_SSH_CONFIG[\s\S]*export CTX_DESKTOP_SSH_CONFIG_PATH=/,
+  );
+});
+
+test("docker remote contract wrapper uses a Bash 3.2-compatible env presence check", () => {
+  const wrapper = fs.readFileSync(REMOTE_DOCKER_WRAPPER, "utf8");
+  assert.match(wrapper, /if \[\[ -z "\$\{CTX_AUTOMATION_REMOTE_ALLOW_SKIP\+x\}" \]\]; then/);
+  assert.doesNotMatch(wrapper, /\[\[ ! -v CTX_AUTOMATION_REMOTE_ALLOW_SKIP \]\]/);
+});
+
+test("docker remote contract wrapper starts a local managed release fixture when no download base is provided", () => {
+  const wrapper = fs.readFileSync(REMOTE_DOCKER_WRAPPER, "utf8");
+  assert.match(wrapper, /CTX_AUTOMATION_REMOTE_USE_LOCAL_RELEASE_FIXTURE:-1/);
+  assert.match(wrapper, /export CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD=1/);
+  assert.match(wrapper, /pnpm -C "\$\{ROOT\}\/core" desktop:prep:release/);
+  assert.match(
+    wrapper,
+    /CTX_DESKTOP_SYNC_BUNDLES=0[\s\S]*CTX_BUNDLE_REMOTE_DAEMONS=0[\s\S]*pnpm -C "\$\{ROOT\}\/core\/apps\/desktop" run build -- --bundles app -- --features automation/s,
+  );
+  assert.match(wrapper, /export CTX_DESKTOP_APP_PATH="\$\{LOCAL_RELEASE_APP_PATH\}"/);
+  assert.match(
+    wrapper,
+    /if \[\[ -n "\$\{CTX_DESKTOP_APP_PATH:-\}" && -z "\$\{CTX_AUTOMATION_SKIP_APP_BUILD\+x\}" \]\]; then[\s\S]*export CTX_AUTOMATION_SKIP_APP_BUILD=1/s,
+  );
+  assert.match(
+    wrapper,
+    /node "\$\{RELEASE_FIXTURE_SCRIPT\}" start --state-file "\$\{RELEASE_FIXTURE_STATE_FILE\}" --channel "\$\{CTX_DESKTOP_CHANNEL:-stable\}"/,
+  );
+  assert.match(
+    wrapper,
+    /export CTX_DESKTOP_ALLOW_INSECURE_LOCAL_UPDATER_FOR_REMOTE_BOOTSTRAP=1/,
+  );
+});
+
+test("docker remote contract wrapper defaults to the real remote sandbox wizard lane", () => {
+  const wrapper = fs.readFileSync(REMOTE_DOCKER_WRAPPER, "utf8");
+  assert.match(wrapper, /RUN_HOST="\$\{CTX_REMOTE_CI_RUN_HOST:-0\}"/);
+  assert.match(wrapper, /CMD=\("\$\{RUNNER_SCRIPT\}" "--run-container" "\$\{RUN_CONTAINER\}"\)/);
+  assert.match(wrapper, /CMD\+=\("--run-host" "\$\{RUN_HOST\}"\)/);
 });

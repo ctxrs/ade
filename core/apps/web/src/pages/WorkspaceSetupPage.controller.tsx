@@ -158,6 +158,10 @@ export function WorkspaceSetupPageController() {
       setNetworkAllowlist={workflow.setters.networkAllowlist}
       remoteHostInput={workflow.remote.remoteHostInput}
       onRemoteInputChange={workflow.remote.onRemoteInputChange}
+      remotePortInput={workflow.remote.remotePortInput}
+      onRemotePortInputChange={workflow.remote.onRemotePortInputChange}
+      remoteDataDirInput={workflow.remote.remoteDataDirInput}
+      onRemoteDataDirInputChange={workflow.remote.onRemoteDataDirInputChange}
       remotePasswordPromptVisible={workflow.remote.remotePasswordPromptVisible}
       remotePasswordInput={workflow.remote.remotePasswordInput}
       setRemotePasswordInput={workflow.remote.setRemotePasswordInput}

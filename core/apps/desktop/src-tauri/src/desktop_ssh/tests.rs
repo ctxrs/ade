@@ -26,6 +26,18 @@ fn wait_for_pid_exit(pid: u32, timeout: std::time::Duration) -> bool {
     !pid_is_alive(pid)
 }
 
+#[cfg(unix)]
+fn spawn_tokio_sleep_child() -> Child {
+    let mut command = Command::new("sh");
+    command
+        .arg("-c")
+        .arg("sleep 30 >/dev/null 2>&1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    command.spawn().expect("spawn tokio sleep child")
+}
+
 #[test]
 fn remote_ctx_bin_values_validate() {
     let valid = validate_remote_ctx_bin("/opt/ctx/bin/ctx").expect("absolute path is valid");
@@ -54,11 +66,16 @@ fn remote_ctx_bin_parent_dir_handles_home_and_absolute_paths() {
 
 #[test]
 fn remote_daemon_exec_command_does_not_inject_system_sandbox_cli_env() {
-    let command = super::install::render_remote_daemon_exec_cmd("~/.ctx/bin/ctx", 44199, "~/.ctx")
-        .expect("render remote daemon exec command");
+    let command = super::install::render_remote_daemon_exec_cmd(
+        "~/.ctx/bin/ctx",
+        44199,
+        "~/.ctx",
+        "~/.ctx/bundles",
+    )
+    .expect("render remote daemon exec command");
     assert!(
         command.contains(
-            "\"$HOME/.ctx/bin/ctx\" serve --bind 127.0.0.1:44199 --data-dir \"$HOME/.ctx\""
+            "CTX_BUNDLE_DIR=\"$HOME/.ctx/bundles\" \"$HOME/.ctx/bin/ctx\" serve --bind 127.0.0.1:44199 --data-dir \"$HOME/.ctx\""
         ),
         "unexpected command: {command}"
     );
@@ -293,4 +310,62 @@ fn remote_stop_command_requires_pkill_success() {
     assert!(cmd.contains("lsof -tiTCP:44199 -sTCP:LISTEN"));
     assert!(cmd.contains("command -v pkill"));
     assert!(cmd.contains("ctx serve"));
+}
+
+#[test]
+#[cfg(unix)]
+fn ssh_handoff_replaces_local_connection_without_pre_disconnect() {
+    let local_child = spawn_tokio_sleep_child();
+    let local_pid = local_child.id();
+    assert!(pid_is_alive(local_pid), "owned local child should start alive");
+
+    let manager = std::sync::Arc::new(ConnectionManager::default());
+    manager.set_local(
+        "http://127.0.0.1:65521".to_string(),
+        "token".to_string(),
+        local_child,
+        false,
+    );
+    assert!(matches!(manager.info().kind, DesktopConnectionKind::Local));
+
+    let ssh_tunnel = spawn_tokio_sleep_child();
+    let ssh_pid = ssh_tunnel.id();
+    assert!(pid_is_alive(ssh_pid), "ssh tunnel child should start alive");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("build current-thread runtime");
+    let result = runtime.block_on(manager.set_ssh_with_blocking_cleanup(
+        "http://127.0.0.1:65522".to_string(),
+        Some("remote-token".to_string()),
+        ssh_tunnel,
+        "fixture.example".to_string(),
+        Some("ctxfixture".to_string()),
+        44199,
+        Some("/tmp/ctx-remote-sandbox".to_string()),
+        SshRuntimeMetadata {
+            managed_ctx_bin: "~/.ctx/bin/ctx".to_string(),
+            active_ctx_bin: Some("~/.ctx/bin/ctx".to_string()),
+        },
+    ));
+
+    assert!(
+        result.is_ok(),
+        "ssh handoff should succeed without tearing down the existing connection first: {result:?}"
+    );
+    assert!(matches!(manager.info().kind, DesktopConnectionKind::Ssh));
+    assert_eq!(
+        manager.info().remote_data_dir.as_deref(),
+        Some("/tmp/ctx-remote-sandbox")
+    );
+    assert!(
+        wait_for_pid_exit(local_pid, std::time::Duration::from_secs(3)),
+        "previous local child {local_pid} should be reclaimed after ssh handoff"
+    );
+    assert!(pid_is_alive(ssh_pid), "ssh tunnel child should remain active after handoff");
+
+    manager.disconnect();
+    assert!(
+        wait_for_pid_exit(ssh_pid, std::time::Duration::from_secs(3)),
+        "ssh tunnel child {ssh_pid} should be reclaimed on disconnect"
+    );
 }

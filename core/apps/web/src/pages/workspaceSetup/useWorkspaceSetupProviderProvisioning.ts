@@ -56,6 +56,7 @@ import {
   type HarnessInstallRowState,
   type RemoteStatus,
 } from "./wizardTypes";
+import { withTimeout } from "./promiseTimeout";
 
 type UseWorkspaceSetupProviderProvisioningArgs = {
   currentStepKeyRef: MutableRefObject<WizardStepKey>;
@@ -91,6 +92,7 @@ export function useWorkspaceSetupProviderProvisioning({
   isCurrentProvisioningRequest,
   getCurrentRoutePlan,
 }: UseWorkspaceSetupProviderProvisioningArgs) {
+  const REMOTE_SPECULATIVE_DAEMON_PROBE_TIMEOUT_MS = 5_000;
   const [authImportCandidates, setAuthImportCandidates] = useState<ProviderAuthImportCandidate[]>([]);
   const [authImportSelected, setAuthImportSelected] = useState<Record<string, boolean>>({});
   const [authImportBusy, setAuthImportBusy] = useState(false);
@@ -139,6 +141,35 @@ export function useWorkspaceSetupProviderProvisioning({
     setHarnessInstallRows({});
     setHarnessInstallError(null);
   }, [clearHarnessInstallObserver]);
+
+  const shouldTreatRemoteSpeculativeConnectFailureAsEmpty = useCallback((
+    location: "local" | "remote",
+    error: unknown,
+  ): boolean => {
+    if (location !== "remote") {
+      return false;
+    }
+    const detail = messageFromError(error).toLowerCase();
+    return detail.includes("failed to reach remote daemon")
+      || detail.includes("remote start skipped")
+      || detail.includes("timed out waiting for daemon health")
+      || detail.includes("timed out probing remote daemon")
+      || (detail.includes("sending request get") && detail.includes("/api/health"));
+  }, []);
+
+  const connectDaemonForSpeculativeRefresh = useCallback(async (
+    location: "local" | "remote",
+  ): Promise<void> => {
+    if (location === "remote") {
+      await withTimeout(
+        connectDaemonForImport(location),
+        REMOTE_SPECULATIVE_DAEMON_PROBE_TIMEOUT_MS,
+        "Timed out probing remote daemon.",
+      );
+      return;
+    }
+    await connectDaemonForImport(location);
+  }, [connectDaemonForImport]);
 
   const mapHarnessInstallCandidate = useCallback((
     provider: ProviderStatus,
@@ -256,9 +287,12 @@ export function useWorkspaceSetupProviderProvisioning({
     setAuthImportError(null);
     try {
       try {
-        await connectDaemonForImport(location);
+        await connectDaemonForSpeculativeRefresh(location);
       } catch (error) {
-        if (shouldDeferSpeculativeLocalRefresh(location)) {
+        if (
+          shouldDeferSpeculativeLocalRefresh(location)
+          || shouldTreatRemoteSpeculativeConnectFailureAsEmpty(location, error)
+        ) {
           if (!isCurrentProvisioningRequest("authImport", request)) {
             return;
           }
@@ -314,11 +348,12 @@ export function useWorkspaceSetupProviderProvisioning({
     }
   }, [
     commitProvisioningMachineState,
-    connectDaemonForImport,
+    connectDaemonForSpeculativeRefresh,
     desktopApp,
     isCurrentProvisioningRequest,
     parsedRemoteHost,
     remoteStatusRef,
+    shouldTreatRemoteSpeculativeConnectFailureAsEmpty,
     shouldDeferSpeculativeLocalRefresh,
   ]);
 
@@ -353,9 +388,12 @@ export function useWorkspaceSetupProviderProvisioning({
     setHarnessInstallError(null);
     try {
       try {
-        await connectDaemonForImport(location);
+        await connectDaemonForSpeculativeRefresh(location);
       } catch (error) {
-        if (shouldDeferSpeculativeLocalRefresh(location)) {
+        if (
+          shouldDeferSpeculativeLocalRefresh(location)
+          || shouldTreatRemoteSpeculativeConnectFailureAsEmpty(location, error)
+        ) {
           if (!isCurrentProvisioningRequest("harnessCandidates", request)) {
             return;
           }
@@ -443,12 +481,13 @@ export function useWorkspaceSetupProviderProvisioning({
   }, [
     attachHarnessInstall,
     commitProvisioningMachineState,
-    connectDaemonForImport,
+    connectDaemonForSpeculativeRefresh,
     desktopApp,
     isCurrentProvisioningRequest,
     mapHarnessInstallCandidate,
     parsedRemoteHost,
     remoteStatusRef,
+    shouldTreatRemoteSpeculativeConnectFailureAsEmpty,
     shouldDeferSpeculativeLocalRefresh,
   ]);
 

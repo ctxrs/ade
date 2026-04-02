@@ -19,7 +19,8 @@ const requireEnv = (key) => {
 
 const ensureSafeE2ETempDir = (dataDir) => {
   const resolved = path.resolve(dataDir);
-  const tmpRoot = path.resolve(os.tmpdir());
+  const configuredTmpRoot = String(process.env.CTX_VOLATILE_TMPDIR ?? "").trim();
+  const tmpRoot = path.resolve(configuredTmpRoot || os.tmpdir());
   const relative = path.relative(tmpRoot, resolved);
   const isOutsideTmp = relative.startsWith("..") || path.isAbsolute(relative);
   if (isOutsideTmp) {
@@ -30,6 +31,26 @@ const ensureSafeE2ETempDir = (dataDir) => {
     throw new Error(`Refusing to delete unexpected e2e data dir name: ${resolved}`);
   }
   return resolved;
+};
+
+export const ensureE2ETempDir = (dataDir) => {
+  const resolved = ensureSafeE2ETempDir(dataDir);
+  fs.mkdirSync(resolved, { recursive: true });
+  return resolved;
+};
+
+export const prepareE2EServerDirs = (dataDir, tmpDir = dataDir) => {
+  const resolvedDataDir = ensureE2ETempDir(dataDir);
+  const resolvedTmpDir = ensureE2ETempDir(tmpDir);
+  fs.rmSync(resolvedDataDir, { recursive: true, force: true });
+  fs.mkdirSync(resolvedDataDir, { recursive: true });
+  if (resolvedTmpDir !== resolvedDataDir) {
+    fs.mkdirSync(resolvedTmpDir, { recursive: true });
+  }
+  return {
+    dataDir: resolvedDataDir,
+    tmpDir: resolvedTmpDir,
+  };
 };
 
 const runSync = (command, args, cwd, env) => {
@@ -109,10 +130,16 @@ const main = () => {
     throw new Error(`Invalid CTX_E2E_PORT: ${portText}`);
   }
 
-  const dataDir = ensureSafeE2ETempDir(requireEnv("CTX_E2E_DATA_DIR"));
+  const { dataDir, tmpDir } = prepareE2EServerDirs(
+    requireEnv("CTX_E2E_DATA_DIR"),
+    process.env.CTX_E2E_TMPDIR ?? requireEnv("CTX_E2E_DATA_DIR"),
+  );
   const authToken = requireEnv("CTX_E2E_AUTH_TOKEN");
   const skipWebBuild = parseBool(process.env.CTX_E2E_SKIP_WEB_BUILD);
   const env = { ...process.env };
+  env.TMPDIR = tmpDir;
+  env.TMP = tmpDir;
+  env.TEMP = tmpDir;
   ensureCargoTargetDir(repoRoot, env);
   env.CTX_MCP_COMMAND = ensureCtxMcpCommand(repoRoot, env);
   const webDistDir = resolveServeWebDistDir(repoRoot, env, skipWebBuild);
@@ -123,9 +150,6 @@ const main = () => {
     fs.rmSync(webDistDir, { recursive: true, force: true });
     runSync(viteBin, resolveWebBuildArgs(webDistDir), webRoot, env);
   }
-
-  fs.rmSync(dataDir, { recursive: true, force: true });
-  fs.mkdirSync(dataDir, { recursive: true });
   fs.writeFileSync(path.join(dataDir, "daemon_auth.json"), JSON.stringify({ token: authToken }, null, 2));
   fs.writeFileSync(path.join(dataDir, "settings.json"), JSON.stringify({ execution: { mode: "host" } }, null, 2));
 

@@ -2,15 +2,37 @@ use super::*;
 
 use tauri_plugin_updater::UpdaterExt;
 
+pub(super) fn should_bypass_remote_bootstrap_freshness_check(channel: &str) -> bool {
+    support::resolve_native_updater_config(channel)
+        .ok()
+        .map(|config| {
+            support::should_allow_remote_bootstrap_insecure_loopback_updater(
+                support::remote_bootstrap_insecure_loopback_override_enabled(),
+                &config.endpoint,
+            )
+        })
+        .unwrap_or(false)
+}
+
 pub(super) async fn ensure_desktop_app_current_for_remote_bootstrap_impl(
     app: &tauri::AppHandle,
     channel: &str,
 ) -> Result<(), String> {
-    let state = resolve_desktop_update_state(app, channel).await.map_err(|err| {
-        format!(
-            "{REMOTE_BOOTSTRAP_FRESHNESS_UNVERIFIED_PREFIX} {err} Update the desktop app, then try again."
-        )
-    })?;
+    if should_bypass_remote_bootstrap_freshness_check(channel) {
+        // EXCEPTION: desktop remote-bootstrap automation uses a loopback HTTP release fixture to
+        // prove the real UI/bootstrap/sandbox flow without depending on a public HTTPS updater
+        // feed. Skip the native updater check entirely here so automation never touches the
+        // platform updater plugin on this loopback path.
+        return Ok(());
+    }
+    let state = match resolve_desktop_update_state(app, channel).await {
+        Ok(state) => state,
+        Err(err) => {
+            return Err(format!(
+                "{REMOTE_BOOTSTRAP_FRESHNESS_UNVERIFIED_PREFIX} {err} Update the desktop app, then try again."
+            ));
+        }
+    };
     validate_remote_bootstrap_desktop_freshness(&state, channel)
 }
 

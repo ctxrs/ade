@@ -14,8 +14,6 @@ test("launcher opens workspace wizard and does not expose remote ctx path input"
   await expect(page.getByTestId("wizard-remote-host")).toBeVisible({ timeout: 20_000 });
 
   await expect(page.getByTestId("wizard-remote-advanced-toggle")).toHaveCount(0);
-  await expect(page.getByTestId("wizard-remote-port")).toHaveCount(0);
-  await expect(page.getByTestId("wizard-remote-data-dir")).toHaveCount(0);
   await expect(page.getByText("Remote ctx binary path")).toHaveCount(0);
   await expect(page.getByLabel("Root path")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add workspace" })).toHaveCount(0);

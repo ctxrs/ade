@@ -83,8 +83,13 @@ function createPrepSteps({
     CARGO_TARGET_DIR: cargoTargetDir,
   };
   const steps = [];
+  const allowManagedAvfRuntimeMissingLocalPayload =
+    String(process.env.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD || "").trim() === "1";
   const shouldPrepareAvfGuestRuntime =
-    platform === "darwin" && arch === "arm64" && syncBundles !== "0";
+    platform === "darwin"
+    && arch === "arm64"
+    && syncBundles !== "0"
+    && !allowManagedAvfRuntimeMissingLocalPayload;
   const avfGuestRuntimeDir = shouldPrepareAvfGuestRuntime
     ? path.join(cargoTargetDir, "desktop-avf-linux-guest-runtime")
     : null;
@@ -117,7 +122,7 @@ function createPrepSteps({
   if (config.buildWeb) {
     steps.push({
       command: "pnpm",
-      args: ["-C", "apps/web", "build"],
+      args: ["-C", "apps/web", "exec", "vite", "build"],
       env: {
         ...baseEnv,
         VITE_CTX_APP_VERSION: desktopVersion,

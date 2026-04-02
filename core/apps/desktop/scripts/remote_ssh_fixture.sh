@@ -7,7 +7,7 @@ FIXTURE_DIR="${SCRIPT_DIR}/remote-fixture"
 usage() {
   cat <<'USAGE' >&2
 usage:
-  remote_ssh_fixture.sh start [--runtime auto|docker|nerdctl] [--auth-mode key|password] [--password VALUE] [--state-file PATH] [--log-dir PATH] [--user NAME]
+  remote_ssh_fixture.sh start [--runtime auto|docker|nerdctl] [--auth-mode key|password] [--password VALUE] [--state-file PATH] [--log-dir PATH] [--user NAME] [--export-container-lane]
   remote_ssh_fixture.sh stop [--state-file PATH]
   remote_ssh_fixture.sh print-env [--state-file PATH]
 
@@ -102,6 +102,17 @@ pick_runtime() {
   die "no supported container runtime found (tried docker, nerdctl)"
 }
 
+default_fixture_image_tag() {
+  local checksum
+  checksum="$(
+    cksum "${FIXTURE_DIR}/Dockerfile" "${FIXTURE_DIR}/entrypoint.sh" \
+      | awk '{print $1}' \
+      | tr '\n' '-' \
+      | sed 's/-$//'
+  )"
+  printf 'ctx-remote-ssh-fixture:local-%s' "${checksum}"
+}
+
 parse_flags() {
   RUNTIME="${CTX_AUTOMATION_REMOTE_FIXTURE_RUNTIME:-auto}"
   AUTH_MODE="${CTX_AUTOMATION_REMOTE_FIXTURE_AUTH_MODE:-key}"
@@ -111,7 +122,8 @@ parse_flags() {
   LOG_DIR="${CTX_AUTOMATION_REMOTE_FIXTURE_LOG_DIR:-}"
   FIXTURE_USER="${CTX_AUTOMATION_REMOTE_FIXTURE_USER:-ctxfixture}"
   DAEMON_PORT="${CTX_AUTOMATION_REMOTE_FIXTURE_DAEMON_PORT:-44099}"
-  IMAGE_TAG="${CTX_AUTOMATION_REMOTE_FIXTURE_IMAGE:-ctx-remote-ssh-fixture:local}"
+  IMAGE_TAG="${CTX_AUTOMATION_REMOTE_FIXTURE_IMAGE:-$(default_fixture_image_tag)}"
+  EXPORT_CONTAINER_LANE="${CTX_AUTOMATION_REMOTE_FIXTURE_EXPORT_CONTAINER_LANE:-0}"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -138,6 +150,10 @@ parse_flags() {
       --user)
         FIXTURE_USER="${2:-}"
         shift 2
+        ;;
+      --export-container-lane)
+        EXPORT_CONTAINER_LANE="1"
+        shift
         ;;
       -h|--help)
         usage
@@ -184,6 +200,18 @@ render_exports_from_loaded_state() {
   quote_export CTX_AUTOMATION_REMOTE_FIXTURE_STATE_FILE "${STATE_FILE}"
   quote_export CTX_AUTOMATION_REMOTE_FIXTURE_RUNTIME "${FIXTURE_RUNTIME}"
   quote_export CTX_AUTOMATION_REMOTE_FIXTURE_LOG_DIR "${FIXTURE_LOG_DIR}"
+  if [[ "${FIXTURE_EXPORT_CONTAINER_LANE:-0}" == "1" ]]; then
+    quote_export CTX_AUTOMATION_REMOTE_CONTAINER_HOST "127.0.0.1"
+    quote_export CTX_AUTOMATION_REMOTE_CONTAINER_USER "${FIXTURE_USER}"
+    quote_export CTX_AUTOMATION_REMOTE_CONTAINER_PORT "${FIXTURE_DAEMON_PORT}"
+    quote_export CTX_AUTOMATION_REMOTE_CONTAINER_DATA_DIR "${FIXTURE_REMOTE_CONTAINER_DATA_DIR}"
+    quote_export CTX_AUTOMATION_REMOTE_CONTAINER_PASSWORD "${FIXTURE_PASSWORD}"
+    quote_export CTX_AUTOMATION_REMOTE_CONTAINER_PASSWORD_ACTUAL "${FIXTURE_PASSWORD}"
+    quote_export CTX_AUTOMATION_REMOTE_CONTAINER_AUTH_MODE "${FIXTURE_AUTH_MODE}"
+    quote_export CTX_AUTOMATION_REMOTE_CONTAINER_SSH_KEY_PATH "${FIXTURE_KEY_PATH}"
+    quote_export CTX_AUTOMATION_REMOTE_CONTAINER_FIXTURE_SSH_CONFIG "${FIXTURE_SSH_CONFIG}"
+    quote_export CTX_AUTOMATION_REMOTE_CONTAINER_SSH_PORT "${FIXTURE_HOST_PORT}"
+  fi
 }
 
 wait_for_ssh_ready() {
@@ -273,6 +301,7 @@ start_fixture() {
   local ssh_config="${ssh_dir}/config"
   local host_alias="ctx-fixture-${RANDOM}-$$"
   local remote_data_dir="/tmp/ctx-e2e-remote-fixture-${RANDOM}/daemon"
+  local remote_container_data_dir="${remote_data_dir}-sandbox"
   local container_name="ctx-remote-fixture-${RANDOM}-$$"
   local container_id=""
   local startup_ok=0
@@ -309,6 +338,7 @@ start_fixture() {
 
   container_id="$("${runtime}" run -d --rm \
     --name "${container_name}" \
+    --privileged \
     -p 127.0.0.1::22 \
     -e "CTX_FIXTURE_USER=${FIXTURE_USER}" \
     -e "CTX_FIXTURE_HOME=/home/${FIXTURE_USER}" \
@@ -351,9 +381,9 @@ EOF
     SSHPASS="${FIXTURE_PASSWORD}" sshpass -e ssh -F "${ssh_config}" \
       -o BatchMode=no \
       -o PreferredAuthentications=password,keyboard-interactive \
-      "${host_alias}" "mkdir -p '${remote_data_dir}'" >/dev/null 2>&1
+      "${host_alias}" "mkdir -p '${remote_data_dir}' '${remote_container_data_dir}'" >/dev/null 2>&1
   else
-    ssh -F "${ssh_config}" "${host_alias}" "mkdir -p '${remote_data_dir}'" >/dev/null 2>&1
+    ssh -F "${ssh_config}" "${host_alias}" "mkdir -p '${remote_data_dir}' '${remote_container_data_dir}'" >/dev/null 2>&1
   fi
 
   : >"${STATE_FILE}"
@@ -367,12 +397,14 @@ EOF
   save_state_var FIXTURE_HOST_PORT "${host_ssh_port}"
   save_state_var FIXTURE_DAEMON_PORT "${DAEMON_PORT}"
   save_state_var FIXTURE_REMOTE_DATA_DIR "${remote_data_dir}"
+  save_state_var FIXTURE_REMOTE_CONTAINER_DATA_DIR "${remote_container_data_dir}"
   save_state_var FIXTURE_AUTH_MODE "${AUTH_MODE}"
   save_state_var FIXTURE_PASSWORD "${FIXTURE_PASSWORD}"
   save_state_var FIXTURE_SSH_HOME "${ssh_home}"
   save_state_var FIXTURE_SSH_CONFIG "${ssh_config}"
   save_state_var FIXTURE_LOG_DIR "${log_dir}"
   save_state_var FIXTURE_IMAGE_TAG "${IMAGE_TAG}"
+  save_state_var FIXTURE_EXPORT_CONTAINER_LANE "${EXPORT_CONTAINER_LANE}"
   save_state_var FIXTURE_STATE_FILE "${STATE_FILE}"
 
   load_state

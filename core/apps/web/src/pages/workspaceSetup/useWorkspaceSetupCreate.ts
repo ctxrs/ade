@@ -363,8 +363,14 @@ export function useWorkspaceSetupCreate({
       const onboardingResult = await ensureOnboardingAfterDaemonConnect({
         allowTitlingInsertion: selections.location === "remote",
       });
-      if (onboardingResult?.insertionStep) {
-        onOnboardingInsertionRequested(onboardingResult.insertionStep);
+      const blockingInsertionStep = onboardingResult?.insertionStep === "harness-downloads"
+        ? null
+        : onboardingResult?.insertionStep;
+      if (blockingInsertionStep) {
+        // Harness downloads remain optional even when a freshly connected remote daemon reports
+        // missing installs. Once the user has committed Create, keep the workspace launch moving
+        // and let the remote daemon surface optional downloads separately.
+        onOnboardingInsertionRequested(blockingInsertionStep);
         return;
       }
       if (titlingStepVisible && titlingMode !== "skip") {

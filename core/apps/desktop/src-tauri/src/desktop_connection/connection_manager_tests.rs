@@ -401,6 +401,72 @@ fn replacing_ssh_connection_stops_previous_tunnel() {
 }
 
 #[test]
+#[cfg(unix)]
+fn replace_with_ssh_defers_previous_tunnel_cleanup_to_caller() {
+    let previous = spawn_tokio_sleep_child();
+    let previous_pid = previous.id();
+    assert!(
+        pid_is_alive(previous_pid),
+        "previous ssh tunnel should start alive"
+    );
+
+    let next = spawn_tokio_sleep_child();
+    let next_pid = next.id();
+    assert!(pid_is_alive(next_pid), "next ssh tunnel should start alive");
+
+    let manager = ConnectionManager::default();
+    manager.set_ssh(
+        "http://127.0.0.1:65523".to_string(),
+        Some("token".to_string()),
+        previous,
+        "example.test".to_string(),
+        Some("dev".to_string()),
+        22,
+        Some("/tmp/ctx".to_string()),
+        SshRuntimeMetadata {
+            managed_ctx_bin: "~/.ctx/bin/ctx".to_string(),
+            active_ctx_bin: Some("~/.ctx/bin/ctx".to_string()),
+        },
+    );
+
+    let displaced = manager.replace_with_ssh(
+        "http://127.0.0.1:65522".to_string(),
+        Some("token".to_string()),
+        next,
+        "example.test".to_string(),
+        Some("dev".to_string()),
+        22,
+        Some("/tmp/ctx".to_string()),
+        SshRuntimeMetadata {
+            managed_ctx_bin: "~/.ctx/bin/ctx".to_string(),
+            active_ctx_bin: Some("~/.ctx/bin/ctx".to_string()),
+        },
+    );
+
+    assert!(displaced.is_some(), "previous tunnel should be returned");
+    assert!(
+        pid_is_alive(previous_pid),
+        "replace_with_ssh should not eagerly terminate the displaced tunnel"
+    );
+    assert!(
+        pid_is_alive(next_pid),
+        "replacement tunnel should remain alive after the swap"
+    );
+
+    cleanup_active_connection(displaced.expect("previous connection should exist"));
+    assert!(
+        wait_for_pid_exit(previous_pid, Duration::from_secs(3)),
+        "caller cleanup should terminate displaced tunnel {previous_pid}"
+    );
+
+    manager.disconnect();
+    assert!(
+        wait_for_pid_exit(next_pid, Duration::from_secs(3)),
+        "active replacement ssh tunnel {next_pid} should be terminated on disconnect"
+    );
+}
+
+#[test]
 fn daemon_request_error_includes_method_and_url_context() {
     let manager = ConnectionManager::default();
     manager.set_local_attached(

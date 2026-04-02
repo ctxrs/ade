@@ -86,14 +86,17 @@ describe("createCtxPlaywrightConfig", () => {
     expect(webServer?.env?.CARGO_TARGET_DIR).toBe(resolvePlaywrightCargoTargetDir(process.env));
   });
 
-  it("defaults e2e tmp and data dirs under the volatile tmp root", async () => {
+  it("defaults e2e tmp and data dirs under separate volatile tmp roots", async () => {
     restoreEnv();
     const config = await createCtxPlaywrightConfig("all");
     const webServer = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
-    const expectedPrefix = path.join(".ctx", "volatile", "tmp", "ctx-e2e-all-");
+    const expectedTmpPrefix = path.join(".ctx", "volatile", "tmp", "ctx-e2e-all-tmp-");
+    const expectedDataPrefix = path.join(".ctx", "volatile", "tmp", "ctx-e2e-all-data-");
 
-    expect(String(webServer?.env?.CTX_E2E_DATA_DIR)).toContain(expectedPrefix);
-    expect(webServer?.env?.CTX_E2E_TMPDIR).toBe(webServer?.env?.CTX_E2E_DATA_DIR);
+    expect(String(webServer?.env?.CTX_E2E_TMPDIR)).toContain(expectedTmpPrefix);
+    expect(String(webServer?.env?.CTX_E2E_DATA_DIR)).toContain(expectedDataPrefix);
+    expect(webServer?.env?.CTX_E2E_TMPDIR).not.toBe(webServer?.env?.CTX_E2E_DATA_DIR);
+    expect(webServer?.env?.CTX_VOLATILE_TMPDIR).toContain(path.join(".ctx", "volatile", "tmp"));
     expect(webServer?.env?.TMPDIR).toBe(webServer?.env?.CTX_E2E_TMPDIR);
     expect(webServer?.env?.TMP).toBe(webServer?.env?.CTX_E2E_TMPDIR);
     expect(webServer?.env?.TEMP).toBe(webServer?.env?.CTX_E2E_TMPDIR);

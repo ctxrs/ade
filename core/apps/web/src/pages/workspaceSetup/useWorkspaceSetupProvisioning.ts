@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type MutableRefObject,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   TitleGenerationLocalStatus,
   TitleGenerationSettings,
@@ -27,8 +20,6 @@ import {
   sessionTitlingPayloadHash,
   type SessionTitlingMode,
 } from "../WorkspaceSetupPage.logic";
-import { type WizardRoutePlan, type WizardStepKey } from "./wizardFlow";
-import type { WizardSelections } from "./wizardFlowReducer";
 import {
   beginWorkspaceSetupProvisioningRefresh,
   completeWorkspaceSetupAuthImportRefresh,
@@ -46,13 +37,11 @@ import {
 import {
   messageFromError,
   type LocalInstallState,
-  type RemoteStatus,
 } from "./wizardTypes";
 import { observeInstall, subscribeInstallProgress, type InstallProgressSnapshot } from "../../state/installProgressMonitor";
 import { sameProvisioningScope } from "../../state/scopeIdentity";
 import type {
   EnsureOnboardingAfterDaemonConnectResult,
-  WorkspaceSetupEffectiveTarget,
   WorkspaceSetupRouteScope,
 } from "./workflowTypes";
 import {
@@ -65,22 +54,11 @@ import { useWorkspaceSetupProviderProvisioning } from "./useWorkspaceSetupProvid
 import { advanceWorkspaceSetupAuthImportStep } from "./advanceWorkspaceSetupAuthImportStep";
 import { ensureWorkspaceSetupSandboxWarmup } from "./ensureWorkspaceSetupSandboxWarmup";
 import { buildTitlingSummaryValue, isTitlingRemoteValid } from "./workspaceSetupTitlingSummary";
-
-const TITLING_PROBE_TIMEOUT_MS = 2_000;
-
-type UseWorkspaceSetupProvisioningArgs = {
-  currentStepKeyRef: MutableRefObject<WizardStepKey>;
-  selections: WizardSelections;
-  routePlan: WizardRoutePlan | null;
-  setRoutePlan: (routePlan: WizardRoutePlan | null) => void;
-  setRoutePlanningBusy: (busy: boolean) => void;
-  invalidateRoutePlan: () => void;
-  desktopApp: boolean;
-  effectiveTarget: WorkspaceSetupEffectiveTarget | null;
-  remoteStatus: RemoteStatus;
-  remoteStatusRef: MutableRefObject<RemoteStatus>;
-  connectDaemonForImport: (locationOverride?: "local" | "remote") => Promise<void>;
-};
+import {
+  TITLING_PROBE_TIMEOUT_MS,
+  type UseWorkspaceSetupProvisioningArgs,
+} from "./useWorkspaceSetupProvisioning.types";
+import type { WizardRoutePlan } from "./wizardFlow";
 
 export function useWorkspaceSetupProvisioning({
   currentStepKeyRef,
@@ -209,6 +187,19 @@ export function useWorkspaceSetupProvisioning({
     const refreshReason = provisioningMachineStateRef.current.refreshReason;
     return refreshReason === "refresh_auth_import" || refreshReason === "ensure_route_plan";
   }, []);
+
+  const shouldTreatRemoteSpeculativeConnectFailureAsSkipped = useCallback((error: unknown): boolean => {
+    if (selections.location !== "remote") {
+      return false;
+    }
+    const detail = messageFromError(error).toLowerCase();
+    return detail.includes("failed to reach remote daemon")
+      || detail.includes("remote start skipped")
+      || detail.includes("timed out waiting for daemon health")
+      || detail.includes("timed out loading daemon settings.")
+      || detail.includes("timed out probing remote daemon")
+      || (detail.includes("sending request get") && detail.includes("/api/health"));
+  }, [selections.location]);
 
   const {
     authImportCandidates,
@@ -371,6 +362,14 @@ export function useWorkspaceSetupProvisioning({
     } catch (error) {
       if (!isCurrentProvisioningRequest("titlingProbe", request) || selectedDaemonTargetKeyRef.current !== targetKey) {
         return null;
+      }
+      if (shouldTreatRemoteSpeculativeConnectFailureAsSkipped(error)) {
+        setTitlingProbeTargetKey(targetKey);
+        setTitlingProbeDone(true);
+        setTitlingConfiguredReady(false);
+        setTitlingStepRequired(false);
+        setTitlingProbeError(null);
+        return false;
       }
       setTitlingProbeTargetKey(targetKey);
       setTitlingProbeDone(true);
@@ -638,6 +637,7 @@ export function useWorkspaceSetupProvisioning({
     refreshTitlingLocalStatus,
     remoteStatusRef,
     selections.location,
+    shouldTreatRemoteSpeculativeConnectFailureAsSkipped,
   ]);
 
   const ensureTitlingProbeForCurrentTarget = useCallback(async (

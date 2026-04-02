@@ -1,14 +1,6 @@
-import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import { Link } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
 import LauncherBrand from "../../components/LauncherBrand";
-import type {
-  ExecutionLaunchSnapshot,
-  InstallTarget,
-  ProviderAuthImportCandidate,
-} from "../../api/client";
-import type { DesktopSshPathEntry } from "../../utils/desktop";
-import type { SessionTitlingMode } from "../WorkspaceSetupPage.logic";
 import {
   AuthImportStepPanel,
   HarnessDownloadsStepPanel,
@@ -20,146 +12,7 @@ import {
 } from "./WorkspaceSetupChrome";
 import { WorkspaceSetupPagination } from "./WorkspaceSetupPagination";
 import { WorkspaceSetupStepHeader } from "./WorkspaceSetupStepHeader";
-import type { WorkspaceSetupLaunchLogLine } from "./launchProgress";
-import type {
-  HarnessInstallProviderRow,
-  HarnessInstallRowState,
-  ImportInitDialogState,
-  RemoteStatus,
-  SshSuggestion,
-  WizardStep,
-} from "./wizardTypes";
-import type { WizardStepKey } from "./wizardFlow";
-
-type WorkspaceSetupPageViewProps = {
-  importInitDialog: ImportInitDialogState | null;
-  resolveImportInitDialog: (confirmed: boolean) => void;
-  infoStep: WizardStep | null;
-  openInfoKey: string | null;
-  setOpenInfoKey: Dispatch<SetStateAction<string | null>>;
-  step: WizardStep;
-  steps: WizardStep[];
-  stepIndex: number;
-  selections: Record<string, string>;
-  createError: string | null;
-  setCreateError: Dispatch<SetStateAction<string | null>>;
-  showLaunchPanel: boolean;
-  launchSnapshot: ExecutionLaunchSnapshot | null;
-  currentLaunchStepLabel: string;
-  currentLaunchElapsed: string;
-  currentLaunchEtaLabel: string;
-  launchCopyLabel: string;
-  onCopyLaunchDiagnostics: () => void;
-  launchLogs: WorkspaceSetupLaunchLogLine[];
-  onSelectOption: (stepKey: string, optionId: string) => void;
-  networkAllowlist: string;
-  setNetworkAllowlist: Dispatch<SetStateAction<string>>;
-  remoteHostInput: string;
-  onRemoteInputChange: (value: string) => void;
-  remotePasswordPromptVisible: boolean;
-  remotePasswordInput: string;
-  setRemotePasswordInput: (value: string) => void;
-  remoteStatus: RemoteStatus;
-  setRemoteStatus: (status: RemoteStatus) => void;
-  remoteError: string | null;
-  setRemoteError: (value: string | null) => void;
-  sshSuggestions: SshSuggestion[];
-  authImportBusy: boolean;
-  authImportError: string | null;
-  authImportCandidates: ProviderAuthImportCandidate[];
-  authImportSelected: Record<string, boolean>;
-  setAuthImportSelected: Dispatch<SetStateAction<Record<string, boolean>>>;
-  harnessByProviderId: Map<string, { logoSrc?: string; invertInDark?: boolean; invertInLight?: boolean }>;
-  onSkipAuthImport: () => void;
-  harnessInstallBusy: boolean;
-  harnessInstallError: string | null;
-  selectedHarnessRunningCount: number;
-  selectedHarnessBlockedCount: number;
-  harnessInstallCandidates: HarnessInstallProviderRow[];
-  harnessDownloadsCanScroll: boolean;
-  harnessDownloadsAtBottom: boolean;
-  harnessDownloadsScrollRef: MutableRefObject<HTMLDivElement | null>;
-  updateHarnessDownloadsScrollState: () => void;
-  harnessInstallSelected: Record<string, boolean>;
-  setHarnessInstallSelected: Dispatch<SetStateAction<Record<string, boolean>>>;
-  harnessInstallRows: Record<string, HarnessInstallRowState>;
-  selectedHarnessInstallTarget: InstallTarget;
-  cancelHarnessInstall: (providerId: string) => void;
-  onSkipHarnessDownloads: () => void;
-  titlingProbeBusy: boolean;
-  titlingProbeError: string | null;
-  titlingPersistError: string | null;
-  titlingStatusError: string | null;
-  titlingMode: SessionTitlingMode;
-  setTitlingMode: Dispatch<SetStateAction<SessionTitlingMode>>;
-  titlingLocalInstallBusy: boolean;
-  titlingPersistBusy: boolean;
-  onSelectTitlingLocal: () => void;
-  titlingLocalStatus: { ready?: boolean } | null;
-  titlingLocalInstall: { state: string; pct: number | null; error?: string } | null;
-  titlingRemoteBaseUrl: string;
-  setTitlingRemoteBaseUrl: Dispatch<SetStateAction<string>>;
-  titlingRemoteApiKey: string;
-  setTitlingRemoteApiKey: Dispatch<SetStateAction<string>>;
-  titlingRemoteModel: string;
-  setTitlingRemoteModel: Dispatch<SetStateAction<string>>;
-  titlingRemoteAdvancedOpen: boolean;
-  setTitlingRemoteAdvancedOpen: Dispatch<SetStateAction<boolean>>;
-  titlingRemoteUseJson: boolean;
-  setTitlingRemoteUseJson: Dispatch<SetStateAction<boolean>>;
-  invalidateTitlingPersisted: () => void;
-  onSkipTitling: () => void;
-  needsSourcePath: boolean;
-  sourcePath: string;
-  setSourcePath: Dispatch<SetStateAction<string>>;
-  onPickLocalFolder: () => void;
-  importRepoStatus: "idle" | "checking" | "ok" | "error";
-  importRepoNote: string | null;
-  remotePathSuggestions: DesktopSshPathEntry[];
-  remotePathStatus: "idle" | "loading" | "error";
-  remotePathError: string | null;
-  repoUrl: string;
-  setRepoUrl: Dispatch<SetStateAction<string>>;
-  repoBranch: string;
-  setRepoBranch: Dispatch<SetStateAction<string>>;
-  useSandboxStaging: boolean;
-  setupHook: string;
-  setSetupHook: Dispatch<SetStateAction<string>>;
-  workspaceName: string;
-  setWorkspaceName: Dispatch<SetStateAction<string>>;
-  mergeQueueSkipped: boolean;
-  targetBranch: string;
-  setTargetBranch: Dispatch<SetStateAction<string>>;
-  setTargetBranchTouched: Dispatch<SetStateAction<boolean>>;
-  verifyCommand: string;
-  setVerifyCommand: Dispatch<SetStateAction<string>>;
-  mergeAdvancedOpen: boolean;
-  setMergeAdvancedOpen: Dispatch<SetStateAction<boolean>>;
-  pushOnSuccess: boolean;
-  setPushOnSuccess: Dispatch<SetStateAction<boolean>>;
-  pushRemote: string;
-  setPushRemote: Dispatch<SetStateAction<string>>;
-  pushBranch: string;
-  setPushBranch: Dispatch<SetStateAction<string>>;
-  setPushBranchTouched: Dispatch<SetStateAction<boolean>>;
-  enableMergeQueueIfSkipped: () => void;
-  onMergeSkip: () => void;
-  harnessSummaryValue: string;
-  titlingSummaryValue: string;
-  sourceStepComplete: boolean;
-  titlingRemoteValid: boolean;
-  hasRemoteHost: boolean;
-  goToStepKey: (key: WizardStepKey) => void;
-  isFirst: boolean;
-  isLast: boolean;
-  canAdvance: boolean;
-  creating: boolean;
-  onCreate: () => void;
-  onNext: () => void;
-  goRelativeStep: (delta: number) => void;
-  createButtonLabel: string;
-  nextButtonLabel: string;
-};
+import type { WorkspaceSetupPageViewProps } from "./WorkspaceSetupPageView.types";
 
 export function WorkspaceSetupPageView({
   importInitDialog,
@@ -186,6 +39,10 @@ export function WorkspaceSetupPageView({
   setNetworkAllowlist,
   remoteHostInput,
   onRemoteInputChange,
+  remotePortInput,
+  onRemotePortInputChange,
+  remoteDataDirInput,
+  onRemoteDataDirInputChange,
   remotePasswordPromptVisible,
   remotePasswordInput,
   setRemotePasswordInput,
@@ -349,6 +206,29 @@ export function WorkspaceSetupPageView({
                           placeholder="user@host"
                           value={remoteHostInput}
                           onChange={(event) => onRemoteInputChange(event.target.value)}
+                        />
+                      </label>
+                    </div>
+                    <div className="wizard-input">
+                      <label>
+                        Remote daemon port
+                        <input
+                          data-testid="wizard-remote-port"
+                          inputMode="numeric"
+                          placeholder="4399"
+                          value={remotePortInput}
+                          onChange={(event) => onRemotePortInputChange(event.target.value)}
+                        />
+                      </label>
+                    </div>
+                    <div className="wizard-input">
+                      <label>
+                        Remote data directory
+                        <input
+                          data-testid="wizard-remote-data-dir"
+                          placeholder="Optional; defaults to ~/.ctx"
+                          value={remoteDataDirInput}
+                          onChange={(event) => onRemoteDataDirInputChange(event.target.value)}
                         />
                       </label>
                     </div>

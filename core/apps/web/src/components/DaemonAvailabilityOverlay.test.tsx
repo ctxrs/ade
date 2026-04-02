@@ -305,4 +305,21 @@ describe("DaemonAvailabilityOverlay", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Open launcher")).not.toBeInTheDocument();
   });
+
+  it("does not poll daemon availability while the workspace setup route suppresses the overlay", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopGetVersion).mockResolvedValue("2.0.0");
+    vi.mocked(daemonFetchRaw).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify(baseHealth),
+      content_type: "application/json",
+    });
+
+    renderOverlay("/workspace-setup");
+    await new Promise((resolve) => window.setTimeout(resolve, 25));
+
+    expect(vi.mocked(daemonFetchRaw)).not.toHaveBeenCalled();
+    expect(vi.mocked(desktopGetConnection)).not.toHaveBeenCalled();
+    expect(screen.queryByText("ctx daemon unavailable")).not.toBeInTheDocument();
+  });
 });

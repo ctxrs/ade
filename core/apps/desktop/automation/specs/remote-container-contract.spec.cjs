@@ -18,7 +18,9 @@ const {
   parseBoolean,
   resolveRemoteFixtureEnv,
 } = require("../helpers/remote_fixture_contract.cjs");
+const { expectedRemoteRootPrefix } = require("../helpers/remote_container_contract_paths.cjs");
 
+const REMOTE_CTX_BIN = "$HOME/.ctx/bin/ctx";
 const reportPath = String(
   process.env.CTX_REMOTE_CONTAINER_CONTRACT_REPORT || path.join("/tmp", "ctx-remote-container-contract.json"),
 ).trim();
@@ -66,6 +68,7 @@ const sshBaseArgs = ({ useKey = true } = {}) => {
 const remoteSsh = (command, { auth = "key", label = "ssh" } = {}) => {
   const usePassword = auth === "password";
   const args = sshBaseArgs({ useKey: !usePassword });
+  const remoteCommand = `bash -lc ${JSON.stringify(command)}`;
   let binary = "ssh";
   let finalArgs;
   let env = process.env;
@@ -87,11 +90,11 @@ const remoteSsh = (command, { auth = "key", label = "ssh" } = {}) => {
       "-o",
       "NumberOfPasswordPrompts=1",
       fixture.target,
-      command,
+      remoteCommand,
     ];
     env = { ...process.env, SSHPASS: password };
   } else {
-    finalArgs = [...args, "-o", "BatchMode=yes", fixture.target, command];
+    finalArgs = [...args, "-o", "BatchMode=yes", fixture.target, remoteCommand];
   }
 
   const result = spawnSync(binary, finalArgs, {
@@ -104,6 +107,7 @@ const remoteSsh = (command, { auth = "key", label = "ssh" } = {}) => {
     binary,
     args: finalArgs,
     command,
+    remote_command: remoteCommand,
     target: fixture.target,
     exit_code: result.status ?? null,
     signal: result.signal ?? null,
@@ -159,6 +163,30 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
   const localBase = mkTempDir(`ctx-remote-container-contract-${runId}-`);
   const remoteBase = `/tmp/ctx-remote-contract-${runId}`;
   const remoteDataDir = fixture.dataDir || `${remoteBase}/daemon`;
+  const remoteAuthMode = fixture.authMode === "password" ? "password" : "key";
+
+  const managedBinaryState = () =>
+    remoteSsh(`if [ -x ${REMOTE_CTX_BIN} ]; then echo present; else echo missing; fi`, {
+      auth: remoteAuthMode,
+      label: "managed-state",
+    }).trim();
+
+  const resetRemoteBootstrapState = () => {
+    remoteSsh(
+      [
+        "set -euo pipefail",
+        "if command -v pkill >/dev/null 2>&1; then pkill -x ctx >/dev/null 2>&1 || true; fi",
+        `rm -f ${REMOTE_CTX_BIN}`,
+        `rm -rf ${JSON.stringify(remoteDataDir)}`,
+        `rm -rf ${JSON.stringify(remoteBase)}`,
+        `mkdir -p ${JSON.stringify(remoteBase)}`,
+      ].join("; "),
+      {
+        auth: remoteAuthMode,
+        label: "remote-bootstrap-reset",
+      },
+    );
+  };
 
   after(async () => {
     try {
@@ -234,13 +262,20 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
     try {
       contractRecorder.recordAssertion("fixture_preflight", "pass", "resolved remote sandbox fixture contract");
 
+      resetRemoteBootstrapState();
+      const beforeState = managedBinaryState();
+      contractRecorder.recordArtifact("managed_binary_state_before_connect", { state: beforeState });
+      if (beforeState !== "missing") {
+        throw new Error(`expected managed binary to be missing before connect, got '${beforeState}'`);
+      }
+
       await browser.url(`tauri://localhost/workspace-setup?remoteContainerContract=${Date.now()}`);
       await waitForTauri();
 
       const sandboxCliProbe = remoteSsh(
         "if { [ -n \"${CTX_HARNESS_SANDBOX_CLI_PATH:-}\" ] && [ -x \"${CTX_HARNESS_SANDBOX_CLI_PATH}\" ]; } || command -v nerdctl >/dev/null 2>&1; then echo yes; else echo no; fi",
         {
-          auth: fixture.authMode === "password" ? "password" : "key",
+          auth: remoteAuthMode,
           label: "sandbox-cli-probe",
         },
       ).trim();
@@ -252,14 +287,6 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
         this.skip();
       }
       contractRecorder.recordAssertion("sandbox_cli_probe", "pass", "remote sandbox substrate available");
-
-      remoteSsh(
-        `set -euo pipefail; rm -rf ${JSON.stringify(remoteBase)}; mkdir -p ${JSON.stringify(remoteBase)}`,
-        {
-          auth: fixture.authMode === "password" ? "password" : "key",
-          label: "remote-base-prepare",
-        },
-      );
 
       const remoteDest = `${remoteBase}/new-sandbox`;
       workspaceId = await runWizardScenario({
@@ -278,12 +305,37 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
       const workspace = await getWorkspace(workspaceId);
       rootPath = String(workspace.root_path || "");
       contractRecorder.recordArtifact("workspace", workspace);
-      if (!rootPath.startsWith(remoteBase)) {
-        throw new Error(`expected remote root under ${remoteBase}, got ${rootPath}`);
+      const expectedRootPrefix = expectedRemoteRootPrefix({
+        remoteBase,
+        remoteDataDir,
+        container: "sandbox",
+        sourceKind: "new",
+      });
+      if (!rootPath.startsWith(expectedRootPrefix)) {
+        throw new Error(`expected remote root under ${expectedRootPrefix}, got ${rootPath}`);
+      }
+
+      const afterState = managedBinaryState();
+      contractRecorder.recordArtifact("managed_binary_state_after_connect", { state: afterState });
+      if (afterState !== "present") {
+        throw new Error(`expected managed binary at ${REMOTE_CTX_BIN}, got '${afterState}'`);
+      }
+      const helpOutput = remoteSsh(`if [ -x ${REMOTE_CTX_BIN} ]; then ${REMOTE_CTX_BIN} --help; else echo missing; fi`, {
+        auth: remoteAuthMode,
+        label: "managed-binary-help",
+      });
+      contractRecorder.recordArtifact("managed_binary_help_output", helpOutput);
+      if (!helpOutput || helpOutput === "missing" || !helpOutput.includes("Usage: ctx")) {
+        throw new Error(`expected installed managed binary to execute and print usage, got '${helpOutput}'`);
       }
 
       await assertNoDaemonOverlayFor(20_000);
       contractRecorder.recordAssertion("workspace_launch", "pass", "remote workspace launched without daemon overlay");
+      const daemonHealth = await safeDaemonJson("GET", "/api/health");
+      contractRecorder.recordArtifact("daemon_health_post_bootstrap", daemonHealth);
+      if (daemonHealth.status !== 200) {
+        throw new Error(`expected /api/health 200 after remote sandbox launch, got ${daemonHealth.status}`);
+      }
 
       try {
         provider = await ensureCodexOpenRouterWorkspaceReady(workspaceId, {

@@ -1,17 +1,8 @@
 {
   "version": 1,
-  "generated_at": "2026-03-31T13:51:05Z",
+  "generated_at": "2026-04-02T01:44:13Z",
   "providers": [],
   "runtimes": [
-    {
-      "id": "avf-linux-guest",
-      "version": "ubuntu-noble-arm64-313b9a54b702",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "0ade3ab4529204da7250bb140fbedf8f04947fd80516fddbfe0c277244a5604c",
-      "root": "runtimes/avf-linux-guest/macos/aarch64/ubuntu-noble-arm64-313b9a54b702",
-      "bin": "rootfs.raw"
-    },
     {
       "id": "ctx-mcp",
       "version": "0.1.0",
@@ -38,14 +29,14 @@
       "id": "ctx-daemon",
       "os": "linux",
       "arch": "aarch64",
-      "sha256": "c4e72c465a91895c6b9025ea42203ff66c0c38e6e970284ec73a511ccea9298a",
+      "sha256": "06ff8d6460ff20a9d435a55aa19dbdaf6dadc81b46e36cf55365deb737702ff0",
       "bin": "daemons/ctx-daemon-linux-aarch64"
     },
     {
       "id": "ctx-daemon",
       "os": "linux",
       "arch": "x86_64",
-      "sha256": "e110d2ce293682d42297c3152991005f2ea9d9a78e38d6d783c22e7313d47552",
+      "sha256": "38a8e2be1a5e019027f03f1303ecf69a80488dfc3d5f699b138bf07970cca23d",
       "bin": "daemons/ctx-daemon-linux-x86_64"
     }
   ]

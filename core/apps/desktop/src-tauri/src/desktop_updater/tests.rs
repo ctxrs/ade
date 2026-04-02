@@ -2,6 +2,7 @@ use super::*;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
+use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -137,6 +138,100 @@ fn resolve_updater_pubkey_falls_back_to_build_value_when_runtime_invalid() {
 #[test]
 fn resolve_updater_pubkey_returns_none_when_both_sources_empty() {
     assert!(support::resolve_updater_pubkey(Some("".to_string()), Some("  ")).is_none());
+}
+
+#[test]
+fn remote_bootstrap_insecure_loopback_override_allows_only_explicit_local_http() {
+    assert!(support::should_allow_remote_bootstrap_insecure_loopback_updater(
+        true,
+        "http://127.0.0.1:43123/releases/stable/latest-tauri.json"
+    ));
+    assert!(support::should_allow_remote_bootstrap_insecure_loopback_updater(
+        true,
+        "http://localhost:43123/releases/stable/latest-tauri.json"
+    ));
+    assert!(!support::should_allow_remote_bootstrap_insecure_loopback_updater(
+        false,
+        "http://127.0.0.1:43123/releases/stable/latest-tauri.json"
+    ));
+    assert!(!support::should_allow_remote_bootstrap_insecure_loopback_updater(
+        true,
+        "https://127.0.0.1:43123/releases/stable/latest-tauri.json"
+    ));
+    assert!(!support::should_allow_remote_bootstrap_insecure_loopback_updater(
+        true,
+        "http://example.test/releases/stable/latest-tauri.json"
+    ));
+}
+
+struct EnvVarGuard {
+    key: &'static str,
+    original: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: impl AsRef<OsStr>) -> Self {
+        let original = std::env::var_os(key);
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, original }
+    }
+
+    fn unset(key: &'static str) -> Self {
+        let original = std::env::var_os(key);
+        unsafe {
+            std::env::remove_var(key);
+        }
+        Self { key, original }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(value) = self.original.as_ref() {
+            unsafe {
+                std::env::set_var(self.key, value);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+}
+
+#[test]
+fn remote_bootstrap_insecure_loopback_override_defaults_to_automation_builds() {
+    let _guard = EnvVarGuard::unset(support::REMOTE_BOOTSTRAP_INSECURE_LOOPBACK_UPDATER_ENV);
+    assert_eq!(
+        support::remote_bootstrap_insecure_loopback_override_enabled(),
+        cfg!(feature = "automation")
+    );
+}
+
+#[test]
+fn remote_bootstrap_insecure_loopback_override_honors_explicit_env() {
+    let _guard = EnvVarGuard::set(
+        support::REMOTE_BOOTSTRAP_INSECURE_LOOPBACK_UPDATER_ENV,
+        "1",
+    );
+    assert!(support::remote_bootstrap_insecure_loopback_override_enabled());
+}
+
+#[test]
+fn remote_bootstrap_freshness_check_bypasses_loopback_release_fixture_before_native_updater() {
+    let _override_guard = EnvVarGuard::set(
+        support::REMOTE_BOOTSTRAP_INSECURE_LOOPBACK_UPDATER_ENV,
+        "1",
+    );
+    let _endpoint_guard = EnvVarGuard::set(
+        "CTX_DESKTOP_UPDATER_ENDPOINT",
+        "http://127.0.0.1:43123/releases/{channel}/latest-tauri.json",
+    );
+    assert!(recovery::should_bypass_remote_bootstrap_freshness_check(
+        "stable"
+    ));
 }
 
 #[test]

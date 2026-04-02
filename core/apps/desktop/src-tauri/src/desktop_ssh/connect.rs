@@ -154,6 +154,12 @@ fn execute_bootstrap_plan(
     }
 
     set_job_phase(job_id.as_deref(), ConnectJobPhase::StartingRemoteDaemon);
+    sync_remote_bundle_metadata_over_ssh(
+        &app,
+        &plan.target.host,
+        plan.target.user.as_deref(),
+        plan.target.remote_data_dir.as_deref(),
+    )?;
     start_remote_daemon_over_ssh(
         &plan.target.host,
         plan.target.user.as_deref(),
@@ -199,11 +205,10 @@ async fn desktop_connect_ssh_inner(
     req: SshConnectReq,
     job_id: Option<String>,
 ) -> Result<DesktopConnectionInfo, String> {
-    {
-        let state = app.state::<ConnectionManager>();
-        state.disconnect();
-    }
-
+    // Preserve any currently active transport until the SSH tunnel and remote daemon are fully
+    // ready, then swap over with ConnectionManager::set_ssh_with_blocking_cleanup. Dropping the
+    // connection to `none` up front invites background local auto-connect paths to race the SSH
+    // bootstrap and can strand the wizard on Create against the wrong daemon.
     let target = normalize_connect_target(req)?;
     let channel = normalize_update_channel(std::env::var("CTX_DESKTOP_CHANNEL").ok().as_deref())?;
     let prepared = tauri::async_runtime::spawn_blocking({
@@ -233,7 +238,8 @@ async fn desktop_connect_ssh_inner(
 
     set_job_phase(job_id.as_deref(), ConnectJobPhase::HandingOffConnection);
     let state = app.state::<ConnectionManager>();
-    state.set_ssh(
+    state
+        .set_ssh_with_blocking_cleanup(
         connected.base_url,
         Some(connected.token),
         connected
@@ -245,7 +251,8 @@ async fn desktop_connect_ssh_inner(
         target.remote_port,
         target.remote_data_dir,
         connected.runtime,
-    );
+    )
+        .await?;
     Ok(state.info())
 }
 

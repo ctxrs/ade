@@ -45,7 +45,7 @@ const sha256File = (filePath) => {
 const ensureParityPrep = ({ prepEnv }) => {
   run("node", ["scripts/desktop_check_versions.cjs"], { env: prepEnv });
   run("cargo", ["build", "-p", "ctx-http", "-p", "ctx-mcp"], { env: prepEnv });
-  run("pnpm", ["-C", "apps/web", "build"], { env: prepEnv });
+  run("pnpm", ["-C", "apps/web", "exec", "vite", "build"], { env: prepEnv });
   run("node", ["scripts/desktop_sync_resources.cjs", "--profile", "debug"], { env: prepEnv });
 };
 

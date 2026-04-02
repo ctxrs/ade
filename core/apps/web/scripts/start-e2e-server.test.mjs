@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   ensureCargoTargetDir,
+  ensureE2ETempDir,
+  prepareE2EServerDirs,
   resolveCargoTargetDir,
   resolveE2EWebDistDir,
   resolveServeWebDistDir,
@@ -65,5 +67,28 @@ describe("start-e2e-server", () => {
     const targetDir = ensureCargoTargetDir(repoRoot, { CARGO_TARGET_DIR: "tmp/cargo" });
     expect(targetDir).toBe(path.resolve(repoRoot, "tmp/cargo"));
     expect(fs.statSync(targetDir).isDirectory()).toBe(true);
+  });
+
+  it("creates the e2e temp dir before build tooling uses TMPDIR", () => {
+    const tempDir = ensureE2ETempDir(path.join(os.tmpdir(), "ctx-e2e-start-server-tmp"));
+    expect(tempDir).toBe(path.resolve(os.tmpdir(), "ctx-e2e-start-server-tmp"));
+    expect(fs.statSync(tempDir).isDirectory()).toBe(true);
+  });
+
+  it("cleans the data dir before startup without breaking an explicitly shared tmp dir", () => {
+    const sharedDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-e2e-start-server-shared-"));
+    const staleFile = path.join(sharedDir, "stale.txt");
+    fs.writeFileSync(staleFile, "stale");
+
+    const prepared = prepareE2EServerDirs(sharedDir, sharedDir);
+
+    expect(prepared.dataDir).toBe(sharedDir);
+    expect(prepared.tmpDir).toBe(sharedDir);
+    expect(fs.statSync(sharedDir).isDirectory()).toBe(true);
+    expect(fs.existsSync(staleFile)).toBe(false);
+
+    const distDir = resolveE2EWebDistDir(prepared.tmpDir, 4242);
+    fs.mkdirSync(distDir, { recursive: true });
+    expect(fs.statSync(distDir).isDirectory()).toBe(true);
   });
 });

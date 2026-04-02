@@ -86,6 +86,7 @@ pub(crate) async fn desktop_update_remote_daemon(
         }
         let active_ctx_bin = decision.ctx_bin;
         run_remote_daemon_self_update(
+            &app_for_update,
             &host,
             user.as_deref(),
             remote_port,
@@ -116,6 +117,7 @@ pub(crate) async fn desktop_update_remote_daemon(
 }
 
 fn run_remote_daemon_self_update(
+    app: &tauri::AppHandle,
     host: &str,
     user: Option<&str>,
     remote_port: u16,
@@ -140,6 +142,8 @@ fn run_remote_daemon_self_update(
 
     stop_remote_daemon_over_ssh(host, user, remote_port, &ctx_bin)
         .context("stopping remote daemon after self-update")?;
+    sync_remote_bundle_metadata_over_ssh(app, host, user, remote_data_dir)
+        .context("syncing remote bundle metadata after self-update")?;
     start_remote_daemon_over_ssh(host, user, remote_port, remote_data_dir, &ctx_bin)
         .context("starting remote daemon after self-update")?;
     Ok(())

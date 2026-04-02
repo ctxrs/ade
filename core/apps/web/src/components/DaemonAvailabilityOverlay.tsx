@@ -21,6 +21,15 @@ const overlaySuppressed = (pathname: string): boolean => {
   return false;
 };
 
+const SUPPRESSED_AVAILABILITY = {
+  status: "unknown",
+  checking: false,
+  error: null,
+  desktopKind: null,
+  desktopVersion: null,
+  mismatch: null,
+} as const;
+
 const trimError = (value: string): string => {
   const text = String(value || "").trim();
   if (!text) return "";
@@ -29,6 +38,7 @@ const trimError = (value: string): string => {
 
 export default function DaemonAvailabilityOverlay() {
   const location = useLocation();
+  const suppressed = overlaySuppressed(location.pathname);
   const [restartBusy, setRestartBusy] = useState(false);
   const [remoteUpdateBusy, setRemoteUpdateBusy] = useState(false);
   const [desktopAppUpdateBusy, setDesktopAppUpdateBusy] = useState(false);
@@ -39,9 +49,19 @@ export default function DaemonAvailabilityOverlay() {
   const isDesktop = isDesktopApp();
   const daemonBaseUrl = useDaemonBaseUrl();
   const availability = useSyncExternalStore(
-    subscribeDaemonAvailability,
-    getDaemonAvailabilitySnapshot,
-    getDaemonAvailabilitySnapshot,
+    useCallback(
+      (listener: Parameters<typeof subscribeDaemonAvailability>[0]) =>
+        suppressed ? () => {} : subscribeDaemonAvailability(listener),
+      [suppressed],
+    ),
+    useCallback(
+      () => (suppressed ? SUPPRESSED_AVAILABILITY : getDaemonAvailabilitySnapshot()),
+      [suppressed],
+    ),
+    useCallback(
+      () => (suppressed ? SUPPRESSED_AVAILABILITY : getDaemonAvailabilitySnapshot()),
+      [suppressed],
+    ),
   );
   const checking = availability.checking;
   const status = availability.status;
@@ -177,7 +197,7 @@ export default function DaemonAvailabilityOverlay() {
   }, [daemonBaseUrl]);
 
   const showOverlay =
-    (status === "down" || status === "mismatch") && !overlaySuppressed(location.pathname);
+    (status === "down" || status === "mismatch") && !suppressed;
   if (!showOverlay) return null;
 
   const canRestart = isDesktop && (desktopKind === "local" || desktopKind === "none");

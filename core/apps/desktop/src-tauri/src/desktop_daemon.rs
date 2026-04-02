@@ -42,6 +42,9 @@ pub(super) use health::{
 pub(super) use launch::{spawn_and_validate_local_daemon, try_kill_child, SpawnedLocalDaemonReady};
 pub(super) use login_relay::desktop_start_codex_login_relay;
 pub(super) use resources::daemon_data_dir;
+pub(super) fn desktop_bundle_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    resources::desktop_bundle_dir(app)
+}
 pub(super) use systemd::{stop_systemd_scope, systemd_scope_for_local_daemon_url};
 
 pub(super) fn enforce_desktop_parity_bundle_preflight(app: &tauri::AppHandle) -> Result<()> {

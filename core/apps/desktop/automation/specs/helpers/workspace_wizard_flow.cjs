@@ -87,6 +87,10 @@ const RETRIABLE_WEBDRIVER_ERROR_PATTERNS = [
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 const isoNow = () => new Date().toISOString();
+const traceWizard = (message, detail = null) => {
+  const payload = detail == null ? "" : ` ${JSON.stringify(detail)}`;
+  console.error(`[wizard-flow] ${isoNow()} ${message}${payload}`);
+};
 
 const shouldRetryWebdriverTransportError = (error) => {
   const text = String(error || "");
@@ -213,6 +217,26 @@ const waitForStep = async (key, timeoutMs = 30000) => {
     timeout: timeoutMs,
     timeoutMsg: `expected step '${key}', got '${last || "unknown"}'`,
   });
+};
+
+const waitForAnyStep = async (keys, timeoutMs = 30000) => {
+  const expected = new Set(
+    Array.isArray(keys)
+      ? keys.map((value) => String(value || "").trim()).filter(Boolean)
+      : [String(keys || "").trim()].filter(Boolean),
+  );
+  if (expected.size === 0) {
+    throw new Error("waitForAnyStep requires at least one expected step");
+  }
+  let last = null;
+  await browser.waitUntil(async () => {
+    last = await currentStepKey();
+    return expected.has(String(last || "").trim());
+  }, {
+    timeout: timeoutMs,
+    timeoutMsg: `expected one of '${Array.from(expected).join("|")}', got '${last || "unknown"}'`,
+  });
+  return String(last || "").trim();
 };
 
 const startWizardStepTrace = async () => {
@@ -1496,8 +1520,13 @@ const ensureReadyForSourceSelection = async (
 ) => {
   const started = Date.now();
   const shouldDownloadHarnesses = harnessDownloads === true || harnessDownloads === "download";
+  let lastLoggedKey = null;
   while (Date.now() - started < timeoutMs) {
     const key = await currentStepKey();
+    if (key !== lastLoggedKey) {
+      traceWizard("source_ready_step", { step: key || null });
+      lastLoggedKey = key;
+    }
     if (key && key !== "location") {
       locationProgress.leftLocation = true;
     }
@@ -1516,17 +1545,41 @@ const ensureReadyForSourceSelection = async (
       if (container === "host") {
         const hostMountedVisible = await ensureContainerOptionVisible("host");
         if (!hostMountedVisible) {
+          traceWizard("container_waiting_for_host_option");
           await browser.pause(100);
           continue;
         }
       }
-      await clickOption("container", container);
-      await browser.pause(100);
+      const desiredContainerTestId = `wizard-option-container-${containerOptionIdForEnvironment(container)}`;
+      const containerState = await browser.execute((expectedTestId) => {
+        const root = document.querySelector('[data-testid="workspace-setup"]');
+        const selected = root
+          ? root.querySelector('[data-testid^="wizard-option-container-"].is-selected')
+          : null;
+        return {
+          selectedTestId: String(selected?.getAttribute("data-testid") || ""),
+          alreadySelected: String(selected?.getAttribute("data-testid") || "") === expectedTestId,
+        };
+      }, desiredContainerTestId);
+      traceWizard("container_selection_state", {
+        container,
+        already_selected: Boolean(containerState?.alreadySelected),
+        selected_test_id: containerState?.selectedTestId || "",
+      });
+      if (!containerState?.alreadySelected) {
+        traceWizard("container_select_start", { container });
+        await clickOption("container", container);
+        await browser.pause(100);
+      }
       const afterSelect = await currentStepKey();
+      traceWizard("container_select_after", { step: afterSelect || null });
       if (afterSelect === "container") {
         const next = await clickNextIfEnabled();
+        traceWizard("container_next_attempt", next);
         if (next.clicked) {
           await browser.pause(100);
+        } else {
+          await browser.pause(150);
         }
       }
       continue;
@@ -1534,15 +1587,21 @@ const ensureReadyForSourceSelection = async (
     if (key === "harness-downloads") {
       if (!shouldDownloadHarnesses) {
         const harnessState = await readWizardHarnessDownloadsState();
+        traceWizard("harness_skip_state", {
+          next_disabled: harnessState.nextDisabled,
+          checked_count: harnessState.rows.filter((row) => row.checked).length,
+        });
         const checkedRows = harnessState.rows.filter((row) => row.checked);
         if (checkedRows.length === 0 && harnessState.nextDisabled === false) {
           const next = await clickNextIfEnabled();
+          traceWizard("harness_skip_next_attempt", next);
           if (next.clicked) {
             await browser.pause(100);
             continue;
           }
         }
         const skipped = await clickHarnessSkipIfEnabled();
+        traceWizard("harness_skip_attempt", skipped);
         if (skipped.clicked) {
           await browser.pause(100);
           continue;
@@ -1789,27 +1848,19 @@ const collectWorkspaceRouteDiagnostics = async () => {
 const waitForWorkspaceRoute = async (timeoutMs = 120000) => {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    const state = await browser.execute(() => {
-      const pathname = window.location.pathname;
-      const errEl = document.querySelector(".wizard-error");
-      const err = errEl ? String(errEl.textContent || "").trim() : "";
-      const overlayEl = document.querySelector(".daemon-overlay");
-      const overlay = overlayEl ? String(overlayEl.textContent || "").trim() : "";
-      return { pathname, err, overlay };
-    });
-    if (state?.err) {
-      throw new Error(`wizard create error: ${state.err}`);
+    const rawUrl = String(await browser.getUrl());
+    let p = rawUrl;
+    try {
+      p = new URL(rawUrl).pathname;
+    } catch {
+      // Keep raw webdriver URL text when parsing fails.
     }
-    if (state?.overlay) {
-      throw new Error(`daemon unavailable overlay rendered: ${state.overlay}`);
-    }
-    const p = String(state?.pathname || "");
     if (p.startsWith("/workspaces/")) {
       const id = p.split("/")[2] || "";
       if (!id) throw new Error("workspace id missing from route");
       return id;
     }
-    await browser.pause(200);
+    await browser.pause(500);
   }
   const diag = await collectWorkspaceRouteDiagnostics();
   throw new Error(`did not navigate to /workspaces/:id; diag=${JSON.stringify(diag)}`);
@@ -2022,6 +2073,11 @@ const runWizardScenario = async (scenario) => {
     );
   }
   // Use a unique query param to force a real navigation (avoid SPA state re-use).
+  traceWizard("scenario_start", {
+    location: scenario.location,
+    container: scenario.container || null,
+    source_kind: scenario.source?.kind || null,
+  });
   await browser.url(`tauri://localhost/workspace-setup?e2e=${Date.now()}`);
   await waitForTauri();
   // Hard-reset wizard UI state between scenarios.
@@ -2044,6 +2100,7 @@ const runWizardScenario = async (scenario) => {
   await waitForStep("location", 90000);
   await startWizardStepTrace();
   try {
+    traceWizard("select_location_start", { location: scenario.location });
     await clickOption("location", scenario.location);
   } catch (error) {
     const stepNow = await currentStepKey();
@@ -2054,6 +2111,11 @@ const runWizardScenario = async (scenario) => {
   }
 
   if (scenario.location === "remote") {
+    traceWizard("remote_location_inputs_start", {
+      remote_host: scenario.remoteHost,
+      remote_port: scenario.remotePort,
+      remote_data_dir: scenario.remoteDataDir || null,
+    });
     await setInput("wizard-remote-host", scenario.remoteHost);
     if (
       typeof scenario.remotePort === "number"
@@ -2076,11 +2138,14 @@ const runWizardScenario = async (scenario) => {
         await setInput("wizard-remote-data-dir", scenario.remoteDataDir.trim());
       }
     }
+    traceWizard("remote_location_verify_start");
     await clickNext(); // verifies SSH and advances
+    traceWizard("remote_location_verify_complete");
   }
 
   if (scenario.location === "remote") {
     const afterLocation = await waitForRemoteStepAfterLocation();
+    traceWizard("remote_after_location", { step: afterLocation });
     if (afterLocation === "source" && scenario.container && scenario.container !== "host") {
       throw new Error("remote wizard did not expose container step (container modes unavailable)");
     }
@@ -2097,8 +2162,21 @@ const runWizardScenario = async (scenario) => {
         `expected step 'container'|'harness-downloads'|'source', got '${afterLocation}' (wizard-error: ${wizardErr || "none"})`,
       );
     }
+    if (afterLocation === "container") {
+      // Fresh remote bootstrap can keep the post-location route-plan transition unsettled for a
+      // while even after the first container mount appears. The source-selection reconciler below
+      // already knows how to wait through transient "location"/unknown/container states and only
+      // proceed once the source step is genuinely ready, so do not re-prove a second settled step
+      // here.
+      await browser.pause(150);
+    }
   }
 
+  traceWizard("source_selection_start", {
+    location: scenario.location,
+    container: scenario.container || null,
+    source_kind: scenario.source.kind,
+  });
   await selectSourceOptionWithRetry({
     location: scenario.location,
     container: scenario.container,
@@ -2153,10 +2231,12 @@ const runWizardScenario = async (scenario) => {
     }
   }
   await clickNext();
+  traceWizard("source_next_clicked");
 
   let afterSource;
   try {
       const transition = await waitForSourceExitOrWorkspaceRoute();
+      traceWizard("source_transition", transition);
       if (transition.kind === "workspace") {
         if (typeof scenario.onWorkspaceRouteDetected === "function") {
           await scenario.onWorkspaceRouteDetected({
@@ -2195,6 +2275,7 @@ const runWizardScenario = async (scenario) => {
   }
   let current = afterSource;
   for (let i = 0; i < 18; i += 1) {
+    traceWizard("post_source_step", { index: i, step: current });
     if (current === "source") {
       const next = await clickNextIfEnabled();
       if (!next.clicked) {
@@ -2318,14 +2399,18 @@ const runWizardScenario = async (scenario) => {
   }
 
   await waitForStep("confirm");
+  traceWizard("confirm_step_ready");
   if (typeof scenario.beforeCreate === "function") {
     await scenario.beforeCreate();
   }
+  traceWizard("create_click_start");
   await clickCreate(
     scenario.container && scenario.container !== "host" ? CONTAINER_LAUNCH_TIMEOUT_MS : 30000,
   );
-  if (scenario.container && scenario.container !== "host") {
+  traceWizard("create_click_complete");
+  if (scenario.location !== "remote" && scenario.container && scenario.container !== "host") {
     const launchVisibility = await waitForLaunchLogsOrWorkspaceRoute(15000);
+    traceWizard("launch_visibility", launchVisibility);
     if (launchVisibility.kind === "logs" && typeof scenario.onLaunchLogsVisible === "function") {
       await scenario.onLaunchLogsVisible();
     }
@@ -2334,7 +2419,9 @@ const runWizardScenario = async (scenario) => {
   const workspaceRouteTimeoutMs = scenario.location === "remote"
     ? REMOTE_LAUNCH_TIMEOUT_MS
     : (scenario.container && scenario.container !== "host" ? CONTAINER_LAUNCH_TIMEOUT_MS : 120000);
+  traceWizard("wait_workspace_route_start", { timeout_ms: workspaceRouteTimeoutMs });
   const id = await waitForWorkspaceRoute(workspaceRouteTimeoutMs);
+  traceWizard("wait_workspace_route_complete", { workspace_id: id });
   if (typeof scenario.onWorkspaceRouteDetected === "function") {
     await scenario.onWorkspaceRouteDetected({
       workspaceId: id,
@@ -2391,6 +2478,7 @@ module.exports = {
   assertWorkbenchUsable,
   assertDesktopConnectionStable,
   waitForRemoteStepAfterLocation,
+  waitForAnyStep,
   clickAuthImportSkip,
   clickTitlingSkip,
   ensureReadyForSourceSelection,

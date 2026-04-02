@@ -24,6 +24,8 @@ test("remote contracts runner dry-run writes preflight and lane summary artifact
         CTX_AUTOMATION_REMOTE_HOST: "builder@example.com",
         CTX_AUTOMATION_REMOTE_DATA_DIR: "/tmp/ctx-remote-host",
         CTX_AUTOMATION_REMOTE_CONTAINER_DATA_DIR: "/tmp/ctx-remote-container",
+        CTX_AUTOMATION_REMOTE_FIXTURE_CLASS: "docker-ssh",
+        CTX_AUTOMATION_REMOTE_FIXTURE_SANDBOX_RUNTIME: "nested-containerd",
       },
     );
 
@@ -33,6 +35,8 @@ test("remote contracts runner dry-run writes preflight and lane summary artifact
 
     assert.equal(preflight.lanes.host.ready, true);
     assert.equal(preflight.lanes.container.ready, true);
+    assert.equal(preflight.lanes.host.proofScope, "docker_fresh_remote_host");
+    assert.equal(preflight.lanes.container.proofScope, "docker_full_remote_sandbox");
     assert.match(summary, /remote-host\tdry-run\t0/);
     assert.match(summary, /remote-container\tdry-run\t0/);
   } finally {

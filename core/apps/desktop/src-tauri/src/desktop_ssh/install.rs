@@ -107,6 +107,10 @@ fn sha256_hex_file(path: &std::path::Path) -> Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+fn remote_bundle_dir_for_data_dir(remote_data_dir: &str) -> String {
+    format!("{}/bundles", remote_data_dir.trim_end_matches('/'))
+}
+
 fn managed_remote_daemon_download_path(
     app: &tauri::AppHandle,
     channel: &str,
@@ -270,6 +274,91 @@ pub(super) fn install_remote_daemon_over_ssh(
     Ok(())
 }
 
+pub(super) fn sync_remote_bundle_metadata_over_ssh(
+    app: &tauri::AppHandle,
+    host: &str,
+    user: Option<&str>,
+    remote_data_dir: Option<&str>,
+) -> Result<()> {
+    let local_bundle_dir = desktop_bundle_dir(app).ok_or_else(|| {
+        anyhow!(
+            "desktop bundle dir unavailable for remote bootstrap; run desktop:prep:release"
+        )
+    })?;
+    let data_dir = remote_data_dir
+        .filter(|d| !d.trim().is_empty())
+        .unwrap_or("~/.ctx");
+    let remote_bundle_dir = remote_bundle_dir_for_data_dir(data_dir);
+    let remote_tmp_dir = format!("{remote_bundle_dir}.tmp-{}", std::process::id());
+    let target = ssh_target(host, user);
+    let remote_cmd = format!(
+        "rm -rf {tmp} && mkdir -p {tmp} && tar -xf - -C {tmp} && mkdir -p {data_dir} && rm -rf {dest} && mv {tmp} {dest}",
+        tmp = remote_path_expr(&remote_tmp_dir),
+        data_dir = remote_path_expr(data_dir),
+        dest = remote_path_expr(&remote_bundle_dir),
+    );
+
+    let mut tar_child = Command::new("tar")
+        .arg("-cf")
+        .arg("-")
+        .arg("-C")
+        .arg(&local_bundle_dir)
+        .arg(".")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| {
+            format!(
+                "spawning tar for local bundle metadata at {}",
+                local_bundle_dir.display()
+            )
+        })?;
+    let mut ssh_child = new_ssh_command()
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=15")
+        .arg("-o")
+        .arg("ServerAliveInterval=15")
+        .arg("-o")
+        .arg("ServerAliveCountMax=2")
+        .arg(target)
+        .arg(format!("sh -lc {}", shell_escape(&remote_cmd)))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("spawning ssh for remote bundle sync")?;
+    {
+        let mut tar_stdout = tar_child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("tar stdout unavailable for remote bundle sync"))?;
+        let mut ssh_stdin = ssh_child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("ssh stdin unavailable for remote bundle sync"))?;
+        std::io::copy(&mut tar_stdout, &mut ssh_stdin)
+            .context("streaming desktop bundle metadata over ssh")?;
+    }
+    let tar_output = tar_child
+        .wait_with_output()
+        .context("waiting for tar bundle metadata stream")?;
+    if !tar_output.status.success() {
+        let stderr = String::from_utf8_lossy(&tar_output.stderr).trim().to_string();
+        anyhow::bail!("local bundle metadata tar failed: {stderr}");
+    }
+    let ssh_output = ssh_child
+        .wait_with_output()
+        .context("waiting for remote bundle metadata ssh command")?;
+    if !ssh_output.status.success() {
+        let stderr = String::from_utf8_lossy(&ssh_output.stderr).trim().to_string();
+        anyhow::bail!("remote bundle metadata sync failed: {stderr}");
+    }
+    Ok(())
+}
+
 pub(super) fn remote_ctx_bin_exists_over_ssh(
     host: &str,
     user: Option<&str>,
@@ -305,12 +394,13 @@ pub(super) fn start_remote_daemon_over_ssh(
     let data_dir = remote_data_dir
         .filter(|d| !d.trim().is_empty())
         .unwrap_or("~/.ctx");
+    let bundle_dir = remote_bundle_dir_for_data_dir(data_dir);
     let log_dir = format!("{}/logs", data_dir.trim_end_matches('/'));
     let log_dir_expr = remote_path_expr(&log_dir);
     let log_file = format!("{}/daemon.log", log_dir.trim_end_matches('/'));
     let log_file_expr = remote_path_expr(&log_file);
     let ctx_bin = validate_remote_ctx_bin(remote_ctx_bin)?;
-    let exec_cmd = render_remote_daemon_exec_cmd(&ctx_bin, remote_port, data_dir)?;
+    let exec_cmd = render_remote_daemon_exec_cmd(&ctx_bin, remote_port, data_dir, &bundle_dir)?;
     let log_cmd = format!(
         "mkdir -p {log_dir} && {exec_cmd} > {log_file} 2>&1",
         log_dir = log_dir_expr,
@@ -351,12 +441,14 @@ pub(super) fn render_remote_daemon_exec_cmd(
     remote_ctx_bin: &str,
     remote_port: u16,
     remote_data_dir: &str,
+    remote_bundle_dir: &str,
 ) -> Result<String> {
     let ctx_bin = validate_remote_ctx_bin(remote_ctx_bin)?;
     let ctx_bin_expr = remote_path_expr(&ctx_bin);
     Ok(format!(
-        "if [ -x {ctx_bin} ]; then {ctx_bin} serve --bind 127.0.0.1:{remote_port} --data-dir {dir}; else echo 'ctx not executable at configured remote path' >&2; exit 127; fi",
+        "if [ -x {ctx_bin} ]; then CTX_BUNDLE_DIR={bundle_dir} {ctx_bin} serve --bind 127.0.0.1:{remote_port} --data-dir {dir}; else echo 'ctx not executable at configured remote path' >&2; exit 127; fi",
         ctx_bin = ctx_bin_expr,
+        bundle_dir = remote_path_expr(remote_bundle_dir),
         dir = remote_path_expr(remote_data_dir),
     ))
 }

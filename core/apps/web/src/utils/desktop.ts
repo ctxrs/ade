@@ -28,6 +28,15 @@ export type SshConnectReq = {
   remote_data_dir?: string | null;
 };
 
+type DesktopSshConnectJobStatus = {
+  status: string;
+  phase?: string | null;
+  info?: DesktopConnectionInfo | null;
+  error?: string | null;
+  created_at_ms?: number | null;
+  updated_at_ms?: number | null;
+};
+
 export type DesktopHttpResponse = {
   status: number;
   body: string;
@@ -280,6 +289,24 @@ const invoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T
   }
 };
 
+const DESKTOP_SSH_CONNECT_POLL_MS = 500;
+const DESKTOP_SSH_CONNECT_TIMEOUT_MS = 4 * 60_000;
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    globalThis.setTimeout(resolve, ms);
+  });
+
+const consumeDesktopSshConnectJob = async (jobId: string) => {
+  try {
+    await invoke<DesktopSshConnectJobStatus>("desktop_connect_ssh_poll", {
+      req: { job_id: jobId, consume: true },
+    });
+  } catch {
+    // Ignore cleanup failures so the primary connect result surfaces cleanly.
+  }
+};
+
 export const desktopListen = async <T>(event: string, handler: (payload: T) => void): Promise<() => void> => {
   const mod = await import("@tauri-apps/api/event");
   const unlisten = await mod.listen<T>(event, (e) => handler(e.payload));
@@ -352,8 +379,35 @@ export const desktopConnectLocal = async (): Promise<DesktopConnectionInfo> =>
 export const desktopRestartLocalDaemon = async (): Promise<DesktopConnectionInfo> =>
   invoke<DesktopConnectionInfo>("desktop_restart_local_daemon", { req: { confirm: true } });
 
-export const desktopConnectSsh = async (req: SshConnectReq): Promise<DesktopConnectionInfo> =>
-  invoke<DesktopConnectionInfo>("desktop_connect_ssh", { req });
+export const desktopConnectSsh = async (req: SshConnectReq): Promise<DesktopConnectionInfo> => {
+  const jobId = String(await invoke<string>("desktop_connect_ssh_begin", { req })).trim();
+  if (!jobId) {
+    throw new Error("desktop_connect_ssh_begin returned empty job id");
+  }
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < DESKTOP_SSH_CONNECT_TIMEOUT_MS) {
+    const snapshot = await invoke<DesktopSshConnectJobStatus>("desktop_connect_ssh_poll", {
+      req: { job_id: jobId, consume: false },
+    });
+    const status = String(snapshot.status || "").trim().toLowerCase();
+    if (status === "succeeded") {
+      await consumeDesktopSshConnectJob(jobId);
+      if (!snapshot.info) {
+        throw new Error("desktop_connect_ssh succeeded without connection info");
+      }
+      return snapshot.info;
+    }
+    if (status === "failed") {
+      await consumeDesktopSshConnectJob(jobId);
+      throw new Error(String(snapshot.error || "desktop_connect_ssh failed"));
+    }
+    await sleep(DESKTOP_SSH_CONNECT_POLL_MS);
+  }
+
+  await consumeDesktopSshConnectJob(jobId);
+  throw new Error("desktop_connect_ssh timed out waiting for completion");
+};
 
 export const desktopUpdateRemoteDaemon = async (channel?: string): Promise<DesktopRemoteDaemonUpdateResp> =>
   invoke<DesktopRemoteDaemonUpdateResp>("desktop_update_remote_daemon", {

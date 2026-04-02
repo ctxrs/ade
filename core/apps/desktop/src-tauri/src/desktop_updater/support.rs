@@ -8,6 +8,8 @@ pub(super) const MISSING_EMBEDDED_UPDATER_PUBKEY_MESSAGE: &str =
     "native updater is not configured (missing embedded updater public key)";
 pub(super) const MISSING_EMBEDDED_UPDATER_PUBKEY_MESSAGE_SENTENCE: &str =
     "Native updater is not configured (missing embedded updater public key).";
+pub(super) const REMOTE_BOOTSTRAP_INSECURE_LOOPBACK_UPDATER_ENV: &str =
+    "CTX_DESKTOP_ALLOW_INSECURE_LOCAL_UPDATER_FOR_REMOTE_BOOTSTRAP";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedVersion {
@@ -187,6 +189,35 @@ pub(super) fn normalize_nonempty(value: &str) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+pub(super) fn should_allow_remote_bootstrap_insecure_loopback_updater(
+    explicit_override: bool,
+    endpoint: &str,
+) -> bool {
+    if !explicit_override {
+        return false;
+    }
+    let Ok(parsed) = Url::parse(endpoint) else {
+        return false;
+    };
+    if parsed.scheme() != "http" {
+        return false;
+    }
+    matches!(
+        parsed.host_str().map(|value| value.trim()),
+        Some("127.0.0.1") | Some("localhost") | Some("::1")
+    )
+}
+
+pub(super) fn remote_bootstrap_insecure_loopback_override_enabled() -> bool {
+    if cfg!(feature = "automation") {
+        return true;
+    }
+    std::env::var(REMOTE_BOOTSTRAP_INSECURE_LOOPBACK_UPDATER_ENV)
+        .ok()
+        .as_deref()
+        == Some("1")
 }
 
 pub(super) fn updater_stage_error(stage: &str, err: impl std::fmt::Display) -> String {

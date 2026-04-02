@@ -653,6 +653,133 @@ describe("useWorkspaceSetupProvisioning", () => {
     expect(latest!.authImportError).toBe("Auth refresh failed.");
   });
 
+  it("keeps fresh remote hosts on the source path before create when no remote daemon is running yet", async () => {
+    vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({ candidates: [] } as never);
+    vi.mocked(listProviders).mockResolvedValue([] as never);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettings as never);
+
+    const currentStepKeyRef = { current: "container" as const };
+    const setRoutePlan = vi.fn();
+    const setRoutePlanningBusy = vi.fn();
+    const invalidateRoutePlan = vi.fn();
+    const connectDaemonForImport = vi.fn(async () => {
+      throw new Error("failed to reach remote daemon: remote start skipped (start_remote=false, no_start_remote=false)");
+    });
+
+    const effectiveTarget = deriveWorkspaceSetupEffectiveTarget("remote", {
+      remoteHostInput: "alice@builder.internal",
+      remotePortInput: "4400",
+      remoteDataDirInput: "/srv/ctx-remote",
+    });
+    if (!effectiveTarget) {
+      throw new Error("Expected a remote workspace setup target.");
+    }
+
+    let latest: ReturnType<typeof useWorkspaceSetupProvisioning> | null = null;
+
+    const Harness = () => {
+      latest = useWorkspaceSetupProvisioning({
+        currentStepKeyRef,
+        selections: {
+          location: "remote",
+          container: "sandbox",
+        },
+        routePlan: null,
+        setRoutePlan,
+        setRoutePlanningBusy,
+        invalidateRoutePlan,
+        desktopApp: true,
+        effectiveTarget,
+        remoteStatus: "connected",
+        remoteStatusRef: { current: "connected" },
+        connectDaemonForImport,
+      });
+      return null;
+    };
+
+    render(createElement(Harness));
+
+    let routePlan: WizardRoutePlan | null = null;
+    await act(async () => {
+      routePlan = await latest!.ensureRoutePlanForSelection("sandbox");
+    });
+
+    expect(routePlan).toEqual({
+      targetKey: expect.stringContaining("\"desktop_ssh\""),
+      containerSelection: "sandbox",
+      includeHarnessDownloads: false,
+      includeAuthImport: false,
+      includeTitling: false,
+    });
+    expect(setRoutePlan).toHaveBeenLastCalledWith(routePlan);
+    expect(connectDaemonForImport).toHaveBeenCalled();
+  });
+
+  it("keeps fresh remote hosts on the source path before create after the wizard advances past container", async () => {
+    vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({ candidates: [] } as never);
+    vi.mocked(listProviders).mockResolvedValue([] as never);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettings as never);
+
+    const currentStepKeyRef = { current: "confirm" as const };
+    const setRoutePlan = vi.fn();
+    const setRoutePlanningBusy = vi.fn();
+    const invalidateRoutePlan = vi.fn();
+    const connectDaemonForImport = vi.fn(async () => {
+      throw new Error("failed to reach remote daemon: remote start skipped (start_remote=false, no_start_remote=false)");
+    });
+
+    const effectiveTarget = deriveWorkspaceSetupEffectiveTarget("remote", {
+      remoteHostInput: "alice@builder.internal",
+      remotePortInput: "4400",
+      remoteDataDirInput: "/srv/ctx-remote",
+    });
+    if (!effectiveTarget) {
+      throw new Error("Expected a remote workspace setup target.");
+    }
+
+    let latest: ReturnType<typeof useWorkspaceSetupProvisioning> | null = null;
+
+    const Harness = () => {
+      latest = useWorkspaceSetupProvisioning({
+        currentStepKeyRef,
+        selections: {
+          location: "remote",
+          container: "sandbox",
+        },
+        routePlan: null,
+        setRoutePlan,
+        setRoutePlanningBusy,
+        invalidateRoutePlan,
+        desktopApp: true,
+        effectiveTarget,
+        remoteStatus: "connected",
+        remoteStatusRef: { current: "connected" },
+        connectDaemonForImport,
+      });
+      return null;
+    };
+
+    render(createElement(Harness));
+
+    let routePlan: WizardRoutePlan | null = null;
+    await act(async () => {
+      routePlan = await latest!.ensureRoutePlanForSelection("sandbox");
+    });
+
+    expect(routePlan).toEqual({
+      targetKey: expect.stringContaining("\"desktop_ssh\""),
+      containerSelection: "sandbox",
+      includeHarnessDownloads: false,
+      includeAuthImport: false,
+      includeTitling: false,
+    });
+    expect(setRoutePlan).toHaveBeenLastCalledWith(routePlan);
+    expect(latest!.authImportError).toBe(null);
+    expect(latest!.harnessInstallError).toBe(null);
+    expect(latest!.titlingProbeError).toBe(null);
+    expect(connectDaemonForImport).toHaveBeenCalled();
+  });
+
   it("clears stale harness rows when a same-scope harness refresh fails", async () => {
     vi.mocked(listProviderAuthImportCandidates)
       .mockResolvedValueOnce({ candidates: [] } as never)

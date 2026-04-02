@@ -122,15 +122,19 @@ export async function createCtxPlaywrightConfig(
   const baseURL = `http://${HOST}:${PORT}`;
   const readinessURL = `${baseURL}/api/health`;
 
-  const defaultTmpDir = path.join(
-    resolveVolatileSubdir(process.env, ["CTX_E2E_TMPDIR", "CTX_VOLATILE_TMPDIR"], ["tmp"]),
-    `ctx-e2e-${profileSlug}-${process.pid}`,
+  const volatileTmpRoot = resolveVolatileSubdir(
+    process.env,
+    ["CTX_E2E_TMPDIR", "CTX_VOLATILE_TMPDIR"],
+    ["tmp"],
   );
-  const tmpDir = process.env.CTX_E2E_TMPDIR ?? process.env.CTX_E2E_DATA_DIR ?? defaultTmpDir;
-  const dataDir = process.env.CTX_E2E_DATA_DIR ?? tmpDir;
+  const defaultTmpDir = path.join(volatileTmpRoot, `ctx-e2e-${profileSlug}-tmp-${process.pid}`);
+  const defaultDataDir = path.join(volatileTmpRoot, `ctx-e2e-${profileSlug}-data-${process.pid}`);
+  const tmpDir = process.env.CTX_E2E_TMPDIR ?? defaultTmpDir;
+  const dataDir = process.env.CTX_E2E_DATA_DIR ?? defaultDataDir;
   const AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
   process.env.CTX_E2E_TMPDIR ??= tmpDir;
   process.env.CTX_E2E_DATA_DIR ??= dataDir;
+  process.env.CTX_VOLATILE_TMPDIR ??= volatileTmpRoot;
   process.env.CTX_E2E_AUTH_TOKEN ??= AUTH_TOKEN;
   const defaultBundleDir = path.resolve(__dirname, "../desktop/src-tauri/bundles");
   const bundleManifestPath = path.join(defaultBundleDir, "manifest.json");
@@ -167,6 +171,7 @@ export async function createCtxPlaywrightConfig(
     ...process.env,
     CTX_E2E_DATA_DIR: dataDir,
     CTX_E2E_TMPDIR: tmpDir,
+    CTX_VOLATILE_TMPDIR: volatileTmpRoot,
     CTX_E2E_AUTH_TOKEN: AUTH_TOKEN,
     CTX_E2E_SKIP_WEB_BUILD: skipWebBuild ? "1" : "0",
     CTX_E2E_HOST: HOST,
