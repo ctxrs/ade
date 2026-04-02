@@ -116,6 +116,61 @@ function rewriteText(text, rewriteRules) {
   return { text: output, changed };
 }
 
+function sanitizeReplaySseChunk(chunk, replayState) {
+  if (typeof chunk !== "string" || !chunk.includes("data:")) {
+    return { text: chunk, changed: false };
+  }
+  let changed = false;
+  const lines = chunk.split("\n");
+  const sanitizedLines = lines.map((line) => {
+    if (!line.startsWith("data: ")) {
+      return line;
+    }
+    const payloadText = line.slice("data: ".length);
+    if (!payloadText || payloadText === "[DONE]") {
+      return line;
+    }
+    let payload;
+    try {
+      payload = JSON.parse(payloadText);
+    } catch {
+      return line;
+    }
+    if (!payload || typeof payload !== "object") {
+      return line;
+    }
+    if (payload.type === "response.output_item.done") {
+      const itemId = typeof payload.item?.id === "string" ? payload.item.id : null;
+      if (itemId) {
+        replayState.seenOutputItemIds.add(itemId);
+      }
+      return line;
+    }
+    if (payload.type !== "response.completed" || !Array.isArray(payload.response?.output)) {
+      return line;
+    }
+    const filteredOutput = payload.response.output.filter((item) => {
+      const itemId = typeof item?.id === "string" ? item.id : null;
+      return !itemId || !replayState.seenOutputItemIds.has(itemId);
+    });
+    if (filteredOutput.length === payload.response.output.length) {
+      return line;
+    }
+    changed = true;
+    return `data: ${JSON.stringify({
+      ...payload,
+      response: {
+        ...payload.response,
+        output: filteredOutput,
+      },
+    })}`;
+  });
+  return {
+    text: sanitizedLines.join("\n"),
+    changed,
+  };
+}
+
 function extractWorkspacePathFromHeaders(headers) {
   const raw = headers["x-codex-turn-metadata"];
   if (typeof raw !== "string" || !raw.trim()) {
@@ -283,6 +338,9 @@ async function replayScenario({ scenario, state, pathname, bodyText, requestHead
     ...step.rewriteRules,
     ...buildDynamicRewriteRules(step, requestHeaders, bodyText),
   ];
+  const replayChunkState = {
+    seenOutputItemIds: new Set(),
+  };
   for (const event of step.sseEvents) {
     const baseChunk = typeof event === "string" ? event : event.chunk;
     const delayMs = typeof event === "string"
@@ -290,12 +348,13 @@ async function replayScenario({ scenario, state, pathname, bodyText, requestHead
       : scenario.forceResponseDelayMs
         ? scenario.responseDelayMs
         : Number(event.delay_ms ?? scenario.responseDelayMs);
-    const rewritten = rewriteText(baseChunk, rewriteRules);
+    const sanitized = sanitizeReplaySseChunk(baseChunk, replayChunkState);
+    const rewritten = rewriteText(sanitized.text, rewriteRules);
     appendJsonl(responsesLog, {
       kind: "sse-chunk",
       path: pathname,
       status: 200,
-      changed: rewritten.changed,
+      changed: sanitized.changed || rewritten.changed,
       chunk: rewritten.text,
     });
     if (delayMs > 0) {
@@ -305,6 +364,20 @@ async function replayScenario({ scenario, state, pathname, bodyText, requestHead
   }
   state.nextStepIndex = currentStepIndex + 1;
   res.end();
+}
+
+async function withReplayLock(state, action) {
+  const previous = state.lock ?? Promise.resolve();
+  let releaseCurrent;
+  state.lock = new Promise((resolve) => {
+    releaseCurrent = resolve;
+  });
+  await previous;
+  try {
+    return await action();
+  } finally {
+    releaseCurrent();
+  }
 }
 
 export async function startDemoRelay(cliOptions) {
@@ -317,7 +390,7 @@ export async function startDemoRelay(cliOptions) {
   const responsesLog = join(options.artifactDir, "responses.jsonl");
   const serverLog = join(options.artifactDir, "server.log");
   const scenario = options.scenarioPath ? loadScenario(options.scenarioPath) : null;
-  const replayState = { nextStepIndex: 0 };
+  const replayState = { nextStepIndex: 0, lock: Promise.resolve() };
   const directRewriteRules = options.rewriteFrom
     ? [{ from: options.rewriteFrom, to: options.rewriteTo }]
     : [];
@@ -358,15 +431,17 @@ export async function startDemoRelay(cliOptions) {
       }
 
       if (options.mode === "replay") {
-        await replayScenario({
-          scenario,
-          state: replayState,
-          pathname: url.pathname,
-          bodyText,
-          requestHeaders: req.headers,
-          requestsLog,
-          responsesLog,
-          res,
+        await withReplayLock(replayState, async () => {
+          await replayScenario({
+            scenario,
+            state: replayState,
+            pathname: url.pathname,
+            bodyText,
+            requestHeaders: req.headers,
+            requestsLog,
+            responsesLog,
+            res,
+          });
         });
         return;
       }

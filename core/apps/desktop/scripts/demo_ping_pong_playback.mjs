@@ -1009,38 +1009,12 @@ async function primeDemoDesktopConnection(browser, daemonUrl, authToken, workspa
 }
 
 async function measureTargets(browser, selectors) {
-  return browser.execute((requestedSelectors) => {
-    const metrics = {
-      screenX: window.screenX,
-      screenY: window.screenY,
-      outerHeight: window.outerHeight,
-      innerHeight: window.innerHeight,
-      screenHeight: window.screen.height,
-      pathname: window.location.pathname,
-    };
-    const elements = Object.fromEntries(
-      Object.entries(requestedSelectors).map(([key, selector]) => {
-        const element = document.querySelector(selector);
-        if (!element) {
-          return [key, null];
-        }
-        const rect = element.getBoundingClientRect();
-        return [
-          key,
-          {
-            selector,
-            rect: {
-              left: rect.left,
-              top: rect.top,
-              width: rect.width,
-              height: rect.height,
-            },
-            text: (element.textContent || "").trim(),
-          },
-        ];
-      }),
-    );
-    return { metrics, elements };
+  return browser.execute(async (requestedSelectors) => {
+    const bridge = globalThis.__ctxE2E;
+    if (!bridge || typeof bridge.measureTargets !== "function") {
+      throw new Error("ctxE2E measureTargets bridge unavailable");
+    }
+    return bridge.measureTargets(requestedSelectors);
   }, selectors);
 }
 
@@ -1293,10 +1267,18 @@ async function ensureWorkbenchVisible(browser, artifactDir) {
             document.querySelector(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea"),
           );
           const hasWorkbenchShell = Boolean(document.querySelector(".wb-main"));
-          const hasFocusNewTaskBridge = Boolean(
-            globalThis.__ctxE2E && typeof globalThis.__ctxE2E.focusNewTask === "function",
+          const bridge = globalThis.__ctxE2E;
+          const hasWorkbenchBridge = Boolean(
+            bridge &&
+            typeof bridge.focusNewTask === "function" &&
+            typeof bridge.clearDraftHarness === "function" &&
+            typeof bridge.toggleDiffPane === "function" &&
+            typeof bridge.toggleArtifactsPane === "function" &&
+            typeof bridge.measureTargets === "function" &&
+            typeof bridge.measureHarnessOption === "function" &&
+            typeof bridge.measureDiffFile === "function",
           );
-          return hasActiveSessionComposer || (hasWorkbenchShell && hasFocusNewTaskBridge);
+          return hasActiveSessionComposer || (hasWorkbenchShell && hasWorkbenchBridge);
         }),
       {
         timeout: 60_000,

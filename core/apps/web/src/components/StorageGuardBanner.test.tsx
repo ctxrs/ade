@@ -35,10 +35,11 @@ const baseHealth = {
   },
 };
 
-const renderBanner = () =>
+const renderBanner = (route = "/") =>
   render(
-    <MemoryRouter initialEntries={["/"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <MemoryRouter initialEntries={[route]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Routes>
+        <Route path="/__geometry_harness" element={<StorageGuardBanner />} />
         <Route path="/" element={<StorageGuardBanner />} />
         <Route path="/diagnostics" element={<div>Diagnostics page</div>} />
       </Routes>
@@ -123,5 +124,12 @@ describe("StorageGuardBanner", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("storage-guard-snackbar")).not.toBeInTheDocument();
     });
+  });
+
+  it("does not poll storage health on the geometry harness route", async () => {
+    renderBanner("/__geometry_harness");
+    await new Promise((resolve) => window.setTimeout(resolve, 25));
+    expect(vi.mocked(getHealth)).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("storage-guard-snackbar")).not.toBeInTheDocument();
   });
 });

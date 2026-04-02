@@ -3,31 +3,32 @@ import assert from "node:assert/strict";
 
 import { resolveCapturePrompt } from "./demo_hn_mobile_capture.mjs";
 import { inferVideoArtifactMimeType } from "./demo_video_artifacts.mjs";
-import { buildCompositeFfmpegArgs, parseScreenBox } from "./demo_hn_mobile_composite_artifact.mjs";
 import {
-  buildRemoteRecordCommand,
-  resolveLocalVideoPlan,
-} from "./demo_hn_mobile_record_simulator_artifact.mjs";
-import {
+  buildArtifactPlaybackCompletionPlan,
+  buildExpectedSidebarTaskTitles,
+  buildMouseTimings,
   buildPromptCharacters,
+  buildRecordStartDelayPlan,
   buildFrameSequenceFfmpegArgs,
+  computeArtifactPlaybackTimeoutMs,
+  ensureSidebarOpen,
   findNewTaskRecord,
+  parseArgs as parsePlaybackArgs,
+  pointFromWindowRectRect,
   resolvePlaybackPrompt,
   resolvePlaybackSessionArtifactPath,
   resolveTaskWorktreeRoot,
+  sidebarMatchesExpectedState,
+  visibleHarnessRowsNeedInstall,
 } from "./demo_hn_mobile_playback.mjs";
-import { buildWrapperHtml } from "./demo_hn_mobile_record_artifact.mjs";
-import { buildRawCaptureUrl } from "./demo_hn_mobile_record_raw_artifact.mjs";
-import { resolveDefaultPagePath } from "../automation/fixtures/demo-workspaces/hn-mobile-baseline/src/app.js";
-import {
-  DEFAULT_HN_DEMO_SCENARIO_ID,
-  HN_DEMO_SCENARIO_QUERY_KEY,
-} from "../automation/fixtures/demo-workspaces/hn-mobile-baseline/demo_scenarios.js";
+import { selectInstallableVisibleHarnessProviderIds } from "./demo_ping_pong_playback.mjs";
+import { buildPlaywrightRunner, buildWrapperHtml } from "./demo_hn_mobile_record_artifact.mjs";
+import { resolveDefaultPagePath } from "../automation/fixtures/demo-workspaces/hn-mobile-muted-domains/src/app.js";
 import {
   buildDemoProfileHtml,
   buildHackerNewsTargetUrl,
+  HN_DEMO_FRONT_PAGE_QUERY_KEY,
   HN_PROXY_PREFIX,
-  injectDemoFrontPageAccountNav,
   injectDemoFrontPageStories,
   rewriteHackerNewsAttribute,
   rewriteHackerNewsHtml,
@@ -35,13 +36,7 @@ import {
   rewriteHackerNewsSetCookie,
   shouldMockDemoProfilePage,
   shouldMockDemoFrontPage,
-} from "../automation/fixtures/demo-workspaces/hn-mobile-baseline/hn_proxy.js";
-import {
-  DEFAULT_DEMO_AUTOPLAY_ID,
-  DEMO_AUTOPLAY_PRESET_QUERY_KEY,
-  DEMO_AUTOPLAY_QUERY_KEY,
-  resolveDemoAutoplayOptions,
-} from "../automation/fixtures/demo-workspaces/hn-mobile-baseline/src/demo_autoplay.js";
+} from "../automation/fixtures/demo-workspaces/hn-mobile-muted-domains/hn_proxy.js";
 import {
   buildDemoLoginFields,
   buildDemoLoginGoto,
@@ -53,8 +48,8 @@ import {
   parseMutedDomains,
   hasLoginLink,
   readDemoLoginCredentials,
-} from "../automation/fixtures/demo-workspaces/hn-mobile-baseline/src/hn_enhancer.js";
-import { resolveScreenHeight } from "../automation/fixtures/demo-workspaces/hn-mobile-baseline/src/viewport.js";
+} from "../automation/fixtures/demo-workspaces/hn-mobile-muted-domains/src/hn_enhancer.js";
+import { resolveScreenHeight } from "../automation/fixtures/demo-workspaces/hn-mobile-muted-domains/src/viewport.js";
 
 test("resolveCapturePrompt prefers the capture prompt", () => {
   const fixture = {
@@ -72,10 +67,10 @@ test("resolvePlaybackPrompt uses the visible fixture prompt", () => {
 
 test("resolvePlaybackSessionArtifactPath resolves fixture-relative artifacts", () => {
   const fixturePath = "/tmp/demo-fixtures/demo-hn-mobile-fixture.json";
-  const fixture = { session_artifact_path: "demo-artifacts/hn-muted-domains-apple-official-mock.mov" };
+  const fixture = { session_artifact_path: "demo-artifacts/hn-muted-domains.mp4" };
   assert.equal(
     resolvePlaybackSessionArtifactPath(fixturePath, fixture, null),
-    "/tmp/demo-fixtures/demo-artifacts/hn-muted-domains-apple-official-mock.mov",
+    "/tmp/demo-fixtures/demo-artifacts/hn-muted-domains.mp4",
   );
   assert.equal(
     resolvePlaybackSessionArtifactPath(fixturePath, fixture, "/tmp/custom.mp4"),
@@ -89,46 +84,230 @@ test("inferVideoArtifactMimeType maps demo video containers to browser MIME type
   assert.equal(inferVideoArtifactMimeType("/tmp/demo.webm"), "video/webm");
 });
 
+test("selectInstallableVisibleHarnessProviderIds keeps only supported visible missing harnesses", () => {
+  assert.deepEqual(
+    selectInstallableVisibleHarnessProviderIds([
+      {
+        provider_id: "codex",
+        installed: false,
+        details: { install_supported: "1" },
+      },
+      {
+        provider_id: "hidden-agent",
+        installed: false,
+        details: { install_supported: "1", ui_hidden: "true" },
+      },
+      {
+        provider_id: "dependency-agent",
+        installed: false,
+        details: { install_supported: "1", provider_kind: "dependency" },
+      },
+      {
+        provider_id: "cursor",
+        installed: true,
+        details: { install_supported: "1" },
+      },
+      {
+        provider_id: "unsupported-agent",
+        installed: false,
+        details: {},
+      },
+    ]),
+    ["codex"],
+  );
+});
+
+test("computeArtifactPlaybackTimeoutMs uses video duration plus buffer", () => {
+  assert.equal(computeArtifactPlaybackTimeoutMs(11.233008), 12734);
+  assert.equal(computeArtifactPlaybackTimeoutMs(null), 20000);
+});
+
+test("buildArtifactPlaybackCompletionPlan includes a 1s end hold after the video finishes", () => {
+  assert.deepEqual(
+    buildArtifactPlaybackCompletionPlan(11.233008),
+    {
+      timeoutMs: 12734,
+      tailDwellMs: 1000,
+    },
+  );
+});
+
+test("buildExpectedSidebarTaskTitles orders seeded tasks newest first by minutes_ago", () => {
+  assert.deepEqual(
+    buildExpectedSidebarTaskTitles({
+      active_tasks: [
+        { title: "Oldest", minutes_ago: 41 },
+        { title: "Newest", minutes_ago: 2 },
+        { title: "Middle", minutes_ago: 12 },
+      ],
+    }),
+    ["Newest", "Middle", "Oldest"],
+  );
+});
+
+test("sidebarMatchesExpectedState requires full ordering and exactly one working row", () => {
+  assert.equal(
+    sidebarMatchesExpectedState(
+      {
+        rows: [
+          { title: "New task", hasWorkingSpinner: false },
+          { title: "Newest", hasWorkingSpinner: true },
+          { title: "Middle", hasWorkingSpinner: false },
+          { title: "Oldest", hasWorkingSpinner: false },
+        ],
+      },
+      ["Newest", "Middle", "Oldest"],
+      "Newest",
+    ),
+    true,
+  );
+  assert.equal(
+    sidebarMatchesExpectedState(
+      {
+        rows: [
+          { title: "Newest", hasWorkingSpinner: true },
+          { title: "Oldest", hasWorkingSpinner: true },
+          { title: "Middle", hasWorkingSpinner: false },
+        ],
+      },
+      ["Newest", "Middle", "Oldest"],
+      "Newest",
+    ),
+    false,
+  );
+});
+
+test("ensureSidebarOpen clicks the collapsed toggle until the sidebar is visible", async () => {
+  let attempts = 0;
+  const browser = {
+    waitUntil: async (predicate) => {
+      for (let index = 0; index < 3; index += 1) {
+        attempts += 1;
+        if (await predicate()) {
+          return true;
+        }
+      }
+      throw new Error("sidebar did not open");
+    },
+    execute: async () => attempts >= 2,
+  };
+  await assert.doesNotReject(() => ensureSidebarOpen(browser));
+  assert.ok(attempts >= 2);
+});
+
+test("parseArgs defaults the HN storyboard to one curated diff file", () => {
+  const options = parsePlaybackArgs([]);
+  assert.equal(options.diffFilePath, "src/hn_enhancer.js");
+  assert.equal(options.secondaryDiffFilePath, null);
+  assert.equal(options.harnessMenuDwellMs, 3000);
+  assert.equal(options.readyPrerollMs, 0);
+  assert.equal(options.recordStartDelayMs, 0);
+  assert.equal(options.mouseTakeoverLeadMs, 2000);
+  assert.equal(options.mouseTimings.harnessTriggerMoveMs, 420);
+  assert.equal(options.mouseTimings.artifactPlayMoveMs, 520);
+});
+
+test("parseArgs keeps an explicit secondary diff file opt-in", () => {
+  const options = parsePlaybackArgs(["--secondary-diff-file", "hn_proxy.js"]);
+  assert.equal(options.secondaryDiffFilePath, "hn_proxy.js");
+});
+
+test("parseArgs allows overriding the harness selector dwell", () => {
+  const options = parsePlaybackArgs(["--harness-menu-dwell-ms", "900"]);
+  assert.equal(options.harnessMenuDwellMs, 900);
+});
+
+test("parseArgs allows overriding the ready preroll dwell", () => {
+  const options = parsePlaybackArgs(["--ready-preroll-ms", "2500"]);
+  assert.equal(options.readyPrerollMs, 2500);
+});
+
+test("parseArgs allows overriding the pre-action record start delay", () => {
+  const options = parsePlaybackArgs(["--record-start-delay-ms", "30000"]);
+  assert.equal(options.recordStartDelayMs, 30000);
+});
+
+test("parseArgs allows overriding the mouse takeover lead time", () => {
+  const options = parsePlaybackArgs(["--mouse-takeover-lead-ms", "2400"]);
+  assert.equal(options.mouseTakeoverLeadMs, 2400);
+});
+
+test("parseArgs allows overriding mouse choreography timing", () => {
+  const options = parsePlaybackArgs([
+    "--mouse-harness-trigger-move-ms", "760",
+    "--mouse-prompt-cps", "22",
+    "--mouse-artifact-play-move-ms", "980",
+  ]);
+  assert.equal(options.mouseTimings.harnessTriggerMoveMs, 760);
+  assert.equal(options.mouseTimings.promptTypingCps, 22);
+  assert.equal(options.mouseTimings.artifactPlayMoveMs, 980);
+});
+
+test("buildMouseTimings falls back when overrides are invalid", () => {
+  assert.deepEqual(
+    buildMouseTimings({
+      harnessTriggerMoveMs: "nope",
+      promptTypingCps: 0,
+      artifactPlayMoveMs: -1,
+    }),
+    buildMouseTimings(),
+  );
+});
+
+test("buildRecordStartDelayPlan leaves most of the delay idle and reserves a short takeover window", () => {
+  assert.deepEqual(
+    buildRecordStartDelayPlan(30000, 2000),
+    {
+      idleDelayMs: 28000,
+      preSequenceTakeoverDelayMs: 2000,
+    },
+  );
+  assert.deepEqual(
+    buildRecordStartDelayPlan(1500, 2000),
+    {
+      idleDelayMs: 0,
+      preSequenceTakeoverDelayMs: 1500,
+    },
+  );
+});
+
+test("pointFromWindowRectRect maps DOM rects into top-based native cursor coordinates using the app inner window rect", () => {
+  assert.deepEqual(
+    pointFromWindowRectRect(
+      { x: 0, y: 80, width: 1728, height: 962 },
+      { innerWidth: 1728, innerHeight: 962, screenHeight: 1117, windowInnerPosition: { x: 0, y: 66 } },
+      { left: 594.5, top: 522, width: 103.109375, height: 22 },
+      0.52,
+      0.5,
+    ),
+    { x: 648.12, y: 599 },
+  );
+});
+
+test("visibleHarnessRowsNeedInstall detects whether any visible rows still need install", () => {
+  assert.equal(visibleHarnessRowsNeedInstall([{ label: "Codex", hasInstallButton: false }]), false);
+  assert.equal(visibleHarnessRowsNeedInstall([{ label: "Goose", hasInstallButton: true }]), true);
+});
+
 test("buildWrapperHtml renders a phone shell iframe", () => {
   const markup = buildWrapperHtml("http://127.0.0.1:4173");
   assert.match(markup, /class="phone"/);
   assert.match(markup, /iframe class="demo-phone-screen" src="http:\/\/127\.0\.0\.1:4173"/);
 });
 
+test("buildPlaywrightRunner records the muted-domains settings flow", () => {
+  const runner = buildPlaywrightRunner();
+  assert.match(runner, /data-muted-domains-input/);
+  assert.match(runner, /ctxDemoMockFrontPage=1/);
+  assert.match(runner, /ctx-muted-domains-toast/);
+  assert.doesNotMatch(runner, /a\[href\*="\/proxy\/hn\/user\?id=ADE_TEST_ACCOUNT"\]/);
+  assert.doesNotMatch(runner, /data-save-current-page/);
+});
+
 test("buildPromptCharacters preserves prompt text character order", () => {
   assert.deepEqual(
     buildPromptCharacters("Save it."),
     ["S", "a", "v", "e", " ", "i", "t", "."],
-  );
-});
-
-test("buildRawCaptureUrl seeds the default app route with the requested scenario", () => {
-  assert.equal(
-    buildRawCaptureUrl("http://127.0.0.1:4173", DEFAULT_HN_DEMO_SCENARIO_ID),
-    `http://127.0.0.1:4173/?${HN_DEMO_SCENARIO_QUERY_KEY}=${DEFAULT_HN_DEMO_SCENARIO_ID}`,
-  );
-});
-
-test("resolveDemoAutoplayOptions only enables the known muted-domains autoplay mode", () => {
-  assert.deepEqual(
-    resolveDemoAutoplayOptions(`?${DEMO_AUTOPLAY_QUERY_KEY}=${DEFAULT_DEMO_AUTOPLAY_ID}&${DEMO_AUTOPLAY_PRESET_QUERY_KEY}=recording`),
-    {
-      id: DEFAULT_DEMO_AUTOPLAY_ID,
-      presetId: "recording",
-      mutedDomainsValue: "x.com\ntwitter.com",
-      requireHiddenResume: false,
-      initialDwellMs: 1400,
-      settingsDwellMs: 950,
-      perCharacterMs: 80,
-      afterTypingMs: 800,
-      afterSaveMs: 1100,
-      finalDwellMs: 2700,
-    },
-  );
-  assert.equal(resolveDemoAutoplayOptions(""), null);
-  assert.throws(
-    () => resolveDemoAutoplayOptions(`?${DEMO_AUTOPLAY_QUERY_KEY}=${DEFAULT_DEMO_AUTOPLAY_ID}&${DEMO_AUTOPLAY_PRESET_QUERY_KEY}=bogus`),
-    /Unknown demo autoplay preset/,
   );
 });
 
@@ -140,10 +319,6 @@ test("rewriteHackerNewsAttribute keeps HN navigation inside the local proxy", ()
   assert.equal(
     rewriteHackerNewsAttribute("action", "login?goto=news"),
     `${HN_PROXY_PREFIX}/login?goto=news`,
-  );
-  assert.equal(
-    rewriteHackerNewsAttribute("href", "user?id=ADE_TEST_ACCOUNT", { scenarioId: DEFAULT_HN_DEMO_SCENARIO_ID }),
-    `${HN_PROXY_PREFIX}/user?id=ADE_TEST_ACCOUNT&${HN_DEMO_SCENARIO_QUERY_KEY}=${DEFAULT_HN_DEMO_SCENARIO_ID}`,
   );
   assert.equal(
     rewriteHackerNewsAttribute("src", "news.css?abc123"),
@@ -172,15 +347,6 @@ test("rewriteHackerNewsHtml strips the upstream script, injects a mobile viewpor
   assert.doesNotMatch(html, /ctx-hn-mobile-viewport-fill/);
   assert.match(html, /href="\/proxy\/hn\/item\?id=47470773"/);
   assert.match(html, /src="https:\/\/news\.ycombinator\.com\/y18\.svg"/);
-
-  const htmlWithScenario = rewriteHackerNewsHtml(
-    `<html><head></head><body><a href="user?id=ADE_TEST_ACCOUNT">Profile</a></body></html>`,
-    { scenarioId: DEFAULT_HN_DEMO_SCENARIO_ID },
-  );
-  assert.match(
-    htmlWithScenario,
-    /href="\/proxy\/hn\/user\?id=ADE_TEST_ACCOUNT&amp;?ctxDemoScenario=muted-domains|href="\/proxy\/hn\/user\?id=ADE_TEST_ACCOUNT&ctxDemoScenario=muted-domains"/,
-  );
 });
 
 test("injectDemoFrontPageStories replaces the top two front-page stories", () => {
@@ -197,14 +363,6 @@ test("injectDemoFrontPageStories replaces the top two front-page stories", () =>
   assert.match(injected, /Claude Code's source code has been leaked via a map file in their NPM registry/);
   assert.match(injected, /You can now run a full Linux operating system inside a 6mb PDF/);
   assert.match(injected, /<span class="rank">3\.<\/span>/);
-});
-
-test("injectDemoFrontPageAccountNav swaps the login nav for the demo account", () => {
-  const html = injectDemoFrontPageAccountNav(`
-    <table><tr><td style="text-align:right;padding-right:4px;"><span class="pagetop"><a href="login">login</a></span></td></tr></table>
-  `, DEFAULT_HN_DEMO_SCENARIO_ID);
-  assert.match(html, /ADE_TEST_ACCOUNT/);
-  assert.match(html, /logout/);
 });
 
 test("rewriteHackerNewsLocation keeps HN redirects inside the local proxy", () => {
@@ -224,20 +382,20 @@ test("rewriteHackerNewsSetCookie strips remote-domain attributes for local proxy
 
 test("buildHackerNewsTargetUrl strips the local demo-front-page flag", () => {
   assert.equal(
-    buildHackerNewsTargetUrl(`${HN_PROXY_PREFIX}/news?${HN_DEMO_SCENARIO_QUERY_KEY}=${DEFAULT_HN_DEMO_SCENARIO_ID}`).href,
+    buildHackerNewsTargetUrl(`${HN_PROXY_PREFIX}/news?${HN_DEMO_FRONT_PAGE_QUERY_KEY}=1`).href,
     "https://news.ycombinator.com/news",
   );
 });
 
 test("shouldMockDemoFrontPage only targets the front-page request", () => {
-  assert.equal(shouldMockDemoFrontPage(`${HN_PROXY_PREFIX}/news?${HN_DEMO_SCENARIO_QUERY_KEY}=${DEFAULT_HN_DEMO_SCENARIO_ID}`), true);
-  assert.equal(shouldMockDemoFrontPage(`${HN_PROXY_PREFIX}/news?p=2&${HN_DEMO_SCENARIO_QUERY_KEY}=${DEFAULT_HN_DEMO_SCENARIO_ID}`), false);
-  assert.equal(shouldMockDemoFrontPage(`${HN_PROXY_PREFIX}/item?id=1&${HN_DEMO_SCENARIO_QUERY_KEY}=${DEFAULT_HN_DEMO_SCENARIO_ID}`), false);
+  assert.equal(shouldMockDemoFrontPage(`${HN_PROXY_PREFIX}/news?${HN_DEMO_FRONT_PAGE_QUERY_KEY}=1`), true);
+  assert.equal(shouldMockDemoFrontPage(`${HN_PROXY_PREFIX}/news?p=2&${HN_DEMO_FRONT_PAGE_QUERY_KEY}=1`), false);
+  assert.equal(shouldMockDemoFrontPage(`${HN_PROXY_PREFIX}/item?id=1&${HN_DEMO_FRONT_PAGE_QUERY_KEY}=1`), false);
 });
 
 test("shouldMockDemoProfilePage only targets the ADE_TEST_ACCOUNT demo profile", () => {
-  assert.equal(shouldMockDemoProfilePage(`${HN_PROXY_PREFIX}/user?id=ADE_TEST_ACCOUNT&${HN_DEMO_SCENARIO_QUERY_KEY}=${DEFAULT_HN_DEMO_SCENARIO_ID}`), true);
-  assert.equal(shouldMockDemoProfilePage(`${HN_PROXY_PREFIX}/user?id=pg&${HN_DEMO_SCENARIO_QUERY_KEY}=${DEFAULT_HN_DEMO_SCENARIO_ID}`), false);
+  assert.equal(shouldMockDemoProfilePage(`${HN_PROXY_PREFIX}/user?id=ADE_TEST_ACCOUNT&${HN_DEMO_FRONT_PAGE_QUERY_KEY}=1`), true);
+  assert.equal(shouldMockDemoProfilePage(`${HN_PROXY_PREFIX}/user?id=pg&${HN_DEMO_FRONT_PAGE_QUERY_KEY}=1`), false);
   assert.equal(shouldMockDemoProfilePage(`${HN_PROXY_PREFIX}/user?id=ADE_TEST_ACCOUNT`), false);
 });
 
@@ -279,14 +437,8 @@ test("buildMutedDomainsSettingsRowMarkup only renders the muted domains textarea
 });
 
 test("buildFeedPreviewPath keeps the demo front-page flag on the feed link", () => {
-  assert.equal(
-    buildFeedPreviewPath("?demoSeedMutedStories=1"),
-    `/proxy/hn/news?${HN_DEMO_SCENARIO_QUERY_KEY}=${DEFAULT_HN_DEMO_SCENARIO_ID}`,
-  );
-  assert.equal(
-    buildFeedPreviewPath(""),
-    `/proxy/hn/news?${HN_DEMO_SCENARIO_QUERY_KEY}=${DEFAULT_HN_DEMO_SCENARIO_ID}`,
-  );
+  assert.equal(buildFeedPreviewPath("?demoSeedMutedStories=1"), `/proxy/hn/news?${HN_DEMO_FRONT_PAGE_QUERY_KEY}=1`);
+  assert.equal(buildFeedPreviewPath(""), `/proxy/hn/news?${HN_DEMO_FRONT_PAGE_QUERY_KEY}=1`);
 });
 
 test("buildMutedDomainsToastMessage uses the shortened copy", () => {
@@ -295,14 +447,8 @@ test("buildMutedDomainsToastMessage uses the shortened copy", () => {
 });
 
 test("buildDemoLoginGoto preserves the demo front-page flag through login", () => {
-  assert.equal(
-    buildDemoLoginGoto("?demoSeedMutedStories=1"),
-    `news?${HN_DEMO_SCENARIO_QUERY_KEY}=${DEFAULT_HN_DEMO_SCENARIO_ID}`,
-  );
-  assert.equal(
-    buildDemoLoginGoto(""),
-    `news?${HN_DEMO_SCENARIO_QUERY_KEY}=${DEFAULT_HN_DEMO_SCENARIO_ID}`,
-  );
+  assert.equal(buildDemoLoginGoto("?demoSeedMutedStories=1"), `news?${HN_DEMO_FRONT_PAGE_QUERY_KEY}=1`);
+  assert.equal(buildDemoLoginGoto(""), `news?${HN_DEMO_FRONT_PAGE_QUERY_KEY}=1`);
 });
 
 test("buildDemoLoginFields prepares proxied HN login fields", () => {
@@ -311,7 +457,7 @@ test("buildDemoLoginFields prepares proxied HN login fields", () => {
     {
       acct: "ADE_TEST_ACCOUNT",
       pw: "secret",
-      goto: `news?${HN_DEMO_SCENARIO_QUERY_KEY}=${DEFAULT_HN_DEMO_SCENARIO_ID}`,
+      goto: `news?${HN_DEMO_FRONT_PAGE_QUERY_KEY}=1`,
     },
   );
   assert.equal(buildDemoLoginFields(""), null);
@@ -331,12 +477,12 @@ test("resolveScreenHeight prefers the tallest available viewport metric", () => 
 
 test("resolveDefaultPagePath accepts an explicit proxied demo path", () => {
   assert.equal(
-    resolveDefaultPagePath(`?demoPath=${encodeURIComponent(`/proxy/hn/user?id=ADE_TEST_ACCOUNT&${HN_DEMO_SCENARIO_QUERY_KEY}=${DEFAULT_HN_DEMO_SCENARIO_ID}`)}`),
-    `/proxy/hn/user?id=ADE_TEST_ACCOUNT&${HN_DEMO_SCENARIO_QUERY_KEY}=${DEFAULT_HN_DEMO_SCENARIO_ID}`,
+    resolveDefaultPagePath(`?demoPath=${encodeURIComponent("/proxy/hn/user?id=ADE_TEST_ACCOUNT&ctxDemoMockFrontPage=1")}`),
+    "/proxy/hn/user?id=ADE_TEST_ACCOUNT&ctxDemoMockFrontPage=1",
   );
   assert.equal(
     resolveDefaultPagePath(`?demoPath=${encodeURIComponent("https://example.com")}`),
-    `/proxy/hn/news?${HN_DEMO_SCENARIO_QUERY_KEY}=${DEFAULT_HN_DEMO_SCENARIO_ID}`,
+    `/proxy/hn/news?${HN_DEMO_FRONT_PAGE_QUERY_KEY}=1`,
   );
 });
 
@@ -386,80 +532,6 @@ test("buildFrameSequenceFfmpegArgs encodes a png sequence into mp4", () => {
       "/tmp/out.mp4",
     ],
   );
-});
-
-test("parseScreenBox accepts x,y,width,height coordinates", () => {
-  assert.deepEqual(parseScreenBox("196,288,1206,2623"), {
-    x: 196,
-    y: 288,
-    width: 1206,
-    height: 2623,
-  });
-  assert.throws(() => parseScreenBox("196,288,1206"), /invalid screen box/);
-});
-
-test("buildCompositeFfmpegArgs composes a raw artifact inside the overlay mask", () => {
-  assert.deepEqual(
-    buildCompositeFfmpegArgs({
-      inputPath: "/tmp/raw.mp4",
-      overlayPath: "/tmp/overlay.png",
-      maskPath: "/tmp/mask.png",
-      outputPath: "/tmp/out.mp4",
-      screenBox: { x: 196, y: 288, width: 1206, height: 2623 },
-      canvasSize: { width: 1600, height: 3200 },
-      durationSeconds: 2.111,
-    }),
-    [
-      "-y",
-      "-i", "/tmp/raw.mp4",
-      "-loop", "1",
-      "-i", "/tmp/mask.png",
-      "-loop", "1",
-      "-i", "/tmp/overlay.png",
-      "-filter_complex",
-      "[0:v]scale=1206:2623:force_original_aspect_ratio=increase,crop=1206:2623[screen];[screen]format=rgba[screen_rgba];color=color=black@0.0:size=1600x3200[base];[base][screen_rgba]overlay=196:288[canvas];[canvas]format=rgba[canvas_rgba];[1:v]format=gray[mask];[canvas_rgba][mask]alphamerge[masked];[masked][2:v]overlay=0:0:format=auto,format=yuv420p[out]",
-      "-map", "[out]",
-      "-an",
-      "-t", "2.111",
-      "-c:v", "libx264",
-      "-pix_fmt", "yuv420p",
-      "-movflags", "+faststart",
-      "/tmp/out.mp4",
-    ],
-  );
-});
-
-test("buildRemoteRecordCommand prewarms on-device, returns to SpringBoard, then records the warm relaunch", () => {
-  const command = buildRemoteRecordCommand({
-    appearance: "light",
-    homeDwellMs: 1000,
-    prewarmDelayMs: 6000,
-    recordingDurationMs: 10_500,
-    relaunchDelayMs: 800,
-    remoteBundleId: "rs.ctx.hnmobile",
-    remoteDeviceName: "iPhone 16",
-    sessionName: "ctx-hn-mobile-record-test",
-  });
-  assert.match(command, /xcrun simctl ui 'iPhone 16' appearance 'light'/);
-  assert.match(command, /xcrun simctl terminate 'iPhone 16' 'rs\.ctx\.hnmobile'/);
-  assert.match(command, /xcrun simctl launch 'iPhone 16' 'rs\.ctx\.hnmobile' >\/tmp\/ctx-hn-mobile-record-test\.prewarm\.log/);
-  assert.match(command, /sleep 6\.000/);
-  assert.match(command, /xcrun simctl launch 'iPhone 16' com\.apple\.springboard >\/tmp\/ctx-hn-mobile-record-test\.home\.log/);
-  assert.match(command, /xcrun simctl io 'iPhone 16' recordVideo --codec=h264 --mask=black '\/tmp\/ctx-hn-mobile-record-test\.mov'/);
-  assert.match(command, /sleep 0\.800/);
-  assert.match(command, /xcrun simctl launch 'iPhone 16' 'rs\.ctx\.hnmobile' >\/tmp\/ctx-hn-mobile-record-test\.launch\.log/);
-});
-
-test("resolveLocalVideoPlan accepts mov and mp4 outputs only", () => {
-  assert.deepEqual(resolveLocalVideoPlan("/tmp/out.mov"), {
-    finalPath: "/tmp/out.mov",
-    needsTranscode: false,
-  });
-  assert.deepEqual(resolveLocalVideoPlan("/tmp/out.mp4"), {
-    finalPath: "/tmp/out.mp4",
-    needsTranscode: true,
-  });
-  assert.throws(() => resolveLocalVideoPlan("/tmp/out.webm"), /must end with \.mov or \.mp4/);
 });
 
 test("resolveTaskWorktreeRoot joins the daemon worktree path", () => {

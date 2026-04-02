@@ -203,12 +203,26 @@ function ArtifactCard({
     }
   }, [artifact, canCopy, url]);
 
+  const stopPreviewOpen = useCallback((event: React.SyntheticEvent) => {
+    event.stopPropagation();
+  }, []);
+
   let preview: React.ReactNode = null;
   if (missing) {
     preview = <div className="wb-artifact-missing">Missing on disk</div>;
   } else if (isVideo) {
     preview = (
-      <video className="wb-artifact-video" autoPlay controls loop muted playsInline preload="metadata">
+      <video
+        className="wb-artifact-video"
+        autoPlay
+        controls
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        onClick={stopPreviewOpen}
+        onPointerDown={stopPreviewOpen}
+      >
         <source src={url} type={artifact.mime_type || "video/mp4"} />
       </video>
     );

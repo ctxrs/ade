@@ -4,11 +4,9 @@ export function screenPointFromProbe(metrics, rect) {
   if (!metrics || !rect) {
     throw new Error("metrics and rect are required");
   }
-  const chromeTop = Math.max(0, Number(metrics.outerHeight) - Number(metrics.innerHeight));
   const globalX = Number(metrics.screenX) + Number(rect.left) + Number(rect.width) / 2;
-  // In the automation build on macOS, window.screenY reports the outer window top edge
-  // in the same bottom-left coordinate space Quartz expects for native cursor events.
-  const globalY = Number(metrics.screenY) - chromeTop - Number(rect.top) - Number(rect.height) / 2;
+  const windowTop = Number(metrics.windowInnerPosition?.y ?? metrics.windowOuterPosition?.y ?? metrics.screenY ?? 0);
+  const globalY = windowTop + Number(rect.top) + Number(rect.height) / 2;
   return {
     x: Number(globalX.toFixed(2)),
     y: Number(globalY.toFixed(2)),

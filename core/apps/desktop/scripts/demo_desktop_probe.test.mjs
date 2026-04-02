@@ -8,13 +8,11 @@ import {
   screenPointFromProbe,
 } from "./demo_desktop_probe.mjs";
 
-test("screenPointFromProbe converts CSS rects into bottom-left cursor coordinates", () => {
+test("screenPointFromProbe converts CSS rects into top-based native cursor coordinates", () => {
   const point = screenPointFromProbe(
     {
       screenX: 100,
-      screenY: 1120,
-      outerHeight: 900,
-      innerHeight: 860,
+      windowInnerPosition: { x: 100, y: 66 },
     },
     {
       left: 20,
@@ -26,7 +24,7 @@ test("screenPointFromProbe converts CSS rects into bottom-left cursor coordinate
 
   assert.deepEqual(point, {
     x: 220,
-    y: 760,
+    y: 386,
   });
 });
 

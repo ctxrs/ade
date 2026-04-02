@@ -640,7 +640,7 @@ async fn tool_projection_uses_provider_tool_name_when_title_is_missing() {
         )
         .await
         .unwrap();
-    fixture
+    let _result_event = fixture
         .store
         .append_session_event(
             fixture.session_id,
@@ -748,6 +748,28 @@ async fn session_head_snapshot_strips_partials_and_stream_only_events() {
         )
         .await
         .unwrap();
+    let assistant_complete = fixture
+        .store
+        .append_session_event(
+            fixture.session_id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::AssistantComplete,
+            serde_json::json!({
+                "full_content": "final answer",
+                "message_id": "provider-msg-1",
+                "order_seq": 2
+            }),
+        )
+        .await
+        .unwrap();
+    let inserted_message = make_assistant_message(
+        fixture.session_id,
+        fixture.task_id,
+        run_id,
+        turn_id,
+        "final answer",
+    );
     let notice = fixture
         .store
         .append_session_event(
@@ -761,13 +783,23 @@ async fn session_head_snapshot_strips_partials_and_stream_only_events() {
         .unwrap();
     fixture
         .store
-        .insert_message(make_assistant_message(
+        .insert_message(inserted_message.clone())
+        .await
+        .unwrap();
+    let inserted_event = fixture
+        .store
+        .append_session_event(
             fixture.session_id,
-            fixture.task_id,
-            run_id,
-            turn_id,
-            "final answer",
-        ))
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::AssistantMessageInserted,
+            serde_json::json!({
+                "message_id": inserted_message.id.0.to_string(),
+                "provider_message_id": "provider-msg-1",
+                "content": inserted_message.content,
+                "order_seq": 2
+            }),
+        )
         .await
         .unwrap();
     fixture
@@ -787,17 +819,17 @@ async fn session_head_snapshot_strips_partials_and_stream_only_events() {
     assert!(assistant_chunk.seq < 0);
     assert!(thought_chunk.transient);
     assert!(thought_chunk.seq < 0);
+    assert!(assistant_complete.seq > 0);
 
     let persisted_events = fixture
         .store
         .list_session_events(fixture.session_id)
         .await
         .unwrap();
-    assert_eq!(persisted_events.len(), 1);
-    assert!(matches!(
-        persisted_events[0].event_type,
+    assert!(persisted_events.iter().any(|event| matches!(
+        event.event_type,
         SessionEventType::Notice
-    ));
+    )));
 
     let head = fixture
         .store
@@ -805,17 +837,20 @@ async fn session_head_snapshot_strips_partials_and_stream_only_events() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(head.last_event_seq, notice.seq);
+    assert_eq!(head.last_event_seq, inserted_event.seq);
     assert_eq!(head.turns.len(), 1);
     assert_eq!(head.turns[0].assistant_partial, None);
     assert_eq!(head.turns[0].thought_partial, None);
     assert_eq!(head.messages.len(), 1);
     assert_eq!(head.messages[0].content, "final answer");
-    assert_eq!(head.events.len(), 1);
-    assert!(matches!(
-        head.events[0].event_type,
+    assert!(head.events.iter().all(|event| !matches!(
+        event.event_type,
+        SessionEventType::AssistantComplete
+    )));
+    assert!(head.events.iter().any(|event| matches!(
+        event.event_type,
         SessionEventType::Notice
-    ));
+    )));
 
     let active_head = fixture
         .store
@@ -828,6 +863,10 @@ async fn session_head_snapshot_strips_partials_and_stream_only_events() {
     assert_eq!(active_head.turns[0].thought_partial, None);
     assert_eq!(active_head.messages.len(), 1);
     assert_eq!(active_head.messages[0].content, "final answer");
+    assert!(active_head.events.iter().all(|event| !matches!(
+        event.event_type,
+        SessionEventType::AssistantComplete
+    )));
     assert!(active_head.events.is_empty());
 }
 

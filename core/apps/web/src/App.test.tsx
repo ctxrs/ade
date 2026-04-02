@@ -67,6 +67,11 @@ vi.mock("./pages/CursorDiffDemoPage", () => ({
   default: () => <div>Diff Demo Screen</div>,
 }));
 
+vi.mock("./pages/GeometryHarnessPage", () => ({
+  __esModule: true,
+  default: () => <div>Geometry Harness Screen</div>,
+}));
+
 vi.mock("./pages/ProvidersPage", () => ({
   __esModule: true,
   default: () => <div>Providers Screen</div>,
@@ -219,6 +224,12 @@ test("renders app shell", async () => {
   render(<App />);
   // App root route is the launcher.
   expect(await screen.findByText("New Workspace")).toBeInTheDocument();
+});
+
+test("routes geometry harness path to the standalone harness page", async () => {
+  window.history.pushState({}, "", "/__geometry_harness");
+  render(<App />);
+  expect(await screen.findByText("Geometry Harness Screen")).toBeInTheDocument();
 });
 
 test("persists runtime diagnostics to desktop log", async () => {

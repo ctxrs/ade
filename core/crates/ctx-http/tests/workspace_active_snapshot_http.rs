@@ -748,9 +748,10 @@ async fn workspace_active_heads_batch_strips_partials() {
 
     let store = state.store_for_session(session.id).await.unwrap();
     let now = Utc::now();
+    let turn_id = TurnId::new();
     store
         .insert_session_turn(SessionTurn {
-            turn_id: TurnId::new(),
+            turn_id,
             session_id: session.id,
             run_id: None,
             user_message_id: None,
@@ -768,6 +769,30 @@ async fn workspace_active_heads_batch_strips_partials() {
             tool_completed: 0,
             tool_failed: 0,
         })
+        .await
+        .unwrap();
+    store
+        .append_session_event(
+            session.id,
+            None,
+            Some(turn_id),
+            SessionEventType::AssistantComplete,
+            json!({
+                "full_content": "final answer",
+                "message_id": "provider-msg-1",
+                "order_seq": 2
+            }),
+        )
+        .await
+        .unwrap();
+    store
+        .append_session_event(
+            session.id,
+            None,
+            Some(turn_id),
+            SessionEventType::Notice,
+            json!({ "kind": "test_checkpoint", "message": "stable" }),
+        )
         .await
         .unwrap();
 
@@ -788,6 +813,9 @@ async fn workspace_active_heads_batch_strips_partials() {
     assert_eq!(head.turns.len(), 1);
     assert!(head.turns[0].assistant_partial.is_none());
     assert!(head.turns[0].thought_partial.is_none());
+    assert!(head.events.iter().all(|event| {
+        !matches!(event.event_type, SessionEventType::AssistantComplete)
+    }));
 }
 
 #[tokio::test]

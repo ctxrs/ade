@@ -29,19 +29,19 @@
   },
   {
     "delay_ms": 18,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_step_20\",\"delta\":\"{\\\"cmd\\\":\\\"ls -lh /tmp/hn-muted-domains-apple-official-mock.mov\\\",\\\"yield_time_ms\\\":1000,\\\"max_output_tokens\\\":4000,\\\"workdir\\\":\\\"/tmp/hn-demo-repository\\\"}\",\"sequence_number\":7}\n\n"
+    "chunk": "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_step_20\",\"delta\":\"{\\\"cmd\\\":\\\"ls -lh /tmp/hn-muted-domains.mp4\\\",\\\"yield_time_ms\\\":1000,\\\"max_output_tokens\\\":4000,\\\"workdir\\\":\\\"/tmp/hn-demo-repository\\\"}\",\"sequence_number\":7}\n\n"
   },
   {
     "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.function_call_arguments.done\",\"output_index\":1,\"item_id\":\"fc_step_20\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"ls -lh /tmp/hn-muted-domains-apple-official-mock.mov\\\",\\\"yield_time_ms\\\":1000,\\\"max_output_tokens\\\":4000,\\\"workdir\\\":\\\"/tmp/hn-demo-repository\\\"}\",\"sequence_number\":8}\n\n"
+    "chunk": "data: {\"type\":\"response.function_call_arguments.done\",\"output_index\":1,\"item_id\":\"fc_step_20\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"ls -lh /tmp/hn-muted-domains.mp4\\\",\\\"yield_time_ms\\\":1000,\\\"max_output_tokens\\\":4000,\\\"workdir\\\":\\\"/tmp/hn-demo-repository\\\"}\",\"sequence_number\":8}\n\n"
   },
   {
     "delay_ms": 0,
-    "chunk": "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"fc_step_20\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_step_20\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"ls -lh /tmp/hn-muted-domains-apple-official-mock.mov\\\",\\\"yield_time_ms\\\":1000,\\\"max_output_tokens\\\":4000,\\\"workdir\\\":\\\"/tmp/hn-demo-repository\\\"}\"},\"sequence_number\":9}\n\n"
+    "chunk": "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"fc_step_20\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_step_20\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"ls -lh /tmp/hn-muted-domains.mp4\\\",\\\"yield_time_ms\\\":1000,\\\"max_output_tokens\\\":4000,\\\"workdir\\\":\\\"/tmp/hn-demo-repository\\\"}\"},\"sequence_number\":9}\n\n"
   },
   {
     "delay_ms": 2,
-    "chunk": "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"gen-muted-domains-step-20\",\"object\":\"response\",\"created_at\":1775000020,\"model\":\"openai/gpt-5.4-20260305\",\"status\":\"completed\",\"completed_at\":1775000021,\"output\":[{\"id\":\"msg_step_20\",\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Everything is done. I’m just confirming the attached demo video artifact.\",\"annotations\":[],\"logprobs\":[]}],\"phase\":\"commentary\"},{\"id\":\"fc_step_20\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_step_20\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"ls -lh /tmp/hn-muted-domains-apple-official-mock.mov\\\",\\\"yield_time_ms\\\":1000,\\\"max_output_tokens\\\":4000,\\\"workdir\\\":\\\"/tmp/hn-demo-repository\\\"}\"}],\"error\":null,\"incomplete_details\":null},\"sequence_number\":10}\n\n"
+    "chunk": "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"gen-muted-domains-step-20\",\"object\":\"response\",\"created_at\":1775000020,\"model\":\"openai/gpt-5.4-20260305\",\"status\":\"completed\",\"completed_at\":1775000021,\"output\":[{\"id\":\"msg_step_20\",\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Everything is done. I’m just confirming the attached demo video artifact.\",\"annotations\":[],\"logprobs\":[]}],\"phase\":\"commentary\"},{\"id\":\"fc_step_20\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_step_20\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"ls -lh /tmp/hn-muted-domains.mp4\\\",\\\"yield_time_ms\\\":1000,\\\"max_output_tokens\\\":4000,\\\"workdir\\\":\\\"/tmp/hn-demo-repository\\\"}\"}],\"error\":null,\"incomplete_details\":null},\"sequence_number\":10}\n\n"
   },
   {
     "delay_ms": 0,

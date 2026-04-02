@@ -4,8 +4,34 @@ import AppKit
 import CoreGraphics
 import Foundation
 
+struct CursorPoint: Codable {
+    let x: Double
+    let y: Double
+}
+
 struct Scenario: Decodable {
+    let initialCursorPoint: CursorPoint?
     let actions: [Action]
+
+    enum CodingKeys: String, CodingKey {
+        case initialCursorPoint = "initial_cursor_point"
+        case actions
+    }
+}
+
+struct DryRunEvent: Encodable {
+    let action: String
+    let point: Point?
+    let button: String?
+    let durationMs: Int?
+    let text: String?
+    let cps: Double?
+    let key: String?
+
+    struct Point: Encodable {
+        let x: Double
+        let y: Double
+    }
 }
 
 enum Action: Decodable {
@@ -85,7 +111,18 @@ func sleepMs(_ durationMs: Int) {
     usleep(useconds_t(durationMs * 1000))
 }
 
+var dryRun = false
+var currentCursorPoint = CGPoint.zero
+var dryRunEvents: [DryRunEvent] = []
+
+func pointPayload(_ point: CGPoint) -> DryRunEvent.Point {
+    DryRunEvent.Point(x: point.x, y: point.y)
+}
+
 func postMouseEvent(type: CGEventType, point: CGPoint, button: CGMouseButton) {
+    if dryRun {
+        return
+    }
     guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: button) else {
         fail("Failed to create mouse event \(type.rawValue)")
     }
@@ -93,7 +130,7 @@ func postMouseEvent(type: CGEventType, point: CGPoint, button: CGMouseButton) {
 }
 
 func moveCursorSmoothly(to target: CGPoint, durationMs: Int) {
-    let start = NSEvent.mouseLocation
+    let start = currentCursorPoint
     let steps = max(1, durationMs / 16)
     for step in 1...steps {
         let progress = Double(step) / Double(steps)
@@ -103,12 +140,20 @@ func moveCursorSmoothly(to target: CGPoint, durationMs: Int) {
             y: start.y + (target.y - start.y) * eased
         )
         postMouseEvent(type: .mouseMoved, point: point, button: .left)
-        sleepMs(16)
+        currentCursorPoint = point
+        if !dryRun {
+            sleepMs(16)
+        }
+    }
+    if dryRun {
+        dryRunEvents.append(
+            DryRunEvent(action: "move", point: pointPayload(target), button: nil, durationMs: durationMs, text: nil, cps: nil, key: nil)
+        )
     }
 }
 
 func dragCursorSmoothly(to target: CGPoint, durationMs: Int) {
-    let start = NSEvent.mouseLocation
+    let start = currentCursorPoint
     postMouseEvent(type: .leftMouseDown, point: start, button: .left)
     let steps = max(1, durationMs / 16)
     for step in 1...steps {
@@ -119,22 +164,41 @@ func dragCursorSmoothly(to target: CGPoint, durationMs: Int) {
             y: start.y + (target.y - start.y) * eased
         )
         postMouseEvent(type: .leftMouseDragged, point: point, button: .left)
-        sleepMs(16)
+        currentCursorPoint = point
+        if !dryRun {
+            sleepMs(16)
+        }
     }
     postMouseEvent(type: .leftMouseUp, point: target, button: .left)
+    currentCursorPoint = target
+    if dryRun {
+        dryRunEvents.append(
+            DryRunEvent(action: "drag", point: pointPayload(target), button: "left", durationMs: durationMs, text: nil, cps: nil, key: nil)
+        )
+    }
 }
 
 func click(button: String) {
-    let point = NSEvent.mouseLocation
+    let point = currentCursorPoint
     let mouseButton: CGMouseButton = button == "right" ? .right : .left
     let downType: CGEventType = button == "right" ? .rightMouseDown : .leftMouseDown
     let upType: CGEventType = button == "right" ? .rightMouseUp : .leftMouseUp
     postMouseEvent(type: downType, point: point, button: mouseButton)
-    sleepMs(40)
+    if !dryRun {
+        sleepMs(40)
+    }
     postMouseEvent(type: upType, point: point, button: mouseButton)
+    if dryRun {
+        dryRunEvents.append(
+            DryRunEvent(action: "click", point: pointPayload(point), button: button, durationMs: nil, text: nil, cps: nil, key: nil)
+        )
+    }
 }
 
 func postKey(character: UniChar) {
+    if dryRun {
+        return
+    }
     guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
           let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else {
         fail("Failed to create keyboard event")
@@ -147,6 +211,9 @@ func postKey(character: UniChar) {
 }
 
 func postVirtualKey(_ keyCode: CGKeyCode) {
+    if dryRun {
+        return
+    }
     guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
           let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) else {
         fail("Failed to create virtual keyboard event")
@@ -173,6 +240,12 @@ func keyCode(for name: String) -> CGKeyCode? {
 func typeText(_ text: String, cps: Double?) {
     let charsPerSecond = max(1.0, cps ?? 12.0)
     let delayMs = Int(1000.0 / charsPerSecond)
+    if dryRun {
+        dryRunEvents.append(
+            DryRunEvent(action: "type", point: nil, button: nil, durationMs: nil, text: text, cps: cps, key: nil)
+        )
+        return
+    }
     for codeUnit in text.utf16 {
         postKey(character: codeUnit)
         sleepMs(delayMs)
@@ -184,13 +257,14 @@ func usage() -> Never {
     macos_demo_conductor.swift
 
     Usage:
-      swift core/apps/desktop/scripts/macos_demo_conductor.swift --scenario <file>
+      swift core/apps/desktop/scripts/macos_demo_conductor.swift --scenario <file> [--dry-run]
     """
     print(text)
     exit(0)
 }
 
 let args = CommandLine.arguments
+dryRun = args.contains("--dry-run")
 guard let scenarioIndex = args.firstIndex(of: "--scenario") else {
     usage()
 }
@@ -202,7 +276,15 @@ let scenarioPath = args[scenarioIndex + 1]
 let scenarioData = try Data(contentsOf: URL(fileURLWithPath: scenarioPath))
 let scenario = try JSONDecoder().decode(Scenario.self, from: scenarioData)
 
-checkAccessibility()
+if let initialCursorPoint = scenario.initialCursorPoint {
+    currentCursorPoint = CGPoint(x: initialCursorPoint.x, y: initialCursorPoint.y)
+} else {
+    currentCursorPoint = dryRun ? .zero : NSEvent.mouseLocation
+}
+
+if !dryRun {
+    checkAccessibility()
+}
 
 for action in scenario.actions {
     switch action {
@@ -220,6 +302,18 @@ for action in scenario.actions {
         guard let keyCode = keyCode(for: name) else {
             fail("Unsupported key action: \(name)")
         }
+        if dryRun {
+            dryRunEvents.append(
+                DryRunEvent(action: "key", point: nil, button: nil, durationMs: nil, text: nil, cps: nil, key: name)
+            )
+            continue
+        }
         postVirtualKey(keyCode)
     }
+}
+
+if dryRun {
+    let data = try JSONEncoder().encode(dryRunEvents)
+    FileHandle.standardOutput.write(data)
+    FileHandle.standardOutput.write(Data("\n".utf8))
 }

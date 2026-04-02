@@ -124,7 +124,9 @@ fn strip_snapshot_partials(turns: &mut [SessionTurn], events: &mut Vec<SessionEv
     events.retain(|event| {
         !matches!(
             event.event_type,
-            SessionEventType::AssistantChunk | SessionEventType::ThoughtChunk
+            SessionEventType::AssistantChunk
+                | SessionEventType::AssistantComplete
+                | SessionEventType::ThoughtChunk
         )
     });
 }

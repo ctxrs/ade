@@ -18,6 +18,7 @@ import {
 const overlaySuppressed = (pathname: string): boolean => {
   if (pathname === "/") return true;
   if (pathname === "/workspace-setup") return true;
+  if (pathname === "/__geometry_harness") return true;
   return false;
 };
 

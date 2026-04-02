@@ -1,4 +1,11 @@
 import { useEffect } from "react";
+import {
+  measureWorkbenchDiffFile,
+  measureWorkbenchHarnessOption,
+  measureWorkbenchTargets,
+  type WorkbenchE2EMeasuredTargetResult,
+  type WorkbenchE2EMeasureTargetsResult,
+} from "./workbenchE2EMeasurements";
 
 type WorkbenchE2EWindow = Window & {
   __ctxE2E?: {
@@ -7,6 +14,9 @@ type WorkbenchE2EWindow = Window & {
     focusTask?: (taskId: string, sessionId?: string | null) => boolean;
     toggleDiffPane?: () => boolean;
     toggleArtifactsPane?: () => boolean;
+    measureTargets?: (selectors: Record<string, string>) => Promise<WorkbenchE2EMeasureTargetsResult>;
+    measureHarnessOption?: (label: string) => Promise<WorkbenchE2EMeasuredTargetResult | null>;
+    measureDiffFile?: (targetPath: string) => Promise<WorkbenchE2EMeasuredTargetResult | null>;
   };
 };
 
@@ -49,6 +59,9 @@ export function useWorkbenchE2EBridge({
       toggleArtifactsPane();
       return true;
     };
+    win.__ctxE2E.measureTargets = (selectors: Record<string, string>) => measureWorkbenchTargets(selectors);
+    win.__ctxE2E.measureHarnessOption = (label: string) => measureWorkbenchHarnessOption(label);
+    win.__ctxE2E.measureDiffFile = (targetPath: string) => measureWorkbenchDiffFile(targetPath);
 
     return () => {
       if (!win.__ctxE2E) return;
@@ -57,6 +70,9 @@ export function useWorkbenchE2EBridge({
       delete win.__ctxE2E.focusTask;
       delete win.__ctxE2E.toggleDiffPane;
       delete win.__ctxE2E.toggleArtifactsPane;
+      delete win.__ctxE2E.measureTargets;
+      delete win.__ctxE2E.measureHarnessOption;
+      delete win.__ctxE2E.measureDiffFile;
     };
   }, [clearDraftHarness, focusNewTask, focusTask, toggleArtifactsPane, toggleDiffPane]);
 }

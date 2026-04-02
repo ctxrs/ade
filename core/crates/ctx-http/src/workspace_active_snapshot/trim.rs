@@ -85,7 +85,9 @@ pub(super) fn is_primary_session(
 fn is_partial_event(event: &SessionEvent) -> bool {
     matches!(
         event.event_type,
-        SessionEventType::AssistantChunk | SessionEventType::ThoughtChunk
+        SessionEventType::AssistantChunk
+            | SessionEventType::AssistantComplete
+            | SessionEventType::ThoughtChunk
     )
 }
 

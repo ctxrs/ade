@@ -7,6 +7,7 @@ import UpdateNoticeBanner from "./components/UpdateNoticeBanner";
 import LauncherPage from "./pages/LauncherPage";
 import WorkbenchPage from "./pages/WorkbenchPage";
 import CursorDiffDemoPage from "./pages/CursorDiffDemoPage";
+import GeometryHarnessPage from "./pages/GeometryHarnessPage";
 import ProvidersPage from "./pages/ProvidersPage";
 import DiagnosticsPage from "./pages/DiagnosticsPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -501,6 +502,7 @@ export default function App() {
             <Route path="/diagnostics" element={<DiagnosticsPage />} />
             <Route path="/workspaces/:id" element={<WorkbenchPage />} />
             <Route path="/__cursor_diff_demo" element={<CursorDiffDemoPage />} />
+            <Route path="/__geometry_harness" element={<GeometryHarnessPage />} />
           </Routes>
           <StorageGuardBanner />
           <DaemonAvailabilityOverlay />

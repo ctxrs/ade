@@ -164,6 +164,9 @@ describe("ArtifactsPane", () => {
     expect(inlineVideo.loop).toBe(true);
     expect(inlineVideo.muted).toBe(true);
     expect(inlineVideo.playsInline).toBe(true);
+    fireEvent.pointerDown(inlineVideo);
+    fireEvent.click(inlineVideo);
+    expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTitle("/tmp/demo.mp4"));
 

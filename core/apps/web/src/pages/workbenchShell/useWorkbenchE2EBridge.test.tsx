@@ -2,6 +2,23 @@ import { render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useWorkbenchE2EBridge } from "./useWorkbenchE2EBridge";
 
+vi.mock("../../utils/desktop", () => ({
+  desktopGetViewGeometry: vi.fn(async () => ({
+    scaleFactor: 2,
+    devicePixelRatio: 2,
+    webviewPosition: { x: 0, y: 0 },
+    webviewSize: { width: 1728, height: 994 },
+    windowInnerPosition: { x: 0, y: 66 },
+    windowOuterPosition: { x: 0, y: 66 },
+    windowInnerSize: { width: 1728, height: 994 },
+    windowOuterSize: { width: 1728, height: 994 },
+    screenWidth: 1728,
+    screenHeight: 1117,
+    innerWidth: 1728,
+    innerHeight: 962,
+  })),
+}));
+
 type E2EWindow = Window & {
   __ctxE2E?: {
     focusNewTask?: () => boolean;
@@ -9,6 +26,9 @@ type E2EWindow = Window & {
     focusTask?: (taskId: string, sessionId?: string | null) => boolean;
     toggleDiffPane?: () => boolean;
     toggleArtifactsPane?: () => boolean;
+    measureTargets?: (selectors: Record<string, string>) => Promise<unknown>;
+    measureHarnessOption?: (label: string) => Promise<unknown>;
+    measureDiffFile?: (targetPath: string) => Promise<unknown>;
   };
 };
 
@@ -53,6 +73,9 @@ describe("useWorkbenchE2EBridge", () => {
     expect(typeof e2eWindow.__ctxE2E?.focusTask).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.toggleDiffPane).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.toggleArtifactsPane).toBe("function");
+    expect(typeof e2eWindow.__ctxE2E?.measureTargets).toBe("function");
+    expect(typeof e2eWindow.__ctxE2E?.measureHarnessOption).toBe("function");
+    expect(typeof e2eWindow.__ctxE2E?.measureDiffFile).toBe("function");
     expect(e2eWindow.__ctxE2E?.focusNewTask?.()).toBe(true);
     expect(e2eWindow.__ctxE2E?.clearDraftHarness?.()).toBe(true);
     expect(e2eWindow.__ctxE2E?.focusTask?.("task-1", "session-1")).toBe(true);
@@ -70,5 +93,8 @@ describe("useWorkbenchE2EBridge", () => {
     expect(e2eWindow.__ctxE2E?.focusTask).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.toggleDiffPane).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.toggleArtifactsPane).toBeUndefined();
+    expect(e2eWindow.__ctxE2E?.measureTargets).toBeUndefined();
+    expect(e2eWindow.__ctxE2E?.measureHarnessOption).toBeUndefined();
+    expect(e2eWindow.__ctxE2E?.measureDiffFile).toBeUndefined();
   });
 });

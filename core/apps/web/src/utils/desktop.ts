@@ -131,6 +131,26 @@ export type DesktopDragDropPosition = {
   y: number;
 };
 
+export type DesktopPhysicalSize = {
+  width: number;
+  height: number;
+};
+
+export type DesktopViewGeometry = {
+  scaleFactor: number;
+  devicePixelRatio: number;
+  webviewPosition: DesktopDragDropPosition;
+  webviewSize: DesktopPhysicalSize;
+  windowInnerPosition: DesktopDragDropPosition;
+  windowOuterPosition: DesktopDragDropPosition;
+  windowInnerSize: DesktopPhysicalSize;
+  windowOuterSize: DesktopPhysicalSize;
+  screenWidth: number;
+  screenHeight: number;
+  innerWidth: number;
+  innerHeight: number;
+};
+
 export type DesktopDragDropEvent =
   | {
       type: "enter";
@@ -364,6 +384,67 @@ export const desktopListenForDragDrop = async (
         // ignore
       }
     }
+  };
+};
+
+export const desktopGetViewGeometry = async (): Promise<DesktopViewGeometry> => {
+  if (!isDesktopApp()) {
+    throw new Error("desktop view geometry is only available inside the desktop app");
+  }
+  const [webviewMod, windowMod] = await Promise.all([
+    import("@tauri-apps/api/webview"),
+    import("@tauri-apps/api/window"),
+  ]);
+  const webview = webviewMod.getCurrentWebview();
+  const currentWindow = windowMod.getCurrentWindow();
+  const [
+    webviewPosition,
+    webviewSize,
+    windowInnerPosition,
+    windowOuterPosition,
+    windowInnerSize,
+    windowOuterSize,
+    scaleFactor,
+  ] = await Promise.all([
+    webview.position(),
+    webview.size(),
+    currentWindow.innerPosition(),
+    currentWindow.outerPosition(),
+    currentWindow.innerSize(),
+    currentWindow.outerSize(),
+    currentWindow.scaleFactor(),
+  ]);
+  return {
+    scaleFactor,
+    devicePixelRatio: window.devicePixelRatio > 0 ? window.devicePixelRatio : 1,
+    webviewPosition: {
+      x: webviewPosition.x,
+      y: webviewPosition.y,
+    },
+    webviewSize: {
+      width: webviewSize.width,
+      height: webviewSize.height,
+    },
+    windowInnerPosition: {
+      x: windowInnerPosition.x,
+      y: windowInnerPosition.y,
+    },
+    windowOuterPosition: {
+      x: windowOuterPosition.x,
+      y: windowOuterPosition.y,
+    },
+    windowInnerSize: {
+      width: windowInnerSize.width,
+      height: windowInnerSize.height,
+    },
+    windowOuterSize: {
+      width: windowOuterSize.width,
+      height: windowOuterSize.height,
+    },
+    screenWidth: window.screen.width,
+    screenHeight: window.screen.height,
+    innerWidth: window.innerWidth,
+    innerHeight: window.innerHeight,
   };
 };
 

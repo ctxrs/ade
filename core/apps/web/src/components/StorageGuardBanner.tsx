@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { getHealth, type Health } from "../api/client";
 
 const POLL_INTERVAL_MS = 5_000;
@@ -27,10 +27,16 @@ const formatPathLabel = (active: StorageActive | null | undefined): string => {
 
 export default function StorageGuardBanner() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [storage, setStorage] = useState<StorageState | null>(null);
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
+  const suppressed = location.pathname === "/__geometry_harness";
 
   useEffect(() => {
+    if (suppressed) {
+      setStorage(null);
+      return;
+    }
     let cancelled = false;
     const load = async () => {
       try {
@@ -50,13 +56,17 @@ export default function StorageGuardBanner() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [suppressed]);
 
   const bannerKey = useMemo(() => bannerKeyFor(storage), [storage]);
   useEffect(() => {
     if (!bannerKey || !dismissedKey || bannerKey === dismissedKey) return;
     setDismissedKey(null);
   }, [bannerKey, dismissedKey]);
+
+  if (suppressed) {
+    return null;
+  }
 
   if (!storage || storage.level === "normal" || dismissedKey === bannerKey) {
     return null;
