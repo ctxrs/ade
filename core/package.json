@@ -123,7 +123,7 @@
     "verify:e2e:visual": "pnpm test:e2e:visual",
     "verify:e2e:soak": "pnpm test:e2e:soak && bash -lc 'scripts/run-rust-suite.sh soak'",
     "verify:e2e:load": "pnpm test:e2e:load && bash -lc 'scripts/run-rust-suite.sh load'",
-    "verify:desktop-smoke": "bash -lc '../scripts/desktop_smoke_with_infisical.sh'",
+    "verify:desktop-smoke": "bash -lc '../scripts/desktop_smoke_with_infisical.sh' && pnpm -C apps/desktop test:automation:remote-contracts:docker",
     "verify:desktop:image-drag-drop": "pnpm -C apps/desktop test:automation:image-drag-drop",
     "verify:desktop:parity-provider-smoke": "CTX_AUTOMATION_SCENARIOS=${CTX_AUTOMATION_SCENARIOS:-local-codex-host-smoke,local-codex-smoke} bash -lc '../scripts/desktop_smoke_with_infisical.sh --spec automation/specs/workspace-wizard.spec.cjs --spec automation/specs/workbench-blank-debug.spec.cjs'",
     "verify:desktop:break-matrix": "apps/desktop/scripts/run_macos_break_matrix.sh",

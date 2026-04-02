@@ -14,6 +14,7 @@
     "test:automation:remote-bootstrap": "CTX_AUTOMATION_SCENARIOS=${CTX_AUTOMATION_SCENARIOS:-remote-bootstrap} wdio run automation/wdio.conf.cjs --spec automation/specs/remote-bootstrap-install.spec.cjs",
     "test:automation:remote-container-contract": "CTX_AUTOMATION_SCENARIOS=${CTX_AUTOMATION_SCENARIOS:-remote-new-disk-isolated} wdio run automation/wdio.conf.cjs --spec automation/specs/remote-container-contract.spec.cjs",
     "test:automation:remote-contracts": "scripts/test_remote_real_ci.sh",
+    "test:automation:remote-contracts:docker": "bash scripts/test_remote_docker_contracts.sh",
     "test:automation:remote-bootstrap:matrix": "scripts/test_remote_bootstrap_auth_matrix.sh",
     "test:automation:updater-mismatch": "wdio run automation/wdio.conf.cjs --spec automation/specs/updater-mismatch-confirmation.spec.cjs",
     "test:automation:updater-remote": "CTX_AUTOMATION_SCENARIOS=${CTX_AUTOMATION_SCENARIOS:-updater-remote} wdio run automation/wdio.conf.cjs --spec automation/specs/updater-remote-daemon-e2e.spec.cjs"
