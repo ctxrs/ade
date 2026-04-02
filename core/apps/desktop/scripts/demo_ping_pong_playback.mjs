@@ -221,6 +221,7 @@ function playbackBuildEnv(tauriTargetDir) {
     ...process.env,
     CARGO_TARGET_DIR: tauriTargetDir,
     CTX_DESKTOP_SYNC_BUNDLES: "0",
+    CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD: "1",
   };
 }
 

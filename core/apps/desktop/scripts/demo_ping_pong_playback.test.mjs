@@ -149,6 +149,7 @@ test("playbackBuildEnv keeps bundle sync disabled for demo builds", () => {
   const env = playbackBuildEnv("/tmp/demo-target");
   assert.equal(env.CARGO_TARGET_DIR, "/tmp/demo-target");
   assert.equal(env.CTX_DESKTOP_SYNC_BUNDLES, "0");
+  assert.equal(env.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD, "1");
 });
 
 test("resolveDaemonBinaryPath points at the bundled desktop daemon binary", () => {
