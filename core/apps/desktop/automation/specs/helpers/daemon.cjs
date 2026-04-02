@@ -4,6 +4,19 @@ const DAEMON_HTTP_TIMEOUT_MS = Number.parseInt(
   String(process.env.CTX_AUTOMATION_DAEMON_HTTP_TIMEOUT_MS || "60000"),
   10,
 ) || 60000;
+const REMOTE_FIXTURE_DIRECT_DAEMON = String(
+  process.env.CTX_AUTOMATION_REMOTE_DIRECT_DAEMON || "0",
+).trim() === "1";
+const REMOTE_FIXTURE_DIRECT_DAEMON_URL = String(
+  process.env.CTX_AUTOMATION_REMOTE_DIRECT_DAEMON_URL || "",
+).trim();
+const REMOTE_FIXTURE_HOST = String(
+  process.env.CTX_AUTOMATION_REMOTE_HOST || process.env.CTX_AUTOMATION_REMOTE_CONTAINER_HOST || "",
+).trim();
+const REMOTE_FIXTURE_PORT = Number.parseInt(
+  String(process.env.CTX_AUTOMATION_REMOTE_PORT || process.env.CTX_AUTOMATION_REMOTE_CONTAINER_PORT || ""),
+  10,
+) || 0;
 let cachedConnection = null;
 const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 
@@ -26,6 +39,24 @@ const shouldRetryWebdriverTransportError = (error) => {
     || text.includes("Websocket connection lost")
     || text.includes("socket hang up")
   );
+};
+
+const maybeDirectRemoteDaemonConnection = (connection) => {
+  if (!REMOTE_FIXTURE_DIRECT_DAEMON) return connection;
+  if (!connection || typeof connection !== "object") return connection;
+  const kind = String(connection.kind || "").trim().toLowerCase();
+  if (kind !== "ssh") return connection;
+  if (REMOTE_FIXTURE_DIRECT_DAEMON_URL) {
+    return {
+      ...connection,
+      base_url: REMOTE_FIXTURE_DIRECT_DAEMON_URL,
+    };
+  }
+  if (!REMOTE_FIXTURE_HOST || REMOTE_FIXTURE_PORT <= 0) return connection;
+  return {
+    ...connection,
+    base_url: `http://${REMOTE_FIXTURE_HOST}:${REMOTE_FIXTURE_PORT}`,
+  };
 };
 
 const getDesktopConnection = async () => {
@@ -65,14 +96,14 @@ const getDesktopConnection = async () => {
   }
 
   if (info.base_url && info.token) {
-    return info;
+    return maybeDirectRemoteDaemonConnection(info);
   }
 
   if (info.kind === "none" || info.kind === "local") {
     await invokeDesktop("desktop_connect_local");
     const refreshed = await invokeDesktop("desktop_get_connection");
     if (refreshed && refreshed.base_url && refreshed.token) {
-      return refreshed;
+      return maybeDirectRemoteDaemonConnection(refreshed);
     }
     throw new Error(
       `desktop connection missing base_url/token after desktop_connect_local: ${JSON.stringify(refreshed || info)}`,

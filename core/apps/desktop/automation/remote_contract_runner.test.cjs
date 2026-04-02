@@ -35,8 +35,8 @@ test("remote contracts runner dry-run writes preflight and lane summary artifact
 
     assert.equal(preflight.lanes.host.ready, true);
     assert.equal(preflight.lanes.container.ready, true);
-    assert.equal(preflight.lanes.host.proofScope, "docker_fresh_remote_host");
-    assert.equal(preflight.lanes.container.proofScope, "docker_full_remote_sandbox");
+    assert.equal(preflight.lanes.host.proofScope, "docker_warm_remote_host");
+    assert.equal(preflight.lanes.container.proofScope, "docker_warm_remote_sandbox");
     assert.match(summary, /remote-host\tdry-run\t0/);
     assert.match(summary, /remote-container\tdry-run\t0/);
   } finally {

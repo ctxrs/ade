@@ -11,6 +11,12 @@ const loadDaemonHelper = () => {
 test.afterEach(() => {
   delete global.browser;
   delete global.fetch;
+  delete process.env.CTX_AUTOMATION_REMOTE_DIRECT_DAEMON;
+  delete process.env.CTX_AUTOMATION_REMOTE_DIRECT_DAEMON_URL;
+  delete process.env.CTX_AUTOMATION_REMOTE_HOST;
+  delete process.env.CTX_AUTOMATION_REMOTE_PORT;
+  delete process.env.CTX_AUTOMATION_REMOTE_CONTAINER_HOST;
+  delete process.env.CTX_AUTOMATION_REMOTE_CONTAINER_PORT;
   delete require.cache[DAEMON_HELPER_PATH];
 });
 
@@ -173,4 +179,89 @@ test("daemonJsonOnce performs a single transport attempt while still refreshing 
     },
   ]);
   assert.deepEqual(executeCalls, ["desktop_get_connection", "desktop_get_connection"]);
+});
+
+test("daemonJson uses the direct remote daemon URL for ssh connections when explicitly enabled", async () => {
+  const executeCalls = [];
+  const fetchCalls = [];
+  process.env.CTX_AUTOMATION_REMOTE_DIRECT_DAEMON = "1";
+  process.env.CTX_AUTOMATION_REMOTE_HOST = "127.0.0.1";
+  process.env.CTX_AUTOMATION_REMOTE_PORT = "44099";
+
+  global.browser = {
+    execute: async (_fn, command) => {
+      executeCalls.push(command || "desktop_get_connection");
+      return {
+        info: {
+          kind: "ssh",
+          base_url: "http://127.0.0.1:51575",
+          token: "token-one",
+          host: "127.0.0.1",
+          remote_port: 44099,
+          user: "ctxfixture",
+        },
+      };
+    },
+  };
+  global.fetch = async (url, options) => {
+    fetchCalls.push({
+      url: String(url),
+      method: options?.method || "GET",
+      authorization: options?.headers?.authorization || "",
+    });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const { daemonJson } = loadDaemonHelper();
+  const resp = await daemonJson("GET", "/api/health");
+
+  assert.equal(resp.status, 200);
+  assert.deepEqual(fetchCalls, [
+    {
+      url: "http://127.0.0.1:44099/api/health",
+      method: "GET",
+      authorization: "Bearer token-one",
+    },
+  ]);
+  assert.deepEqual(executeCalls, ["desktop_get_connection"]);
+});
+
+test("daemonJson prefers an explicit direct remote daemon URL over the desktop tunnel URL", async () => {
+  const fetchCalls = [];
+  process.env.CTX_AUTOMATION_REMOTE_DIRECT_DAEMON = "1";
+  process.env.CTX_AUTOMATION_REMOTE_DIRECT_DAEMON_URL = "http://127.0.0.1:47123";
+
+  global.browser = {
+    execute: async () => ({
+      info: {
+        kind: "ssh",
+        base_url: "http://127.0.0.1:51575",
+        token: "token-two",
+      },
+    }),
+  };
+  global.fetch = async (url, options) => {
+    fetchCalls.push({
+      url: String(url),
+      authorization: options?.headers?.authorization || "",
+    });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const { daemonJson } = loadDaemonHelper();
+  const resp = await daemonJson("GET", "/api/health");
+
+  assert.equal(resp.status, 200);
+  assert.deepEqual(fetchCalls, [
+    {
+      url: "http://127.0.0.1:47123/api/health",
+      authorization: "Bearer token-two",
+    },
+  ]);
 });

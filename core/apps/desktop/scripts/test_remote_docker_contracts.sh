@@ -6,6 +6,12 @@ FIXTURE_SCRIPT="${ROOT}/core/apps/desktop/scripts/remote_ssh_fixture.sh"
 RUNNER_SCRIPT="${ROOT}/core/apps/desktop/scripts/test_remote_real_ci.sh"
 RELEASE_FIXTURE_SCRIPT="${ROOT}/core/apps/desktop/scripts/local_release_fixture.cjs"
 LOCAL_RELEASE_APP_PATH="${ROOT}/core/target/release/bundle/macos/ctx.app"
+INFISICAL_ENV="${INFISICAL_ENV:-dev}"
+INFISICAL_PROJECT_ID="${INFISICAL_PROJECT_ID:-}"
+INFISICAL_CONFIG_FILE="${CTX_AUTOMATION_INFISICAL_CONFIG_FILE:-${ROOT}/core/.infisical.json}"
+INFISICAL_REEXEC_MARKER="${CTX_REMOTE_DOCKER_CONTRACTS_INFISICAL_REEXEC:-0}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${ROOT}/core/target}"
+export CTX_AUTOMATION_REMOTE_DIRECT_DAEMON="${CTX_AUTOMATION_REMOTE_DIRECT_DAEMON:-1}"
 
 RUNTIME="auto"
 RUN_HOST="${CTX_REMOTE_CI_RUN_HOST:-0}"
@@ -18,6 +24,8 @@ RELEASE_FIXTURE_STATE_FILE="${CTX_AUTOMATION_REMOTE_RELEASE_FIXTURE_STATE_FILE:-
 ARTIFACTS_DIR=""
 RUN_CONTAINER="${CTX_REMOTE_CI_RUN_CONTAINER:-1}"
 PASSTHROUGH_ARGS=()
+ORIGINAL_ARGS=("$@")
+DIRECT_DAEMON_TUNNEL_PID=""
 
 usage() {
   cat <<'USAGE' >&2
@@ -34,6 +42,128 @@ notes:
   - Defaults `CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS=1` so the sandbox lane proves a usable workspace, not only creation.
 USAGE
 }
+
+ensure_desktop_automation_deps() {
+  (
+    cd "${ROOT}/core"
+    if [[ -d node_modules ]] \
+      && pnpm -C apps/web exec which vite >/dev/null 2>&1 \
+      && pnpm -C apps/desktop exec which wdio >/dev/null 2>&1; then
+      exit 0
+    fi
+    echo "[remote-contracts] repairing missing core/apps/web/apps/desktop automation toolchain" >&2
+    pnpm install --frozen-lockfile >/dev/null
+    pnpm -C apps/web install --frozen-lockfile >/dev/null
+    pnpm -C apps/desktop install --frozen-lockfile >/dev/null
+  )
+}
+
+pick_unused_local_port() {
+  python3 - <<'PY'
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+}
+
+wait_for_local_port() {
+  local port="$1"
+  local attempts="${2:-50}"
+  python3 - "$port" "$attempts" <<'PY'
+import socket
+import sys
+import time
+port = int(sys.argv[1])
+attempts = int(sys.argv[2])
+for _ in range(attempts):
+    s = socket.socket()
+    s.settimeout(0.2)
+    try:
+        s.connect(("127.0.0.1", port))
+    except OSError:
+        time.sleep(0.2)
+    else:
+        s.close()
+        sys.exit(0)
+    finally:
+        try:
+            s.close()
+        except OSError:
+            pass
+sys.exit(1)
+PY
+}
+
+start_remote_daemon_tunnel() {
+  local local_port=""
+  local remote_port="${CTX_AUTOMATION_REMOTE_PORT:-}"
+  local ssh_config="${CTX_AUTOMATION_REMOTE_FIXTURE_SSH_CONFIG:-}"
+  local ssh_target="${CTX_AUTOMATION_REMOTE_FIXTURE_HOST_ALIAS:-}"
+  local ssh_password="${CTX_AUTOMATION_REMOTE_PASSWORD_ACTUAL:-${CTX_AUTOMATION_REMOTE_PASSWORD:-}}"
+
+  if [[ -z "${remote_port}" || -z "${ssh_config}" || -z "${ssh_target}" ]]; then
+    echo "error: remote daemon tunnel requires fixture ssh config, alias, and remote port" >&2
+    exit 1
+  fi
+
+  local_port="$(pick_unused_local_port)"
+  if [[ "${AUTH_MODE}" == "password" ]]; then
+    SSHPASS="${ssh_password}" sshpass -e ssh \
+      -F "${ssh_config}" \
+      -o BatchMode=no \
+      -o PreferredAuthentications=password,keyboard-interactive \
+      -o NumberOfPasswordPrompts=1 \
+      -o ExitOnForwardFailure=yes \
+      -N \
+      -L "127.0.0.1:${local_port}:127.0.0.1:${remote_port}" \
+      "${ssh_target}" >/dev/null 2>&1 &
+  else
+    ssh \
+      -F "${ssh_config}" \
+      -o BatchMode=yes \
+      -o ExitOnForwardFailure=yes \
+      -N \
+      -L "127.0.0.1:${local_port}:127.0.0.1:${remote_port}" \
+      "${ssh_target}" >/dev/null 2>&1 &
+  fi
+  DIRECT_DAEMON_TUNNEL_PID="$!"
+  if ! wait_for_local_port "${local_port}" 50; then
+    echo "error: remote daemon tunnel did not become ready on 127.0.0.1:${local_port}" >&2
+    exit 1
+  fi
+  export CTX_AUTOMATION_REMOTE_DIRECT_DAEMON_URL="http://127.0.0.1:${local_port}"
+}
+
+can_run_with_infisical() {
+  if [[ "${CTX_AUTOMATION_USE_INFISICAL:-1}" == "0" ]]; then
+    return 1
+  fi
+  if ! command -v infisical >/dev/null 2>&1; then
+    return 1
+  fi
+  [[ -f "${INFISICAL_CONFIG_FILE}" ]]
+}
+
+maybe_reexec_with_infisical() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    return 0
+  fi
+  if [[ -n "${CN_API_KEY:-}" ]]; then
+    return 0
+  fi
+  if [[ "${INFISICAL_REEXEC_MARKER}" == "1" ]]; then
+    return 0
+  fi
+  if ! can_run_with_infisical; then
+    return 0
+  fi
+  : "${INFISICAL_PROJECT_ID:?Set INFISICAL_PROJECT_ID to load automation credentials from Infisical}"
+  exec infisical run --env "${INFISICAL_ENV}" --projectId "${INFISICAL_PROJECT_ID}" -- \
+    env CTX_REMOTE_DOCKER_CONTRACTS_INFISICAL_REEXEC=1 "$0" "$@"
+}
+
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -85,10 +215,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+maybe_reexec_with_infisical "${ORIGINAL_ARGS[@]}"
+
 if [[ "$(uname -s)" == "Darwin" && -z "${CN_API_KEY:-}" ]]; then
   echo "error: CN_API_KEY is required on macOS for desktop automation (stored in Infisical for core/)." >&2
   exit 1
 fi
+
+ensure_desktop_automation_deps
 
 if [[ "${RUN_CONTAINER}" != "0" && "${RUN_CONTAINER}" != "1" ]]; then
   echo "error: --run-container must be 1 or 0" >&2
@@ -102,10 +236,27 @@ fi
 if [[ -z "${STATE_FILE}" ]]; then
   STATE_FILE="$(mktemp /tmp/ctx-remote-fixture-state.XXXXXX)"
 fi
+if [[ -n "${ARTIFACTS_DIR}" ]]; then
+  mkdir -p "${ARTIFACTS_DIR}"
+  export CTX_VOLATILE_ARTIFACTS_DIR="${CTX_VOLATILE_ARTIFACTS_DIR:-${ARTIFACTS_DIR}}"
+  export CTX_VOLATILE_ROOT="${CTX_VOLATILE_ROOT:-${ARTIFACTS_DIR}/volatile}"
+else
+  export CTX_VOLATILE_ROOT="${CTX_VOLATILE_ROOT:-$(mktemp -d /tmp/ctx-remote-contracts-volatile.XXXXXX)}"
+fi
+export CTX_VOLATILE_TMPDIR="${CTX_VOLATILE_TMPDIR:-${CTX_VOLATILE_ROOT}/tmp}"
+mkdir -p "${CTX_VOLATILE_ROOT}" "${CTX_VOLATILE_TMPDIR}"
+export CTX_AUTOMATION_CN_BACKEND_STATE_DIR="${CTX_AUTOMATION_CN_BACKEND_STATE_DIR:-${CTX_VOLATILE_ROOT}/cn-backend}"
+export CTX_AUTOMATION_CN_BACKEND_LOG="${CTX_AUTOMATION_CN_BACKEND_LOG:-${CTX_VOLATILE_ROOT}/crabnebula-backend.log}"
+export CTX_AUTOMATION_CN_DRIVER_LOG="${CTX_AUTOMATION_CN_DRIVER_LOG:-${CTX_VOLATILE_ROOT}/tauri-driver.log}"
+export CTX_AUTOMATION_CN_SHARED_BACKEND="${CTX_AUTOMATION_CN_SHARED_BACKEND:-0}"
+mkdir -p "${CTX_AUTOMATION_CN_BACKEND_STATE_DIR}"
 
 cleanup() {
   if [[ "${KEEP_ALIVE}" == "1" ]]; then
     return 0
+  fi
+  if [[ -n "${DIRECT_DAEMON_TUNNEL_PID}" ]]; then
+    kill "${DIRECT_DAEMON_TUNNEL_PID}" >/dev/null 2>&1 || true
   fi
   if [[ -n "${RELEASE_FIXTURE_STATE_FILE}" ]]; then
     node "${RELEASE_FIXTURE_SCRIPT}" stop --state-file "${RELEASE_FIXTURE_STATE_FILE}" >/dev/null 2>&1 || true
@@ -126,6 +277,7 @@ if [[ -z "${CTX_DOWNLOAD_BASE_URL:-}" && "${CTX_AUTOMATION_REMOTE_USE_LOCAL_RELE
     CTX_DESKTOP_SYNC_BUNDLES=0 \
     CTX_BUNDLE_REMOTE_DAEMONS=0 \
     CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD=1 \
+    CARGO_TARGET_DIR="${CARGO_TARGET_DIR}" \
     pnpm -C "${ROOT}/core/apps/desktop" run build -- --bundles app -- --features automation
     export CTX_DESKTOP_APP_PATH="${LOCAL_RELEASE_APP_PATH}"
   fi
@@ -165,9 +317,11 @@ export CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION="${CTX_AUTOMATION_SKIP_REMOTE_CT
 export CTX_AUTOMATION_USE_EXTERNAL_DAEMON="${CTX_AUTOMATION_USE_EXTERNAL_DAEMON:-0}"
 export CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP="${CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP:-1}"
 export CTX_AUTOMATION_REMOTE_FIXTURE_CLASS="${CTX_AUTOMATION_REMOTE_FIXTURE_CLASS:-docker-ssh}"
+export CTX_AUTOMATION_REMOTE_FIXTURE_HOST_MODE="${CTX_AUTOMATION_REMOTE_FIXTURE_HOST_MODE:-fresh-install}"
 export CTX_AUTOMATION_REMOTE_FIXTURE_SANDBOX_RUNTIME="${CTX_AUTOMATION_REMOTE_FIXTURE_SANDBOX_RUNTIME:-nested-containerd}"
 export CTX_AUTOMATION_REMOTE_STRICT="${CTX_AUTOMATION_REMOTE_STRICT:-1}"
 export CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS="${CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS:-1}"
+start_remote_daemon_tunnel
 if [[ -n "${CTX_DESKTOP_APP_PATH:-}" && -z "${CTX_AUTOMATION_SKIP_APP_BUILD+x}" ]]; then
   export CTX_AUTOMATION_SKIP_APP_BUILD=1
 fi

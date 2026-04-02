@@ -77,3 +77,18 @@ test("linux ctx-mcp container build command stages runtime into bundle tree", ()
     /install -Dm0755 .* \/out\/runtimes\/ctx-mcp\/linux\/aarch64\/0\.1\.0\/ctx-mcp/,
   );
 });
+
+test("bundle cache root follows CARGO_TARGET_DIR before HOME cache fallbacks", () => {
+  const cacheRoot = __desktopSyncResourcesTestHooks.resolveBundleCacheRoot(
+    "desktop-remote-daemons",
+    {
+      CARGO_TARGET_DIR: "/tmp/ctx-cargo-target",
+      HOME: "/Users/example-user",
+    },
+  );
+
+  assert.equal(
+    cacheRoot,
+    "/tmp/ctx-cargo-target/desktop-sync-cache/desktop-remote-daemons",
+  );
+});

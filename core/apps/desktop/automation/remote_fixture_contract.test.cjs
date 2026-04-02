@@ -7,6 +7,7 @@ const path = require("node:path");
 const {
   createRemoteContractRecorder,
   resolveRemoteFixtureEnv,
+  resolveRemotePerformanceBudgets,
   summarizeFixtureForReport,
 } = require("./helpers/remote_fixture_contract.cjs");
 
@@ -59,6 +60,7 @@ test("fixture metadata records what docker-backed remote lanes actually prove", 
     env: {
       CTX_AUTOMATION_REMOTE_HOST: "builder@example.com",
       CTX_AUTOMATION_REMOTE_DATA_DIR: "/tmp/ctx-remote-host",
+      CTX_AUTOMATION_REMOTE_FIXTURE_HOST_MODE: "existing-installed-host",
       CTX_AUTOMATION_REMOTE_FIXTURE_CLASS: "docker-ssh",
       CTX_AUTOMATION_REMOTE_FIXTURE_SANDBOX_RUNTIME: "nested-containerd",
     },
@@ -75,14 +77,37 @@ test("fixture metadata records what docker-backed remote lanes actually prove", 
   });
 
   assert.equal(hostFixture.fixtureClass, "docker-ssh");
+  assert.equal(hostFixture.hostMode, "existing-installed-host");
   assert.equal(hostFixture.sandboxRuntime, "nested-containerd");
-  assert.equal(hostFixture.proofScope, "docker_fresh_remote_host");
-  assert.equal(sandboxFixture.proofScope, "docker_full_remote_sandbox");
+  assert.equal(hostFixture.proofScope, "docker_warm_remote_host");
+  assert.equal(sandboxFixture.proofScope, "docker_warm_remote_sandbox");
 
   const summary = summarizeFixtureForReport(sandboxFixture);
+  assert.equal(summary.host_mode, "fresh-install");
   assert.equal(summary.fixture_class, "docker-ssh");
   assert.equal(summary.sandbox_runtime, "nested-containerd");
-  assert.equal(summary.proof_scope, "docker_full_remote_sandbox");
+  assert.equal(summary.proof_scope, "docker_warm_remote_sandbox");
+});
+
+test("docker fixture performance budgets default to warm-path CI bounds", () => {
+  const fixture = resolveRemoteFixtureEnv({
+    lane: "host",
+    env: {
+      CTX_AUTOMATION_REMOTE_HOST: "builder@example.com",
+      CTX_AUTOMATION_REMOTE_DATA_DIR: "/tmp/ctx-remote-host",
+      CTX_AUTOMATION_REMOTE_FIXTURE_CLASS: "docker-ssh",
+    },
+  });
+
+  const budgets = resolveRemotePerformanceBudgets({ fixture });
+  assert.deepEqual(budgets, {
+    cold_connect_ms: 180000,
+    warm_connect_ms: 60000,
+    daemon_restart_connect_ms: 120000,
+    provider_ready_ms: 45000,
+    terminal_ready_ms: 30000,
+    task_create_ms: 20000,
+  });
 });
 
 test("remote contract recorder redacts secrets in artifacts and ssh transcripts", () => {

@@ -8,6 +8,13 @@ const normalizeLowerText = (value) => normalizeText(value).toLowerCase();
 
 const parseBoolean = (value) => parseBoolish(value) === true;
 
+const parseDurationMs = (value, fallback) => {
+  const text = normalizeText(value);
+  if (!text) return fallback;
+  const numeric = Number.parseInt(text, 10);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
+};
+
 const parsePort = (value, fallback = 0) => {
   const text = normalizeText(value);
   if (!text) return fallback;
@@ -82,6 +89,54 @@ const LANE_ENV_NAMES = {
 
 const envHint = (names) => names.join(" or ");
 
+const resolveRemoteProofScope = ({
+  lane = "host",
+  fixtureClass = "",
+} = {}) => {
+  const normalizedLane = lane === "sandbox" ? "sandbox" : "host";
+  const normalizedFixtureClass = normalizeLowerText(fixtureClass);
+  if (normalizedFixtureClass === "docker-ssh") {
+    return normalizedLane === "sandbox"
+      ? "docker_warm_remote_sandbox"
+      : "docker_warm_remote_host";
+  }
+  return normalizedLane === "sandbox" ? "remote_sandbox" : "remote_host";
+};
+
+const resolveRemotePerformanceBudgets = ({
+  fixture = {},
+  env = process.env,
+} = {}) => {
+  const fixtureClass = normalizeLowerText(fixture.fixtureClass);
+  const dockerFixture = fixtureClass === "docker-ssh";
+  return {
+    cold_connect_ms: parseDurationMs(
+      env.CTX_AUTOMATION_REMOTE_COLD_CONNECT_MAX_MS,
+      dockerFixture ? 180_000 : 240_000,
+    ),
+    warm_connect_ms: parseDurationMs(
+      env.CTX_AUTOMATION_REMOTE_WARM_CONNECT_MAX_MS,
+      dockerFixture ? 60_000 : 120_000,
+    ),
+    daemon_restart_connect_ms: parseDurationMs(
+      env.CTX_AUTOMATION_REMOTE_DAEMON_RESTART_CONNECT_MAX_MS,
+      dockerFixture ? 120_000 : 180_000,
+    ),
+    provider_ready_ms: parseDurationMs(
+      env.CTX_AUTOMATION_REMOTE_PROVIDER_READY_MAX_MS,
+      dockerFixture ? 45_000 : 90_000,
+    ),
+    terminal_ready_ms: parseDurationMs(
+      env.CTX_AUTOMATION_REMOTE_TERMINAL_READY_MAX_MS,
+      dockerFixture ? 30_000 : 60_000,
+    ),
+    task_create_ms: parseDurationMs(
+      env.CTX_AUTOMATION_REMOTE_TASK_CREATE_MAX_MS,
+      dockerFixture ? 20_000 : 45_000,
+    ),
+  };
+};
+
 const summarizeFixtureForReport = (fixture) => ({
   lane: fixture.lane,
   host: fixture.host || null,
@@ -99,6 +154,10 @@ const summarizeFixtureForReport = (fixture) => ({
   allow_skip: fixture.allowSkip,
   ready: fixture.ready,
   missing_requirements: fixture.missingRequirements,
+  host_mode: fixture.hostMode || null,
+  fixture_class: fixture.fixtureClass || null,
+  sandbox_runtime: fixture.sandboxRuntime || null,
+  proof_scope: fixture.proofScope || null,
   env_sources: fixture.sources,
 });
 
@@ -157,6 +216,13 @@ const resolveRemoteFixtureEnv = ({
     ? (parsedHost.user ? hostMatch.value : `${user}@${host}`)
     : "";
   const target = host && user ? `${user}@${host}` : "";
+  const hostMode = normalizeLowerText(env.CTX_AUTOMATION_REMOTE_FIXTURE_HOST_MODE) || "fresh-install";
+  const fixtureClass = normalizeLowerText(env.CTX_AUTOMATION_REMOTE_FIXTURE_CLASS);
+  const sandboxRuntime = normalizeLowerText(env.CTX_AUTOMATION_REMOTE_FIXTURE_SANDBOX_RUNTIME);
+  const proofScope = resolveRemoteProofScope({
+    lane: laneKey,
+    fixtureClass,
+  });
 
   return {
     lane: laneKey,
@@ -177,6 +243,10 @@ const resolveRemoteFixtureEnv = ({
     strictRequired: strictRequested && !allowSkip,
     allowSkip,
     missingRequirements,
+    hostMode,
+    fixtureClass,
+    sandboxRuntime,
+    proofScope,
     preflightMessage:
       missingRequirements.length === 0
         ? ""
@@ -313,8 +383,11 @@ module.exports = {
   createRedactor,
   normalizeText,
   parseBoolean,
+  parseDurationMs,
   parsePort,
   resolveRemoteFixtureEnv,
+  resolveRemotePerformanceBudgets,
+  resolveRemoteProofScope,
   summarizeFixtureForReport,
   writeJsonFile,
 };

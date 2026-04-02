@@ -80,6 +80,32 @@ const copyDirRecursive = (srcDir, destDir) => {
   }
 };
 
+const resolveBundleCacheRoot = (cacheKey, env = process.env) => {
+  const normalizedKey = String(cacheKey || "").trim();
+  if (!normalizedKey) {
+    throw new Error("cacheKey is required");
+  }
+
+  const explicitRoot = String(env.CTX_DESKTOP_BUNDLE_CACHE_ROOT || "").trim();
+  if (explicitRoot) {
+    return path.join(explicitRoot, normalizedKey);
+  }
+
+  const cargoTargetDir = String(env.CARGO_TARGET_DIR || "").trim()
+    || resolveCargoTargetDir({ cwd: coreRoot, env });
+  if (cargoTargetDir) {
+    return path.join(cargoTargetDir, "desktop-sync-cache", normalizedKey);
+  }
+
+  return path.join(
+    env.HOME || coreRoot,
+    ".cache",
+    "cargo",
+    "ctx-monorepo",
+    normalizedKey,
+  );
+};
+
 const parseAvfLinuxGuestRuntimeVersion = (raw) => {
   const text = String(raw || "");
   if (!text.trim()) return "";
@@ -775,13 +801,7 @@ const bundleRemoteDaemons = (bundleDir) => {
   const builderImage = resolveRemoteDaemonBuilderImage();
   const daemonsDir = path.join(bundleDir, "daemons");
   fs.mkdirSync(daemonsDir, { recursive: true });
-  const cacheRoot = path.join(
-    process.env.HOME || coreRoot,
-    ".cache",
-    "cargo",
-    "ctx-monorepo",
-    "desktop-remote-daemons",
-  );
+  const cacheRoot = resolveBundleCacheRoot("desktop-remote-daemons");
   const cargoRegistryCache = path.join(cacheRoot, "registry");
   const cargoGitCache = path.join(cacheRoot, "git");
   fs.mkdirSync(cargoRegistryCache, { recursive: true });
@@ -842,13 +862,8 @@ const bundleLinuxCtxMcpRuntime = (bundleDir) => {
   const runtimesDir = bundleDir;
   fs.mkdirSync(runtimesDir, { recursive: true });
   const runtimeVersion = readCargoPackageVersion(ctxMcpCargoTomlPath);
-  const cacheRoot = path.join(
-    process.env.HOME || coreRoot,
-    ".cache",
-    "cargo",
-    "ctx-monorepo",
-    "desktop-bundled-runtimes",
-    CTX_MCP_RUNTIME_ID,
+  const cacheRoot = resolveBundleCacheRoot(
+    path.join("desktop-bundled-runtimes", CTX_MCP_RUNTIME_ID),
   );
   const cargoRegistryCache = path.join(cacheRoot, "registry");
   const cargoGitCache = path.join(cacheRoot, "git");
@@ -1272,11 +1287,12 @@ if (require.main === module) {
     __desktopSyncResourcesTestHooks: {
       assertRuntimeTargetsAvailable,
       buildLinuxCtxMcpContainerArgs,
-    buildRemoteDaemonContainerArgs,
-    filterManagedAvfLocalPayloadErrors,
-    resetBundleDir,
-    shouldBundleLinuxCtxMcpRuntime,
-    writePlaceholderBundleManifest,
+      buildRemoteDaemonContainerArgs,
+      filterManagedAvfLocalPayloadErrors,
+      resetBundleDir,
+      resolveBundleCacheRoot,
+      shouldBundleLinuxCtxMcpRuntime,
+      writePlaceholderBundleManifest,
       writeEffectiveBundleManifest,
     },
     copySidecarBinary,

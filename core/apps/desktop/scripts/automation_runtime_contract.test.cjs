@@ -105,12 +105,13 @@ test("docker remote contract wrapper uses a Bash 3.2-compatible env presence che
 
 test("docker remote contract wrapper starts a local managed release fixture when no download base is provided", () => {
   const wrapper = fs.readFileSync(REMOTE_DOCKER_WRAPPER, "utf8");
+  assert.match(wrapper, /export CARGO_TARGET_DIR="\$\{CARGO_TARGET_DIR:-\$\{ROOT\}\/core\/target\}"/);
   assert.match(wrapper, /CTX_AUTOMATION_REMOTE_USE_LOCAL_RELEASE_FIXTURE:-1/);
   assert.match(wrapper, /export CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD=1/);
   assert.match(wrapper, /pnpm -C "\$\{ROOT\}\/core" desktop:prep:release/);
   assert.match(
     wrapper,
-    /CTX_DESKTOP_SYNC_BUNDLES=0[\s\S]*CTX_BUNDLE_REMOTE_DAEMONS=0[\s\S]*pnpm -C "\$\{ROOT\}\/core\/apps\/desktop" run build -- --bundles app -- --features automation/s,
+    /CTX_DESKTOP_SYNC_BUNDLES=0[\s\S]*CTX_BUNDLE_REMOTE_DAEMONS=0[\s\S]*CARGO_TARGET_DIR="\$\{CARGO_TARGET_DIR\}"[\s\S]*pnpm -C "\$\{ROOT\}\/core\/apps\/desktop" run build -- --bundles app -- --features automation/s,
   );
   assert.match(wrapper, /export CTX_DESKTOP_APP_PATH="\$\{LOCAL_RELEASE_APP_PATH\}"/);
   assert.match(
@@ -125,6 +126,82 @@ test("docker remote contract wrapper starts a local managed release fixture when
     wrapper,
     /export CTX_DESKTOP_ALLOW_INSECURE_LOCAL_UPDATER_FOR_REMOTE_BOOTSTRAP=1/,
   );
+});
+
+test("docker remote contract wrapper auto-hydrates CN_API_KEY from Infisical on macOS when available", () => {
+  const wrapper = fs.readFileSync(REMOTE_DOCKER_WRAPPER, "utf8");
+  assert.match(wrapper, /INFISICAL_CONFIG_FILE="\$\{CTX_AUTOMATION_INFISICAL_CONFIG_FILE:-\$\{ROOT\}\/core\/\.infisical\.json\}"/);
+  assert.match(wrapper, /INFISICAL_REEXEC_MARKER="\$\{CTX_REMOTE_DOCKER_CONTRACTS_INFISICAL_REEXEC:-0\}"/);
+  assert.match(wrapper, /can_run_with_infisical\(\) \{/);
+  assert.match(wrapper, /maybe_reexec_with_infisical\(\) \{/);
+  assert.match(
+    wrapper,
+    /exec infisical run --env "\$\{INFISICAL_ENV\}" --projectId "\$\{INFISICAL_PROJECT_ID\}" -- \\\s+env CTX_REMOTE_DOCKER_CONTRACTS_INFISICAL_REEXEC=1 "\$0" "\$@"/s,
+  );
+  assert.match(wrapper, /maybe_reexec_with_infisical "\$@"/);
+});
+
+test("docker remote contract wrapper defaults the fixture host mode to fresh-install", () => {
+  const wrapper = fs.readFileSync(REMOTE_DOCKER_WRAPPER, "utf8");
+  assert.match(
+    wrapper,
+    /export CTX_AUTOMATION_REMOTE_FIXTURE_HOST_MODE="\$\{CTX_AUTOMATION_REMOTE_FIXTURE_HOST_MODE:-fresh-install\}"/,
+  );
+});
+
+test("docker remote contract wrapper repairs missing desktop automation toolchain before prep", () => {
+  const wrapper = fs.readFileSync(REMOTE_DOCKER_WRAPPER, "utf8");
+  assert.match(wrapper, /ensure_desktop_automation_deps\(\) \{/);
+  assert.match(
+    wrapper,
+    /if \[\[ -d node_modules \]\] \\\s+&& pnpm -C apps\/web exec which vite >\/dev\/null 2>&1 \\\s+&& pnpm -C apps\/desktop exec which wdio >\/dev\/null 2>&1; then/s,
+  );
+  assert.match(wrapper, /\[remote-contracts\] repairing missing core\/apps\/web\/apps\/desktop automation toolchain/);
+  assert.match(wrapper, /pnpm install --frozen-lockfile >\/dev\/null/);
+  assert.match(wrapper, /pnpm -C apps\/web install --frozen-lockfile >\/dev\/null/);
+  assert.match(wrapper, /pnpm -C apps\/desktop install --frozen-lockfile >\/dev\/null/);
+  assert.match(
+    wrapper,
+    /if \[\[ "\$\(uname -s\)" == "Darwin" && -z "\$\{CN_API_KEY:-\}" \]\]; then[\s\S]*fi\n\nensure_desktop_automation_deps/s,
+  );
+});
+
+test("docker remote contract wrapper pins volatile temp paths inside its artifact root", () => {
+  const wrapper = fs.readFileSync(REMOTE_DOCKER_WRAPPER, "utf8");
+  assert.match(
+    wrapper,
+    /if \[\[ -n "\$\{ARTIFACTS_DIR\}" \]\]; then[\s\S]*export CTX_VOLATILE_ARTIFACTS_DIR="\$\{CTX_VOLATILE_ARTIFACTS_DIR:-\$\{ARTIFACTS_DIR\}\}"[\s\S]*export CTX_VOLATILE_ROOT="\$\{CTX_VOLATILE_ROOT:-\$\{ARTIFACTS_DIR\}\/volatile\}"[\s\S]*else/s,
+  );
+  assert.match(wrapper, /mktemp -d \/tmp\/ctx-remote-contracts-volatile\.XXXXXX/);
+  assert.match(
+    wrapper,
+    /export CTX_VOLATILE_TMPDIR="\$\{CTX_VOLATILE_TMPDIR:-\$\{CTX_VOLATILE_ROOT\}\/tmp\}"/,
+  );
+  assert.match(wrapper, /mkdir -p "\$\{CTX_VOLATILE_ROOT\}" "\$\{CTX_VOLATILE_TMPDIR\}"/);
+  assert.match(
+    wrapper,
+    /export CTX_AUTOMATION_CN_BACKEND_STATE_DIR="\$\{CTX_AUTOMATION_CN_BACKEND_STATE_DIR:-\$\{CTX_VOLATILE_ROOT\}\/cn-backend\}"/,
+  );
+  assert.match(
+    wrapper,
+    /export CTX_AUTOMATION_CN_BACKEND_LOG="\$\{CTX_AUTOMATION_CN_BACKEND_LOG:-\$\{CTX_VOLATILE_ROOT\}\/crabnebula-backend\.log\}"/,
+  );
+  assert.match(
+    wrapper,
+    /export CTX_AUTOMATION_CN_DRIVER_LOG="\$\{CTX_AUTOMATION_CN_DRIVER_LOG:-\$\{CTX_VOLATILE_ROOT\}\/tauri-driver\.log\}"/,
+  );
+  assert.match(
+    wrapper,
+    /export CTX_AUTOMATION_CN_SHARED_BACKEND="\$\{CTX_AUTOMATION_CN_SHARED_BACKEND:-0\}"/,
+  );
+  assert.match(wrapper, /mkdir -p "\$\{CTX_AUTOMATION_CN_BACKEND_STATE_DIR\}"/);
+  assert.match(wrapper, /pick_unused_local_port\(\) \{/);
+  assert.match(wrapper, /start_remote_daemon_tunnel\(\) \{/);
+  assert.match(
+    wrapper,
+    /export CTX_AUTOMATION_REMOTE_DIRECT_DAEMON_URL="http:\/\/127\.0\.0\.1:\$\{local_port\}"/,
+  );
+  assert.match(wrapper, /start_remote_daemon_tunnel/);
 });
 
 test("docker remote contract wrapper defaults to the real remote sandbox wizard lane", () => {

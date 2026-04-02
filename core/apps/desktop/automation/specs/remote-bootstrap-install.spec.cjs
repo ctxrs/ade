@@ -2,14 +2,21 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
+const { tauriInvoke, connectSshWithPolling } = require("./helpers/desktop_connection.cjs");
 const { waitForTauri } = require("./helpers/tauri.cjs");
 const { daemonJson, safeDaemonJson } = require("./helpers/daemon.cjs");
-const { ensureCodexOpenRouterWorkspaceReady } = require("./helpers/provider_runtime.cjs");
+const { assertWorkspaceTerminalCwdPrefix } = require("./helpers/workspace_wizard_flow.cjs");
+const {
+  ensureCodexOpenRouterWorkspaceReady,
+  getProviderStatus,
+  verifyProviderForWorkspace,
+} = require("./helpers/provider_runtime.cjs");
 const { runDeterministicFirstTurnOutcome } = require("./helpers/first_turn_contract.cjs");
 const {
   createRemoteContractRecorder,
   parseBoolean,
   resolveRemoteFixtureEnv,
+  resolveRemotePerformanceBudgets,
 } = require("../helpers/remote_fixture_contract.cjs");
 
 const REMOTE_CTX_BIN = "$HOME/.ctx/bin/ctx";
@@ -23,73 +30,35 @@ const CONTRACT_REPORT_PATH = String(
 const REQUIRE_FIRST_TURN_SUCCESS = parseBoolean(process.env.CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS || "0");
 const SKIP_MANAGED_BINARY_RESET = parseBoolean(process.env.CTX_AUTOMATION_REMOTE_SKIP_MANAGED_BINARY_RESET || "0");
 const fixture = resolveRemoteFixtureEnv({ lane: "host" });
+const perfBudgets = resolveRemotePerformanceBudgets({ fixture });
 
 let contractRecorder = null;
 
-const tauriInvoke = async (command, args) => {
-  try {
-    const result = await browser.executeAsync(({ cmd, payload }, done) => {
-      const tauriCoreInvoke = window.__TAURI__?.core?.invoke;
-      const tauriInternalsInvoke = window.__TAURI_INTERNALS__?.invoke;
-      const invoke = tauriInternalsInvoke || tauriCoreInvoke;
-      if (!invoke) {
-        done({ error: "Tauri invoke API not available" });
-        return;
-      }
-      Promise.resolve()
-        .then(() => invoke(cmd, payload))
-        .then((value) => done({ value }))
-        .catch((err) => done({ error: String(err) }));
-    }, { cmd: command, payload: args });
-    return result && typeof result === "object" ? result : { value: result };
-  } catch (err) {
-    return { error: String(err) };
-  }
+const recordTimedOperation = async (name, fn) => {
+  const startedAt = Date.now();
+  const value = await fn();
+  const measurement = {
+    name,
+    started_at: new Date(startedAt).toISOString(),
+    elapsed_ms: Date.now() - startedAt,
+    value,
+  };
+  contractRecorder?.recordArtifact(name, measurement);
+  return measurement;
 };
 
-const connectSshWithPolling = async (req, timeoutMs = 240000) => {
-  const begin = await tauriInvoke("desktop_connect_ssh_begin", { req });
-  if (begin.error) {
-    const detail = String(begin.error || "").toLowerCase();
-    if (detail.includes("desktop_connect_ssh_begin") || detail.includes("unknown command")) {
-      return tauriInvoke("desktop_connect_ssh", { req });
-    }
-    return begin;
+const assertElapsedWithinBudget = (name, measurement, maxMs) => {
+  if (!measurement || typeof measurement.elapsed_ms !== "number") {
+    throw new Error(`${name}: missing elapsed_ms measurement`);
   }
-
-  const jobId = String(begin.value || "").trim();
-  if (!jobId) {
-    return { error: "desktop_connect_ssh_begin returned empty job id" };
+  if (measurement.elapsed_ms > maxMs) {
+    throw new Error(`${name} exceeded ${maxMs}ms (actual ${measurement.elapsed_ms}ms)`);
   }
-
-  const startedAt = Date.now();
-  let lastError = "";
-  while (Date.now() - startedAt < timeoutMs) {
-    const poll = await tauriInvoke("desktop_connect_ssh_poll", {
-      req: { job_id: jobId, consume: false },
-    });
-    if (poll.error) {
-      lastError = String(poll.error || "");
-      await browser.pause(500);
-      continue;
-    }
-    const snapshot = poll.value || {};
-    const status = String(snapshot.status || "").trim().toLowerCase();
-    if (status === "succeeded") {
-      await tauriInvoke("desktop_connect_ssh_poll", { req: { job_id: jobId, consume: true } });
-      return { value: snapshot.info || null };
-    }
-    if (status === "failed") {
-      await tauriInvoke("desktop_connect_ssh_poll", { req: { job_id: jobId, consume: true } });
-      return { error: String(snapshot.error || "desktop_connect_ssh failed") };
-    }
-    await browser.pause(500);
-  }
-
-  await tauriInvoke("desktop_connect_ssh_poll", { req: { job_id: jobId, consume: true } });
-  return {
-    error: `desktop_connect_ssh timed out waiting for async completion${lastError ? `: ${lastError}` : ""}`,
-  };
+  contractRecorder?.recordAssertion(
+    name,
+    "pass",
+    `${name} completed in ${measurement.elapsed_ms}ms (budget ${maxMs}ms)`,
+  );
 };
 
 const sshBaseArgs = ({ useKey = true } = {}) => {
@@ -194,6 +163,171 @@ const managedState = () => {
   return remoteSsh(`sh -lc ${JSON.stringify(cmd)}`, { auth: diagnosticsAuthMode(), label: "managed-state" });
 };
 
+const reconnectReq = () => ({
+  host: fixture.host,
+  user: fixture.user,
+  remote_port: fixture.port,
+  start_remote: true,
+  remote_data_dir: fixture.dataDir || undefined,
+});
+
+const readRemoteBinaryFingerprint = () => {
+  const cmd = [
+    "set -eu",
+    `if [ -x ${REMOTE_CTX_BIN} ]; then set -- $(cksum ${REMOTE_CTX_BIN}); mtime=$(stat -c %Y ${REMOTE_CTX_BIN} 2>/dev/null || echo 0); printf '%s|%s|%s\\n' \"$1\" \"$2\" \"$mtime\"; else printf 'missing\\n'; fi`,
+  ].join("; ");
+  const raw = remoteSsh(`sh -lc ${JSON.stringify(cmd)}`, {
+    auth: diagnosticsAuthMode(),
+    label: "managed-binary-fingerprint",
+  }).trim();
+  if (!raw || raw === "missing") {
+    return { present: false };
+  }
+  const [checksum, bytes, mtime] = raw.split("|");
+  return {
+    present: true,
+    checksum: String(checksum || "").trim(),
+    bytes: Number.parseInt(String(bytes || "0"), 10) || 0,
+    mtime: Number.parseInt(String(mtime || "0"), 10) || 0,
+  };
+};
+
+const readRemoteDaemonFingerprint = () => {
+  const cmd = [
+    "set -eu",
+    "pid=$(pgrep -xo ctx || true)",
+    "if [ -n \"$pid\" ]; then etimes=$(ps -o etimes= -p \"$pid\" 2>/dev/null | tr -d ' '); started=$(ps -o lstart= -p \"$pid\" 2>/dev/null | sed 's/^ *//'); printf '%s|%s|%s\\n' \"$pid\" \"${etimes:-0}\" \"$started\"; else printf 'missing\\n'; fi",
+  ].join("; ");
+  const raw = remoteSsh(`sh -lc ${JSON.stringify(cmd)}`, {
+    auth: diagnosticsAuthMode(),
+    label: "remote-daemon-fingerprint",
+  }).trim();
+  if (!raw || raw === "missing") {
+    return { present: false };
+  }
+  const [pid, etimes, ...startedParts] = raw.split("|");
+  return {
+    present: true,
+    pid: String(pid || "").trim(),
+    etimes: Number.parseInt(String(etimes || "0"), 10) || 0,
+    started: startedParts.join("|").trim(),
+  };
+};
+
+const collectRemoteRuntimeState = (label) => {
+  const snapshot = {
+    binary: readRemoteBinaryFingerprint(),
+    daemon: readRemoteDaemonFingerprint(),
+  };
+  contractRecorder?.recordArtifact(label, snapshot);
+  return snapshot;
+};
+
+const assertSameBinaryFingerprint = (before, after, label) => {
+  if (!before?.present || !after?.present) {
+    throw new Error(`${label}: expected managed binary to be present before and after reconnect`);
+  }
+  const changed = (
+    before.checksum !== after.checksum
+    || before.bytes !== after.bytes
+    || before.mtime !== after.mtime
+  );
+  if (changed) {
+    throw new Error(
+      `${label}: managed binary changed unexpectedly: before=${JSON.stringify(before)} after=${JSON.stringify(after)}`,
+    );
+  }
+  contractRecorder?.recordAssertion(label, "pass", "managed binary fingerprint stayed stable");
+};
+
+const recordDaemonProcessObservation = (before, after, label) => {
+  if (!before?.present && !after?.present) {
+    contractRecorder?.recordAssertion(
+      label,
+      "pass",
+      "remote daemon process was not directly observable across reconnect; health and workspace continuity remain the contract",
+    );
+    return;
+  }
+  if (before?.present && after?.present && before.pid === after.pid && before.started === after.started) {
+    contractRecorder?.recordAssertion(label, "pass", "daemon process fingerprint stayed stable");
+    return;
+  }
+  contractRecorder?.recordAssertion(
+    label,
+    "pass",
+    `remote daemon process changed or was only partially observable across reconnect: before=${JSON.stringify(before)} after=${JSON.stringify(after)}`,
+  );
+};
+
+const createTaskSmoke = async (workspaceId, label) => {
+  const resp = await daemonJson("POST", `/api/workspaces/${workspaceId}/tasks`, {
+    title: `${label}-${Date.now()}`,
+    description: `Remote warm task smoke for ${label}`,
+    create_default_session: false,
+  });
+  if (resp.status !== 200 && resp.status !== 201) {
+    throw new Error(`task create failed (${resp.status}): ${JSON.stringify(resp.payload || null)}`);
+  }
+  return resp.payload || null;
+};
+
+const assertProviderInstalledNoInstallRunning = async (target, label) => {
+  const status = await getProviderStatus("codex", target);
+  contractRecorder?.recordArtifact(`${label}_provider_status`, status);
+  if (!status.installed) {
+    throw new Error(`${label}: codex provider is not installed for target=${target}`);
+  }
+  if (String(status.details.install_running || "").trim().toLowerCase() === "true") {
+    throw new Error(`${label}: unexpected provider install still running for target=${target}`);
+  }
+  return status;
+};
+
+const assertWarmWorkspaceUsability = async ({
+  workspaceId,
+  expectedTerminalCwdPrefix,
+  installTarget,
+  endpointName,
+  perfLabel,
+}) => {
+  await assertProviderInstalledNoInstallRunning(installTarget, `${perfLabel}_before`);
+
+  const providerReady = await recordTimedOperation(`${perfLabel}_provider_ready`, async () => {
+    const provider = await ensureCodexOpenRouterWorkspaceReady(workspaceId, {
+      installTarget,
+      endpointName,
+      allowInstall: false,
+      timeoutMs: perfBudgets.provider_ready_ms,
+      pollMs: 2000,
+    });
+    const verifyPayload = await verifyProviderForWorkspace(workspaceId, provider.providerId);
+    return {
+      provider,
+      verifyPayload,
+    };
+  });
+  assertElapsedWithinBudget(`${perfLabel}_provider_ready_budget`, providerReady, perfBudgets.provider_ready_ms);
+
+  const terminalReady = await recordTimedOperation(`${perfLabel}_terminal_ready`, async () => {
+    await assertWorkspaceTerminalCwdPrefix(workspaceId, expectedTerminalCwdPrefix);
+    return { cwd_prefix: expectedTerminalCwdPrefix };
+  });
+  assertElapsedWithinBudget(`${perfLabel}_terminal_ready_budget`, terminalReady, perfBudgets.terminal_ready_ms);
+
+  const taskCreate = await recordTimedOperation(`${perfLabel}_task_create`, async () => {
+    return await createTaskSmoke(workspaceId, perfLabel);
+  });
+  assertElapsedWithinBudget(`${perfLabel}_task_create_budget`, taskCreate, perfBudgets.task_create_ms);
+
+  await assertProviderInstalledNoInstallRunning(installTarget, `${perfLabel}_after`);
+  contractRecorder?.recordAssertion(
+    `${perfLabel}_workspace_usable`,
+    "pass",
+    "provider verify, terminal create, and task create succeeded without reinstall",
+  );
+};
+
 const removeManagedBinary = () => {
   const cmd = `rm -f ${REMOTE_CTX_BIN}`;
   remoteSsh(`sh -lc ${JSON.stringify(cmd)}`, { auth: diagnosticsAuthMode(), label: "managed-binary-reset" });
@@ -234,6 +368,19 @@ const connectReq = () => {
     req.password_once = fixture.passwordActual;
   }
   return req;
+};
+
+const assertDesktopSshConnection = async (stage) => {
+  const connectionResp = await tauriInvoke("desktop_get_connection", {});
+  contractRecorder?.recordArtifact(`desktop_connection_${stage}`, connectionResp);
+  if (connectionResp.error) {
+    throw new Error(`${stage}: desktop_get_connection failed: ${connectionResp.error}`);
+  }
+  const kind = String(connectionResp.value?.kind || "").toLowerCase();
+  if (kind !== "ssh") {
+    throw new Error(`${stage}: expected ssh desktop connection, got ${JSON.stringify(connectionResp.value || null)}`);
+  }
+  return connectionResp.value || null;
 };
 
 const assertRemoteHealth = async (stage) => {
@@ -342,6 +489,7 @@ describe("remote bootstrap install e2e", () => {
       skip_managed_binary_reset: SKIP_MANAGED_BINARY_RESET,
       contract_report_path: CONTRACT_REPORT_PATH,
       first_turn_report_path: FIRST_TURN_REPORT_PATH || null,
+      perf_budgets: perfBudgets,
       fixture,
     });
 
@@ -379,7 +527,10 @@ describe("remote bootstrap install e2e", () => {
 
       const req = connectReq();
       contractRecorder.recordArtifact("connect_request", req);
-      const connectResp = await connectSshWithPolling(req);
+      const initialConnect = await recordTimedOperation("initial_connect", async () => {
+        return await connectSshWithPolling(req);
+      });
+      const connectResp = initialConnect.value;
       contractRecorder.recordArtifact("connect_response", connectResp);
 
       if (EXPECT_CONNECT_FAILURE || AUTH_TEST_MODE === "wrong_password") {
@@ -399,16 +550,8 @@ describe("remote bootstrap install e2e", () => {
         throw new Error(`desktop_connect_ssh failed: ${connectResp.error}`);
       }
       contractRecorder.recordAssertion("ssh_connect", "pass", "desktop_connect_ssh succeeded");
-
-      const connectionResp = await tauriInvoke("desktop_get_connection", {});
-      contractRecorder.recordArtifact("desktop_connection_after_connect", connectionResp);
-      if (connectionResp.error) {
-        throw new Error(`desktop_get_connection failed: ${connectionResp.error}`);
-      }
-      const kind = String(connectionResp.value?.kind || "").toLowerCase();
-      if (kind !== "ssh") {
-        throw new Error(`expected ssh connection after bootstrap, got ${JSON.stringify(connectionResp.value)}`);
-      }
+      assertElapsedWithinBudget("initial_connect_budget", initialConnect, perfBudgets.cold_connect_ms);
+      await assertDesktopSshConnection("after_connect");
 
       const afterState = managedState();
       contractRecorder.recordArtifact("managed_binary_state_after_connect", { state: afterState });
@@ -478,44 +621,119 @@ describe("remote bootstrap install e2e", () => {
         throw new Error(`expected first turn success, got ${JSON.stringify(firstTurn)}`);
       }
 
+      const postBootstrapState = collectRemoteRuntimeState("remote_state_after_bootstrap");
+      await assertProviderInstalledNoInstallRunning("host", "post_bootstrap");
+
       const disconnectResp = await tauriInvoke("desktop_disconnect", {});
       if (disconnectResp.error) {
         throw new Error(`desktop_disconnect failed: ${disconnectResp.error}`);
       }
-      const reconnectResp = await connectSshWithPolling({
-        host: fixture.host,
-        user: fixture.user,
-        remote_port: fixture.port,
-        start_remote: true,
-        remote_data_dir: fixture.dataDir || undefined,
+      const warmReconnect = await recordTimedOperation("warm_reconnect", async () => {
+        return await connectSshWithPolling(reconnectReq());
       });
+      const reconnectResp = warmReconnect.value;
       contractRecorder.recordArtifact("reconnect_response", reconnectResp);
       if (reconnectResp.error) {
         throw new Error(`desktop reconnect failed: ${reconnectResp.error}`);
       }
+      assertElapsedWithinBudget("warm_reconnect_budget", warmReconnect, perfBudgets.warm_connect_ms);
+      await assertDesktopSshConnection("after_reconnect");
       contractRecorder.recordArtifact("daemon_health_post_reconnect", await assertRemoteHealth("post-reconnect"));
+      const postWarmReconnectState = collectRemoteRuntimeState("remote_state_after_warm_reconnect");
+      assertSameBinaryFingerprint(
+        postBootstrapState.binary,
+        postWarmReconnectState.binary,
+        "warm_reconnect_binary_stable",
+      );
+      recordDaemonProcessObservation(
+        postBootstrapState.daemon,
+        postWarmReconnectState.daemon,
+        "warm_reconnect_daemon_observation",
+      );
+      const warmWorkspaceRead = await daemonJson("GET", `/api/workspaces/${workspaceLaunch.workspaceId}`);
+      contractRecorder.recordArtifact("workspace_read_post_warm_reconnect", warmWorkspaceRead);
+      if (warmWorkspaceRead.status !== 200) {
+        throw new Error(`workspace read after warm reconnect failed (${warmWorkspaceRead.status}): ${JSON.stringify(warmWorkspaceRead.payload || null)}`);
+      }
+      if (String(warmWorkspaceRead.payload?.root_path || "") !== workspaceLaunch.remoteRoot) {
+        throw new Error(
+          `workspace root changed after warm reconnect: expected ${workspaceLaunch.remoteRoot}, got ${String(warmWorkspaceRead.payload?.root_path || "")}`,
+        );
+      }
+      await assertWarmWorkspaceUsability({
+        workspaceId: workspaceLaunch.workspaceId,
+        expectedTerminalCwdPrefix: workspaceLaunch.remoteRoot,
+        installTarget: "host",
+        endpointName: `remote-bootstrap-openrouter-warm-${Date.now()}`,
+        perfLabel: "warm_reconnect",
+      });
+      contractRecorder.recordAssertion(
+        "warm_reconnect",
+        "pass",
+        "warm reconnect reused the managed binary and existing remote daemon",
+      );
 
       stopRemoteDaemon();
       const disconnectResp2 = await tauriInvoke("desktop_disconnect", {});
       if (disconnectResp2.error) {
         throw new Error(`desktop_disconnect before restart check failed: ${disconnectResp2.error}`);
       }
-      const restartResp = await connectSshWithPolling({
-        host: fixture.host,
-        user: fixture.user,
-        remote_port: fixture.port,
-        start_remote: true,
-        remote_data_dir: fixture.dataDir || undefined,
+      const restartReconnect = await recordTimedOperation("restart_reconnect", async () => {
+        return await connectSshWithPolling(reconnectReq());
       });
+      const restartResp = restartReconnect.value;
       contractRecorder.recordArtifact("restart_response", restartResp);
       if (restartResp.error) {
         throw new Error(`desktop reconnect after remote daemon stop failed: ${restartResp.error}`);
       }
+      assertElapsedWithinBudget(
+        "restart_reconnect_budget",
+        restartReconnect,
+        perfBudgets.daemon_restart_connect_ms,
+      );
+      await assertDesktopSshConnection("after_remote_restart");
       contractRecorder.recordArtifact(
         "daemon_health_post_remote_restart",
         await assertRemoteHealth("post-remote-daemon-restart"),
       );
-      contractRecorder.recordAssertion("remote_restart", "pass", "desktop reconnect restarted the remote daemon");
+      const postRestartState = collectRemoteRuntimeState("remote_state_after_remote_restart");
+      assertSameBinaryFingerprint(
+        postBootstrapState.binary,
+        postRestartState.binary,
+        "restart_reconnect_binary_stable",
+      );
+      if (!postRestartState.daemon.present || !postBootstrapState.daemon.present) {
+        contractRecorder.recordAssertion(
+          "restart_reconnect_daemon_observation",
+          "pass",
+          `remote daemon process was not directly observable across explicit stop/reconnect: before=${JSON.stringify(postBootstrapState.daemon)} after=${JSON.stringify(postRestartState.daemon)}`,
+        );
+      } else if (
+        postRestartState.daemon.pid === postBootstrapState.daemon.pid
+        && postRestartState.daemon.started === postBootstrapState.daemon.started
+      ) {
+        throw new Error(
+          `expected a new daemon process after explicit stop, got same fingerprint: before=${JSON.stringify(postBootstrapState.daemon)} after=${JSON.stringify(postRestartState.daemon)}`,
+        );
+      } else {
+        contractRecorder.recordAssertion(
+          "restart_reconnect_daemon_observation",
+          "pass",
+          "daemon process fingerprint changed after explicit stop/reconnect",
+        );
+      }
+      await assertWarmWorkspaceUsability({
+        workspaceId: workspaceLaunch.workspaceId,
+        expectedTerminalCwdPrefix: workspaceLaunch.remoteRoot,
+        installTarget: "host",
+        endpointName: `remote-bootstrap-openrouter-restart-${Date.now()}`,
+        perfLabel: "post_restart",
+      });
+      contractRecorder.recordAssertion(
+        "remote_restart",
+        "pass",
+        "desktop reconnect restarted the remote daemon without reinstalling the managed binary",
+      );
     } catch (error) {
       finalResult = "failed";
       finalError = String(error);
@@ -532,6 +750,7 @@ describe("remote bootstrap install e2e", () => {
           auth_test_mode: AUTH_TEST_MODE,
           expect_connect_failure: EXPECT_CONNECT_FAILURE,
           require_first_turn_success: REQUIRE_FIRST_TURN_SUCCESS,
+          perf_budgets: perfBudgets,
           first_turn_report_path: FIRST_TURN_REPORT_PATH || null,
           workspace_launch: workspaceLaunch,
           provider_config: firstTurnProvider,

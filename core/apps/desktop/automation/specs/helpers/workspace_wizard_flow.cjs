@@ -1508,6 +1508,9 @@ const clickTitlingSkip = async () => {
 const ensureReadyForSourceSelection = async (
   {
     location,
+    remoteHost = null,
+    remotePort = null,
+    remoteDataDir = null,
     container,
     harnessDownloads,
     selectedHarnessProviderIds = null,
@@ -1728,6 +1731,29 @@ const ensureReadyForSourceSelection = async (
       await browser.pause(100);
       const afterSelect = await currentStepKey();
       if (afterSelect === "location") {
+        if (location === "remote") {
+          if (!remoteHost) {
+            throw new Error("remote location regression reached without scenario.remoteHost");
+          }
+          traceWizard("remote_location_regression_inputs_start", {
+            remote_host: remoteHost,
+            remote_port: typeof remotePort === "number" ? remotePort : null,
+            remote_data_dir: typeof remoteDataDir === "string" ? remoteDataDir : null,
+          });
+          await setInput("wizard-remote-host", remoteHost);
+          const hasRemotePortInput = await browser.execute(
+            () => Boolean(document.querySelector('[data-testid="wizard-remote-port"]')),
+          );
+          if (hasRemotePortInput && typeof remotePort === "number") {
+            await setInput("wizard-remote-port", String(remotePort));
+          }
+          const hasRemoteDataDirInput = await browser.execute(
+            () => Boolean(document.querySelector('[data-testid="wizard-remote-data-dir"]')),
+          );
+          if (hasRemoteDataDirInput && typeof remoteDataDir === "string" && remoteDataDir.trim()) {
+            await setInput("wizard-remote-data-dir", remoteDataDir.trim());
+          }
+        }
         const next = await clickNextIfEnabled();
         if (next.clicked) {
           await browser.pause(100);
@@ -1747,6 +1773,9 @@ const ensureReadyForSourceSelection = async (
 const selectSourceOptionWithRetry = async (
   {
     location,
+    remoteHost = null,
+    remotePort = null,
+    remoteDataDir = null,
     container,
     harnessDownloads,
     sourceKind,
@@ -1780,6 +1809,9 @@ const selectSourceOptionWithRetry = async (
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     await ensureReadyForSourceSelection({
       location,
+      remoteHost,
+      remotePort,
+      remoteDataDir,
       container,
       harnessDownloads,
       selectedHarnessProviderIds,
@@ -2179,6 +2211,9 @@ const runWizardScenario = async (scenario) => {
   });
   await selectSourceOptionWithRetry({
     location: scenario.location,
+    remoteHost: scenario.remoteHost || null,
+    remotePort: typeof scenario.remotePort === "number" ? scenario.remotePort : null,
+    remoteDataDir: typeof scenario.remoteDataDir === "string" ? scenario.remoteDataDir : null,
     container: scenario.container,
     harnessDownloads: scenario.harnessDownloads,
     sourceKind: scenario.source.kind,

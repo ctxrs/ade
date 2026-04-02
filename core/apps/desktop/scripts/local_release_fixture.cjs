@@ -63,6 +63,33 @@ const discoverDaemonArtifacts = (bundleDir) => {
   return artifacts;
 };
 
+const platformKeyForArch = (arch) => {
+  const normalized = String(arch || "").trim().toLowerCase();
+  if (normalized === "x86_64" || normalized === "amd64") {
+    return "linux-x64";
+  }
+  if (normalized === "aarch64" || normalized === "arm64") {
+    return "linux-arm64";
+  }
+  throw new Error(`unsupported remote fixture architecture: ${normalized || "<missing>"}`);
+};
+
+const resolveExpectedManagedVersion = (state) =>
+  String(state?.expectedManagedVersion || state?.releaseManifest?.latest_version || "").trim();
+
+const resolveArtifactForArch = (state, arch) => {
+  const platformKey = platformKeyForArch(arch);
+  const artifact = state?.artifacts?.[platformKey];
+  if (!artifact || !artifact.filePath) {
+    throw new Error(`missing ${platformKey} daemon artifact in fixture state`);
+  }
+  return {
+    platformKey,
+    filePath: String(artifact.filePath),
+    sha256: String(artifact.sha256 || "").trim(),
+  };
+};
+
 const buildManifest = ({ channel, artifacts }) => {
   const platforms = {};
   for (const [platformKey, artifact] of Object.entries(artifacts)) {
@@ -125,6 +152,7 @@ const parseArgs = (argv) => {
     channel: DEFAULT_CHANNEL,
     host: DEFAULT_HOST,
     port: 0,
+    arch: "",
   };
   for (let i = 0; i < rest.length; i += 1) {
     const token = rest[i];
@@ -147,6 +175,10 @@ const parseArgs = (argv) => {
         break;
       case "--port":
         args.port = Number.parseInt(String(rest[i + 1] || "0"), 10) || 0;
+        i += 1;
+        break;
+      case "--arch":
+        args.arch = String(rest[i + 1] || "");
         i += 1;
         break;
       default:
@@ -274,6 +306,7 @@ const start = (args) => {
     artifacts,
     desktopVersion,
     updaterTarget,
+    expectedManagedVersion: releaseManifest.latest_version,
     releaseManifest,
     tauriManifest: buildTauriManifest({
       baseUrl,
@@ -296,6 +329,9 @@ const start = (args) => {
       const state = readState(args.stateFile);
       if (state.ready && state.baseUrl) {
         process.stdout.write(`export CTX_DOWNLOAD_BASE_URL=${shellQuote(`${state.baseUrl}/functions/v1`)}\n`);
+        process.stdout.write(
+          `export CTX_AUTOMATION_REMOTE_EXPECTED_MANAGED_VERSION=${shellQuote(resolveExpectedManagedVersion(state))}\n`,
+        );
         process.stdout.write(
           `export CTX_AUTOMATION_REMOTE_RELEASE_FIXTURE_STATE_FILE=${shellQuote(args.stateFile)}\n`,
         );
@@ -338,6 +374,17 @@ const stop = (args) => {
   }
 };
 
+const printArtifact = (args) => {
+  const state = readState(args.stateFile);
+  const artifact = resolveArtifactForArch(state, args.arch);
+  process.stdout.write(`${artifact.filePath}\n`);
+};
+
+const printExpectedVersion = (args) => {
+  const state = readState(args.stateFile);
+  process.stdout.write(`${resolveExpectedManagedVersion(state)}\n`);
+};
+
 if (require.main === module) {
   try {
     const args = parseArgs(process.argv.slice(2));
@@ -350,6 +397,12 @@ if (require.main === module) {
         break;
       case "stop":
         stop(args);
+        break;
+      case "print-artifact":
+        printArtifact(args);
+        break;
+      case "print-expected-version":
+        printExpectedVersion(args);
         break;
       default:
         throw new Error(`unknown command: ${args.command || "<missing>"}`);
@@ -365,4 +418,7 @@ module.exports = {
   buildManifest,
   buildTauriManifest,
   discoverDaemonArtifacts,
+  platformKeyForArch,
+  resolveArtifactForArch,
+  resolveExpectedManagedVersion,
 };

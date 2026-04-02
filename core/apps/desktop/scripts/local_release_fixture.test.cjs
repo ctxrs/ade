@@ -59,12 +59,18 @@ test("local release fixture serves a managed daemon manifest and daemon bytes", 
     });
     assert.equal(start.status, 0, start.stderr);
     baseUrl = parseExport(start.stdout, "CTX_DOWNLOAD_BASE_URL");
+    const expectedManagedVersion = parseExport(
+      start.stdout,
+      "CTX_AUTOMATION_REMOTE_EXPECTED_MANAGED_VERSION",
+    );
     assert.match(baseUrl, /^http:\/\/127\.0\.0\.1:\d+\/functions\/v1$/);
+    assert.equal(expectedManagedVersion, "automation-local");
 
     const manifestResp = await httpGet(`${baseUrl}/releases/stable/latest.json`);
     assert.equal(manifestResp.statusCode, 200);
     const manifest = JSON.parse(manifestResp.body.toString("utf8"));
     assert.equal(manifest.channel, "stable");
+    assert.equal(manifest.latest_version, expectedManagedVersion);
     assert.equal(
       manifest.platforms["linux-arm64"].daemon.url_path,
       "/releases/stable/linux-arm64/ctx",
@@ -84,6 +90,39 @@ test("local release fixture serves a managed daemon manifest and daemon bytes", 
     const daemonResp = await httpGet(`${baseUrl}/releases/stable/linux-arm64/ctx`);
     assert.equal(daemonResp.statusCode, 200);
     assert.equal(daemonResp.body.toString("utf8"), "linux-arm64-daemon");
+
+    const expectedVersion = spawnSync(
+      "node",
+      [scriptPath, "print-expected-version", "--state-file", stateFile],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+      },
+    );
+    assert.equal(expectedVersion.status, 0, expectedVersion.stderr);
+    assert.equal(expectedVersion.stdout.trim(), expectedManagedVersion);
+
+    const x64Artifact = spawnSync(
+      "node",
+      [scriptPath, "print-artifact", "--state-file", stateFile, "--arch", "x86_64"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+      },
+    );
+    assert.equal(x64Artifact.status, 0, x64Artifact.stderr);
+    assert.equal(x64Artifact.stdout.trim(), path.join(bundlesDir, "ctx-daemon-linux-x86_64"));
+
+    const arm64Artifact = spawnSync(
+      "node",
+      [scriptPath, "print-artifact", "--state-file", stateFile, "--arch", "arm64"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+      },
+    );
+    assert.equal(arm64Artifact.status, 0, arm64Artifact.stderr);
+    assert.equal(arm64Artifact.stdout.trim(), path.join(bundlesDir, "ctx-daemon-linux-aarch64"));
   } finally {
     spawnSync("node", [scriptPath, "stop", "--state-file", stateFile], {
       cwd: repoRoot,
@@ -107,6 +146,39 @@ test("local release fixture fails fast when no bundled daemon artifacts are avai
     assert.notEqual(start.status, 0);
     assert.match(start.stderr, /run 'pnpm -C core desktop:prep:release' or set CTX_DOWNLOAD_BASE_URL/);
   } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("local release fixture rejects unsupported preseed architectures", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-local-release-fixture-arch-"));
+  const bundlesDir = path.join(tmp, "bundles");
+  const stateFile = path.join(tmp, "fixture.state.json");
+  fs.mkdirSync(bundlesDir, { recursive: true });
+  writeDaemon(bundlesDir, "ctx-daemon-linux-x86_64", "linux-x64-daemon");
+
+  try {
+    const start = spawnSync("node", [scriptPath, "start", "--state-file", stateFile, "--bundle-dir", bundlesDir], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    assert.equal(start.status, 0, start.stderr);
+
+    const artifact = spawnSync(
+      "node",
+      [scriptPath, "print-artifact", "--state-file", stateFile, "--arch", "riscv64"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+      },
+    );
+    assert.notEqual(artifact.status, 0);
+    assert.match(artifact.stderr, /unsupported remote fixture architecture/);
+  } finally {
+    spawnSync("node", [scriptPath, "stop", "--state-file", stateFile], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
