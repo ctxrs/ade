@@ -813,9 +813,10 @@ async fn workspace_active_heads_batch_strips_partials() {
     assert_eq!(head.turns.len(), 1);
     assert!(head.turns[0].assistant_partial.is_none());
     assert!(head.turns[0].thought_partial.is_none());
-    assert!(head.events.iter().all(|event| {
-        !matches!(event.event_type, SessionEventType::AssistantComplete)
-    }));
+    assert!(head
+        .events
+        .iter()
+        .all(|event| { !matches!(event.event_type, SessionEventType::AssistantComplete) }));
 }
 
 #[tokio::test]

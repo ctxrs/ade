@@ -826,10 +826,9 @@ async fn session_head_snapshot_strips_partials_and_stream_only_events() {
         .list_session_events(fixture.session_id)
         .await
         .unwrap();
-    assert!(persisted_events.iter().any(|event| matches!(
-        event.event_type,
-        SessionEventType::Notice
-    )));
+    assert!(persisted_events
+        .iter()
+        .any(|event| matches!(event.event_type, SessionEventType::Notice)));
 
     let head = fixture
         .store
@@ -843,14 +842,14 @@ async fn session_head_snapshot_strips_partials_and_stream_only_events() {
     assert_eq!(head.turns[0].thought_partial, None);
     assert_eq!(head.messages.len(), 1);
     assert_eq!(head.messages[0].content, "final answer");
-    assert!(head.events.iter().all(|event| !matches!(
-        event.event_type,
-        SessionEventType::AssistantComplete
-    )));
-    assert!(head.events.iter().any(|event| matches!(
-        event.event_type,
-        SessionEventType::Notice
-    )));
+    assert!(head
+        .events
+        .iter()
+        .all(|event| !matches!(event.event_type, SessionEventType::AssistantComplete)));
+    assert!(head
+        .events
+        .iter()
+        .any(|event| matches!(event.event_type, SessionEventType::Notice)));
 
     let active_head = fixture
         .store
@@ -863,10 +862,10 @@ async fn session_head_snapshot_strips_partials_and_stream_only_events() {
     assert_eq!(active_head.turns[0].thought_partial, None);
     assert_eq!(active_head.messages.len(), 1);
     assert_eq!(active_head.messages[0].content, "final answer");
-    assert!(active_head.events.iter().all(|event| !matches!(
-        event.event_type,
-        SessionEventType::AssistantComplete
-    )));
+    assert!(active_head
+        .events
+        .iter()
+        .all(|event| !matches!(event.event_type, SessionEventType::AssistantComplete)));
     assert!(active_head.events.is_empty());
 }
 
