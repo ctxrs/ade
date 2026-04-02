@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createWriteStream, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -415,11 +415,15 @@ function prepareAutomationAppForLaunch(appPath, artifactDir) {
   if (process.platform !== "darwin") {
     return appPath;
   }
-  const infoPlistPath = path.join(appPath, "Contents/Info.plist");
+  const launchAppPath = path.join(artifactDir, `${DEMO_APP_PRODUCT_NAME}.app`);
+  rmSync(launchAppPath, { recursive: true, force: true });
+  cpSync(appPath, launchAppPath, { recursive: true, force: true });
+  const infoPlistPath = path.join(launchAppPath, "Contents/Info.plist");
   for (const [key, value] of [
     ["CFBundleIdentifier", DEMO_APP_IDENTIFIER],
     ["CFBundleName", DEMO_APP_PRODUCT_NAME],
     ["CFBundleDisplayName", "ctx demo"],
+    ["CFBundleExecutable", DEMO_APP_PRODUCT_NAME],
   ]) {
     const result = spawnSync("/usr/bin/plutil", ["-replace", key, "-string", value, infoPlistPath], {
       encoding: "utf8",
@@ -430,7 +434,13 @@ function prepareAutomationAppForLaunch(appPath, artifactDir) {
       );
     }
   }
-  return appPath;
+  const originalExecutablePath = path.join(launchAppPath, "Contents/MacOS/ctx");
+  const launchExecutablePath = path.join(launchAppPath, `Contents/MacOS/${DEMO_APP_PRODUCT_NAME}`);
+  if (!existsSync(originalExecutablePath)) {
+    throw new Error(`automation app executable not found: ${originalExecutablePath}`);
+  }
+  renameSync(originalExecutablePath, launchExecutablePath);
+  return launchAppPath;
 }
 
 function startManagedProcess(command, args, options = {}) {
@@ -509,9 +519,13 @@ function waitForTcpPort(host, port, timeoutMs, label) {
 }
 
 function bundleExecutablePaths(appPath) {
-  const candidates = new Set([path.join(appPath, "Contents/MacOS/ctx")]);
+  const candidates = new Set([
+    path.join(appPath, "Contents/MacOS/ctx"),
+    path.join(appPath, `Contents/MacOS/${DEMO_APP_PRODUCT_NAME}`),
+  ]);
   try {
     candidates.add(path.join(realpathSync(appPath), "Contents/MacOS/ctx"));
+    candidates.add(path.join(realpathSync(appPath), `Contents/MacOS/${DEMO_APP_PRODUCT_NAME}`));
   } catch {
     // ignore missing/unresolvable bundle path here; buildAutomationAppIfNeeded validates existence
   }
@@ -616,6 +630,52 @@ function listeningPidsForPort(port) {
     .split(/\s+/)
     .map((value) => Number.parseInt(value, 10))
     .filter((value) => Number.isInteger(value) && value > 0);
+}
+
+function describeListeningProcessesForPort(port) {
+  const pids = listeningPidsForPort(port);
+  if (pids.length === 0) {
+    return [];
+  }
+  const result = spawnSync("ps", ["-o", "pid=,command=", "-p", pids.join(",")], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    throw new Error(`ps failed for port ${port}: ${String(result.stderr || result.stdout || "").trim()}`);
+  }
+  return String(result.stdout || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^(\d+)\s+(.+)$/);
+      return match
+        ? { pid: Number.parseInt(match[1], 10), command: match[2] }
+        : null;
+    })
+    .filter((entry) => entry && Number.isInteger(entry.pid) && entry.pid > 0 && entry.command)
+    .map((entry) => ({ pid: entry.pid, command: entry.command }));
+}
+
+function isCrabNebulaBackendCommand(command) {
+  const text = String(command || "");
+  return text.includes("ctx-cnb-cli")
+    || text.includes("@crabnebula/test-runner-backend")
+    || text.includes("test-runner-backend/cli.js");
+}
+
+function shouldRecycleSharedCrabNebulaBackend({
+  platform = process.platform,
+  backendPort,
+  backendAlreadyListening,
+  processEntries,
+}) {
+  if (!backendAlreadyListening) return false;
+  if (platform !== "darwin") return false;
+  if (backendPort !== SHARED_CN_BACKEND_PORT) return false;
+  const entries = Array.isArray(processEntries) ? processEntries : [];
+  if (entries.length === 0) return false;
+  return entries.every((entry) => isCrabNebulaBackendCommand(entry.command));
 }
 
 async function terminateListeningPort(host, port, label) {
@@ -729,7 +789,31 @@ async function startCrabNebulaStack({ artifactDir, backendPort, driverPort, appE
   const driverLogPath = path.join(artifactDir, "tauri-driver.log");
   let backendProc = null;
   const backendAlreadyListening = await isTcpPortOpen(backendHost, effectiveBackendPort);
-  if (!backendAlreadyListening) {
+  const backendProcessEntries = backendAlreadyListening
+    ? describeListeningProcessesForPort(effectiveBackendPort)
+    : [];
+  const recycleSharedBackend = shouldRecycleSharedCrabNebulaBackend({
+    backendPort: effectiveBackendPort,
+    backendAlreadyListening,
+    processEntries: backendProcessEntries,
+  });
+  if (
+    backendAlreadyListening
+    && process.platform === "darwin"
+    && effectiveBackendPort === SHARED_CN_BACKEND_PORT
+    && !recycleSharedBackend
+  ) {
+    const summary = backendProcessEntries.length > 0
+      ? backendProcessEntries.map(({ pid, command }) => `${pid}:${command}`).join("; ")
+      : "unknown listener";
+    throw new Error(
+      `shared CrabNebula backend port ${effectiveBackendPort} is occupied by a non-playback process: ${summary}`,
+    );
+  }
+  if (recycleSharedBackend) {
+    await terminateListeningPort(backendHost, effectiveBackendPort, "CrabNebula backend");
+  }
+  if (!backendAlreadyListening || recycleSharedBackend) {
     const backendCommand = buildCrabNebulaCliCommand({
       packageName: "@crabnebula/test-runner-backend",
       specifier: "@crabnebula/test-runner-backend/cli.js",
@@ -844,10 +928,9 @@ async function navigateBrowserToWorkspace(browser, workspaceId) {
 }
 
 async function primeDemoDesktopConnectionToWorkspace(browser, daemonUrl, authToken, workspaceId) {
-  const workspacePath = `/workspaces/${encodeURIComponent(workspaceId)}?ctxE2E=1`;
   const storagePayload = buildDemoDesktopConnectionPayload(daemonUrl, authToken);
   await browser.execute(
-    async ({ nextBaseUrl, nextToken, nextPath, storage }) => {
+    async ({ nextBaseUrl, nextToken, storage }) => {
       const invoke = globalThis.__TAURI__?.core?.invoke || globalThis.__TAURI_INTERNALS__?.invoke;
       if (typeof invoke !== "function") {
         throw new Error("Tauri invoke bridge unavailable in automation app");
@@ -861,29 +944,14 @@ async function primeDemoDesktopConnectionToWorkspace(browser, daemonUrl, authTok
       sessionStorage.setItem("ctxE2E", "1");
       sessionStorage.setItem("ctxDaemonConnectionV1", storage.sessionConnection);
       localStorage.setItem("ctxDaemonConnectionBaseV1", storage.persistedBase);
-      const next = new URL(nextPath, window.location.origin);
-      if (`${window.location.pathname}${window.location.search}` !== `${next.pathname}${next.search}`) {
-        window.history.replaceState({}, "", `${next.pathname}${next.search}`);
-        window.dispatchEvent(new PopStateEvent("popstate"));
-      }
     },
     {
       nextBaseUrl: daemonUrl,
       nextToken: authToken,
-      nextPath: workspacePath,
       storage: storagePayload,
     },
   );
-  await browser.waitUntil(
-    async () => {
-      const state = await captureBrowserState(browser);
-      return state.pathname === `/workspaces/${encodeURIComponent(workspaceId)}`;
-    },
-    {
-      timeout: 30_000,
-      timeoutMsg: `browser did not navigate to ${workspacePath} after demo connection priming`,
-    },
-  );
+  await navigateBrowserToWorkspace(browser, workspaceId);
 }
 
 async function primeDemoDesktopConnection(browser, daemonUrl, authToken, workspaceId, taskId, sessionId) {
@@ -1218,7 +1286,23 @@ async function startDaemon(dataDir, bind, { tauriTargetDir = null, skipBuild = f
 async function ensureWorkbenchVisible(browser, artifactDir) {
   try {
     await waitForSelector(browser, ".wb-root");
-    await waitForSelector(browser, ".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
+    await browser.waitUntil(
+      async () =>
+        await browser.execute(() => {
+          const hasActiveSessionComposer = Boolean(
+            document.querySelector(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea"),
+          );
+          const hasWorkbenchShell = Boolean(document.querySelector(".wb-main"));
+          const hasFocusNewTaskBridge = Boolean(
+            globalThis.__ctxE2E && typeof globalThis.__ctxE2E.focusNewTask === "function",
+          );
+          return hasActiveSessionComposer || (hasWorkbenchShell && hasFocusNewTaskBridge);
+        }),
+      {
+        timeout: 60_000,
+        timeoutMsg: "workbench interactive shell did not become visible",
+      },
+    );
   } catch (error) {
     const state = await captureBrowserState(browser).catch((captureError) => ({
       capture_error: String(captureError?.stack || captureError),
@@ -1233,6 +1317,49 @@ async function waitForDiffPane(browser) {
     const state = await captureDiffPaneState(browser);
     return state.hasDiffPaneClass || state.hasDiffContent;
   }, { timeout: 30_000, timeoutMsg: "diff pane did not open in time" });
+}
+
+async function waitForDiffPaneReady(browser, options = {}) {
+  const minFileRows = Math.max(1, Number(options.minFileRows ?? 1));
+  const requireParsedSummaries = options.requireParsedSummaries !== false;
+  const requiredStablePolls = Math.max(1, Number(options.requiredStablePolls ?? 2));
+  let stablePolls = 0;
+  let lastSignature = null;
+  await browser.waitUntil(async () => {
+    const state = await captureDiffPaneState(browser);
+    const inventoryReady =
+      state.hasDiffPaneClass &&
+      state.fileRowCount >= minFileRows &&
+      !state.loadingChangesVisible &&
+      !state.loadingChangedFilesVisible;
+    const parsedSummariesReady =
+      !requireParsedSummaries ||
+      (state.diffSummaryCount >= state.fileRowCount && state.statusSummaryCount === 0);
+    if (!inventoryReady || !parsedSummariesReady) {
+      stablePolls = 0;
+      lastSignature = null;
+      return false;
+    }
+    const signature = [
+      state.fileRowCount,
+      state.diffSummaryCount,
+      state.statusSummaryCount,
+      state.openFileCount,
+      state.editorShellCount,
+      state.monacoEditorCount,
+    ].join("|");
+    if (signature === lastSignature) {
+      stablePolls += 1;
+    } else {
+      lastSignature = signature;
+      stablePolls = 1;
+    }
+    return stablePolls >= requiredStablePolls;
+  }, {
+    timeout: 30_000,
+    interval: 150,
+    timeoutMsg: "diff pane did not reach a stable ready state in time",
+  });
 }
 
 async function openDiffPane(browser) {
@@ -1267,13 +1394,70 @@ async function captureDiffPaneState(browser) {
     const diffPane = document.querySelector(".wb-right-pane.wb-diff");
     const diffContent = document.querySelector(".wb-right-pane.wb-diff .diff-pane, .wb-right-pane.wb-diff .wb-diff-empty");
     const toggleButton = document.querySelector('button[aria-label="Toggle diff view"]');
+    const mutedLabels = Array.from(document.querySelectorAll(".wb-right-pane.wb-diff .muted"))
+      .map((element) => element.textContent?.trim() ?? "")
+      .filter(Boolean);
+    const fileRows = Array.from(document.querySelectorAll(".wb-right-pane.wb-diff .cursor-diff-file"));
     return {
       hasDiffPaneClass: Boolean(diffPane),
       hasDiffContent: Boolean(diffContent),
       rightPaneCount: document.querySelectorAll(".wb-right-pane").length,
       togglePressed: toggleButton instanceof HTMLButtonElement ? toggleButton.getAttribute("aria-pressed") === "true" : false,
+      loadingChangesVisible: mutedLabels.includes("Loading changes..."),
+      loadingChangedFilesVisible: mutedLabels.includes("Loading changed files..."),
+      loadingDiffVisible: mutedLabels.includes("Loading diff..."),
+      parsingDiffVisible: mutedLabels.includes("Parsing diff..."),
+      fileRowCount: fileRows.length,
+      openFileCount: fileRows.filter((row) => row.querySelector(".cursor-diff-file-body")).length,
+      diffSummaryCount: document.querySelectorAll(
+        '.wb-right-pane.wb-diff .cursor-diff-summary[aria-label="Diff summary"]',
+      ).length,
+      statusSummaryCount: document.querySelectorAll(
+        '.wb-right-pane.wb-diff .cursor-diff-summary[aria-label="File status"]',
+      ).length,
+      editorShellCount: document.querySelectorAll(".wb-right-pane.wb-diff .cursor-diff-editor-shell").length,
+      monacoEditorCount: document.querySelectorAll(".wb-right-pane.wb-diff .monaco-editor").length,
+      hiddenByPlayback: Boolean(document.getElementById("ctx-demo-hide-diff-pane-style")),
     };
   });
+}
+
+async function setDiffPanePlaybackHidden(browser, hidden) {
+  return browser.execute((nextHidden) => {
+    const styleId = "ctx-demo-hide-diff-pane-style";
+    const existing = document.getElementById(styleId);
+    if (nextHidden) {
+      if (!existing) {
+        const style = document.createElement("style");
+        style.id = styleId;
+        style.textContent = ".wb-right-pane.wb-diff { display: none !important; }";
+        document.head.appendChild(style);
+      }
+    } else {
+      existing?.remove();
+    }
+    return Boolean(document.getElementById(styleId));
+  }, Boolean(hidden));
+}
+
+async function setArtifactsPanePlaybackHidden(browser, hidden) {
+  return browser.execute((nextHidden) => {
+    const marker = "data-ctx-demo-artifacts-hidden";
+    const panes = Array.from(document.querySelectorAll(".wb-right-pane")).filter(
+      (element) => element.querySelector(".wb-artifacts"),
+    );
+    for (const pane of panes) {
+      if (!(pane instanceof HTMLElement)) continue;
+      if (nextHidden) {
+        pane.setAttribute(marker, "1");
+        pane.style.display = "none";
+      } else if (pane.getAttribute(marker) === "1") {
+        pane.removeAttribute(marker);
+        pane.style.removeProperty("display");
+      }
+    }
+    return panes.some((pane) => pane instanceof HTMLElement && pane.getAttribute(marker) === "1");
+  }, Boolean(hidden));
 }
 
 async function waitForArtifactsPane(browser) {
@@ -1327,8 +1511,16 @@ async function captureArtifactsPaneState(browser) {
       videoCount: videos.length,
       playingVideoCount: playingVideos.length,
       firstVideoCurrentTime: videos[0]?.currentTime ?? 0,
+      firstVideoDuration: Number.isFinite(videos[0]?.duration) ? videos[0].duration : null,
+      firstVideoPaused: videos[0]?.paused ?? true,
+      firstVideoEnded: videos[0]?.ended ?? false,
+      firstVideoControls: videos[0]?.controls ?? false,
+      firstVideoLoop: videos[0]?.loop ?? false,
       hasEmptyState: Boolean(empty),
       rightPaneCount: document.querySelectorAll(".wb-right-pane").length,
+      hiddenByPlayback: Array.from(document.querySelectorAll(".wb-right-pane")).some(
+        (element) => element instanceof HTMLElement && element.getAttribute("data-ctx-demo-artifacts-hidden") === "1",
+      ),
     };
   });
 }
@@ -1523,6 +1715,7 @@ export {
   requireWorkspacePackage,
   runConductor,
   seedProviderRuntimeConfig,
+  shouldRecycleSharedCrabNebulaBackend,
   startCrabNebulaStack,
   startSetupProcess,
   openDiffPane,
@@ -1532,10 +1725,13 @@ export {
   captureDiffPaneState,
   captureArtifactsPaneState,
   prepareAutomationAppForLaunch,
+  setArtifactsPanePlaybackHidden,
+  setDiffPanePlaybackHidden,
   submitComposerPrompt,
   terminateAutomationAppProcesses,
   terminateListeningPort,
   waitForDiffPane,
+  waitForDiffPaneReady,
   waitForArtifactsPane,
   waitForProcessReady,
   waitForSessionTurnCompletion,

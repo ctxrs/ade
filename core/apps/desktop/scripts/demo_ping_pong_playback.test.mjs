@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -33,9 +33,13 @@ import {
   prepareAutomationAppForLaunch,
   requireWorkspacePackage,
   seedProviderRuntimeConfig,
+  setArtifactsPanePlaybackHidden,
+  setDiffPanePlaybackHidden,
+  shouldRecycleSharedCrabNebulaBackend,
   submitComposerPrompt,
   waitForProcessReady,
   waitForArtifactsPane,
+  waitForDiffPaneReady,
   waitForSessionTurnCompletion,
   waitForTcpPort,
 } from "./demo_ping_pong_playback.mjs";
@@ -84,9 +88,10 @@ test("desktopSyncCommand points at the desktop resource sync script", () => {
 test("bundleExecutablePaths targets the automation app binary", () => {
   const candidates = bundleExecutablePaths("/tmp/ctx-demo-target/debug/bundle/macos/ctx-demo.app");
   assert.ok(candidates.some((candidate) => candidate.endsWith("/ctx-demo.app/Contents/MacOS/ctx")));
+  assert.ok(candidates.some((candidate) => candidate.endsWith("/ctx-demo.app/Contents/MacOS/ctx-demo")));
 });
 
-test("prepareAutomationAppForLaunch rewrites the macOS automation bundle metadata in place", () => {
+test("prepareAutomationAppForLaunch copies and rewrites the macOS automation bundle", () => {
   if (process.platform !== "darwin") {
     const sourcePath = "/tmp/ctx-demo-target/debug/bundle/macos/ctx-demo.app";
     assert.equal(prepareAutomationAppForLaunch(sourcePath, "/tmp/demo-artifacts"), sourcePath);
@@ -96,7 +101,9 @@ test("prepareAutomationAppForLaunch rewrites the macOS automation bundle metadat
   const dir = mkdtempSync(path.join(tmpdir(), "demo-playback-app-"));
   const sourceAppPath = path.join(dir, "ctx-demo.app");
   const infoPlistPath = path.join(sourceAppPath, "Contents/Info.plist");
+  const executablePath = path.join(sourceAppPath, "Contents/MacOS/ctx");
   mkdirSync(path.dirname(infoPlistPath), { recursive: true });
+  mkdirSync(path.dirname(executablePath), { recursive: true });
   writeFileSync(
     infoPlistPath,
     `<?xml version="1.0" encoding="UTF-8"?>
@@ -109,17 +116,22 @@ test("prepareAutomationAppForLaunch rewrites the macOS automation bundle metadat
   <string>ctx</string>
   <key>CFBundleDisplayName</key>
   <string>ctx</string>
+  <key>CFBundleExecutable</key>
+  <string>ctx</string>
 </dict>
   </plist>
 `,
     "utf8",
   );
+  writeFileSync(executablePath, "#!/bin/sh\n", "utf8");
   const launchAppPath = prepareAutomationAppForLaunch(sourceAppPath, path.join(dir, "artifacts"));
-  assert.equal(launchAppPath, sourceAppPath);
+  assert.equal(launchAppPath, path.join(dir, "artifacts", "ctx-demo.app"));
   const plistDump = readFileSync(path.join(launchAppPath, "Contents/Info.plist"), "utf8");
   assert.match(plistDump, /rs\.ctx\.desktop\.demo/);
   assert.match(plistDump, /ctx-demo/);
   assert.match(plistDump, /ctx demo/);
+  assert.equal(existsSync(path.join(launchAppPath, "Contents/MacOS/ctx")), false);
+  assert.equal(existsSync(path.join(launchAppPath, "Contents/MacOS/ctx-demo")), true);
 });
 
 test("killProcesses terminates matching helper processes", async () => {
@@ -199,6 +211,31 @@ test("CrabNebula driver env carries backend routing and playback app overrides",
   assert.equal(env.TAURI_DRIVER_PORT, "4444");
   assert.equal(env.REMOTE_WEBDRIVER_URL, "http://127.0.0.1:3000");
   assert.equal(env.CTX_DESKTOP_DAEMON_TOKEN, "token-123");
+});
+
+test("shared macOS CrabNebula backend is recycled only for known playback commands", () => {
+  assert.equal(
+    shouldRecycleSharedCrabNebulaBackend({
+      platform: "darwin",
+      backendPort: 3000,
+      backendAlreadyListening: true,
+      processEntries: [
+        { pid: 1, command: "/opt/homebrew/bin/node /tmp/ctx-cnb-cli --host 127.0.0.1 --port 3000" },
+      ],
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRecycleSharedCrabNebulaBackend({
+      platform: "darwin",
+      backendPort: 3000,
+      backendAlreadyListening: true,
+      processEntries: [
+        { pid: 2, command: "/usr/bin/python3 -m http.server 3000" },
+      ],
+    }),
+    false,
+  );
 });
 
 test("requireWorkspacePackage fails with an install hint when dependency is missing", () => {
@@ -333,6 +370,11 @@ test("primeDemoDesktopConnection seeds desktop and workbench state before target
   const browser = {
     execute: async (fn, payload) => {
       calls.push(payload);
+      if (typeof payload === "string") {
+        currentHref = payload;
+        focusEnabled = true;
+        return undefined;
+      }
       if (payload?.nextPath) {
         currentHref = payload.nextPath;
         focusEnabled = true;
@@ -368,11 +410,10 @@ test("primeDemoDesktopConnection seeds desktop and workbench state before target
     },
   };
   await primeDemoDesktopConnection(browser, "http://127.0.0.1:4416", "token-123", "ws-123", "task-456", "session-789");
-  const payloadCalls = calls.filter((value) => value !== undefined);
+  const payloadCalls = calls.filter((value) => value && typeof value === "object");
   assert.deepEqual(payloadCalls[0], {
     nextBaseUrl: "http://127.0.0.1:4416",
     nextToken: "token-123",
-    nextPath: "/workspaces/ws-123?ctxE2E=1",
     storage: buildDemoDesktopConnectionPayload("http://127.0.0.1:4416", "token-123"),
   });
   assert.deepEqual(payloadCalls[1], buildDemoWorkbenchWindowPayload("ws-123", "task-456", "session-789"));
@@ -384,6 +425,7 @@ test("primeDemoDesktopConnection seeds desktop and workbench state before target
     taskId: "task-456",
     sessionId: "session-789",
   });
+  assert.equal(currentHref, "/workspaces/ws-123");
   assert.equal(focusAttempts, 2);
 });
 
@@ -518,6 +560,17 @@ test("captureDiffPaneState reads the diff pane markers", async () => {
       hasDiffContent: true,
       rightPaneCount: 1,
       togglePressed: true,
+      loadingChangesVisible: false,
+      loadingChangedFilesVisible: false,
+      loadingDiffVisible: false,
+      parsingDiffVisible: false,
+      fileRowCount: 3,
+      openFileCount: 0,
+      diffSummaryCount: 3,
+      statusSummaryCount: 0,
+      editorShellCount: 0,
+      monacoEditorCount: 0,
+      hiddenByPlayback: false,
     }),
   };
   const result = await captureDiffPaneState(browser);
@@ -526,7 +579,89 @@ test("captureDiffPaneState reads the diff pane markers", async () => {
     hasDiffContent: true,
     rightPaneCount: 1,
     togglePressed: true,
+    loadingChangesVisible: false,
+    loadingChangedFilesVisible: false,
+    loadingDiffVisible: false,
+    parsingDiffVisible: false,
+    fileRowCount: 3,
+    openFileCount: 0,
+    diffSummaryCount: 3,
+    statusSummaryCount: 0,
+    editorShellCount: 0,
+    monacoEditorCount: 0,
+    hiddenByPlayback: false,
   });
+});
+
+test("waitForDiffPaneReady waits for stable parsed summaries", async () => {
+  let attempts = 0;
+  const browser = {
+    waitUntil: async (predicate) => {
+      for (let i = 0; i < 6; i += 1) {
+        attempts += 1;
+        if (await predicate()) {
+          return true;
+        }
+      }
+      throw new Error("diff pane never stabilized");
+    },
+    execute: async () => {
+      if (attempts <= 1) {
+        return {
+          hasDiffPaneClass: true,
+          hasDiffContent: true,
+          rightPaneCount: 1,
+          togglePressed: true,
+          loadingChangesVisible: false,
+          loadingChangedFilesVisible: false,
+          loadingDiffVisible: false,
+          parsingDiffVisible: false,
+          fileRowCount: 3,
+          openFileCount: 0,
+          diffSummaryCount: 0,
+          statusSummaryCount: 3,
+          editorShellCount: 0,
+          monacoEditorCount: 0,
+          hiddenByPlayback: true,
+        };
+      }
+      return {
+        hasDiffPaneClass: true,
+        hasDiffContent: true,
+        rightPaneCount: 1,
+        togglePressed: true,
+        loadingChangesVisible: false,
+        loadingChangedFilesVisible: false,
+        loadingDiffVisible: false,
+        parsingDiffVisible: false,
+        fileRowCount: 3,
+        openFileCount: 0,
+        diffSummaryCount: 3,
+        statusSummaryCount: 0,
+        editorShellCount: 0,
+        monacoEditorCount: 0,
+        hiddenByPlayback: true,
+      };
+    },
+  };
+  await waitForDiffPaneReady(browser);
+  assert.ok(attempts >= 3);
+});
+
+test("setDiffPanePlaybackHidden proxies the requested hidden state", async () => {
+  const browser = {
+    execute: async (_fn, hidden) => Boolean(hidden),
+  };
+  assert.equal(await setDiffPanePlaybackHidden(browser, true), true);
+  assert.equal(await setDiffPanePlaybackHidden(browser, false), false);
+});
+
+test("setArtifactsPanePlaybackHidden proxies the requested hidden state", async () => {
+  const browser = {
+    execute: async (_fn, hidden) => Boolean(hidden),
+  };
+  assert.equal(await setArtifactsPanePlaybackHidden(browser, true), true);
+  assert.equal(await setArtifactsPanePlaybackHidden(browser, false), false);
 });
 
 test("captureArtifactsPaneState reads the artifact pane markers", async () => {
@@ -538,8 +673,14 @@ test("captureArtifactsPaneState reads the artifact pane markers", async () => {
       videoCount: 1,
       playingVideoCount: 1,
       firstVideoCurrentTime: 1.25,
+      firstVideoDuration: 11.233,
+      firstVideoPaused: false,
+      firstVideoEnded: false,
+      firstVideoControls: false,
+      firstVideoLoop: false,
       hasEmptyState: false,
       rightPaneCount: 1,
+      hiddenByPlayback: false,
     }),
   };
   const result = await captureArtifactsPaneState(browser);
@@ -550,8 +691,14 @@ test("captureArtifactsPaneState reads the artifact pane markers", async () => {
     videoCount: 1,
     playingVideoCount: 1,
     firstVideoCurrentTime: 1.25,
+    firstVideoDuration: 11.233,
+    firstVideoPaused: false,
+    firstVideoEnded: false,
+    firstVideoControls: false,
+    firstVideoLoop: false,
     hasEmptyState: false,
     rightPaneCount: 1,
+    hiddenByPlayback: false,
   });
 });
 
@@ -603,6 +750,32 @@ test("ensureWorkbenchVisible writes a browser-state artifact when selector wait 
     const artifact = JSON.parse(readFileSync(artifactPath, "utf8"));
     assert.equal(typeof artifact, "object");
     assert.equal(artifact.capture_error, undefined);
+  } finally {
+    rmSync(artifactDir, { recursive: true, force: true });
+  }
+});
+
+test("ensureWorkbenchVisible accepts a ready workbench shell with the E2E bridge", async () => {
+  const artifactDir = mkdtempSync(path.join(tmpdir(), "demo-playback-artifacts-"));
+  let waitUntilCount = 0;
+  const browser = {
+    waitUntil: async (predicate) => {
+      waitUntilCount += 1;
+      const ready = await predicate();
+      if (!ready) {
+        throw new Error(`waitUntil failed at step ${waitUntilCount}`);
+      }
+    },
+    execute: async (_fn, selector) => {
+      if (typeof selector === "string") {
+        return selector === ".wb-root";
+      }
+      return true;
+    },
+  };
+  try {
+    await assert.doesNotReject(() => ensureWorkbenchVisible(browser, artifactDir));
+    assert.equal(waitUntilCount, 2);
   } finally {
     rmSync(artifactDir, { recursive: true, force: true });
   }

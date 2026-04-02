@@ -4,13 +4,17 @@ import assert from "node:assert/strict";
 import { resolveCapturePrompt } from "./demo_hn_mobile_capture.mjs";
 import { inferVideoArtifactMimeType } from "./demo_video_artifacts.mjs";
 import {
+  buildExpectedSidebarTaskTitles,
   buildPromptCharacters,
   buildFrameSequenceFfmpegArgs,
   computeArtifactPlaybackTimeoutMs,
+  ensureSidebarOpen,
   findNewTaskRecord,
+  parseArgs as parsePlaybackArgs,
   resolvePlaybackPrompt,
   resolvePlaybackSessionArtifactPath,
   resolveTaskWorktreeRoot,
+  sidebarMatchesExpectedState,
   visibleHarnessRowsNeedInstall,
 } from "./demo_hn_mobile_playback.mjs";
 import { selectInstallableVisibleHarnessProviderIds } from "./demo_ping_pong_playback.mjs";
@@ -112,6 +116,92 @@ test("selectInstallableVisibleHarnessProviderIds keeps only supported visible mi
 test("computeArtifactPlaybackTimeoutMs uses video duration plus buffer", () => {
   assert.equal(computeArtifactPlaybackTimeoutMs(11.233008), 12734);
   assert.equal(computeArtifactPlaybackTimeoutMs(null), 20000);
+});
+
+test("buildExpectedSidebarTaskTitles orders seeded tasks newest first by minutes_ago", () => {
+  assert.deepEqual(
+    buildExpectedSidebarTaskTitles({
+      active_tasks: [
+        { title: "Oldest", minutes_ago: 41 },
+        { title: "Newest", minutes_ago: 2 },
+        { title: "Middle", minutes_ago: 12 },
+      ],
+    }),
+    ["Newest", "Middle", "Oldest"],
+  );
+});
+
+test("sidebarMatchesExpectedState requires full ordering and exactly one working row", () => {
+  assert.equal(
+    sidebarMatchesExpectedState(
+      {
+        rows: [
+          { title: "New task", hasWorkingSpinner: false },
+          { title: "Newest", hasWorkingSpinner: true },
+          { title: "Middle", hasWorkingSpinner: false },
+          { title: "Oldest", hasWorkingSpinner: false },
+        ],
+      },
+      ["Newest", "Middle", "Oldest"],
+      "Newest",
+    ),
+    true,
+  );
+  assert.equal(
+    sidebarMatchesExpectedState(
+      {
+        rows: [
+          { title: "Newest", hasWorkingSpinner: true },
+          { title: "Oldest", hasWorkingSpinner: true },
+          { title: "Middle", hasWorkingSpinner: false },
+        ],
+      },
+      ["Newest", "Middle", "Oldest"],
+      "Newest",
+    ),
+    false,
+  );
+});
+
+test("ensureSidebarOpen clicks the collapsed toggle until the sidebar is visible", async () => {
+  let attempts = 0;
+  const browser = {
+    waitUntil: async (predicate) => {
+      for (let index = 0; index < 3; index += 1) {
+        attempts += 1;
+        if (await predicate()) {
+          return true;
+        }
+      }
+      throw new Error("sidebar did not open");
+    },
+    execute: async () => attempts >= 2,
+  };
+  await assert.doesNotReject(() => ensureSidebarOpen(browser));
+  assert.ok(attempts >= 2);
+});
+
+test("parseArgs defaults the HN storyboard to one curated diff file", () => {
+  const options = parsePlaybackArgs([]);
+  assert.equal(options.diffFilePath, "src/hn_enhancer.js");
+  assert.equal(options.secondaryDiffFilePath, null);
+  assert.equal(options.harnessMenuDwellMs, 3000);
+  assert.equal(options.readyPrerollMs, 0);
+});
+
+test("parseArgs keeps an explicit secondary diff file opt-in", () => {
+  const options = parsePlaybackArgs(["--secondary-diff-file", "hn_proxy.js"]);
+  assert.equal(options.secondaryDiffFilePath, "hn_proxy.js");
+});
+
+test("parseArgs allows overriding the harness selector dwell", () => {
+  const options = parsePlaybackArgs(["--harness-menu-dwell-ms", "900"]);
+  assert.equal(options.harnessMenuDwellMs, 900);
+});
+
+test("parseArgs allows overriding the ready preroll dwell", () => {
+  const options = parsePlaybackArgs(["--ready-preroll-ms", "2500"]);
+  assert.equal(options.readyPrerollMs, 2500);
 });
 
 test("visibleHarnessRowsNeedInstall detects whether any visible rows still need install", () => {

@@ -12,67 +12,11 @@
   "session_artifact_path": "demo-artifacts/hn-muted-domains-apple-official-mock.mov",
   "active_tasks": [
     {
-      "title": "Tune muted-domain toast timing",
-      "session_title": "Muted toast timing",
-      "provider_id": "cursor",
-      "model_id": "cursor/auto",
-      "minutes_ago": 2,
-      "status": "working"
-    },
-    {
-      "title": "Polish Settings insertion spacing",
-      "session_title": "Settings spacing",
-      "provider_id": "claude-crp",
-      "model_id": "claude-sonnet-4",
-      "minutes_ago": 5,
-      "status": "new_message"
-    },
-    {
-      "title": "Add muted-domain suggestion chips",
-      "session_title": "Muted suggestions",
-      "provider_id": "gemini",
-      "model_id": "gemini-2.5-pro",
-      "minutes_ago": 8,
-      "status": "idle"
-    },
-    {
-      "title": "Investigate HN auth cookie refresh",
-      "session_title": "HN auth refresh",
+      "title": "Clean up article reader spacing",
+      "session_title": "Reader spacing",
       "provider_id": "codex",
       "model_id": "gpt-5.4/medium",
-      "minutes_ago": 12,
-      "status": "working"
-    },
-    {
-      "title": "Improve offline wrapper error copy",
-      "session_title": "Offline wrapper copy",
-      "provider_id": "cursor",
-      "model_id": "cursor/auto",
-      "minutes_ago": 16,
-      "status": "new_message"
-    },
-    {
-      "title": "Collapse long comment threads",
-      "session_title": "Comment collapse",
-      "provider_id": "gemini",
-      "model_id": "gemini-2.5-flash",
-      "minutes_ago": 21,
-      "status": "idle"
-    },
-    {
-      "title": "Audit orange header contrast",
-      "session_title": "Header contrast",
-      "provider_id": "claude-crp",
-      "model_id": "claude-sonnet-4",
-      "minutes_ago": 27,
-      "status": "working"
-    },
-    {
-      "title": "Profile launch time on Pixel 9",
-      "session_title": "Pixel 9 launch time",
-      "provider_id": "copilot",
-      "model_id": "gpt-4.1",
-      "minutes_ago": 34,
+      "minutes_ago": 52,
       "status": "idle"
     },
     {
@@ -84,12 +28,68 @@
       "status": "new_message"
     },
     {
-      "title": "Clean up article reader spacing",
-      "session_title": "Reader spacing",
+      "title": "Profile launch time on Pixel 9",
+      "session_title": "Pixel 9 launch time",
+      "provider_id": "copilot",
+      "model_id": "gpt-4.1",
+      "minutes_ago": 34,
+      "status": "idle"
+    },
+    {
+      "title": "Audit orange header contrast",
+      "session_title": "Header contrast",
+      "provider_id": "claude-crp",
+      "model_id": "claude-sonnet-4",
+      "minutes_ago": 27,
+      "status": "new_message"
+    },
+    {
+      "title": "Collapse long comment threads",
+      "session_title": "Comment collapse",
+      "provider_id": "gemini",
+      "model_id": "gemini-2.5-flash",
+      "minutes_ago": 21,
+      "status": "idle"
+    },
+    {
+      "title": "Improve offline wrapper error copy",
+      "session_title": "Offline wrapper copy",
+      "provider_id": "cursor",
+      "model_id": "cursor/auto",
+      "minutes_ago": 16,
+      "status": "new_message"
+    },
+    {
+      "title": "Investigate HN auth cookie refresh",
+      "session_title": "HN auth refresh",
       "provider_id": "codex",
       "model_id": "gpt-5.4/medium",
-      "minutes_ago": 52,
+      "minutes_ago": 12,
       "status": "idle"
+    },
+    {
+      "title": "Add muted-domain suggestion chips",
+      "session_title": "Muted suggestions",
+      "provider_id": "gemini",
+      "model_id": "gemini-2.5-pro",
+      "minutes_ago": 8,
+      "status": "idle"
+    },
+    {
+      "title": "Polish Settings insertion spacing",
+      "session_title": "Settings spacing",
+      "provider_id": "claude-crp",
+      "model_id": "claude-sonnet-4",
+      "minutes_ago": 5,
+      "status": "new_message"
+    },
+    {
+      "title": "Tune muted-domain toast timing",
+      "session_title": "Muted toast timing",
+      "provider_id": "cursor",
+      "model_id": "cursor/auto",
+      "minutes_ago": 2,
+      "status": "working"
     }
   ]
 }

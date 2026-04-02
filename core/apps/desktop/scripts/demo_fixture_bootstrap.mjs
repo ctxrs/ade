@@ -117,6 +117,32 @@ export function isoMinutesAgo(minutesAgo, baseNow = new Date()) {
   return new Date(baseNow.getTime() - numericMinutes * 60_000).toISOString();
 }
 
+export function patchActiveSnapshotTurnsForDemoStatus(turnsJson, status, updatedAt) {
+  const normalizedStatus = normalizeDemoTaskStatus(status);
+  if (normalizedStatus !== "working") {
+    return String(turnsJson ?? "");
+  }
+  const turns = JSON.parse(String(turnsJson ?? "[]"));
+  if (!Array.isArray(turns) || turns.length === 0) {
+    return JSON.stringify(turns);
+  }
+  const patchedTurns = turns.map((turn, index) => {
+    if (!turn || typeof turn !== "object") {
+      return turn;
+    }
+    if (index !== turns.length - 1) {
+      return turn;
+    }
+    return {
+      ...turn,
+      status: "running",
+      end_seq: null,
+      updated_at: updatedAt,
+    };
+  });
+  return JSON.stringify(patchedTurns);
+}
+
 function buildSeedTurns(seed, index) {
   if (Array.isArray(seed.turns) && seed.turns.length > 0) {
     return seed.turns;
@@ -186,6 +212,35 @@ function applySeededTaskPresentationState({ dataDir, workspaceId, taskId, sessio
              running_turn_count = ?
        WHERE session_id = ?`,
     ).run(iso, iso, status === "working" ? "running" : "completed", status === "working" ? 1 : 0, sessionId);
+    if (status === "working") {
+      db.prepare(
+        `UPDATE session_turns
+           SET status = 'running',
+               end_seq = NULL,
+               updated_at = ?
+         WHERE session_id = ?
+           AND turn_id = (
+             SELECT turn_id
+             FROM session_turns
+             WHERE session_id = ?
+             ORDER BY started_at DESC
+             LIMIT 1
+           )`,
+      ).run(iso, sessionId, sessionId);
+      const headRow = db.prepare(
+        `SELECT turns_json
+           FROM session_active_snapshot_heads
+          WHERE session_id = ?`,
+      ).get(sessionId);
+      if (headRow && typeof headRow.turns_json === "string") {
+        db.prepare(
+          `UPDATE session_active_snapshot_heads
+             SET turns_json = ?,
+                 updated_at = ?
+           WHERE session_id = ?`,
+        ).run(patchActiveSnapshotTurnsForDemoStatus(headRow.turns_json, status, iso), iso, sessionId);
+      }
+    }
   } finally {
     db.close();
   }

@@ -9,6 +9,7 @@ import {
   ensureWorkspaceRoot,
   isoMinutesAgo,
   normalizeDemoTaskStatus,
+  patchActiveSnapshotTurnsForDemoStatus,
   resolveWorkspaceDbPath,
   resolveWorkspaceTemplateDir,
 } from "./demo_fixture_bootstrap.mjs";
@@ -82,4 +83,40 @@ test("isoMinutesAgo offsets the supplied base time", () => {
   const baseNow = new Date("2026-03-22T18:00:00.000Z");
   assert.equal(isoMinutesAgo(17, baseNow), "2026-03-22T17:43:00.000Z");
   assert.throws(() => isoMinutesAgo(-1, baseNow), /minutes_ago must be a non-negative number/);
+});
+
+test("patchActiveSnapshotTurnsForDemoStatus marks the last seeded turn as running for working rows", () => {
+  const turnsJson = JSON.stringify([
+    {
+      turn_id: "turn-1",
+      status: "completed",
+      start_seq: 4,
+      end_seq: 8,
+      updated_at: "2026-04-01T20:57:23.459Z",
+    },
+  ]);
+
+  const patched = JSON.parse(
+    patchActiveSnapshotTurnsForDemoStatus(turnsJson, "working", "2026-04-01T21:00:23.552Z"),
+  );
+
+  assert.equal(patched[0]?.status, "running");
+  assert.equal(patched[0]?.end_seq, null);
+  assert.equal(patched[0]?.updated_at, "2026-04-01T21:00:23.552Z");
+});
+
+test("patchActiveSnapshotTurnsForDemoStatus leaves non-working rows unchanged", () => {
+  const turnsJson = JSON.stringify([
+    {
+      turn_id: "turn-1",
+      status: "completed",
+      end_seq: 8,
+      updated_at: "2026-04-01T20:57:23.459Z",
+    },
+  ]);
+
+  assert.equal(
+    patchActiveSnapshotTurnsForDemoStatus(turnsJson, "idle", "2026-04-01T21:00:23.552Z"),
+    turnsJson,
+  );
 });
