@@ -7,79 +7,42 @@ import {
   buildAutomationAppIfNeeded,
   captureArtifactsPaneState,
   captureDiffPaneState,
-  ensureWorkbenchVisible,
-  installVisibleHarnessProvidersAndWait,
-  measureTargets,
   openArtifactsPane,
   openDiffPane,
   prepareAutomationAppForLaunch,
   primeDemoDesktopConnectionToWorkspace,
   readTokenFromManifest,
-  runConductor,
-  setArtifactsPanePlaybackHidden,
-  setDiffPanePlaybackHidden,
   startCrabNebulaStack,
   startSetupProcess,
   submitComposerPrompt,
   terminateAutomationAppProcesses,
   waitForArtifactsPane,
   waitForDiffPane,
-  waitForDiffPaneReady,
   connectBrowser,
 } from "./demo_ping_pong_playback.mjs";
-import { api, installProviderAndWait, sleep, waitFor } from "./demo_lib.mjs";
+import { api, sleep, waitFor } from "./demo_lib.mjs";
 import { inferVideoArtifactMimeType } from "./demo_video_artifacts.mjs";
-import { screenPointFromProbe } from "./demo_desktop_probe.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../../..");
 const DEMO_APP_PRODUCT_NAME = "ctx-demo";
-const DEFAULT_PROMPT = "Build a Hacker News iOS app as a Tauri wrapper. Add a new muted domains feature in Settings, then record a short demo video.";
+const DEFAULT_PROMPT = "This project is an HN mobile app. Let's add a muted domains feature to the settings page. Then show me a screen recording of it working.";
 const DEFAULT_SESSION_ARTIFACT_PATH = path.resolve(
   REPO_ROOT,
   "core/apps/desktop/automation/fixtures/demo-artifacts/hn-muted-domains-apple-official-mock.mov",
 );
-const DEFAULT_EXPECTED_FINAL_WORKSPACE_PATH = path.resolve(
+const DEFAULT_EXPECTED_FINAL_APP_PATH = path.resolve(
   REPO_ROOT,
-  "core/apps/desktop/automation/fixtures/demo-workspaces/hn-mobile-muted-domains",
+  "core/apps/desktop/automation/fixtures/demo-workspaces/hn-mobile-saved-stories/src/app.js",
 );
-const DEFAULT_DIFF_FILE_PATH = "src/hn_enhancer.js";
-const DEFAULT_SECONDARY_DIFF_FILE_PATH = null;
-const EXPECTED_FINAL_WORKSPACE_DIFF_FILES = Object.freeze([
-  "src/app.js",
-  "src/style.css",
-  "src/hn_enhancer.js",
-  "src/viewport.js",
-  "vite.config.js",
-  "hn_proxy.js",
-]);
-const HARNESS_LABEL_TO_PROVIDER_ID = Object.freeze({
-  "Claude Code": "claude-crp",
-  Codex: "codex",
-  "Qwen Code": "qwen",
-  Cursor: "cursor",
-  Pi: "pi",
-  Amp: "amp",
-  Droid: "droid",
-  Gemini: "gemini",
-  Goose: "goose",
-  Copilot: "copilot",
-  OpenCode: "opencode",
-  OpenHands: "openhands",
-  Cline: "cline",
-  "Mistral Vibe": "mistral",
-  Auggie: "auggie",
-  Kimi: "kimi",
-});
 const PROMPT_CHARACTER_DELAY_MS = 10;
-const DEFAULT_HARNESS_MENU_DWELL_MS = 3000;
+const HARNESS_MENU_DWELL_MS = 460;
 const HARNESS_SELECTED_DWELL_MS = 280;
 const POST_HARNESS_DWELL_MS = 120;
 const POST_PROMPT_DWELL_MS = 100;
 const RESPONSE_PRE_DIFF_DWELL_MS = 900;
-const DIFF_FILE_LIST_DWELL_MS = 900;
-const PRIMARY_DIFF_PANE_DWELL_MS = 1700;
+const DIFF_PANE_DWELL_MS = 2400;
 const POST_ARTIFACT_ATTACH_DWELL_MS = 250;
-const SIDEBAR_READY_STABLE_POLLS = 3;
+const ARTIFACT_PANE_DWELL_MS = 2600;
 
 function runChecked(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -120,7 +83,7 @@ function pickUnusedPortSync(fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-export function parseArgs(argv) {
+function parseArgs(argv) {
   const stamp = runStamp();
   const artifactDir = `/tmp/ctx-demo-hn-mobile-${stamp}`;
   const tauriTargetDir = `/tmp/ctx-demo-desktop-target-hn-mobile-${stamp}`;
@@ -140,15 +103,10 @@ export function parseArgs(argv) {
     fixturePath: path.resolve(REPO_ROOT, "core/apps/desktop/automation/fixtures/demo-hn-mobile-fixture.json"),
     relayScenarioPath: path.resolve(REPO_ROOT, "core/apps/desktop/automation/fixtures/demo-relay/codex-hn-mobile.replay.json"),
     sessionArtifactPath: null,
-    expectedFinalWorkspacePath: DEFAULT_EXPECTED_FINAL_WORKSPACE_PATH,
-    diffFilePath: DEFAULT_DIFF_FILE_PATH,
-    secondaryDiffFilePath: DEFAULT_SECONDARY_DIFF_FILE_PATH,
-    harnessMenuDwellMs: DEFAULT_HARNESS_MENU_DWELL_MS,
-    readyPrerollMs: 0,
+    expectedFinalAppPath: DEFAULT_EXPECTED_FINAL_APP_PATH,
     recordVideoOut: null,
     recordFps: 12,
     captureMilestones: false,
-    installVisibleHarnesses: true,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -194,24 +152,11 @@ export function parseArgs(argv) {
     } else if (arg === "--session-artifact") {
       options.sessionArtifactPath = path.resolve(next);
       index += 1;
-    } else if (arg === "--expected-final-workspace") {
-      options.expectedFinalWorkspacePath = path.resolve(next);
-      index += 1;
-    } else if (arg === "--diff-file") {
-      options.diffFilePath = next;
-      index += 1;
-    } else if (arg === "--secondary-diff-file") {
-      options.secondaryDiffFilePath = next;
+    } else if (arg === "--expected-final-app") {
+      options.expectedFinalAppPath = path.resolve(next);
       index += 1;
     } else if (arg === "--harness-label") {
       options.harnessLabel = next;
-      index += 1;
-    } else if (arg === "--harness-menu-dwell-ms") {
-      options.harnessMenuDwellMs = Number.parseInt(next, 10);
-      index += 1;
-    } else if (arg === "--ready-preroll-ms") {
-      const parsedReadyPrerollMs = Number.parseInt(next, 10);
-      options.readyPrerollMs = Number.isFinite(parsedReadyPrerollMs) && parsedReadyPrerollMs > 0 ? parsedReadyPrerollMs : 0;
       index += 1;
     } else if (arg === "--record-video-out") {
       options.recordVideoOut = path.resolve(next);
@@ -224,15 +169,6 @@ export function parseArgs(argv) {
     }
   }
   return options;
-}
-
-function pointFromProbeRect(metrics, rect, xFraction, yFraction) {
-  return screenPointFromProbe(metrics, {
-    left: Number(rect.left) + Number(rect.width) * xFraction - 0.5,
-    top: Number(rect.top) + Number(rect.height) * yFraction - 0.5,
-    width: 1,
-    height: 1,
-  });
 }
 
 function resolveFixturePath(fixturePath, maybeRelativePath) {
@@ -354,151 +290,6 @@ async function ensureNewTaskVisible(browser, artifactDir) {
   }
 }
 
-export function buildExpectedSidebarTaskTitles(fixture) {
-  const activeTasks = Array.isArray(fixture?.active_tasks) ? fixture.active_tasks : [];
-  return [...activeTasks]
-    .map((task) => ({
-      title: String(task?.title || "").trim(),
-      minutesAgo: Number(task?.minutes_ago ?? Number.POSITIVE_INFINITY),
-    }))
-    .filter((task) => task.title)
-    .sort((left, right) => left.minutesAgo - right.minutesAgo || left.title.localeCompare(right.title))
-    .map((task) => task.title);
-}
-
-async function captureSidebarTaskState(browser) {
-  return browser.execute(() => {
-    const sidebar = document.querySelector(".wb-sidebar");
-    const rows = Array.from(document.querySelectorAll(".wb-task-row")).map((element) => {
-      const row = element instanceof HTMLElement ? element : null;
-      if (!row) return null;
-      const title = row.querySelector(".wb-task-title")?.textContent?.trim() || row.getAttribute("aria-label") || "";
-      const age = row.querySelector(".wb-task-age")?.textContent?.trim() || "";
-      return {
-        title,
-        age,
-        selected: row.classList.contains("wb-task-row-active"),
-        hasWorkingSpinner: Boolean(row.querySelector(".wb-task-spinner")),
-        hasUnreadDot: Boolean(row.querySelector(".wb-task-status-dot-unread")),
-      };
-    }).filter(Boolean);
-    return {
-      sidebarHidden: sidebar?.getAttribute("aria-hidden") === "true",
-      hasTaskList: Boolean(document.querySelector(".wb-task-list")),
-      roleListItemCount: document.querySelectorAll('[role="listitem"]').length,
-      sidebarText: (sidebar?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 240),
-      rowCount: rows.length,
-      rows,
-    };
-  });
-}
-
-export async function ensureSidebarOpen(browser) {
-  await browser.waitUntil(
-    async () =>
-      await browser.execute(() => {
-        const sidebar = document.querySelector(".wb-sidebar");
-        if (sidebar?.getAttribute("aria-hidden") !== "true") {
-          return true;
-        }
-        const showSidebarButton = document.querySelector(".wb-sidebar-tab-collapsed");
-        if (showSidebarButton instanceof HTMLButtonElement) {
-          showSidebarButton.click();
-        }
-        return false;
-      }),
-    {
-      timeout: 10_000,
-      timeoutMsg: "sidebar did not open in time",
-    },
-  );
-}
-
-export function sidebarMatchesExpectedState(state, expectedTitles, requiredWorkingTitle) {
-  if (!state || !Array.isArray(state.rows)) {
-    return false;
-  }
-  const matchedTitles = state.rows
-    .map((row) => String(row?.title || "").trim())
-    .filter((title) => expectedTitles.includes(title));
-  if (matchedTitles.length !== expectedTitles.length) {
-    return false;
-  }
-  if (matchedTitles.some((title, index) => title !== expectedTitles[index])) {
-    return false;
-  }
-  const workingRows = state.rows.filter((row) => row?.hasWorkingSpinner);
-  return workingRows.length === 1 && String(workingRows[0]?.title || "") === requiredWorkingTitle;
-}
-
-async function waitForSidebarTaskState(browser, expectedTitles, requiredWorkingTitle, options = {}) {
-  const minRowCount = Math.max(expectedTitles.length, Number(options.minRowCount ?? expectedTitles.length));
-  const requiredStablePolls = Math.max(1, Number(options.requiredStablePolls ?? SIDEBAR_READY_STABLE_POLLS));
-  let stablePolls = 0;
-  let lastSignature = null;
-  let latestState = null;
-  try {
-    await browser.waitUntil(async () => {
-      const state = await captureSidebarTaskState(browser);
-      latestState = state;
-      const isReady = state.rowCount >= minRowCount && sidebarMatchesExpectedState(state, expectedTitles, requiredWorkingTitle);
-      if (!isReady) {
-        stablePolls = 0;
-        lastSignature = null;
-        return false;
-      }
-      const signature = JSON.stringify(
-        state.rows.map((row) => ({
-          title: row.title,
-          age: row.age,
-          selected: row.selected,
-          working: row.hasWorkingSpinner,
-          unread: row.hasUnreadDot,
-        })),
-      );
-      if (signature === lastSignature) {
-        stablePolls += 1;
-      } else {
-        lastSignature = signature;
-        stablePolls = 1;
-      }
-      return stablePolls >= requiredStablePolls;
-    }, {
-      timeout: 30_000,
-      timeoutMsg: "sidebar task rows did not reach the expected stable state",
-    });
-  } catch (error) {
-    if (error && typeof error === "object") {
-      error.sidebarState = latestState;
-    }
-    throw error;
-  }
-  return latestState;
-}
-
-async function moveCursorToNeutralWorkbenchPoint(browser, artifactDir) {
-  const measurement = await measureTargets(browser, {
-    main: ".wb-main",
-  });
-  const rect = measurement?.elements?.main?.rect;
-  if (!rect) {
-    throw new Error("unable to measure a neutral workbench point");
-  }
-  const point = pointFromProbeRect(measurement.metrics, rect, 0.12, 0.06);
-  const scenarioPath = path.join(artifactDir, "neutral-cursor-scenario.json");
-  writeJson(scenarioPath, {
-    actions: [
-      { kind: "move", x: point.x, y: point.y, duration_ms: 240 },
-      { kind: "wait", duration_ms: 120 },
-    ],
-  });
-  writeJson(path.join(artifactDir, "neutral-cursor-target.json"), {
-    measurement,
-    point,
-  });
-  await runConductor(scenarioPath);
-}
-
 async function focusNewTask(browser) {
   await browser.waitUntil(
     async () =>
@@ -550,7 +341,7 @@ async function clearDraftHarness(browser) {
   );
 }
 
-async function selectHarness(browser, harnessLabel, menuDwellMs) {
+async function selectHarness(browser, harnessLabel) {
   await browser.execute(() => {
     const trigger = document.querySelector(".wb-switcher-harness");
     if (!(trigger instanceof HTMLButtonElement)) {
@@ -569,7 +360,7 @@ async function selectHarness(browser, harnessLabel, menuDwellMs) {
       timeoutMsg: `harness menu item ${harnessLabel} did not appear`,
     },
   );
-  await sleep(menuDwellMs);
+  await sleep(HARNESS_MENU_DWELL_MS);
   await browser.execute((label) => {
     const target = Array.from(document.querySelectorAll(".wb-harness-row-main")).find((element) =>
       element.textContent?.includes(label));
@@ -579,154 +370,6 @@ async function selectHarness(browser, harnessLabel, menuDwellMs) {
     target.click();
   }, harnessLabel);
   await sleep(HARNESS_SELECTED_DWELL_MS);
-}
-
-async function openHarnessMenu(browser) {
-  await browser.execute(() => {
-    const trigger = document.querySelector(".wb-switcher-harness");
-    if (!(trigger instanceof HTMLButtonElement)) {
-      throw new Error("harness trigger not found");
-    }
-    trigger.click();
-  });
-  await browser.waitUntil(
-    async () =>
-      await browser.execute(() => Boolean(document.querySelector(".wb-harness-menu .wb-harness-row"))),
-    {
-      timeout: 10_000,
-      timeoutMsg: "harness menu did not open",
-    },
-  );
-}
-
-async function closeHarnessMenu(browser) {
-  const menuOpen = await browser.execute(() => Boolean(document.querySelector(".wb-harness-menu")));
-  if (!menuOpen) {
-    return;
-  }
-  await browser.execute(() => {
-    const trigger = document.querySelector(".wb-switcher-harness");
-    if (!(trigger instanceof HTMLButtonElement)) {
-      throw new Error("harness trigger not found");
-    }
-    trigger.click();
-  });
-  await browser.waitUntil(
-    async () =>
-      !(await browser.execute(() => Boolean(document.querySelector(".wb-harness-menu")))),
-    {
-      timeout: 10_000,
-      timeoutMsg: "harness menu did not close",
-    },
-  );
-}
-
-async function captureVisibleHarnessRows(browser) {
-  return browser.execute(() => {
-    const list = document.querySelector(".wb-harness-list");
-    if (!(list instanceof HTMLElement)) {
-      return [];
-    }
-    const listRect = list.getBoundingClientRect();
-    return Array.from(list.querySelectorAll(".wb-harness-row"))
-      .map((row) => {
-        if (!(row instanceof HTMLElement)) {
-          return null;
-        }
-        const rect = row.getBoundingClientRect();
-        const label = row.querySelector(".wb-harness-name")?.textContent?.trim() ?? "";
-        const installButton = row.querySelector(".wb-harness-install");
-        const isVisible =
-          label.length > 0
-          && rect.height > 0
-          && rect.bottom > listRect.top
-          && rect.top < listRect.bottom;
-        if (!isVisible) {
-          return null;
-        }
-        return {
-          label,
-          hasInstallButton: installButton instanceof HTMLButtonElement,
-          installDisabled: installButton instanceof HTMLButtonElement ? installButton.disabled : false,
-        };
-      })
-      .filter(Boolean);
-  });
-}
-
-export function visibleHarnessRowsNeedInstall(rows) {
-  return Array.isArray(rows) && rows.some((row) => row?.hasInstallButton);
-}
-
-function resolveHarnessProviderId(label) {
-  const normalizedLabel = String(label || "").trim();
-  return HARNESS_LABEL_TO_PROVIDER_ID[normalizedLabel] || null;
-}
-
-async function waitForVisibleHarnessRowsInstalled(browser, timeout = 30_000) {
-  await browser.waitUntil(async () => {
-    const rows = await captureVisibleHarnessRows(browser);
-    return rows.length > 0 && !visibleHarnessRowsNeedInstall(rows);
-  }, {
-    timeout,
-    timeoutMsg: "visible harness rows still showed Install after preinstall",
-  });
-}
-
-async function preinstallVisibleHarnesses(browser, baseUrl, authToken, artifactDir) {
-  await openHarnessMenu(browser);
-  const beforeRows = await captureVisibleHarnessRows(browser);
-  writeJson(path.join(artifactDir, "visible-harness-rows-before-install.json"), beforeRows);
-
-  const labelsNeedingInstall = [...new Set(
-    beforeRows
-      .filter((row) => row.hasInstallButton)
-      .map((row) => row.label),
-  )];
-  if (labelsNeedingInstall.length === 0) {
-    await closeHarnessMenu(browser);
-    return [];
-  }
-
-  const unresolvedLabels = labelsNeedingInstall.filter((label) => !resolveHarnessProviderId(label));
-  if (unresolvedLabels.length > 0) {
-    throw new Error(`unable to map visible harness labels to provider ids: ${unresolvedLabels.join(", ")}`);
-  }
-
-  await closeHarnessMenu(browser);
-
-  const installs = [];
-  for (const label of labelsNeedingInstall) {
-    const providerId = resolveHarnessProviderId(label);
-    installs.push({
-      label,
-      provider_id: providerId,
-      install: await installProviderAndWait(baseUrl, authToken, providerId, {
-        target: "host",
-        timeoutMs: 20 * 60_000,
-        pollMs: 2_000,
-      }),
-    });
-  }
-  writeJson(path.join(artifactDir, "visible-harness-installs.json"), installs);
-
-  await sleep(1_500);
-  await openHarnessMenu(browser);
-  try {
-    await waitForVisibleHarnessRowsInstalled(browser);
-  } catch (error) {
-    await closeHarnessMenu(browser);
-    await browser.refresh();
-    await focusNewTask(browser);
-    await ensureNewTaskVisible(browser, artifactDir);
-    await sleep(1_000);
-    await openHarnessMenu(browser);
-    await waitForVisibleHarnessRowsInstalled(browser);
-  }
-  const afterRows = await captureVisibleHarnessRows(browser);
-  writeJson(path.join(artifactDir, "visible-harness-rows-after-install.json"), afterRows);
-  await closeHarnessMenu(browser);
-  return installs;
 }
 
 async function setComposerValue(browser, value) {
@@ -794,29 +437,12 @@ async function captureOpenedDiffFileState(browser, filePath) {
       return filePathElement?.textContent?.trim() === targetPath;
     });
     const body = diffFile?.querySelector(".cursor-diff-file-body");
-    const loadingLabel = Array.from(body?.querySelectorAll(".muted") ?? [])
-      .map((element) => element.textContent?.trim() ?? "")
-      .find((text) => text.length > 0) ?? null;
     return {
       target_path: targetPath,
       has_file_row: Boolean(diffFile),
       has_open_body: body instanceof HTMLElement,
-      has_editor_shell: Boolean(body?.querySelector(".cursor-diff-editor-shell")),
-      has_monaco_editor: Boolean(body?.querySelector(".monaco-editor")),
-      loading_label: loadingLabel,
     };
   }, filePath);
-}
-
-async function waitForOpenedDiffFileReady(browser, filePath) {
-  await browser.waitUntil(async () => {
-    const state = await captureOpenedDiffFileState(browser, filePath);
-    return state.has_open_body && state.has_editor_shell && state.has_monaco_editor && !state.loading_label;
-  }, {
-    timeout: 30_000,
-    interval: 150,
-    timeoutMsg: `diff file ${filePath} did not finish rendering`,
-  });
 }
 
 export function findNewTaskRecord(tasks, knownTaskIds = []) {
@@ -895,86 +521,11 @@ async function waitForWorkspaceDiff(worktreeRoot) {
   });
 }
 
-function seedExpectedWorkspaceDiff(
-  worktreeRoot,
-  expectedFinalWorkspacePath,
-  relativePaths = EXPECTED_FINAL_WORKSPACE_DIFF_FILES,
-) {
-  if (!existsSync(expectedFinalWorkspacePath)) {
-    throw new Error(`expected final workspace does not exist: ${expectedFinalWorkspacePath}`);
+function seedExpectedWorkspaceDiff(worktreeRoot, expectedFinalAppPath) {
+  if (!existsSync(expectedFinalAppPath)) {
+    throw new Error(`expected final app file does not exist: ${expectedFinalAppPath}`);
   }
-
-  for (const relativePath of relativePaths) {
-    const sourcePath = path.join(expectedFinalWorkspacePath, relativePath);
-    if (!existsSync(sourcePath)) {
-      throw new Error(`expected final workspace file does not exist: ${sourcePath}`);
-    }
-
-    const destinationPath = path.join(worktreeRoot, relativePath);
-    mkdirSync(path.dirname(destinationPath), { recursive: true });
-    copyFileSync(sourcePath, destinationPath);
-  }
-}
-
-export function computeArtifactPlaybackTimeoutMs(durationSeconds) {
-  if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
-    return Math.max(12_000, Math.ceil((durationSeconds + 1.5) * 1000));
-  }
-  return 20_000;
-}
-
-async function readArtifactVideoState(browser) {
-  return browser.execute(() => {
-    const video = document.querySelector(".wb-artifact-video");
-    if (!(video instanceof HTMLVideoElement)) {
-      return null;
-    }
-    return {
-      currentTime: video.currentTime,
-      duration: Number.isFinite(video.duration) ? video.duration : null,
-      paused: video.paused,
-      ended: video.ended,
-      controls: video.controls,
-      loop: video.loop,
-    };
-  });
-}
-
-async function prepareArtifactVideoForPlayback(browser) {
-  return browser.execute(async () => {
-    const video = document.querySelector(".wb-artifact-video");
-    if (!(video instanceof HTMLVideoElement)) {
-      return null;
-    }
-    video.pause();
-    video.currentTime = 0;
-    video.loop = false;
-    video.controls = false;
-    video.removeAttribute("controls");
-    video.style.pointerEvents = "none";
-    video.muted = true;
-    try {
-      await video.play();
-    } catch (error) {
-      return {
-        play_error: String(error?.message || error),
-        currentTime: video.currentTime,
-        duration: Number.isFinite(video.duration) ? video.duration : null,
-        paused: video.paused,
-        ended: video.ended,
-        controls: video.controls,
-        loop: video.loop,
-      };
-    }
-    return {
-      currentTime: video.currentTime,
-      duration: Number.isFinite(video.duration) ? video.duration : null,
-      paused: video.paused,
-      ended: video.ended,
-      controls: video.controls,
-      loop: video.loop,
-    };
-  });
+  copyFileSync(expectedFinalAppPath, path.join(worktreeRoot, "src/app.js"));
 }
 
 async function waitForArtifactVideoPlayback(browser) {
@@ -984,41 +535,6 @@ async function waitForArtifactVideoPlayback(browser) {
   }, {
     timeout: 30_000,
     timeoutMsg: "artifact video preview did not start playing in time",
-  });
-}
-
-async function openArtifactsPaneAndWait(browser, attempts = 2) {
-  let lastError = null;
-  let lastToggleResult = null;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    lastToggleResult = await openArtifactsPane(browser);
-    try {
-      await waitForArtifactsPane(browser);
-      return lastToggleResult;
-    } catch (error) {
-      lastError = error;
-      await sleep(300);
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error("artifacts pane did not open in time");
-}
-
-async function waitForArtifactVideoCompletion(browser) {
-  const initialState = await readArtifactVideoState(browser);
-  const timeout = computeArtifactPlaybackTimeoutMs(initialState?.duration ?? null);
-  await browser.waitUntil(async () => {
-    const state = await readArtifactVideoState(browser);
-    if (!state) return false;
-    if (state.ended) return true;
-    return (
-      Number.isFinite(state.duration) &&
-      state.duration > 0 &&
-      state.currentTime >= state.duration - 0.05 &&
-      state.paused
-    );
-  }, {
-    timeout,
-    timeoutMsg: "artifact video preview did not finish in time",
   });
 }
 
@@ -1055,10 +571,7 @@ async function main() {
   let recordingStartedAt = 0;
 
   try {
-    const setup = await startSetupProcess({
-      ...options,
-      installVisibleHarnesses: false,
-    });
+    const setup = await startSetupProcess(options);
     relayServer = setup.relay.server;
     daemonProc = setup.daemon.proc;
     const setupManifest = setup.manifest;
@@ -1066,13 +579,6 @@ async function main() {
     const baseUrl = setupManifest.daemon.url;
     const workspaceId = setupManifest.fixture.workspace_id;
     await api(baseUrl, authToken, "POST", `/api/workspaces/${workspaceId}/providers/codex/verify`, {});
-    if (options.installVisibleHarnesses) {
-      writeJson(
-        path.join(options.artifactDir, "visible-harness-install-all.json"),
-        await installVisibleHarnessProvidersAndWait(baseUrl, authToken, "host"),
-      );
-      options.installVisibleHarnesses = false;
-    }
 
     buildAutomationAppIfNeeded(options.appPath, options.skipBuild, options.tauriTargetDir);
     const launchAppPath = prepareAutomationAppForLaunch(options.appPath, options.artifactDir);
@@ -1097,30 +603,9 @@ async function main() {
     browser = await connectBrowser({ driverPort: options.driverPort, appPath: launchAppPath });
 
     await primeDemoDesktopConnectionToWorkspace(browser, baseUrl, authToken, workspaceId);
-    await ensureWorkbenchVisible(browser, options.artifactDir);
     await focusNewTask(browser);
     await ensureNewTaskVisible(browser, options.artifactDir);
-    await ensureSidebarOpen(browser);
     await clearDraftHarness(browser);
-    if (options.installVisibleHarnesses) {
-      await preinstallVisibleHarnesses(browser, baseUrl, authToken, options.artifactDir);
-      await focusNewTask(browser);
-      await ensureNewTaskVisible(browser, options.artifactDir);
-      await ensureSidebarOpen(browser);
-      await clearDraftHarness(browser);
-    }
-    const expectedSidebarTitles = buildExpectedSidebarTaskTitles(fixture);
-    await sleep(2_200);
-    const sidebarState = await captureSidebarTaskState(browser);
-    writeJson(path.join(options.artifactDir, "sidebar-task-state.json"), sidebarState);
-    if (!sidebarMatchesExpectedState(sidebarState, expectedSidebarTitles, "Tune muted-domain toast timing")) {
-      writeJson(path.join(options.artifactDir, "sidebar-task-state-failure.json"), {
-        expected_titles: expectedSidebarTitles,
-        observed: sidebarState,
-        error: "sidebar task rows were not fully ready before capture start",
-      });
-    }
-    await moveCursorToNeutralWorkbenchPoint(browser, options.artifactDir);
     if (options.recordVideoOut) {
       recordingStartedAt = Date.now();
       videoCapture = startBrowserFrameCapture(browser, options.artifactDir, options.recordFps);
@@ -1128,12 +613,9 @@ async function main() {
         await captureMilestone(browser, options.artifactDir, recordingStartedAt, "new-task-ready");
       }
     }
-    if (options.readyPrerollMs > 0) {
-      await sleep(options.readyPrerollMs);
-    }
     await sleep(450);
 
-    await selectHarness(browser, options.harnessLabel, options.harnessMenuDwellMs);
+    await selectHarness(browser, options.harnessLabel);
     if (videoCapture && options.captureMilestones) {
       await captureMilestone(browser, options.artifactDir, recordingStartedAt, "harness-selected");
     }
@@ -1171,7 +653,7 @@ async function main() {
       task.id,
     );
     await sleep(RESPONSE_PRE_DIFF_DWELL_MS);
-    seedExpectedWorkspaceDiff(worktreeRoot, options.expectedFinalWorkspacePath);
+    seedExpectedWorkspaceDiff(worktreeRoot, options.expectedFinalAppPath);
     const workspaceDiff = await waitForWorkspaceDiff(worktreeRoot);
     writeJson(path.join(options.artifactDir, "workspace-diff-detected.json"), {
       worktree_root: worktreeRoot,
@@ -1179,65 +661,31 @@ async function main() {
     });
     await sleep(350);
 
-    await setDiffPanePlaybackHidden(browser, true);
     const diffToggleResult = await openDiffPane(browser);
     writeJson(path.join(options.artifactDir, "diff-toggle-result.json"), diffToggleResult);
     await waitForDiffPane(browser);
-    await waitForDiffPaneReady(browser);
-    await setDiffPanePlaybackHidden(browser, false);
+    await openDiffFile(browser, "src/app.js");
     writeJson(path.join(options.artifactDir, "diff-pane-state.json"), await captureDiffPaneState(browser));
-    if (videoCapture && options.captureMilestones) {
-      await captureMilestone(browser, options.artifactDir, recordingStartedAt, "diff-file-list-ready");
-    }
-    await sleep(DIFF_FILE_LIST_DWELL_MS);
-
-    await setDiffPanePlaybackHidden(browser, true);
-    await openDiffFile(browser, options.diffFilePath);
-    await waitForOpenedDiffFileReady(browser, options.diffFilePath);
-    await setDiffPanePlaybackHidden(browser, false);
-    writeJson(
-      path.join(options.artifactDir, "opened-diff-file-state.json"),
-      await captureOpenedDiffFileState(browser, options.diffFilePath),
-    );
+    writeJson(path.join(options.artifactDir, "opened-diff-file-state.json"), await captureOpenedDiffFileState(browser, "src/app.js"));
     if (videoCapture && options.captureMilestones) {
       await captureMilestone(browser, options.artifactDir, recordingStartedAt, "diff-file-open");
     }
-    await sleep(PRIMARY_DIFF_PANE_DWELL_MS);
-
-    if (options.secondaryDiffFilePath) {
-      await setDiffPanePlaybackHidden(browser, true);
-      await openDiffFile(browser, options.secondaryDiffFilePath);
-      await waitForOpenedDiffFileReady(browser, options.secondaryDiffFilePath);
-      await setDiffPanePlaybackHidden(browser, false);
-      writeJson(
-        path.join(options.artifactDir, "opened-secondary-diff-file-state.json"),
-        await captureOpenedDiffFileState(browser, options.secondaryDiffFilePath),
-      );
-      if (videoCapture && options.captureMilestones) {
-        await captureMilestone(browser, options.artifactDir, recordingStartedAt, "secondary-diff-file-open");
-      }
-      await sleep(PRIMARY_DIFF_PANE_DWELL_MS);
-    }
+    await sleep(DIFF_PANE_DWELL_MS);
 
     const attachedArtifacts = await attachSessionArtifact(baseUrl, authToken, session.id, options.sessionArtifactPath);
     writeJson(path.join(options.artifactDir, "attached-artifacts.json"), attachedArtifacts);
     await sleep(POST_ARTIFACT_ATTACH_DWELL_MS);
 
-    await setArtifactsPanePlaybackHidden(browser, true);
-    const artifactsToggleResult = await openArtifactsPaneAndWait(browser);
+    const artifactsToggleResult = await openArtifactsPane(browser);
     writeJson(path.join(options.artifactDir, "artifacts-toggle-result.json"), artifactsToggleResult);
-    writeJson(
-      path.join(options.artifactDir, "artifact-video-prepared.json"),
-      await prepareArtifactVideoForPlayback(browser),
-    );
+    await waitForArtifactsPane(browser);
     await waitForArtifactVideoPlayback(browser);
-    await setArtifactsPanePlaybackHidden(browser, false);
     writeJson(path.join(options.artifactDir, "artifacts-pane-state.json"), await captureArtifactsPaneState(browser));
     if (videoCapture && options.captureMilestones) {
       await captureMilestone(browser, options.artifactDir, recordingStartedAt, "artifact-video-playing");
     }
     if (options.recordVideoOut) {
-      await waitForArtifactVideoCompletion(browser);
+      await sleep(ARTIFACT_PANE_DWELL_MS);
       const captureSummary = await videoCapture.stop();
       videoCapture = null;
       mkdirSync(path.dirname(options.recordVideoOut), { recursive: true });

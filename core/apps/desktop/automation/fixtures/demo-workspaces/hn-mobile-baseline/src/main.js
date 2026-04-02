@@ -7,4 +7,4 @@ if (!root) {
   throw new Error("Missing #app root");
 }
 
-mountApp(root);
+void mountApp(root);

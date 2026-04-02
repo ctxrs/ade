@@ -1,0 +1,12 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "url": "http://127.0.0.1:1420/?ctxDemoScenario=muted-domains&demoAutoplay=muted-domains&demoAutoplayPreset=recording",
+        "title": "HN Mobile",
+        "resizable": true
+      }
+    ]
+  }
+}
