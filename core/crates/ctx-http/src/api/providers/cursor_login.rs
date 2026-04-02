@@ -5,6 +5,9 @@ use super::login::{
 use super::*;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct CursorLoginStartReq {
     label: Option<String>,
@@ -180,45 +183,8 @@ fn is_cursor_login_command(path: &StdPath) -> bool {
         .is_some_and(|name| name == "cursor-agent" || name == "cursor-agent.exe")
 }
 
-async fn persist_cursor_login_command(
-    data_root: &StdPath,
-    command_path: &StdPath,
-) -> anyhow::Result<()> {
-    let command = std::fs::canonicalize(command_path)
-        .unwrap_or_else(|_| command_path.to_path_buf())
-        .to_string_lossy()
-        .to_string();
-    installer::mutate_agent_server_config(data_root, move |cfg| {
-        let should_update = cfg
-            .provider_login_commands
-            .get("cursor")
-            .is_none_or(|existing| {
-                existing.command != command
-                    || !existing.args.is_empty()
-                    || !existing.dependencies.is_empty()
-                    || existing.managed.is_some()
-            });
-        if should_update {
-            cfg.provider_login_commands.insert(
-                "cursor".to_string(),
-                installer::AgentServerCommand {
-                    command,
-                    args: Vec::new(),
-                    dependencies: Vec::new(),
-                    managed: None,
-                },
-            );
-        }
-    })
-    .await
-    .context("persisting cursor login command")?;
-    Ok(())
-}
-
-async fn resolve_cursor_login_runtime(state: &Arc<AppState>) -> anyhow::Result<PathBuf> {
-    if let Some(path) =
-        resolve_provider_login_command_from_config(&state.core.data_root, "cursor").await?
-    {
+async fn resolve_cursor_login_runtime_from_config(data_root: &StdPath) -> anyhow::Result<PathBuf> {
+    if let Some(path) = resolve_provider_login_command_from_config(data_root, "cursor").await? {
         if is_cursor_login_command(&path) {
             return Ok(path);
         }
@@ -227,31 +193,32 @@ async fn resolve_cursor_login_runtime(state: &Arc<AppState>) -> anyhow::Result<P
         );
     }
 
-    if let Some(runtime) =
-        resolve_runtime_provider_command_from_config(&state.core.data_root, "cursor").await?
+    if let Some(runtime) = resolve_runtime_provider_command_from_config(data_root, "cursor").await?
     {
+        if matches!(
+            runtime.source,
+            installer::ProviderRuntimeCommandSource::BundledSeed
+        ) {
+            anyhow::bail!(
+                "runtime_command_missing: provider=cursor-login (ctx requires a managed or explicitly configured `cursor-agent` login command; bundled runtime discovery is not supported)"
+            );
+        }
         let path = PathBuf::from(runtime.command_abs_path);
         if is_cursor_login_command(&path) {
             return Ok(path);
         }
-    }
-
-    let (found, resolved) = installer::resolve_command_path("cursor-agent");
-    if found {
-        if let Some(path) = resolved {
-            if !is_cursor_login_command(&path) {
-                anyhow::bail!(
-                    "runtime_command_invalid: provider=cursor-login (resolved login command must point to `cursor-agent`)"
-                );
-            }
-            persist_cursor_login_command(&state.core.data_root, &path).await?;
-            return Ok(path);
-        }
+        anyhow::bail!(
+            "runtime_command_invalid: provider=cursor-login (configured runtime command must point to `cursor-agent`)"
+        );
     }
 
     anyhow::bail!(
-        "runtime_command_missing: provider=cursor-login (install Cursor CLI so ctx can register an absolute `cursor-agent` login command)"
+        "runtime_command_missing: provider=cursor-login (ctx requires a managed or explicitly configured `cursor-agent` login command; host PATH lookup is not supported)"
     );
+}
+
+async fn resolve_cursor_login_runtime(state: &Arc<AppState>) -> anyhow::Result<PathBuf> {
+    resolve_cursor_login_runtime_from_config(&state.core.data_root).await
 }
 
 async fn set_cursor_login_error(state: &Arc<AppState>, login_id: &str, error: String) {

@@ -189,19 +189,19 @@ async fn read_trailing_claude_login_lines_waits_for_late_arrival() {
 }
 
 #[tokio::test]
-async fn resolve_claude_login_runtime_reads_host_claude_command() {
-    let Some(host_claude) = which::which("claude").ok() else {
-        return;
-    };
+async fn resolve_claude_login_runtime_requires_managed_or_configured_command() {
     let temp = tempfile::tempdir().expect("tempdir");
     let data_root = temp.path().to_path_buf();
 
-    let resolved = resolve_claude_login_runtime_from_config(&data_root)
+    let err = resolve_claude_login_runtime_from_config(&data_root)
         .await
-        .expect("resolve host claude command");
-    let expected = std::fs::canonicalize(&host_claude).unwrap_or(host_claude);
-    assert_eq!(resolved.command_abs_path, expected.to_string_lossy());
-    assert!(resolved.args.is_empty());
+        .expect_err("missing managed/configured claude login command should fail");
+    assert!(err
+        .to_string()
+        .contains("runtime_command_missing: provider=claude-cli"));
+    assert!(err
+        .to_string()
+        .contains("host PATH lookup is not supported"));
 }
 
 #[tokio::test]

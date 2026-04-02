@@ -1144,7 +1144,97 @@ echo "ZXY987654321"
 }
 
 #[tokio::test]
-async fn claude_login_start_does_not_fail_on_manual_copy_code_fallback() {
+async fn claude_login_start_requires_managed_or_configured_runtime_command() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let start_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({ "label": "Claude setup-token" }))
+        .send()
+        .await
+        .expect("start claude login request");
+    assert_eq!(start_resp.status(), StatusCode::BAD_REQUEST);
+    let body: ErrorResp = start_resp.json().await.expect("start error body");
+    assert!(body
+        .error
+        .contains("runtime_command_missing: provider=claude-cli"));
+    assert!(body.error.contains("host PATH lookup is not supported"));
+}
+
+#[tokio::test]
+async fn claude_login_start_rejects_manual_copy_code_fallback_without_browser_open_capture() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+    let script_path = write_mock_claude_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+echo "Browser didn't open? Use the URL below to sign in"
+echo "https://claude.ai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=bad"
+"#,
+    )
+    .await;
+    let mut cfg = AgentServerConfigFile {
+        providers: HashMap::new(),
+        provider_login_commands: HashMap::new(),
+        managed_installs: HashMap::new(),
+        managed_provider_targets: HashMap::new(),
+        managed_install_targets: HashMap::new(),
+    };
+    cfg.provider_login_commands.insert(
+        "claude-cli".to_string(),
+        AgentServerCommand {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![],
+            dependencies: vec![],
+            managed: None,
+        },
+    );
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save agent config");
+
+    let start_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(&start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start claude login request");
+    assert_eq!(start_resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let error_body: serde_json::Value = start_resp.json().await.expect("error body");
+    assert!(error_body["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("fell back to manual code entry"));
+}
+
+#[tokio::test]
+async fn claude_login_start_ignores_manual_copy_code_fallback_after_browser_open_capture() {
     let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
@@ -1183,6 +1273,12 @@ export PATH="{fake_open_dir}:$PATH"
 "$BROWSER" "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fcallback&state=test"
 echo "Browser didn't open? Use the URL below to sign in"
 echo "https://claude.ai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=bad"
+echo "Long-lived authentication token created successfully!"
+echo ""
+echo "Your OAuth token (valid for 1 year):"
+echo ""
+echo "sk-ant-oat01-abcDEF1234567890_"
+echo "ZXY987654321"
 "#,
             fake_open_dir = fake_open_dir.display(),
         ),
@@ -1221,7 +1317,6 @@ echo "https://claude.ai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.clau
         .expect("start claude login request");
     assert_eq!(start_resp.status(), StatusCode::OK);
     let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
-    assert!(!start_body.login_id.is_empty());
     assert_eq!(
         start_body.auth_url.as_deref(),
         Some("https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fcallback&state=test")
@@ -1229,86 +1324,8 @@ echo "https://claude.ai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.clau
 
     let status =
         poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
-    assert_eq!(status.status, "failed");
-    assert!(status.account_id.is_none());
-    assert!(status
-        .error
-        .as_deref()
-        .unwrap_or_default()
-        .contains("completed but no setup token was detected"));
-}
-
-#[tokio::test]
-async fn claude_login_start_returns_pending_without_initial_auth_url() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router(state)).await;
-
-    let script_path = write_mock_claude_runtime(
-        data_dir.path(),
-        r#"#!/usr/bin/env bash
-set -euo pipefail
-sleep 30
-"#,
-    )
-    .await;
-    let mut cfg = AgentServerConfigFile {
-        providers: HashMap::new(),
-        provider_login_commands: HashMap::new(),
-        managed_installs: HashMap::new(),
-        managed_provider_targets: HashMap::new(),
-        managed_install_targets: HashMap::new(),
-    };
-    cfg.provider_login_commands.insert(
-        "claude-cli".to_string(),
-        AgentServerCommand {
-            command: script_path.to_string_lossy().to_string(),
-            args: vec![],
-            dependencies: vec![],
-            managed: None,
-        },
-    );
-    save_agent_server_config(data_dir.path(), &cfg)
-        .await
-        .expect("save agent config");
-
-    let start_url = format!(
-        "{}/api/providers/claude-crp/accounts/login/start",
-        server.base_url
-    );
-    let start_resp = server
-        .client
-        .post(start_url)
-        .json(&json!({ "label": "Claude setup-token" }))
-        .send()
-        .await
-        .expect("start claude login request");
-    assert_eq!(start_resp.status(), StatusCode::OK);
-    let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
-    assert!(!start_body.login_id.is_empty());
-    assert!(start_body.auth_url.is_none());
-
-    let status_url = format!(
-        "{}/api/providers/claude-crp/accounts/login/{}",
-        server.base_url, start_body.login_id
-    );
-    let status_resp = server
-        .client
-        .get(status_url)
-        .send()
-        .await
-        .expect("claude login status request");
-    assert_eq!(status_resp.status(), StatusCode::OK);
-    let status: ClaudeLoginStatusResponse =
-        status_resp.json().await.expect("claude login status body");
-    assert_eq!(status.status, "pending");
-    assert!(status.account_id.is_none());
+    assert_eq!(status.status, "success");
+    assert!(status.account_id.is_some());
     assert!(status.error.is_none());
 }
 
@@ -2270,7 +2287,7 @@ if (capturePath) {
 }
 
 #[tokio::test]
-async fn cursor_login_start_discovers_and_persists_login_command() {
+async fn cursor_login_start_rejects_host_path_discovery_and_does_not_persist_login_command() {
     let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
@@ -2282,7 +2299,7 @@ async fn cursor_login_start_discovers_and_persists_login_command() {
     );
     let server = common::spawn_http_server(common::router(state)).await;
 
-    let cursor_script = write_mock_cursor_runtime(
+    write_mock_cursor_runtime(
         data_dir.path(),
         r#"#!/usr/bin/env node
 const fs = require('fs');
@@ -2311,31 +2328,19 @@ if (capturePath) {
         .send()
         .await
         .expect("start cursor login request");
-    assert_eq!(start_resp.status(), StatusCode::OK);
-    let start_body: CursorLoginStartResponse = start_resp.json().await.expect("start body");
-    assert!(!start_body.login_id.is_empty());
-
-    let status = poll_cursor_login_status(&server, &start_body.login_id).await;
-    assert_eq!(status.status, "success");
-    assert_eq!(
-        status.auth_url.as_deref(),
-        Some("https://cursor.com/login/device?code=discovered")
-    );
-    assert!(status.account_id.is_some());
+    assert_eq!(start_resp.status(), StatusCode::BAD_REQUEST);
+    let body: ErrorResp = start_resp.json().await.expect("start error body");
+    assert!(body
+        .error
+        .contains("runtime_command_missing: provider=cursor-login"));
+    assert!(body.error.contains("host PATH lookup is not supported"));
 
     let cfg = load_agent_server_config(data_dir.path())
         .await
         .expect("load persisted agent config");
-    let persisted = cfg
-        .provider_login_commands
-        .get("cursor")
-        .expect("persisted cursor login command");
-    assert_eq!(
-        persisted.command,
-        cursor_script
-            .canonicalize()
-            .expect("canonicalize cursor script")
-            .to_string_lossy()
+    assert!(
+        !cfg.provider_login_commands.contains_key("cursor"),
+        "host PATH discovery must not persist a cursor login command"
     );
 }
 
