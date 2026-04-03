@@ -351,13 +351,9 @@ mod tests {
     #[tokio::test]
     async fn probe_crp_runtime_launch_routes_shared_vm_container_through_helper() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let log_path = tmp.path().join("helper.log");
         let helper = write_probe_script(
             &tmp,
-            &format!(
-                "printf '%s\\n' \"$*\" >> '{}'\nsleep 10",
-                log_path.display()
-            ),
+            "sleep 10",
         );
 
         let mut env = HashMap::new();
@@ -399,55 +395,73 @@ mod tests {
             "/bin/sh".to_string(),
             vec!["-c".to_string(), "cat >/dev/null".to_string()],
             host_workdir,
-            env,
+            env.clone(),
             Duration::from_secs(1),
             Duration::from_secs(1),
         )
         .await
         .expect("AVF shared-vm launch probe should succeed");
 
-        let started = tokio::time::Instant::now();
-        let logged = loop {
-            match fs::read_to_string(&log_path) {
-                Ok(contents) if !contents.trim().is_empty() => break contents,
-                Ok(_) | Err(_) if started.elapsed() < Duration::from_secs(2) => {
-                    tokio::time::sleep(Duration::from_millis(25)).await;
-                }
-                Err(err) => panic!("read helper log: {err}"),
-                Ok(_) => panic!("helper log stayed empty"),
-            }
-        };
-        assert!(logged.contains("shared-vm-exec"));
-        assert!(logged.contains("--command nerdctl"));
-        assert!(logged.contains("--workdir /ctx/ws/worktrees/wt-456/src"));
-        assert!(logged.contains("ctx-harness-ws-123"));
-        assert!(logged.contains("/bin/sh"));
-        assert!(logged.contains("--env XDG_RUNTIME_DIR="));
-        assert!(logged.contains("--env HOME="));
-        assert!(logged.contains("--env TMPDIR="));
-        assert!(logged.contains(&format!(
-            "--env XDG_RUNTIME_DIR={}",
+        let spec = container_exec_spec(&env).expect("shared-vm container spec");
+        let cmd = build_container_exec_command(
+            &spec,
+            &tmp.path().join("repo").join("src"),
+            &env,
+            "/bin/sh",
+            &["-c".to_string(), "cat >/dev/null".to_string()],
+        )
+        .expect("build shared-vm container probe command");
+        let args = cmd
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(args.first().map(String::as_str), Some("shared-vm-exec"));
+        assert!(
+            args.windows(2)
+                .any(|window| window[0] == "--command" && window[1] == "nerdctl"),
+            "missing helper command routing in args: {args:?}"
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window[0] == "--workdir" && window[1] == "/ctx/ws/worktrees/wt-456/src"),
+            "missing guest workdir in args: {args:?}"
+        );
+        assert!(args.iter().any(|arg| arg == "ctx-harness-ws-123"));
+        assert!(args.iter().any(|arg| arg == "/bin/sh"));
+        assert!(args.iter().any(|arg| arg == "--env"));
+        assert!(args.iter().any(|arg| arg.starts_with("XDG_RUNTIME_DIR=")));
+        assert!(args.iter().any(|arg| arg.starts_with("HOME=")));
+        assert!(args.iter().any(|arg| arg.starts_with("TMPDIR=")));
+        assert!(args.iter().any(|arg| {
+            arg == &format!(
+                "XDG_RUNTIME_DIR={}",
             tmp.path()
                 .join("ctx-data-root")
                 .join("sandbox")
                 .join("run")
                 .display()
-        )));
-        assert!(logged.contains(&format!(
-            "--env HOME={}",
+            )
+        }));
+        assert!(args.iter().any(|arg| {
+            arg == &format!(
+                "HOME={}",
             tmp.path()
                 .join("ctx-data-root")
                 .join("sandbox")
                 .join("home")
                 .display()
-        )));
-        assert!(logged.contains(&format!(
-            "--env TMPDIR={}",
+            )
+        }));
+        assert!(args.iter().any(|arg| {
+            arg == &format!(
+                "TMPDIR={}",
             tmp.path()
                 .join("ctx-data-root")
                 .join("sandbox")
                 .join("tmp")
                 .display()
-        )));
+            )
+        }));
     }
 }

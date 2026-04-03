@@ -263,6 +263,52 @@ describe("applyStableListUpdate", () => {
     expect(calls[2]?.args).toEqual([1]);
     expect(readStore()).toEqual(next);
   });
+
+  it("forces remeasurement for structural tail replacements when localized neighbors keep stable ids", () => {
+    const currentThought = buildThoughtItem();
+    const currentStatus = buildTurnStatusItem({
+      status: "running",
+      assistant_messages_content: "",
+      updated_at: "2026-03-15T00:00:05.000Z",
+    });
+    const nextThought = buildThoughtItem({
+      id: "thought-turn-1-stream-2",
+      content: "thinking...",
+    });
+    const nextStatus = buildTurnStatusItem({
+      status: "running",
+      assistant_messages_content: "",
+      updated_at: "2026-03-15T00:00:06.000Z",
+    });
+    const current = [buildMessageItem(), currentThought, currentStatus];
+    const next = [current[0]!, nextThought, nextStatus];
+    const { methods, calls, readStore } = createFakeMethods(current);
+
+    const result = applyStructuralStableListUpdate({
+      methods,
+      current,
+      next,
+      prefixLen: 1,
+      suffixLen: 1,
+      stickToBottom: true,
+      anchorIndex: -1,
+      appendBehavior: () => false,
+      forceRemeasureItemIds: [nextThought.id, nextStatus.id],
+    });
+
+    expect(result).toEqual({
+      mode: "remeasure",
+      changedSpans: [{ start: 1, count: 2 }],
+    });
+    expect(calls.map((call) => call.method)).toEqual(["batch", "deleteRange", "insert", "map"]);
+    expect(calls[1]?.args).toEqual([1, 1]);
+    expect(calls[2]?.args).toEqual([1, [nextThought.id]]);
+    expect(calls[3]?.args).toEqual(["auto"]);
+    const store = readStore();
+    expect(store).toEqual(next);
+    expect(store[1]).not.toBe(nextThought);
+    expect(store[2]).not.toBe(nextStatus);
+  });
 });
 
 describe("getWorkbenchListItemRenderKey", () => {

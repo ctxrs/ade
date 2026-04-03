@@ -912,6 +912,7 @@ export function useSessionMessageListReconcileEffect({
       stickToBottom: stickToBottomRef.current,
       anchorIndex,
       appendBehavior,
+      forceRemeasureItemIds: hasLocalizedThreadOp ? (threadOp?.remeasureItemIds ?? []) : [],
     });
     if (stickToBottomRef.current) {
       snapToBottom(methods);

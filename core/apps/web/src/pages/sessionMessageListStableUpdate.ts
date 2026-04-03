@@ -248,10 +248,14 @@ export function applyStructuralStableListUpdate({
   anchorIndex,
   appendBehavior,
   allowAnchorMap = true,
+  forceRemeasureItemIds = [],
 }: StableListUpdateParams & {
   prefixLen: number;
   suffixLen: number;
 }): StableListUpdateResult {
+  const forceRemeasureIds = new Set(forceRemeasureItemIds);
+  const materializeItem = (item: WorkbenchListItem): WorkbenchListItem =>
+    forceRemeasureIds.has(item.id) ? ({ ...item } as WorkbenchListItem) : item;
   const deleteCount = current.length - prefixLen - suffixLen;
   const insertData = next.slice(prefixLen, next.length - suffixLen);
   const postStructureCurrent = [
@@ -259,8 +263,8 @@ export function applyStructuralStableListUpdate({
     ...insertData,
     ...current.slice(current.length - suffixLen),
   ];
-  const changedSpans = findStableListRemeasureSpans(postStructureCurrent, next);
-  const nextById = new Map(next.map((item) => [item.id, item] as const));
+  const changedSpans = findStableListRemeasureSpans(postStructureCurrent, next, forceRemeasureIds);
+  const nextById = new Map(next.map((item) => [item.id, materializeItem(item)] as const));
 
   methods.data.batch(
     () => {
