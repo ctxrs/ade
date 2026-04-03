@@ -10,6 +10,7 @@ import {
   getInstall,
   getExecutionLaunchStatus,
   getHealth,
+  prepareLinuxSandboxRuntime,
   getSettings,
   installProvider,
   listProviders,
@@ -32,6 +33,8 @@ import {
 import {
   desktopConnectLocal,
   desktopConnectSsh,
+  desktopEnsureLocalLinuxSandboxReady,
+  desktopEnsureRemoteLinuxSandboxReady,
   desktopKickoffRemotePrewarm,
   desktopListSshHosts,
   desktopTestSsh,
@@ -110,6 +113,7 @@ vi.mock("../api/client", async () => {
     getExecutionLaunchStatus: vi.fn(),
     getHealth: vi.fn(),
     getSettings: vi.fn(),
+    prepareLinuxSandboxRuntime: vi.fn(),
     installProvider: vi.fn(),
     listProviders: vi.fn(),
     getTitleGenerationLocalStatus: vi.fn(),
@@ -153,6 +157,8 @@ vi.mock("../utils/desktop", async () => {
     ...actual,
     desktopConnectLocal: vi.fn(),
     desktopConnectSsh: vi.fn(),
+    desktopEnsureLocalLinuxSandboxReady: vi.fn(),
+    desktopEnsureRemoteLinuxSandboxReady: vi.fn(),
     desktopKickoffRemotePrewarm: vi.fn(),
     desktopListSshHosts: vi.fn(),
     desktopListSshPaths: vi.fn(),
@@ -298,6 +304,8 @@ describe("WorkspaceSetupPage", () => {
     vi.mocked(updateWorkspaceWorktreeBootstrapConfig).mockReset();
     vi.mocked(desktopConnectLocal).mockReset();
     vi.mocked(desktopConnectSsh).mockReset();
+    vi.mocked(desktopEnsureLocalLinuxSandboxReady).mockReset();
+    vi.mocked(desktopEnsureRemoteLinuxSandboxReady).mockReset();
     vi.mocked(desktopKickoffRemotePrewarm).mockReset();
     vi.mocked(desktopListSshHosts).mockReset();
     vi.mocked(desktopTestSsh).mockReset();
@@ -320,6 +328,17 @@ describe("WorkspaceSetupPage", () => {
     vi.mocked(getHealth).mockResolvedValue({
       daemon_version: "0.0.0-test",
       compatibility: { desktop_exact_version: "0.0.0-test", mobile_api_min: 1, mobile_api_max: 1 },
+    } as never);
+    vi.mocked(prepareLinuxSandboxRuntime).mockResolvedValue({
+      ready: true,
+      needs_password: false,
+      message: "Linux sandbox runtime is ready.",
+      status: {
+        state: "ready",
+        supported: true,
+        cache_root: "/tmp/ctx/linux-sandbox-runtime",
+        message: "Linux sandbox runtime is ready.",
+      },
     } as never);
     vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
     vi.mocked(listProviders).mockResolvedValue([] as never);
@@ -390,6 +409,8 @@ describe("WorkspaceSetupPage", () => {
       base_url: "http://127.0.0.1:4402",
       token: "test-token",
     } as never);
+    vi.mocked(desktopEnsureLocalLinuxSandboxReady).mockResolvedValue({ ready: true } as never);
+    vi.mocked(desktopEnsureRemoteLinuxSandboxReady).mockResolvedValue({ ready: true } as never);
     vi.mocked(upsertLauncherRecent).mockResolvedValue([]);
     vi.mocked(desktopListSshHosts).mockResolvedValue([]);
     vi.mocked(desktopTestSsh).mockResolvedValue();

@@ -317,7 +317,10 @@ fn remote_stop_command_requires_pkill_success() {
 fn ssh_handoff_replaces_local_connection_without_pre_disconnect() {
     let local_child = spawn_tokio_sleep_child();
     let local_pid = local_child.id();
-    assert!(pid_is_alive(local_pid), "owned local child should start alive");
+    assert!(
+        pid_is_alive(local_pid),
+        "owned local child should start alive"
+    );
 
     let manager = std::sync::Arc::new(ConnectionManager::default());
     manager.set_local(
@@ -345,6 +348,8 @@ fn ssh_handoff_replaces_local_connection_without_pre_disconnect() {
         SshRuntimeMetadata {
             managed_ctx_bin: "~/.ctx/bin/ctx".to_string(),
             active_ctx_bin: Some("~/.ctx/bin/ctx".to_string()),
+            ssh_password_once: None,
+            admin_password_once: None,
         },
     ));
 
@@ -361,7 +366,10 @@ fn ssh_handoff_replaces_local_connection_without_pre_disconnect() {
         wait_for_pid_exit(local_pid, std::time::Duration::from_secs(3)),
         "previous local child {local_pid} should be reclaimed after ssh handoff"
     );
-    assert!(pid_is_alive(ssh_pid), "ssh tunnel child should remain active after handoff");
+    assert!(
+        pid_is_alive(ssh_pid),
+        "ssh tunnel child should remain active after handoff"
+    );
 
     manager.disconnect();
     assert!(

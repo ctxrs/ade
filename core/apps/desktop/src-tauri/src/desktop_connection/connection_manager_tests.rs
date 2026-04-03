@@ -368,6 +368,8 @@ fn replacing_ssh_connection_stops_previous_tunnel() {
         SshRuntimeMetadata {
             managed_ctx_bin: "~/.ctx/bin/ctx".to_string(),
             active_ctx_bin: Some("~/.ctx/bin/ctx".to_string()),
+            ssh_password_once: None,
+            admin_password_once: None,
         },
     );
     manager.set_ssh(
@@ -381,6 +383,8 @@ fn replacing_ssh_connection_stops_previous_tunnel() {
         SshRuntimeMetadata {
             managed_ctx_bin: "~/.ctx/bin/ctx".to_string(),
             active_ctx_bin: Some("~/.ctx/bin/ctx".to_string()),
+            ssh_password_once: None,
+            admin_password_once: None,
         },
     );
 
@@ -426,6 +430,8 @@ fn replace_with_ssh_defers_previous_tunnel_cleanup_to_caller() {
         SshRuntimeMetadata {
             managed_ctx_bin: "~/.ctx/bin/ctx".to_string(),
             active_ctx_bin: Some("~/.ctx/bin/ctx".to_string()),
+            ssh_password_once: None,
+            admin_password_once: None,
         },
     );
 
@@ -440,6 +446,8 @@ fn replace_with_ssh_defers_previous_tunnel_cleanup_to_caller() {
         SshRuntimeMetadata {
             managed_ctx_bin: "~/.ctx/bin/ctx".to_string(),
             active_ctx_bin: Some("~/.ctx/bin/ctx".to_string()),
+            ssh_password_once: None,
+            admin_password_once: None,
         },
     );
 

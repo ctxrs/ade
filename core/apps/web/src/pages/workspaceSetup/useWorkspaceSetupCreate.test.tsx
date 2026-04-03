@@ -9,6 +9,7 @@ const apiMocks = vi.hoisted(() => ({
   deleteWorkspace: vi.fn(),
   idToString: vi.fn((id: string | number) => String(id)),
   listWorkspaces: vi.fn(),
+  prepareLinuxSandboxRuntime: vi.fn(),
   repoClone: vi.fn(),
   repoInit: vi.fn(),
   repoStatus: vi.fn(),
@@ -22,6 +23,8 @@ const apiMocks = vi.hoisted(() => ({
 const desktopMocks = vi.hoisted(() => ({
   desktopConnectLocal: vi.fn(),
   desktopConnectSsh: vi.fn(),
+  desktopEnsureLocalLinuxSandboxReady: vi.fn(),
+  desktopEnsureRemoteLinuxSandboxReady: vi.fn(),
   desktopPickFolder: vi.fn(),
 }));
 
@@ -47,6 +50,7 @@ vi.mock("../../api/client", () => ({
   deleteWorkspace: apiMocks.deleteWorkspace,
   idToString: apiMocks.idToString,
   listWorkspaces: apiMocks.listWorkspaces,
+  prepareLinuxSandboxRuntime: apiMocks.prepareLinuxSandboxRuntime,
   repoClone: apiMocks.repoClone,
   repoInit: apiMocks.repoInit,
   repoStatus: apiMocks.repoStatus,
@@ -60,6 +64,8 @@ vi.mock("../../api/client", () => ({
 vi.mock("../../utils/desktop", () => ({
   desktopConnectLocal: desktopMocks.desktopConnectLocal,
   desktopConnectSsh: desktopMocks.desktopConnectSsh,
+  desktopEnsureLocalLinuxSandboxReady: desktopMocks.desktopEnsureLocalLinuxSandboxReady,
+  desktopEnsureRemoteLinuxSandboxReady: desktopMocks.desktopEnsureRemoteLinuxSandboxReady,
   desktopPickFolder: desktopMocks.desktopPickFolder,
 }));
 
@@ -197,12 +203,14 @@ const renderCreateHook = (
       trackWizardCompleted,
       desktopApp,
       remotePasswordOnce: null,
+      remotePasswordCandidate: null,
       effectiveTarget: effectiveTarget ?? null,
       connectDaemonForImport: vi.fn(async () => {}),
       ensureOnboardingAfterDaemonConnect: vi.fn(async () => ({ insertionStep })),
       waitForDaemonReady: vi.fn(async () => {}),
       applyConnection,
       rememberRemoteProfile,
+      requestRemotePasswordPrompt: vi.fn(),
       setCreateError,
     }),
   );
@@ -225,12 +233,25 @@ describe("useWorkspaceSetupCreate", () => {
     apiMocks.listWorkspaces.mockResolvedValue([]);
     apiMocks.repoInit.mockResolvedValue({ path: "/remote/new-sandbox" });
     apiMocks.createWorkspace.mockResolvedValue({ id: "ws-1" });
+    apiMocks.prepareLinuxSandboxRuntime.mockResolvedValue({
+      ready: true,
+      needs_password: false,
+      message: "Linux sandbox runtime is ready.",
+      status: {
+        state: "ready",
+        supported: true,
+        cache_root: "/tmp/ctx/linux-sandbox-runtime",
+        message: "Linux sandbox runtime is ready.",
+      },
+    });
     apiMocks.updateWorkspaceExecutionConfig.mockResolvedValue(undefined);
     desktopMocks.desktopConnectSsh.mockResolvedValue({
       kind: "ssh",
       base_url: "http://127.0.0.1:4399",
       token: "token",
     });
+    desktopMocks.desktopEnsureLocalLinuxSandboxReady.mockResolvedValue({ ready: true });
+    desktopMocks.desktopEnsureRemoteLinuxSandboxReady.mockResolvedValue({ ready: true });
     launchHandoffMocks.startWorkspaceSetupLaunchHandoff.mockResolvedValue(baseLaunchSnapshot);
     launchHandoffMocks.waitForLaunchHandoffTerminal.mockResolvedValue(undefined);
     launcherRecentsMocks.upsertLauncherRecent.mockResolvedValue(undefined);

@@ -111,6 +111,8 @@ fn prepare_initial_connect(
                 runtime: SshRuntimeMetadata {
                     managed_ctx_bin: MANAGED_REMOTE_CTX_BIN.to_string(),
                     active_ctx_bin,
+                    ssh_password_once: target.password_once.clone(),
+                    admin_password_once: None,
                 },
             }))
         }
@@ -196,6 +198,8 @@ fn execute_bootstrap_plan(
         runtime: SshRuntimeMetadata {
             managed_ctx_bin: MANAGED_REMOTE_CTX_BIN.to_string(),
             active_ctx_bin: Some(MANAGED_REMOTE_CTX_BIN.to_string()),
+            ssh_password_once: plan.target.password_once.clone(),
+            admin_password_once: None,
         },
     })
 }
@@ -238,21 +242,31 @@ async fn desktop_connect_ssh_inner(
 
     set_job_phase(job_id.as_deref(), ConnectJobPhase::HandingOffConnection);
     let state = app.state::<ConnectionManager>();
+    let prewarm_host = target.host.clone();
+    let prewarm_user = target.user.clone();
+    let prewarm_remote_data_dir = target.remote_data_dir.clone();
     state
         .set_ssh_with_blocking_cleanup(
-        connected.base_url,
-        Some(connected.token),
-        connected
-            .tunnel
-            .into_connection_child()
-            .map_err(|err| format!("failed to hand off ssh tunnel: {err:#}"))?,
-        target.host,
-        target.user,
-        target.remote_port,
-        target.remote_data_dir,
-        connected.runtime,
-    )
+            connected.base_url,
+            Some(connected.token),
+            connected
+                .tunnel
+                .into_connection_child()
+                .map_err(|err| format!("failed to hand off ssh tunnel: {err:#}"))?,
+            target.host,
+            target.user,
+            target.remote_port,
+            target.remote_data_dir,
+            connected.runtime,
+        )
         .await?;
+    let _ = super::commands::schedule_remote_prewarm_request(
+        app.clone(),
+        prewarm_host,
+        prewarm_user,
+        target.remote_port,
+        prewarm_remote_data_dir,
+    );
     Ok(state.info())
 }
 

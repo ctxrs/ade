@@ -47,6 +47,7 @@ mod avf_linux_vm;
 mod container;
 mod image;
 mod lifecycle_manager;
+mod linux_sandbox_runtime;
 mod machine;
 mod manager;
 mod materialization;
@@ -114,6 +115,11 @@ use self::image::{
 };
 pub(crate) use self::lifecycle_manager::{
     SharedSubstrateLifecycleManager, SubstrateLifecycleRecord,
+};
+pub(crate) use self::linux_sandbox_runtime::{
+    linux_sandbox_runtime_status, preferred_native_sandbox_cli_path, prepare_linux_sandbox_runtime,
+    stage_linux_sandbox_runtime_downloads, LinuxSandboxActivationMode,
+    LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeStatus,
 };
 use self::machine::sandbox_machine_name;
 use self::machine::{

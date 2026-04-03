@@ -216,6 +216,34 @@ export type ExecutionLaunchStreamEvent =
 
 export type RuntimePrewarmScope = "runtime" | "launch_ready" | "builder" | "all";
 
+export type LinuxSandboxRuntimeState =
+  | "ready"
+  | "download_pending"
+  | "downloaded_not_activated"
+  | "activating"
+  | "unsupported"
+  | "failed";
+
+export type LinuxSandboxRuntimeStatus = {
+  state: LinuxSandboxRuntimeState;
+  supported: boolean;
+  distro?: string | null;
+  cache_root: string;
+  staged_archive_path?: string | null;
+  activation_script_path?: string | null;
+  runtime_cli_path?: string | null;
+  message: string;
+};
+
+export type LinuxSandboxActivationMode = "local" | "remote";
+
+export type LinuxSandboxRuntimePrepareResult = {
+  ready: boolean;
+  needs_password: boolean;
+  status: LinuxSandboxRuntimeStatus;
+  message: string;
+};
+
 export const startExecutionLaunch = (workspaceId: string) =>
   apiAny<ExecutionLaunchSnapshot>("/api/execution/launch/start", {
     method: "POST",
@@ -246,6 +274,26 @@ export const buildExecutionLaunchWsUrl = (jobId: string): string => {
   if (token) qs.set("token", token);
   return getDaemonWsUrl("/api/execution/launch/stream", qs);
 };
+
+export const getLinuxSandboxRuntimeStatus = () =>
+  apiAny<LinuxSandboxRuntimeStatus>("/api/execution/linux_sandbox_runtime/status");
+
+export const stageLinuxSandboxRuntime = () =>
+  apiAny<LinuxSandboxRuntimeStatus>("/api/execution/linux_sandbox_runtime/stage", {
+    method: "POST",
+  });
+
+export const prepareLinuxSandboxRuntime = (
+  activationMode: LinuxSandboxActivationMode,
+  sudoPassword?: string | null,
+) =>
+  apiAny<LinuxSandboxRuntimePrepareResult>("/api/execution/linux_sandbox_runtime/prepare", {
+    method: "POST",
+    body: JSON.stringify({
+      activation_mode: activationMode,
+      sudo_password: sudoPassword ?? null,
+    }),
+  });
 
 export type UpdateWorktreeBootstrapConfigRequest = {
   setup_command?: string | null;

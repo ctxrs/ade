@@ -65,6 +65,19 @@ impl ExecutionSetupCoordinator {
         };
 
         if !harness_runtime::local_runtime_available(&self.data_root, &exec.container.runtime) {
+            let staged_status =
+                match harness_runtime::stage_linux_sandbox_runtime_downloads(&self.data_root, None)
+                    .await
+                {
+                    Ok(status) => Some(status),
+                    Err(err) => {
+                        tracing::warn!(
+                            error = %format_error_chain(&err),
+                            "failed to stage Linux sandbox runtime downloads during startup prewarm"
+                        );
+                        None
+                    }
+                };
             let snapshot = StartupPrewarmSnapshot {
                 state: StartupPrewarmState::Skipped,
                 target_image: target,
@@ -75,7 +88,9 @@ impl ExecutionSetupCoordinator {
                 bundled_image_digest_changed: false,
                 last_attempt_at: Some(attempted_at),
                 last_success_at: None,
-                error: Some("local sandbox runtime unavailable".to_string()),
+                error: staged_status
+                    .map(|status| status.message)
+                    .or_else(|| Some("local sandbox runtime unavailable".to_string())),
             };
             self.set_startup_snapshot(snapshot).await;
             return;

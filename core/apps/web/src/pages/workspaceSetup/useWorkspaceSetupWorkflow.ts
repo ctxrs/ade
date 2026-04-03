@@ -175,12 +175,14 @@ export function useWorkspaceSetupWorkflow({
     trackWizardCompleted,
     desktopApp: remote.desktopApp,
     remotePasswordOnce: remote.remotePasswordOnce,
+    remotePasswordCandidate: remote.remotePasswordCandidate,
     effectiveTarget,
     connectDaemonForImport: remote.connectDaemonForImport,
     ensureOnboardingAfterDaemonConnect: provisioning.ensureOnboardingAfterDaemonConnect,
     waitForDaemonReady: remote.waitForDaemonReady,
     applyConnection: remote.applyConnection,
     rememberRemoteProfile: remote.rememberRemoteProfile,
+    requestRemotePasswordPrompt: remote.requestRemotePasswordPrompt,
     setCreateError: setters.createError,
   });
 

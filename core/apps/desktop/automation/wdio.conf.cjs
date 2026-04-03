@@ -284,6 +284,9 @@ const SHIPPED_APP_MODE = resolveBoolishFlag(
   false,
   "CTX_AUTOMATION_SHIPPED_APP",
 );
+const SHIPPED_APP_BUNDLES_DIR_OVERRIDE = resolveConfiguredPath(
+  process.env.CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR,
+);
 
 let daemonProcess = null;
 let daemonDataDir = null;
@@ -344,7 +347,7 @@ const resolveAppBundlesDir = (appPath) => {
   return "";
 };
 
-const USING_SHIPPED_APP_MODE = process.platform === "darwin" && SHIPPED_APP_MODE;
+const USING_SHIPPED_APP_MODE = SHIPPED_APP_MODE;
 
 function canonicalPath(p) {
   const raw = String(p || "").trim();
@@ -965,6 +968,9 @@ const resolveBundlesDir = () => {
     return path.resolve(configured);
   }
   if (USING_SHIPPED_APP_MODE) {
+    if (SHIPPED_APP_BUNDLES_DIR_OVERRIDE) {
+      return SHIPPED_APP_BUNDLES_DIR_OVERRIDE;
+    }
     return resolveAppBundlesDir(APP_PATH);
   }
   return BUNDLES_DIR;
@@ -1732,7 +1738,7 @@ exports.config = {
       }
       if (String(process.env.CTX_BUNDLE_DIR || "").trim()) {
         throw new Error(
-          "CTX_AUTOMATION_SHIPPED_APP=1 does not allow CTX_BUNDLE_DIR overrides; validate the installed app bundle instead.",
+          "CTX_AUTOMATION_SHIPPED_APP=1 does not allow CTX_BUNDLE_DIR overrides; use CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR when the shipped app bundles must be provided explicitly.",
         );
       }
     }
@@ -1769,7 +1775,16 @@ exports.config = {
       process.env.CTX_BUNDLE_DIR = BUNDLES_DIR;
     }
     if (USING_SHIPPED_APP_MODE) {
-      delete process.env.CTX_BUNDLE_DIR;
+      if (RUNS_CONTAINER_SCENARIOS && !SHIPPED_APP_BUNDLES_DIR_OVERRIDE && !resolveAppBundlesDir(APP_PATH)) {
+        throw new Error(
+          "CTX_AUTOMATION_SHIPPED_APP=1 requires CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR for Linux/Windows container scenarios so automation can validate the installed bundle resources.",
+        );
+      }
+      if (SHIPPED_APP_BUNDLES_DIR_OVERRIDE) {
+        process.env.CTX_BUNDLE_DIR = SHIPPED_APP_BUNDLES_DIR_OVERRIDE;
+      } else {
+        delete process.env.CTX_BUNDLE_DIR;
+      }
       delete process.env.CTX_DESKTOP_DEV_BIN_DIR;
       delete process.env.CTX_DESKTOP_START_PATH;
       console.error(`[wdio] shipped-app mode using bundled resources at ${resolveBundlesDir()}`);

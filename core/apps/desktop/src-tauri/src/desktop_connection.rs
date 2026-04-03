@@ -41,6 +41,8 @@ pub(super) struct SshConnectionTarget {
 pub(super) struct SshRuntimeMetadata {
     pub(super) managed_ctx_bin: String,
     pub(super) active_ctx_bin: Option<String>,
+    pub(super) ssh_password_once: Option<String>,
+    pub(super) admin_password_once: Option<String>,
 }
 
 #[tauri::command]

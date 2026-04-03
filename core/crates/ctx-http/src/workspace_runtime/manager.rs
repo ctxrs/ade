@@ -436,12 +436,11 @@ impl HarnessRuntimeManager {
             return Ok(());
         }
         if sandbox_cli_invocation(&self.data_root).is_err() {
-            anyhow::bail!(
-                "native sandbox container runtime is unavailable; install nerdctl or set {}",
-                CTX_HARNESS_SANDBOX_CLI_PATH_ENV
-            );
+            let bootstrap = linux_sandbox_runtime_status(&self.data_root).await?;
+            anyhow::bail!("{}", bootstrap.message);
         }
-        anyhow::bail!("native sandbox container runtime is installed but not reachable")
+        let bootstrap = linux_sandbox_runtime_status(&self.data_root).await?;
+        anyhow::bail!("{}", bootstrap.message)
     }
 
     pub(crate) async fn workspace_container_exists(

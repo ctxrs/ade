@@ -14,6 +14,8 @@ const WDIO_CONF = path.join(ROOT, "automation", "wdio.conf.cjs");
 const REMOTE_REAL_CI_WRAPPER = path.join(ROOT, "scripts", "test_remote_real_ci.sh");
 const REMOTE_DOCKER_WRAPPER = path.join(ROOT, "scripts", "test_remote_docker_contracts.sh");
 const DESKTOP_SMOKE_WRAPPER = path.join(REPO_ROOT, "scripts", "desktop_smoke_with_infisical.sh");
+const LINUX_LOCAL_TRUTH_WRAPPER = path.join(REPO_ROOT, "scripts", "tests", "linux_local_install_sandbox_release_truth.sh");
+const MAC_REMOTE_TRUTH_WRAPPER = path.join(REPO_ROOT, "scripts", "tests", "macos_remote_ubuntu_sandbox_release_truth.sh");
 
 test("production desktop build keeps automation runtime available", () => {
   const cargo = fs.readFileSync(TAURI_CARGO, "utf8");
@@ -228,4 +230,29 @@ test("docker remote contract wrapper defaults to the real remote sandbox wizard 
   assert.match(wrapper, /RUN_HOST="\$\{CTX_REMOTE_CI_RUN_HOST:-0\}"/);
   assert.match(wrapper, /CMD=\("\$\{RUNNER_SCRIPT\}" "--run-container" "\$\{RUN_CONTAINER\}"\)/);
   assert.match(wrapper, /CMD\+=\("--run-host" "\$\{RUN_HOST\}"\)/);
+});
+
+test("linux local install truth wrapper validates the installed AppImage through the real workspace wizard lane", () => {
+  const wrapper = fs.readFileSync(LINUX_LOCAL_TRUTH_WRAPPER, "utf8");
+  assert.match(wrapper, /curl -fsSL '\$\{INSTALL_URL\}' \| sh/);
+  assert.match(wrapper, /ctx\.AppImage/);
+  assert.match(wrapper, /--appimage-extract/);
+  assert.match(wrapper, /CTX_AUTOMATION_SHIPPED_APP=1/);
+  assert.match(wrapper, /CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR="\$\{bundle_dir\}"/);
+  assert.match(wrapper, /workspace-wizard\.spec\.cjs/);
+  assert.match(wrapper, /CTX_AUTOMATION_SCENARIOS="\$\{CTX_AUTOMATION_SCENARIOS:-local-codex-smoke\}"/);
+  assert.match(wrapper, /runtime_bootstrap_missing/);
+});
+
+test("mac remote truth wrapper runs the real remote matrix and rejects docker-backed proof scopes", () => {
+  const wrapper = fs.readFileSync(MAC_REMOTE_TRUTH_WRAPPER, "utf8");
+  assert.match(wrapper, /CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS=1/);
+  assert.match(wrapper, /CTX_AUTOMATION_CN_SHARED_BACKEND=0/);
+  assert.match(wrapper, /REMOTE_MATRIX_SCRIPT="\$\{ROOT\}\/scripts\/updater_e2e_remote_matrix\.sh"/);
+  assert.match(wrapper, /"\$\{REMOTE_MATRIX_SCRIPT\}" run --/);
+  assert.match(wrapper, /REMOTE_REAL_SCRIPT="\$\{ROOT\}\/core\/apps\/desktop\/scripts\/test_remote_real_ci\.sh"/);
+  assert.match(wrapper, /"\$\{REMOTE_REAL_SCRIPT\}"/);
+  assert.match(wrapper, /expectedScope:\s*"remote_host"/);
+  assert.match(wrapper, /expectedScope:\s*"remote_sandbox"/);
+  assert.match(wrapper, /prepared docker fixture cannot satisfy release truth/);
 });

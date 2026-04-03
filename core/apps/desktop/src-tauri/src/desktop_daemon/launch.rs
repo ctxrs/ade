@@ -128,6 +128,18 @@ fn spawn_daemon_with_mode(
             cmd.arg("--setenv")
                 .arg(format!("CTX_BUNDLE_DIR={}", bundle.to_string_lossy()));
         }
+        if local_linux_sandbox_runtime_ready(data_dir) {
+            cmd.arg("--setenv")
+                .arg(format!(
+                    "CTX_HARNESS_SANDBOX_CLI_PATH={ROOTFUL_WRAPPER_PATH}"
+                ))
+                .arg("--setenv")
+                .arg(format!("CONTAINERD_ADDRESS={MANAGED_CONTAINERD_ADDRESS}"))
+                .arg("--setenv")
+                .arg(format!(
+                    "CONTAINERD_NAMESPACE={MANAGED_CONTAINERD_NAMESPACE}"
+                ));
+        }
         if seed_codex_auth {
             cmd.arg("--setenv").arg("CTX_SEED_CODEX_AUTH_FROM_HOST=1");
         }
@@ -169,6 +181,7 @@ fn spawn_daemon_with_mode(
         if let Some(bundle) = bundle_dir.as_ref() {
             cmd.env("CTX_BUNDLE_DIR", bundle.to_string_lossy().to_string());
         }
+        configure_local_linux_sandbox_daemon_env(&mut cmd, data_dir);
         if seed_codex_auth {
             cmd.env("CTX_SEED_CODEX_AUTH_FROM_HOST", "1");
         }

@@ -517,6 +517,8 @@ fn desktop_connect_local_spawn_race_switches_to_validated_local_daemon_over_ssh_
         SshRuntimeMetadata {
             managed_ctx_bin: "~/.ctx/bin/ctx".to_string(),
             active_ctx_bin: Some("~/.ctx/bin/ctx".to_string()),
+            ssh_password_once: None,
+            admin_password_once: None,
         },
     );
 

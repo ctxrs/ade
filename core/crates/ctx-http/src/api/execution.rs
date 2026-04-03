@@ -19,6 +19,11 @@ use crate::execution_setup::{
 };
 use crate::logs;
 use crate::settings::ExecutionMode;
+use crate::workspace_runtime::{
+    linux_sandbox_runtime_status, prepare_linux_sandbox_runtime,
+    stage_linux_sandbox_runtime_downloads, LinuxSandboxActivationMode,
+    LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeStatus,
+};
 
 use super::errors::ApiErrorResp;
 use super::shared::map_effective_execution_settings_error;
@@ -90,6 +95,69 @@ pub(super) async fn launch_start(
         }
     };
     Ok(Json(snapshot))
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct LinuxSandboxRuntimePrepareReq {
+    #[serde(default)]
+    activation_mode: Option<LinuxSandboxActivationMode>,
+    #[serde(default)]
+    sudo_password: Option<String>,
+}
+
+pub(super) async fn linux_sandbox_runtime_status_api(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<LinuxSandboxRuntimeStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    let status = linux_sandbox_runtime_status(&state.core.data_root)
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&err.to_string()),
+                }),
+            )
+        })?;
+    Ok(Json(status))
+}
+
+pub(super) async fn linux_sandbox_runtime_stage(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<LinuxSandboxRuntimeStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    let status = stage_linux_sandbox_runtime_downloads(&state.core.data_root, None)
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&err.to_string()),
+                }),
+            )
+        })?;
+    Ok(Json(status))
+}
+
+pub(super) async fn linux_sandbox_runtime_prepare(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LinuxSandboxRuntimePrepareReq>,
+) -> Result<Json<LinuxSandboxRuntimePrepareResult>, (StatusCode, Json<ApiErrorResp>)> {
+    let result = prepare_linux_sandbox_runtime(
+        &state.core.data_root,
+        req.activation_mode
+            .unwrap_or(LinuxSandboxActivationMode::Local),
+        req.sudo_password.as_deref(),
+        None,
+    )
+    .await
+    .map_err(|err| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&err.to_string()),
+            }),
+        )
+    })?;
+    Ok(Json(result))
 }
 
 #[derive(Debug, Deserialize)]

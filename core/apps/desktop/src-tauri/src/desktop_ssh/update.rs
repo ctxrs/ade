@@ -101,6 +101,8 @@ pub(crate) async fn desktop_update_remote_daemon(
             SshRuntimeMetadata {
                 managed_ctx_bin: managed_remote_ctx_bin.clone(),
                 active_ctx_bin: Some(active_ctx_bin),
+                ssh_password_once: None,
+                admin_password_once: None,
             },
         ))
     })

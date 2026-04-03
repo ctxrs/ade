@@ -48,6 +48,10 @@ export type DesktopRemoteDaemonUpdateResp = {
   message: string;
 };
 
+export type DesktopLinuxSandboxEnsureResp = {
+  ready: boolean;
+};
+
 export type DesktopAppUpdateCheckResp = {
   configured: boolean;
   available: boolean;
@@ -539,6 +543,16 @@ export const desktopKickoffRemotePrewarm = async (req: {
   remote_data_dir?: string | null;
 }): Promise<void> =>
   invoke<void>("desktop_kickoff_remote_prewarm", { req });
+
+export const desktopEnsureLocalLinuxSandboxReady = async (): Promise<DesktopLinuxSandboxEnsureResp> =>
+  invoke<DesktopLinuxSandboxEnsureResp>("desktop_ensure_local_linux_sandbox_ready");
+
+export const desktopEnsureRemoteLinuxSandboxReady = async (req?: {
+  admin_password_once?: string | null;
+}): Promise<DesktopLinuxSandboxEnsureResp> =>
+  invoke<DesktopLinuxSandboxEnsureResp>("desktop_ensure_remote_linux_sandbox_ready", {
+    req: req ?? {},
+  });
 
 export const desktopListSshPaths = async (req: { host: string; user?: string | null; path?: string | null }): Promise<DesktopSshPathEntry[]> =>
   invoke<DesktopSshPathEntry[]>("desktop_list_ssh_paths", { req });

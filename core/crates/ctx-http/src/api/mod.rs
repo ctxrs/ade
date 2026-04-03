@@ -248,6 +248,18 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/execution/launch/status", get(launch_status))
         .route("/api/execution/launch/stream", get(launch_stream_ws))
         .route(
+            "/api/execution/linux_sandbox_runtime/status",
+            get(linux_sandbox_runtime_status_api),
+        )
+        .route(
+            "/api/execution/linux_sandbox_runtime/stage",
+            post(linux_sandbox_runtime_stage),
+        )
+        .route(
+            "/api/execution/linux_sandbox_runtime/prepare",
+            post(linux_sandbox_runtime_prepare),
+        )
+        .route(
             "/api/title_generation/local/status",
             get(get_title_generation_local_status),
         )

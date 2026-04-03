@@ -281,9 +281,7 @@ pub(super) fn sync_remote_bundle_metadata_over_ssh(
     remote_data_dir: Option<&str>,
 ) -> Result<()> {
     let local_bundle_dir = desktop_bundle_dir(app).ok_or_else(|| {
-        anyhow!(
-            "desktop bundle dir unavailable for remote bootstrap; run desktop:prep:release"
-        )
+        anyhow!("desktop bundle dir unavailable for remote bootstrap; run desktop:prep:release")
     })?;
     let data_dir = remote_data_dir
         .filter(|d| !d.trim().is_empty())
@@ -346,14 +344,18 @@ pub(super) fn sync_remote_bundle_metadata_over_ssh(
         .wait_with_output()
         .context("waiting for tar bundle metadata stream")?;
     if !tar_output.status.success() {
-        let stderr = String::from_utf8_lossy(&tar_output.stderr).trim().to_string();
+        let stderr = String::from_utf8_lossy(&tar_output.stderr)
+            .trim()
+            .to_string();
         anyhow::bail!("local bundle metadata tar failed: {stderr}");
     }
     let ssh_output = ssh_child
         .wait_with_output()
         .context("waiting for remote bundle metadata ssh command")?;
     if !ssh_output.status.success() {
-        let stderr = String::from_utf8_lossy(&ssh_output.stderr).trim().to_string();
+        let stderr = String::from_utf8_lossy(&ssh_output.stderr)
+            .trim()
+            .to_string();
         anyhow::bail!("remote bundle metadata sync failed: {stderr}");
     }
     Ok(())
@@ -445,8 +447,10 @@ pub(super) fn render_remote_daemon_exec_cmd(
 ) -> Result<String> {
     let ctx_bin = validate_remote_ctx_bin(remote_ctx_bin)?;
     let ctx_bin_expr = remote_path_expr(&ctx_bin);
+    let linux_sandbox_env_prefix = remote_linux_sandbox_daemon_env_prefix(remote_data_dir);
     Ok(format!(
-        "if [ -x {ctx_bin} ]; then CTX_BUNDLE_DIR={bundle_dir} {ctx_bin} serve --bind 127.0.0.1:{remote_port} --data-dir {dir}; else echo 'ctx not executable at configured remote path' >&2; exit 127; fi",
+        "{linux_sandbox_env_prefix} if [ -x {ctx_bin} ]; then CTX_BUNDLE_DIR={bundle_dir} {ctx_bin} serve --bind 127.0.0.1:{remote_port} --data-dir {dir}; else echo 'ctx not executable at configured remote path' >&2; exit 127; fi",
+        linux_sandbox_env_prefix = linux_sandbox_env_prefix,
         ctx_bin = ctx_bin_expr,
         bundle_dir = remote_path_expr(remote_bundle_dir),
         dir = remote_path_expr(remote_data_dir),

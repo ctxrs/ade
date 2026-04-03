@@ -51,6 +51,7 @@ mod desktop_ssh;
 mod desktop_storage;
 mod desktop_updater;
 mod desktop_windows;
+mod linux_sandbox;
 use desktop_connection::*;
 use desktop_daemon::*;
 use desktop_deeplink::*;
@@ -65,6 +66,7 @@ use desktop_ssh::*;
 use desktop_storage::*;
 use desktop_updater::*;
 use desktop_windows::*;
+use linux_sandbox::*;
 
 fn main() {
     #[cfg(all(target_os = "windows", feature = "stt"))]
@@ -113,6 +115,8 @@ fn main() {
             desktop_connect_ssh_poll,
             desktop_update_remote_daemon,
             desktop_kickoff_remote_prewarm,
+            desktop_ensure_local_linux_sandbox_ready,
+            desktop_ensure_remote_linux_sandbox_ready,
             desktop_list_ssh_hosts,
             desktop_test_ssh,
             desktop_list_ssh_paths,
@@ -157,6 +161,7 @@ fn main() {
             open_main_window(&app.handle())?;
             install_macos_dock_menu_bridge(app.handle().clone());
             schedule_local_daemon_prewarm(app.handle().clone());
+            schedule_local_linux_sandbox_prefetch(app.handle().clone());
             schedule_force_launcher(app.handle().clone());
             schedule_startup_workspaces(app.handle().clone());
             setup_deep_link_listener(&app.handle());

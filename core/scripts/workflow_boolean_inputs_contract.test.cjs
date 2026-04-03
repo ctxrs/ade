@@ -78,6 +78,16 @@ test("linux bundle workflows preserve AVF runtime targets instead of rewriting t
   assert.match(releaseSupabaseText, /lock\.required\.targets\.image = \["linux\/aarch64"\];/);
 });
 
+test("desktop sandbox bootstrap real-truth workflow uses typed booleans for manual lane selection", () => {
+  const text = workflowText("desktop-sandbox-bootstrap-real-truth.yml");
+  assert.match(text, /run_local_ubuntu:[\s\S]*type: boolean/);
+  assert.match(text, /run_remote_macos:[\s\S]*type: boolean/);
+  assert.match(text, /run_remote_container:[\s\S]*type: boolean/);
+  assert.ok(!text.includes("inputs.run_local_ubuntu == 'true'"));
+  assert.ok(!text.includes("inputs.run_remote_macos == 'true'"));
+  assert.ok(!text.includes("inputs.run_remote_container == 'true'"));
+});
+
 test("release supabase release-stage jobs consume the merged desktop bundle artifact", () => {
   const text = workflowText("release-supabase.yml");
   assert.match(text, /name:\s+Download merged desktop bundle resources \(current run\)[\s\S]*name:\s+desktop-bundles-linux-merged/s);

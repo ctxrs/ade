@@ -92,6 +92,7 @@ export function useWorkspaceSetupRemote({
   const [remotePathStatus, setRemotePathStatus] = useState<"idle" | "loading" | "error">("idle");
   const [remotePathError, setRemotePathError] = useState<string | null>(null);
   const remoteStatusRef = useRef<RemoteStatus>("idle");
+  const remotePasswordCandidateRef = useRef<string | null>(null);
 
   const remoteHostInput = targetDraft.remoteHostInput;
   const remotePortInput = targetDraft.remotePortInput;
@@ -122,6 +123,7 @@ export function useWorkspaceSetupRemote({
   const onRemoteInputChange = useCallback((value: string) => {
     setRemoteHostInput(value);
     setRemotePasswordInput("");
+    remotePasswordCandidateRef.current = null;
     setRemotePasswordPromptVisible(false);
     onRemoteEndpointChanged();
     resetVerificationState();
@@ -129,6 +131,7 @@ export function useWorkspaceSetupRemote({
 
   const onRemotePasswordInputChange = useCallback((value: string) => {
     setRemotePasswordInput(value);
+    remotePasswordCandidateRef.current = value.trim() ? value : null;
     resetVerificationState();
   }, [resetVerificationState]);
 
@@ -181,7 +184,7 @@ export function useWorkspaceSetupRemote({
       const info = await desktopConnectSsh({
         host: effectiveTarget.host,
         user: effectiveTarget.user,
-        password_once: remotePasswordOnce,
+        password_once: remotePasswordOnce ?? remotePasswordCandidateRef.current,
         remote_port: effectiveTarget.port,
         start_remote: false,
         remote_data_dir: effectiveTarget.dataDir,
@@ -209,6 +212,12 @@ export function useWorkspaceSetupRemote({
       remote_data_dir: effectiveTarget.dataDir,
     });
   }, [effectiveTarget]);
+
+  const requestRemotePasswordPrompt = useCallback(() => {
+    setRemotePasswordPromptVisible(true);
+    setRemoteStatus("idle");
+    setRemoteError(null);
+  }, []);
 
   const rememberRemoteProfile = useCallback((host: string, user: string | null) => {
     if (!host) return;
@@ -441,6 +450,7 @@ export function useWorkspaceSetupRemote({
     remoteDataDirInput,
     remoteError,
     remoteHostInput,
+    remotePasswordCandidate: remotePasswordCandidateRef.current,
     remotePasswordInput,
     remotePasswordOnce,
     remotePasswordPromptVisible,
@@ -464,5 +474,6 @@ export function useWorkspaceSetupRemote({
     connectDaemonForImport,
     rememberCurrentRemoteProfile,
     rememberRemoteProfile,
+    requestRemotePasswordPrompt,
   };
 }

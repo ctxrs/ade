@@ -165,13 +165,28 @@ pub(crate) async fn desktop_kickoff_remote_prewarm(
     app: tauri::AppHandle,
     req: DesktopRemotePrewarmReq,
 ) -> Result<(), String> {
-    let host = req.host.trim().to_string();
+    schedule_remote_prewarm_request(
+        app,
+        req.host,
+        req.user,
+        req.remote_port.unwrap_or(4399),
+        req.remote_data_dir,
+    )
+}
+
+pub(super) fn schedule_remote_prewarm_request(
+    app: tauri::AppHandle,
+    host: String,
+    user: Option<String>,
+    remote_port: u16,
+    remote_data_dir: Option<String>,
+) -> Result<(), String> {
+    let host = host.trim().to_string();
     if host.is_empty() {
         return Err("host is required".to_string());
     }
-    let user = normalize_optional_text(req.user.as_deref());
-    let remote_port = req.remote_port.unwrap_or(4399);
-    let remote_data_dir = normalize_optional_text(req.remote_data_dir.as_deref());
+    let user = normalize_optional_text(user.as_deref());
+    let remote_data_dir = normalize_optional_text(remote_data_dir.as_deref());
     let key = remote_prewarm_dedupe_key(
         &host,
         user.as_deref(),
@@ -245,14 +260,8 @@ fn request_remote_startup_prewarm(
 pub(super) fn build_remote_startup_prewarm_request() -> DesktopDaemonRequest {
     DesktopDaemonRequest {
         method: "POST".to_string(),
-        path: "/api/execution/launch/start".to_string(),
-        body: Some(
-            serde_json::json!({
-                "kind": "startup_prewarm",
-                "prewarm_scope": "all",
-            })
-            .to_string(),
-        ),
+        path: "/api/execution/linux_sandbox_runtime/stage".to_string(),
+        body: None,
         headers: vec![("Content-Type".to_string(), "application/json".to_string())],
     }
 }

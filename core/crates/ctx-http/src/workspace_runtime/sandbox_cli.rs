@@ -33,6 +33,9 @@ pub(super) fn sandbox_cli_binary_path(data_root: &Path) -> Option<PathBuf> {
     if let Some(path) = explicit_sandbox_cli_binary_path() {
         return Some(path);
     }
+    if let Some(path) = preferred_native_sandbox_cli_path() {
+        return Some(path);
+    }
     let _ = data_root;
     which::which("nerdctl").ok()
 }

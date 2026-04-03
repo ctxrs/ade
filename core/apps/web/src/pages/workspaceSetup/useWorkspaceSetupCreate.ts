@@ -8,6 +8,7 @@ import {
   deleteWorkspace,
   idToString,
   listWorkspaces,
+  prepareLinuxSandboxRuntime,
   repoClone,
   repoInit,
   repoStatus,
@@ -17,7 +18,13 @@ import {
   updateWorkspaceMergeQueueConfig,
   updateWorkspaceWorktreeBootstrapConfig,
 } from "../../api/client";
-import { desktopConnectLocal, desktopConnectSsh, desktopPickFolder } from "../../utils/desktop";
+import {
+  desktopConnectLocal,
+  desktopConnectSsh,
+  desktopEnsureLocalLinuxSandboxReady,
+  desktopEnsureRemoteLinuxSandboxReady,
+  desktopPickFolder,
+} from "../../utils/desktop";
 import { trackWorkspaceLaunchCompleted } from "../../utils/analytics";
 import { upsertLauncherRecent } from "../../state/launcherRecentsStore";
 import {
@@ -78,6 +85,7 @@ type UseWorkspaceSetupCreateArgs = {
   trackWizardCompleted: (payload: { wizardKey: string; workspaceKind: string }) => void;
   desktopApp: boolean;
   remotePasswordOnce: string | null;
+  remotePasswordCandidate: string | null;
   effectiveTarget: WorkspaceSetupEffectiveTarget | null;
   connectDaemonForImport: (locationOverride?: "local" | "remote") => Promise<void>;
   ensureOnboardingAfterDaemonConnect: (options?: { allowTitlingInsertion?: boolean }) => Promise<{
@@ -86,6 +94,7 @@ type UseWorkspaceSetupCreateArgs = {
   waitForDaemonReady: (timeoutMs: number) => Promise<void>;
   applyConnection: (info: Awaited<ReturnType<typeof desktopConnectLocal>>) => void;
   rememberRemoteProfile: (host: string, user: string | null) => void;
+  requestRemotePasswordPrompt: () => void;
   setCreateError: (message: string | null) => void;
 };
 
@@ -117,15 +126,18 @@ export function useWorkspaceSetupCreate({
   trackWizardCompleted,
   desktopApp,
   remotePasswordOnce,
+  remotePasswordCandidate,
   effectiveTarget,
   connectDaemonForImport,
   ensureOnboardingAfterDaemonConnect,
   waitForDaemonReady,
   applyConnection,
   rememberRemoteProfile,
+  requestRemotePasswordPrompt,
   setCreateError,
 }: UseWorkspaceSetupCreateArgs) {
   const [creating, setCreating] = useState(false);
+  const [sandboxPrepareMessage, setSandboxPrepareMessage] = useState<string | null>(null);
   const [launchSnapshot, setLaunchSnapshot] = useState<ExecutionLaunchSnapshot | null>(null);
   const [launchLogs, setLaunchLogs] = useState<WorkspaceSetupLaunchLogLine[]>([]);
   const [provisioningState, setProvisioningState] = useState<WorkspaceProvisioningState | null>(null);
@@ -540,6 +552,61 @@ export function useWorkspaceSetupCreate({
     await waitForLaunchTerminal(initial);
   };
 
+  const prepareSandboxRuntimeIfNeeded = async () => {
+    if (selections.container === "host") {
+      return;
+    }
+    const activationMode = selections.location === "remote" ? "remote" : "local";
+    setSandboxPrepareMessage(
+      activationMode === "remote"
+        ? "Preparing sandbox on remote host…"
+        : "Preparing sandbox…",
+    );
+    if (desktopApp) {
+      try {
+        if (activationMode === "remote") {
+          await desktopEnsureRemoteLinuxSandboxReady({
+            admin_password_once: remotePasswordCandidate ?? remotePasswordOnce ?? null,
+          });
+        } else {
+          await desktopEnsureLocalLinuxSandboxReady();
+        }
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+          activationMode === "remote" &&
+          message.includes("CTX_REMOTE_ADMIN_PASSWORD_REQUIRED")
+        ) {
+          requestRemotePasswordPrompt();
+          onCreateErrorStep("location");
+          throw new Error(
+            "Preparing sandbox on remote host needs the remote admin password. Enter it on the Remote step and try again.",
+          );
+        }
+        throw error;
+      }
+    }
+
+    const result = await prepareLinuxSandboxRuntime(
+      activationMode,
+      activationMode === "remote"
+        ? (remotePasswordCandidate ?? remotePasswordOnce ?? null)
+        : null,
+    );
+    if (result.ready) {
+      return;
+    }
+    if (result.needs_password && activationMode === "remote") {
+      requestRemotePasswordPrompt();
+      onCreateErrorStep("location");
+      throw new Error(
+        "Preparing sandbox on remote host needs the remote admin password. Enter it on the Remote step and try again.",
+      );
+    }
+    throw new Error(result.message);
+  };
+
   const onCopyLaunchDiagnostics = async () => {
     if (!effectiveLaunchSnapshot) return;
     const payload = {
@@ -569,6 +636,7 @@ export function useWorkspaceSetupCreate({
     setLaunchCopyState("idle");
     setLaunchTick(0);
     syntheticLogSeqRef.current = -1;
+    setSandboxPrepareMessage(null);
     setCreating(true);
     const launchStartedAtMs = Date.now();
     let createdWorkspaceId: string | null = null;
@@ -594,7 +662,7 @@ export function useWorkspaceSetupCreate({
           ? await desktopConnectSsh({
             host: parsedRemoteHost!,
             user: parsedRemoteUser ?? null,
-            password_once: remotePasswordOnce,
+            password_once: remotePasswordOnce ?? remotePasswordCandidate,
             remote_port: parsedRemotePort,
             start_remote: true,
             remote_data_dir: remoteDataDir,
@@ -608,6 +676,7 @@ export function useWorkspaceSetupCreate({
       }
 
       await waitForDaemonReady(15000);
+      await prepareSandboxRuntimeIfNeeded();
       beginProvisioningPhase(
         "prepare_source",
         "Preparing workspace source",
@@ -943,6 +1012,7 @@ export function useWorkspaceSetupCreate({
       const key = resolveCreateErrorStepKey(message);
       if (key) onCreateErrorStep(key);
     } finally {
+      setSandboxPrepareMessage(null);
       setCreating(false);
     }
   };
@@ -975,7 +1045,9 @@ export function useWorkspaceSetupCreate({
       : launchCopyState === "failed"
         ? "Copy failed"
         : "Copy diagnostics",
-    createButtonLabel: creating ? "Creating…" : "Create workspace",
+    createButtonLabel: creating
+      ? (sandboxPrepareMessage ?? "Creating…")
+      : "Create workspace",
     onCopyLaunchDiagnostics,
     onCreate,
   };
