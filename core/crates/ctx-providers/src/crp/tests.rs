@@ -278,6 +278,79 @@ done
 }
 
 #[tokio::test]
+async fn prompt_fails_fast_on_fatal_startup_stderr_and_shuts_down_runtime() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("fatal_startup.sh");
+
+    fs::write(
+        &script_path,
+        "#!/bin/sh\nprintf 'time=\"2026-04-02T22:10:57Z\" level=fatal msg=\"failed to create temp dir\"\\n' >&2\nsleep 30\n",
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "codex",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "session-fatal-startup";
+    let mut env = HashMap::new();
+    env.insert("CTX_SESSION_ID".to_string(), session_key.to_string());
+
+    let (event_sink, mut event_rx) = tokio::sync::mpsc::channel(8);
+    let handle = adapter
+        .run(
+            TurnInput {
+                content: "user".to_string(),
+                attachments: vec![],
+                context_blocks: vec![],
+                model_id: None,
+            },
+            workdir,
+            env,
+            event_sink,
+        )
+        .await?;
+
+    tokio::time::timeout(Duration::from_secs(5), handle.done)
+        .await
+        .expect("fatal startup run should finish promptly")?;
+
+    let error_event = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match event_rx.recv().await {
+                Some(event) if matches!(event.event_type, SessionEventType::Error) => {
+                    return Some(event)
+                }
+                Some(_) => {}
+                None => return None,
+            }
+        }
+    })
+    .await
+    .expect("error event wait should complete")
+    .expect("expected error event");
+
+    assert!(
+        error_event
+            .payload_json
+            .get("message")
+            .and_then(|value| value.as_str())
+            .is_some_and(|message| message.contains("level=fatal")),
+        "expected fatal stderr to surface through the error event"
+    );
+    assert!(
+        !adapter.has_live_session(session_key).await,
+        "fatal startup stderr should shut down the unusable runtime session"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn opencode_flattens_prompt_items_into_single_prompt_field() -> Result<()> {
     let tempdir = tempfile::tempdir()?;
     let workdir = tempdir.path().to_path_buf();

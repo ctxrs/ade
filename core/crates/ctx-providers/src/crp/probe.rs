@@ -422,5 +422,32 @@ mod tests {
         assert!(logged.contains("--workdir /ctx/ws/worktrees/wt-456/src"));
         assert!(logged.contains("ctx-harness-ws-123"));
         assert!(logged.contains("/bin/sh"));
+        assert!(logged.contains("--env XDG_RUNTIME_DIR="));
+        assert!(logged.contains("--env HOME="));
+        assert!(logged.contains("--env TMPDIR="));
+        assert!(logged.contains(&format!(
+            "--env XDG_RUNTIME_DIR={}",
+            tmp.path()
+                .join("ctx-data-root")
+                .join("sandbox")
+                .join("run")
+                .display()
+        )));
+        assert!(logged.contains(&format!(
+            "--env HOME={}",
+            tmp.path()
+                .join("ctx-data-root")
+                .join("sandbox")
+                .join("home")
+                .display()
+        )));
+        assert!(logged.contains(&format!(
+            "--env TMPDIR={}",
+            tmp.path()
+                .join("ctx-data-root")
+                .join("sandbox")
+                .join("tmp")
+                .display()
+        )));
     }
 }

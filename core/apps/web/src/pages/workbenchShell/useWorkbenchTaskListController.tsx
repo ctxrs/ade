@@ -449,6 +449,8 @@ export function useWorkbenchTaskListController({
           : liveLastAssistantMs ?? serverLastAssistantMs;
       const seenMs = parseMs(task.assistant_seen_at ?? null);
       const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
+      // Deliberately show recency in the nav ("last activity"), not run duration.
+      // The thread view owns precise per-turn elapsed timing.
       const ageIso = task.last_activity_at ?? task.updated_at ?? task.created_at;
       let statusKind: "archive" | "error" | "working" | "unread" | "idle" = archivePending
         ? "archive"

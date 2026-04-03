@@ -2422,9 +2422,101 @@ fn wait_for_real_guest_launch_ready_requires_guest_control_marker() {
         None,
     )
     .expect_err("launch readiness should require the guest control ready marker");
-    assert!(err
-        .to_string()
-        .contains("guest control ready marker"));
+    assert!(err.to_string().contains("guest control ready marker"));
+
+    server.join().expect("server thread");
+    let control_socket = shared_vm_control_socket_path(&temp);
+    if control_socket.exists() {
+        fs::remove_file(&control_socket).expect("cleanup control socket");
+    }
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(all(target_os = "macos", unix))]
+#[test]
+fn wait_for_real_guest_launch_ready_backfills_ready_marker_after_restore_hit() {
+    use std::thread;
+
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctx-avf-launch-ready-restore-hit-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    prepare_runtime_layout(&temp).expect("prepare runtime layout");
+    persist_state(
+        &shared_vm_state_path(&temp),
+        &PersistedSharedVmState {
+            state: AvfLinuxSharedVmLifecycleState::Running,
+            guest_identity: supported_guest_identity(),
+            runtime_root: None,
+            rootfs_image: None,
+            kernel_path: None,
+            initrd_path: None,
+            runtime_version: None,
+            runtime_shape_digest: None,
+            updated_at: Some(now_timestamp_string()),
+            last_started_at: Some(now_timestamp_string()),
+            last_saved_at: Some(now_timestamp_string()),
+            last_stopped_at: None,
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Scaffolded),
+            last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::Restored),
+            last_stop_outcome: Some(AvfLinuxSharedVmStopOutcome::SavedStateWritten),
+            last_restore_error: None,
+            last_save_error: None,
+            relay_pid: Some(std::process::id()),
+            guest_agent_pid: None,
+            simulated: false,
+            notes: vec!["restored".to_string()],
+        },
+    )
+    .expect("persist restored state");
+    let failure_marker = shared_vm_guest_control_failed_path(&temp);
+    if let Some(parent) = failure_marker.parent() {
+        fs::create_dir_all(parent).expect("create failure marker parent");
+    }
+    fs::write(&failure_marker, b"stale failure").expect("seed stale failure marker");
+    let listener = bind_shared_vm_control_listener(&temp).expect("bind control socket");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept control socket");
+        let frame = read_exec_frame(&mut stream)
+            .expect("read request")
+            .expect("request frame");
+        let request = match frame {
+            AvfLinuxExecFrame::Request(request) => request,
+            other => panic!("expected request frame, got {other:?}"),
+        };
+        assert_eq!(request.command, "/bin/sh");
+        write_exec_frame(
+            &mut stream,
+            &AvfLinuxExecFrame::Stderr(
+                b"[ctx-avf-linux] readiness phase containerd ok in 1ms\n".to_vec(),
+            ),
+        )
+        .expect("write readiness phase");
+        write_exec_frame(
+            &mut stream,
+            &AvfLinuxExecFrame::Exit(AvfLinuxExecExit { exit_code: 0 }),
+        )
+        .expect("write exit frame");
+    });
+
+    let readiness =
+        wait_for_real_guest_launch_ready_with_owner_process(&temp, Duration::from_secs(1), None)
+            .expect("restore-hit launch readiness should succeed without a republished marker");
+    assert_eq!(readiness.attempts, 1);
+    assert!(shared_vm_owner_guest_probe_ready(&temp));
+    let ready_marker = shared_vm_guest_control_ready_path(&temp);
+    assert_eq!(
+        fs::read_to_string(&ready_marker).expect("read backfilled ready marker"),
+        format!("listening:{SHARED_VM_GUEST_CONTROL_VSOCK_PORT}\n"),
+    );
+    assert!(
+        !failure_marker.exists(),
+        "restore-hit backfill should clear any stale failure marker"
+    );
 
     server.join().expect("server thread");
     let control_socket = shared_vm_control_socket_path(&temp);

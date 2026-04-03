@@ -37,8 +37,8 @@ use self::config::{
 use self::normalize::{event_matches_session, event_turn_id, map_crp_event, CachedToolInput};
 use self::policy::{
     extract_auth_error_from_stderr_line, extract_auth_url_from_stderr_line,
-    parse_native_crp_slash_command_for_provider, validate_provider_slash_command_support,
-    CrpSlashCommand,
+    extract_runtime_fatal_error_from_stderr_line, parse_native_crp_slash_command_for_provider,
+    validate_provider_slash_command_support, CrpSlashCommand,
 };
 use self::protocol::{CrpCommand, CrpEvent};
 use self::runtime::{resolve_explicit_command_path, CrpAgentConfig, CrpProcess};
@@ -591,6 +591,7 @@ impl CrpSessionPool {
 
         let turn_id = format!("crp-{}", Uuid::new_v4());
         let mut rx = session.process.events.subscribe();
+        let mut stderr_rx = session.process.stderr_lines.subscribe();
         let mut shutdown_rx = session.process.shutdown.subscribe();
         let shutdown_reason = {
             let reason = shutdown_rx.borrow().clone();
@@ -748,6 +749,20 @@ impl CrpSessionPool {
                         })
                         .await;
                     break;
+                }
+                stderr = stderr_rx.recv() => {
+                    match stderr {
+                        Ok(line) => {
+                            if last_seq == 0 {
+                                if let Some(message) = extract_runtime_fatal_error_from_stderr_line(&line) {
+                                    session.process.shutdown("crp_runtime_fatal_stderr").await;
+                                    anyhow::bail!("{message}");
+                                }
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(broadcast::error::RecvError::Closed) => {}
+                    }
                 }
                 recv = rx.recv() => {
                     match recv {

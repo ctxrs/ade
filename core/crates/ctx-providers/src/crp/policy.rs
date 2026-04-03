@@ -279,6 +279,18 @@ pub(super) fn extract_auth_error_from_stderr_line(line: &str) -> Option<String> 
     None
 }
 
+pub(super) fn extract_runtime_fatal_error_from_stderr_line(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lowered = trimmed.to_ascii_lowercase();
+    if lowered.contains("level=fatal") {
+        return Some(trimmed.to_string());
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,6 +321,19 @@ mod tests {
             Some(
                 "Auggie does not currently support ACP authentication in this environment. Run `auggie login` via the fallback flow."
             )
+        );
+    }
+
+    #[test]
+    fn extract_runtime_fatal_error_from_stderr_line_detects_structured_fatal_logs() {
+        let line = "time=\"2026-04-02T22:10:57Z\" level=fatal msg=\"failed to create temp dir\"";
+        assert_eq!(
+            extract_runtime_fatal_error_from_stderr_line(line).as_deref(),
+            Some(line)
+        );
+        assert_eq!(
+            extract_runtime_fatal_error_from_stderr_line("warning: retrying"),
+            None
         );
     }
 

@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use sha2::Digest;
 use tokio::process::Command;
 
 use crate::crp::rewrite_bundled_path_for_linux;
@@ -266,12 +265,13 @@ fn sandbox_cli_env_for_data_root(data_root: &str) -> HashMap<String, String> {
         return HashMap::new();
     }
     let root = PathBuf::from(data_root);
-    let xdg_root = root.join("sandbox").join("xdg");
+    let sandbox_root = root.join("sandbox");
+    let xdg_root = sandbox_root.join("xdg");
     let xdg_config = xdg_root.join("config");
     let xdg_data = xdg_root.join("data");
-    let xdg_run = sandbox_runtime_root(&root).join("run");
-    let sandbox_home = sandbox_home_root(&root);
-    let sandbox_tmp_root = sandbox_temp_root(&root);
+    let xdg_run = sandbox_root.join("run");
+    let sandbox_home = sandbox_root.join("home");
+    let sandbox_tmp_root = sandbox_root.join("tmp");
     // Best-effort: directory creation failures will surface as sandbox CLI connection failures.
     let _ = std::fs::create_dir_all(&xdg_config);
     let _ = std::fs::create_dir_all(&xdg_data);
@@ -314,63 +314,31 @@ fn sandbox_cli_env_for_data_root(data_root: &str) -> HashMap<String, String> {
     ])
 }
 
-fn sandbox_runtime_root(data_root: &Path) -> PathBuf {
-    let hash = sandbox_data_root_hash(data_root);
-    #[cfg(unix)]
-    {
-        PathBuf::from("/tmp").join("ctxp").join(hash)
-    }
-    #[cfg(not(unix))]
-    {
-        std::env::temp_dir().join("ctxp").join(hash)
-    }
-}
-
-fn sandbox_home_root(data_root: &Path) -> PathBuf {
-    sandbox_runtime_root(data_root).join("home")
-}
-
-fn sandbox_temp_root(data_root: &Path) -> PathBuf {
-    sandbox_runtime_root(data_root).join("tmp")
-}
-
-fn sandbox_data_root_hash(data_root: &Path) -> String {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(data_root.to_string_lossy().as_bytes());
-    let digest = hasher.finalize();
-    digest[..6]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
 
     #[test]
-    fn sandbox_cli_env_for_data_root_uses_short_runtime_root_and_shared_state_paths() {
+    fn sandbox_cli_env_for_data_root_uses_shared_sandbox_paths() {
         let temp = tempfile::tempdir().expect("tempdir");
         let env = sandbox_cli_env_for_data_root(&temp.path().to_string_lossy());
+        let sandbox_root = temp.path().join("sandbox");
 
         let runtime_dir = env.get("XDG_RUNTIME_DIR").cloned().expect("runtime dir");
         let home = env.get("HOME").cloned().expect("home");
         let tmpdir = env.get("TMPDIR").cloned().expect("tmpdir");
 
-        assert_eq!(
-            PathBuf::from(runtime_dir),
-            sandbox_runtime_root(temp.path()).join("run")
-        );
-        assert_eq!(PathBuf::from(home), sandbox_home_root(temp.path()));
-        assert_eq!(PathBuf::from(tmpdir), sandbox_temp_root(temp.path()));
+        assert_eq!(PathBuf::from(runtime_dir), sandbox_root.join("run"));
+        assert_eq!(PathBuf::from(home), sandbox_root.join("home"));
+        assert_eq!(PathBuf::from(tmpdir), sandbox_root.join("tmp"));
         assert_eq!(
             env.get("XDG_CONFIG_HOME").map(PathBuf::from),
-            Some(temp.path().join("sandbox").join("xdg").join("config"))
+            Some(sandbox_root.join("xdg").join("config"))
         );
         assert_eq!(
             env.get("XDG_DATA_HOME").map(PathBuf::from),
-            Some(temp.path().join("sandbox").join("xdg").join("data"))
+            Some(sandbox_root.join("xdg").join("data"))
         );
         assert_eq!(
             env.get("CONTAINERD_ADDRESS").map(String::as_str),

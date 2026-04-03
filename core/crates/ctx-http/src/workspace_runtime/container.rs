@@ -32,6 +32,7 @@ pub(super) fn build_mounts(
     settings: &ContainerExecutionSettings,
 ) -> MountPlan {
     let mut mounts = Vec::new();
+    let mut external_mounts = HashSet::new();
     let workspace_root = PathBuf::from(&workspace.root_path);
 
     let worktrees_root = worktrees_root(data_root).join(workspace.id.0.to_string());
@@ -57,6 +58,11 @@ pub(super) fn build_mounts(
     ensure_dir(&runtimes);
     mounts.push(bind_mount(&runtimes, &runtimes, true));
 
+    let vcs_hooks = crate::vcs_hooks::vcs_hooks_root(data_root);
+    ensure_dir(&vcs_hooks);
+    mounts.push(bind_mount(&vcs_hooks, &vcs_hooks, false));
+    external_mounts.insert(vcs_hooks.to_string_lossy().to_string());
+
     if let Ok(raw) = std::env::var("CTX_BUNDLE_DIR") {
         let bundle_dir = PathBuf::from(raw.trim());
         if bundle_dir.exists() {
@@ -73,7 +79,7 @@ pub(super) fn build_mounts(
 
     MountPlan {
         mounts,
-        external_mounts: HashSet::new(),
+        external_mounts,
     }
 }
 

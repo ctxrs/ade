@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-04-02T06:17:17Z",
+  "generated_at": "2026-04-03T02:59:33Z",
   "providers": [],
   "runtimes": [
     {
@@ -38,14 +38,14 @@
       "id": "ctx-daemon",
       "os": "linux",
       "arch": "aarch64",
-      "sha256": "2643b222e7de3db93d0056537175277c7f1b1dd01a09755744976c8621c46cea",
+      "sha256": "e0c1b70b1d1a5007d7c009836524b31926e5f0e4fe7af93c70fd23411e4d6b1d",
       "bin": "daemons/ctx-daemon-linux-aarch64"
     },
     {
       "id": "ctx-daemon",
       "os": "linux",
       "arch": "x86_64",
-      "sha256": "4f45dfd27531386b8efadf9aa0ec35baebdbc1fd9ccdf97589b32b33d1f3ac5d",
+      "sha256": "9d297fc9e7f2f48be27e291fb734dd61baf5f26310854d68299c47fb839e136e",
       "bin": "daemons/ctx-daemon-linux-x86_64"
     }
   ]

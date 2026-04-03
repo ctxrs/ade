@@ -112,6 +112,33 @@ pub(in super::super) fn wait_for_guest_control_ready_marker(
     )
 }
 
+fn backfill_guest_control_ready_marker_for_restore_hit(data_root: &Path) -> Result<bool> {
+    let state_path = shared_vm_state_path(data_root);
+    let restore_hit = load_state(&state_path)?.and_then(|state| state.last_start_outcome)
+        == Some(AvfLinuxSharedVmStartOutcome::Restored);
+    if !restore_hit {
+        return Ok(false);
+    }
+
+    let ready_marker = shared_vm_guest_control_ready_path(data_root);
+    if let Some(parent) = ready_marker.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    fs::write(
+        &ready_marker,
+        format!("listening:{SHARED_VM_GUEST_CONTROL_VSOCK_PORT}\n"),
+    )
+    .with_context(|| format!("writing {}", ready_marker.display()))?;
+
+    let failure_marker = shared_vm_guest_control_failed_path(data_root);
+    if failure_marker.exists() {
+        fs::remove_file(&failure_marker)
+            .with_context(|| format!("removing {}", failure_marker.display()))?;
+    }
+
+    Ok(true)
+}
+
 #[cfg(unix)]
 fn render_shared_vm_guest_agent_log_tail(log_path: &Path) -> String {
     match fs::read_to_string(log_path) {
@@ -296,11 +323,13 @@ pub(crate) fn wait_for_real_guest_launch_ready_with_owner_process(
     owner_process: Option<&mut std::process::Child>,
 ) -> Result<SharedVmGuestReadinessReport> {
     let started_at = std::time::Instant::now();
-    let readiness = wait_for_real_guest_exec_ready_with_owner_process(
-        data_root,
-        timeout,
-        owner_process,
-    )?;
+    let readiness =
+        wait_for_real_guest_exec_ready_with_owner_process(data_root, timeout, owner_process)?;
+    if shared_vm_guest_control_ready_path(data_root).is_file()
+        || backfill_guest_control_ready_marker_for_restore_hit(data_root)?
+    {
+        return Ok(readiness);
+    }
     let marker_timeout = timeout.saturating_sub(started_at.elapsed());
     wait_for_guest_control_ready_marker(data_root, marker_timeout).with_context(|| {
         format!(

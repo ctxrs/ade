@@ -594,15 +594,7 @@ pub(in crate::api) async fn cleanup_task_worktrees(
     let mut needs_prune = false;
     for target in targets {
         let worktree = &target.worktree;
-        if let Err(err) = vcs_hooks::cleanup_worktree_hooks(
-            &state.core.data_root,
-            workspace.id,
-            worktree.id,
-            Some(StdPath::new(&worktree.root_path)),
-            worktree.vcs_kind.clone(),
-        )
-        .await
-        {
+        if let Err(err) = vcs_hooks::cleanup_worktree_hooks(state, workspace, worktree).await {
             tracing::warn!(
                 task_id = %task_id.0,
                 worktree_id = %worktree.id.0,

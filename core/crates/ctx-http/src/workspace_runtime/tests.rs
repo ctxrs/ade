@@ -3670,6 +3670,32 @@ fn build_mounts_only_includes_bundle_dir_when_shareable() {
     );
 }
 
+#[test]
+fn build_mounts_includes_vcs_hooks_bind_mount() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let workspace = sample_workspace(&tmp);
+    let mount_plan = build_mounts(
+        tmp.path(),
+        &workspace,
+        None,
+        &ContainerExecutionSettings::default(),
+    );
+    let hooks_root = crate::vcs_hooks::vcs_hooks_root(tmp.path());
+    let expected = bind_mount(&hooks_root, &hooks_root, false);
+    assert!(
+        mount_plan.mounts.iter().any(|mount| mount == &expected),
+        "expected vcs hooks bind mount in {:?}",
+        mount_plan.mounts
+    );
+    assert!(
+        mount_plan
+            .external_mounts
+            .contains(&hooks_root.to_string_lossy().to_string()),
+        "expected vcs hooks root in external mount tracking: {:?}",
+        mount_plan.external_mounts
+    );
+}
+
 #[tokio::test]
 async fn managed_default_image_install_lock_serializes_callers() {
     let lock = managed_default_image_install_lock();
