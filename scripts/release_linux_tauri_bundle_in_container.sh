@@ -19,7 +19,7 @@ case "$platform" in
     ;;
 esac
 
-for cmd in pnpm patchelf file readelf ldd appstreamcli xdg-mime desktop-file-validate mksquashfs zsyncmake gtk-update-icon-cache dpkg-deb; do
+for cmd in pnpm patchelf file readelf ldd appstreamcli xdg-mime desktop-file-validate mksquashfs zsyncmake gtk-update-icon-cache; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "error: missing required command in release image: $cmd" >&2
     exit 1
@@ -118,15 +118,13 @@ pick_latest_bundle_artifact_from_candidates() {
 }
 
 appimage_bundle_dir="core/apps/desktop/src-tauri/target/release/bundle/appimage"
-deb_bundle_dir="core/apps/desktop/src-tauri/target/release/bundle/deb"
 fallback_appimage_bundle_dir="core/target/release/bundle/appimage"
-fallback_deb_bundle_dir="core/target/release/bundle/deb"
 
 if ! \
   CTX_DESKTOP_SYNC_BUNDLES=0 \
   CTX_BUNDLE_REMOTE_DAEMONS=0 \
   RUST_LOG=tauri_bundler=debug \
-  pnpm -C core/apps/desktop run build -- --bundles appimage,deb; then
+  pnpm -C core/apps/desktop run build -- --bundles appimage; then
   echo "::group::linuxdeploy diagnostics (${platform})"
 
   tauri_cache_dir="$(select_tauri_cache_dir)"
@@ -222,11 +220,5 @@ fi
 appimage_bundle="$(pick_latest_bundle_artifact_from_candidates '*.AppImage' "$appimage_bundle_dir" "$fallback_appimage_bundle_dir")"
 if [[ -z "$appimage_bundle" || ! -f "$appimage_bundle" ]]; then
   echo "error: linux AppImage bundle missing after Tauri build"
-  exit 1
-fi
-
-deb_bundle="$(pick_latest_bundle_artifact_from_candidates '*.deb' "$deb_bundle_dir" "$fallback_deb_bundle_dir")"
-if [[ -z "$deb_bundle" || ! -f "$deb_bundle" ]]; then
-  echo "error: linux Debian bundle missing after Tauri build"
   exit 1
 fi

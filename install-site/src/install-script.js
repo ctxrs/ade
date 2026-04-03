@@ -177,63 +177,45 @@ write_linux_launcher_script() {
   chmod 0755 "$launcher_path"
 }
 
-launch_linux_binary() {
-  binary_name="$1"
-  start_path="$2"
-  if ! command -v "$binary_name" >/dev/null 2>&1; then
-    log "Installed ctx desktop package. Launch it from your app menu."
-    return 0
-  fi
-  CTX_DESKTOP_START_PATH="$start_path" "$binary_name" >/dev/null 2>&1 &
-}
+install_linux_icon() {
+  appimage_path="$1"
+  icon_dir="\${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps"
+  icon_path="$icon_dir/ctx.png"
+  extract_dir="$tmp_dir/appimage-icon"
 
-linux_os_release_path() {
-  if [ -n "\${CTX_INSTALL_OS_RELEASE_PATH:-}" ]; then
-    printf "%s\\n" "$CTX_INSTALL_OS_RELEASE_PATH"
-    return 0
+  rm -rf "$extract_dir"
+  mkdir -p "$extract_dir"
+  if ! (
+    cd "$extract_dir"
+    "$appimage_path" --appimage-extract >/dev/null 2>&1
+  ); then
+    fail "failed to extract application icon from AppImage"
   fi
-  printf "/etc/os-release\\n"
-}
 
-linux_os_release_field() {
-  field_name="$1"
-  release_path="$(linux_os_release_path)"
-  if [ ! -r "$release_path" ]; then
-    printf "\\n"
-    return 0
+  icon_source=""
+  if [ -f "$extract_dir/squashfs-root/usr/share/icons/hicolor/512x512/apps/ctx.png" ]; then
+    icon_source="$extract_dir/squashfs-root/usr/share/icons/hicolor/512x512/apps/ctx.png"
+  elif [ -f "$extract_dir/squashfs-root/.DirIcon" ]; then
+    icon_source="$extract_dir/squashfs-root/.DirIcon"
+  else
+    icon_source="$(find "$extract_dir/squashfs-root/usr/share/icons" -type f -name '*.png' 2>/dev/null | head -n 1 || true)"
   fi
-  awk -F= -v target="$field_name" '
-    $1 == target {
-      value = $2
-      gsub(/^"/, "", value)
-      gsub(/"$/, "", value)
-      print tolower(value)
-      exit
-    }
-  ' "$release_path"
-}
 
-linux_is_debian_like() {
-  os_id="$(linux_os_release_field ID)"
-  os_like="$(linux_os_release_field ID_LIKE)"
-  case " $os_id $os_like " in
-    *" debian "*|*" ubuntu "*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-run_as_root() {
-  if [ "$(id -u)" = "0" ]; then
-    "$@"
-    return 0
+  if [ -z "$icon_source" ] || [ ! -f "$icon_source" ]; then
+    fail "failed to locate application icon in AppImage contents"
   fi
-  need_cmd sudo
-  sudo "$@"
+
+  mkdir -p "$icon_dir"
+  cp "$icon_source" "$icon_path"
+  chmod 0644 "$icon_path"
+  log "Installed app icon at $icon_path"
+  printf "%s\\n" "$icon_path"
 }
 
 install_linux_desktop_entry() {
   launcher_path="$1"
   appimage_path="$2"
+  icon_path="$3"
   desktop_entry_dir="\${XDG_DATA_HOME:-$HOME/.local/share}/applications"
   desktop_entry_path="$desktop_entry_dir/ctx.desktop"
 
@@ -246,6 +228,7 @@ Name=ctx
 Comment=ctx desktop app
 TryExec=$appimage_path
 Exec=$launcher_path
+Icon=$icon_path
 Terminal=false
 Categories=Development;
 StartupNotify=true
@@ -257,31 +240,6 @@ EOF
   fi
 
   log "Installed desktop entry at $desktop_entry_path"
-}
-
-install_linux_deb() {
-  platform="$1"
-  need_cmd id
-  need_cmd apt-get
-
-  url_path="$(extract_manifest_field_linux "platforms.$platform.deb.url_path")"
-  [ -n "$url_path" ] || fail "manifest does not contain a Debian package for $platform"
-
-  expected_sha="$(extract_manifest_field_linux "platforms.$platform.deb.sha256")"
-
-  artifact_path="$tmp_dir/ctx-installer.deb"
-  download_url="$(resolve_download_url "$url_path")"
-  log "Downloading $download_url"
-  curl -fL --retry 3 --retry-delay 2 "$download_url" -o "$artifact_path"
-  verify_artifact_sha "$artifact_path" "$expected_sha"
-
-  run_as_root apt-get install -y "$artifact_path"
-  log "Installed ctx desktop Debian package"
-
-  if [ "\${CTX_INSTALL_NO_OPEN:-0}" != "1" ]; then
-    launch_linux_binary ctx "$(first_open_start_path)"
-    log "Launched ctx desktop"
-  fi
 }
 
 install_macos() {
@@ -352,25 +310,14 @@ install_macos() {
 install_linux() {
   local_arch="$1"
   need_cmd python3
+  need_cmd chmod
+  need_cmd cp
 
   case "$local_arch" in
     x86_64|amd64) platform="linux-x64" ;;
     aarch64|arm64) platform="linux-arm64" ;;
     *) fail "unsupported Linux architecture: $local_arch" ;;
   esac
-
-  if linux_is_debian_like; then
-    if [ -n "$(extract_manifest_field_linux "platforms.$platform.deb.url_path")" ]; then
-      install_linux_deb "$platform"
-      return 0
-    fi
-    # EXCEPTION: keep Ubuntu/Debian bootstrap installs working during the .deb rollout
-    # when the current release manifest has not published a package yet.
-    log "No Debian package published for $platform in this release manifest; using portable AppImage install."
-  fi
-
-  need_cmd chmod
-  need_cmd cp
 
   url_path="$(extract_manifest_field_linux "platforms.$platform.appimage.url_path")"
   [ -n "$url_path" ] || fail "manifest does not contain an AppImage for $platform"
@@ -393,7 +340,8 @@ install_linux() {
   mkdir -p "$bin_dir"
   launcher_path="$bin_dir/ctx-desktop"
   write_linux_launcher_script "$launcher_path" "$target_appimage"
-  install_linux_desktop_entry "$launcher_path" "$target_appimage"
+  icon_path="$(install_linux_icon "$target_appimage")"
+  install_linux_desktop_entry "$launcher_path" "$target_appimage" "$icon_path"
 
   log "Installed ctx desktop AppImage to $target_appimage"
   log "Installed launcher script at $launcher_path"

@@ -9,6 +9,15 @@ import { renderInstallScript } from "./install-script.js";
 
 const makeTempDir = (prefix) => mkdtempSync(path.join(tmpdir(), prefix));
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const createFakeAppImage = () => `#!/bin/sh
+set -eu
+if [ "\${1:-}" = "--appimage-extract" ]; then
+  mkdir -p squashfs-root/usr/share/icons/hicolor/512x512/apps
+  printf '%s\\n' 'fake-icon-bytes' > squashfs-root/usr/share/icons/hicolor/512x512/apps/ctx.png
+  exit 0
+fi
+exit 0
+`;
 
 const writeExecutable = (filePath, contents) => {
   writeFileSync(filePath, contents);
@@ -253,10 +262,11 @@ test("renderInstallScript includes release resolution, checksum verify, and app 
   assert.match(script, /ditto "\$app_src" "\$target_app"/);
   assert.match(script, /open "\$target_app"/);
   assert.match(script, /CTX_DESKTOP_START_PATH="\$start_path"/);
-  assert.match(script, /ctx-installer\.deb/);
-  assert.match(script, /apt-get install -y "\$artifact_path"/);
   assert.match(script, /ctx\.AppImage/);
   assert.match(script, /ctx-desktop/);
+  assert.match(script, /ctx\.png/);
+  assert.match(script, /--appimage-extract/);
+  assert.match(script, /Icon=\$icon_path/);
   assert.match(script, /export CTX_DESKTOP_START_PATH=\//);
   assert.match(script, /Installed desktop entry at/);
   assert.match(script, /ctx\.desktop/);
@@ -335,7 +345,7 @@ test("macOS install hard-fails when manifest omits sha256", () => {
 });
 
 test("linux install succeeds when manifest includes sha256", () => {
-  const artifactContents = "fake-appimage-with-sha";
+  const artifactContents = createFakeAppImage();
   const result = runInstaller({
     os: "Linux",
     arch: "x86_64",
@@ -365,19 +375,25 @@ test("linux install succeeds when manifest includes sha256", () => {
       new RegExp(`exec \"${escapeRegExp(path.join(result.installDir, "ctx.AppImage"))}\"`),
     );
     assert.match(readFileSync(launcherPath, "utf8"), /"\$@"/);
+    const iconPath = path.join(result.xdgDataHome, "icons", "hicolor", "512x512", "apps", "ctx.png");
+    assert.equal(existsSync(iconPath), true);
     const desktopEntryPath = path.join(result.xdgDataHome, "applications", "ctx.desktop");
     assert.equal(existsSync(desktopEntryPath), true);
     assert.match(
       readFileSync(desktopEntryPath, "utf8"),
       new RegExp(`Exec=${escapeRegExp(launcherPath)}`),
     );
+    assert.match(
+      readFileSync(desktopEntryPath, "utf8"),
+      new RegExp(`Icon=${escapeRegExp(iconPath)}`),
+    );
   } finally {
     result.cleanup();
   }
 });
 
-test("linux install falls back to AppImage on Debian-like systems when deb is unpublished", () => {
-  const artifactContents = "fake-appimage-on-ubuntu";
+test("linux install uses the AppImage path on Debian-like systems too", () => {
+  const artifactContents = createFakeAppImage();
   const result = runInstaller({
     os: "Linux",
     arch: "x86_64",
@@ -398,40 +414,12 @@ test("linux install falls back to AppImage on Debian-like systems when deb is un
   });
   try {
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stderr, /No Debian package published for linux-x64/);
     assert.equal(existsSync(path.join(result.installDir, "ctx.AppImage")), true);
     assert.equal(existsSync(path.join(result.binDir, "ctx-desktop")), true);
-  } finally {
-    result.cleanup();
-  }
-});
-
-test("linux install uses Debian package on Debian-like systems", () => {
-  const artifactContents = "fake-deb-with-sha";
-  const result = runInstaller({
-    os: "Linux",
-    arch: "x86_64",
-    artifactContents,
-    osReleaseText: "ID=ubuntu\nID_LIKE=debian\n",
-    manifest: {
-      channel: "stable",
-      latest_version: "0.0.1",
-      platforms: {
-        "linux-x64": {
-          deb: {
-            url_path: "/download/stable/0.0.1/ctx.deb",
-            sha256: sha256(artifactContents),
-          },
-        },
-      },
-    },
-  });
-  try {
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stderr, /Installed ctx desktop Debian package/);
-    assert.equal(existsSync(path.join(result.installDir, "ctx.AppImage")), false);
-    assert.match(readFileSync(result.aptLogPath, "utf8"), /^install -y /);
-    assert.match(readFileSync(result.aptLogPath, "utf8"), /ctx-installer\.deb/);
+    assert.equal(
+      existsSync(path.join(result.xdgDataHome, "icons", "hicolor", "512x512", "apps", "ctx.png")),
+      true,
+    );
   } finally {
     result.cleanup();
   }

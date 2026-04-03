@@ -71,16 +71,16 @@ fn linux_installer_target_suffix_uses_appimage_extension_when_env_missing() {
 }
 
 #[test]
-fn linux_installer_target_suffix_defaults_to_deb_without_appimage_signal() {
-    assert_eq!(support::linux_installer_target_suffix(None, None), "deb");
+fn linux_installer_target_suffix_defaults_to_appimage_without_extra_signal() {
+    assert_eq!(support::linux_installer_target_suffix(None, None), "appimage");
 }
 
 #[test]
 fn desktop_platform_key_for_linux_targets_includes_installer_suffix() {
     assert_eq!(
-        support::desktop_platform_key_for("linux", "x86_64", "deb")
-            .expect("linux x64 deb target should resolve"),
-        "linux-x64-deb"
+        support::desktop_platform_key_for("linux", "x86_64", "appimage")
+            .expect("linux x64 appimage target should resolve"),
+        "linux-x64-appimage"
     );
     assert_eq!(
         support::desktop_platform_key_for("linux", "aarch64", "appimage")

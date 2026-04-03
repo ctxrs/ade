@@ -308,7 +308,7 @@ pub(super) fn linux_installer_target_suffix(
     }) {
         return "appimage";
     }
-    "deb"
+    "appimage"
 }
 
 pub(super) fn desktop_platform_key_for(

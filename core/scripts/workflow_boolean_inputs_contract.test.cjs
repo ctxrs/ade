@@ -177,16 +177,16 @@ test("linux tauri release container reuses staged bundles instead of remateriali
   const text = fs.readFileSync(path.join(repoRoot, "scripts", "release_linux_tauri_bundle_in_container.sh"), "utf8");
   assert.match(text, /CTX_DESKTOP_SYNC_BUNDLES=0/);
   assert.match(text, /CTX_BUNDLE_REMOTE_DAEMONS=0/);
-  assert.match(text, /pnpm -C core\/apps\/desktop run build -- --bundles appimage,deb/);
+  assert.match(text, /pnpm -C core\/apps\/desktop run build -- --bundles appimage/);
 });
 
-test("release supabase linux updater signing covers both AppImage and deb artifacts", () => {
+test("release supabase linux updater signing covers the AppImage artifact", () => {
   const text = workflowText("release-supabase.yml");
   assert.match(text, /name:\s+Sign Linux updater artifacts/);
   assert.match(text, /find "\$dir" -maxdepth 1 -type f -name '\*\.AppImage'/);
-  assert.match(text, /find "\$dir" -maxdepth 1 -type f -name '\*\.deb'/);
   assert.match(text, /"\$appimage" > "\$\{appimage\}\.sig"/);
-  assert.match(text, /"\$deb" > "\$\{deb\}\.sig"/);
+  assert.doesNotMatch(text, /find "\$dir" -maxdepth 1 -type f -name '\*\.deb'/);
+  assert.doesNotMatch(text, /"\$deb" > "\$\{deb\}\.sig"/);
 });
 
 test("non-linux release-stage tauri builds reuse staged bundles instead of rematerializing them", () => {

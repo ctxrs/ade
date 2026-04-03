@@ -41,10 +41,9 @@ impl ReleasePlatform {
     ) -> Option<&'a ReleaseArtifact> {
         match platform_key {
             "linux-x64" | "linux-arm64" => self
-                .appimage
+                .desktop
                 .as_ref()
-                .or(self.desktop.as_ref())
-                .or(self.deb.as_ref()),
+                .or(self.appimage.as_ref()),
             "macos-x64" | "macos-arm64" => self
                 .desktop
                 .as_ref()
@@ -342,7 +341,7 @@ mod tests {
         let linux = platform
             .preferred_desktop_artifact("linux-x64")
             .expect("linux artifact");
-        assert_eq!(linux.url_path, "/appimage");
+        assert_eq!(linux.url_path, "/desktop");
 
         let mac = platform
             .preferred_desktop_artifact("macos-arm64")
@@ -359,7 +358,7 @@ mod tests {
     fn preferred_desktop_artifact_uses_fallbacks() {
         let linux = ReleasePlatform {
             desktop: None,
-            appimage: None,
+            appimage: Some(artifact("/appimage")),
             deb: Some(artifact("/deb")),
             dmg: None,
             msi: None,
@@ -373,7 +372,7 @@ mod tests {
                 .preferred_desktop_artifact("linux-arm64")
                 .expect("linux fallback")
                 .url_path,
-            "/deb"
+            "/appimage"
         );
 
         let windows = ReleasePlatform {
