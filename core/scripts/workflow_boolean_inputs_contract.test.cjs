@@ -104,14 +104,19 @@ test("release supabase preserves AVF helper virtualization entitlements in the f
     text,
     /helper_entitlements="core\/apps\/desktop\/src-tauri\/ctx-avf-linux-helper\.entitlements"/,
   );
+  assert.match(
+    text,
+    /app_entitlements="core\/apps\/desktop\/src-tauri\/ctx\.entitlements"/,
+  );
   assert.match(text, /assert_virtualization_entitlement\(\) \{/);
+  assert.match(text, /assert_app_automation_entitlement\(\) \{/);
   assert.match(
     text,
     /codesign_with_retry --force --sign "\$identity" --options runtime --entitlements "\$helper_entitlements" --timestamp "\$helper_bin"/,
   );
   assert.match(
     text,
-    /codesign_with_retry --force --sign "\$identity" --options runtime --timestamp "\$app_path"/,
+    /codesign_with_retry --force --sign "\$identity" --options runtime --entitlements "\$app_entitlements" --timestamp "\$app_path"/,
   );
   assert.doesNotMatch(
     text,
