@@ -51,6 +51,14 @@ test("first-run local sandbox script defaults to isolated macOS CN backend", () 
   );
 });
 
+test("updater native smoke script opts out of container scenario defaults", () => {
+  const pkg = JSON.parse(fs.readFileSync(PACKAGE_JSON, "utf8"));
+  assert.match(
+    String(pkg.scripts["test:automation:updater-native-smoke"] || ""),
+    /CTX_AUTOMATION_SCENARIOS=\$\{CTX_AUTOMATION_SCENARIOS:-updater-native-smoke\}/,
+  );
+});
+
 test("mac WDIO automation targets the app executable and performs a real session readiness probe", () => {
   const wdio = fs.readFileSync(WDIO_CONF, "utf8");
   assert.match(wdio, /const resolveWdioApplicationPath = \(appPath\) => \{/);
