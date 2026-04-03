@@ -192,6 +192,40 @@ fn should_skip_linux_exec_env_key(spec: &ContainerExecSpec, key: &str) -> bool {
     }
 }
 
+pub(crate) fn translate_thread_cwd_for_container(
+    env: &HashMap<String, String>,
+    workdir: &Path,
+) -> Result<PathBuf> {
+    let Some(spec) = container_exec_spec(env) else {
+        return Ok(workdir.to_path_buf());
+    };
+    match spec {
+        ContainerExecSpec::NativeContainer {
+            host_worktree_root: Some(host_worktree_root),
+            guest_worktree_root: Some(guest_worktree_root),
+            guest_workspace_root: Some(guest_workspace_root),
+            ..
+        } => resolve_linux_sandbox_cwd(
+            workdir,
+            &host_worktree_root,
+            &guest_worktree_root,
+            &guest_workspace_root,
+        ),
+        ContainerExecSpec::SharedVmContainer {
+            host_worktree_root,
+            guest_worktree_root,
+            guest_workspace_root,
+            ..
+        } => resolve_linux_sandbox_cwd(
+            workdir,
+            &host_worktree_root,
+            &guest_worktree_root,
+            &guest_workspace_root,
+        ),
+        _ => Ok(workdir.to_path_buf()),
+    }
+}
+
 fn resolve_linux_sandbox_cwd(
     workdir: &Path,
     host_worktree_root: &Path,

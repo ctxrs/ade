@@ -17,6 +17,7 @@ use crate::adapters::{
     ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderProcessInfo,
     ProviderRestartMode, ProviderStatus, RunHandle, TurnInput,
 };
+use crate::container_exec::translate_thread_cwd_for_container;
 use crate::events::NormalizedEvent;
 
 mod config;
@@ -273,7 +274,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
         let mut shutdown_rx = session.process.shutdown.subscribe();
         let auth_session_key = session_key.clone();
         if !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst) {
-            let config = build_crp_session_config(&env, &workdir);
+            let config = build_crp_session_config(&env, &workdir)?;
             let provider_session_id = env
                 .get("CTX_PROVIDER_SESSION_REF")
                 .map(|value| value.trim().to_string())
@@ -614,7 +615,7 @@ impl CrpSessionPool {
         }
 
         if !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst) {
-            let config = build_crp_session_config(&req.env, &req.workdir);
+            let config = build_crp_session_config(&req.env, &req.workdir)?;
             let provider_session_id = req
                 .env
                 .get("CTX_PROVIDER_SESSION_REF")
@@ -680,6 +681,7 @@ impl CrpSessionPool {
                         .map(split_model_id_and_effort)
                         .unwrap_or((None, None))
                 };
+                let prompt_cwd = translate_thread_cwd_for_container(&req.env, &req.workdir)?;
                 session
                     .process
                     .send(CrpCommand::SessionPrompt {
@@ -689,7 +691,7 @@ impl CrpSessionPool {
                         prompt,
                         model,
                         reasoning_effort,
-                        cwd: Some(req.workdir.clone()),
+                        cwd: Some(prompt_cwd),
                     })
                     .await?;
             }

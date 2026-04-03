@@ -91,8 +91,6 @@ test("resolveSessionWorktreeRoot reads the session snapshot worktree root", asyn
 
 test("runProviderFileEditApiSmoke waits for files in the session managed worktree", async () => {
   const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-file-edit-source-"));
-  const managedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-file-edit-managed-"));
-  fs.writeFileSync(path.join(managedRoot, "hello.md"), "hi", "utf8");
 
   const { runProviderFileEditApiSmoke } = loadHelper(async (method, requestPath, body) => {
     if (method === "POST" && requestPath === "/api/workspaces/ws-1/tasks") {
@@ -138,24 +136,20 @@ test("runProviderFileEditApiSmoke waits for files in the session managed worktre
         },
       };
     }
-    if (method === "GET" && requestPath === "/api/sessions/session-1/snapshot?limit=1") {
+    if (method === "GET" && requestPath === "/api/sessions/session-1/diff") {
       return {
         status: 200,
         payload: {
-          head: {
-            session: {
-              worktree_id: "wt-456",
-            },
-          },
-          summary: {},
-        },
-      };
-    }
-    if (method === "GET" && requestPath === "/api/worktrees/wt-456") {
-      return {
-        status: 200,
-        payload: {
-          root_path: managedRoot,
+          diff: [
+            "diff --git a/hello.md b/hello.md",
+            "new file mode 100644",
+            "index 0000000..32f95c0",
+            "--- /dev/null",
+            "+++ b/hello.md",
+            "@@ -0,0 +1 @@",
+            "+hi",
+            "\\ No newline at end of file",
+          ].join("\n"),
         },
       };
     }
@@ -182,7 +176,125 @@ test("runProviderFileEditApiSmoke waits for files in the session managed worktre
   );
 
   assert.equal(result.sessionId, "session-1");
-  assert.equal(result.filePath, path.join(managedRoot, "hello.md"));
+  assert.equal(result.filePath, "hello.md");
   assert.equal(result.fileContents, "hi");
   assert.equal(fs.existsSync(path.join(sourceRoot, "hello.md")), false);
+});
+
+test("runProviderFileEditApiSmoke waits for turn completion before accepting assistant output", async () => {
+  const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-file-edit-source-"));
+  let historyCalls = 0;
+  let diffCalls = 0;
+
+  const { runProviderFileEditApiSmoke } = loadHelper(async (method, requestPath, body) => {
+    if (method === "POST" && requestPath === "/api/workspaces/ws-1/tasks") {
+      return {
+        status: 200,
+        payload: {
+          id: "task-1",
+        },
+      };
+    }
+    if (method === "POST" && requestPath === "/api/tasks/task-1/sessions") {
+      assert.equal(body.execution_environment, "sandbox");
+      return {
+        status: 200,
+        payload: {
+          id: "session-1",
+        },
+      };
+    }
+    if (method === "POST" && requestPath === "/api/sessions/session-1/messages") {
+      return {
+        status: 200,
+        payload: {
+          ok: true,
+        },
+      };
+    }
+    if (method === "GET" && requestPath === "/api/sessions/session-1/history?limit=200") {
+      historyCalls += 1;
+      if (historyCalls === 1) {
+        return {
+          status: 200,
+          payload: {
+            messages: [
+              {
+                role: "assistant",
+                content:
+                  "It seems there is an issue with creating the file in the current working directory as requested. Let me try another method to write the file correctly in the workspace root.",
+              },
+            ],
+            turns: [
+              {
+                status: "running",
+                turn_id: "turn-1",
+              },
+            ],
+          },
+        };
+      }
+
+      return {
+        status: 200,
+        payload: {
+          messages: [
+            {
+              role: "assistant",
+              content: "hi",
+            },
+          ],
+          turns: [
+            {
+              status: "completed",
+              turn_id: "turn-1",
+            },
+          ],
+        },
+      };
+    }
+    if (method === "GET" && requestPath === "/api/sessions/session-1/diff") {
+      diffCalls += 1;
+      return {
+        status: 200,
+        payload: {
+          diff: diffCalls === 1
+            ? ""
+            : [
+              "diff --git a/hello.md b/hello.md",
+              "new file mode 100644",
+              "index 0000000..32f95c0",
+              "--- /dev/null",
+              "+++ b/hello.md",
+              "@@ -0,0 +1 @@",
+              "+hi",
+              "\\ No newline at end of file",
+            ].join("\n"),
+        },
+      };
+    }
+    throw new Error(`unexpected daemonJson call: ${method} ${requestPath}`);
+  });
+
+  const result = await runProviderFileEditApiSmoke(
+    "ws-1",
+    sourceRoot,
+    {
+      providerId: "codex",
+      modelId: "default",
+      executionEnvironment: "sandbox",
+      relativeFilePath: "hello.md",
+      fileContents: "hi",
+      exactFileContents: true,
+      expectedAssistantMessage: "hi",
+      exactAssistantMessage: true,
+    },
+    2_000,
+  );
+
+  assert.equal(historyCalls, 2);
+  assert.equal(diffCalls, 2);
+  assert.equal(result.assistantMessage, "hi");
+  assert.equal(result.filePath, "hello.md");
+  assert.equal(result.fileContents, "hi");
 });

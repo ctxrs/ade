@@ -285,3 +285,11 @@ test("run_provider_auth_matrix accepts file-backed deferred oauth prerequisites 
   assert.match(summary, /gemini\.subscription_oauth\.local\.host\tdry-run\t0\t/);
   assert.doesNotMatch(summary, /missing_env:/);
 });
+
+test("run_provider_auth_matrix retry classification uses portable grep", () => {
+  const text = fs.readFileSync(scriptPath, "utf8");
+
+  assert.doesNotMatch(text, /\brg -q\b/);
+  assert.match(text, /grep -E -q[\s\S]*Request failed with error code ECONNREFUSED/s);
+  assert.match(text, /grep -E -q[\s\S]*codex oauth login did not succeed/s);
+});

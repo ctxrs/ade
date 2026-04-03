@@ -509,14 +509,14 @@ for (const [k, v] of Object.entries(extra)) {
     fi
     # OAuth provider-side credential/verification failures are deterministic and
     # should not consume retry budget.
-    if rg -q \
+    if grep -E -q \
       -e 'OpenAI auth page reported an error: Check your inbox' \
       -e 'Code Incorrect code' \
       -e 'codex oauth login did not succeed' \
       "${log_path}"; then
       return 1
     fi
-    rg -q \
+    grep -E -q \
       -e 'Request failed with error code ECONNREFUSED' \
       -e 'Request failed with error code UND_ERR_CLOSED' \
       -e 'Request failed with error code UND_ERR_SOCKET' \

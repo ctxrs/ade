@@ -82,6 +82,8 @@ pub(super) struct CrpSessionConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) cwd: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) spawn_cwd: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) reasoning_effort: Option<String>,

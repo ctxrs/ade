@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use tokio::time::Duration;
 
 use crate::adapters::TurnInput;
-use crate::container_exec::container_exec_spec;
+use crate::container_exec::{container_exec_spec, translate_thread_cwd_for_container};
 
 use super::protocol::{CrpMcpServerConfig, CrpModelInfo, CrpModelsProbe, CrpSessionConfig};
 
@@ -24,7 +24,7 @@ pub(super) fn model_override_disabled(env: &HashMap<String, String>) -> bool {
 pub(super) fn build_crp_session_config(
     env: &HashMap<String, String>,
     workdir: &Path,
-) -> CrpSessionConfig {
+) -> Result<CrpSessionConfig> {
     let mcp_enabled = env
         .get("CTX_MCP_DISABLED")
         .and_then(|value| parse_boolish(value))
@@ -76,8 +76,9 @@ pub(super) fn build_crp_session_config(
         None
     };
 
-    CrpSessionConfig {
-        cwd: Some(workdir.to_path_buf()),
+    Ok(CrpSessionConfig {
+        cwd: Some(translate_thread_cwd_for_container(env, workdir)?),
+        spawn_cwd: Some(workdir.to_path_buf()),
         model,
         reasoning_effort,
         approval_policy: Some(FULL_YOLO_APPROVAL_POLICY.to_string()),
@@ -90,7 +91,7 @@ pub(super) fn build_crp_session_config(
             .filter(|provider_id| *provider_id == "codex")
             .map(|_| "pragmatic".to_string()),
         mcp_servers,
-    }
+    })
 }
 
 fn resolve_session_mcp_command(env: &HashMap<String, String>) -> String {
@@ -131,13 +132,14 @@ fn looks_like_windows_absolute_path(command: &str) -> bool {
 pub(super) fn build_crp_model_probe_config(
     env: &HashMap<String, String>,
     workdir: &Path,
-) -> CrpSessionConfig {
+) -> Result<CrpSessionConfig> {
     let (model, reasoning_effort) = env
         .get("CTX_MODEL_ID")
         .map(|value| split_model_id_and_effort(value))
         .unwrap_or((None, None));
-    CrpSessionConfig {
-        cwd: Some(workdir.to_path_buf()),
+    Ok(CrpSessionConfig {
+        cwd: Some(translate_thread_cwd_for_container(env, workdir)?),
+        spawn_cwd: Some(workdir.to_path_buf()),
         model,
         reasoning_effort,
         approval_policy: Some(FULL_YOLO_APPROVAL_POLICY.to_string()),
@@ -146,7 +148,7 @@ pub(super) fn build_crp_model_probe_config(
         reasoning_trace_enabled: None,
         personality: None,
         mcp_servers: None,
-    }
+    })
 }
 
 pub(super) fn split_model_id_and_effort(model_id: &str) -> (Option<String>, Option<String>) {
@@ -321,7 +323,7 @@ mod tests {
         env.insert("CTX_PROVIDER_ID".to_string(), "codex".to_string());
         let workdir = PathBuf::from("/tmp/workdir");
 
-        let cfg = build_crp_session_config(&env, &workdir);
+        let cfg = build_crp_session_config(&env, &workdir).expect("build session config");
         assert_eq!(
             cfg.approval_policy.as_deref(),
             Some(FULL_YOLO_APPROVAL_POLICY)
@@ -337,7 +339,7 @@ mod tests {
         env.insert("CTX_PROVIDER_ID".to_string(), "claude-crp".to_string());
         let workdir = PathBuf::from("/tmp/workdir");
 
-        let cfg = build_crp_session_config(&env, &workdir);
+        let cfg = build_crp_session_config(&env, &workdir).expect("build session config");
         assert_eq!(
             cfg.approval_policy.as_deref(),
             Some(FULL_YOLO_APPROVAL_POLICY)
@@ -359,7 +361,7 @@ mod tests {
         );
         let workdir = PathBuf::from("/tmp/workdir");
 
-        let cfg = build_crp_session_config(&env, &workdir);
+        let cfg = build_crp_session_config(&env, &workdir).expect("build session config");
         assert_eq!(cfg.model, None);
         assert_eq!(cfg.reasoning_effort, None);
     }
@@ -376,7 +378,8 @@ mod tests {
             "/Users/example-user/.cache/cargo/ctx-monorepo/debug/ctx-mcp".to_string(),
         );
 
-        let cfg = build_crp_session_config(&env, Path::new("/ctx/ws"));
+        let cfg =
+            build_crp_session_config(&env, Path::new("/ctx/ws")).expect("build session config");
         let command = cfg
             .mcp_servers
             .as_ref()
@@ -401,7 +404,8 @@ mod tests {
             mcp_path.to_string_lossy().to_string(),
         );
 
-        let cfg = build_crp_session_config(&env, Path::new("/ctx/ws"));
+        let cfg =
+            build_crp_session_config(&env, Path::new("/ctx/ws")).expect("build session config");
         let command = cfg
             .mcp_servers
             .as_ref()
@@ -414,12 +418,39 @@ mod tests {
     fn build_crp_model_probe_config_forces_full_yolo_policy() {
         let workdir = PathBuf::from("/tmp/workdir");
 
-        let cfg = build_crp_model_probe_config(&HashMap::new(), &workdir);
+        let cfg = build_crp_model_probe_config(&HashMap::new(), &workdir)
+            .expect("build model probe config");
         assert_eq!(
             cfg.approval_policy.as_deref(),
             Some(FULL_YOLO_APPROVAL_POLICY)
         );
         assert_eq!(cfg.sandbox_mode.as_deref(), Some(FULL_YOLO_SANDBOX_MODE));
+    }
+
+    #[test]
+    fn build_crp_session_config_maps_container_thread_cwd_to_guest_worktree() {
+        let mut env = HashMap::new();
+        env.insert(
+            "CTX_HARNESS_CONTAINER_ID".to_string(),
+            "ctx-harness-123".to_string(),
+        );
+        env.insert(
+            "CTX_HARNESS_HOST_WORKTREE_ROOT".to_string(),
+            "/Users/example-user/code/repo".to_string(),
+        );
+        env.insert(
+            "CTX_HARNESS_GUEST_WORKTREE_ROOT".to_string(),
+            "/ctx/ws/worktrees/wt-123".to_string(),
+        );
+        env.insert(
+            "CTX_HARNESS_GUEST_WORKSPACE_ROOT".to_string(),
+            "/ctx/ws".to_string(),
+        );
+        let workdir = PathBuf::from("/Users/example-user/code/repo/src");
+
+        let cfg = build_crp_session_config(&env, &workdir).expect("build session config");
+        assert_eq!(cfg.cwd, Some(PathBuf::from("/ctx/ws/worktrees/wt-123/src")));
+        assert_eq!(cfg.spawn_cwd, Some(workdir));
     }
 
     #[test]

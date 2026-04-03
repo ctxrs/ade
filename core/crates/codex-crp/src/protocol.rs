@@ -81,6 +81,8 @@ pub enum CrpCommand {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct CrpSessionConfig {
     pub cwd: Option<PathBuf>,
+    #[serde(default)]
+    pub spawn_cwd: Option<PathBuf>,
     pub model: Option<String>,
     #[serde(default)]
     pub reasoning_effort: Option<String>,

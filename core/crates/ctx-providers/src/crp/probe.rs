@@ -83,7 +83,7 @@ pub async fn probe_crp_models(request: CrpModelsProbeRequest) -> Result<CrpModel
 
     let mut stdin = BufWriter::new(stdin);
     let mut stdout_reader = BufReader::new(stdout).lines();
-    let config = build_crp_model_probe_config(&env, &workdir);
+    let config = build_crp_model_probe_config(&env, &workdir)?;
     let envelope = CrpCommandEnvelope {
         v: crp_version,
         command: CrpCommand::ModelsList {

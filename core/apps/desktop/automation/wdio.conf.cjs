@@ -118,6 +118,11 @@ const USE_EXTERNAL_DAEMON = resolveBoolishFlag(
   false,
   "CTX_AUTOMATION_USE_EXTERNAL_DAEMON",
 );
+const ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD = resolveBoolishFlag(
+  process.env.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD,
+  false,
+  "CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD",
+);
 const SSH_NO_START_REMOTE = resolveBoolishFlag(
   process.env.CTX_AUTOMATION_SSH_NO_START_REMOTE,
   true,
@@ -991,6 +996,8 @@ const ensureBundledContainerAssets = (options = {}) => {
   const hostOs = normalizeDesktopOs(options.platform);
   const hostArch = normalizeDesktopArch(options.arch);
   const requiresBundledAvfRuntime = hostOs === "macos" && hostArch === "aarch64";
+  const allowManagedAvfRuntimeWithoutLocalPayload =
+    USING_SHIPPED_APP_MODE || ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD;
   if (requiresBundledAvfRuntime) {
     const avfGuestRuntime = runtimes.find((entry) =>
       entry
@@ -1013,14 +1020,17 @@ const ensureBundledContainerAssets = (options = {}) => {
           path.join(runtimeRoot, "helpers", "egress-proxy"),
           path.join(runtimeRoot, "helpers", "container-stack.tar.gz"),
         ];
-        for (const requiredPath of requiredPaths) {
-          if (!fs.existsSync(requiredPath)) {
-            throw new Error(
-              `bundled AVF guest runtime asset missing at ${requiredPath}; run pnpm -C core desktop:prep:release`,
-            );
+        const missingRequiredPath = requiredPaths.find((requiredPath) => !fs.existsSync(requiredPath));
+        if (missingRequiredPath) {
+          if (allowManagedAvfRuntimeWithoutLocalPayload) {
+            assertManagedAvfRuntimeComponent(runtimeLock, hostOs, hostArch);
+            return;
           }
+          throw new Error(
+            `bundled AVF guest runtime asset missing at ${missingRequiredPath}; run pnpm -C core desktop:prep:release`,
+          );
         }
-      } else if (USING_SHIPPED_APP_MODE) {
+      } else if (allowManagedAvfRuntimeWithoutLocalPayload) {
         assertManagedAvfRuntimeComponent(runtimeLock, hostOs, hostArch);
       } else {
         throw new Error(

@@ -1125,13 +1125,16 @@ const runProviderFirstTurnApiSmoke = async (
     const history = await safeDaemonJson("GET", `/api/sessions/${sessionId}/history?limit=200`);
     if (history.status === 200 && history.payload) {
       lastHistory = history.payload;
+      const turns = Array.isArray(history.payload.turns) ? history.payload.turns : [];
+      const latestTurn = turns.length ? turns[turns.length - 1] : null;
+      const latestStatus = String(latestTurn?.status || "").trim().toLowerCase();
       const messages = Array.isArray(history.payload.messages) ? history.payload.messages : [];
       const assistantMessageRaw = messages
         .filter((m) => String(m?.role || "").toLowerCase() === "assistant")
         .map((m) => String(m?.content || ""))
         .find((content) => content.trim().length > 0) || "";
       const assistantMessage = assistantMessageRaw.trim();
-      if (assistantMessage) {
+      if (latestStatus === "completed" && assistantMessage) {
         return {
           taskId,
           sessionId,
@@ -1139,10 +1142,6 @@ const runProviderFirstTurnApiSmoke = async (
           assistantMessage,
         };
       }
-
-      const turns = Array.isArray(history.payload.turns) ? history.payload.turns : [];
-      const latestTurn = turns.length ? turns[turns.length - 1] : null;
-      const latestStatus = String(latestTurn?.status || "").trim().toLowerCase();
       if (latestStatus === "failed" || latestStatus === "cancelled") {
         const turnId = String(latestTurn?.turn_id || latestTurn?.id || "").trim();
         const events = await safeDaemonJson("GET", `/api/sessions/${sessionId}/events?limit=200`);
@@ -1188,6 +1187,41 @@ const runCodexFirstTurnApiSmoke = async (workspaceId, options = {}, timeoutMs = 
 
 const normalizeNewlines = (value) => String(value || "").replace(/\r\n/g, "\n");
 const normalizeFileBody = (value) => normalizeNewlines(value).trimEnd();
+
+const sessionDiffContainsExpectedFile = (diffText, relativePath, expectedContents, exactFileContents) => {
+  const normalizedPath = normalizeText(relativePath);
+  if (!normalizedPath) return false;
+  const normalizedDiff = normalizeNewlines(diffText || "");
+  const fileHeader = `diff --git a/${normalizedPath} b/${normalizedPath}`;
+  const fileStart = normalizedDiff.indexOf(fileHeader);
+  if (fileStart < 0) return false;
+
+  const nextHeader = normalizedDiff.indexOf("\ndiff --git ", fileStart + fileHeader.length);
+  const fileBlock = normalizedDiff.slice(fileStart, nextHeader < 0 ? undefined : nextHeader);
+  const addedLines = [];
+  let sawNoNewlineMarker = false;
+
+  for (const line of fileBlock.split("\n")) {
+    if (line === "\\ No newline at end of file") {
+      sawNoNewlineMarker = true;
+      continue;
+    }
+    if (line.startsWith("+++ ")) continue;
+    if (line.startsWith("+")) {
+      addedLines.push(line.slice(1));
+    }
+  }
+
+  const actualRaw = addedLines.join("\n");
+  const expectedRaw = normalizeNewlines(expectedContents);
+  if (exactFileContents) {
+    const expectsTrailingNewline = /(?:\n)$/.test(expectedRaw);
+    if (actualRaw !== expectedRaw) return false;
+    return expectsTrailingNewline ? !sawNoNewlineMarker : sawNoNewlineMarker;
+  }
+
+  return normalizeFileBody(actualRaw) === normalizeFileBody(expectedContents);
+};
 
 const runProviderFileEditApiSmoke = async (
   workspaceId,
@@ -1245,28 +1279,27 @@ const runProviderFileEditApiSmoke = async (
     }
   }
 
-  const executionRoot = await resolveSessionWorktreeRoot(turnResult.sessionId);
-  const absolutePath = path.join(executionRoot, relativePath);
   const deadline = Date.now() + timeoutMs;
+  let lastDiff = "";
   while (Date.now() <= deadline) {
-    if (fs.existsSync(absolutePath)) {
-      const fileBody = fs.readFileSync(absolutePath, "utf8");
-      const actualContents = exactFileContents ? normalizeNewlines(fileBody) : normalizeFileBody(fileBody);
-      const expectedBody = exactFileContents ? normalizeNewlines(expectedContents) : normalizeFileBody(expectedContents);
-      if (actualContents === expectedBody) {
+    const diffResp = await safeDaemonJson("GET", `/api/sessions/${turnResult.sessionId}/diff`);
+    if (diffResp.status === 200 && diffResp.payload) {
+      lastDiff = normalizeNewlines(diffResp.payload.diff || "");
+      if (sessionDiffContainsExpectedFile(lastDiff, relativePath, expectedContents, exactFileContents)) {
+        const expectedBody = exactFileContents ? normalizeNewlines(expectedContents) : normalizeFileBody(expectedContents);
         return {
           ...turnResult,
-          filePath: absolutePath,
-          fileContents: actualContents,
+          filePath: relativePath,
+          fileContents: expectedBody,
+          diff: lastDiff,
         };
       }
     }
     await sleep(500);
   }
 
-  const actualContents = fs.existsSync(absolutePath) ? fs.readFileSync(absolutePath, "utf8") : null;
   throw new Error(
-    `${providerId} file edit smoke timed out waiting for ${absolutePath} to contain ${JSON.stringify(expectedContents)}; session=${turnResult.sessionId || "unknown"}; actual=${JSON.stringify(actualContents)}`,
+    `${providerId} file edit smoke timed out waiting for session diff to show ${relativePath} with ${JSON.stringify(expectedContents)}; session=${turnResult.sessionId || "unknown"}; diff=${JSON.stringify(lastDiff)}`,
   );
 };
 

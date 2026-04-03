@@ -208,8 +208,9 @@ test("release supabase publishes the AVF Linux guest runtime before the shipped-
   );
   assert.match(
     text,
-    /- name:\s+Probe published AVF Linux guest runtime URLs \(macOS arm64\)[\s\S]*runtime_lock\.v2\.json[\s\S]*rootfs\.raw\.zst[\s\S]*curl -fsSIL --retry 3 --retry-delay 1 "\$url"/s,
+    /- name:\s+Probe published AVF Linux guest runtime URLs \(macOS arm64\)[\s\S]*runtime_urls_file="\$RUNNER_TEMP\/ctx-avf-runtime-urls\.txt"[\s\S]*runtime_lock\.v2\.json[\s\S]*rootfs\.raw\.zst[\s\S]*while IFS= read -r url; do[\s\S]*curl -fsSIL --retry 3 --retry-delay 1 "\$url"/s,
   );
+  assert.doesNotMatch(text, /mapfile -t runtime_urls/);
 });
 
 test("release supabase validates managed ctx-harness freshness on Linux release lanes", () => {

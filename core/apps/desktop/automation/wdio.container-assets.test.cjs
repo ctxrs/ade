@@ -401,6 +401,44 @@ test("wdio AVF container preflight rejects a thin bundle missing managed AVF hel
   }
 });
 
+test("wdio AVF container preflight accepts managed runtime metadata when local payload is intentionally skipped", async () => {
+  const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-avf-assets-"));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
+  try {
+    writeThinBundleManifestAndRuntimeLock(bundleDir, { hostOs: "macos", hostArch: "aarch64" });
+    const manifestPath = path.join(bundleDir, "manifest.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    manifest.runtimes = [
+      {
+        id: "avf-linux-guest",
+        os: "macos",
+        arch: "aarch64",
+        root: "runtimes/avf-linux-guest/macos/aarch64/test",
+        bin: "rootfs.raw",
+      },
+    ];
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    await withEnv(
+      {
+        CTX_BUNDLE_DIR: bundleDir,
+        CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
+        CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD: "1",
+      },
+      (mod) => {
+        assert.doesNotThrow(() => {
+          mod.__desktopAutomationConfigTestHooks.ensureBundledContainerAssets({
+            platform: "darwin",
+            arch: "arm64",
+          });
+        });
+      },
+    );
+  } finally {
+    fs.rmSync(bundleDir, { recursive: true, force: true });
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("wdio automation AVF runtime prep reuses an existing prepared runtime directory", async () => {
   const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-bundle-"));
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-avf-runtime-"));

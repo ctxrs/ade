@@ -663,8 +663,9 @@ async fn open_session(
     options: &RuntimeOptions,
 ) -> Result<AppServerSessionState> {
     let workdir = session_config
-        .cwd
+        .spawn_cwd
         .clone()
+        .or_else(|| session_config.cwd.clone())
         .unwrap_or(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let mut client = AppServerClient::start(&workdir).await?;
     let developer_instructions =
@@ -769,8 +770,9 @@ async fn start_thread(
 
 async fn probe_models(config: CrpSessionConfig, _options: &RuntimeOptions) -> Result<ModelsProbe> {
     let workdir = config
-        .cwd
+        .spawn_cwd
         .clone()
+        .or_else(|| config.cwd.clone())
         .unwrap_or(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let mut client = AppServerClient::start(&workdir).await?;
     let response = client
