@@ -6,7 +6,11 @@ import {
   mergeMessagesForView,
   mergeQueuedMessagesForPanel,
 } from "../../pages/workbenchViewModel/messageMerge";
-import { deriveMessagesKey, deriveTurnsKey } from "../../pages/workbenchViewModel/messageKeys";
+import {
+  deriveAssistantStreamingKey,
+  deriveMessagesKey,
+  deriveTurnsKey,
+} from "../../pages/workbenchViewModel/messageKeys";
 import type { SessionCacheEntry } from "../sessionSupervisor/entryState";
 import type { SessionThreadProjection } from "./types";
 
@@ -85,7 +89,11 @@ export function applySessionThreadProjectionOverlay(
   return {
     ...baseProjection,
     turns: turnsForThread,
-    turnsStamp: `${baseProjection.projectionRev + overlayRev}:${deriveTurnsKey(turnsForThread)}`,
+    turnsStamp: `${baseProjection.projectionRev + overlayRev}:${deriveTurnsKey(turnsForThread)}:${baseProjection.assistantStreamingStamp}`,
+    assistantStreamingByTurnId: baseProjection.assistantStreamingByTurnId,
+    assistantStreamingStamp:
+      baseProjection.assistantStreamingStamp ||
+      `0:${deriveAssistantStreamingKey(baseProjection.assistantStreamingByTurnId)}`,
     messages: mergedMessages,
     messagesStamp: `${baseProjection.projectionRev + overlayRev}:${deriveMessagesKey(mergedMessages)}`,
     projectionRev: baseProjection.projectionRev + overlayRev,

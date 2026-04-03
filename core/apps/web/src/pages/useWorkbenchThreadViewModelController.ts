@@ -3,6 +3,7 @@ import type { Message, SessionEvent, SessionTurn, SessionTurnTool } from "../api
 import { idToString } from "../api/client";
 import type { AskUserQuestionAnswerState, WorkbenchListItem, WorkbenchThreadView } from "./SessionPage.types";
 import type { SessionViewVerbosity } from "../state/uiStateStore";
+import type { AssistantStreamingState } from "../state/assistantStreaming";
 import {
   buildWorkbenchThreadViewModelFromTurns,
   filterThreadItemsForVerbosity,
@@ -22,6 +23,7 @@ type Params = {
   eventsStamp: string;
   verbosity: SessionViewVerbosity;
   turns: SessionTurn[];
+  assistantStreamingByTurnId?: Record<string, AssistantStreamingState>;
   messages: Message[];
   events: SessionEvent[];
   toolsByTurnId: Record<string, SessionTurnTool[]>;
@@ -87,6 +89,7 @@ function buildPerTurnCaches(messages: Message[], events: SessionEvent[]): PerTur
 
 function buildStateFromInputs(opts: {
   turns: SessionTurn[];
+  assistantStreamingByTurnId: Record<string, AssistantStreamingState>;
   messages: Message[];
   toolsByTurnId: Record<string, SessionTurnTool[]>;
   toolSummariesReady: boolean;
@@ -94,12 +97,22 @@ function buildStateFromInputs(opts: {
   askUserQuestionAnswers: Map<string, AskUserQuestionAnswerState>;
   verbosity: SessionViewVerbosity;
 }): Pick<InternalState, "view" | "listItems" | "groupRanges" | "turnsLen" | "messagesLen" | "eventsLen"> {
-  const { turns, messages, toolsByTurnId, toolSummariesReady, events, askUserQuestionAnswers, verbosity } = opts;
+  const {
+    turns,
+    assistantStreamingByTurnId,
+    messages,
+    toolsByTurnId,
+    toolSummariesReady,
+    events,
+    askUserQuestionAnswers,
+    verbosity,
+  } = opts;
   const view = buildWorkbenchThreadViewModelFromTurns(
     turns,
     messages,
     toolSummariesReady ? toolsByTurnId : {},
     events,
+    assistantStreamingByTurnId,
     askUserQuestionAnswers,
   );
 
@@ -151,6 +164,7 @@ export function useWorkbenchThreadViewModelController(
     eventsStamp,
     verbosity,
     turns,
+    assistantStreamingByTurnId = {},
     messages,
     events,
     toolsByTurnId,
@@ -164,6 +178,7 @@ export function useWorkbenchThreadViewModelController(
   if (initialBuildRef.current === null) {
     const initialState = buildStateFromInputs({
       turns,
+      assistantStreamingByTurnId,
       messages,
       toolsByTurnId,
       toolSummariesReady,
@@ -220,6 +235,7 @@ export function useWorkbenchThreadViewModelController(
   fullRebuild.current = (preferredKind = "reconcile") => {
     const rebuilt = buildStateFromInputs({
       turns,
+      assistantStreamingByTurnId,
       messages,
       toolsByTurnId,
       toolSummariesReady,
@@ -410,8 +426,17 @@ export function useWorkbenchThreadViewModelController(
       const msgs = perTurnCachesRef.current.messagesByTurnId.get(turnId) ?? [];
       const evs = perTurnCachesRef.current.eventsByTurnId.get(turnId) ?? [];
       const tools = toolSummariesReady ? { [turnId]: toolsByTurnId[turnId] ?? [] } : {};
+      const assistantStreaming =
+        assistantStreamingByTurnId[turnId] == null ? {} : { [turnId]: assistantStreamingByTurnId[turnId]! };
 
-      const rebuilt = buildWorkbenchThreadViewModelFromTurns([turn], msgs, tools, evs, askUserQuestionAnswers);
+      const rebuilt = buildWorkbenchThreadViewModelFromTurns(
+        [turn],
+        msgs,
+        tools,
+        evs,
+        assistantStreaming,
+        askUserQuestionAnswers,
+      );
       const nextGroup = rebuilt.groups.find((x) => x.key === key);
       if (!nextGroup) {
         syncInvalidationRefs();

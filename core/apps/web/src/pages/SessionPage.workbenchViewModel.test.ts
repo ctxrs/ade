@@ -222,6 +222,89 @@ describe("buildWorkbenchThreadViewModel", () => {
     expect(items.map((it) => it.kind)).toEqual(["tool", "thought", "tool", "turn_status"]);
   }, 10000);
 
+  it("suppresses a stale pending assistant row when the same assistant reply is already persisted", async () => {
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+
+    const turns = [
+      {
+        turn_id: "t1",
+        session_id: "s1",
+        user_message_id: "m1",
+        status: "running",
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:02.000Z",
+        assistant_partial: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ];
+
+    const messages = [
+      {
+        id: "m1",
+        session_id: "s1",
+        role: "user",
+        content: "hi",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        turn_id: "t1",
+        order_seq: 1,
+      },
+      {
+        id: "a1",
+        session_id: "s1",
+        role: "assistant",
+        content: "pong",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:01.000Z",
+        turn_id: "t1",
+        order_seq: 2,
+      },
+    ];
+
+    const events = [
+      {
+        seq: 1,
+        id: "e1",
+        session_id: "s1",
+        run_id: "r1",
+        turn_id: "t1",
+        event_type: "assistant_complete",
+        payload_json: { full_content: "pong", message_id: "provider-msg-1", order_seq: 2 },
+        created_at: "2025-12-15T00:00:01.000Z",
+      },
+    ];
+
+    const out = buildWorkbenchThreadViewModel(
+      turns as unknown as SessionTurn[],
+      messages as unknown as Message[],
+      {},
+      events as unknown as SessionEvent[],
+      {
+        t1: {
+          content: "pong",
+          providerMessageId: "provider-msg-1",
+        },
+      },
+    );
+    const items = out.groups[0]?.items ?? [];
+    const assistantItems = items.filter(
+      (item): item is Extract<ThreadItem, { kind: "assistant" }> => item.kind === "assistant",
+    );
+
+    expect(assistantItems).toHaveLength(1);
+    expect(assistantItems[0]).toMatchObject({
+      id: "assistant-msg-a1",
+      content: "pong",
+      is_complete: true,
+    });
+  }, 10000);
+
   it("uses CRP reasoning summaries for status and keeps trace chunks in thought rows", async () => {
     const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
 

@@ -12,6 +12,7 @@ import type {
   WorkbenchThreadView,
   WorkbenchTurnHeader,
 } from "./SessionPage.types";
+import type { AssistantStreamingState } from "../state/assistantStreaming";
 import { humanToolKind, isPlaceholderToolLabel, normalizeDisplayToolLabel, toolDisplayTitleFromPayload } from "./SessionPage.helpers";
 import {
   buildPendingTurns,
@@ -78,20 +79,10 @@ function logViewModelInvariant(reason: string, details: Record<string, unknown>)
   console.error("[WorkbenchThreadViewModel][contract-violation]", { reason, ...details });
 }
 
-type TurnStreamingMeta = {
-  pendingProviderId: string | null;
-  lastProviderId: string | null;
-};
-
-function readTurnStreamingMeta(turn: SessionTurn): TurnStreamingMeta {
-  const t = turn as SessionTurn & {
-    assistant_partial_provider_message_id?: string | null;
-    assistant_last_provider_message_id?: string | null;
-  };
-  return {
-    pendingProviderId: t.assistant_partial_provider_message_id ?? null,
-    lastProviderId: t.assistant_last_provider_message_id ?? null,
-  };
+function isTerminalTurnStatus(
+  status: SessionTurn["status"] | null | undefined,
+): status is Extract<SessionTurn["status"], "completed" | "failed" | "interrupted"> {
+  return status === "completed" || status === "failed" || status === "interrupted";
 }
 
 function readMessageOrderSeq(message: unknown): number {
@@ -117,12 +108,27 @@ export function buildWorkbenchThreadViewModel(
   messages: Message[],
   toolsByTurnId: Record<string, SessionTurnTool[]>,
   events: SessionEvent[],
+  assistantStreamingOrAnswers:
+    | Record<string, AssistantStreamingState>
+    | Map<string, AskUserQuestionAnswerState> = {},
   askUserQuestionAnswers?: Map<string, AskUserQuestionAnswerState>,
 ): WorkbenchThreadView {
+  const assistantStreamingByTurnId =
+    assistantStreamingOrAnswers instanceof Map ? {} : assistantStreamingOrAnswers;
   const answers =
-    askUserQuestionAnswers ?? collectAskUserQuestionAnswers(events, {});
+    assistantStreamingOrAnswers instanceof Map
+      ? assistantStreamingOrAnswers
+      : askUserQuestionAnswers ??
+        collectAskUserQuestionAnswers(events, {});
   if (turns.length > 0) {
-    return buildWorkbenchThreadViewModelFromTurns(turns, messages, toolsByTurnId, events, answers);
+    return buildWorkbenchThreadViewModelFromTurns(
+      turns,
+      messages,
+      toolsByTurnId,
+      events,
+      assistantStreamingByTurnId,
+      answers,
+    );
   }
   recordThreadInvariantCounter("managed_no_turns");
   return { groups: mergeGroupsWithSystemMessages([], messages), debugEvents: [] };
@@ -464,8 +470,17 @@ export function buildWorkbenchThreadViewModelFromTurns(
   messages: Message[],
   toolsByTurnId: Record<string, SessionTurnTool[]>,
   events: SessionEvent[],
+  assistantStreamingOrAnswers:
+    | Record<string, AssistantStreamingState>
+    | Map<string, AskUserQuestionAnswerState> = {},
   askUserQuestionAnswers: Map<string, AskUserQuestionAnswerState> = new Map(),
 ): WorkbenchThreadView {
+  const assistantStreamingByTurnId =
+    assistantStreamingOrAnswers instanceof Map ? {} : assistantStreamingOrAnswers;
+  const answers =
+    assistantStreamingOrAnswers instanceof Map
+      ? assistantStreamingOrAnswers
+      : askUserQuestionAnswers;
   const debugEvents: SessionEvent[] = [];
   const groups: SortableThreadGroup[] = [];
   const customStatusByTurnId = buildCustomStatusByTurnId(events);
@@ -574,7 +589,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
       turn,
       tools,
       events: eventsForTurn,
-      askUserQuestionAnswers,
+      askUserQuestionAnswers: answers,
     });
     const assistantOrderSeq = collectAssistantOrderSeq(eventsForTurn);
 
@@ -638,14 +653,33 @@ export function buildWorkbenchThreadViewModelFromTurns(
       turn.status === "running" || turn.status === "queued"
         ? customStatusByTurnId.get(turnId) ?? null
         : null;
-    const pendingContent = String(turn.assistant_partial ?? "");
+    const pendingState = assistantStreamingByTurnId[turnId] ?? null;
+    const pendingContent = String(pendingState?.content ?? "");
     const pendingTrimmed = pendingContent.trim();
     const statusTrimmed = statusText?.trim() ?? "";
-    const { pendingProviderId, lastProviderId } = readTurnStreamingMeta(turn);
-    // provider_message_id lets us drop the streaming partial once the final message is inserted.
-    const isDuplicatePending =
-      !!pendingProviderId && !!lastProviderId && pendingProviderId === lastProviderId;
-    if (pendingTrimmed.length > 0 && pendingTrimmed !== statusTrimmed && !isDuplicatePending) {
+    const pendingProviderId = pendingState?.providerMessageId ?? null;
+    const persistedAssistantDuplicate =
+      pendingTrimmed.length > 0
+        ? assistantMessages.find((message) => String(message.content ?? "").trim() === pendingTrimmed) ?? null
+        : null;
+    if (persistedAssistantDuplicate) {
+      const reason = isTerminalTurnStatus(turn.status)
+        ? "stale_pending_after_terminal_assistant_message"
+        : "stale_pending_duplicate_assistant_message";
+      recordThreadInvariantCounter(reason, { turn_status: String(turn.status ?? "") || "unknown" });
+      logViewModelInvariant(reason, {
+        turnId,
+        turnStatus: turn.status ?? null,
+        pendingProviderId,
+        pendingLength: pendingTrimmed.length,
+        messageId: idToString(persistedAssistantDuplicate.id),
+      });
+    }
+    if (
+      pendingTrimmed.length > 0 &&
+      pendingTrimmed !== statusTrimmed &&
+      !persistedAssistantDuplicate
+    ) {
       const pendingOrderSeq = pendingProviderId
         ? assistantOrderSeq.byProviderId.get(pendingProviderId)
         : undefined;

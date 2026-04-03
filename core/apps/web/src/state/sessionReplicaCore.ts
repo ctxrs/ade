@@ -16,6 +16,7 @@ import type {
   WorkspaceActiveSnapshotEvent,
 } from "@ctx/types";
 import { idToString } from "../api/client";
+import { clearAllAssistantStreaming, type AssistantStreamingState } from "./assistantStreaming";
 import {
   clearSessionHeadV1,
   clearSessionHistoryPagesV1,
@@ -62,6 +63,8 @@ type SessionReplicaEntry = {
   stateRev?: number;
   turns: SessionTurn[];
   turnsRev: number;
+  assistantStreamingByTurnId: Record<string, AssistantStreamingState>;
+  assistantStreamingRev: number;
   messages: Message[];
   messagesRev: number;
   events: SessionEvent[];
@@ -109,19 +112,11 @@ const isPartialEvent = (event: SessionEvent | null | undefined): boolean => {
 
 const stripTurnPartials = (turns: SessionTurn[]): SessionTurn[] =>
   turns.map((turn) => {
-    const next = {
+    return {
       ...turn,
       assistant_partial: null,
       thought_partial: null,
-    } as SessionTurn & {
-      assistant_partial_provider_message_id?: string | null;
-      assistant_last_provider_message_id?: string | null;
-      thought_partial_provider_item_id?: string | null;
     };
-    next.assistant_partial_provider_message_id = null;
-    next.assistant_last_provider_message_id = null;
-    next.thought_partial_provider_item_id = null;
-    return next;
   });
 
 const stripPartialEvents = (events: SessionEvent[]): SessionEvent[] =>
@@ -182,12 +177,11 @@ const mergePartial = (p: string, n: string): string => {
 };
 
 const mergeTurn = (prev: SessionTurn, next: SessionTurn): SessionTurn => {
-  const assistant_partial = mergePartial(prev.assistant_partial ?? "", next.assistant_partial ?? "");
   const thought_partial = mergePartial(prev.thought_partial ?? "", next.thought_partial ?? "");
   return {
     ...prev,
     ...next,
-    assistant_partial,
+    assistant_partial: null,
     thought_partial,
     tool_total: Math.max(prev.tool_total ?? 0, next.tool_total ?? 0),
     tool_pending: Math.max(prev.tool_pending ?? 0, next.tool_pending ?? 0),
@@ -381,6 +375,8 @@ export class SessionReplicaCore {
       stateRev: undefined,
       turns: [],
       turnsRev: 0,
+      assistantStreamingByTurnId: {},
+      assistantStreamingRev: 0,
       messages: [],
       messagesRev: 0,
       events: [],
@@ -427,6 +423,8 @@ export class SessionReplicaCore {
       freshness: entry.freshness,
       turns: entry.turns,
       turnsRev: entry.turnsRev,
+      assistantStreamingByTurnId: entry.assistantStreamingByTurnId,
+      assistantStreamingRev: entry.assistantStreamingRev,
       messages: entry.messages,
       messagesRev: entry.messagesRev,
       events: entry.events,
@@ -534,6 +532,9 @@ export class SessionReplicaCore {
     }
     entry.turns = turns;
     entry.turnsRev += 1;
+    if (authoritative || (!incomingIsOlder && !incomingIsNarrower)) {
+      clearAllAssistantStreaming(entry);
+    }
     entry.messages = messages;
     entry.messagesRev += 1;
     entry.events = events;

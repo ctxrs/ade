@@ -71,6 +71,8 @@ const cloneSessionEntry = (entry: InternalEntry): SessionCacheEntry => {
     messages: entry.messages,
     messagesRev: entry.messagesRev,
     turnsRev: entry.turnsRev,
+    assistantStreamingByTurnId: entry.assistantStreamingByTurnId,
+    assistantStreamingRev: entry.assistantStreamingRev,
     artifacts: support.artifacts,
     artifactsLoading: support.artifactsLoading,
     subagentInvocations: support.subagentInvocations,

@@ -10,6 +10,7 @@ import {
   type SessionTurnToolSummary,
 } from "../../api/client";
 import { saveSessionHeadV1 } from "../uiStateStore";
+import { clearAllAssistantStreaming, clearAssistantStreaming } from "../assistantStreaming";
 import { findWorkspaceSessionHead } from "../workspaceActiveSnapshot/projection";
 import { stripPartialEvents, stripTurnPartials } from "./cachePolicy";
 import { asRecord, hasModelList } from "./eventHydration";
@@ -116,6 +117,7 @@ function pruneOmittedNonTerminalTurns(
     delete support.turnToolsHydratedByTurnId[turnId];
     entry.startedTurnIds.delete(turnId);
     entry.toolIdsByTurn.delete(turnId);
+    clearAssistantStreaming(entry, turnId);
   }
 
   for (const turnId of removedTurnIds) {
@@ -173,6 +175,7 @@ export function applyHead(
   if (opts?.freshness) {
     entry.freshness = opts.freshness;
   }
+  clearAllAssistantStreaming(entry);
   if (!entry.mode) {
     const resolvedMode = this.resolveSessionMode(entry.sessionId, entry);
     if (resolvedMode) {
@@ -464,6 +467,7 @@ export function resetEntryProjectionForReplace(
   entry.events = [];
   entry.messages = [];
   entry.queue = [];
+  clearAllAssistantStreaming(entry);
   this.bumpTurnsRev(entry);
   this.bumpEventsRev(entry);
   this.bumpMessagesRev(entry);

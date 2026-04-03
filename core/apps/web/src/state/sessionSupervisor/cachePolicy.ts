@@ -10,14 +10,13 @@ const mergePartial = (p: string, n: string): string => {
 };
 
 export const mergeTurn = (prev: SessionTurn, next: SessionTurn): SessionTurn => {
-  const assistant_partial = mergePartial(prev.assistant_partial ?? "", next.assistant_partial ?? "");
   const thought_partial = mergePartial(prev.thought_partial ?? "", next.thought_partial ?? "");
   const status = mergeTurnStatus(prev.status, next.status);
   return {
     ...prev,
     ...next,
     status,
-    assistant_partial,
+    assistant_partial: null,
     thought_partial,
     end_seq: next.end_seq ?? prev.end_seq,
     updated_at:
@@ -63,19 +62,11 @@ export const isPartialEvent = (event: SessionEvent | null | undefined): boolean 
 
 export const stripTurnPartials = (turns: SessionTurn[]): SessionTurn[] => {
   return turns.map((turn) => {
-    const next = {
+    return {
       ...turn,
       assistant_partial: null,
       thought_partial: null,
-    } as SessionTurn & {
-      assistant_partial_provider_message_id?: string | null;
-      assistant_last_provider_message_id?: string | null;
-      thought_partial_provider_item_id?: string | null;
     };
-    next.assistant_partial_provider_message_id = null;
-    next.assistant_last_provider_message_id = null;
-    next.thought_partial_provider_item_id = null;
-    return next;
   });
 };
 

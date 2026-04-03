@@ -683,6 +683,296 @@ describe("SessionReplicaCore", () => {
     expect(latest.data.lastEventSeq).toBe(2);
   });
 
+  it("clears stale assistant streaming overlay when the assistant message delta arrives before the inserted event", () => {
+    const sessionId = "session-assistant-stream-cleared-by-message";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    const createdAt = new Date().toISOString();
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [
+          {
+            turn_id: "turn-1",
+            session_id: sessionId,
+            run_id: "run-1",
+            user_message_id: "message-1",
+            status: "running",
+            start_seq: 1,
+            end_seq: null,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: null,
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+          },
+        ],
+        events: [],
+        messages: [
+          {
+            id: "message-1",
+            session_id: sessionId,
+            task_id: "task-1",
+            turn_id: "turn-1",
+            role: "user",
+            content: "hi",
+            delivery: "immediate",
+            created_at: createdAt,
+          },
+        ],
+        last_event_seq: 1,
+        state_rev: 1,
+        activity: { is_working: true, last_turn_status: "running" },
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "bootstrap_seed",
+    });
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 2,
+          projection_rev: 2,
+          state_rev: 2,
+          event: {
+            seq: 2,
+            id: "event-assistant-complete",
+            session_id: sessionId,
+            run_id: "run-1",
+            turn_id: "turn-1",
+            event_type: "assistant_complete",
+            payload_json: {
+              full_content: "pong",
+              message_id: "provider-msg-1",
+              order_seq: 2,
+            },
+            created_at: createdAt,
+          },
+        },
+      },
+    });
+
+    const streamingPatch = [...patches].reverse().find(
+      (patch) =>
+        patch.sessionId === sessionId &&
+        patch.op === "append" &&
+        patch.data.assistantStreamingByTurnId?.["turn-1"]?.content === "pong",
+    );
+    expect(streamingPatch).toBeTruthy();
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 3,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 3,
+          projection_rev: 3,
+          state_rev: 3,
+          message: {
+            id: "assistant-msg-1",
+            session_id: sessionId,
+            task_id: "task-1",
+            turn_id: "turn-1",
+            role: "assistant",
+            content: "pong",
+            delivery: "immediate",
+            created_at: createdAt,
+            order_seq: 2,
+          },
+        },
+      },
+    });
+
+    const latest = [...patches].reverse().find(
+      (patch) => patch.sessionId === sessionId && patch.op === "append" && Array.isArray(patch.data.messages),
+    );
+    if (!latest || latest.op === "evict" || !latest.data.messages) {
+      throw new Error("expected canonical append patch with assistant message");
+    }
+
+    expect(latest.data.messages.some((message) => message.role === "assistant")).toBe(true);
+    expect(latest.data.assistantStreamingByTurnId ?? {}).toEqual({});
+  });
+
+  it("clears stale assistant streaming overlay on repair replace", () => {
+    const sessionId = "session-assistant-stream-cleared-by-repair";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    const createdAt = new Date().toISOString();
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [
+          {
+            turn_id: "turn-1",
+            session_id: sessionId,
+            run_id: "run-1",
+            user_message_id: "message-1",
+            status: "running",
+            start_seq: 1,
+            end_seq: null,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: null,
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+          },
+        ],
+        events: [],
+        messages: [
+          {
+            id: "message-1",
+            session_id: sessionId,
+            task_id: "task-1",
+            turn_id: "turn-1",
+            role: "user",
+            content: "hi",
+            delivery: "immediate",
+            created_at: createdAt,
+          },
+        ],
+        last_event_seq: 1,
+        state_rev: 1,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "bootstrap_seed",
+    });
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 2,
+          projection_rev: 2,
+          state_rev: 2,
+          event: {
+            seq: 2,
+            id: "event-assistant-complete",
+            session_id: sessionId,
+            run_id: "run-1",
+            turn_id: "turn-1",
+            event_type: "assistant_complete",
+            payload_json: {
+              full_content: "pong",
+              message_id: "provider-msg-1",
+              order_seq: 2,
+            },
+            created_at: createdAt,
+          },
+        },
+      },
+    });
+
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [
+          {
+            turn_id: "turn-1",
+            session_id: sessionId,
+            run_id: "run-1",
+            user_message_id: "message-1",
+            status: "completed",
+            start_seq: 1,
+            end_seq: 3,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: null,
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+          },
+        ],
+        events: [],
+        messages: [
+          {
+            id: "message-1",
+            session_id: sessionId,
+            task_id: "task-1",
+            turn_id: "turn-1",
+            role: "user",
+            content: "hi",
+            delivery: "immediate",
+            created_at: createdAt,
+          },
+          {
+            id: "assistant-msg-1",
+            session_id: sessionId,
+            task_id: "task-1",
+            turn_id: "turn-1",
+            role: "assistant",
+            content: "pong",
+            delivery: "immediate",
+            created_at: createdAt,
+            order_seq: 2,
+          },
+        ],
+        last_event_seq: 3,
+        state_rev: 3,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "repair_replace",
+    });
+
+    const latest = [...patches].reverse().find(
+      (patch) => patch.sessionId === sessionId && patch.op === "replace",
+    );
+    if (!latest || latest.op === "evict") {
+      throw new Error("expected repair replace patch");
+    }
+
+    expect(latest.data.replaceMode).toBe("repair_replace");
+    expect(latest.data.assistantStreamingByTurnId ?? {}).toEqual({});
+  });
+
   it("applies queue events into canonical message state before emitting append patches", () => {
     const sessionId = "session-canonical-queue-delta";
     const patches: SessionReplicaPatch[] = [];

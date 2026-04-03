@@ -49,7 +49,9 @@ test("release supabase uses typed updater drill booleans", () => {
   const text = workflowText("release-supabase.yml");
   assert.match(text, /run_updater_e2e_drill:[\s\S]*type: boolean/);
   assert.match(text, /updater_e2e_expect_version_change:[\s\S]*type: boolean/);
+  assert.match(text, /run_mac_first_run_workspace_create:[\s\S]*type: boolean/);
   assert.ok(!text.includes("inputs.run_updater_e2e_drill == 'true'"));
+  assert.ok(!text.includes("inputs.run_mac_first_run_workspace_create == 'true'"));
   assert.match(text, /CTX_UPDATER_E2E_EXPECT_VERSION_CHANGE:\s*\$\{\{\s*github\.event_name == 'workflow_dispatch'/);
 });
 
@@ -245,6 +247,10 @@ test("release supabase runs a shipped-app first-run workspace gate on the Mac mi
     /- name:\s+Real first-run workspace create smoke \(macOS shipped app\)[\s\S]*?(?=\n\s*- name:|\n\s*verify-manifest:|$)/,
   )?.[0] || "";
   assert.match(text, /mac-first-run-workspace-create:/);
+  assert.match(
+    block,
+    /if:\s*\$\{\{\s*always\(\)\s*&&\s*!cancelled\(\)[\s\S]*\(github\.event_name != 'workflow_dispatch' \|\| inputs\.run_mac_first_run_workspace_create\)\s*\}\}/s,
+  );
   assert.match(
     block,
     /mac-first-run-workspace-create:[\s\S]*runs-on:[\s\S]*group:\s*ctx-avf[\s\S]*labels:\s*ctx-avf-mac-mini/s,

@@ -42,8 +42,7 @@
       "stableEventTypes": [
         "user_message",
         "tool_call",
-        "tool_result",
-        "assistant_complete"
+        "tool_result"
       ],
       "renderItemKinds": [
         "tool",

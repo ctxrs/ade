@@ -97,6 +97,7 @@ export function useWorkbenchSessionActions({
       activeEntry.messages ?? [],
       activeEntry.turnToolsByTurnId ?? {},
       activeEntry.events ?? [],
+      activeEntry.assistantStreamingByTurnId ?? activeEntry.threadProjection?.assistantStreamingByTurnId ?? {},
     );
     const title = singleSessionTitle ?? "Conversation";
     const lines: string[] = [];
@@ -185,6 +186,7 @@ export function useWorkbenchSessionActions({
         entry.messages ?? [],
         entry.turnToolsByTurnId ?? {},
         entry.events ?? [],
+        entry.assistantStreamingByTurnId ?? entry.threadProjection?.assistantStreamingByTurnId ?? {},
       );
 
       const title = singleSessionTitle ?? "Conversation";

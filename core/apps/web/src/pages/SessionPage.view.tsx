@@ -421,6 +421,7 @@ export function SessionView({
     eventsStamp: threadProjection.eventsStamp,
     verbosity,
     turns: threadProjection.turns,
+    assistantStreamingByTurnId: threadProjection.assistantStreamingByTurnId,
     messages: threadProjection.messages,
     events: threadProjection.events,
     toolsByTurnId: threadProjection.toolsByTurnId,

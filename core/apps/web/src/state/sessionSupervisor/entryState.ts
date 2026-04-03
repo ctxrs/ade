@@ -13,6 +13,7 @@ import type {
 } from "../../api/client";
 import type { SessionActivityState } from "@ctx/types";
 import type { SessionThreadProjection } from "../sessionThreadProjection/types";
+import type { AssistantStreamingState } from "../assistantStreaming";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "idle";
 
@@ -99,6 +100,8 @@ export type SessionCacheEntry = {
   stateLoaded: boolean;
   stateLoading: boolean;
   stateRev?: number;
+  assistantStreamingByTurnId?: Record<string, AssistantStreamingState>;
+  assistantStreamingRev?: number;
   loadErrors?: SessionSupportLoadErrors;
   queue: Message[];
   optimisticThreadMessages?: Message[];
@@ -175,6 +178,8 @@ export type InternalEntry = InternalEntryBase & {
   turnsRev: number;
   messagesRev: number;
   eventsRev: number;
+  assistantStreamingByTurnId: Record<string, AssistantStreamingState>;
+  assistantStreamingRev: number;
   stateRev?: number;
   headFromCache: boolean;
   thoughtCacheByKey: Record<string, ThoughtCacheEntry>;
@@ -212,6 +217,8 @@ export function createInternalEntry(
     messages: [],
     messagesRev: 0,
     turnsRev: 0,
+    assistantStreamingByTurnId: {},
+    assistantStreamingRev: 0,
     stateRev: undefined,
     queue: [],
     summaryCheckpoint: null,

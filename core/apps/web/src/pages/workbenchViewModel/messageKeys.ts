@@ -1,4 +1,5 @@
 import type { Message, SessionTurn } from "../../api/client";
+import type { AssistantStreamingState } from "../../state/assistantStreaming";
 
 // Runtime thread invalidation now uses explicit supervisor/view stamps.
 // These hash helpers remain as a narrow test/debug seam.
@@ -84,7 +85,6 @@ export function deriveTurnsKey(turns: SessionTurn[]): string {
     hash = hashNumber(hash, Number(turn.end_seq ?? Number.NaN));
     hash = hashString(hash, String(turn.started_at ?? ""));
     hash = hashString(hash, String(turn.updated_at ?? ""));
-    hash = hashString(hash, String(turn.assistant_partial ?? ""));
     hash = hashString(hash, String(turn.thought_partial ?? ""));
     hash = hashNumber(hash, turn.tool_total);
     hash = hashNumber(hash, turn.tool_pending);
@@ -94,4 +94,19 @@ export function deriveTurnsKey(turns: SessionTurn[]): string {
     hash = hashUnknownRecord(hash, turn.metrics_json ?? null);
   }
   return finalizeHash(turns.length, hash);
+}
+
+export function deriveAssistantStreamingKey(
+  assistantStreamingByTurnId: Record<string, AssistantStreamingState>,
+): string {
+  const entries = Object.entries(assistantStreamingByTurnId);
+  if (entries.length === 0) return "0";
+  let hash = HASH_SEED;
+  entries.sort(([a], [b]) => a.localeCompare(b));
+  for (const [turnId, state] of entries) {
+    hash = hashString(hash, turnId);
+    hash = hashString(hash, state.content);
+    hash = hashString(hash, state.providerMessageId ?? "");
+  }
+  return finalizeHash(entries.length, hash);
 }

@@ -246,6 +246,10 @@ const applyCanonicalTranscriptPatch = (
       });
     }
   }
+  if (data.assistantStreamingByTurnId) {
+    entry.assistantStreamingByTurnId = data.assistantStreamingByTurnId;
+    entry.assistantStreamingRev = data.assistantStreamingRev ?? (entry.assistantStreamingRev + 1);
+  }
 
   if (data.session) {
     entry.session = data.session;

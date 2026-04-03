@@ -220,7 +220,7 @@ describe("sessionHeadState", () => {
       ],
     );
 
-    expect(mergedTurns[0]?.assistant_partial).toBe("hello");
+    expect(mergedTurns[0]?.assistant_partial).toBeNull();
     expect(mergedMessages.map((message) => message.id)).toEqual(["message-1", "message-2"]);
   });
 });

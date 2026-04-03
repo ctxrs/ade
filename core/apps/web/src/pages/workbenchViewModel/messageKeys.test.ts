@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Message, SessionTurn } from "../../api/client";
-import { deriveMessagesKey, deriveTurnsKey } from "./messageKeys";
+import { deriveAssistantStreamingKey, deriveMessagesKey, deriveTurnsKey } from "./messageKeys";
 
 describe("messageKeys", () => {
-  it("changes turnsKey when a non-tail assistant partial changes with the same timestamp", () => {
+  it("ignores assistant_partial when deriving turnsKey", () => {
     const turns = [
       {
         turn_id: "turn-1",
@@ -27,6 +27,18 @@ describe("messageKeys", () => {
       },
       turns[1],
     ] as unknown as SessionTurn[]);
+
+    expect(k1).toBe(k2);
+  });
+
+  it("changes assistant streaming key when a non-tail pending assistant changes with the same timestamp", () => {
+    const k1 = deriveAssistantStreamingKey({});
+    const k2 = deriveAssistantStreamingKey({
+      "turn-1": {
+        content: "stream",
+        providerMessageId: "provider-1",
+      },
+    });
 
     expect(k1).not.toBe(k2);
   });

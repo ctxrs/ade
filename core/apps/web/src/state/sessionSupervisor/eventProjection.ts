@@ -1,4 +1,11 @@
 import {
+  applyAssistantChunkToStreaming,
+  applyAssistantCompleteToStreaming,
+  clearAssistantStreaming,
+  reconcileAssistantStreamingWithMessages,
+  type AssistantStreamingStore,
+} from "../assistantStreaming";
+import {
   idToString,
   type Artifact,
   type GitStatusSummary,
@@ -72,8 +79,6 @@ export type SessionSupervisorEventProjectionHost = {
 };
 
 type TurnProjectionState = SessionTurn & {
-  assistant_partial_provider_message_id?: string | null;
-  assistant_last_provider_message_id?: string | null;
   thought_partial_provider_item_id?: string | null;
 };
 
@@ -132,6 +137,7 @@ export function mergeMessages(
 ) {
   if (incoming.length === 0) return;
   entry.messages = mergeSessionMessages(entry.messages, incoming);
+  reconcileAssistantStreamingWithMessages(entry as AssistantStreamingStore, incoming);
   entry.queue = entry.messages.filter((message) => message.delivery === "queued");
   this.bumpMessagesRev(entry);
 }
@@ -287,7 +293,7 @@ export function ensureTurnFromEvent(
     end_seq: null,
     started_at: createdAt,
     updated_at: createdAt,
-    assistant_partial: "",
+    assistant_partial: null,
     // Streaming-only placeholder for in-flight thought chunks.
     // Completed thought rows are emitted separately; do not persist this.
     thought_partial: "",
@@ -324,19 +330,9 @@ export function applyEventToTurns(
       const fragment = String(event.payload_json?.content_fragment ?? "");
       if (fragment) {
         const providerMessageId = readPayloadString(event.payload_json, ["message_id", "messageId"]);
-        if (
-          providerMessageId &&
-          turn.assistant_partial_provider_message_id &&
-          providerMessageId !== turn.assistant_partial_provider_message_id
-        ) {
-          turn.assistant_partial = fragment;
-        } else {
-          turn.assistant_partial = appendFragment(turn.assistant_partial, fragment);
-        }
-        if (providerMessageId) {
-          turn.assistant_partial_provider_message_id = providerMessageId;
-        }
-        changed = true;
+        changed =
+          applyAssistantChunkToStreaming(entry as AssistantStreamingStore, turnId, fragment, providerMessageId) ||
+          changed;
       }
       break;
     }
@@ -350,33 +346,22 @@ export function applyEventToTurns(
       break;
     }
     case "assistant_message_inserted": {
-      turn.assistant_partial = "";
-      const providerMessageId = readPayloadString(event.payload_json, [
-        "provider_message_id",
-        "providerMessageId",
-      ]);
-      if (providerMessageId) {
-        turn.assistant_last_provider_message_id = providerMessageId;
-      }
-      turn.assistant_partial_provider_message_id = null;
-      changed = true;
+      changed = clearAssistantStreaming(entry as AssistantStreamingStore, turnId) || changed;
       break;
     }
     case "assistant_complete": {
       const full =
         event.payload_json?.full_content ??
         event.payload_json?.content ??
-        turn.assistant_partial;
+        entry.assistantStreamingByTurnId[turnId]?.content;
       const providerMessageId = readPayloadString(event.payload_json, ["message_id", "messageId"]);
-      const shouldUpdatePartial =
-        !providerMessageId || providerMessageId !== turn.assistant_last_provider_message_id;
-      if (full && shouldUpdatePartial) {
-        turn.assistant_partial = String(full);
-      }
-      if (providerMessageId) {
-        turn.assistant_partial_provider_message_id = providerMessageId;
-      }
-      changed = true;
+      changed =
+        applyAssistantCompleteToStreaming(
+          entry as AssistantStreamingStore,
+          turnId,
+          String(full ?? ""),
+          providerMessageId,
+        ) || changed;
       break;
     }
     case "turn_queued": {

@@ -1,4 +1,12 @@
 import {
+  applyAssistantChunkToStreaming,
+  applyAssistantCompleteToStreaming,
+  clearAssistantStreaming,
+  reconcileAssistantStreamingWithMessages,
+  type AssistantStreamingState,
+  type AssistantStreamingStore,
+} from "./assistantStreaming";
+import {
   idToString,
   type Message,
   type Session,
@@ -22,16 +30,13 @@ import {
 } from "./sessionSupervisor/toolStateProjection";
 import { isFinalThoughtEvent } from "./sessionSupervisor/thoughtProjection";
 
-type ReplicaTurnProjectionState = SessionTurn & {
-  assistant_partial_provider_message_id?: string | null;
-  assistant_last_provider_message_id?: string | null;
-};
-
 export type SessionReplicaTranscriptEntry = {
   sessionId: string;
   session?: Session;
   turns: SessionTurn[];
   turnsRev: number;
+  assistantStreamingByTurnId: Record<string, AssistantStreamingState>;
+  assistantStreamingRev: number;
   messages: Message[];
   messagesRev: number;
   events: SessionEvent[];
@@ -110,11 +115,15 @@ export const ensureReplicaEventSeq = (
 };
 
 const mergeMessagesIntoEntry = (
-  entry: Pick<SessionReplicaTranscriptEntry, "messages" | "messagesRev">,
+  entry: Pick<
+    SessionReplicaTranscriptEntry,
+    "messages" | "messagesRev" | "assistantStreamingByTurnId" | "assistantStreamingRev"
+  >,
   incoming: Message[],
 ) => {
   if (incoming.length === 0) return;
   entry.messages = mergeSessionMessages(entry.messages, incoming);
+  reconcileAssistantStreamingWithMessages(entry as AssistantStreamingStore, incoming);
   bumpMessagesRev(entry);
 };
 
@@ -137,7 +146,7 @@ const ensureTurnFromEvent = (
     end_seq: null,
     started_at: createdAt,
     updated_at: createdAt,
-    assistant_partial: "",
+    assistant_partial: null,
     thought_partial: "",
     metrics_json: null,
     tool_total: 0,
@@ -197,7 +206,12 @@ const applyToolEventToTurn = (
 const applyEventToTurns = (
   entry: Pick<
     SessionReplicaTranscriptEntry,
-    "turns" | "turnsRev" | "toolIdsByTurn" | "toolStatusByKey"
+    | "turns"
+    | "turnsRev"
+    | "toolIdsByTurn"
+    | "toolStatusByKey"
+    | "assistantStreamingByTurnId"
+    | "assistantStreamingRev"
   >,
   event: SessionEvent,
 ): boolean => {
@@ -206,7 +220,7 @@ const applyEventToTurns = (
   const turnIndex = entry.turns.findIndex((turn) => idToString(turn.turn_id) === turnId);
   if (turnIndex < 0) return false;
 
-  const turn = { ...(entry.turns[turnIndex] as ReplicaTurnProjectionState) };
+  const turn = { ...entry.turns[turnIndex] };
   let changed = false;
   switch (String(event.event_type)) {
     case "assistant_chunk": {
@@ -214,19 +228,9 @@ const applyEventToTurns = (
       const fragment = String(event.payload_json?.content_fragment ?? "");
       if (fragment) {
         const providerMessageId = readPayloadString(event.payload_json, ["message_id", "messageId"]);
-        if (
-          providerMessageId &&
-          turn.assistant_partial_provider_message_id &&
-          providerMessageId !== turn.assistant_partial_provider_message_id
-        ) {
-          turn.assistant_partial = fragment;
-        } else {
-          turn.assistant_partial = appendFragment(turn.assistant_partial, fragment);
-        }
-        if (providerMessageId) {
-          turn.assistant_partial_provider_message_id = providerMessageId;
-        }
-        changed = true;
+        changed =
+          applyAssistantChunkToStreaming(entry as AssistantStreamingStore, turnId, fragment, providerMessageId) ||
+          changed;
       }
       break;
     }
@@ -240,33 +244,22 @@ const applyEventToTurns = (
       break;
     }
     case "assistant_message_inserted": {
-      turn.assistant_partial = "";
-      const providerMessageId = readPayloadString(event.payload_json, [
-        "provider_message_id",
-        "providerMessageId",
-      ]);
-      if (providerMessageId) {
-        turn.assistant_last_provider_message_id = providerMessageId;
-      }
-      turn.assistant_partial_provider_message_id = null;
-      changed = true;
+      changed = clearAssistantStreaming(entry as AssistantStreamingStore, turnId) || changed;
       break;
     }
     case "assistant_complete": {
       const full =
         event.payload_json?.full_content ??
         event.payload_json?.content ??
-        turn.assistant_partial;
+        entry.assistantStreamingByTurnId[turnId]?.content;
       const providerMessageId = readPayloadString(event.payload_json, ["message_id", "messageId"]);
-      const shouldUpdatePartial =
-        !providerMessageId || providerMessageId !== turn.assistant_last_provider_message_id;
-      if (full && shouldUpdatePartial) {
-        turn.assistant_partial = String(full);
-      }
-      if (providerMessageId) {
-        turn.assistant_partial_provider_message_id = providerMessageId;
-      }
-      changed = true;
+      changed =
+        applyAssistantCompleteToStreaming(
+          entry as AssistantStreamingStore,
+          turnId,
+          String(full ?? ""),
+          providerMessageId,
+        ) || changed;
       break;
     }
     case "turn_queued":
@@ -389,7 +382,10 @@ export const mergeReplicaTurnsIntoEntry = (
 };
 
 export const mergeReplicaMessagesIntoEntry = (
-  entry: Pick<SessionReplicaTranscriptEntry, "messages" | "messagesRev">,
+  entry: Pick<
+    SessionReplicaTranscriptEntry,
+    "messages" | "messagesRev" | "assistantStreamingByTurnId" | "assistantStreamingRev"
+  >,
   incoming: Message[],
 ) => {
   mergeMessagesIntoEntry(entry, incoming);

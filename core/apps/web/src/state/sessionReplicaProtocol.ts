@@ -12,6 +12,7 @@ import type {
   WorkspaceActiveSnapshotEvent,
 } from "@ctx/types";
 import type { GitStatusSummary } from "../api/client";
+import type { AssistantStreamingState } from "./assistantStreaming";
 
 export type SessionReplicaConfig = {
   eventBufferLimit: number;
@@ -74,6 +75,8 @@ export type SessionReplicaData = {
   };
   turns?: SessionTurn[];
   turnsRev?: number;
+  assistantStreamingByTurnId?: Record<string, AssistantStreamingState>;
+  assistantStreamingRev?: number;
   messages?: Message[];
   messagesRev?: number;
   events?: SessionEvent[];
