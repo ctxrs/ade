@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "node --test src/install-script.test.mjs"
+    "test": "node --test src/*.test.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.67.0"

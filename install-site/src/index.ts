@@ -1,4 +1,5 @@
 import { renderInstallScript } from "./install-script.js";
+import { renderUninstallScript } from "./uninstall-script.js";
 
 const DOWNLOAD_ID_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 const ATTRIBUTION_VALUE_PATTERN = /[^A-Za-z0-9._:-]/g;
@@ -25,6 +26,7 @@ function html(body: string, status = 200): Response {
 }
 
 const INSTALL_ROUTES = new Set(["/install", "/install.sh"]);
+const UNINSTALL_ROUTES = new Set(["/uninstall", "/uninstall.sh"]);
 
 function normalizeDownloadId(raw: string | null): string | null {
   if (!raw) return null;
@@ -72,9 +74,13 @@ export default {
       }), 200);
     }
 
+    if (request.method === "GET" && UNINSTALL_ROUTES.has(pathname)) {
+      return shell(renderUninstallScript(), 200);
+    }
+
     if (request.method === "GET" && pathname === "/") {
       return html(
-        `<!doctype html><html><body><p>ctx install endpoint</p><p>Use <code>curl -fsSL https://ctx.rs/install | sh</code></p></body></html>`,
+        `<!doctype html><html><body><p>ctx install endpoint</p><p>Install: <code>curl -fsSL https://ctx.rs/install | sh</code></p><p>Uninstall: <code>curl -fsSL https://ctx.rs/uninstall | sh</code></p></body></html>`,
       );
     }
 
