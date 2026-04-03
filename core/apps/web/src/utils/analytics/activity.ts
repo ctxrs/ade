@@ -6,6 +6,7 @@ import type {
   AnalyticsSessionLocation,
   AnalyticsSessionRootKind,
 } from "./types";
+import { parseModelId } from "../modelEffort";
 
 const FIRST_TURN_SUBMITTED_ONCE_KEY = "ctx.analytics.first_turn_submitted.install_once.v1";
 const FIRST_TURN_COMPLETED_ONCE_KEY = "ctx.analytics.first_turn_completed.install_once.v1";
@@ -35,6 +36,57 @@ const durationBucketForMs = (durationMs: number | undefined): string => {
   if (durationMs < 5 * 60_000) return "1m_to_5m";
   if (durationMs < 15 * 60_000) return "5m_to_15m";
   return "15m_plus";
+};
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
+const readFiniteNumber = (
+  record: Record<string, unknown>,
+  key: string,
+): number | undefined => {
+  const value = record[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+};
+
+const tokenUsageProperties = (metrics: unknown): AnalyticsProperties => {
+  const record = asRecord(metrics);
+  const totalTokensEstimate = readFiniteNumber(record, "context_tokens_estimate");
+  const inputTokens = readFiniteNumber(record, "total_input_tokens");
+  const outputTokens = readFiniteNumber(record, "total_output_tokens");
+  const contextWindowTokens = readFiniteNumber(record, "context_window_tokens");
+  const remainingTokensEstimate = readFiniteNumber(record, "remaining_tokens_estimate");
+  const remainingFraction = readFiniteNumber(record, "remaining_fraction");
+  return {
+    ...(totalTokensEstimate !== undefined ? { total_tokens_estimate: totalTokensEstimate } : {}),
+    ...(inputTokens !== undefined ? { input_tokens: inputTokens } : {}),
+    ...(outputTokens !== undefined ? { output_tokens: outputTokens } : {}),
+    ...(contextWindowTokens !== undefined ? { context_window_tokens: contextWindowTokens } : {}),
+    ...(remainingTokensEstimate !== undefined ? { remaining_tokens_estimate: remainingTokensEstimate } : {}),
+    ...(remainingFraction !== undefined ? { remaining_fraction: remainingFraction } : {}),
+  };
+};
+
+const modelAnalyticsProperties = (
+  modelId: string | undefined,
+  reasoningEffort: string | null | undefined,
+): AnalyticsProperties => {
+  const rawModelId = String(modelId ?? "").trim();
+  const parsedModel = rawModelId ? parseModelId(rawModelId) : null;
+  const normalizedReasoningEffort = String(reasoningEffort ?? "").trim() || parsedModel?.effort || undefined;
+  const normalizedModelId =
+    parsedModel?.base && parsedModel.base !== rawModelId
+      ? parsedModel.base
+      : rawModelId || undefined;
+  return {
+    ...(normalizedModelId ? { model_id: normalizedModelId } : {}),
+    ...(normalizedReasoningEffort ? { reasoning_effort: normalizedReasoningEffort } : {}),
+  };
 };
 
 export const trackAppOpened = (props?: { downloadId?: string }): void => {
@@ -243,6 +295,20 @@ export const trackSessionCreated = (props: {
   });
 };
 
+export const trackTaskCreated = (props: {
+  providerId: string;
+  modelId?: string;
+  reasoningEffort?: string | null;
+  executionEnvironment?: ExecutionEnvironment;
+}): void => {
+  capture("task_created", {
+    provider_id: props.providerId,
+    ...modelAnalyticsProperties(props.modelId, props.reasoningEffort),
+    ...(props.executionEnvironment ? { execution_environment: props.executionEnvironment } : {}),
+    session_kind: "primary",
+  });
+};
+
 export const trackProviderSelected = (props: {
   providerId: string;
   source: "session_create" | "provider_switch" | "unknown";
@@ -265,6 +331,38 @@ export const trackFirstTurnSubmitted = (props: {
   });
 };
 
+export const trackUserMessageSent = (props: {
+  providerId?: string;
+  modelId?: string;
+  reasoningEffort?: string | null;
+  executionEnvironment?: ExecutionEnvironment;
+  sessionKind?: AnalyticsSessionKind;
+  isFirstTurn?: boolean;
+}): void => {
+  capture("user_message_sent", {
+    ...(props.providerId ? { provider_id: props.providerId } : {}),
+    ...modelAnalyticsProperties(props.modelId, props.reasoningEffort),
+    ...(props.executionEnvironment ? { execution_environment: props.executionEnvironment } : {}),
+    ...(props.sessionKind ? { session_kind: props.sessionKind } : {}),
+    ...(props.isFirstTurn !== undefined ? { is_first_turn: props.isFirstTurn } : {}),
+  });
+};
+
+export const trackTurnStarted = (props: {
+  providerId?: string;
+  modelId?: string;
+  reasoningEffort?: string | null;
+  executionEnvironment?: ExecutionEnvironment;
+  sessionKind?: AnalyticsSessionKind;
+}): void => {
+  capture("turn_started", {
+    ...(props.providerId ? { provider_id: props.providerId } : {}),
+    ...modelAnalyticsProperties(props.modelId, props.reasoningEffort),
+    ...(props.executionEnvironment ? { execution_environment: props.executionEnvironment } : {}),
+    ...(props.sessionKind ? { session_kind: props.sessionKind } : {}),
+  });
+};
+
 export const trackProviderRunCompleted = (props: {
   providerId?: string;
   modelId?: string;
@@ -278,6 +376,27 @@ export const trackProviderRunCompleted = (props: {
     status: props.status,
     duration_bucket: durationBucketForMs(props.durationMs),
     ...(props.sessionKind ? { session_kind: props.sessionKind } : {}),
+  });
+};
+
+export const trackTurnCompleted = (props: {
+  providerId?: string;
+  modelId?: string;
+  reasoningEffort?: string | null;
+  executionEnvironment?: ExecutionEnvironment;
+  status: "completed" | "failed" | "interrupted";
+  durationMs?: number;
+  sessionKind?: AnalyticsSessionKind;
+  metrics?: unknown;
+}): void => {
+  capture("turn_completed", {
+    ...(props.providerId ? { provider_id: props.providerId } : {}),
+    ...modelAnalyticsProperties(props.modelId, props.reasoningEffort),
+    ...(props.executionEnvironment ? { execution_environment: props.executionEnvironment } : {}),
+    status: props.status,
+    duration_bucket: durationBucketForMs(props.durationMs),
+    ...(props.sessionKind ? { session_kind: props.sessionKind } : {}),
+    ...tokenUsageProperties(props.metrics),
   });
 };
 

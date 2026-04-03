@@ -14,6 +14,9 @@ import { clearAllAssistantStreaming, clearAssistantStreaming } from "../assistan
 import { findWorkspaceSessionHead } from "../workspaceActiveSnapshot/projection";
 import { stripPartialEvents, stripTurnPartials } from "./cachePolicy";
 import { asRecord, hasModelList } from "./eventHydration";
+import { resolveTurnAnalyticsMetadata } from "./turnAnalyticsMetadata";
+import { replayTurnStartEffectsFromTurns } from "./turnStartEffects";
+import { replayTurnOutcomeEffectsFromTurns } from "./turnOutcomeEffects";
 import {
   type InternalEntry,
   type SessionLoadState,
@@ -167,6 +170,7 @@ export function applyHead(
   },
 ) {
   const support = entry.support;
+  const previousTurns = entry.turns;
   entry.headFromCache = Boolean(opts?.fromCache);
   entry.session = head.session;
   if ("activity" in head) {
@@ -199,6 +203,17 @@ export function applyHead(
     this.adoptLoadedSubagentInvocationsRevision(entry, headStateRev);
   }
   this.mergeTurns(entry, head.turns ?? []);
+  const analytics = resolveTurnAnalyticsMetadata(entry.session, entry.sessionId);
+  replayTurnStartEffectsFromTurns({
+    ...analytics,
+    previousTurns,
+    nextTurns: entry.turns,
+  });
+  replayTurnOutcomeEffectsFromTurns({
+    ...analytics,
+    previousTurns,
+    nextTurns: entry.turns,
+  });
   if (isBoundedHeadWindow(head)) {
     pruneOmittedNonTerminalTurns.call(this, entry, head.turns ?? []);
   }

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { captureProductEventMock } = vi.hoisted(() => ({
   captureProductEventMock: vi.fn(),
@@ -9,193 +9,111 @@ vi.mock("./client", () => ({
 }));
 
 import {
-  trackFirstTurnCompleted,
-  trackFirstTurnSubmitted,
-  trackProviderRunCompleted,
-  trackSessionCreated,
-  trackWizardAbandoned,
-  trackWizardCompleted,
-  trackWizardStarted,
-  trackWizardStepCompleted,
-  trackWizardStepViewed,
-  trackWorkbenchPanelToggled,
-  trackWorkspaceCreateFailed,
-  trackWorkspaceCreateSubmitted,
-  trackWorkspaceCreateSucceeded,
-  trackWorkspaceLaunchCompleted,
-  trackWorkspaceRouteOpenedFromPending,
+  trackTaskCreated,
+  trackTurnCompleted,
+  trackTurnStarted,
+  trackUserMessageSent,
 } from "./activity";
 
-describe("analytics events", () => {
+describe("usage analytics activity helpers", () => {
   beforeEach(() => {
     captureProductEventMock.mockReset();
     window.localStorage.clear();
     window.sessionStorage.clear();
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-03-10T00:00:10.000Z"));
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("deduplicates first_turn_submitted per install scope", () => {
-    trackFirstTurnSubmitted({ sessionId: "s1", providerId: "codex" });
-    trackFirstTurnSubmitted({ sessionId: "s2", providerId: "codex" });
-    expect(captureProductEventMock).toHaveBeenCalledTimes(1);
-    expect(captureProductEventMock).toHaveBeenCalledWith(
-      "first_turn_submitted",
-      1,
-      expect.objectContaining({ provider_id: "codex" }),
-    );
-  });
-
-  it("records first_turn_completed once per install scope and only for completed status", () => {
-    trackFirstTurnCompleted({ sessionId: "s2", providerId: "claude", status: "failed" });
-    trackFirstTurnCompleted({ sessionId: "s2", providerId: "claude", status: "completed" });
-    trackFirstTurnCompleted({ sessionId: "s3", providerId: "claude", status: "completed" });
-    expect(captureProductEventMock).toHaveBeenCalledTimes(1);
-    expect(captureProductEventMock).toHaveBeenCalledWith(
-      "first_turn_completed",
-      1,
-      expect.objectContaining({ provider_id: "claude", status: "completed" }),
-    );
-  });
-
-  it("tracks wizard, workspace create lifecycle, and workbench panel toggle events", () => {
-    trackWizardStarted({ wizardKey: "workspace_setup" });
-    trackWizardStepViewed({ wizardKey: "workspace_setup", stepKey: "location", stepIndex: 0 });
-    trackWizardStepCompleted({ wizardKey: "workspace_setup", stepKey: "location", stepIndex: 0 });
-    trackWizardCompleted({ wizardKey: "workspace_setup", workspaceKind: "local" });
-    trackWizardAbandoned({ wizardKey: "workspace_setup", lastStepKey: "source", lastStepIndex: 3 });
-    trackWorkspaceCreateSubmitted({ workspaceKind: "local", source: "wizard" });
-    trackWorkspaceCreateSucceeded({ workspaceKind: "local", source: "wizard" });
-    trackWorkspaceCreateFailed({ workspaceKind: "remote", source: "api", failureKind: "request_error" });
-    trackWorkbenchPanelToggled({ panelKey: "terminal", open: true, source: "header_button" });
-
-    expect(captureProductEventMock).toHaveBeenCalledWith(
-      "wizard_started",
-      1,
-      expect.objectContaining({ wizard_key: "workspace_setup" }),
-    );
-    expect(captureProductEventMock).toHaveBeenCalledWith(
-      "workspace_create_failed",
-      1,
-      expect.objectContaining({
-        workspace_kind: "remote",
-        source: "api",
-        failure_kind: "request_error",
-      }),
-    );
-    expect(captureProductEventMock).toHaveBeenCalledWith(
-      "workbench_panel_toggled",
-      1,
-      expect.objectContaining({
-        panel_key: "terminal",
-        open: true,
-        source: "header_button",
-      }),
-    );
-  });
-
-  it("tracks session_created with split topology and canonical runtime fields", () => {
-    trackSessionCreated({
+  it("normalizes task, message, and turn events onto base model ids plus reasoning effort", () => {
+    trackTaskCreated({
       providerId: "codex",
-      modelId: "gpt-5-codex",
+      modelId: "gpt-5.4/high",
       executionEnvironment: "sandbox",
-      sessionRootKind: "worktree",
-      sessionLocation: "remote",
     });
-
-    expect(captureProductEventMock).toHaveBeenCalledWith(
-      "session_created",
-      1,
-      {
-        provider_id: "codex",
-        model_id: "gpt-5-codex",
-        execution_environment: "sandbox",
-        session_root_kind: "worktree",
-        session_location: "remote",
-      },
-    );
-  });
-
-  it("buckets provider run duration and includes session kind", () => {
-    trackProviderRunCompleted({
+    trackUserMessageSent({
       providerId: "codex",
-      modelId: "gpt-5-codex",
-      status: "completed",
-      durationMs: 42_000,
+      modelId: "gpt-5.4/high",
+      executionEnvironment: "sandbox",
+      sessionKind: "primary",
+      isFirstTurn: true,
+    });
+    trackTurnStarted({
+      providerId: "codex",
+      modelId: "gpt-5.4/high",
+      executionEnvironment: "sandbox",
       sessionKind: "subagent",
     });
 
     expect(captureProductEventMock).toHaveBeenCalledWith(
-      "provider_run_completed",
+      "task_created",
       1,
       {
         provider_id: "codex",
-        model_id: "gpt-5-codex",
-        status: "completed",
-        duration_bucket: "15s_to_60s",
+        model_id: "gpt-5.4",
+        reasoning_effort: "high",
+        execution_environment: "sandbox",
+        session_kind: "primary",
+      },
+    );
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "user_message_sent",
+      1,
+      {
+        provider_id: "codex",
+        model_id: "gpt-5.4",
+        reasoning_effort: "high",
+        execution_environment: "sandbox",
+        session_kind: "primary",
+        is_first_turn: true,
+      },
+    );
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "turn_started",
+      1,
+      {
+        provider_id: "codex",
+        model_id: "gpt-5.4",
+        reasoning_effort: "high",
+        execution_environment: "sandbox",
         session_kind: "subagent",
       },
     );
   });
 
-  it("tracks launch ready immediately but only records a pending route marker when explicitly persisted", () => {
-    trackWorkspaceLaunchCompleted({
-      workspaceId: "ws_123",
-      workspaceKind: "local",
-      executionMode: "sandbox",
-      source: "wizard",
-      startedAtMs: Date.parse("2026-03-10T00:00:00.000Z"),
-      result: "ready",
-      persistPendingRoute: false,
+  it("flattens bounded token metrics onto turn_completed", () => {
+    trackTurnCompleted({
+      providerId: "codex",
+      modelId: "gpt-5.4/high",
+      executionEnvironment: "sandbox",
+      sessionKind: "subagent",
+      status: "completed",
+      durationMs: 2_000,
+      metrics: {
+        context_tokens_estimate: 120,
+        total_input_tokens: 80,
+        total_output_tokens: 40,
+        context_window_tokens: 200,
+        remaining_tokens_estimate: 80,
+        remaining_fraction: 0.4,
+      },
     });
-    trackWorkspaceRouteOpenedFromPending("ws_123");
-    trackWorkspaceLaunchCompleted({
-      workspaceId: "ws_123",
-      workspaceKind: "local",
-      executionMode: "sandbox",
-      source: "wizard",
-      startedAtMs: Date.parse("2026-03-10T00:00:00.000Z"),
-      result: "ready",
-      emitEvent: false,
-    });
-    trackWorkspaceRouteOpenedFromPending("ws_123");
 
     expect(captureProductEventMock).toHaveBeenCalledWith(
-      "workspace_launch_completed",
+      "turn_completed",
       1,
-      expect.objectContaining({
-        click_to_launch_ready_ms: 10000,
-        execution_mode: "sandbox",
-        result: "ready",
-      }),
-    );
-    expect(captureProductEventMock).toHaveBeenCalledWith(
-      "workspace_route_opened",
-      1,
-      expect.objectContaining({
-        click_to_workspace_route_ms: 10000,
-        execution_mode: "sandbox",
-      }),
-    );
-    expect(
-      captureProductEventMock.mock.calls.filter(([eventName]) => eventName === "workspace_launch_completed"),
-    ).toHaveLength(1);
-    expect(
-      captureProductEventMock.mock.calls.filter(([eventName]) => eventName === "workspace_route_opened"),
-    ).toHaveLength(1);
-    expect(captureProductEventMock).not.toHaveBeenCalledWith(
-      "workspace_launch_completed",
-      1,
-      expect.objectContaining({ workspace_id: "ws_123" }),
-    );
-    expect(captureProductEventMock).not.toHaveBeenCalledWith(
-      "workspace_route_opened",
-      1,
-      expect.objectContaining({ workspace_id: "ws_123" }),
+      {
+        provider_id: "codex",
+        model_id: "gpt-5.4",
+        reasoning_effort: "high",
+        execution_environment: "sandbox",
+        status: "completed",
+        duration_bucket: "under_15s",
+        session_kind: "subagent",
+        total_tokens_estimate: 120,
+        input_tokens: 80,
+        output_tokens: 40,
+        context_window_tokens: 200,
+        remaining_tokens_estimate: 80,
+        remaining_fraction: 0.4,
+      },
     );
   });
 });

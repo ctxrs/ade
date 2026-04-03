@@ -5,6 +5,7 @@ import { resetTurnOutcomeTrackingForTests } from "../../utils/analytics/turnOutc
 const sendDesktopNotification = vi.hoisted(() => vi.fn());
 const isAppInForeground = vi.hoisted(() => vi.fn());
 const getClientSettings = vi.hoisted(() => vi.fn());
+const trackTurnCompleted = vi.hoisted(() => vi.fn());
 const trackProviderRunCompleted = vi.hoisted(() => vi.fn());
 const trackFirstTurnCompleted = vi.hoisted(() => vi.fn());
 
@@ -21,6 +22,7 @@ vi.mock("../clientSettings", () => ({
 }));
 
 vi.mock("../../utils/analytics", () => ({
+  trackTurnCompleted,
   trackProviderRunCompleted,
   trackFirstTurnCompleted,
 }));
@@ -48,6 +50,7 @@ describe("turnOutcomeEffects", () => {
       nextStatus: "completed",
     });
 
+    expect(trackTurnCompleted).toHaveBeenCalledTimes(1);
     expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
     expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
     expect(sendDesktopNotification).not.toHaveBeenCalled();
@@ -68,6 +71,16 @@ describe("turnOutcomeEffects", () => {
       nextStatus: "completed",
     });
 
+    expect(trackTurnCompleted).toHaveBeenCalledWith({
+      providerId: "codex",
+      modelId: "gpt-5",
+      reasoningEffort: undefined,
+      executionEnvironment: undefined,
+      status: "completed",
+      durationMs: 42000,
+      sessionKind: "subagent",
+      metrics: undefined,
+    });
     expect(trackProviderRunCompleted).toHaveBeenCalledWith({
       providerId: "codex",
       modelId: "gpt-5",
@@ -99,6 +112,7 @@ describe("turnOutcomeEffects", () => {
       nextStatus: "failed",
     });
 
+    expect(trackTurnCompleted).toHaveBeenCalledTimes(1);
     expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
     expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
     expect(sendDesktopNotification).not.toHaveBeenCalled();
@@ -126,6 +140,7 @@ describe("turnOutcomeEffects", () => {
       nextStatus: "completed",
     });
 
+    expect(trackTurnCompleted).toHaveBeenCalledTimes(1);
     expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
     expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
     expect(sendDesktopNotification).toHaveBeenCalledTimes(1);

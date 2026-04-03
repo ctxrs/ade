@@ -19,11 +19,18 @@ describe("sanitizeAnalyticsProperties", () => {
     const out = sanitizeAnalyticsProperties({
       prompt_text: "secret",
       api_key: "nope",
+      auth_token: "still nope",
+      total_tokens_estimate: 42,
+      input_tokens: 21,
       nested: { a: 1 },
       list: ["x"],
       ok_key: "ok",
     });
-    expect(out).toEqual({ ok_key: "ok" });
+    expect(out).toEqual({
+      total_tokens_estimate: 42,
+      input_tokens: 21,
+      ok_key: "ok",
+    });
   });
 
   it("truncates very long strings", () => {

@@ -675,6 +675,16 @@ export function SessionView({
       const posted = await postMessage(id, text, requestedDelivery, attachmentsToSend, {
         id: messageId,
         turn_id: turnId,
+        analytics: {
+          providerId: session?.provider_id ?? undefined,
+          modelId: currentModelId || undefined,
+          reasoningEffort: session?.reasoning_effort ?? null,
+          executionEnvironment: session?.execution_environment ?? undefined,
+          sessionKind:
+            session?.parent_session_id || session?.relationship === "sub_agent"
+              ? "subagent"
+              : "primary",
+        },
       });
       if (shouldQueue) {
         supervisor.upsertOptimisticQueuedMessage(id, posted);
@@ -793,6 +803,16 @@ export function SessionView({
       const posted = await postMessage(id, content, "immediate", attachments, {
         id: messageId,
         turn_id: turnId,
+        analytics: {
+          providerId: session?.provider_id ?? undefined,
+          modelId: currentModelId || undefined,
+          reasoningEffort: session?.reasoning_effort ?? null,
+          executionEnvironment: session?.execution_environment ?? undefined,
+          sessionKind:
+            session?.parent_session_id || session?.relationship === "sub_agent"
+              ? "subagent"
+              : "primary",
+        },
       });
       supervisor.upsertOptimisticThreadMessage(id, posted);
     } catch (e: unknown) {

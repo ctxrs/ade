@@ -8,6 +8,9 @@ import {
 import { mergeSessionMessages } from "../sessionHeadState";
 import { hasModelList } from "./eventHydration";
 import { mergeTurnStatus } from "./cachePolicy";
+import { resolveTurnAnalyticsMetadata } from "./turnAnalyticsMetadata";
+import { replayTurnStartEffectsFromTurns } from "./turnStartEffects";
+import { replayTurnOutcomeEffectsFromTurns } from "./turnOutcomeEffects";
 import {
   hasSessionReplicaRecoveryData,
   resolveReplicaReadyLoadState,
@@ -213,6 +216,7 @@ const applyCanonicalTranscriptPatch = (
   const localQueuedMessages =
     Array.isArray(data.messages) ? preserveLocalQueuedMessages(entry.messages, data.messages) : [];
   const previousTurns = entry.turns;
+  let nextTurnsForAnalytics: SessionTurn[] | null = null;
 
   if (patch.op === "replace" && shouldApplyReplace && !preserveCoveredHistoryOnRepair) {
     host.resetEntryProjectionForReplace(entry, { skipPublish: true });
@@ -224,6 +228,7 @@ const applyCanonicalTranscriptPatch = (
     if (Array.isArray(data.turns)) {
       entry.turns = preserveMonotonicTurns(previousTurns, data.turns);
       entry.turnsRev = data.turnsRev ?? (entry.turnsRev + 1);
+      nextTurnsForAnalytics = entry.turns;
     }
     if (Array.isArray(data.messages)) {
       entry.messages = mergeSessionMessages(data.messages, localQueuedMessages);
@@ -294,6 +299,19 @@ const applyCanonicalTranscriptPatch = (
     if (preserveHasMoreHistory) {
       entry.historyExtended = true;
     }
+  }
+  if (nextTurnsForAnalytics) {
+    const analytics = resolveTurnAnalyticsMetadata(entry.session, entry.sessionId);
+    replayTurnStartEffectsFromTurns({
+      ...analytics,
+      previousTurns,
+      nextTurns: nextTurnsForAnalytics,
+    });
+    replayTurnOutcomeEffectsFromTurns({
+      ...analytics,
+      previousTurns,
+      nextTurns: nextTurnsForAnalytics,
+    });
   }
 };
 

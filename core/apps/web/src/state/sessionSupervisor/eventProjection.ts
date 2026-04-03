@@ -37,6 +37,8 @@ import {
   shouldRenderThoughtChunk,
   toolStatusBucket,
 } from "./toolStateProjection";
+import { resolveTurnAnalyticsMetadata } from "./turnAnalyticsMetadata";
+import { applyTurnStartEffects } from "./turnStartEffects";
 import { applyTurnOutcomeEffects } from "./turnOutcomeEffects";
 
 type SessionSupportLoadErrorKey = "state" | "artifacts" | "subagentInvocations";
@@ -220,8 +222,14 @@ export function mergeEvents(
       mergeMessages.call(this, entry, [message]);
       changed = true;
     }
+    const previousTurnStatus = turnId
+      ? entry.turns.find((turn) => idToString(turn.turn_id) === turnId)?.status
+      : undefined;
     ensureTurnFromEvent.call(this, entry, event);
-    if (applyEventToTurns.call(this, entry, event, { notify: shouldNotify })) {
+    if (applyEventToTurns.call(this, entry, event, {
+      notify: shouldNotify,
+      previousStatusOverride: previousTurnStatus,
+    })) {
       changed = true;
     }
     if (applyQueueEvent.call(this, entry, event)) {
@@ -314,7 +322,7 @@ export function applyEventToTurns(
   this: SessionSupervisorEventProjectionHost,
   entry: SessionSupervisorEventProjectionEntry,
   event: SessionEvent,
-  opts?: { notify?: boolean },
+  opts?: { notify?: boolean; previousStatusOverride?: SessionTurn["status"] },
 ): boolean {
   const turnId = idToString(event.turn_id);
   if (!turnId) return false;
@@ -322,7 +330,7 @@ export function applyEventToTurns(
   if (turnIndex < 0) return false;
 
   const turn = entry.turns[turnIndex] as TurnProjectionState;
-  const previousStatus = turn.status;
+  const previousStatus = opts?.previousStatusOverride ?? turn.status;
   let changed = false;
   switch (String(event.event_type)) {
     case "assistant_chunk": {
@@ -425,19 +433,20 @@ export function applyEventToTurns(
   turn.updated_at = event.created_at ?? turn.updated_at;
   entry.turns[turnIndex] = { ...turn };
   this.bumpTurnsRev(entry);
+  const analytics = resolveTurnAnalyticsMetadata(entry.session, turn.session_id ?? entry.sessionId);
+  applyTurnStartEffects({
+    ...analytics,
+    turnId,
+    previousStatus,
+    nextStatus: turn.status,
+  });
   applyTurnOutcomeEffects({
     notify: opts?.notify ?? true,
-    sessionId: idToString(entry.session?.id ?? turn.session_id ?? ""),
+    ...analytics,
     turnId,
-    providerId: String(entry.session?.provider_id ?? "").trim() || undefined,
-    modelId: String(entry.session?.model_id ?? "").trim() || undefined,
-    sessionKind:
-      entry.session?.parent_session_id || entry.session?.relationship === "sub_agent"
-        ? "subagent"
-        : "primary",
     startedAt: turn.started_at,
     completedAt: turn.updated_at,
-    title: entry.session?.title ? String(entry.session.title) : undefined,
+    metrics: turn.metrics_json,
     previousStatus,
     nextStatus: turn.status,
   });

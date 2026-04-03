@@ -18,6 +18,7 @@ import {
 } from "./SessionPage.workbenchViewModel";
 import { buildOptimisticUserMessage } from "./SessionPage.optimisticMessage";
 import { getQueuedAttachments } from "./sessionView/SessionQueuePanel";
+import { composeModelId } from "../utils/modelEffort";
 
 export type PendingMessageEntry = {
   clientId: string;
@@ -142,6 +143,10 @@ export function useSessionComposerQueueController(params: Params): Result {
     setAtBottom,
     onDraftPersistNow,
   } = params;
+  const currentModelId = useMemo(
+    () => composeModelId(String(session?.model_id ?? ""), session?.reasoning_effort ?? null),
+    [session?.model_id, session?.reasoning_effort],
+  );
   const [sendBusy, setSendBusy] = useState(false);
   const sendBusyRef = useRef(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -369,6 +374,16 @@ export function useSessionComposerQueueController(params: Params): Result {
       const posted = await postMessage(sessionId, text, requestedDelivery, attachmentsToSend, {
         id: messageId,
         turn_id: turnId,
+        analytics: {
+          providerId: session?.provider_id ?? undefined,
+          modelId: currentModelId || undefined,
+          reasoningEffort: session?.reasoning_effort ?? null,
+          executionEnvironment: session?.execution_environment ?? undefined,
+          sessionKind:
+            session?.parent_session_id || session?.relationship === "sub_agent"
+              ? "subagent"
+              : "primary",
+        },
       });
       if (shouldQueue) {
         setPendingQueueMessages((prev) =>
@@ -505,6 +520,16 @@ export function useSessionComposerQueueController(params: Params): Result {
       const posted = await postMessage(sessionId, content, "immediate", attachments, {
         id: optimisticMessageId,
         turn_id: turnId,
+        analytics: {
+          providerId: session?.provider_id ?? undefined,
+          modelId: currentModelId || undefined,
+          reasoningEffort: session?.reasoning_effort ?? null,
+          executionEnvironment: session?.execution_environment ?? undefined,
+          sessionKind:
+            session?.parent_session_id || session?.relationship === "sub_agent"
+              ? "subagent"
+              : "primary",
+        },
       });
       setPendingMessages((prev) =>
         prev.map((entry) => (entry.clientId === optimisticMessageId ? { ...entry, message: posted } : entry)),

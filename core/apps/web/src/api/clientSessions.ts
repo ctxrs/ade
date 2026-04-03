@@ -21,8 +21,9 @@ import {
   trackFirstTurnSubmitted,
   trackProviderSelected,
   trackSessionCreated,
+  trackUserMessageSent,
 } from "../utils/analytics";
-import { composeModelId } from "../utils/modelEffort";
+import { composeModelId, parseModelId } from "../utils/modelEffort";
 
 export type BlobUploadResp = {
   blob_id: string;
@@ -84,6 +85,8 @@ export const createSession = (
   if (hasPrompt && !hasIds) {
     throw new Error("createSession requires initial_message_id and initial_turn_id when initial_prompt is provided");
   }
+  const parsedModel = parseModelId(model_id);
+  const reasoningEffort = opts?.reasoning_effort ?? parsedModel.effort;
   return apiAny<Session>(`/api/tasks/${taskId}/sessions`, {
     method: "POST",
     body: JSON.stringify({
@@ -101,7 +104,7 @@ export const createSession = (
         : {}),
     }),
   }).then((session) => {
-    const effectiveModelId = composeModelId(model_id, opts?.reasoning_effort ?? null) || model_id;
+    const effectiveModelId = composeModelId(parsedModel.base || model_id, reasoningEffort ?? null) || model_id;
     const connection = getDaemonConnection();
     trackSessionCreated({
       providerId: provider_id,
@@ -122,6 +125,17 @@ export const createSession = (
     if (opts?.initial_prompt) {
       const sessionId = String(session.id ?? "").trim();
       if (sessionId) {
+        trackUserMessageSent({
+          providerId: provider_id,
+          modelId: effectiveModelId,
+          reasoningEffort,
+          executionEnvironment: opts?.execution_environment,
+          sessionKind:
+            opts?.parent_session_id || opts?.relationship === "sub_agent"
+              ? "subagent"
+              : "primary",
+          isFirstTurn: true,
+        });
         trackFirstTurnSubmitted({
           sessionId,
           providerId: provider_id,
@@ -303,7 +317,18 @@ export const postMessage = (
   content: string,
   delivery?: "immediate" | "queued",
   attachments?: MessageAttachment[],
-  opts?: { id?: string; turn_id?: string },
+  opts?: {
+    id?: string;
+    turn_id?: string;
+    analytics?: {
+      providerId?: string;
+      modelId?: string;
+      reasoningEffort?: string | null;
+      executionEnvironment?: ExecutionEnvironment;
+      sessionKind?: "primary" | "subagent";
+      isFirstTurn?: boolean;
+    };
+  },
 ) =>
   apiAny<Message>(`/api/sessions/${sessionId}/messages`, {
     method: "POST",
@@ -315,7 +340,19 @@ export const postMessage = (
       ...(opts?.turn_id ? { turn_id: opts.turn_id } : {}),
     }),
   }).then((message) => {
-    trackFirstTurnSubmitted({ sessionId });
+    trackUserMessageSent({
+      providerId: opts?.analytics?.providerId,
+      modelId: opts?.analytics?.modelId,
+      reasoningEffort: opts?.analytics?.reasoningEffort,
+      executionEnvironment: opts?.analytics?.executionEnvironment,
+      sessionKind: opts?.analytics?.sessionKind,
+      isFirstTurn: opts?.analytics?.isFirstTurn,
+    });
+    trackFirstTurnSubmitted({
+      sessionId,
+      providerId: opts?.analytics?.providerId,
+      modelId: opts?.analytics?.modelId,
+    });
     if (delivery === "queued") {
       trackFeatureUsed("queued_message_sent");
     }

@@ -1,9 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { apiAnyMock, trackFirstTurnSubmittedMock, trackSessionCreatedMock, getDaemonConnectionMock } = vi.hoisted(() => ({
+const {
+  apiAnyMock,
+  trackFirstTurnSubmittedMock,
+  trackSessionCreatedMock,
+  trackUserMessageSentMock,
+  getDaemonConnectionMock,
+} = vi.hoisted(() => ({
   apiAnyMock: vi.fn(),
   trackFirstTurnSubmittedMock: vi.fn(),
   trackSessionCreatedMock: vi.fn(),
+  trackUserMessageSentMock: vi.fn(),
   getDaemonConnectionMock: vi.fn(() => ({
     baseUrl: "http://127.0.0.1:4399",
     targetScope: { kind: "desktop_local" },
@@ -27,10 +34,11 @@ vi.mock("../utils/analytics", async (importOriginal) => {
     ...actual,
     trackFirstTurnSubmitted: trackFirstTurnSubmittedMock,
     trackSessionCreated: trackSessionCreatedMock,
+    trackUserMessageSent: trackUserMessageSentMock,
   };
 });
 
-import { createSession } from "./clientSessions";
+import { createSession, postMessage } from "./clientSessions";
 
 describe("createSession analytics", () => {
   beforeEach(() => {
@@ -71,6 +79,14 @@ describe("createSession analytics", () => {
       providerId: "codex",
       modelId: "gpt-5-codex",
     });
+    expect(trackUserMessageSentMock).toHaveBeenCalledWith({
+      providerId: "codex",
+      modelId: "gpt-5-codex",
+      reasoningEffort: null,
+      executionEnvironment: "host",
+      sessionKind: "primary",
+      isFirstTurn: true,
+    });
   });
 
   it("does not emit first_turn_submitted when initial_prompt is absent", async () => {
@@ -95,5 +111,41 @@ describe("createSession analytics", () => {
       providerId: "codex",
       modelId: "gpt-5-codex/xhigh",
     }));
+  });
+});
+
+describe("postMessage analytics", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiAnyMock.mockResolvedValue({ id: "message-123" });
+  });
+
+  it("emits user_message_sent with bounded analytics metadata", async () => {
+    await postMessage("session-1", "hello", "immediate", [], {
+      id: "message-1",
+      turn_id: "turn-1",
+      analytics: {
+        providerId: "codex",
+        modelId: "gpt-5-codex/xhigh",
+        reasoningEffort: "xhigh",
+        executionEnvironment: "sandbox",
+        sessionKind: "primary",
+        isFirstTurn: false,
+      },
+    });
+
+    expect(trackUserMessageSentMock).toHaveBeenCalledWith({
+      providerId: "codex",
+      modelId: "gpt-5-codex/xhigh",
+      reasoningEffort: "xhigh",
+      executionEnvironment: "sandbox",
+      sessionKind: "primary",
+      isFirstTurn: false,
+    });
+    expect(trackFirstTurnSubmittedMock).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      providerId: "codex",
+      modelId: "gpt-5-codex/xhigh",
+    });
   });
 });

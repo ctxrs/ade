@@ -11,6 +11,10 @@ import type { OptimisticFocus } from "../WorkbenchPage.types";
 import { useWorkbenchOptimisticTasks } from "./useWorkbenchOptimisticTasks";
 import { useWorkbenchTaskCreation } from "./useWorkbenchTaskCreation";
 
+const { trackTaskCreatedMock } = vi.hoisted(() => ({
+  trackTaskCreatedMock: vi.fn(),
+}));
+
 vi.mock("../../api/client", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../api/client")>();
   return {
@@ -25,6 +29,14 @@ vi.mock("../../api/client", async (importOriginal) => {
 vi.mock("../../utils/randomUuid", () => ({
   randomUuid: vi.fn(),
 }));
+
+vi.mock("../../utils/analytics", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../utils/analytics")>();
+  return {
+    ...actual,
+    trackTaskCreated: trackTaskCreatedMock,
+  };
+});
 
 const mockedCreateTask = vi.mocked(createTask);
 const mockedCreateSession = vi.mocked(createSession);
@@ -279,6 +291,12 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "codex", "gpt-5", expect.objectContaining({
       execution_environment: "sandbox",
     }));
+    expect(trackTaskCreatedMock).toHaveBeenCalledWith({
+      providerId: "codex",
+      modelId: "gpt-5",
+      reasoningEffort: null,
+      executionEnvironment: "sandbox",
+    });
     expect(mockedPostMessage).not.toHaveBeenCalled();
     expect(onStartError).toHaveBeenCalledWith(null);
   });
@@ -342,6 +360,14 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     expect(mockedPostMessage).toHaveBeenCalledWith("session-1", "Write docs", "immediate", attachments, {
       id: "message-1",
       turn_id: "turn-1",
+      analytics: {
+        providerId: "codex",
+        modelId: "gpt-5",
+        reasoningEffort: null,
+        executionEnvironment: "sandbox",
+        sessionKind: "primary",
+        isFirstTurn: true,
+      },
     });
     expect(onStartError).toHaveBeenCalledWith(null);
   });
@@ -376,6 +402,12 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "codex", "gpt-5/xhigh", expect.objectContaining({
       execution_environment: "sandbox",
     }));
+    expect(trackTaskCreatedMock).toHaveBeenCalledWith({
+      providerId: "codex",
+      modelId: "gpt-5/xhigh",
+      reasoningEffort: "xhigh",
+      executionEnvironment: "sandbox",
+    });
     expect(mockedCreateSession.mock.calls[0]?.[3]).not.toHaveProperty("reasoning_effort");
     expect(onStartError).toHaveBeenCalledWith(null);
   });

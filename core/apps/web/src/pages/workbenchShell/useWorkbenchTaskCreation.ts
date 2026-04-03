@@ -25,6 +25,7 @@ import {
   providerUsabilityReason,
 } from "../../utils/providerInventory";
 import { randomUuid } from "../../utils/randomUuid";
+import { trackTaskCreated } from "../../utils/analytics";
 import type { WorkbenchStore } from "../../workbench/store";
 import type { OptimisticFocus, OptimisticTaskSummary } from "../WorkbenchPage.types";
 import { deriveTaskTitle, modelIdsFromOptions } from "../WorkbenchPage.utils";
@@ -285,6 +286,12 @@ export function useWorkbenchTaskCreation({
       }
 
       currentTaskId = taskId;
+      trackTaskCreated({
+        providerId: primaryTrack.providerId,
+        modelId: resolvedModelId,
+        reasoningEffort: parsedResolvedModel.effort,
+        executionEnvironment,
+      });
       setOptimisticTasks((prev) =>
         prev.map((item) => {
           if (item.id !== currentTaskId) return item;
@@ -362,6 +369,14 @@ export function useWorkbenchTaskCreation({
         const posted = await postMessage(sessionId, prompt, "immediate", attachmentsToSend, {
           id: messageId,
           turn_id: turnId,
+          analytics: {
+            providerId: primaryTrack.providerId,
+            modelId: resolvedModelId,
+            reasoningEffort: parsedResolvedModel.effort,
+            executionEnvironment,
+            sessionKind: "primary",
+            isFirstTurn: true,
+          },
         });
         supervisor.setMessages(sessionId, [posted]);
         primaryMessagePosted = true;
