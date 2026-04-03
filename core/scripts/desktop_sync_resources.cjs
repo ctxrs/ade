@@ -310,14 +310,16 @@ const writeEffectiveBundleManifest = (
   return effectiveManifestPath;
 };
 
-const isManagedAvfLocalPayloadValidationError = (error, hostOs, hostArch) => {
-  const label = `${AVF_LINUX_GUEST_RUNTIME_ID} (${hostOs}/${hostArch})`;
+const parseManagedAvfLocalPayloadValidationTarget = (error) => {
   const text = String(error || "");
-  return (
-    text.startsWith(`runtime root ${label} missing directory:`)
-    || text.startsWith(`runtime bin ${label} missing file:`)
-    || text.startsWith(`runtime helper ${AVF_LINUX_GUEST_RUNTIME_ID}/`)
+  const match = text.match(
+    /^runtime (?:root avf-linux-guest|bin avf-linux-guest|helper avf-linux-guest\/[^ ]+) \(([^/]+)\/([^)]+)\) missing (?:directory|file):/,
   );
+  if (!match) return null;
+  return {
+    os: match[1],
+    arch: match[2],
+  };
 };
 
 const filterManagedAvfLocalPayloadErrors = ({
@@ -331,13 +333,24 @@ const filterManagedAvfLocalPayloadErrors = ({
   if (!allowManagedRuntime || list.length === 0 || hostOs !== "macos") {
     return list;
   }
+  let lock = null;
   try {
-    const lock = readRuntimeLock(bundleDir);
-    assertManagedAvfRuntimeComponent(lock, hostOs, hostArch);
+    lock = readRuntimeLock(bundleDir);
   } catch {
     return list;
   }
-  return list.filter((error) => !isManagedAvfLocalPayloadValidationError(error, hostOs, hostArch));
+  return list.filter((error) => {
+    const target = parseManagedAvfLocalPayloadValidationTarget(error);
+    if (!target || target.os !== "macos") {
+      return true;
+    }
+    try {
+      assertManagedAvfRuntimeComponent(lock, target.os, target.arch);
+      return false;
+    } catch {
+      return true;
+    }
+  });
 };
 
 const assertRuntimeTargetsAvailable = (bundleDir, runtimeId, targets) => {

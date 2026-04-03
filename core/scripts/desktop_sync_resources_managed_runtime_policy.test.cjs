@@ -79,3 +79,42 @@ test("managed AVF local payload errors are preserved when the runtime lock lacks
 
   assert.deepEqual(filtered, errors);
 });
+
+test("managed AVF local payload errors can be filtered for macos x64 hosts when the failing target is macos aarch64", () => {
+  const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-managed-avf-policy-"));
+  writeLock(bundleDir, managedAvfComponent());
+  const errors = [
+    "runtime root avf-linux-guest (macos/aarch64) missing directory: /tmp/runtime",
+    "runtime helper avf-linux-guest/kernel (macos/aarch64) missing file: /tmp/runtime/helpers/kernel",
+    "missing provider bundle entry for codex (linux/x86_64)",
+  ];
+
+  const filtered = filterManagedAvfLocalPayloadErrors({
+    errors,
+    bundleDir,
+    hostOs: "macos",
+    hostArch: "x86_64",
+    allowManagedRuntime: true,
+  });
+
+  assert.deepEqual(filtered, ["missing provider bundle entry for codex (linux/x86_64)"]);
+});
+
+test("managed AVF local payload errors are preserved when the runtime lock does not cover the failing target arch", () => {
+  const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-managed-avf-policy-"));
+  writeLock(bundleDir, managedAvfComponent());
+  const errors = [
+    "runtime root avf-linux-guest (macos/x86_64) missing directory: /tmp/runtime",
+    "runtime helper avf-linux-guest/kernel (macos/x86_64) missing file: /tmp/runtime/helpers/kernel",
+  ];
+
+  const filtered = filterManagedAvfLocalPayloadErrors({
+    errors,
+    bundleDir,
+    hostOs: "macos",
+    hostArch: "x86_64",
+    allowManagedRuntime: true,
+  });
+
+  assert.deepEqual(filtered, errors);
+});
