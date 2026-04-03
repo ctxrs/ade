@@ -55,6 +55,41 @@ fn desktop_platform_key_is_known_for_current_target() {
 }
 
 #[test]
+fn linux_installer_target_suffix_prefers_appimage_env() {
+    assert_eq!(
+        support::linux_installer_target_suffix(Some("/tmp/ctx.AppImage"), None),
+        "appimage"
+    );
+}
+
+#[test]
+fn linux_installer_target_suffix_uses_appimage_extension_when_env_missing() {
+    assert_eq!(
+        support::linux_installer_target_suffix(None, Some(PathBuf::from("/tmp/ctx.AppImage").as_path())),
+        "appimage"
+    );
+}
+
+#[test]
+fn linux_installer_target_suffix_defaults_to_deb_without_appimage_signal() {
+    assert_eq!(support::linux_installer_target_suffix(None, None), "deb");
+}
+
+#[test]
+fn desktop_platform_key_for_linux_targets_includes_installer_suffix() {
+    assert_eq!(
+        support::desktop_platform_key_for("linux", "x86_64", "deb")
+            .expect("linux x64 deb target should resolve"),
+        "linux-x64-deb"
+    );
+    assert_eq!(
+        support::desktop_platform_key_for("linux", "aarch64", "appimage")
+            .expect("linux arm64 appimage target should resolve"),
+        "linux-arm64-appimage"
+    );
+}
+
+#[test]
 fn resolve_native_updater_config_uses_base_defaults() {
     let cfg = support::resolve_native_updater_config("stable").expect("config should resolve");
     assert!(

@@ -19,7 +19,7 @@ case "$platform" in
     ;;
 esac
 
-for cmd in pnpm patchelf file readelf ldd appstreamcli xdg-mime desktop-file-validate mksquashfs zsyncmake gtk-update-icon-cache; do
+for cmd in pnpm patchelf file readelf ldd appstreamcli xdg-mime desktop-file-validate mksquashfs zsyncmake gtk-update-icon-cache dpkg-deb; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "error: missing required command in release image: $cmd" >&2
     exit 1
@@ -87,11 +87,46 @@ select_tauri_cache_dir() {
   printf '%s' "."
 }
 
+pick_latest_bundle_artifact() {
+  local search_dir="$1"
+  local pattern="$2"
+  if [[ ! -d "$search_dir" ]]; then
+    return 0
+  fi
+  local latest
+  latest="$(
+    find "$search_dir" -maxdepth 1 -type f -name "$pattern" -printf '%T@ %p\n' 2>/dev/null \
+      | LC_ALL=C sort -n \
+      | tail -n 1 \
+      | sed -E 's/^[0-9]+(\.[0-9]+)? //'
+  )"
+  printf '%s' "$latest"
+}
+
+pick_latest_bundle_artifact_from_candidates() {
+  local pattern="$1"
+  shift
+  local search_dir latest
+  for search_dir in "$@"; do
+    latest="$(pick_latest_bundle_artifact "$search_dir" "$pattern")"
+    if [[ -n "$latest" ]]; then
+      printf '%s' "$latest"
+      return 0
+    fi
+  done
+  return 0
+}
+
+appimage_bundle_dir="core/apps/desktop/src-tauri/target/release/bundle/appimage"
+deb_bundle_dir="core/apps/desktop/src-tauri/target/release/bundle/deb"
+fallback_appimage_bundle_dir="core/target/release/bundle/appimage"
+fallback_deb_bundle_dir="core/target/release/bundle/deb"
+
 if ! \
   CTX_DESKTOP_SYNC_BUNDLES=0 \
   CTX_BUNDLE_REMOTE_DAEMONS=0 \
   RUST_LOG=tauri_bundler=debug \
-  pnpm -C core/apps/desktop run build -- --bundles appimage; then
+  pnpm -C core/apps/desktop run build -- --bundles appimage,deb; then
   echo "::group::linuxdeploy diagnostics (${platform})"
 
   tauri_cache_dir="$(select_tauri_cache_dir)"
@@ -100,7 +135,7 @@ if ! \
   if [[ ! -f "$plugin_path" ]]; then
     plugin_path="$tauri_cache_dir/linuxdeploy-plugin-appimage.AppImage"
   fi
-  appdir_path="$(find core/apps/desktop/src-tauri/target/release/bundle/appimage -maxdepth 1 -type d -name '*.AppDir' | head -n 1 || true)"
+  appdir_path="$(find "$appimage_bundle_dir" "$fallback_appimage_bundle_dir" -maxdepth 1 -type d -name '*.AppDir' 2>/dev/null | head -n 1 || true)"
 
   echo "tauri_cache_candidates=${tauri_cache_candidates[*]:-<none>}"
   echo "tauri_cache_dir=$tauri_cache_dir"
@@ -160,26 +195,10 @@ if ! \
 
   echo "::endgroup::"
   if [[ "$manual_linuxdeploy_ok" -eq 1 ]]; then
-    pick_latest_appimage() {
-      local search_dir="$1"
-      if [[ ! -d "$search_dir" ]]; then
-        return 0
-      fi
-      local latest
-      latest="$(
-        find "$search_dir" -maxdepth 1 -type f -name '*.AppImage' -printf '%T@ %p\n' 2>/dev/null \
-          | LC_ALL=C sort -n \
-          | tail -n 1 \
-          | sed -E 's/^[0-9]+(\.[0-9]+)? //' || true
-      )"
-      printf '%s' "$latest"
-    }
-
-    appimage_bundle_dir="core/apps/desktop/src-tauri/target/release/bundle/appimage"
     mkdir -p "$appimage_bundle_dir"
-    appimage_after_recovery="$(pick_latest_appimage "$appimage_bundle_dir")"
+    appimage_after_recovery="$(pick_latest_bundle_artifact "$appimage_bundle_dir" '*.AppImage')"
     if [[ -z "$appimage_after_recovery" ]]; then
-      appimage_after_recovery="$(pick_latest_appimage ".")"
+      appimage_after_recovery="$(pick_latest_bundle_artifact "." '*.AppImage')"
     fi
     if [[ -n "$appimage_after_recovery" && -f "$appimage_after_recovery" ]]; then
       if [[ "$appimage_after_recovery" != "$appimage_bundle_dir/"* ]]; then
@@ -198,4 +217,16 @@ if ! \
   else
     exit 1
   fi
+fi
+
+appimage_bundle="$(pick_latest_bundle_artifact_from_candidates '*.AppImage' "$appimage_bundle_dir" "$fallback_appimage_bundle_dir")"
+if [[ -z "$appimage_bundle" || ! -f "$appimage_bundle" ]]; then
+  echo "error: linux AppImage bundle missing after Tauri build"
+  exit 1
+fi
+
+deb_bundle="$(pick_latest_bundle_artifact_from_candidates '*.deb' "$deb_bundle_dir" "$fallback_deb_bundle_dir")"
+if [[ -z "$deb_bundle" || ! -f "$deb_bundle" ]]; then
+  echo "error: linux Debian bundle missing after Tauri build"
+  exit 1
 fi

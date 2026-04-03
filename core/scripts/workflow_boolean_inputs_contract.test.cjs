@@ -49,9 +49,7 @@ test("release supabase uses typed updater drill booleans", () => {
   const text = workflowText("release-supabase.yml");
   assert.match(text, /run_updater_e2e_drill:[\s\S]*type: boolean/);
   assert.match(text, /updater_e2e_expect_version_change:[\s\S]*type: boolean/);
-  assert.match(text, /run_mac_first_run_workspace_create:[\s\S]*type: boolean/);
   assert.ok(!text.includes("inputs.run_updater_e2e_drill == 'true'"));
-  assert.ok(!text.includes("inputs.run_mac_first_run_workspace_create == 'true'"));
   assert.match(text, /CTX_UPDATER_E2E_EXPECT_VERSION_CHANGE:\s*\$\{\{\s*github\.event_name == 'workflow_dispatch'/);
 });
 
@@ -179,7 +177,16 @@ test("linux tauri release container reuses staged bundles instead of remateriali
   const text = fs.readFileSync(path.join(repoRoot, "scripts", "release_linux_tauri_bundle_in_container.sh"), "utf8");
   assert.match(text, /CTX_DESKTOP_SYNC_BUNDLES=0/);
   assert.match(text, /CTX_BUNDLE_REMOTE_DAEMONS=0/);
-  assert.match(text, /pnpm -C core\/apps\/desktop run build -- --bundles appimage/);
+  assert.match(text, /pnpm -C core\/apps\/desktop run build -- --bundles appimage,deb/);
+});
+
+test("release supabase linux updater signing covers both AppImage and deb artifacts", () => {
+  const text = workflowText("release-supabase.yml");
+  assert.match(text, /name:\s+Sign Linux updater artifacts/);
+  assert.match(text, /find "\$dir" -maxdepth 1 -type f -name '\*\.AppImage'/);
+  assert.match(text, /find "\$dir" -maxdepth 1 -type f -name '\*\.deb'/);
+  assert.match(text, /"\$appimage" > "\$\{appimage\}\.sig"/);
+  assert.match(text, /"\$deb" > "\$\{deb\}\.sig"/);
 });
 
 test("non-linux release-stage tauri builds reuse staged bundles instead of rematerializing them", () => {
@@ -247,10 +254,6 @@ test("release supabase runs a shipped-app first-run workspace gate on the Mac mi
     /- name:\s+Real first-run workspace create smoke \(macOS shipped app\)[\s\S]*?(?=\n\s*- name:|\n\s*verify-manifest:|$)/,
   )?.[0] || "";
   assert.match(text, /mac-first-run-workspace-create:/);
-  assert.match(
-    block,
-    /if:\s*\$\{\{\s*always\(\)\s*&&\s*!cancelled\(\)[\s\S]*\(github\.event_name != 'workflow_dispatch' \|\| inputs\.run_mac_first_run_workspace_create\)\s*\}\}/s,
-  );
   assert.match(
     block,
     /mac-first-run-workspace-create:[\s\S]*runs-on:[\s\S]*group:\s*ctx-avf[\s\S]*labels:\s*ctx-avf-mac-mini/s,

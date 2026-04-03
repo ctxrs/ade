@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BrowserRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { appendDesktopLog, openLogsFolder } from "./api/client";
 import DaemonAvailabilityOverlay from "./components/DaemonAvailabilityOverlay";
 import StorageGuardBanner from "./components/StorageGuardBanner";
@@ -496,6 +496,7 @@ export default function App() {
           <GlobalUpdateNotice />
           <Routes>
             <Route path="/" element={<LauncherPage />} />
+            <Route path="/index.html" element={<Navigate replace to="/" />} />
             <Route path="/workspace-setup" element={<WorkspaceSetupPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/providers" element={<ProvidersPage />} />

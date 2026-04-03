@@ -2,12 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { renderInstallScript } from "./install-script.js";
 
 const makeTempDir = (prefix) => mkdtempSync(path.join(tmpdir(), prefix));
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const writeExecutable = (filePath, contents) => {
   writeFileSync(filePath, contents);
@@ -96,6 +97,16 @@ exec node "${extractorPath}" "$2" "$3"
 `,
   );
   writeExecutable(
+    path.join(stubDir, "id"),
+    `#!/bin/sh
+set -eu
+case "$1" in
+  -u) printf '%s\\n' "\${CTX_TEST_ID_U:-1000}" ;;
+  *) exit 2 ;;
+esac
+`,
+  );
+  writeExecutable(
     path.join(stubDir, "plutil"),
     `#!/bin/sh
 set -eu
@@ -122,7 +133,7 @@ done
 exec node "${extractorPath}" "$manifest" "$key"
 `,
   );
-  for (const name of ["hdiutil", "ditto", "open", "xdg-open"]) {
+  for (const name of ["hdiutil", "ditto", "open", "xdg-open", "update-desktop-database"]) {
     writeExecutable(
       path.join(stubDir, name),
       `#!/bin/sh
@@ -131,6 +142,29 @@ exit 0
 `,
     );
   }
+  writeExecutable(
+    path.join(stubDir, "sudo"),
+    `#!/bin/sh
+set -eu
+exec "$@"
+`,
+  );
+  writeExecutable(
+    path.join(stubDir, "apt-get"),
+    `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" > "$CTX_TEST_APT_LOG"
+exit 0
+`,
+  );
+  writeExecutable(
+    path.join(stubDir, "ctx"),
+    `#!/bin/sh
+set -eu
+printf '%s\\n' "ctx $*" > "$CTX_TEST_CTX_LOG"
+exit 0
+`,
+  );
 };
 
 const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
@@ -142,6 +176,7 @@ const runInstaller = ({
   artifactContents,
   installDirName = "install-root",
   binDirName = "bin-root",
+  osReleaseText = "ID=testos\n",
 }) => {
   const sandboxDir = makeTempDir("ctx-install-script-");
   const stubDir = path.join(sandboxDir, "stubs");
@@ -153,13 +188,19 @@ const runInstaller = ({
   const artifactPath = path.join(sandboxDir, "artifact.bin");
   const installDir = path.join(sandboxDir, installDirName);
   const binDir = path.join(sandboxDir, binDirName);
+  const xdgDataHome = path.join(sandboxDir, "xdg-data");
+  const osReleasePath = path.join(sandboxDir, "os-release");
+  const aptLogPath = path.join(sandboxDir, "apt.log");
+  const ctxLogPath = path.join(sandboxDir, "ctx.log");
 
   writeFileSync(scriptPath, renderInstallScript());
   writeFileSync(manifestPath, JSON.stringify(manifest));
   writeFileSync(artifactPath, artifactContents);
+  writeFileSync(osReleasePath, osReleaseText);
   chmodSync(scriptPath, 0o755);
   mkdirSync(installDir);
   mkdirSync(binDir);
+  mkdirSync(xdgDataHome);
 
   const result = spawnSync("sh", [scriptPath], {
     encoding: "utf8",
@@ -173,11 +214,15 @@ const runInstaller = ({
       CTX_TEST_ARTIFACT_PATH: artifactPath,
       CTX_TEST_UNAME_S: os,
       CTX_TEST_UNAME_M: arch,
+      CTX_INSTALL_OS_RELEASE_PATH: osReleasePath,
+      CTX_TEST_APT_LOG: aptLogPath,
+      CTX_TEST_CTX_LOG: ctxLogPath,
+      XDG_DATA_HOME: xdgDataHome,
     },
   });
 
   const cleanup = () => rmSync(sandboxDir, { recursive: true, force: true });
-  return { ...result, installDir, binDir, cleanup };
+  return { ...result, installDir, binDir, xdgDataHome, aptLogPath, ctxLogPath, cleanup };
 };
 
 test("renderInstallScript emits a bootstrap script with stable defaults", () => {
@@ -208,8 +253,13 @@ test("renderInstallScript includes release resolution, checksum verify, and app 
   assert.match(script, /ditto "\$app_src" "\$target_app"/);
   assert.match(script, /open "\$target_app"/);
   assert.match(script, /CTX_DESKTOP_START_PATH="\$start_path"/);
+  assert.match(script, /ctx-installer\.deb/);
+  assert.match(script, /apt-get install -y "\$artifact_path"/);
   assert.match(script, /ctx\.AppImage/);
   assert.match(script, /ctx-desktop/);
+  assert.match(script, /export CTX_DESKTOP_START_PATH=\//);
+  assert.match(script, /Installed desktop entry at/);
+  assert.match(script, /ctx\.desktop/);
   assert.match(script, /first_open_start_path/);
   assert.match(script, /CTX_INSTALL_DIR/);
 });
@@ -243,7 +293,7 @@ test("linux install hard-fails when manifest omits sha256", () => {
       latest_version: "0.0.1",
       platforms: {
         "linux-x64": {
-          desktop: {
+          appimage: {
             url_path: "/download/stable/0.0.1/ctx.AppImage",
           },
         },
@@ -295,7 +345,7 @@ test("linux install succeeds when manifest includes sha256", () => {
       latest_version: "0.0.1",
       platforms: {
         "linux-x64": {
-          desktop: {
+          appimage: {
             url_path: "/download/stable/0.0.1/ctx.AppImage",
             sha256: sha256(artifactContents),
           },
@@ -307,7 +357,81 @@ test("linux install succeeds when manifest includes sha256", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stderr, /Verified artifact sha256/);
     assert.equal(existsSync(path.join(result.installDir, "ctx.AppImage")), true);
+    const launcherPath = path.join(result.binDir, "ctx-desktop");
+    assert.equal(existsSync(launcherPath), true);
+    assert.match(readFileSync(launcherPath, "utf8"), /export CTX_DESKTOP_START_PATH=\//);
+    assert.match(
+      readFileSync(launcherPath, "utf8"),
+      new RegExp(`exec \"${escapeRegExp(path.join(result.installDir, "ctx.AppImage"))}\"`),
+    );
+    assert.match(readFileSync(launcherPath, "utf8"), /"\$@"/);
+    const desktopEntryPath = path.join(result.xdgDataHome, "applications", "ctx.desktop");
+    assert.equal(existsSync(desktopEntryPath), true);
+    assert.match(
+      readFileSync(desktopEntryPath, "utf8"),
+      new RegExp(`Exec=${escapeRegExp(launcherPath)}`),
+    );
+  } finally {
+    result.cleanup();
+  }
+});
+
+test("linux install falls back to AppImage on Debian-like systems when deb is unpublished", () => {
+  const artifactContents = "fake-appimage-on-ubuntu";
+  const result = runInstaller({
+    os: "Linux",
+    arch: "x86_64",
+    artifactContents,
+    osReleaseText: "ID=ubuntu\nID_LIKE=debian\n",
+    manifest: {
+      channel: "stable",
+      latest_version: "0.0.1",
+      platforms: {
+        "linux-x64": {
+          appimage: {
+            url_path: "/download/stable/0.0.1/ctx.AppImage",
+            sha256: sha256(artifactContents),
+          },
+        },
+      },
+    },
+  });
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /No Debian package published for linux-x64/);
+    assert.equal(existsSync(path.join(result.installDir, "ctx.AppImage")), true);
     assert.equal(existsSync(path.join(result.binDir, "ctx-desktop")), true);
+  } finally {
+    result.cleanup();
+  }
+});
+
+test("linux install uses Debian package on Debian-like systems", () => {
+  const artifactContents = "fake-deb-with-sha";
+  const result = runInstaller({
+    os: "Linux",
+    arch: "x86_64",
+    artifactContents,
+    osReleaseText: "ID=ubuntu\nID_LIKE=debian\n",
+    manifest: {
+      channel: "stable",
+      latest_version: "0.0.1",
+      platforms: {
+        "linux-x64": {
+          deb: {
+            url_path: "/download/stable/0.0.1/ctx.deb",
+            sha256: sha256(artifactContents),
+          },
+        },
+      },
+    },
+  });
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /Installed ctx desktop Debian package/);
+    assert.equal(existsSync(path.join(result.installDir, "ctx.AppImage")), false);
+    assert.match(readFileSync(result.aptLogPath, "utf8"), /^install -y /);
+    assert.match(readFileSync(result.aptLogPath, "utf8"), /ctx-installer\.deb/);
   } finally {
     result.cleanup();
   }

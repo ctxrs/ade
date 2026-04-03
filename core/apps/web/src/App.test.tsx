@@ -226,6 +226,17 @@ test("renders app shell", async () => {
   expect(await screen.findByText("New Workspace")).toBeInTheDocument();
 });
 
+test("redirects /index.html to the launcher route", async () => {
+  window.history.pushState({}, "", "/index.html");
+
+  render(<App />);
+
+  expect(await screen.findByText("New Workspace")).toBeInTheDocument();
+  await waitFor(() => {
+    expect(window.location.pathname).toBe("/");
+  });
+});
+
 test("routes geometry harness path to the standalone harness page", async () => {
   window.history.pushState({}, "", "/__geometry_harness");
   render(<App />);

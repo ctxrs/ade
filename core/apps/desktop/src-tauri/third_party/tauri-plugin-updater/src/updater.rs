@@ -43,7 +43,7 @@ use crate::{
 
 const UPDATER_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Installer {
     AppImage,
     Deb,
@@ -66,6 +66,38 @@ impl Installer {
             Self::Nsis => "nsis",
         }
     }
+}
+
+fn installer_for_target(target: &str) -> Option<Installer> {
+    let normalized = target.trim().to_ascii_lowercase();
+    if normalized.ends_with("-appimage") {
+        return Some(Installer::AppImage);
+    }
+    if normalized.ends_with("-deb") {
+        return Some(Installer::Deb);
+    }
+    if normalized.ends_with("-rpm") {
+        return Some(Installer::Rpm);
+    }
+    if normalized.ends_with("-app") {
+        return Some(Installer::App);
+    }
+    if normalized.ends_with("-msi") {
+        return Some(Installer::Msi);
+    }
+    if normalized.ends_with("-nsis") {
+        return Some(Installer::Nsis);
+    }
+    None
+}
+
+fn installer_for_target_or_bundle(
+    target: Option<&str>,
+    bundle: Option<BundleType>,
+) -> Option<Installer> {
+    target
+        .and_then(installer_for_target)
+        .or_else(|| installer_for_bundle_type(bundle))
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -411,7 +443,7 @@ impl Updater {
             const CONTROLS_ADD: &AsciiSet = &CONTROLS.add(b'+');
             let encoded_version = percent_encoding::percent_encode(version, CONTROLS_ADD);
             let encoded_version = encoded_version.to_string();
-            let installer = installer_for_bundle_type(bundle_type())
+            let installer = installer_for_target_or_bundle(self.target.as_deref(), bundle_type())
                 .map(|i| i.name())
                 .unwrap_or("unknown");
 
@@ -521,7 +553,7 @@ impl Updater {
             None => release.version > self.current_version,
         };
 
-        let installer = installer_for_bundle_type(bundle_type());
+        let installer = installer_for_target_or_bundle(self.target.as_deref(), bundle_type());
         let (download_url, signature) = self.get_urls(&release, &installer)?;
 
         let update = if should_update {
@@ -951,7 +983,7 @@ impl Update {
     /// └── ...
     ///
     fn install_inner(&self, bytes: &[u8]) -> Result<()> {
-        match installer_for_bundle_type(bundle_type()) {
+        match installer_for_target_or_bundle(Some(&self.target), bundle_type()) {
             Some(Installer::Deb) => self.install_deb(bytes),
             Some(Installer::Rpm) => self.install_rpm(bytes),
             _ => self.install_appimage(bytes),
@@ -1528,6 +1560,8 @@ fn escape_msi_property_arg(arg: impl AsRef<OsStr>) -> String {
 mod tests {
     #[cfg(target_os = "macos")]
     use super::{macos_direct_replace_permission_denied, move_current_app_to_backup};
+    use super::{installer_for_target, installer_for_target_or_bundle, Installer};
+    use tauri::utils::config::BundleType;
 
     #[test]
     #[cfg(windows)]
@@ -1671,5 +1705,44 @@ mod tests {
             backup.exists(),
             "backup app should exist after direct rename"
         );
+    }
+
+    #[test]
+    fn installer_for_target_parses_linux_suffixes() {
+        assert_eq!(installer_for_target("linux-x64-deb"), Some(Installer::Deb));
+        assert_eq!(
+            installer_for_target("linux-arm64-appimage"),
+            Some(Installer::AppImage)
+        );
+        assert_eq!(installer_for_target("linux-x64-rpm"), Some(Installer::Rpm));
+        assert_eq!(installer_for_target("linux-x64"), None);
+    }
+
+    #[test]
+    fn installer_for_target_or_bundle_prefers_explicit_target() {
+        assert_eq!(
+            installer_for_target_or_bundle(Some("linux-x64-deb"), Some(BundleType::AppImage)),
+            Some(Installer::Deb)
+        );
+        assert_eq!(
+            installer_for_target_or_bundle(
+                Some("linux-arm64-appimage"),
+                Some(BundleType::Deb)
+            ),
+            Some(Installer::AppImage)
+        );
+    }
+
+    #[test]
+    fn installer_for_target_or_bundle_falls_back_to_bundle_type() {
+        assert_eq!(
+            installer_for_target_or_bundle(None, Some(BundleType::Deb)),
+            Some(Installer::Deb)
+        );
+        assert_eq!(
+            installer_for_target_or_bundle(Some("linux-x64"), Some(BundleType::AppImage)),
+            Some(Installer::AppImage)
+        );
+        assert_eq!(installer_for_target_or_bundle(Some("linux-x64"), None), None);
     }
 }

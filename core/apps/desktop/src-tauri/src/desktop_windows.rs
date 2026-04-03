@@ -364,7 +364,7 @@ pub(super) fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
     }
     let start_url = match std::env::var("CTX_DESKTOP_START_PATH") {
         Ok(v) if v.trim().starts_with('/') => tauri::WebviewUrl::App(v.trim().into()),
-        _ => tauri::WebviewUrl::App("index.html".into()),
+        _ => tauri::WebviewUrl::App("/".into()),
     };
     let mut builder = tauri::WebviewWindowBuilder::new(app, "main", start_url).title("");
     if let Ok(Some(monitor)) = app.primary_monitor() {

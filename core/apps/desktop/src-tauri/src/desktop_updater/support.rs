@@ -294,17 +294,43 @@ pub(super) fn expand_updater_endpoint_template(raw: &str, channel: &str) -> Opti
     Some(trimmed.replace("{channel}", channel))
 }
 
-pub(super) fn desktop_platform_key() -> Result<&'static str, String> {
-    let os = std::env::consts::OS;
-    let arch = std::env::consts::ARCH;
+pub(super) fn linux_installer_target_suffix(
+    appimage_env: Option<&str>,
+    current_exe: Option<&std::path::Path>,
+) -> &'static str {
+    if appimage_env.is_some_and(|value| !value.trim().is_empty()) {
+        return "appimage";
+    }
+    if current_exe.is_some_and(|path| {
+        path.extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("AppImage"))
+    }) {
+        return "appimage";
+    }
+    "deb"
+}
+
+pub(super) fn desktop_platform_key_for(
+    os: &str,
+    arch: &str,
+    linux_installer_suffix: &str,
+) -> Result<String, String> {
+    let linux_suffix = linux_installer_suffix.trim();
     match (os, arch) {
-        ("linux", "x86_64") => Ok("linux-x64"),
-        ("linux", "aarch64") => Ok("linux-arm64"),
-        ("macos", "x86_64") => Ok("macos-x64"),
-        ("macos", "aarch64") => Ok("macos-arm64"),
-        ("windows", "x86_64") => Ok("windows-x64"),
+        ("linux", "x86_64") if !linux_suffix.is_empty() => Ok(format!("linux-x64-{linux_suffix}")),
+        ("linux", "aarch64") if !linux_suffix.is_empty() => Ok(format!("linux-arm64-{linux_suffix}")),
+        ("macos", "x86_64") => Ok("macos-x64".to_string()),
+        ("macos", "aarch64") => Ok("macos-arm64".to_string()),
+        ("windows", "x86_64") => Ok("windows-x64".to_string()),
         _ => Err(format!(
             "unsupported platform for desktop updater: {os}/{arch}"
         )),
     }
+}
+
+pub(super) fn desktop_platform_key() -> Result<String, String> {
+    let installer_suffix =
+        linux_installer_target_suffix(std::env::var("APPIMAGE").ok().as_deref(), std::env::current_exe().ok().as_deref());
+    desktop_platform_key_for(std::env::consts::OS, std::env::consts::ARCH, installer_suffix)
 }
