@@ -40,6 +40,7 @@
     ],
     "externalBin": ["bin/ctx-daemon", "bin/ctx-mcp"],
     "macOS": {
+      "entitlements": "ctx.entitlements",
       "infoPlist": "Info.plist"
     }
   }

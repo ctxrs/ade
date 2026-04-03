@@ -6,6 +6,8 @@ const path = require("node:path");
 const ROOT = path.resolve(__dirname, "..");
 const REPO_ROOT = path.resolve(ROOT, "..", "..", "..");
 const TAURI_CARGO = path.join(ROOT, "src-tauri", "Cargo.toml");
+const TAURI_CONF = path.join(ROOT, "src-tauri", "tauri.conf.json");
+const APP_ENTITLEMENTS = path.join(ROOT, "src-tauri", "ctx.entitlements");
 const TAURI_MAIN = path.join(ROOT, "src-tauri", "src", "main.rs");
 const PACKAGE_JSON = path.join(ROOT, "package.json");
 const WDIO_CONF = path.join(ROOT, "automation", "wdio.conf.cjs");
@@ -30,6 +32,15 @@ test("production desktop build keeps automation runtime available", () => {
     main,
     /#\[cfg\(feature = "automation"\)\]\s*\{\s*builder = builder\.plugin\(automation_init\(\)\);/s,
   );
+});
+
+test("production desktop build disables macOS library validation for shipped-app automation", () => {
+  const tauriConf = JSON.parse(fs.readFileSync(TAURI_CONF, "utf8"));
+  assert.equal(tauriConf.bundle?.macOS?.entitlements, "ctx.entitlements");
+
+  const entitlements = fs.readFileSync(APP_ENTITLEMENTS, "utf8");
+  assert.match(entitlements, /<key>com\.apple\.security\.cs\.disable-library-validation<\/key>/);
+  assert.match(entitlements, /<true\/>/);
 });
 
 test("first-run local sandbox script defaults to isolated macOS CN backend", () => {
