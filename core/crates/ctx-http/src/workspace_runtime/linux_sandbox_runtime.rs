@@ -766,4 +766,18 @@ mod tests {
         assert!(BOOTSTRAP_SCRIPT.contains("CTX_CONTAINER_TERMINAL_USER"));
         assert!(BOOTSTRAP_SCRIPT.contains("iptables -P OUTPUT DROP"));
     }
+
+    #[test]
+    fn bootstrap_script_prefers_verified_staged_debs_before_network_refresh() {
+        let install_idx = BOOTSTRAP_SCRIPT
+            .find("if [[ ${#verified_debs[@]} -eq 2 ]]; then")
+            .expect("verified deb branch should exist");
+        let update_idx = BOOTSTRAP_SCRIPT
+            .rfind("apt-get update")
+            .expect("apt-get update should remain available for fallback installs");
+        assert!(
+            install_idx < update_idx,
+            "activation should try verified staged debs before refreshing apt metadata"
+        );
+    }
 }

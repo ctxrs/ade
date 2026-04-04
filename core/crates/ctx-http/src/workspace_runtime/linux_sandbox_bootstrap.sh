@@ -224,7 +224,6 @@ install_apt_requirements() {
     echo "error: apt-get is required for Linux sandbox activation" >&2
     exit 1
   fi
-  apt-get update
 
   local tmp_dir
   tmp_dir="$(mktemp -d)"
@@ -242,6 +241,7 @@ install_apt_requirements() {
   if [[ ${#verified_debs[@]} -eq 2 ]]; then
     apt-get install -y "${verified_debs[@]}"
   else
+    apt-get update
     apt-get install -y containerd containernetworking-plugins
   fi
   rm -rf "${tmp_dir}"

@@ -62,6 +62,23 @@ fn linux_sandbox_script_path(data_dir: &Path) -> PathBuf {
     linux_sandbox_root(data_dir).join("bootstrap.sh")
 }
 
+fn write_local_status_override(data_dir: &Path, state: &str, message: &str) -> Result<()> {
+    let status_path = linux_sandbox_status_path(data_dir);
+    if let Some(parent) = status_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    let payload = serde_json::json!({
+        "state": state,
+        "supported": true,
+        "message": message,
+        "distro": ""
+    });
+    std::fs::write(&status_path, serde_json::to_vec(&payload).context("serializing status")?)
+        .with_context(|| format!("writing {}", status_path.display()))?;
+    Ok(())
+}
+
 fn write_local_bootstrap_script(data_dir: &Path) -> Result<PathBuf> {
     let root = linux_sandbox_root(data_dir);
     std::fs::create_dir_all(&root)
@@ -151,10 +168,19 @@ fn local_stage_spawn(app: tauri::AppHandle) {
     if !should_spawn {
         return;
     }
+    let data_dir = match daemon_data_dir(&app) {
+        Ok(data_dir) => data_dir,
+        Err(err) => {
+            eprintln!("local linux sandbox bootstrap stage failed: {err:#}");
+            if let Ok(mut guard) = local_prefetch_inflight().lock() {
+                *guard = false;
+            }
+            return;
+        }
+    };
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(LOCAL_PREFETCH_DELAY_MS));
         let result = (|| -> Result<()> {
-            let data_dir = daemon_data_dir(&app)?;
             let script_path = write_local_bootstrap_script(&data_dir)?;
             let output = Command::new(&script_path)
                 .arg("stage")
@@ -171,6 +197,8 @@ fn local_stage_spawn(app: tauri::AppHandle) {
             Ok(())
         })();
         if let Err(err) = result {
+            let detail = err.to_string();
+            let _ = write_local_status_override(&data_dir, "failed", &detail);
             eprintln!("local linux sandbox bootstrap stage failed: {err:#}");
         }
         if let Ok(mut guard) = local_prefetch_inflight().lock() {
@@ -611,6 +639,23 @@ mod tests {
         .expect("status should parse");
         assert_eq!(status.state, "downloaded_not_activated");
         assert!(status.message.is_empty());
+    }
+
+    #[test]
+    fn wait_for_local_stage_completion_returns_failed_status_immediately() {
+        let temp = std::env::temp_dir().join(format!("ctx-linux-sandbox-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).expect("create temp dir");
+        write_local_status_override(
+            &temp,
+            "failed",
+            "local linux sandbox bootstrap stage failed: checksum mismatch",
+        )
+        .expect("write failed status");
+
+        let status = wait_for_local_stage_completion(&temp).expect("failed status should return");
+        assert_eq!(status.state, "failed");
+        assert!(status.message.contains("checksum mismatch"));
+        std::fs::remove_dir_all(&temp).expect("remove temp dir");
     }
 
     #[test]
