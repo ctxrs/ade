@@ -1,2 +1,0 @@
-{"v":1,"seq":1,"channel":"control","type":"session.opened","session_id":"replay_session","provider_session_id":null}
-{"v":1,"seq":2,"channel":"control","type":"reasoning.summary","session_id":"replay_session","turn_id":"crp-512457e0-db50-47d9-9217-5aa99237e9aa","summary_index":0,"text":"Applying patch to add hello_world.txt","item_id":"rs_0ece40f3c989df4d01697c05db5818819e8b8a12bb89197472"}

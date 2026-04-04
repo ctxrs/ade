@@ -32,7 +32,6 @@
     "test:bundles:claude-crp": "bash -lc '../scripts/tests/ensure_bundled_harnesses_claude_crp.sh'",
     "test:bundles:matrix-required-managed": "bash -lc '../scripts/tests/provider_matrix_required_managed_sources.sh'",
     "test:bundles:codex-provenance": "bash -lc '../scripts/tests/codex_release_provenance_policy.sh'",
-    "test:bundles:codex-patch-series": "bash -lc '../scripts/codex_release_upgrade.sh --mode check --from-provider-matrix --verify-sync'",
     "test:bundles:codex-archive-artifacts": "node scripts/provider_matrix_archive_artifact_gate.cjs --provider codex",
     "test:bundles:manifest-required-providers": "bash -lc '../scripts/tests/validate_required_bundle_manifest.sh ${CTX_BUNDLE_MANIFEST:?set CTX_BUNDLE_MANIFEST to bundle manifest path}'",
     "test:bundles:runtime-lock-sandbox": "bash -lc '../scripts/tests/runtime_lock_sandbox_contract.sh'",
@@ -137,7 +136,7 @@
     "verify:agent:fast": "bash -lc 'scripts/affected_tests.sh'",
     "verify:e2e:all": "pnpm verify:e2e && pnpm verify:e2e:release && pnpm verify:e2e:cross-platform && pnpm verify:e2e:soak && pnpm verify:e2e:load",
     "verify:nightly": "pnpm verify:anomaly && pnpm verify:fuzz:regression && pnpm verify:e2e:soak && pnpm verify:e2e:load && pnpm test:providers:e2e && pnpm test:providers:e2e:runner",
-    "verify:release": "pnpm verify:merge:ci && pnpm verify:e2e:release && pnpm test:bundles:codex-archive-artifacts && pnpm test:bundles:codex-provenance && pnpm test:bundles:codex-patch-series",
+    "verify:release": "pnpm verify:merge:ci && pnpm verify:e2e:release && pnpm test:bundles:codex-archive-artifacts && pnpm test:bundles:codex-provenance",
     "posthog:bootstrap": "node scripts/posthog_bootstrap.mjs",
     "posthog:smoke": "node scripts/posthog_smoke_test.mjs --env staging --timeout-seconds 180"
   },

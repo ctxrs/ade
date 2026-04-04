@@ -1,5 +1,0 @@
-{"v":1,"seq":1,"channel":"control","type":"session.opened","session_id":"replay_session","provider_session_id":null}
-{"v":1,"seq":2,"channel":"control","type":"reasoning.summary","session_id":"replay_session","turn_id":"crp-0b356178-0666-4844-a72c-d47939f10367","summary_index":0,"text":"Clarifying file reading approach","item_id":"rs_0a09e82cb36f9efb01697c05bb60a081a0847bcb800fe3cc6e"}
-{"v":1,"seq":3,"channel":"data","type":"reasoning.trace","session_id":"replay_session","turn_id":"crp-0b356178-0666-4844-a72c-d47939f10367","chunk":"Confirmed","summary_index":0,"item_id":"rs_0a09e82cb36f9efb01697c05bb60a081a0847bcb800fe3cc6e"}
-{"v":1,"seq":4,"channel":"data","type":"reasoning.trace","session_id":"replay_session","turn_id":"crp-0b356178-0666-4844-a72c-d47939f10367","chunk":" instructions","summary_index":0,"item_id":"rs_0a09e82cb36f9efb01697c05bb60a081a0847bcb800fe3cc6e"}
-{"v":1,"seq":5,"channel":"data","type":"reasoning.trace.final","session_id":"replay_session","turn_id":"crp-0b356178-0666-4844-a72c-d47939f10367","content":"Confirmed instructions","summary_index":0,"item_id":"rs_0a09e82cb36f9efb01697c05bb60a081a0847bcb800fe3cc6e"}

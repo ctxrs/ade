@@ -27,7 +27,6 @@ const writeFile = (rootDir, relativePath, lineCount) => {
 test("source file classification distinguishes production from test and ignored paths", () => {
   assert.equal(classifySourceFile("core/apps/web/src/pages/SessionPage.view.tsx"), "production");
   assert.equal(classifySourceFile("core/crates/ctx-http/src/api/mod.rs"), "production");
-  assert.equal(classifySourceFile("site/src/main.js"), "production");
   assert.equal(classifySourceFile("core/apps/web/src/pages/SessionPage.view.test.tsx"), "test_or_automation");
   assert.equal(classifySourceFile("core/crates/ctx-http/src/provider_accounts/tests.rs"), "test_or_automation");
   assert.equal(classifySourceFile("core/apps/web/e2e/workbench-index.spec.ts"), "test_or_automation");
@@ -39,7 +38,6 @@ test("source file classification distinguishes production from test and ignored 
 test("isTrackedSourceFile includes production files and excludes tests and external harnesses", () => {
   assert.equal(isTrackedSourceFile("core/apps/web/src/pages/SessionPage.view.tsx"), true);
   assert.equal(isTrackedSourceFile("core/crates/ctx-http/src/api/mod.rs"), true);
-  assert.equal(isTrackedSourceFile("site/src/main.js"), true);
   assert.equal(isTrackedSourceFile("core/apps/web/src/pages/SessionPage.view.test.tsx"), false);
   assert.equal(isTrackedSourceFile("core/crates/ctx-http/src/provider_accounts/tests.rs"), false);
   assert.equal(isTrackedSourceFile("core/apps/web/scripts/replay-loadtest.mjs"), false);
@@ -108,16 +106,12 @@ test("run ignores oversized test and automation files", () => {
   assert.equal(exitCode, 0);
 });
 
-test("collectSourceFileStats keeps site sources and ignores external harnesses", () => {
+test("collectSourceFileStats keeps production sources and ignores external harnesses", () => {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "source-file-size-collect-"));
   writeFile(rootDir, "core/apps/web/src/pages/WorkbenchPage.shell.tsx", 10);
-  writeFile(rootDir, "site/src/main.js", 11);
   writeFile(rootDir, "core/apps/web/e2e/workbench-index.spec.ts", 12);
   writeFile(rootDir, "external-harnesses/codex/codex-rs/core/src/codex.rs", 13);
 
   const files = collectSourceFileStats(rootDir);
-  assert.deepEqual(
-    files.map((entry) => entry.path),
-    ["site/src/main.js", "core/apps/web/src/pages/WorkbenchPage.shell.tsx"],
-  );
+  assert.deepEqual(files.map((entry) => entry.path), ["core/apps/web/src/pages/WorkbenchPage.shell.tsx"]);
 });

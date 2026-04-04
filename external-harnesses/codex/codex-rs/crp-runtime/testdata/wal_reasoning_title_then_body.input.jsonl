@@ -1,4 +1,0 @@
-{"id":"turn-1","msg":{"type":"task_started"}}
-{"id":"turn-1","msg":{"type":"reasoning_content_delta","thread_id":"thread-1","turn_id":"turn-1","item_id":"rs-1","delta":"**Planning to read context files**","summary_index":0}}
-{"id":"turn-1","msg":{"type":"reasoning_content_delta","thread_id":"thread-1","turn_id":"turn-1","item_id":"rs-1","delta":"\n\nI'm preparing to list and read all files in .ctx/ctx-pack (agent-basics + specs) before doing anything else.","summary_index":0}}
-{"id":"turn-1","msg":{"type":"reasoning_content_delta","thread_id":"thread-1","turn_id":"turn-1","item_id":"rs-1","delta":"**Planning to read context files**","summary_index":0}}

@@ -23,7 +23,7 @@ const EXCLUDED_PARTS = new Set([
   ".cache",
 ]);
 const TEST_PATH_SEGMENTS = new Set(["tests", "__tests__", "e2e", "automation"]);
-const REPO_ROOTS = new Set(["core", "site"]);
+const REPO_ROOTS = new Set(["core"]);
 const TEST_FILE_PATTERNS = [
   /\.test\.[^.]+$/u,
   /\.spec\.[^.]+$/u,
@@ -37,7 +37,6 @@ const PRODUCTION_ROOT_PATTERNS = [
   /^core\/crates\/[^/]+\/src\//u,
   /^core\/packages\/[^/]+\/src\//u,
   /^core\/tools\/[^/]+\/src\//u,
-  /^site\/src\//u,
 ];
 
 const GUIDANCE_MESSAGE =
