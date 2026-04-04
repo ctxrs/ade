@@ -1,5 +1,6 @@
 use super::*;
 use crate::api::sessions;
+use crate::api::shared;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -177,7 +178,7 @@ pub(in crate::api) async fn create_session_for_task(
                 worktree_id = %worktree_id.0,
                 "worktree provisioning failed: {e:#}"
             );
-            StatusCode::INTERNAL_SERVER_ERROR
+            shared::status_code_for_internal_error(&e)
         })?;
 
         let worktree = Worktree {

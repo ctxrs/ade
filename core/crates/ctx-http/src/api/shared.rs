@@ -21,6 +21,23 @@ use crate::worktree_data_plane::{
     apply_data_plane_to_execution_settings, resolve_worktree_data_plane,
 };
 
+pub(super) fn status_code_for_internal_error(err: &anyhow::Error) -> StatusCode {
+    if crate::storage_guard::is_storage_exhaustion_error(&format!("{err:#}")) {
+        StatusCode::INSUFFICIENT_STORAGE
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
+
+pub(super) fn map_internal_api_error(err: &anyhow::Error) -> (StatusCode, Json<ApiErrorResp>) {
+    (
+        status_code_for_internal_error(err),
+        Json(ApiErrorResp {
+            error: logs::redact_sensitive(&format!("{err:#}")),
+        }),
+    )
+}
+
 pub(super) async fn store_for_existing_workspace_status(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
@@ -31,6 +48,39 @@ pub(super) async fn store_for_existing_workspace_status(
             Err(StatusCode::NOT_FOUND)
         }
         crate::daemon::StoreLookup::Unavailable(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_code_for_internal_error_maps_storage_failures_to_insufficient_storage() {
+        let err =
+            anyhow::anyhow!("Insufficient storage capacity for creating an isolated task worktree");
+        assert_eq!(
+            status_code_for_internal_error(&err),
+            StatusCode::INSUFFICIENT_STORAGE
+        );
+    }
+
+    #[test]
+    fn status_code_for_internal_error_preserves_generic_internal_errors() {
+        let err = anyhow::anyhow!("plain internal failure");
+        assert_eq!(
+            status_code_for_internal_error(&err),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[test]
+    fn map_internal_api_error_preserves_storage_guidance() {
+        let err = anyhow::anyhow!("wrapper")
+            .context("Insufficient storage capacity for creating an isolated task worktree");
+        let (status, body) = map_internal_api_error(&err);
+        assert_eq!(status, StatusCode::INSUFFICIENT_STORAGE);
+        assert!(body.0.error.contains("Insufficient storage capacity"));
     }
 }
 

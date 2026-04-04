@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::shared;
 
 pub(in crate::api) async fn create_task(
     State(state): State<Arc<AppState>>,
@@ -224,14 +225,7 @@ pub(in crate::api) async fn create_task(
         &effective,
     )
     .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
+    .map_err(|e| shared::map_internal_api_error(&e))?;
 
     let worktree = Worktree {
         id: worktree_id,
