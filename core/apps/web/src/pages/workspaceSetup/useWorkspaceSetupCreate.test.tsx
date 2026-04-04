@@ -87,38 +87,53 @@ const remoteEffectiveTarget = deriveWorkspaceSetupEffectiveTarget("remote", {
   remotePortInput: "44099",
   remoteDataDirInput: "/tmp/ctx-remote",
 });
+const localEffectiveTarget = deriveWorkspaceSetupEffectiveTarget("local", {
+  remoteHostInput: "",
+  remotePortInput: "4399",
+  remoteDataDirInput: "",
+});
 
 if (!remoteEffectiveTarget) {
   throw new Error("expected a remote effective target for create hook tests");
 }
+if (!localEffectiveTarget) {
+  throw new Error("expected a local effective target for create hook tests");
+}
 
-const buildIntent = (): WorkspaceSetupCreateIntent => ({
-  selections: {
-    location: "remote",
-    container: "sandbox",
-    source: "new",
-    network: "full",
-  },
-  sourcePath: "/remote/new-sandbox",
-  repoUrl: "",
-  repoBranch: "",
-  workspaceName: "remote-sandbox",
-  networkAllowlist: "",
-  useSandboxStaging: false,
-  importRepoStatus: "idle",
-  importRepoNote: null,
-  targetBranch: "",
-  verifyCommand: "",
-  mergeQueueSkipped: true,
-  pushOnSuccess: false,
-  pushRemote: "origin",
-  pushBranch: "main",
-  setupHook: "",
-  titlingStepVisible: false,
-  titlingMode: "skip" as const,
-  titlingRemoteValid: false,
-  titlingPersistError: null,
-});
+const buildIntent = (
+  overrides: Partial<WorkspaceSetupCreateIntent> = {},
+): WorkspaceSetupCreateIntent => {
+  const { selections: selectionOverrides, ...restOverrides } = overrides;
+  return {
+    sourcePath: "/remote/new-sandbox",
+    repoUrl: "",
+    repoBranch: "",
+    workspaceName: "remote-sandbox",
+    networkAllowlist: "",
+    useSandboxStaging: false,
+    importRepoStatus: "idle",
+    importRepoNote: null,
+    targetBranch: "",
+    verifyCommand: "",
+    mergeQueueSkipped: true,
+    pushOnSuccess: false,
+    pushRemote: "origin",
+    pushBranch: "main",
+    setupHook: "",
+    titlingStepVisible: false,
+    titlingMode: "skip" as const,
+    titlingRemoteValid: false,
+    titlingPersistError: null,
+    ...restOverrides,
+    selections: {
+      location: "remote",
+      container: "sandbox",
+      source: "new",
+      network: "full",
+      ...selectionOverrides,
+    },
+  };
+};
 
 const baseLaunchSnapshot = {
   job_id: "launch-1",
@@ -136,7 +151,28 @@ const baseLaunchSnapshot = {
   error: null,
 };
 
-const renderCreateHook = (insertionStep: RoutePlanInsertionStep | null) => {
+const createDeferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (error?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
+const renderCreateHook = (
+  insertionStep: RoutePlanInsertionStep | null,
+  {
+    intentOverrides,
+    effectiveTarget = remoteEffectiveTarget,
+    desktopApp = true,
+  }: {
+    intentOverrides?: Partial<WorkspaceSetupCreateIntent>;
+    effectiveTarget?: ReturnType<typeof deriveWorkspaceSetupEffectiveTarget>;
+    desktopApp?: boolean;
+  } = {},
+) => {
   const onOnboardingInsertionRequested = vi.fn();
   const navigate = vi.fn();
   const applyConnection = vi.fn();
@@ -148,7 +184,7 @@ const renderCreateHook = (insertionStep: RoutePlanInsertionStep | null) => {
   const hook = renderHook(() =>
     useWorkspaceSetupCreate({
       currentStepKey: "confirm",
-      intent: buildIntent(),
+      intent: buildIntent(intentOverrides),
       ensureTitlingPersistedForCurrentTarget: vi.fn(async () => true),
       setSourcePath: vi.fn(),
       setImportRepoStatus: vi.fn(),
@@ -159,9 +195,9 @@ const renderCreateHook = (insertionStep: RoutePlanInsertionStep | null) => {
       wizardCompletedRef,
       wizardKey: "wizard-remote-sandbox",
       trackWizardCompleted,
-      desktopApp: true,
+      desktopApp,
       remotePasswordOnce: null,
-      effectiveTarget: remoteEffectiveTarget,
+      effectiveTarget: effectiveTarget ?? null,
       connectDaemonForImport: vi.fn(async () => {}),
       ensureOnboardingAfterDaemonConnect: vi.fn(async () => ({ insertionStep })),
       waitForDaemonReady: vi.fn(async () => {}),
@@ -256,5 +292,101 @@ describe("useWorkspaceSetupCreate", () => {
     expect(onOnboardingInsertionRequested).toHaveBeenCalledWith("session-titling");
     expect(apiMocks.createWorkspace).not.toHaveBeenCalled();
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: "remote sandbox clone",
+      intentOverrides: {
+        selections: {
+          location: "remote",
+          container: "sandbox",
+          source: "clone",
+        },
+        sourcePath: "/remote/projects/",
+        repoUrl: "https://github.com/contextual-ai/ctx.git",
+        repoBranch: "main",
+      },
+      effectiveTarget: remoteEffectiveTarget,
+      pendingMock: () => apiMocks.repoClone,
+      resolveValue: { path: "/remote/projects/ctx" },
+      expectedStepLabel: "Cloning repository",
+    },
+    {
+      name: "remote host new",
+      intentOverrides: {
+        selections: {
+          location: "remote",
+          container: "host",
+          source: "new",
+        },
+      },
+      effectiveTarget: remoteEffectiveTarget,
+      pendingMock: () => apiMocks.repoInit,
+      resolveValue: { path: "/remote/new-sandbox" },
+      expectedStepLabel: "Initializing repository",
+    },
+    {
+      name: "local sandbox clone",
+      intentOverrides: {
+        selections: {
+          location: "local",
+          container: "sandbox",
+          source: "clone",
+        },
+        sourcePath: "/Users/test/projects/",
+        repoUrl: "https://github.com/contextual-ai/ctx.git",
+        repoBranch: "main",
+      },
+      effectiveTarget: localEffectiveTarget,
+      pendingMock: () => apiMocks.repoClone,
+      resolveValue: { path: "/Users/test/projects/ctx" },
+      expectedStepLabel: "Cloning repository",
+    },
+    {
+      name: "local host new",
+      intentOverrides: {
+        selections: {
+          location: "local",
+          container: "host",
+          source: "new",
+        },
+        sourcePath: "/Users/test/projects/ctx",
+      },
+      effectiveTarget: localEffectiveTarget,
+      pendingMock: () => apiMocks.repoInit,
+      resolveValue: { path: "/Users/test/projects/ctx" },
+      expectedStepLabel: "Initializing repository",
+    },
+  ])("shows launch logs immediately for $name", async ({
+    intentOverrides,
+    effectiveTarget,
+    pendingMock,
+    resolveValue,
+    expectedStepLabel,
+  }) => {
+    const deferred = createDeferred<typeof resolveValue>();
+    pendingMock().mockImplementationOnce(() => deferred.promise);
+    const { hook } = renderCreateHook(null, {
+      intentOverrides,
+      effectiveTarget,
+    });
+
+    await act(async () => {
+      void hook.result.current.onCreate();
+      await Promise.resolve();
+    });
+
+    expect(hook.result.current.creating).toBe(true);
+    expect(hook.result.current.showLaunchPanel).toBe(true);
+    expect(hook.result.current.currentLaunchStepLabel).toBe(expectedStepLabel);
+    expect(hook.result.current.currentLaunchEtaLabel).not.toBe("Finishing up…");
+    expect(hook.result.current.launchLogs.length).toBeGreaterThan(0);
+
+    await act(async () => {
+      deferred.resolve(resolveValue);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
   });
 });

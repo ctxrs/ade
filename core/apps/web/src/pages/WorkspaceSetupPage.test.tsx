@@ -2563,7 +2563,11 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(deleteWorkspace).toHaveBeenCalledWith("ws_test");
       expect(upsertLauncherRecent).not.toHaveBeenCalled();
-      expect(screen.getByText(/container runtime failed/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/container runtime failed/i, {
+          selector: ".wizard-error",
+        }),
+      ).toBeInTheDocument();
     });
   });
 

@@ -6,6 +6,14 @@ import type {
 } from "../../api/client";
 
 const LAUNCH_LOG_MAX = 400;
+const WORKSPACE_SETUP_REMOTE_CONNECT_MS = 12_000;
+const WORKSPACE_SETUP_SOURCE_PREP_MS = 3_000;
+const WORKSPACE_SETUP_CLONE_MS = 45_000;
+const WORKSPACE_SETUP_IMPORT_MS = 8_000;
+const WORKSPACE_SETUP_NEW_REPO_MS = 6_000;
+const WORKSPACE_SETUP_REGISTER_MS = 3_000;
+const WORKSPACE_SETUP_CONFIGURE_MS = 4_000;
+const WORKSPACE_SETUP_HOST_BOOTSTRAP_MS = 6_000;
 const ARTIFACT_ACQUISITION_PREPARATION_MS = 40_000;
 const SHARED_VM_STARTUP_MS = 19_000;
 const SANDBOX_SETUP_MS = 12_000;
@@ -23,9 +31,141 @@ const LAUNCH_ETA_BUCKET_ORDER: LaunchEtaBucket[] = [
   "sandbox_setup",
 ];
 
+export type WorkspaceSetupProvisioningPhase =
+  | "connect_daemon"
+  | "prepare_source"
+  | "clone_repo"
+  | "import_repo"
+  | "init_repo"
+  | "register_workspace"
+  | "configure_workspace"
+  | "launch_runtime"
+  | "bootstrap_workspace";
+
+export type WorkspaceSetupProvisioningSource = "clone" | "import" | "new";
+
+export type WorkspaceSetupProvisioningExecutionMode = "host" | "sandbox";
+
 export type WorkspaceSetupLaunchLogLine = ExecutionLaunchLogLine & {
   phaseLabel: string;
   timeLabel: string;
+};
+
+export const workspaceSetupProvisioningPhaseLabel = (
+  phase: WorkspaceSetupProvisioningPhase,
+): string => {
+  switch (phase) {
+    case "connect_daemon":
+      return "Daemon";
+    case "prepare_source":
+      return "Source";
+    case "clone_repo":
+      return "Clone";
+    case "import_repo":
+      return "Import";
+    case "init_repo":
+      return "Git";
+    case "register_workspace":
+      return "Workspace";
+    case "configure_workspace":
+      return "Runtime";
+    case "launch_runtime":
+      return "Sandbox";
+    case "bootstrap_workspace":
+      return "Bootstrap";
+  }
+};
+
+const workspaceSetupProvisioningPhaseBudgetMs = (
+  phase: WorkspaceSetupProvisioningPhase,
+  source: WorkspaceSetupProvisioningSource,
+  executionMode: WorkspaceSetupProvisioningExecutionMode,
+): number => {
+  switch (phase) {
+    case "connect_daemon":
+      return WORKSPACE_SETUP_REMOTE_CONNECT_MS;
+    case "prepare_source":
+      return WORKSPACE_SETUP_SOURCE_PREP_MS;
+    case "clone_repo":
+      return source === "clone" ? WORKSPACE_SETUP_CLONE_MS : 0;
+    case "import_repo":
+      return source === "import" ? WORKSPACE_SETUP_IMPORT_MS : 0;
+    case "init_repo":
+      return source === "new" ? WORKSPACE_SETUP_NEW_REPO_MS : 0;
+    case "register_workspace":
+      return WORKSPACE_SETUP_REGISTER_MS;
+    case "configure_workspace":
+      return WORKSPACE_SETUP_CONFIGURE_MS;
+    case "launch_runtime":
+      return executionMode === "sandbox" ? TOTAL_LAUNCH_BUDGET_MS : 0;
+    case "bootstrap_workspace":
+      return executionMode === "host" ? WORKSPACE_SETUP_HOST_BOOTSTRAP_MS : 0;
+  }
+};
+
+const WORKSPACE_SETUP_PHASE_ORDER: WorkspaceSetupProvisioningPhase[] = [
+  "connect_daemon",
+  "prepare_source",
+  "clone_repo",
+  "import_repo",
+  "init_repo",
+  "register_workspace",
+  "configure_workspace",
+  "launch_runtime",
+  "bootstrap_workspace",
+];
+
+const workspaceSetupPhaseIsRelevant = (
+  phase: WorkspaceSetupProvisioningPhase,
+  source: WorkspaceSetupProvisioningSource,
+  executionMode: WorkspaceSetupProvisioningExecutionMode,
+): boolean => workspaceSetupProvisioningPhaseBudgetMs(phase, source, executionMode) > 0;
+
+export const workspaceSetupProvisioningRemainingMs = ({
+  phase,
+  source,
+  executionMode,
+  phaseStartedAtMs,
+  nowMs,
+}: {
+  phase: WorkspaceSetupProvisioningPhase;
+  source: WorkspaceSetupProvisioningSource;
+  executionMode: WorkspaceSetupProvisioningExecutionMode;
+  phaseStartedAtMs: number;
+  nowMs: number;
+}): number => {
+  const currentBudgetMs = workspaceSetupProvisioningPhaseBudgetMs(phase, source, executionMode);
+  const currentRemainingMs = Math.max(0, currentBudgetMs - Math.max(0, nowMs - phaseStartedAtMs));
+  let downstreamMs = 0;
+  const currentIndex = WORKSPACE_SETUP_PHASE_ORDER.indexOf(phase);
+  for (let index = currentIndex + 1; index < WORKSPACE_SETUP_PHASE_ORDER.length; index += 1) {
+    const nextPhase = WORKSPACE_SETUP_PHASE_ORDER[index];
+    if (!workspaceSetupPhaseIsRelevant(nextPhase, source, executionMode)) continue;
+    downstreamMs += workspaceSetupProvisioningPhaseBudgetMs(nextPhase, source, executionMode);
+  }
+  return currentRemainingMs + downstreamMs;
+};
+
+export const stabilizeLaunchEtaRemainingMs = ({
+  previousRemainingMs,
+  previousNowMs,
+  nowMs,
+  rawRemainingMs,
+}: {
+  previousRemainingMs: number | null;
+  previousNowMs: number | null;
+  nowMs: number;
+  rawRemainingMs: number | null;
+}): number | null => {
+  if (rawRemainingMs === null) {
+    if (previousRemainingMs === null || previousNowMs === null) return null;
+    return Math.max(0, previousRemainingMs - Math.max(0, nowMs - previousNowMs));
+  }
+  if (previousRemainingMs === null || previousNowMs === null) {
+    return rawRemainingMs;
+  }
+  const decayedMs = Math.max(0, previousRemainingMs - Math.max(0, nowMs - previousNowMs));
+  return Math.min(decayedMs, rawRemainingMs);
 };
 
 export const launchPhaseLabel = (phase?: ExecutionLaunchPhase | null): string => {

@@ -7,6 +7,8 @@ import {
   launchElapsedMs,
   launchEtaRemainingMs,
   mergeLaunchLogs,
+  stabilizeLaunchEtaRemainingMs,
+  workspaceSetupProvisioningRemainingMs,
 } from "./launchProgress";
 
 const baseSnapshot = (): ExecutionLaunchSnapshot => ({
@@ -423,5 +425,56 @@ describe("launchProgress", () => {
     );
     expect(remainingMs).toBe(0);
     expect(formatLaunchRemaining(remainingMs)).toBe("Finishing up…");
+  });
+
+  it("models clone setup as one cumulative ETA through sandbox launch and bootstrap", () => {
+    const remainingMs = workspaceSetupProvisioningRemainingMs({
+      phase: "clone_repo",
+      source: "clone",
+      executionMode: "sandbox",
+      phaseStartedAtMs: Date.parse("2026-03-10T00:00:10.000Z"),
+      nowMs: Date.parse("2026-03-10T00:00:25.000Z"),
+    });
+    expect(remainingMs).toBe(108_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("1m 48s est. remaining");
+  });
+
+  it("models host setup remaining without sandbox launch phases", () => {
+    const remainingMs = workspaceSetupProvisioningRemainingMs({
+      phase: "configure_workspace",
+      source: "new",
+      executionMode: "host",
+      phaseStartedAtMs: Date.parse("2026-03-10T00:00:20.000Z"),
+      nowMs: Date.parse("2026-03-10T00:00:22.000Z"),
+    });
+    expect(remainingMs).toBe(8_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("8s est. remaining");
+  });
+
+  it("never lets a new raw ETA jump the displayed countdown upward", () => {
+    const remainingMs = stabilizeLaunchEtaRemainingMs({
+      previousRemainingMs: 18_000,
+      previousNowMs: Date.parse("2026-03-10T00:00:10.000Z"),
+      nowMs: Date.parse("2026-03-10T00:00:11.000Z"),
+      rawRemainingMs: 31_000,
+    });
+    expect(remainingMs).toBe(17_000);
+  });
+
+  it("keeps decaying when the raw ETA is stuck at the same value", () => {
+    const firstTick = stabilizeLaunchEtaRemainingMs({
+      previousRemainingMs: 31_000,
+      previousNowMs: Date.parse("2026-03-10T00:00:10.000Z"),
+      nowMs: Date.parse("2026-03-10T00:00:11.000Z"),
+      rawRemainingMs: 31_000,
+    });
+    const secondTick = stabilizeLaunchEtaRemainingMs({
+      previousRemainingMs: firstTick,
+      previousNowMs: Date.parse("2026-03-10T00:00:11.000Z"),
+      nowMs: Date.parse("2026-03-10T00:00:12.000Z"),
+      rawRemainingMs: 31_000,
+    });
+    expect(firstTick).toBe(30_000);
+    expect(secondTick).toBe(29_000);
   });
 });

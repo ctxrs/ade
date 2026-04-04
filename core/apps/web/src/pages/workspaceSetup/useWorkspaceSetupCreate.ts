@@ -29,8 +29,15 @@ import {
   currentLaunchStepLabel as deriveCurrentLaunchStepLabel,
   formatLaunchElapsed,
   formatLaunchRemaining,
+  formatLaunchTime,
   launchElapsedMs,
   launchEtaRemainingMs,
+  stabilizeLaunchEtaRemainingMs,
+  workspaceSetupProvisioningPhaseLabel,
+  workspaceSetupProvisioningRemainingMs,
+  type WorkspaceSetupProvisioningExecutionMode,
+  type WorkspaceSetupProvisioningPhase,
+  type WorkspaceSetupProvisioningSource,
   type WorkspaceSetupLaunchLogLine,
 } from "./launchProgress";
 import type { WizardStepKey } from "./wizardFlow";
@@ -82,6 +89,19 @@ type UseWorkspaceSetupCreateArgs = {
   setCreateError: (message: string | null) => void;
 };
 
+type WorkspaceProvisioningState = {
+  phase: WorkspaceSetupProvisioningPhase;
+  stepLabel: string;
+  startedAtMs: number;
+  phaseStartedAtMs: number;
+  updatedAtMs: number;
+  state: "running" | "ready" | "error";
+  error: string | null;
+  workspaceId: string | null;
+};
+
+const SYNTHETIC_WORKSPACE_SETUP_JOB_ID = "workspace-setup-provisioning";
+
 export function useWorkspaceSetupCreate({
   currentStepKey,
   intent,
@@ -108,10 +128,18 @@ export function useWorkspaceSetupCreate({
   const [creating, setCreating] = useState(false);
   const [launchSnapshot, setLaunchSnapshot] = useState<ExecutionLaunchSnapshot | null>(null);
   const [launchLogs, setLaunchLogs] = useState<WorkspaceSetupLaunchLogLine[]>([]);
+  const [provisioningState, setProvisioningState] = useState<WorkspaceProvisioningState | null>(null);
+  const [launchEtaDisplayMs, setLaunchEtaDisplayMs] = useState<number | null>(null);
   const [launchTick, setLaunchTick] = useState(0);
   const [launchCopyState, setLaunchCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [importInitDialog, setImportInitDialog] = useState<ImportInitDialogState | null>(null);
   const importInitResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
+  const provisioningStateRef = useRef<WorkspaceProvisioningState | null>(null);
+  const syntheticLogSeqRef = useRef(-1);
+  const launchEtaDisplayRef = useRef<{ remainingMs: number | null; nowMs: number | null }>({
+    remainingMs: null,
+    nowMs: null,
+  });
   const createIntent = buildWorkspaceSetupCreateIntent(intent);
   const {
     selections,
@@ -138,12 +166,185 @@ export function useWorkspaceSetupCreate({
   const parsedRemoteUser = remoteTarget?.user;
   const parsedRemotePort = remoteTarget?.port ?? null;
   const remoteDataDir = remoteTarget?.dataDir ?? null;
+  const provisioningSource = selections.source as WorkspaceSetupProvisioningSource;
+  const provisioningExecutionMode =
+    (selections.container === "host" ? "host" : "sandbox") satisfies WorkspaceSetupProvisioningExecutionMode;
 
   useEffect(() => {
-    if (!creating || !launchSnapshot || launchSnapshot.state !== "running") return;
+    provisioningStateRef.current = provisioningState;
+  }, [provisioningState]);
+
+  const buildSyntheticLaunchSnapshot = (
+    state: WorkspaceProvisioningState | null,
+  ): ExecutionLaunchSnapshot | null => {
+    if (!state) return null;
+    const startedAt = new Date(state.startedAtMs).toISOString();
+    return {
+      job_id: SYNTHETIC_WORKSPACE_SETUP_JOB_ID,
+      workspace_id: state.workspaceId ?? "pending",
+      kind: "workspace_launch",
+      state: state.state,
+      created_at: startedAt,
+      started_at: startedAt,
+      updated_at: new Date(state.updatedAtMs).toISOString(),
+      finished_at: state.state === "running" ? null : new Date(state.updatedAtMs).toISOString(),
+      current_phase: "machine_check",
+      current_step_label: state.stepLabel,
+      progress_pct: null,
+      eta_ms: null,
+      active_download: null,
+      phases: [],
+      logs: [],
+      error: state.error,
+    };
+  };
+
+  const appendSyntheticLaunchLog = (
+    phase: WorkspaceSetupProvisioningPhase,
+    message: string,
+    level: "info" | "warn" | "error" = "info",
+  ) => {
+    const ts = new Date().toISOString();
+    const seq = syntheticLogSeqRef.current;
+    syntheticLogSeqRef.current -= 1;
+    setLaunchLogs((prev) => prev.concat({
+      seq,
+      ts,
+      phase: "machine_check",
+      level,
+      message,
+      phaseLabel: workspaceSetupProvisioningPhaseLabel(phase),
+      timeLabel: formatLaunchTime(ts),
+    }).slice(-400));
+  };
+
+  const beginProvisioningPhase = (
+    phase: WorkspaceSetupProvisioningPhase,
+    stepLabel: string,
+    message: string,
+    workspaceId?: string | null,
+  ) => {
+    const nowMs = Date.now();
+    const startedAtMs = provisioningStateRef.current?.startedAtMs ?? nowMs;
+    const nextState: WorkspaceProvisioningState = {
+      phase,
+      stepLabel,
+      startedAtMs,
+      phaseStartedAtMs: nowMs,
+      updatedAtMs: nowMs,
+      state: "running",
+      error: null,
+      workspaceId: workspaceId ?? provisioningStateRef.current?.workspaceId ?? null,
+    };
+    provisioningStateRef.current = nextState;
+    setProvisioningState(nextState);
+    appendSyntheticLaunchLog(phase, message);
+  };
+
+  const clearProvisioningState = () => {
+    provisioningStateRef.current = null;
+    setProvisioningState(null);
+  };
+
+  const markProvisioningError = (message: string) => {
+    const current = provisioningStateRef.current;
+    if (!current) return;
+    const nowMs = Date.now();
+    const nextState: WorkspaceProvisioningState = {
+      ...current,
+      updatedAtMs: nowMs,
+      state: "error",
+      error: message,
+    };
+    provisioningStateRef.current = nextState;
+    setProvisioningState(nextState);
+    appendSyntheticLaunchLog(current.phase, message, "error");
+  };
+
+  const syntheticLaunchSnapshot = buildSyntheticLaunchSnapshot(provisioningState);
+  const effectiveLaunchSnapshot =
+    provisioningState?.state === "running"
+      ? syntheticLaunchSnapshot
+      : launchSnapshot ?? syntheticLaunchSnapshot;
+
+  useEffect(() => {
+    if (!creating || !effectiveLaunchSnapshot || effectiveLaunchSnapshot.state !== "running") return;
     const handle = window.setInterval(() => setLaunchTick((value) => value + 1), 1000);
     return () => window.clearInterval(handle);
-  }, [creating, launchSnapshot?.job_id, launchSnapshot?.state]);
+  }, [
+    creating,
+    launchSnapshot?.job_id,
+    launchSnapshot?.state,
+    provisioningState?.phase,
+    provisioningState?.state,
+  ]);
+
+  useEffect(() => {
+    if (
+      provisioningState?.state !== "running"
+      || provisioningState.phase !== "launch_runtime"
+      || !launchSnapshot
+    ) {
+      return;
+    }
+    clearProvisioningState();
+  }, [
+    launchSnapshot,
+    provisioningState?.phase,
+    provisioningState?.state,
+  ]);
+
+  useEffect(() => {
+    const nowMs = Date.now();
+    if (!creating || !effectiveLaunchSnapshot) {
+      launchEtaDisplayRef.current = { remainingMs: null, nowMs: null };
+      setLaunchEtaDisplayMs(null);
+      return;
+    }
+    if (effectiveLaunchSnapshot.state === "ready") {
+      launchEtaDisplayRef.current = { remainingMs: 0, nowMs };
+      setLaunchEtaDisplayMs(0);
+      return;
+    }
+    if (effectiveLaunchSnapshot.state === "error") {
+      launchEtaDisplayRef.current = { remainingMs: null, nowMs };
+      setLaunchEtaDisplayMs(null);
+      return;
+    }
+    const rawRemainingMs = provisioningState?.state === "running"
+      ? workspaceSetupProvisioningRemainingMs({
+        phase: provisioningState.phase,
+        source: provisioningSource,
+        executionMode: provisioningExecutionMode,
+        phaseStartedAtMs: provisioningState.phaseStartedAtMs,
+        nowMs,
+      })
+      : launchEtaRemainingMs(launchSnapshot, nowMs);
+    const nextRemainingMs = stabilizeLaunchEtaRemainingMs({
+      previousRemainingMs: launchEtaDisplayRef.current.remainingMs,
+      previousNowMs: launchEtaDisplayRef.current.nowMs,
+      nowMs,
+      rawRemainingMs,
+    });
+    launchEtaDisplayRef.current = { remainingMs: nextRemainingMs, nowMs };
+    setLaunchEtaDisplayMs(nextRemainingMs);
+  }, [
+    creating,
+    launchSnapshot?.job_id,
+    launchSnapshot?.state,
+    launchSnapshot?.updated_at,
+    launchSnapshot?.current_phase,
+    launchSnapshot?.current_step_label,
+    provisioningExecutionMode,
+    provisioningSource,
+    provisioningState?.phase,
+    provisioningState?.phaseStartedAtMs,
+    provisioningState?.state,
+    provisioningState?.stepLabel,
+    provisioningState?.updatedAtMs,
+    provisioningState?.workspaceId,
+    launchTick,
+  ]);
 
   useEffect(() => () => {
     const resolve = importInitResolveRef.current;
@@ -310,9 +511,9 @@ export function useWorkspaceSetupCreate({
   };
 
   const onCopyLaunchDiagnostics = async () => {
-    if (!launchSnapshot) return;
+    if (!effectiveLaunchSnapshot) return;
     const payload = {
-      snapshot: launchSnapshot,
+      snapshot: effectiveLaunchSnapshot,
       logs: launchLogs.map(({ phaseLabel: _phaseLabel, timeLabel: _timeLabel, ...line }) => line),
     };
     try {
@@ -327,13 +528,24 @@ export function useWorkspaceSetupCreate({
     setCreateError(null);
     setLaunchSnapshot(null);
     setLaunchLogs([]);
+    clearProvisioningState();
+    launchEtaDisplayRef.current = { remainingMs: null, nowMs: null };
+    setLaunchEtaDisplayMs(null);
     setLaunchCopyState("idle");
     setLaunchTick(0);
+    syntheticLogSeqRef.current = -1;
     setCreating(true);
     const launchStartedAtMs = Date.now();
     let createdWorkspaceId: string | null = null;
     let shouldCleanupCreatedWorkspace = false;
     try {
+      beginProvisioningPhase(
+        "connect_daemon",
+        selections.location === "remote" ? "Connecting to remote daemon" : "Connecting to local daemon",
+        selections.location === "remote"
+          ? "Connecting to the selected remote daemon."
+          : "Connecting to the local daemon.",
+      );
       if (selections.location === "remote" && !desktopApp) {
         throw new Error("Workspace creation from the wizard requires the desktop app.");
       }
@@ -361,6 +573,11 @@ export function useWorkspaceSetupCreate({
       }
 
       await waitForDaemonReady(15000);
+      beginProvisioningPhase(
+        "prepare_source",
+        "Preparing workspace source",
+        "Daemon ready. Preparing workspace source.",
+      );
       const onboardingResult = await ensureOnboardingAfterDaemonConnect({
         allowTitlingInsertion: selections.location === "remote",
       });
@@ -409,6 +626,11 @@ export function useWorkspaceSetupCreate({
       let name: string | undefined;
       let workspaceId = "";
       if (selections.source === "import") {
+        beginProvisioningPhase(
+          "import_repo",
+          "Checking import source",
+          "Checking the selected folder before importing it as a workspace.",
+        );
         rootPath = sourcePath.trim().replace(/\/+$/, "");
         if (!rootPath) throw new Error("Folder is required.");
         let status = await repoStatus({ path: rootPath }).catch(() => null);
@@ -424,6 +646,11 @@ export function useWorkspaceSetupCreate({
             setImportRepoNote("Folder is not a repo. Initialization cancelled.");
             throw new Error("Selected folder is not a repo.");
           }
+          beginProvisioningPhase(
+            "init_repo",
+            "Initializing Git repository",
+            "Initializing a new Git repository in the selected folder.",
+          );
           setImportRepoStatus("checking");
           setImportRepoNote("Initializing Git repo in selected folder…");
           const init = await repoInit({ path: rootPath, allow_existing: true, allow_non_empty: true });
@@ -447,6 +674,13 @@ export function useWorkspaceSetupCreate({
           name = workspaceName.trim() || undefined;
         }
       } else if (selections.source === "clone") {
+        beginProvisioningPhase(
+          "prepare_source",
+          "Preparing clone destination",
+          useSandboxStaging
+            ? "Allocating sandbox staging before cloning the repository."
+            : "Preparing the destination folder for the repository clone.",
+        );
         let destParent: string;
         let destName: string | null;
         if (useSandboxStaging) {
@@ -460,6 +694,11 @@ export function useWorkspaceSetupCreate({
           destParent = dest.dest_parent;
           destName = dest.dest_name ?? null;
         }
+        beginProvisioningPhase(
+          "clone_repo",
+          "Cloning repository",
+          `Cloning ${repoUrl.trim()}${repoBranch.trim() ? ` (${repoBranch.trim()})` : ""}.`,
+        );
         const response = await repoClone({
           repo_url: repoUrl.trim(),
           branch: repoBranch.trim() || null,
@@ -477,6 +716,13 @@ export function useWorkspaceSetupCreate({
           existingWorkspaceNames,
         });
       } else if (selections.source === "new") {
+        beginProvisioningPhase(
+          "init_repo",
+          "Initializing repository",
+          useSandboxStaging
+            ? "Allocating sandbox staging before creating the new repository."
+            : "Initializing a new Git repository for the workspace.",
+        );
         let destPath: string;
         if (useSandboxStaging) {
           const staging = await repoStagingPath();
@@ -510,12 +756,24 @@ export function useWorkspaceSetupCreate({
         startedAtMs: number;
       } | null = null;
       if (!workspaceId) {
+        beginProvisioningPhase(
+          "register_workspace",
+          "Registering workspace",
+          "Registering the workspace with the daemon.",
+        );
         const created = await createWorkspace(rootPath, name, workspaceKind, "wizard");
         workspaceId = idToString(created.id);
         createdWorkspaceId = workspaceId;
         shouldCleanupCreatedWorkspace = true;
+        setProvisioningState((current) => current ? { ...current, workspaceId } : current);
       }
 
+      beginProvisioningPhase(
+        "configure_workspace",
+        "Configuring workspace runtime",
+        "Saving workspace runtime settings.",
+        workspaceId,
+      );
       const environment = selections.container === "host"
         ? "host"
         : "sandbox";
@@ -532,6 +790,10 @@ export function useWorkspaceSetupCreate({
       });
 
       if (selections.container !== "host") {
+        appendSyntheticLaunchLog(
+          "launch_runtime",
+          "Handing off to sandbox launch and waiting for runtime readiness.",
+        );
         try {
           await waitForLaunchCompletion(workspaceId);
           trackWorkspaceLaunchCompleted({
@@ -562,6 +824,13 @@ export function useWorkspaceSetupCreate({
           throw error;
         }
       }
+
+      beginProvisioningPhase(
+        "bootstrap_workspace",
+        "Finalizing workspace setup",
+        "Finalizing workspace setup before opening it.",
+        workspaceId,
+      );
 
       if (!mergeQueueSkipped) {
         await updateWorkspaceMergeQueueConfig(workspaceId, {
@@ -606,6 +875,11 @@ export function useWorkspaceSetupCreate({
         // best-effort only; do not block workspace creation if recents persistence fails
       }
       await waitForWorkspaceBootstrapBeforeNavigation(workspaceId);
+      setProvisioningState((current) => current ? {
+        ...current,
+        updatedAtMs: Date.now(),
+        state: "ready",
+      } : current);
       if (pendingRouteLaunch) {
         trackWorkspaceLaunchCompleted({
           ...pendingRouteLaunch,
@@ -629,6 +903,7 @@ export function useWorkspaceSetupCreate({
         }
       }
       const message = messageFromError(error);
+      markProvisioningError(message);
       setCreateError(message);
       const key = resolveCreateErrorStepKey(message);
       if (key) onCreateErrorStep(key);
@@ -638,14 +913,14 @@ export function useWorkspaceSetupCreate({
   };
 
   const currentLaunchElapsed = (() => {
-    return formatLaunchElapsed(launchElapsedMs(launchSnapshot, Date.now()));
+    return formatLaunchElapsed(launchElapsedMs(effectiveLaunchSnapshot, Date.now()));
   })();
-  const currentLaunchStepLabel = deriveCurrentLaunchStepLabel(launchSnapshot);
-  const currentLaunchEtaLabel = launchSnapshot?.state === "ready"
+  const currentLaunchStepLabel = deriveCurrentLaunchStepLabel(effectiveLaunchSnapshot);
+  const currentLaunchEtaLabel = effectiveLaunchSnapshot?.state === "ready"
     ? "Ready"
-    : launchSnapshot?.state === "error"
+    : effectiveLaunchSnapshot?.state === "error"
       ? "Launch failed"
-      : formatLaunchRemaining(launchEtaRemainingMs(launchSnapshot, Date.now()));
+      : formatLaunchRemaining(launchEtaDisplayMs);
 
   return {
     creating,
@@ -654,9 +929,9 @@ export function useWorkspaceSetupCreate({
     resolveImportInitDialog,
     onPickLocalFolder,
     preflightSourceStep,
-    launchSnapshot,
+    launchSnapshot: effectiveLaunchSnapshot,
     launchLogs,
-    showLaunchPanel: Boolean(launchSnapshot) && (creating || launchSnapshot?.state === "error"),
+    showLaunchPanel: Boolean(effectiveLaunchSnapshot) && (creating || effectiveLaunchSnapshot?.state === "error"),
     currentLaunchStepLabel,
     currentLaunchElapsed,
     currentLaunchEtaLabel,
