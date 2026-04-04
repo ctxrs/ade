@@ -65,7 +65,7 @@ fn remote_ctx_bin_parent_dir_handles_home_and_absolute_paths() {
 }
 
 #[test]
-fn remote_daemon_exec_command_does_not_inject_system_sandbox_cli_env() {
+fn remote_daemon_exec_command_injects_system_sandbox_cli_env_only_when_ready() {
     let command = super::install::render_remote_daemon_exec_cmd(
         "~/.ctx/bin/ctx",
         44199,
@@ -80,8 +80,12 @@ fn remote_daemon_exec_command_does_not_inject_system_sandbox_cli_env() {
         "unexpected command: {command}"
     );
     assert!(
-        !command.contains("CTX_HARNESS_SANDBOX_CLI_PATH"),
-        "remote daemon start command should not inject a system sandbox CLI path: {command}"
+        command.contains("CTX_HARNESS_SANDBOX_CLI_PATH"),
+        "remote daemon start command should inject a system sandbox CLI path when the managed runtime is healthy: {command}"
+    );
+    assert!(
+        command.contains("/usr/local/bin/ctx-rootful-nerdctl info >/dev/null 2>&1"),
+        "remote daemon start command should guard sandbox env behind a runtime health check: {command}"
     );
     assert!(
         !command.contains("CTX_SANDBOX_PREFETCH"),
@@ -102,6 +106,18 @@ fn remote_startup_prewarm_request_targets_daemon_launch_api() {
         request.body.as_deref(),
         Some(r#"{"kind":"startup_prewarm","prewarm_scope":"all"}"#)
     );
+}
+
+#[test]
+fn remote_linux_sandbox_stage_request_targets_stage_api() {
+    let request = super::commands::build_remote_linux_sandbox_stage_request();
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.path, "/api/execution/linux_sandbox_runtime/stage");
+    assert_eq!(
+        request.headers,
+        vec![("Content-Type".to_string(), "application/json".to_string())]
+    );
+    assert!(request.body.is_none());
 }
 
 #[test]

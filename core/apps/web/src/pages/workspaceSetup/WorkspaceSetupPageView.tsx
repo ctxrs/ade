@@ -43,9 +43,13 @@ export function WorkspaceSetupPageView({
   onRemotePortInputChange,
   remoteDataDirInput,
   onRemoteDataDirInputChange,
+  localAdminPasswordPromptVisible,
+  localAdminPasswordInput,
+  setLocalAdminPasswordInput,
   remotePasswordPromptVisible,
+  remotePasswordPromptMode,
   remotePasswordInput,
-  setRemotePasswordInput,
+  onRemotePasswordInputChange,
   remoteStatus,
   setRemoteStatus,
   remoteError,
@@ -235,24 +239,26 @@ export function WorkspaceSetupPageView({
                     {remotePasswordPromptVisible ? (
                       <div className="wizard-input">
                         <label>
-                          SSH Password
+                          {remotePasswordPromptMode === "admin" ? "Remote Admin Password" : "SSH Password"}
                           <input
                             data-testid="wizard-remote-password-once"
                             type="password"
                             autoComplete="current-password"
-                            value={remotePasswordInput}
-                            onChange={(event) => {
-                              setCreateError(null);
-                              setRemotePasswordInput(event.target.value);
-                              if (remoteStatus !== "idle") {
-                                setRemoteStatus("idle");
-                                setRemoteError(null);
+                              value={remotePasswordInput}
+                              onChange={(event) => {
+                                setCreateError(null);
+                                onRemotePasswordInputChange(event.target.value);
+                                if (remoteStatus !== "idle") {
+                                  setRemoteStatus("idle");
+                                  setRemoteError(null);
                               }
                             }}
                           />
                         </label>
                         <div className="wizard-note">
-                          Used to install SSH key auth; never stored
+                          {remotePasswordPromptMode === "admin"
+                            ? "Used once to finish sandbox setup on this host; never stored"
+                            : "Used to install SSH key auth; never stored"}
                         </div>
                       </div>
                     ) : null}
@@ -282,6 +288,28 @@ export function WorkspaceSetupPageView({
                     {remoteStatus === "error" && remoteError && (
                       <div className="wizard-error">{remoteError}</div>
                     )}
+                  </div>
+                )}
+                {step.key === "location" && selections.location === "local" && localAdminPasswordPromptVisible && (
+                  <div className="wizard-remote">
+                    <div className="wizard-input">
+                      <label>
+                        Linux Admin Password
+                        <input
+                          data-testid="wizard-local-admin-password-once"
+                          type="password"
+                          autoComplete="current-password"
+                          value={localAdminPasswordInput}
+                          onChange={(event) => {
+                            setCreateError(null);
+                            setLocalAdminPasswordInput(event.target.value);
+                          }}
+                        />
+                      </label>
+                      <div className="wizard-note">
+                        Used once to finish sandbox setup on this machine; never stored
+                      </div>
+                    </div>
                   </div>
                 )}
                 {step.key === "auth-import" && (

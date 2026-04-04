@@ -351,10 +351,7 @@ mod tests {
     #[tokio::test]
     async fn probe_crp_runtime_launch_routes_shared_vm_container_through_helper() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let helper = write_probe_script(
-            &tmp,
-            "sleep 10",
-        );
+        let helper = write_probe_script(&tmp, "sleep 10");
 
         let mut env = HashMap::new();
         env.insert(
@@ -424,7 +421,8 @@ mod tests {
         );
         assert!(
             args.windows(2)
-                .any(|window| window[0] == "--workdir" && window[1] == "/ctx/ws/worktrees/wt-456/src"),
+                .any(|window| window[0] == "--workdir"
+                    && window[1] == "/ctx/ws/worktrees/wt-456/src"),
             "missing guest workdir in args: {args:?}"
         );
         assert!(args.iter().any(|arg| arg == "ctx-harness-ws-123"));
@@ -436,31 +434,31 @@ mod tests {
         assert!(args.iter().any(|arg| {
             arg == &format!(
                 "XDG_RUNTIME_DIR={}",
-            tmp.path()
-                .join("ctx-data-root")
-                .join("sandbox")
-                .join("run")
-                .display()
+                tmp.path()
+                    .join("ctx-data-root")
+                    .join("sandbox")
+                    .join("run")
+                    .display()
             )
         }));
         assert!(args.iter().any(|arg| {
             arg == &format!(
                 "HOME={}",
-            tmp.path()
-                .join("ctx-data-root")
-                .join("sandbox")
-                .join("home")
-                .display()
+                tmp.path()
+                    .join("ctx-data-root")
+                    .join("sandbox")
+                    .join("home")
+                    .display()
             )
         }));
         assert!(args.iter().any(|arg| {
             arg == &format!(
                 "TMPDIR={}",
-            tmp.path()
-                .join("ctx-data-root")
-                .join("sandbox")
-                .join("tmp")
-                .display()
+                tmp.path()
+                    .join("ctx-data-root")
+                    .join("sandbox")
+                    .join("tmp")
+                    .display()
             )
         }));
     }

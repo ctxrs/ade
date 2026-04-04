@@ -182,22 +182,69 @@ stage_apt_debs() {
   )
 }
 
+apt_expected_filename() {
+  local package="$1"
+  local filename
+  filename="$(apt-cache show "${package}" | awk '/^Filename: /{print $2; exit}')"
+  printf '%s\n' "${filename##*/}"
+}
+
+apt_expected_sha256() {
+  local package="$1"
+  apt-cache show "${package}" | awk '/^SHA256: /{print $2; exit}'
+}
+
+copy_verified_staged_deb() {
+  local package="$1"
+  local dest_dir="$2"
+  local expected_name
+  expected_name="$(apt_expected_filename "${package}")"
+  local expected_sha
+  expected_sha="$(apt_expected_sha256 "${package}")"
+  if [[ -z "${expected_name}" || -z "${expected_sha}" ]]; then
+    return 1
+  fi
+  local source_path="${debs_dir}/${expected_name}"
+  if [[ ! -f "${source_path}" ]]; then
+    return 1
+  fi
+  local verified_copy="${dest_dir}/${expected_name}"
+  install -m 0644 "${source_path}" "${verified_copy}"
+  local actual_sha
+  actual_sha="$(sha256sum "${verified_copy}" | awk '{print $1}')"
+  if [[ "${actual_sha}" != "${expected_sha}" ]]; then
+    rm -f "${verified_copy}"
+    return 1
+  fi
+  printf '%s\n' "${verified_copy}"
+}
+
 install_apt_requirements() {
   if ! command -v apt-get >/dev/null 2>&1; then
     echo "error: apt-get is required for Linux sandbox activation" >&2
     exit 1
   fi
-  local deb_matches=()
-  shopt -s nullglob
-  deb_matches=("${debs_dir}"/containerd*.deb "${debs_dir}"/containernetworking-plugins*.deb)
-  shopt -u nullglob
-  if [[ ${#deb_matches[@]} -gt 0 ]]; then
-    apt-get update
-    apt-get install -y "${deb_matches[@]}"
+  apt-get update
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local verified_debs=()
+  local package
+  for package in containerd containernetworking-plugins; do
+    local verified_deb
+    if ! verified_deb="$(copy_verified_staged_deb "${package}" "${tmp_dir}")"; then
+      verified_debs=()
+      break
+    fi
+    verified_debs+=("${verified_deb}")
+  done
+
+  if [[ ${#verified_debs[@]} -eq 2 ]]; then
+    apt-get install -y "${verified_debs[@]}"
   else
-    apt-get update
     apt-get install -y containerd containernetworking-plugins
   fi
+  rm -rf "${tmp_dir}"
 }
 
 install_managed_nerdctl() {
@@ -215,57 +262,389 @@ install_managed_nerdctl() {
   rm -rf "${tmp_dir}"
 }
 
+validate_allow_user_name() {
+  local user_name="$1"
+  if [[ -z "${user_name}" ]]; then
+    echo "error: activation requires --allow-user" >&2
+    exit 1
+  fi
+  if [[ ! "${user_name}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "error: activation requires a POSIX-safe username" >&2
+    exit 1
+  fi
+}
+
 install_rootful_wrapper() {
+  local allow_user_name="$1"
+  validate_allow_user_name "${allow_user_name}"
+  local allow_uid
+  allow_uid="$(id -u "${allow_user_name}")"
+  local allow_gid
+  allow_gid="$(id -g "${allow_user_name}")"
   local tmp_dir
   tmp_dir="$(mktemp -d)"
   cat > "${tmp_dir}/ctx-rootful-nerdctl" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-filtered_args=()
-explicit_snapshotter=0
-while [[ \$# -gt 0 ]]; do
-  case "\$1" in
-    --userns=keep-id)
-      shift
-      continue
-      ;;
-    --network=slirp4netns:allow_host_loopback=true|--net=slirp4netns:allow_host_loopback=true)
-      shift
-      continue
-      ;;
-    --network|--net)
-      if [[ "\${2:-}" == "slirp4netns:allow_host_loopback=true" ]]; then
-        shift 2
-        continue
-      fi
-      filtered_args+=("\$1")
-      shift
-      if [[ \$# -gt 0 ]]; then
-        filtered_args+=("\$1")
-        shift
-      fi
-      continue
-      ;;
-    --snapshotter)
-      explicit_snapshotter=1
-      filtered_args+=("\$1")
-      shift
-      if [[ \$# -gt 0 ]]; then
-        filtered_args+=("\$1")
-        shift
-      fi
-      continue
+allowed_user="${allow_user_name}"
+allowed_uid="${allow_uid}"
+allowed_gid="${allow_gid}"
+if [[ "\${EUID}" -ne 0 ]]; then
+  exec sudo --non-interactive "\$0" "\$@"
+fi
+if [[ -n "\${SUDO_USER:-}" && "\${SUDO_USER}" != "\${allowed_user}" ]]; then
+  echo "error: ctx sandbox wrapper only permits ${allow_user_name}" >&2
+  exit 1
+fi
+
+is_container_name() {
+  [[ "\$1" =~ ^ctx-harness-[A-Za-z0-9._:-]+$ ]]
+}
+
+is_volume_name() {
+  [[ "\$1" =~ ^ctx-ws-[A-Za-z0-9._:-]+$ ]]
+}
+
+is_absolute_path() {
+  [[ "\$1" == /* ]]
+}
+
+is_safe_user_value() {
+  [[ "\$1" =~ ^[0-9]+(:[0-9]+)?$ ]]
+}
+
+is_allowed_user_value() {
+  [[ "\$1" == "\${allowed_uid}" || "\$1" == "\${allowed_uid}:\${allowed_gid}" ]]
+}
+
+is_root_user_value() {
+  [[ "\$1" == "0" || "\$1" == "0:0" ]]
+}
+
+is_safe_env_assignment() {
+  [[ "\$1" =~ ^[A-Z0-9_]+= ]]
+}
+
+is_allowed_root_exec_env_assignment() {
+  local key="\${1%%=*}"
+  case "\$key" in
+    CTX_CONTAINER_TERMINAL_USER|CTX_CONTAINER_TERMINAL_HOME|CTX_CONTAINER_TERMINAL_UID|CTX_CONTAINER_TERMINAL_GID)
+      [[ "\$1" != *$'\n'* ]]
       ;;
     *)
-      filtered_args+=("\$1")
-      shift
+      return 1
       ;;
   esac
-done
-if [[ "\${explicit_snapshotter}" -eq 0 ]]; then
-  filtered_args=(--snapshotter native "\${filtered_args[@]}")
-fi
-exec sudo --non-interactive "${managed_nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" "\${filtered_args[@]}"
+}
+
+canonical_owned_path() {
+  local raw_path="\$1"
+  local resolved
+  resolved="$(readlink -f -- "\$raw_path")"
+  [[ -n "\$resolved" && -e "\$resolved" ]] || return 1
+  local owner_uid
+  owner_uid="$(stat -c '%u' -- "\$resolved")"
+  [[ "\$owner_uid" == "\${allowed_uid}" ]] || return 1
+  printf '%s\n' "\$resolved"
+}
+
+validate_mount() {
+  local spec="\$1"
+  local type=""
+  local src=""
+  local dst=""
+  IFS=',' read -r -a parts <<< "\$spec"
+  for part in "\${parts[@]}"; do
+    case "\$part" in
+      type=*) type="\${part#type=}" ;;
+      src=*|source=*) src="\${part#*=}" ;;
+      dst=*|target=*|destination=*) dst="\${part#*=}" ;;
+      ro|rw) ;;
+      *) ;;
+    esac
+  done
+  if [[ "\$type" == "bind" ]]; then
+    [[ -n "\$src" && -n "\$dst" ]] || return 1
+    canonical_owned_path "\$src" >/dev/null
+    is_absolute_path "\$dst" || return 1
+    return 0
+  fi
+  if [[ "\$type" == "volume" ]]; then
+    [[ -n "\$src" && -n "\$dst" ]] || return 1
+    is_volume_name "\$src" || return 1
+    is_absolute_path "\$dst" || return 1
+    return 0
+  fi
+  return 1
+}
+
+validate_image_ref() {
+  [[ "\$1" =~ ^[A-Za-z0-9._/@:-]+$ ]]
+}
+
+validate_exec() {
+  shift
+  local args=()
+  local env_assignments=()
+  local exec_user="\${allowed_uid}:\${allowed_gid}"
+  local saw_interactive=0
+  local saw_workdir=0
+  while [[ \$# -gt 0 ]]; do
+    case "\$1" in
+      --interactive)
+        saw_interactive=1
+        args+=("\$1")
+        shift
+        ;;
+      --user)
+        is_safe_user_value "\${2:-}" || return 1
+        if is_root_user_value "\${2:-}"; then
+          exec_user="0"
+        else
+          is_allowed_user_value "\${2:-}" || return 1
+          exec_user="\${allowed_uid}:\${allowed_gid}"
+        fi
+        shift 2
+        ;;
+      --workdir)
+        is_absolute_path "\${2:-}" || return 1
+        saw_workdir=1
+        args+=("\$1" "\$2")
+        shift 2
+        ;;
+      --env)
+        is_safe_env_assignment "\${2:-}" || return 1
+        env_assignments+=("\$2")
+        args+=("\$1" "\$2")
+        shift 2
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        return 1
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  is_container_name "\${1:-}" || return 1
+  local container_name="\$1"
+  shift
+  [[ \$# -gt 0 ]] || return 1
+  if [[ "\$exec_user" == "0" ]]; then
+    [[ "\$saw_interactive" -eq 0 && "\$saw_workdir" -eq 0 ]] || return 1
+    local assignment
+    for assignment in "\${env_assignments[@]}"; do
+      is_allowed_root_exec_env_assignment "\$assignment" || return 1
+    done
+    if [[ "\${1:-}" == "/bin/sh" && "\${2:-}" == "-lc" && \$# -eq 3 ]]; then
+      [[ "\${3:-}" == *'CTX_CONTAINER_TERMINAL_USER'* ]] || return 1
+      [[ "\${3:-}" == *'__CTX_CONTAINER_TERMINAL_SUDO_MISSING__'* ]] || return 1
+      [[ "\${3:-}" == *'/etc/sudoers.d/$user'* ]] || return 1
+    elif [[ "\${1:-}" == "sh" && "\${2:-}" == "-c" && \$# -eq 3 ]]; then
+      local script="\${3:-}"
+      if [[ "\${script}" == *"command -v iptables"* && "\${script}" == *"test -x '"* ]]; then
+        :
+      elif [[ "\${script}" == *"ctx-egress-proxy.log"* && "\${script}" == *'echo $! > "$pid_file"'* ]]; then
+        :
+      elif [[ "\${script}" == *"failed to stop transparent proxy pid"* ]]; then
+        :
+      elif [[ "\${script}" == *"iptables -P OUTPUT DROP"* && "\${script}" == *"REDIRECT --to-ports"* ]]; then
+        :
+      elif [[ "\${script}" == *"iptables -P OUTPUT ACCEPT"* && "\${script}" == *"iptables -t nat -F OUTPUT"* ]]; then
+        :
+      else
+        return 1
+      fi
+    else
+      return 1
+    fi
+  fi
+  exec "${managed_nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" exec --user "\${exec_user}" "\${args[@]}" "\$container_name" "\$@"
+}
+
+validate_run() {
+  shift
+  local args=(-d --user "\${allowed_uid}:\${allowed_gid}")
+  local saw_detach=0
+  local saw_name=0
+  while [[ \$# -gt 0 ]]; do
+    case "\$1" in
+      -d)
+        saw_detach=1
+        shift
+        ;;
+      --name)
+        is_container_name "\${2:-}" || return 1
+        args+=("\$1" "\$2")
+        saw_name=1
+        shift 2
+        ;;
+      --hostname)
+        [[ "\${2:-}" =~ ^[A-Za-z0-9.-]+$ ]] || return 1
+        args+=("\$1" "\$2")
+        shift 2
+        ;;
+      --userns=keep-id)
+        shift
+        ;;
+      --user)
+        is_safe_user_value "\${2:-}" || return 1
+        is_allowed_user_value "\${2:-}" || return 1
+        shift 2
+        ;;
+      --network=slirp4netns:allow_host_loopback=true|--net=slirp4netns:allow_host_loopback=true)
+        shift
+        ;;
+      --network|--net)
+        [[ "\${2:-}" == "slirp4netns:allow_host_loopback=true" ]] || return 1
+        shift 2
+        ;;
+      --cap-add)
+        [[ "\${2:-}" == "NET_ADMIN" ]] || return 1
+        args+=("\$1" "\$2")
+        shift 2
+        ;;
+      --add-host)
+        [[ "\${2:-}" == "host.containers.internal:host-gateway" ]] || return 1
+        args+=("\$1" "\$2")
+        shift 2
+        ;;
+      --mount)
+        validate_mount "\${2:-}" || return 1
+        args+=("\$1" "\$2")
+        shift 2
+        ;;
+      -*)
+        return 1
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  [[ "\${saw_detach}" -eq 1 && "\${saw_name}" -eq 1 ]] || return 1
+  validate_image_ref "\${1:-}" || return 1
+  local image_ref="\$1"
+  shift
+  [[ "\${1:-}" == "/bin/sh" && "\${2:-}" == "-c" && "\${3:-}" == "while true; do sleep 100000; done" ]] || return 1
+  shift 3
+  [[ \$# -eq 0 ]] || return 1
+  exec "${managed_nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" --snapshotter native run "\${args[@]}" "\$image_ref" /bin/sh -c "while true; do sleep 100000; done"
+}
+
+validate_simple_named_command() {
+  local verb="\$1"
+  shift
+  case "\$verb" in
+    start)
+      is_container_name "\${1:-}" || return 1
+      [[ \$# -eq 1 ]] || return 1
+      exec "${managed_nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" start "\$1"
+      ;;
+    rm)
+      [[ "\${1:-}" == "-f" ]] || return 1
+      is_container_name "\${2:-}" || return 1
+      [[ \$# -eq 2 ]] || return 1
+      exec "${managed_nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" rm -f "\$2"
+      ;;
+    inspect)
+      is_container_name "\${1:-}" || return 1
+      [[ \$# -eq 1 ]] || return 1
+      exec "${managed_nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" inspect "\$1"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+validate_volume() {
+  [[ \$# -ge 2 ]] || return 1
+  local subcommand="\$2"
+  case "\$subcommand" in
+    inspect|create)
+      is_volume_name "\${3:-}" || return 1
+      [[ \$# -eq 3 ]] || return 1
+      exec "${managed_nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" volume "\$subcommand" "\$3"
+      ;;
+    rm)
+      [[ "\${3:-}" == "-f" ]] || return 1
+      is_volume_name "\${4:-}" || return 1
+      [[ \$# -eq 4 ]] || return 1
+      exec "${managed_nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" volume rm -f "\$4"
+      ;;
+    ls)
+      [[ "\${3:-}" == "--format" && "\${4:-}" == "{{.Name}}" && \$# -eq 4 ]] || return 1
+      exec "${managed_nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" volume ls --format "{{.Name}}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+validate_container() {
+  [[ \$# -ge 2 ]] || return 1
+  [[ "\$2" == "inspect" ]] || return 1
+  if [[ "\${3:-}" == "--format" ]]; then
+    [[ "\${4:-}" == "{{.State.Running}}" ]] || return 1
+    is_container_name "\${5:-}" || return 1
+    [[ \$# -eq 5 ]] || return 1
+    exec "${managed_nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" container inspect --format "{{.State.Running}}" "\$5"
+  fi
+  is_container_name "\${3:-}" || return 1
+  [[ \$# -eq 3 ]] || return 1
+  exec "${managed_nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" container inspect "\$3"
+}
+
+validate_image() {
+  [[ "\${2:-}" == "inspect" ]] || return 1
+  validate_image_ref "\${3:-}" || return 1
+  [[ \$# -eq 3 ]] || return 1
+  exec "${managed_nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" image inspect "\$3"
+}
+
+validate_load() {
+  [[ "\${2:-}" == "-i" ]] || return 1
+  local archive_path
+  archive_path="$(canonical_owned_path "\${3:-}")" || return 1
+  [[ \$# -eq 3 ]] || return 1
+  exec "${managed_nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" load -i "\$archive_path"
+}
+
+case "\${1:-}" in
+  info)
+    [[ \$# -eq 1 ]] || exit 1
+    exec "${managed_nerdctl_path}" --address "${system_containerd_address}" --namespace "${system_containerd_namespace}" info
+    ;;
+  exec)
+    validate_exec "\$@"
+    ;;
+  run)
+    validate_run "\$@"
+    ;;
+  start|rm|inspect)
+    validate_simple_named_command "\$@"
+    ;;
+  volume)
+    validate_volume "\$@"
+    ;;
+  container)
+    validate_container "\$@"
+    ;;
+  image)
+    validate_image "\$@"
+    ;;
+  load)
+    validate_load "\$@"
+    ;;
+esac
+echo "error: unsupported ctx sandbox wrapper invocation: \$*" >&2
+exit 1
 EOF
   install -m 0755 "${tmp_dir}/ctx-rootful-nerdctl" "${wrapper_path}"
   rm -rf "${tmp_dir}"
@@ -273,16 +652,11 @@ EOF
 
 install_sudoers_rule() {
   local user_name="$1"
-  if [[ -z "${user_name}" ]]; then
-    echo "error: activation requires --allow-user" >&2
-    exit 1
-  fi
-  local sanitized
-  sanitized="$(printf '%s' "${user_name}" | tr -c 'A-Za-z0-9._-' '_')"
-  local sudoers_path="/etc/sudoers.d/ctx-managed-nerdctl-${sanitized}"
+  validate_allow_user_name "${user_name}"
+  local sudoers_path="/etc/sudoers.d/ctx-managed-nerdctl-${user_name}"
   cat > "${sudoers_path}" <<EOF
 Defaults:${user_name} !requiretty
-${user_name} ALL=(root) NOPASSWD: ${managed_nerdctl_path}
+${user_name} ALL=(root) NOPASSWD: ${wrapper_path}
 EOF
   chmod 0440 "${sudoers_path}"
 }
@@ -310,7 +684,11 @@ mark_ready() {
 
 emit_current_status() {
   if [[ -f "${ready_marker}" && -x "${wrapper_path}" ]]; then
-    write_status "ready" true "" "${distro}"
+    if [[ -S "${system_containerd_address}" ]] && "${wrapper_path}" info >/dev/null 2>&1; then
+      write_status "ready" true "" "${distro}"
+    else
+      write_status "failed" true "Installed Linux sandbox runtime is not healthy." "${distro}"
+    fi
   elif [[ -f "${staged_archive_path}" ]]; then
     write_status "downloaded_not_activated" true "" "${distro}"
   else
@@ -348,8 +726,7 @@ fi
 
 if [[ "${mode}" == "stage" ]]; then
   if [[ -f "${ready_marker}" && -x "${wrapper_path}" ]]; then
-    write_status "ready" true "" "${distro}"
-    status_json
+    emit_current_status
     exit 0
   fi
   write_status "downloading" true "" "${distro}"
@@ -366,7 +743,7 @@ if [[ "${mode}" == "activate" ]]; then
     exit 1
   fi
   install_managed_nerdctl "${arch}"
-  install_rootful_wrapper
+  install_rootful_wrapper "${allow_user}"
   install_sudoers_rule "${allow_user}"
   install_apt_requirements
   ensure_containerd_running

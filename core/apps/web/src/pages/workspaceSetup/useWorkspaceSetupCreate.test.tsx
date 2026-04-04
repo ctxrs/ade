@@ -173,16 +173,19 @@ const renderCreateHook = (
     intentOverrides,
     effectiveTarget = remoteEffectiveTarget,
     desktopApp = true,
+    ...overrides
   }: {
     intentOverrides?: Partial<WorkspaceSetupCreateIntent>;
-    effectiveTarget?: ReturnType<typeof deriveWorkspaceSetupEffectiveTarget>;
+    effectiveTarget?: ReturnType<typeof deriveWorkspaceSetupEffectiveTarget> | null;
     desktopApp?: boolean;
-  } = {},
+  } & Partial<Parameters<typeof useWorkspaceSetupCreate>[0]> = {},
 ) => {
   const onOnboardingInsertionRequested = vi.fn();
+  const onCreateErrorStep = vi.fn();
   const navigate = vi.fn();
   const applyConnection = vi.fn();
   const rememberRemoteProfile = vi.fn();
+  const requestRemotePasswordPrompt = vi.fn();
   const setCreateError = vi.fn();
   const wizardCompletedRef = { current: false };
   const trackWizardCompleted = vi.fn();
@@ -196,31 +199,36 @@ const renderCreateHook = (
       setImportRepoStatus: vi.fn(),
       setImportRepoNote: vi.fn(),
       onOnboardingInsertionRequested,
-      onCreateErrorStep: vi.fn(),
+      onCreateErrorStep,
       navigate,
       wizardCompletedRef,
       wizardKey: "wizard-remote-sandbox",
       trackWizardCompleted,
       desktopApp,
-      remotePasswordOnce: null,
-      remotePasswordCandidate: null,
+      remoteSshPasswordOnce: null,
+      remoteSshPasswordCandidate: null,
+      remoteAdminPasswordOnce: null,
+      remoteAdminPasswordCandidate: null,
       effectiveTarget: effectiveTarget ?? null,
       connectDaemonForImport: vi.fn(async () => {}),
       ensureOnboardingAfterDaemonConnect: vi.fn(async () => ({ insertionStep })),
       waitForDaemonReady: vi.fn(async () => {}),
       applyConnection,
       rememberRemoteProfile,
-      requestRemotePasswordPrompt: vi.fn(),
+      requestRemotePasswordPrompt,
       setCreateError,
+      ...overrides,
     }),
   );
 
   return {
     hook,
     onOnboardingInsertionRequested,
+    onCreateErrorStep,
     navigate,
     applyConnection,
     rememberRemoteProfile,
+    requestRemotePasswordPrompt,
     setCreateError,
     wizardCompletedRef,
     trackWizardCompleted,
@@ -245,6 +253,11 @@ describe("useWorkspaceSetupCreate", () => {
       },
     });
     apiMocks.updateWorkspaceExecutionConfig.mockResolvedValue(undefined);
+    desktopMocks.desktopConnectLocal.mockResolvedValue({
+      kind: "local",
+      base_url: "http://127.0.0.1:4319",
+      token: "local-token",
+    });
     desktopMocks.desktopConnectSsh.mockResolvedValue({
       kind: "ssh",
       base_url: "http://127.0.0.1:4399",
@@ -445,5 +458,97 @@ describe("useWorkspaceSetupCreate", () => {
       provisioningPhase: "clone_repo",
     });
     expect(setCreateError).toHaveBeenCalledWith("clone exploded");
+  });
+
+  it("uses SSH credentials for connect and admin credentials for remote sandbox prepare", async () => {
+    const { hook } = renderCreateHook(null, {
+      remoteSshPasswordCandidate: "ssh-password",
+      remoteAdminPasswordCandidate: "admin-password",
+    });
+
+    await act(async () => {
+      await hook.result.current.onCreate();
+    });
+
+    expect(desktopMocks.desktopConnectSsh).toHaveBeenCalledWith(
+      expect.objectContaining({
+        password_once: "ssh-password",
+      }),
+    );
+    expect(desktopMocks.desktopEnsureRemoteLinuxSandboxReady).toHaveBeenCalledWith({
+      admin_password_once: "admin-password",
+    });
+  });
+
+  it("prompts for the local admin password and retries sandbox prepare with it", async () => {
+    desktopMocks.desktopEnsureLocalLinuxSandboxReady
+      .mockRejectedValueOnce(
+        new Error(
+          "CTX_LOCAL_ADMIN_PASSWORD_REQUIRED: Local admin password required to prepare sandbox on this machine.",
+        ),
+      )
+      .mockResolvedValueOnce({ ready: true });
+    const { hook, onCreateErrorStep, setCreateError } = renderCreateHook(null, {
+      intent: {
+        ...buildIntent(),
+        selections: {
+          location: "local",
+          container: "sandbox",
+          source: "new",
+          network: "full",
+        },
+      },
+      effectiveTarget: null,
+    });
+
+    await act(async () => {
+      await hook.result.current.onCreate();
+    });
+
+    expect(hook.result.current.localAdminPasswordPromptVisible).toBe(true);
+    expect(onCreateErrorStep).toHaveBeenCalledWith("location");
+    expect(setCreateError).toHaveBeenCalledWith(
+      "Preparing sandbox needs your Linux admin password. Enter it on the Local step and try again.",
+    );
+    expect(desktopMocks.desktopEnsureLocalLinuxSandboxReady).toHaveBeenCalledWith({
+      admin_password_once: null,
+    });
+
+    await act(async () => {
+      hook.result.current.setLocalAdminPasswordInput("local-admin");
+    });
+    await act(async () => {
+      await hook.result.current.onCreate();
+    });
+
+    expect(desktopMocks.desktopEnsureLocalLinuxSandboxReady).toHaveBeenLastCalledWith({
+      admin_password_once: "local-admin",
+    });
+    expect(hook.result.current.localAdminPasswordPromptVisible).toBe(false);
+  });
+
+  it("requests the remote admin password prompt when remote sandbox prepare needs elevation", async () => {
+    desktopMocks.desktopEnsureRemoteLinuxSandboxReady.mockRejectedValueOnce(
+      new Error(
+        "CTX_REMOTE_ADMIN_PASSWORD_REQUIRED: Remote admin password required to prepare sandbox on this host.",
+      ),
+    );
+    const { hook, onCreateErrorStep, requestRemotePasswordPrompt, setCreateError } =
+      renderCreateHook(null, {
+        remoteSshPasswordCandidate: "ssh-password",
+      });
+
+    await act(async () => {
+      await hook.result.current.onCreate();
+    });
+
+    expect(requestRemotePasswordPrompt).toHaveBeenCalledWith("admin");
+    expect(onCreateErrorStep).toHaveBeenCalledWith("location");
+    expect(setCreateError).toHaveBeenCalledWith(
+      "Preparing sandbox on remote host needs the remote admin password. Enter it on the Remote step and try again.",
+    );
+    expect(desktopMocks.desktopEnsureRemoteLinuxSandboxReady).toHaveBeenCalledWith({
+      admin_password_once: null,
+    });
   });
 });

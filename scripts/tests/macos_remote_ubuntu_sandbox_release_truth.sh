@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../.. && pwd)"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 ARTIFACT_DIR="${CTX_REMOTE_RELEASE_TRUTH_ARTIFACT_DIR:-${ROOT}/core/apps/desktop/automation/artifacts/remote-release-truth/${RUN_ID}}"
+ARCHES_CSV="${CTX_UPDATER_E2E_ARCHES:-linux-x64,linux-arm64}"
 RUN_CONTAINER="${CTX_REMOTE_RELEASE_TRUTH_RUN_CONTAINER:-1}"
 REPORT_PATH="${ARTIFACT_DIR}/summary.json"
 RUN_LOG="${ARTIFACT_DIR}/remote-release-truth.log"
@@ -78,28 +79,42 @@ env \
   CTX_AUTOMATION_WDIO_LOG_LEVEL="${CTX_AUTOMATION_WDIO_LOG_LEVEL:-warn}" \
   "${REMOTE_MATRIX_SCRIPT}" run -- \
   "${REMOTE_REAL_SCRIPT}" \
-  --artifacts-dir "${ARTIFACT_DIR}" \
   --run-host 1 \
   --run-container "${RUN_CONTAINER}" >"${RUN_LOG}" 2>&1
 status=$?
 set -e
 
-host_report="${ARTIFACT_DIR}/remote-host/contract-report.json"
-container_report="${ARTIFACT_DIR}/remote-container/contract-report.json"
-
 set +e
-node - "${host_report}" "${container_report}" "${RUN_CONTAINER}" <<'NODE'
+node - "${ARTIFACT_DIR}" "${ARCHES_CSV}" "${RUN_CONTAINER}" <<'NODE'
 const fs = require("node:fs");
+const path = require("node:path");
 
-const hostReportPath = process.argv[2];
-const containerReportPath = process.argv[3];
+const artifactDir = process.argv[2];
+const arches = String(process.argv[3] || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
 const runContainer = process.argv[4] === "1";
 
-const checks = [
-  { path: hostReportPath, expectedScope: "remote_host", expectedLane: "host" },
-];
-if (runContainer) {
-  checks.push({ path: containerReportPath, expectedScope: "remote_sandbox", expectedLane: "sandbox" });
+if (arches.length === 0) {
+  console.error("no remote truth arches configured");
+  process.exit(2);
+}
+
+const checks = [];
+for (const arch of arches) {
+  checks.push({
+    path: path.join(artifactDir, arch, "remote-host", "contract-report.json"),
+    expectedScope: "remote_host",
+    expectedLane: "host",
+  });
+  if (runContainer) {
+    checks.push({
+      path: path.join(artifactDir, arch, "remote-container", "contract-report.json"),
+      expectedScope: "remote_sandbox",
+      expectedLane: "sandbox",
+    });
+  }
 }
 
 for (const check of checks) {

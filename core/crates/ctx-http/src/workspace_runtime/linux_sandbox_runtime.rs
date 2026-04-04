@@ -162,13 +162,14 @@ fn linux_sandbox_platform() -> LinuxSandboxPlatform {
     LinuxSandboxPlatform::OtherLinux { distro }
 }
 
+fn is_posix_safe_username(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
 fn current_username() -> Result<String> {
-    if let Ok(value) = std::env::var("USER") {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return Ok(trimmed.to_string());
-        }
-    }
     let output = std::process::Command::new("id")
         .arg("-un")
         .stdin(Stdio::null())
@@ -186,6 +187,11 @@ fn current_username() -> Result<String> {
     let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if value.is_empty() {
         anyhow::bail!("id -un returned an empty username while preparing Linux sandbox runtime");
+    }
+    if !is_posix_safe_username(&value) {
+        anyhow::bail!(
+            "id -un returned a non-POSIX-safe username while preparing Linux sandbox runtime"
+        );
     }
     Ok(value)
 }
@@ -445,72 +451,72 @@ pub(crate) async fn stage_linux_sandbox_runtime_downloads(
     Ok(build_status(&paths, &platform, bootstrap))
 }
 
-fn activation_args(
-    paths: &LinuxSandboxBootstrapPaths,
-    data_root: &Path,
-    user_name: &str,
-) -> Vec<String> {
-    let mut args = Vec::with_capacity(5);
-    args.push(paths.activation_script_path.to_string_lossy().to_string());
-    args.push("activate".to_string());
-    args.push("--data-dir".to_string());
-    args.push(data_root.to_string_lossy().to_string());
-    args.push("--allow-user".to_string());
-    args.push(user_name.to_string());
-    args
+fn activation_args(data_root: &Path, user_name: &str) -> Vec<String> {
+    vec![
+        "/bin/sh".to_string(),
+        "-s".to_string(),
+        "--".to_string(),
+        "activate".to_string(),
+        "--data-dir".to_string(),
+        data_root.to_string_lossy().to_string(),
+        "--allow-user".to_string(),
+        user_name.to_string(),
+    ]
 }
 
-async fn run_sudo_with_password(args: &[String], password: &str) -> Result<std::process::Output> {
-    let mut command = Command::new("sudo");
+async fn run_command_with_stdin(
+    mut command: Command,
+    stdin_bytes: &[u8],
+) -> Result<std::process::Output> {
     command
-        .arg("-S")
-        .arg("-p")
-        .arg("")
-        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let mut child = command.spawn().context("spawning sudo command")?;
+    let mut child = command
+        .spawn()
+        .context("spawning Linux sandbox activation command")?;
     if let Some(mut stdin) = child.stdin.take() {
         stdin
-            .write_all(format!("{password}\n").as_bytes())
+            .write_all(stdin_bytes)
             .await
-            .context("writing sudo password to stdin")?;
+            .context("writing Linux sandbox activation payload to stdin")?;
     }
     match tokio::time::timeout(BOOTSTRAP_TIMEOUT, child.wait_with_output()).await {
-        Ok(output) => Ok(output.context("waiting for sudo command")?),
+        Ok(output) => Ok(output.context("waiting for Linux sandbox activation command")?),
         Err(_) => anyhow::bail!(
-            "sudo activation command timed out after {}s",
+            "Linux sandbox activation command timed out after {}s",
             BOOTSTRAP_TIMEOUT.as_secs()
         ),
     }
+}
+
+async fn run_sudo_with_password(args: &[String], password: &str) -> Result<std::process::Output> {
+    let mut command = Command::new("sudo");
+    command.arg("-S").arg("-p").arg("").args(args);
+    let mut stdin = Vec::with_capacity(password.len() + BOOTSTRAP_SCRIPT.len() + 1);
+    stdin.extend_from_slice(password.as_bytes());
+    stdin.push(b'\n');
+    stdin.extend_from_slice(BOOTSTRAP_SCRIPT.as_bytes());
+    run_command_with_stdin(command, &stdin).await
 }
 
 fn sudo_needs_password(output: &std::process::Output) -> bool {
     let detail = command_output_message(output).to_ascii_lowercase();
     detail.contains("a password is required")
         || detail.contains("password is required")
+        || detail.contains("sorry, try again")
+        || detail.contains("incorrect password")
         || (detail.contains("sudo:")
             && (detail.contains("no tty")
                 || detail.contains("askpass")
                 || detail.contains("password")))
 }
 
-async fn try_local_pkexec(args: &[String]) -> Result<Option<std::process::Output>> {
-    if which::which("pkexec").is_err() {
-        return Ok(None);
-    }
-    let mut command = Command::new("pkexec");
-    command.args(args);
-    let output = command_output_with_timeout(command, BOOTSTRAP_TIMEOUT).await?;
-    Ok(Some(output))
-}
-
 async fn try_sudo_non_interactive(args: &[String]) -> Result<std::process::Output> {
     let mut command = Command::new("sudo");
     command.arg("--non-interactive").args(args);
-    command_output_with_timeout(command, BOOTSTRAP_TIMEOUT).await
+    run_command_with_stdin(command, BOOTSTRAP_SCRIPT.as_bytes()).await
 }
 
 pub(crate) async fn prepare_linux_sandbox_runtime(
@@ -552,32 +558,46 @@ pub(crate) async fn prepare_linux_sandbox_runtime(
     let paths = linux_sandbox_bootstrap_paths(data_root);
     ensure_linux_sandbox_bootstrap_script(&paths).await?;
     let user_name = current_username()?;
-    let args = activation_args(&paths, data_root, &user_name);
+    let args = activation_args(data_root, &user_name);
 
     match activation_mode {
         LinuxSandboxActivationMode::Local => {
-            if let Some(output) = try_local_pkexec(&args).await? {
-                if !output.status.success() {
-                    let detail = command_output_message(&output);
-                    if !detail.is_empty() {
-                        tracing::warn!("pkexec Linux sandbox activation failed: {detail}");
-                    }
-                } else {
-                    let status = linux_sandbox_runtime_status(data_root).await?;
-                    return Ok(LinuxSandboxRuntimePrepareResult {
-                        ready: status.state == LinuxSandboxRuntimeState::Ready,
-                        needs_password: false,
-                        message: status.message.clone(),
-                        status,
-                    });
-                }
-            }
-
             let output = try_sudo_non_interactive(&args).await?;
             if !output.status.success() {
+                if sudo_needs_password(&output) && sudo_password.is_none() {
+                    return Ok(LinuxSandboxRuntimePrepareResult {
+                        ready: false,
+                        needs_password: true,
+                        message: "Preparing Linux sandbox runtime needs the local admin password."
+                            .to_string(),
+                        status: LinuxSandboxRuntimeStatus {
+                            state: LinuxSandboxRuntimeState::Activating,
+                            message:
+                                "Preparing Linux sandbox runtime needs the local admin password."
+                                    .to_string(),
+                            ..staged_status
+                        },
+                    });
+                }
                 if let Some(password) = sudo_password {
                     let output = run_sudo_with_password(&args, password).await?;
                     if !output.status.success() {
+                        if sudo_needs_password(&output) {
+                            return Ok(LinuxSandboxRuntimePrepareResult {
+                                ready: false,
+                                needs_password: true,
+                                message:
+                                    "Preparing Linux sandbox runtime needs the local admin password."
+                                        .to_string(),
+                                status: LinuxSandboxRuntimeStatus {
+                                    state: LinuxSandboxRuntimeState::Activating,
+                                    message:
+                                        "Preparing Linux sandbox runtime needs the local admin password."
+                                            .to_string(),
+                                    ..staged_status
+                                },
+                            });
+                        }
                         let detail = command_output_message(&output);
                         anyhow::bail!(
                             "Preparing Linux sandbox runtime failed. {}",
@@ -624,6 +644,22 @@ pub(crate) async fn prepare_linux_sandbox_runtime(
                 if let Some(password) = sudo_password {
                     let output = run_sudo_with_password(&args, password).await?;
                     if !output.status.success() {
+                        if sudo_needs_password(&output) {
+                            return Ok(LinuxSandboxRuntimePrepareResult {
+                                ready: false,
+                                needs_password: true,
+                                message:
+                                    "Preparing sandbox on remote host needs the remote admin password."
+                                        .to_string(),
+                                status: LinuxSandboxRuntimeStatus {
+                                    state: LinuxSandboxRuntimeState::Activating,
+                                    message:
+                                        "Preparing sandbox on remote host needs the remote admin password."
+                                            .to_string(),
+                                    ..staged_status
+                                },
+                            });
+                        }
                         let detail = command_output_message(&output);
                         anyhow::bail!(
                             "Preparing sandbox on remote host failed. {}",
@@ -675,6 +711,7 @@ pub(crate) async fn prepare_linux_sandbox_runtime(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::process::ExitStatusExt;
 
     #[test]
     fn parse_os_release_value_trims_quotes() {
@@ -699,5 +736,34 @@ mod tests {
             normalize_bootstrap_state("downloading"),
             LinuxSandboxRuntimeState::DownloadPending
         );
+    }
+
+    #[test]
+    fn sudo_needs_password_detects_wrong_password_attempts() {
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(1 << 8),
+            stdout: Vec::new(),
+            stderr: b"sudo: 1 incorrect password attempt".to_vec(),
+        };
+        assert!(sudo_needs_password(&output));
+    }
+
+    #[test]
+    fn posix_safe_username_rejects_shell_metacharacters() {
+        assert!(is_posix_safe_username("ctx-user_01"));
+        assert!(!is_posix_safe_username("ctx user"));
+        assert!(!is_posix_safe_username("ctx$(rm -rf /)"));
+    }
+
+    #[test]
+    fn bootstrap_wrapper_forces_container_processes_to_run_as_allowed_uid_gid() {
+        assert!(BOOTSTRAP_SCRIPT.contains("allowed_gid="));
+        assert!(BOOTSTRAP_SCRIPT.contains("local exec_user="));
+        assert!(BOOTSTRAP_SCRIPT.contains("exec --user \"\\${exec_user}\""));
+        assert!(BOOTSTRAP_SCRIPT.contains("local args=(-d --user"));
+        assert!(BOOTSTRAP_SCRIPT.contains("is_allowed_user_value"));
+        assert!(BOOTSTRAP_SCRIPT.contains("is_root_user_value"));
+        assert!(BOOTSTRAP_SCRIPT.contains("CTX_CONTAINER_TERMINAL_USER"));
+        assert!(BOOTSTRAP_SCRIPT.contains("iptables -P OUTPUT DROP"));
     }
 }

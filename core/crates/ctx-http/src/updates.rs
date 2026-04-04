@@ -40,10 +40,7 @@ impl ReleasePlatform {
         platform_key: &str,
     ) -> Option<&'a ReleaseArtifact> {
         match platform_key {
-            "linux-x64" | "linux-arm64" => self
-                .desktop
-                .as_ref()
-                .or(self.appimage.as_ref()),
+            "linux-x64" | "linux-arm64" => self.desktop.as_ref().or(self.appimage.as_ref()),
             "macos-x64" | "macos-arm64" => self
                 .desktop
                 .as_ref()

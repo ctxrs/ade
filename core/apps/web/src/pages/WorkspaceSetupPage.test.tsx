@@ -1303,6 +1303,182 @@ describe("WorkspaceSetupPage", () => {
     });
   });
 
+  it("shows the local admin password prompt when sandbox setup needs elevation", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopEnsureLocalLinuxSandboxReady).mockRejectedValueOnce(
+      new Error(
+        "CTX_LOCAL_ADMIN_PASSWORD_REQUIRED: Local admin password required to prepare sandbox on this machine.",
+      ) as never,
+    );
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-container-sandbox"));
+    await waitFor(() => {
+      expect(["auth-import", "session-titling", "source"]).toContain(wizardStepKey());
+    });
+    if (wizardStepKey() === "auth-import") {
+      fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
+      await waitFor(() => {
+        expect(["session-titling", "source"]).toContain(wizardStepKey());
+      });
+    }
+    if (wizardStepKey() === "session-titling") {
+      fireEvent.click(screen.getByTestId("wizard-titling-skip"));
+      await waitFor(() => {
+        expect(wizardStepKey()).toBe("source");
+      });
+    }
+    fireEvent.click(screen.getByTestId("wizard-option-source-new"));
+    fireEvent.change(screen.getByTestId("wizard-workspace-name"), {
+      target: { value: "local-admin-prompt" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("network");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-network-full"));
+    await waitFor(() => {
+      expect(["setup", "merge-queue"]).toContain(wizardStepKey());
+    });
+    if (wizardStepKey() === "setup") {
+      fireEvent.click(screen.getByTestId("wizard-next"));
+      await waitFor(() => {
+        expect(wizardStepKey()).toBe("merge-queue");
+      });
+    }
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("confirm");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-create"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("location");
+    });
+    await screen.findByTestId("wizard-local-admin-password-once");
+    expect(screen.getByText("Linux Admin Password")).toBeInTheDocument();
+    expect(
+      screen.getByText("Used once to finish sandbox setup on this machine; never stored"),
+    ).toBeInTheDocument();
+    expect(desktopEnsureLocalLinuxSandboxReady).toHaveBeenCalledWith({
+      admin_password_once: null,
+    });
+  });
+
+  it("shows the remote admin password prompt when sandbox setup needs elevation", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopEnsureRemoteLinuxSandboxReady).mockRejectedValueOnce(
+      new Error(
+        "CTX_REMOTE_ADMIN_PASSWORD_REQUIRED: Remote admin password required to prepare sandbox on this host.",
+      ) as never,
+    );
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    fireEvent.click(screen.getByTestId("wizard-option-location-remote"));
+    fireEvent.change(await screen.findByTestId("wizard-remote-host"), {
+      target: { value: "devbox.example" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-container-sandbox"));
+    await waitFor(() => {
+      expect(["auth-import", "session-titling", "source"]).toContain(wizardStepKey());
+    });
+    if (wizardStepKey() === "auth-import") {
+      fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
+      await waitFor(() => {
+        expect(["session-titling", "source"]).toContain(wizardStepKey());
+      });
+    }
+    if (wizardStepKey() === "session-titling") {
+      fireEvent.click(screen.getByTestId("wizard-titling-skip"));
+      await waitFor(() => {
+        expect(wizardStepKey()).toBe("source");
+      });
+    }
+    fireEvent.click(screen.getByTestId("wizard-option-source-new"));
+    fireEvent.change(screen.getByTestId("wizard-workspace-name"), {
+      target: { value: "remote-admin-prompt" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("network");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-network-full"));
+    await waitFor(() => {
+      expect(["setup", "merge-queue"]).toContain(wizardStepKey());
+    });
+    if (wizardStepKey() === "setup") {
+      fireEvent.click(screen.getByTestId("wizard-next"));
+      await waitFor(() => {
+        expect(wizardStepKey()).toBe("merge-queue");
+      });
+    }
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("confirm");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-create"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("location");
+    });
+    await screen.findByTestId("wizard-remote-password-once");
+    expect(screen.getByText("Remote Admin Password")).toBeInTheDocument();
+    expect(
+      screen.getByText("Used once to finish sandbox setup on this host; never stored"),
+    ).toBeInTheDocument();
+    expect(desktopEnsureRemoteLinuxSandboxReady).toHaveBeenCalledWith({
+      admin_password_once: null,
+    });
+  });
+
+  it("clears the remote password prompt when switching back to local", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopTestSsh)
+      .mockRejectedValueOnce(new Error("ssh failed to probe remote platform: Permission denied (publickey,password)."))
+      .mockResolvedValueOnce();
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+
+    fireEvent.click(screen.getByTestId("wizard-option-location-remote"));
+    fireEvent.change(await screen.findByTestId("wizard-remote-host"), {
+      target: { value: "devbox.example" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await screen.findByTestId("wizard-remote-password-once");
+    fireEvent.change(screen.getByTestId("wizard-remote-password-once"), {
+      target: { value: "hunter2" },
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("wizard-remote-password-once")).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-back"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("location");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-location-remote"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("location");
+    });
+    await screen.findByTestId("wizard-remote-host");
+    expect(screen.queryByTestId("wizard-remote-password-once")).not.toBeInTheDocument();
+  });
+
   it("shows explicit unsupported message when remote probe rejects Windows hosts", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(desktopTestSsh).mockRejectedValueOnce(

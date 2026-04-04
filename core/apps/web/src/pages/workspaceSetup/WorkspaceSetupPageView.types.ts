@@ -7,6 +7,7 @@ import type {
 import type { DesktopSshPathEntry } from "../../utils/desktop";
 import type { SessionTitlingMode } from "../WorkspaceSetupPage.logic";
 import type { WorkspaceSetupLaunchLogLine } from "./launchProgress";
+import type { RemotePasswordPromptMode } from "./useWorkspaceSetupRemote";
 import type {
   HarnessInstallProviderRow,
   HarnessInstallRowState,
@@ -46,9 +47,13 @@ export type WorkspaceSetupPageViewProps = {
   onRemotePortInputChange: (value: string) => void;
   remoteDataDirInput: string;
   onRemoteDataDirInputChange: (value: string) => void;
+  localAdminPasswordPromptVisible: boolean;
+  localAdminPasswordInput: string;
+  setLocalAdminPasswordInput: (value: string) => void;
   remotePasswordPromptVisible: boolean;
+  remotePasswordPromptMode: RemotePasswordPromptMode;
   remotePasswordInput: string;
-  setRemotePasswordInput: (value: string) => void;
+  onRemotePasswordInputChange: (value: string) => void;
   remoteStatus: RemoteStatus;
   setRemoteStatus: (status: RemoteStatus) => void;
   remoteError: string | null;

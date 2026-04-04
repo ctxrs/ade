@@ -86,6 +86,8 @@ test("desktop sandbox bootstrap real-truth workflow uses typed booleans for manu
   assert.ok(!text.includes("inputs.run_local_ubuntu == 'true'"));
   assert.ok(!text.includes("inputs.run_remote_macos == 'true'"));
   assert.ok(!text.includes("inputs.run_remote_container == 'true'"));
+  assert.match(text, /ubuntu-local-install-truth:[\s\S]*if:\s*\$\{\{\s*\(github\.event_name != 'workflow_dispatch' \|\| inputs\.run_local_ubuntu\)/);
+  assert.match(text, /macos-remote-fresh-ubuntu-truth:[\s\S]*if:\s*\$\{\{\s*\(github\.event_name != 'workflow_dispatch' \|\| inputs\.run_remote_macos\)/);
 });
 
 test("release supabase release-stage jobs consume the merged desktop bundle artifact", () => {

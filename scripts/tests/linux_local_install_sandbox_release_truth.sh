@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../.. && pwd)"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 ARTIFACT_DIR="${CTX_LINUX_RELEASE_TRUTH_ARTIFACT_DIR:-${ROOT}/core/apps/desktop/automation/artifacts/linux-local-install-truth/${RUN_ID}}"
 INSTALL_URL="${CTX_LINUX_RELEASE_TRUTH_INSTALL_URL:-https://ctx.rs/install}"
+RELEASE_CHANNEL="${CTX_LINUX_RELEASE_TRUTH_CHANNEL:-stable}"
 ALLOW_PREINSTALLED_RUNTIME="${CTX_LINUX_RELEASE_TRUTH_ALLOW_PREINSTALLED_RUNTIME:-0}"
 REPORT_PATH="${ARTIFACT_DIR}/report.json"
 INSTALL_STDOUT="${ARTIFACT_DIR}/install.stdout.log"
@@ -26,9 +27,22 @@ need_cmd() {
   }
 }
 
+refresh_runtime_guardrail_status() {
+  runtime_cli_path="$(command -v nerdctl || true)"
+  runtime_wrapper_present="0"
+  containerd_active="0"
+  if [[ -x /usr/local/bin/ctx-rootful-nerdctl ]]; then
+    runtime_wrapper_present="1"
+  fi
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet containerd.service; then
+    containerd_active="1"
+  fi
+}
+
 write_report() {
   local status="$1"
   local reason="$2"
+  refresh_runtime_guardrail_status
   REPORT_PATH="${REPORT_PATH}" \
   REPORT_STATUS="${status}" \
   REPORT_REASON="${reason}" \
@@ -93,13 +107,7 @@ if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
   exit 1
 fi
 
-runtime_cli_path="$(command -v nerdctl || true)"
-if [[ -x /usr/local/bin/ctx-rootful-nerdctl ]]; then
-  runtime_wrapper_present="1"
-fi
-if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet containerd.service; then
-  containerd_active="1"
-fi
+refresh_runtime_guardrail_status
 
 if [[ "${ALLOW_PREINSTALLED_RUNTIME}" != "1" ]]; then
   if [[ -n "${runtime_cli_path}" || "${runtime_wrapper_present}" == "1" || "${containerd_active}" == "1" || -n "${CTX_HARNESS_SANDBOX_CLI_PATH:-}" ]]; then
@@ -119,6 +127,7 @@ XDG_DATA_HOME="${home_dir}/.local/share" \
 XDG_CONFIG_HOME="${home_dir}/.config" \
 XDG_CACHE_HOME="${home_dir}/.cache" \
 PATH="${home_dir}/.local/bin:${PATH}" \
+CTX_CHANNEL="${RELEASE_CHANNEL}" \
 CTX_INSTALL_NO_OPEN=1 \
 bash -lc "curl -fsSL '${INSTALL_URL}' | sh" >"${INSTALL_STDOUT}" 2>"${INSTALL_STDERR}"
 

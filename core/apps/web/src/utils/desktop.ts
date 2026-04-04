@@ -544,8 +544,12 @@ export const desktopKickoffRemotePrewarm = async (req: {
 }): Promise<void> =>
   invoke<void>("desktop_kickoff_remote_prewarm", { req });
 
-export const desktopEnsureLocalLinuxSandboxReady = async (): Promise<DesktopLinuxSandboxEnsureResp> =>
-  invoke<DesktopLinuxSandboxEnsureResp>("desktop_ensure_local_linux_sandbox_ready");
+export const desktopEnsureLocalLinuxSandboxReady = async (req?: {
+  admin_password_once?: string | null;
+}): Promise<DesktopLinuxSandboxEnsureResp> =>
+  invoke<DesktopLinuxSandboxEnsureResp>("desktop_ensure_local_linux_sandbox_ready", {
+    req: req ?? {},
+  });
 
 export const desktopEnsureRemoteLinuxSandboxReady = async (req?: {
   admin_password_once?: string | null;

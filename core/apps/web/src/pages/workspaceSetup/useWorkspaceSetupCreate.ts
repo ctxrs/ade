@@ -1,14 +1,10 @@
-import { startTransition, useEffect, useRef, useState, type MutableRefObject } from "react";
-import type {
-  ExecutionLaunchLogLine,
-  ExecutionLaunchSnapshot,
-} from "../../api/client";
+import { type MutableRefObject, useEffect, useRef, useState } from "react";
+import type { ExecutionLaunchSnapshot } from "../../api/client";
 import {
   createWorkspace,
   deleteWorkspace,
   idToString,
   listWorkspaces,
-  prepareLinuxSandboxRuntime,
   repoClone,
   repoInit,
   repoStatus,
@@ -18,20 +14,10 @@ import {
   updateWorkspaceMergeQueueConfig,
   updateWorkspaceWorktreeBootstrapConfig,
 } from "../../api/client";
-import {
-  desktopConnectLocal,
-  desktopConnectSsh,
-  desktopEnsureLocalLinuxSandboxReady,
-  desktopEnsureRemoteLinuxSandboxReady,
-  desktopPickFolder,
-} from "../../utils/desktop";
+import { desktopConnectLocal, desktopConnectSsh, desktopPickFolder } from "../../utils/desktop";
 import { trackWorkspaceLaunchCompleted } from "../../utils/analytics";
 import { upsertLauncherRecent } from "../../state/launcherRecentsStore";
-import {
-  deriveRepoNameFromUrl,
-  parseCloneDestPath,
-  resolveWorkspaceName,
-} from "../WorkspaceSetupPage.logic";
+import { deriveRepoNameFromUrl, parseCloneDestPath, resolveWorkspaceName } from "../WorkspaceSetupPage.logic";
 import {
   currentLaunchStepLabel as deriveCurrentLaunchStepLabel,
   formatLaunchElapsed,
@@ -48,27 +34,18 @@ import {
   type WorkspaceSetupLaunchLogLine,
 } from "./launchProgress";
 import type { WizardStepKey } from "./wizardFlow";
-import {
-  lastPathSegment,
-  messageFromError,
-  type ImportInitDialogState,
-} from "./wizardTypes";
-import {
-  buildWorkspaceSetupCreateIntent,
-  parseNetworkAllowlist,
-  resolveCreateErrorStepKey,
-  type WorkspaceSetupCreateIntent,
-} from "./createHandoff";
-import {
-  mergeWorkspaceSetupLaunchLogs,
-  startWorkspaceSetupLaunchHandoff,
-  waitForLaunchHandoffTerminal,
-} from "./launchHandoff";
+import { lastPathSegment, messageFromError, type ImportInitDialogState } from "./wizardTypes";
+import { buildWorkspaceSetupCreateIntent, parseNetworkAllowlist, resolveCreateErrorStepKey, type WorkspaceSetupCreateIntent } from "./createHandoff";
 import { waitForWorkspaceBootstrapBeforeNavigation } from "../workspaceBootstrapGate";
 import type {
   RoutePlanInsertionStep,
   WorkspaceSetupEffectiveTarget,
 } from "./workflowTypes";
+import {
+  copyWorkspaceSetupLaunchDiagnostics,
+  prepareWorkspaceSetupSandboxRuntime,
+  waitForWorkspaceSetupLaunchCompletion,
+} from "./workspaceSetupLaunchHelpers";
 
 type UseWorkspaceSetupCreateArgs = {
   currentStepKey: WizardStepKey;
@@ -84,8 +61,10 @@ type UseWorkspaceSetupCreateArgs = {
   wizardKey: string;
   trackWizardCompleted: (payload: { wizardKey: string; workspaceKind: string }) => void;
   desktopApp: boolean;
-  remotePasswordOnce: string | null;
-  remotePasswordCandidate: string | null;
+  remoteSshPasswordOnce: string | null;
+  remoteSshPasswordCandidate: string | null;
+  remoteAdminPasswordOnce: string | null;
+  remoteAdminPasswordCandidate: string | null;
   effectiveTarget: WorkspaceSetupEffectiveTarget | null;
   connectDaemonForImport: (locationOverride?: "local" | "remote") => Promise<void>;
   ensureOnboardingAfterDaemonConnect: (options?: { allowTitlingInsertion?: boolean }) => Promise<{
@@ -94,7 +73,7 @@ type UseWorkspaceSetupCreateArgs = {
   waitForDaemonReady: (timeoutMs: number) => Promise<void>;
   applyConnection: (info: Awaited<ReturnType<typeof desktopConnectLocal>>) => void;
   rememberRemoteProfile: (host: string, user: string | null) => void;
-  requestRemotePasswordPrompt: () => void;
+  requestRemotePasswordPrompt: (mode?: "ssh" | "admin") => void;
   setCreateError: (message: string | null) => void;
 };
 
@@ -125,8 +104,10 @@ export function useWorkspaceSetupCreate({
   wizardKey,
   trackWizardCompleted,
   desktopApp,
-  remotePasswordOnce,
-  remotePasswordCandidate,
+  remoteSshPasswordOnce,
+  remoteSshPasswordCandidate,
+  remoteAdminPasswordOnce,
+  remoteAdminPasswordCandidate,
   effectiveTarget,
   connectDaemonForImport,
   ensureOnboardingAfterDaemonConnect,
@@ -137,6 +118,8 @@ export function useWorkspaceSetupCreate({
   setCreateError,
 }: UseWorkspaceSetupCreateArgs) {
   const [creating, setCreating] = useState(false);
+  const [localAdminPasswordPromptVisible, setLocalAdminPasswordPromptVisible] = useState(false);
+  const [localAdminPasswordInput, setLocalAdminPasswordInput] = useState("");
   const [sandboxPrepareMessage, setSandboxPrepareMessage] = useState<string | null>(null);
   const [launchSnapshot, setLaunchSnapshot] = useState<ExecutionLaunchSnapshot | null>(null);
   const [launchLogs, setLaunchLogs] = useState<WorkspaceSetupLaunchLogLine[]>([]);
@@ -188,6 +171,15 @@ export function useWorkspaceSetupCreate({
   const provisioningSource = selections.source as WorkspaceSetupProvisioningSource;
   const provisioningExecutionMode =
     (selections.container === "host" ? "host" : "sandbox") satisfies WorkspaceSetupProvisioningExecutionMode;
+  const localAdminPasswordOnce = localAdminPasswordInput.length > 0 ? localAdminPasswordInput : null;
+
+  useEffect(() => {
+    if (selections.location === "local") {
+      return;
+    }
+    setLocalAdminPasswordPromptVisible(false);
+    setLocalAdminPasswordInput("");
+  }, [selections.location]);
 
   useEffect(() => {
     provisioningStateRef.current = provisioningState;
@@ -525,100 +517,34 @@ export function useWorkspaceSetupCreate({
     return true;
   };
 
-  const mergeLaunchLogBatch = (lines: ExecutionLaunchLogLine[]) => {
-    startTransition(() => {
-      setLaunchLogs((prev) => mergeWorkspaceSetupLaunchLogs(prev, lines));
-    });
-  };
-
-  const applyLaunchSnapshot = (snapshot: ExecutionLaunchSnapshot) => {
-    setLaunchSnapshot(snapshot);
-    mergeLaunchLogBatch(snapshot.logs ?? []);
-  };
-
-  const appendLaunchLines = (lines: ExecutionLaunchLogLine[]) => {
-    mergeLaunchLogBatch(lines);
-  };
-
-  const waitForLaunchTerminal = async (initial: ExecutionLaunchSnapshot) => {
-    await waitForLaunchHandoffTerminal(initial, {
-      applySnapshot: applyLaunchSnapshot,
-      appendLines: appendLaunchLines,
-    });
-  };
-
-  const waitForLaunchCompletion = async (workspaceId: string) => {
-    const initial = await startWorkspaceSetupLaunchHandoff(workspaceId);
-    await waitForLaunchTerminal(initial);
-  };
-
   const prepareSandboxRuntimeIfNeeded = async () => {
-    if (selections.container === "host") {
-      return;
-    }
-    const activationMode = selections.location === "remote" ? "remote" : "local";
-    setSandboxPrepareMessage(
-      activationMode === "remote"
-        ? "Preparing sandbox on remote host…"
-        : "Preparing sandbox…",
-    );
-    if (desktopApp) {
-      try {
-        if (activationMode === "remote") {
-          await desktopEnsureRemoteLinuxSandboxReady({
-            admin_password_once: remotePasswordCandidate ?? remotePasswordOnce ?? null,
-          });
-        } else {
-          await desktopEnsureLocalLinuxSandboxReady();
-        }
-        return;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (
-          activationMode === "remote" &&
-          message.includes("CTX_REMOTE_ADMIN_PASSWORD_REQUIRED")
-        ) {
-          requestRemotePasswordPrompt();
-          onCreateErrorStep("location");
-          throw new Error(
-            "Preparing sandbox on remote host needs the remote admin password. Enter it on the Remote step and try again.",
-          );
-        }
-        throw error;
-      }
-    }
-
-    const result = await prepareLinuxSandboxRuntime(
-      activationMode,
-      activationMode === "remote"
-        ? (remotePasswordCandidate ?? remotePasswordOnce ?? null)
-        : null,
-    );
-    if (result.ready) {
-      return;
-    }
-    if (result.needs_password && activationMode === "remote") {
-      requestRemotePasswordPrompt();
-      onCreateErrorStep("location");
-      throw new Error(
-        "Preparing sandbox on remote host needs the remote admin password. Enter it on the Remote step and try again.",
-      );
-    }
-    throw new Error(result.message);
+    await prepareWorkspaceSetupSandboxRuntime({
+      activationMode: selections.location === "remote" ? "remote" : "local",
+      containerSelection: selections.container === "host" ? "host" : "sandbox",
+      desktopApp,
+      localAdminPasswordOnce,
+      remoteAdminPasswordOnce,
+      remoteAdminPasswordCandidate,
+      requestRemoteAdminPasswordPrompt: () => requestRemotePasswordPrompt("admin"),
+      setSandboxPrepareMessage,
+      onLocalAdminPasswordRequired: () => {
+        setLocalAdminPasswordPromptVisible(true);
+        setLocalAdminPasswordInput("");
+      },
+      onLocalAdminPasswordReady: () => {
+        setLocalAdminPasswordPromptVisible(false);
+        setLocalAdminPasswordInput("");
+      },
+      onCreateErrorStep: (stepKey) => onCreateErrorStep(stepKey),
+    });
   };
 
   const onCopyLaunchDiagnostics = async () => {
-    if (!effectiveLaunchSnapshot) return;
-    const payload = {
-      snapshot: effectiveLaunchSnapshot,
-      logs: launchLogs.map(({ phaseLabel: _phaseLabel, timeLabel: _timeLabel, ...line }) => line),
-    };
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
-      setLaunchCopyState("copied");
-    } catch {
-      setLaunchCopyState("failed");
-    }
+    await copyWorkspaceSetupLaunchDiagnostics(
+      effectiveLaunchSnapshot,
+      launchLogs,
+      setLaunchCopyState,
+    );
   };
 
   const onCreate = async () => {
@@ -662,7 +588,7 @@ export function useWorkspaceSetupCreate({
           ? await desktopConnectSsh({
             host: parsedRemoteHost!,
             user: parsedRemoteUser ?? null,
-            password_once: remotePasswordOnce ?? remotePasswordCandidate,
+            password_once: remoteSshPasswordOnce ?? remoteSshPasswordCandidate,
             remote_port: parsedRemotePort,
             start_remote: true,
             remote_data_dir: remoteDataDir,
@@ -890,7 +816,7 @@ export function useWorkspaceSetupCreate({
       await updateWorkspaceExecutionConfig(workspaceId, {
         environment,
         network_mode: selections.container !== "host" ? netMode : null,
-        allowlist: selections.container !== "host" && netMode === "allowlist" ? allowlist : null,
+          allowlist: selections.container !== "host" && netMode === "allowlist" ? allowlist : null,
       });
 
       if (selections.container !== "host") {
@@ -899,7 +825,11 @@ export function useWorkspaceSetupCreate({
           "Handing off to sandbox launch and waiting for runtime readiness.",
         );
         try {
-          await waitForLaunchCompletion(workspaceId);
+          await waitForWorkspaceSetupLaunchCompletion(
+            workspaceId,
+            setLaunchSnapshot,
+            setLaunchLogs,
+          );
           trackWorkspaceLaunchCompleted({
             workspaceId,
             workspaceKind,
@@ -1029,6 +959,9 @@ export function useWorkspaceSetupCreate({
 
   return {
     creating,
+    localAdminPasswordPromptVisible,
+    localAdminPasswordInput,
+    setLocalAdminPasswordInput,
     setCreateError,
     importInitDialog,
     resolveImportInitDialog,

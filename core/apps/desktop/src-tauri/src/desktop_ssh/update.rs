@@ -31,87 +31,90 @@ pub(super) fn resolve_remote_update_target_ctx_bin(
 #[tauri::command]
 pub(crate) async fn desktop_update_remote_daemon(
     app: tauri::AppHandle,
-    state: tauri::State<'_, ConnectionManager>,
     req: DesktopRemoteDaemonUpdateReq,
 ) -> Result<DesktopRemoteDaemonUpdateResp, String> {
     if !req.confirm {
         return Err("confirm required".to_string());
     }
-    let channel = normalize_update_channel(req.channel.as_deref())?;
-    let target = state.ssh_target().map_err(to_err)?;
+    let channel = req.channel.clone();
+    let app_for_update = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_for_update.state::<ConnectionManager>();
+        update_current_remote_daemon(&app_for_update, state.inner(), channel.as_deref())
+    })
+    .await
+    .map_err(|err| format!("remote daemon update task failed: {err}"))?
+    .map_err(to_err)
+}
+
+pub(crate) fn update_current_remote_daemon(
+    app: &tauri::AppHandle,
+    state: &ConnectionManager,
+    requested_channel: Option<&str>,
+) -> Result<DesktopRemoteDaemonUpdateResp> {
+    let channel = normalize_update_channel(requested_channel).map_err(anyhow::Error::msg)?;
+    let target = state.ssh_target()?;
     let managed_remote_ctx_bin = target.runtime.managed_ctx_bin.clone();
     let host = target.host;
     let user = target.user;
     let remote_port = target.remote_port;
     let remote_data_dir = target.remote_data_dir;
     let channel_for_update = channel.clone();
-    let app_for_update = app.clone();
+    let recorded_active_ctx_bin = target
+        .runtime
+        .active_ctx_bin
+        .filter(|value| !value.trim().is_empty());
 
-    let (new_token, runtime) = tauri::async_runtime::spawn_blocking(move || {
-        let recorded_active_ctx_bin = target
-            .runtime
-            .active_ctx_bin
-            .filter(|value| !value.trim().is_empty());
+    let recorded_active_exists = recorded_active_ctx_bin
+        .as_deref()
+        .map(|active_ctx_bin| remote_ctx_bin_exists_over_ssh(&host, user.as_deref(), active_ctx_bin))
+        .transpose()?
+        .unwrap_or(false);
+    let managed_exists = if recorded_active_ctx_bin.as_deref() == Some(&managed_remote_ctx_bin) {
+        recorded_active_exists
+    } else {
+        remote_ctx_bin_exists_over_ssh(&host, user.as_deref(), &managed_remote_ctx_bin)?
+    };
+    let decision = resolve_remote_update_target_ctx_bin(
+        recorded_active_ctx_bin,
+        &managed_remote_ctx_bin,
+        recorded_active_exists,
+        managed_exists,
+    );
 
-        let recorded_active_exists = recorded_active_ctx_bin
-            .as_deref()
-            .map(|active_ctx_bin| {
-                remote_ctx_bin_exists_over_ssh(&host, user.as_deref(), active_ctx_bin)
-            })
-            .transpose()?
-            .unwrap_or(false);
-        let managed_exists = if recorded_active_ctx_bin.as_deref() == Some(&managed_remote_ctx_bin)
-        {
-            recorded_active_exists
-        } else {
-            remote_ctx_bin_exists_over_ssh(&host, user.as_deref(), &managed_remote_ctx_bin)?
-        };
-        let decision = resolve_remote_update_target_ctx_bin(
-            recorded_active_ctx_bin,
-            &managed_remote_ctx_bin,
-            recorded_active_exists,
-            managed_exists,
-        );
-
-        if decision.install_managed {
-            let remote_platform = probe_remote_linux_platform(&host, user.as_deref())?;
-            install_remote_daemon_over_ssh(
-                &app_for_update,
-                &host,
-                user.as_deref(),
-                remote_platform,
-                &managed_remote_ctx_bin,
-            )
-            .map_err(|install_err| install_err.context(REMOTE_BOOTSTRAP_CAPABILITY_MSG))?;
-        }
-        let active_ctx_bin = decision.ctx_bin;
-        run_remote_daemon_self_update(
-            &app_for_update,
+    if decision.install_managed {
+        let remote_platform = probe_remote_linux_platform(&host, user.as_deref())?;
+        install_remote_daemon_over_ssh(
+            app,
             &host,
             user.as_deref(),
-            remote_port,
-            remote_data_dir.as_deref(),
-            &active_ctx_bin,
-            &channel_for_update,
-        )?;
-        let auth =
-            read_remote_daemon_auth_with_retry(&host, user.as_deref(), remote_data_dir.as_deref())?;
-        Ok::<(String, SshRuntimeMetadata), anyhow::Error>((
-            auth.token,
-            SshRuntimeMetadata {
-                managed_ctx_bin: managed_remote_ctx_bin.clone(),
-                active_ctx_bin: Some(active_ctx_bin),
-                ssh_password_once: None,
-                admin_password_once: None,
-            },
-        ))
-    })
-    .await
-    .map_err(|e| format!("remote daemon update task failed: {e}"))?
-    .map_err(to_err)?;
-
-    state.update_ssh_token(new_token).map_err(to_err)?;
-    state.update_ssh_runtime(runtime).map_err(to_err)?;
+            remote_platform,
+            &managed_remote_ctx_bin,
+        )
+        .map_err(|install_err| install_err.context(REMOTE_BOOTSTRAP_CAPABILITY_MSG))?;
+    }
+    let active_ctx_bin = decision.ctx_bin;
+    run_remote_daemon_self_update(
+        app,
+        &host,
+        user.as_deref(),
+        remote_port,
+        remote_data_dir.as_deref(),
+        &active_ctx_bin,
+        &channel_for_update,
+    )?;
+    let auth = read_remote_daemon_auth_with_retry(&host, user.as_deref(), remote_data_dir.as_deref())?;
+    state
+        .update_ssh_token(auth.token)
+        .map_err(anyhow::Error::msg)?;
+    state
+        .update_ssh_runtime(SshRuntimeMetadata {
+            managed_ctx_bin: managed_remote_ctx_bin.clone(),
+            active_ctx_bin: Some(active_ctx_bin),
+            ssh_password_once: None,
+            admin_password_once: None,
+        })
+        .map_err(anyhow::Error::msg)?;
     Ok(DesktopRemoteDaemonUpdateResp {
         updated: true,
         message: format!("Remote daemon updated on channel `{channel}` and restarted."),

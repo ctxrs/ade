@@ -249,7 +249,14 @@ fn request_remote_startup_prewarm(
     }
     let response = manager.daemon_request(build_remote_startup_prewarm_request())?;
     if (200..300).contains(&response.status) {
-        return Ok(());
+        let stage_response = manager.daemon_request(build_remote_linux_sandbox_stage_request())?;
+        if (200..300).contains(&stage_response.status) {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "remote linux sandbox stage request failed with status {}",
+            stage_response.status
+        );
     }
     anyhow::bail!(
         "remote startup prewarm request failed with status {}",
@@ -258,6 +265,21 @@ fn request_remote_startup_prewarm(
 }
 
 pub(super) fn build_remote_startup_prewarm_request() -> DesktopDaemonRequest {
+    DesktopDaemonRequest {
+        method: "POST".to_string(),
+        path: "/api/execution/launch/start".to_string(),
+        body: Some(
+            serde_json::json!({
+                "kind": "startup_prewarm",
+                "prewarm_scope": "all",
+            })
+            .to_string(),
+        ),
+        headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+    }
+}
+
+pub(super) fn build_remote_linux_sandbox_stage_request() -> DesktopDaemonRequest {
     DesktopDaemonRequest {
         method: "POST".to_string(),
         path: "/api/execution/linux_sandbox_runtime/stage".to_string(),

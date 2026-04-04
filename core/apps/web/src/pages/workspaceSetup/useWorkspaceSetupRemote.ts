@@ -42,6 +42,7 @@ import {
 } from "./workflowTypes";
 
 type ImportRepoStatus = "idle" | "checking" | "ok" | "error";
+export type RemotePasswordPromptMode = "ssh" | "admin";
 
 type UseWorkspaceSetupRemoteParams = {
   selections: WizardSelections;
@@ -86,13 +87,16 @@ export function useWorkspaceSetupRemote({
   const [sshRecents, setSshRecents] = useState<SshRecent[]>(() => loadSshRecents());
   const [remotePasswordInput, setRemotePasswordInput] = useState("");
   const [remotePasswordPromptVisible, setRemotePasswordPromptVisible] = useState(false);
+  const [remotePasswordPromptMode, setRemotePasswordPromptMode] =
+    useState<RemotePasswordPromptMode>("ssh");
   const [remoteStatus, setRemoteStatus] = useState<RemoteStatus>("idle");
   const [remoteError, setRemoteError] = useState<string | null>(null);
   const [remotePathSuggestions, setRemotePathSuggestions] = useState<DesktopSshPathEntry[]>([]);
   const [remotePathStatus, setRemotePathStatus] = useState<"idle" | "loading" | "error">("idle");
   const [remotePathError, setRemotePathError] = useState<string | null>(null);
   const remoteStatusRef = useRef<RemoteStatus>("idle");
-  const remotePasswordCandidateRef = useRef<string | null>(null);
+  const remoteSshPasswordCandidateRef = useRef<string | null>(null);
+  const remoteAdminPasswordCandidateRef = useRef<string | null>(null);
 
   const remoteHostInput = targetDraft.remoteHostInput;
   const remotePortInput = targetDraft.remotePortInput;
@@ -102,6 +106,8 @@ export function useWorkspaceSetupRemote({
     ? { host: effectiveTarget.host, user: effectiveTarget.user }
     : parseUserHost(remoteHostInput);
   const remotePasswordOnce = remotePasswordInput.length > 0 ? remotePasswordInput : null;
+  const remoteSshPasswordOnce = remotePasswordPromptMode === "ssh" ? remotePasswordOnce : null;
+  const remoteAdminPasswordOnce = remotePasswordPromptMode === "admin" ? remotePasswordOnce : null;
   const parsedRemotePort = effectiveTarget?.kind === "remote"
     ? effectiveTarget.port
     : parseWorkspaceSetupRemotePort(remotePortInput);
@@ -123,17 +129,23 @@ export function useWorkspaceSetupRemote({
   const onRemoteInputChange = useCallback((value: string) => {
     setRemoteHostInput(value);
     setRemotePasswordInput("");
-    remotePasswordCandidateRef.current = null;
+    remoteSshPasswordCandidateRef.current = null;
+    remoteAdminPasswordCandidateRef.current = null;
     setRemotePasswordPromptVisible(false);
+    setRemotePasswordPromptMode("ssh");
     onRemoteEndpointChanged();
     resetVerificationState();
   }, [onRemoteEndpointChanged, resetVerificationState]);
 
   const onRemotePasswordInputChange = useCallback((value: string) => {
     setRemotePasswordInput(value);
-    remotePasswordCandidateRef.current = value.trim() ? value : null;
+    if (remotePasswordPromptMode === "admin") {
+      remoteAdminPasswordCandidateRef.current = value.trim() ? value : null;
+    } else {
+      remoteSshPasswordCandidateRef.current = value.trim() ? value : null;
+    }
     resetVerificationState();
-  }, [resetVerificationState]);
+  }, [remotePasswordPromptMode, resetVerificationState]);
 
   const onRemotePortInputChange = useCallback((value: string) => {
     setRemotePortInput(value);
@@ -184,7 +196,7 @@ export function useWorkspaceSetupRemote({
       const info = await desktopConnectSsh({
         host: effectiveTarget.host,
         user: effectiveTarget.user,
-        password_once: remotePasswordOnce ?? remotePasswordCandidateRef.current,
+        password_once: remoteSshPasswordOnce ?? remoteSshPasswordCandidateRef.current,
         remote_port: effectiveTarget.port,
         start_remote: false,
         remote_data_dir: effectiveTarget.dataDir,
@@ -200,7 +212,7 @@ export function useWorkspaceSetupRemote({
   }, [
     applyConnection,
     effectiveTarget,
-    remotePasswordOnce,
+    remoteSshPasswordOnce,
     selections.location,
     waitForDaemonReady,
   ]);
@@ -213,7 +225,12 @@ export function useWorkspaceSetupRemote({
     });
   }, [effectiveTarget]);
 
-  const requestRemotePasswordPrompt = useCallback(() => {
+  const requestRemotePasswordPrompt = useCallback((mode: RemotePasswordPromptMode = "admin") => {
+    setRemotePasswordPromptMode(mode);
+    if (mode === "admin") {
+      remoteAdminPasswordCandidateRef.current = null;
+    }
+    setRemotePasswordInput("");
     setRemotePasswordPromptVisible(true);
     setRemoteStatus("idle");
     setRemoteError(null);
@@ -244,19 +261,24 @@ export function useWorkspaceSetupRemote({
       await desktopTestSsh({
         host: parsedRemote.host,
         user: parsedRemote.user ?? null,
-        password_once: remotePasswordOnce,
+        password_once: remoteSshPasswordOnce,
       });
       remoteStatusRef.current = "connected";
       setRemoteStatus("connected");
+      if (remoteSshPasswordOnce) {
+        remoteSshPasswordCandidateRef.current = remoteSshPasswordOnce;
+      }
       setRemotePasswordInput("");
       setRemotePasswordPromptVisible(false);
+      setRemotePasswordPromptMode("ssh");
       rememberCurrentRemoteProfile();
       setSshRecents(upsertSshRecent(parsedRemote.host, parsedRemote.user ?? null));
       return true;
     } catch (error) {
       const detail = messageFromError(error);
-      if (!remotePasswordPromptVisible && remotePasswordOnce === null && looksLikeSshAuthFailure(detail)) {
+      if (!remotePasswordPromptVisible && remoteSshPasswordOnce === null && looksLikeSshAuthFailure(detail)) {
         remoteStatusRef.current = "idle";
+        setRemotePasswordPromptMode("ssh");
         setRemotePasswordPromptVisible(true);
         setRemoteStatus("idle");
         setRemoteError(null);
@@ -271,7 +293,7 @@ export function useWorkspaceSetupRemote({
     parsedRemote?.host,
     parsedRemote?.user,
     rememberCurrentRemoteProfile,
-    remotePasswordOnce,
+    remoteSshPasswordOnce,
     remotePasswordPromptVisible,
   ]);
 
@@ -423,6 +445,11 @@ export function useWorkspaceSetupRemote({
     remoteStatusRef.current = "idle";
     setRemoteStatus("idle");
     setRemoteError(null);
+    setRemotePasswordInput("");
+    setRemotePasswordPromptVisible(false);
+    setRemotePasswordPromptMode("ssh");
+    remoteSshPasswordCandidateRef.current = null;
+    remoteAdminPasswordCandidateRef.current = null;
     setImportRepoStatus("idle");
     setImportRepoNote(null);
   }, [setImportRepoNote, setImportRepoStatus]);
@@ -450,9 +477,13 @@ export function useWorkspaceSetupRemote({
     remoteDataDirInput,
     remoteError,
     remoteHostInput,
-    remotePasswordCandidate: remotePasswordCandidateRef.current,
+    remoteAdminPasswordCandidate: remoteAdminPasswordCandidateRef.current,
     remotePasswordInput,
+    remotePasswordPromptMode,
     remotePasswordOnce,
+    remoteSshPasswordCandidate: remoteSshPasswordCandidateRef.current,
+    remoteSshPasswordOnce,
+    remoteAdminPasswordOnce,
     remotePasswordPromptVisible,
     remotePathError,
     remotePathStatus,
