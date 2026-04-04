@@ -79,9 +79,29 @@ pub(super) fn render_shared_vm_host_data_mount_service(host_data_root: &Path) ->
 
 pub(super) fn render_shared_vm_data_disk_script() -> String {
     format!(
-        "#!/bin/sh\nset -eu\nmount_root='/ctx'\ndata_label='{data_label}'\nmarker_name='.ctx-avf-data-disk-ready'\nroot_device=\"$(findmnt -n -o SOURCE /)\"\nif [ -z \"$root_device\" ]; then\n  echo \"[ctx-avf-linux] could not determine root device\" >/dev/hvc0\n  exit 1\nfi\nroot_device=\"$(readlink -f \"$root_device\" 2>/dev/null || printf '%s' \"$root_device\")\"\nroot_disk=\"$(lsblk -nro PKNAME \"$root_device\" | head -n1)\"\nif [ -z \"$root_disk\" ]; then\n  echo \"[ctx-avf-linux] could not resolve parent disk for $root_device\" >/dev/hvc0\n  exit 1\nfi\ndata_device=\"$(lsblk -dnbo NAME,SIZE,RO,TYPE | awk -v root_disk=\"$root_disk\" '$4 == \"disk\" && $1 != root_disk && $3 == 0 && $2 >= 1073741824 {{ print \"/dev/\" $1; exit }}')\"\nif [ -z \"$data_device\" ]; then\n  echo \"[ctx-avf-linux] could not locate writable data disk\" >/dev/hvc0\n  exit 1\nfi\nmkdir -p \"$mount_root\"\nif ! blkid -s TYPE -o value \"$data_device\" >/dev/null 2>&1; then\n  mkfs.ext4 -F -L \"$data_label\" \"$data_device\" >/dev/hvc0 2>&1\nfi\ncurrent_mount_source=\"$(findmnt -n -o SOURCE \"$mount_root\" 2>/dev/null || true)\"\nif [ -n \"$current_mount_source\" ] && [ \"$current_mount_source\" != \"$data_device\" ]; then\n  umount \"$mount_root\" >/dev/null 2>&1 || true\n  current_mount_source=\"\"\nfi\nif [ \"$current_mount_source\" != \"$data_device\" ]; then\n  mount \"$data_device\" \"$mount_root\" >/dev/hvc0 2>&1\nfi\nmkdir -p \"$mount_root/ws/worktrees\" \"$mount_root/home\" \"$mount_root/cache\" \"$mount_root/tmp\" \"$mount_root/system/containerd\" \"$mount_root/system/buildkit\" /var/lib/containerd /var/lib/buildkit\nif [ ! -f \"$mount_root/$marker_name\" ]; then\n  printf 'ready\\n' > \"$mount_root/$marker_name\"\nfi\necho \"[ctx-avf-linux] mounted data disk $data_device at $mount_root\" >/dev/hvc0\nmountpoint -q /var/lib/containerd || mount --bind \"$mount_root/system/containerd\" /var/lib/containerd >/dev/hvc0 2>&1\nmountpoint -q /var/lib/buildkit || mount --bind \"$mount_root/system/buildkit\" /var/lib/buildkit >/dev/hvc0 2>&1\n",
+        "#!/bin/sh\nset -eu\nmount_root='/ctx'\ndata_label='{data_label}'\nmarker_name='.ctx-avf-data-disk-ready'\nroot_device=\"$(findmnt -n -o SOURCE /)\"\nif [ -z \"$root_device\" ]; then\n  echo \"[ctx-avf-linux] could not determine root device\" >/dev/hvc0\n  exit 1\nfi\nroot_device=\"$(readlink -f \"$root_device\" 2>/dev/null || printf '%s' \"$root_device\")\"\nroot_disk=\"$(lsblk -nro PKNAME \"$root_device\" | head -n1)\"\nif [ -z \"$root_disk\" ]; then\n  echo \"[ctx-avf-linux] could not resolve parent disk for $root_device\" >/dev/hvc0\n  exit 1\nfi\ndata_device=\"$(lsblk -dnbo NAME,SIZE,RO,TYPE | awk -v root_disk=\"$root_disk\" '$4 == \"disk\" && $1 != root_disk && $3 == 0 && $2 >= 1073741824 {{ print \"/dev/\" $1; exit }}')\"\nif [ -z \"$data_device\" ]; then\n  echo \"[ctx-avf-linux] could not locate writable data disk\" >/dev/hvc0\n  exit 1\nfi\nmkdir -p \"$mount_root\"\nif ! blkid -s TYPE -o value \"$data_device\" >/dev/null 2>&1; then\n  mkfs.ext4 -F -L \"$data_label\" \"$data_device\" >/dev/hvc0 2>&1\nfi\ncurrent_mount_source=\"$(findmnt -n -o SOURCE \"$mount_root\" 2>/dev/null || true)\"\nif [ -n \"$current_mount_source\" ] && [ \"$current_mount_source\" != \"$data_device\" ]; then\n  umount \"$mount_root\" >/dev/null 2>&1 || true\n  current_mount_source=\"\"\nfi\nif [ \"$current_mount_source\" != \"$data_device\" ]; then\n  mount \"$data_device\" \"$mount_root\" >/dev/hvc0 2>&1\nfi\nmkdir -p \"$mount_root/ws/worktrees\" \"$mount_root/home\" \"$mount_root/cache\" \"$mount_root/tmp\" \"$mount_root/system/containerd\" \"$mount_root/system/buildkit\" /var/lib/containerd /var/lib/buildkit /tmp /var/tmp\nchmod 1777 \"$mount_root/tmp\"\ncurrent_tmp_source=\"$(findmnt -n -o SOURCE /tmp 2>/dev/null || true)\"\nif [ \"$current_tmp_source\" != \"$mount_root/tmp\" ]; then\n  mountpoint -q /tmp && umount /tmp >/dev/null 2>&1 || true\n  mount --bind \"$mount_root/tmp\" /tmp >/dev/hvc0 2>&1\nfi\nchmod 1777 /tmp\ncurrent_var_tmp_source=\"$(findmnt -n -o SOURCE /var/tmp 2>/dev/null || true)\"\nif [ \"$current_var_tmp_source\" != \"$mount_root/tmp\" ]; then\n  mountpoint -q /var/tmp && umount /var/tmp >/dev/null 2>&1 || true\n  mount --bind \"$mount_root/tmp\" /var/tmp >/dev/hvc0 2>&1\nfi\nchmod 1777 /var/tmp\nif [ ! -f \"$mount_root/$marker_name\" ]; then\n  printf 'ready\\n' > \"$mount_root/$marker_name\"\nfi\necho \"[ctx-avf-linux] mounted data disk $data_device at $mount_root\" >/dev/hvc0\nmountpoint -q /var/lib/containerd || mount --bind \"$mount_root/system/containerd\" /var/lib/containerd >/dev/hvc0 2>&1\nmountpoint -q /var/lib/buildkit || mount --bind \"$mount_root/system/buildkit\" /var/lib/buildkit >/dev/hvc0 2>&1\n",
         data_label = SHARED_VM_DATA_DISK_LABEL,
     )
+}
+
+pub(super) fn shared_vm_writable_surface_contract_digest(data_root: &Path) -> String {
+    let mut hasher = Sha256::new();
+    for rendered in [
+        render_shared_vm_host_data_mount_service(data_root),
+        render_shared_vm_data_disk_script(),
+        render_shared_vm_data_disk_service(),
+        render_shared_vm_containerd_service(),
+        render_shared_vm_buildkit_service(),
+        render_shared_vm_guest_agent_service(
+            &shared_vm_guest_control_ready_path(data_root),
+            &shared_vm_guest_control_failed_path(data_root),
+            &shared_vm_guest_agent_log_path(data_root),
+        ),
+    ] {
+        hasher.update(rendered.as_bytes());
+        hasher.update(b"\0");
+    }
+    hex::encode(hasher.finalize())
 }
 
 pub(super) fn render_shared_vm_data_disk_service() -> String {

@@ -313,6 +313,8 @@ struct AvfLinuxSharedVmStateResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     runtime_shape_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    writable_surface_contract_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     updated_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_started_at: Option<String>,
@@ -355,6 +357,8 @@ struct PersistedSharedVmState {
     runtime_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     runtime_shape_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    writable_surface_contract_digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     updated_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

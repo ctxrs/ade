@@ -474,6 +474,7 @@ mod tests {
                 initrd_path: None,
                 runtime_version: None,
                 runtime_shape_digest: None,
+                writable_surface_contract_digest: None,
                 updated_at: Some(now_timestamp_string()),
                 last_started_at: Some(now_timestamp_string()),
                 last_saved_at: None,

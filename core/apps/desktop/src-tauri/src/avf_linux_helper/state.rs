@@ -28,6 +28,8 @@ pub(super) fn map_state_response(
         initrd_path: persisted.and_then(|state| state.initrd_path.clone()),
         runtime_version: persisted.and_then(|state| state.runtime_version.clone()),
         runtime_shape_digest: persisted.and_then(|state| state.runtime_shape_digest.clone()),
+        writable_surface_contract_digest: persisted
+            .and_then(|state| state.writable_surface_contract_digest.clone()),
         updated_at: persisted.and_then(|state| state.updated_at.clone()),
         last_started_at: persisted.and_then(|state| state.last_started_at.clone()),
         last_saved_at: persisted.and_then(|state| state.last_saved_at.clone()),
@@ -56,6 +58,7 @@ pub(super) fn default_stopped_state() -> PersistedSharedVmState {
         initrd_path: None,
         runtime_version: None,
         runtime_shape_digest: None,
+        writable_surface_contract_digest: None,
         updated_at: Some(now_timestamp_string()),
         last_started_at: None,
         last_saved_at: None,

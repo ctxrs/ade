@@ -89,6 +89,7 @@ pub(super) fn prepare_runtime_layout(data_root: &Path) -> Result<AvfLinuxRuntime
             initrd_path: None,
             runtime_version: None,
             runtime_shape_digest: None,
+            writable_surface_contract_digest: None,
             updated_at: Some(now_timestamp_string()),
             last_started_at: None,
             last_saved_at: None,
@@ -251,6 +252,8 @@ pub(super) fn start_shared_vm(
         initrd_path,
         runtime_version.as_str(),
     );
+    let requested_writable_surface_contract_digest =
+        shared_vm_writable_surface_contract_digest(data_root);
     let runtime_shape_changed = match state.runtime_shape_digest.as_deref() {
         Some(previous_digest) => previous_digest != requested_runtime_shape_digest.as_str(),
         None => {
@@ -259,6 +262,9 @@ pub(super) fn start_shared_vm(
                 || state.initrd_path.as_ref().map(PathBuf::as_path) != Some(initrd_path)
         }
     };
+    let writable_surface_contract_changed = state.writable_surface_contract_digest.as_deref()
+        != Some(requested_writable_surface_contract_digest.as_str());
+    let boot_contract_changed = runtime_shape_changed || writable_surface_contract_changed;
     let mut runtime_restart_note = None;
     let mut owner_alive = state.relay_pid.is_some_and(shared_vm_server_process_alive);
     let mut guest_alive = state
@@ -274,21 +280,25 @@ pub(super) fn start_shared_vm(
         owner_alive
     };
     already_running &= launch_ready_for_reuse;
-    if already_running && runtime_shape_changed {
-        let restart_note =
-            "requested AVF runtime differs from the running shared VM; forcing a stop before restart"
-                .to_string();
+    if already_running && boot_contract_changed {
+        let restart_note = format!(
+            "requested shared VM {} differs from the running shared VM; forcing a stop before restart",
+            shared_vm_restart_reason_label(
+                runtime_shape_changed,
+                writable_surface_contract_changed
+            )
+        );
         append_shared_vm_log_line(data_root, &restart_note)?;
         let stopped = stop_shared_vm(data_root)
-            .context("stopping already-running shared VM after runtime shape change")?;
+            .context("stopping already-running shared VM after boot contract change")?;
         if !matches!(stopped.state, AvfLinuxSharedVmLifecycleState::Stopped) {
             bail!(
-                "expected shared VM to stop before runtime change restart, found {:?}",
+                "expected shared VM to stop before boot contract restart, found {:?}",
                 stopped.state
             );
         }
         reset_writable_shared_vm_runtime_state(data_root)
-            .context("resetting writable shared VM runtime state after runtime shape change")?;
+            .context("resetting writable shared VM runtime state after boot contract change")?;
         runtime_restart_note = Some(restart_note);
         state = load_state(&state_path)?.unwrap_or_else(default_stopped_state);
         owner_alive = state.relay_pid.is_some_and(shared_vm_server_process_alive);
@@ -307,7 +317,7 @@ pub(super) fn start_shared_vm(
         already_running &= launch_ready_for_reuse;
     }
     let mut stale_saved_state_note = None;
-    if runtime_shape_changed && saved_state_path.exists() {
+    if boot_contract_changed && saved_state_path.exists() {
         fs::remove_file(&saved_state_path).with_context(|| {
             format!(
                 "removing stale saved AVF Linux VM state {}",
@@ -315,11 +325,15 @@ pub(super) fn start_shared_vm(
             )
         })?;
         stale_saved_state_note = Some(format!(
-            "discarded saved workspace VM state at {} because the staged runtime changed",
-            saved_state_path.display()
+            "discarded saved workspace VM state at {} because the staged {} changed",
+            saved_state_path.display(),
+            shared_vm_restart_reason_label(
+                runtime_shape_changed,
+                writable_surface_contract_changed
+            )
         ));
     }
-    if runtime_shape_changed {
+    if boot_contract_changed {
         let staged_rootfs_path = shared_vm_rootfs_path(data_root);
         if staged_rootfs_path.exists() {
             fs::remove_file(&staged_rootfs_path).with_context(|| {
@@ -371,9 +385,11 @@ pub(super) fn start_shared_vm(
         state.initrd_path = Some(initrd_path.to_path_buf());
         state.runtime_version = Some(runtime_version);
         state.runtime_shape_digest = Some(requested_runtime_shape_digest.clone());
+        state.writable_surface_contract_digest =
+            Some(requested_writable_surface_contract_digest.clone());
         state.updated_at = Some(now_timestamp_string());
         state.last_started_at = state.updated_at.clone();
-        if runtime_shape_changed {
+        if boot_contract_changed {
             state.last_saved_at = None;
         }
         state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Ready);
@@ -441,10 +457,12 @@ pub(super) fn start_shared_vm(
     state.initrd_path = Some(initrd_path.to_path_buf());
     state.runtime_version = Some(runtime_version.clone());
     state.runtime_shape_digest = Some(requested_runtime_shape_digest.clone());
+    state.writable_surface_contract_digest =
+        Some(requested_writable_surface_contract_digest.clone());
     state.state = AvfLinuxSharedVmLifecycleState::Starting;
     state.updated_at = Some(now_timestamp_string());
     state.last_started_at = None;
-    if runtime_shape_changed {
+    if boot_contract_changed {
         state.last_saved_at = None;
     }
     state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Scaffolded);
@@ -556,6 +574,7 @@ pub(super) fn start_shared_vm(
     state.initrd_path = Some(initrd_path.to_path_buf());
     state.runtime_version = Some(runtime_version);
     state.runtime_shape_digest = Some(requested_runtime_shape_digest);
+    state.writable_surface_contract_digest = Some(requested_writable_surface_contract_digest);
     state.updated_at = Some(now_timestamp_string());
     state.last_started_at = state.updated_at.clone();
     state.transition_status = Some(AvfLinuxSharedVmTransitionStatus::Ready);
@@ -614,6 +633,7 @@ pub(super) fn stop_shared_vm(data_root: &Path) -> Result<AvfLinuxSharedVmStateRe
             initrd_path: None,
             runtime_version: None,
             runtime_shape_digest: None,
+            writable_surface_contract_digest: None,
             updated_at: Some(now_timestamp_string()),
             last_started_at: None,
             last_saved_at: None,
@@ -786,6 +806,18 @@ pub(super) fn shared_vm_runtime_shape_digest(
     hasher.update(b"\0");
     hasher.update(initrd_path.display().to_string().as_bytes());
     hex::encode(hasher.finalize())
+}
+
+fn shared_vm_restart_reason_label(
+    runtime_shape_changed: bool,
+    writable_surface_contract_changed: bool,
+) -> &'static str {
+    match (runtime_shape_changed, writable_surface_contract_changed) {
+        (true, true) => "runtime and writable-surface contract",
+        (true, false) => "runtime",
+        (false, true) => "writable-surface contract",
+        (false, false) => "boot contract",
+    }
 }
 
 pub(super) fn append_shared_vm_log_line(data_root: &Path, line: &str) -> Result<()> {

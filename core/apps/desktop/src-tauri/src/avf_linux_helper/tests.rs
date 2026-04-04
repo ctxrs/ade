@@ -476,6 +476,12 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
     assert!(user_data.contains("\"$mount_root/home\""));
     assert!(user_data.contains("\"$mount_root/cache\""));
     assert!(user_data.contains("\"$mount_root/tmp\""));
+    assert!(user_data.contains("chmod 1777 \"$mount_root/tmp\""));
+    assert!(user_data.contains("current_tmp_source=\"$(findmnt -n -o SOURCE /tmp"));
+    assert!(user_data.contains("mount --bind \"$mount_root/tmp\" /tmp"));
+    assert!(user_data.contains("mount --bind \"$mount_root/tmp\" /var/tmp"));
+    assert!(user_data.contains("chmod 1777 /tmp"));
+    assert!(user_data.contains("chmod 1777 /var/tmp"));
     assert!(user_data.contains(".ctx-avf-data-disk-ready"));
     assert!(user_data.contains("\"$mount_root/system/containerd\""));
     assert!(user_data.contains("\"$mount_root/system/buildkit\""));
@@ -992,6 +998,7 @@ fn persist_shared_vm_owner_error_state_marks_vm_error_and_clears_owner_processes
         initrd_path: Some(temp.join("initrd")),
         runtime_version: Some("test-runtime".to_string()),
         runtime_shape_digest: None,
+        writable_surface_contract_digest: None,
         updated_at: None,
         last_started_at: Some("started".to_string()),
         last_saved_at: Some("saved".to_string()),
@@ -1065,6 +1072,7 @@ fn shared_vm_state_marks_missing_owner_with_memory_pressure_request_as_error() {
             initrd_path: None,
             runtime_version: None,
             runtime_shape_digest: None,
+            writable_surface_contract_digest: None,
             updated_at: Some(now_timestamp_string()),
             last_started_at: None,
             last_saved_at: Some(now_timestamp_string()),
@@ -1125,6 +1133,7 @@ fn shared_vm_state_marks_missing_owner_as_cold_stop_and_clears_stale_save_metada
             initrd_path: None,
             runtime_version: None,
             runtime_shape_digest: None,
+            writable_surface_contract_digest: None,
             updated_at: Some(now_timestamp_string()),
             last_started_at: Some("started".to_string()),
             last_saved_at: Some("saved".to_string()),
@@ -1183,6 +1192,7 @@ fn shared_vm_state_surfaces_explicit_start_and_stop_outcomes() {
             initrd_path: Some(temp.join("initrd")),
             runtime_version: Some("test-runtime".to_string()),
             runtime_shape_digest: Some("digest".to_string()),
+            writable_surface_contract_digest: None,
             updated_at: Some(now_timestamp_string()),
             last_started_at: Some("started".to_string()),
             last_saved_at: None,
@@ -1369,6 +1379,9 @@ fn start_shared_vm_surfaces_saved_state_downgrade_when_restore_is_unavailable() 
                 &initrd_path,
                 "test-runtime",
             )),
+            writable_surface_contract_digest: Some(shared_vm_writable_surface_contract_digest(
+                &temp,
+            )),
             updated_at: Some(now_timestamp_string()),
             last_started_at: None,
             last_saved_at: Some("saved".to_string()),
@@ -1462,6 +1475,9 @@ fn start_shared_vm_marks_already_running_path_explicitly() {
                 &initrd_path,
                 "runtime-current",
             )),
+            writable_surface_contract_digest: Some(shared_vm_writable_surface_contract_digest(
+                &temp,
+            )),
             updated_at: Some(now_timestamp_string()),
             last_started_at: Some(now_timestamp_string()),
             last_saved_at: Some("older-save".to_string()),
@@ -1534,6 +1550,7 @@ fn stop_shared_vm_discards_stale_saved_state_and_reports_cold_stop() {
             initrd_path: None,
             runtime_version: None,
             runtime_shape_digest: None,
+            writable_surface_contract_digest: None,
             updated_at: Some(now_timestamp_string()),
             last_started_at: Some(now_timestamp_string()),
             last_saved_at: Some("old-save".to_string()),
@@ -1601,6 +1618,7 @@ fn stop_shared_vm_clears_guest_control_ready_marker() {
             initrd_path: None,
             runtime_version: None,
             runtime_shape_digest: None,
+            writable_surface_contract_digest: None,
             updated_at: Some(now_timestamp_string()),
             last_started_at: Some(now_timestamp_string()),
             last_saved_at: None,
@@ -1672,6 +1690,7 @@ fn stop_shared_vm_discards_stale_saved_state_on_cold_stop() {
             initrd_path: Some(temp.join("initrd")),
             runtime_version: Some("runtime-current".to_string()),
             runtime_shape_digest: Some("digest".to_string()),
+            writable_surface_contract_digest: None,
             updated_at: Some(now_timestamp_string()),
             last_started_at: Some(now_timestamp_string()),
             last_saved_at: Some("older-save".to_string()),
@@ -1760,6 +1779,9 @@ fn start_shared_vm_forces_restart_when_runtime_changes_while_vm_is_live() {
             initrd_path: Some(temp.join("initrd-prev")),
             runtime_version: Some("runtime-prev".to_string()),
             runtime_shape_digest: None,
+            writable_surface_contract_digest: Some(shared_vm_writable_surface_contract_digest(
+                &temp,
+            )),
             updated_at: Some(now_timestamp_string()),
             last_started_at: Some(now_timestamp_string()),
             last_saved_at: None,
@@ -1897,6 +1919,9 @@ fn start_shared_vm_forces_restart_when_runtime_digest_changes_with_same_version(
                 &initrd_path,
                 "runtime-stable",
             )),
+            writable_surface_contract_digest: Some(shared_vm_writable_surface_contract_digest(
+                &temp,
+            )),
             updated_at: Some(now_timestamp_string()),
             last_started_at: Some(now_timestamp_string()),
             last_saved_at: None,
@@ -1945,6 +1970,139 @@ fn start_shared_vm_forces_restart_when_runtime_digest_changes_with_same_version(
         fs::read(shared_vm_rootfs_path(&temp)).expect("read staged rootfs"),
         b"rootfs-v2"
     );
+    assert!(wait_for_child_exit(&mut relay, Duration::from_secs(2)));
+    assert!(wait_for_child_exit(&mut guest, Duration::from_secs(2)));
+
+    let _ = relay.kill();
+    let _ = guest.kill();
+    let _ = relay.wait();
+    let _ = guest.wait();
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[cfg(unix)]
+#[test]
+fn start_shared_vm_forces_restart_when_writable_surface_contract_changes_while_vm_is_live() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-start-writable-surface-restart-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    prepare_runtime_layout(&temp).expect("prepare runtime layout");
+
+    let runtime_root = temp.join("runtime");
+    let helpers_root = runtime_root.join("helpers");
+    fs::create_dir_all(&helpers_root).expect("create helpers root");
+    let source_rootfs = temp.join("source-rootfs.raw");
+    fs::write(&source_rootfs, b"rootfs").expect("write rootfs");
+    let kernel_path = helpers_root.join("kernel");
+    fs::write(&kernel_path, b"kernel").expect("write kernel");
+    let initrd_path = helpers_root.join("initrd");
+    fs::write(&initrd_path, b"initrd").expect("write initrd");
+    let expected_writable_surface_digest = shared_vm_writable_surface_contract_digest(&temp);
+
+    let mut relay = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("spawn relay placeholder");
+    let mut guest = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("spawn guest placeholder");
+
+    persist_state(
+        &shared_vm_state_path(&temp),
+        &PersistedSharedVmState {
+            state: AvfLinuxSharedVmLifecycleState::Running,
+            guest_identity: supported_guest_identity(),
+            runtime_root: Some(runtime_root.clone()),
+            rootfs_image: Some(shared_vm_rootfs_path(&temp)),
+            kernel_path: Some(shared_vm_boot_kernel_path(&temp)),
+            initrd_path: Some(initrd_path.clone()),
+            runtime_version: Some("runtime-current".to_string()),
+            runtime_shape_digest: Some(shared_vm_runtime_shape_digest(
+                &runtime_root,
+                &source_rootfs,
+                &kernel_path,
+                &initrd_path,
+                "runtime-current",
+            )),
+            writable_surface_contract_digest: Some("stale-writable-surface".to_string()),
+            updated_at: Some(now_timestamp_string()),
+            last_started_at: Some(now_timestamp_string()),
+            last_saved_at: None,
+            last_stopped_at: None,
+            transition_status: Some(AvfLinuxSharedVmTransitionStatus::Ready),
+            last_start_outcome: Some(AvfLinuxSharedVmStartOutcome::AlreadyRunning),
+            last_stop_outcome: None,
+            last_restore_error: None,
+            last_save_error: None,
+            relay_pid: Some(relay.id()),
+            guest_agent_pid: Some(guest.id()),
+            simulated: true,
+            notes: vec!["simulated running state".to_string()],
+        },
+    )
+    .expect("persist running state");
+    for path in [
+        shared_vm_control_socket_path(&temp),
+        shared_vm_guest_agent_socket_path(&temp),
+        shared_vm_guest_control_ready_path(&temp),
+        shared_vm_saved_state_path(&temp),
+    ] {
+        fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
+        fs::write(&path, b"x").expect("seed derived state");
+    }
+
+    let started = start_shared_vm(
+        &temp,
+        &runtime_root,
+        &source_rootfs,
+        &kernel_path,
+        &initrd_path,
+        "runtime-current".to_string(),
+    )
+    .expect("restart shared vm after writable-surface contract change");
+
+    assert!(matches!(
+        started.state,
+        AvfLinuxSharedVmLifecycleState::Running
+    ));
+    assert!(started
+        .notes
+        .iter()
+        .any(|note| note.contains("writable-surface contract")));
+    assert!(!started
+        .notes
+        .iter()
+        .any(|note| { note.contains("shared VM start reused an already-running") }));
+    assert_eq!(
+        started.writable_surface_contract_digest.as_deref(),
+        Some(expected_writable_surface_digest.as_str())
+    );
+    let persisted = load_state(&shared_vm_state_path(&temp))
+        .expect("load persisted state")
+        .expect("persisted shared vm state");
+    assert_eq!(
+        persisted.writable_surface_contract_digest.as_deref(),
+        Some(expected_writable_surface_digest.as_str())
+    );
+    assert!(persisted.last_saved_at.is_none());
+    for path in [
+        shared_vm_control_socket_path(&temp),
+        shared_vm_guest_agent_socket_path(&temp),
+        shared_vm_guest_control_ready_path(&temp),
+        shared_vm_saved_state_path(&temp),
+    ] {
+        assert!(
+            !path.exists(),
+            "{} should be cleared before restart",
+            path.display()
+        );
+    }
     assert!(wait_for_child_exit(&mut relay, Duration::from_secs(2)));
     assert!(wait_for_child_exit(&mut guest, Duration::from_secs(2)));
 
@@ -2457,6 +2615,7 @@ fn wait_for_real_guest_launch_ready_backfills_ready_marker_after_restore_hit() {
             initrd_path: None,
             runtime_version: None,
             runtime_shape_digest: None,
+            writable_surface_contract_digest: None,
             updated_at: Some(now_timestamp_string()),
             last_started_at: Some(now_timestamp_string()),
             last_saved_at: Some(now_timestamp_string()),
@@ -2549,6 +2708,7 @@ fn shared_vm_exec_requires_launch_ready_transition() {
             initrd_path: None,
             runtime_version: None,
             runtime_shape_digest: None,
+            writable_surface_contract_digest: None,
             updated_at: Some(now_timestamp_string()),
             last_started_at: Some(now_timestamp_string()),
             last_saved_at: None,
