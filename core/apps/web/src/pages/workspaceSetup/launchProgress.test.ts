@@ -435,8 +435,8 @@ describe("launchProgress", () => {
       phaseStartedAtMs: Date.parse("2026-03-10T00:00:10.000Z"),
       nowMs: Date.parse("2026-03-10T00:00:25.000Z"),
     });
-    expect(remainingMs).toBe(108_000);
-    expect(formatLaunchRemaining(remainingMs)).toBe("1m 48s est. remaining");
+    expect(remainingMs).toBe(114_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("1m 54s est. remaining");
   });
 
   it("models host setup remaining without sandbox launch phases", () => {
@@ -451,30 +451,70 @@ describe("launchProgress", () => {
     expect(formatLaunchRemaining(remainingMs)).toBe("8s est. remaining");
   });
 
-  it("never lets a new raw ETA jump the displayed countdown upward", () => {
-    const remainingMs = stabilizeLaunchEtaRemainingMs({
-      previousRemainingMs: 18_000,
-      previousNowMs: Date.parse("2026-03-10T00:00:10.000Z"),
-      nowMs: Date.parse("2026-03-10T00:00:11.000Z"),
-      rawRemainingMs: 31_000,
+  it("includes repo initialization time for imported non-repo folders", () => {
+    const remainingMs = workspaceSetupProvisioningRemainingMs({
+      phase: "init_repo",
+      source: "import",
+      executionMode: "sandbox",
+      phaseStartedAtMs: Date.parse("2026-03-10T00:00:20.000Z"),
+      nowMs: Date.parse("2026-03-10T00:00:22.000Z"),
     });
-    expect(remainingMs).toBe(17_000);
+    expect(remainingMs).toBe(88_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("1m 28s est. remaining");
   });
 
-  it("keeps decaying when the raw ETA is stuck at the same value", () => {
+  it("recalibrates upward in bounded steps when a slow phase runs over budget", () => {
     const firstTick = stabilizeLaunchEtaRemainingMs({
-      previousRemainingMs: 31_000,
+      previousRemainingMs: 18_000,
+      previousRawRemainingMs: 18_000,
+      previousRecalibrationTargetMs: null,
       previousNowMs: Date.parse("2026-03-10T00:00:10.000Z"),
       nowMs: Date.parse("2026-03-10T00:00:11.000Z"),
       rawRemainingMs: 31_000,
     });
     const secondTick = stabilizeLaunchEtaRemainingMs({
-      previousRemainingMs: firstTick,
+      previousRemainingMs: firstTick.remainingMs,
+      previousRawRemainingMs: 31_000,
+      previousRecalibrationTargetMs: firstTick.recalibrationTargetMs,
       previousNowMs: Date.parse("2026-03-10T00:00:11.000Z"),
       nowMs: Date.parse("2026-03-10T00:00:12.000Z"),
       rawRemainingMs: 31_000,
     });
-    expect(firstTick).toBe(30_000);
-    expect(secondTick).toBe(29_000);
+
+    expect(firstTick).toEqual({
+      recalibrationTargetMs: 31_000,
+      remainingMs: 22_600,
+    });
+    expect(secondTick).toEqual({
+      recalibrationTargetMs: 31_000,
+      remainingMs: 25_360,
+    });
+  });
+
+  it("keeps decaying when the raw ETA is stuck at the same value", () => {
+    const firstTick = stabilizeLaunchEtaRemainingMs({
+      previousRemainingMs: 31_000,
+      previousRawRemainingMs: 31_000,
+      previousRecalibrationTargetMs: null,
+      previousNowMs: Date.parse("2026-03-10T00:00:10.000Z"),
+      nowMs: Date.parse("2026-03-10T00:00:11.000Z"),
+      rawRemainingMs: 31_000,
+    });
+    const secondTick = stabilizeLaunchEtaRemainingMs({
+      previousRemainingMs: firstTick.remainingMs,
+      previousRawRemainingMs: 31_000,
+      previousRecalibrationTargetMs: firstTick.recalibrationTargetMs,
+      previousNowMs: Date.parse("2026-03-10T00:00:11.000Z"),
+      nowMs: Date.parse("2026-03-10T00:00:12.000Z"),
+      rawRemainingMs: 31_000,
+    });
+    expect(firstTick).toEqual({
+      recalibrationTargetMs: null,
+      remainingMs: 30_000,
+    });
+    expect(secondTick).toEqual({
+      recalibrationTargetMs: null,
+      remainingMs: 29_000,
+    });
   });
 });

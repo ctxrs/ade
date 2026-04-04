@@ -389,4 +389,40 @@ describe("useWorkspaceSetupCreate", () => {
       await Promise.resolve();
     });
   });
+
+  it("preserves clone-phase attribution when synthetic provisioning fails before sandbox launch", async () => {
+    apiMocks.repoClone.mockRejectedValueOnce(new Error("clone exploded"));
+    const { hook, setCreateError } = renderCreateHook(null, {
+      intentOverrides: {
+        selections: {
+          location: "remote",
+          container: "sandbox",
+          source: "clone",
+        },
+        sourcePath: "/remote/projects/",
+        repoUrl: "https://github.com/contextual-ai/ctx.git",
+        repoBranch: "main",
+      },
+      effectiveTarget: remoteEffectiveTarget,
+    });
+
+    await act(async () => {
+      await hook.result.current.onCreate();
+    });
+
+    expect(hook.result.current.launchSnapshot).toMatchObject({
+      current_phase: null,
+      current_step_label: "Cloning repository",
+      error: "clone exploded",
+      state: "error",
+    });
+    expect(hook.result.current.currentLaunchStepLabel).toBe("Cloning repository");
+    expect(hook.result.current.launchLogs.at(-1)).toMatchObject({
+      level: "error",
+      message: "clone exploded",
+      phaseLabel: "Clone",
+      provisioningPhase: "clone_repo",
+    });
+    expect(setCreateError).toHaveBeenCalledWith("clone exploded");
+  });
 });

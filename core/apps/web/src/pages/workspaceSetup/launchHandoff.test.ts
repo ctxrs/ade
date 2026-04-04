@@ -17,6 +17,22 @@ describe("launchHandoff", () => {
     })).toBe("Machine start/init: failed to start remote daemon");
   });
 
+  it("prefers the detailed current step label for provisioning-style error messages", () => {
+    expect(launchErrorFromSnapshot({
+      job_id: "job_123",
+      workspace_id: "ws_123",
+      kind: "workspace_launch",
+      state: "error",
+      created_at: "2026-03-09T00:00:00Z",
+      started_at: "2026-03-09T00:00:01Z",
+      current_phase: null,
+      current_step_label: "Cloning repository",
+      error: "clone exploded",
+      phases: [],
+      logs: [],
+    })).toBe("Cloning repository: clone exploded");
+  });
+
   it("batches launch-log lines before flushing them", () => {
     const appended: number[][] = [];
     const scheduler: { scheduledFlush: (() => void) | null } = { scheduledFlush: null };

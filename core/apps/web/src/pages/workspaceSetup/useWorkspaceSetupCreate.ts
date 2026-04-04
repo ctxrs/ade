@@ -136,9 +136,16 @@ export function useWorkspaceSetupCreate({
   const importInitResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
   const provisioningStateRef = useRef<WorkspaceProvisioningState | null>(null);
   const syntheticLogSeqRef = useRef(-1);
-  const launchEtaDisplayRef = useRef<{ remainingMs: number | null; nowMs: number | null }>({
-    remainingMs: null,
+  const launchEtaDisplayRef = useRef<{
+    nowMs: number | null;
+    rawRemainingMs: number | null;
+    recalibrationTargetMs: number | null;
+    remainingMs: number | null;
+  }>({
     nowMs: null,
+    rawRemainingMs: null,
+    recalibrationTargetMs: null,
+    remainingMs: null,
   });
   const createIntent = buildWorkspaceSetupCreateIntent(intent);
   const {
@@ -188,7 +195,7 @@ export function useWorkspaceSetupCreate({
       started_at: startedAt,
       updated_at: new Date(state.updatedAtMs).toISOString(),
       finished_at: state.state === "running" ? null : new Date(state.updatedAtMs).toISOString(),
-      current_phase: "machine_check",
+      current_phase: null,
       current_step_label: state.stepLabel,
       progress_pct: null,
       eta_ms: null,
@@ -214,6 +221,7 @@ export function useWorkspaceSetupCreate({
       level,
       message,
       phaseLabel: workspaceSetupProvisioningPhaseLabel(phase),
+      provisioningPhase: phase,
       timeLabel: formatLaunchTime(ts),
     }).slice(-400));
   };
@@ -297,17 +305,32 @@ export function useWorkspaceSetupCreate({
   useEffect(() => {
     const nowMs = Date.now();
     if (!creating || !effectiveLaunchSnapshot) {
-      launchEtaDisplayRef.current = { remainingMs: null, nowMs: null };
+      launchEtaDisplayRef.current = {
+        nowMs: null,
+        rawRemainingMs: null,
+        recalibrationTargetMs: null,
+        remainingMs: null,
+      };
       setLaunchEtaDisplayMs(null);
       return;
     }
     if (effectiveLaunchSnapshot.state === "ready") {
-      launchEtaDisplayRef.current = { remainingMs: 0, nowMs };
+      launchEtaDisplayRef.current = {
+        nowMs,
+        rawRemainingMs: 0,
+        recalibrationTargetMs: null,
+        remainingMs: 0,
+      };
       setLaunchEtaDisplayMs(0);
       return;
     }
     if (effectiveLaunchSnapshot.state === "error") {
-      launchEtaDisplayRef.current = { remainingMs: null, nowMs };
+      launchEtaDisplayRef.current = {
+        nowMs,
+        rawRemainingMs: null,
+        recalibrationTargetMs: null,
+        remainingMs: null,
+      };
       setLaunchEtaDisplayMs(null);
       return;
     }
@@ -322,12 +345,19 @@ export function useWorkspaceSetupCreate({
       : launchEtaRemainingMs(launchSnapshot, nowMs);
     const nextRemainingMs = stabilizeLaunchEtaRemainingMs({
       previousRemainingMs: launchEtaDisplayRef.current.remainingMs,
+      previousRawRemainingMs: launchEtaDisplayRef.current.rawRemainingMs,
+      previousRecalibrationTargetMs: launchEtaDisplayRef.current.recalibrationTargetMs,
       previousNowMs: launchEtaDisplayRef.current.nowMs,
       nowMs,
       rawRemainingMs,
     });
-    launchEtaDisplayRef.current = { remainingMs: nextRemainingMs, nowMs };
-    setLaunchEtaDisplayMs(nextRemainingMs);
+    launchEtaDisplayRef.current = {
+      nowMs,
+      rawRemainingMs,
+      recalibrationTargetMs: nextRemainingMs.recalibrationTargetMs,
+      remainingMs: nextRemainingMs.remainingMs,
+    };
+    setLaunchEtaDisplayMs(nextRemainingMs.remainingMs);
   }, [
     creating,
     launchSnapshot?.job_id,
@@ -529,7 +559,12 @@ export function useWorkspaceSetupCreate({
     setLaunchSnapshot(null);
     setLaunchLogs([]);
     clearProvisioningState();
-    launchEtaDisplayRef.current = { remainingMs: null, nowMs: null };
+    launchEtaDisplayRef.current = {
+      nowMs: null,
+      rawRemainingMs: null,
+      recalibrationTargetMs: null,
+      remainingMs: null,
+    };
     setLaunchEtaDisplayMs(null);
     setLaunchCopyState("idle");
     setLaunchTick(0);

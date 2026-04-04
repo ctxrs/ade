@@ -19,6 +19,9 @@ const SHARED_VM_STARTUP_MS = 19_000;
 const SANDBOX_SETUP_MS = 12_000;
 const TOTAL_LAUNCH_BUDGET_MS =
   ARTIFACT_ACQUISITION_PREPARATION_MS + SHARED_VM_STARTUP_MS + SANDBOX_SETUP_MS;
+const ETA_UPWARD_RECALIBRATION_TRIGGER_MS = 2_000;
+const ETA_UPWARD_RECALIBRATION_FLOOR_MS = 3_000;
+const ETA_UPWARD_RECALIBRATION_GAP_RATIO = 0.4;
 
 type LaunchEtaBucket =
   | "artifact_acquisition_preparation"
@@ -48,7 +51,13 @@ export type WorkspaceSetupProvisioningExecutionMode = "host" | "sandbox";
 
 export type WorkspaceSetupLaunchLogLine = ExecutionLaunchLogLine & {
   phaseLabel: string;
+  provisioningPhase?: WorkspaceSetupProvisioningPhase;
   timeLabel: string;
+};
+
+export type StabilizedLaunchEtaState = {
+  recalibrationTargetMs: number | null;
+  remainingMs: number | null;
 };
 
 export const workspaceSetupProvisioningPhaseLabel = (
@@ -91,7 +100,7 @@ const workspaceSetupProvisioningPhaseBudgetMs = (
     case "import_repo":
       return source === "import" ? WORKSPACE_SETUP_IMPORT_MS : 0;
     case "init_repo":
-      return source === "new" ? WORKSPACE_SETUP_NEW_REPO_MS : 0;
+      return source === "new" || source === "import" ? WORKSPACE_SETUP_NEW_REPO_MS : 0;
     case "register_workspace":
       return WORKSPACE_SETUP_REGISTER_MS;
     case "configure_workspace":
@@ -99,7 +108,7 @@ const workspaceSetupProvisioningPhaseBudgetMs = (
     case "launch_runtime":
       return executionMode === "sandbox" ? TOTAL_LAUNCH_BUDGET_MS : 0;
     case "bootstrap_workspace":
-      return executionMode === "host" ? WORKSPACE_SETUP_HOST_BOOTSTRAP_MS : 0;
+      return WORKSPACE_SETUP_HOST_BOOTSTRAP_MS;
   }
 };
 
@@ -148,24 +157,70 @@ export const workspaceSetupProvisioningRemainingMs = ({
 
 export const stabilizeLaunchEtaRemainingMs = ({
   previousRemainingMs,
+  previousRawRemainingMs,
+  previousRecalibrationTargetMs,
   previousNowMs,
   nowMs,
   rawRemainingMs,
 }: {
   previousRemainingMs: number | null;
+  previousRawRemainingMs: number | null;
+  previousRecalibrationTargetMs: number | null;
   previousNowMs: number | null;
   nowMs: number;
   rawRemainingMs: number | null;
-}): number | null => {
+}): StabilizedLaunchEtaState => {
   if (rawRemainingMs === null) {
-    if (previousRemainingMs === null || previousNowMs === null) return null;
-    return Math.max(0, previousRemainingMs - Math.max(0, nowMs - previousNowMs));
+    if (previousRemainingMs === null || previousNowMs === null) {
+      return {
+        recalibrationTargetMs: null,
+        remainingMs: null,
+      };
+    }
+    return {
+      recalibrationTargetMs: null,
+      remainingMs: Math.max(0, previousRemainingMs - Math.max(0, nowMs - previousNowMs)),
+    };
   }
   if (previousRemainingMs === null || previousNowMs === null) {
-    return rawRemainingMs;
+    return {
+      recalibrationTargetMs: null,
+      remainingMs: rawRemainingMs,
+    };
   }
   const decayedMs = Math.max(0, previousRemainingMs - Math.max(0, nowMs - previousNowMs));
-  return Math.min(decayedMs, rawRemainingMs);
+  if (rawRemainingMs <= decayedMs) {
+    return {
+      recalibrationTargetMs: null,
+      remainingMs: rawRemainingMs,
+    };
+  }
+
+  const recalibrationTargetMs = previousRecalibrationTargetMs !== null
+    ? Math.max(previousRecalibrationTargetMs, rawRemainingMs)
+    : previousRawRemainingMs !== null
+      && rawRemainingMs >= previousRawRemainingMs + ETA_UPWARD_RECALIBRATION_TRIGGER_MS
+      ? rawRemainingMs
+      : null;
+
+  if (recalibrationTargetMs === null) {
+    return {
+      recalibrationTargetMs: null,
+      remainingMs: decayedMs,
+    };
+  }
+
+  const gapMs = recalibrationTargetMs - decayedMs;
+  const boundedIncreaseMs = Math.max(
+    ETA_UPWARD_RECALIBRATION_FLOOR_MS,
+    Math.ceil(gapMs * ETA_UPWARD_RECALIBRATION_GAP_RATIO),
+  );
+  const nextRemainingMs = Math.min(recalibrationTargetMs, decayedMs + boundedIncreaseMs);
+  return {
+    recalibrationTargetMs:
+      nextRemainingMs < recalibrationTargetMs ? recalibrationTargetMs : null,
+    remainingMs: nextRemainingMs,
+  };
 };
 
 export const launchPhaseLabel = (phase?: ExecutionLaunchPhase | null): string => {
@@ -248,7 +303,7 @@ export const mergeLaunchLogs = (
 };
 
 export const launchErrorFromSnapshot = (snapshot: ExecutionLaunchSnapshot): string => {
-  const phase = launchPhaseLabel(snapshot.current_phase);
+  const phase = currentLaunchStepLabel(snapshot);
   const message = String(snapshot.error ?? "").trim();
   if (!message) return `Workspace launch failed during ${phase}.`;
   return `${phase}: ${message}`;
