@@ -495,13 +495,13 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
         },
       ).trim();
       contractRecorder.recordArtifact("sandbox_cli_probe", { result: sandboxCliProbe });
-      if (sandboxCliProbe !== "yes") {
-        const detail = "remote sandbox substrate unavailable";
-        contractRecorder.recordAssertion("sandbox_cli_probe", "skip", detail);
-        finalizeReport({ result: "skipped", reason: detail });
-        this.skip();
-      }
-      contractRecorder.recordAssertion("sandbox_cli_probe", "pass", "remote sandbox substrate available");
+      contractRecorder.recordAssertion(
+        "sandbox_cli_probe",
+        "pass",
+        sandboxCliProbe === "yes"
+          ? "remote sandbox substrate already present before bootstrap"
+          : "remote sandbox substrate absent before bootstrap; bootstrap path must provision it",
+      );
 
       const remoteDest = `${remoteBase}/new-sandbox`;
       workspaceId = await runWizardScenario({

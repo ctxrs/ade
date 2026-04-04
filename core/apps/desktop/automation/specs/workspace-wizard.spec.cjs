@@ -1899,19 +1899,12 @@ describe("launcher workspace wizard (e2e)", () => {
   const remoteDataDir = REMOTE_DATA_DIR_RAW.trim() || `${remoteBase}/daemon`;
   const preserveRemoteDaemonDir = SSH_NO_START_REMOTE;
   let remoteBaseResolved = remoteBase;
-  let remoteHasSandboxCli = false;
-  let remoteSupportsContainerStep = false;
 
   before(async () => {
     initGitRepo(localImportRepo, "local-import");
     initGitRepo(localCloneSrc, "local-clone-src");
 
     if (remoteTarget) {
-      const sandboxCliProbe = ssh(
-        remoteTarget,
-        "if { [ -n \"${CTX_HARNESS_SANDBOX_CLI_PATH:-}\" ] && [ -x \"${CTX_HARNESS_SANDBOX_CLI_PATH}\" ]; } || command -v nerdctl >/dev/null 2>&1; then echo yes; else echo no; fi",
-      ).trim();
-      remoteHasSandboxCli = sandboxCliProbe === "yes";
       // Pre-create remote repos for import/clone without touching the daemon.
       const script = [
         "set -euo pipefail",
@@ -1948,23 +1941,6 @@ describe("launcher workspace wizard (e2e)", () => {
         // Keep the nominal /tmp path if realpath is unavailable.
       }
 
-      // Probe whether the current wizard flow exposes a sandbox step for remote targets.
-      await browser.url(`tauri://localhost/workspace-setup?remoteProbe=${Date.now()}`);
-      await waitForTauri();
-      await waitForTestId("workspace-setup", 60000);
-      await waitForStep("location");
-      await clickOption("location", "remote");
-      await setInput("wizard-remote-host", remoteHostForWizard);
-      await clickNext();
-      let step = await currentStepKey();
-      if (step === "location") {
-        try {
-          step = await waitForRemoteStepAfterLocation(20000);
-        } catch {
-          step = await currentStepKey();
-        }
-      }
-      remoteSupportsContainerStep = step === "container";
     }
   });
 
@@ -2258,8 +2234,6 @@ describe("launcher workspace wizard (e2e)", () => {
   it("remote clone works end-to-end", async function () {
     if (!scenarioEnabled("remote-clone-host", ["remote", "host"])) this.skip();
     if (!remoteTarget) this.skip();
-    if (!remoteHasSandboxCli) this.skip();
-    if (!remoteSupportsContainerStep) this.skip();
     const destParent = `${remoteBase}/clone-dest`;
     const destPath = `${destParent}/`;
     const src = `${remoteBase}/clone-src`;
@@ -2289,8 +2263,6 @@ describe("launcher workspace wizard (e2e)", () => {
   it("remote new empty works end-to-end", async function () {
     if (!scenarioEnabled("remote-new-sandbox", ["remote", "sandbox"])) this.skip();
     if (!remoteTarget) this.skip();
-    if (!remoteHasSandboxCli) this.skip();
-    if (!remoteSupportsContainerStep) this.skip();
     const dest = `${remoteBase}/new-sandbox`;
     ssh(remoteTarget, `rm -rf ${JSON.stringify(dest)}`);
 

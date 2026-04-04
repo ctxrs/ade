@@ -35,3 +35,14 @@ test("wdio shipped-app mode is cross-platform and supports an explicit bundle di
     /delete process\.env\.CTX_DESKTOP_DEV_BIN_DIR;[\s\S]*delete process\.env\.CTX_DESKTOP_START_PATH;/,
   );
 });
+
+test("wdio remote-only prep on mac arm64 skips the managed AVF payload download", () => {
+  const script = fs.readFileSync(configPath, "utf8");
+
+  assert.match(script, /const RUNS_REMOTE_ONLY_SCENARIOS = SCENARIO_FILTER\.length > 0/);
+  assert.match(script, /SCENARIO_FILTER\.every\(\(token\) => token\.startsWith\("remote"\)\)/);
+  assert.match(
+    script,
+    /process\.platform === "darwin"[\s\S]*process\.arch === "arm64"[\s\S]*RUNS_REMOTE_ONLY_SCENARIOS[\s\S]*CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD = "1"/,
+  );
+});

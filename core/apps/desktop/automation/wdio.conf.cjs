@@ -230,6 +230,8 @@ const CONTAINER_SCENARIO_TOKENS = new Set([
 ]);
 const RUNS_CONTAINER_SCENARIOS = SCENARIO_FILTER.length === 0
   || SCENARIO_FILTER.some((token) => CONTAINER_SCENARIO_TOKENS.has(token));
+const RUNS_REMOTE_ONLY_SCENARIOS = SCENARIO_FILTER.length > 0
+  && SCENARIO_FILTER.every((token) => token.startsWith("remote"));
 const ALLOW_CN_PORT_REUSE = resolveBoolishFlag(
   process.env.CTX_AUTOMATION_CN_ALLOW_PORT_REUSE,
   false,
@@ -1760,6 +1762,14 @@ exports.config = {
     // for the automation plugin, but sync release resources.
     if (!SKIP_PREP_RELEASE && !USING_SHIPPED_APP_MODE) {
       const prepEnv = { ...process.env };
+      if (
+        process.platform === "darwin"
+        && process.arch === "arm64"
+        && RUNS_REMOTE_ONLY_SCENARIOS
+        && !String(prepEnv.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD || "").trim()
+      ) {
+        prepEnv.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD = "1";
+      }
       delete prepEnv.NODE_OPTIONS;
       const prepRelease = spawnSync("pnpm", ["-C", CORE_ROOT, "desktop:prep:release"], {
         stdio: "inherit",
