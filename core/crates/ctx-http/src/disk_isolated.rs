@@ -84,6 +84,32 @@ async fn estimate_tree_size_bytes(root: &Path) -> Result<u64> {
         .context("joining tree-size estimate task")?
 }
 
+async fn estimate_self_contained_copy_size_bytes(source_root: &Path) -> Result<u64> {
+    let source_bytes = estimate_tree_size_bytes(source_root).await?;
+    let dotgit = source_root.join(".git");
+    let dotgit_meta = match tokio::fs::symlink_metadata(&dotgit).await {
+        Ok(meta) => meta,
+        Err(_) => return Ok(source_bytes),
+    };
+    if dotgit_meta.is_dir() {
+        return Ok(source_bytes);
+    }
+
+    // Conservative upper bound: staging replaces the lightweight `.git` pointer with a full
+    // standalone `.git` directory assembled from the common git dir plus worktree-specific git
+    // metadata. Summing both trees can slightly overestimate when files overlap, but it avoids
+    // admitting copies that still fail during host-side staging.
+    let git_dir = resolve_git_dir(source_root).await?;
+    let common_git_dir = resolve_common_git_dir(&git_dir).await?;
+    let mut expanded_bytes = source_bytes.saturating_sub(dotgit_meta.len());
+    expanded_bytes =
+        expanded_bytes.saturating_add(estimate_tree_size_bytes(&common_git_dir).await?);
+    if git_dir != common_git_dir {
+        expanded_bytes = expanded_bytes.saturating_add(estimate_tree_size_bytes(&git_dir).await?);
+    }
+    Ok(expanded_bytes)
+}
+
 fn reserve_file_active(data_root: &Path) -> bool {
     data_root.join(".storage-guard.reserve").exists()
 }
@@ -168,13 +194,12 @@ async fn sandbox_storage_sample(
 async fn preflight_disk_isolated_copy(
     data_root: &Path,
     container_id: &str,
-    source_root: &Path,
+    estimated_copy_bytes: u64,
     destination_probe_root: &Path,
     operation: StorageAdmissionOperation,
 ) -> Result<()> {
-    let source_bytes = estimate_tree_size_bytes(source_root).await?;
     let required_bytes = storage_guard::storage_admission_required_bytes(
-        disk_isolated_copy_budget_bytes(source_bytes),
+        disk_isolated_copy_budget_bytes(estimated_copy_bytes),
     );
     let host_sample = host_storage_sample(data_root, "CTX data root", true)?;
     let sandbox_sample = sandbox_storage_sample(
@@ -193,6 +218,7 @@ async fn preflight_disk_isolated_copy(
     .map_err(|err| {
         tracing::warn!(
             operation = ?operation,
+            estimated_copy_bytes,
             required_bytes,
             host_path = %host_sample.path,
             host_free_bytes = host_sample.free_bytes,
@@ -613,6 +639,23 @@ pub async fn ensure_worktree_from_host_copy(
         dest_root = %dest_root.display(),
         "provisioning disk-isolated worktree from host copy"
     );
+    let estimated_copy_bytes = estimate_self_contained_copy_size_bytes(host_workspace_root)
+        .await
+        .with_context(|| {
+            format!(
+                "estimating self-contained sandbox copy size from {}",
+                host_workspace_root.display()
+            )
+        })?;
+    preflight_disk_isolated_copy(
+        data_root,
+        &container_id,
+        estimated_copy_bytes,
+        dest_root.parent().unwrap_or(dest_root.as_path()),
+        StorageAdmissionOperation::DiskIsolatedWorktreeMaterialization,
+    )
+    .await
+    .context("preflighting disk-isolated worktree materialization")?;
     let (copy_root, _staging_guard) =
         prepare_self_contained_copy_root(data_root, host_workspace_root)
             .await
@@ -622,16 +665,6 @@ pub async fn ensure_worktree_from_host_copy(
                     host_workspace_root.display()
                 )
             })?;
-    preflight_disk_isolated_copy(
-        data_root,
-        &container_id,
-        &copy_root,
-        dest_root.parent().unwrap_or(dest_root.as_path()),
-        StorageAdmissionOperation::DiskIsolatedWorktreeMaterialization,
-    )
-    .await
-    .context("preflighting disk-isolated worktree materialization")?;
-
     // 1) Create destination directory.
     {
         let mut cmd = crate::harness_runtime::sandbox_container_command(data_root)?;
@@ -755,6 +788,23 @@ pub async fn ensure_workspace_root_from_host_copy(
             host_workspace_root.display()
         );
     }
+    let estimated_copy_bytes = estimate_self_contained_copy_size_bytes(host_workspace_root)
+        .await
+        .with_context(|| {
+            format!(
+                "estimating self-contained sandbox workspace copy size from {}",
+                host_workspace_root.display()
+            )
+        })?;
+    preflight_disk_isolated_copy(
+        data_root,
+        &container_id,
+        estimated_copy_bytes,
+        &dest_root,
+        StorageAdmissionOperation::DiskIsolatedWorkspaceMaterialization,
+    )
+    .await
+    .context("preflighting disk-isolated workspace materialization")?;
     let (copy_root, _staging_guard) =
         prepare_self_contained_copy_root(data_root, host_workspace_root)
             .await
@@ -764,16 +814,6 @@ pub async fn ensure_workspace_root_from_host_copy(
                     host_workspace_root.display()
                 )
             })?;
-    preflight_disk_isolated_copy(
-        data_root,
-        &container_id,
-        &copy_root,
-        &dest_root,
-        StorageAdmissionOperation::DiskIsolatedWorkspaceMaterialization,
-    )
-    .await
-    .context("preflighting disk-isolated workspace materialization")?;
-
     ensure_empty_container_root(data_root, &container_id, &dest_root)
         .await
         .context("preparing disk-isolated workspace root")?;
@@ -859,6 +899,43 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "true");
+    }
+
+    #[tokio::test]
+    async fn estimate_self_contained_copy_size_accounts_for_expanded_git_metadata() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repo_root = temp.path().join("repo");
+        std::fs::create_dir_all(&repo_root).expect("create repo root");
+        git(&["init", "-b", "main"], &repo_root);
+        git(&["config", "user.name", "Test User"], &repo_root);
+        git(&["config", "user.email", "test@example.com"], &repo_root);
+        std::fs::write(repo_root.join("README.md"), "hello\n").expect("write readme");
+        git(&["add", "README.md"], &repo_root);
+        git(&["commit", "-m", "initial"], &repo_root);
+
+        let worktree_root = temp.path().join("worktree");
+        git(
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "ctx/test-size-estimate",
+                worktree_root.to_str().expect("worktree path"),
+            ],
+            &repo_root,
+        );
+
+        let source_bytes = collect_tree_size_bytes(&worktree_root).expect("measure worktree");
+        let estimated_bytes = estimate_self_contained_copy_size_bytes(&worktree_root)
+            .await
+            .expect("estimate self-contained worktree");
+        let (copy_root, _guard) = prepare_self_contained_copy_root(temp.path(), &worktree_root)
+            .await
+            .expect("prepare self-contained root");
+        let staged_bytes = collect_tree_size_bytes(&copy_root).expect("measure staged copy");
+
+        assert!(estimated_bytes > source_bytes);
+        assert!(estimated_bytes >= staged_bytes);
     }
 
     #[tokio::test]

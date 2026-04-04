@@ -22,10 +22,25 @@ use crate::worktree_data_plane::{
 };
 
 pub(super) fn status_code_for_internal_error(err: &anyhow::Error) -> StatusCode {
-    if crate::storage_guard::is_storage_exhaustion_error(&format!("{err:#}")) {
+    if err
+        .chain()
+        .any(|cause| crate::storage_guard::is_storage_exhaustion_error(&cause.to_string()))
+    {
         StatusCode::INSUFFICIENT_STORAGE
     } else {
         StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
+
+fn internal_api_error_message(err: &anyhow::Error) -> String {
+    if let Some(storage_message) = err
+        .chain()
+        .map(ToString::to_string)
+        .find(|message| crate::storage_guard::is_storage_exhaustion_error(message))
+    {
+        storage_message
+    } else {
+        format!("{err:#}")
     }
 }
 
@@ -33,7 +48,7 @@ pub(super) fn map_internal_api_error(err: &anyhow::Error) -> (StatusCode, Json<A
     (
         status_code_for_internal_error(err),
         Json(ApiErrorResp {
-            error: logs::redact_sensitive(&format!("{err:#}")),
+            error: logs::redact_sensitive(&internal_api_error_message(err)),
         }),
     )
 }
@@ -80,7 +95,10 @@ mod tests {
             .context("Insufficient storage capacity for creating an isolated task worktree");
         let (status, body) = map_internal_api_error(&err);
         assert_eq!(status, StatusCode::INSUFFICIENT_STORAGE);
-        assert!(body.0.error.contains("Insufficient storage capacity"));
+        assert_eq!(
+            body.0.error,
+            "Insufficient storage capacity for creating an isolated task worktree"
+        );
     }
 }
 
