@@ -72,6 +72,13 @@ export function shouldReplaceSessionHead(
   next: SessionHeadSnapshot,
 ): boolean {
   if (!prev) return true;
+  const prevSeq = typeof prev.last_event_seq === "number" ? prev.last_event_seq : -1;
+  const nextSeq = typeof next.last_event_seq === "number" ? next.last_event_seq : -1;
+  if (prevSeq < 0 && nextSeq >= 0) return true;
+  if (prevSeq >= 0 && nextSeq < 0) return false;
+  if (prevSeq >= 0 && nextSeq >= 0) {
+    return nextSeq >= prevSeq;
+  }
   const prevProjectionRev = typeof prev.projection_rev === "number" ? prev.projection_rev : -1;
   const nextProjectionRev = typeof next.projection_rev === "number" ? next.projection_rev : -1;
   if (prevProjectionRev >= 0 && nextProjectionRev >= 0 && nextProjectionRev < prevProjectionRev) {
@@ -80,10 +87,6 @@ export function shouldReplaceSessionHead(
   if (prevProjectionRev >= 0 && nextProjectionRev >= 0 && nextProjectionRev > prevProjectionRev) {
     return true;
   }
-  const prevSeq = typeof prev.last_event_seq === "number" ? prev.last_event_seq : -1;
-  const nextSeq = typeof next.last_event_seq === "number" ? next.last_event_seq : -1;
-  if (prevSeq >= 0 && nextSeq < 0) return false;
-  if (prevSeq >= 0 && nextSeq >= 0 && nextSeq < prevSeq) return false;
   return true;
 }
 

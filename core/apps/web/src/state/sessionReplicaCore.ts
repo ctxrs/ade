@@ -31,6 +31,7 @@ import {
   mergeReplicaTurnsIntoEntry,
   rebuildReplicaTranscriptAuxState,
 } from "./sessionReplicaTranscript";
+import { mergeTurnStatus } from "./sessionSupervisor/cachePolicy";
 import type {
   SessionReplicaCommand,
   SessionReplicaConfig,
@@ -147,21 +148,23 @@ const mergeToolSummaries = (
 
 const isOlderVersion = (
   incomingLastEventSeq: number | null,
-  incomingStateRev: number | null,
+  incomingProjectionRev: number | null,
   existingLastEventSeq: number | null,
-  existingStateRev: number | null,
+  existingProjectionRev: number | null,
 ): boolean => {
-  if (
-    incomingStateRev !== null &&
-    existingStateRev !== null &&
-    incomingStateRev < existingStateRev
-  ) {
+  if (incomingLastEventSeq !== null && existingLastEventSeq !== null) {
+    return incomingLastEventSeq < existingLastEventSeq;
+  }
+  if (existingLastEventSeq !== null && incomingLastEventSeq === null) {
     return true;
   }
+  if (incomingLastEventSeq !== null && existingLastEventSeq === null) {
+    return false;
+  }
   if (
-    incomingLastEventSeq !== null &&
-    existingLastEventSeq !== null &&
-    incomingLastEventSeq < existingLastEventSeq
+    incomingProjectionRev !== null &&
+    existingProjectionRev !== null &&
+    incomingProjectionRev < existingProjectionRev
   ) {
     return true;
   }
@@ -181,13 +184,20 @@ const mergeTurn = (prev: SessionTurn, next: SessionTurn): SessionTurn => {
   return {
     ...prev,
     ...next,
+    status: mergeTurnStatus(prev.status, next.status),
     assistant_partial: null,
     thought_partial,
+    end_seq: next.end_seq ?? prev.end_seq,
+    updated_at:
+      String(next.updated_at ?? "").localeCompare(String(prev.updated_at ?? "")) >= 0
+        ? next.updated_at
+        : prev.updated_at,
     tool_total: Math.max(prev.tool_total ?? 0, next.tool_total ?? 0),
     tool_pending: Math.max(prev.tool_pending ?? 0, next.tool_pending ?? 0),
     tool_running: Math.max(prev.tool_running ?? 0, next.tool_running ?? 0),
     tool_completed: Math.max(prev.tool_completed ?? 0, next.tool_completed ?? 0),
     tool_failed: Math.max(prev.tool_failed ?? 0, next.tool_failed ?? 0),
+    metrics_json: next.metrics_json ?? prev.metrics_json,
   };
 };
 
