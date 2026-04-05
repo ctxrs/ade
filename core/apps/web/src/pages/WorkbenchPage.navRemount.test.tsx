@@ -375,13 +375,38 @@ vi.mock("../components/DiffReviewPane", () => ({
 
 vi.mock("./SessionPage", () => ({
   SessionView: ({ sessionId: mockedSessionId }: { sessionId: string }) => {
+    const loadErrors = sessionSnap.sessions[mockedSessionId]?.loadErrors ?? {};
+    const issues = [
+      loadErrors.state,
+      loadErrors.subagentInvocations,
+    ].filter((value): value is string => typeof value === "string" && value.length > 0);
     React.useEffect(() => {
       sessionViewMountSpy(mockedSessionId);
       return () => {
         sessionViewUnmountSpy(mockedSessionId);
       };
     }, [mockedSessionId]);
-    return <div data-testid="session-view-mock" data-session-id={mockedSessionId} />;
+    return (
+      <div data-testid="session-view-mock" data-session-id={mockedSessionId}>
+        {issues.length > 0 ? (
+          <div className="banner" data-testid="workbench-session-load-issues">
+            <div>Some session details failed to load.</div>
+            {issues.map((issue) => (
+              <div key={issue}>{issue}</div>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                sessionSupervisorMock.loadSessionState(mockedSessionId, { force: true });
+                sessionSupervisorMock.loadSubagentInvocations(mockedSessionId, { force: true });
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        ) : null}
+      </div>
+    );
   },
   buildWorkbenchThreadViewModel: () => ({ groups: [] }),
 }));
@@ -1129,6 +1154,7 @@ describe("WorkbenchPage session support load issues", () => {
     render(ui);
 
     expect(await screen.findByText("Some session details failed to load.")).toBeInTheDocument();
+    expect(screen.getByTestId("workbench-session-load-issues")).toHaveClass("banner");
     expect(screen.getByText("Failed to load session state: daemon offline")).toBeInTheDocument();
     expect(screen.getByText("Failed to load subagent invocations: query failed")).toBeInTheDocument();
 

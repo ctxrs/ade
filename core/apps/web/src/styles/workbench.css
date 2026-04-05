@@ -2876,14 +2876,21 @@
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  position: relative;
+  display: flex;
+  flex-direction: column;
 }
 
 .wb-session-slot {
-  height: 100%;
+  display: flex;
+  flex: 1 1 auto;
   min-height: 0;
-  position: absolute;
-  inset: 0;
+  width: 100%;
+}
+
+.wb-session-slot-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
 }
 

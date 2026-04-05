@@ -218,6 +218,11 @@ export function SessionView({
     if (!id) return;
     supervisor.refreshSession(id, { watchDiff: true });
   }, [id, supervisor]);
+  const handleRetrySessionLoads = useCallback(() => {
+    if (!id) return;
+    supervisor.loadSessionState(id, { force: true });
+    supervisor.loadSubagentInvocations(id, { force: true });
+  }, [id, supervisor]);
 
   const {
     dictationRecording,
@@ -285,6 +290,19 @@ export function SessionView({
   const optimisticQueuedMessages: Message[] = entry?.optimisticQueuedMessages ?? [];
   const optimisticQueueRemovalIds = entry?.optimisticQueueRemovalIds ?? [];
   const subagentInvocations: SubagentInvocation[] = entry?.subagentInvocations ?? [];
+  const sessionLoadIssues = useMemo(() => {
+    const issues: Array<{ key: "state" | "subagentInvocations"; message: string }> = [];
+    if (entry?.loadErrors?.state) {
+      issues.push({ key: "state", message: entry.loadErrors.state });
+    }
+    if (entry?.loadErrors?.subagentInvocations) {
+      issues.push({
+        key: "subagentInvocations",
+        message: entry.loadErrors.subagentInvocations,
+      });
+    }
+    return issues;
+  }, [entry?.loadErrors?.state, entry?.loadErrors?.subagentInvocations]);
   const markQueueOptimisticallyRemoved = useCallback((messageId: string) => {
     if (!messageId) return;
     supervisor.addOptimisticQueueRemovalId(id, messageId);
@@ -883,6 +901,7 @@ export function SessionView({
       entryError={entry?.error}
       session={session}
       sessionError={sessionError}
+      sessionLoadIssues={sessionLoadIssues}
       dropActive={dropActive}
       dropScopeRef={dropScopeRef}
       listItems={listItems}
@@ -914,6 +933,7 @@ export function SessionView({
       authBusy={authBusy}
       authError={authError}
       onAuthenticate={handleAuthenticate}
+      onRetrySessionLoads={handleRetrySessionLoads}
       subagentInvocations={subagentInvocations}
       onOpenChildSession={openChildSession}
       style={virtuosoStyle}

@@ -90,6 +90,7 @@ type SessionWorkbenchPaneProps = {
   entryError: string | null | undefined;
   session: Session | null;
   sessionError: SessionErrorState;
+  sessionLoadIssues: Array<{ key: "state" | "subagentInvocations"; message: string }>;
   dropActive: boolean;
   dropScopeRef: MutableRefObject<HTMLDivElement | null>;
   listItems: WorkbenchListItem[];
@@ -121,6 +122,7 @@ type SessionWorkbenchPaneProps = {
   authBusy: boolean;
   authError: string | null;
   onAuthenticate: () => Promise<void>;
+  onRetrySessionLoads: () => void;
   subagentInvocations: SubagentInvocation[];
   onOpenChildSession: (childSessionId: string) => void;
   style: CSSProperties;
@@ -200,6 +202,7 @@ export function SessionWorkbenchPane({
   entryError,
   session,
   sessionError,
+  sessionLoadIssues,
   dropActive,
   dropScopeRef,
   listItems,
@@ -229,6 +232,7 @@ export function SessionWorkbenchPane({
   authBusy,
   authError,
   onAuthenticate,
+  onRetrySessionLoads,
   subagentInvocations,
   onOpenChildSession,
   style,
@@ -487,6 +491,17 @@ export function SessionWorkbenchPane({
             </div>
             <div className="error" style={{ whiteSpace: "pre-wrap" }}>
               {modelSwitchError}
+            </div>
+          </div>
+        ) : null}
+        {sessionLoadIssues.length > 0 ? (
+          <div className="banner wb-session-load-issues" role="alert" data-testid="workbench-session-load-issues">
+            <div className="wb-session-load-issues-title">Some session details failed to load.</div>
+            {sessionLoadIssues.map((issue) => (
+              <div key={issue.key}>{issue.message}</div>
+            ))}
+            <div>
+              <button type="button" onClick={onRetrySessionLoads}>Retry</button>
             </div>
           </div>
         ) : null}
