@@ -56,6 +56,7 @@ import {
 } from "./sessionMessageListItemIdentity";
 import { isSameContextWindow } from "./sessionView/estimateHeuristics";
 import { getQueuedAttachments } from "./sessionView/SessionQueuePanel";
+import { collectSessionLoadIssues } from "./sessionView/sessionLoadIssues";
 import { SessionWorkbenchPane } from "./sessionView/SessionWorkbenchPane";
 import { useSessionImageDropScope } from "./sessionView/useSessionImageDropScope";
 import { useSessionProviderGuard } from "./sessionView/useSessionProviderGuard";
@@ -290,19 +291,10 @@ export function SessionView({
   const optimisticQueuedMessages: Message[] = entry?.optimisticQueuedMessages ?? [];
   const optimisticQueueRemovalIds = entry?.optimisticQueueRemovalIds ?? [];
   const subagentInvocations: SubagentInvocation[] = entry?.subagentInvocations ?? [];
-  const sessionLoadIssues = useMemo(() => {
-    const issues: Array<{ key: "state" | "subagentInvocations"; message: string }> = [];
-    if (entry?.loadErrors?.state) {
-      issues.push({ key: "state", message: entry.loadErrors.state });
-    }
-    if (entry?.loadErrors?.subagentInvocations) {
-      issues.push({
-        key: "subagentInvocations",
-        message: entry.loadErrors.subagentInvocations,
-      });
-    }
-    return issues;
-  }, [entry?.loadErrors?.state, entry?.loadErrors?.subagentInvocations]);
+  const sessionLoadIssues = useMemo(
+    () => collectSessionLoadIssues(entry?.loadErrors),
+    [entry?.loadErrors?.state, entry?.loadErrors?.subagentInvocations],
+  );
   const markQueueOptimisticallyRemoved = useCallback((messageId: string) => {
     if (!messageId) return;
     supervisor.addOptimisticQueueRemovalId(id, messageId);
