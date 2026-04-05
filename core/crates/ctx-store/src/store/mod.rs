@@ -412,6 +412,10 @@ impl Store {
     }
 
     pub async fn close(&self) {
+        if self._lease_guard.is_some() {
+            tracing::debug!("ignoring close() on lease-backed store handle");
+            return;
+        }
         if let Err(err) = self.event_log.shutdown().await {
             tracing::warn!("event log shutdown failed during close: {err:#}");
         }
@@ -422,6 +426,10 @@ impl Store {
     }
 
     pub fn close_blocking(&self) {
+        if self._lease_guard.is_some() {
+            tracing::debug!("ignoring close_blocking() on lease-backed store handle");
+            return;
+        }
         if let Err(err) = self.event_log.shutdown_blocking() {
             tracing::warn!("event log shutdown failed during blocking close: {err:#}");
         }
