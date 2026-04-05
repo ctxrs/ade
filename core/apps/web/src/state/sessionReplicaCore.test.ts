@@ -210,6 +210,218 @@ describe("SessionReplicaCore", () => {
     expect(replacePatches[1]?.data.freshness).toBe("authoritative");
   });
 
+  it("accepts repair_replace heads when last_event_seq advances even if projection_rev trails", () => {
+    const sessionId = "session-repair-seq-dominates";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    const createdAt = "2026-03-09T00:00:01.000Z";
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [
+          {
+            turn_id: "turn-1",
+            session_id: sessionId,
+            run_id: "run-1",
+            user_message_id: "message-1",
+            status: "running",
+            start_seq: 1,
+            end_seq: null,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: "",
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+          },
+        ],
+        events: [] as SessionEvent[],
+        messages: [] as Message[],
+        activity: { is_working: true, last_turn_status: "running" },
+        last_event_seq: 4,
+        projection_rev: 7,
+        state_rev: 7,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "bootstrap_seed",
+    });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [
+          {
+            turn_id: "turn-1",
+            session_id: sessionId,
+            run_id: "run-1",
+            user_message_id: "message-1",
+            status: "completed",
+            start_seq: 1,
+            end_seq: 5,
+            started_at: createdAt,
+            updated_at: "2026-03-09T00:00:05.000Z",
+            assistant_partial: null,
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+          },
+        ],
+        events: [] as SessionEvent[],
+        messages: [] as Message[],
+        activity: { is_working: false, last_turn_status: "completed" },
+        last_event_seq: 5,
+        projection_rev: 6,
+        state_rev: 7,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "repair_replace",
+    });
+
+    const latest = [...patches].reverse().find(
+      (patch) => patch.sessionId === sessionId && patch.op === "replace",
+    );
+    if (!latest || latest.op === "evict") {
+      throw new Error("expected repair replace patch");
+    }
+
+    expect(latest.data.replaceMode).toBe("repair_replace");
+    expect(latest.data.lastEventSeq).toBe(5);
+    expect(latest.data.activity).toEqual({ is_working: false, last_turn_status: "completed" });
+    expect(latest.data.turns?.[0]?.status).toBe("completed");
+    expect(latest.data.turns?.[0]?.end_seq).toBe(5);
+  });
+
+  it("keeps terminal turns when merging an older cached bootstrap head", async () => {
+    const sessionId = "session-bootstrap-cache-merge";
+    const patches: SessionReplicaPatch[] = [];
+    const getSessionHead = vi.fn();
+    const core = new SessionReplicaCore({
+      api: { getSessionHead },
+      emit: (next) => patches.push(...next),
+    });
+    const createdAt = "2026-03-09T00:00:01.000Z";
+
+    loadSessionHeadV1Mock.mockResolvedValueOnce({
+      v: 1,
+      sessionId,
+      updatedAtMs: Date.now(),
+      head: {
+        session: mkSession(sessionId),
+        turns: [
+          {
+            turn_id: "turn-1",
+            session_id: sessionId,
+            run_id: "run-1",
+            user_message_id: "message-1",
+            status: "running",
+            start_seq: 1,
+            end_seq: null,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: "",
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+          },
+        ],
+        events: [] as SessionEvent[],
+        messages: [] as Message[],
+        activity: { is_working: true, last_turn_status: "running" },
+        last_event_seq: 4,
+        projection_rev: 6,
+        has_more_turns: false,
+        head_window: undefined,
+        summary_checkpoint: null,
+      } satisfies SessionHead,
+    });
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [
+          {
+            turn_id: "turn-1",
+            session_id: sessionId,
+            run_id: "run-1",
+            user_message_id: "message-1",
+            status: "completed",
+            start_seq: 1,
+            end_seq: 5,
+            started_at: createdAt,
+            updated_at: "2026-03-09T00:00:05.000Z",
+            assistant_partial: null,
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+          },
+        ],
+        events: [] as SessionEvent[],
+        messages: [] as Message[],
+        activity: { is_working: false, last_turn_status: "completed" },
+        last_event_seq: 5,
+        projection_rev: 7,
+        state_rev: 7,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "repair_replace",
+    });
+    core.handleCommand({ type: "open_session", sessionId, force: true });
+
+    await waitForCondition(() =>
+      patches.some(
+        (patch) =>
+          patch.sessionId === sessionId &&
+          patch.op === "replace" &&
+          patch.data.freshness === "bootstrap",
+      ),
+    );
+
+    const latest = [...patches].reverse().find(
+      (patch) => patch.sessionId === sessionId && patch.op === "replace",
+    );
+    if (!latest || latest.op === "evict") {
+      throw new Error("expected bootstrap replace patch");
+    }
+
+    expect(getSessionHead).not.toHaveBeenCalled();
+    expect(latest.data.activity).toEqual({ is_working: false, last_turn_status: "completed" });
+    expect(latest.data.turns?.[0]?.status).toBe("completed");
+    expect(latest.data.turns?.[0]?.end_seq).toBe(5);
+  });
+
   it("refetches /head on session_gap", async () => {
     const head = mkHead("session-gap");
     const getSessionHead = vi.fn(async () => head);
