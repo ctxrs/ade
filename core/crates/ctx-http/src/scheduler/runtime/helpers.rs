@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 
@@ -163,8 +163,11 @@ pub(super) fn compute_context_window_metrics(
     }))
 }
 
-pub(super) fn read_codex_context_window_metrics(session_ref: &str) -> Option<serde_json::Value> {
-    let path = find_codex_session_log(session_ref)?;
+pub(super) fn read_codex_context_window_metrics(
+    codex_home: &Path,
+    session_ref: &str,
+) -> Option<serde_json::Value> {
+    let path = find_codex_session_log(codex_home, session_ref)?;
     let file = File::open(path).ok()?;
     let reader = BufReader::new(file);
     let mut latest_info: Option<Value> = None;
@@ -227,9 +230,8 @@ pub(super) fn read_codex_context_window_metrics(session_ref: &str) -> Option<ser
     }))
 }
 
-fn find_codex_session_log(session_ref: &str) -> Option<PathBuf> {
-    let base = directories::BaseDirs::new()?;
-    let root = base.home_dir().join(".codex").join("sessions");
+fn find_codex_session_log(codex_home: &Path, session_ref: &str) -> Option<PathBuf> {
+    let root = codex_home.join("sessions");
     if !root.exists() {
         return None;
     }

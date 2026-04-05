@@ -585,6 +585,9 @@ pub(crate) async fn start_turn(
         provider_env.insert("CTX_SYSTEM_PROMPT_APPEND".to_string(), append.to_string());
     }
     apply_provider_launch_overrides(runtime_provider_id, workdir, &mut provider_env).await?;
+    let codex_home = provider_env
+        .get("CODEX_HOME")
+        .map(|value| PathBuf::from(value.as_str()));
 
     let run_started_at = Instant::now();
     let spawn_started_at = Instant::now();
@@ -720,6 +723,7 @@ pub(crate) async fn start_turn(
         turn_id,
         message_id,
         provider_session_ref,
+        codex_home,
         context_window_metrics,
         ev_rx,
         events_done_tx,

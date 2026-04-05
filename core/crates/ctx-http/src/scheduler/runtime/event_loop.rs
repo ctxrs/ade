@@ -25,6 +25,7 @@ pub(super) struct TurnEventLoop {
     pub(super) turn_id: TurnId,
     pub(super) message_id: MessageId,
     pub(super) provider_session_ref: Option<String>,
+    pub(super) codex_home: Option<PathBuf>,
     pub(super) context_window_metrics: Option<Value>,
     pub(super) ev_rx: mpsc::Receiver<NormalizedEvent>,
     pub(super) events_done_tx: oneshot::Sender<()>,
@@ -211,6 +212,7 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
         turn_id,
         message_id,
         mut provider_session_ref,
+        codex_home,
         context_window_metrics,
         mut ev_rx,
         events_done_tx,
@@ -278,9 +280,13 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
             if let Some(obj) = payload.as_object_mut() {
                 if obj.get("context_window").is_none() {
                     let metrics = if provider_id == "codex" {
-                        provider_session_ref
+                        codex_home
                             .as_deref()
-                            .and_then(read_codex_context_window_metrics)
+                            .and_then(|home| {
+                                provider_session_ref.as_deref().and_then(|session_ref| {
+                                    read_codex_context_window_metrics(home, session_ref)
+                                })
+                            })
                             .or_else(|| context_window_metrics.clone())
                     } else {
                         context_window_metrics.clone()
