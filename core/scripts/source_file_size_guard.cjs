@@ -40,7 +40,7 @@ const PRODUCTION_ROOT_PATTERNS = [
 ];
 
 const GUIDANCE_MESSAGE =
-  'This file is getting too big. Consider if that is a code smell pointing to a deeper architectural issue with a module having too many concerns. Break it up along clean responsibility boundaries instead of sharding it arbitrarily. We do not allow production-source exceptions to this hard cap.';
+  "If you are receiving this error message, do not try to make small tweaks just to barely slip below the 1000-line cap. Take the opportunity to pause, think through an architecturally sound split that will age well, and use that to bring the file back under the limit. This file is getting too big, which is usually a code smell pointing to a module with too many concerns. Break it up along clean responsibility boundaries instead of sharding it arbitrarily. We do not allow production-source exceptions to this hard cap.";
 
 const toPosix = (value) => value.split(path.sep).join("/");
 
