@@ -5,11 +5,11 @@ import { DiffReviewPane } from "../../components/DiffReviewPane";
 import { SessionsPane } from "../../components/SessionsPane";
 import { WorkbenchSessionSlot } from "../WorkbenchPage.sessionSlot";
 import { WorkbenchSessionHeader } from "./WorkbenchSessionHeader";
-import { WorkbenchSessionLoadIssues } from "./WorkbenchSessionLoadIssues";
+import { WorkbenchSessionLoadIssues, type WorkbenchSessionLoadIssue } from "./WorkbenchSessionLoadIssues";
 import type { GitPaneModel } from "./worktreeGitPaneModel";
 
 type WorktreeChip = ComponentProps<typeof WorkbenchSessionHeader>["worktreeChip"];
-type SessionLoadIssues = ComponentProps<typeof WorkbenchSessionLoadIssues>["issues"];
+type SessionLoadIssues = WorkbenchSessionLoadIssue[];
 type OptimisticFailure = ComponentProps<typeof WorkbenchSessionSlot>["optimisticFailure"];
 type SessionSections = ComponentProps<typeof SessionsPane>["sections"];
 type Artifacts = ComponentProps<typeof ArtifactsPane>["artifacts"];
@@ -133,12 +133,14 @@ export function WorkbenchActiveTaskView({
         ) : null}
 
         <div className="wb-session">
-          <WorkbenchSessionLoadIssues issues={sessionLoadIssues} onRetry={onRetrySessionLoads} />
           {activeSessionId && activeSessionRenderable ? (
             <WorkbenchSessionSlot
               sessionId={activeSessionId}
               optimisticFailure={optimisticFailure}
             />
+          ) : null}
+          {(!activeSessionId || !activeSessionRenderable) && sessionLoadIssues.length > 0 ? (
+            <WorkbenchSessionLoadIssues issues={sessionLoadIssues} onRetry={onRetrySessionLoads} />
           ) : null}
           {(!activeSessionId || !activeSessionRenderable) ? (
             <div className="wb-muted" style={{ padding: 16 }}>

@@ -40,18 +40,20 @@ export function WorkbenchSessionSlot({
 
   return (
     <div className="wb-session-slot" aria-hidden="false">
-      <SessionView
-        key={sessionId}
-        sessionId={sessionId}
-        autoOpenSession={false}
-        draft={draft.value}
-        onDraftChange={(text) => draft.setValue((prev) => ({ ...prev, text }))}
-        onDraftAttachmentsChange={(attachments) =>
-          draft.setValue((prev) => ({ ...prev, attachments }))
-        }
-        onDraftPersistNow={() => workbenchStore.flushDraft(sessionDraftKey(sessionId))}
-        onModeChange={(modeId) => draft.setValue((prev) => ({ ...prev, modeId }))}
-      />
+      <div className="wb-session-slot-body">
+        <SessionView
+          key={sessionId}
+          sessionId={sessionId}
+          autoOpenSession={false}
+          draft={draft.value}
+          onDraftChange={(text) => draft.setValue((prev) => ({ ...prev, text }))}
+          onDraftAttachmentsChange={(attachments) =>
+            draft.setValue((prev) => ({ ...prev, attachments }))
+          }
+          onDraftPersistNow={() => workbenchStore.flushDraft(sessionDraftKey(sessionId))}
+          onModeChange={(modeId) => draft.setValue((prev) => ({ ...prev, modeId }))}
+        />
+      </div>
     </div>
   );
 }

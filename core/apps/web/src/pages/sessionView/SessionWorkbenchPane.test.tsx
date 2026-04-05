@@ -78,6 +78,7 @@ function TestPane() {
         entryError={null}
         session={null}
         sessionError={null}
+        sessionLoadIssues={[]}
         dropActive={false}
         dropScopeRef={dropScopeRef}
         listItems={listItems.current}
@@ -107,6 +108,7 @@ function TestPane() {
         authBusy={false}
         authError={null}
         onAuthenticate={async () => {}}
+        onRetrySessionLoads={() => {}}
         subagentInvocations={[]}
         onOpenChildSession={() => {}}
         style={{ height: 400 }}
@@ -209,6 +211,7 @@ function TestMessagePane() {
         entryError={null}
         session={null}
         sessionError={null}
+        sessionLoadIssues={[]}
         dropActive={false}
         dropScopeRef={dropScopeRef}
         listItems={listItems.current}
@@ -238,6 +241,7 @@ function TestMessagePane() {
         authBusy={false}
         authError={null}
         onAuthenticate={async () => {}}
+        onRetrySessionLoads={() => {}}
         subagentInvocations={[]}
         onOpenChildSession={() => {}}
         style={{ height: 400 }}
@@ -341,6 +345,7 @@ function TestAssistantPane() {
         entryError={null}
         session={null}
         sessionError={null}
+        sessionLoadIssues={[]}
         dropActive={false}
         dropScopeRef={dropScopeRef}
         listItems={listItems.current}
@@ -370,6 +375,7 @@ function TestAssistantPane() {
         authBusy={false}
         authError={null}
         onAuthenticate={async () => {}}
+        onRetrySessionLoads={() => {}}
         subagentInvocations={[]}
         onOpenChildSession={() => {}}
         style={{ height: 400 }}
