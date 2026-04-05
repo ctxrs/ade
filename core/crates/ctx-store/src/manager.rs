@@ -387,9 +387,10 @@ impl StoreManager {
     pub async fn workspace_transient(&self, workspace_id: WorkspaceId) -> Result<Store> {
         match self.workspace_access_outcome(workspace_id).await? {
             WorkspaceStoreAccessOutcome::Access(access) => {
-                if access.kind.triggers_open_side_effects() {
-                    self.evict_workspace(workspace_id).await;
-                }
+                // Transient callers want a handle that does not remain in the workspace cache.
+                // If we reopened an already cached store, queue it for close immediately and let
+                // the returned lease-backed handle keep it alive until the caller drops it.
+                self.evict_workspace(workspace_id).await;
                 Ok(access.store)
             }
             WorkspaceStoreAccessOutcome::Missing | WorkspaceStoreAccessOutcome::Deleting => {
