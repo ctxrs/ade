@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -19,6 +20,9 @@ const restoreEnv = () => {
   delete process.env.CTX_VOLATILE_TMPDIR;
   delete process.env.CTX_E2E_TMPDIR;
   delete process.env.CTX_E2E_DATA_DIR;
+  delete process.env.CTX_BUNDLE_DIR;
+  delete process.env.CTX_WEB_DIST;
+  delete process.env.CTX_E2E_ALLOW_CONFIGURED_BUNDLE_DIR;
 };
 
 const getReporterTuples = (reporter: unknown): ReporterTuple[] => {
@@ -102,16 +106,49 @@ describe("createCtxPlaywrightConfig", () => {
     expect(webServer?.env?.TEMP).toBe(webServer?.env?.CTX_E2E_TMPDIR);
   });
 
-  it("does not leak ambient desktop runtime paths into the e2e webServer env", async () => {
+  it("does not inherit installed-app dist or bundle env by default", async () => {
     restoreEnv();
-    process.env.CTX_WEB_DIST = "/Applications/ctx.app/Contents/Resources/web/dist";
+    process.env.CTX_WEB_DIST = "/Applications/ctx.app/Contents/Resources/web";
     process.env.CTX_BUNDLE_DIR = "/Applications/ctx.app/Contents/Resources/bundles";
 
-    const config = await createCtxPlaywrightConfig("premerge_required");
+    const config = await createCtxPlaywrightConfig("all");
     const webServer = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
 
-    expect(webServer?.env?.CTX_WEB_DIST).toBeUndefined();
+    expect(webServer?.env?.CTX_WEB_DIST).toBe("");
     expect(webServer?.env?.CTX_BUNDLE_DIR).not.toBe("/Applications/ctx.app/Contents/Resources/bundles");
+  });
+
+  it("allows a configured bundle dir only with an explicit e2e opt-in", async () => {
+    restoreEnv();
+    process.env.CTX_BUNDLE_DIR = "/tmp/custom-bundles";
+
+    const withoutOptIn = await createCtxPlaywrightConfig("all");
+    const withoutOptInWebServer = Array.isArray(withoutOptIn.webServer)
+      ? withoutOptIn.webServer[0]
+      : withoutOptIn.webServer;
+    expect(withoutOptInWebServer?.env?.CTX_BUNDLE_DIR).not.toBe("/tmp/custom-bundles");
+
+    restoreEnv();
+    process.env.CTX_BUNDLE_DIR = "/tmp/custom-bundles";
+    process.env.CTX_E2E_ALLOW_CONFIGURED_BUNDLE_DIR = "1";
+
+    const withOptIn = await createCtxPlaywrightConfig("all");
+    const withOptInWebServer = Array.isArray(withOptIn.webServer) ? withOptIn.webServer[0] : withOptIn.webServer;
+    expect(withOptInWebServer?.env?.CTX_BUNDLE_DIR).toBe("/tmp/custom-bundles");
+  });
+
+  it("uses the checked-in bundle manifest when available", async () => {
+    restoreEnv();
+    const config = await createCtxPlaywrightConfig("all");
+    const webServer = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
+    const expectedBundleDir = path.resolve(__dirname, "../desktop/src-tauri/bundles");
+    const bundleManifestPath = path.join(expectedBundleDir, "manifest.json");
+
+    if (fs.existsSync(bundleManifestPath)) {
+      expect(webServer?.env?.CTX_BUNDLE_DIR).toBe(expectedBundleDir);
+    } else {
+      expect(webServer?.env?.CTX_BUNDLE_DIR).toBe("");
+    }
   });
 
   it("uses CTX_E2E_BUNDLE_DIR instead of ambient CTX_BUNDLE_DIR", async () => {

@@ -148,11 +148,17 @@ export async function createCtxPlaywrightConfig(
   process.env.CTX_E2E_AUTH_TOKEN ??= AUTH_TOKEN;
   const defaultBundleDir = path.resolve(__dirname, "../desktop/src-tauri/bundles");
   const bundleManifestPath = path.join(defaultBundleDir, "manifest.json");
+  const allowConfiguredBundleDir = parseBool(process.env.CTX_E2E_ALLOW_CONFIGURED_BUNDLE_DIR);
   const resolvedBundleDir =
-    (process.env.CTX_E2E_BUNDLE_DIR ?? "").trim()
+    (process.env.CTX_E2E_BUNDLE_DIR
+      ?? (allowConfiguredBundleDir ? process.env.CTX_BUNDLE_DIR : "")
+      ?? "")
+      .trim()
     || (fs.existsSync(bundleManifestPath) ? defaultBundleDir : "");
   if (resolvedBundleDir) {
     process.env.CTX_E2E_BUNDLED_ONLY ??= "1";
+  } else {
+    delete process.env.CTX_BUNDLE_DIR;
   }
 
   const docsMirrorBin = path.resolve(__dirname, "e2e/fixtures/ctx-docs-mirror-fixture.sh");
