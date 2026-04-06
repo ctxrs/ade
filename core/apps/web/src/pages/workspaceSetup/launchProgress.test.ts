@@ -310,6 +310,101 @@ describe("launchProgress", () => {
     expect(formatLaunchRemaining(remainingMs)).toBe("26s est. remaining");
   });
 
+  it("treats a completed legacy phase without a finish timestamp as complete", () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      current_phase: "machine_start_or_init" as const,
+      current_step_label: "starting AVF Linux workspace VM",
+      active_download: null,
+      phases: [
+        {
+          phase: "artifact_download" as const,
+          status: "completed" as const,
+          started_at: "2026-03-10T00:00:00.000Z",
+          completed_at: null,
+          elapsed_ms: 20_000,
+        },
+        {
+          phase: "machine_start_or_init" as const,
+          status: "running" as const,
+          started_at: "2026-03-10T00:00:20.000Z",
+          completed_at: null,
+          elapsed_ms: null,
+        },
+      ],
+    };
+    const remainingMs = launchEtaRemainingMs(
+      snapshot,
+      Date.parse("2026-03-10T00:00:25.000Z"),
+    );
+    expect(remainingMs).toBe(26_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("26s est. remaining");
+  });
+
+  it("treats a completed phase with an invalid legacy finish timestamp as complete", () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      current_phase: "machine_start_or_init" as const,
+      current_step_label: "starting AVF Linux workspace VM",
+      active_download: null,
+      phases: [
+        {
+          phase: "artifact_download" as const,
+          status: "completed" as const,
+          started_at: "2026-03-10T00:00:00.000Z",
+          completed_at: "not-a-timestamp",
+          finished_at: null,
+          elapsed_ms: 20_000,
+        },
+        {
+          phase: "machine_start_or_init" as const,
+          status: "running" as const,
+          started_at: "2026-03-10T00:00:20.000Z",
+          completed_at: null,
+          finished_at: null,
+          elapsed_ms: null,
+        },
+      ],
+    };
+    const remainingMs = launchEtaRemainingMs(
+      snapshot,
+      Date.parse("2026-03-10T00:00:25.000Z"),
+    );
+    expect(remainingMs).toBe(26_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("26s est. remaining");
+  });
+
+  it("keeps a bucket incomplete when the legacy phase status is still running", () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      current_phase: "machine_start_or_init" as const,
+      current_step_label: "starting AVF Linux workspace VM",
+      active_download: null,
+      phases: [
+        {
+          phase: "artifact_download" as const,
+          status: "running" as const,
+          started_at: "2026-03-10T00:00:00.000Z",
+          completed_at: null,
+          elapsed_ms: null,
+        },
+        {
+          phase: "machine_start_or_init" as const,
+          status: "running" as const,
+          started_at: "2026-03-10T00:00:20.000Z",
+          completed_at: null,
+          elapsed_ms: null,
+        },
+      ],
+    };
+    const remainingMs = launchEtaRemainingMs(
+      snapshot,
+      Date.parse("2026-03-10T00:00:25.000Z"),
+    );
+    expect(remainingMs).toBe(46_000);
+    expect(formatLaunchRemaining(remainingMs)).toBe("46s est. remaining");
+  });
+
   it("uses total launch budget when a running snapshot has no current phase", () => {
     const snapshot = {
       ...baseSnapshot(),

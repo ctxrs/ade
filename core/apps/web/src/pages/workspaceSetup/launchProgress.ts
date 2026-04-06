@@ -397,13 +397,18 @@ const phaseFinishedAtMs = (phase: ExecutionLaunchPhaseStatus): number | null => 
   return parseUtcMs(completedAt);
 };
 
+const phaseIsComplete = (phase: ExecutionLaunchPhaseStatus): boolean => {
+  if (phaseFinishedAtMs(phase) !== null) return true;
+  return phase.status === "completed";
+};
+
 const bucketHasIncompletePhase = (
   snapshot: ExecutionLaunchSnapshot,
   bucket: LaunchEtaBucket,
 ): boolean => {
   return snapshot.phases.some((phase) => {
     if (etaBucketForPhase(phase.phase) !== bucket) return false;
-    return phaseFinishedAtMs(phase) === null;
+    return !phaseIsComplete(phase);
   });
 };
 

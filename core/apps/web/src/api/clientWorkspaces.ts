@@ -182,9 +182,19 @@ export type ExecutionLaunchDownloadStatus = {
   bytes_per_sec?: number | null;
 };
 
+export type ExecutionLaunchPhaseLifecycle =
+  | "pending"
+  | "running"
+  | "completed"
+  | "error"
+  | (string & {});
+
 export type ExecutionLaunchPhaseStatus = {
   phase: ExecutionLaunchPhase;
   started_at: string;
+  // Compatibility: older or mixed-shape snapshots may still use legacy completion fields.
+  status?: ExecutionLaunchPhaseLifecycle | null;
+  completed_at?: string | null;
   finished_at?: string | null;
   elapsed_ms?: number | null;
 };
