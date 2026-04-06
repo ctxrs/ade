@@ -66,9 +66,10 @@ describe("workspaceBootstrapGate", () => {
       );
 
       const waitPromise = waitForWorkspaceBootstrapBeforeNavigation("ws-hung");
+      const rejection = expect(waitPromise).rejects.toThrow(getProviderBootstrapTimeoutMessage());
       await vi.advanceTimersByTimeAsync(PROVIDER_BOOTSTRAP_TIMEOUT_MS);
 
-      await expect(waitPromise).rejects.toThrow(getProviderBootstrapTimeoutMessage());
+      await rejection;
       expect(loadProviderOnboardingBootstrap).toHaveBeenCalledWith("ws-hung");
     } finally {
       vi.useRealTimers();
