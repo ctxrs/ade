@@ -59,6 +59,14 @@ remove_path() {
   fi
 }
 
+remove_path_as_root() {
+  target="$1"
+  if [ -L "$target" ] || [ -e "$target" ]; then
+    run_as_root rm -rf "$target"
+    log "Removed $target"
+  fi
+}
+
 linux_os_release_path() {
   if [ -n "\${CTX_UNINSTALL_OS_RELEASE_PATH:-}" ]; then
     printf '%s\\n' "$CTX_UNINSTALL_OS_RELEASE_PATH"
@@ -170,7 +178,7 @@ uninstall_macos() {
   if command -v osascript >/dev/null 2>&1; then
     osascript -e 'quit app "ctx"' >/dev/null 2>&1 || true
   fi
-  remove_path "$mac_system_app"
+  remove_path_as_root "$mac_system_app"
   remove_path "$mac_user_app"
   remove_path "$data_dir"
   remove_path "$mac_avf_private_dir"

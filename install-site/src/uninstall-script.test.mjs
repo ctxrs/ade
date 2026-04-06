@@ -13,7 +13,36 @@ const writeExecutable = (filePath, contents) => {
   chmodSync(filePath, 0o755);
 };
 
-const installCommonStubs = (stubDir, { os, uid = "1000", aptLogPath, dpkgStatus = "missing" }) => {
+const readCommandLog = (logPath) => {
+  if (!existsSync(logPath)) {
+    return [];
+  }
+
+  const commands = [];
+  let currentCommand = [];
+
+  for (const line of readFileSync(logPath, "utf8").split("\n")) {
+    if (line === "--") {
+      if (currentCommand.length > 0) {
+        commands.push(currentCommand);
+        currentCommand = [];
+      }
+      continue;
+    }
+
+    if (line) {
+      currentCommand.push(line);
+    }
+  }
+
+  if (currentCommand.length > 0) {
+    commands.push(currentCommand);
+  }
+
+  return commands;
+};
+
+const installCommonStubs = (stubDir, { os, uid = "1000", aptLogPath, sudoLogPath, dpkgStatus = "missing" }) => {
   writeExecutable(
     path.join(stubDir, "uname"),
     `#!/bin/sh
@@ -40,6 +69,10 @@ esac
     path.join(stubDir, "sudo"),
     `#!/bin/sh
 set -eu
+for arg in "$@"; do
+  printf '%s\\n' "$arg"
+done >> "${sudoLogPath}"
+printf '%s\\n' '--' >> "${sudoLogPath}"
 exec "$@"
 `,
   );
@@ -79,11 +112,15 @@ const runUninstaller = ({ os, args = [], env = {}, uid, dpkgStatus }) => {
   const stubDir = path.join(sandboxDir, "stubs");
   const homeDir = path.join(sandboxDir, "home");
   const aptLogPath = path.join(sandboxDir, "apt.log");
+  const sudoLogPath = path.join(sandboxDir, "sudo.log");
   const scriptPath = path.join(sandboxDir, "uninstall.sh");
+  const effectiveUid = uid ?? "1000";
+  const safeMacSystemApp = path.join(sandboxDir, "Applications", "ctx.app");
+  const safeMacAvfSocketDir = path.join(sandboxDir, "tmp", `ctxavf-uid-${effectiveUid}`);
 
   mkdirSync(stubDir);
   mkdirSync(homeDir);
-  installCommonStubs(stubDir, { os, uid, aptLogPath, dpkgStatus });
+  installCommonStubs(stubDir, { os, uid, aptLogPath, sudoLogPath, dpkgStatus });
   writeFileSync(scriptPath, renderUninstallScript());
   chmodSync(scriptPath, 0o755);
 
@@ -93,6 +130,8 @@ const runUninstaller = ({ os, args = [], env = {}, uid, dpkgStatus }) => {
       ...process.env,
       HOME: homeDir,
       PATH: `${stubDir}:${process.env.PATH ?? ""}`,
+      CTX_UNINSTALL_MAC_SYSTEM_APP: safeMacSystemApp,
+      CTX_UNINSTALL_AVF_SOCKET_DIR: safeMacAvfSocketDir,
       ...env,
     },
   });
@@ -102,6 +141,7 @@ const runUninstaller = ({ os, args = [], env = {}, uid, dpkgStatus }) => {
     sandboxDir,
     homeDir,
     aptLogPath,
+    sudoLogPath,
     cleanup() {
       rmSync(sandboxDir, { recursive: true, force: true });
     },
@@ -133,7 +173,7 @@ test("uninstall script refuses noninteractive execution without --yes", () => {
   }
 });
 
-test("macOS uninstall removes app, data, and AVF state with --yes", () => {
+test("macOS uninstall removes app, data, and AVF state with sudo only for the system app", () => {
   const result = runUninstaller({
     os: "Darwin",
     uid: "502",
@@ -182,6 +222,7 @@ test("macOS uninstall removes app, data, and AVF state with --yes", () => {
     for (const target of Object.values(macPaths)) {
       assert.equal(existsSync(target), false, `expected ${target} to be removed`);
     }
+    assert.deepEqual(readCommandLog(result.sudoLogPath), [["rm", "-rf", macPaths.systemApp]]);
     assert.match(rerun.stderr, /ctx uninstall complete\./);
   } finally {
     result.cleanup();
