@@ -2,6 +2,7 @@ import {
   loadProviderOnboardingBootstrap,
   type ProviderOnboardingBootstrapState,
 } from "../state/providerOnboardingCoordinator";
+import { withProviderBootstrapTimeout } from "../utils/providerBootstrapTimeout";
 
 export type WorkspaceBootstrapGateState = "loading" | "ready" | "error";
 
@@ -21,5 +22,5 @@ export function resolveWorkspaceBootstrapGateState({
 }
 
 export async function waitForWorkspaceBootstrapBeforeNavigation(workspaceId: string): Promise<void> {
-  await loadProviderOnboardingBootstrap(workspaceId);
+  await withProviderBootstrapTimeout(loadProviderOnboardingBootstrap(workspaceId));
 }

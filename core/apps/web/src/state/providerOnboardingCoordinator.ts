@@ -59,6 +59,7 @@ import {
   isPinnedSubscriptionBootstrapCatalog,
   SUBSCRIPTION_MODEL_DISCOVERY_PROVIDER_IDS,
 } from "../utils/providerModelCatalog";
+import { withProviderBootstrapTimeout } from "../utils/providerBootstrapTimeout";
 
 export { resolveProviderOptionsUpdate } from "./providersBootstrapStore";
 
@@ -831,9 +832,11 @@ export const useProviderOnboardingCoordinator = ({
         setEntryBootstrapState(entry, "loading", null);
       }
       try {
-        const result = mode === "refresh"
-          ? await refreshProviderOnboardingBootstrap(workspaceId)
-          : await loadProviderOnboardingBootstrap(workspaceId);
+        const result = await withProviderBootstrapTimeout(
+          mode === "refresh"
+            ? refreshProviderOnboardingBootstrap(workspaceId)
+            : loadProviderOnboardingBootstrap(workspaceId),
+        );
         const current = providerOnboardingByScope.get(entry.scopeKey);
         if (current) {
           setEntryBootstrapState(current, "ready", null);

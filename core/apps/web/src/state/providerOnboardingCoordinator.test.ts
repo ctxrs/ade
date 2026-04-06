@@ -29,6 +29,10 @@ import {
   resetProviderOnboardingCoordinatorForTests,
   useProviderOnboardingCoordinator,
 } from "./providerOnboardingCoordinator";
+import {
+  getProviderBootstrapTimeoutMessage,
+  PROVIDER_BOOTSTRAP_TIMEOUT_MS,
+} from "../utils/providerBootstrapTimeout";
 
 vi.mock("../api/client", async (importOriginal) => {
   const original = await importOriginal<typeof import("../api/client")>();
@@ -458,6 +462,42 @@ describe("providerOnboardingCoordinator", () => {
       expect(vi.mocked(observeInstall)).toHaveBeenCalledTimes(1);
       expect(hookValue?.bootstrap.provider_options.codex?.workspace_id).toBe(workspaceId);
     });
+  });
+
+  it("surfaces an explicit error when workspace bootstrap stalls past the timeout", async () => {
+    const workspaceId = "ws-bootstrap-timeout";
+    let hookValue: HookValue | null = null;
+
+    vi.useFakeTimers();
+    try {
+      vi.mocked(getProvidersBootstrap).mockImplementation(
+        () => new Promise(() => {}) as Promise<ProvidersBootstrapResponse>,
+      );
+
+      render(createElement(CoordinatorHarness, {
+        workspaceId,
+        onChange: (value) => {
+          hookValue = value;
+        },
+      }));
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(hookValue?.bootstrapState).toBe("loading");
+      expect(hookValue?.bootstrapError).toBeNull();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PROVIDER_BOOTSTRAP_TIMEOUT_MS);
+        await Promise.resolve();
+      });
+
+      expect(hookValue?.bootstrapState).toBe("error");
+      expect(hookValue?.bootstrapError).toBe(getProviderBootstrapTimeoutMessage());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not share running installs or auth-summary dedupe across same-origin browser token changes", async () => {
