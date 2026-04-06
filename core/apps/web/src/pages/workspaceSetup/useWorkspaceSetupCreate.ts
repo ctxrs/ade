@@ -908,6 +908,9 @@ export function useWorkspaceSetupCreate({
       } catch {
         // best-effort only; do not block workspace creation if recents persistence fails
       }
+      // The workspace now exists and has been fully configured. If provider bootstrap
+      // fails while gating navigation, preserve the created workspace for recovery.
+      shouldCleanupCreatedWorkspace = false;
       await waitForWorkspaceBootstrapBeforeNavigation(workspaceId);
       setProvisioningState((current) => current ? {
         ...current,

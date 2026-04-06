@@ -316,6 +316,33 @@ describe("useWorkspaceSetupCreate", () => {
     });
   });
 
+  it("preserves the created workspace when bootstrap fails after create succeeds", async () => {
+    workspaceBootstrapGateMocks.waitForWorkspaceBootstrapBeforeNavigation.mockRejectedValueOnce(
+      new Error("bootstrap exploded"),
+    );
+    const { hook, navigate, setCreateError, wizardCompletedRef, trackWizardCompleted } =
+      renderCreateHook(null);
+
+    await act(async () => {
+      await hook.result.current.onCreate();
+    });
+
+    expect(apiMocks.createWorkspace).toHaveBeenCalledWith(
+      "/remote/new-sandbox",
+      "remote-sandbox",
+      "remote",
+      "wizard",
+    );
+    expect(
+      workspaceBootstrapGateMocks.waitForWorkspaceBootstrapBeforeNavigation,
+    ).toHaveBeenCalledWith("ws-1");
+    expect(apiMocks.deleteWorkspace).not.toHaveBeenCalled();
+    expect(setCreateError).toHaveBeenCalledWith("bootstrap exploded");
+    expect(navigate).not.toHaveBeenCalled();
+    expect(wizardCompletedRef.current).toBe(false);
+    expect(trackWizardCompleted).not.toHaveBeenCalled();
+  });
+
   it("still routes back when remote create discovers a blocking titling step", async () => {
     const { hook, onOnboardingInsertionRequested, navigate } = renderCreateHook("session-titling");
 

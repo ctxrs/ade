@@ -748,6 +748,79 @@ describe("WorkspaceSetupPage", () => {
     });
   });
 
+  it("preserves the created workspace when bootstrap fails before navigation", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
+    vi.mocked(listProviders).mockResolvedValue([
+      providerStatusFixture({
+        provider_id: "codex",
+        installed: true,
+        health: "ok",
+        details: { install_supported: "true" },
+        usability: {
+          usable: true,
+          status: "ready",
+          blocking_provider_ids: [],
+          recommended_action: "none",
+        },
+      }),
+    ] as never);
+    waitForWorkspaceBootstrapBeforeNavigationMock.mockRejectedValueOnce(
+      new Error("bootstrap exploded"),
+    );
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-container-sandbox"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-source-new"));
+    fireEvent.change(screen.getByTestId("wizard-workspace-name"), {
+      target: { value: "sandbox-bootstrap-error" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("network");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-network-full"));
+
+    await waitFor(() => {
+      expect(["setup", "merge-queue"]).toContain(wizardStepKey());
+    });
+    if (wizardStepKey() === "setup") {
+      fireEvent.click(screen.getByTestId("wizard-next"));
+      await waitFor(() => {
+        expect(wizardStepKey()).toBe("merge-queue");
+      });
+    }
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("confirm");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-create"));
+
+    await waitFor(() => {
+      expect(createWorkspace).toHaveBeenCalled();
+      expect(waitForWorkspaceBootstrapBeforeNavigationMock).toHaveBeenCalledWith("ws_test");
+      expect(deleteWorkspace).not.toHaveBeenCalled();
+      expect(
+        screen.getByText(/bootstrap exploded/i, {
+          selector: ".wizard-error",
+        }),
+      ).toBeInTheDocument();
+    });
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
   it("keeps cancel enabled for active harness installs after scan completes", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
