@@ -788,6 +788,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         style={rootStyle}
       >
         <WorktreeBootstrapSnackbar />
+        {composerHarnessAuthModal}
         {archiveCleanupSnackbar}
         {transcriptNoticeSnackbar}
         {desktopStorageNoticeSnackbar}

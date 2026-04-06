@@ -365,6 +365,11 @@ vi.mock("./workbenchShell/useWorkbenchProviders", () => ({
   }),
 }));
 
+vi.mock("./settings/sections/HarnessAuthenticationSection", () => ({
+  HarnessAuthenticationSectionView: ({ modalOnly }: { modalOnly?: boolean }) =>
+    modalOnly ? <div data-testid="composer-harness-auth-modal">Composer auth recovery UI</div> : null,
+}));
+
 vi.mock("../components/WorkbenchComposer", () => ({
   WorkbenchComposer: () => null,
 }));
@@ -523,6 +528,7 @@ describe("WorkbenchPage bootstrap gate", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Loading workspace...")).toBeInTheDocument();
+      expect(screen.getByTestId("composer-harness-auth-modal")).toBeInTheDocument();
       expect(screen.queryByTestId("session-view-mock")).not.toBeInTheDocument();
     });
   });
@@ -536,6 +542,7 @@ describe("WorkbenchPage bootstrap gate", () => {
     await waitFor(() => {
       expect(screen.getByText("Failed to load workspace.")).toBeInTheDocument();
       expect(screen.getByText("bootstrap failed")).toBeInTheDocument();
+      expect(screen.getByTestId("composer-harness-auth-modal")).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Retry workspace load" }));
