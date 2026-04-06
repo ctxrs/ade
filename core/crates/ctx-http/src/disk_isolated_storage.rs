@@ -11,15 +11,7 @@ fn disk_isolated_copy_budget_bytes(source_bytes: u64) -> u64 {
     source_bytes.saturating_add(DISK_ISOLATED_COPY_OVERHEAD_BYTES)
 }
 
-fn reserve_file_active(data_root: &Path) -> bool {
-    data_root.join(".storage-guard.reserve").exists()
-}
-
-fn host_storage_sample(
-    path: &Path,
-    label: &str,
-    reserve_file_eligible: bool,
-) -> Result<StorageAdmissionSample> {
+fn host_storage_sample(path: &Path, label: &str) -> Result<StorageAdmissionSample> {
     let free_bytes = fs2::available_space(path)
         .with_context(|| format!("checking free space for {}", path.display()))?;
     let total_bytes = fs2::total_space(path)
@@ -30,7 +22,6 @@ fn host_storage_sample(
         mount_point: path.to_string_lossy().to_string(),
         free_bytes,
         total_bytes,
-        reserve_file_eligible,
     })
 }
 
@@ -58,7 +49,6 @@ fn parse_df_pk_line(line: &str, label: &str, path: &Path) -> Result<StorageAdmis
         mount_point,
         free_bytes,
         total_bytes,
-        reserve_file_eligible: false,
     })
 }
 
@@ -116,7 +106,7 @@ pub(super) async fn preflight_disk_isolated_copy(
     let required_bytes = storage_guard::storage_admission_required_bytes(
         disk_isolated_copy_budget_bytes(estimated_copy_bytes),
     );
-    let host_sample = host_storage_sample(data_root, "CTX data root", true)?;
+    let host_sample = host_storage_sample(data_root, "CTX data root")?;
     let sandbox_sample = sandbox_storage_sample(
         data_root,
         container_id,
@@ -127,7 +117,6 @@ pub(super) async fn preflight_disk_isolated_copy(
     storage_guard::check_storage_admission(
         operation,
         required_bytes,
-        reserve_file_active(data_root),
         &[host_sample.clone(), sandbox_sample.clone()],
     )
     .map_err(|err| {
@@ -193,7 +182,6 @@ mod tests {
         let err = storage_guard::check_storage_admission(
             StorageAdmissionOperation::DiskIsolatedWorktreeMaterialization,
             required_bytes,
-            false,
             &[
                 StorageAdmissionSample {
                     label: "CTX data root".to_string(),
@@ -201,7 +189,6 @@ mod tests {
                     mount_point: "/".to_string(),
                     free_bytes: 5 * 1024 * 1024 * 1024,
                     total_bytes: 20 * 1024 * 1024 * 1024,
-                    reserve_file_eligible: true,
                 },
                 StorageAdmissionSample {
                     label: "sandbox workspace volume".to_string(),
@@ -209,7 +196,6 @@ mod tests {
                     mount_point: "/ctx/ws".to_string(),
                     free_bytes: 256 * 1024 * 1024,
                     total_bytes: 20 * 1024 * 1024 * 1024,
-                    reserve_file_eligible: false,
                 },
             ],
         )

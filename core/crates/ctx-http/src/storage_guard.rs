@@ -78,7 +78,6 @@ pub struct StorageAdmissionSample {
     pub mount_point: String,
     pub free_bytes: u64,
     pub total_bytes: u64,
-    pub reserve_file_eligible: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -265,26 +264,20 @@ pub fn is_storage_exhaustion_error(message: &str) -> bool {
         || normalized.contains("insufficient storage capacity")
 }
 
+// Admission is based on bytes that are free right now. The storage reserve file is only released
+// later by the live guard once the system reaches Emergency on the reserve-backed mount.
 pub fn check_storage_admission(
     operation: StorageAdmissionOperation,
     required_bytes: u64,
-    reserve_file_active: bool,
     samples: &[StorageAdmissionSample],
 ) -> std::result::Result<(), StorageAdmissionFailure> {
     let mut active: Option<StorageGuardPathStatus> = None;
     for sample in samples {
-        let effective_free = sample.free_bytes.saturating_add(
-            if reserve_file_active && sample.reserve_file_eligible {
-                RESERVE_BYTES
-            } else {
-                0
-            },
-        );
         let path = StorageGuardPathStatus {
             label: sample.label.clone(),
             path: sample.path.clone(),
             mount_point: sample.mount_point.clone(),
-            free_bytes: effective_free,
+            free_bytes: sample.free_bytes,
             total_bytes: sample.total_bytes,
         };
         let should_replace = active
@@ -736,14 +729,12 @@ mod tests {
         let err = check_storage_admission(
             StorageAdmissionOperation::DiskIsolatedWorktreeMaterialization,
             2 * GIB,
-            true,
             &[StorageAdmissionSample {
                 label: "CTX data root".to_string(),
                 path: "/ctx-data".to_string(),
                 mount_point: "/".to_string(),
                 free_bytes: 1200 * MIB,
                 total_bytes: 20 * GIB,
-                reserve_file_eligible: true,
             }],
         )
         .expect_err("admission should fail");
@@ -756,21 +747,21 @@ mod tests {
     }
 
     #[test]
-    fn storage_admission_allows_reserve_file_bonus_for_eligible_paths() {
-        check_storage_admission(
+    fn storage_admission_does_not_count_reserve_bytes_before_release() {
+        let err = check_storage_admission(
             StorageAdmissionOperation::DiskIsolatedWorkspaceMaterialization,
             1200 * MIB,
-            true,
             &[StorageAdmissionSample {
                 label: "CTX data root".to_string(),
                 path: "/ctx-data".to_string(),
                 mount_point: "/".to_string(),
                 free_bytes: 900 * MIB,
                 total_bytes: 20 * GIB,
-                reserve_file_eligible: true,
             }],
         )
-        .expect("reserve file should satisfy admission");
+        .expect_err("inactive reserve bytes must not satisfy admission");
+        assert!(err.to_string().contains("isolated workspace copy"));
+        assert!(err.to_string().contains("CTX data root"));
     }
 
     #[tokio::test]
