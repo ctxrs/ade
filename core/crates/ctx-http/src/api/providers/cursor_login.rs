@@ -48,6 +48,47 @@ fn cursor_login_timeout() -> Duration {
     Duration::from_secs(seconds)
 }
 
+#[cfg(unix)]
+async fn set_private_permissions(path: &StdPath, mode: u32) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+        .await
+        .with_context(|| format!("setting permissions {:o} on {}", mode, path.display()))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn set_private_permissions(_path: &StdPath, _mode: u32) -> anyhow::Result<()> {
+    Ok(())
+}
+
+async fn ensure_private_dir(path: &StdPath) -> anyhow::Result<()> {
+    tokio::fs::create_dir_all(path)
+        .await
+        .with_context(|| format!("creating private dir {}", path.display()))?;
+    set_private_permissions(path, 0o700).await?;
+    Ok(())
+}
+
+async fn write_private_file(path: &StdPath, bytes: &[u8], label: &str) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("missing parent dir for {}", path.display()))?;
+    ensure_private_dir(parent).await?;
+    tokio::fs::write(path, bytes)
+        .await
+        .with_context(|| format!("writing {label} {}", path.display()))?;
+    set_private_permissions(path, 0o600).await?;
+    Ok(())
+}
+
+// The hook appends with `{ mode: 0o600 }`, but append mode does not tighten an existing file.
+// Pre-create the capture file here so managed auth tokens never inherit permissive defaults.
+async fn initialize_cursor_capture_file(path: &StdPath) -> anyhow::Result<()> {
+    write_private_file(path, b"", "cursor capture file").await
+}
+
 fn first_email_from_text(value: &str) -> Option<String> {
     value
         .split_whitespace()
@@ -127,15 +168,7 @@ for (const name of ['spawn', 'spawnSync']) {
 "#;
 
 async fn write_cursor_capture_hook(path: &StdPath) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .with_context(|| format!("creating cursor hook parent {}", parent.display()))?;
-    }
-    tokio::fs::write(path, CURSOR_KEYCHAIN_CAPTURE_HOOK.as_bytes())
-        .await
-        .with_context(|| format!("writing cursor hook {}", path.display()))?;
-    Ok(())
+    write_private_file(path, CURSOR_KEYCHAIN_CAPTURE_HOOK.as_bytes(), "cursor hook").await
 }
 
 async fn parse_cursor_captured_tokens(
@@ -254,13 +287,19 @@ async fn monitor_cursor_login(state: Arc<AppState>, login_id: String, label: Opt
     let hook_path = login_home.join("capture-hook.cjs");
     let capture_path = login_home.join("captured_tokens.jsonl");
 
-    if let Err(err) = tokio::fs::create_dir_all(&workdir).await {
+    if let Err(err) = async {
+        ensure_private_dir(&login_home).await?;
+        ensure_private_dir(&workdir).await
+    }
+    .await
+    {
         set_cursor_login_error(
             &state,
             &login_id,
             format!("failed to prepare login workspace: {err}"),
         )
         .await;
+        let _ = tokio::fs::remove_dir_all(&login_home).await;
         return;
     }
 
@@ -269,7 +308,7 @@ async fn monitor_cursor_login(state: Arc<AppState>, login_id: String, label: Opt
         let _ = tokio::fs::remove_dir_all(&login_home).await;
         return;
     }
-    if let Err(err) = tokio::fs::write(&capture_path, b"").await {
+    if let Err(err) = initialize_cursor_capture_file(&capture_path).await {
         set_cursor_login_error(
             &state,
             &login_id,
