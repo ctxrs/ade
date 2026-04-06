@@ -402,8 +402,8 @@ fn resolve_provider_login_command_reads_prepared_absolute_path() {
         "cursor".to_string(),
         AgentServerCommand {
             command: login_cmd.to_string_lossy().to_string(),
-            args: Vec::new(),
-            dependencies: Vec::new(),
+            args: vec!["--shim".to_string()],
+            dependencies: vec!["dep-node".to_string()],
             managed: None,
         },
     );
@@ -412,9 +412,15 @@ fn resolve_provider_login_command_reads_prepared_absolute_path() {
         .expect("resolve login command")
         .expect("login command");
     assert_eq!(
-        resolved,
-        std::fs::canonicalize(&login_cmd).expect("canonicalize login command")
+        resolved.command_abs_path,
+        std::fs::canonicalize(&login_cmd)
+            .expect("canonicalize login command")
+            .to_string_lossy()
+            .to_string()
     );
+    assert_eq!(resolved.args, vec!["--shim".to_string()]);
+    assert_eq!(resolved.dependencies, vec!["dep-node".to_string()]);
+    assert_eq!(resolved.source, ProviderRuntimeCommandSource::UserOverride);
 }
 
 #[test]

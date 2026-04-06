@@ -196,13 +196,7 @@ pub(crate) async fn resolve_claude_login_runtime_from_config(
     if let Some(login_command) =
         resolve_provider_login_command_from_config(data_root, "claude-cli").await?
     {
-        return Ok(installer::ProviderRuntimeCommand {
-            provider_id: "claude-cli".to_string(),
-            command_abs_path: login_command.to_string_lossy().to_string(),
-            args: Vec::new(),
-            dependencies: Vec::new(),
-            source: installer::ProviderRuntimeCommandSource::UserOverride,
-        });
+        return Ok(login_command);
     }
 
     if let Some(runtime_command) =

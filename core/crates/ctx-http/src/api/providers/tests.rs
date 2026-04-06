@@ -219,7 +219,7 @@ async fn resolve_claude_login_runtime_prefers_configured_login_command() {
         installer::AgentServerCommand {
             command: runtime_path_str,
             args: vec!["--shim".to_string()],
-            dependencies: Vec::new(),
+            dependencies: vec!["dep-node".to_string()],
             managed: None,
         },
     );
@@ -231,7 +231,12 @@ async fn resolve_claude_login_runtime_prefers_configured_login_command() {
         .await
         .expect("resolve runtime from config");
     assert!(resolved.command_abs_path.contains("claude-cli-mock.sh"));
-    assert!(resolved.args.is_empty());
+    assert_eq!(resolved.args, vec!["--shim".to_string()]);
+    assert_eq!(resolved.dependencies, vec!["dep-node".to_string()]);
+    assert_eq!(
+        resolved.source,
+        installer::ProviderRuntimeCommandSource::UserOverride
+    );
 }
 
 #[tokio::test]

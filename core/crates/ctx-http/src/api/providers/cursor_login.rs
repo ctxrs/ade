@@ -183,10 +183,12 @@ fn is_cursor_login_command(path: &StdPath) -> bool {
         .is_some_and(|name| name == "cursor-agent" || name == "cursor-agent.exe")
 }
 
-async fn resolve_cursor_login_runtime_from_config(data_root: &StdPath) -> anyhow::Result<PathBuf> {
-    if let Some(path) = resolve_provider_login_command_from_config(data_root, "cursor").await? {
-        if is_cursor_login_command(&path) {
-            return Ok(path);
+async fn resolve_cursor_login_runtime_from_config(
+    data_root: &StdPath,
+) -> anyhow::Result<installer::ProviderRuntimeCommand> {
+    if let Some(runtime) = resolve_provider_login_command_from_config(data_root, "cursor").await? {
+        if is_cursor_login_command(StdPath::new(&runtime.command_abs_path)) {
+            return Ok(runtime);
         }
         anyhow::bail!(
             "runtime_command_invalid: provider=cursor-login (configured login command must point to `cursor-agent`)"
@@ -203,9 +205,8 @@ async fn resolve_cursor_login_runtime_from_config(data_root: &StdPath) -> anyhow
                 "runtime_command_missing: provider=cursor-login (ctx requires a managed or explicitly configured `cursor-agent` login command; bundled runtime discovery is not supported)"
             );
         }
-        let path = PathBuf::from(runtime.command_abs_path);
-        if is_cursor_login_command(&path) {
-            return Ok(path);
+        if is_cursor_login_command(StdPath::new(&runtime.command_abs_path)) {
+            return Ok(runtime);
         }
         anyhow::bail!(
             "runtime_command_invalid: provider=cursor-login (configured runtime command must point to `cursor-agent`)"
@@ -217,7 +218,9 @@ async fn resolve_cursor_login_runtime_from_config(data_root: &StdPath) -> anyhow
     );
 }
 
-async fn resolve_cursor_login_runtime(state: &Arc<AppState>) -> anyhow::Result<PathBuf> {
+async fn resolve_cursor_login_runtime(
+    state: &Arc<AppState>,
+) -> anyhow::Result<installer::ProviderRuntimeCommand> {
     resolve_cursor_login_runtime_from_config(&state.core.data_root).await
 }
 
@@ -237,8 +240,8 @@ async fn update_cursor_auth_url(state: &Arc<AppState>, login_id: &str, auth_url:
 }
 
 async fn monitor_cursor_login(state: Arc<AppState>, login_id: String, label: Option<String>) {
-    let cursor_command = match resolve_cursor_login_runtime(&state).await {
-        Ok(path) => path,
+    let cursor_runtime = match resolve_cursor_login_runtime(&state).await {
+        Ok(runtime) => runtime,
         Err(err) => {
             set_cursor_login_error(&state, &login_id, logs::redact_sensitive(&err.to_string()))
                 .await;
@@ -285,7 +288,10 @@ async fn monitor_cursor_login(state: Arc<AppState>, login_id: String, label: Opt
         _ => hook_require,
     };
 
-    let mut cmd = Command::new(&cursor_command);
+    let mut cmd = Command::new(&cursor_runtime.command_abs_path);
+    for arg in &cursor_runtime.args {
+        cmd.arg(arg);
+    }
     cmd.arg("login");
     cmd.current_dir(&workdir);
     cmd.stdin(Stdio::null());

@@ -367,14 +367,42 @@ fn resolve_absolute_command_path(provider_id: &str, source: &str, raw: &str) -> 
         .unwrap_or_else(|| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())))
 }
 
+fn build_provider_runtime_command(
+    provider_id: &str,
+    candidate: &AgentServerCommand,
+    resolve_source: &str,
+    source: ProviderRuntimeCommandSource,
+) -> Result<ProviderRuntimeCommand> {
+    let command_abs_path =
+        resolve_absolute_command_path(provider_id, resolve_source, &candidate.command)?
+            .to_string_lossy()
+            .to_string();
+
+    Ok(ProviderRuntimeCommand {
+        provider_id: provider_id.to_string(),
+        command_abs_path,
+        args: candidate.args.clone(),
+        dependencies: candidate.dependencies.clone(),
+        source,
+    })
+}
+
+/// Configured login commands use the same command/args/dependencies runtime contract
+/// as provider runtime commands; only the callsite differs.
 pub fn resolve_provider_login_command(
     cfg: &AgentServerConfigFile,
     provider_id: &str,
-) -> Result<Option<PathBuf>> {
+) -> Result<Option<ProviderRuntimeCommand>> {
     let Some(configured) = configured_provider_login_command(cfg, provider_id) else {
         return Ok(None);
     };
-    resolve_absolute_command_path(provider_id, "login_command", &configured.command).map(Some)
+    build_provider_runtime_command(
+        provider_id,
+        configured,
+        "login_command",
+        ProviderRuntimeCommandSource::UserOverride,
+    )
+    .map(Some)
 }
 
 pub fn resolve_runtime_provider_command_for_target(
@@ -387,18 +415,7 @@ pub fn resolve_runtime_provider_command_for_target(
         return Ok(None);
     };
 
-    let command_abs_path =
-        resolve_absolute_command_path(provider_id, source.as_str(), &candidate.command)?
-            .to_string_lossy()
-            .to_string();
-
-    Ok(Some(ProviderRuntimeCommand {
-        provider_id: provider_id.to_string(),
-        command_abs_path,
-        args: candidate.args,
-        dependencies: candidate.dependencies,
-        source,
-    }))
+    build_provider_runtime_command(provider_id, &candidate, source.as_str(), source).map(Some)
 }
 
 pub fn resolve_runtime_provider_command(

@@ -98,7 +98,16 @@ async fn resolve_cursor_login_runtime_accepts_configured_login_command() {
         .await
         .expect("resolve configured login command");
     let expected = std::fs::canonicalize(&runtime_path).unwrap_or(runtime_path);
-    assert_eq!(resolved, expected);
+    assert_eq!(
+        resolved.command_abs_path,
+        expected.to_string_lossy().to_string()
+    );
+    assert_eq!(resolved.args, vec!["--ignored".to_string()]);
+    assert_eq!(resolved.dependencies, vec!["dep".to_string()]);
+    assert_eq!(
+        resolved.source,
+        installer::ProviderRuntimeCommandSource::UserOverride
+    );
 }
 
 #[tokio::test]
@@ -126,5 +135,9 @@ async fn resolve_cursor_login_runtime_accepts_configured_runtime_command() {
         .await
         .expect("resolve configured runtime command");
     let expected = std::fs::canonicalize(&runtime_path).unwrap_or(runtime_path);
-    assert_eq!(resolved, expected);
+    assert_eq!(
+        resolved.command_abs_path,
+        expected.to_string_lossy().to_string()
+    );
+    assert_eq!(resolved.args, vec!["cli.js".to_string()]);
 }
