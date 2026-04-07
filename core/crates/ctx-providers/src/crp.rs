@@ -58,6 +58,15 @@ const CRP_CANCEL_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const CODEX_CRP_DUMP_CODEX_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CODEX_EVENTS_PATH";
 const CODEX_CRP_DUMP_CRP_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CRP_EVENTS_PATH";
 
+pub(super) fn auth_required_notice_payload_from_stderr(_auth_url: &str) -> serde_json::Value {
+    json!({
+        "kind": "auth_required",
+        "code": "auth_required",
+        "message": "Authentication required.",
+        "source": "crp_stderr",
+    })
+}
+
 #[derive(Clone)]
 pub struct Tier1CrpAdapter {
     id: String,
@@ -381,11 +390,9 @@ impl ProviderAdapter for Tier1CrpAdapter {
                                     if event_sink
                                         .send(NormalizedEvent {
                                             event_type: SessionEventType::Notice,
-                                            payload_json: json!({
-                                                "kind": "auth_url_stderr",
-                                                "auth_url": auth_url,
-                                                "source": "crp_stderr",
-                                            }),
+                                            payload_json: auth_required_notice_payload_from_stderr(
+                                                &auth_url,
+                                            ),
                                         })
                                         .await
                                         .is_err()
