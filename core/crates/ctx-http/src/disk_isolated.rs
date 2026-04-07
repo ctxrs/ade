@@ -13,6 +13,9 @@ mod sandbox;
 #[path = "disk_isolated_storage.rs"]
 mod storage;
 
+#[cfg(test)]
+pub(crate) use storage::set_test_preflight_storage_samples_override;
+
 fn sandbox_container_id(workspace_id: WorkspaceId) -> String {
     format!("ctx-harness-{}", workspace_id.0)
 }

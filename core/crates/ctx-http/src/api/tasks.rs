@@ -918,4 +918,7 @@ pub(super) use snapshot_state::load_workspace_active_snapshot_state;
 mod lifecycle_tests;
 
 #[cfg(test)]
+mod storage_admission_http_tests;
+
+#[cfg(test)]
 mod tests;

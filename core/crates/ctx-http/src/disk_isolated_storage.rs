@@ -96,6 +96,83 @@ async fn sandbox_storage_sample(
     parse_df_pk_output(String::from_utf8_lossy(&out.stdout).trim(), label, path)
 }
 
+#[cfg(test)]
+type TestPreflightStorageSamplesFn = dyn Fn(
+        &Path,
+        &str,
+        u64,
+        &Path,
+        StorageAdmissionOperation,
+        u64,
+    ) -> Result<(StorageAdmissionSample, StorageAdmissionSample)>
+    + Send
+    + Sync
+    + 'static;
+
+#[cfg(test)]
+fn test_preflight_storage_samples_override(
+) -> &'static std::sync::Mutex<Option<std::sync::Arc<TestPreflightStorageSamplesFn>>> {
+    static OVERRIDE: std::sync::OnceLock<
+        std::sync::Mutex<Option<std::sync::Arc<TestPreflightStorageSamplesFn>>>,
+    > = std::sync::OnceLock::new();
+    OVERRIDE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+#[cfg(test)]
+pub(crate) struct TestPreflightStorageSamplesOverrideGuard;
+
+#[cfg(test)]
+impl Drop for TestPreflightStorageSamplesOverrideGuard {
+    fn drop(&mut self) {
+        let mut slot = test_preflight_storage_samples_override()
+            .lock()
+            .expect("lock test storage override");
+        *slot = None;
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_preflight_storage_samples_override(
+    override_fn: std::sync::Arc<TestPreflightStorageSamplesFn>,
+) -> TestPreflightStorageSamplesOverrideGuard {
+    let mut slot = test_preflight_storage_samples_override()
+        .lock()
+        .expect("lock test storage override");
+    assert!(
+        slot.is_none(),
+        "test storage override already installed for disk-isolated preflight"
+    );
+    *slot = Some(override_fn);
+    TestPreflightStorageSamplesOverrideGuard
+}
+
+#[cfg(test)]
+fn maybe_test_preflight_storage_samples(
+    data_root: &Path,
+    container_id: &str,
+    estimated_copy_bytes: u64,
+    destination_probe_root: &Path,
+    operation: StorageAdmissionOperation,
+    required_bytes: u64,
+) -> Result<Option<(StorageAdmissionSample, StorageAdmissionSample)>> {
+    let override_fn = test_preflight_storage_samples_override()
+        .lock()
+        .expect("lock test storage override")
+        .clone();
+    match override_fn {
+        Some(override_fn) => override_fn(
+            data_root,
+            container_id,
+            estimated_copy_bytes,
+            destination_probe_root,
+            operation,
+            required_bytes,
+        )
+        .map(Some),
+        None => Ok(None),
+    }
+}
+
 pub(super) async fn preflight_disk_isolated_copy(
     data_root: &Path,
     container_id: &str,
@@ -106,14 +183,43 @@ pub(super) async fn preflight_disk_isolated_copy(
     let required_bytes = storage_guard::storage_admission_required_bytes(
         disk_isolated_copy_budget_bytes(estimated_copy_bytes),
     );
-    let host_sample = host_storage_sample(data_root, "CTX data root")?;
-    let sandbox_sample = sandbox_storage_sample(
-        data_root,
-        container_id,
-        destination_probe_root,
-        "sandbox workspace volume",
-    )
-    .await?;
+    let (host_sample, sandbox_sample) = {
+        #[cfg(test)]
+        if let Some(samples) = maybe_test_preflight_storage_samples(
+            data_root,
+            container_id,
+            estimated_copy_bytes,
+            destination_probe_root,
+            operation,
+            required_bytes,
+        )? {
+            samples
+        } else {
+            (
+                host_storage_sample(data_root, "CTX data root")?,
+                sandbox_storage_sample(
+                    data_root,
+                    container_id,
+                    destination_probe_root,
+                    "sandbox workspace volume",
+                )
+                .await?,
+            )
+        }
+        #[cfg(not(test))]
+        {
+            (
+                host_storage_sample(data_root, "CTX data root")?,
+                sandbox_storage_sample(
+                    data_root,
+                    container_id,
+                    destination_probe_root,
+                    "sandbox workspace volume",
+                )
+                .await?,
+            )
+        }
+    };
     storage_guard::check_storage_admission(
         operation,
         required_bytes,
