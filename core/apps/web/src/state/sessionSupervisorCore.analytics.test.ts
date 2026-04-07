@@ -286,7 +286,7 @@ describe("SessionSupervisor analytics tracking", () => {
     expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
   });
 
-  it("emits start analytics when head hydration carries running turns without replayable start events", () => {
+  it("does not emit start analytics during head hydration even if running turns are present", () => {
     const { supervisor, entry } = setupSupervisorWithSession();
     const head: SessionHead = {
       session: entry.session as Session,
@@ -301,15 +301,10 @@ describe("SessionSupervisor analytics tracking", () => {
       freshness: "authoritative",
     });
 
-    expect(trackTurnStarted).toHaveBeenCalledTimes(1);
-    expect(trackTurnStarted).toHaveBeenCalledWith(expect.objectContaining({
-      providerId: "codex",
-      modelId: "gpt-5",
-      sessionKind: "primary",
-    }));
+    expect(trackTurnStarted).not.toHaveBeenCalled();
   });
 
-  it("does not double count a hydrated running turn across supervisor reloads", () => {
+  it("does not emit analytics across supervisor reloads for hydrated running turns", () => {
     const first = setupSupervisorWithSession();
     const head: SessionHead = {
       session: first.entry.session as Session,
@@ -323,16 +318,16 @@ describe("SessionSupervisor analytics tracking", () => {
     applyHead.call(asHeadHost(first.supervisor), asInternalEntry(first.entry), head, {
       freshness: "authoritative",
     });
-    expect(trackTurnStarted).toHaveBeenCalledTimes(1);
+    expect(trackTurnStarted).not.toHaveBeenCalled();
 
     const second = setupSupervisorWithSession();
     applyHead.call(asHeadHost(second.supervisor), asInternalEntry(second.entry), head, {
       freshness: "authoritative",
     });
-    expect(trackTurnStarted).toHaveBeenCalledTimes(1);
+    expect(trackTurnStarted).not.toHaveBeenCalled();
   });
 
-  it("emits start and terminal analytics when head hydration carries completed turns without replayable terminal events", () => {
+  it("does not emit analytics during head hydration even when completed turns are present", () => {
     const { supervisor, entry } = setupSupervisorWithSession();
     const head: SessionHead = {
       session: entry.session as Session,
@@ -347,14 +342,10 @@ describe("SessionSupervisor analytics tracking", () => {
       freshness: "authoritative",
     });
 
-    expect(trackTurnStarted).toHaveBeenCalledTimes(1);
-    expect(trackTurnCompleted).toHaveBeenCalledTimes(1);
-    expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
-    expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
-    expect(trackProviderRunCompleted).toHaveBeenCalledWith(expect.objectContaining({
-      status: "completed",
-      sessionKind: "primary",
-    }));
+    expect(trackTurnStarted).not.toHaveBeenCalled();
+    expect(trackTurnCompleted).not.toHaveBeenCalled();
+    expect(trackProviderRunCompleted).not.toHaveBeenCalled();
+    expect(trackFirstTurnCompleted).not.toHaveBeenCalled();
   });
 
   it("emits start and terminal analytics when replica patches carry completed turns without replaying events", () => {

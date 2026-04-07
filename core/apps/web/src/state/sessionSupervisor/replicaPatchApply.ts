@@ -300,7 +300,9 @@ const applyCanonicalTranscriptPatch = (
       entry.historyExtended = true;
     }
   }
-  if (nextTurnsForAnalytics) {
+  // Only emit analytics for live incoming deltas (append). Historical replaces
+  // are for hydration/backfill and must not count toward current-day analytics.
+  if (nextTurnsForAnalytics && patch.op === "append") {
     const analytics = resolveTurnAnalyticsMetadata(entry.session, entry.sessionId);
     replayTurnStartEffectsFromTurns({
       ...analytics,

@@ -203,17 +203,9 @@ export function applyHead(
     this.adoptLoadedSubagentInvocationsRevision(entry, headStateRev);
   }
   this.mergeTurns(entry, head.turns ?? []);
-  const analytics = resolveTurnAnalyticsMetadata(entry.session, entry.sessionId);
-  replayTurnStartEffectsFromTurns({
-    ...analytics,
-    previousTurns,
-    nextTurns: entry.turns,
-  });
-  replayTurnOutcomeEffectsFromTurns({
-    ...analytics,
-    previousTurns,
-    nextTurns: entry.turns,
-  });
+  // Historical snapshot hydration should not emit fresh analytics events.
+  // Live analytics are produced via event-driven paths (replica append patches).
+  // See: core/apps/web/src/state/sessionSupervisorCore.analytics.test.ts
   if (isBoundedHeadWindow(head)) {
     pruneOmittedNonTerminalTurns.call(this, entry, head.turns ?? []);
   }
