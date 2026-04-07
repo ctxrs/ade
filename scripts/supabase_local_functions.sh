@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+TEMP_ROOT="${CTX_VOLATILE_TMPDIR:-${TMPDIR:-/tmp}}"
+mkdir -p "$TEMP_ROOT"
+
 MODE="foreground"
 if [ "${1:-}" = "--background" ]; then
   MODE="background"
@@ -22,6 +25,57 @@ strip_quotes() {
   raw="${raw%\'}"
   raw="${raw#\'}"
   printf '%s' "$raw"
+}
+
+TEMP_FILES=()
+MERGED_ENV_CREATED=0
+
+track_temp_file() {
+  TEMP_FILES+=("$1")
+}
+
+cleanup_temp_files() {
+  local temp_file
+  if [ "${#TEMP_FILES[@]}" -eq 0 ]; then
+    return
+  fi
+
+  for temp_file in "${TEMP_FILES[@]}"; do
+    rm -f "$temp_file"
+  done
+}
+
+make_temp_file() {
+  LAST_TEMP_FILE="$(mktemp "${TEMP_ROOT%/}/ctx-supabase-functions.XXXXXX")"
+  chmod 600 "$LAST_TEMP_FILE"
+  track_temp_file "$LAST_TEMP_FILE"
+}
+
+trap cleanup_temp_files EXIT
+
+resolve_runner_args() {
+  RUNNER_ARGS=()
+  if ! declare -p RUNNER >/dev/null 2>&1; then
+    return
+  fi
+
+  if declare -p RUNNER 2>/dev/null | grep -q '^declare \-a'; then
+    RUNNER_ARGS=("${RUNNER[@]}")
+    return
+  fi
+
+  if [ -n "${RUNNER:-}" ]; then
+    RUNNER_ARGS=("$RUNNER")
+  fi
+}
+
+launch_supabase_functions() {
+  if [ "${#RUNNER_ARGS[@]}" -gt 0 ]; then
+    "${RUNNER_ARGS[@]}" "${CMD[@]}"
+    return
+  fi
+
+  "${CMD[@]}"
 }
 
 ENV_FILE="${SUPABASE_FUNCTIONS_ENV:-$ROOT/supabase/.env}"
@@ -57,9 +111,19 @@ elif [ "${#ENV_FILE_ARG[@]}" -eq 0 ]; then
 fi
 
 use_infisical="${SUPABASE_FUNCTIONS_USE_INFISICAL:-1}"
-MERGED_ENV="${SUPABASE_FUNCTIONS_MERGED_ENV:-/tmp/ctx-supabase-functions.env}"
-mkdir -p "$(dirname "$MERGED_ENV")"
+MERGED_ENV="${SUPABASE_FUNCTIONS_MERGED_ENV:-}"
+if [ -n "$MERGED_ENV" ]; then
+  mkdir -p "$(dirname "$MERGED_ENV")"
+  : >"$MERGED_ENV"
+  chmod 600 "$MERGED_ENV"
+else
+  make_temp_file
+  MERGED_ENV="$LAST_TEMP_FILE"
+  MERGED_ENV_CREATED=1
+fi
+
 printf '' >"$MERGED_ENV"
+chmod 600 "$MERGED_ENV"
 
 if [ "$use_infisical" = "1" ]; then
   if ! command -v infisical >/dev/null 2>&1; then
@@ -68,7 +132,8 @@ if [ "$use_infisical" = "1" ]; then
     infisical_env="${INFISICAL_ENV:-dev}"
     infisical_path="${INFISICAL_PATH:-/}"
     infisical_project_dir="${INFISICAL_PROJECT_DIR:-$ROOT/core}"
-    infisical_env_file="$(mktemp /tmp/ctx-infisical.env.XXXXXX)"
+    make_temp_file
+    infisical_env_file="$LAST_TEMP_FILE"
     (
       cd "$infisical_project_dir"
       infisical export --env "$infisical_env" --path "$infisical_path" --format dotenv --output-file "$infisical_env_file"
@@ -164,12 +229,30 @@ if [ "$stripe_listen" = "1" ]; then
 fi
 
 CMD=(supabase functions serve --env-file "$MERGED_ENV" --no-verify-jwt)
+resolve_runner_args
+
+for entry in "${ENV_VARS[@]}"; do
+  export "$entry"
+done
 
 if [ "$MODE" = "background" ]; then
   LOG_PATH="${SUPABASE_FUNCTIONS_LOG:-/tmp/ctx-supabase-functions.log}"
-  nohup env "${ENV_VARS[@]}" "${RUNNER[@]}" "${CMD[@]}" >"$LOG_PATH" 2>&1 &
+  cleanup_cmd=':'
+  if [ "$MERGED_ENV_CREATED" = "1" ]; then
+    printf -v cleanup_cmd 'rm -f -- %q' "$MERGED_ENV"
+  fi
+
+  launch_cmd=""
+  if [ "${#RUNNER_ARGS[@]}" -gt 0 ]; then
+    printf -v launch_cmd '%q ' "${RUNNER_ARGS[@]}"
+  fi
+  cmd_q=""
+  printf -v cmd_q '%q ' "${CMD[@]}"
+  launch_cmd="${launch_cmd}${cmd_q}"
+  TEMP_FILES=()
+  nohup bash -c "trap '$cleanup_cmd' EXIT; $launch_cmd" >"$LOG_PATH" 2>&1 &
   echo "Supabase functions running (pid $!). Logs: $LOG_PATH"
   exit 0
 fi
 
-env "${ENV_VARS[@]}" "${RUNNER[@]}" "${CMD[@]}"
+launch_supabase_functions
