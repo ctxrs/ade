@@ -68,4 +68,26 @@ describe("MemoMarkdown", () => {
     fireEvent.keyUp(window, { key: "Meta", metaKey: false });
     expect(link.className).not.toContain("ctx-modifier-hover");
   });
+
+  it("renders markdown tables with transcript-owned structure classes", () => {
+    render(<MemoMarkdown content={"| Day | Count |\n|---|---:|\n| 2026-04-06 | 8 |"} />);
+
+    const wrapper = document.querySelector(".wb-md-table-scroll");
+    const table = wrapper?.querySelector("table.wb-md-table");
+    const headerCells = wrapper?.querySelectorAll("th.wb-md-table-cell-head");
+    const bodyCells = wrapper?.querySelectorAll("td.wb-md-table-cell");
+
+    expect(wrapper).not.toBeNull();
+    expect(table).not.toBeNull();
+    expect(headerCells?.length).toBe(2);
+    expect(bodyCells?.length).toBe(2);
+  });
+
+  it("renders blockquotes with transcript-owned structure classes", () => {
+    render(<MemoMarkdown content={"> Quoted transcript guidance"} />);
+
+    const blockquote = document.querySelector("blockquote.wb-md-blockquote");
+    expect(blockquote).not.toBeNull();
+    expect(blockquote?.textContent).toContain("Quoted transcript guidance");
+  });
 });

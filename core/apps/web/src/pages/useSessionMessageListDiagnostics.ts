@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
-import type { VirtuosoMessageListMethods } from "@virtuoso.dev/message-list";
 import {
   measureSessionMessageListState,
   recordSessionMessageListDebugSnapshot,
   recordSessionMessageListFlashTrace,
   type SessionMessageListFlashSample,
 } from "./sessionMessageListDebug";
-import type { WorkbenchListItem } from "./SessionPage.types";
-import type { WorkbenchMessageListContext } from "./SessionPage.thread";
+
+type ThreadScrollerMethods = {
+  scrollerElement: () => HTMLElement | null;
+};
 
 type Params = {
   sessionId: string;
@@ -15,7 +16,7 @@ type Params = {
   loaded: boolean;
   listItemsLength: number;
   showDebug: boolean;
-  methodsRef: MutableRefObject<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>;
+  methodsRef: MutableRefObject<ThreadScrollerMethods | null>;
   lastAtBottomRef: MutableRefObject<boolean | null>;
   renderedAnchorIdRef: MutableRefObject<string | null>;
   renderedTopIdRef: MutableRefObject<string | null>;

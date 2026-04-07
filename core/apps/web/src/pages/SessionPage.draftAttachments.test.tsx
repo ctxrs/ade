@@ -72,8 +72,16 @@ vi.mock("./useWorkbenchThreadViewModelController", () => ({
   }),
 }));
 
-vi.mock("./useSessionMessageListController", () => ({
-  useSessionMessageListController: () => ({
+vi.mock("./useSessionTranscriptController", () => ({
+  useSessionTranscriptController: () => ({
+    threadProjectionOp: {
+      kind: "noop",
+      projectionRevision: 0,
+      changedItemIds: [],
+      remeasureItemIds: [],
+    },
+    itemIdentity: (item: { id: string }) => item.id,
+    itemKey: (item: { id: string }) => item.id,
     methodsRef: { current: null },
     context: null,
     initialData: [],

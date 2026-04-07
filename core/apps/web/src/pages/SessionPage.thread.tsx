@@ -41,6 +41,9 @@ export type WorkbenchMessageListContext = {
   expandedTurnHeaders?: Readonly<Record<string, boolean>>;
   expandedTurnDetailsById?: Readonly<Record<string, boolean>>;
   expandedToolById?: Readonly<Record<string, boolean>>;
+  expandedMessageById?: Readonly<Record<string, boolean>>;
+  turnToolsLoading?: readonly string[];
+  verbosity?: string;
 };
 
 const DEBUG_ROW_SIZE_DELTA_PX = 8;

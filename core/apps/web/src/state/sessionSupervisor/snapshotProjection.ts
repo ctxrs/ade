@@ -11,6 +11,7 @@ export type SessionSupervisorSnapshotProjectionHost = {
   listeners: Set<() => void>;
   snapshot: SessionSupervisorSnapshot;
   entries: Map<string, InternalEntry>;
+  onEvictSession?: (sessionId: string) => void;
 };
 
 export function mapConnection(
@@ -41,6 +42,7 @@ export function evictIfNeeded(this: SessionSupervisorSnapshotProjectionHost) {
   for (const entry of candidates) {
     if (this.entries.size <= this.maxCachedSessions) break;
     this.entries.delete(entry.sessionId);
+    this.onEvictSession?.(entry.sessionId);
   }
 }
 

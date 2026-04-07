@@ -1,17 +1,18 @@
 import type { CSSProperties, MutableRefObject, ReactNode } from "react";
 import type {
-  DataWithScrollModifier,
-  ItemLocation,
-  ListScrollLocation,
-  ShortSizeAlign,
-  VirtuosoMessageListMethods,
-} from "@virtuoso.dev/message-list";
+  PretextVirtualizerItemLocation,
+  PretextVirtualizerListMethods,
+  PretextVirtualizerScrollLocation,
+  PretextVirtualizerShortSizeAlign,
+} from "@pretext-virtualizer/interface";
 import type { WorkbenchMessageListContext } from "../SessionPage.thread";
 import type { WorkbenchListItem } from "../SessionPage.types";
+import type { WorkbenchThreadProjectionOp } from "../sessionThreadProjection";
 import { SessionThreadMessageList } from "../SessionThreadMessageList";
 
 export function SessionThreadPane({
   sessionId,
+  isActive,
   style,
   initialData,
   itemContent,
@@ -19,7 +20,7 @@ export function SessionThreadPane({
   itemKey,
   increaseViewportBy,
   initialLocation,
-  dataState,
+  threadProjectionOp,
   context,
   onScroll,
   onRenderedDataChange,
@@ -29,26 +30,28 @@ export function SessionThreadPane({
   children,
 }: {
   sessionId: string;
+  isActive: boolean;
   style: CSSProperties;
   initialData: WorkbenchListItem[];
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
   itemIdentity: (item: WorkbenchListItem) => unknown;
   itemKey: (item: WorkbenchListItem) => string;
   increaseViewportBy: number;
-  initialLocation: ItemLocation;
-  dataState?: DataWithScrollModifier<WorkbenchListItem>;
+  initialLocation: PretextVirtualizerItemLocation | null;
+  threadProjectionOp: WorkbenchThreadProjectionOp;
   context: WorkbenchMessageListContext;
-  onScroll: (location: ListScrollLocation) => void;
-  onRenderedDataChange: (range: WorkbenchListItem[]) => void;
-  methodsRef: MutableRefObject<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>;
+  onScroll: (location: PretextVirtualizerScrollLocation) => void;
+  onRenderedDataChange: (range: readonly WorkbenchListItem[]) => void;
+  methodsRef: MutableRefObject<PretextVirtualizerListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>;
   licenseKey: string;
-  shortSizeAlign: ShortSizeAlign;
+  shortSizeAlign: PretextVirtualizerShortSizeAlign;
   children: ReactNode;
 }) {
   return (
     <>
       <SessionThreadMessageList
         sessionId={sessionId}
+        isActive={isActive}
         style={style}
         initialData={initialData}
         itemContent={itemContent}
@@ -56,7 +59,7 @@ export function SessionThreadPane({
         itemKey={itemKey}
         increaseViewportBy={increaseViewportBy}
         initialLocation={initialLocation}
-        dataState={dataState}
+        threadProjectionOp={threadProjectionOp}
         context={context}
         onScroll={onScroll}
         onRenderedDataChange={onRenderedDataChange}

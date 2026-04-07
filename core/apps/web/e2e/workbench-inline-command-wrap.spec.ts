@@ -1,6 +1,10 @@
 import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
+const ASSISTANT_ENTRY_BOTTOM_PADDING_PX = 10;
+const ASSISTANT_ENTRY_PADDING_TOLERANCE_PX = 2;
+const MAX_ASSISTANT_TO_NEXT_ROW_CHROME_GAP_PX = 20;
+
 test("workbench: inline code wraps without horizontal scroll", async ({ page, request }) => {
   const seed = await seedDummyWorkspace(request, {
     tasks: 1,
@@ -52,6 +56,28 @@ test("workbench: inline code wraps without horizontal scroll", async ({ page, re
     expect(Math.max(wrapMetrics.rectCount, wrapMetrics.estimatedLines)).toBeGreaterThan(1);
   }
 
+  const inlineCodeStyles = await assistantEntry.locator("code").first().evaluate((element) => {
+    const style = window.getComputedStyle(element);
+    return {
+      paddingTop: style.paddingTop,
+      paddingRight: style.paddingRight,
+      paddingBottom: style.paddingBottom,
+      paddingLeft: style.paddingLeft,
+      borderRadius: style.borderRadius,
+      borderTopWidth: style.borderTopWidth,
+      fontSize: style.fontSize,
+      fontFamily: style.fontFamily,
+    };
+  });
+  expect(inlineCodeStyles.paddingTop).toBe("1px");
+  expect(inlineCodeStyles.paddingRight).toBe("6px");
+  expect(inlineCodeStyles.paddingBottom).toBe("1px");
+  expect(inlineCodeStyles.paddingLeft).toBe("6px");
+  expect(inlineCodeStyles.borderRadius).toBe("6px");
+  expect(inlineCodeStyles.borderTopWidth).toBe("1px");
+  expect(inlineCodeStyles.fontSize).toBe("13px");
+  expect(inlineCodeStyles.fontFamily.toLowerCase()).toContain("mono");
+
   const metrics = await page.evaluate(() => {
     const doc = document.documentElement;
     const body = document.body;
@@ -69,6 +95,386 @@ test("workbench: inline code wraps without horizontal scroll", async ({ page, re
   expect(metrics.docScrollWidth).toBeLessThanOrEqual(metrics.docClientWidth + 1);
   expect(metrics.bodyScrollWidth).toBeLessThanOrEqual(metrics.bodyClientWidth + 1);
   expect(metrics.sessionScrollWidth).toBeLessThanOrEqual(metrics.sessionClientWidth + 1);
+});
+
+test("workbench: dense inline links and inline-code chips stay deterministic", async ({ page, request }) => {
+  const seed = await seedDummyWorkspace(request, {
+    tasks: 1,
+    sessionsPerTask: 1,
+    turnsPerSession: 0,
+  });
+
+  await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
+  const rows = page.locator(".wb-task-row");
+  await expect(rows).toHaveCount(1);
+  await rows.first().click();
+  await page.waitForTimeout(400);
+  await expect(page.locator('.wb-session-slot[aria-hidden="false"] textarea.wb-active-textarea')).toBeVisible({
+    timeout: 20_000,
+  });
+
+  const sessionId = seed.sessionIdsByTask[seed.taskIds[0]][0];
+  const marker = `inline-link-code-${Date.now()}`;
+  const content = [
+    marker,
+    "",
+    "Yes, with an important qualifier: this looks promising, but it is still early-signal promising rather than a `100M` story today.",
+    "",
+    "The market backdrop is unusually strong. [Cursor official](https://cursor.com/blog/series-c), [Anthropic official](https://www.anthropic.com/news/anthropic-raises-30-billion-series-g-funding-380-billion-post-money-valuation), [OpenAI official](https://openai.com/index/accelerating-the-next-phase-ai/), and [StackBlitz](https://claude.com/customers/stackblitz) all reinforce the same point: workflow tools can move very quickly when they convert usage into retained teams.",
+    "",
+    "My honest read is that the moat cannot just be `Claude/Codex` access. It has to be `pro`, `team`, and `enterprise` workflow value, plus better reviewability and orchestration.",
+  ].join("\n");
+
+  const resp = await request.post(`/api/sessions/${sessionId}/messages`, {
+    data: { content, delivery: "immediate" },
+  });
+  expect(resp.ok()).toBeTruthy();
+
+  const assistantEntry = page.locator(".wb-assistant-entry").filter({ hasText: `done: ${marker}` });
+  await expect(assistantEntry).toBeVisible({ timeout: 20_000 });
+  await expect(assistantEntry.locator("a")).toHaveCount(4);
+  await expect(assistantEntry.locator("code")).toHaveCount(5);
+  await expect(page.locator(".wb-turn-status")).toBeVisible({ timeout: 20_000 });
+
+  const overlapAndGap = await page.evaluate((markerValue) => {
+    const entries = Array.from(document.querySelectorAll<HTMLElement>(".wb-assistant-entry"));
+    const entry = entries.find((element) => element.textContent?.includes(`done: ${markerValue}`));
+    if (!entry) return null;
+    const slot = entry.closest(".wb-pretext-virtualizer-row")?.parentElement ?? null;
+    const nextSlot = slot?.nextElementSibling ?? null;
+    const nextRow = nextSlot?.querySelector<HTMLElement>(".wb-pretext-virtualizer-row") ?? null;
+    if (!slot || !nextRow) return null;
+    const slotRect = slot.getBoundingClientRect();
+    const nextRect = nextRow.getBoundingClientRect();
+    const lastBlock = Array.from(entry.querySelectorAll<HTMLElement>(".wb-assistant-body > div > *")).at(-1) ?? null;
+    const lastBlockRect = lastBlock?.getBoundingClientRect() ?? null;
+    return {
+      slotToNextGapPx: nextRect.top - slotRect.bottom,
+      lastBlockToNextGapPx: lastBlockRect ? nextRect.top - lastBlockRect.bottom : null,
+      slotContentSlackPx: lastBlockRect ? slotRect.bottom - lastBlockRect.bottom : null,
+      overlapPx: slotRect.bottom - nextRect.top,
+    };
+  }, marker);
+
+  expect(overlapAndGap).not.toBeNull();
+  expect(overlapAndGap?.overlapPx ?? 0).toBeLessThanOrEqual(1);
+  expect(overlapAndGap?.slotToNextGapPx ?? Number.NEGATIVE_INFINITY).toBeGreaterThanOrEqual(-1);
+  expect(overlapAndGap?.lastBlockToNextGapPx ?? Number.NEGATIVE_INFINITY).toBeGreaterThanOrEqual(-1);
+  expect(
+    Math.abs((overlapAndGap?.slotContentSlackPx ?? Number.NEGATIVE_INFINITY) - ASSISTANT_ENTRY_BOTTOM_PADDING_PX),
+  ).toBeLessThanOrEqual(ASSISTANT_ENTRY_PADDING_TOLERANCE_PX);
+});
+
+test("workbench: rich markdown assistant rows do not overlap a trailing turn status row", async ({ page, request }) => {
+  const seed = await seedDummyWorkspace(request, {
+    tasks: 1,
+    sessionsPerTask: 1,
+    turnsPerSession: 0,
+  });
+
+  await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
+  const rows = page.locator(".wb-task-row");
+  await expect(rows).toHaveCount(1);
+  await rows.first().click();
+  await page.waitForTimeout(400);
+  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({
+    timeout: 20_000,
+  });
+
+  const sessionId = seed.sessionIdsByTask[seed.taskIds[0]][0];
+  const marker = `overlap-test-${Date.now()}`;
+  const content = [
+    marker,
+    "",
+    "The actual problems were:",
+    "",
+    "- The prompt only made `question first, context second` a preference.",
+    "- The subject template still teaches `agents + project + angle`.",
+    "- Thin-signal gating still allowed `NEEDS REVIEW` prospects through.",
+    "",
+    "The real fix is to change the prompt and rerun with zero hand edits.",
+    "",
+    "- make `artifact sentence first, question second` a hard requirement",
+    "- hard-fail any prospect whose research step returns `NEEDS REVIEW`",
+  ].join("\n");
+
+  const resp = await request.post(`/api/sessions/${sessionId}/messages`, {
+    data: { content, delivery: "immediate" },
+  });
+  expect(resp.ok()).toBeTruthy();
+
+  const assistantEntry = page.locator(".wb-assistant-entry").filter({ hasText: `done: ${marker}` });
+  await expect(assistantEntry).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator(".wb-turn-status")).toBeVisible({ timeout: 20_000 });
+
+  const overlapReport = await page.evaluate(() => {
+    const scroller = document.querySelector(
+      '.wb-session-slot[aria-hidden="false"] [data-pretext-virtualizer-list="1"]',
+    ) as HTMLElement | null;
+    if (!scroller) return null;
+    const shells = Array.from(scroller.querySelectorAll<HTMLElement>('[data-pretext-virtualizer-row-shell="1"]'));
+    const overlaps = shells.flatMap((shell, index) => {
+      if (index >= shells.length - 1) return [] as Array<{
+        overlapPx: number;
+        kind: string;
+        nextKind: string;
+        itemId: string | null;
+        nextItemId: string | null;
+      }>;
+      const nextShell = shells[index + 1];
+      if (!nextShell) return [];
+      const row = shell.querySelector<HTMLElement>('[data-pretext-virtualizer-row="1"]');
+      const nextRow = nextShell.querySelector<HTMLElement>('[data-pretext-virtualizer-row="1"]');
+      const currentRect = row?.getBoundingClientRect() ?? shell.getBoundingClientRect();
+      const nextRect = nextShell.getBoundingClientRect();
+      const overlapPx = currentRect.bottom - nextRect.top;
+      if (overlapPx <= 1) return [];
+      const resolveKind = (element: HTMLElement) => {
+        if (element.querySelector(".wb-turn-status")) return "turn_status";
+        if (element.querySelector(".wb-thought-row")) return "thought";
+        if (element.querySelector(".wb-turn-header")) return "turn_header";
+        if (element.querySelector(".wb-user-message")) return "message";
+        if (element.querySelector(".wb-assistant-entry")) return "assistant";
+        if (element.querySelector(".wb-tool-group")) return "tool_group";
+        if (element.querySelector(".wb-tool")) return "tool";
+        if (element.querySelector(".ask-user-question-card")) return "ask_user_question";
+        return "unknown";
+      };
+      return [
+        {
+          overlapPx,
+          kind: resolveKind(shell),
+          nextKind: resolveKind(nextShell),
+          itemId: row?.getAttribute("data-pretext-virtualizer-item-id") ?? null,
+          nextItemId: nextRow?.getAttribute("data-pretext-virtualizer-item-id") ?? null,
+        },
+      ];
+    });
+    return {
+      overlapCount: overlaps.length,
+      maxOverlapPx: overlaps.reduce((max, entry) => Math.max(max, entry.overlapPx), 0),
+      overlaps,
+    };
+  });
+
+  expect(overlapReport).not.toBeNull();
+  expect(overlapReport?.overlapCount).toBe(0);
+  expect(overlapReport?.maxOverlapPx ?? 0).toBeLessThanOrEqual(1);
+});
+
+test("workbench: list-heavy assistant rows do not leave a blank gap before a trailing turn status row", async ({
+  page,
+  request,
+}) => {
+  const seed = await seedDummyWorkspace(request, {
+    tasks: 1,
+    sessionsPerTask: 1,
+    turnsPerSession: 0,
+  });
+
+  await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
+  const rows = page.locator(".wb-task-row");
+  await expect(rows).toHaveCount(1);
+  await rows.first().click();
+  await page.waitForTimeout(400);
+  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({
+    timeout: 20_000,
+  });
+
+  const sessionId = seed.sessionIdsByTask[seed.taskIds[0]][0];
+  const marker = `list-gap-test-${Date.now()}`;
+  const content = [
+    marker,
+    "",
+    "Short answer:",
+    "",
+    "- Against `react-window`: yes on determinism for this workload.",
+    "- Against `Virtuoso`: likely yes on user-visible stability if rows stay deterministic.",
+    "- On raw throughput: not proven yet.",
+    "",
+    "How I would measure it:",
+    "",
+    "1. Build an A/B renderer switch in the app.",
+    "   - Current deterministic transcript",
+    "   - Existing MessageList/Virtuoso path",
+    "   - Synthetic `react-window` path",
+    "2. Use identical seeded workloads.",
+    "   - Long rich markdown thread",
+    "   - Detached-from-bottom while streaming",
+    "   - Width change / resize",
+    "3. Compare p50 and p95, not one run.",
+    "   - Same machine, same viewport, same seeded data",
+    "",
+    "The important point is that the benchmark should be workload-shaped, not library-shaped.",
+    "",
+    "If you want, I can build the A/B benchmark harness next and make it output a comparable report.",
+  ].join("\n");
+
+  const resp = await request.post(`/api/sessions/${sessionId}/messages`, {
+    data: { content, delivery: "immediate" },
+  });
+  expect(resp.ok()).toBeTruthy();
+
+  const assistantEntry = page.locator(".wb-assistant-entry").filter({ hasText: `done: ${marker}` });
+  await expect(assistantEntry).toBeVisible({ timeout: 20_000 });
+
+  const gapReport = await page.evaluate((markerValue) => {
+    const entries = Array.from(document.querySelectorAll<HTMLElement>(".wb-assistant-entry"));
+    const entry = entries.find((element) => element.textContent?.includes(`done: ${markerValue}`));
+    if (!entry) return null;
+    const slot = entry.closest(".wb-pretext-virtualizer-row")?.parentElement ?? null;
+    const nextSlot = slot?.nextElementSibling ?? null;
+    const nextRow = nextSlot?.querySelector<HTMLElement>(".wb-pretext-virtualizer-row") ?? null;
+    if (!slot || !nextRow) return null;
+    const slotRect = slot.getBoundingClientRect();
+    const nextRect = nextRow.getBoundingClientRect();
+    const lastBlock = Array.from(entry.querySelectorAll<HTMLElement>(".wb-assistant-body > div > *")).at(-1) ?? null;
+    const lastBlockRect = lastBlock?.getBoundingClientRect() ?? null;
+    return {
+      nextRowText: nextRow.textContent?.replace(/\s+/g, " ").trim() ?? null,
+      slotToNextGapPx: nextRect.top - slotRect.bottom,
+      lastBlockToNextGapPx: lastBlockRect ? nextRect.top - lastBlockRect.bottom : null,
+      slotContentSlackPx: lastBlockRect ? slotRect.bottom - lastBlockRect.bottom : null,
+      overlapPx: slotRect.bottom - nextRect.top,
+    };
+  }, marker);
+
+  expect(gapReport).not.toBeNull();
+  expect(gapReport?.nextRowText ?? "").not.toHaveLength(0);
+  expect(gapReport?.overlapPx ?? 0).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs((gapReport?.slotContentSlackPx ?? Number.NEGATIVE_INFINITY) - ASSISTANT_ENTRY_BOTTOM_PADDING_PX),
+  ).toBeLessThanOrEqual(ASSISTANT_ENTRY_PADDING_TOLERANCE_PX);
+  expect(gapReport?.lastBlockToNextGapPx ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
+    MAX_ASSISTANT_TO_NEXT_ROW_CHROME_GAP_PX,
+  );
+});
+
+test("workbench: markdown tables stay deterministic without overlap or shell overflow", async ({ page, request }) => {
+  const seed = await seedDummyWorkspace(request, {
+    tasks: 1,
+    sessionsPerTask: 1,
+    turnsPerSession: 0,
+  });
+
+  await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
+  const rows = page.locator(".wb-task-row");
+  await expect(rows).toHaveCount(1);
+  await rows.first().click();
+  await page.waitForTimeout(400);
+  await expect(page.locator('.wb-session-slot[aria-hidden="false"] textarea.wb-active-textarea')).toBeVisible({
+    timeout: 20_000,
+  });
+
+  const sessionId = seed.sessionIdsByTask[seed.taskIds[0]][0];
+  const marker = `table-contract-${Date.now()}`;
+  const content = [
+    marker,
+    "",
+    "Using a synthetic KPI definition, this fixture renders four deterministic activity rows with a wrapped inline value.",
+    "",
+    "| Fixture day | Active rows | Return rows |",
+    "|---|---:|---:|",
+    "| fixture-a | 12 | 3 |",
+    "| fixture-b | 9 | 4 |",
+    "| fixture-c | 11 | 2 |",
+    "| fixture-d | 7 | `5` |",
+    "",
+    "Return rows are synthetic values used only to verify table width, inline code, and trailing prose.",
+  ].join("\n");
+
+  const resp = await request.post(`/api/sessions/${sessionId}/messages`, {
+    data: { content, delivery: "immediate" },
+  });
+  expect(resp.ok()).toBeTruthy();
+
+  const assistantEntry = page.locator(".wb-assistant-entry").filter({ hasText: `done: ${marker}` });
+  await expect(assistantEntry).toBeVisible({ timeout: 20_000 });
+  await expect(assistantEntry.locator(".wb-md-table-scroll")).toHaveCount(1);
+  await expect(assistantEntry.locator(".wb-md-table")).toHaveCount(1);
+
+  const report = await page.evaluate((markerValue) => {
+    const entries = Array.from(document.querySelectorAll<HTMLElement>(".wb-assistant-entry"));
+    const entry = entries.find((element) => element.textContent?.includes(`done: ${markerValue}`));
+    if (!entry) return null;
+    const tableWrapper = entry.querySelector<HTMLElement>(".wb-md-table-scroll");
+    const table = tableWrapper?.querySelector<HTMLElement>(".wb-md-table") ?? null;
+    const inlineCode = table?.querySelector<HTMLElement>("code") ?? null;
+    const slot = entry.closest(".wb-pretext-virtualizer-row")?.parentElement ?? null;
+    const nextSlot = slot?.nextElementSibling ?? null;
+    const nextRow = nextSlot?.querySelector<HTMLElement>(".wb-pretext-virtualizer-row") ?? null;
+    if (!tableWrapper || !table || !slot || !nextRow) return null;
+    const blocks = Array.from(entry.querySelectorAll<HTMLElement>(".wb-assistant-body > div > *"));
+    const lastBlock = blocks.at(-1) ?? null;
+    const slotRect = slot.getBoundingClientRect();
+    const nextRect = nextRow.getBoundingClientRect();
+    const tableRect = tableWrapper.getBoundingClientRect();
+    const lastBlockRect = lastBlock?.getBoundingClientRect() ?? null;
+    const tableStyle = window.getComputedStyle(table);
+    const wrapperStyle = window.getComputedStyle(tableWrapper);
+    const inlineCodeStyle = inlineCode ? window.getComputedStyle(inlineCode) : null;
+    const doc = document.documentElement;
+    const body = document.body;
+    const sessionView = document.querySelector(".wb-session-view") as HTMLElement | null;
+    return {
+      overlapPx: slotRect.bottom - nextRect.top,
+      slotToNextGapPx: nextRect.top - slotRect.bottom,
+      lastBlockToNextGapPx: lastBlockRect ? nextRect.top - lastBlockRect.bottom : null,
+      slotContentSlackPx: lastBlockRect ? slotRect.bottom - lastBlockRect.bottom : null,
+      tableLayout: tableStyle.tableLayout,
+      borderCollapse: tableStyle.borderCollapse,
+      wrapperOverflowX: wrapperStyle.overflowX,
+      inlineCodeStyles: inlineCodeStyle
+        ? {
+            paddingTop: inlineCodeStyle.paddingTop,
+            paddingRight: inlineCodeStyle.paddingRight,
+            paddingBottom: inlineCodeStyle.paddingBottom,
+            paddingLeft: inlineCodeStyle.paddingLeft,
+            borderTopWidth: inlineCodeStyle.borderTopWidth,
+            fontFamily: inlineCodeStyle.fontFamily,
+          }
+        : null,
+      blocks: blocks.map((block) => ({
+        tag: block.tagName,
+        className: block.className,
+        text: (block.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 120),
+        top: block.getBoundingClientRect().top,
+        bottom: block.getBoundingClientRect().bottom,
+        height: block.getBoundingClientRect().height,
+      })),
+      docScrollWidth: doc.scrollWidth,
+      docClientWidth: doc.clientWidth,
+      bodyScrollWidth: body.scrollWidth,
+      bodyClientWidth: body.clientWidth,
+      sessionScrollWidth: sessionView?.scrollWidth ?? 0,
+      sessionClientWidth: sessionView?.clientWidth ?? 0,
+    };
+  }, marker);
+
+  expect(report).not.toBeNull();
+  expect(report?.tableLayout).toBe("fixed");
+  expect(report?.borderCollapse).toBe("collapse");
+  expect(report?.wrapperOverflowX).toBe("auto");
+  expect(report?.inlineCodeStyles).toMatchObject({
+    paddingTop: "1px",
+    paddingRight: "6px",
+    paddingBottom: "1px",
+    paddingLeft: "6px",
+    borderTopWidth: "1px",
+  });
+  expect(report?.inlineCodeStyles?.fontFamily.toLowerCase()).toContain("mono");
+  expect(report?.overlapPx ?? 0).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs((report?.slotContentSlackPx ?? Number.NEGATIVE_INFINITY) - ASSISTANT_ENTRY_BOTTOM_PADDING_PX),
+  ).toBeLessThanOrEqual(ASSISTANT_ENTRY_PADDING_TOLERANCE_PX);
+  expect(report?.lastBlockToNextGapPx ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
+    MAX_ASSISTANT_TO_NEXT_ROW_CHROME_GAP_PX,
+  );
+  expect(report?.docScrollWidth ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual((report?.docClientWidth ?? 0) + 1);
+  expect(report?.bodyScrollWidth ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual((report?.bodyClientWidth ?? 0) + 1);
+  expect(report?.sessionScrollWidth ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
+    (report?.sessionClientWidth ?? 0) + 1,
+  );
 });
 
 test("workbench: fenced code blocks stay within thread width", async ({ page, request }) => {
@@ -139,6 +545,100 @@ test("workbench: fenced code blocks stay within thread width", async ({ page, re
   if (scrollMetrics) {
     expect(scrollMetrics.scrollWidth).toBeGreaterThan(scrollMetrics.clientWidth);
   }
+
+  const pageMetrics = await page.evaluate(() => {
+    const doc = document.documentElement;
+    const body = document.body;
+    const sessionView = document.querySelector(".wb-session-view") as HTMLElement | null;
+    return {
+      docScrollWidth: doc.scrollWidth,
+      docClientWidth: doc.clientWidth,
+      bodyScrollWidth: body.scrollWidth,
+      bodyClientWidth: body.clientWidth,
+      sessionScrollWidth: sessionView?.scrollWidth ?? 0,
+      sessionClientWidth: sessionView?.clientWidth ?? 0,
+    };
+  });
+
+  expect(pageMetrics.docScrollWidth).toBeLessThanOrEqual(pageMetrics.docClientWidth + 1);
+  expect(pageMetrics.bodyScrollWidth).toBeLessThanOrEqual(pageMetrics.bodyClientWidth + 1);
+  expect(pageMetrics.sessionScrollWidth).toBeLessThanOrEqual(pageMetrics.sessionClientWidth + 1);
+});
+
+test("workbench: nested lists, blockquotes, and long markdown tokens stay deterministic", async ({ page, request }) => {
+  const seed = await seedDummyWorkspace(request, {
+    tasks: 1,
+    sessionsPerTask: 1,
+    turnsPerSession: 0,
+  });
+
+  await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
+  const rows = page.locator(".wb-task-row");
+  await expect(rows).toHaveCount(1);
+  await rows.first().click();
+  await page.waitForTimeout(400);
+  await expect(page.locator('.wb-session-slot[aria-hidden="false"] textarea.wb-active-textarea')).toBeVisible({
+    timeout: 20_000,
+  });
+
+  const sessionId = seed.sessionIdsByTask[seed.taskIds[0]][0];
+  const marker = `complex-markdown-${Date.now()}`;
+  const longToken = `artifact${"segment".repeat(40)}`;
+  const longUrl = `https://example.com/${Array.from({ length: 16 }, (_, index) => `section-${index + 1}`).join("/")}/${longToken}`;
+  const content = [
+    marker,
+    "",
+    "# Release Readiness",
+    "",
+    "> We only want one scroll owner at a time, and we need deterministic layout even when markdown gets awkward.",
+    "",
+    "1. Transcript checks",
+    "   - keep semantic invalidation wired through the runtime",
+    `   - verify long token wrapping for ${longToken}`,
+    "   - confirm there is no overlap before the trailing status row",
+    "2. UI checks",
+    "   - route composer wheel input to exactly one owner",
+    `   - preserve blockquotes and links like [release canary](${longUrl}) without blowing out the session width`,
+    "",
+    "> Follow-up",
+    "> - blockquotes should stay visually bounded",
+    "> - nested markdown should not leave a fake tail gap",
+    "",
+    `Tail paragraph with one more raw token: ${longToken}`,
+  ].join("\n");
+
+  const resp = await request.post(`/api/sessions/${sessionId}/messages`, {
+    data: { content, delivery: "immediate" },
+  });
+  expect(resp.ok()).toBeTruthy();
+
+  const assistantEntry = page.locator(".wb-assistant-entry").filter({ hasText: `done: ${marker}` });
+  await expect(assistantEntry).toBeVisible({ timeout: 20_000 });
+  await expect(assistantEntry.locator("blockquote")).toHaveCount(2);
+
+  const overlapAndGap = await page.evaluate((markerValue) => {
+    const entries = Array.from(document.querySelectorAll<HTMLElement>(".wb-assistant-entry"));
+    const entry = entries.find((element) => element.textContent?.includes(`done: ${markerValue}`));
+    if (!entry) return null;
+    const slot = entry.closest(".wb-pretext-virtualizer-row")?.parentElement ?? null;
+    const nextSlot = slot?.nextElementSibling ?? null;
+    const nextRow = nextSlot?.querySelector<HTMLElement>(".wb-pretext-virtualizer-row") ?? null;
+    if (!slot || !nextRow) return null;
+    const slotRect = slot.getBoundingClientRect();
+    const nextRect = nextRow.getBoundingClientRect();
+    const lastBlock = Array.from(entry.querySelectorAll<HTMLElement>(".wb-assistant-body > div > *")).at(-1) ?? null;
+    const lastBlockRect = lastBlock?.getBoundingClientRect() ?? null;
+    return {
+      slotToNextGapPx: nextRect.top - slotRect.bottom,
+      lastBlockToNextGapPx: lastBlockRect ? nextRect.top - lastBlockRect.bottom : null,
+      overlapPx: slotRect.bottom - nextRect.top,
+    };
+  }, marker);
+
+  expect(overlapAndGap).not.toBeNull();
+  expect(overlapAndGap?.overlapPx ?? 0).toBeLessThanOrEqual(1);
+  expect(overlapAndGap?.slotToNextGapPx ?? Number.NEGATIVE_INFINITY).toBeGreaterThanOrEqual(-1);
+  expect(overlapAndGap?.lastBlockToNextGapPx ?? Number.NEGATIVE_INFINITY).toBeGreaterThanOrEqual(-1);
 
   const pageMetrics = await page.evaluate(() => {
     const doc = document.documentElement;

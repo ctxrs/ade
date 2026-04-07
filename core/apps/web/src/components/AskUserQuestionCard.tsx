@@ -1,170 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  buildAskUserQuestionAnswersFromState,
+  DEFAULT_OTHER_LABEL,
+  deriveAskUserQuestionSelectionState,
+  normalizeAskUserQuestions,
+  type AskUserQuestionItem,
+  type AskUserQuestionOption,
+} from "./askUserQuestionShared";
 import { errorMessage } from "../utils/errorMessage";
-
-type AskUserQuestionOption = { label: string; description?: string; isOther?: boolean };
-type AskUserQuestionItem = {
-  header: string;
-  question: string;
-  options: AskUserQuestionOption[];
-  multiSelect: boolean;
-  otherLabel?: string;
-};
-
-const DEFAULT_OTHER_LABEL = "Type something.";
-
-const asRecord = (value: unknown): Record<string, unknown> => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return value as Record<string, unknown>;
-};
-
-function readNonEmptyString(...values: Array<unknown>): string | null {
-  for (const value of values) {
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return null;
-}
-
-function normalizeOptions(raw: unknown): AskUserQuestionOption[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((o) => {
-      if (typeof o === "string") return { label: o };
-      if (o && typeof o === "object") {
-        const rec = asRecord(o);
-        const label = typeof rec.label === "string" ? rec.label : "";
-        if (!label.trim()) return null;
-        const description = typeof rec.description === "string" ? rec.description : undefined;
-        return { label, description };
-      }
-      return null;
-    })
-    .filter((o: AskUserQuestionOption | null): o is AskUserQuestionOption => Boolean(o));
-}
-
-function extractOtherLabel(
-  question: Record<string, unknown>,
-  options: AskUserQuestionOption[],
-): {
-  options: AskUserQuestionOption[];
-  otherLabel?: string;
-} {
-  const allowOther = Boolean(question?.allowOther ?? question?.allow_other ?? question?.allowOtherOption);
-  const explicitLabel = readNonEmptyString(
-    question?.otherOptionLabel,
-    question?.other_option_label,
-    question?.otherLabel,
-  );
-  let otherLabel = explicitLabel ?? undefined;
-
-  const nextOptions: AskUserQuestionOption[] = [];
-  for (const opt of options) {
-    const label = opt.label.trim();
-    const lower = label.toLowerCase();
-    if (!otherLabel && (lower === "other" || lower === "type something" || lower === "type something.")) {
-      otherLabel = label;
-      continue;
-    }
-    nextOptions.push(opt);
-  }
-
-  if (!otherLabel && allowOther) otherLabel = DEFAULT_OTHER_LABEL;
-  return { options: nextOptions, otherLabel };
-}
-
-function normalizeQuestions(input: unknown): AskUserQuestionItem[] {
-  const rec = asRecord(input);
-  const nested = asRecord(rec.input);
-  const rawQuestions: unknown[] = Array.isArray(rec.questions)
-    ? rec.questions
-    : Array.isArray(nested.questions)
-      ? nested.questions
-      : Array.isArray(input)
-        ? input
-        : [];
-  const out: AskUserQuestionItem[] = [];
-  rawQuestions.forEach((q, idx) => {
-    const qRec = asRecord(q);
-    const question = typeof qRec.question === "string" ? qRec.question : "";
-    if (!question.trim()) return;
-    const header = typeof qRec.header === "string" ? qRec.header : `Question ${idx + 1}`;
-    const baseOptions = normalizeOptions(qRec.options);
-    const multiSelect = Boolean(qRec.multiSelect ?? qRec.multi_select);
-    const { options, otherLabel } = extractOtherLabel(qRec, baseOptions);
-    out.push({ header, question, options, multiSelect, otherLabel });
-  });
-  return out;
-}
-
-function splitAnswerParts(answer: string, multiSelect: boolean): string[] {
-  if (!answer.trim()) return [];
-  if (!multiSelect) return [answer.trim()];
-  return answer
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-function deriveSelectionFromAnswers(
-  questions: AskUserQuestionItem[],
-  answers?: Record<string, string>,
-): {
-  selectedByQuestion: Record<string, Set<string>>;
-  otherByQuestion: Record<string, string>;
-} {
-  const selectedByQuestion: Record<string, Set<string>> = {};
-  const otherByQuestion: Record<string, string> = {};
-  if (!answers) return { selectedByQuestion, otherByQuestion };
-
-  for (const q of questions) {
-    const answer = String(answers[q.question] ?? "").trim();
-    if (!answer) continue;
-    const optionLabels = new Set(q.options.map((opt) => opt.label));
-    const selected = new Set<string>();
-    const otherParts: string[] = [];
-    const parts = splitAnswerParts(answer, q.multiSelect);
-    for (const part of parts) {
-      if (optionLabels.has(part)) selected.add(part);
-      else otherParts.push(part);
-    }
-    if (otherParts.length > 0) {
-      otherByQuestion[q.question] = q.multiSelect ? otherParts.join(", ") : otherParts[0];
-      if (q.otherLabel) selected.add(q.otherLabel);
-    }
-    if (selected.size > 0) selectedByQuestion[q.question] = selected;
-  }
-
-  return { selectedByQuestion, otherByQuestion };
-}
-
-function buildAnswersFromState(
-  questions: AskUserQuestionItem[],
-  selectedByQuestion: Record<string, Set<string>>,
-  otherByQuestion: Record<string, string>,
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const q of questions) {
-    const other = (otherByQuestion[q.question] ?? "").trim();
-    const selected = selectedByQuestion[q.question];
-    const selectedValues = selected ? [...selected] : [];
-    const trimmedSelected = q.otherLabel
-      ? selectedValues.filter((value) => value !== q.otherLabel)
-      : selectedValues;
-
-    if (q.multiSelect) {
-      const combined = [...trimmedSelected];
-      if (other) combined.push(other);
-      if (combined.length > 0) out[q.question] = combined.join(", ");
-      continue;
-    }
-
-    if (other) {
-      out[q.question] = other;
-      continue;
-    }
-    if (trimmedSelected.length > 0) out[q.question] = trimmedSelected[0];
-  }
-  return out;
-}
 
 export function AskUserQuestionCard({
   input,
@@ -183,7 +26,7 @@ export function AskUserQuestionCard({
   onSubmit?: (answers: Record<string, string>) => Promise<void>;
   onCancel?: () => Promise<void>;
 }) {
-  const questions = useMemo(() => normalizeQuestions(input), [input]);
+  const questions = useMemo(() => normalizeAskUserQuestions(input), [input]);
   const [activeIdx, setActiveIdx] = useState(0);
   const [selectedByQuestion, setSelectedByQuestion] = useState<Record<string, Set<string>>>({});
   const [otherByQuestion, setOtherByQuestion] = useState<Record<string, string>>({});
@@ -194,7 +37,7 @@ export function AskUserQuestionCard({
   const otherInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const derivedSelections = useMemo(
-    () => deriveSelectionFromAnswers(questions, answers),
+    () => deriveAskUserQuestionSelectionState(questions, answers),
     [questions, answers],
   );
 
@@ -218,7 +61,7 @@ export function AskUserQuestionCard({
   }, [active, readOnly, busy]);
 
   const draftAnswers = useMemo(
-    () => buildAnswersFromState(questions, selectedByQuestion, otherByQuestion),
+    () => buildAskUserQuestionAnswersFromState(questions, selectedByQuestion, otherByQuestion),
     [questions, selectedByQuestion, otherByQuestion],
   );
   const effectiveAnswers = answers ?? draftAnswers;

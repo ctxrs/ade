@@ -12,6 +12,7 @@ export type WorkbenchMessageListUiState = {
   expandedToolById: Record<string, boolean>;
   expandedMessageById: Record<string, boolean>;
   turnToolsLoading: readonly string[];
+  verbosity?: string;
 };
 
 type HeightRevisionOptions = {
@@ -64,7 +65,7 @@ export function getWorkbenchMessageListLayoutRevision(
   options?: { verbosity?: string },
 ): string {
   return JSON.stringify({
-    verbosity: options?.verbosity ?? null,
+    verbosity: options?.verbosity ?? uiState.verbosity ?? null,
     turnHeaders: stableTrueKeys(uiState.expandedTurnHeaders),
     turnDetails: stableTrueKeys(uiState.expandedTurnDetailsById),
     tools: stableTrueKeys(uiState.expandedToolById),
@@ -139,6 +140,7 @@ export function getWorkbenchListItemHeightRevision(
   uiState: WorkbenchMessageListUiState,
   options?: HeightRevisionOptions,
 ): string {
+  const verbosity = options?.verbosity ?? uiState.verbosity;
   switch (item.kind) {
     case "message":
       if (!isExpandableMessageContent(item.content)) {
@@ -165,7 +167,7 @@ export function getWorkbenchListItemHeightRevision(
         fingerprintString(item.subtitle ?? ""),
         fingerprintUnknown(item.locations),
         fingerprintUnknown(item.input),
-        uiState.expandedToolById[item.id] && options?.verbosity === "verbose"
+        uiState.expandedToolById[item.id] && verbosity === "verbose"
           ? fingerprintString(item.output_text)
           : "output:hidden",
       ].join(":");

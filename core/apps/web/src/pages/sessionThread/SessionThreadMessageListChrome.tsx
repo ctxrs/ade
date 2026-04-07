@@ -29,7 +29,6 @@ export const WorkbenchMessageListStickyFooter: WorkbenchMessageListProps["Sticky
           className="new-activity-overlay"
           aria-label="Jump to latest"
           title="Jump to latest"
-          style={{ position: "absolute", right: 16, bottom: 16 }}
           onClick={() => methods.scrollToItem({ index: "LAST" as const, align: "end", behavior: "auto" })}
         >
           ↓
@@ -38,4 +37,3 @@ export const WorkbenchMessageListStickyFooter: WorkbenchMessageListProps["Sticky
     </div>
   );
 };
-

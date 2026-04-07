@@ -238,6 +238,7 @@ export const dropSessionEntry = (
   if (!id) return;
   if (!host.entries.has(id)) return;
   host.entries.delete(id);
+  host.replicaDispatch({ type: "drop_session", sessionId: id });
   host.setActiveTaskSessionIds(host.getActiveTaskSessionIds().filter((entryId) => entryId !== id));
   host.setWarmSessionIds(host.getWarmSessionIds().filter((entryId) => entryId !== id));
   host.setSubscribedSessionIds(host.getSubscribedSessionIds().filter((entryId) => entryId !== id));

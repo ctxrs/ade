@@ -635,8 +635,6 @@ export const WorkbenchToolGroupRow = memo(function WorkbenchToolGroupRow({
   onToggleTool: (id: string) => void;
   expandedToolById: Record<string, boolean>;
 }) {
-  void expanded;
-  void onToggle;
   const total = Math.max(item.tool_total ?? 0, item.tools.length);
   const parts: string[] = [];
   if (total > 0) {
@@ -655,18 +653,26 @@ export const WorkbenchToolGroupRow = memo(function WorkbenchToolGroupRow({
   const hasDetails = total > 0 || item.thought.trim().length > 0;
 
   useEffect(() => {
-    if (total > 0 && item.tools.length === 0 && !toolsLoading) {
+    if (expanded && total > 0 && item.tools.length === 0 && !toolsLoading) {
       onRequestTools();
     }
-  }, [total, item.tools.length, toolsLoading, onRequestTools]);
+  }, [expanded, total, item.tools.length, toolsLoading, onRequestTools]);
 
   return (
     <div className="wb-tool-group">
-      <div className="wb-event-row wb-event-row-static">
+      <button
+        type="button"
+        className="wb-event-row"
+        aria-expanded={expanded}
+        onClick={onToggle}
+      >
         <span className="wb-event-text">{label}</span>
-      </div>
+        <span className="wb-event-chev" aria-hidden="true">
+          {expanded ? "▴" : "▾"}
+        </span>
+      </button>
 
-      {hasDetails && (
+      {expanded && hasDetails && (
         <div className="wb-tool-group-body">
           {total > 0 && item.tools.length === 0 && toolsLoading && <div className="wb-tool-loading">Loading tools...</div>}
           {item.tools.map((tool) => (

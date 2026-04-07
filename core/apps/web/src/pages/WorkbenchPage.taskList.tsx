@@ -7,6 +7,23 @@ type TaskListScrollerProps = React.HTMLAttributes<HTMLDivElement> & {
 
 const ARCHIVED_SCROLL_LOAD_THRESHOLD_PX = 120;
 
+const normalizeFiniteLengthStyle = (
+  value: React.CSSProperties["paddingBottom"],
+): React.CSSProperties["paddingBottom"] =>
+  typeof value === "number" && !Number.isFinite(value) ? 0 : value;
+
+export const sanitizeTaskListStyle = (
+  style: React.CSSProperties | undefined,
+): React.CSSProperties | undefined => {
+  if (!style) return style;
+  return {
+    ...style,
+    marginTop: normalizeFiniteLengthStyle(style.marginTop),
+    paddingTop: normalizeFiniteLengthStyle(style.paddingTop),
+    paddingBottom: normalizeFiniteLengthStyle(style.paddingBottom),
+  };
+};
+
 const TaskListScroller = React.forwardRef<HTMLDivElement, TaskListScrollerProps>((props, ref) => {
   const { context, onScroll, ...rest } = props;
   const handleRef = useCallback(
@@ -39,9 +56,19 @@ const TaskListScroller = React.forwardRef<HTMLDivElement, TaskListScrollerProps>
   return <div {...rest} ref={handleRef} className="wb-task-scroll" onScroll={handleScroll} />;
 });
 
-const TaskListContainer = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-  <div {...props} ref={ref} className="wb-task-list" role="list" aria-label="Tasks" />
-));
+const TaskListContainer = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => {
+  const { style, ...rest } = props;
+  return (
+    <div
+      {...rest}
+      ref={ref}
+      className="wb-task-list"
+      role="list"
+      aria-label="Tasks"
+      style={sanitizeTaskListStyle(style)}
+    />
+  );
+});
 
 const TaskListHeader = () => (
   <div className="wb-section-header">

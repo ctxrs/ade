@@ -133,18 +133,21 @@ export function WorkbenchActiveTaskView({
         ) : null}
 
         <div className="wb-session">
+          <WorkbenchSessionLoadIssues issues={sessionLoadIssues} onRetry={onRetrySessionLoads} />
           {activeSessionId && activeSessionRenderable ? (
             <WorkbenchSessionSlot
               sessionId={activeSessionId}
               optimisticFailure={optimisticFailure}
             />
           ) : null}
-          {(!activeSessionId || !activeSessionRenderable) && sessionLoadIssues.length > 0 ? (
-            <WorkbenchSessionLoadIssues issues={sessionLoadIssues} onRetry={onRetrySessionLoads} />
+          {activeSessionId && !activeSessionRenderable ? (
+            <div className="wb-session-slot wb-session-slot--hydrating" aria-hidden="true">
+              <div className="wb-session-slot-body" />
+            </div>
           ) : null}
-          {(!activeSessionId || !activeSessionRenderable) ? (
+          {!activeSessionId ? (
             <div className="wb-muted" style={{ padding: 16 }}>
-              {sessionsCount > 0 ? "Loading conversation..." : "Select a session to view this task."}
+              Select a session to view this task.
             </div>
           ) : null}
         </div>

@@ -470,10 +470,12 @@ button.linklike:hover {
 }
 
 .attachment-img {
-  max-width: 240px;
-  max-height: 180px;
+  width: 240px;
+  height: 180px;
   border-radius: 6px;
   border: 1px solid var(--border);
+  object-fit: contain;
+  background: var(--panel-2);
 }
 
 .link {

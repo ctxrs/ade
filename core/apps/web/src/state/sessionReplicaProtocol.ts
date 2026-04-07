@@ -56,6 +56,7 @@ export type SessionReplicaCommand =
       forceHydrate?: boolean;
     }
   | { type: "close_session"; sessionId: string }
+  | { type: "drop_session"; sessionId: string }
   | { type: "refresh_session"; sessionId: string }
   | { type: "hydrate_session_head"; sessionId: string; force?: boolean; silent?: boolean }
   | { type: "seed_head"; sessionId: string; head: SessionHeadSnapshot; mode: SessionReplicaHeadSeedMode }

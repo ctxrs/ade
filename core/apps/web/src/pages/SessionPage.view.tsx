@@ -41,17 +41,13 @@ import {
   normalizeContextWindowMetrics,
 } from "./SessionPage.workbenchViewModel";
 import { buildOptimisticUserMessage } from "./SessionPage.optimisticMessage";
-import { useSessionMessageListController } from "./useSessionMessageListController";
+import { useSessionTranscriptController } from "./useSessionTranscriptController";
 import { useWorkbenchThreadViewModelController } from "./useWorkbenchThreadViewModelController";
 import { errorMessage } from "../utils/errorMessage";
 import { hasSessionActiveTurn } from "../utils/sessionActivity";
 import { defaultSessionVerbosityForProvider } from "./sessionVerbosity";
 import { appendSegment } from "./SessionPage.helpers";
-import {
-  getWorkbenchListItemSizeCacheKey,
-  getWorkbenchMessageListLayoutRevision,
-  type WorkbenchMessageListUiState,
-} from "./sessionMessageListItemIdentity";
+import { type WorkbenchMessageListUiState } from "./sessionMessageListItemIdentity";
 import { isSameContextWindow } from "./sessionView/estimateHeuristics";
 import { getQueuedAttachments } from "./sessionView/SessionQueuePanel";
 import { collectSessionLoadIssues } from "./sessionView/sessionLoadIssues";
@@ -62,11 +58,6 @@ import { recordSessionThreadProjectionDebugEntry } from "./sessionThreadProjecti
 import { useSharedSessionProviderOptions } from "./sessionView/useSharedSessionProviderOptions";
 import { useStableAskUserQuestionAnswers } from "./sessionView/useStableAskUserQuestionAnswers";
 import { composeModelId } from "../utils/modelEffort";
-import {
-  createWorkbenchThreadProjectionOp,
-  createWorkbenchLayoutProjectionOp,
-  mergeWorkbenchThreadProjectionOps,
-} from "./sessionThreadProjection";
 import { useSessionModelSwitcher } from "./sessionView/useSessionModelSwitcher";
 
 const SCROLLBACK_INCREASE_VIEWPORT_BY_PX = 240;
@@ -436,7 +427,6 @@ export function SessionView({
     askUserQuestionAnswers,
     enableDebugEvents: showDebug,
   });
-  const workbenchThreadOp = rawWorkbenchThreadOp ?? createWorkbenchThreadProjectionOp("noop", projectionRevision);
 
   const debugEvents = workbenchThreadView.debugEvents;
   const wbListItems = threadListItems;
@@ -448,6 +438,7 @@ export function SessionView({
       expandedToolById,
       expandedMessageById,
       turnToolsLoading,
+      verbosity,
     }),
     [
       expandedMessageById,
@@ -455,72 +446,20 @@ export function SessionView({
       expandedTurnDetailsById,
       expandedTurnHeaders,
       turnToolsLoading,
+      verbosity,
     ],
   );
-  const previousMessageListUiStateRef = useRef<WorkbenchMessageListUiState | null>(null);
-  const layoutThreadOp = useMemo(
-    () =>
-      createWorkbenchLayoutProjectionOp({
-        listItems,
-        previousUiState: previousMessageListUiStateRef.current,
-        nextUiState: messageListUiState,
-        projectionRevision,
-      }),
-    [listItems, messageListUiState, projectionRevision],
-  );
-  useEffect(() => {
-    previousMessageListUiStateRef.current = messageListUiState;
-  }, [messageListUiState]);
-  const threadProjectionOp = useMemo(
-    () => mergeWorkbenchThreadProjectionOps(workbenchThreadOp, layoutThreadOp),
-    [layoutThreadOp, workbenchThreadOp],
-  );
-  const renderRevisionByItemIdRef = useRef<Record<string, number>>({});
-  const lastRenderRevisionOpKeyRef = useRef<string>("");
-  const renderRevisionOpKey = `${id}:${threadProjectionOp.kind}:${threadProjectionOp.projectionRevision}:${threadProjectionOp.remeasureItemIds.join("|")}`;
-  const renderRevisionByItemId = useMemo(() => {
-    if (lastRenderRevisionOpKeyRef.current === renderRevisionOpKey) {
-      return renderRevisionByItemIdRef.current;
-    }
-    let nextMap = renderRevisionByItemIdRef.current;
-    if (threadProjectionOp.kind === "replace_session") {
-      nextMap = {};
-    } else if (threadProjectionOp.remeasureItemIds.length > 0) {
-      nextMap = { ...renderRevisionByItemIdRef.current };
-      for (const itemId of threadProjectionOp.remeasureItemIds) {
-        nextMap[itemId] = (nextMap[itemId] ?? 0) + 1;
-      }
-    }
-    renderRevisionByItemIdRef.current = nextMap;
-    lastRenderRevisionOpKeyRef.current = renderRevisionOpKey;
-    return nextMap;
-  }, [renderRevisionOpKey, threadProjectionOp]);
-  const messageListItemIdentity = useCallback((item: WorkbenchListItem) => item.id, []);
-  const messageListItemKey = useCallback(
-    (item: WorkbenchListItem) => {
-      const renderRevision = renderRevisionByItemId[item.id] ?? 0;
-      return renderRevision > 0 ? `${item.id}:${renderRevision}` : item.id;
-    },
-    [renderRevisionByItemId],
-  );
-  const messageListItemSizeCacheKey = useCallback(
-    (item: WorkbenchListItem) =>
-      getWorkbenchListItemSizeCacheKey(item, messageListUiState, { verbosity }),
-    [messageListUiState, verbosity],
-  );
-  const messageListLayoutRevision = useMemo(
-    () => getWorkbenchMessageListLayoutRevision(messageListUiState, { verbosity }),
-    [messageListUiState, verbosity],
-  );
-
   const {
+    threadProjectionOp,
+    itemIdentity: messageListItemIdentity,
+    itemKey: messageListItemKey,
     methodsRef: messageListMethodsRef,
     context: messageListContext,
     initialData: messageListInitialData,
     initialLocation: messageListInitialLocation,
     onScroll: handleMessageListScroll,
     onRenderedDataChange: handleRenderedDataChange,
-  } = useSessionMessageListController({
+  } = useSessionTranscriptController({
     sessionId: id,
     isActive,
     loaded: Boolean(entry?.stateLoaded),
@@ -530,12 +469,11 @@ export function SessionView({
       if (!id) return;
       await supervisor.loadMoreTurns(id);
     },
-    layoutRevision: messageListLayoutRevision,
-    itemSizeCacheKey: messageListItemSizeCacheKey,
-    renderRevisionByItemId,
-    threadOp: threadProjectionOp,
     showDebug,
     onAtBottomChange: setAtBottom,
+    uiState: messageListUiState,
+    workbenchThreadOp: rawWorkbenchThreadOp,
+    projectionRevision,
   });
 
   useEffect(() => {
@@ -572,7 +510,7 @@ export function SessionView({
     threadProjectionSource,
   ]);
 
-  // MessageList integration is now handled by `useSessionMessageListController`.
+  // PretextVirtualizer integration is now handled by `usePretextVirtualizerSessionController`.
 
   const authUi = useMemo(() => deriveAuthUi(baseEvents), [baseEvents, baseEventsStamp]);
   const {
@@ -919,12 +857,14 @@ export function SessionView({
       onRetrySessionLoads={handleRetrySessionLoads}
       subagentInvocations={subagentInvocations}
       onOpenChildSession={openChildSession}
+      isActive={isActive}
       style={virtuosoStyle}
       itemIdentity={messageListItemIdentity}
       itemKey={messageListItemKey}
       increaseViewportBy={SCROLLBACK_INCREASE_VIEWPORT_BY_PX}
       initialData={messageListInitialData}
       initialLocation={messageListInitialLocation}
+      threadProjectionOp={threadProjectionOp}
       context={messageListContext}
       onScroll={handleMessageListScroll}
       onRenderedDataChange={handleRenderedDataChange}

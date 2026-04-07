@@ -328,6 +328,9 @@ export class SessionReplicaCore {
       case "close_session":
         this.closeSession(cmd.sessionId);
         return;
+      case "drop_session":
+        this.dropSession(cmd.sessionId);
+        return;
       case "refresh_session":
         this.hydrateSessionHead(cmd.sessionId, {
           force: true,
@@ -458,7 +461,17 @@ export class SessionReplicaCore {
 
   private closeSession(sessionId: string) {
     const id = normalizeId(sessionId);
-    if (id) this.entries.delete(id);
+    if (!id) return;
+    const entry = this.entries.get(id);
+    if (!entry) return;
+    entry.requestToken += 1;
+    entry.loading = false;
+  }
+
+  private dropSession(sessionId: string) {
+    const id = normalizeId(sessionId);
+    if (!id) return;
+    this.entries.delete(id);
   }
 
   private applyHead(

@@ -32,6 +32,11 @@ import {
   shouldShowLoadingProviderModels,
 } from "./WorkbenchComposer.utils";
 import type { ActiveSessionProps, NewSessionProps, WorkbenchComposerProps } from "./WorkbenchComposer.types";
+import {
+  findComposerTranscriptScroller,
+  normalizeComposerWheelDeltaY,
+  resolveComposerWheelTarget,
+} from "./workbenchComposerScrollOwnership";
 
 type OpenMenuId = "harness" | "model" | "effort" | "verbosity";
 
@@ -175,6 +180,46 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     restoreDraftTailRef.current = false;
     setValue(`${textarea.value.slice(0, start)}${text}${textarea.value.slice(end)}`);
   }, [setValue]);
+
+  const handleTextareaWheelCapture = useCallback((event: React.WheelEvent<HTMLTextAreaElement>) => {
+    const textarea = textareaRef.current;
+    if (!textarea || event.ctrlKey) return;
+
+    const lineHeightPx = Number.parseFloat(window.getComputedStyle(textarea).lineHeight || "") || 20;
+    const deltaY = normalizeComposerWheelDeltaY(event.deltaY, event.deltaMode, lineHeightPx);
+    const target = resolveComposerWheelTarget(
+      {
+        scrollTop: textarea.scrollTop,
+        clientHeight: textarea.clientHeight,
+        scrollHeight: textarea.scrollHeight,
+      },
+      deltaY,
+    );
+
+    if (target === "ignore") return;
+
+    if (target === "composer") {
+      const maxScrollTop = Math.max(0, textarea.scrollHeight - textarea.clientHeight);
+      const nextTop = clamp(textarea.scrollTop + deltaY, 0, maxScrollTop);
+      event.preventDefault();
+      event.stopPropagation();
+      if (Math.abs(nextTop - textarea.scrollTop) > 0.5) {
+        textarea.scrollTop = nextTop;
+      }
+      return;
+    }
+
+    const scroller = findComposerTranscriptScroller(textarea);
+    if (!scroller) return;
+
+    const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    const nextTop = Math.max(0, Math.min(maxScrollTop, scroller.scrollTop + deltaY));
+    event.preventDefault();
+    event.stopPropagation();
+    if (Math.abs(nextTop - scroller.scrollTop) <= 0.5) return;
+    scroller.scrollTop = nextTop;
+    scroller.dispatchEvent(new Event("scroll"));
+  }, []);
 
   useLayoutEffect(() => {
     resizeTextarea();
@@ -583,6 +628,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
           setValue(e.target.value);
         }}
         disabled={!!inputDisabled}
+        onWheelCapture={handleTextareaWheelCapture}
         onPaste={(e) => {
           const transfer = e.clipboardData;
           if (!clipboardHasImagePayload(transfer)) return;

@@ -697,6 +697,10 @@ export class SessionSupervisor {
     emitSubscribedSessions(this.subscribedSessionIdsSink, this.buildSubscribedSessions());
   }
 
+  onEvictSession = (sessionId: string) => {
+    this.replicaDispatch({ type: "drop_session", sessionId });
+  };
+
   private syncActiveSnapshot(state: WorkspaceActiveSnapshotState) {
     syncWorkspaceAuthorityActiveSnapshot(this.createWorkspaceActiveSyncHost(), state);
   }

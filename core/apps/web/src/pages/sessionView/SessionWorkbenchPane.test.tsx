@@ -111,13 +111,14 @@ function TestPane() {
         onRetrySessionLoads={() => {}}
         subagentInvocations={[]}
         onOpenChildSession={() => {}}
+        isActive
         style={{ height: 400 }}
         itemIdentity={(item) => item.id}
         itemKey={(item) => item.id}
         increaseViewportBy={240}
         initialData={listItems.current}
         initialLocation={{ index: 0, align: "start" }}
-        dataState={{ data: listItems.current }}
+        threadProjectionOp={{ kind: "noop", projectionRevision: 0, changedItemIds: [], remeasureItemIds: [] }}
         context={context}
         onScroll={() => {}}
         onRenderedDataChange={() => {}}
@@ -136,6 +137,7 @@ function TestPane() {
         slashCommands={[]}
         draftAttachments={draftAttachments}
         setDraftAttachments={setDraftAttachments}
+        onAttachmentError={() => {}}
         sendNow={async () => {}}
         hasDraftContent={false}
         hasActiveTurn={false}
@@ -148,7 +150,6 @@ function TestPane() {
         onToggleRecording={() => {}}
         onInterruptSession={null}
         sendError={null}
-        onAttachmentError={() => {}}
         fileOpenError={null}
         dictationDebugText={null}
         dictationError={null}
@@ -245,13 +246,14 @@ function TestMessagePane() {
         onRetrySessionLoads={() => {}}
         subagentInvocations={[]}
         onOpenChildSession={() => {}}
+        isActive
         style={{ height: 400 }}
         itemIdentity={(item) => item.id}
         itemKey={(item) => item.id}
         increaseViewportBy={240}
         initialData={listItems.current}
         initialLocation={{ index: 0, align: "start" }}
-        dataState={{ data: listItems.current }}
+        threadProjectionOp={{ kind: "noop", projectionRevision: 0, changedItemIds: [], remeasureItemIds: [] }}
         context={context}
         onScroll={() => {}}
         onRenderedDataChange={() => {}}
@@ -270,6 +272,7 @@ function TestMessagePane() {
         slashCommands={[]}
         draftAttachments={draftAttachments}
         setDraftAttachments={setDraftAttachments}
+        onAttachmentError={() => {}}
         sendNow={async () => {}}
         hasDraftContent={false}
         hasActiveTurn={false}
@@ -282,7 +285,6 @@ function TestMessagePane() {
         onToggleRecording={() => {}}
         onInterruptSession={null}
         sendError={null}
-        onAttachmentError={() => {}}
         fileOpenError={null}
         dictationDebugText={null}
         dictationError={null}
@@ -380,13 +382,14 @@ function TestAssistantPane() {
         onRetrySessionLoads={() => {}}
         subagentInvocations={[]}
         onOpenChildSession={() => {}}
+        isActive
         style={{ height: 400 }}
         itemIdentity={(item) => item.id}
         itemKey={(item) => item.id}
         increaseViewportBy={240}
         initialData={listItems.current}
         initialLocation={{ index: 0, align: "start" }}
-        dataState={{ data: listItems.current }}
+        threadProjectionOp={{ kind: "noop", projectionRevision: 0, changedItemIds: [], remeasureItemIds: [] }}
         context={context}
         onScroll={() => {}}
         onRenderedDataChange={() => {}}
@@ -405,6 +408,7 @@ function TestAssistantPane() {
         slashCommands={[]}
         draftAttachments={draftAttachments}
         setDraftAttachments={setDraftAttachments}
+        onAttachmentError={() => {}}
         sendNow={async () => {}}
         hasDraftContent={false}
         hasActiveTurn={false}
@@ -417,7 +421,6 @@ function TestAssistantPane() {
         onToggleRecording={() => {}}
         onInterruptSession={null}
         sendError={null}
-        onAttachmentError={() => {}}
         fileOpenError={null}
         dictationDebugText={null}
         dictationError={null}

@@ -29,6 +29,15 @@ async function addLongMessages(request: APIRequestContext, sessionId: string) {
   }
 }
 
+async function setComposerLines(
+  composer: ReturnType<Parameters<typeof test>[0]["page"]["locator"]>,
+  label: string,
+  lineCount: number,
+) {
+  const text = Array.from({ length: lineCount }, (_, index) => `${label} ${index + 1}`).join("\n");
+  await composer.fill(text);
+}
+
 test("workbench: sticks to bottom unless the user scrolls away", async ({ page, request }) => {
   test.setTimeout(120000);
   await page.setViewportSize({ width: 1400, height: 900 });
@@ -96,6 +105,16 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
     )
     .toBeLessThanOrEqual(16);
 
+  for (const lineCount of [2, 4, 6]) {
+    await setComposerLines(composer, `composer-grow-${lineCount}`, lineCount);
+    await expect
+      .poll(
+        async () => scroller.evaluate((el) => el.scrollHeight - (el.scrollTop + el.clientHeight)),
+        { timeout: 10000 },
+      )
+      .toBeLessThanOrEqual(16);
+  }
+
   const prompt = `stick-bottom-${Date.now()}`;
   await composer.fill(prompt);
   await page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]").click();
@@ -112,6 +131,7 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
   await scroller.evaluate((el) => {
     const target = Math.max(0, el.scrollHeight - el.clientHeight - 400);
     el.scrollTop = target;
+    el.dispatchEvent(new Event("scroll"));
   });
   await expect
     .poll(async () => scroller.evaluate((el) => el.scrollHeight - (el.scrollTop + el.clientHeight)), {

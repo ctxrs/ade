@@ -1,63 +1,64 @@
 import { memo, type CSSProperties, type MutableRefObject, type ReactNode } from "react";
 import type {
-  DataWithScrollModifier,
-  ItemLocation,
-  ListScrollLocation,
-  ShortSizeAlign,
-  VirtuosoMessageListMethods,
-} from "@virtuoso.dev/message-list";
-import { WorkbenchMessageListStack, type WorkbenchMessageListContext } from "./SessionPage.thread";
+  PretextVirtualizerItemLocation,
+  PretextVirtualizerListMethods,
+  PretextVirtualizerScrollLocation,
+  PretextVirtualizerShortSizeAlign,
+} from "@pretext-virtualizer/interface";
+import { SessionThreadPretextVirtualizerList } from "./SessionThreadMessageList.pretextVirtualizer";
 import type { WorkbenchListItem } from "./SessionPage.types";
+import type { WorkbenchMessageListContext } from "./SessionPage.thread";
+import type { WorkbenchThreadProjectionOp } from "./sessionThreadProjection";
 
 export const SessionThreadMessageList = memo(function SessionThreadMessageList({
   sessionId,
+  isActive,
   style,
   initialData,
   itemContent,
-  itemIdentity,
   itemKey,
-  increaseViewportBy,
   initialLocation,
-  dataState,
   context,
   onScroll,
   onRenderedDataChange,
   methodsRef,
-  licenseKey,
   shortSizeAlign,
+  itemIdentity: _itemIdentity,
+  increaseViewportBy: _increaseViewportBy,
+  threadProjectionOp,
+  licenseKey: _licenseKey,
 }: {
   sessionId: string;
+  isActive: boolean;
   style: CSSProperties;
   initialData: WorkbenchListItem[];
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
   itemIdentity: (item: WorkbenchListItem) => unknown;
   itemKey: (item: WorkbenchListItem) => string;
   increaseViewportBy: number;
-  initialLocation: ItemLocation;
-  dataState?: DataWithScrollModifier<WorkbenchListItem>;
+  initialLocation: PretextVirtualizerItemLocation | null;
+  threadProjectionOp: WorkbenchThreadProjectionOp;
   context: WorkbenchMessageListContext;
-  onScroll: (location: ListScrollLocation) => void;
-  onRenderedDataChange: (range: WorkbenchListItem[]) => void;
-  methodsRef: MutableRefObject<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>;
+  onScroll: (location: PretextVirtualizerScrollLocation) => void;
+  onRenderedDataChange: (range: readonly WorkbenchListItem[]) => void;
+  methodsRef: MutableRefObject<PretextVirtualizerListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>;
   licenseKey: string;
-  shortSizeAlign: ShortSizeAlign;
+  shortSizeAlign: PretextVirtualizerShortSizeAlign;
 }) {
   return (
-    <WorkbenchMessageListStack
-      key={sessionId}
-      virtuosoStyle={style}
-      initialData={initialData}
+    <SessionThreadPretextVirtualizerList
+      style={style}
+      sessionId={sessionId}
+      isActive={isActive}
+      listItems={initialData}
       itemContent={itemContent}
-      itemIdentity={itemIdentity}
       itemKey={itemKey}
-      increaseViewportBy={increaseViewportBy}
       initialLocation={initialLocation}
-      dataState={dataState}
+      threadProjectionOp={threadProjectionOp}
       context={context}
       onScroll={onScroll}
       onRenderedDataChange={onRenderedDataChange}
-      listRef={methodsRef}
-      licenseKey={licenseKey}
+      methodsRef={methodsRef}
       shortSizeAlign={shortSizeAlign}
     />
   );

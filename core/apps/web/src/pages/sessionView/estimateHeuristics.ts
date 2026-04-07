@@ -20,6 +20,23 @@ const estimateTextHeight = (text: string, attachments = 0): number => {
   return base + lines * lineHeight + attachmentExtra;
 };
 
+const estimateMarkdownHeight = (text: string): number => {
+  const normalized = String(text ?? "");
+  if (!normalized.trim()) return 28;
+  const lines = normalized.split("\n");
+  const wrappedNonEmptyLines = lines.reduce((sum, line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return sum;
+    return sum + Math.max(1, Math.ceil(trimmed.length / 80));
+  }, 0);
+  const blankGroups = lines.reduce((sum, line, index) => {
+    const blank = line.trim().length === 0;
+    const previousBlank = index > 0 ? lines[index - 1]!.trim().length === 0 : false;
+    return blank && !previousBlank ? sum + 1 : sum;
+  }, 0);
+  return 4 + wrappedNonEmptyLines * 21.75 + blankGroups * 8;
+};
+
 export const estimateItemHeight = (item: WorkbenchListItem): number => {
   const kind = item.kind ?? "unknown";
   switch (kind) {
@@ -28,8 +45,9 @@ export const estimateItemHeight = (item: WorkbenchListItem): number => {
       return estimateTextHeight(msg.content ?? "", msg.attachments?.length ?? 0);
     }
     case "assistant":
+      return estimateMarkdownHeight((item as Extract<WorkbenchListItem, { kind: "assistant" }>).content ?? "");
     case "thought": {
-      const text = (item as Extract<WorkbenchListItem, { kind: "assistant" | "thought" }>).content ?? "";
+      const text = (item as Extract<WorkbenchListItem, { kind: "thought" }>).content ?? "";
       return estimateTextHeight(text);
     }
     case "turn_header": {
@@ -49,17 +67,20 @@ export const estimateItemHeight = (item: WorkbenchListItem): number => {
       return estimateTextHeight(text) + toolCount * 28;
     }
     case "turn_status":
-      return 44;
+      return 24;
     case "ask_user_question": {
       const input = String((item as Extract<WorkbenchListItem, { kind: "ask_user_question" }>).input ?? "");
       return estimateTextHeight(input) + 60;
     }
     case "spacer":
-      return 24;
+      return 1;
     default:
       return 56;
   }
 };
+
+export const estimatePretextVirtualizerItemHeight = (item: WorkbenchListItem): number =>
+  estimateItemHeight(item);
 
 export const shouldLockItem = (item: WorkbenchListItem): boolean => {
   if (!item) return false;

@@ -3,60 +3,42 @@ import {
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
-  useMemo,
 } from "react";
 import type {
-  DataWithScrollModifier,
-  ItemLocation,
-  ListScrollLocation,
-  ShortSizeAlign,
-  VirtuosoMessageListMethods,
-} from "@virtuoso.dev/message-list";
+  PretextVirtualizerItemLocation,
+  PretextVirtualizerListMethods,
+  PretextVirtualizerScrollLocation,
+  PretextVirtualizerShortSizeAlign,
+} from "@pretext-virtualizer/interface";
 import {
   Message,
   Session,
   SessionEvent,
-  submitAskUserQuestion,
   type MessageAttachment,
   type SubagentInvocation,
 } from "../../api/client";
-import { AskUserQuestionCard } from "../../components/AskUserQuestionCard";
-import { DictationOnboardingModal } from "../../components/dictation/DictationOnboardingModal";
 import {
-  WorkbenchComposer as UnifiedWorkbenchComposer,
   type ContextWindowInfo,
   type WorkbenchModeId,
 } from "../../components/WorkbenchComposer";
-import {
-  AssistantEntry,
-  ThreadItemView,
-  WorkbenchThoughtRow,
-  WorkbenchToolGroupRow,
-  WorkbenchToolRow,
-  WorkbenchTurnHeaderView,
-  WorkbenchTurnStatusRow,
-} from "../sessionThread/SessionThreadItemViews";
-import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
 import type {
   DictationOnboardingCloudDraft,
   DictationOnboardingState,
 } from "../../utils/useDictationController";
 import type { SlashCommandDescriptor } from "../../state/useComposerAutocomplete";
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
-import { markdownToPlainText } from "../SessionPage.helpers";
 import type { WorkbenchMessageListContext } from "../SessionPage.thread";
 import type {
   AskUserQuestionAnswerState,
-  ThreadItem,
   WorkbenchListItem,
 } from "../SessionPage.types";
-import { resolveWorkbenchMessageExpanded } from "../sessionMessageListItemIdentity";
-import { SessionThreadPane } from "../sessionThread/SessionThreadPane";
+import { SESSION_THREAD_LAYOUT_STYLE } from "../sessionThread/sessionThreadLayoutTokens";
+import type { WorkbenchThreadProjectionOp } from "../sessionThreadProjection";
 import { ProviderGuardBanner } from "./ProviderGuardBanner";
 import { SessionAuthBanner } from "./SessionAuthBanner";
 import { SessionDebugPanel } from "./SessionDebugPanel";
-import { SessionQueuePanel } from "./SessionQueuePanel";
 import { SessionSubagentInvocationsCard } from "./SessionSubagentInvocationsCard";
+import { SessionThreadSurface } from "./SessionThreadSurface";
 
 type ProviderGuardNotice = {
   kind: string;
@@ -125,21 +107,22 @@ type SessionWorkbenchPaneProps = {
   onRetrySessionLoads: () => void;
   subagentInvocations: SubagentInvocation[];
   onOpenChildSession: (childSessionId: string) => void;
+  isActive: boolean;
   style: CSSProperties;
   itemIdentity: (item: WorkbenchListItem) => unknown;
   itemKey: (item: WorkbenchListItem) => string;
   increaseViewportBy: number;
   initialData: WorkbenchListItem[];
-  initialLocation: ItemLocation;
-  dataState?: DataWithScrollModifier<WorkbenchListItem>;
+  initialLocation: PretextVirtualizerItemLocation | null;
+  threadProjectionOp: WorkbenchThreadProjectionOp;
   context: WorkbenchMessageListContext;
-  onScroll: (location: ListScrollLocation) => void;
-  onRenderedDataChange: (range: WorkbenchListItem[]) => void;
+  onScroll: (location: PretextVirtualizerScrollLocation) => void;
+  onRenderedDataChange: (range: readonly WorkbenchListItem[]) => void;
   methodsRef: MutableRefObject<
-    VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null
+    PretextVirtualizerListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null
   >;
   licenseKey: string;
-  shortSizeAlign: ShortSizeAlign;
+  shortSizeAlign: PretextVirtualizerShortSizeAlign;
   queueForPanel: Message[];
   pendingQueueMessageIdSet: Set<string>;
   queueActionBusy: boolean;
@@ -236,13 +219,14 @@ export function SessionWorkbenchPane({
   onRetrySessionLoads,
   subagentInvocations,
   onOpenChildSession,
+  isActive,
   style,
   itemIdentity,
   itemKey,
   increaseViewportBy,
   initialData,
   initialLocation,
-  dataState,
+  threadProjectionOp,
   context,
   onScroll,
   onRenderedDataChange,
@@ -303,163 +287,14 @@ export function SessionWorkbenchPane({
   onSetModelId,
   modelSwitchError,
 }: SessionWorkbenchPaneProps) {
-  const messageListContext = useMemo(
-    () => ({
-      ...context,
-      expandedTurnHeaders,
-      expandedTurnDetailsById,
-      expandedToolById,
-    }),
-    [context, expandedToolById, expandedTurnDetailsById, expandedTurnHeaders],
-  );
-  const renderThreadItem = (item: ThreadItem) => {
-    if (item.kind === "spacer") {
-      return <div style={{ height: 1 }} />;
-    }
-    if (item.kind === "thought") {
-      return <WorkbenchThoughtRow item={item} />;
-    }
-    if (item.kind === "turn_status") {
-      return <WorkbenchTurnStatusRow item={item} />;
-    }
-    if (item.kind === "assistant") {
-      if (!item.is_complete && item.content.trim().length === 0) {
-        return null;
-      }
-      return (
-        <AssistantEntry
-          content={item.content}
-          worktreeId={worktreeId}
-          onFileOpenError={handleFileOpenError}
-        />
-      );
-    }
-    if (item.kind === "tool_group") {
-      const expanded = expandedTurnDetailsById[item.turn_id] ?? false;
-      const toolsLoading = turnToolsLoading.includes(item.turn_id);
-      return (
-        <WorkbenchToolGroupRow
-          item={item}
-          verbosity={verbosity}
-          expanded={expanded}
-          toolsLoading={toolsLoading}
-          onToggle={() => {
-            setExpandedTurnDetailsById((prev) => ({
-              ...prev,
-              [item.turn_id]: !expanded,
-            }));
-          }}
-          onRequestTools={() => onRequestTurnTools(item.turn_id)}
-          onToggleTool={(toolId) => {
-            setExpandedToolById((prev) => ({ ...prev, [toolId]: !prev[toolId] }));
-          }}
-          expandedToolById={expandedToolById}
-        />
-      );
-    }
-    if (item.kind === "tool") {
-      const toolExpanded = expandedToolById[item.id] ?? false;
-      return (
-        <WorkbenchToolRow
-          item={item}
-          verbosity={verbosity}
-          expanded={toolExpanded}
-          onToggle={() => {
-            setExpandedToolById((prev) => ({ ...prev, [item.id]: !toolExpanded }));
-          }}
-        />
-      );
-    }
-    if (item.kind === "ask_user_question") {
-      const isActive = item.tool_call_id === activeAskToolCallId;
-      return (
-        <AskUserQuestionCard
-          input={item.input}
-          answers={item.answers}
-          outcome={item.outcome}
-          readOnly={item.answered}
-          active={isActive}
-          onCancel={
-            item.answered
-              ? undefined
-              : async () => {
-                await submitAskUserQuestion(id, item.tool_call_id, "cancelled", {});
-                setOptimisticAskAnswers((prev) => ({
-                  ...prev,
-                  [item.tool_call_id]: { outcome: "cancelled", answers: {} },
-                }));
-              }
-          }
-          onSubmit={
-            item.answered
-              ? undefined
-              : async (answers) => {
-                await submitAskUserQuestion(id, item.tool_call_id, "submitted", answers);
-                setOptimisticAskAnswers((prev) => ({
-                  ...prev,
-                  [item.tool_call_id]: { outcome: "submitted", answers },
-                }));
-              }
-          }
-        />
-      );
-    }
-    return (
-      <ThreadItemView
-        item={item}
-        worktreeId={worktreeId}
-        onFileOpenError={handleFileOpenError}
-        messageExpanded={
-          item.kind === "message" ? resolveWorkbenchMessageExpanded(item, expandedMessageById) : undefined
-        }
-        onToggleMessageExpanded={
-          item.kind === "message"
-            ? (expanded) => {
-                setExpandedMessageById((prev) => ({ ...prev, [item.id]: expanded }));
-              }
-            : undefined
-        }
-      />
-    );
-  };
-
-  const workbenchItemContent = (_: number, item: WorkbenchListItem) => {
-    if (!item) return <div style={{ height: 1 }} />;
-    const itemId = item.id;
-    if (item.kind === "turn_header") {
-      const header = (item as Extract<WorkbenchListItem, { kind: "turn_header" }>).header;
-      const plainText = header.plain_text ?? markdownToPlainText(header.content ?? "");
-      const isLong = plainText.split("\n").length > 4 || plainText.length > 280;
-      const expanded = expandedTurnHeaders[header.id] ?? !isLong;
-      return (
-        <div data-thread-item-id={itemId} style={{ display: "contents" }}>
-          <WorkbenchTurnHeaderView
-            header={header}
-            plainText={plainText}
-            expanded={expanded}
-            onToggle={() => {
-              setExpandedTurnHeaders((prev) => ({ ...prev, [header.id]: !expanded }));
-            }}
-          />
-        </div>
-      );
-    }
-    const content = renderThreadItem(item as ThreadItem);
-    return (
-      <div className="wb-thread-indent" data-thread-item-id={itemId}>
-        {content}
-      </div>
-    );
-  };
   const liveTailCount = liveTailItems.length;
   const totalVisibleThreadItems = listItems.length + liveTailCount;
-
-  const harness = HARNESS_CATALOG.find((candidate) => candidate.id === (session?.provider_id ?? ""));
 
   return (
     <div
       className="wb-session-view ctx-drop-scope"
       ref={dropScopeRef}
+      style={SESSION_THREAD_LAYOUT_STYLE}
       data-testid="session-view"
       data-session-id={id}
       data-thread-count={totalVisibleThreadItems}
@@ -559,97 +394,87 @@ export function SessionWorkbenchPane({
         />
         {showDebug && debugEvents.length > 0 ? <SessionDebugPanel events={debugEvents} /> : null}
 
-        <SessionThreadPane
+        <SessionThreadSurface
           sessionId={id}
-          style={style}
-          initialData={initialData}
-          itemContent={workbenchItemContent}
-          itemIdentity={itemIdentity}
-          itemKey={itemKey}
-          increaseViewportBy={increaseViewportBy}
-          initialLocation={initialLocation}
-          dataState={dataState}
-          context={messageListContext}
-          onScroll={onScroll}
-          onRenderedDataChange={onRenderedDataChange}
-          methodsRef={methodsRef}
-          licenseKey={licenseKey}
-          shortSizeAlign={shortSizeAlign}
-        >
-          {liveTailCount > 0 ? (
-            <div className="wb-thread-live-tail" role="list" aria-label="Live turn">
-              {liveTailItems.map((item, index) => (
-                <div key={item.id} role="listitem" className="wb-thread-live-tail-row" data-thread-item-id={item.id}>
-                  {workbenchItemContent(index, item)}
-                </div>
-              ))}
-            </div>
-          ) : null}
-          <SessionQueuePanel
-            queue={queueForPanel}
-            pendingQueueMessageIdSet={pendingQueueMessageIdSet}
-            queueActionBusy={queueActionBusy}
-            sendBusy={sendBusy}
-            onSendQueuedNow={onSendQueuedNow}
-            onEditQueued={onEditQueued}
-            onRemoveQueued={onRemoveQueued}
-          />
-          <UnifiedWorkbenchComposer
-            variant="activeSession"
-            value={input}
-            setValue={setInput}
-            placeholder="@ for context, / for commands"
-            inputDisabled={dictationRecording}
-            sessionIdForAutocomplete={id}
-            slashCommands={slashCommands}
-            attachments={draftAttachments}
-            setAttachments={setDraftAttachments}
-            onAttachmentError={onAttachmentError}
-            onSend={sendNow}
-            sendDisabled={sendBusy || !hasDraftContent}
-            sendDisabledReason={
-              sendBusy ? "Sending..." : !hasDraftContent ? "Enter a message." : null
-            }
-            onInterrupt={onInterruptSession}
-            isWorking={hasActiveTurn}
-            verbosity={verbosity}
-            onSetVerbosity={setVerbosityPref}
-            modeId={workbenchMode}
-            setModeId={setWorkbenchMode}
-            contextWindow={contextWindow}
-            recording={dictationRecording}
-            onToggleRecording={onToggleRecording}
-            harnessLabel={harness?.label ?? (session?.provider_id ?? "Provider")}
-            harnessLogoSrc={harness?.logoSrc}
-            harnessLogoInvert={harness?.invertInDark}
-            harnessLogoInvertInLight={harness?.invertInLight}
-            availableModels={availableModels}
-            currentModelId={currentModelId}
-            onSetModelId={onSetModelId}
-          />
-          {sendError ? <div className="wb-banner">{sendError}</div> : null}
-          {fileOpenError ? <div className="wb-banner">{fileOpenError}</div> : null}
-          {dictationDebugText ? <div className="wb-banner">{dictationDebugText}</div> : null}
-          {dictationError ? <div className="wb-banner">{dictationError}</div> : null}
-          <DictationOnboardingModal
-            state={dictationOnboarding}
-            onClose={dismissDictationOnboarding}
-            onBack={backDictationOnboarding}
-            onChooseLocal={chooseDictationOnboardingLocal}
-            onChooseCloud={chooseDictationOnboardingCloud}
-            onCloudChange={updateDictationOnboardingCloud}
-            onSubmitCloud={() => {
-              void submitDictationOnboardingCloud();
-            }}
-            onSubmitLocal={() => {
-              void submitDictationOnboardingLocal();
-            }}
-          />
-        </SessionThreadPane>
-
-        <div className="sr-only" aria-live="polite">
-          {session && (atBottom ? "Agent output updating." : "New agent activity.")}
-        </div>
+          session={session}
+          worktreeId={worktreeId}
+          handleFileOpenError={handleFileOpenError}
+          transcript={{
+            listItems,
+            liveTailItems,
+            activeAskToolCallId,
+            expandedTurnHeaders,
+            setExpandedTurnHeaders,
+            expandedTurnDetailsById,
+            setExpandedTurnDetailsById,
+            expandedToolById,
+            setExpandedToolById,
+            expandedMessageById,
+            setExpandedMessageById,
+            turnToolsLoading,
+            verbosity,
+            setOptimisticAskAnswers,
+            onRequestTurnTools,
+            isActive,
+            listStyle: style,
+            itemIdentity,
+            itemKey,
+            increaseViewportBy,
+            initialData,
+            initialLocation,
+            threadProjectionOp,
+            context,
+            onScroll,
+            onRenderedDataChange,
+            methodsRef,
+            licenseKey,
+            shortSizeAlign,
+          }}
+          queue={{
+            queueForPanel,
+            pendingQueueMessageIdSet,
+            queueActionBusy,
+            sendBusy,
+            onSendQueuedNow,
+            onEditQueued,
+            onRemoveQueued,
+          }}
+          composer={{
+            input,
+            setInput,
+            slashCommands,
+            draftAttachments,
+            setDraftAttachments,
+            onAttachmentError,
+            sendNow,
+            sendBusy,
+            hasDraftContent,
+            hasActiveTurn,
+            setVerbosityPref,
+            workbenchMode,
+            setWorkbenchMode,
+            contextWindow,
+            dictationRecording,
+            onToggleRecording,
+            onInterruptSession,
+            sendError,
+            fileOpenError,
+            dictationDebugText,
+            dictationError,
+            dictationOnboarding,
+            dismissDictationOnboarding,
+            backDictationOnboarding,
+            chooseDictationOnboardingLocal,
+            chooseDictationOnboardingCloud,
+            updateDictationOnboardingCloud,
+            submitDictationOnboardingCloud,
+            submitDictationOnboardingLocal,
+            availableModels,
+            currentModelId,
+            onSetModelId,
+          }}
+          atBottom={atBottom}
+        />
       </div>
     </div>
   );

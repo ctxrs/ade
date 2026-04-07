@@ -34,6 +34,9 @@
     "typecheck": "tsc --noEmit --incremental false"
   },
   "dependencies": {
+    "@chenglou/pretext": "^0.0.4",
+    "@pretext-virtualizer/core": "workspace:*",
+    "@pretext-virtualizer/interface": "workspace:*",
     "@ctx/design": "workspace:*",
     "@ctx/types": "workspace:*",
     "@monaco-editor/react": "^4.6.0",

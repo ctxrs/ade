@@ -269,13 +269,15 @@ export function createWorkbenchLayoutProjectionOp(params: {
     previousUiState.turnToolsLoading,
     nextUiState.turnToolsLoading,
   );
+  const verbosityChanged = (previousUiState.verbosity ?? null) !== (nextUiState.verbosity ?? null);
 
   if (
     changedTurnHeaderIds.size === 0 &&
     changedTurnDetailIds.size === 0 &&
     changedToolIds.size === 0 &&
     changedMessageIds.size === 0 &&
-    changedLoadingTurnIds.size === 0
+    changedLoadingTurnIds.size === 0 &&
+    !verbosityChanged
   ) {
     return createWorkbenchThreadProjectionOp("noop", projectionRevision);
   }
@@ -288,9 +290,10 @@ export function createWorkbenchLayoutProjectionOp(params: {
         case "message":
           return changedMessageIds.has(item.id);
         case "tool":
-          return changedToolIds.has(item.id);
+          return verbosityChanged || changedToolIds.has(item.id);
         case "tool_group":
           return (
+            verbosityChanged ||
             changedTurnDetailIds.has(item.turn_id) ||
             changedLoadingTurnIds.has(item.turn_id) ||
             item.tools.some((tool) => changedToolIds.has(tool.id))

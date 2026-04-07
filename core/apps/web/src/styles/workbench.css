@@ -830,6 +830,7 @@
   line-height: 1.45;
   padding: 2px 2px;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
 }
 
 .wb-composer-mirror {
@@ -2894,6 +2895,10 @@
   width: 100%;
 }
 
+.wb-session-slot--hydrating .wb-session-slot-body {
+  background: transparent;
+}
+
 .wb-session-start-failure {
   display: flex;
   flex-direction: column;
@@ -2921,15 +2926,17 @@
 }
 
 .wb-session-view {
-  --wb-thread-max-width: 820px;
   --wb-scrollbar-width: 6px;
-  --wb-session-padding-inline: 12px;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
   height: 100%;
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow-x: hidden;
   overflow-anchor: none;
+  box-sizing: border-box;
   padding-left: var(--wb-session-padding-inline);
   padding-right: var(--wb-session-padding-inline);
   padding-bottom: 12px;
@@ -2942,6 +2949,18 @@
   max-width: var(--wb-thread-max-width);
   margin-left: auto;
   margin-right: auto;
+}
+
+.wb-session-view .wb-pretext-transcript-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: calc(100% + (var(--wb-session-padding-inline) * 2));
+  min-width: 0;
+  max-width: none;
+  margin-left: calc(var(--wb-session-padding-inline) * -1);
+  margin-right: calc(var(--wb-session-padding-inline) * -1);
+  display: block;
+  position: relative;
 }
 
 .wb-session-view .thread-stack {
@@ -2961,6 +2980,8 @@
 }
 
 .wb-session-view .wb-thread-stack {
+  flex: 1 1 auto;
+  align-self: stretch;
   max-width: none;
   width: calc(100% + (var(--wb-session-padding-inline) * 2));
   margin-left: calc(var(--wb-session-padding-inline) * -1);
@@ -2975,7 +2996,7 @@
 
 .wb-thread-live-tail {
   width: 100%;
-  max-width: var(--wb-thread-max-width);
+  max-width: calc(var(--wb-transcript-max-width) + (var(--wb-session-padding-inline) * 2));
   margin-left: auto;
   margin-right: auto;
   display: flex;
@@ -2991,7 +3012,12 @@
 }
 
 .wb-thread-scroller {
+  display: block;
+  flex: 1 1 auto;
+  align-self: stretch;
   box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   padding-inline: 0;
   overflow-x: hidden;
   overflow-anchor: none;
@@ -3006,7 +3032,8 @@
 
 .wb-thread-list {
   width: 100%;
-  max-width: calc(var(--wb-thread-max-width) + (var(--wb-session-padding-inline) * 2));
+  min-width: 0;
+  max-width: calc(var(--wb-transcript-max-width) + (var(--wb-session-padding-inline) * 2));
   margin-left: auto;
   margin-right: auto;
   padding: 0 var(--wb-session-padding-inline) 8px;
@@ -3022,9 +3049,35 @@
 
 .wb-thread-scroller--message-list [data-testid="virtuoso-list"] [role="listitem"] {
   width: 100%;
-  max-width: var(--wb-thread-max-width);
+  max-width: var(--wb-transcript-max-width);
   margin-left: auto;
   margin-right: auto;
+  padding-left: var(--wb-session-padding-inline);
+  padding-right: var(--wb-session-padding-inline);
+  box-sizing: border-box;
+}
+
+.wb-thread-scroller[data-pretext-virtualizer-list="1"] .wb-thread-list[data-pretext-virtualizer-content="1"] {
+  width: 100%;
+  max-width: none;
+  margin-left: 0;
+  margin-right: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.wb-thread-scroller[data-pretext-virtualizer-list="1"] .wb-thread-list[data-pretext-virtualizer-content="1"] [data-pretext-virtualizer-row-shell="1"] {
+  width: 100%;
+  padding-left: 0;
+  padding-right: 0;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: center;
+}
+
+.wb-thread-scroller[data-pretext-virtualizer-list="1"] .wb-pretext-virtualizer-row[data-pretext-virtualizer-row="1"] {
+  width: 100%;
+  max-width: var(--wb-transcript-max-width);
   padding-left: var(--wb-session-padding-inline);
   padding-right: var(--wb-session-padding-inline);
   box-sizing: border-box;
@@ -3450,7 +3503,8 @@
 .wb-turn-header-content,
 .wb-tool-markdown,
 .wb-assistant-body {
-  line-height: 1.55;
+  font-size: var(--wb-markdown-body-font-size);
+  line-height: var(--wb-markdown-body-line-height);
 }
 
 .wb-turn-header-content a,
@@ -3470,22 +3524,29 @@
   color: inherit;
 }
 
-.wb-turn-header-content :where(p, ul, ol, pre, blockquote, table, hr),
-.wb-tool-markdown :where(p, ul, ol, pre, blockquote, table, hr),
-.wb-assistant-body :where(p, ul, ol, pre, blockquote, table, hr) {
-  margin: 0 0 12px 0;
+.wb-turn-header-content :where(.wb-markdown-root, .wb-md-stack, .wb-md-list-item-body),
+.wb-tool-markdown :where(.wb-markdown-root, .wb-md-stack, .wb-md-list-item-body),
+.wb-assistant-body :where(.wb-markdown-root, .wb-md-stack, .wb-md-list-item-body) {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
-.wb-turn-header-content :where(p, ul, ol, pre, blockquote, table, hr):last-child,
-.wb-tool-markdown :where(p, ul, ol, pre, blockquote, table, hr):last-child,
-.wb-assistant-body :where(p, ul, ol, pre, blockquote, table, hr):last-child {
-  margin-bottom: 0;
+.wb-turn-header-content :where(.wb-md-block),
+.wb-tool-markdown :where(.wb-md-block),
+.wb-assistant-body :where(.wb-md-block) {
+  min-width: 0;
+}
+
+.wb-turn-header-content :where(p, ul, ol, pre, .wb-md-blockquote, hr, .wb-md-table-scroll, .codeblock, h1, h2, h3, h4),
+.wb-tool-markdown :where(p, ul, ol, pre, .wb-md-blockquote, hr, .wb-md-table-scroll, .codeblock, h1, h2, h3, h4),
+.wb-assistant-body :where(p, ul, ol, pre, .wb-md-blockquote, hr, .wb-md-table-scroll, .codeblock, h1, h2, h3, h4) {
+  margin: 0;
 }
 
 .wb-turn-header-content :where(h1, h2, h3, h4),
 .wb-tool-markdown :where(h1, h2, h3, h4),
 .wb-assistant-body :where(h1, h2, h3, h4) {
-  margin: 16px 0 8px 0;
   line-height: 1.25;
   font-weight: 600;
   color: var(--text);
@@ -3518,28 +3579,49 @@
 .wb-turn-header-content :where(ul, ol),
 .wb-tool-markdown :where(ul, ol),
 .wb-assistant-body :where(ul, ol) {
-  padding-left: 1.25em;
+  margin: 0;
+  padding-left: var(--wb-markdown-list-indent);
 }
 
 .wb-turn-header-content :where(li + li),
 .wb-tool-markdown :where(li + li),
 .wb-assistant-body :where(li + li) {
-  margin-top: 4px;
+  margin-top: var(--wb-markdown-list-gap);
 }
 
-.wb-turn-header-content :where(li > p),
-.wb-tool-markdown :where(li > p),
-.wb-assistant-body :where(li > p) {
-  margin: 0;
+.wb-turn-header-content :where(.wb-md-task-item),
+.wb-tool-markdown :where(.wb-md-task-item),
+.wb-assistant-body :where(.wb-md-task-item) {
+  list-style: none;
+}
+
+.wb-turn-header-content :where(.wb-md-task-row),
+.wb-tool-markdown :where(.wb-md-task-row),
+.wb-assistant-body :where(.wb-md-task-row) {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 0;
+}
+
+.wb-turn-header-content :where(.wb-md-task-checkbox),
+.wb-tool-markdown :where(.wb-md-task-checkbox),
+.wb-assistant-body :where(.wb-md-task-checkbox) {
+  width: 14px;
+  height: 14px;
+  margin: 2px 0 0 0;
 }
 
 .wb-turn-header-content :where(p, li, td, th, h1, h2, h3, h4, h5, h6)>code,
 .wb-tool-markdown :where(p, li, td, th, h1, h2, h3, h4, h5, h6)>code,
 .wb-assistant-body :where(p, li, td, th, h1, h2, h3, h4, h5, h6)>code {
   display: inline;
-  padding: 1px 6px;
-  border-radius: 6px;
-  border: 1px solid var(--surface-active);
+  font-family: var(--wb-markdown-inline-code-font-family);
+  font-size: var(--wb-markdown-inline-code-font-size);
+  line-height: inherit;
+  padding: var(--wb-markdown-inline-code-padding-block) var(--wb-markdown-inline-code-padding-inline);
+  border-radius: var(--wb-markdown-inline-code-border-radius);
+  border: var(--wb-markdown-inline-code-border-width) solid var(--surface-active);
   background: var(--surface-soft);
   color: var(--text-strong);
   vertical-align: baseline;
@@ -3555,6 +3637,73 @@
 .wb-assistant-body :where(hr) {
   border: none;
   border-top: 1px solid var(--surface-selected);
+}
+
+.wb-turn-header-content :where(.wb-md-blockquote),
+.wb-tool-markdown :where(.wb-md-blockquote),
+.wb-assistant-body :where(.wb-md-blockquote) {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin-left: 0;
+  padding-left: var(--wb-markdown-blockquote-padding-inline-start);
+  border-left: var(--wb-markdown-blockquote-border-width) solid var(--surface-active);
+  color: var(--text-muted);
+}
+
+.wb-turn-header-content :where(.wb-md-table-scroll),
+.wb-tool-markdown :where(.wb-md-table-scroll),
+.wb-assistant-body :where(.wb-md-table-scroll) {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-gutter: stable;
+}
+
+.wb-turn-header-content :where(.codeblock),
+.wb-tool-markdown :where(.codeblock),
+.wb-assistant-body :where(.codeblock) {
+  margin: 0;
+}
+
+.wb-turn-header-content :where(.wb-md-table),
+.wb-tool-markdown :where(.wb-md-table),
+.wb-assistant-body :where(.wb-md-table) {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  background: var(--surface-soft);
+}
+
+.wb-turn-header-content :where(.wb-md-table-cell),
+.wb-tool-markdown :where(.wb-md-table-cell),
+.wb-assistant-body :where(.wb-md-table-cell) {
+  padding: var(--wb-markdown-table-cell-padding-block) var(--wb-markdown-table-cell-padding-inline);
+  border: var(--wb-markdown-table-border-width) solid var(--surface-active);
+  vertical-align: top;
+  text-align: left;
+  line-height: var(--wb-markdown-body-line-height);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.wb-turn-header-content :where(.wb-md-table-cell-head),
+.wb-tool-markdown :where(.wb-md-table-cell-head),
+.wb-assistant-body :where(.wb-md-table-cell-head) {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.wb-tool-markdown img,
+.wb-assistant-body img,
+.msg img {
+  display: block;
+  width: var(--wb-markdown-image-width);
+  height: var(--wb-markdown-image-height);
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--surface-active);
+  object-fit: contain;
+  background: var(--surface-soft);
 }
 
 .wb-composer {
