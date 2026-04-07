@@ -1,9 +1,7 @@
 import type { Artifact } from "../api/client";
+import { getArtifactDocumentFormat } from "./documentArtifacts";
 
 const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "webm", "m4v"]);
-const MARKDOWN_EXTENSIONS = new Set(["md", "markdown", "mdown", "mkd", "mkdn"]);
-const TEXT_EXTENSIONS = new Set(["txt", "text", "log"]);
-const JSON_EXTENSIONS = new Set(["json", "jsonl", "ndjson", "jsonc"]);
 const CSV_EXTENSIONS = new Set(["csv"]);
 
 export type ArtifactPreviewKind = "none" | "image" | "video" | "markdown" | "text";
@@ -36,27 +34,13 @@ const isCsvArtifact = (artifact: Artifact): boolean => {
   return CSV_EXTENSIONS.has(ext);
 };
 
-const isMarkdownArtifact = (artifact: Artifact): boolean => {
-  const mime = artifactMime(artifact);
-  if (mime === "text/markdown" || mime === "text/x-markdown") return true;
-  const ext = artifactExtension(artifact.absolute_path || artifact.name || "");
-  return MARKDOWN_EXTENSIONS.has(ext);
-};
-
-const isTextArtifact = (artifact: Artifact): boolean => {
-  const mime = artifactMime(artifact);
-  if (mime === "text/plain") return true;
-  if (mime === "application/json" || mime === "text/json" || mime.endsWith("+json")) return true;
-  const ext = artifactExtension(artifact.absolute_path || artifact.name || "");
-  return TEXT_EXTENSIONS.has(ext) || JSON_EXTENSIONS.has(ext);
-};
-
 export const getArtifactPreviewKind = (artifact: Artifact): ArtifactPreviewKind => {
+  const documentFormat = getArtifactDocumentFormat(artifact);
   if (isImageArtifact(artifact)) return "image";
   if (isVideoArtifact(artifact)) return "video";
   if (isCsvArtifact(artifact)) return "none";
-  if (isMarkdownArtifact(artifact)) return "markdown";
-  if (isTextArtifact(artifact)) return "text";
+  if (documentFormat === "markdown" || documentFormat === "mdx") return "markdown";
+  if (documentFormat === "text") return "text";
   return "none";
 };
 

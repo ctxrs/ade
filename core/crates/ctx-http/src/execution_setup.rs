@@ -426,6 +426,8 @@ impl ExecutionSetupCoordinator {
         settings: ExecutionSettings,
         daemon_url: String,
     ) {
+        #[cfg(test)]
+        eprintln!("run_workspace_launch: begin workspace={}", workspace.id);
         let launch_started = std::time::Instant::now();
         let observer = LaunchObserver {
             coordinator: Arc::clone(&self),
@@ -440,6 +442,8 @@ impl ExecutionSetupCoordinator {
                 // We check launch readiness after the join before deciding which launch path
                 // to take.
                 let join_shared_runtime = self.prewarm.runtime_is_running(&settings, false).await;
+                #[cfg(test)]
+                eprintln!("run_workspace_launch: join_shared_runtime={join_shared_runtime}");
 
                 if join_shared_runtime {
                     let reusable_container_exists = self
@@ -447,7 +451,13 @@ impl ExecutionSetupCoordinator {
                         .workspace_container_exists(workspace.id)
                         .await
                         .context("failed to probe existing workspace container")?;
+                    #[cfg(test)]
+                    eprintln!(
+                        "run_workspace_launch: reusable_container_exists={reusable_container_exists}"
+                    );
                     if reusable_container_exists {
+                        #[cfg(test)]
+                        eprintln!("run_workspace_launch: ensure_workspace_container_with_observer");
                         return self
                             .harness
                             .ensure_workspace_container_with_observer(
@@ -516,6 +526,8 @@ impl ExecutionSetupCoordinator {
                         .await
                         .context("container runtime failed")
                 } else {
+                    #[cfg(test)]
+                    eprintln!("run_workspace_launch: direct ensure_workspace_container_with_observer");
                     self.harness
                         .ensure_workspace_container_with_observer(
                             &workspace,
@@ -532,6 +544,8 @@ impl ExecutionSetupCoordinator {
 
         match run_result {
             Ok(()) => {
+                #[cfg(test)]
+                eprintln!("run_workspace_launch: success");
                 if !matches!(settings.mode, ExecutionMode::Host) {
                     self.refresh_startup_prewarm_metadata_after_successful_container_launch(
                         &settings.container,
@@ -555,6 +569,8 @@ impl ExecutionSetupCoordinator {
                 self.record_launch_metric(launch_started.elapsed().as_millis() as u64, "ready");
             }
             Err(err) => {
+                #[cfg(test)]
+                eprintln!("run_workspace_launch: error={err:#}");
                 let message = format_error_chain(&err);
                 let phase = job
                     .current_phase()

@@ -40,6 +40,18 @@ describe("artifact preview classification", () => {
     ).toBe("markdown");
   });
 
+  it("classifies mdx by extension even when the mime falls back to octet-stream", () => {
+    expect(
+      getArtifactPreviewKind(
+        makeArtifact({
+          name: "post.mdx",
+          mime_type: "application/octet-stream",
+          absolute_path: "/tmp/post.mdx",
+        }),
+      ),
+    ).toBe("markdown");
+  });
+
   it("classifies plain text and json artifacts as text", () => {
     expect(
       getArtifactPreviewKind(
@@ -56,6 +68,15 @@ describe("artifact preview classification", () => {
           name: "report.json",
           mime_type: "application/json",
           absolute_path: "/tmp/report.json",
+        }),
+      ),
+    ).toBe("text");
+
+    expect(
+      getArtifactPreviewKind(
+        makeArtifact({
+          name: "main.ts",
+          absolute_path: "/tmp/main.ts",
         }),
       ),
     ).toBe("text");

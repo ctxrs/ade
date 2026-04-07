@@ -957,6 +957,7 @@ async fn concurrent_launch_start_is_deduplicated() {
     let container_name = format!("ctx-harness-{}", workspace.id.0);
     let sandbox_cli_path =
         write_running_container_sandbox_cli_shim(data_dir.path(), &log_path, &container_name);
+    let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli = EnvVarGuard::set(
         "CTX_HARNESS_SANDBOX_CLI_PATH",
         &sandbox_cli_path.to_string_lossy(),

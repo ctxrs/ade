@@ -170,6 +170,13 @@ fn infer_artifact_mime_type(path: &StdPath, override_value: Option<String>) -> S
             return trimmed.to_string();
         }
     }
+    if path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("mdx"))
+    {
+        return "text/markdown".to_string();
+    }
     mime_guess::from_path(path)
         .first_or_octet_stream()
         .essence_str()
@@ -462,4 +469,37 @@ pub(super) async fn set_session_artifacts(
     state.publish_event(event).await;
 
     Ok(Json(artifacts))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::infer_artifact_mime_type;
+    use std::path::Path;
+
+    #[test]
+    fn infer_artifact_mime_type_treats_mdx_as_markdown() {
+        assert_eq!(
+            infer_artifact_mime_type(Path::new("/tmp/merge-queue-for-agents.mdx"), None),
+            "text/markdown"
+        );
+    }
+
+    #[test]
+    fn infer_artifact_mime_type_preserves_explicit_override() {
+        assert_eq!(
+            infer_artifact_mime_type(
+                Path::new("/tmp/merge-queue-for-agents.mdx"),
+                Some("application/mdx".to_string())
+            ),
+            "application/mdx"
+        );
+    }
+
+    #[test]
+    fn infer_artifact_mime_type_keeps_existing_markdown_inference() {
+        assert_eq!(
+            infer_artifact_mime_type(Path::new("/tmp/notes.md"), None),
+            "text/markdown"
+        );
+    }
 }

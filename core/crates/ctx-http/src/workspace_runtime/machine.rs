@@ -59,7 +59,6 @@ pub(super) fn sandbox_machine_temp_root(data_root: &Path) -> PathBuf {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 pub(super) fn sandbox_machine_cache_root(data_root: &Path) -> PathBuf {
     data_root
         .join("sandbox-cli")
@@ -255,7 +254,6 @@ async fn materialize_sandbox_machine_cache_file(
 }
 
 #[cfg(test)]
-#[cfg(test)]
 pub(super) async fn seed_shared_sandbox_machine_cache(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
@@ -292,7 +290,6 @@ pub(super) async fn seed_shared_sandbox_machine_cache(
     Ok(())
 }
 
-#[cfg(test)]
 #[cfg(test)]
 pub(super) async fn persist_sandbox_machine_cache_to_shared(
     data_root: &Path,

@@ -48,7 +48,7 @@ pub(crate) async fn wait_for_execution_launch_terminal(
     job_id: &str,
     timeout: Duration,
 ) -> ExecutionLaunchSnapshot {
-    tokio::time::timeout(timeout, async {
+    match tokio::time::timeout(timeout, async {
         let (initial, mut rx) = coordinator
             .subscribe_launch(job_id)
             .await
@@ -102,7 +102,16 @@ pub(crate) async fn wait_for_execution_launch_terminal(
         }
     })
     .await
-    .expect("timed out waiting for terminal launch state")
+    {
+        Ok(snapshot) => snapshot,
+        Err(_) => {
+            let latest = coordinator
+                .launch_status(job_id)
+                .await
+                .expect("missing launch job after timeout");
+            panic!("timed out waiting for terminal launch state: {latest:?}");
+        }
+    }
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@ import {
   isVideoArtifact,
   type ArtifactPreviewKind,
 } from "../utils/artifacts";
+import { buildArtifactDocumentPreview } from "../utils/documentArtifacts";
 import { errorMessage } from "../utils/errorMessage";
 
 const MIN_ZOOM = 1;
@@ -97,11 +98,9 @@ async function copyArtifactImage(artifact: Artifact, url: string) {
 function ArtifactInlineTextPreview({
   sessionId,
   artifact,
-  previewKind,
 }: {
   sessionId: string;
   artifact: Artifact;
-  previewKind: Extract<ArtifactPreviewKind, "markdown" | "text">;
 }) {
   const artifactId = idToString(artifact.id);
   const url = artifactUrl(sessionId, artifactId);
@@ -146,15 +145,41 @@ function ArtifactInlineTextPreview({
     return <div className="wb-artifact-inline-status">{textPreview.error}</div>;
   }
 
-  if (previewKind === "markdown") {
+  const documentPreview = buildArtifactDocumentPreview(artifact, textPreview.content);
+
+  if (documentPreview?.renderKind === "markdown") {
     return (
       <div className="wb-artifact-inline-markdown wb-tool-markdown">
-        <MemoMarkdown content={textPreview.content} />
+        <MemoMarkdown content={documentPreview.content} />
       </div>
     );
   }
 
-  return <pre className="wb-artifact-inline-text">{textPreview.content}</pre>;
+  return <pre className="wb-artifact-inline-text">{documentPreview?.content ?? textPreview.content}</pre>;
+}
+
+function ArtifactDocumentContent({
+  artifact,
+  content,
+}: {
+  artifact: Artifact;
+  content: string;
+}) {
+  const documentPreview = buildArtifactDocumentPreview(artifact, content);
+
+  if (documentPreview?.renderKind === "markdown") {
+    return (
+      <div className="wb-artifact-text-content wb-tool-markdown">
+        <MemoMarkdown content={documentPreview.content} />
+      </div>
+    );
+  }
+
+  return (
+    <pre className="wb-artifact-text-content wb-artifact-text-pre">
+      {documentPreview?.content ?? content}
+    </pre>
+  );
 }
 
 function ArtifactCard({
@@ -233,7 +258,6 @@ function ArtifactCard({
       <ArtifactInlineTextPreview
         sessionId={sessionId}
         artifact={artifact}
-        previewKind={previewKind}
       />
     );
   } else {
@@ -296,7 +320,6 @@ function ArtifactViewer({
   const previewKind = getArtifactPreviewKind(artifact);
   const isVideo = previewKind === "video";
   const isImage = previewKind === "image";
-  const isMarkdown = previewKind === "markdown";
   const isTextPreview = previewKind === "markdown" || previewKind === "text";
   const name = displayName(artifact);
   const artifactId = idToString(artifact.id);
@@ -642,12 +665,8 @@ function ArtifactViewer({
               <div className="wb-artifacts-error" role="alert">
                 <div>{textPreview.error}</div>
               </div>
-            ) : isMarkdown ? (
-              <div className="wb-artifact-text-content wb-tool-markdown">
-                <MemoMarkdown content={textPreview.content} />
-              </div>
             ) : (
-              <pre className="wb-artifact-text-content wb-artifact-text-pre">{textPreview.content}</pre>
+              <ArtifactDocumentContent artifact={artifact} content={textPreview.content} />
             )
           ) : (
             <div className="wb-artifact-file">{name}</div>

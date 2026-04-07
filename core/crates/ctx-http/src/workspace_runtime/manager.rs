@@ -312,13 +312,22 @@ impl HarnessRuntimeManager {
         daemon_url: &str,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<()> {
+        #[cfg(test)]
+        eprintln!(
+            "ensure_workspace_container_with_observer: workspace={} mode={:?}",
+            workspace.id, settings.mode
+        );
         if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(());
         }
         let _activity = self.begin_runtime_operation();
+        #[cfg(test)]
+        eprintln!("ensure_workspace_container_with_observer: before ensure_container_machine_ready");
         self.ensure_container_machine_ready(&settings.container, observer)
             .await
             .context("local sandbox runtime is unavailable")?;
+        #[cfg(test)]
+        eprintln!("ensure_workspace_container_with_observer: before after_machine_ready");
         self.ensure_workspace_container_after_machine_ready_with_observer(
             workspace, settings, daemon_url, observer,
         )
@@ -663,7 +672,14 @@ impl HarnessRuntimeManager {
         } = request;
         let name = format!("ctx-harness-{}", workspace.id.0);
         let image = resolve_container_image(settings);
+        #[cfg(test)]
+        eprintln!(
+            "ensure_container_after_machine_ready: workspace={} readiness={:?}",
+            workspace.id, readiness
+        );
         if matches!(settings.mount_mode, ContainerMountMode::DiskIsolated) {
+            #[cfg(test)]
+            eprintln!("ensure_container_after_machine_ready: before ensure_workspace_volume");
             observe_log(
                 observer,
                 HarnessSetupPhase::ContainerCheck,
@@ -749,13 +765,21 @@ impl HarnessRuntimeManager {
             let exists = if recreate || recreate_for_terminal_contract {
                 false
             } else {
+                #[cfg(test)]
+                eprintln!("ensure_container_after_machine_ready: before container_exists");
                 container_exists(&self.data_root, &name).await?
             };
+            #[cfg(test)]
+            eprintln!("ensure_container_after_machine_ready: exists={exists}");
 
             if exists {
+                #[cfg(test)]
+                eprintln!("ensure_container_after_machine_ready: before container_running");
                 let running = container_running(&self.data_root, &name)
                     .await?
                     .unwrap_or(false);
+                #[cfg(test)]
+                eprintln!("ensure_container_after_machine_ready: running={running}");
                 if !running {
                     observe_phase(
                         observer,
@@ -921,9 +945,13 @@ impl HarnessRuntimeManager {
         }
 
         if matches!(settings.mount_mode, ContainerMountMode::DiskIsolated) {
+            #[cfg(test)]
+            eprintln!("ensure_container_after_machine_ready: before verify_disk_isolated_container_mounts");
             verify_disk_isolated_container_mounts(&self.data_root, workspace, &name).await?;
         }
 
+        #[cfg(test)]
+        eprintln!("ensure_container_after_machine_ready: before apply_container_network_policy");
         observe_phase(
             observer,
             HarnessSetupPhase::RuntimeNetworkSetup,
@@ -939,6 +967,8 @@ impl HarnessRuntimeManager {
         )
         .await?
         .egress_guard;
+        #[cfg(test)]
+        eprintln!("ensure_container_after_machine_ready: after apply_container_network_policy");
         observe_log(
             observer,
             HarnessSetupPhase::RuntimeNetworkSetup,

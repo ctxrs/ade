@@ -32,6 +32,20 @@ function mockTextFetch(opts: { ok?: boolean; status?: number; text?: string } = 
   global.fetch = vi.fn(async () => response);
 }
 
+const sampleMdx = `---
+title: Merge queue for agents
+description: Fast path
+---
+
+import Example from "./Example"
+
+## Inline Heading
+
+Preview body text.
+
+<p style={{ color: "red" }}>This should not render literally.</p>
+`;
+
 afterEach(() => {
   global.fetch = originalFetch;
 });
@@ -241,6 +255,37 @@ describe("ArtifactsPane", () => {
     expect(await screen.findByText("Inline Heading")).toBeInTheDocument();
     expect(screen.getByText("Preview body text.")).toBeInTheDocument();
     expect(screen.queryByText("## Inline Heading")).not.toBeInTheDocument();
+  });
+
+  it("normalizes mdx artifacts in inline and modal previews", async () => {
+    mockTextFetch({ text: sampleMdx });
+
+    render(
+      <ArtifactsPane
+        sessionId="session-1"
+        artifacts={[
+          makeArtifact({
+            name: "merge-queue-for-agents.mdx",
+            mime_type: "application/octet-stream",
+            absolute_path: "/tmp/merge-queue-for-agents.mdx",
+          }),
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText("Inline Heading")).toBeInTheDocument();
+    expect(screen.getAllByText("Preview body text.")).toHaveLength(1);
+    expect(screen.queryByText(/title:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/<p style=/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("/tmp/merge-queue-for-agents.mdx"));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Inline Heading")).toHaveLength(2);
+      expect(screen.getAllByText("Preview body text.")).toHaveLength(2);
+    });
+    expect(screen.queryByText(/title:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/<p style=/)).not.toBeInTheDocument();
   });
 
   it("renders json artifacts as text in the viewer", async () => {
