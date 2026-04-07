@@ -166,6 +166,8 @@ import fs from "node:fs";
 
 const [, , src, dest] = process.argv;
 if (!src || !dest) process.exit(2);
+const failMatch = process.env.CTX_TEST_FAIL_DITTO_DEST_MATCH ?? "";
+if (failMatch && dest.includes(failMatch)) process.exit(1);
 fs.rmSync(dest, { recursive: true, force: true });
 fs.cpSync(src, dest, { recursive: true });
 `,
@@ -183,7 +185,14 @@ exit 0
 
 const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
 
-const runInstaller = ({ os, arch, manifest, artifactContents }) => {
+const runInstaller = ({
+  os,
+  arch,
+  manifest,
+  artifactContents,
+  existingMacAppFiles = null,
+  extraEnv = {},
+}) => {
   const sandboxDir = makeTempDir("ctx-install-bootstrap-ci-");
   const stubDir = path.join(sandboxDir, "stubs");
   mkdirSync(stubDir);
@@ -205,6 +214,13 @@ const runInstaller = ({ os, arch, manifest, artifactContents }) => {
   mkdirSync(installDir);
   mkdirSync(binDir);
   mkdirSync(xdgDataHome);
+  if (existingMacAppFiles !== null) {
+    for (const [relativePath, contents] of Object.entries(existingMacAppFiles)) {
+      const destination = path.join(installDir, "ctx.app", relativePath);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      writeFileSync(destination, contents);
+    }
+  }
 
   const result = spawnSync("sh", [scriptPath], {
     encoding: "utf8",
@@ -220,6 +236,7 @@ const runInstaller = ({ os, arch, manifest, artifactContents }) => {
       CTX_TEST_UNAME_M: arch,
       CTX_INSTALL_OS_RELEASE_PATH: osReleasePath,
       XDG_DATA_HOME: xdgDataHome,
+      ...extraEnv,
     },
   });
 
@@ -284,6 +301,43 @@ test("macOS install bootstrap succeeds with a checksummed dmg", () => {
     assert.equal(existsSync(installedApp), true);
     assert.equal(existsSync(path.join(installedApp, "Contents", "Info.plist")), true);
     assert.match(result.stderr, /Installed ctx\.app to/);
+  } finally {
+    result.cleanup();
+  }
+});
+
+test("macOS upgrade preserves the existing app when staging the replacement fails", () => {
+  const artifactContents = "fake-dmg";
+  const existingInfoPlist = "existing plist";
+  const result = runInstaller({
+    os: "Darwin",
+    arch: "x86_64",
+    artifactContents,
+    existingMacAppFiles: {
+      "Contents/Info.plist": existingInfoPlist,
+      "Contents/MacOS/ctx": "existing binary",
+    },
+    extraEnv: {
+      CTX_TEST_FAIL_DITTO_DEST_MATCH: ".ctx-stage.",
+    },
+    manifest: {
+      channel: "stable",
+      latest_version: "0.0.2",
+      platforms: {
+        "macos-x64": {
+          desktop: {
+            url_path: "/download/stable/0.0.2/ctx.dmg",
+            sha256: sha256(artifactContents),
+          },
+        },
+      },
+    },
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    const installedApp = path.join(result.installDir, "ctx.app");
+    assert.equal(readFileSync(path.join(installedApp, "Contents", "Info.plist"), "utf8").trim(), existingInfoPlist);
+    assert.equal(existsSync(path.join(installedApp, "Contents", "MacOS", "ctx")), true);
   } finally {
     result.cleanup();
   }

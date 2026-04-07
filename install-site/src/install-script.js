@@ -38,6 +38,7 @@ need_cmd mktemp
 need_cmd find
 need_cmd awk
 need_cmd uname
+need_cmd mv
 
 functions_base="\${CTX_FUNCTIONS_BASE:-${normalizedBase}}"
 channel="\${CTX_CHANNEL:-${normalizedChannel}}"
@@ -54,6 +55,8 @@ tmp_dir="$(mktemp -d "\${TMPDIR:-/tmp}/ctx-install.XXXXXX")"
 mount_dir="$tmp_dir/mount"
 manifest_json="$tmp_dir/latest.json"
 mounted=0
+cleanup_stage_path=""
+cleanup_backup_path=""
 
 cleanup() {
   if [ "$mounted" = "1" ]; then
@@ -61,9 +64,67 @@ cleanup() {
       hdiutil detach "$mount_dir" -quiet >/dev/null 2>&1 || true
     fi
   fi
+  if [ -n "$cleanup_stage_path" ] && [ -e "$cleanup_stage_path" ]; then
+    rm -rf "$cleanup_stage_path"
+  fi
+  if [ -n "$cleanup_backup_path" ] && [ -e "$cleanup_backup_path" ]; then
+    rm -rf "$cleanup_backup_path"
+  fi
   rm -rf "$tmp_dir"
 }
 trap cleanup EXIT INT TERM
+
+unique_target_sibling_path() {
+  target_path="$1"
+  label="$2"
+  candidate="$target_path.$label.$$"
+  index=0
+  while [ -e "$candidate" ]; do
+    index=$((index + 1))
+    candidate="$target_path.$label.$$.\${index}"
+  done
+  printf "%s\\n" "$candidate"
+}
+
+stage_path_for_target() {
+  unique_target_sibling_path "$1" "ctx-stage"
+}
+
+backup_path_for_target() {
+  unique_target_sibling_path "$1" "ctx-backup"
+}
+
+promote_staged_path() {
+  staged_path="$1"
+  target_path="$2"
+  target_label="$3"
+  backup_path=""
+
+  cleanup_stage_path="$staged_path"
+  cleanup_backup_path=""
+
+  if [ -e "$target_path" ]; then
+    backup_path="$(backup_path_for_target "$target_path")"
+    mv "$target_path" "$backup_path" || fail "failed to move existing $target_label aside"
+    cleanup_backup_path="$backup_path"
+  fi
+
+  if mv "$staged_path" "$target_path"; then
+    cleanup_stage_path=""
+    if [ -n "$backup_path" ] && [ -e "$backup_path" ]; then
+      rm -rf "$backup_path" || fail "failed to remove previous $target_label backup"
+    fi
+    cleanup_backup_path=""
+    return 0
+  fi
+
+  if [ -n "$backup_path" ] && [ -e "$backup_path" ]; then
+    mv "$backup_path" "$target_path" || fail "failed to restore previous $target_label after upgrade failure"
+    cleanup_backup_path=""
+  fi
+
+  fail "failed to install $target_label"
+}
 
 append_query_param() {
   input_url="$1"
@@ -295,10 +356,9 @@ install_macos() {
   fi
 
   target_app="$install_root/$app_name"
-  if [ -e "$target_app" ]; then
-    rm -rf "$target_app"
-  fi
-  ditto "$app_src" "$target_app"
+  staged_app="$(stage_path_for_target "$target_app")"
+  ditto "$app_src" "$staged_app"
+  promote_staged_path "$staged_app" "$target_app" "$app_name"
 
   log "Installed $app_name to $target_app"
   if [ "\${CTX_INSTALL_NO_OPEN:-0}" != "1" ]; then
@@ -333,8 +393,10 @@ install_linux() {
   install_root="\${CTX_INSTALL_DIR:-$HOME/.local/share/ctx}"
   mkdir -p "$install_root"
   target_appimage="$install_root/ctx.AppImage"
-  cp "$artifact_path" "$target_appimage"
-  chmod +x "$target_appimage"
+  staged_appimage="$(stage_path_for_target "$target_appimage")"
+  cp "$artifact_path" "$staged_appimage"
+  chmod +x "$staged_appimage"
+  promote_staged_path "$staged_appimage" "$target_appimage" "ctx desktop AppImage"
 
   bin_dir="\${CTX_BIN_DIR:-$HOME/.local/bin}"
   mkdir -p "$bin_dir"

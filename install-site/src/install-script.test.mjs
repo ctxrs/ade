@@ -88,6 +88,26 @@ esac
 `,
   );
   writeExecutable(
+    path.join(stubDir, "cp"),
+    `#!/bin/sh
+set -eu
+src="\${1:-}"
+dest="\${2:-}"
+case "\${CTX_TEST_FAIL_CP_DEST_MATCH:-}" in
+  "")
+    ;;
+  *)
+    case "$dest" in
+      *"$CTX_TEST_FAIL_CP_DEST_MATCH"*)
+        exit 1
+        ;;
+    esac
+    ;;
+esac
+exec /bin/cp "$src" "$dest"
+`,
+  );
+  writeExecutable(
     path.join(stubDir, "uname"),
     `#!/bin/sh
 set -eu
@@ -186,6 +206,8 @@ const runInstaller = ({
   installDirName = "install-root",
   binDirName = "bin-root",
   osReleaseText = "ID=testos\n",
+  existingAppImageContents = null,
+  extraEnv = {},
 }) => {
   const sandboxDir = makeTempDir("ctx-install-script-");
   const stubDir = path.join(sandboxDir, "stubs");
@@ -210,6 +232,9 @@ const runInstaller = ({
   mkdirSync(installDir);
   mkdirSync(binDir);
   mkdirSync(xdgDataHome);
+  if (existingAppImageContents !== null) {
+    writeFileSync(path.join(installDir, "ctx.AppImage"), existingAppImageContents);
+  }
 
   const result = spawnSync("sh", [scriptPath], {
     encoding: "utf8",
@@ -227,6 +252,7 @@ const runInstaller = ({
       CTX_TEST_APT_LOG: aptLogPath,
       CTX_TEST_CTX_LOG: ctxLogPath,
       XDG_DATA_HOME: xdgDataHome,
+      ...extraEnv,
     },
   });
 
@@ -259,7 +285,10 @@ test("renderInstallScript includes release resolution, checksum verify, and app 
   assert.match(script, /fail "manifest missing sha256 for selected artifact"/);
   assert.doesNotMatch(script, /skipping checksum verification/);
   assert.match(script, /hdiutil attach/);
-  assert.match(script, /ditto "\$app_src" "\$target_app"/);
+  assert.match(script, /ditto "\$app_src" "\$staged_app"/);
+  assert.match(script, /promote_staged_path/);
+  assert.match(script, /stage_path_for_target/);
+  assert.doesNotMatch(script, /rm -rf "\$target_app"/);
   assert.match(script, /open "\$target_app"/);
   assert.match(script, /CTX_DESKTOP_START_PATH="\$start_path"/);
   assert.match(script, /ctx\.AppImage/);
@@ -420,6 +449,39 @@ test("linux install uses the AppImage path on Debian-like systems too", () => {
       existsSync(path.join(result.xdgDataHome, "icons", "hicolor", "512x512", "apps", "ctx.png")),
       true,
     );
+  } finally {
+    result.cleanup();
+  }
+});
+
+test("linux upgrade preserves the existing AppImage when staging the replacement fails", () => {
+  const existingAppImageContents = "existing-appimage";
+  const artifactContents = createFakeAppImage();
+  const result = runInstaller({
+    os: "Linux",
+    arch: "x86_64",
+    artifactContents,
+    existingAppImageContents,
+    extraEnv: {
+      CTX_TEST_FAIL_CP_DEST_MATCH: ".ctx-stage.",
+    },
+    manifest: {
+      channel: "stable",
+      latest_version: "0.0.2",
+      platforms: {
+        "linux-x64": {
+          appimage: {
+            url_path: "/download/stable/0.0.2/ctx.AppImage",
+            sha256: sha256(artifactContents),
+          },
+        },
+      },
+    },
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.equal(readFileSync(path.join(result.installDir, "ctx.AppImage"), "utf8"), existingAppImageContents);
+    assert.match(result.stderr, /Verified artifact sha256/);
   } finally {
     result.cleanup();
   }
