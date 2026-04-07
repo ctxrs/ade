@@ -532,7 +532,9 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     const bottomOffsetPx = Math.max(0, scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight));
     const shouldFollowBottom = followBottomRef.current && bottomOffsetPx <= BOTTOM_THRESHOLD_PX;
     followBottomRef.current = shouldFollowBottom;
-    const anchorOverride: PretextVirtualizerLogicalAnchor = shouldFollowBottom ? { kind: "bottom" } : core.getAnchor();
+    const anchorOverride: PretextVirtualizerLogicalAnchor = shouldFollowBottom
+      ? { kind: "bottom" }
+      : core.getAnchor("detached");
     const nextSnapshot = syncItemsFromProjectionOp(listItems, threadProjectionOp, anchorOverride);
     applySnapshotToDom(nextSnapshot, {
       behavior: "auto",

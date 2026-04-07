@@ -1,6 +1,7 @@
 export type PretextVirtualizerLayoutRevision = string | number;
 export type PretextVirtualizerWidthBucket = `w${number}`;
 export type PretextVirtualizerAnchorRestoreMode = "offset" | "ratio";
+type PretextVirtualizerAnchorCaptureMode = "default" | "detached";
 
 export type PretextVirtualizerPlannedLayout = {
   height: number;
@@ -63,7 +64,7 @@ export type PretextVirtualizerCoreOptions<Item> = {
 
 type PretextVirtualizerCore<Item> = {
   getSnapshot: () => PretextVirtualizerSnapshot<Item>;
-  getAnchor: () => PretextVirtualizerLogicalAnchor;
+  getAnchor: (mode?: PretextVirtualizerAnchorCaptureMode) => PretextVirtualizerLogicalAnchor;
   syncViewport: (viewport: {
     height: number;
     width: number;
@@ -186,10 +187,11 @@ export const createPretextVirtualizerCore = <Item,>({
   const captureAnchor = (
     layout = computeLayout(),
     scrollTop = state.scrollTop,
+    mode: PretextVirtualizerAnchorCaptureMode = "default",
   ): PretextVirtualizerLogicalAnchor => {
     const normalizedScrollTop = clampScrollTop(scrollTop, layout.totalHeight);
     const bottomOffsetPx = layout.totalHeight - (normalizedScrollTop + state.viewportHeight);
-    if (bottomOffsetPx <= bottomThresholdPx) {
+    if (mode === "default" && bottomOffsetPx <= bottomThresholdPx) {
       return { kind: "bottom" };
     }
     const viewportBottom = normalizedScrollTop + state.viewportHeight;
@@ -305,7 +307,10 @@ export const createPretextVirtualizerCore = <Item,>({
 
   return {
     getSnapshot: () => createSnapshot(),
-    getAnchor: () => createSnapshot().anchor,
+    getAnchor: (mode = "default") => {
+      const layout = computeLayout();
+      return captureAnchor(layout, state.scrollTop, mode);
+    },
     syncViewport: ({ height, width, scrollTop }) => {
       state.viewportHeight = normalizeSize(height);
       const normalizedWidth = normalizeSize(width);

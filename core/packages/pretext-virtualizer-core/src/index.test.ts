@@ -110,6 +110,25 @@ describe("createPretextVirtualizerCore", () => {
     expect(snapshot.visibleItems.at(-1)?.id).toBe("item-4");
   });
 
+  it("captures an item anchor instead of bottom when detached near the tail", () => {
+    const core = createCore(makeItems(40, 64, 72, 48));
+
+    core.syncViewport({
+      height: 100,
+      width: 320,
+      scrollTop: 116,
+    });
+
+    expect(core.getAnchor()).toEqual({ kind: "bottom" });
+    expect(core.getAnchor("detached")).toEqual({
+      kind: "item",
+      id: "item-3",
+      index: 2,
+      offsetPx: 12,
+      offsetRatio: 12 / 72,
+    });
+  });
+
   it("restores an item anchor by ratio when the row height changes", () => {
     const core = createCore(makeItems(40, 64, 72));
     const anchor = {
