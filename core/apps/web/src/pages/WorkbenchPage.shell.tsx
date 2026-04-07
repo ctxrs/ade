@@ -44,6 +44,7 @@ import { useWorkbenchTaskListController } from "./workbenchShell/useWorkbenchTas
 import { useWorkbenchActiveTaskController } from "./workbenchShell/useWorkbenchActiveTaskController";
 import { useWorkbenchE2EBridge } from "./workbenchShell/useWorkbenchE2EBridge";
 import { useWorkbenchComposerHarnessAuth } from "./workbenchShell/useWorkbenchComposerHarnessAuth";
+import { useWarmSessionTranscriptRuntimes } from "./workbenchShell/useWarmSessionTranscriptRuntimes";
 import type { OptimisticFocus } from "./WorkbenchPage.types";
 import { appendSegment } from "./WorkbenchPage.utils";
 import { resolveWorkspaceBootstrapGateState } from "./workspaceBootstrapGate";
@@ -480,6 +481,12 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     workspaceSnapshot,
     workspaceSnapshotStore,
     supervisor,
+  });
+
+  useWarmSessionTranscriptRuntimes({
+    workspaceSnapshot,
+    sessionSnap,
+    activeSessionId,
   });
 
   useWorkbenchE2EBridge({

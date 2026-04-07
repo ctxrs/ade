@@ -14,6 +14,13 @@ import {
   type WorkbenchThreadProjectionOp,
   type WorkbenchThreadProjectionOpKind,
 } from "./sessionThreadProjection";
+import {
+  buildWorkbenchThreadViewModelWarmKey,
+  buildWorkbenchThreadViewModelWarmSnapshot,
+  persistWarmWorkbenchThreadViewModel,
+  primeWarmWorkbenchThreadViewModel,
+  type WorkbenchThreadViewModelPerTurnCaches,
+} from "./workbenchThreadViewModelWarmCache";
 
 type Params = {
   sessionId: string;
@@ -47,97 +54,10 @@ type InternalState = {
   eventsLen: number;
 };
 
-type PerTurnCaches = {
-  messagesByTurnId: Map<string, Message[]>;
-  eventsByTurnId: Map<string, SessionEvent[]>;
-};
-
 function getTurnGroupKey(turnId: string): string {
   return `turn-${turnId}`;
 }
 
-function buildMessagesByTurnId(messages: Message[]): Map<string, Message[]> {
-  const byTurnMsg = new Map<string, Message[]>();
-  for (const message of messages) {
-    const turnId = idToString(message.turn_id);
-    if (!turnId) continue;
-    const list = byTurnMsg.get(turnId) ?? [];
-    list.push(message);
-    byTurnMsg.set(turnId, list);
-  }
-  return byTurnMsg;
-}
-
-function buildEventsByTurnId(events: SessionEvent[]): Map<string, SessionEvent[]> {
-  const byTurnEv = new Map<string, SessionEvent[]>();
-  for (const event of events) {
-    const turnId = idToString(event.turn_id ?? "");
-    if (!turnId) continue;
-    const list = byTurnEv.get(turnId) ?? [];
-    list.push(event);
-    byTurnEv.set(turnId, list);
-  }
-  return byTurnEv;
-}
-
-function buildPerTurnCaches(messages: Message[], events: SessionEvent[]): PerTurnCaches {
-  return {
-    messagesByTurnId: buildMessagesByTurnId(messages),
-    eventsByTurnId: buildEventsByTurnId(events),
-  };
-}
-
-function buildStateFromInputs(opts: {
-  turns: SessionTurn[];
-  assistantStreamingByTurnId: Record<string, AssistantStreamingState>;
-  messages: Message[];
-  toolsByTurnId: Record<string, SessionTurnTool[]>;
-  toolSummariesReady: boolean;
-  events: SessionEvent[];
-  askUserQuestionAnswers: Map<string, AskUserQuestionAnswerState>;
-  verbosity: SessionViewVerbosity;
-}): Pick<InternalState, "view" | "listItems" | "groupRanges" | "turnsLen" | "messagesLen" | "eventsLen"> {
-  const {
-    turns,
-    assistantStreamingByTurnId,
-    messages,
-    toolsByTurnId,
-    toolSummariesReady,
-    events,
-    askUserQuestionAnswers,
-    verbosity,
-  } = opts;
-  const view = buildWorkbenchThreadViewModelFromTurns(
-    turns,
-    messages,
-    toolSummariesReady ? toolsByTurnId : {},
-    events,
-    assistantStreamingByTurnId,
-    askUserQuestionAnswers,
-  );
-
-  const listItems: WorkbenchListItem[] = [];
-  const groupRanges = new Map<string, { start: number; end: number }>();
-  for (const g of view.groups) {
-    const start = listItems.length;
-    if (g.header) {
-      listItems.push({ kind: "turn_header", id: `turn-header-${g.header.id}`, header: g.header });
-    }
-    const filtered = filterThreadItemsForVerbosity(g.items, verbosity);
-    listItems.push(...filtered);
-    const end = listItems.length;
-    groupRanges.set(String(g.key), { start, end });
-  }
-
-  return {
-    view,
-    listItems,
-    groupRanges,
-    turnsLen: turns.length,
-    messagesLen: messages.length,
-    eventsLen: events.length,
-  };
-}
 
 /**
  * Narrow sanctioned projector fast path:
@@ -174,34 +94,42 @@ export function useWorkbenchThreadViewModelController(
   } = params;
   const projectionRev = projectionRevInput ?? 0;
 
-  const initialBuildRef = useRef<{ state: InternalState; caches: PerTurnCaches } | null>(null);
-  if (initialBuildRef.current === null) {
-    const initialState = buildStateFromInputs({
+  const buildWarmSnapshot = () =>
+    primeWarmWorkbenchThreadViewModel({
+      sessionId,
+      projectionRev,
+      turnsStamp,
+      messagesStamp,
+      eventsStamp,
+      verbosity,
       turns,
       assistantStreamingByTurnId,
       messages,
+      events,
       toolsByTurnId,
       toolSummariesReady,
-      events,
       askUserQuestionAnswers,
-      verbosity,
+      enableDebugEvents,
     });
-    const initialOp = createWorkbenchThreadProjectionOp(
-      "replace_session",
-      projectionRev,
-      initialState.listItems.map((item) => item.id),
-    );
+
+  const initialBuildRef = useRef<{ state: InternalState; caches: WorkbenchThreadViewModelPerTurnCaches } | null>(null);
+  if (initialBuildRef.current === null) {
+    const initialState = buildWarmSnapshot();
+    const initialOp = createWorkbenchThreadProjectionOp("noop", projectionRev);
     initialBuildRef.current = {
       state: {
-        ...initialState,
+        view: initialState.view,
+        listItems: initialState.listItems,
+        groupRanges: initialState.groupRanges,
         projectionRevision: projectionRev,
         lastOp: initialOp,
         changedItemIds: initialOp.changedItemIds,
         remeasureItemIds: initialOp.remeasureItemIds,
+        turnsLen: initialState.turnsLen,
+        messagesLen: initialState.messagesLen,
+        eventsLen: initialState.eventsLen,
       },
-      // Prime the per-turn caches on mount so the first append-only update can
-      // rebuild a dirty turn group with the already-rendered transcript context.
-      caches: buildPerTurnCaches(messages, events),
+      caches: initialState.caches,
     };
   }
   const initialBuild = initialBuildRef.current!;
@@ -219,7 +147,7 @@ export function useWorkbenchThreadViewModelController(
     return map;
   }, [turns, turnsStamp]);
 
-  const perTurnCachesRef = useRef<PerTurnCaches>(initialBuild.caches);
+  const perTurnCachesRef = useRef<WorkbenchThreadViewModelPerTurnCaches>(initialBuild.caches);
   const lastSessionIdRef = useRef(sessionId);
   const lastTurnsStampRef = useRef(turnsStamp);
   const lastMessagesStampRef = useRef(messagesStamp);
@@ -233,18 +161,24 @@ export function useWorkbenchThreadViewModelController(
 
   const fullRebuild = useRef((_preferredKind?: WorkbenchThreadProjectionOpKind) => {});
   fullRebuild.current = (preferredKind = "reconcile") => {
-    const rebuilt = buildStateFromInputs({
+    const rebuilt = buildWorkbenchThreadViewModelWarmSnapshot({
+      sessionId,
+      projectionRev,
+      turnsStamp,
+      messagesStamp,
+      eventsStamp,
+      verbosity,
       turns,
       assistantStreamingByTurnId,
       messages,
+      events,
       toolsByTurnId,
       toolSummariesReady,
-      events,
       askUserQuestionAnswers,
-      verbosity,
+      enableDebugEvents,
     });
 
-    perTurnCachesRef.current = buildPerTurnCaches(messages, events);
+    perTurnCachesRef.current = rebuilt.caches;
 
     setState((previous) => {
       const lastOp = classifyWorkbenchThreadProjectionOp({
@@ -254,11 +188,16 @@ export function useWorkbenchThreadViewModelController(
         fallbackKind: preferredKind,
       });
       return {
-        ...rebuilt,
+        view: rebuilt.view,
+        listItems: rebuilt.listItems,
+        groupRanges: rebuilt.groupRanges,
         projectionRevision: projectionRev,
         lastOp,
         changedItemIds: lastOp.changedItemIds,
         remeasureItemIds: lastOp.remeasureItemIds,
+        turnsLen: rebuilt.turnsLen,
+        messagesLen: rebuilt.messagesLen,
+        eventsLen: rebuilt.eventsLen,
       };
     });
   };
@@ -280,11 +219,21 @@ export function useWorkbenchThreadViewModelController(
     if (sessionChanged) {
       lastSessionIdRef.current = sessionId;
       syncInvalidationRefs();
-      perTurnCachesRef.current = {
-        messagesByTurnId: new Map(),
-        eventsByTurnId: new Map(),
-      };
-      fullRebuild.current("replace_session");
+      const rebuilt = buildWarmSnapshot();
+      perTurnCachesRef.current = rebuilt.caches;
+      const lastOp = createWorkbenchThreadProjectionOp("noop", projectionRev);
+      setState({
+        view: rebuilt.view,
+        listItems: rebuilt.listItems,
+        groupRanges: rebuilt.groupRanges,
+        projectionRevision: projectionRev,
+        lastOp,
+        changedItemIds: [],
+        remeasureItemIds: [],
+        turnsLen: rebuilt.turnsLen,
+        messagesLen: rebuilt.messagesLen,
+        eventsLen: rebuilt.eventsLen,
+      });
       return;
     }
 
@@ -537,6 +486,51 @@ export function useWorkbenchThreadViewModelController(
     turns,
     turnsStamp,
     turnsById,
+  ]);
+
+  useLayoutEffect(() => {
+    persistWarmWorkbenchThreadViewModel(sessionId, {
+      warmKey: buildWorkbenchThreadViewModelWarmKey({
+        sessionId,
+        projectionRev,
+        turnsStamp,
+        messagesStamp,
+        eventsStamp,
+        verbosity,
+        turns,
+        assistantStreamingByTurnId,
+        messages,
+        events,
+        toolsByTurnId,
+        toolSummariesReady,
+        askUserQuestionAnswers,
+        enableDebugEvents,
+      }),
+      projectionRevision: state.projectionRevision,
+      view: state.view,
+      listItems: state.listItems,
+      groupRanges: state.groupRanges,
+      turnsLen: state.turnsLen,
+      messagesLen: state.messagesLen,
+      eventsLen: state.eventsLen,
+      caches: perTurnCachesRef.current,
+    });
+  }, [
+    askUserQuestionAnswers,
+    assistantStreamingByTurnId,
+    enableDebugEvents,
+    events,
+    eventsStamp,
+    messages,
+    messagesStamp,
+    projectionRev,
+    sessionId,
+    state,
+    toolSummariesReady,
+    toolsByTurnId,
+    turns,
+    turnsStamp,
+    verbosity,
   ]);
 
   return {

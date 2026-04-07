@@ -59,6 +59,7 @@ import { useSharedSessionProviderOptions } from "./sessionView/useSharedSessionP
 import { useStableAskUserQuestionAnswers } from "./sessionView/useStableAskUserQuestionAnswers";
 import { composeModelId } from "../utils/modelEffort";
 import { useSessionModelSwitcher } from "./sessionView/useSessionModelSwitcher";
+import { noteSessionTranscriptWarmVerbosity } from "./sessionThread/sessionTranscriptWarmState";
 
 const SCROLLBACK_INCREASE_VIEWPORT_BY_PX = 240;
 
@@ -263,6 +264,10 @@ export function SessionView({
       cancelled = true;
     };
   }, [id, session?.provider_id]);
+
+  useEffect(() => {
+    noteSessionTranscriptWarmVerbosity(verbosity);
+  }, [verbosity]);
   const openChildSession = useCallback(
     (childSessionId: string) => {
       if (!session) return;
