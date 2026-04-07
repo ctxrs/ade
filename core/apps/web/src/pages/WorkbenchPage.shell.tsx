@@ -214,7 +214,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setDraftAttachments,
     draftHarness,
     providersById,
-    providerOptions,
     ensureProviderAuthSummary,
     dictationRecording,
     stopDictation,

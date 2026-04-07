@@ -40,7 +40,6 @@ type UseWorkbenchTaskCreationArgs = {
   setDraftAttachments: Dispatch<SetStateAction<MessageAttachment[]>>;
   draftHarness: DraftHarness | null;
   providersById: Record<string, ProviderStatus | undefined>;
-  providerOptions: Record<string, ProviderOptions | undefined>;
   ensureProviderAuthSummary: (
     providerId: string,
     opts?: { force?: boolean; trigger?: ProviderAuthSummaryTrigger },
@@ -65,7 +64,6 @@ export function useWorkbenchTaskCreation({
   setDraftAttachments,
   draftHarness,
   providersById,
-  providerOptions,
   ensureProviderAuthSummary,
   dictationRecording,
   stopDictation,
@@ -107,11 +105,6 @@ export function useWorkbenchTaskCreation({
     selectedModelId: string | null | undefined,
     selectedModelExplicit: boolean,
   ): Promise<string> => {
-    const explicitModelId = selectedModelExplicit ? selectedModelId?.trim() : "";
-    if (explicitModelId) return explicitModelId;
-    const seededModelId = selectedModelId?.trim();
-    const cachedModelId = modelIdsFromOptions(providerOptions[providerId])[0];
-
     let refreshedOptions: ProviderOptions | undefined;
     try {
       refreshedOptions = await ensureProviderAuthSummary(providerId, {
@@ -119,17 +112,29 @@ export function useWorkbenchTaskCreation({
         trigger: "explicit",
       });
     } catch (e: unknown) {
-      if (seededModelId) return seededModelId;
-      if (cachedModelId) return cachedModelId;
-      throw new Error(`Failed to load models for harness “${providerId}”: ${errorMessage(e)}`);
+      throw new Error(
+        `Failed to refresh models for harness “${providerId}”: ${errorMessage(e)}. Refresh provider settings and try again.`,
+      );
     }
 
-    const refreshedModelId = modelIdsFromOptions(refreshedOptions)[0];
-    if (refreshedModelId) return refreshedModelId;
-    if (seededModelId) return seededModelId;
-    if (cachedModelId) return cachedModelId;
+    const refreshedModelIds = modelIdsFromOptions(refreshedOptions);
+    const explicitModelId = selectedModelExplicit ? selectedModelId?.trim() : "";
+    if (explicitModelId) {
+      const explicitBaseModelId = parseModelId(explicitModelId).base || explicitModelId;
+      const explicitStillAvailable = refreshedModelIds.some((modelId) => {
+        const refreshedBaseModelId = parseModelId(modelId).base || modelId;
+        return modelId === explicitModelId || refreshedBaseModelId === explicitBaseModelId;
+      });
+      if (explicitStillAvailable) return explicitModelId;
+      throw new Error(
+        `Selected model “${explicitModelId}” is no longer available for harness “${providerId}”. Refresh provider settings and choose another model.`,
+      );
+    }
 
-    throw new Error(`Harness “${providerId}” did not provide a model. Refresh provider settings and try again.`);
+    const refreshedModelId = refreshedModelIds[0];
+    if (refreshedModelId) return refreshedModelId;
+
+    throw new Error(`Harness “${providerId}” did not provide a fresh model. Refresh provider settings and try again.`);
   };
 
   const startNewTask = async () => {

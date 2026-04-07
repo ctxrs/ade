@@ -314,7 +314,7 @@ impl HarnessRuntimeManager {
     ) -> Result<()> {
         #[cfg(test)]
         eprintln!(
-            "ensure_workspace_container_with_observer: workspace={} mode={:?}",
+            "ensure_workspace_container_with_observer: workspace={:?} mode={:?}",
             workspace.id, settings.mode
         );
         if matches!(settings.mode, ExecutionMode::Host) {
@@ -322,7 +322,9 @@ impl HarnessRuntimeManager {
         }
         let _activity = self.begin_runtime_operation();
         #[cfg(test)]
-        eprintln!("ensure_workspace_container_with_observer: before ensure_container_machine_ready");
+        eprintln!(
+            "ensure_workspace_container_with_observer: before ensure_container_machine_ready"
+        );
         self.ensure_container_machine_ready(&settings.container, observer)
             .await
             .context("local sandbox runtime is unavailable")?;
@@ -674,7 +676,7 @@ impl HarnessRuntimeManager {
         let image = resolve_container_image(settings);
         #[cfg(test)]
         eprintln!(
-            "ensure_container_after_machine_ready: workspace={} readiness={:?}",
+            "ensure_container_after_machine_ready: workspace={:?} readiness={:?}",
             workspace.id, readiness
         );
         if matches!(settings.mount_mode, ContainerMountMode::DiskIsolated) {

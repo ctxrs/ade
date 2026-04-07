@@ -205,7 +205,6 @@ function Harness({
     setDraftAttachments,
     draftHarness,
     providersById: resolvedProvidersById,
-    providerOptions: resolvedProviderOptions,
     ensureProviderAuthSummary:
       ensureProviderAuthSummary
       ?? (async (providerId) => resolvedProviderOptions[providerId]),
@@ -679,7 +678,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     expect(onStartError).toHaveBeenCalledWith(null);
   });
 
-  it("falls back to the seeded implicit model when provider refresh fails during session creation", async () => {
+  it("fails before creating optimistic state when provider refresh fails during session creation", async () => {
     let current: FlowValue | null = null;
     mockedCreateTask.mockResolvedValue(makeTask("task-1", "session-1"));
     mockedCreateSession.mockResolvedValue(makeSession("session-1", "task-1"));
@@ -714,25 +713,19 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
       await requireValue(current).startNewTask();
     });
 
-    await waitFor(() => {
-      expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
-    });
+    expect(requireValue(current).optimisticTasks).toEqual([]);
     expect(ensureProviderAuthSummary).toHaveBeenCalledWith("fake", {
       force: true,
       trigger: "explicit",
     });
-    expect(mockedCreateSession).toHaveBeenCalledWith(
-      "task-1",
-      "fake",
-      "seeded-model",
-      expect.objectContaining({
-        execution_environment: "sandbox",
-      }),
+    expect(mockedCreateTask).not.toHaveBeenCalled();
+    expect(mockedCreateSession).not.toHaveBeenCalled();
+    expect(onStartError).toHaveBeenLastCalledWith(
+      "Failed to refresh models for harness “fake”: refresh failed. Refresh provider settings and try again.",
     );
-    expect(onStartError).toHaveBeenCalledWith(null);
   });
 
-  it("falls back to cached provider options when the implicit model has not been seeded yet", async () => {
+  it("fails before creating optimistic state when implicit model refresh fails without a seeded model", async () => {
     let current: FlowValue | null = null;
     mockedCreateTask.mockResolvedValue(makeTask("task-1", "session-1"));
     mockedCreateSession.mockResolvedValue(makeSession("session-1", "task-1"));
@@ -767,18 +760,12 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
       await requireValue(current).startNewTask();
     });
 
-    await waitFor(() => {
-      expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
-    });
-    expect(mockedCreateSession).toHaveBeenCalledWith(
-      "task-1",
-      "fake",
-      "cached-model",
-      expect.objectContaining({
-        execution_environment: "sandbox",
-      }),
+    expect(requireValue(current).optimisticTasks).toEqual([]);
+    expect(mockedCreateTask).not.toHaveBeenCalled();
+    expect(mockedCreateSession).not.toHaveBeenCalled();
+    expect(onStartError).toHaveBeenLastCalledWith(
+      "Failed to refresh models for harness “fake”: refresh failed. Refresh provider settings and try again.",
     );
-    expect(onStartError).toHaveBeenCalledWith(null);
   });
 
   it("fails before creating optimistic state when no concrete model can be resolved", async () => {
@@ -805,7 +792,51 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     expect(mockedCreateTask).not.toHaveBeenCalled();
     expect(mockedCreateSession).not.toHaveBeenCalled();
     expect(onStartError).toHaveBeenLastCalledWith(
-      "Harness “codex” did not provide a model. Refresh provider settings and try again.",
+      "Harness “codex” did not provide a fresh model. Refresh provider settings and try again.",
+    );
+  });
+
+  it("fails before creating optimistic state when the selected explicit model is invalid after refresh", async () => {
+    let current: FlowValue | null = null;
+    const onStartError = vi.fn();
+
+    render(
+      <Harness
+        draftHarness={{ providerId: "codex", modelId: "stale-model", preferenceExplicit: true }}
+        providerOptionsById={{
+          codex: makeProviderOptions({
+            has_active_auth: true,
+            models: {
+              current_model_id: "stale-model",
+              models: [{ id: "stale-model" }],
+            },
+          }),
+        }}
+        ensureProviderAuthSummary={async () =>
+          makeProviderOptions({
+            has_active_auth: true,
+            preferred_model_id: "fresh-model",
+            models: {
+              current_model_id: "fresh-model",
+              models: [{ id: "fresh-model" }],
+            },
+          })}
+        onChange={(value) => {
+          current = value;
+        }}
+        onStartError={onStartError}
+      />,
+    );
+
+    await act(async () => {
+      await requireValue(current).startNewTask();
+    });
+
+    expect(requireValue(current).optimisticTasks).toEqual([]);
+    expect(mockedCreateTask).not.toHaveBeenCalled();
+    expect(mockedCreateSession).not.toHaveBeenCalled();
+    expect(onStartError).toHaveBeenLastCalledWith(
+      "Selected model “stale-model” is no longer available for harness “codex”. Refresh provider settings and choose another model.",
     );
   });
 
@@ -831,7 +862,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     });
 
     expect(onStartError).toHaveBeenLastCalledWith(
-      "Harness “amp” did not provide a model. Refresh provider settings and try again.",
+      "Harness “amp” did not provide a fresh model. Refresh provider settings and try again.",
     );
 
     view.rerender(

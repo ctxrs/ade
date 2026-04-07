@@ -1,4 +1,7 @@
-use super::update::remote_stop_daemon_cmd;
+use super::update::{
+    remote_backup_ctx_bin_cmd, remote_cleanup_backup_ctx_bin_cmd, remote_restore_ctx_bin_cmd,
+    remote_stop_daemon_cmd, remote_update_backup_ctx_bin,
+};
 use super::*;
 
 #[cfg(unix)]
@@ -24,6 +27,13 @@ fn wait_for_pid_exit(pid: u32, timeout: std::time::Duration) -> bool {
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
     !pid_is_alive(pid)
+}
+
+#[cfg(unix)]
+fn new_temp_test_dir(prefix: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&path).expect("create temp dir");
+    path
 }
 
 #[cfg(unix)]
@@ -321,11 +331,169 @@ fn remote_update_reuses_existing_managed_binary_when_recorded_active_is_missing(
 }
 
 #[test]
-fn remote_stop_command_requires_pkill_success() {
-    let cmd = remote_stop_daemon_cmd(44199, "/opt/ctx/bin/ctx");
+fn remote_update_backup_path_is_stable_and_adjacent_to_binary() {
+    let backup = remote_update_backup_ctx_bin("/opt/ctx/bin/ctx").expect("backup path");
+    assert_eq!(backup, "/opt/ctx/bin/ctx.pre-update-backup");
+}
+
+#[test]
+fn remote_update_backup_and_restore_commands_use_copy_not_rename() {
+    let backup_cmd =
+        remote_backup_ctx_bin_cmd("/opt/ctx/bin/ctx", "/opt/ctx/bin/ctx.pre-update-backup");
+    assert!(backup_cmd.contains("cp '/opt/ctx/bin/ctx' '/opt/ctx/bin/ctx.pre-update-backup'"));
+    assert!(backup_cmd.contains("chmod 755"));
+
+    let restore_cmd =
+        remote_restore_ctx_bin_cmd("/opt/ctx/bin/ctx", "/opt/ctx/bin/ctx.pre-update-backup");
+    assert!(restore_cmd.contains("cp '/opt/ctx/bin/ctx.pre-update-backup' '/opt/ctx/bin/ctx'"));
+    assert!(restore_cmd.contains("backup missing"));
+}
+
+#[test]
+fn remote_update_backup_cleanup_command_removes_backup_file() {
+    let cmd = remote_cleanup_backup_ctx_bin_cmd("/opt/ctx/bin/ctx.pre-update-backup");
+    assert_eq!(cmd, "rm -f '/opt/ctx/bin/ctx.pre-update-backup'");
+}
+
+#[test]
+fn remote_stop_command_targets_expected_listener_without_fallback_patterns() {
+    let cmd = remote_stop_daemon_cmd(44199, Some("/tmp/ctx-remote"), "/opt/ctx/bin/ctx");
     assert!(cmd.contains("lsof -tiTCP:44199 -sTCP:LISTEN"));
-    assert!(cmd.contains("command -v pkill"));
-    assert!(cmd.contains("ctx serve"));
+    assert!(
+        cmd.contains("expected_cmd=\"$ctx_bin serve --bind 127.0.0.1:44199 --data-dir $data_dir\"")
+    );
+    assert!(cmd.contains("ps -p \"$pid\" -o args="));
+    assert!(!cmd.contains("[["));
+    assert!(!cmd.contains("pkill"));
+}
+
+#[test]
+#[cfg(unix)]
+fn remote_stop_command_runs_under_sh_and_kills_only_matching_listener() {
+    let temp = new_temp_test_dir("ctx-remote-stop-match");
+    let fakebin = temp.join("fakebin");
+    std::fs::create_dir_all(&fakebin).expect("create fakebin");
+    let home_dir = temp.join("home");
+    std::fs::create_dir_all(&home_dir).expect("create home dir");
+    let mut child = Command::new("/bin/sleep")
+        .arg("30")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn sleep child");
+    let child_pid = child.id();
+
+    let lsof_path = fakebin.join("lsof");
+    std::fs::write(
+        &lsof_path,
+        format!("#!/bin/sh\nprintf '{}\\n'\n", child_pid),
+    )
+    .expect("write fake lsof");
+    let ps_path = fakebin.join("ps");
+    std::fs::write(
+        &ps_path,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = '-p' ] && [ \"$2\" = '{}' ]; then\n  printf '%s\\n' '{}'\n  exit 0\nfi\nexit 1\n",
+            child_pid,
+            format!(
+                "{}/.ctx/bin/ctx serve --bind 127.0.0.1:44199 --data-dir {}/daemon",
+                home_dir.display(),
+                home_dir.display()
+            )
+        ),
+    )
+    .expect("write fake ps");
+    for path in [&lsof_path, &ps_path] {
+        let mut perms = std::fs::metadata(path).expect("metadata").permissions();
+        use std::os::unix::fs::PermissionsExt;
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).expect("chmod");
+    }
+
+    let cmd = remote_stop_daemon_cmd(44199, Some("~/daemon"), "~/.ctx/bin/ctx");
+    let output = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(&cmd)
+        .env("PATH", format!("{}:/usr/bin:/bin", fakebin.display()))
+        .env("HOME", home_dir.display().to_string())
+        .output()
+        .expect("run generated stop command");
+
+    assert!(
+        output.status.success(),
+        "expected stop command to succeed under /bin/sh: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !child.wait().expect("wait sleep child").success(),
+        "expected remote stop command to terminate pid {child_pid}"
+    );
+    std::fs::remove_dir_all(&temp).expect("remove temp dir");
+}
+
+#[test]
+#[cfg(unix)]
+fn remote_stop_command_refuses_non_matching_listener() {
+    let temp = new_temp_test_dir("ctx-remote-stop-mismatch");
+    let fakebin = temp.join("fakebin");
+    std::fs::create_dir_all(&fakebin).expect("create fakebin");
+    let home_dir = temp.join("home");
+    std::fs::create_dir_all(&home_dir).expect("create home dir");
+    let mut child = Command::new("/bin/sleep")
+        .arg("30")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn sleep child");
+    let child_pid = child.id();
+
+    let lsof_path = fakebin.join("lsof");
+    std::fs::write(
+        &lsof_path,
+        format!("#!/bin/sh\nprintf '{}\\n'\n", child_pid),
+    )
+    .expect("write fake lsof");
+    let ps_path = fakebin.join("ps");
+    std::fs::write(
+        &ps_path,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = '-p' ] && [ \"$2\" = '{}' ]; then\n  printf '%s\\n' '/usr/bin/ctx serve --bind 127.0.0.1:44199 --data-dir /tmp/other'\n  exit 0\nfi\nexit 1\n",
+            child_pid
+        ),
+    )
+    .expect("write fake ps");
+    for path in [&lsof_path, &ps_path] {
+        let mut perms = std::fs::metadata(path).expect("metadata").permissions();
+        use std::os::unix::fs::PermissionsExt;
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).expect("chmod");
+    }
+
+    let cmd = remote_stop_daemon_cmd(44199, Some("~/daemon"), "~/.ctx/bin/ctx");
+    let output = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(&cmd)
+        .env("PATH", format!("{}:/usr/bin:/bin", fakebin.display()))
+        .env("HOME", home_dir.display().to_string())
+        .output()
+        .expect("run generated stop command");
+
+    assert!(!output.status.success(), "mismatched listener should fail");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("remote daemon stop refused"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        pid_is_alive(child_pid),
+        "mismatched listener should not terminate pid {child_pid}"
+    );
+    child.kill().expect("kill sleep child");
+    let _ = child.wait().expect("wait sleep child");
+    std::fs::remove_dir_all(&temp).expect("remove temp dir");
 }
 
 #[test]

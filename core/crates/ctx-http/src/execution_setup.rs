@@ -427,7 +427,7 @@ impl ExecutionSetupCoordinator {
         daemon_url: String,
     ) {
         #[cfg(test)]
-        eprintln!("run_workspace_launch: begin workspace={}", workspace.id);
+        eprintln!("run_workspace_launch: begin workspace={:?}", workspace.id);
         let launch_started = std::time::Instant::now();
         let observer = LaunchObserver {
             coordinator: Arc::clone(&self),

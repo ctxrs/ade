@@ -74,8 +74,11 @@ fn write_local_status_override(data_dir: &Path, state: &str, message: &str) -> R
         "message": message,
         "distro": ""
     });
-    std::fs::write(&status_path, serde_json::to_vec(&payload).context("serializing status")?)
-        .with_context(|| format!("writing {}", status_path.display()))?;
+    std::fs::write(
+        &status_path,
+        serde_json::to_vec(&payload).context("serializing status")?,
+    )
+    .with_context(|| format!("writing {}", status_path.display()))?;
     Ok(())
 }
 
@@ -512,20 +515,16 @@ fn runtime_with_persisted_remote_admin_password(
 }
 
 fn remote_stage_status(manager: &ConnectionManager) -> Result<LinuxSandboxBootstrapStatus> {
-    parse_remote_daemon_json(
-        manager.daemon_request(build_remote_stage_request())?,
-        "/api/execution/linux_sandbox_runtime/stage",
-    )
+    remote_stage_status_response(manager.daemon_request(build_remote_stage_request())?)
 }
 
-fn remote_stage_status_with_upgrade(
-    app: &tauri::AppHandle,
-    manager: &ConnectionManager,
+fn remote_stage_status_response(
+    response: DesktopHttpResponse,
 ) -> Result<LinuxSandboxBootstrapStatus> {
-    let response = manager.daemon_request(build_remote_stage_request())?;
     if remote_daemon_missing_linux_sandbox_endpoint(&response) {
-        update_current_remote_daemon(app, manager, None)?;
-        return remote_stage_status(manager);
+        anyhow::bail!(
+            "remote daemon does not support sandbox preparation yet. Update or install the remote daemon explicitly, then reconnect"
+        );
     }
     parse_remote_daemon_json(response, "/api/execution/linux_sandbox_runtime/stage")
 }
@@ -565,7 +564,7 @@ pub(crate) async fn desktop_ensure_remote_linux_sandbox_ready(
         let manager: &ConnectionManager = state.inner();
         let target = manager.ssh_target().map_err(to_err)?;
         let (ssh_password_once, cached_admin_password) = active_remote_passwords(&target);
-        let status = remote_stage_status_with_upgrade(&app, manager).map_err(to_err)?;
+        let status = remote_stage_status(manager).map_err(to_err)?;
         match status.state.as_str() {
             "ready" => Ok(DesktopLinuxSandboxEnsureResp { ready: true }),
             "manual_runtime_required" => Err(if status.message.trim().is_empty() {
@@ -676,16 +675,33 @@ mod tests {
 
     #[test]
     fn missing_remote_linux_sandbox_endpoint_detected_from_404() {
-        assert!(remote_daemon_missing_linux_sandbox_endpoint(&DesktopHttpResponse {
+        assert!(remote_daemon_missing_linux_sandbox_endpoint(
+            &DesktopHttpResponse {
+                status: 404,
+                body: String::new(),
+                content_type: None,
+            }
+        ));
+        assert!(!remote_daemon_missing_linux_sandbox_endpoint(
+            &DesktopHttpResponse {
+                status: 200,
+                body: String::new(),
+                content_type: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn missing_remote_linux_sandbox_endpoint_requires_explicit_update() {
+        let err = remote_stage_status_response(DesktopHttpResponse {
             status: 404,
             body: String::new(),
             content_type: None,
-        }));
-        assert!(!remote_daemon_missing_linux_sandbox_endpoint(&DesktopHttpResponse {
-            status: 200,
-            body: String::new(),
-            content_type: None,
-        }));
+        })
+        .expect_err("404 stage response should require explicit remote update");
+        assert!(err.to_string().contains(
+            "remote daemon does not support sandbox preparation yet. Update or install the remote daemon explicitly, then reconnect"
+        ));
     }
 
     #[test]
@@ -707,7 +723,10 @@ mod tests {
             "admin-secret",
         );
         assert_eq!(updated.managed_ctx_bin, "~/.ctx/bin/ctx-managed");
-        assert_eq!(updated.active_ctx_bin.as_deref(), Some("~/.ctx/bin/ctx-active"));
+        assert_eq!(
+            updated.active_ctx_bin.as_deref(),
+            Some("~/.ctx/bin/ctx-active")
+        );
         assert_eq!(updated.admin_password_once.as_deref(), Some("admin-secret"));
     }
 }
