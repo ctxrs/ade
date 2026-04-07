@@ -16,11 +16,10 @@ export function resolveFollowBottomAfterScroll({
   programmaticScroll,
 }: ResolveFollowBottomAfterScrollParams): boolean {
   const scrolledUp = !programmaticScroll && currentScrollTop < previousScrollTop - 1;
-  const scrolledDown = !programmaticScroll && currentScrollTop > previousScrollTop + 1;
   if (scrolledUp) {
     return false;
   }
-  if (bottomOffsetPx <= thresholdPx && (programmaticScroll || scrolledDown || bottomOffsetPx <= 1)) {
+  if (bottomOffsetPx <= thresholdPx && (programmaticScroll || bottomOffsetPx <= 1)) {
     return true;
   }
   return followBottom;

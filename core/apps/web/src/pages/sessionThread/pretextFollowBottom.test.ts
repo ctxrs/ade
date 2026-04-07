@@ -31,6 +31,19 @@ describe("pretext follow-bottom helpers", () => {
     ).toBe(true);
   });
 
+  it("does not reattach just because a detached near-bottom scroll settles slightly downward within the threshold", () => {
+    expect(
+      resolveFollowBottomAfterScroll({
+        followBottom: false,
+        previousScrollTop: 1090,
+        currentScrollTop: 1096,
+        bottomOffsetPx: 10,
+        thresholdPx: 16,
+        programmaticScroll: false,
+      }),
+    ).toBe(false);
+  });
+
   it("re-enables follow-bottom for programmatic bottom restores", () => {
     expect(
       resolveFollowBottomAfterScroll({
