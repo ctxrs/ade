@@ -146,6 +146,83 @@ impl Store {
         Ok(row.and_then(|r| build_artifact_from_row(r).ok()))
     }
 
+    pub async fn upsert_session_artifact_by_path(&self, artifact: &Artifact) -> Result<Artifact> {
+        let existing = self
+            .query(
+                r#"SELECT id, session_id, task_id, workspace_id, worktree_id,
+                          name, absolute_path, mime_type, bytes, created_at
+                   FROM artifacts
+                   WHERE session_id = ? AND absolute_path = ?"#,
+            )
+            .bind(artifact.session_id.0.to_string())
+            .bind(&artifact.absolute_path)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some(row) = existing {
+            let existing_artifact = build_artifact_from_row(row)?;
+            self.query(
+                r#"UPDATE artifacts
+                   SET name = ?, mime_type = ?, bytes = ?
+                   WHERE id = ?"#,
+            )
+            .bind(artifact.name.as_deref())
+            .bind(&artifact.mime_type)
+            .bind(artifact.bytes)
+            .bind(existing_artifact.id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+
+            return Ok(Artifact {
+                id: existing_artifact.id,
+                session_id: existing_artifact.session_id,
+                task_id: existing_artifact.task_id,
+                workspace_id: existing_artifact.workspace_id,
+                worktree_id: existing_artifact.worktree_id,
+                name: artifact.name.clone(),
+                absolute_path: artifact.absolute_path.clone(),
+                mime_type: artifact.mime_type.clone(),
+                bytes: artifact.bytes,
+                created_at: existing_artifact.created_at,
+                missing: None,
+            });
+        }
+
+        let position: i64 = self
+            .query(
+                r#"SELECT COALESCE(MAX(position) + 1, 0) AS position
+                   FROM artifacts
+                   WHERE session_id = ?"#,
+            )
+            .bind(artifact.session_id.0.to_string())
+            .fetch_one(&self.pool)
+            .await?
+            .try_get("position")?;
+
+        self.query(
+            r#"INSERT INTO artifacts (
+                    id, session_id, task_id, workspace_id, worktree_id,
+                    position, name, absolute_path, mime_type, bytes, created_at
+               )
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(artifact.id.0.to_string())
+        .bind(artifact.session_id.0.to_string())
+        .bind(artifact.task_id.0.to_string())
+        .bind(artifact.workspace_id.0.to_string())
+        .bind(artifact.worktree_id.0.to_string())
+        .bind(position)
+        .bind(artifact.name.as_deref())
+        .bind(&artifact.absolute_path)
+        .bind(&artifact.mime_type)
+        .bind(artifact.bytes)
+        .bind(artifact.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(artifact.clone())
+    }
+
     pub async fn replace_session_artifacts(
         &self,
         session_id: SessionId,

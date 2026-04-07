@@ -27,22 +27,26 @@ fn preview_truncates_long_lines() {
 }
 
 #[test]
-fn sanitize_tool_payload_keeps_spool_path() {
+fn sanitize_tool_payload_keeps_bounded_preview_and_artifact_ref() {
     let raw = json!({
         "tool_call_id": "call-1",
         "output_text": "line1\nline2\nline3\nline4\nline5\nline6"
     });
-    let sanitized = sanitize_tool_event_payload(
-        &SessionEventType::ToolResult,
-        &raw,
-        Some("tool-output-spool/call-1.txt"),
-    );
+    let artifact = super::projections::ToolOutputArtifactRef {
+        artifact_id: "artifact-1".to_string(),
+        name: Some("tool-output-call-1.txt".to_string()),
+        mime_type: "text/plain".to_string(),
+        bytes: 35,
+    };
+    let sanitized =
+        sanitize_tool_event_payload(&SessionEventType::ToolResult, &raw, Some(&artifact));
     assert!(sanitized.get("output_text").is_none());
     assert_eq!(
         sanitized
-            .get("output_spool_path")
+            .get("output_artifact")
+            .and_then(|value| value.get("artifact_id"))
             .and_then(|value| value.as_str()),
-        Some("tool-output-spool/call-1.txt")
+        Some("artifact-1")
     );
     assert!(sanitized.get("output_preview").is_some());
     assert_eq!(

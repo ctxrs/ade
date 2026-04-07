@@ -467,15 +467,16 @@ pub(super) fn sanitize_tool_event_payload(
     let output_meta = extract_tool_output_text(update)
         .map(|output| build_output_preview(&output))
         .filter(|preview| !preview.preview.trim().is_empty());
-    let output_spool_path = update
-        .get("output_spool_path")
-        .and_then(|v| v.as_str())
+    let output_artifact = update
+        .get("output_artifact")
+        .filter(|value| value.is_object())
+        .cloned()
         .or_else(|| {
             raw_payload
-                .get("output_spool_path")
-                .and_then(|v| v.as_str())
-        })
-        .map(|v| v.to_string());
+                .get("output_artifact")
+                .filter(|value| value.is_object())
+                .cloned()
+        });
 
     let mut obj = serde_json::Map::new();
     if !tool_call_id.trim().is_empty() {
@@ -541,8 +542,8 @@ pub(super) fn sanitize_tool_event_payload(
             Value::Number(serde_json::Number::from(output_original_bytes)),
         );
     }
-    if let Some(path) = output_spool_path {
-        obj.insert("output_spool_path".to_string(), Value::String(path));
+    if let Some(artifact) = output_artifact {
+        obj.insert("output_artifact".to_string(), artifact);
     }
 
     if let Some(value) = raw_payload
@@ -735,27 +736,6 @@ pub(super) fn extract_tool_output_text(update: &Value) -> Option<String> {
     }
 }
 
-pub(super) fn merge_streaming_text(prev: Option<&str>, next: &str) -> String {
-    let prev = prev.unwrap_or("");
-    if prev.is_empty() {
-        return next.to_string();
-    }
-    if next.is_empty() {
-        return prev.to_string();
-    }
-    if next.starts_with(prev) {
-        return next.to_string();
-    }
-    if prev.starts_with(next) {
-        return prev.to_string();
-    }
-    if next.len() >= prev.len() {
-        next.to_string()
-    } else {
-        prev.to_string()
-    }
-}
-
 pub(super) fn build_turn_tools_from_events(
     session_id: SessionId,
     turn_id: TurnId,
@@ -875,10 +855,7 @@ pub(super) fn build_turn_tools_from_events(
 
         if let Some(output) = extract_tool_output_text(update) {
             let preview = build_output_preview(&output);
-            entry.output_text = Some(merge_streaming_text(
-                entry.output_text.as_deref(),
-                &preview.preview,
-            ));
+            entry.output_text = Some(preview.preview.clone());
             entry.output_truncated = Some(
                 update
                     .get("output_truncated")
@@ -925,4 +902,62 @@ pub(super) fn build_turn_tools_from_events(
     }
     out.sort_by(compare_tool_order);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_turn_tools_from_events_keeps_latest_preview_instead_of_merging() {
+        let session_id = SessionId::new();
+        let turn_id = TurnId::new();
+        let created_at = Utc::now();
+        let update_event = SessionEvent {
+            seq: 1,
+            id: SessionEventId::new(),
+            session_id,
+            run_id: None,
+            turn_id: Some(turn_id),
+            event_type: SessionEventType::ToolCallUpdate,
+            payload_json: serde_json::json!({
+                "tool_call_id": "tool-1",
+                "order_seq": 1,
+                "status": "running",
+                "output_preview": "line-1\nline-2\n... +4 lines\nline-7\nline-8",
+                "output_truncated": true,
+                "output_original_bytes": 64
+            }),
+            transient: true,
+            created_at,
+        };
+        let result_event = SessionEvent {
+            seq: 2,
+            id: SessionEventId::new(),
+            session_id,
+            run_id: None,
+            turn_id: Some(turn_id),
+            event_type: SessionEventType::ToolResult,
+            payload_json: serde_json::json!({
+                "tool_call_id": "tool-1",
+                "order_seq": 1,
+                "status": "completed",
+                "output_preview": "line-1\nline-2\n... +6 lines\nline-9\nline-10",
+                "output_truncated": true,
+                "output_original_bytes": 80
+            }),
+            transient: false,
+            created_at,
+        };
+
+        let tools =
+            build_turn_tools_from_events(session_id, turn_id, &[update_event, result_event]);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(
+            tools[0].output_text.as_deref(),
+            Some("line-1\nline-2\n... +6 lines\nline-9\nline-10")
+        );
+        assert_eq!(tools[0].output_original_bytes, Some(80));
+        assert_eq!(tools[0].status.as_deref(), Some("completed"));
+    }
 }

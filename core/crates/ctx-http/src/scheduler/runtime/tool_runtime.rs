@@ -5,6 +5,8 @@ use tokio::fs;
 use crate::daemon::AppState;
 
 use super::super::tools::normalize::NormalizedToolEvent;
+use super::super::tools::projections::ToolOutputArtifactRef;
+use ctx_core::models::Artifact;
 
 pub(super) fn cwd_outside_worktree(
     cwd: &str,
@@ -31,16 +33,27 @@ pub(super) fn cwd_outside_worktree(
 
 pub(super) async fn maybe_spool_tool_output(
     state: &AppState,
+    store: &ctx_store::Store,
     tool_event: &NormalizedToolEvent,
     session_id: ctx_core::ids::SessionId,
+    task_id: ctx_core::ids::TaskId,
+    workspace_id: ctx_core::ids::WorkspaceId,
+    worktree_id: ctx_core::ids::WorktreeId,
     turn_id: ctx_core::ids::TurnId,
-) -> Option<String> {
+) -> Option<ToolOutputArtifactRef> {
     if !state.core.tool_output_spool_enabled {
         return None;
     }
     let tool_call_id = tool_event.tool_call_id.as_deref()?;
     let output = tool_event.raw_output_text.as_deref()?;
     if output.trim().is_empty() {
+        return None;
+    }
+    if !tool_event
+        .output_preview
+        .as_ref()
+        .is_some_and(|preview| preview.truncated)
+    {
         return None;
     }
 
@@ -66,7 +79,37 @@ pub(super) async fn maybe_spool_tool_output(
         );
         return None;
     }
-    Some(path.to_string_lossy().to_string())
+    let name = format!("tool-output-{}.txt", sanitize_spool_segment(tool_call_id));
+    let artifact = Artifact {
+        id: ctx_core::ids::ArtifactId::new(),
+        session_id,
+        task_id,
+        workspace_id,
+        worktree_id,
+        name: Some(name.clone()),
+        absolute_path: path.to_string_lossy().to_string(),
+        mime_type: "text/plain".to_string(),
+        bytes: output.len() as i64,
+        created_at: chrono::Utc::now(),
+        missing: None,
+    };
+    let artifact = match store.upsert_session_artifact_by_path(&artifact).await {
+        Ok(artifact) => artifact,
+        Err(err) => {
+            tracing::warn!(
+                "failed to register tool output artifact {}: {err}",
+                path.to_string_lossy()
+            );
+            return None;
+        }
+    };
+
+    Some(ToolOutputArtifactRef {
+        artifact_id: artifact.id.0.to_string(),
+        name: artifact.name,
+        mime_type: artifact.mime_type,
+        bytes: artifact.bytes,
+    })
 }
 
 fn sanitize_spool_segment(raw: &str) -> String {

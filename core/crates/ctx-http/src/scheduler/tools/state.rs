@@ -70,13 +70,9 @@ pub(in crate::scheduler) fn merge_tool_update(
     let input_original_bytes = update
         .input_original_bytes
         .or_else(|| prev.and_then(|tool| tool.input_original_bytes));
-    let output_text = match update.output_text {
-        Some(next) => Some(merge_streaming_text(
-            prev.and_then(|tool| tool.output_text.as_deref()),
-            &next,
-        )),
-        None => prev.and_then(|tool| tool.output_text.clone()),
-    };
+    let output_text = update
+        .output_text
+        .or_else(|| prev.and_then(|tool| tool.output_text.clone()));
     let output_truncated = match (
         update.output_truncated,
         prev.and_then(|tool| tool.output_truncated),
@@ -172,26 +168,5 @@ fn tool_status_bucket(status: Option<&str>) -> Option<&'static str> {
         "failed" | "error" => Some("failed"),
         "" => Some("pending"),
         _ => Some("pending"),
-    }
-}
-
-fn merge_streaming_text(prev: Option<&str>, next: &str) -> String {
-    let prev = prev.unwrap_or("");
-    if prev.is_empty() {
-        return next.to_string();
-    }
-    if next.is_empty() {
-        return prev.to_string();
-    }
-    if next.starts_with(prev) {
-        return next.to_string();
-    }
-    if prev.starts_with(next) {
-        return prev.to_string();
-    }
-    if next.len() >= prev.len() {
-        next.to_string()
-    } else {
-        prev.to_string()
     }
 }

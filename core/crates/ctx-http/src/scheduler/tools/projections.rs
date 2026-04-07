@@ -9,6 +9,14 @@ use super::normalize::NormalizedToolEvent;
 use super::state::TurnToolUpdate;
 
 #[derive(Debug, Clone)]
+pub(in crate::scheduler) struct ToolOutputArtifactRef {
+    pub(in crate::scheduler) artifact_id: String,
+    pub(in crate::scheduler) name: Option<String>,
+    pub(in crate::scheduler) mime_type: String,
+    pub(in crate::scheduler) bytes: i64,
+}
+
+#[derive(Debug, Clone)]
 pub(in crate::scheduler) struct ToolOpsMeta {
     pub(in crate::scheduler) tool_call_id: Option<String>,
     pub(in crate::scheduler) tool_kind: Option<String>,
@@ -22,15 +30,15 @@ pub(in crate::scheduler) struct ToolOpsMeta {
 pub(in crate::scheduler) fn sanitize_tool_event_payload(
     event_type: &SessionEventType,
     raw_payload: &Value,
-    output_spool_path: Option<&str>,
+    output_artifact: Option<&ToolOutputArtifactRef>,
 ) -> Value {
     let normalized = normalize_tool_event(event_type, raw_payload);
-    sanitize_normalized_tool_event_payload(&normalized, output_spool_path)
+    sanitize_normalized_tool_event_payload(&normalized, output_artifact)
 }
 
 pub(in crate::scheduler) fn sanitize_normalized_tool_event_payload(
     normalized: &NormalizedToolEvent,
-    output_spool_path: Option<&str>,
+    output_artifact: Option<&ToolOutputArtifactRef>,
 ) -> Value {
     let mut object = serde_json::Map::new();
 
@@ -100,11 +108,24 @@ pub(in crate::scheduler) fn sanitize_normalized_tool_event_payload(
     if let Some(order_seq) = normalized.raw_order_seq.as_ref() {
         object.insert("order_seq".to_string(), order_seq.clone());
     }
-    if let Some(path) = output_spool_path {
-        object.insert(
-            "output_spool_path".to_string(),
-            Value::String(path.to_string()),
+    if let Some(artifact) = output_artifact {
+        let mut artifact_json = serde_json::Map::new();
+        artifact_json.insert(
+            "artifact_id".to_string(),
+            Value::String(artifact.artifact_id.clone()),
         );
+        if let Some(name) = artifact.name.as_ref() {
+            artifact_json.insert("name".to_string(), Value::String(name.clone()));
+        }
+        artifact_json.insert(
+            "mime_type".to_string(),
+            Value::String(artifact.mime_type.clone()),
+        );
+        artifact_json.insert(
+            "bytes".to_string(),
+            Value::Number(serde_json::Number::from(artifact.bytes)),
+        );
+        object.insert("output_artifact".to_string(), Value::Object(artifact_json));
     }
 
     Value::Object(object)

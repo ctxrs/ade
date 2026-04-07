@@ -15,9 +15,9 @@ pub(super) const TOOL_PREVIEW_MAX_LINE_CHARS: usize = 80;
 
 #[derive(Debug, Clone)]
 pub(in crate::scheduler) struct ToolTextPreview {
-    pub(super) preview: String,
-    pub(super) truncated: bool,
-    pub(super) original_bytes: usize,
+    pub(in crate::scheduler) preview: String,
+    pub(in crate::scheduler) truncated: bool,
+    pub(in crate::scheduler) original_bytes: usize,
 }
 
 #[derive(Debug, Clone)]

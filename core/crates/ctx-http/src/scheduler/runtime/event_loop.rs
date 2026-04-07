@@ -361,13 +361,22 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
             }
         }
         if let Some(tool_event) = normalized_tool_event.as_ref() {
-            let output_spool_path = if matches!(event_type, SessionEventType::ToolResult) {
-                maybe_spool_tool_output(state.as_ref(), tool_event, session_id, turn_id).await
+            let output_artifact = if matches!(event_type, SessionEventType::ToolResult) {
+                maybe_spool_tool_output(
+                    state.as_ref(),
+                    &store,
+                    tool_event,
+                    session_id,
+                    task_id,
+                    workspace_id,
+                    worktree_id,
+                    turn_id,
+                )
+                .await
             } else {
                 None
             };
-            payload =
-                sanitize_normalized_tool_event_payload(tool_event, output_spool_path.as_deref());
+            payload = sanitize_normalized_tool_event_payload(tool_event, output_artifact.as_ref());
         }
         {
             let mut order_seq_state = order_seq_state.lock().await;
