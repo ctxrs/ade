@@ -49,6 +49,7 @@ linux_install_dir="\${CTX_INSTALL_DIR:-$home_dir/.local/share/ctx}"
 linux_bin_dir="\${CTX_BIN_DIR:-$home_dir/.local/bin}"
 linux_launcher_path="\${CTX_UNINSTALL_LINUX_LAUNCHER_PATH:-$linux_bin_dir/ctx-desktop}"
 linux_desktop_entry_path="\${CTX_UNINSTALL_LINUX_DESKTOP_ENTRY_PATH:-\${XDG_DATA_HOME:-$home_dir/.local/share}/applications/ctx.desktop}"
+linux_icon_path="\${CTX_UNINSTALL_LINUX_ICON_PATH:-\${XDG_DATA_HOME:-$home_dir/.local/share}/icons/hicolor/512x512/apps/ctx.png}"
 linux_debian_package_name="\${CTX_UNINSTALL_DEBIAN_PACKAGE_NAME:-ctx}"
 
 remove_path() {
@@ -143,7 +144,8 @@ print_targets() {
         "$data_dir" \
         "$linux_install_dir" \
         "$linux_launcher_path" \
-        "$linux_desktop_entry_path"
+        "$linux_desktop_entry_path" \
+        "$linux_icon_path"
       if linux_is_debian_like; then
         printf 'Debian package: %s (if installed)\\n' "$linux_debian_package_name"
       fi
@@ -199,6 +201,7 @@ uninstall_linux() {
   remove_path "$linux_install_dir"
   remove_path "$linux_launcher_path"
   remove_path "$linux_desktop_entry_path"
+  remove_path "$linux_icon_path"
 }
 
 confirm_uninstall

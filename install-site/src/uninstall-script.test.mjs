@@ -229,7 +229,7 @@ test("macOS uninstall removes app, data, and AVF state with sudo only for the sy
   }
 });
 
-test("Linux uninstall removes local data, AppImage install, and desktop entry with --yes", () => {
+test("Linux uninstall removes local data, AppImage install, desktop entry, and icon with --yes", () => {
   const result = runUninstaller({
     os: "Linux",
     args: ["--yes"],
@@ -240,6 +240,7 @@ test("Linux uninstall removes local data, AppImage install, and desktop entry wi
   const launcherPath = path.join(binDir, "ctx-desktop");
   const xdgDataHome = path.join(result.homeDir, ".local", "share");
   const desktopEntryPath = path.join(xdgDataHome, "applications", "ctx.desktop");
+  const iconPath = path.join(xdgDataHome, "icons", "hicolor", "512x512", "apps", "ctx.png");
   const dataDir = path.join(result.homeDir, ".ctx");
   const osReleasePath = path.join(result.sandboxDir, "os-release");
 
@@ -250,6 +251,8 @@ test("Linux uninstall removes local data, AppImage install, and desktop entry wi
   writeFileSync(path.join(installDir, "ctx.AppImage"), "appimage");
   writeFileSync(launcherPath, "#!/bin/sh\n");
   writeFileSync(desktopEntryPath, "[Desktop Entry]\n");
+  mkdirSync(path.dirname(iconPath), { recursive: true });
+  writeFileSync(iconPath, "icon-bytes");
   writeFileSync(osReleasePath, "ID=fedora\nID_LIKE=rhel\n");
 
   const rerun = spawnSync("sh", [path.join(result.sandboxDir, "uninstall.sh"), "--yes"], {
@@ -272,13 +275,14 @@ test("Linux uninstall removes local data, AppImage install, and desktop entry wi
     assert.equal(existsSync(installDir), false);
     assert.equal(existsSync(launcherPath), false);
     assert.equal(existsSync(desktopEntryPath), false);
+    assert.equal(existsSync(iconPath), false);
     assert.equal(existsSync(result.aptLogPath), false);
   } finally {
     result.cleanup();
   }
 });
 
-test("Linux uninstall purges installed Debian package before removing local state", () => {
+test("Linux uninstall purges installed Debian package before removing local state (including icon)", () => {
   const result = runUninstaller({
     os: "Linux",
     args: ["--yes"],
@@ -290,6 +294,7 @@ test("Linux uninstall purges installed Debian package before removing local stat
   const launcherPath = path.join(binDir, "ctx-desktop");
   const xdgDataHome = path.join(result.homeDir, ".local", "share");
   const desktopEntryPath = path.join(xdgDataHome, "applications", "ctx.desktop");
+  const iconPath = path.join(xdgDataHome, "icons", "hicolor", "512x512", "apps", "ctx.png");
   const dataDir = path.join(result.homeDir, ".ctx");
   const osReleasePath = path.join(result.sandboxDir, "os-release");
 
@@ -299,6 +304,8 @@ test("Linux uninstall purges installed Debian package before removing local stat
   mkdirSync(dataDir, { recursive: true });
   writeFileSync(launcherPath, "#!/bin/sh\n");
   writeFileSync(desktopEntryPath, "[Desktop Entry]\n");
+  mkdirSync(path.dirname(iconPath), { recursive: true });
+  writeFileSync(iconPath, "icon-bytes");
   writeFileSync(osReleasePath, "ID=ubuntu\nID_LIKE=debian\n");
 
   const rerun = spawnSync("sh", [path.join(result.sandboxDir, "uninstall.sh"), "--yes"], {
@@ -323,6 +330,7 @@ test("Linux uninstall purges installed Debian package before removing local stat
     assert.equal(existsSync(installDir), false);
     assert.equal(existsSync(launcherPath), false);
     assert.equal(existsSync(desktopEntryPath), false);
+    assert.equal(existsSync(iconPath), false);
   } finally {
     result.cleanup();
   }
