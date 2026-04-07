@@ -1154,8 +1154,8 @@ async fn emit_auth_required_notice(
         let state = bridge_state.lock().await;
         (state.auth_methods.clone(), state.provider_id.clone())
     };
-    let details = auth_notice_details(&auth_methods, provider_id.as_deref(), err.data.as_ref());
-    let message = auth_notice_message(&err.message, err.data.as_ref());
+    let details = auth_notice_details(&auth_methods, provider_id.as_deref());
+    let message = auth_notice_message("auth_required", &err.message, err.data.as_ref());
     emit_auth_notice(
         events_tx,
         session_id,
@@ -1175,8 +1175,8 @@ async fn emit_auth_error_notice(
         let state = bridge_state.lock().await;
         (state.auth_methods.clone(), state.provider_id.clone())
     };
-    let details = auth_notice_details(&auth_methods, provider_id.as_deref(), err.data.as_ref());
-    let message = auth_notice_message(&err.message, err.data.as_ref());
+    let details = auth_notice_details(&auth_methods, provider_id.as_deref());
+    let message = auth_notice_message("auth_error", &err.message, err.data.as_ref());
     emit_auth_notice(
         events_tx,
         session_id,
@@ -1212,48 +1212,64 @@ async fn emit_auth_notice(
     let _ = events_tx.send(notice).await;
 }
 
-fn auth_notice_message(default_message: &str, error_data: Option<&Value>) -> String {
-    if let Some(message) = error_data
+fn auth_notice_message(code: &str, default_message: &str, error_data: Option<&Value>) -> String {
+    let generic = match code {
+        "auth_required" => "Authentication required.",
+        "auth_error" => "Authentication failed.",
+        _ => "Authentication update.",
+    };
+
+    let candidate = error_data
         .and_then(Value::as_str)
-        .map(ToString::to_string)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .or_else(|| {
             error_data
                 .and_then(|value| value.get("message"))
                 .and_then(Value::as_str)
-                .map(ToString::to_string)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
         })
-    {
-        return message;
+        .or_else(|| {
+            let trimmed = default_message.trim();
+            (!trimmed.is_empty()).then_some(trimmed)
+        });
+
+    match candidate {
+        Some(message) if auth_notice_message_is_safe(message) => message.to_string(),
+        _ => generic.to_string(),
     }
-    default_message.to_string()
 }
 
-fn auth_notice_details(
-    auth_methods: &[AuthMethod],
-    provider_id: Option<&str>,
-    error_data: Option<&Value>,
-) -> Option<Value> {
+fn auth_notice_message_is_safe(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    !lower.contains("://")
+        && !lower.contains("www.")
+        && !lower.contains("token=")
+        && !lower.contains("code=")
+        && !lower.contains("bearer ")
+}
+
+fn auth_notice_details(auth_methods: &[AuthMethod], provider_id: Option<&str>) -> Option<Value> {
     let mut details = serde_json::Map::new();
     if !auth_methods.is_empty() {
-        if let Ok(value) = serde_json::to_value(auth_methods) {
-            details.insert("auth_methods".to_string(), value);
-        }
+        details.insert(
+            "auth_methods".to_string(),
+            Value::Array(
+                auth_methods
+                    .iter()
+                    .map(|method| {
+                        json!({
+                            "id": method.id.to_string(),
+                            "name": method.name,
+                        })
+                    })
+                    .collect(),
+            ),
+        );
     }
     if let Some(provider_id) = provider_id {
         details.insert("provider".to_string(), json!(provider_id));
-    }
-
-    if let Some(data) = error_data {
-        match data {
-            Value::Object(map) => {
-                for (key, value) in map {
-                    details.insert(key.clone(), value.clone());
-                }
-            }
-            other => {
-                details.insert("error_data".to_string(), other.clone());
-            }
-        }
     }
 
     if details.is_empty() {
@@ -1798,6 +1814,61 @@ mod tests {
         assert!(bridge_trace_filter_matches(Some("*"), Some("qwen")));
         assert!(!bridge_trace_filter_matches(Some("qwen"), Some("opencode")));
         assert!(!bridge_trace_filter_matches(None, Some("opencode")));
+    }
+
+    #[test]
+    fn auth_notice_details_only_include_safe_auth_metadata() {
+        let auth_methods = vec![AuthMethod::new("oauth", "Sign in")
+            .description("Open the browser")
+            .meta(
+                json!({"authUrl": "https://auth.example.test/start?token=secret"})
+                    .as_object()
+                    .cloned()
+                    .expect("meta map"),
+            )];
+        let details = auth_notice_details(&auth_methods, Some("amp"))
+            .expect("safe auth details")
+            .as_object()
+            .cloned()
+            .expect("object");
+
+        assert_eq!(details.get("provider"), Some(&json!("amp")));
+        assert_eq!(
+            details.get("auth_methods"),
+            Some(&json!([{ "id": "oauth", "name": "Sign in" }]))
+        );
+        assert!(!details.contains_key("authUrl"));
+        assert!(!details.contains_key("message"));
+        assert!(!details.contains_key("description"));
+        let serialized = Value::Object(details).to_string();
+        assert!(!serialized.contains("https://auth.example.test/start"));
+        assert!(!serialized.contains("token=secret"));
+    }
+
+    #[test]
+    fn auth_notice_message_redacts_url_like_payloads_to_generic_copy() {
+        let message = auth_notice_message(
+            "auth_required",
+            "Open https://auth.example.test/start?code=secret",
+            Some(&json!({
+                "message": "Visit https://auth.example.test/start?token=secret"
+            })),
+        );
+
+        assert_eq!(message, "Authentication required.");
+    }
+
+    #[test]
+    fn auth_notice_message_keeps_safe_plaintext_reason() {
+        let message = auth_notice_message(
+            "auth_error",
+            "Browser sign-in timed out",
+            Some(&json!({
+                "message": "Browser sign-in timed out"
+            })),
+        );
+
+        assert_eq!(message, "Browser sign-in timed out");
     }
 
     #[test]
