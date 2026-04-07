@@ -29,6 +29,9 @@ type E2EWindow = Window & {
     measureTargets?: (selectors: Record<string, string>) => Promise<unknown>;
     measureHarnessOption?: (label: string) => Promise<unknown>;
     measureDiffFile?: (targetPath: string) => Promise<unknown>;
+    measureMarkdownParity?: (samples: readonly { name: string; markdown: string }[], width: number) => Promise<unknown>;
+    installMarkdownScrollProbe?: (markdown: string, width?: number) => Promise<boolean>;
+    removeMarkdownScrollProbe?: () => boolean;
   };
 };
 
@@ -76,6 +79,9 @@ describe("useWorkbenchE2EBridge", () => {
     expect(typeof e2eWindow.__ctxE2E?.measureTargets).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.measureHarnessOption).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.measureDiffFile).toBe("function");
+    expect(typeof e2eWindow.__ctxE2E?.measureMarkdownParity).toBe("function");
+    expect(typeof e2eWindow.__ctxE2E?.installMarkdownScrollProbe).toBe("function");
+    expect(typeof e2eWindow.__ctxE2E?.removeMarkdownScrollProbe).toBe("function");
     expect(e2eWindow.__ctxE2E?.focusNewTask?.()).toBe(true);
     expect(e2eWindow.__ctxE2E?.clearDraftHarness?.()).toBe(true);
     expect(e2eWindow.__ctxE2E?.focusTask?.("task-1", "session-1")).toBe(true);
@@ -96,5 +102,8 @@ describe("useWorkbenchE2EBridge", () => {
     expect(e2eWindow.__ctxE2E?.measureTargets).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.measureHarnessOption).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.measureDiffFile).toBeUndefined();
+    expect(e2eWindow.__ctxE2E?.measureMarkdownParity).toBeUndefined();
+    expect(e2eWindow.__ctxE2E?.installMarkdownScrollProbe).toBeUndefined();
+    expect(e2eWindow.__ctxE2E?.removeMarkdownScrollProbe).toBeUndefined();
   });
 });

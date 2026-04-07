@@ -97,7 +97,7 @@ const resolveTurnHeaderTextWidth = (viewportWidth: number): number =>
 const resolveMessageOuterWidth = (viewportWidth: number): number =>
   Math.max(
     1,
-    Math.floor((resolveSessionThreadContentWidth(viewportWidth) - SESSION_THREAD_INDENT_LEFT_PX) * MESSAGE_MAX_WIDTH_RATIO),
+    (resolveSessionThreadContentWidth(viewportWidth) - SESSION_THREAD_INDENT_LEFT_PX) * MESSAGE_MAX_WIDTH_RATIO,
   );
 
 const resolveMessageTextWidth = (viewportWidth: number): number =>

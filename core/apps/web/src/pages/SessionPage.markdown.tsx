@@ -9,6 +9,7 @@ import {
   useSyncExternalStore,
   type MouseEvent,
   type ReactNode,
+  type WheelEvent,
 } from "react";
 import { defaultUrlTransform } from "react-markdown";
 import { Check, Copy } from "lucide-react";
@@ -79,6 +80,19 @@ type CodeTokenOptions = {
   onFileOpenError?: (message: string | null) => void;
   wrapPlainTokens?: boolean;
 };
+
+function forwardVerticalWheelToTranscript(event: WheelEvent<HTMLElement>) {
+  if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+  const transcriptScroller = event.currentTarget.closest("[data-pretext-virtualizer-list='1'], .wb-thread-scroller") as HTMLElement | null;
+  if (!transcriptScroller) return;
+  const maxScrollTop = Math.max(0, transcriptScroller.scrollHeight - transcriptScroller.clientHeight);
+  if (maxScrollTop <= 0) return;
+  const nextScrollTop = Math.max(0, Math.min(maxScrollTop, transcriptScroller.scrollTop + event.deltaY));
+  if (Math.abs(nextScrollTop - transcriptScroller.scrollTop) <= 0.5) return;
+  transcriptScroller.scrollTop = nextScrollTop;
+  transcriptScroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+  event.preventDefault();
+}
 
 const hasModifier = (event: { metaKey?: boolean; ctrlKey?: boolean }): boolean =>
   Boolean(event.metaKey || event.ctrlKey);
@@ -395,7 +409,7 @@ function FencedCodeBlock({
         </button>
       </div>
       <div className="codeblock-body">
-        <pre className="codeblock-pre">
+        <pre className="codeblock-pre" onWheelCapture={forwardVerticalWheelToTranscript}>
           <code className="codeblock-code">{content}</code>
         </pre>
       </div>
@@ -665,7 +679,7 @@ function renderBlock(
     case "table":
       return (
         <div key={keyPrefix} className="wb-md-block wb-md-block--table" style={shellStyle}>
-          <div className="wb-md-table-scroll">
+          <div className="wb-md-table-scroll" onWheelCapture={forwardVerticalWheelToTranscript}>
             <table className="wb-md-table">
               <tbody className="wb-md-table-body">
                 {block.rows.map((row, rowIndex) => (

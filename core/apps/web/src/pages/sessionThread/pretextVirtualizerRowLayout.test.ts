@@ -52,7 +52,12 @@ import {
   getPretextVirtualizerRowLayout,
 } from "./pretextVirtualizerRowLayout";
 import { measureSessionMarkdownDocument } from "./sessionMarkdownMeasurement";
-import { SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_HEIGHT_PX } from "./sessionThreadLayoutTokens";
+import {
+  SESSION_THREAD_MARKDOWN_CODE_BLOCK_BORDER_WIDTH_PX,
+  SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_BOTTOM_PX,
+  SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_TOP_PX,
+  SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_BLOCK_PX,
+} from "./sessionThreadLayoutTokens";
 
 describe("getPretextVirtualizerRowLayout", () => {
   beforeEach(() => {
@@ -148,7 +153,25 @@ describe("getPretextVirtualizerRowLayout", () => {
 
     const height = measureSessionMarkdownDocument(markdown, 50);
 
-    expect(height).toBe(Math.ceil(3 * (20.15 + SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_HEIGHT_PX)));
+    expect(height).toBe(
+      Math.round(
+        3 * (Math.max(20.15, 17.4) + SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_BLOCK_PX) * 16,
+      ) / 16,
+    );
+  });
+
+  it("includes fenced code block border chrome in deterministic markdown height", () => {
+    const markdown = "```ts\nconst value = 1;\n```";
+
+    const height = measureSessionMarkdownDocument(markdown, 400);
+
+    const expected =
+      10 +
+      SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_TOP_PX +
+      SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_BOTTOM_PX +
+      SESSION_THREAD_MARKDOWN_CODE_BLOCK_BORDER_WIDTH_PX * 2 +
+      17.4;
+    expect(height).toBe(Math.round(expected * 16) / 16);
   });
 
   it("accounts for expansion state and attachments in turn header height", () => {

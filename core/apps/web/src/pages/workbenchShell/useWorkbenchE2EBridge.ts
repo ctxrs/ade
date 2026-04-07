@@ -6,6 +6,13 @@ import {
   type WorkbenchE2EMeasuredTargetResult,
   type WorkbenchE2EMeasureTargetsResult,
 } from "./workbenchE2EMeasurements";
+import {
+  installWorkbenchMarkdownScrollProbe,
+  measureWorkbenchMarkdownParity,
+  removeWorkbenchMarkdownScrollProbe,
+  type WorkbenchMarkdownParityMeasurement,
+  type WorkbenchMarkdownParitySample,
+} from "./workbenchE2EMarkdown";
 
 type WorkbenchE2EWindow = Window & {
   __ctxE2E?: {
@@ -17,6 +24,12 @@ type WorkbenchE2EWindow = Window & {
     measureTargets?: (selectors: Record<string, string>) => Promise<WorkbenchE2EMeasureTargetsResult>;
     measureHarnessOption?: (label: string) => Promise<WorkbenchE2EMeasuredTargetResult | null>;
     measureDiffFile?: (targetPath: string) => Promise<WorkbenchE2EMeasuredTargetResult | null>;
+    measureMarkdownParity?: (
+      samples: readonly WorkbenchMarkdownParitySample[],
+      width: number,
+    ) => Promise<WorkbenchMarkdownParityMeasurement[]>;
+    installMarkdownScrollProbe?: (markdown: string, width?: number) => Promise<boolean>;
+    removeMarkdownScrollProbe?: () => boolean;
   };
 };
 
@@ -62,6 +75,16 @@ export function useWorkbenchE2EBridge({
     win.__ctxE2E.measureTargets = (selectors: Record<string, string>) => measureWorkbenchTargets(selectors);
     win.__ctxE2E.measureHarnessOption = (label: string) => measureWorkbenchHarnessOption(label);
     win.__ctxE2E.measureDiffFile = (targetPath: string) => measureWorkbenchDiffFile(targetPath);
+    win.__ctxE2E.measureMarkdownParity = (
+      samples: readonly WorkbenchMarkdownParitySample[],
+      width: number,
+    ) => measureWorkbenchMarkdownParity(samples, width);
+    win.__ctxE2E.installMarkdownScrollProbe = (markdown: string, width?: number) =>
+      installWorkbenchMarkdownScrollProbe(markdown, width);
+    win.__ctxE2E.removeMarkdownScrollProbe = () => {
+      removeWorkbenchMarkdownScrollProbe();
+      return true;
+    };
 
     return () => {
       if (!win.__ctxE2E) return;
@@ -73,6 +96,9 @@ export function useWorkbenchE2EBridge({
       delete win.__ctxE2E.measureTargets;
       delete win.__ctxE2E.measureHarnessOption;
       delete win.__ctxE2E.measureDiffFile;
+      delete win.__ctxE2E.measureMarkdownParity;
+      delete win.__ctxE2E.installMarkdownScrollProbe;
+      delete win.__ctxE2E.removeMarkdownScrollProbe;
     };
   }, [clearDraftHarness, focusNewTask, focusTask, toggleArtifactsPane, toggleDiffPane]);
 }

@@ -17,11 +17,14 @@ import {
   SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY,
   SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX,
   SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
+  SESSION_THREAD_MARKDOWN_CODE_BLOCK_BORDER_WIDTH_PX,
+  SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_BOTTOM_PX,
+  SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_TOP_PX,
   SESSION_THREAD_MARKDOWN_IMAGE_HEIGHT_PX,
   SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY,
-  SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_HEIGHT_PX,
   SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX,
   SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_SIZE_PX,
+  SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_BLOCK_PX,
   SESSION_THREAD_MARKDOWN_LIST_GAP_PX,
   SESSION_THREAD_MARKDOWN_LIST_INDENT_PX,
   SESSION_THREAD_MARKDOWN_TABLE_BORDER_WIDTH_PX,
@@ -48,7 +51,9 @@ const HEADING_LINE_HEIGHT_BY_DEPTH = {
 } as const;
 const MONO_FONT = `${SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY}`;
 const MONO_LINE_HEIGHT_PX = 17.4;
-const CODE_BLOCK_VERTICAL_PADDING_PX = 40;
+const CODE_BLOCK_VERTICAL_PADDING_PX =
+  SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_TOP_PX +
+  SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_BOTTOM_PX;
 const CHECKBOX_GUTTER_PX = 18;
 
 type TextWhiteSpace = "normal" | "pre-wrap";
@@ -144,7 +149,7 @@ function measureTextHeight(params: {
 }): number {
   const whiteSpace = params.whiteSpace ?? "normal";
   const prepared = getPreparedText(params.cacheKey, params.text, params.font, whiteSpace);
-  return clampHeight(layout(prepared, Math.max(1, Math.floor(params.width)), params.lineHeight).height);
+  return clampHeight(layout(prepared, Math.max(1, params.width), params.lineHeight).height);
 }
 
 function parseMarkdown(content: string): SessionMarkdownBlock[] {
@@ -257,12 +262,9 @@ function measureInlineRunsHeight(params: {
   lineHeight: number;
   cacheKeyPrefix: string;
 }): number {
-  const maxWidth = Math.max(1, Math.floor(params.width));
+  const maxWidth = Math.max(1, params.width);
   const inlineCodeFont = resolveInlineCodeFont(params.textFont);
-  const inlineCodeLineHeight = Math.max(
-    params.lineHeight,
-    MONO_LINE_HEIGHT_PX + SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_HEIGHT_PX,
-  );
+  const inlineCodeLineHeight = Math.max(params.lineHeight, MONO_LINE_HEIGHT_PX) + SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_BLOCK_PX;
   let totalHeight = 0;
   let currentLineWidth = 0;
   let pendingWhitespaceWidth = 0;
@@ -363,22 +365,25 @@ function measureInlineRunsHeight(params: {
     }
 
     if (currentLineWidth > 0) {
-      advanceLine();
+      consumePendingWhitespace();
     }
-    pendingWhitespaceWidth = 0;
-
+    let fragmentWidth = currentLineWidth + SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX;
+    if (fragmentWidth > maxWidth + 0.01 && currentLineWidth > 0) {
+      advanceLine();
+      fragmentWidth = SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX;
+    }
     const graphemeWidths = measureGraphemeWidths(run.text, inlineCodeFont, `${params.cacheKeyPrefix}:inline-code:${runIndex}`);
-    let fragmentWidth = SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX;
+    currentLineHeight = Math.max(currentLineHeight, inlineCodeLineHeight);
     for (let graphemeIndex = 0; graphemeIndex < graphemeWidths.length; graphemeIndex += 1) {
       const graphemeWidth = graphemeWidths[graphemeIndex] ?? 0;
       if (
-        fragmentWidth > SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX &&
+        fragmentWidth > currentLineWidth + SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX &&
         fragmentWidth + graphemeWidth > maxWidth + 0.01
       ) {
         currentLineWidth = fragmentWidth;
-        currentLineHeight = Math.max(currentLineHeight, inlineCodeLineHeight);
         advanceLine();
         fragmentWidth = SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX;
+        currentLineHeight = Math.max(currentLineHeight, inlineCodeLineHeight);
       }
       fragmentWidth += graphemeWidth;
     }
@@ -463,7 +468,11 @@ function measureHeading(block: Extract<SessionMarkdownBlock, { kind: "heading" }
 function measureCodeBlock(block: Extract<SessionMarkdownBlock, { kind: "code" }>): number {
   const lineCount = Math.max(1, block.code.replace(/\n$/, "").split("\n").length);
   const textHeight = clampHeight(lineCount * MONO_LINE_HEIGHT_PX);
-  return CODE_BLOCK_VERTICAL_PADDING_PX + textHeight;
+  return (
+    CODE_BLOCK_VERTICAL_PADDING_PX +
+    textHeight +
+    SESSION_THREAD_MARKDOWN_CODE_BLOCK_BORDER_WIDTH_PX * 2
+  );
 }
 
 function measureListItem(
@@ -526,7 +535,7 @@ function measureTable(block: Extract<SessionMarkdownBlock, { kind: "table" }>, w
   const totalCellPaddingInlineWidth = columnCount * cellPaddingInlinePx * 2;
   const cellContentWidth = Math.max(
     1,
-    Math.floor((Math.max(1, width) - totalBorderWidth - totalCellPaddingInlineWidth) / columnCount),
+    (Math.max(1, width) - totalBorderWidth - totalCellPaddingInlineWidth) / columnCount,
   );
 
   let height = borderWidthPx;
@@ -595,5 +604,5 @@ export function clearSessionMarkdownMeasurementCaches(): void {
 
 export function measureSessionMarkdownDocument(markdown: string, width: number): number {
   const parsed = parseMarkdown(markdown);
-  return measureBlockChildren(parsed, Math.max(1, Math.floor(width)), "root");
+  return measureBlockChildren(parsed, Math.max(1, width), "root");
 }

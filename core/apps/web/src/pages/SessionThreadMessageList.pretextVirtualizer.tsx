@@ -37,6 +37,10 @@ import {
   noteSessionPretextRuntimeSnapshot,
   SESSION_PRETEXT_BOTTOM_THRESHOLD_PX,
 } from "./sessionThread/pretextSessionRuntimeCache";
+import {
+  resolveFollowBottomAfterScroll,
+  shouldRestoreBottomOnViewportResize,
+} from "./sessionThread/pretextFollowBottom";
 import { noteSessionTranscriptWarmViewport } from "./sessionThread/sessionTranscriptWarmState";
 
 type SessionThreadPretextVirtualizerListProps = {
@@ -546,21 +550,11 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
       const nextWidth = scroller.clientWidth;
       const nextHeight = scroller.clientHeight;
       const sizeChanged = nextWidth !== lastWidth || nextHeight !== lastHeight;
-      const previousHeight = lastHeight;
       lastWidth = nextWidth;
       lastHeight = nextHeight;
       const previousSnapshot = snapshotRef.current;
-      const bottomOffsetBeforeResize =
-        previousHeight > 0
-          ? Math.max(
-              0,
-              (previousSnapshot?.totalHeight ?? scroller.scrollHeight) -
-                (scroller.scrollTop + previousHeight),
-            )
-          : Number.POSITIVE_INFINITY;
-      const shouldRestoreBottom =
-        sizeChanged &&
-        (followBottomRef.current || bottomOffsetBeforeResize <= BOTTOM_THRESHOLD_PX);
+      void previousSnapshot;
+      const shouldRestoreBottom = shouldRestoreBottomOnViewportResize(sizeChanged, followBottomRef.current);
       if (sizeChanged) {
         core.syncViewport({
           height: nextHeight,
@@ -583,6 +577,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     const scroller = containerRef.current;
     if (!scroller) return;
     const currentScrollTop = scroller.scrollTop;
+    const previousScrollTop = lastScrollTopRef.current;
     const pendingProgrammaticTop = pendingProgrammaticTopRef.current;
     let programmaticScroll = false;
     if (pendingProgrammaticTop != null) {
@@ -598,9 +593,6 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
         pendingProgrammaticBehaviorRef.current = "auto";
       }
     }
-    if (!programmaticScroll && currentScrollTop < lastScrollTopRef.current - 1) {
-      followBottomRef.current = false;
-    }
     lastScrollTopRef.current = currentScrollTop;
     const nextSnapshot = core.syncViewport({
       height: scroller.clientHeight,
@@ -608,9 +600,14 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
       scrollTop: currentScrollTop,
     });
     const bottomOffsetPx = Math.max(0, scroller.scrollHeight - (currentScrollTop + scroller.clientHeight));
-    if (bottomOffsetPx <= BOTTOM_THRESHOLD_PX) {
-      followBottomRef.current = true;
-    }
+    followBottomRef.current = resolveFollowBottomAfterScroll({
+      followBottom: followBottomRef.current,
+      previousScrollTop,
+      currentScrollTop,
+      bottomOffsetPx,
+      thresholdPx: BOTTOM_THRESHOLD_PX,
+      programmaticScroll,
+    });
     commitRuntimeSnapshot(nextSnapshot);
     setSnapshot(nextSnapshot);
     emitScrollState(scroller, nextSnapshot);
