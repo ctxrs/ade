@@ -2,13 +2,16 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateA
 import type { MessageAttachment } from "../../api/client";
 import { registerDropScope } from "../../utils/dragDropScopes";
 import { imageAttachmentsFromPaths, imageAttachmentsFromTransfer } from "../../utils/droppedImageAttachments";
+import { errorMessage } from "../../utils/errorMessage";
 
 type UseSessionImageDropScopeArgs = {
   setDraftAttachments: Dispatch<SetStateAction<MessageAttachment[]>>;
+  onError?: (message: string | null) => void;
 };
 
 export function useSessionImageDropScope({
   setDraftAttachments,
+  onError,
 }: UseSessionImageDropScopeArgs) {
   const dropScopeRef = useRef<HTMLDivElement | null>(null);
   const [dropActive, setDropActive] = useState(false);
@@ -48,17 +51,27 @@ export function useSessionImageDropScope({
       onDrop: (dt) => {
         hideDropOverlay();
         void (async () => {
-          appendAttachments(await imageAttachmentsFromTransfer(dt));
+          onError?.(null);
+          try {
+            appendAttachments(await imageAttachmentsFromTransfer(dt));
+          } catch (error: unknown) {
+            onError?.(errorMessage(error));
+          }
         })();
       },
       onDropPaths: (paths) => {
         hideDropOverlay();
         void (async () => {
-          appendAttachments(await imageAttachmentsFromPaths(paths));
+          onError?.(null);
+          try {
+            appendAttachments(await imageAttachmentsFromPaths(paths));
+          } catch (error: unknown) {
+            onError?.(errorMessage(error));
+          }
         })();
       },
     });
-  }, [appendAttachments, hideDropOverlay, showDropOverlay]);
+  }, [appendAttachments, hideDropOverlay, onError, showDropOverlay]);
 
   useEffect(() => {
     return () => {

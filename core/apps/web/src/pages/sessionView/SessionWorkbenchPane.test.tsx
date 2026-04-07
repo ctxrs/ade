@@ -148,6 +148,7 @@ function TestPane() {
         onToggleRecording={() => {}}
         onInterruptSession={null}
         sendError={null}
+        onAttachmentError={() => {}}
         fileOpenError={null}
         dictationDebugText={null}
         dictationError={null}
@@ -281,6 +282,7 @@ function TestMessagePane() {
         onToggleRecording={() => {}}
         onInterruptSession={null}
         sendError={null}
+        onAttachmentError={() => {}}
         fileOpenError={null}
         dictationDebugText={null}
         dictationError={null}
@@ -415,6 +417,7 @@ function TestAssistantPane() {
         onToggleRecording={() => {}}
         onInterruptSession={null}
         sendError={null}
+        onAttachmentError={() => {}}
         fileOpenError={null}
         dictationDebugText={null}
         dictationError={null}

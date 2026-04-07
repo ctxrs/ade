@@ -387,7 +387,17 @@ export const uploadBlob = async (file: File): Promise<BlobUploadResp> => {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || `${res.status} ${res.statusText}`);
+    let message = text || `${res.status} ${res.statusText}`;
+    try {
+      const parsed = text ? JSON.parse(text) : null;
+      const parsedMessage = parsed?.error ?? parsed?.message;
+      if (typeof parsedMessage === "string" && parsedMessage.trim()) {
+        message = parsedMessage;
+      }
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
   }
   const text = await res.text();
   return (text ? JSON.parse(text) : undefined) as BlobUploadResp;

@@ -152,6 +152,7 @@ type SessionWorkbenchPaneProps = {
   slashCommands: SlashCommandDescriptor[];
   draftAttachments: MessageAttachment[];
   setDraftAttachments: Dispatch<SetStateAction<MessageAttachment[]>>;
+  onAttachmentError: (message: string | null) => void;
   sendNow: () => Promise<void>;
   hasDraftContent: boolean;
   hasActiveTurn: boolean;
@@ -260,6 +261,7 @@ export function SessionWorkbenchPane({
   slashCommands,
   draftAttachments,
   setDraftAttachments,
+  onAttachmentError,
   sendNow,
   hasDraftContent,
   hasActiveTurn,
@@ -602,6 +604,7 @@ export function SessionWorkbenchPane({
             slashCommands={slashCommands}
             attachments={draftAttachments}
             setAttachments={setDraftAttachments}
+            onAttachmentError={onAttachmentError}
             onSend={sendNow}
             sendDisabled={sendBusy || !hasDraftContent}
             sendDisabledReason={

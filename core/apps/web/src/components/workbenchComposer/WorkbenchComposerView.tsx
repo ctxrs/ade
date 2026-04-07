@@ -2,13 +2,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ArrowUp, ChevronDown, Ellipsis, Image, Square } from "lucide-react";
 import { shouldSendOnEnter } from "../../utils/keyboard";
 import { buildModelCatalog, formatEffortLabel, parseModelId } from "../../utils/modelEffort";
+import { errorMessage } from "../../utils/errorMessage";
 import {
   isReadyVisibleHarnessProviderStatus,
 } from "../../utils/providerInventory";
 import { shouldHydrateProviderModels } from "../../pages/workbenchShell/useWorkbenchProviders";
 import { ComposerAutocompleteMenu } from "../ComposerAutocompleteMenu";
 import { useComposerAutocomplete } from "../../state/useComposerAutocomplete";
-import { imageFilesToInlineAttachments } from "../../utils/messageAttachments";
+import { imageFilesToMessageAttachments } from "../../utils/messageAttachments";
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
 import { MenuTitleRow } from "./WorkbenchComposerMenu";
 import { WorkbenchComposerHarnessMenu } from "./WorkbenchComposerHarnessMenu";
@@ -42,6 +43,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     inputDisabled,
     attachments,
     setAttachments,
+    onAttachmentError,
     onSend,
     sendDisabled,
     sendDisabledReason,
@@ -747,9 +749,15 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             style={{ display: "none" }}
             onChange={async (e) => {
               const files = Array.from(e.target.files ?? []);
-              const next = await imageFilesToInlineAttachments(files);
-              setAttachments((prev) => [...prev, ...next]);
-              e.target.value = "";
+              onAttachmentError?.(null);
+              try {
+                const next = await imageFilesToMessageAttachments(files);
+                setAttachments((prev) => [...prev, ...next]);
+              } catch (error: unknown) {
+                onAttachmentError?.(errorMessage(error));
+              } finally {
+                e.target.value = "";
+              }
             }}
           />
 

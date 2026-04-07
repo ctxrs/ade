@@ -1,5 +1,5 @@
 import type { MessageAttachment } from "../api/client";
-import { imageFilesToInlineAttachments, isImageFile } from "./messageAttachments";
+import { imageFilesToMessageAttachments, isImageFile } from "./messageAttachments";
 import { desktopReadBinaryFile, isDesktopApp } from "./desktop";
 
 const WINDOWS_DRIVE_PATH_RE = /^\/[A-Za-z]:\//;
@@ -123,7 +123,7 @@ export function extractFirstUrlFromTransfer(transfer: DataTransfer | null): stri
 
 export async function imageAttachmentsFromTransfer(transfer: DataTransfer | null): Promise<MessageAttachment[]> {
   const files = extractFilesFromTransfer(transfer);
-  if (files.length > 0) return imageFilesToInlineAttachments(files);
+  if (files.length > 0) return imageFilesToMessageAttachments(files);
 
   const url = extractFirstUrlFromTransfer(transfer);
   if (!url) return [];
@@ -132,7 +132,7 @@ export async function imageAttachmentsFromTransfer(transfer: DataTransfer | null
 
   const file = await readImageFileFromUrl(url);
   if (!file) return [];
-  return imageFilesToInlineAttachments([file]);
+  return imageFilesToMessageAttachments([file]);
 }
 
 export async function imageAttachmentsFromPaths(paths: string[]): Promise<MessageAttachment[]> {
@@ -165,5 +165,5 @@ export async function imageAttachmentsFromPaths(paths: string[]): Promise<Messag
     }
   ).__ctxDroppedImagePathsCalls = diagnostics;
   if (files.length === 0) return [];
-  return imageFilesToInlineAttachments(files);
+  return imageFilesToMessageAttachments(files);
 }

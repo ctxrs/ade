@@ -1,5 +1,4 @@
 import {
-  type SetStateAction,
   useCallback,
   useEffect,
   useMemo,
@@ -57,7 +56,7 @@ import { isSameContextWindow } from "./sessionView/estimateHeuristics";
 import { getQueuedAttachments } from "./sessionView/SessionQueuePanel";
 import { collectSessionLoadIssues } from "./sessionView/sessionLoadIssues";
 import { SessionWorkbenchPane } from "./sessionView/SessionWorkbenchPane";
-import { useSessionImageDropScope } from "./sessionView/useSessionImageDropScope";
+import { useSessionDraftAttachments } from "./sessionView/useSessionDraftAttachments";
 import { useSessionProviderGuard } from "./sessionView/useSessionProviderGuard";
 import { recordSessionThreadProjectionDebugEntry } from "./sessionThreadProjectionDebug";
 import { useSharedSessionProviderOptions } from "./sessionView/useSharedSessionProviderOptions";
@@ -129,7 +128,6 @@ export function SessionView({
   const perfStartRef = useRef<number>(0);
   const [verbosity, setVerbosity] = useState<SessionViewVerbosity>("default");
   const [inputInternal, setInputInternal] = useState("");
-  const [draftAttachmentsInternal, setDraftAttachmentsInternal] = useState<MessageAttachment[]>([]);
   const [workbenchModeInternal, setWorkbenchModeInternal] = useState<WorkbenchModeId>("default");
   const [sendBusy, setSendBusy] = useState(false);
   const sendBusyRef = useRef(false);
@@ -148,19 +146,18 @@ export function SessionView({
   const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
   const [expandedMessageById, setExpandedMessageById] = useState<Record<string, boolean>>({});
   const [lastContextWindow, setLastContextWindow] = useState<ContextWindowInfo | null>(null);
-  const draftAttachments = draft?.attachments ?? draftAttachmentsInternal;
-  const setDraftAttachments = useCallback(
-    (next: SetStateAction<MessageAttachment[]>) => {
-      if (draft) {
-        const resolved = typeof next === "function" ? next(draft.attachments ?? []) : next;
-        onDraftAttachmentsChange?.(resolved);
-        return;
-      }
-      setDraftAttachmentsInternal(next);
-    },
-    [draft, onDraftAttachmentsChange],
-  );
-  const { dropScopeRef, dropActive } = useSessionImageDropScope({ setDraftAttachments });
+  const {
+    draftAttachmentsInternal,
+    setDraftAttachmentsInternal,
+    draftAttachments,
+    setDraftAttachments,
+    dropScopeRef,
+    dropActive,
+  } = useSessionDraftAttachments({
+    draft,
+    onDraftAttachmentsChange,
+    onError: setSendError,
+  });
 
   useEffect(() => {
     setDraftAttachmentsInternal([]);
@@ -946,6 +943,7 @@ export function SessionView({
       slashCommands={slashCommands}
       draftAttachments={draftAttachments}
       setDraftAttachments={setDraftAttachments}
+      onAttachmentError={setSendError}
       sendNow={sendNow}
       hasDraftContent={hasDraftContent}
       hasActiveTurn={hasActiveTurn}

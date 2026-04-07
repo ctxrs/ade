@@ -203,6 +203,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     scopeElement: newComposerElement,
     activeTaskId,
     setDraftAttachments,
+    onError: setStartError,
   });
 
   const { startBlockedReason, startNewTask } = useWorkbenchTaskCreation({
@@ -873,6 +874,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             slashCommands={slashCommands}
             draftAttachments={draftAttachments}
             setDraftAttachments={setDraftAttachments}
+            onAttachmentError={setStartError}
             onSend={startNewTask}
             sendDisabled={Boolean(startBlockedReason)}
             sendDisabledReason={startBlockedReason}

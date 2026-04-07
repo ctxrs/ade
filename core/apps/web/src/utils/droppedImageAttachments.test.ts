@@ -7,10 +7,21 @@ const desktopReadBinaryFileMock = vi.hoisted(() =>
     bytes: [137, 80, 78, 71],
   })),
 );
+const uploadBlobMock = vi.hoisted(() =>
+  vi.fn(async (file: File) => ({
+    blob_id: `blob-${file.name || "image"}`,
+    mime_type: file.type || "image/png",
+    name: file.name || "image.png",
+  })),
+);
 
 vi.mock("./desktop", () => ({
   isDesktopApp: isDesktopAppMock,
   desktopReadBinaryFile: desktopReadBinaryFileMock,
+}));
+
+vi.mock("../api/client", () => ({
+  uploadBlob: uploadBlobMock,
 }));
 
 describe("droppedImageAttachments", () => {
@@ -23,22 +34,28 @@ describe("droppedImageAttachments", () => {
       path: args.path,
       bytes: [137, 80, 78, 71],
     }));
+    uploadBlobMock.mockImplementation(async (file: File) => ({
+      blob_id: `blob-${file.name || "image"}`,
+      mime_type: file.type || "image/png",
+      name: file.name || "image.png",
+    }));
   });
 
-  it("creates inline attachments from dropped desktop paths", async () => {
+  it("creates blob-ref attachments from dropped desktop paths", async () => {
     const mod = await import("./droppedImageAttachments");
     const attachments = await mod.imageAttachmentsFromPaths(["/tmp/example.png"]);
     const attachment = attachments[0];
 
     expect(desktopReadBinaryFileMock).toHaveBeenCalledWith({ path: "/tmp/example.png" });
+    expect(uploadBlobMock).toHaveBeenCalledTimes(1);
     expect(attachments).toHaveLength(1);
-    expect(attachment?.kind).toBe("image");
-    if (!attachment || attachment.kind !== "image") {
-      throw new Error("Expected an inline image attachment");
+    expect(attachment?.kind).toBe("image_ref");
+    if (!attachment || attachment.kind !== "image_ref") {
+      throw new Error("Expected a blob-ref image attachment");
     }
     expect(attachment.mime_type).toBe("image/png");
     expect(attachment.name).toBe("example.png");
-    expect(attachment.data_base64).toBeTruthy();
+    expect(attachment.blob_id).toBe("blob-example.png");
   });
 
   it("normalizes file:// drops through the desktop path flow", async () => {

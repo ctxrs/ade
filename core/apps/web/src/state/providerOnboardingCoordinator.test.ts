@@ -485,16 +485,18 @@ describe("providerOnboardingCoordinator", () => {
         await Promise.resolve();
       });
 
-      expect(requireHookValue(hookValue).bootstrapState).toBe("loading");
-      expect(requireHookValue(hookValue).bootstrapError).toBeNull();
+      const loadingValue = requireHookValue(hookValue);
+      expect(loadingValue.bootstrapState).toBe("loading");
+      expect(loadingValue.bootstrapError).toBeNull();
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(PROVIDER_BOOTSTRAP_TIMEOUT_MS);
         await Promise.resolve();
       });
 
-      expect(requireHookValue(hookValue).bootstrapState).toBe("error");
-      expect(requireHookValue(hookValue).bootstrapError).toBe(getProviderBootstrapTimeoutMessage());
+      const erroredValue = requireHookValue(hookValue);
+      expect(erroredValue.bootstrapState).toBe("error");
+      expect(erroredValue.bootstrapError).toBe(getProviderBootstrapTimeoutMessage());
     } finally {
       vi.useRealTimers();
     }

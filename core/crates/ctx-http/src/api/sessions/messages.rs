@@ -1,9 +1,122 @@
 use super::*;
 
+type ApiErr = (StatusCode, Json<ApiErrorResp>);
+
+const MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
+const MAX_MESSAGE_IMAGE_ATTACHMENT_MIB: usize = MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES / (1024 * 1024);
+
+fn api_error(status: StatusCode, error: impl Into<String>) -> ApiErr {
+    (
+        status,
+        Json(ApiErrorResp {
+            error: error.into(),
+        }),
+    )
+}
+
+fn image_attachment_too_large_error() -> ApiErr {
+    api_error(
+        StatusCode::PAYLOAD_TOO_LARGE,
+        format!("Image attachments must be {MAX_MESSAGE_IMAGE_ATTACHMENT_MIB} MiB or smaller."),
+    )
+}
+
+fn ensure_image_attachment_size(bytes: usize) -> Result<(), ApiErr> {
+    if bytes > MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES {
+        return Err(image_attachment_too_large_error());
+    }
+    Ok(())
+}
+
+fn session_store_api_error(status: StatusCode) -> ApiErr {
+    match status {
+        StatusCode::NOT_FOUND => api_error(StatusCode::NOT_FOUND, "Session not found."),
+        _ => api_error(status, "Failed to open session."),
+    }
+}
+
+fn ensure_image_attachment_mime_type(mime_type: &str) -> Result<(), ApiErr> {
+    if mime_type
+        .trim()
+        .get(..6)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("image/"))
+    {
+        return Ok(());
+    }
+    Err(api_error(
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        "Only image attachments are supported.",
+    ))
+}
+
+fn decoded_base64_len(data_base64: &str) -> Result<usize, ApiErr> {
+    let bytes = data_base64.as_bytes();
+    if bytes.is_empty() {
+        return Ok(0);
+    }
+    if !bytes.len().is_multiple_of(4) {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "Invalid image attachment.",
+        ));
+    }
+    let padding = if bytes.ends_with(b"==") {
+        2
+    } else if bytes.ends_with(b"=") {
+        1
+    } else {
+        0
+    };
+    Ok((bytes.len() / 4) * 3 - padding)
+}
+
+fn decode_inline_image_attachment(data_base64: &str) -> Result<Vec<u8>, ApiErr> {
+    let decoded_len = decoded_base64_len(data_base64)?;
+    ensure_image_attachment_size(decoded_len)?;
+    base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|_| api_error(StatusCode::BAD_REQUEST, "Invalid image attachment."))
+}
+
+struct ImageBlobMetadata {
+    sha256: String,
+    mime_type: String,
+}
+
+async fn load_image_blob_metadata(
+    state: &Arc<AppState>,
+    blob_id: &str,
+) -> Result<ImageBlobMetadata, ApiErr> {
+    let blob = state.global_store().get_blob(blob_id).await.map_err(|_| {
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to inspect image attachment.",
+        )
+    })?;
+    let Some((sha256, stored_mime_type, bytes, _stored_name, _created_at)) = blob else {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "Image attachment blob was not found.",
+        ));
+    };
+    ensure_image_attachment_mime_type(&stored_mime_type)?;
+    let bytes = usize::try_from(bytes).map_err(|_| {
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Invalid image attachment metadata.",
+        )
+    })?;
+    ensure_image_attachment_size(bytes)?;
+    Ok(ImageBlobMetadata {
+        sha256,
+        mime_type: stored_mime_type,
+    })
+}
+
 pub(super) async fn normalize_message_attachments(
     state: &Arc<AppState>,
     attachments: Vec<MessageAttachment>,
-) -> Result<Vec<MessageAttachment>, StatusCode> {
+) -> Result<Vec<MessageAttachment>, ApiErr> {
     let mut out = Vec::with_capacity(attachments.len());
     for att in attachments {
         match att {
@@ -12,34 +125,31 @@ pub(super) async fn normalize_message_attachments(
                 data_base64,
                 name,
             } => {
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(data_base64.as_bytes())
-                    .map_err(|_| StatusCode::BAD_REQUEST)?;
-                let saved =
-                    persist_blob_bytes(state.as_ref(), &bytes, &mime_type, name.as_deref()).await?;
+                let bytes = decode_inline_image_attachment(&data_base64)?;
+                let saved = persist_blob_bytes(state.as_ref(), &bytes, &mime_type, name.as_deref())
+                    .await
+                    .map_err(|status| match status {
+                        StatusCode::PAYLOAD_TOO_LARGE => image_attachment_too_large_error(),
+                        StatusCode::UNSUPPORTED_MEDIA_TYPE => api_error(
+                            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                            "Only image attachments are supported.",
+                        ),
+                        _ => api_error(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "Failed to persist image attachment.",
+                        ),
+                    })?;
                 out.push(MessageAttachment::ImageRef {
                     blob_id: saved.blob_id,
                     mime_type,
                     name,
                 });
             }
-            MessageAttachment::ImageRef {
-                blob_id,
-                mime_type,
-                name,
-            } => {
-                let exists = state
-                    .global_store()
-                    .get_blob(&blob_id)
-                    .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                    .is_some();
-                if !exists {
-                    return Err(StatusCode::BAD_REQUEST);
-                }
+            MessageAttachment::ImageRef { blob_id, name, .. } => {
+                let metadata = load_image_blob_metadata(state, &blob_id).await?;
                 out.push(MessageAttachment::ImageRef {
                     blob_id,
-                    mime_type,
+                    mime_type: metadata.mime_type,
                     name,
                 });
             }
@@ -58,16 +168,14 @@ struct AttachmentSignature {
 async fn attachment_signature(
     state: &Arc<AppState>,
     attachment: &MessageAttachment,
-) -> Result<AttachmentSignature, StatusCode> {
+) -> Result<AttachmentSignature, ApiErr> {
     match attachment {
         MessageAttachment::Image {
             mime_type,
             data_base64,
             name,
         } => {
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(data_base64.as_bytes())
-                .map_err(|_| StatusCode::BAD_REQUEST)?;
+            let bytes = decode_inline_image_attachment(data_base64)?;
             let mut hasher = sha2::Sha256::new();
             hasher.update(&bytes);
             let sha256 = hex::encode(hasher.finalize());
@@ -77,23 +185,12 @@ async fn attachment_signature(
                 sha256,
             })
         }
-        MessageAttachment::ImageRef {
-            blob_id,
-            mime_type,
-            name,
-        } => {
-            let blob = state
-                .global_store()
-                .get_blob(blob_id)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            let Some((sha256, _mime_type, _bytes, _name, _created_at)) = blob else {
-                return Err(StatusCode::BAD_REQUEST);
-            };
+        MessageAttachment::ImageRef { blob_id, name, .. } => {
+            let metadata = load_image_blob_metadata(state, blob_id).await?;
             Ok(AttachmentSignature {
-                mime_type: mime_type.clone(),
+                mime_type: metadata.mime_type,
                 name: name.clone(),
-                sha256,
+                sha256: metadata.sha256,
             })
         }
     }
@@ -103,7 +200,7 @@ pub(super) async fn attachments_match(
     state: &Arc<AppState>,
     existing: &[MessageAttachment],
     requested: &[MessageAttachment],
-) -> Result<bool, StatusCode> {
+) -> Result<bool, ApiErr> {
     if existing.len() != requested.len() {
         return Ok(false);
     }
@@ -251,9 +348,14 @@ pub(crate) async fn post_message(
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
     Json(req): Json<PostMessageReq>,
-) -> Result<Json<Message>, StatusCode> {
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = store_for_existing_session_status_for_write(&state, session_id).await?;
+) -> Result<Json<Message>, ApiErr> {
+    let session_id = SessionId(
+        uuid::Uuid::parse_str(&id)
+            .map_err(|_| api_error(StatusCode::BAD_REQUEST, "Invalid session id."))?,
+    );
+    let store = store_for_existing_session_status_for_write(&state, session_id)
+        .await
+        .map_err(session_store_api_error)?;
     let run_id_header = headers
         .get("x-ctx-run-id")
         .and_then(|v| v.to_str().ok())
@@ -262,8 +364,8 @@ pub(crate) async fn post_message(
     let session = store
         .get_session(session_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .map_err(|_| api_error(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load session."))?
+        .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "Session not found."))?;
     state.remember_session_meta(&session).await;
 
     let requested_delivery = req.delivery.clone();
@@ -286,12 +388,23 @@ pub(crate) async fn post_message(
             .filter(|v| !v.is_empty()),
     ) {
         (Some(message_id), Some(turn_id)) => (
-            MessageId(uuid::Uuid::parse_str(message_id).map_err(|_| StatusCode::BAD_REQUEST)?),
-            TurnId(uuid::Uuid::parse_str(turn_id).map_err(|_| StatusCode::BAD_REQUEST)?),
+            MessageId(
+                uuid::Uuid::parse_str(message_id)
+                    .map_err(|_| api_error(StatusCode::BAD_REQUEST, "Invalid message id."))?,
+            ),
+            TurnId(
+                uuid::Uuid::parse_str(turn_id)
+                    .map_err(|_| api_error(StatusCode::BAD_REQUEST, "Invalid turn id."))?,
+            ),
             true,
         ),
         (None, None) => (MessageId::new(), TurnId::new(), false),
-        _ => return Err(StatusCode::BAD_REQUEST),
+        _ => {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "Message id and turn id must either both be provided or both be omitted.",
+            ))
+        }
     };
 
     let attachments = normalize_message_attachments(&state, req.attachments).await?;
@@ -301,7 +414,7 @@ pub(crate) async fn post_message(
         if let Some(existing) = store
             .get_message(message_id)
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .map_err(|_| api_error(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load message."))?
         {
             let matches = existing.session_id == session_id
                 && existing.turn_id == Some(turn_id)
@@ -315,10 +428,24 @@ pub(crate) async fn post_message(
                 }
                 && attachments_match(&state, &existing.attachments, &attachments).await?;
             if matches {
-                ensure_session_turn_for_message(&store, session_id, turn_id, &existing).await?;
+                ensure_session_turn_for_message(&store, session_id, turn_id, &existing)
+                    .await
+                    .map_err(|status| match status {
+                        StatusCode::CONFLICT => api_error(
+                            StatusCode::CONFLICT,
+                            "Turn id already belongs to another message.",
+                        ),
+                        _ => api_error(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "Failed to ensure message turn.",
+                        ),
+                    })?;
                 return Ok(Json(existing));
             }
-            return Err(StatusCode::CONFLICT);
+            return Err(api_error(
+                StatusCode::CONFLICT,
+                "A different message already exists for that client id.",
+            ));
         }
     }
 
@@ -354,14 +481,19 @@ pub(crate) async fn post_message(
         Ok(saved) => saved,
         Err(err) if idempotency_payload.is_some() && is_unique_constraint_violation(&err) => {
             let Some((content, attachments, requested_delivery)) = idempotency_payload else {
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                return Err(api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Message idempotency state was unexpectedly missing.",
+                ));
             };
-            let Some(existing) = store
-                .get_message(message_id)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            let Some(existing) = store.get_message(message_id).await.map_err(|_| {
+                api_error(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load message.")
+            })?
             else {
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                return Err(api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Message already existed but could not be loaded.",
+                ));
             };
 
             let matches = existing.session_id == session_id
@@ -378,10 +510,18 @@ pub(crate) async fn post_message(
             if matches {
                 existing
             } else {
-                return Err(StatusCode::CONFLICT);
+                return Err(api_error(
+                    StatusCode::CONFLICT,
+                    "A different message already exists for that client id.",
+                ));
             }
         }
-        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(_) => {
+            return Err(api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to save message.",
+            ))
+        }
     };
     let event = store
         .append_session_event(
@@ -398,7 +538,12 @@ pub(crate) async fn post_message(
             }),
         )
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to append session event.",
+            )
+        })?;
     let start_seq = event.seq;
 
     let turn_status = if matches!(saved.delivery, MessageDelivery::Queued) {
@@ -425,32 +570,48 @@ pub(crate) async fn post_message(
         tool_completed: 0,
         tool_failed: 0,
     };
-    let existing_turn = store
-        .get_session_turn_by_id(turn_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let existing_turn = store.get_session_turn_by_id(turn_id).await.map_err(|_| {
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to inspect session turn.",
+        )
+    })?;
     if let Some(existing) = existing_turn {
         let matches =
             existing.session_id == session_id && existing.user_message_id == Some(saved.id);
         if !matches {
-            return Err(StatusCode::CONFLICT);
+            return Err(api_error(
+                StatusCode::CONFLICT,
+                "Turn id already belongs to another message.",
+            ));
         }
     } else if let Err(err) = store.insert_session_turn(turn).await {
         if !is_unique_constraint_violation(&err) {
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return Err(api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to create session turn.",
+            ));
         }
-        let existing = store
-            .get_session_turn_by_id(turn_id)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let existing = store.get_session_turn_by_id(turn_id).await.map_err(|_| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to inspect session turn.",
+            )
+        })?;
         if let Some(existing) = existing {
             let matches =
                 existing.session_id == session_id && existing.user_message_id == Some(saved.id);
             if !matches {
-                return Err(StatusCode::CONFLICT);
+                return Err(api_error(
+                    StatusCode::CONFLICT,
+                    "Turn id already belongs to another message.",
+                ));
             }
         } else {
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return Err(api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Session turn insert succeeded but could not be reloaded.",
+            ));
         }
     }
     state.publish_event(event).await;
@@ -465,7 +626,12 @@ pub(crate) async fn post_message(
                 serde_json::json!({"message_id": saved.id.0}),
             )
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|_| {
+                api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to append queued-input event.",
+                )
+            })?;
         state.publish_event(queued).await;
 
         let queue_position = store
@@ -491,7 +657,12 @@ pub(crate) async fn post_message(
                 }),
             )
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|_| {
+                api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to append queue event.",
+                )
+            })?;
         state.publish_event(queue_added).await;
 
         let turn_queued = store
@@ -506,7 +677,12 @@ pub(crate) async fn post_message(
                 }),
             )
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|_| {
+                api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to append queued turn event.",
+                )
+            })?;
         state.publish_event(turn_queued).await;
     }
 

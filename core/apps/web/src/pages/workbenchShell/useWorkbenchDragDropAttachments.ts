@@ -2,17 +2,20 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateA
 import type { MessageAttachment } from "../../api/client";
 import { registerDropScope } from "../../utils/dragDropScopes";
 import { imageAttachmentsFromPaths, imageAttachmentsFromTransfer } from "../../utils/droppedImageAttachments";
+import { errorMessage } from "../../utils/errorMessage";
 
 type UseWorkbenchDragDropAttachmentsArgs = {
   scopeElement: HTMLElement | null;
   activeTaskId: string | null;
   setDraftAttachments: Dispatch<SetStateAction<MessageAttachment[]>>;
+  onError?: (message: string | null) => void;
 };
 
 export function useWorkbenchDragDropAttachments({
   scopeElement,
   activeTaskId,
   setDraftAttachments,
+  onError,
 }: UseWorkbenchDragDropAttachmentsArgs) {
   const [dropActive, setDropActive] = useState(false);
   const dropHideTimerRef = useRef<number | null>(null);
@@ -47,17 +50,27 @@ export function useWorkbenchDragDropAttachments({
       onDrop: (transfer) => {
         hideDropOverlay();
         void (async () => {
-          appendAttachments(await imageAttachmentsFromTransfer(transfer));
+          onError?.(null);
+          try {
+            appendAttachments(await imageAttachmentsFromTransfer(transfer));
+          } catch (error: unknown) {
+            onError?.(errorMessage(error));
+          }
         })();
       },
       onDropPaths: (paths) => {
         hideDropOverlay();
         void (async () => {
-          appendAttachments(await imageAttachmentsFromPaths(paths));
+          onError?.(null);
+          try {
+            appendAttachments(await imageAttachmentsFromPaths(paths));
+          } catch (error: unknown) {
+            onError?.(errorMessage(error));
+          }
         })();
       },
     });
-  }, [activeTaskId, appendAttachments, hideDropOverlay, scopeElement, showDropOverlay]);
+  }, [activeTaskId, appendAttachments, hideDropOverlay, onError, scopeElement, showDropOverlay]);
 
   useEffect(
     () => () => {

@@ -23,6 +23,7 @@ type WorkbenchEmptyStateProps = {
   slashCommands: SlashCommandDescriptor[];
   draftAttachments: MessageAttachment[];
   setDraftAttachments: React.Dispatch<React.SetStateAction<MessageAttachment[]>>;
+  onAttachmentError: (message: string | null) => void;
   onSend: () => Promise<void>;
   sendDisabled: boolean;
   sendDisabledReason: string | null;
@@ -64,6 +65,7 @@ export function WorkbenchEmptyState({
   slashCommands,
   draftAttachments,
   setDraftAttachments,
+  onAttachmentError,
   onSend,
   sendDisabled,
   sendDisabledReason,
@@ -114,6 +116,7 @@ export function WorkbenchEmptyState({
           slashCommands={slashCommands}
           attachments={draftAttachments}
           setAttachments={setDraftAttachments}
+          onAttachmentError={onAttachmentError}
           onSend={onSend}
           sendDisabled={sendDisabled}
           sendDisabledReason={sendDisabledReason}

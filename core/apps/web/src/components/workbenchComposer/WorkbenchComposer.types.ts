@@ -39,6 +39,7 @@ type SharedProps = {
 
   attachments: MessageAttachment[];
   setAttachments: React.Dispatch<React.SetStateAction<MessageAttachment[]>>;
+  onAttachmentError?: (message: string | null) => void;
 
   onSend: () => void;
   sendDisabledReason?: string | null;
