@@ -205,7 +205,7 @@ async fn resolve_claude_login_runtime_requires_managed_or_configured_command() {
 }
 
 #[tokio::test]
-async fn resolve_claude_login_runtime_prefers_configured_login_command() {
+async fn resolve_claude_login_runtime_uses_configured_runtime_command() {
     let temp = tempfile::tempdir().expect("tempdir");
     let data_root = temp.path().to_path_buf();
     let runtime_path = data_root.join("claude-cli-mock.sh");
@@ -214,7 +214,7 @@ async fn resolve_claude_login_runtime_prefers_configured_login_command() {
     let mut cfg = installer::load_agent_server_config(&data_root)
         .await
         .expect("load config for runtime resolution test");
-    cfg.provider_login_commands.insert(
+    cfg.providers.insert(
         "claude-cli".to_string(),
         installer::AgentServerCommand {
             command: runtime_path_str,

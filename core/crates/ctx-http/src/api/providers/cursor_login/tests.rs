@@ -79,8 +79,8 @@ async fn resolve_cursor_login_runtime_requires_managed_or_configured_command() {
         .await
         .expect("load config");
     assert!(
-        !cfg.provider_login_commands.contains_key("cursor"),
-        "host discovery must not persist a cursor login command"
+        !cfg.provider_login_executables.contains_key("cursor"),
+        "host discovery must not persist a cursor login executable"
     );
 }
 
@@ -92,13 +92,10 @@ async fn resolve_cursor_login_runtime_accepts_configured_login_command() {
     let mut cfg = installer::load_agent_server_config(temp.path())
         .await
         .expect("load config");
-    cfg.provider_login_commands.insert(
+    cfg.provider_login_executables.insert(
         "cursor".to_string(),
-        installer::AgentServerCommand {
-            command: runtime_path_str,
-            args: vec!["--ignored".to_string()],
-            dependencies: vec!["dep".to_string()],
-            managed: None,
+        installer::ProviderLoginExecutable {
+            executable_path: runtime_path_str,
         },
     );
     installer::save_agent_server_config(temp.path(), &cfg)
@@ -113,11 +110,11 @@ async fn resolve_cursor_login_runtime_accepts_configured_login_command() {
         resolved.command_abs_path,
         expected.to_string_lossy().to_string()
     );
-    assert_eq!(resolved.args, vec!["--ignored".to_string()]);
-    assert_eq!(resolved.dependencies, vec!["dep".to_string()]);
+    assert!(resolved.args.is_empty());
+    assert!(resolved.dependencies.is_empty());
     assert_eq!(
         resolved.source,
-        installer::ProviderRuntimeCommandSource::UserOverride
+        installer::ProviderRuntimeCommandSource::PreparedLoginExecutable
     );
 }
 

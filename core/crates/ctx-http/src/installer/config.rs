@@ -69,11 +69,23 @@ pub struct AgentServerCommand {
     pub managed: Option<ManagedInstallMetadata>,
 }
 
+/// Internal-only configuration for provider-specific login executables.
+///
+/// Login execution is narrower than provider runtime execution: ctx owns the
+/// invocation contract and persists only the explicit executable path for the
+/// providers whose login binary differs from the runtime command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderLoginExecutable {
+    pub executable_path: String,
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct AgentServerConfigFile {
     #[serde(default)]
     pub providers: HashMap<String, AgentServerCommand>,
     #[serde(default)]
+    pub provider_login_executables: HashMap<String, ProviderLoginExecutable>,
+    #[serde(default, skip_serializing)]
     pub provider_login_commands: HashMap<String, AgentServerCommand>,
     #[serde(default)]
     pub managed_installs: HashMap<String, ManagedInstallMetadata>,
@@ -88,6 +100,7 @@ pub enum ProviderRuntimeCommandSource {
     UserOverride,
     ManagedInstall,
     BundledSeed,
+    PreparedLoginExecutable,
 }
 
 impl ProviderRuntimeCommandSource {
@@ -96,6 +109,7 @@ impl ProviderRuntimeCommandSource {
             Self::UserOverride => "user_override",
             Self::ManagedInstall => "managed_install",
             Self::BundledSeed => "bundled_seed",
+            Self::PreparedLoginExecutable => "prepared_login_executable",
         }
     }
 }
@@ -131,8 +145,8 @@ fn user_override_provider_command(
 fn configured_provider_login_command<'a>(
     cfg: &'a AgentServerConfigFile,
     provider_id: &str,
-) -> Option<&'a AgentServerCommand> {
-    cfg.provider_login_commands.get(provider_id)
+) -> Option<&'a ProviderLoginExecutable> {
+    cfg.provider_login_executables.get(provider_id)
 }
 
 pub fn managed_install_metadata_for_target<'a>(
@@ -387,8 +401,8 @@ fn build_provider_runtime_command(
     })
 }
 
-/// Configured login commands use the same command/args/dependencies runtime contract
-/// as provider runtime commands; only the callsite differs.
+/// Configured login executables are narrower than provider runtime commands:
+/// they only pin the provider-owned login executable path.
 pub fn resolve_provider_login_command(
     cfg: &AgentServerConfigFile,
     provider_id: &str,
@@ -396,11 +410,17 @@ pub fn resolve_provider_login_command(
     let Some(configured) = configured_provider_login_command(cfg, provider_id) else {
         return Ok(None);
     };
+    let candidate = AgentServerCommand {
+        command: configured.executable_path.clone(),
+        args: Vec::new(),
+        dependencies: Vec::new(),
+        managed: None,
+    };
     build_provider_runtime_command(
         provider_id,
-        configured,
-        "login_command",
-        ProviderRuntimeCommandSource::UserOverride,
+        &candidate,
+        "login_executable",
+        ProviderRuntimeCommandSource::PreparedLoginExecutable,
     )
     .map(Some)
 }
@@ -472,6 +492,21 @@ fn migrate_agent_server_config(cfg: &mut AgentServerConfigFile) -> bool {
     let mut changed = false;
     let mut drop_provider_entries = Vec::new();
     let mut drop_managed_entries = Vec::new();
+
+    if !cfg.provider_login_commands.is_empty() {
+        for (provider_id, legacy) in std::mem::take(&mut cfg.provider_login_commands) {
+            if provider_id == "claude-cli" {
+                cfg.providers.entry(provider_id).or_insert(legacy);
+                continue;
+            }
+            cfg.provider_login_executables
+                .entry(provider_id)
+                .or_insert_with(|| ProviderLoginExecutable {
+                    executable_path: legacy.command,
+                });
+        }
+        changed = true;
+    }
 
     for (provider_id, command) in cfg.providers.iter_mut() {
         if migrate_managed_provider_command_args(provider_id, command) {
@@ -633,6 +668,8 @@ where
 }
 
 pub async fn save_agent_server_config(data_root: &Path, cfg: &AgentServerConfigFile) -> Result<()> {
+    let mut cfg_to_save = cfg.clone();
+    migrate_agent_server_config(&mut cfg_to_save);
     let path = agent_server_config_path(data_root);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -646,7 +683,7 @@ pub async fn save_agent_server_config(data_root: &Path, cfg: &AgentServerConfigF
         path.file_name().unwrap_or_default().to_string_lossy(),
         nanos
     ));
-    tokio::fs::write(&tmp_path, serde_json::to_string_pretty(cfg)?).await?;
+    tokio::fs::write(&tmp_path, serde_json::to_string_pretty(&cfg_to_save)?).await?;
     if let Err(err) = tokio::fs::rename(&tmp_path, &path).await {
         let _ = tokio::fs::remove_file(&path).await;
         tokio::fs::rename(&tmp_path, &path).await?;

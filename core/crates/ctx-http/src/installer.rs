@@ -55,8 +55,8 @@ pub use config::{
     mutate_agent_server_config, resolve_provider_command, resolve_provider_login_command,
     resolve_runtime_provider_command, resolve_runtime_provider_command_for_target,
     save_agent_server_config, save_lsp_server_config, AgentServerCommand, AgentServerConfigFile,
-    LspServerConfigFile, ManagedInstallError, ManagedInstallMetadata, ProviderRuntimeCommand,
-    ProviderRuntimeCommandSource, UserLspConfigFile, UserLspServerSpec,
+    LspServerConfigFile, ManagedInstallError, ManagedInstallMetadata, ProviderLoginExecutable,
+    ProviderRuntimeCommand, ProviderRuntimeCommandSource, UserLspConfigFile, UserLspServerSpec,
 };
 pub use lsp::{install_lsp_catalog_server_with_progress, install_lsp_server_with_progress};
 pub use provider_install::refresh_provider_statuses;

@@ -236,7 +236,7 @@ pub(super) async fn resolve_provider_login_command_from_config(
         .await
         .context("loading agent server config")?;
     installer::resolve_provider_login_command(&cfg, provider_id)
-        .with_context(|| format!("resolving prepared login command for {provider_id}"))
+        .with_context(|| format!("resolving prepared login executable for {provider_id}"))
 }
 
 fn strip_ansi_sequences(input: &str) -> String {

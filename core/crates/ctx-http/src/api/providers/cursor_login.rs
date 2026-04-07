@@ -224,7 +224,7 @@ async fn resolve_cursor_login_runtime_from_config(
             return Ok(runtime);
         }
         anyhow::bail!(
-            "runtime_command_invalid: provider=cursor-login (configured login command must point to `cursor-agent`)"
+            "runtime_command_invalid: provider=cursor-login (configured login executable must point to `cursor-agent`)"
         );
     }
 
@@ -235,7 +235,7 @@ async fn resolve_cursor_login_runtime_from_config(
             installer::ProviderRuntimeCommandSource::BundledSeed
         ) {
             anyhow::bail!(
-                "runtime_command_missing: provider=cursor-login (ctx requires a managed or explicitly configured `cursor-agent` login command; bundled runtime discovery is not supported)"
+                "runtime_command_missing: provider=cursor-login (ctx requires a managed or explicitly configured `cursor-agent` login executable; bundled runtime discovery is not supported)"
             );
         }
         if is_cursor_login_command(StdPath::new(&runtime.command_abs_path)) {
@@ -247,7 +247,7 @@ async fn resolve_cursor_login_runtime_from_config(
     }
 
     anyhow::bail!(
-        "runtime_command_missing: provider=cursor-login (ctx requires a managed or explicitly configured `cursor-agent` login command; host PATH lookup is not supported)"
+        "runtime_command_missing: provider=cursor-login (ctx requires a managed or explicitly configured `cursor-agent` login executable; host PATH lookup is not supported)"
     );
 }
 

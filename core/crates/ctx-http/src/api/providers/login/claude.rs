@@ -193,12 +193,6 @@ pub(crate) async fn get_claude_login(
 pub(crate) async fn resolve_claude_login_runtime_from_config(
     data_root: &std::path::Path,
 ) -> anyhow::Result<installer::ProviderRuntimeCommand> {
-    if let Some(login_command) =
-        resolve_provider_login_command_from_config(data_root, "claude-cli").await?
-    {
-        return Ok(login_command);
-    }
-
     if let Some(runtime_command) =
         resolve_runtime_provider_command_from_config(data_root, "claude-cli").await?
     {
@@ -206,7 +200,7 @@ pub(crate) async fn resolve_claude_login_runtime_from_config(
     }
 
     anyhow::bail!(
-        "runtime_command_missing: provider=claude-cli (ctx requires a managed or explicitly configured Claude CLI login command; host PATH lookup is not supported)"
+        "runtime_command_missing: provider=claude-cli (ctx requires a managed or explicitly configured Claude CLI runtime command; host PATH lookup is not supported)"
     )
 }
 

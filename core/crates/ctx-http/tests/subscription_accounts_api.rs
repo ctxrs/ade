@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -16,6 +16,7 @@ use url::Url;
 use ctx_core::models::SessionEventType;
 use ctx_http::installer::{
     load_agent_server_config, save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
+    ProviderLoginExecutable,
 };
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderHealth, ProviderStatus, RunHandle, TurnInput,
@@ -861,6 +862,25 @@ async fn poll_claude_login_status(
     panic!("claude login did not reach terminal status in time");
 }
 
+fn empty_agent_server_config() -> AgentServerConfigFile {
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.providers = HashMap::new();
+    cfg
+}
+
+fn set_login_executable(
+    cfg: &mut AgentServerConfigFile,
+    provider_id: &str,
+    executable_path: &Path,
+) {
+    cfg.provider_login_executables.insert(
+        provider_id.to_string(),
+        ProviderLoginExecutable {
+            executable_path: executable_path.to_string_lossy().to_string(),
+        },
+    );
+}
+
 async fn poll_gemini_login_status(
     server: &common::TestServer,
     login_id: &str,
@@ -1094,14 +1114,8 @@ echo "ZXY987654321"
         ),
     )
     .await;
-    let mut cfg = AgentServerConfigFile {
-        providers: HashMap::new(),
-        provider_login_commands: HashMap::new(),
-        managed_installs: HashMap::new(),
-        managed_provider_targets: HashMap::new(),
-        managed_install_targets: HashMap::new(),
-    };
-    cfg.provider_login_commands.insert(
+    let mut cfg = empty_agent_server_config();
+    cfg.providers.insert(
         "claude-cli".to_string(),
         AgentServerCommand {
             command: script_path.to_string_lossy().to_string(),
@@ -1194,14 +1208,8 @@ echo "https://claude.ai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.clau
 "#,
     )
     .await;
-    let mut cfg = AgentServerConfigFile {
-        providers: HashMap::new(),
-        provider_login_commands: HashMap::new(),
-        managed_installs: HashMap::new(),
-        managed_provider_targets: HashMap::new(),
-        managed_install_targets: HashMap::new(),
-    };
-    cfg.provider_login_commands.insert(
+    let mut cfg = empty_agent_server_config();
+    cfg.providers.insert(
         "claude-cli".to_string(),
         AgentServerCommand {
             command: script_path.to_string_lossy().to_string(),
@@ -1284,14 +1292,8 @@ echo "ZXY987654321"
         ),
     )
     .await;
-    let mut cfg = AgentServerConfigFile {
-        providers: HashMap::new(),
-        provider_login_commands: HashMap::new(),
-        managed_installs: HashMap::new(),
-        managed_provider_targets: HashMap::new(),
-        managed_install_targets: HashMap::new(),
-    };
-    cfg.provider_login_commands.insert(
+    let mut cfg = empty_agent_server_config();
+    cfg.providers.insert(
         "claude-cli".to_string(),
         AgentServerCommand {
             command: script_path.to_string_lossy().to_string(),
@@ -1353,14 +1355,8 @@ sleep 30
 "#,
     )
     .await;
-    let mut cfg = AgentServerConfigFile {
-        providers: HashMap::new(),
-        provider_login_commands: HashMap::new(),
-        managed_installs: HashMap::new(),
-        managed_provider_targets: HashMap::new(),
-        managed_install_targets: HashMap::new(),
-    };
-    cfg.provider_login_commands.insert(
+    let mut cfg = empty_agent_server_config();
+    cfg.providers.insert(
         "claude-cli".to_string(),
         AgentServerCommand {
             command: script_path.to_string_lossy().to_string(),
@@ -1431,14 +1427,8 @@ async fn claude_login_start_requires_usable_configured_login_command() {
     );
     let server = common::spawn_http_server(common::router(state)).await;
     let missing_path = data_dir.path().join("missing-claude");
-    let mut cfg = AgentServerConfigFile {
-        providers: HashMap::new(),
-        provider_login_commands: HashMap::new(),
-        managed_installs: HashMap::new(),
-        managed_provider_targets: HashMap::new(),
-        managed_install_targets: HashMap::new(),
-    };
-    cfg.provider_login_commands.insert(
+    let mut cfg = empty_agent_server_config();
+    cfg.providers.insert(
         "claude-cli".to_string(),
         AgentServerCommand {
             command: missing_path.to_string_lossy().to_string(),
@@ -1466,7 +1456,7 @@ async fn claude_login_start_requires_usable_configured_login_command() {
     let body: ErrorResp = start_resp.json().await.expect("start error body");
     assert!(body
         .error
-        .contains("runtime_command_not_found: provider=claude-cli source=login_command"));
+        .contains("runtime_command_not_found: provider=claude-cli source=user_override"));
 }
 
 #[tokio::test]
@@ -1493,14 +1483,8 @@ exit 5
 "#,
     )
     .await;
-    let mut cfg = AgentServerConfigFile {
-        providers: HashMap::new(),
-        provider_login_commands: HashMap::new(),
-        managed_installs: HashMap::new(),
-        managed_provider_targets: HashMap::new(),
-        managed_install_targets: HashMap::new(),
-    };
-    cfg.provider_login_commands.insert(
+    let mut cfg = empty_agent_server_config();
+    cfg.providers.insert(
         "claude-cli".to_string(),
         AgentServerCommand {
             command: script_path.to_string_lossy().to_string(),
@@ -1559,14 +1543,8 @@ echo "ZXY987654321"
 "#,
     )
     .await;
-    let mut cfg = AgentServerConfigFile {
-        providers: HashMap::new(),
-        provider_login_commands: HashMap::new(),
-        managed_installs: HashMap::new(),
-        managed_provider_targets: HashMap::new(),
-        managed_install_targets: HashMap::new(),
-    };
-    cfg.provider_login_commands.insert(
+    let mut cfg = empty_agent_server_config();
+    cfg.providers.insert(
         "claude-cli".to_string(),
         AgentServerCommand {
             command: script_path.to_string_lossy().to_string(),
@@ -1624,14 +1602,8 @@ echo "Token omitted intentionally for test."
 "#,
     )
     .await;
-    let mut cfg = AgentServerConfigFile {
-        providers: HashMap::new(),
-        provider_login_commands: HashMap::new(),
-        managed_installs: HashMap::new(),
-        managed_provider_targets: HashMap::new(),
-        managed_install_targets: HashMap::new(),
-    };
-    cfg.provider_login_commands.insert(
+    let mut cfg = empty_agent_server_config();
+    cfg.providers.insert(
         "claude-cli".to_string(),
         AgentServerCommand {
             command: script_path.to_string_lossy().to_string(),
@@ -1689,14 +1661,8 @@ sleep 30
 "#,
     )
     .await;
-    let mut cfg = AgentServerConfigFile {
-        providers: HashMap::new(),
-        provider_login_commands: HashMap::new(),
-        managed_installs: HashMap::new(),
-        managed_provider_targets: HashMap::new(),
-        managed_install_targets: HashMap::new(),
-    };
-    cfg.provider_login_commands.insert(
+    let mut cfg = empty_agent_server_config();
+    cfg.providers.insert(
         "claude-cli".to_string(),
         AgentServerCommand {
             command: script_path.to_string_lossy().to_string(),
@@ -1788,14 +1754,8 @@ echo "{}"
         shared_token
     );
     let script_path = write_mock_claude_runtime(data_dir.path(), &script_with_token).await;
-    let mut cfg = AgentServerConfigFile {
-        providers: HashMap::new(),
-        provider_login_commands: HashMap::new(),
-        managed_installs: HashMap::new(),
-        managed_provider_targets: HashMap::new(),
-        managed_install_targets: HashMap::new(),
-    };
-    cfg.provider_login_commands.insert(
+    let mut cfg = empty_agent_server_config();
+    cfg.providers.insert(
         "claude-cli".to_string(),
         AgentServerCommand {
             command: script_path.to_string_lossy().to_string(),
@@ -2227,22 +2187,8 @@ if (capturePath) {
     )
     .await;
 
-    let mut cfg = AgentServerConfigFile {
-        providers: HashMap::new(),
-        provider_login_commands: HashMap::new(),
-        managed_installs: HashMap::new(),
-        managed_provider_targets: HashMap::new(),
-        managed_install_targets: HashMap::new(),
-    };
-    cfg.provider_login_commands.insert(
-        "cursor".to_string(),
-        AgentServerCommand {
-            command: cursor_script.to_string_lossy().to_string(),
-            args: vec![],
-            dependencies: vec![],
-            managed: None,
-        },
-    );
+    let mut cfg = empty_agent_server_config();
+    set_login_executable(&mut cfg, "cursor", &cursor_script);
     save_agent_server_config(data_dir.path(), &cfg)
         .await
         .expect("save agent config");
@@ -2339,8 +2285,8 @@ if (capturePath) {
         .await
         .expect("load persisted agent config");
     assert!(
-        !cfg.provider_login_commands.contains_key("cursor"),
-        "host PATH discovery must not persist a cursor login command"
+        !cfg.provider_login_executables.contains_key("cursor"),
+        "host PATH discovery must not persist a cursor login executable"
     );
 }
 

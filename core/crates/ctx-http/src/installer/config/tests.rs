@@ -398,13 +398,10 @@ fn resolve_provider_login_command_reads_prepared_absolute_path() {
     std::fs::write(&login_cmd, b"cursor").expect("write login command");
 
     let mut cfg = AgentServerConfigFile::default();
-    cfg.provider_login_commands.insert(
+    cfg.provider_login_executables.insert(
         "cursor".to_string(),
-        AgentServerCommand {
-            command: login_cmd.to_string_lossy().to_string(),
-            args: vec!["--shim".to_string()],
-            dependencies: vec!["dep-node".to_string()],
-            managed: None,
+        ProviderLoginExecutable {
+            executable_path: login_cmd.to_string_lossy().to_string(),
         },
     );
 
@@ -418,21 +415,21 @@ fn resolve_provider_login_command_reads_prepared_absolute_path() {
             .to_string_lossy()
             .to_string()
     );
-    assert_eq!(resolved.args, vec!["--shim".to_string()]);
-    assert_eq!(resolved.dependencies, vec!["dep-node".to_string()]);
-    assert_eq!(resolved.source, ProviderRuntimeCommandSource::UserOverride);
+    assert!(resolved.args.is_empty());
+    assert!(resolved.dependencies.is_empty());
+    assert_eq!(
+        resolved.source,
+        ProviderRuntimeCommandSource::PreparedLoginExecutable
+    );
 }
 
 #[test]
 fn resolve_provider_login_command_rejects_relative_paths() {
     let mut cfg = AgentServerConfigFile::default();
-    cfg.provider_login_commands.insert(
+    cfg.provider_login_executables.insert(
         "cursor".to_string(),
-        AgentServerCommand {
-            command: "cursor-agent".to_string(),
-            args: Vec::new(),
-            dependencies: Vec::new(),
-            managed: None,
+        ProviderLoginExecutable {
+            executable_path: "cursor-agent".to_string(),
         },
     );
 
@@ -440,7 +437,50 @@ fn resolve_provider_login_command_rejects_relative_paths() {
         .expect_err("relative login command should fail");
     assert!(err
         .to_string()
-        .contains("runtime_command_not_absolute: provider=cursor source=login_command"));
+        .contains("runtime_command_not_absolute: provider=cursor source=login_executable"));
+}
+
+#[test]
+fn migration_moves_legacy_provider_login_commands_to_login_executables() {
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.provider_login_commands.insert(
+        "cursor".to_string(),
+        AgentServerCommand {
+            command: "/tmp/cursor-agent".to_string(),
+            args: vec!["--ignored".to_string()],
+            dependencies: vec!["ignored".to_string()],
+            managed: None,
+        },
+    );
+
+    assert!(migrate_agent_server_config(&mut cfg));
+    assert!(cfg.provider_login_executables.contains_key("cursor"));
+    let migrated = cfg
+        .provider_login_executables
+        .get("cursor")
+        .expect("cursor");
+    assert_eq!(migrated.executable_path, "/tmp/cursor-agent");
+}
+
+#[test]
+fn migration_moves_legacy_claude_login_command_to_runtime_command() {
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.provider_login_commands.insert(
+        "claude-cli".to_string(),
+        AgentServerCommand {
+            command: "/tmp/claude".to_string(),
+            args: vec!["--real".to_string()],
+            dependencies: vec!["dep".to_string()],
+            managed: None,
+        },
+    );
+
+    assert!(migrate_agent_server_config(&mut cfg));
+    let migrated = cfg.providers.get("claude-cli").expect("claude-cli");
+    assert_eq!(migrated.command, "/tmp/claude");
+    assert_eq!(migrated.args, vec!["--real".to_string()]);
+    assert_eq!(migrated.dependencies, vec!["dep".to_string()]);
+    assert!(!cfg.provider_login_executables.contains_key("claude-cli"));
 }
 
 #[test]
