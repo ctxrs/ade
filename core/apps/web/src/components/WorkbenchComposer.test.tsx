@@ -1487,6 +1487,104 @@ describe("WorkbenchComposer textarea sizing", () => {
     });
   });
 
+  it("does not overwrite an explicit draft model when a saved preference arrives later", async () => {
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({
+        providerId: "codex",
+        modelId: "",
+      });
+      const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions | undefined>>({
+        codex: {
+          ...baseOptions("codex"),
+          has_active_auth: true,
+          models: {
+            current_model_id: "gpt-5.4/medium",
+            models: [{ id: "gpt-5.4/medium" }, { id: "gpt-5.4/xhigh" }],
+          },
+        },
+      });
+      const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: makeProviderStatus("codex"),
+      };
+
+      return (
+        <>
+          <div data-testid="draft-model">{draftHarness?.modelId ?? ""}</div>
+          <button
+            type="button"
+            onClick={() =>
+              setDraftHarness((prev) => (prev ? { ...prev, preferenceExplicit: true } : prev))
+            }
+          >
+            Mark Explicit
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              setProviderOptions((prev) => ({
+                ...prev,
+                codex: prev.codex
+                  ? {
+                      ...prev.codex,
+                      preferred_model_id: "gpt-5.4/xhigh",
+                    }
+                  : prev.codex,
+              }))
+            }
+          >
+            Load Saved Preference
+          </button>
+          <WorkbenchComposer
+            variant="newSession"
+            value={value}
+            setValue={setValue}
+            placeholder="@ for context, / for commands"
+            inputDisabled={false}
+            sessionIdForAutocomplete={null}
+            workspaceIdForAutocomplete={null}
+            slashCommands={[]}
+            attachments={attachments}
+            setAttachments={setAttachments}
+            onSend={vi.fn()}
+            sendDisabled={false}
+            sendDisabledReason={null}
+            onInterrupt={null}
+            modeId={modeId}
+            setModeId={setModeId}
+            harnessCatalog={harnessCatalog}
+            providersById={providersById}
+            providerInstallsById={{}}
+            onInstallProvider={vi.fn()}
+            onInstallAllProviders={vi.fn()}
+            providerOptions={providerOptions}
+            ensureProviderAuthSummary={async () => providerOptions.codex}
+            draftHarness={draftHarness}
+            setDraftHarness={setDraftHarness}
+            defaultProviderId="codex"
+          />
+        </>
+      );
+    };
+
+    render(<NewTaskHarness />);
+    await waitFor(() => {
+      expect(screen.getByTestId("draft-model").textContent).toBe("gpt-5.4/medium");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark Explicit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load Saved Preference" }));
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(screen.getByTestId("draft-model").textContent).toBe("gpt-5.4/medium");
+  });
+
   it("shows an explicit unselected harness state", async () => {
     const NewTaskHarness = () => {
       const [value, setValue] = useState("");

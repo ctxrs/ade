@@ -470,6 +470,77 @@ async fn provider_options_probe_uses_managed_dependency_path() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn provider_options_preserve_live_runtime_catalog_for_preferred_models() {
+    let _env_lock = lock_env().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let _env_guards = configure_hermetic_codex_host_auth(data_dir.path()).await;
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let state = app_state(data_dir.path()).await;
+    let app = api::router(state.clone());
+
+    let (runtime_cmd, dep_bin_rel) = setup_runtime_command_with_managed_interpreter_response(
+        data_dir.path(),
+        "codex",
+        r#"{"seq":1,"channel":"control","type":"models.list","models":[{"id":"runtime-live"},{"id":"runtime-only"}],"current_model_id":"runtime-live","catalog_source":"live_remote"}"#,
+    );
+    seed_runtime_and_status(&state, "codex", runtime_cmd, dep_bin_rel).await;
+    seed_managed_codex_cli_dependency(&state, "managed/runtime-node-codex/bin").await;
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (pref_status, pref_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        format!(
+            "/api/workspaces/{}/provider_model_preferences/codex",
+            ws.id.0
+        ),
+        Some(serde_json::json!({
+            "preferred_model_id": "runtime-only"
+        })),
+    )
+    .await;
+    assert_eq!(
+        pref_status,
+        StatusCode::OK,
+        "preference request failed: {pref_body:#?}"
+    );
+
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/codex/options", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "options request failed: {body:#?}");
+    assert_eq!(
+        body.pointer("/models/current_model_id")
+            .and_then(serde_json::Value::as_str),
+        Some("runtime-live"),
+        "expected runtime-probed current model to win: {body:#?}"
+    );
+    assert_eq!(
+        body.get("preferred_model_id")
+            .and_then(serde_json::Value::as_str),
+        Some("runtime-only"),
+        "expected runtime-only preferred model to remain visible: {body:#?}"
+    );
+    let available_models = body
+        .pointer("/models/models")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        available_models.iter().any(|model| {
+            model.get("id").and_then(serde_json::Value::as_str) == Some("runtime-only")
+        }),
+        "expected live runtime catalog to include runtime-only model: {body:#?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn kimi_provider_options_expose_live_runtime_catalog_and_bootstrap_stays_hydratable() {
     let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");

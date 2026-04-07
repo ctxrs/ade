@@ -73,6 +73,7 @@ export const createSession = (
     parent_session_id?: string | null;
     relationship?: string | null;
     reasoning_effort?: string | null;
+    remember_model_preference?: boolean;
     execution_environment?: ExecutionEnvironment;
     worktree_id?: string | null;
     initial_prompt?: string | null;
@@ -94,6 +95,7 @@ export const createSession = (
       provider_id,
       model_id,
       ...(opts?.reasoning_effort ? { reasoning_effort: opts.reasoning_effort } : {}),
+      ...(opts?.remember_model_preference ? { remember_model_preference: true } : {}),
       ...(opts?.parent_session_id ? { parent_session_id: opts.parent_session_id } : {}),
       ...(opts?.relationship ? { relationship: opts.relationship } : {}),
       ...(opts?.execution_environment ? { execution_environment: opts.execution_environment } : {}),

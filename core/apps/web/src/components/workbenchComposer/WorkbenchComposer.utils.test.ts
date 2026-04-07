@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildModelsForProvider,
   buildModelsFromCatalogPayload,
+  modelIdFromProviderOptions,
+  nextAutoSeededModelId,
   shouldShowLoadingProviderModels,
 } from "./WorkbenchComposer.utils";
 
@@ -40,6 +42,54 @@ describe("buildModelsFromCatalogPayload", () => {
       { id: "gpt-5.4/medium", name: undefined },
       { id: "gpt-5.4/xhigh", name: undefined },
     ]);
+  });
+});
+
+describe("modelIdFromProviderOptions", () => {
+  it("prefers a saved preferred_model_id when it exists in the available catalog", () => {
+    expect(modelIdFromProviderOptions({
+      provider_id: "codex",
+      workspace_id: "ws-test",
+      supports_load: false,
+      auth_required: false,
+      preferred_model_id: "gpt-5.4/xhigh",
+      probed_at: "2026-03-10T00:00:00.000Z",
+      models: {
+        current_model_id: "gpt-5.4/medium",
+        models: [{ id: "gpt-5.4/medium" }, { id: "gpt-5.4/xhigh" }],
+      },
+    })).toBe("gpt-5.4/xhigh");
+  });
+
+  it("ignores a saved preferred_model_id when the available catalog does not contain it", () => {
+    expect(modelIdFromProviderOptions({
+      provider_id: "codex",
+      workspace_id: "ws-test",
+      supports_load: false,
+      auth_required: false,
+      preferred_model_id: "gpt-5.4/xhigh",
+      probed_at: "2026-03-10T00:00:00.000Z",
+      models: {
+        current_model_id: "gpt-5.4/medium",
+        models: [{ id: "gpt-5.4/medium" }, { id: "gpt-5.4/high" }],
+      },
+    })).toBe("gpt-5.4/medium");
+  });
+});
+
+describe("nextAutoSeededModelId", () => {
+  it("seeds when the draft model is still blank", () => {
+    expect(nextAutoSeededModelId("", "gpt-5.4/xhigh", null)).toBe("gpt-5.4/xhigh");
+  });
+
+  it("updates a previously auto-seeded model when a saved preference arrives later", () => {
+    expect(nextAutoSeededModelId("gpt-5.4/medium", "gpt-5.4/xhigh", "gpt-5.4/medium")).toBe(
+      "gpt-5.4/xhigh",
+    );
+  });
+
+  it("does not override an explicit user-selected model", () => {
+    expect(nextAutoSeededModelId("gpt-5.4/high", "gpt-5.4/xhigh", "gpt-5.4/medium")).toBeNull();
   });
 });
 

@@ -766,6 +766,11 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(get_subagent_system_prompt).post(update_subagent_system_prompt),
         )
         .route(
+            "/api/workspaces/:id/provider_model_preferences/:provider_id",
+            get(get_workspace_provider_model_preference)
+                .post(update_workspace_provider_model_preference),
+        )
+        .route(
             "/api/workspaces/:id/primary_branch",
             get(get_workspace_primary_branch).post(update_workspace_primary_branch),
         )

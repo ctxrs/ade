@@ -2,7 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessageAttachment, ProviderOptions, ProviderStatus, Session, Task } from "../../api/client";
-import { createSession, createTask, getWorkspaceExecutionConfig, postMessage } from "../../api/client";
+import {
+  createSession,
+  createTask,
+  getWorkspaceExecutionConfig,
+  postMessage,
+} from "../../api/client";
 import type { DraftHarness, ProviderAuthSummaryTrigger } from "../../components/WorkbenchComposer";
 import type { SessionSupervisor } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem } from "../../state/workspaceActiveSnapshotStore";
@@ -11,8 +16,9 @@ import type { OptimisticFocus } from "../WorkbenchPage.types";
 import { useWorkbenchOptimisticTasks } from "./useWorkbenchOptimisticTasks";
 import { useWorkbenchTaskCreation } from "./useWorkbenchTaskCreation";
 
-const { trackTaskCreatedMock } = vi.hoisted(() => ({
+const { trackTaskCreatedMock, refreshProvidersBootstrapMock } = vi.hoisted(() => ({
   trackTaskCreatedMock: vi.fn(),
+  refreshProvidersBootstrapMock: vi.fn(async () => undefined),
 }));
 
 vi.mock("../../api/client", async (importOriginal) => {
@@ -25,6 +31,10 @@ vi.mock("../../api/client", async (importOriginal) => {
     postMessage: vi.fn(),
   };
 });
+
+vi.mock("../../state/providersBootstrapStore", () => ({
+  refreshProvidersBootstrap: refreshProvidersBootstrapMock,
+}));
 
 vi.mock("../../utils/randomUuid", () => ({
   randomUuid: vi.fn(),
@@ -65,6 +75,10 @@ function makeProviderOptions(overrides: Partial<ProviderOptions> = {}): Provider
     has_active_auth: true,
     auth_mode: "subscription",
     probed_at: now,
+    models: {
+      current_model_id: "gpt-5",
+      models: [{ id: "gpt-5" }],
+    },
     ...overrides,
   };
 }
@@ -290,6 +304,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     expect(mockedGetWorkspaceExecutionConfig).toHaveBeenCalledWith("workspace-1");
     expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "codex", "gpt-5", expect.objectContaining({
       execution_environment: "sandbox",
+      remember_model_preference: false,
     }));
     expect(trackTaskCreatedMock).toHaveBeenCalledWith({
       providerId: "codex",
@@ -297,6 +312,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
       reasoningEffort: null,
       executionEnvironment: "sandbox",
     });
+    expect(refreshProvidersBootstrapMock).toHaveBeenCalledWith("workspace-1");
     expect(mockedPostMessage).not.toHaveBeenCalled();
     expect(onStartError).toHaveBeenCalledWith(null);
   });
@@ -372,6 +388,41 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     expect(onStartError).toHaveBeenCalledWith(null);
   });
 
+  it("refreshes provider bootstrap after session creation even when the first message post fails", async () => {
+    let current: FlowValue | null = null;
+    mockedCreateTask.mockResolvedValue(makeTask("task-1", "session-1"));
+    mockedCreateSession.mockResolvedValue(makeSession("session-1", "task-1"));
+    mockedPostMessage.mockRejectedValue(new Error("post failed"));
+    const onStartError = vi.fn();
+    const attachments: MessageAttachment[] = [
+      {
+        kind: "image",
+        mime_type: "image/png",
+        name: "drop.png",
+        data_base64: "abc123",
+      },
+    ];
+
+    render(
+      <Harness
+        initialAttachments={attachments}
+        onChange={(value) => {
+          current = value;
+        }}
+        onStartError={onStartError}
+      />,
+    );
+
+    await act(async () => {
+      await requireValue(current).startNewTask();
+    });
+
+    await waitFor(() => {
+      expect(onStartError).toHaveBeenCalledWith("post failed");
+    });
+    expect(refreshProvidersBootstrapMock).toHaveBeenCalledWith("workspace-1");
+  });
+
   it("preserves a combined draft model id for session creation", async () => {
     let current: FlowValue | null = null;
     mockedCreateTask.mockResolvedValue(makeTask("task-1", "session-1"));
@@ -384,7 +435,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
 
     render(
       <Harness
-        draftHarness={{ providerId: "codex", modelId: "gpt-5/xhigh" }}
+        draftHarness={{ providerId: "codex", modelId: "gpt-5/xhigh", preferenceExplicit: true }}
         onChange={(value) => {
           current = value;
         }}
@@ -401,6 +452,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     });
     expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "codex", "gpt-5/xhigh", expect.objectContaining({
       execution_environment: "sandbox",
+      remember_model_preference: true,
     }));
     expect(trackTaskCreatedMock).toHaveBeenCalledWith({
       providerId: "codex",
@@ -529,9 +581,10 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     const refreshedOptions = makeProviderOptions({
       provider_id: "fake",
       has_active_auth: true,
+      preferred_model_id: "saved-model",
       models: {
         current_model_id: "fake-model",
-        models: [{ id: "fake-model" }],
+        models: [{ id: "fake-model" }, { id: "saved-model" }],
       },
     });
 
@@ -558,7 +611,169 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     expect(mockedCreateSession).toHaveBeenCalledWith(
       "task-1",
       "fake",
-      "fake-model",
+      "saved-model",
+      expect.objectContaining({
+        execution_environment: "sandbox",
+      }),
+    );
+    expect(onStartError).toHaveBeenCalledWith(null);
+  });
+
+  it("refreshes provider options before using an implicit cached model for session creation", async () => {
+    let current: FlowValue | null = null;
+    mockedCreateTask.mockResolvedValue(makeTask("task-1", "session-1"));
+    mockedCreateSession.mockResolvedValue(makeSession("session-1", "task-1"));
+    const onStartError = vi.fn();
+
+    const staleOptions = makeProviderOptions({
+      provider_id: "fake",
+      has_active_auth: true,
+      models: {
+        current_model_id: "stale-model",
+        models: [{ id: "stale-model" }],
+      },
+    });
+    const refreshedOptions = makeProviderOptions({
+      provider_id: "fake",
+      has_active_auth: true,
+      preferred_model_id: "saved-model",
+      models: {
+        current_model_id: "stale-model",
+        models: [{ id: "stale-model" }, { id: "saved-model" }],
+      },
+    });
+    const ensureProviderAuthSummary = vi.fn(async () => refreshedOptions);
+
+    render(
+      <Harness
+        draftHarness={{ providerId: "fake", modelId: "stale-model", preferenceExplicit: false }}
+        providerOptionsById={{ fake: staleOptions }}
+        providersByIdProp={{ fake: makeProviderStatus({ provider_id: "fake" }) }}
+        ensureProviderAuthSummary={ensureProviderAuthSummary}
+        onChange={(value) => {
+          current = value;
+        }}
+        onStartError={onStartError}
+      />,
+    );
+
+    await act(async () => {
+      await requireValue(current).startNewTask();
+    });
+
+    await waitFor(() => {
+      expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
+    });
+    expect(ensureProviderAuthSummary).toHaveBeenCalledWith("fake", {
+      force: true,
+      trigger: "explicit",
+    });
+    expect(mockedCreateSession).toHaveBeenCalledWith(
+      "task-1",
+      "fake",
+      "saved-model",
+      expect.objectContaining({
+        execution_environment: "sandbox",
+      }),
+    );
+    expect(onStartError).toHaveBeenCalledWith(null);
+  });
+
+  it("falls back to the seeded implicit model when provider refresh fails during session creation", async () => {
+    let current: FlowValue | null = null;
+    mockedCreateTask.mockResolvedValue(makeTask("task-1", "session-1"));
+    mockedCreateSession.mockResolvedValue(makeSession("session-1", "task-1"));
+    const onStartError = vi.fn();
+    const ensureProviderAuthSummary = vi.fn(async () => {
+      throw new Error("refresh failed");
+    });
+
+    render(
+      <Harness
+        draftHarness={{ providerId: "fake", modelId: "seeded-model", preferenceExplicit: false }}
+        providerOptionsById={{
+          fake: makeProviderOptions({
+            provider_id: "fake",
+            has_active_auth: true,
+            models: {
+              current_model_id: "seeded-model",
+              models: [{ id: "seeded-model" }],
+            },
+          }),
+        }}
+        providersByIdProp={{ fake: makeProviderStatus({ provider_id: "fake" }) }}
+        ensureProviderAuthSummary={ensureProviderAuthSummary}
+        onChange={(value) => {
+          current = value;
+        }}
+        onStartError={onStartError}
+      />,
+    );
+
+    await act(async () => {
+      await requireValue(current).startNewTask();
+    });
+
+    await waitFor(() => {
+      expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
+    });
+    expect(ensureProviderAuthSummary).toHaveBeenCalledWith("fake", {
+      force: true,
+      trigger: "explicit",
+    });
+    expect(mockedCreateSession).toHaveBeenCalledWith(
+      "task-1",
+      "fake",
+      "seeded-model",
+      expect.objectContaining({
+        execution_environment: "sandbox",
+      }),
+    );
+    expect(onStartError).toHaveBeenCalledWith(null);
+  });
+
+  it("falls back to cached provider options when the implicit model has not been seeded yet", async () => {
+    let current: FlowValue | null = null;
+    mockedCreateTask.mockResolvedValue(makeTask("task-1", "session-1"));
+    mockedCreateSession.mockResolvedValue(makeSession("session-1", "task-1"));
+    const onStartError = vi.fn();
+    const ensureProviderAuthSummary = vi.fn(async () => {
+      throw new Error("refresh failed");
+    });
+
+    render(
+      <Harness
+        draftHarness={{ providerId: "fake", modelId: "", preferenceExplicit: false }}
+        providerOptionsById={{
+          fake: makeProviderOptions({
+            provider_id: "fake",
+            has_active_auth: true,
+            models: {
+              current_model_id: "cached-model",
+              models: [{ id: "cached-model" }],
+            },
+          }),
+        }}
+        providersByIdProp={{ fake: makeProviderStatus({ provider_id: "fake" }) }}
+        ensureProviderAuthSummary={ensureProviderAuthSummary}
+        onChange={(value) => {
+          current = value;
+        }}
+        onStartError={onStartError}
+      />,
+    );
+
+    await act(async () => {
+      await requireValue(current).startNewTask();
+    });
+
+    await waitFor(() => {
+      expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
+    });
+    expect(mockedCreateSession).toHaveBeenCalledWith(
+      "task-1",
+      "fake",
+      "cached-model",
       expect.objectContaining({
         execution_environment: "sandbox",
       }),
@@ -573,8 +788,8 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     render(
       <Harness
         draftHarness={{ providerId: "codex", modelId: "" }}
-        providerOptionsById={{ codex: makeProviderOptions({ has_active_auth: true }) }}
-        ensureProviderAuthSummary={async () => makeProviderOptions({ has_active_auth: true })}
+        providerOptionsById={{ codex: makeProviderOptions({ has_active_auth: true, models: undefined }) }}
+        ensureProviderAuthSummary={async () => makeProviderOptions({ has_active_auth: true, models: undefined })}
         onChange={(value) => {
           current = value;
         }}
@@ -601,9 +816,9 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     const view = render(
       <Harness
         draftHarness={{ providerId: "amp", modelId: "" }}
-        providerOptionsById={{ amp: makeProviderOptions({ provider_id: "amp", has_active_auth: true }) }}
+        providerOptionsById={{ amp: makeProviderOptions({ provider_id: "amp", has_active_auth: true, models: undefined }) }}
         providersByIdProp={{ amp: makeProviderStatus({ provider_id: "amp" }) }}
-        ensureProviderAuthSummary={async () => makeProviderOptions({ provider_id: "amp", has_active_auth: true })}
+        ensureProviderAuthSummary={async () => makeProviderOptions({ provider_id: "amp", has_active_auth: true, models: undefined })}
         onChange={(value) => {
           current = value;
         }}

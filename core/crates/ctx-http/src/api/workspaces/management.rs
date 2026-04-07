@@ -2,8 +2,10 @@ use super::*;
 use crate::git_status::emit_worktree_vcs_snapshot_for_worktree;
 
 mod prompt_config;
+mod provider_model_preferences;
 
 pub(in crate::api) use prompt_config::*;
+pub(in crate::api) use provider_model_preferences::*;
 
 pub(in crate::api) async fn get_workspace_primary_branch(
     State(state): State<Arc<AppState>>,

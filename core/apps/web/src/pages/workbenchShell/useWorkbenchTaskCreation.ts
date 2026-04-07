@@ -26,6 +26,7 @@ import {
 } from "../../utils/providerInventory";
 import { randomUuid } from "../../utils/randomUuid";
 import { trackTaskCreated } from "../../utils/analytics";
+import { refreshProvidersBootstrap } from "../../state/providersBootstrapStore";
 import type { WorkbenchStore } from "../../workbench/store";
 import type { OptimisticFocus, OptimisticTaskSummary } from "../WorkbenchPage.types";
 import { deriveTaskTitle, modelIdsFromOptions } from "../WorkbenchPage.utils";
@@ -104,12 +105,12 @@ export function useWorkbenchTaskCreation({
   const resolveSessionModelId = async (
     providerId: string,
     selectedModelId: string | null | undefined,
+    selectedModelExplicit: boolean,
   ): Promise<string> => {
-    const explicitModelId = selectedModelId?.trim();
+    const explicitModelId = selectedModelExplicit ? selectedModelId?.trim() : "";
     if (explicitModelId) return explicitModelId;
-
+    const seededModelId = selectedModelId?.trim();
     const cachedModelId = modelIdsFromOptions(providerOptions[providerId])[0];
-    if (cachedModelId) return cachedModelId;
 
     let refreshedOptions: ProviderOptions | undefined;
     try {
@@ -118,11 +119,15 @@ export function useWorkbenchTaskCreation({
         trigger: "explicit",
       });
     } catch (e: unknown) {
+      if (seededModelId) return seededModelId;
+      if (cachedModelId) return cachedModelId;
       throw new Error(`Failed to load models for harness “${providerId}”: ${errorMessage(e)}`);
     }
 
-    const refreshedModelId = modelIdsFromOptions(refreshedOptions ?? providerOptions[providerId])[0];
+    const refreshedModelId = modelIdsFromOptions(refreshedOptions)[0];
     if (refreshedModelId) return refreshedModelId;
+    if (seededModelId) return seededModelId;
+    if (cachedModelId) return cachedModelId;
 
     throw new Error(`Harness “${providerId}” did not provide a model. Refresh provider settings and try again.`);
   };
@@ -150,7 +155,11 @@ export function useWorkbenchTaskCreation({
     }
     let resolvedModelId: string;
     try {
-      resolvedModelId = await resolveSessionModelId(primaryTrack.providerId, primaryTrack.modelId);
+      resolvedModelId = await resolveSessionModelId(
+        primaryTrack.providerId,
+        primaryTrack.modelId,
+        primaryTrack.preferenceExplicit === true,
+      );
     } catch (e: unknown) {
       setStartBusy(false);
       onStartError(errorMessage(e));
@@ -330,6 +339,7 @@ export function useWorkbenchTaskCreation({
       const session = await createSession(currentTaskId, primaryTrack.providerId, resolvedModelId, {
         execution_environment: executionEnvironment,
         id: clientSessionId,
+        remember_model_preference: primaryTrack.preferenceExplicit === true,
         initial_message_id: messageId,
         initial_turn_id: turnId,
         ...(shouldSendInitialPrompt ? { initial_prompt: prompt } : {}),
@@ -362,6 +372,7 @@ export function useWorkbenchTaskCreation({
           };
         }),
       );
+      void refreshProvidersBootstrap(workspaceId).catch(() => {});
 
       if (shouldSendInitialPrompt) {
         primaryMessagePosted = true;

@@ -71,6 +71,7 @@ export const listProviders = (target?: InstallTarget) =>
 export type ProviderOptions = {
   provider_id: string;
   workspace_id: string;
+  preferred_model_id?: string;
   installed?: boolean;
   probe_ok?: boolean;
   probe_error?: string;

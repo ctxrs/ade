@@ -107,6 +107,11 @@ export type WorkspacePrimaryBranch = {
   primary_branch: string;
 };
 
+export type WorkspaceProviderModelPreference = {
+  provider_id: string;
+  preferred_model_id?: string | null;
+};
+
 export const getWorkspacePrimaryBranch = (workspaceId: string) =>
   apiAny<WorkspacePrimaryBranch>(`/api/workspaces/${workspaceId}/primary_branch`);
 
@@ -115,6 +120,27 @@ export const updateWorkspacePrimaryBranch = (workspaceId: string, primary_branch
     method: "POST",
     body: JSON.stringify({ primary_branch }),
   });
+
+export const getWorkspaceProviderModelPreference = (
+  workspaceId: string,
+  providerId: string,
+) =>
+  apiAny<WorkspaceProviderModelPreference>(
+    `/api/workspaces/${workspaceId}/provider_model_preferences/${providerId}`,
+  );
+
+export const updateWorkspaceProviderModelPreference = (
+  workspaceId: string,
+  providerId: string,
+  preferred_model_id?: string | null,
+) =>
+  apiAny<WorkspaceProviderModelPreference>(
+    `/api/workspaces/${workspaceId}/provider_model_preferences/${providerId}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ preferred_model_id: preferred_model_id ?? null }),
+    },
+  );
 
 export const updateWorkspaceMergeQueueConfig = (workspaceId: string, req: UpdateMergeQueueConfigRequest) =>
   apiAny<UpdateWorkspaceConfigResponse>(`/api/workspaces/${workspaceId}/merge_queue_config`, {

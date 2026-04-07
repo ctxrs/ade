@@ -22,6 +22,7 @@ export type ContextWindowInfo = {
 export type DraftHarness = {
   providerId: string;
   modelId: string;
+  preferenceExplicit?: boolean;
 };
 
 type SharedProps = {

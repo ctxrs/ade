@@ -22,6 +22,7 @@ import {
   imageAttachmentSrc,
   labelForVerbosity,
   modelIdFromProviderOptions,
+  nextAutoSeededModelId,
   pickDefaultEffort,
   shouldShowLoadingProviderModels,
 } from "./WorkbenchComposer.utils";
@@ -74,6 +75,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const mirrorRef = useRef<HTMLDivElement | null>(null);
   const lastHeightRef = useRef<number>(0);
   const restoreDraftTailRef = useRef(true);
+  const autoSeededModelIdByProviderRef = useRef<Record<string, string>>({});
   const harnessTriggerRef = useRef<HTMLButtonElement | null>(null);
   const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
   const effortTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -359,17 +361,23 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     }
   }, [newSession?.ensureProviderAuthSummary, newSession?.providerOptions, newSession?.providersById, providerIdsToEnsure]);
 
-  // Seed the primary draft model from provider-advertised defaults (when available),
-  // so the UI shows the current model + effort (e.g. `gpt-5.2/xhigh`) immediately.
+  // Seed the primary draft model from the daemon-backed saved preference when valid,
+  // otherwise fall back to the provider-advertised current/default model.
   useEffect(() => {
     if (!newSession) return;
     const primary = newSession.draftHarness ?? null;
     if (!primary) return;
-    if (primary.modelId.trim().length > 0) return;
-    const opts = newSession.providerOptions[primary.providerId];
+    if (primary.preferenceExplicit) return;
+    const providerId = primary.providerId;
+    const opts = newSession.providerOptions[providerId];
     const next = modelIdFromProviderOptions(opts);
-    if (!next) return;
-    newSession.setDraftHarness((prev) => (prev ? { ...prev, modelId: next } : prev));
+    const previousAutoSeed = autoSeededModelIdByProviderRef.current[providerId] ?? null;
+    const nextSeededModelId = nextAutoSeededModelId(primary.modelId, next, previousAutoSeed);
+    if (!nextSeededModelId) return;
+    autoSeededModelIdByProviderRef.current[providerId] = nextSeededModelId;
+    newSession.setDraftHarness((prev) =>
+      prev && prev.providerId === providerId ? { ...prev, modelId: nextSeededModelId } : prev,
+    );
   }, [newSession?.draftHarness, newSession?.providerOptions, newSession?.setDraftHarness]);
 
   const showModelEffort = useMemo(() => {
@@ -390,7 +398,9 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         return;
       }
       const ns = props as NewSessionProps;
-      ns.setDraftHarness((prev) => (prev ? { ...prev, modelId: nextFullId } : prev));
+      ns.setDraftHarness((prev) =>
+        prev ? { ...prev, modelId: nextFullId, preferenceExplicit: true } : prev,
+      );
     },
     [props, variant],
   );

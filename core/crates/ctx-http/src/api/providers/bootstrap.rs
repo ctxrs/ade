@@ -1,4 +1,5 @@
 use super::*;
+use crate::workspace_config;
 
 fn parse_workspace_id(ws_id: &str) -> Result<WorkspaceId, (StatusCode, Json<serde_json::Value>)> {
     Ok(WorkspaceId(uuid::Uuid::parse_str(ws_id).map_err(|_| {
@@ -41,6 +42,32 @@ pub(crate) async fn get_workspace_providers_bootstrap(
     let install_target = status::install_target_for_workspace(&state, ws_id)
         .await
         .map_err(|error| status::workspace_execution_settings_error_json(&error))?;
+    let store = state.store_for_workspace(ws_id).await.map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": format!(
+                    "failed to load workspace store: {}",
+                    logs::redact_sensitive(&error.to_string())
+                ),
+            })),
+        )
+    })?;
+    let preferred_model_by_provider = std::sync::Arc::new(
+        workspace_config::load_preferred_new_session_models(&store)
+            .await
+            .map_err(|error| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": format!(
+                            "failed to load workspace provider model preferences: {}",
+                            logs::redact_sensitive(&error.to_string())
+                        ),
+                    })),
+                )
+            })?,
+    );
 
     let providers = status::providers_statuses_response(&state, install_target, true).await;
     let mut provider_options = HashMap::new();
@@ -57,6 +84,7 @@ pub(crate) async fn get_workspace_providers_bootstrap(
             let state = Arc::clone(&state);
             let workspace = workspace.clone();
             let ws_id = ws_id_str.clone();
+            let preferred_model_by_provider = std::sync::Arc::clone(&preferred_model_by_provider);
             async move {
                 let provider_id = provider_status.provider_id.clone();
                 let source_config = harness_sources::get_provider_source_config(
@@ -117,6 +145,14 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                     )
                 {
                     options["models"] = models;
+                }
+                if let Some(preferred_model_id) =
+                    crate::provider_model_preferences::preferred_model_id_from_available_models(
+                        preferred_model_by_provider.get(&provider_id).cloned(),
+                        options.get("models"),
+                    )
+                {
+                    options["preferred_model_id"] = serde_json::json!(preferred_model_id);
                 }
 
                 (provider_id, options, source_config)

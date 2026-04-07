@@ -131,7 +131,7 @@ export function WorkbenchComposerHarnessMenu({
       if (prev?.providerId === providerId) {
         return authReadyVisibleHarnessCount <= 1 ? prev : null;
       }
-      return { providerId, modelId: "" };
+      return { providerId, modelId: "", preferenceExplicit: false };
     });
     newSession.ensureProviderAuthSummary(providerId).catch(() => {});
     onClose();

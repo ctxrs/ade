@@ -4,8 +4,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 mod handlers;
+mod provider_options_response;
 
 pub(in crate::api) use handlers::*;
+use provider_options_response::*;
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -44,24 +46,6 @@ use crate::provider_usability::{provider_status_is_usable, provider_status_unusa
 use ctx_core::ids::WorkspaceId;
 use ctx_providers::crp::{probe_crp_models, probe_crp_runtime_launch};
 
-fn invalid_provider_id_error(
-    provider_id: &str,
-    canonical_id: &str,
-) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({
-            "error": format!(
-                "provider '{}' is not supported; use '{}'",
-                provider_id, canonical_id
-            ),
-            "code": "invalid_provider_id",
-            "provider_id": provider_id,
-            "canonical_id": canonical_id,
-        })),
-    )
-}
-
 #[derive(Debug, Deserialize)]
 pub(super) struct InstallTargetQuery {
     target: Option<String>,
@@ -91,17 +75,6 @@ pub(super) struct ProviderAuthCheckResp {
     checked_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
-}
-
-fn parse_workspace_id(ws_id: &str) -> Result<WorkspaceId, (StatusCode, Json<serde_json::Value>)> {
-    Ok(WorkspaceId(uuid::Uuid::parse_str(ws_id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "invalid workspace id",
-            })),
-        )
-    })?))
 }
 
 fn classify_probe_error(

@@ -1,7 +1,11 @@
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
 use anyhow::{bail, Context, Result};
 pub use ctx_core::models::ExecutionEnvironment;
 use ctx_store::Store;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::settings::{ContainerNetworkMode, ExecutionMode, ExecutionSettings};
 
@@ -106,6 +110,8 @@ struct WorkspaceRuntimeSettingsDoc {
     #[serde(default)]
     subagents: Option<WorkspaceSubagentsConfig>,
     #[serde(default)]
+    new_session: Option<WorkspaceNewSessionConfig>,
+    #[serde(default)]
     vcs: Option<WorkspaceVcsConfig>,
     #[serde(default)]
     merge_queue: Option<WorkspaceMergeQueueConfig>,
@@ -125,6 +131,12 @@ struct WorkspaceAgentsConfig {
 struct WorkspaceSubagentsConfig {
     #[serde(default)]
     system_prompt_append: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+struct WorkspaceNewSessionConfig {
+    #[serde(default, deserialize_with = "deserialize_optional_string_map")]
+    preferred_model_by_provider: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
@@ -320,16 +332,81 @@ pub async fn load_primary_branch(store: &Store) -> Result<Option<String>> {
     Ok(Some(trimmed))
 }
 
+pub async fn load_preferred_new_session_model_id(
+    store: &Store,
+    provider_id: &str,
+) -> Result<Option<String>> {
+    let provider_id = normalize_provider_preference_key(provider_id);
+    let Some(provider_id) = provider_id else {
+        return Ok(None);
+    };
+    let prefs = load_preferred_new_session_models(store).await?;
+    Ok(prefs.get(&provider_id).cloned())
+}
+
+pub async fn load_preferred_new_session_models(store: &Store) -> Result<HashMap<String, String>> {
+    let cfg = load_workspace_settings_doc(store).await?;
+    let raw = cfg
+        .new_session
+        .and_then(|new_session| new_session.preferred_model_by_provider)
+        .unwrap_or_default();
+    let mut normalized = HashMap::new();
+    for (provider_id, model_id) in raw {
+        let Some(provider_id) = normalize_provider_preference_key(&provider_id) else {
+            continue;
+        };
+        let Some(model_id) = trimmed_nonempty(&model_id) else {
+            continue;
+        };
+        normalized.insert(provider_id, model_id);
+    }
+    Ok(normalized)
+}
+
+pub async fn update_preferred_new_session_model_id(
+    store: &Store,
+    provider_id: &str,
+    model_id: Option<String>,
+) -> Result<()> {
+    let Some(provider_id) = normalize_provider_preference_key(provider_id) else {
+        bail!("provider_id is required");
+    };
+    mutate_workspace_settings_doc(store, "preferred_new_session_model", move |cfg| {
+        let mut prefs = cfg
+            .new_session
+            .as_ref()
+            .and_then(|new_session| new_session.preferred_model_by_provider.clone())
+            .unwrap_or_default();
+        if let Some(model_id) = model_id.as_deref().and_then(trimmed_nonempty) {
+            prefs.insert(provider_id, model_id);
+        } else {
+            prefs.remove(&provider_id);
+        }
+
+        if prefs.is_empty() {
+            cfg.new_session = None;
+        } else {
+            cfg.new_session = Some(WorkspaceNewSessionConfig {
+                preferred_model_by_provider: Some(prefs),
+            });
+        }
+        Ok(())
+    })
+    .await
+}
+
 pub async fn update_primary_branch(store: &Store, primary_branch: &str) -> Result<()> {
-    let mut cfg = load_workspace_settings_doc(store).await?;
     let trimmed = primary_branch.trim().to_string();
     if trimmed.is_empty() {
         bail!("primary_branch is required");
     }
-    cfg.vcs = Some(WorkspaceVcsConfig {
-        primary_branch: Some(trimmed),
-    });
-    save_workspace_settings_doc(store, &cfg).await
+    mutate_workspace_settings_doc(store, "primary_branch", move |cfg| {
+        cfg.vcs = Some(WorkspaceVcsConfig {
+            primary_branch: Some(trimmed),
+        });
+        Ok(())
+    })
+    .await
 }
 
 pub async fn load_merge_queue_config(store: &Store) -> Result<MergeQueueConfig> {
@@ -444,29 +521,30 @@ pub async fn update_merge_queue_config(
     store: &Store,
     update: MergeQueueConfigUpdate,
 ) -> Result<()> {
-    let mut cfg = load_workspace_settings_doc(store).await?;
     let update = update.normalized();
+    mutate_workspace_settings_doc(store, "merge_queue", move |cfg| {
+        if !update.enabled {
+            cfg.merge_queue = None;
+            return Ok(());
+        }
 
-    if !update.enabled {
-        cfg.merge_queue = None;
-        return save_workspace_settings_doc(store, &cfg).await;
-    }
+        cfg.merge_queue = Some(WorkspaceMergeQueueConfig {
+            enabled: Some(true),
+            target_branch: update.target_branch,
+            verify_commands: if update.verify_commands.is_empty() {
+                None
+            } else {
+                Some(update.verify_commands)
+            },
+            push_on_success: update.push_on_success,
+            push_remote: update.push_remote,
+            push_branch: update.push_branch,
+            canonical_sync: update.canonical_sync,
+        });
 
-    cfg.merge_queue = Some(WorkspaceMergeQueueConfig {
-        enabled: Some(true),
-        target_branch: update.target_branch,
-        verify_commands: if update.verify_commands.is_empty() {
-            None
-        } else {
-            Some(update.verify_commands)
-        },
-        push_on_success: update.push_on_success,
-        push_remote: update.push_remote,
-        push_branch: update.push_branch,
-        canonical_sync: update.canonical_sync,
-    });
-
-    save_workspace_settings_doc(store, &cfg).await
+        Ok(())
+    })
+    .await
 }
 
 #[derive(Debug, Clone)]
@@ -503,28 +581,27 @@ pub async fn update_worktree_bootstrap_config(
     store: &Store,
     update: WorktreeBootstrapConfigUpdate,
 ) -> Result<()> {
-    let mut cfg = load_workspace_settings_doc(store).await?;
-
     let setup_command = update
         .setup_command
         .as_ref()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
-
-    if setup_command.is_none()
-        && update.timeout_sec.is_none()
-        && update.wait_for_completion.is_none()
-    {
-        cfg.worktree_bootstrap = None;
-    } else {
-        cfg.worktree_bootstrap = Some(WorkspaceWorktreeBootstrapConfig {
-            setup_command,
-            timeout_sec: update.timeout_sec,
-            wait_for_completion: update.wait_for_completion,
-        });
-    }
-
-    save_workspace_settings_doc(store, &cfg).await
+    mutate_workspace_settings_doc(store, "worktree_bootstrap", move |cfg| {
+        if setup_command.is_none()
+            && update.timeout_sec.is_none()
+            && update.wait_for_completion.is_none()
+        {
+            cfg.worktree_bootstrap = None;
+        } else {
+            cfg.worktree_bootstrap = Some(WorkspaceWorktreeBootstrapConfig {
+                setup_command,
+                timeout_sec: update.timeout_sec,
+                wait_for_completion: update.wait_for_completion,
+            });
+        }
+        Ok(())
+    })
+    .await
 }
 
 #[derive(Debug, Clone)]
@@ -536,8 +613,6 @@ pub struct ExecutionConfigUpdate {
 }
 
 pub async fn update_execution_config(store: &Store, update: ExecutionConfigUpdate) -> Result<()> {
-    let mut cfg = load_workspace_settings_doc(store).await?;
-
     let container = if matches!(update.environment, ExecutionEnvironment::Sandbox) {
         Some(WorkspaceContainerExecutionConfig {
             network_mode: update.network_mode,
@@ -556,49 +631,52 @@ pub async fn update_execution_config(store: &Store, update: ExecutionConfigUpdat
     } else {
         None
     };
-
-    cfg.execution = Some(WorkspaceExecutionConfig {
-        environment: Some(update.environment),
-        container,
-    });
-
-    save_workspace_settings_doc(store, &cfg).await
+    mutate_workspace_settings_doc(store, "execution", move |cfg| {
+        cfg.execution = Some(WorkspaceExecutionConfig {
+            environment: Some(update.environment),
+            container,
+        });
+        Ok(())
+    })
+    .await
 }
 
 pub async fn update_agent_system_prompt_append(
     store: &Store,
     system_prompt_append: Option<String>,
 ) -> Result<()> {
-    let mut cfg = load_workspace_settings_doc(store).await?;
-    match system_prompt_append {
-        Some(value) => {
-            let trimmed = value.trim().to_string();
-            cfg.agents = Some(WorkspaceAgentsConfig {
-                system_prompt_append: Some(trimmed),
-            });
+    mutate_workspace_settings_doc(store, "agents", move |cfg| {
+        match system_prompt_append {
+            Some(value) => {
+                let trimmed = value.trim().to_string();
+                cfg.agents = Some(WorkspaceAgentsConfig {
+                    system_prompt_append: Some(trimmed),
+                });
+            }
+            None => cfg.agents = None,
         }
-        None => cfg.agents = None,
-    }
-
-    save_workspace_settings_doc(store, &cfg).await
+        Ok(())
+    })
+    .await
 }
 
 pub async fn update_subagent_system_prompt_append(
     store: &Store,
     system_prompt_append: Option<String>,
 ) -> Result<()> {
-    let mut cfg = load_workspace_settings_doc(store).await?;
-    match system_prompt_append {
-        Some(value) => {
-            let trimmed = value.trim().to_string();
-            cfg.subagents = Some(WorkspaceSubagentsConfig {
-                system_prompt_append: Some(trimmed),
-            });
+    mutate_workspace_settings_doc(store, "subagents", move |cfg| {
+        match system_prompt_append {
+            Some(value) => {
+                let trimmed = value.trim().to_string();
+                cfg.subagents = Some(WorkspaceSubagentsConfig {
+                    system_prompt_append: Some(trimmed),
+                });
+            }
+            None => cfg.subagents = None,
         }
-        None => cfg.subagents = None,
-    }
-
-    save_workspace_settings_doc(store, &cfg).await
+        Ok(())
+    })
+    .await
 }
 
 async fn load_workspace_settings_doc(store: &Store) -> Result<WorkspaceRuntimeSettingsDoc> {
@@ -609,6 +687,24 @@ async fn load_workspace_settings_doc(store: &Store) -> Result<WorkspaceRuntimeSe
     let parsed = serde_json::from_str::<WorkspaceRuntimeSettingsDoc>(&doc.settings_json)
         .context("parsing workspace runtime settings document")?;
     Ok(parsed)
+}
+
+fn workspace_settings_write_lock() -> &'static AsyncMutex<()> {
+    static LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| AsyncMutex::new(()))
+}
+
+async fn mutate_workspace_settings_doc(
+    store: &Store,
+    operation: &'static str,
+    mutate: impl FnOnce(&mut WorkspaceRuntimeSettingsDoc) -> Result<()>,
+) -> Result<()> {
+    let _guard = workspace_settings_write_lock().lock().await;
+    let mut cfg = load_workspace_settings_doc(store).await?;
+    #[cfg(test)]
+    pause_after_workspace_settings_load_for_tests(operation).await;
+    mutate(&mut cfg)?;
+    save_workspace_settings_doc(store, &cfg).await
 }
 
 async fn save_workspace_settings_doc(
@@ -622,6 +718,25 @@ async fn save_workspace_settings_doc(
     Ok(())
 }
 
+fn normalize_provider_preference_key(value: &str) -> Option<String> {
+    trimmed_nonempty(value)
+}
+
+fn deserialize_optional_string_map<'de, D>(
+    deserializer: D,
+) -> Result<Option<HashMap<String, String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Option::<HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
+    Ok(raw.map(|entries| {
+        entries
+            .into_iter()
+            .filter_map(|(key, value)| value.as_str().map(|model_id| (key, model_id.to_string())))
+            .collect()
+    }))
+}
+
 fn trimmed_nonempty(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -632,43 +747,32 @@ fn trimmed_nonempty(value: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+type WorkspaceSettingsLoadedSignal = (
+    tokio::sync::oneshot::Sender<()>,
+    tokio::sync::oneshot::Receiver<()>,
+);
 
-    #[tokio::test]
-    async fn update_execution_config_can_leave_runtime_unspecified() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let db_path = temp.path().join("db.sqlite");
-        let store = Store::open_sqlite(&db_path, None)
-            .await
-            .expect("open sqlite store");
+#[cfg(test)]
+type WorkspaceSettingsTestPauseHook =
+    AsyncMutex<HashMap<&'static str, WorkspaceSettingsLoadedSignal>>;
 
-        update_execution_config(
-            &store,
-            ExecutionConfigUpdate {
-                environment: ExecutionEnvironment::Sandbox,
-                network_mode: Some(ContainerNetworkMode::LlmOnly),
-                allowlist: Some(vec![" api.openai.com ".to_string(), "".to_string()]),
-                image: None,
-            },
-        )
+#[cfg(test)]
+fn workspace_settings_test_pause_hook() -> &'static WorkspaceSettingsTestPauseHook {
+    static HOOK: OnceLock<WorkspaceSettingsTestPauseHook> = OnceLock::new();
+    HOOK.get_or_init(|| AsyncMutex::new(HashMap::new()))
+}
+
+#[cfg(test)]
+async fn pause_after_workspace_settings_load_for_tests(operation: &'static str) {
+    let hook = workspace_settings_test_pause_hook()
+        .lock()
         .await
-        .expect("update execution config");
-
-        let loaded = load_execution_settings_override(&store)
-            .await
-            .expect("load override")
-            .expect("execution override");
-        assert_eq!(loaded.mode, Some(ExecutionMode::Sandbox));
-        assert_eq!(
-            loaded.container.network_mode,
-            Some(ContainerNetworkMode::LlmOnly)
-        );
-        assert_eq!(
-            loaded.container.allowlist,
-            Some(vec!["api.openai.com".to_string()])
-        );
-
-        store.close().await;
+        .remove(operation);
+    if let Some((loaded_tx, resume_rx)) = hook {
+        let _ = loaded_tx.send(());
+        let _ = resume_rx.await;
     }
 }
+
+#[cfg(test)]
+mod tests;

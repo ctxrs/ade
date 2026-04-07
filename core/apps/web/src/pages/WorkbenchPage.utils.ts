@@ -160,16 +160,21 @@ const selectedEndpointModelOverride = (opts?: ProviderOptions): string => {
 export function modelIdsFromOptions(opts?: ProviderOptions): string[] {
   const raw = opts?.models;
   const rec = asRecord(raw);
+  const preferred = String(opts?.preferred_model_id ?? "").trim();
   const current = String(rec.currentModelId ?? rec.current_model_id ?? "").trim();
   const sourceOverride = selectedEndpointModelOverride(opts);
   const list = rec.availableModels ?? rec.available_models ?? rec.models ?? raw;
   const ids = (Array.isArray(list) ? list : [])
     .map((m) => {
       const model = asRecord(m);
-      return String(model.modelId ?? model.model_id ?? model.id ?? "").trim();
+      return String(model.modelId ?? model.model_id ?? model.id ?? model.name ?? "").trim();
     })
     .filter((s: string) => s.length > 0);
-  return Array.from(new Set([current, sourceOverride, ...ids].filter((id) => id.length > 0)));
+  const preferredAvailable =
+    preferred.length > 0 && (current === preferred || ids.includes(preferred));
+  return Array.from(
+    new Set([preferredAvailable ? preferred : "", current, sourceOverride, ...ids].filter((id) => id.length > 0)),
+  );
 }
 
 export function appendSegment(base: string, addition: string): string {

@@ -184,6 +184,23 @@ export function deriveFullModelIdForBase(
 
 export function modelIdFromProviderOptions(opts?: ProviderOptions): string | null {
   const raw = asRecord(opts?.models);
+  const preferred = opts?.preferred_model_id;
+  if (typeof preferred === "string" && preferred.trim().length > 0) {
+    const preferredId = preferred.trim();
+    const current = raw.currentModelId ?? raw.current_model_id;
+    if (typeof current === "string" && current.trim() === preferredId) {
+      return preferredId;
+    }
+    const list = raw.availableModels ?? raw.available_models ?? raw.models ?? [];
+    if (Array.isArray(list)) {
+      const preferredAvailable = list.some((entry) => {
+        const model = asRecord(entry);
+        const id = model.modelId ?? model.model_id ?? model.id ?? model.name;
+        return typeof id === "string" && id.trim() === preferredId;
+      });
+      if (preferredAvailable) return preferredId;
+    }
+  }
   const current = raw.currentModelId ?? raw.current_model_id;
   if (typeof current === "string" && current.trim().length > 0) return current.trim();
   const sourceOverride = selectedEndpointModelOverride(opts);
@@ -194,4 +211,20 @@ export function modelIdFromProviderOptions(opts?: ProviderOptions): string | nul
   const first = asRecord(list[0]);
   const id = first.modelId ?? first.model_id ?? first.id ?? first.name;
   return typeof id === "string" && id.trim().length > 0 ? id.trim() : null;
+}
+
+export function nextAutoSeededModelId(
+  currentModelId: string,
+  nextResolvedModelId: string | null,
+  previousAutoSeededModelId: string | null,
+): string | null {
+  const current = currentModelId.trim();
+  const next = nextResolvedModelId?.trim() ?? "";
+  const previousAuto = previousAutoSeededModelId?.trim() ?? "";
+  if (!next) return null;
+  if (!current) return next;
+  if (previousAuto && current === previousAuto && current !== next) {
+    return next;
+  }
+  return null;
 }

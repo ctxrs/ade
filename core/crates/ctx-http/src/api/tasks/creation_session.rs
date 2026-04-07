@@ -16,6 +16,8 @@ pub(in crate::api) struct CreateSessionReq {
         deserialize_with = "sessions::deserialize_optional_reasoning_effort"
     )]
     reasoning_effort: Option<String>,
+    #[serde(default)]
+    remember_model_preference: bool,
     parent_session_id: Option<String>,
     relationship: Option<String>,
     #[serde(default)]
@@ -253,6 +255,7 @@ pub(in crate::api) async fn create_session_for_task(
     .map_err(|_| StatusCode::BAD_REQUEST)?;
     let model_id = resolved_model.model_id.clone();
     let reasoning_effort = resolved_model.reasoning_effort.clone();
+    let preferred_model_id = sessions::compose_model_id(&model_id, reasoning_effort.as_deref());
 
     if let Some(session_id) = session_id {
         let existing_ws = state
@@ -282,6 +285,24 @@ pub(in crate::api) async fn create_session_for_task(
                     return Err(StatusCode::CONFLICT);
                 }
                 state.remember_session_meta(&existing).await;
+                if req.remember_model_preference {
+                    if let Err(error) =
+                        crate::workspace_provider_model_preferences::update_workspace_provider_preferred_model_id(
+                            &state,
+                            task.workspace_id,
+                            &provider_id,
+                            Some(preferred_model_id.clone()),
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            session_id = %existing.id.0,
+                            workspace_id = %task.workspace_id.0,
+                            provider_id = provider_id,
+                            "failed to persist workspace provider model preference: {error:#}"
+                        );
+                    }
+                }
                 return Ok(Json(existing));
             }
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -523,6 +544,25 @@ pub(in crate::api) async fn create_session_for_task(
             let _ =
                 schedule_session_title_generation(state.clone(), session.clone(), prompt, false)
                     .await;
+        }
+    }
+
+    if req.remember_model_preference {
+        if let Err(error) =
+            crate::workspace_provider_model_preferences::update_workspace_provider_preferred_model_id(
+                &state,
+                task.workspace_id,
+                &provider_id,
+                Some(preferred_model_id),
+            )
+            .await
+        {
+            tracing::warn!(
+                session_id = %session.id.0,
+                workspace_id = %task.workspace_id.0,
+                provider_id = provider_id,
+                "failed to persist workspace provider model preference: {error:#}"
+            );
         }
     }
 

@@ -13,7 +13,6 @@ import {
   postMessage,
   Session,
   type SubagentInvocation,
-  setSessionModel,
   authenticateSession,
   type ProviderOptions,
   idToString,
@@ -69,6 +68,7 @@ import {
   createWorkbenchLayoutProjectionOp,
   mergeWorkbenchThreadProjectionOps,
 } from "./sessionThreadProjection";
+import { useSessionModelSwitcher } from "./sessionView/useSessionModelSwitcher";
 
 const SCROLLBACK_INCREASE_VIEWPORT_BY_PX = 240;
 
@@ -873,18 +873,12 @@ export function SessionView({
     startDictation().catch(() => {});
   }, [dictationRecording, startDictation, stopDictation]);
 
-  const handleSetModelId = useCallback(async (next: string) => {
-    setModelSwitchError(null);
-    setOptimisticModelId(next);
-    try {
-      const updated = await setSessionModel(id, next);
-      supervisor.setSession(updated);
-      setOptimisticModelId(null);
-    } catch (error: unknown) {
-      setOptimisticModelId(null);
-      setModelSwitchError(errorMessage(error));
-    }
-  }, [id, supervisor]);
+  const handleSetModelId = useSessionModelSwitcher({
+    sessionId: id,
+    supervisor,
+    setModelSwitchError,
+    setOptimisticModelId,
+  });
 
   return (
     <SessionWorkbenchPane

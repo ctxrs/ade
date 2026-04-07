@@ -126,4 +126,22 @@ describe("modelIdsFromOptions", () => {
       "openai/gpt-5.2-codex",
     ]);
   });
+
+  it("accepts name-only catalog entries when checking preferred_model_id availability", () => {
+    const options: ProviderOptions = {
+      ...baseOptions("codex"),
+      preferred_model_id: "openai/gpt-5.4/xhigh",
+      models: {
+        availableModels: [
+          { name: "openai/gpt-5.4/xhigh" },
+          { name: "openai/gpt-5.4/medium" },
+        ],
+      },
+    };
+
+    expect(modelIdsFromOptions(options)).toEqual([
+      "openai/gpt-5.4/xhigh",
+      "openai/gpt-5.4/medium",
+    ]);
+  });
 });

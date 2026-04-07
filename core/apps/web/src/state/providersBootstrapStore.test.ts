@@ -276,4 +276,80 @@ describe("providersBootstrapStore", () => {
 
     expect(resolved?.models).toEqual(previous.models);
   });
+
+  it("clears preferred_model_id when a partial refresh omits the server field", async () => {
+    const store = await import("./providersBootstrapStore");
+    const daemonConnection = await import("../api/daemonConnection");
+
+    daemonConnection.setDaemonConnection({
+      baseUrl: "https://daemon-pref.example",
+      source: "test",
+    });
+    clientMocks.getProvidersBootstrap.mockResolvedValueOnce(makeWorkspaceBootstrap("ws-pref", {
+      provider_options: {
+        codex: {
+          ...makeWorkspaceBootstrap("ws-pref").provider_options.codex,
+          preferred_model_id: "gpt-5.4/xhigh",
+          probed_at: "2026-03-10T00:00:01.000Z",
+          models: {
+            models: [{ id: "gpt-5.4/medium" }, { id: "gpt-5.4/xhigh" }],
+            current_model_id: "gpt-5.4/medium",
+          },
+        },
+      },
+    }));
+    await store.loadProvidersBootstrap("ws-pref");
+
+    clientMocks.getProvidersBootstrap.mockResolvedValueOnce(makeWorkspaceBootstrap("ws-pref", {
+      provider_options: {
+        codex: {
+          ...makeWorkspaceBootstrap("ws-pref").provider_options.codex,
+          probed_at: "2026-03-10T00:00:01.000Z",
+        },
+      },
+    }));
+    await store.refreshProvidersBootstrap("ws-pref");
+
+    expect(store.getProvidersBootstrapSnapshot("ws-pref").provider_options.codex?.models).toEqual({
+      models: [{ id: "gpt-5.4/medium" }, { id: "gpt-5.4/xhigh" }],
+      current_model_id: "gpt-5.4/medium",
+    });
+    expect(store.getProvidersBootstrapSnapshot("ws-pref").provider_options.codex?.preferred_model_id).toBeUndefined();
+  });
+
+  it("does not preserve preferred_model_id across a fresh probe without a server field", async () => {
+    const store = await import("./providersBootstrapStore");
+    const daemonConnection = await import("../api/daemonConnection");
+
+    daemonConnection.setDaemonConnection({
+      baseUrl: "https://daemon-pref-clear.example",
+      source: "test",
+    });
+    clientMocks.getProvidersBootstrap.mockResolvedValueOnce(makeWorkspaceBootstrap("ws-pref-clear", {
+      provider_options: {
+        codex: {
+          ...makeWorkspaceBootstrap("ws-pref-clear").provider_options.codex,
+          preferred_model_id: "gpt-5.4/xhigh",
+          probed_at: "2026-03-10T00:00:01.000Z",
+          models: {
+            models: [{ id: "gpt-5.4/medium" }, { id: "gpt-5.4/xhigh" }],
+            current_model_id: "gpt-5.4/medium",
+          },
+        },
+      },
+    }));
+    await store.loadProvidersBootstrap("ws-pref-clear");
+
+    clientMocks.getProvidersBootstrap.mockResolvedValueOnce(makeWorkspaceBootstrap("ws-pref-clear", {
+      provider_options: {
+        codex: {
+          ...makeWorkspaceBootstrap("ws-pref-clear").provider_options.codex,
+          probed_at: "2026-03-10T00:00:02.000Z",
+        },
+      },
+    }));
+    await store.refreshProvidersBootstrap("ws-pref-clear");
+
+    expect(store.getProvidersBootstrapSnapshot("ws-pref-clear").provider_options.codex?.preferred_model_id).toBeUndefined();
+  });
 });

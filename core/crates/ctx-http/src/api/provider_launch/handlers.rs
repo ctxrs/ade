@@ -36,13 +36,7 @@ pub(in crate::api) async fn get_provider_options(
     if let Some((cached_at, cached_value)) = authoritative_cached_entry {
         if cached_at.elapsed() < CACHE_TTL {
             let mut out = cached_value.clone();
-            if let Some((verify_at, verify)) = verify_entry.as_ref() {
-                if verify_at.elapsed() < VERIFY_TTL {
-                    if let Some(obj) = out.as_object_mut() {
-                        obj.insert("verify".to_string(), verify.clone());
-                    }
-                }
-            }
+            attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
             return Ok(Json(out));
         }
     }
@@ -101,6 +95,7 @@ pub(in crate::api) async fn get_provider_options(
                 "error": "workspace not found",
             })),
         ))?;
+    let preferred_model_id = load_workspace_preferred_model_id(&state, ws_id, &provider_id).await?;
 
     let provider_status =
         provider_status_for_target(&state, &managed, &matrix, &provider_id, install_target).await;
@@ -133,6 +128,17 @@ pub(in crate::api) async fn get_provider_options(
             raw_base_resp["source"] =
                 serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
         }
+        attach_static_provider_models_and_modes(
+            &state,
+            &mut raw_base_resp,
+            &provider_id,
+            &provider_status,
+            selected_endpoint.as_ref(),
+            cached_models.clone(),
+            cached_modes.clone(),
+        )
+        .await;
+        inject_preferred_model_id(&mut raw_base_resp, preferred_model_id.clone());
         let base_resp = redact_json_value(raw_base_resp);
         state.providers.options_cache.lock().await.insert(
             cache_key,
@@ -142,13 +148,7 @@ pub(in crate::api) async fn get_provider_options(
             },
         );
         let mut out = base_resp;
-        if let Some((verify_at, verify)) = verify_entry.as_ref() {
-            if verify_at.elapsed() < VERIFY_TTL {
-                if let Some(obj) = out.as_object_mut() {
-                    obj.insert("verify".to_string(), verify.clone());
-                }
-            }
-        }
+        attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
         return Ok(Json(out));
     }
 
@@ -194,37 +194,17 @@ pub(in crate::api) async fn get_provider_options(
                 raw_resp["source"] =
                     serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
             }
-            if let Some(endpoint) = selected_endpoint.as_ref() {
-                raw_resp["models"] = endpoint_models_payload(&provider_id, endpoint, now);
-                if harness_sources::endpoint_model_catalog_is_stale(endpoint, now) {
-                    let state = Arc::clone(&state);
-                    let provider_id_for_refresh = provider_id.clone();
-                    let endpoint_id_for_refresh = endpoint.id.clone();
-                    tokio::spawn(async move {
-                        let _ = harness_sources::refresh_provider_endpoint_model_catalog(
-                            &state.core.data_root,
-                            &provider_id_for_refresh,
-                            &endpoint_id_for_refresh,
-                        )
-                        .await;
-                    });
-                }
-            } else if let Some(models) = subscription_models_payload_from_status(&provider_status) {
-                raw_resp["models"] = models;
-            }
-            if raw_resp.get("models").is_none()
-                || raw_resp.get("models").is_some_and(|v| v.is_null())
-            {
-                if let Some(models) = cached_models {
-                    raw_resp["models"] = models;
-                }
-            }
-            if raw_resp.get("modes").is_none() || raw_resp.get("modes").is_some_and(|v| v.is_null())
-            {
-                if let Some(modes) = cached_modes {
-                    raw_resp["modes"] = modes;
-                }
-            }
+            attach_static_provider_models_and_modes(
+                &state,
+                &mut raw_resp,
+                &provider_id,
+                &provider_status,
+                selected_endpoint.as_ref(),
+                cached_models.clone(),
+                cached_modes.clone(),
+            )
+            .await;
+            inject_preferred_model_id(&mut raw_resp, preferred_model_id.clone());
 
             let resp = redact_json_value(raw_resp);
             state.providers.options_cache.lock().await.insert(
@@ -236,13 +216,7 @@ pub(in crate::api) async fn get_provider_options(
             );
 
             let mut out = resp;
-            if let Some((verify_at, verify)) = verify_entry.as_ref() {
-                if verify_at.elapsed() < VERIFY_TTL {
-                    if let Some(obj) = out.as_object_mut() {
-                        obj.insert("verify".to_string(), verify.clone());
-                    }
-                }
-            }
+            attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
             return Ok(Json(out));
         }
         ProviderOptionsProbePlan::SelectedEndpointRuntimeLaunch(endpoint_id) => {
@@ -327,19 +301,17 @@ pub(in crate::api) async fn get_provider_options(
                 raw_resp["source"] =
                     serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
             }
-            if harness_sources::endpoint_model_catalog_is_stale(endpoint, now) {
-                let state = Arc::clone(&state);
-                let provider_id_for_refresh = provider_id.clone();
-                let endpoint_id_for_refresh = endpoint.id.clone();
-                tokio::spawn(async move {
-                    let _ = harness_sources::refresh_provider_endpoint_model_catalog(
-                        &state.core.data_root,
-                        &provider_id_for_refresh,
-                        &endpoint_id_for_refresh,
-                    )
-                    .await;
-                });
-            }
+            attach_static_provider_models_and_modes(
+                &state,
+                &mut raw_resp,
+                &provider_id,
+                &provider_status,
+                selected_endpoint.as_ref(),
+                cached_models.clone(),
+                cached_modes.clone(),
+            )
+            .await;
+            inject_preferred_model_id(&mut raw_resp, preferred_model_id.clone());
             let resp = redact_json_value(raw_resp);
             state.providers.options_cache.lock().await.insert(
                 cache_key,
@@ -349,13 +321,7 @@ pub(in crate::api) async fn get_provider_options(
                 },
             );
             let mut out = resp;
-            if let Some((verify_at, verify)) = verify_entry.as_ref() {
-                if verify_at.elapsed() < VERIFY_TTL {
-                    if let Some(obj) = out.as_object_mut() {
-                        obj.insert("verify".to_string(), verify.clone());
-                    }
-                }
-            }
+            attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
             return Ok(Json(out));
         }
         ProviderOptionsProbePlan::RuntimeModels => {}
@@ -468,21 +434,17 @@ pub(in crate::api) async fn get_provider_options(
     if let Some(source) = source_config.as_ref() {
         raw_resp["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
     }
-    if raw_resp.get("models").is_none() || raw_resp.get("models").is_some_and(|v| v.is_null()) {
-        if let Some(models) = subscription_models_payload_from_status(&provider_status) {
-            raw_resp["models"] = models;
-        }
-    }
-    if raw_resp.get("models").is_none() || raw_resp.get("models").is_some_and(|v| v.is_null()) {
-        if let Some(models) = cached_models {
-            raw_resp["models"] = models;
-        }
-    }
-    if raw_resp.get("modes").is_none() || raw_resp.get("modes").is_some_and(|v| v.is_null()) {
-        if let Some(modes) = cached_modes {
-            raw_resp["modes"] = modes;
-        }
-    }
+    attach_static_provider_models_and_modes(
+        &state,
+        &mut raw_resp,
+        &provider_id,
+        &provider_status,
+        selected_endpoint.as_ref(),
+        cached_models,
+        cached_modes,
+    )
+    .await;
+    inject_preferred_model_id(&mut raw_resp, preferred_model_id);
 
     let resp = redact_json_value(raw_resp);
     state.providers.options_cache.lock().await.insert(
@@ -494,13 +456,7 @@ pub(in crate::api) async fn get_provider_options(
     );
 
     let mut out = resp;
-    if let Some((verify_at, verify)) = verify_entry.as_ref() {
-        if verify_at.elapsed() < VERIFY_TTL {
-            if let Some(obj) = out.as_object_mut() {
-                obj.insert("verify".to_string(), verify.clone());
-            }
-        }
-    }
+    attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
     Ok(Json(out))
 }
 

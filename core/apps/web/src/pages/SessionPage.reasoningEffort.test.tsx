@@ -27,7 +27,9 @@ const {
   featureGateMock,
   sharedProviderOptionsState,
   setSessionModelMock,
+  updateWorkspaceProviderModelPreferenceMock,
   setSessionSpy,
+  refreshProvidersBootstrapMock,
 } = vi.hoisted(() => ({
   paneSpy: vi.fn(),
   sessionEntries: { map: {} as Record<string, unknown> },
@@ -48,13 +50,16 @@ const {
     } as ProviderOptions | undefined,
   },
   setSessionModelMock: vi.fn(async () => ({})),
+  updateWorkspaceProviderModelPreferenceMock: vi.fn(async () => ({})),
   setSessionSpy: vi.fn(),
+  refreshProvidersBootstrapMock: vi.fn(async () => undefined),
 }));
 
 vi.mock("../api/client", () => ({
   deleteMessage: vi.fn(async () => ({})),
   postMessage: vi.fn(async () => ({})),
   setSessionModel: setSessionModelMock,
+  updateWorkspaceProviderModelPreference: updateWorkspaceProviderModelPreferenceMock,
   authenticateSession: vi.fn(async () => ({})),
   idToString: (id: string | null | undefined) => {
     if (id === null || id === undefined) return "";
@@ -62,6 +67,10 @@ vi.mock("../api/client", () => ({
   },
   interruptSession: vi.fn(async () => ({})),
   uploadBlob: vi.fn(async () => ({ blob_id: "blob-1" })),
+}));
+
+vi.mock("../state/providersBootstrapStore", () => ({
+  refreshProvidersBootstrap: refreshProvidersBootstrapMock,
 }));
 
 vi.mock("../state/sessionSupervisor", () => ({
@@ -185,7 +194,10 @@ beforeEach(() => {
   featureGateMock.mockReturnValue(false);
   setSessionModelMock.mockReset();
   setSessionModelMock.mockResolvedValue({});
+  updateWorkspaceProviderModelPreferenceMock.mockReset();
+  updateWorkspaceProviderModelPreferenceMock.mockResolvedValue({});
   setSessionSpy.mockReset();
+  refreshProvidersBootstrapMock.mockReset();
   setSessionSpy.mockImplementation((updated: unknown) => {
     const current = sessionEntries.map[sessionId] as { session?: unknown } | undefined;
     if (!current) return;
@@ -561,6 +573,12 @@ describe("SessionPage reasoning effort", () => {
       expect(settledCall.currentModelId).toBe("gpt-5.4/medium");
       expect(setSessionSpy).toHaveBeenCalled();
     });
+    expect(updateWorkspaceProviderModelPreferenceMock).toHaveBeenCalledWith(
+      "ws-1",
+      "codex",
+      "gpt-5.4/medium",
+    );
+    expect(refreshProvidersBootstrapMock).toHaveBeenCalledWith("ws-1");
   });
 
   it("reverts the optimistic model selection and surfaces a model-switch error on failure", async () => {
