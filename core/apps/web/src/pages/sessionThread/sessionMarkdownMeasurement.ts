@@ -66,6 +66,8 @@ type InlineRun =
       text: string;
     };
 
+type TextInlineRun = Extract<InlineRun, { kind: "text" }>;
+
 const preparedCache = new Map<string, PreparedText>();
 const preparedSegmentsCache = new Map<string, PreparedTextWithSegments>();
 const markdownBlocksCache = new Map<string, SessionMarkdownBlock[]>();
@@ -224,7 +226,7 @@ function resolveInlineCodeFont(textFont: string): string {
   return `${SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY}`;
 }
 
-function splitNormalTextTokens(text: string): InlineRun[] {
+function splitNormalTextTokens(text: string): TextInlineRun[] {
   const normalized = text.replace(/\s+/g, " ");
   if (normalized.length === 0) {
     return [];
@@ -392,6 +394,9 @@ function measureInlineRunsHeight(params: {
     }
     if (run.kind === "inlineCode") {
       placeInlineCodeRun(run, runIndex);
+      continue;
+    }
+    if (run.kind !== "text") {
       continue;
     }
     const tokens = splitNormalTextTokens(run.text);
