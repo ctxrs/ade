@@ -11,6 +11,7 @@ import {
 } from "../../api/client";
 import { saveSessionHeadV1 } from "../uiStateStore";
 import { clearAllAssistantStreaming, clearAssistantStreaming } from "../assistantStreaming";
+import { isBoundedSessionHead } from "../sessionHeadRepair";
 import { findWorkspaceSessionHead } from "../workspaceActiveSnapshot/projection";
 import { stripPartialEvents, stripTurnPartials } from "./cachePolicy";
 import { asRecord, hasModelList } from "./eventHydration";
@@ -64,9 +65,6 @@ export type SessionSupervisorHeadProjectionHost = {
   bumpMessagesRev(entry: InternalEntry): void;
   bumpEventsRev(entry: InternalEntry): void;
 };
-
-const isBoundedHeadWindow = (head: SessionHead): boolean =>
-  typeof head.head_window?.turn_limit === "number" && head.head_window.turn_limit > 0;
 
 function resolveActiveSnapshotSeedFreshness(
   this: SessionSupervisorHeadProjectionHost,
@@ -206,7 +204,7 @@ export function applyHead(
   // Historical snapshot hydration should not emit fresh analytics events.
   // Live analytics are produced via event-driven paths (replica append patches).
   // See: core/apps/web/src/state/sessionSupervisorCore.analytics.test.ts
-  if (isBoundedHeadWindow(head)) {
+  if (isBoundedSessionHead(head)) {
     pruneOmittedNonTerminalTurns.call(this, entry, head.turns ?? []);
   }
   this.mergeEvents(entry, head.events ?? [], { notify: false });

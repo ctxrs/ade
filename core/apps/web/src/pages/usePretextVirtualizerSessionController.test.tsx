@@ -50,7 +50,7 @@ describe("usePretextVirtualizerSessionController", () => {
     expect(result.current.initialLocation).toEqual(PRETEXT_VIRTUALIZER_INITIAL_BOTTOM_LOCATION);
   });
 
-  it("requests older history when the active user scrolls near the top while detached from bottom", async () => {
+  it("requests older history only when the active user reaches the top edge while detached from bottom", async () => {
     const loadOlder = vi.fn(async () => {});
     const { result } = renderHook(() =>
       usePretextVirtualizerSessionController({
@@ -66,14 +66,50 @@ describe("usePretextVirtualizerSessionController", () => {
 
     await act(async () => {
       result.current.onScroll({
-        listOffset: -200,
+        listOffset: -40,
         visibleListHeight: 600,
-        bottomOffset: 320,
+        bottomOffset: 440,
+      });
+      result.current.onScroll({
+        listOffset: -4,
+        visibleListHeight: 600,
+        bottomOffset: 360,
       });
       await Promise.resolve();
     });
 
     expect(loadOlder).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not request older history on a top-edge downward settle", async () => {
+    const loadOlder = vi.fn(async () => {});
+    const { result } = renderHook(() =>
+      usePretextVirtualizerSessionController({
+        sessionId: "session-1",
+        isActive: true,
+        loaded: true,
+        listItems,
+        canLoadOlder: true,
+        loadOlder,
+        showDebug: false,
+      }),
+    );
+
+    await act(async () => {
+      result.current.onScroll({
+        listOffset: -4,
+        visibleListHeight: 600,
+        bottomOffset: 440,
+      });
+      result.current.onScroll({
+        listOffset: -20,
+        visibleListHeight: 600,
+        bottomOffset: 360,
+      });
+      await Promise.resolve();
+    });
+
+    expect(loadOlder).not.toHaveBeenCalled();
   });
 
   it("reopens at bottom when the same pane reactivates", () => {
@@ -153,9 +189,14 @@ describe("usePretextVirtualizerSessionController", () => {
 
     await act(async () => {
       result.current.onScroll({
-        listOffset: -200,
+        listOffset: -40,
         visibleListHeight: 600,
-        bottomOffset: 320,
+        bottomOffset: 440,
+      });
+      result.current.onScroll({
+        listOffset: -4,
+        visibleListHeight: 600,
+        bottomOffset: 360,
       });
       await Promise.resolve();
     });
@@ -192,5 +233,36 @@ describe("usePretextVirtualizerSessionController", () => {
     });
 
     expect(onInitialContentRendered).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not request older history while still well below the top edge", async () => {
+    const loadOlder = vi.fn(async () => {});
+    const { result } = renderHook(() =>
+      usePretextVirtualizerSessionController({
+        sessionId: "session-1",
+        isActive: true,
+        loaded: true,
+        listItems,
+        canLoadOlder: true,
+        loadOlder,
+        showDebug: false,
+      }),
+    );
+
+    await act(async () => {
+      result.current.onScroll({
+        listOffset: -120,
+        visibleListHeight: 600,
+        bottomOffset: 540,
+      });
+      result.current.onScroll({
+        listOffset: -20,
+        visibleListHeight: 600,
+        bottomOffset: 440,
+      });
+      await Promise.resolve();
+    });
+
+    expect(loadOlder).not.toHaveBeenCalled();
   });
 });

@@ -634,6 +634,165 @@ describe("SessionReplicaCore", () => {
     expect(lastPatch?.data?.messages?.[0]?.content).toBe("from-seed");
   });
 
+  it("emits repair_replace for bounded session_head_seed events", async () => {
+    const getSessionHead = vi.fn();
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead },
+      emit: (next) => patches.push(...next),
+    });
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+
+    const seedHead = {
+      ...mkHead("session-seed-bounded", "from-bounded-seed"),
+      head_window: {
+        turn_limit: 0,
+        message_limit: 50,
+        event_limit: 800,
+        byte_limit: 200_000,
+        turn_count: 1,
+        message_count: 1,
+        event_count: 0,
+        bytes: 256,
+        truncated: true,
+      },
+    };
+    const seedEvent: WorkspaceActiveSnapshotEvent = {
+      type: "session_head_seed",
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      head: seedHead,
+    };
+    core.handleCommand({ type: "workspace_event", event: seedEvent });
+
+    await waitForCondition(() => patches.some((patch) => patch.sessionId === "session-seed-bounded"));
+    const lastPatch = patches.filter((patch) => patch.sessionId === "session-seed-bounded").slice(-1)[0];
+    if (lastPatch?.op === "evict") {
+      throw new Error("expected append/replace patch");
+    }
+    expect(lastPatch?.data?.replaceMode).toBe("repair_replace");
+    expect(lastPatch?.data?.messages?.[0]?.content).toBe("from-bounded-seed");
+  });
+
+  it("repairs narrower unbounded session_head_seed events instead of dropping loaded history", async () => {
+    const sessionId = "session-seed-covered-history";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+
+    const fullHead: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: [
+        {
+          turn_id: "turn-1",
+          session_id: sessionId,
+          status: "completed",
+          start_seq: 1,
+          started_at: "2026-03-09T00:00:01.000Z",
+          updated_at: "2026-03-09T00:00:01.000Z",
+          tool_total: 0,
+          tool_pending: 0,
+          tool_running: 0,
+          tool_completed: 0,
+          tool_failed: 0,
+        },
+        {
+          turn_id: "turn-2",
+          session_id: sessionId,
+          status: "completed",
+          start_seq: 3,
+          started_at: "2026-03-09T00:00:02.000Z",
+          updated_at: "2026-03-09T00:00:02.000Z",
+          tool_total: 0,
+          tool_pending: 0,
+          tool_running: 0,
+          tool_completed: 0,
+          tool_failed: 0,
+        },
+      ],
+      events: [] as SessionEvent[],
+      messages: [
+        {
+          id: "m-1",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-1",
+          role: "assistant",
+          content: "older",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:01.000Z",
+        },
+        {
+          id: "m-2",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-2",
+          role: "assistant",
+          content: "newer",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:02.000Z",
+        },
+      ],
+      last_event_seq: 10,
+      projection_rev: 7,
+      state_rev: 7,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+      head_window: {
+        turn_limit: 0,
+        message_limit: 0,
+        event_limit: 0,
+        byte_limit: 0,
+        turn_count: 2,
+        message_count: 2,
+        event_count: 0,
+        bytes: 512,
+        truncated: false,
+      },
+    };
+    core.handleCommand({ type: "seed_head", sessionId, head: fullHead, mode: "repair_replace" });
+
+    const compactHead: SessionHeadSnapshot = {
+      ...fullHead,
+      turns: [fullHead.turns[1]!],
+      messages: [fullHead.messages[1]!],
+      last_event_seq: 20,
+      projection_rev: 9,
+    };
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_seed",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        head: compactHead,
+      },
+    });
+
+    await waitForCondition(() =>
+      patches.some(
+        (patch) =>
+          patch.sessionId === sessionId &&
+          patch.op === "replace" &&
+          patch.data.lastEventSeq === 20,
+      ),
+    );
+
+    const lastPatch = [...patches]
+      .reverse()
+      .find((patch) => patch.sessionId === sessionId && patch.op === "replace");
+    if (!lastPatch || lastPatch.op === "evict") {
+      throw new Error("expected replace patch");
+    }
+    expect(lastPatch.data.replaceMode).toBe("repair_replace");
+    expect(lastPatch.data.messages?.map((message) => message.id)).toEqual(["m-1", "m-2"]);
+    expect(lastPatch.data.turns?.map((turn) => turn.turn_id)).toEqual(["turn-1", "turn-2"]);
+  });
+
   it("preserves newer streamed state when an older /head hydrate resolves later", async () => {
     const sessionId = "session-stale-head";
     let resolveHead: (value: SessionHeadSnapshot | null) => void = () => {

@@ -1,4 +1,4 @@
-import type { ComponentProps, MouseEvent } from "react";
+import { useEffect, useState, type ComponentProps, type MouseEvent } from "react";
 
 import { ArtifactsPane } from "../../components/ArtifactsPane";
 import { DiffReviewPane } from "../../components/DiffReviewPane";
@@ -109,6 +109,24 @@ export function WorkbenchActiveTaskView({
   artifactsError,
   onRetryArtifactsLoad,
 }: WorkbenchActiveTaskViewProps) {
+  const [stickyRenderableSessionId, setStickyRenderableSessionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!activeSessionId) {
+      setStickyRenderableSessionId(null);
+      return;
+    }
+    if (activeSessionRenderable) {
+      setStickyRenderableSessionId(activeSessionId);
+      return;
+    }
+    setStickyRenderableSessionId((current) => (current === activeSessionId ? current : null));
+  }, [activeSessionId, activeSessionRenderable]);
+
+  const showSessionSlot = Boolean(activeSessionId) && (
+    activeSessionRenderable || stickyRenderableSessionId === activeSessionId
+  );
+
   return (
     <div className="wb-body">
       <div className="wb-convo">
@@ -134,13 +152,13 @@ export function WorkbenchActiveTaskView({
 
         <div className="wb-session">
           <WorkbenchSessionLoadIssues issues={sessionLoadIssues} onRetry={onRetrySessionLoads} />
-          {activeSessionId && activeSessionRenderable ? (
+          {activeSessionId && showSessionSlot ? (
             <WorkbenchSessionSlot
               sessionId={activeSessionId}
               optimisticFailure={optimisticFailure}
             />
           ) : null}
-          {activeSessionId && !activeSessionRenderable ? (
+          {activeSessionId && !showSessionSlot ? (
             <div className="wb-session-slot wb-session-slot--hydrating" aria-hidden="true">
               <div className="wb-session-slot-body" />
             </div>

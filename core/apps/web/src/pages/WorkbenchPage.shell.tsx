@@ -42,9 +42,8 @@ import { useWorkbenchSessionBridge } from "./workbenchShell/useWorkbenchSessionB
 import { useWorkbenchTaskCreation } from "./workbenchShell/useWorkbenchTaskCreation";
 import { useWorkbenchTaskListController } from "./workbenchShell/useWorkbenchTaskListController";
 import { useWorkbenchActiveTaskController } from "./workbenchShell/useWorkbenchActiveTaskController";
-import { useWorkbenchE2EBridge } from "./workbenchShell/useWorkbenchE2EBridge";
 import { useWorkbenchComposerHarnessAuth } from "./workbenchShell/useWorkbenchComposerHarnessAuth";
-import { useWarmSessionTranscriptRuntimes } from "./workbenchShell/useWarmSessionTranscriptRuntimes";
+import { useWorkbenchShellIntegrations } from "./workbenchShell/useWorkbenchShellIntegrations";
 import type { OptimisticFocus } from "./WorkbenchPage.types";
 import { appendSegment } from "./WorkbenchPage.utils";
 import { resolveWorkspaceBootstrapGateState } from "./workspaceBootstrapGate";
@@ -483,13 +482,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     supervisor,
   });
 
-  useWarmSessionTranscriptRuntimes({
+  useWorkbenchShellIntegrations({
     workspaceSnapshot,
     sessionSnap,
     activeSessionId,
-  });
-
-  useWorkbenchE2EBridge({
     focusNewTask,
     clearDraftHarness,
     focusTask,

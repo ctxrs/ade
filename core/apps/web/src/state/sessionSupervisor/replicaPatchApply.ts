@@ -5,7 +5,12 @@ import {
   type SessionTurn,
   type SessionTurnTool,
 } from "../../api/client";
-import { mergeSessionMessages } from "../sessionHeadState";
+import {
+  mergeSessionEvents,
+  mergeSessionMessages,
+  mergeSessionToolSummaries,
+  mergeSessionTurns,
+} from "../sessionHeadState";
 import { hasModelList } from "./eventHydration";
 import { mergeTurnStatus } from "./cachePolicy";
 import { resolveTurnAnalyticsMetadata } from "./turnAnalyticsMetadata";
@@ -251,6 +256,33 @@ const applyCanonicalTranscriptPatch = (
       applyCanonicalToolSummaries(entry, data.toolSummaries, {
         resetByTurn: patch.op === "replace",
       });
+    }
+  } else if (shouldCopyCanonicalTranscript && preserveCoveredHistoryOnRepair) {
+    if (Array.isArray(data.turns)) {
+      entry.turns = preserveMonotonicTurns(entry.turns, mergeSessionTurns(entry.turns, data.turns));
+      entry.turnsRev = data.turnsRev ?? (entry.turnsRev + 1);
+      nextTurnsForAnalytics = entry.turns;
+    }
+    if (Array.isArray(data.messages)) {
+      entry.messages = mergeSessionMessages(entry.messages, data.messages);
+      entry.messagesRev = data.messagesRev ?? (entry.messagesRev + 1);
+      entry.queue = entry.messages.filter((message) => message.delivery === "queued");
+    }
+    if (Array.isArray(data.events)) {
+      entry.events = mergeSessionEvents(entry.events, data.events);
+      entry.eventsRev = data.eventsRev ?? (entry.eventsRev + 1);
+    }
+    rebuildSeqAndStartState(entry);
+    if (data.turnsHydrated !== undefined) {
+      entry.turnsHydrated = data.turnsHydrated;
+    } else if (Array.isArray(data.turns) || Array.isArray(data.messages) || Array.isArray(data.events)) {
+      entry.turnsHydrated = true;
+    }
+    if (Array.isArray(data.toolSummaries)) {
+      applyCanonicalToolSummaries(
+        entry,
+        mergeSessionToolSummaries(entry.toolSummaries, data.toolSummaries, entry.turns),
+      );
     }
   }
   if (data.assistantStreamingByTurnId) {

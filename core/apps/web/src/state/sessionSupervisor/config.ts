@@ -1,6 +1,7 @@
 import type { SessionHeadSnapshot } from "../../api/client";
 import type { InternalEntry } from "./entryState";
 import type { SessionReplicaFreshnessState } from "../sessionReplicaProtocol";
+import { isBoundedSessionHead } from "../sessionHeadRepair";
 
 const readTunableInt = (key: string, fallback: number) => {
   try {
@@ -31,9 +32,6 @@ export const toReplicaFreshness = (
   freshness: SessionReplicaFreshnessState,
 ): InternalEntry["freshness"] => (freshness === "authoritative" ? "replica" : freshness);
 
-const isBoundedHeadSeed = (head: SessionHeadSnapshot): boolean =>
-  typeof head.head_window?.turn_limit === "number" && head.head_window.turn_limit > 0;
-
 export const shouldSkipBoundedActiveSnapshotSeed = (
   entry: InternalEntry,
   head: SessionHeadSnapshot,
@@ -45,5 +43,5 @@ export const shouldSkipBoundedActiveSnapshotSeed = (
     entry.messages.length === 0 &&
     entry.events.length === 0;
   const recoveringOpenSession = entry.freshness === "recovering";
-  return isBoundedHeadSeed(head) && (freshBootstrapOpen || recoveringOpenSession);
+  return isBoundedSessionHead(head) && (freshBootstrapOpen || recoveringOpenSession);
 };

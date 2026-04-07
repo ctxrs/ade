@@ -3045,6 +3045,216 @@ describe("SessionSupervisor", () => {
     );
   });
 
+  it("preserves already loaded history when a bounded active head reseeds a covered tail window", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-bounded-covered-history";
+    const listeners = new Set<(evt: WorkspaceActiveSnapshotEvent) => void>();
+    const store: WorkspaceActiveSnapshotEventSource = {
+      subscribe: () => () => {},
+      subscribeEvents: (listener: (evt: WorkspaceActiveSnapshotEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      getSessionHeadSnapshot: () => null,
+      getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
+      setSubscribedSessions: () => {},
+      getSnapshot: () => mkWorkspaceSnapshotState(),
+    };
+
+    const fullHead: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: [
+        mkTurn({ sessionId, turnId: "turn-1", status: "completed", startSeq: 1 }),
+        mkTurn({ sessionId, turnId: "turn-2", status: "completed", startSeq: 3 }),
+      ],
+      events: [] as SessionEvent[],
+      messages: [
+        {
+          id: "m-1",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-1",
+          role: "assistant",
+          content: "older",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:01.000Z",
+        },
+        {
+          id: "m-2",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-2",
+          role: "assistant",
+          content: "newer",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:02.000Z",
+        },
+      ],
+      last_event_seq: 10,
+      projection_rev: 7,
+      state_rev: 7,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+      head_window: {
+        turn_limit: 0,
+        message_limit: 0,
+        event_limit: 0,
+        byte_limit: 0,
+        turn_count: 2,
+        message_count: 2,
+        event_count: 0,
+        bytes: 512,
+        truncated: false,
+      },
+    };
+
+    const compactHead: SessionHeadSnapshot = {
+      ...fullHead,
+      turns: [fullHead.turns[1]!],
+      messages: [fullHead.messages[1]!],
+      last_event_seq: 20,
+      projection_rev: 9,
+      state_rev: 9,
+      head_window: {
+        turn_limit: 0,
+        message_limit: 50,
+        event_limit: 800,
+        byte_limit: 200_000,
+        turn_count: 1,
+        message_count: 1,
+        event_count: 0,
+        bytes: 256,
+        truncated: true,
+      },
+    };
+
+    getSessionHeadMock.mockResolvedValueOnce(fullHead);
+
+    const sup = new SessionSupervisor();
+    attachWorkspaceStore(sup, store);
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.messages.length === 2);
+
+    listeners.forEach((listener) =>
+      listener({
+        type: "session_head_seed",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        head: compactHead,
+      }),
+    );
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.lastEventSeq === 20);
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.messages.map((message) => message.id)).toEqual(fullHead.messages.map((message) => message.id));
+    expect(entry?.turns.map((turn) => turn.turn_id)).toEqual(fullHead.turns.map((turn) => turn.turn_id));
+  });
+
+  it("preserves already loaded history when an unbounded active head reseeds a covered tail window", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-unbounded-covered-history";
+    const listeners = new Set<(evt: WorkspaceActiveSnapshotEvent) => void>();
+    const store: WorkspaceActiveSnapshotEventSource = {
+      subscribe: () => () => {},
+      subscribeEvents: (listener: (evt: WorkspaceActiveSnapshotEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      getSessionHeadSnapshot: () => null,
+      getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
+      setSubscribedSessions: () => {},
+      getSnapshot: () => mkWorkspaceSnapshotState(),
+    };
+
+    const fullHead: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: [
+        mkTurn({ sessionId, turnId: "turn-1", status: "completed", startSeq: 1 }),
+        mkTurn({ sessionId, turnId: "turn-2", status: "completed", startSeq: 3 }),
+      ],
+      events: [] as SessionEvent[],
+      messages: [
+        {
+          id: "m-1",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-1",
+          role: "assistant",
+          content: "older",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:01.000Z",
+        },
+        {
+          id: "m-2",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-2",
+          role: "assistant",
+          content: "newer",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:02.000Z",
+        },
+      ],
+      last_event_seq: 10,
+      projection_rev: 7,
+      state_rev: 7,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+      head_window: {
+        turn_limit: 0,
+        message_limit: 0,
+        event_limit: 0,
+        byte_limit: 0,
+        turn_count: 2,
+        message_count: 2,
+        event_count: 0,
+        bytes: 512,
+        truncated: false,
+      },
+    };
+
+    const compactHead: SessionHeadSnapshot = {
+      ...fullHead,
+      turns: [fullHead.turns[1]!],
+      messages: [fullHead.messages[1]!],
+      last_event_seq: 20,
+      projection_rev: 9,
+    };
+
+    getSessionHeadMock.mockResolvedValueOnce(fullHead);
+
+    const sup = new SessionSupervisor();
+    attachWorkspaceStore(sup, store);
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.messages.length === 2);
+
+    listeners.forEach((listener) =>
+      listener({
+        type: "session_head_seed",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        head: compactHead,
+      }),
+    );
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.lastEventSeq === 20);
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.messages.map((message) => message.id)).toEqual(fullHead.messages.map((message) => message.id));
+    expect(entry?.turns.map((turn) => turn.turn_id)).toEqual(fullHead.turns.map((turn) => turn.turn_id));
+  });
+
   it("auto-loads support for open sessions once an authoritative head revision is known", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 

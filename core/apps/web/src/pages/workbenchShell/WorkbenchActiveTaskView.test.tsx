@@ -119,6 +119,29 @@ describe("WorkbenchActiveTaskView", () => {
     expect(screen.getByTestId("session-slot")).toHaveTextContent("session-1");
   });
 
+  it("keeps the current session slot mounted through transient non-renderable refreshes", () => {
+    const { rerender } = render(
+      <WorkbenchActiveTaskView
+        {...makeProps()}
+        activeSessionId="session-1"
+        activeSessionRenderable
+      />,
+    );
+
+    expect(screen.getByTestId("session-slot")).toHaveTextContent("session-1");
+
+    rerender(
+      <WorkbenchActiveTaskView
+        {...makeProps()}
+        activeSessionId="session-1"
+        activeSessionRenderable={false}
+      />,
+    );
+
+    expect(screen.getByTestId("session-slot")).toHaveTextContent("session-1");
+    expect(document.querySelector(".wb-session-slot--hydrating")).toBeNull();
+  });
+
   it("shows the empty-state prompt only when no session is selected", () => {
     render(<WorkbenchActiveTaskView {...makeProps()} />);
 

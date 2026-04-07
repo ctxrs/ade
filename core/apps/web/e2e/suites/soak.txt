@@ -1,9 +1,11 @@
 # Long-running/stability-oriented soak suite (non pre-merge).
 e2e/meaningful-repaints.spec.ts
+e2e/workbench-markdown-parity.spec.ts
 e2e/workbench-message-list-acceptance.spec.ts
 e2e/workbench-message-list-bottom-hit.spec.ts
 e2e/workbench-claude-subscription-setup-token-real.spec.ts
 e2e/workbench-composer-scroll-ownership.spec.ts
+e2e/workbench-pretext-detached-wheel.spec.ts
 e2e/workbench-pretext-virtualizer-acceptance.spec.ts
 e2e/workbench-pretext-virtualizer-bottom-rehit.spec.ts
 e2e/workbench-pretext-virtualizer-short-thread.spec.ts

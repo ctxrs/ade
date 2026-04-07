@@ -30,6 +30,8 @@ type Result = {
   onRenderedDataChange: (range: readonly WorkbenchListItem[]) => void;
 };
 
+const PRETEXT_HISTORY_TRIGGER_PX = 8;
+
 export function usePretextVirtualizerSessionController(params: Params): Result {
   const {
     sessionId,
@@ -47,6 +49,7 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
   const lastSessionIdRef = useRef(sessionId);
   const lastIsActiveRef = useRef(isActive);
   const lastAtBottomRef = useRef<boolean | null>(null);
+  const lastListOffsetRef = useRef<number | null>(null);
   const pendingHistoryRef = useRef(false);
   const continueHistoryAtTopRef = useRef(false);
   const initialContentRenderedSessionIdRef = useRef<string | null>(null);
@@ -97,6 +100,7 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
     lastSessionIdRef.current = sessionId;
     pendingHistoryRef.current = false;
     continueHistoryAtTopRef.current = false;
+    lastListOffsetRef.current = null;
     setLoadingOlder(false);
     lastAtBottomRef.current = true;
     renderedAnchorIdRef.current = null;
@@ -161,12 +165,15 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
         if (!canLoadOlder || atBottom) {
           continueHistoryAtTopRef.current = false;
         }
+        lastListOffsetRef.current = location.listOffset;
         return;
       }
 
-      const prefetchThreshold = -Math.max(1200, Math.round(location.visibleListHeight * 2.5));
-      const nearTop = location.listOffset > prefetchThreshold;
-      if (!nearTop) {
+      const previousListOffset = lastListOffsetRef.current;
+      lastListOffsetRef.current = location.listOffset;
+      const scrollingUp = previousListOffset == null ? false : location.listOffset > previousListOffset;
+      const nearTop = location.listOffset >= -PRETEXT_HISTORY_TRIGGER_PX;
+      if (!nearTop || !scrollingUp) {
         return;
       }
 
@@ -175,6 +182,7 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
         visibleListHeight: location.visibleListHeight,
         bottomOffset: location.bottomOffset,
         nearTop,
+        scrollingUp,
       });
     },
     [canLoadOlder, isActive, onAtBottomChange, requestOlderHistory],

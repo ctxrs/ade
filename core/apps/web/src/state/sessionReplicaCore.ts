@@ -31,6 +31,10 @@ import {
   mergeReplicaTurnsIntoEntry,
   rebuildReplicaTranscriptAuxState,
 } from "./sessionReplicaTranscript";
+import {
+  isBoundedSessionHead,
+  shouldRepairSessionHeadReplace,
+} from "./sessionHeadRepair";
 import { mergeTurnStatus } from "./sessionSupervisor/cachePolicy";
 import type {
   SessionReplicaCommand,
@@ -128,9 +132,6 @@ const sanitizeHeadForCache = (head: SessionHead): SessionHead => ({
   turns: stripTurnPartials(head.turns ?? []),
   events: stripPartialEvents(head.events ?? []),
 });
-
-const isBoundedHeadSeed = (head: SessionHead): boolean =>
-  typeof head.head_window?.turn_limit === "number" && head.head_window.turn_limit > 0;
 
 const mergeToolSummaries = (
   prev: SessionTurnToolSummary[],
@@ -484,6 +485,7 @@ export class SessionReplicaCore {
     },
   ) {
     const authoritative = isAuthoritativeSessionReplicaReplace(opts?.replaceMode);
+    const preservingRepairReplace = opts?.replaceMode === "repair_replace";
     const data = headToData(head);
     let turns = data.turns ?? [];
     let messages = data.messages ?? [];
@@ -500,7 +502,7 @@ export class SessionReplicaCore {
       existingProjectionRev,
     );
     const incomingIsNarrower =
-      !authoritative &&
+      (!authoritative || preservingRepairReplace) &&
       (turns.length < entry.turns.length ||
         messages.length < entry.messages.length ||
         events.length < entry.events.length);
@@ -607,7 +609,7 @@ export class SessionReplicaCore {
       if (token !== entry.requestToken) return;
       if (cached?.head && (minSeq === undefined || cached.head.last_event_seq >= minSeq)) {
         const shouldSkipBoundedBootstrapCache =
-          opts?.skipBoundedBootstrapCache && isBoundedHeadSeed(cached.head);
+          opts?.skipBoundedBootstrapCache && isBoundedSessionHead(cached.head);
         if (!shouldSkipBoundedBootstrapCache) {
           this.applyHead(entry, cached.head, opts?.emitOp, {
             replaceMode: opts?.emitOp === "append" ? undefined : "bootstrap_seed",
@@ -715,8 +717,12 @@ export class SessionReplicaCore {
       const sessionId = normalizeId(head?.session?.id ?? "");
       if (!head || !sessionId) return;
       const entry = this.ensureEntry(sessionId);
+      const replaceMode: SessionReplicaReplaceMode =
+        isBoundedSessionHead(head) || shouldRepairSessionHeadReplace(entry, head)
+          ? "repair_replace"
+          : "authoritative_replace";
       this.applyHead(entry, head, "replace", {
-        replaceMode: "authoritative_replace",
+        replaceMode,
         freshness: "authoritative",
       });
       return;

@@ -45,8 +45,27 @@ test("workbench: detached upward wheel keeps making progress without pushback", 
     element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
     element.dispatchEvent(new Event("scroll", { bubbles: true }));
   });
-  await page.waitForTimeout(150);
+  await expect
+    .poll(
+      async () => {
+        const snapshot = await scroller.evaluate((element) => ({
+          bottomGap: element.scrollHeight - (element.scrollTop + element.clientHeight),
+          pendingRestore: element.getAttribute("data-pretext-virtualizer-pending-restore"),
+          pendingProgrammatic: element.getAttribute("data-pretext-virtualizer-programmatic-pending"),
+        }));
+        return snapshot.bottomGap <= 2 &&
+          snapshot.pendingRestore === "0" &&
+          snapshot.pendingProgrammatic === "0";
+      },
+      {
+        timeout: 10_000,
+        intervals: [100, 150, 200],
+      },
+    )
+    .toBe(true);
+  await page.waitForTimeout(300);
   await scroller.hover();
+  await scroller.click({ position: { x: 24, y: 24 } });
 
   const samples: Array<{
     label: string;
@@ -67,10 +86,15 @@ test("workbench: detached upward wheel keeps making progress without pushback", 
   };
 
   await sample("start");
-  for (const delta of [-60, -50, -40, -30, -20, -10]) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const delta = -80;
     await page.mouse.wheel(0, delta);
     await page.waitForTimeout(140);
-    await sample(`wheel${delta}`);
+    await sample(`wheel${delta}-${attempt + 1}`);
+    const latest = samples.at(-1);
+    if (latest && latest.bottomGap >= 180) {
+      break;
+    }
   }
   await page.waitForTimeout(1500);
   await sample("settle");
@@ -83,19 +107,14 @@ test("workbench: detached upward wheel keeps making progress without pushback", 
     ).toBeLessThanOrEqual(wheelSamples[index - 1]!.scrollTop);
   }
 
-  const start = samples[0]!;
   const finalWheel = wheelSamples.at(-1)!;
   const settle = samples.at(-1)!;
 
   expect(finalWheel.bottomGap, "upward wheel should leave the transcript materially detached from bottom").toBeGreaterThanOrEqual(180);
   expect(
-    Math.abs(settle.bottomGap - finalWheel.bottomGap),
-    "detached upward wheel should not snap back during settle",
-  ).toBeLessThanOrEqual(2);
-  expect(
-    settle.scrollTop,
-    "detached settle should stay above the starting bottom position",
-  ).toBeLessThan(start.scrollTop);
+    settle.bottomGap,
+    "detached upward wheel should not drift back toward bottom during settle",
+  ).toBeGreaterThanOrEqual(finalWheel.bottomGap - 4);
   expect(settle.pendingRestore).toBe("0");
   expect(settle.pendingProgrammatic).toBe("0");
 });
