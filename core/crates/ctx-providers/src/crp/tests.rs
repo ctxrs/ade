@@ -509,13 +509,15 @@ async fn shutdown_cached_session_is_not_live_and_gets_replaced() -> Result<()> {
 
 #[test]
 fn auth_required_stderr_notice_payload_is_redacted() {
-    let payload = auth_required_notice_payload_from_stderr(
-        "https://auth.example.test/start?token=secret",
-    );
+    let payload =
+        auth_required_notice_payload_from_stderr("https://auth.example.test/start?token=secret");
 
     assert_eq!(payload.get("kind"), Some(&json!("auth_required")));
     assert_eq!(payload.get("code"), Some(&json!("auth_required")));
-    assert_eq!(payload.get("message"), Some(&json!("Authentication required.")));
+    assert_eq!(
+        payload.get("message"),
+        Some(&json!("Authentication required."))
+    );
     assert_eq!(payload.get("source"), Some(&json!("crp_stderr")));
     assert_eq!(payload.get("auth_url"), None);
 }

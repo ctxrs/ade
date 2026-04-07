@@ -8,6 +8,14 @@ use super::super::tools::normalize::NormalizedToolEvent;
 use super::super::tools::projections::ToolOutputArtifactRef;
 use ctx_core::models::Artifact;
 
+pub(super) struct ToolOutputArtifactScope {
+    pub(super) session_id: ctx_core::ids::SessionId,
+    pub(super) task_id: ctx_core::ids::TaskId,
+    pub(super) workspace_id: ctx_core::ids::WorkspaceId,
+    pub(super) worktree_id: ctx_core::ids::WorktreeId,
+    pub(super) turn_id: ctx_core::ids::TurnId,
+}
+
 pub(super) fn cwd_outside_worktree(
     cwd: &str,
     workdir_root: &Path,
@@ -35,11 +43,7 @@ pub(super) async fn maybe_spool_tool_output(
     state: &AppState,
     store: &ctx_store::Store,
     tool_event: &NormalizedToolEvent,
-    session_id: ctx_core::ids::SessionId,
-    task_id: ctx_core::ids::TaskId,
-    workspace_id: ctx_core::ids::WorkspaceId,
-    worktree_id: ctx_core::ids::WorktreeId,
-    turn_id: ctx_core::ids::TurnId,
+    scope: ToolOutputArtifactScope,
 ) -> Option<ToolOutputArtifactRef> {
     if !state.core.tool_output_spool_enabled {
         return None;
@@ -60,8 +64,8 @@ pub(super) async fn maybe_spool_tool_output(
     let dir = state
         .core
         .tool_output_spool_dir
-        .join(session_id.0.to_string())
-        .join(turn_id.0.to_string());
+        .join(scope.session_id.0.to_string())
+        .join(scope.turn_id.0.to_string());
     if let Err(err) = fs::create_dir_all(&dir).await {
         tracing::warn!(
             "failed to create tool output spool dir {}: {err}",
@@ -82,10 +86,10 @@ pub(super) async fn maybe_spool_tool_output(
     let name = format!("tool-output-{}.txt", sanitize_spool_segment(tool_call_id));
     let artifact = Artifact {
         id: ctx_core::ids::ArtifactId::new(),
-        session_id,
-        task_id,
-        workspace_id,
-        worktree_id,
+        session_id: scope.session_id,
+        task_id: scope.task_id,
+        workspace_id: scope.workspace_id,
+        worktree_id: scope.worktree_id,
         name: Some(name.clone()),
         absolute_path: path.to_string_lossy().to_string(),
         mime_type: "text/plain".to_string(),

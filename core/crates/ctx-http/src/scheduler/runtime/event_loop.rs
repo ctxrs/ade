@@ -366,11 +366,13 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                     state.as_ref(),
                     &store,
                     tool_event,
-                    session_id,
-                    task_id,
-                    workspace_id,
-                    worktree_id,
-                    turn_id,
+                    tool_runtime::ToolOutputArtifactScope {
+                        session_id,
+                        task_id,
+                        workspace_id,
+                        worktree_id,
+                        turn_id,
+                    },
                 )
                 .await
             } else {
