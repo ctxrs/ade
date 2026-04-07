@@ -179,10 +179,10 @@ fn current_username() -> Result<String> {
         .context("running id -un for Linux sandbox bootstrap")?;
     if !output.status.success() {
         let detail = command_output_message(&output);
-        if detail.is_empty() {
-            anyhow::bail!("id -un failed while preparing Linux sandbox runtime");
+        if !detail.is_empty() {
+            tracing::warn!(target: "linux_sandbox", detail = %crate::logs::redact_sensitive(&detail), "id -un failed while preparing Linux sandbox runtime");
         }
-        anyhow::bail!("id -un failed while preparing Linux sandbox runtime: {detail}");
+        anyhow::bail!("Failed to determine current user while preparing Linux sandbox runtime");
     }
     let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if value.is_empty() {
@@ -401,7 +401,8 @@ async fn status_via_bootstrap(
         parsed
     } else {
         let detail = command_output_message(&output);
-        anyhow::bail!("Linux sandbox bootstrap status failed: {detail}");
+        tracing::warn!(target: "linux_sandbox", detail = %crate::logs::redact_sensitive(&detail), "Linux sandbox bootstrap status failed");
+        anyhow::bail!("Linux sandbox runtime status check failed");
     };
     Ok(build_status(paths, platform, bootstrap))
 }
@@ -413,11 +414,10 @@ pub(crate) async fn linux_sandbox_runtime_status(
     let paths = linux_sandbox_bootstrap_paths(data_root);
     match status_via_bootstrap(data_root, &paths, &platform).await {
         Ok(status) => Ok(status),
-        Err(err) => Ok(bootstrap_failed_status(
-            &paths,
-            &platform,
-            logs::redact_sensitive(&err.to_string()),
-        )),
+        Err(err) => {
+            tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_status failed");
+            Ok(bootstrap_failed_status(&paths, &platform, platform_default_message(&platform, &LinuxSandboxRuntimeState::Failed)))
+        },
     }
 }
 
@@ -446,7 +446,8 @@ pub(crate) async fn stage_linux_sandbox_runtime_downloads(
         parsed
     } else {
         let detail = command_output_message(&output);
-        anyhow::bail!("Linux sandbox bootstrap stage failed: {detail}");
+        tracing::warn!(target: "linux_sandbox", detail = %crate::logs::redact_sensitive(&detail), "Linux sandbox runtime downloads failed to stage");
+        anyhow::bail!("Linux sandbox runtime downloads failed to stage");
     };
     Ok(build_status(&paths, &platform, bootstrap))
 }
@@ -611,14 +612,8 @@ pub(crate) async fn prepare_linux_sandbox_runtime(
                     }
                 } else {
                     let detail = command_output_message(&output);
-                    anyhow::bail!(
-                        "Preparing Linux sandbox runtime failed. {}",
-                        if detail.is_empty() {
-                            "ctx couldn't prepare the sandbox runtime on this machine.".to_string()
-                        } else {
-                            detail
-                        }
-                    );
+                    tracing::warn!(target: "linux_sandbox", detail = %crate::logs::redact_sensitive(&detail), "Preparing Linux sandbox runtime failed during activation");
+                    anyhow::bail!("Preparing Linux sandbox runtime failed. ctx couldn't prepare the sandbox runtime on this machine.");
                 }
             }
         }
@@ -661,25 +656,13 @@ pub(crate) async fn prepare_linux_sandbox_runtime(
                             });
                         }
                         let detail = command_output_message(&output);
-                        anyhow::bail!(
-                            "Preparing sandbox on remote host failed. {}",
-                            if detail.is_empty() {
-                                "ctx couldn't prepare the sandbox runtime on this host.".to_string()
-                            } else {
-                                detail
-                            }
-                        );
+                        tracing::warn!(target: "linux_sandbox", detail = %crate::logs::redact_sensitive(&detail), "Preparing sandbox on remote host failed during activation");
+                        anyhow::bail!("Preparing sandbox on remote host failed. ctx couldn't prepare the sandbox runtime on this host.");
                     }
                 } else {
                     let detail = command_output_message(&output);
-                    anyhow::bail!(
-                        "Preparing sandbox on remote host failed. {}",
-                        if detail.is_empty() {
-                            "ctx couldn't prepare the sandbox runtime on this host.".to_string()
-                        } else {
-                            detail
-                        }
-                    );
+                    tracing::warn!(target: "linux_sandbox", detail = %crate::logs::redact_sensitive(&detail), "Preparing sandbox on remote host failed during activation");
+                    anyhow::bail!("Preparing sandbox on remote host failed. ctx couldn't prepare the sandbox runtime on this host.");
                 }
             }
         }
@@ -779,5 +762,38 @@ mod tests {
             install_idx < update_idx,
             "activation should try verified staged debs before refreshing apt metadata"
         );
+    }
+
+    #[test]
+    fn product_message_for_failed_on_ubuntu_is_generic() {
+        let platform = LinuxSandboxPlatform::UbuntuDebian {
+            distro: "Ubuntu".to_string(),
+        };
+        let msg = platform_default_message(&platform, &LinuxSandboxRuntimeState::Failed);
+        assert!(msg.contains("Preparing the Linux sandbox runtime failed on Ubuntu."));
+        // Ensure we don't leak tool names
+        for leak in ["apt", "containerd", "nerdctl"] {
+            assert!(
+                !msg.to_ascii_lowercase().contains(leak),
+                "message leaked tool detail: {}",
+                leak
+            );
+        }
+    }
+
+    #[test]
+    fn product_message_for_failed_on_otherlinux_is_best_effort() {
+        let platform = LinuxSandboxPlatform::OtherLinux {
+            distro: "Arch".to_string(),
+        };
+        let msg = platform_default_message(&platform, &LinuxSandboxRuntimeState::Failed);
+        assert!(msg.contains("best-effort on Arch"));
+        for leak in ["apt", "containerd", "nerdctl"] {
+            assert!(
+                !msg.to_ascii_lowercase().contains(leak),
+                "message leaked tool detail: {}",
+                leak
+            );
+        }
     }
 }

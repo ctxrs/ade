@@ -28,6 +28,15 @@ use crate::workspace_runtime::{
 use super::errors::ApiErrorResp;
 use super::shared::map_effective_execution_settings_error;
 
+fn linux_sandbox_user_message(kind: &str) -> String {
+    match kind {
+        "status" => "Linux sandbox runtime status check failed".to_string(),
+        "stage" => "Linux sandbox runtime downloads failed to stage".to_string(),
+        "prepare" => "Preparing Linux sandbox runtime failed".to_string(),
+        _ => "Linux sandbox operation failed".to_string(),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct ExecutionLaunchStartReq {
     #[serde(default)]
@@ -111,11 +120,10 @@ pub(super) async fn linux_sandbox_runtime_status_api(
     let status = linux_sandbox_runtime_status(&state.core.data_root)
         .await
         .map_err(|err| {
+            tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_status_api error");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&err.to_string()),
-                }),
+                Json(ApiErrorResp { error: linux_sandbox_user_message("status") }),
             )
         })?;
     Ok(Json(status))
@@ -127,11 +135,10 @@ pub(super) async fn linux_sandbox_runtime_stage(
     let status = stage_linux_sandbox_runtime_downloads(&state.core.data_root, None)
         .await
         .map_err(|err| {
+            tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_stage error");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&err.to_string()),
-                }),
+                Json(ApiErrorResp { error: linux_sandbox_user_message("stage") }),
             )
         })?;
     Ok(Json(status))
@@ -150,11 +157,10 @@ pub(super) async fn linux_sandbox_runtime_prepare(
     )
     .await
     .map_err(|err| {
+        tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_prepare error");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&err.to_string()),
-            }),
+            Json(ApiErrorResp { error: linux_sandbox_user_message("prepare") }),
         )
     })?;
     Ok(Json(result))
