@@ -63,6 +63,7 @@ pub(crate) fn update_current_remote_daemon(
     let remote_port = target.remote_port;
     let remote_data_dir = target.remote_data_dir;
     let channel_for_update = channel.clone();
+    let remote_platform = probe_remote_linux_platform(&host, user.as_deref())?;
     let base_url = state
         .info()
         .base_url
@@ -92,7 +93,6 @@ pub(crate) fn update_current_remote_daemon(
     );
 
     if decision.install_managed {
-        let remote_platform = probe_remote_linux_platform(&host, user.as_deref())?;
         install_remote_daemon_over_ssh(
             app,
             &host,
@@ -110,6 +110,7 @@ pub(crate) fn update_current_remote_daemon(
         remote_port,
         remote_data_dir.as_deref(),
         &active_ctx_bin,
+        remote_platform.arch,
         &channel_for_update,
         &base_url,
     )?;
@@ -139,6 +140,7 @@ fn run_remote_daemon_self_update(
     remote_port: u16,
     remote_data_dir: Option<&str>,
     remote_ctx_bin: &str,
+    remote_arch: &str,
     channel: &str,
     base_url: &str,
 ) -> Result<()> {
@@ -162,8 +164,15 @@ fn run_remote_daemon_self_update(
             anyhow::bail!("remote self-update failed: {detail}");
         }
 
-        sync_remote_bundle_metadata_over_ssh(app, host, user, remote_data_dir)
-            .context("syncing remote bundle metadata before daemon restart")?;
+        sync_remote_bundle_metadata_over_ssh(
+            app,
+            host,
+            user,
+            remote_data_dir,
+            remote_arch,
+            channel,
+        )
+        .context("syncing remote bundle metadata before daemon restart")?;
         stop_remote_daemon_over_ssh(host, user, remote_port, remote_data_dir, &ctx_bin)
             .context("stopping remote daemon after self-update")?;
         daemon_stopped = true;

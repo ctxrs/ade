@@ -138,6 +138,7 @@ fn prepare_initial_connect(
 fn execute_bootstrap_plan(
     app: tauri::AppHandle,
     plan: BootstrapPlanContext,
+    channel: String,
     job_id: Option<String>,
 ) -> Result<ConnectedRemoteDaemon> {
     if matches!(
@@ -161,6 +162,8 @@ fn execute_bootstrap_plan(
         &plan.target.host,
         plan.target.user.as_deref(),
         plan.target.remote_data_dir.as_deref(),
+        plan.platform.arch,
+        &channel,
     )?;
     start_remote_daemon_over_ssh(
         &plan.target.host,
@@ -231,8 +234,9 @@ async fn desktop_connect_ssh_inner(
                 .await?;
             tauri::async_runtime::spawn_blocking({
                 let app = app.clone();
+                let channel = channel.clone();
                 let job_id = job_id.clone();
-                move || execute_bootstrap_plan(app, plan, job_id)
+                move || execute_bootstrap_plan(app, plan, channel, job_id)
             })
             .await
             .map_err(|e| format!("failed to reach remote daemon: {e}"))?
