@@ -4,7 +4,11 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureLockedNodeInstall, requireLocalNodeBin } from "./localTooling.mjs";
+import {
+  ensureLockedNodeInstall,
+  ensurePlaywrightBrowserInstall,
+  requireLocalNodeBin,
+} from "./localTooling.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -109,6 +113,7 @@ console.error(`running suite '${suite}' with ${files.length} spec(s)`);
 
 const configPath = configBySuite[suite];
 ensureLockedNodeInstall(webRoot);
+ensurePlaywrightBrowserInstall(webRoot);
 const cmd = requireLocalNodeBin(webRoot, "playwright");
 const args = ["test", "-c", configPath, ...files, ...forwardedArgs];
 

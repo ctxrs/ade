@@ -13,6 +13,7 @@ e2e/workbench-spinner-stale-cache.spec.ts
 e2e/workbench-task-overlap.spec.ts
 e2e/workbench-failed-start-ui.spec.ts
 e2e/workbench-new-task-drag-drop-image.spec.ts
+e2e/workbench-composer-paste-image.spec.ts
 e2e/workbench-worktree-path.spec.ts
 e2e/workbench-bootstrap-auth-recovery.spec.ts
 e2e/workspace-setup-bootstrap-failure.spec.ts

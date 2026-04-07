@@ -413,6 +413,23 @@ pub(crate) async fn set_session_model(
         })?;
     state.publish_event(event).await;
 
+    if let Err(error) =
+        crate::workspace_provider_model_preferences::update_workspace_provider_preferred_model_id(
+            &state,
+            updated.workspace_id,
+            &updated.provider_id,
+            Some(next_full_model_id.clone()),
+        )
+        .await
+    {
+        tracing::warn!(
+            session_id = %updated.id.0,
+            workspace_id = %updated.workspace_id.0,
+            provider_id = updated.provider_id.as_str(),
+            "failed to persist workspace provider model preference after session model update: {error:#}"
+        );
+    }
+
     if let Err(e) = state.emit_workspace_task_upsert(updated.task_id).await {
         tracing::warn!(
             task_id = %updated.task_id.0,

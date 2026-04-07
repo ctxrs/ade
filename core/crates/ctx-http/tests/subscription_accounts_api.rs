@@ -863,9 +863,10 @@ async fn poll_claude_login_status(
 }
 
 fn empty_agent_server_config() -> AgentServerConfigFile {
-    let mut cfg = AgentServerConfigFile::default();
-    cfg.providers = HashMap::new();
-    cfg
+    AgentServerConfigFile {
+        providers: HashMap::new(),
+        ..AgentServerConfigFile::default()
+    }
 }
 
 fn set_login_executable(

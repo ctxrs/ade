@@ -50,6 +50,7 @@ mod lifecycle_manager;
 mod linux_sandbox_runtime;
 mod machine;
 mod manager;
+mod manager_container;
 mod materialization;
 mod network_policy_transition;
 #[cfg(test)]

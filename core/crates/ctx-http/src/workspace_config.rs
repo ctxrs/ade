@@ -696,13 +696,13 @@ fn workspace_settings_write_lock() -> &'static AsyncMutex<()> {
 
 async fn mutate_workspace_settings_doc(
     store: &Store,
-    operation: &'static str,
+    _operation: &'static str,
     mutate: impl FnOnce(&mut WorkspaceRuntimeSettingsDoc) -> Result<()>,
 ) -> Result<()> {
     let _guard = workspace_settings_write_lock().lock().await;
     let mut cfg = load_workspace_settings_doc(store).await?;
     #[cfg(test)]
-    pause_after_workspace_settings_load_for_tests(operation).await;
+    pause_after_workspace_settings_load_for_tests(_operation).await;
     mutate(&mut cfg)?;
     save_workspace_settings_doc(store, &cfg).await
 }
