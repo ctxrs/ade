@@ -46,6 +46,7 @@ type SessionState = {
 
 type TurnState = {
   sessionId: string;
+  providerSessionId: string;
   turnId: string;
   runId: string;
   requestedModel?: string;
@@ -644,7 +645,7 @@ async function openSession(command: CrpCommand, state: { session: SessionState |
   });
 }
 
-function buildQueryOptions(turn: TurnState) {
+export function buildQueryOptions(turn: TurnState) {
   const claudeConfigDir =
     typeof process.env.CLAUDE_CONFIG_DIR === "string" && process.env.CLAUDE_CONFIG_DIR.trim()
       ? process.env.CLAUDE_CONFIG_DIR.trim()
@@ -655,7 +656,7 @@ function buildQueryOptions(turn: TurnState) {
     claudeConfigDir,
     "projects",
     projectKey,
-    `${turn.sessionId}.jsonl`
+    `${turn.providerSessionId}.jsonl`
   );
   const shouldResume = fs.existsSync(sessionFilePath);
 
@@ -670,8 +671,8 @@ function buildQueryOptions(turn: TurnState) {
       turn.allowDangerouslySkipPermissions
     ),
     ...(shouldResume
-      ? { resume: turn.sessionId }
-      : { extraArgs: { "session-id": turn.sessionId } }),
+      ? { resume: turn.providerSessionId }
+      : { extraArgs: { "session-id": turn.providerSessionId } }),
     abortController: turn.abortController,
     stderr: (data: string) => {
       process.stderr.write(String(data));
@@ -984,6 +985,7 @@ async function startTurn(command: CrpCommand, state: { session: SessionState | n
 
   const turn: TurnState = {
     sessionId: session.sessionId,
+    providerSessionId: session.providerSessionId,
     turnId,
     runId,
     requestedModel,
