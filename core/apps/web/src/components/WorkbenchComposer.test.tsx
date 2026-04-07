@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkbenchComposer } from "./WorkbenchComposer";
@@ -10,6 +10,13 @@ const { trackFeatureUsedMock, trackProviderSelectedMock } = vi.hoisted(() => ({
   trackFeatureUsedMock: vi.fn(),
   trackProviderSelectedMock: vi.fn(),
 }));
+const uploadBlobMock = vi.hoisted(() =>
+  vi.fn(async (file: File) => ({
+    blob_id: `blob-${file.name || "image"}`,
+    mime_type: file.type || "image/png",
+    name: file.name || "image.png",
+  })),
+);
 
 vi.mock("../utils/analytics", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../utils/analytics")>();
@@ -17,6 +24,14 @@ vi.mock("../utils/analytics", async (importOriginal) => {
     ...actual,
     trackFeatureUsed: trackFeatureUsedMock,
     trackProviderSelected: trackProviderSelectedMock,
+  };
+});
+
+vi.mock("../api/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/client")>();
+  return {
+    ...actual,
+    uploadBlob: uploadBlobMock,
   };
 });
 
@@ -81,6 +96,11 @@ describe("WorkbenchComposer textarea sizing", () => {
     vi.restoreAllMocks();
     trackFeatureUsedMock.mockReset();
     trackProviderSelectedMock.mockReset();
+    uploadBlobMock.mockImplementation(async (file: File) => ({
+      blob_id: `blob-${file.name || "image"}`,
+      mime_type: file.type || "image/png",
+      name: file.name || "image.png",
+    }));
     if (originalScrollHeight) {
       Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", originalScrollHeight);
     } else {
@@ -1918,5 +1938,225 @@ describe("WorkbenchComposer textarea sizing", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(ensureProviderAuthSummary).toHaveBeenNthCalledWith(2, "codex", { trigger: "explicit" });
+  });
+
+  it("attaches pasted images in the new-task composer", async () => {
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
+      const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: makeProviderStatus("codex"),
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{}}
+          onInstallProvider={vi.fn()}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={{}}
+          ensureProviderAuthSummary={async () => undefined}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
+          defaultProviderId="codex"
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+    const textarea = screen.getByPlaceholderText("@ for context, / for commands") as HTMLTextAreaElement;
+    const transfer = {
+      files: [new File([Uint8Array.from([137, 80, 78, 71])], "clipboard.png", { type: "image/png" })],
+      items: [],
+    } as unknown as DataTransfer;
+
+    const pasteEvent = createEvent.paste(textarea);
+    Object.defineProperty(pasteEvent, "clipboardData", { value: transfer });
+    fireEvent(textarea, pasteEvent);
+
+    expect(pasteEvent.defaultPrevented).toBe(true);
+    await waitFor(() => {
+      expect(screen.getByAltText("clipboard.png")).toBeInTheDocument();
+    });
+  });
+
+  it("attaches pasted images in the active-session composer", async () => {
+    const ActiveHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+
+      return (
+        <WorkbenchComposer
+          variant="activeSession"
+          value={value}
+          setValue={setValue}
+          placeholder="Ask follow-ups"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          recording={false}
+          harnessLabel="Codex"
+          availableModels={[{ id: "o3", name: "o3" }]}
+          currentModelId="o3"
+          onSetModelId={vi.fn()}
+        />
+      );
+    };
+
+    render(<ActiveHarness />);
+    const textarea = screen.getByPlaceholderText("Ask follow-ups") as HTMLTextAreaElement;
+    const transfer = {
+      files: [new File([Uint8Array.from([255, 216, 255, 224])], "clipboard.jpg", { type: "image/jpeg" })],
+      items: [],
+    } as unknown as DataTransfer;
+
+    const pasteEvent = createEvent.paste(textarea);
+    Object.defineProperty(pasteEvent, "clipboardData", { value: transfer });
+    fireEvent(textarea, pasteEvent);
+
+    expect(pasteEvent.defaultPrevented).toBe(true);
+    await waitFor(() => {
+      expect(screen.getByAltText("clipboard.jpg")).toBeInTheDocument();
+    });
+  });
+
+  it("preserves plain text when pasted clipboard data also contains an image", async () => {
+    const ActiveHarness = () => {
+      const [value, setValue] = useState("before ");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+
+      return (
+        <WorkbenchComposer
+          variant="activeSession"
+          value={value}
+          setValue={setValue}
+          placeholder="Ask follow-ups"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          recording={false}
+          harnessLabel="Codex"
+          availableModels={[{ id: "o3", name: "o3" }]}
+          currentModelId="o3"
+          onSetModelId={vi.fn()}
+        />
+      );
+    };
+
+    render(<ActiveHarness />);
+    const textarea = screen.getByPlaceholderText("Ask follow-ups") as HTMLTextAreaElement;
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    const transfer = {
+      files: [new File([Uint8Array.from([137, 80, 78, 71])], "clipboard.png", { type: "image/png" })],
+      items: [],
+      getData(type: string) {
+        if (type === "text/plain") return "caption";
+        return "";
+      },
+    } as unknown as DataTransfer;
+
+    const pasteEvent = createEvent.paste(textarea);
+    Object.defineProperty(pasteEvent, "clipboardData", { value: transfer });
+    fireEvent(textarea, pasteEvent);
+
+    expect(pasteEvent.defaultPrevented).toBe(true);
+    await waitFor(() => {
+      expect(textarea).toHaveValue("before caption");
+      expect(screen.getByAltText("clipboard.png")).toBeInTheDocument();
+    });
+  });
+
+  it("does not consume text-only paste events", () => {
+    const ActiveHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+
+      return (
+        <WorkbenchComposer
+          variant="activeSession"
+          value={value}
+          setValue={setValue}
+          placeholder="Ask follow-ups"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          recording={false}
+          harnessLabel="Codex"
+          availableModels={[{ id: "o3", name: "o3" }]}
+          currentModelId="o3"
+          onSetModelId={vi.fn()}
+        />
+      );
+    };
+
+    render(<ActiveHarness />);
+    const textarea = screen.getByPlaceholderText("Ask follow-ups") as HTMLTextAreaElement;
+    const transfer = {
+      files: [new File(["hello"], "notes.txt", { type: "text/plain" })],
+      items: [
+        {
+          kind: "string",
+          type: "text/plain",
+          getAsFile: () => null,
+        },
+      ],
+    } as unknown as DataTransfer;
+
+    const pasteEvent = createEvent.paste(textarea);
+    Object.defineProperty(pasteEvent, "clipboardData", { value: transfer });
+    fireEvent(textarea, pasteEvent);
+
+    expect(pasteEvent.defaultPrevented).toBe(false);
+    expect(document.querySelectorAll(".wb-composer-attachments .wb-attach-thumb-img")).toHaveLength(0);
   });
 });

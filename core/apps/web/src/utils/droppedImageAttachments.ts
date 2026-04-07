@@ -84,6 +84,28 @@ async function readImageFileFromUrl(url: string, suggestedName?: string | null):
   }
 }
 
+type TransferImageUrlOptions = {
+  allowUriList?: boolean;
+  allowUriListWhenPlainTextExists?: boolean;
+  allowHtmlImageSrc?: boolean;
+  allowPlainTextLocalImageRefs?: boolean;
+  allowPlainTextRemoteUrls?: boolean;
+};
+
+function firstUriListEntry(raw: string): string | null {
+  for (const line of raw.split("\n")) {
+    const value = line.trim();
+    if (!value || value.startsWith("#")) continue;
+    return value;
+  }
+  return null;
+}
+
+function htmlImageSrc(html: string): string | null {
+  const match = html.match(/<img[^>]*\ssrc=("([^"]+)"|'([^']+)'|([^\s>]+))/i);
+  return (match?.[2] ?? match?.[3] ?? match?.[4] ?? "").trim() || null;
+}
+
 export function extractFilesFromTransfer(transfer: DataTransfer | null): File[] {
   if (!transfer) return [];
   const out: File[] = [];
@@ -100,25 +122,53 @@ export function extractFilesFromTransfer(transfer: DataTransfer | null): File[] 
   return out;
 }
 
-export function extractFirstUrlFromTransfer(transfer: DataTransfer | null): string | null {
+export function extractFirstUrlFromTransfer(
+  transfer: DataTransfer | null,
+  options: TransferImageUrlOptions = {},
+): string | null {
   if (!transfer) return null;
+  const {
+    allowUriList = true,
+    allowUriListWhenPlainTextExists = true,
+    allowHtmlImageSrc = true,
+    allowPlainTextLocalImageRefs = true,
+    allowPlainTextRemoteUrls = true,
+  } = options;
+
+  const text = transfer.getData?.("text/plain") ?? "";
+  const trimmedText = text.trim();
+  const hasPlainText = trimmedText.length > 0;
+
   const uriRaw = (transfer.getData?.("text/uri-list") ?? "").trim();
-  if (uriRaw) {
-    for (const line of uriRaw.split("\n")) {
-      const value = line.trim();
-      if (!value || value.startsWith("#")) continue;
-      return value;
-    }
+  if (allowUriList && (!hasPlainText || allowUriListWhenPlainTextExists)) {
+    const uri = firstUriListEntry(uriRaw);
+    if (uri) return uri;
   }
+
   const html = (transfer.getData?.("text/html") ?? "").trim();
-  if (html) {
-    const match = html.match(/<img[^>]*\ssrc=("([^"]+)"|'([^']+)'|([^\s>]+))/i);
-    const src = (match?.[2] ?? match?.[3] ?? match?.[4] ?? "").trim();
+  if (allowHtmlImageSrc && html) {
+    const src = htmlImageSrc(html);
     if (src) return src;
   }
-  const text = (transfer.getData?.("text/plain") ?? "").trim();
-  if (text && /^(https?:|data:image\/|blob:|file:)/i.test(text)) return text;
+
+  if (
+    allowPlainTextLocalImageRefs
+    && trimmedText
+    && /^(data:image\/|blob:|file:)/i.test(trimmedText)
+  ) {
+    return trimmedText;
+  }
+  if (allowPlainTextRemoteUrls && trimmedText && /^https?:/i.test(trimmedText)) return trimmedText;
   return null;
+}
+
+export async function imageAttachmentsFromUrl(url: string): Promise<MessageAttachment[]> {
+  const fileUrlPath = normalizeFileUrlToPath(url);
+  if (fileUrlPath) return imageAttachmentsFromPaths([fileUrlPath]);
+
+  const file = await readImageFileFromUrl(url);
+  if (!file) return [];
+  return imageFilesToMessageAttachments([file]);
 }
 
 export async function imageAttachmentsFromTransfer(transfer: DataTransfer | null): Promise<MessageAttachment[]> {
@@ -127,12 +177,7 @@ export async function imageAttachmentsFromTransfer(transfer: DataTransfer | null
 
   const url = extractFirstUrlFromTransfer(transfer);
   if (!url) return [];
-  const fileUrlPath = normalizeFileUrlToPath(url);
-  if (fileUrlPath) return imageAttachmentsFromPaths([fileUrlPath]);
-
-  const file = await readImageFileFromUrl(url);
-  if (!file) return [];
-  return imageFilesToMessageAttachments([file]);
+  return imageAttachmentsFromUrl(url);
 }
 
 export async function imageAttachmentsFromPaths(paths: string[]): Promise<MessageAttachment[]> {

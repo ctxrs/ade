@@ -10,6 +10,10 @@ import { shouldHydrateProviderModels } from "../../pages/workbenchShell/useWorkb
 import { ComposerAutocompleteMenu } from "../ComposerAutocompleteMenu";
 import { useComposerAutocomplete } from "../../state/useComposerAutocomplete";
 import { imageFilesToMessageAttachments } from "../../utils/messageAttachments";
+import {
+  clipboardHasImagePayload,
+  imageAttachmentsFromClipboardTransfer,
+} from "../../utils/pastedImageAttachments";
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
 import { MenuTitleRow } from "./WorkbenchComposerMenu";
 import { WorkbenchComposerHarnessMenu } from "./WorkbenchComposerHarnessMenu";
@@ -78,6 +82,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const lastHeightRef = useRef<number>(0);
   const restoreDraftTailRef = useRef(true);
   const autoSeededModelIdByProviderRef = useRef<Record<string, string>>({});
+  const pendingSelectionRef = useRef<number | null>(null);
   const harnessTriggerRef = useRef<HTMLButtonElement | null>(null);
   const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
   const effortTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -162,10 +167,26 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     onSend();
   }, [clearSelectionBeforeSubmit, onInterrupt, onSend, showStop]);
 
+  const insertPastedText = useCallback((textarea: HTMLTextAreaElement, text: string) => {
+    if (!text) return;
+    const start = textarea.selectionStart ?? textarea.value.length;
+    const end = textarea.selectionEnd ?? start;
+    pendingSelectionRef.current = start + text.length;
+    restoreDraftTailRef.current = false;
+    setValue(`${textarea.value.slice(0, start)}${text}${textarea.value.slice(end)}`);
+  }, [setValue]);
+
   useLayoutEffect(() => {
     resizeTextarea();
     const textarea = textareaRef.current;
-    if (!textarea || !restoreDraftTailRef.current || value.length === 0) return;
+    if (!textarea) return;
+    const pendingSelection = pendingSelectionRef.current;
+    if (pendingSelection !== null) {
+      textarea.setSelectionRange(pendingSelection, pendingSelection);
+      pendingSelectionRef.current = null;
+      return;
+    }
+    if (!restoreDraftTailRef.current || value.length === 0) return;
     const end = textarea.value.length;
     textarea.setSelectionRange(end, end);
     textarea.scrollTop = textarea.scrollHeight;
@@ -562,6 +583,24 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
           setValue(e.target.value);
         }}
         disabled={!!inputDisabled}
+        onPaste={(e) => {
+          const transfer = e.clipboardData;
+          if (!clipboardHasImagePayload(transfer)) return;
+          e.preventDefault();
+          const pastedText = transfer.getData?.("text/plain") ?? "";
+          if (pastedText.length > 0) {
+            insertPastedText(e.currentTarget, pastedText);
+          }
+          onAttachmentError?.(null);
+          void imageAttachmentsFromClipboardTransfer(transfer)
+            .then((next) => {
+              if (next.length === 0) return;
+              setAttachments((prev) => [...prev, ...next]);
+            })
+            .catch((error: unknown) => {
+              onAttachmentError?.(errorMessage(error));
+            });
+        }}
         onKeyDown={(e) => {
           if (autocomplete.onKeyDown(e)) return;
           if (shouldSendOnEnter(e)) {
