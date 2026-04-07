@@ -1815,6 +1815,70 @@ describe("SessionSupervisor", () => {
     expect(current?.turns[0]?.status).toBe("interrupted");
   });
 
+  it("lets authoritative replacement patches clear live tool counters", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-replace-tool-counters";
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+
+    entry.session = mkSession(sessionId);
+    entry.turns = [
+      {
+        ...mkTurn({
+          sessionId,
+          turnId: "turn-1",
+          status: "running",
+          startSeq: 1,
+        }),
+        tool_total: 2,
+        tool_pending: 1,
+        tool_running: 1,
+      },
+    ];
+    entry.turnsHydrated = true;
+    entry.lastEventSeq = 2;
+    entry.freshness = "bootstrap";
+
+    internals.handleReplicaPatches([
+      {
+        op: "replace",
+        sessionId,
+        data: {
+          session: mkSession(sessionId),
+          freshness: "authoritative",
+          replaceMode: "authoritative_replace",
+          turns: [
+            {
+              ...mkTurn({
+                sessionId,
+                turnId: "turn-1",
+                status: "completed",
+                startSeq: 1,
+              }),
+              tool_total: 2,
+              tool_pending: 0,
+              tool_running: 0,
+              tool_completed: 2,
+            },
+          ],
+          events: [] as SessionEvent[],
+          messages: [] as Message[],
+          lastEventSeq: 3,
+          hasMoreTurns: false,
+        },
+      },
+    ]);
+
+    const current = sup.getSnapshot().sessions[sessionId];
+    expect(current?.turns).toHaveLength(1);
+    expect(current?.turns[0]?.status).toBe("completed");
+    expect(current?.turns[0]?.tool_pending).toBe(0);
+    expect(current?.turns[0]?.tool_running).toBe(0);
+    expect(current?.turns[0]?.tool_completed).toBe(2);
+  });
+
   it("ignores active task upserts without head data", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 

@@ -176,8 +176,10 @@ const preserveMonotonicTurns = (
       status: nextStatus,
       end_seq: turn.end_seq ?? previous.end_seq,
       tool_total: Math.max(previous.tool_total ?? 0, turn.tool_total ?? 0),
-      tool_pending: Math.max(previous.tool_pending ?? 0, turn.tool_pending ?? 0),
-      tool_running: Math.max(previous.tool_running ?? 0, turn.tool_running ?? 0),
+      // `tool_pending`/`tool_running` are live counters, not cumulative totals.
+      // Authoritative replace/repair patches must be able to clear them.
+      tool_pending: turn.tool_pending,
+      tool_running: turn.tool_running,
       tool_completed: Math.max(previous.tool_completed ?? 0, turn.tool_completed ?? 0),
       tool_failed: Math.max(previous.tool_failed ?? 0, turn.tool_failed ?? 0),
       metrics_json: turn.metrics_json ?? previous.metrics_json,
