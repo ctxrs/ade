@@ -23,6 +23,7 @@ import {
   trackSessionCreated,
   trackUserMessageSent,
 } from "../utils/analytics";
+import { resolveImageMimeType } from "../utils/imageMime";
 import { composeModelId, parseModelId } from "../utils/modelEffort";
 
 export type BlobUploadResp = {
@@ -368,9 +369,10 @@ export const uploadBlob = async (file: File): Promise<BlobUploadResp> => {
   if (isDesktopApp()) {
     const buf = await file.arrayBuffer();
     const bytes = Array.from(new Uint8Array(buf));
+    const mimeType = resolveImageMimeType(file.type, file.name) || "application/octet-stream";
     const resp = await desktopUploadBlob({
       bytes,
-      mime_type: file.type || "application/octet-stream",
+      mime_type: mimeType,
       name: file.name,
     });
     return resp as BlobUploadResp;

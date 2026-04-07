@@ -2,12 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   apiAnyMock,
+  desktopUploadBlobMock,
   trackFirstTurnSubmittedMock,
   trackSessionCreatedMock,
   trackUserMessageSentMock,
   getDaemonConnectionMock,
+  isDesktopAppMock,
 } = vi.hoisted(() => ({
   apiAnyMock: vi.fn(),
+  desktopUploadBlobMock: vi.fn(),
   trackFirstTurnSubmittedMock: vi.fn(),
   trackSessionCreatedMock: vi.fn(),
   trackUserMessageSentMock: vi.fn(),
@@ -16,6 +19,7 @@ const {
     targetScope: { kind: "desktop_local" },
     authToken: null,
   })),
+  isDesktopAppMock: vi.fn(() => false),
 }));
 
 vi.mock("./clientBase", () => ({
@@ -28,6 +32,15 @@ vi.mock("./daemonConnection", () => ({
   getDaemonHttpUrl: vi.fn(),
 }));
 
+vi.mock("../utils/desktop", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../utils/desktop")>();
+  return {
+    ...actual,
+    desktopUploadBlob: desktopUploadBlobMock,
+    isDesktopApp: isDesktopAppMock,
+  };
+});
+
 vi.mock("../utils/analytics", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../utils/analytics")>();
   return {
@@ -38,7 +51,7 @@ vi.mock("../utils/analytics", async (importOriginal) => {
   };
 });
 
-import { createSession, postMessage } from "./clientSessions";
+import { createSession, postMessage, uploadBlob } from "./clientSessions";
 
 describe("createSession analytics", () => {
   beforeEach(() => {
@@ -117,6 +130,7 @@ describe("createSession analytics", () => {
 describe("postMessage analytics", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    isDesktopAppMock.mockReturnValue(false);
     apiAnyMock.mockResolvedValue({ id: "message-123" });
   });
 
@@ -146,6 +160,37 @@ describe("postMessage analytics", () => {
       sessionId: "session-1",
       providerId: "codex",
       modelId: "gpt-5-codex/xhigh",
+    });
+  });
+});
+
+describe("uploadBlob", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    isDesktopAppMock.mockReturnValue(false);
+  });
+
+  it("infers image MIME for desktop uploads when File.type is empty", async () => {
+    isDesktopAppMock.mockReturnValue(true);
+    desktopUploadBlobMock.mockResolvedValue({
+      blob_id: "blob-1",
+      sha256: "sha",
+      bytes: 3,
+      mime_type: "image/png",
+      name: "image.png",
+    });
+
+    const bytes = new Uint8Array([1, 2, 3]);
+    const file = new File([bytes], "image.png");
+    Object.defineProperty(file, "arrayBuffer", {
+      value: vi.fn(async () => bytes.buffer.slice(0)),
+    });
+    await uploadBlob(file);
+
+    expect(desktopUploadBlobMock).toHaveBeenCalledWith({
+      bytes: [1, 2, 3],
+      mime_type: "image/png",
+      name: "image.png",
     });
   });
 });

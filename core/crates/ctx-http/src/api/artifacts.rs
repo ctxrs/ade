@@ -32,6 +32,13 @@ fn blobs_dir(data_root: &StdPath) -> PathBuf {
     data_root.join("blobs")
 }
 
+fn infer_upload_blob_mime_type(file_name: Option<&str>, override_value: Option<String>) -> String {
+    match file_name {
+        Some(name) => infer_artifact_mime_type(StdPath::new(name), override_value),
+        None => override_value.unwrap_or_else(|| "application/octet-stream".to_string()),
+    }
+}
+
 pub(super) async fn persist_blob_bytes(
     state: &AppState,
     bytes: &[u8],
@@ -111,7 +118,7 @@ pub(super) async fn upload_blob(
     let Some(bytes) = bytes else {
         return Err(StatusCode::BAD_REQUEST);
     };
-    let mime_type = mime_type.unwrap_or_else(|| "application/octet-stream".to_string());
+    let mime_type = infer_upload_blob_mime_type(file_name.as_deref(), mime_type);
     let resp = persist_blob_bytes(&state, &bytes, &mime_type, file_name.as_deref()).await?;
     Ok(Json(resp))
 }

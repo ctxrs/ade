@@ -14,7 +14,7 @@ fn multipart_body(
     boundary: &str,
     name: &str,
     filename: &str,
-    content_type: &str,
+    content_type: Option<&str>,
     bytes: &[u8],
 ) -> Vec<u8> {
     let mut out = Vec::new();
@@ -23,7 +23,10 @@ fn multipart_body(
         format!("Content-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\n")
             .as_bytes(),
     );
-    out.extend_from_slice(format!("Content-Type: {content_type}\r\n\r\n").as_bytes());
+    if let Some(content_type) = content_type {
+        out.extend_from_slice(format!("Content-Type: {content_type}\r\n").as_bytes());
+    }
+    out.extend_from_slice(b"\r\n");
     out.extend_from_slice(bytes);
     out.extend_from_slice(b"\r\n");
     out.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
@@ -52,7 +55,7 @@ async fn image_attachments_use_blobs_and_never_persist_base64() {
 
     // 1) Upload blob and fetch it back.
     let boundary = "ctx-test-boundary";
-    let body = multipart_body(boundary, "file", "x.png", "image/png", &png_bytes);
+    let body = multipart_body(boundary, "file", "x.png", Some("image/png"), &png_bytes);
     let req = Request::builder()
         .method("POST")
         .uri("/api/blobs")
@@ -144,7 +147,7 @@ async fn image_ref_attachments_use_stored_blob_mime_type() {
     let app = common::router(state.clone());
 
     let boundary = "ctx-test-boundary";
-    let body = multipart_body(boundary, "file", "x.png", "image/png", &png_bytes);
+    let body = multipart_body(boundary, "file", "x.png", Some("image/png"), &png_bytes);
     let req = Request::builder()
         .method("POST")
         .uri("/api/blobs")
@@ -180,6 +183,44 @@ async fn image_ref_attachments_use_stored_blob_mime_type() {
     let att_json = serde_json::to_value(&msg.attachments[0]).unwrap();
     assert_eq!(
         att_json.get("mime_type").and_then(|v| v.as_str()),
+        Some("image/png")
+    );
+}
+
+#[tokio::test]
+async fn blob_upload_infers_image_mime_type_from_filename_when_part_content_type_is_missing() {
+    const PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6Vn3b0AAAAASUVORK5CYII=";
+    let png_bytes = base64::engine::general_purpose::STANDARD
+        .decode(PNG_BASE64.as_bytes())
+        .unwrap();
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let store = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        store,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let boundary = "ctx-test-boundary";
+    let body = multipart_body(boundary, "file", "x.png", None, &png_bytes);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/blobs")
+        .header(
+            "content-type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(Body::from(body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let uploaded: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        uploaded.get("mime_type").and_then(|value| value.as_str()),
         Some("image/png")
     );
 }

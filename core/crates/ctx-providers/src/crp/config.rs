@@ -243,6 +243,8 @@ fn infer_image_extension(mime_type: &str) -> Option<&'static str> {
     }
 }
 
+const MAX_PROVIDER_VISIBLE_IMAGE_NAME_BYTES: usize = 160;
+
 fn attachment_basename(name: Option<&str>) -> Option<String> {
     let raw = name?.trim();
     if raw.is_empty() {
@@ -256,9 +258,48 @@ fn attachment_basename(name: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
+fn truncate_utf8_to_bytes(input: &str, max_bytes: usize) -> String {
+    if input.len() <= max_bytes {
+        return input.to_string();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !input.is_char_boundary(end) {
+        end -= 1;
+    }
+    input[..end].to_string()
+}
+
+fn bounded_attachment_suffix(name: &str, mime_type: &str, max_bytes: usize) -> String {
+    let path = Path::new(name);
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(".{value}"))
+        .or_else(|| infer_image_extension(mime_type).map(|value| format!(".{value}")))
+        .filter(|value| value.len() < max_bytes)
+        .unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("image");
+    let stem_budget = max_bytes.saturating_sub(extension.len());
+    let bounded_stem = truncate_utf8_to_bytes(stem, stem_budget);
+    if bounded_stem.is_empty() {
+        return truncate_utf8_to_bytes("image", max_bytes);
+    }
+    format!("{bounded_stem}{extension}")
+}
+
 fn provider_visible_image_name(stem: &str, name: Option<&str>, mime_type: &str) -> String {
     if let Some(name) = attachment_basename(name) {
-        return format!("{stem}-{name}");
+        let prefix = format!("{stem}-");
+        let suffix_budget = MAX_PROVIDER_VISIBLE_IMAGE_NAME_BYTES.saturating_sub(prefix.len());
+        let suffix = bounded_attachment_suffix(&name, mime_type, suffix_budget.max(1));
+        return format!("{prefix}{suffix}");
     }
     match infer_image_extension(mime_type) {
         Some(ext) => format!("{stem}.{ext}"),
@@ -780,6 +821,48 @@ mod tests {
             .file_name()
             .and_then(|value| value.to_str())
             .is_some_and(|value| value.ends_with("-blob.png")));
+        assert_eq!(
+            tokio::fs::read(&path).await.expect("read prompt image"),
+            bytes
+        );
+    }
+
+    #[tokio::test]
+    async fn build_prompt_items_bounds_long_attachment_names() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut env = HashMap::new();
+        env.insert(
+            "CTX_DATA_ROOT".to_string(),
+            temp.path().to_string_lossy().to_string(),
+        );
+        let long_name = format!("{}.png", "a".repeat(400));
+        let bytes = vec![1u8, 2, 3, 4];
+        let input = TurnInput {
+            content: "describe image".to_string(),
+            context_blocks: Vec::new(),
+            attachments: vec![ctx_core::models::MessageAttachment::Image {
+                mime_type: "image/png".to_string(),
+                data_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+                name: Some(long_name),
+            }],
+            model_id: None,
+        };
+
+        let items = build_prompt_items(&input, &PathBuf::from("."), &env)
+            .await
+            .expect("long inline image name should materialize");
+        let path = PathBuf::from(
+            items[0]
+                .get("path")
+                .and_then(Value::as_str)
+                .expect("local image path"),
+        );
+        let file_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .expect("file name");
+        assert!(file_name.len() <= MAX_PROVIDER_VISIBLE_IMAGE_NAME_BYTES);
+        assert!(file_name.ends_with(".png"));
         assert_eq!(
             tokio::fs::read(&path).await.expect("read prompt image"),
             bytes

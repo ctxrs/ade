@@ -1,20 +1,9 @@
 import type { MessageAttachment } from "../api/client";
 import { imageFilesToMessageAttachments, isImageFile } from "./messageAttachments";
 import { desktopReadBinaryFile, isDesktopApp } from "./desktop";
+import { inferImageMimeTypeFromName } from "./imageMime";
 
 const WINDOWS_DRIVE_PATH_RE = /^\/[A-Za-z]:\//;
-const IMAGE_EXTENSION_FALLBACKS: Record<string, string> = {
-  avif: "image/avif",
-  bmp: "image/bmp",
-  gif: "image/gif",
-  jpeg: "image/jpeg",
-  jpg: "image/jpeg",
-  png: "image/png",
-  svg: "image/svg+xml",
-  tif: "image/tiff",
-  tiff: "image/tiff",
-  webp: "image/webp",
-};
 
 function basename(input: string): string {
   const normalized = input.replace(/\\/g, "/");
@@ -33,8 +22,7 @@ function fileNameFromUrl(url: string): string {
 }
 
 function extensionMimeType(name: string): string {
-  const ext = name.trim().toLowerCase().split(".").pop() ?? "";
-  return IMAGE_EXTENSION_FALLBACKS[ext] ?? "";
+  return inferImageMimeTypeFromName(name) ?? "";
 }
 
 function pathLooksLikeImage(path: string): boolean {
