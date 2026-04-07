@@ -484,6 +484,5 @@ mod tests {
         assert!(args.contains(&".".to_string()));
         assert!(!args.contains(&".git".to_string()));
         assert!(!args.contains(&"file.txt".to_string()));
-
     }
 }

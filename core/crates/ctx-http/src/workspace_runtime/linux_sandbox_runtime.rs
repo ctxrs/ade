@@ -416,8 +416,12 @@ pub(crate) async fn linux_sandbox_runtime_status(
         Ok(status) => Ok(status),
         Err(err) => {
             tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_status failed");
-            Ok(bootstrap_failed_status(&paths, &platform, platform_default_message(&platform, &LinuxSandboxRuntimeState::Failed)))
-        },
+            Ok(bootstrap_failed_status(
+                &paths,
+                &platform,
+                platform_default_message(&platform, &LinuxSandboxRuntimeState::Failed),
+            ))
+        }
     }
 }
 

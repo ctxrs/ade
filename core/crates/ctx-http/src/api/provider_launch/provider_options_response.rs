@@ -189,6 +189,20 @@ pub(super) async fn attach_static_provider_models_and_modes(
     }
 }
 
+pub(super) fn attach_verify_cache(
+    value: &mut serde_json::Value,
+    verify_entry: Option<&(std::time::Instant, serde_json::Value)>,
+    verify_ttl: Duration,
+) {
+    if let Some((verify_at, verify)) = verify_entry {
+        if verify_at.elapsed() < verify_ttl {
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("verify".to_string(), verify.clone());
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,19 +315,5 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("openai/gpt-5.2")
         );
-    }
-}
-
-pub(super) fn attach_verify_cache(
-    value: &mut serde_json::Value,
-    verify_entry: Option<&(std::time::Instant, serde_json::Value)>,
-    verify_ttl: Duration,
-) {
-    if let Some((verify_at, verify)) = verify_entry {
-        if verify_at.elapsed() < verify_ttl {
-            if let Some(obj) = value.as_object_mut() {
-                obj.insert("verify".to_string(), verify.clone());
-            }
-        }
     }
 }

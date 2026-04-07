@@ -151,7 +151,20 @@ async fn handle_terminal_socket(
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    needs_tail_resync_output.store(true, Ordering::Release);
+                    match queue_terminal_ws_tail_snapshot(
+                        &event_tx_output,
+                        &session_output,
+                        snapshot_tail,
+                    ) {
+                        TerminalWsQueueOutcome::Enqueued => {}
+                        TerminalWsQueueOutcome::Dropped => {
+                            needs_tail_resync_output.store(true, Ordering::Release);
+                            tracing::debug!(
+                                "dropping terminal tail resync for slow websocket consumer"
+                            );
+                        }
+                        TerminalWsQueueOutcome::Closed => break,
+                    }
                     continue;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -192,7 +205,23 @@ async fn handle_terminal_socket(
                         TerminalWsQueueOutcome::Closed => break,
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    match queue_terminal_ws_tail_snapshot(
+                        &event_tx_status,
+                        &session_status,
+                        snapshot_tail,
+                    ) {
+                        TerminalWsQueueOutcome::Enqueued => {}
+                        TerminalWsQueueOutcome::Dropped => {
+                            needs_tail_resync_status.store(true, Ordering::Release);
+                            tracing::debug!(
+                                "dropping terminal tail resync for slow websocket consumer"
+                            );
+                        }
+                        TerminalWsQueueOutcome::Closed => break,
+                    }
+                    continue;
+                }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }

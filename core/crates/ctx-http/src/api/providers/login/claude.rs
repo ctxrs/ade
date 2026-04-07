@@ -5,6 +5,7 @@ use tokio::sync::oneshot;
 
 const CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT: Duration = Duration::from_secs(8);
 const CLAUDE_LOGIN_URL_SETTLE_WAIT: Duration = Duration::from_millis(500);
+const CLAUDE_LOGIN_CAPTURE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const CLAUDE_LOGIN_COMPLETION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const CLAUDE_LOGIN_EXIT_GRACE_WAIT: Duration = Duration::from_millis(400);
 const CLAUDE_BROWSER_OPEN_MARKER: &str = "CTX_CLAUDE_AUTH_URL:";
@@ -122,12 +123,12 @@ fn claude_manual_fallback_is_terminal(
         && read_claude_browser_open_capture_url(browser_open_capture_path).is_none()
 }
 
-fn upgrade_claude_auth_url_from_capture_path(
+fn refresh_claude_auth_url_from_capture_path(
     observed_auth_url: &mut Option<String>,
     capture_path: &std::path::Path,
-) {
+) -> bool {
     let Some(candidate) = read_claude_browser_open_capture_url(capture_path) else {
-        return;
+        return false;
     };
     if should_replace_observed_claude_auth_url(
         observed_auth_url.as_deref(),
@@ -135,7 +136,9 @@ fn upgrade_claude_auth_url_from_capture_path(
         ClaudeAuthUrlSource::BrowserOpenCapture,
     ) {
         *observed_auth_url = Some(candidate);
+        return true;
     }
+    false
 }
 
 pub(crate) async fn start_claude_login(
@@ -466,7 +469,9 @@ async fn start_claude_login_process(state: &Arc<AppState>) -> anyhow::Result<Cla
     let hard_deadline = Instant::now() + CLAUDE_LOGIN_URL_WAIT;
     let mut settle_deadline: Option<Instant> = None;
     loop {
-        upgrade_claude_auth_url_from_capture_path(&mut auth_url, &browser_open_capture_path);
+        if refresh_claude_auth_url_from_capture_path(&mut auth_url, &browser_open_capture_path) {
+            settle_deadline = Some(Instant::now() + CLAUDE_LOGIN_URL_SETTLE_WAIT);
+        }
         let now = Instant::now();
         let remaining = if let Some(settle) = settle_deadline {
             std::cmp::min(
@@ -479,17 +484,20 @@ async fn start_claude_login_process(state: &Arc<AppState>) -> anyhow::Result<Cla
         if remaining.is_zero() {
             break;
         }
-        match tokio::time::timeout(remaining, rx.recv()).await {
+        let wait = remaining.min(CLAUDE_LOGIN_CAPTURE_POLL_INTERVAL);
+        match tokio::time::timeout(wait, rx.recv()).await {
             Ok(Some(line)) => {
                 transcript.push_str(&line);
                 transcript.push('\n');
                 hit_unsupported_manual_fallback |=
                     claude_login_hit_unsupported_manual_fallback(&line);
                 buffered_lines.push(line);
-                upgrade_claude_auth_url_from_capture_path(
+                if refresh_claude_auth_url_from_capture_path(
                     &mut auth_url,
                     &browser_open_capture_path,
-                );
+                ) {
+                    settle_deadline = Some(Instant::now() + CLAUDE_LOGIN_URL_SETTLE_WAIT);
+                }
                 if let Some((candidate, source)) = extract_preferred_claude_auth_url(&transcript) {
                     if should_replace_observed_claude_auth_url(
                         auth_url.as_deref(),
@@ -502,10 +510,10 @@ async fn start_claude_login_process(state: &Arc<AppState>) -> anyhow::Result<Cla
                 }
             }
             Ok(None) => break,
-            Err(_) => break,
+            Err(_) => continue,
         }
     }
-    upgrade_claude_auth_url_from_capture_path(&mut auth_url, &browser_open_capture_path);
+    refresh_claude_auth_url_from_capture_path(&mut auth_url, &browser_open_capture_path);
 
     if hit_unsupported_manual_fallback
         && claude_manual_fallback_is_terminal(&transcript, &browser_open_capture_path)
@@ -619,7 +627,7 @@ async fn monitor_claude_login(
             line,
         )
         .await;
-        upgrade_claude_auth_url_from_capture_path(
+        let _ = refresh_claude_auth_url_from_capture_path(
             &mut observed_auth_url,
             &login.browser_open_capture_path,
         );
@@ -633,7 +641,7 @@ async fn monitor_claude_login(
     }
 
     while terminal_error.is_none() {
-        upgrade_claude_auth_url_from_capture_path(
+        let _ = refresh_claude_auth_url_from_capture_path(
             &mut observed_auth_url,
             &login.browser_open_capture_path,
         );
@@ -663,7 +671,7 @@ async fn monitor_claude_login(
                             line,
                         )
                         .await;
-                        upgrade_claude_auth_url_from_capture_path(
+                        let _ = refresh_claude_auth_url_from_capture_path(
                             &mut observed_auth_url,
                             &login.browser_open_capture_path,
                         );
@@ -713,7 +721,7 @@ async fn monitor_claude_login(
                 line,
             )
             .await;
-            upgrade_claude_auth_url_from_capture_path(
+            let _ = refresh_claude_auth_url_from_capture_path(
                 &mut observed_auth_url,
                 &login.browser_open_capture_path,
             );
@@ -728,7 +736,7 @@ async fn monitor_claude_login(
                 line,
             )
             .await;
-            upgrade_claude_auth_url_from_capture_path(
+            let _ = refresh_claude_auth_url_from_capture_path(
                 &mut observed_auth_url,
                 &login.browser_open_capture_path,
             );

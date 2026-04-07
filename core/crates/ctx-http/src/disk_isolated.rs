@@ -268,7 +268,6 @@ mod tests {
         assert!(!log.contains("exec --interactive --user root"));
         assert!(!log.contains("chown 502:20 /ctx/ws"));
         assert!(!log.contains(" cp "));
-
     }
 
     #[tokio::test]
@@ -331,6 +330,5 @@ mod tests {
             )),
             "preflight should not probe the not-yet-created worktree parent: {log}"
         );
-
     }
 }
