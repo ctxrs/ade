@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveFollowBottomAfterScroll,
+  shouldFollowBottomOnItemsUpdate,
   shouldRestoreBottomOnViewportResize,
 } from "./pretextFollowBottom";
 

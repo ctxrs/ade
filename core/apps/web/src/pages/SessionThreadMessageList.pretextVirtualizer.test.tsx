@@ -8,6 +8,7 @@ import { SessionThreadPretextVirtualizerList } from "./SessionThreadMessageList.
 import type { WorkbenchListItem } from "./SessionPage.types";
 import type { WorkbenchMessageListContext } from "./SessionPage.thread";
 import type { WorkbenchThreadProjectionOp } from "./sessionThreadProjection";
+import { getOrCreateSessionPretextRuntime, resetSessionPretextRuntimeCache } from "./sessionThread/pretextSessionRuntimeCache";
 
 const resizeObserverInstances: Array<{ callback: ResizeObserverCallback }> = [];
 
@@ -61,6 +62,7 @@ function defineScrollerMetrics(scroller: HTMLElement, metrics: { clientHeight: n
 describe("SessionThreadPretextVirtualizerList", () => {
   beforeEach(() => {
     resizeObserverInstances.length = 0;
+    resetSessionPretextRuntimeCache();
     Object.defineProperty(globalThis, "ResizeObserver", {
       configurable: true,
       value: ResizeObserverStub,
@@ -354,6 +356,117 @@ describe("SessionThreadPretextVirtualizerList", () => {
         itemContent={(_, item) => <div>{item.id}</div>}
         itemKey={(item) => item.id}
         context={{ ...context, expandedMessageById: { "message-expandable": true } }}
+      />,
+    );
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+    });
+
+    const shellsAfter = container.querySelectorAll<HTMLElement>("[data-pretext-virtualizer-row-shell='1']");
+    const secondTopAfter = Number.parseFloat(shellsAfter[1]?.style.top ?? "0");
+
+    expect(secondTopAfter).toBeGreaterThan(secondTopBefore);
+  });
+
+  it("does not re-enter projection sync during ordinary scroll with unchanged items", () => {
+    const sessionId = "session-scroll";
+    const { container } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={makeItems(20)}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 1400 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+    });
+
+    const runtime = getOrCreateSessionPretextRuntime(sessionId);
+    const syncViewportSpy = vi.spyOn(runtime.core, "syncViewport");
+    const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
+    syncViewportSpy.mockClear();
+    syncItemsSpy.mockClear();
+
+    act(() => {
+      scroller.scrollTop = 500;
+      fireEvent.scroll(scroller);
+    });
+
+    expect(syncViewportSpy).toHaveBeenCalledTimes(1);
+    expect(syncItemsSpy).not.toHaveBeenCalled();
+  });
+
+  it("replans offsets when context changes even if the projection op is noop", () => {
+    const expandableContent = Array.from(
+      { length: 28 },
+      (_, index) => `- expanded row ${index + 1} with enough text to wrap and change the measured height`,
+    ).join("\n");
+    const listItems: WorkbenchListItem[] = [
+      {
+        kind: "message",
+        id: "message-expandable-noop",
+        role: "user",
+        content: expandableContent,
+        attachments: [],
+        created_at: "2026-04-06T00:00:00Z",
+      },
+      {
+        kind: "turn_status",
+        id: "status-2",
+        turn_id: "turn-2",
+        created_at: "2026-04-06T00:01:00Z",
+        started_at: "2026-04-06T00:01:00Z",
+        updated_at: "2026-04-06T00:01:05Z",
+        status: "completed",
+        assistant_messages_content: "done",
+      },
+    ];
+
+    const { container, rerender } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId="session-noop-layout"
+        isActive
+        listItems={listItems}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={{ ...context, expandedMessageById: {} }}
+      />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 1400 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+    });
+
+    const shellsBefore = container.querySelectorAll<HTMLElement>("[data-pretext-virtualizer-row-shell='1']");
+    const secondTopBefore = Number.parseFloat(shellsBefore[1]?.style.top ?? "0");
+
+    rerender(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId="session-noop-layout"
+        isActive
+        listItems={listItems}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={{ ...context, expandedMessageById: { "message-expandable-noop": true } }}
       />,
     );
 

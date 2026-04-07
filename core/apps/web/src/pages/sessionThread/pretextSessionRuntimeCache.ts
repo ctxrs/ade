@@ -170,3 +170,7 @@ export function markSessionPretextRuntimeVisible(
 export function getSessionPretextRuntimeCacheSize(): number {
   return runtimeCache.size;
 }
+
+export function resetSessionPretextRuntimeCache(): void {
+  runtimeCache.clear();
+}

@@ -25,6 +25,17 @@ export function resolveFollowBottomAfterScroll({
   return followBottom;
 }
 
-export function shouldRestoreBottomOnViewportResize(sizeChanged: boolean, followBottom: boolean): boolean {
+export function shouldRestoreBottomOnViewportResize(
+  sizeChanged: boolean,
+  followBottom: boolean,
+): boolean {
   return sizeChanged && followBottom;
+}
+
+export function shouldFollowBottomOnItemsUpdate(
+  followBottom: boolean,
+  bottomOffsetPx: number,
+  thresholdPx: number,
+): boolean {
+  return followBottom && bottomOffsetPx <= thresholdPx;
 }
