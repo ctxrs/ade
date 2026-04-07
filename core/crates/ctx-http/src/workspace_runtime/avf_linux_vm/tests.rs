@@ -99,6 +99,7 @@ import json
 import os
 import pathlib
 import sys
+from typing import Optional
 
 PROTOCOL_VERSION = 1
 PROTOCOL_SCHEMA = "ctx.avf_linux_helper.v1"
@@ -111,7 +112,7 @@ def vm_root(data_root: str) -> pathlib.Path:
 def state_path(data_root: str) -> pathlib.Path:
     return vm_root(data_root) / STATE_FILE
 
-def write_state(data_root: str, state: str, transition: str | None = None):
+def write_state(data_root: str, state: str, transition: Optional[str] = None):
     root = vm_root(data_root)
     root.mkdir(parents=True, exist_ok=True)
     payload = {

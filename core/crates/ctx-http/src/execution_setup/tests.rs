@@ -2668,7 +2668,14 @@ async fn subscribe_launch_receiver_gets_terminal_event_after_running_snapshot() 
 async fn runtime_prewarm_emits_initial_log_before_runtime_work_completes() {
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
-    let coordinator = test_coordinator(data_dir.path().to_path_buf());
+    let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(data_dir.path());
+    let _sandbox_cli = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+    let _sandbox_cli_path = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        &sandbox_cli_path.to_string_lossy(),
+    );
+    let ops = Arc::new(BlockingWarmupOperations::default());
+    let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
     let settings = sandbox_execution_settings();
 
     let snapshot = coordinator
@@ -2683,20 +2690,11 @@ async fn runtime_prewarm_emits_initial_log_before_runtime_work_completes() {
             && line.message == "requesting shared container readiness"
     }));
 
-    let observed = tokio::time::timeout(QUICK_ASYNC_TEST_TIMEOUT, async {
-        loop {
-            let latest = coordinator
-                .launch_status(&snapshot.job_id)
-                .await
-                .expect("missing launch job");
-            if !latest.logs.is_empty() {
-                break latest;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("timed out waiting for initial launch log");
+    ops.wait_for_runtime_runs(1).await;
+    let observed = coordinator
+        .launch_status(&snapshot.job_id)
+        .await
+        .expect("missing launch job");
 
     assert!(matches!(
         observed.current_phase,
@@ -2705,11 +2703,12 @@ async fn runtime_prewarm_emits_initial_log_before_runtime_work_completes() {
     assert!(observed.logs.iter().any(|line| {
         line.phase == HarnessSetupPhase::MachineCheck
             && (line.message == "requesting shared container readiness"
-                || line.message == "checking container runtime")
+                || line.message == "warming runtime")
     }));
 
+    ops.release_runtime();
     let _terminal =
-        wait_for_execution_launch_terminal(&coordinator, &snapshot.job_id, Duration::from_secs(10))
+        wait_for_execution_launch_terminal(&coordinator, &snapshot.job_id, BACKGROUND_TEST_TIMEOUT)
             .await;
 }
 

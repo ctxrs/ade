@@ -13,14 +13,14 @@ fn explicit_sandbox_cli_binary_path() -> Option<PathBuf> {
 }
 
 fn sandbox_cli_available(data_root: &Path) -> bool {
+    if explicit_sandbox_cli_binary_path().is_some() {
+        return true;
+    }
     if cfg!(test) {
         if let Ok(value) = std::env::var("CTX_TEST_SANDBOX_CLI_AVAILABLE") {
             let value = value.trim().to_ascii_lowercase();
             return matches!(value.as_str(), "1" | "true" | "yes" | "y");
         }
-    }
-    if explicit_sandbox_cli_binary_path().is_some() {
-        return true;
     }
     #[cfg(target_os = "macos")]
     if super::avf_linux_runtime_available() && super::avf_linux_vm::helper_path().is_ok() {
@@ -318,6 +318,34 @@ mod tests {
         let _serial = env_var_test_lock().lock().await;
         let _guard = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "true");
         assert!(sandbox_cli_available(tempdir().unwrap().path()));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn explicit_cli_override_beats_negative_test_override() {
+        let _serial = env_var_test_lock().lock().await;
+        let temp = tempdir().expect("tempdir");
+        let cli_path = temp.path().join("sandbox-cli.sh");
+        std::fs::write(
+            &cli_path,
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  printf '{}\\n'\n  exit 0\nfi\necho \"unexpected invocation: $*\" >&2\nexit 1\n",
+        )
+        .expect("write sandbox cli shim");
+        std::fs::set_permissions(&cli_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod sandbox cli shim");
+        let _override = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
+        let _guard = EnvVarGuard::set(
+            CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+            &cli_path.to_string_lossy(),
+        );
+
+        assert!(sandbox_cli_available(temp.path()));
+        assert!(
+            sandbox_engine_ready(temp.path())
+                .await
+                .expect("sandbox engine ready check"),
+            "sandbox engine should honor the explicit CLI override even when the negative test override is set",
+        );
     }
 
     #[cfg(unix)]

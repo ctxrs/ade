@@ -34,6 +34,8 @@ test("workbench active snapshot stream keeps network lean", async ({ page }) => 
   const snapshotStream = await snapshotStreamPromise;
   await expect.poll(() => requests.length).toBeGreaterThan(0);
   expect(workspaceId).not.toEqual("");
+  await expect(page.getByRole("button", { name: "fake", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "fake-model", exact: true })).toBeVisible();
 
   const apiRequests = () => requests.filter((r) => r.url.includes("/api/"));
   expect(apiRequests().length).toBeLessThanOrEqual(18);
@@ -44,7 +46,9 @@ test("workbench active snapshot stream keeps network lean", async ({ page }) => 
     const pathname = new URL(r.url).pathname;
     return pathname === providerBootstrapPath;
   });
-  expect(providerBootstrapRequests.length).toBe(1);
+  // Provider bootstrap can be satisfied from the active snapshot/bootstrap store,
+  // so opening the workbench should not require more than one extra bootstrap GET.
+  expect(providerBootstrapRequests.length).toBeLessThanOrEqual(1);
 
   const startupProviderAccounts = apiRequests().filter((r) => {
     if (r.method !== "GET") return false;

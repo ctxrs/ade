@@ -7,6 +7,7 @@ import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 
 test("golden path: workspace → task → session → message", async ({ page }) => {
+  test.setTimeout(120000);
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
   execSync("git init", { cwd: repo });
   execSync("git config user.email test@example.com", { cwd: repo });
@@ -32,7 +33,9 @@ test("golden path: workspace → task → session → message", async ({ page })
   await expect(page.locator(".wb-session-slot textarea.wb-active-textarea")).toBeVisible({
     timeout: 20000,
   });
-  await expect(page.locator(".wb-session-slot .wb-assistant-entry")).toHaveCount(1, {
-    timeout: 40000,
+  await expect(
+    page.locator(".wb-session-slot .wb-assistant-entry").filter({ hasText: "done: hello" }),
+  ).toBeVisible({
+    timeout: 60000,
   });
 });

@@ -10,9 +10,7 @@ use tokio::time::sleep;
 use ctx_core::ids::{RunId, SessionId, TurnId};
 use ctx_core::models::{SessionTurn, SessionTurnStatus, VcsKind};
 use ctx_http::daemon::AppState;
-use ctx_providers::adapters::{
-    ProviderAdapter, ProviderRecommendedAction, ProviderUsability, ProviderUsabilityStatus,
-};
+use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::Store;
 use uuid::Uuid;
@@ -37,15 +35,7 @@ async fn setup_state(
         "http://127.0.0.1:0",
     );
     {
-        let mut status = FakeProviderAdapter::new().inspect().await.unwrap();
-        status.usability = ProviderUsability {
-            usable: true,
-            status: ProviderUsabilityStatus::Ready,
-            reason_code: None,
-            reason: None,
-            blocking_provider_ids: Vec::new(),
-            recommended_action: ProviderRecommendedAction::None,
-        };
+        let status = FakeProviderAdapter::new().inspect().await.unwrap();
         state
             .providers
             .statuses
@@ -111,6 +101,32 @@ async fn setup_state(
         .unwrap();
 
     (data_dir, state, server, store, session.id.0.to_string())
+}
+
+#[tokio::test]
+async fn subagent_init_accepts_raw_provider_status_when_derived_status_is_ready() {
+    let repo = common::init_git_repo(&[("README.md", "ok")]).await;
+    let (_data_dir, _state, server, _store, parent_id) = setup_state(repo.path()).await;
+    let client = &server.client;
+    let base = &server.base_url;
+
+    let resp = client
+        .post(format!("{base}/api/mcp/sessions/{parent_id}/subagent_init"))
+        .json(&json!({
+            "worktree": "inherit",
+            "agents": [
+                { "prompt": "ready", "label": "Ready", "harness": "fake", "model": "fake-model" }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "running");
+    assert_eq!(body["results"][0]["label"], "Ready");
+    assert_eq!(body["results"][0]["status"], "running");
 }
 
 #[tokio::test]

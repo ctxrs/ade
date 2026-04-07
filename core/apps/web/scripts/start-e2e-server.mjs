@@ -89,9 +89,19 @@ export const resolveWebBuildArgs = (webDistDir) => [
   "--emptyOutDir",
 ];
 
+export const shouldUseConfiguredWebDist = (env) =>
+  String(env.CTX_E2E_ALLOW_CONFIGURED_WEB_DIST ?? "").trim() === "1";
+
 export const resolveServeWebDistDir = (repoRoot, env, skipWebBuild = false) => {
+  const configuredE2E = String(env.CTX_E2E_WEB_DIST ?? "").trim();
+  if (configuredE2E) {
+    return path.isAbsolute(configuredE2E)
+      ? configuredE2E
+      : path.resolve(repoRoot, configuredE2E);
+  }
+
   const configured = String(env.CTX_WEB_DIST ?? "").trim();
-  if (configured) {
+  if (configured && shouldUseConfiguredWebDist(env)) {
     return path.isAbsolute(configured) ? configured : path.resolve(repoRoot, configured);
   }
   if (skipWebBuild) {

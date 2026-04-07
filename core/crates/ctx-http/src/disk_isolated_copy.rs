@@ -304,6 +304,29 @@ pub(super) async fn prepare_self_contained_copy_root(
 mod tests {
     use super::*;
     use std::fs;
+
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.prev.take() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
     use std::process::Command as StdCommand;
 
     fn git(args: &[&str], cwd: &Path) {
@@ -428,8 +451,7 @@ mod tests {
         fs::create_dir_all(src.join(".git")).expect("create git dir");
         fs::write(src.join(".git").join("HEAD"), "ref: refs/heads/main\n").expect("write git head");
 
-        let old_cli = std::env::var("CTX_HARNESS_SANDBOX_CLI_PATH").ok();
-        std::env::set_var("CTX_HARNESS_SANDBOX_CLI_PATH", &cli_path);
+        let _cli = EnvGuard::set("CTX_HARNESS_SANDBOX_CLI_PATH", &cli_path);
 
         stream_dir_to_container(temp.path(), "ctx-harness-test", &src, Path::new("/ctx/ws"))
             .await
@@ -463,9 +485,5 @@ mod tests {
         assert!(!args.contains(&".git".to_string()));
         assert!(!args.contains(&"file.txt".to_string()));
 
-        match old_cli {
-            Some(value) => std::env::set_var("CTX_HARNESS_SANDBOX_CLI_PATH", value),
-            None => std::env::remove_var("CTX_HARNESS_SANDBOX_CLI_PATH"),
-        }
     }
 }

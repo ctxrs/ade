@@ -331,6 +331,7 @@ async fn codex_env_seed_enabled_fails_when_host_auth_missing() {
 async fn codex_env_clears_stale_runtime_auth_when_no_active_account() {
     let _env_lock = lock_env().await;
     let _guard = EnvGuard::without("CTX_CODEX_HOME");
+    let _seed_guard = EnvGuard::without(CTX_SEED_CODEX_AUTH_FROM_HOST_ENV);
     let missing_host_auth = tempfile::tempdir()
         .unwrap()
         .path()

@@ -21,6 +21,10 @@ urlencoding = "2"
 
 [dev-dependencies]
 axum.workspace = true
+ctx-http = { path = "../ctx-http" }
+ctx-providers = { path = "../ctx-providers" }
+ctx-store = { path = "../ctx-store" }
+tempfile = "3"
 tower = "0.5"
 rand = "0.8"
 

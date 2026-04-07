@@ -200,6 +200,8 @@ pub(crate) async fn provider_status_for_target(
         )
         .await;
     }
+    apply_install_viability_details(&mut status, &state.core.data_root, managed, matrix, target);
+    apply_provider_usability_details(&mut status, &state.core.data_root, managed, matrix, target);
     status
 }
 
@@ -256,8 +258,6 @@ pub(super) async fn providers_statuses_response(
                 if show_fake { "false" } else { "true" }.into(),
             );
         }
-        apply_install_viability_details(status, &state.core.data_root, &managed, &matrix, target);
-        apply_provider_usability_details(status, &state.core.data_root, &managed, &matrix, target);
         status
             .details
             .insert("install_target".into(), target.as_str().to_string());
@@ -355,20 +355,6 @@ pub(crate) async fn get_provider(
         ));
     }
     let mut status = provider_status_for_target(&state, &managed, &matrix, &id, target).await;
-    apply_install_viability_details(
-        &mut status,
-        &state.core.data_root,
-        &managed,
-        &matrix,
-        target,
-    );
-    apply_provider_usability_details(
-        &mut status,
-        &state.core.data_root,
-        &managed,
-        &matrix,
-        target,
-    );
     if let Some(bytes) =
         installer::managed_install_download_size_bytes(&matrix, &status.provider_id, target)
     {

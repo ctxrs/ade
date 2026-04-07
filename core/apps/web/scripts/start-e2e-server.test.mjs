@@ -12,6 +12,7 @@ import {
   resolveServeWebDistDir,
   resolveWebBuildArgs,
   shouldUseConfiguredCtxMcpCommand,
+  shouldUseConfiguredWebDist,
 } from "./start-e2e-server.mjs";
 
 describe("start-e2e-server", () => {
@@ -30,9 +31,24 @@ describe("start-e2e-server", () => {
     ]);
   });
 
-  it("honors an explicit CTX_WEB_DIST override", () => {
+  it("honors an explicit CTX_E2E_WEB_DIST override", () => {
+    const resolved = resolveServeWebDistDir("/repo/core", {
+      CTX_E2E_WEB_DIST: "custom/web-dist",
+    });
+    expect(resolved).toBe(path.resolve("/repo/core", "custom/web-dist"));
+  });
+
+  it("ignores an ambient CTX_WEB_DIST override without an e2e opt-in", () => {
+    const resolved = resolveServeWebDistDir("/repo/core", {
+      CTX_WEB_DIST: "/Applications/ctx.app/Contents/Resources/web/dist",
+    });
+    expect(resolved).toBe(resolveE2EWebDistDir());
+  });
+
+  it("allows CTX_WEB_DIST only when explicitly opted in for e2e", () => {
     const resolved = resolveServeWebDistDir("/repo/core", {
       CTX_WEB_DIST: "custom/web-dist",
+      CTX_E2E_ALLOW_CONFIGURED_WEB_DIST: "1",
     });
     expect(resolved).toBe(path.resolve("/repo/core", "custom/web-dist"));
   });
@@ -40,6 +56,20 @@ describe("start-e2e-server", () => {
   it("falls back to the checked-in web dist when skip-build is enabled", () => {
     const resolved = resolveServeWebDistDir("/repo/core", {}, true);
     expect(resolved).toBe(path.resolve("/repo/core", "apps", "web", "dist"));
+  });
+
+  it("requires an explicit e2e opt-in before using a configured web dist", () => {
+    expect(
+      shouldUseConfiguredWebDist({
+        CTX_WEB_DIST: "/Applications/ctx.app/Contents/Resources/web/dist",
+      }),
+    ).toBe(false);
+    expect(
+      shouldUseConfiguredWebDist({
+        CTX_WEB_DIST: "/tmp/custom-web-dist",
+        CTX_E2E_ALLOW_CONFIGURED_WEB_DIST: "1",
+      }),
+    ).toBe(true);
   });
 
   it("requires an explicit e2e opt-in before using a configured ctx-mcp command", () => {

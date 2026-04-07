@@ -101,4 +101,27 @@ describe("createCtxPlaywrightConfig", () => {
     expect(webServer?.env?.TMP).toBe(webServer?.env?.CTX_E2E_TMPDIR);
     expect(webServer?.env?.TEMP).toBe(webServer?.env?.CTX_E2E_TMPDIR);
   });
+
+  it("does not leak ambient desktop runtime paths into the e2e webServer env", async () => {
+    restoreEnv();
+    process.env.CTX_WEB_DIST = "/Applications/ctx.app/Contents/Resources/web/dist";
+    process.env.CTX_BUNDLE_DIR = "/Applications/ctx.app/Contents/Resources/bundles";
+
+    const config = await createCtxPlaywrightConfig("premerge_required");
+    const webServer = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
+
+    expect(webServer?.env?.CTX_WEB_DIST).toBeUndefined();
+    expect(webServer?.env?.CTX_BUNDLE_DIR).not.toBe("/Applications/ctx.app/Contents/Resources/bundles");
+  });
+
+  it("uses CTX_E2E_BUNDLE_DIR instead of ambient CTX_BUNDLE_DIR", async () => {
+    restoreEnv();
+    process.env.CTX_BUNDLE_DIR = "/Applications/ctx.app/Contents/Resources/bundles";
+    process.env.CTX_E2E_BUNDLE_DIR = "/tmp/ctx-e2e-bundles";
+
+    const config = await createCtxPlaywrightConfig("premerge_required");
+    const webServer = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
+
+    expect(webServer?.env?.CTX_BUNDLE_DIR).toBe("/tmp/ctx-e2e-bundles");
+  });
 });

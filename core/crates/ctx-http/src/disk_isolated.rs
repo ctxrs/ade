@@ -191,6 +191,29 @@ mod tests {
     use std::fs;
     use uuid::Uuid;
 
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.prev.take() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
     #[tokio::test]
     async fn ensure_workspace_root_from_host_copy_fails_when_host_workspace_is_missing() {
         let _env_lock = crate::test_support::sandbox_cli_env_test_lock()
@@ -215,8 +238,7 @@ mod tests {
             fs::set_permissions(&cli_path, perms).expect("chmod fake sandbox cli");
         }
 
-        let old_cli = std::env::var("CTX_HARNESS_SANDBOX_CLI_PATH").ok();
-        std::env::set_var("CTX_HARNESS_SANDBOX_CLI_PATH", &cli_path);
+        let _cli = EnvGuard::set("CTX_HARNESS_SANDBOX_CLI_PATH", &cli_path);
 
         let workspace = Workspace {
             id: WorkspaceId(uuid::Uuid::new_v4()),
@@ -244,10 +266,6 @@ mod tests {
         assert!(!log.contains("chown 502:20 /ctx/ws"));
         assert!(!log.contains(" cp "));
 
-        match old_cli {
-            Some(value) => std::env::set_var("CTX_HARNESS_SANDBOX_CLI_PATH", value),
-            None => std::env::remove_var("CTX_HARNESS_SANDBOX_CLI_PATH"),
-        }
     }
 
     #[tokio::test]
@@ -283,8 +301,7 @@ mod tests {
         fs::write(src.join("README.md"), "hello\n").expect("write readme");
         fs::write(src.join(".git").join("HEAD"), "ref: refs/heads/main\n").expect("write git head");
 
-        let old_cli = std::env::var("CTX_HARNESS_SANDBOX_CLI_PATH").ok();
-        std::env::set_var("CTX_HARNESS_SANDBOX_CLI_PATH", &cli_path);
+        let _cli = EnvGuard::set("CTX_HARNESS_SANDBOX_CLI_PATH", &cli_path);
 
         let dest_root = ensure_worktree_from_host_copy(
             temp.path(),
@@ -312,9 +329,5 @@ mod tests {
             "preflight should not probe the not-yet-created worktree parent: {log}"
         );
 
-        match old_cli {
-            Some(value) => std::env::set_var("CTX_HARNESS_SANDBOX_CLI_PATH", value),
-            None => std::env::remove_var("CTX_HARNESS_SANDBOX_CLI_PATH"),
-        }
     }
 }

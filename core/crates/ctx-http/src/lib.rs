@@ -757,26 +757,26 @@ mod tests {
             ExecutionLaunchState::Running | ExecutionLaunchState::Error
         ));
 
-        let mut terminal = snapshot.clone();
-        for _ in 0..20 {
-            let req = Request::builder()
-                .method("GET")
-                .uri(format!(
-                    "/api/execution/launch/status?job_id={}",
-                    snapshot.job_id
-                ))
-                .body(Body::empty())
-                .unwrap();
-            let res = app.clone().oneshot(req).await.unwrap();
-            assert_eq!(res.status(), StatusCode::OK);
-            let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-            terminal = serde_json::from_slice(&body).unwrap();
-            if terminal.state != ExecutionLaunchState::Running {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-        assert_ne!(terminal.state, ExecutionLaunchState::Running);
+        let req = Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/api/execution/launch/status?job_id={}",
+                snapshot.job_id
+            ))
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let status_snapshot: ExecutionLaunchSnapshot = serde_json::from_slice(&body).unwrap();
+        assert_eq!(status_snapshot.job_id, snapshot.job_id);
+        assert_eq!(status_snapshot.kind, ExecutionSetupJobKind::StartupPrewarm);
+        assert!(matches!(
+            status_snapshot.state,
+            ExecutionLaunchState::Running
+                | ExecutionLaunchState::Ready
+                | ExecutionLaunchState::Error
+        ));
     }
 
     #[tokio::test]

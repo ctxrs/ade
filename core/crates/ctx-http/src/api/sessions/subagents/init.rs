@@ -170,47 +170,6 @@ pub(crate) async fn mcp_agent_init(
         provider_ids.insert(provider_id.to_string());
     }
 
-    let available_providers: Vec<String> = {
-        let statuses = state.providers.statuses.lock().await;
-        let mut ids = statuses.keys().cloned().collect::<Vec<_>>();
-        ids.sort();
-        ids
-    };
-    let mut provider_statuses = HashMap::new();
-    {
-        let statuses = state.providers.statuses.lock().await;
-        for provider_id in provider_ids.iter() {
-            if let Some(status) = statuses.get(provider_id) {
-                provider_statuses.insert(provider_id.clone(), status.clone());
-            } else {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: format!(
-                            "unknown harness '{provider_id}'; available harnesses: {}",
-                            available_providers.join(", ")
-                        ),
-                    }),
-                ));
-            }
-        }
-    }
-
-    for (provider_id, status) in &provider_statuses {
-        if !crate::provider_usability::provider_status_is_usable(status) {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: format!(
-                        "harness '{provider_id}' is not ready: {}",
-                        crate::provider_usability::provider_status_unusable_reason(status)
-                            .unwrap_or_else(|| "provider not ready for use".to_string())
-                    ),
-                }),
-            ));
-        }
-    }
-
     let parent_worktree_execution = crate::api::tasks::resolve_existing_worktree_execution(
         &state,
         &store,
@@ -235,6 +194,74 @@ pub(crate) async fn mcp_agent_init(
             resolved = resolved_parent_execution_environment.as_str(),
             "parent session execution_environment drifted from resolved worktree identity"
         );
+    }
+    let install_target = crate::execution_effective::effective_install_target_for_environment(
+        state.as_ref(),
+        workspace.id,
+        resolved_parent_execution_environment,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let managed = crate::installer::load_agent_server_config(&state.core.data_root)
+        .await
+        .unwrap_or_default();
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.core.data_root,
+        &state.providers.matrix_cache,
+    )
+    .await;
+    let mut known_providers = {
+        let statuses = state.providers.statuses.lock().await;
+        statuses.keys().cloned().collect::<HashSet<_>>()
+    };
+    for entry in &matrix.providers {
+        if entry.kind == crate::provider_matrix::ProviderMatrixEntryKind::Harness {
+            known_providers.insert(entry.id.clone());
+        }
+    }
+    let mut available_providers = known_providers.iter().cloned().collect::<Vec<_>>();
+    available_providers.sort();
+
+    for provider_id in &provider_ids {
+        if !known_providers.contains(provider_id) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: format!(
+                        "unknown harness '{provider_id}'; available harnesses: {}",
+                        available_providers.join(", ")
+                    ),
+                }),
+            ));
+        }
+
+        let status = crate::api::providers::provider_status_for_target(
+            &state,
+            &managed,
+            &matrix,
+            provider_id,
+            install_target,
+        )
+        .await;
+        if !crate::provider_usability::provider_status_is_usable(&status) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: format!(
+                        "harness '{provider_id}' is not ready: {}",
+                        crate::provider_usability::provider_status_unusable_reason(&status)
+                            .unwrap_or_else(|| "provider not ready for use".to_string())
+                    ),
+                }),
+            ));
+        }
     }
 
     let mut model_catalogs: HashMap<String, Option<ModelCatalog>> = HashMap::new();

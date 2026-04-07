@@ -63,6 +63,16 @@ const resolveWebServerStdio = () => {
   return {} as const;
 };
 
+const buildWebServerBaseEnv = (env: NodeJS.ProcessEnv) => {
+  return Object.fromEntries(
+    Object.entries(env).filter(([key]) => {
+      if (!key.startsWith("CTX_")) return true;
+      if (key.startsWith("CTX_E2E_") || key.startsWith("CTX_VOLATILE_")) return true;
+      return key === "CTX_MCP_COMMAND";
+    }),
+  );
+};
+
 export const resolvePlaywrightCargoTargetDir = (env: NodeJS.ProcessEnv) => {
   const configured = String(env.CTX_E2E_CARGO_TARGET_DIR ?? env.CARGO_TARGET_DIR ?? "").trim();
   if (configured) {
@@ -139,10 +149,9 @@ export async function createCtxPlaywrightConfig(
   const defaultBundleDir = path.resolve(__dirname, "../desktop/src-tauri/bundles");
   const bundleManifestPath = path.join(defaultBundleDir, "manifest.json");
   const resolvedBundleDir =
-    (process.env.CTX_BUNDLE_DIR ?? "").trim()
+    (process.env.CTX_E2E_BUNDLE_DIR ?? "").trim()
     || (fs.existsSync(bundleManifestPath) ? defaultBundleDir : "");
   if (resolvedBundleDir) {
-    process.env.CTX_BUNDLE_DIR = resolvedBundleDir;
     process.env.CTX_E2E_BUNDLED_ONLY ??= "1";
   }
 
@@ -168,7 +177,7 @@ export async function createCtxPlaywrightConfig(
     ]);
   }
   const webServerEnv = {
-    ...process.env,
+    ...buildWebServerBaseEnv(process.env),
     CTX_E2E_DATA_DIR: dataDir,
     CTX_E2E_TMPDIR: tmpDir,
     CTX_VOLATILE_TMPDIR: volatileTmpRoot,
@@ -188,6 +197,10 @@ export async function createCtxPlaywrightConfig(
     CTX_STORAGE_BACKEND: "sqlite",
     ...(process.platform === "win32" ? {} : { SHELL: "/bin/sh" }),
   };
+  if (resolvedBundleDir) {
+    webServerEnv.CTX_BUNDLE_DIR = resolvedBundleDir;
+    webServerEnv.CTX_E2E_BUNDLED_ONLY ??= "1";
+  }
 
   return defineConfig({
     testDir: "./e2e",
