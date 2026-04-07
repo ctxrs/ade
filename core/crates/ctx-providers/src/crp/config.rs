@@ -1,15 +1,11 @@
 use std::collections::HashMap;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
-use base64::Engine as _;
+use anyhow::Result;
 use ctx_core::boolish::parse_boolish;
 use ctx_core::provider_policy::{FULL_YOLO_APPROVAL_POLICY, FULL_YOLO_SANDBOX_MODE};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use tokio::time::Duration;
-use uuid::Uuid;
 
 use crate::adapters::TurnInput;
 use crate::container_exec::{container_exec_spec, translate_thread_cwd_for_container};
@@ -213,233 +209,21 @@ pub(super) fn probe_timeout_for_env(
     }
 }
 
-fn runtime_prompt_image_root(env: &HashMap<String, String>) -> Result<PathBuf> {
-    // In sandbox/container runs CTX_DATA_ROOT points at the runtime data root that is
-    // bind-mounted at the same absolute path into the provider environment, so the
-    // daemon can materialize files here and the provider can open them via local_image.
-    let data_root = env
-        .get("CTX_DATA_ROOT")
-        .or_else(|| env.get("CTX_DATA_ROOT_HOST"))
-        .map(String::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            anyhow::anyhow!("missing CTX_DATA_ROOT/CTX_DATA_ROOT_HOST for image attachment")
-        })?;
-    Ok(Path::new(data_root).join("prompt-images"))
-}
-
-fn infer_image_extension(mime_type: &str) -> Option<&'static str> {
-    match mime_type.trim().to_ascii_lowercase().as_str() {
-        "image/avif" => Some("avif"),
-        "image/bmp" => Some("bmp"),
-        "image/gif" => Some("gif"),
-        "image/jpeg" => Some("jpg"),
-        "image/png" => Some("png"),
-        "image/svg+xml" => Some("svg"),
-        "image/tiff" => Some("tiff"),
-        "image/webp" => Some("webp"),
-        _ => None,
-    }
-}
-
-const MAX_PROVIDER_VISIBLE_IMAGE_NAME_BYTES: usize = 160;
-
-fn attachment_basename(name: Option<&str>) -> Option<String> {
-    let raw = name?.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    Path::new(raw)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-}
-
-fn truncate_utf8_to_bytes(input: &str, max_bytes: usize) -> String {
-    if input.len() <= max_bytes {
-        return input.to_string();
-    }
-    let mut end = max_bytes;
-    while end > 0 && !input.is_char_boundary(end) {
-        end -= 1;
-    }
-    input[..end].to_string()
-}
-
-fn bounded_attachment_suffix(name: &str, mime_type: &str, max_bytes: usize) -> String {
-    let path = Path::new(name);
-    let extension = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| format!(".{value}"))
-        .or_else(|| infer_image_extension(mime_type).map(|value| format!(".{value}")))
-        .filter(|value| value.len() < max_bytes)
-        .unwrap_or_default();
-    let stem = path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("image");
-    let stem_budget = max_bytes.saturating_sub(extension.len());
-    let bounded_stem = truncate_utf8_to_bytes(stem, stem_budget);
-    if bounded_stem.is_empty() {
-        return truncate_utf8_to_bytes("image", max_bytes);
-    }
-    format!("{bounded_stem}{extension}")
-}
-
-fn provider_visible_image_name(stem: &str, name: Option<&str>, mime_type: &str) -> String {
-    if let Some(name) = attachment_basename(name) {
-        let prefix = format!("{stem}-");
-        let suffix_budget = MAX_PROVIDER_VISIBLE_IMAGE_NAME_BYTES.saturating_sub(prefix.len());
-        let suffix = bounded_attachment_suffix(&name, mime_type, suffix_budget.max(1));
-        return format!("{prefix}{suffix}");
-    }
-    match infer_image_extension(mime_type) {
-        Some(ext) => format!("{stem}.{ext}"),
-        None => stem.to_string(),
-    }
-}
-
-fn prompt_image_tmp_path(destination: &Path) -> PathBuf {
-    let file_name = destination
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("image");
-    destination.with_file_name(format!(".{file_name}.{}.tmp", Uuid::new_v4().simple()))
-}
-
-async fn destination_exists(path: &Path) -> Result<bool> {
-    match tokio::fs::metadata(path).await {
-        Ok(_) => Ok(true),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
-        Err(err) => Err(err).with_context(|| format!("checking {}", path.display())),
-    }
-}
-
-async fn rename_or_accept_existing(tmp: &Path, destination: &Path) -> Result<()> {
-    match tokio::fs::rename(tmp, destination).await {
-        Ok(_) => Ok(()),
-        Err(err) if err.kind() == ErrorKind::AlreadyExists => {
-            let _ = tokio::fs::remove_file(tmp).await;
-            Ok(())
-        }
-        Err(err) => {
-            let _ = tokio::fs::remove_file(tmp).await;
-            Err(err).with_context(|| {
-                format!(
-                    "moving prompt image {} into place at {}",
-                    tmp.display(),
-                    destination.display()
-                )
-            })
-        }
-    }
-}
-
-async fn materialize_prompt_image_bytes(bytes: &[u8], destination: &Path) -> Result<()> {
-    if destination_exists(destination).await? {
-        return Ok(());
-    }
-    let Some(parent) = destination.parent() else {
-        anyhow::bail!(
-            "prompt image destination has no parent: {}",
-            destination.display()
-        );
-    };
-    tokio::fs::create_dir_all(parent)
-        .await
-        .with_context(|| format!("creating prompt image directory {}", parent.display()))?;
-    let tmp = prompt_image_tmp_path(destination);
-    tokio::fs::write(&tmp, bytes)
-        .await
-        .with_context(|| format!("writing prompt image {}", tmp.display()))?;
-    rename_or_accept_existing(&tmp, destination).await
-}
-
-async fn materialize_prompt_image_file(source: &Path, destination: &Path) -> Result<()> {
-    if source == destination || destination_exists(destination).await? {
-        return Ok(());
-    }
-    let Some(parent) = destination.parent() else {
-        anyhow::bail!(
-            "prompt image destination has no parent: {}",
-            destination.display()
-        );
-    };
-    tokio::fs::create_dir_all(parent)
-        .await
-        .with_context(|| format!("creating prompt image directory {}", parent.display()))?;
-    match tokio::fs::hard_link(source, destination).await {
-        Ok(_) => Ok(()),
-        Err(err) if err.kind() == ErrorKind::AlreadyExists => Ok(()),
-        Err(_) => {
-            let tmp = prompt_image_tmp_path(destination);
-            tokio::fs::copy(source, &tmp).await.with_context(|| {
-                format!(
-                    "copying prompt image {} to {}",
-                    source.display(),
-                    tmp.display()
-                )
-            })?;
-            rename_or_accept_existing(&tmp, destination).await
-        }
-    }
-}
-
-async fn materialize_inline_prompt_image(
-    env: &HashMap<String, String>,
-    mime_type: &str,
-    data_base64: &str,
-    name: Option<&str>,
-) -> Result<PathBuf> {
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data_base64.as_bytes())
-        .context("decoding inline image attachment")?;
-    let digest = format!("{:x}", Sha256::digest(&bytes));
-    let stem = format!("inline-{}", &digest[..16]);
-    let destination =
-        runtime_prompt_image_root(env)?.join(provider_visible_image_name(&stem, name, mime_type));
-    materialize_prompt_image_bytes(&bytes, &destination).await?;
-    Ok(destination)
-}
-
-async fn materialize_blob_ref_prompt_image(
-    env: &HashMap<String, String>,
-    blob_id: &str,
-    mime_type: &str,
-    name: Option<&str>,
-) -> Result<PathBuf> {
-    let Some(host_root) = crate::env::data_root_for_host(env) else {
-        anyhow::bail!("missing CTX_DATA_ROOT_HOST/CTX_DATA_ROOT for image attachment");
-    };
-    let source = Path::new(&host_root).join("blobs").join(blob_id);
-    tokio::fs::metadata(&source)
-        .await
-        .with_context(|| format!("statting image blob {blob_id}"))?;
-    let destination =
-        runtime_prompt_image_root(env)?.join(provider_visible_image_name(blob_id, name, mime_type));
-    materialize_prompt_image_file(&source, &destination).await?;
-    Ok(destination)
-}
+// NOTE: The canonical CRP image transport is now blob-backed refs and inline bytes, not
+// provider-visible files. Explicit `local_image` items remain compatibility-only for runtimes
+// that deliberately opt into filesystem paths.
 
 pub(super) async fn build_prompt_items(
     input: &TurnInput,
     _workdir: &PathBuf,
-    env: &HashMap<String, String>,
+    _env: &HashMap<String, String>,
 ) -> Result<Vec<Value>> {
     let mut items = Vec::new();
     for block in &input.context_blocks {
         if block
             .get("type")
             .and_then(Value::as_str)
-            .is_some_and(|t| matches!(t, "text" | "image" | "local_image" | "skill"))
+            .is_some_and(|t| matches!(t, "text" | "image" | "image_ref" | "local_image" | "skill"))
         {
             items.push(block.clone());
         }
@@ -452,12 +236,11 @@ pub(super) async fn build_prompt_items(
                 data_base64,
                 name,
             } => {
-                let path =
-                    materialize_inline_prompt_image(env, mime_type, data_base64, name.as_deref())
-                        .await?;
                 items.push(json!({
-                    "type": "local_image",
-                    "path": path.to_string_lossy(),
+                    "type": "image",
+                    "mime_type": mime_type,
+                    "data": data_base64,
+                    "name": name,
                 }));
             }
             ctx_core::models::MessageAttachment::ImageRef {
@@ -465,12 +248,11 @@ pub(super) async fn build_prompt_items(
                 mime_type,
                 name,
             } => {
-                let path =
-                    materialize_blob_ref_prompt_image(env, blob_id, mime_type, name.as_deref())
-                        .await?;
                 items.push(json!({
-                    "type": "local_image",
-                    "path": path.to_string_lossy(),
+                    "type": "image_ref",
+                    "blob_id": blob_id,
+                    "mime_type": mime_type,
+                    "name": name,
                 }));
             }
         }
@@ -511,6 +293,7 @@ pub(super) fn flatten_prompt_items_as_text(items: &[Value]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
     use std::fs;
 
     #[test]
@@ -722,7 +505,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_prompt_items_materializes_inline_images_as_local_images() {
+    async fn build_prompt_items_emits_inline_images_as_bytes_items() {
         let temp = tempfile::tempdir().expect("tempdir");
         let mut env = HashMap::new();
         env.insert(
@@ -743,31 +526,25 @@ mod tests {
 
         let items = build_prompt_items(&input, &PathBuf::from("."), &env)
             .await
-            .expect("inline image should materialize");
+            .expect("inline image should be emitted as CRP image item");
         assert_eq!(items.len(), 2);
+        assert_eq!(items[0].get("type").and_then(Value::as_str), Some("image"));
         assert_eq!(
-            items[0].get("type").and_then(Value::as_str),
-            Some("local_image")
+            items[0].get("mime_type").and_then(Value::as_str),
+            Some("image/png")
         );
-        let path = PathBuf::from(
-            items[0]
-                .get("path")
-                .and_then(Value::as_str)
-                .expect("local image path"),
-        );
-        assert!(path.starts_with(temp.path().join("prompt-images")));
-        assert!(path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .is_some_and(|value| value.ends_with("-inline.png")));
         assert_eq!(
-            tokio::fs::read(&path).await.expect("read prompt image"),
-            bytes
+            items[0].get("data").and_then(Value::as_str),
+            Some(
+                base64::engine::general_purpose::STANDARD
+                    .encode(&bytes)
+                    .as_str()
+            )
         );
     }
 
     #[tokio::test]
-    async fn build_prompt_items_materializes_blob_refs_as_local_images() {
+    async fn build_prompt_items_emits_blob_refs_as_image_refs() {
         let host_root = tempfile::tempdir().expect("host tempdir");
         let runtime_root = tempfile::tempdir().expect("runtime tempdir");
         let blob_dir = host_root.path().join("blobs");
@@ -804,68 +581,19 @@ mod tests {
 
         let items = build_prompt_items(&input, &PathBuf::from("."), &env)
             .await
-            .expect("blob image should materialize");
+            .expect("blob image should be emitted as image_ref");
         assert_eq!(items.len(), 2);
         assert_eq!(
             items[0].get("type").and_then(Value::as_str),
-            Some("local_image")
+            Some("image_ref")
         );
-        let path = PathBuf::from(
-            items[0]
-                .get("path")
-                .and_then(Value::as_str)
-                .expect("local image path"),
-        );
-        assert!(path.starts_with(runtime_root.path().join("prompt-images")));
-        assert!(path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .is_some_and(|value| value.ends_with("-blob.png")));
         assert_eq!(
-            tokio::fs::read(&path).await.expect("read prompt image"),
-            bytes
+            items[0].get("blob_id").and_then(Value::as_str),
+            Some(blob_id)
         );
-    }
-
-    #[tokio::test]
-    async fn build_prompt_items_bounds_long_attachment_names() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let mut env = HashMap::new();
-        env.insert(
-            "CTX_DATA_ROOT".to_string(),
-            temp.path().to_string_lossy().to_string(),
-        );
-        let long_name = format!("{}.png", "a".repeat(400));
-        let bytes = vec![1u8, 2, 3, 4];
-        let input = TurnInput {
-            content: "describe image".to_string(),
-            context_blocks: Vec::new(),
-            attachments: vec![ctx_core::models::MessageAttachment::Image {
-                mime_type: "image/png".to_string(),
-                data_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
-                name: Some(long_name),
-            }],
-            model_id: None,
-        };
-
-        let items = build_prompt_items(&input, &PathBuf::from("."), &env)
-            .await
-            .expect("long inline image name should materialize");
-        let path = PathBuf::from(
-            items[0]
-                .get("path")
-                .and_then(Value::as_str)
-                .expect("local image path"),
-        );
-        let file_name = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .expect("file name");
-        assert!(file_name.len() <= MAX_PROVIDER_VISIBLE_IMAGE_NAME_BYTES);
-        assert!(file_name.ends_with(".png"));
         assert_eq!(
-            tokio::fs::read(&path).await.expect("read prompt image"),
-            bytes
+            items[0].get("mime_type").and_then(Value::as_str),
+            Some("image/png")
         );
     }
 }

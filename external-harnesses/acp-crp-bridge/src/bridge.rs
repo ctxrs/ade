@@ -12,6 +12,7 @@ use agent_client_protocol::{
     SessionNotification, SessionUpdate, SetSessionModeRequest, SetSessionModelRequest, TextContent,
 };
 use anyhow::{anyhow, Context, Result};
+use base64::Engine as _;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::Command;
@@ -49,6 +50,7 @@ struct ModelCatalogState {
 struct BridgeState {
     auth_methods: Vec<AuthMethod>,
     provider_id: Option<String>,
+    prompt_image_supported: bool,
 }
 
 #[derive(Default)]
@@ -384,6 +386,8 @@ pub async fn run_bridge(config: Config) -> Result<()> {
                 let mut state = bridge_state.lock().await;
                 state.auth_methods = init_response.auth_methods;
                 state.provider_id = std::env::var("CTX_PROVIDER_ID").ok();
+                state.prompt_image_supported =
+                    init_response.agent_capabilities.prompt_capabilities.image;
             }
 
             let mut writer = CrpWriter::new(tokio::io::stdout());
@@ -826,12 +830,42 @@ async fn handle_command(
             state.model_catalog = prompt_model_catalog.clone();
             drop(sessions_guard);
 
-            let prompt_blocks = build_prompt_blocks(prompt, items, Some(&prompt_cwd))
-                .ok_or_else(|| anyhow!("session.prompt missing prompt"))?;
-            let trace_enabled = {
+            let (trace_enabled, prompt_image_supported) = {
                 let state = bridge_state.lock().await;
-                bridge_trace_enabled(state.provider_id.as_deref())
+                (
+                    bridge_trace_enabled(state.provider_id.as_deref()),
+                    state.prompt_image_supported,
+                )
             };
+            let prompt_blocks =
+                match build_prompt_blocks(prompt, items, Some(&prompt_cwd), prompt_image_supported)
+                {
+                    Ok(Some(blocks)) => blocks,
+                    Ok(None) => {
+                        fail_active_turn(
+                            events_tx,
+                            sessions,
+                            &crp_session_id,
+                            &acp_session_id,
+                            &turn_id,
+                            "session.prompt missing prompt".to_string(),
+                        )
+                        .await;
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        fail_active_turn(
+                            events_tx,
+                            sessions,
+                            &crp_session_id,
+                            &acp_session_id,
+                            &turn_id,
+                            err.to_string(),
+                        )
+                        .await;
+                        return Ok(());
+                    }
+                };
             if trace_enabled {
                 info!(
                     session_id = %crp_session_id,
@@ -1233,11 +1267,16 @@ fn build_prompt_blocks(
     prompt: Option<String>,
     items: Option<Vec<Value>>,
     cwd: Option<&Path>,
-) -> Option<Vec<ContentBlock>> {
+    prompt_image_supported: bool,
+) -> Result<Option<Vec<ContentBlock>>> {
     let mut blocks = Vec::new();
     if let Some(items) = items {
         for item in items {
-            blocks.extend(crp_item_to_content_blocks(&item, cwd));
+            blocks.extend(crp_item_to_content_blocks(
+                &item,
+                cwd,
+                prompt_image_supported,
+            )?);
         }
     }
     if blocks.is_empty() {
@@ -1246,62 +1285,81 @@ fn build_prompt_blocks(
         }
     }
     if blocks.is_empty() {
-        None
+        Ok(None)
     } else {
-        Some(blocks)
+        Ok(Some(blocks))
     }
 }
 
-fn crp_item_to_content_blocks(item: &Value, cwd: Option<&Path>) -> Vec<ContentBlock> {
+fn crp_item_to_content_blocks(
+    item: &Value,
+    cwd: Option<&Path>,
+    prompt_image_supported: bool,
+) -> Result<Vec<ContentBlock>> {
     if let Some(text) = item.as_str() {
-        return vec![ContentBlock::Text(TextContent::new(text))];
+        return Ok(vec![ContentBlock::Text(TextContent::new(text))]);
     }
     let Some(obj) = item.as_object() else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
 
     if let Some(kind) = obj.get("type").and_then(|v| v.as_str()) {
         match kind {
             "text" => {
                 if let Some(text) = obj.get("text").and_then(|v| v.as_str()) {
-                    return vec![ContentBlock::Text(TextContent::new(text))];
+                    return Ok(vec![ContentBlock::Text(TextContent::new(text))]);
                 }
+                anyhow::bail!("CRP text item missing text");
             }
             "image" => {
+                require_prompt_image_support(prompt_image_supported)?;
                 if let Some(block) = image_block_from_item(obj) {
-                    return vec![block];
+                    return Ok(vec![block]);
                 }
+                anyhow::bail!("CRP image item missing data or mime_type");
+            }
+            "image_ref" => {
+                require_prompt_image_support(prompt_image_supported)?;
+                return Ok(vec![image_ref_block(obj)?]);
             }
             "local_image" => {
                 if let Some(block) = local_image_block(obj, cwd) {
-                    return vec![block];
+                    return Ok(vec![block]);
                 }
+                anyhow::bail!("CRP local_image item missing path");
             }
             "skill" => {
                 if let Some(block) = skill_block(obj) {
-                    return vec![block];
+                    return Ok(vec![block]);
                 }
+                anyhow::bail!("CRP skill item missing name/content");
             }
             _ => {}
         }
     }
 
     if let Some(text) = obj.get("text").and_then(|v| v.as_str()) {
-        return vec![ContentBlock::Text(TextContent::new(text))];
+        return Ok(vec![ContentBlock::Text(TextContent::new(text))]);
     }
     if let Some(text) = obj.get("content").and_then(|v| v.as_str()) {
-        return vec![ContentBlock::Text(TextContent::new(text))];
+        return Ok(vec![ContentBlock::Text(TextContent::new(text))]);
     }
     if let Some(url_value) = obj.get("image_url") {
         if let Some(url) = url_value.as_str() {
-            return vec![image_block_from_url(url)];
+            if parse_data_url(url).is_some() {
+                require_prompt_image_support(prompt_image_supported)?;
+            }
+            return Ok(vec![image_block_from_url(url)]);
         }
         if let Some(url) = url_value.get("url").and_then(|v| v.as_str()) {
-            return vec![image_block_from_url(url)];
+            if parse_data_url(url).is_some() {
+                require_prompt_image_support(prompt_image_supported)?;
+            }
+            return Ok(vec![image_block_from_url(url)]);
         }
     }
 
-    Vec::new()
+    Ok(Vec::new())
 }
 
 fn image_block_from_item(obj: &serde_json::Map<String, Value>) -> Option<ContentBlock> {
@@ -1330,6 +1388,42 @@ fn image_block_from_url(url: &str) -> ContentBlock {
     } else {
         ContentBlock::ResourceLink(ResourceLink::new("image", url.to_string()))
     }
+}
+
+fn require_prompt_image_support(prompt_image_supported: bool) -> Result<()> {
+    if prompt_image_supported {
+        return Ok(());
+    }
+    anyhow::bail!("ACP agent did not advertise promptCapabilities.image for image prompt items");
+}
+
+fn image_ref_block(obj: &serde_json::Map<String, Value>) -> Result<ContentBlock> {
+    let blob_id = obj
+        .get("blob_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("CRP image_ref item missing blob_id"))?;
+    let mime = obj
+        .get("mimeType")
+        .or_else(|| obj.get("mime_type"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("application/octet-stream");
+
+    let data_root = std::env::var("CTX_DATA_ROOT_HOST")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var("CTX_DATA_ROOT")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .ok_or_else(|| anyhow!("CRP image_ref requires CTX_DATA_ROOT_HOST or CTX_DATA_ROOT"))?;
+    let path = Path::new(&data_root).join("blobs").join(blob_id);
+    let bytes = std::fs::read(&path)
+        .with_context(|| format!("reading image blob {} from {}", blob_id, path.display()))?;
+    let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(ContentBlock::Image(ImageContent::new(data, mime)))
 }
 
 fn parse_data_url(raw: &str) -> Option<(String, String)> {
@@ -1401,6 +1495,8 @@ fn skill_block(obj: &serde_json::Map<String, Value>) -> Option<ContentBlock> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     fn session_mode_state(current: &str, available: &[&str]) -> SessionModeState {
         SessionModeState::new(
@@ -1585,6 +1681,100 @@ mod tests {
             should_apply_requested_session_mode(Some(&modes), "auto_high")
                 .expect("advertised mode should be accepted")
         );
+    }
+
+    #[test]
+    fn crp_image_item_maps_to_acp_image_block() {
+        let obj = serde_json::json!({
+            "type": "image",
+            "mime_type": "image/png",
+            "data": "AQIDBA=="
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+        let block = image_block_from_item(&obj).expect("image block");
+        match block {
+            ContentBlock::Image(img) => {
+                assert_eq!(img.mime_type, "image/png");
+                assert_eq!(img.data, "AQIDBA==");
+            }
+            _ => panic!("expected Image block"),
+        }
+    }
+
+    #[test]
+    fn crp_image_ref_maps_to_acp_image_block_via_blob_bytes() {
+        let host = tempdir().expect("host root");
+        let blob_dir = host.path().join("blobs");
+        fs::create_dir_all(&blob_dir).expect("create blobs dir");
+        let blob_id = "blob-xyz";
+        let bytes = vec![1u8, 2, 3, 4, 5];
+        fs::write(blob_dir.join(blob_id), &bytes).expect("write blob");
+        std::env::set_var("CTX_DATA_ROOT_HOST", host.path());
+
+        let obj = serde_json::json!({
+            "type": "image_ref",
+            "blob_id": blob_id,
+            "mime_type": "image/webp"
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+        let block = image_ref_block(&obj).expect("image_ref block");
+        match block {
+            ContentBlock::Image(img) => {
+                assert_eq!(img.mime_type, "image/webp");
+                assert_eq!(
+                    img.data,
+                    base64::engine::general_purpose::STANDARD.encode(&bytes)
+                );
+            }
+            _ => panic!("expected Image block"),
+        }
+    }
+
+    #[test]
+    fn build_prompt_blocks_rejects_images_without_agent_image_capability() {
+        let err = build_prompt_blocks(
+            None,
+            Some(vec![serde_json::json!({
+                "type": "image_ref",
+                "blob_id": "blob-1",
+                "mime_type": "image/png"
+            })]),
+            None,
+            false,
+        )
+        .expect_err("image prompt without capability should fail");
+
+        assert!(
+            err.to_string().contains("promptCapabilities.image"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn build_prompt_blocks_allows_local_image_without_image_capability() {
+        let blocks = build_prompt_blocks(
+            None,
+            Some(vec![serde_json::json!({
+                "type": "local_image",
+                "path": "/tmp/example.png"
+            })]),
+            None,
+            false,
+        )
+        .expect("local_image should remain compatibility-only")
+        .expect("prompt blocks");
+
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            ContentBlock::ResourceLink(link) => {
+                assert_eq!(link.uri, "/tmp/example.png");
+            }
+            other => panic!("expected resource link, got {other:?}"),
+        }
     }
 
     #[test]

@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import {
   query,
   type Query,
+  type SDKUserMessage,
   type SlashCommand,
   type ModelInfo,
   type AgentInfo,
@@ -59,6 +60,34 @@ type TurnState = {
   query?: Query;
   done?: Promise<void>;
 };
+
+type ClaudeImageMimeType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+
+type ClaudeTextPromptBlock = {
+  type: "text";
+  text: string;
+};
+
+type ClaudeImagePromptBlock = {
+  type: "image";
+  source: {
+    type: "base64";
+    media_type: ClaudeImageMimeType;
+    data: string;
+  };
+};
+
+type ClaudePromptBlock = ClaudeTextPromptBlock | ClaudeImagePromptBlock;
+
+export type ResolvedPromptInput =
+  | {
+      kind: "text";
+      prompt: string;
+    }
+  | {
+      kind: "structured";
+      messages: SDKUserMessage[];
+    };
 
 let globalSeq = 0;
 
@@ -322,34 +351,246 @@ function projectKeyForCwd(cwd: string): string {
   return resolved.replace(/[^a-zA-Z0-9]/g, "-");
 }
 
-function extractPrompt(command: CrpCommand): string | null {
-  const prompt = command.prompt;
-  if (typeof prompt === "string") return prompt;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 
-  const items = command.items;
-  if (!Array.isArray(items)) return null;
+function inferClaudeImageMimeType(rawMime: string): ClaudeImageMimeType {
+  const mime = rawMime.trim().toLowerCase();
+  switch (mime) {
+    case "image/jpeg":
+    case "image/jpg":
+      return "image/jpeg";
+    case "image/png":
+      return "image/png";
+    case "image/gif":
+      return "image/gif";
+    case "image/webp":
+      return "image/webp";
+    default:
+      throw new Error(`unsupported image mime type for Claude runtime: ${rawMime}`);
+  }
+}
 
-  const parts: string[] = [];
-  for (const item of items) {
-    if (!item) continue;
-    if (typeof item === "string") {
-      parts.push(item);
-      continue;
+function inferClaudeImageMimeTypeFromPath(filePath: string): ClaudeImageMimeType {
+  const ext = path.extname(filePath).trim().toLowerCase();
+  switch (ext) {
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".png":
+      return "image/png";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    default:
+      throw new Error(`local_image requires an explicit supported image mime type: ${filePath}`);
+  }
+}
+
+function parseDataUrl(url: string): { mimeType: string; data: string } | null {
+  if (!url.startsWith("data:")) return null;
+  const rest = url.slice("data:".length);
+  const split = rest.indexOf(",");
+  if (split === -1) return null;
+  const meta = rest.slice(0, split);
+  const data = rest.slice(split + 1);
+  if (!meta.includes("base64")) return null;
+  const [maybeMime] = meta.split(";");
+  return {
+    mimeType: maybeMime?.trim() || "application/octet-stream",
+    data,
+  };
+}
+
+function imageBlockFromBase64(data: string, mimeType: string): ClaudeImagePromptBlock {
+  return {
+    type: "image",
+    source: {
+      type: "base64",
+      media_type: inferClaudeImageMimeType(mimeType),
+      data,
+    },
+  };
+}
+
+function resolveDataRoot(env: NodeJS.ProcessEnv): string {
+  const hostRoot = typeof env.CTX_DATA_ROOT_HOST === "string" ? env.CTX_DATA_ROOT_HOST.trim() : "";
+  if (hostRoot) return hostRoot;
+  const dataRoot = typeof env.CTX_DATA_ROOT === "string" ? env.CTX_DATA_ROOT.trim() : "";
+  if (dataRoot) return dataRoot;
+  throw new Error("missing CTX_DATA_ROOT_HOST/CTX_DATA_ROOT for image attachment");
+}
+
+function resolveBlobImageBlock(blobId: string, mimeType: string, env: NodeJS.ProcessEnv): ClaudeImagePromptBlock {
+  const dataRoot = resolveDataRoot(env);
+  const blobPath = path.join(dataRoot, "blobs", blobId);
+  const bytes = fs.readFileSync(blobPath);
+  return imageBlockFromBase64(bytes.toString("base64"), mimeType);
+}
+
+function resolveLocalImageBlock(
+  rawPath: string,
+  cwd: string,
+  explicitMimeType?: string,
+): ClaudeImagePromptBlock {
+  const resolvedPath = path.isAbsolute(rawPath) ? rawPath : path.join(cwd, rawPath);
+  const bytes = fs.readFileSync(resolvedPath);
+  const mimeType = explicitMimeType
+    ? inferClaudeImageMimeType(explicitMimeType)
+    : inferClaudeImageMimeTypeFromPath(resolvedPath);
+  return {
+    type: "image",
+    source: {
+      type: "base64",
+      media_type: mimeType,
+      data: bytes.toString("base64"),
+    },
+  };
+}
+
+function skillText(item: Record<string, unknown>): string | null {
+  const name = asNonEmptyTrimmedString(item.name);
+  const content =
+    asNonEmptyTrimmedString(item.content) ?? asNonEmptyTrimmedString(item.text);
+  if (!name && !content) return null;
+  if (!name) return content;
+  if (!content) return `Skill: ${name}`;
+  return `Skill: ${name}\n\n${content}`;
+}
+
+function resolvePromptBlock(
+  item: unknown,
+  options: { env: NodeJS.ProcessEnv; cwd: string },
+): ClaudePromptBlock[] {
+  if (typeof item === "string") {
+    return [{ type: "text", text: item }];
+  }
+  if (!isRecord(item)) {
+    return [];
+  }
+
+  const type = asNonEmptyTrimmedString(item.type);
+  if (type === "text") {
+    const text = asNonEmptyTrimmedString(item.text);
+    if (!text) throw new Error("CRP text item missing text");
+    return [{ type: "text", text }];
+  }
+  if (type === "skill") {
+    const text = skillText(item);
+    if (!text) throw new Error("CRP skill item missing name/content");
+    return [{ type: "text", text }];
+  }
+  if (type === "image") {
+    const data = asNonEmptyTrimmedString(item.data);
+    const mimeType =
+      asNonEmptyTrimmedString(item.mime_type) ?? asNonEmptyTrimmedString(item.mimeType);
+    if (!data || !mimeType) {
+      throw new Error("CRP image item missing data or mime_type");
     }
-    if (typeof item === "object") {
-      const maybeText = (item as { text?: unknown }).text;
-      if (typeof maybeText === "string") {
-        parts.push(maybeText);
-        continue;
+    return [imageBlockFromBase64(data, mimeType)];
+  }
+  if (type === "image_ref") {
+    const blobId = asNonEmptyTrimmedString(item.blob_id);
+    const mimeType =
+      asNonEmptyTrimmedString(item.mime_type) ?? asNonEmptyTrimmedString(item.mimeType);
+    if (!blobId || !mimeType) {
+      throw new Error("CRP image_ref item missing blob_id or mime_type");
+    }
+    return [resolveBlobImageBlock(blobId, mimeType, options.env)];
+  }
+  if (type === "local_image") {
+    const rawPath = asNonEmptyTrimmedString(item.path);
+    if (!rawPath) {
+      throw new Error("CRP local_image item missing path");
+    }
+    const mimeType =
+      asNonEmptyTrimmedString(item.mime_type) ?? asNonEmptyTrimmedString(item.mimeType);
+    return [resolveLocalImageBlock(rawPath, options.cwd, mimeType)];
+  }
+
+  const imageUrlValue = item.image_url;
+  if (typeof imageUrlValue === "string") {
+    const parsed = parseDataUrl(imageUrlValue);
+    if (!parsed) {
+      throw new Error("image_url must be a base64 data URL for the Claude runtime");
+    }
+    return [imageBlockFromBase64(parsed.data, parsed.mimeType)];
+  }
+  if (isRecord(imageUrlValue) && typeof imageUrlValue.url === "string") {
+    const parsed = parseDataUrl(imageUrlValue.url);
+    if (!parsed) {
+      throw new Error("image_url.url must be a base64 data URL for the Claude runtime");
+    }
+    return [imageBlockFromBase64(parsed.data, parsed.mimeType)];
+  }
+
+  const maybeText = asNonEmptyTrimmedString(item.text);
+  if (maybeText) {
+    return [{ type: "text", text: maybeText }];
+  }
+  const maybeContent = asNonEmptyTrimmedString(item.content);
+  if (maybeContent) {
+    return [{ type: "text", text: maybeContent }];
+  }
+  return [];
+}
+
+function buildStructuredPromptMessages(
+  sessionId: string,
+  content: ClaudePromptBlock[],
+): SDKUserMessage[] {
+  if (content.length === 0) {
+    return [];
+  }
+  return [
+    {
+      type: "user",
+      session_id: sessionId,
+      parent_tool_use_id: null,
+      message: {
+        role: "user",
+        content,
+      } as SDKUserMessage["message"],
+    },
+  ];
+}
+
+export function resolvePromptInput(
+  command: CrpCommand,
+  options: { sessionId: string; cwd: string; env?: NodeJS.ProcessEnv },
+): ResolvedPromptInput | null {
+  const env = options.env ?? process.env;
+  const items = Array.isArray(command.items) ? command.items : null;
+  if (items) {
+    const content = items.flatMap((item) =>
+      resolvePromptBlock(item, { env, cwd: options.cwd }),
+    );
+    if (content.length > 0) {
+      const hasImage = content.some((block) => block.type === "image");
+      if (!hasImage) {
+        const prompt = content
+          .filter((block): block is ClaudeTextPromptBlock => block.type === "text")
+          .map((block) => block.text)
+          .join("\n");
+        if (prompt) {
+          return { kind: "text", prompt };
+        }
       }
-      const maybeContent = (item as { content?: unknown }).content;
-      if (typeof maybeContent === "string") {
-        parts.push(maybeContent);
-      }
+      const messages = buildStructuredPromptMessages(options.sessionId, content);
+      return messages.length > 0 ? { kind: "structured", messages } : null;
     }
   }
 
-  return parts.length ? parts.join("\n") : null;
+  const prompt = typeof command.prompt === "string" ? command.prompt : null;
+  return prompt ? { kind: "text", prompt } : null;
+}
+
+async function* streamPromptMessages(messages: SDKUserMessage[]): AsyncIterable<SDKUserMessage> {
+  for (const message of messages) {
+    yield message;
+  }
 }
 
 function parseIncomingCommand(parsed: unknown): CrpCommand | null {
@@ -561,18 +802,38 @@ async function requestCancel(turn: TurnState): Promise<void> {
   }
 }
 
-async function runTurn(session: SessionState, turn: TurnState, prompt: string): Promise<void> {
+async function runTurn(session: SessionState, turn: TurnState, command: CrpCommand): Promise<void> {
   const options = buildQueryOptions(turn);
-  const q = query({ prompt, options });
-  turn.query = q;
   let initializationResult: RuntimeInitializationResult | null = null;
   let failureMessage: string | null = null;
   let initializationEmitted = false;
+  let q: Query | null = null;
 
   try {
+    const promptInput = resolvePromptInput(command, {
+      sessionId: session.sessionId,
+      cwd: turn.cwd,
+      env: process.env,
+    });
+    if (promptInput == null) {
+      throw new Error("missing prompt");
+    }
+
+    q = query({
+      prompt:
+        promptInput.kind === "text"
+          ? promptInput.prompt
+          : streamPromptMessages(promptInput.messages),
+      options,
+    });
+    turn.query = q;
+
     initializationResult = await q.initializationResult();
   } catch (err) {
-    warn(`initializationResult failed for ${turn.turnId}: ${err}`);
+    const msg =
+      err instanceof Error ? err.message : err == null ? "unknown_error" : String(err);
+    warn(`initializationResult failed for ${turn.turnId}: ${msg}`);
+    failureMessage = msg;
   }
 
   const ensureResultRecord = () => {
@@ -622,6 +883,9 @@ async function runTurn(session: SessionState, turn: TurnState, prompt: string): 
   };
 
   try {
+    if (!q) {
+      throw new Error(failureMessage ?? "claude_code_query_not_initialized");
+    }
     while (true) {
       const { value, done } = await q.next();
       if (value != null) {
@@ -704,12 +968,6 @@ async function startTurn(command: CrpCommand, state: { session: SessionState | n
     return;
   }
 
-  const prompt = extractPrompt(command);
-  if (prompt === null) {
-    warn("session.prompt ignored: missing prompt");
-    return;
-  }
-
   const turnId =
     typeof command.turn_id === "string" && command.turn_id
       ? command.turn_id
@@ -740,7 +998,7 @@ async function startTurn(command: CrpCommand, state: { session: SessionState | n
   };
 
   session.activeTurn = turn;
-  turn.done = runTurn(session, turn, prompt)
+  turn.done = runTurn(session, turn, command)
     .catch((err) => warn(`turn ${turnId} failed: ${err}`))
     .finally(() => {
       if (session.activeTurn === turn) session.activeTurn = null;
