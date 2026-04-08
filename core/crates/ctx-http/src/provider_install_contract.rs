@@ -128,7 +128,7 @@ fn resolve_dependency_viability(
     dependency_role: ProviderInstallDependencyRoleKind,
     codes: DependencyResolutionCodes,
 ) -> Result<ProviderInstallDependency, ProviderInstallViabilityIssue> {
-    match installer::resolve_runtime_provider_command_for_target(
+    match installer::resolve_runtime_provider_command_for_target_repairable_managed(
         cfg,
         dependency_id,
         Some(dependency_target),
@@ -520,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_bridge_runtime_is_reported() {
+    fn invalid_managed_bridge_runtime_stays_repairable() {
         let root = tempfile::tempdir().expect("tempdir");
         let mut cfg = AgentServerConfigFile::default();
         cfg.managed_provider_targets.insert(
@@ -535,6 +535,41 @@ mod tests {
                 },
             )]),
         );
+        let contract = resolve_provider_install_contract(
+            root.path(),
+            &cfg,
+            &matrix_with_entries(vec![
+                archive_entry("kimi", ProviderMatrixEntryKind::Harness),
+                archive_entry("acp-crp-bridge", ProviderMatrixEntryKind::Dependency),
+            ]),
+            "kimi",
+            InstallTarget::Container,
+        )
+        .expect("stale managed bridge should stay repairable");
+        assert_eq!(
+            contract.dependencies_for_role(ProviderInstallDependencyRoleKind::Prerequisite),
+            vec![ProviderInstallDependency {
+                provider_id: "acp-crp-bridge".to_string(),
+                role: ProviderInstallDependencyRoleKind::Prerequisite,
+                target: InstallTarget::Container,
+                satisfied: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn invalid_user_override_bridge_runtime_is_reported() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let mut cfg = AgentServerConfigFile::default();
+        cfg.providers.insert(
+            "acp-crp-bridge".to_string(),
+            AgentServerCommand {
+                command: "relative-bridge".to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: None,
+            },
+        );
         let issue = provider_install_viability_issue(
             root.path(),
             &cfg,
@@ -545,7 +580,7 @@ mod tests {
             "kimi",
             InstallTarget::Container,
         )
-        .expect("invalid bridge should be reported");
+        .expect("invalid user bridge override should still be reported");
         assert_eq!(issue.code, "acp_bridge_invalid");
         assert!(issue.message.contains("relative-bridge"));
     }

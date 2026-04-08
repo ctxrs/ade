@@ -824,6 +824,44 @@ describe("HarnessAuthenticationSection install row rendering", () => {
     expect(screen.queryByRole("button", { name: "Update" })).not.toBeInTheDocument();
   });
 
+  it("shows install action for harnesses blocked on repairable dependencies", () => {
+    const blockedProvider = makeProviderStatus("qwen", {
+      installed: false,
+      health: "error",
+      details: {
+        install_supported: "true",
+      },
+      usability: {
+        usable: false,
+        status: "blocked",
+        reason_code: "missing_dependency",
+        reason: "provider is not ready until required dependencies are installed: acp-crp-bridge",
+        blocking_provider_ids: ["acp-crp-bridge"],
+        recommended_action: "resolve_dependency",
+      },
+    });
+
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({
+        harnessAuthModal: null,
+        providers: [blockedProvider],
+        installs: {},
+        installBusy: null,
+      }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+      />,
+    );
+
+    const qwenRow = screen.getByText("Qwen Code").closest(".settings-harness-row");
+    expect(qwenRow).not.toBeNull();
+    expect(within(qwenRow as HTMLElement).getByRole("button", { name: "Install" })).toBeEnabled();
+  });
+
   it("does not render dependency-only provider ids in harness authentication", () => {
     const installedProvider = makeProviderStatus("codex", {
       details: {

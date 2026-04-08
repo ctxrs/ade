@@ -1047,7 +1047,7 @@ async fn acp_host_install_surfaces_bridge_as_installable_prerequisite() {
 }
 
 #[tokio::test]
-async fn acp_container_install_is_blocked_before_start_when_bridge_runtime_is_invalid() {
+async fn acp_container_install_keeps_invalid_bridge_runtime_repairable_before_start() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
@@ -1091,85 +1091,40 @@ async fn acp_container_install_is_blocked_before_start_when_bridge_runtime_is_in
         provider_body
             .pointer("/details/install_supported")
             .and_then(serde_json::Value::as_str),
-        Some("false"),
-        "invalid bridge config must suppress container ACP installs: {provider_body:#?}"
+        Some("true"),
+        "stale invalid managed bridge runtime should remain repairable for ACP installs: {provider_body:#?}"
     );
     assert_eq!(
+        provider_body
+            .pointer("/usability/status")
+            .and_then(serde_json::Value::as_str),
+        Some("blocked"),
+        "repairable bridge prerequisites should keep ACP installs actionable instead of unsupported: {provider_body:#?}"
+    );
+    assert_eq!(
+        provider_body
+            .pointer("/usability/reason_code")
+            .and_then(serde_json::Value::as_str),
+        Some("missing_dependency"),
+        "repairable bridge prerequisites should surface the canonical missing-dependency reason: {provider_body:#?}"
+    );
+    assert_eq!(
+        provider_body
+            .pointer("/details/pending_dependency_ids")
+            .and_then(serde_json::Value::as_str),
+        Some("acp-crp-bridge"),
+        "repairable bridge prerequisites should remain listed as pending dependencies: {provider_body:#?}"
+    );
+    assert!(
         provider_body
             .pointer("/details/install_blocked_code")
-            .and_then(serde_json::Value::as_str),
-        Some("acp_bridge_invalid"),
-        "expected explicit install blocker code: {provider_body:#?}"
-    );
-    assert_eq!(
-        provider_body
-            .pointer("/details/error_code")
-            .and_then(serde_json::Value::as_str),
-        Some("acp_bridge_invalid"),
-        "provider status should preserve invalid bridge classification: {provider_body:#?}"
-    );
-    assert!(
-        provider_body
-            .get("diagnostics")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|diagnostics| diagnostics.iter().any(|value| {
-                value
-                    .as_str()
-                    .is_some_and(|text| text.contains("invalid runtime command for acp-crp-bridge"))
-            })),
-        "provider diagnostics should describe the invalid bridge runtime: {provider_body:#?}"
-    );
-
-    let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
-        &app,
-        axum::http::Method::POST,
-        "/api/providers/kimi/install?target=container",
-        None,
-    )
-    .await;
-    assert_eq!(
-        install_status,
-        StatusCode::BAD_REQUEST,
-        "install should fail before start when bridge is invalid: {install_body:#?}"
-    );
-    assert_eq!(
-        install_body.get("code").and_then(serde_json::Value::as_str),
-        Some("acp_bridge_invalid"),
-        "expected explicit install failure code: {install_body:#?}"
-    );
-    assert!(
-        install_body
-            .get("error")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|value| {
-                value.contains("Required prerequisite dependency 'acp-crp-bridge'")
-                    && value.contains("target 'container'")
-            }),
-        "expected explicit bridge contract error: {install_body:#?}"
-    );
-    assert!(
-        state
-            .find_running_install("kimi", Some(ctx_http::installs::InstallTarget::Container))
-            .await
             .is_none(),
-        "no install should start when bridge contract is invalid"
-    );
-
-    let cfg = load_agent_server_config(data_dir.path())
-        .await
-        .expect("load agent server config");
-    assert!(
-        !cfg.managed_provider_targets.contains_key("kimi"),
-        "failed preflight must not write partial provider install state"
-    );
-    assert!(
-        !cfg.managed_install_targets.contains_key("kimi"),
-        "failed preflight must not write partial install metadata"
+        "repairable bridge prerequisites must not be surfaced as blocked installs: {provider_body:#?}"
     );
 }
 
 #[tokio::test]
-async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_and_keeps_acp_dependents_in_batch(
+async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_and_keeps_acp_dependents_installable(
 ) {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
@@ -1219,22 +1174,30 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_and_
     assert_eq!(
         install_ids.len(),
         3,
-        "bulk install should keep the bridge and ACP dependents in the same batch: {install_body:#?}"
+        "bulk install should return the bridge repair plus the selectable ACP harness installs: {install_body:#?}"
     );
     assert!(
         install_ids.contains_key("acp-crp-bridge"),
-        "bridge repair must stay in the batch: {install_body:#?}"
+        "bridge repair should stay visible to bulk install callers: {install_body:#?}"
     );
     assert!(
         install_ids.contains_key("kimi"),
-        "kimi should be deferred behind the bridge repair instead of skipped: {install_body:#?}"
+        "kimi should remain installable through the repaired dependency path: {install_body:#?}"
     );
     assert!(
         install_ids.contains_key("qwen"),
-        "qwen should be deferred behind the bridge repair instead of skipped: {install_body:#?}"
+        "qwen should remain installable through the repaired dependency path: {install_body:#?}"
     );
+    let bridge_install_id = *install_ids
+        .get("acp-crp-bridge")
+        .expect("missing bridge install id");
 
-    for provider_id in ["acp-crp-bridge", "kimi", "qwen"] {
+    let bridge_install_info = wait_for_install_completion(&state, bridge_install_id).await;
+    assert!(
+        matches!(bridge_install_info.state, InstallStateKind::Succeeded),
+        "bridge repair should succeed during bulk install: {bridge_install_info:#?}"
+    );
+    for provider_id in ["kimi", "qwen"] {
         let install_info = wait_for_install_completion(
             &state,
             *install_ids
@@ -1352,7 +1315,7 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when
     assert_eq!(
         install_ids.len(),
         3,
-        "install_all should still return the bridge repair plus both ACP dependents: {install_body:#?}"
+        "install_all should still return the bridge repair plus both ACP harness installs: {install_body:#?}"
     );
     let bridge_install_id = *install_ids
         .get("acp-crp-bridge")
@@ -1360,33 +1323,13 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when
     let kimi_install_id = *install_ids.get("kimi").expect("missing kimi install id");
     let qwen_install_id = *install_ids.get("qwen").expect("missing qwen install id");
 
-    let (kimi_polled, qwen_polled) = tokio::join!(
-        wait_for_prerequisite_visibility(&state, &app, kimi_install_id, bridge_install_id),
-        wait_for_prerequisite_visibility(&state, &app, qwen_install_id, bridge_install_id)
+    let bridge_install_info = wait_for_install_completion(&state, bridge_install_id).await;
+    assert!(
+        matches!(bridge_install_info.state, InstallStateKind::Succeeded),
+        "bridge repair should succeed after being started implicitly by the first ACP install: {bridge_install_info:#?}"
     );
-    for (provider_id, polled_info) in [("kimi", kimi_polled), ("qwen", qwen_polled)] {
-        assert!(
-            matches!(polled_info.state, InstallStateKind::Running),
-            "{provider_id} should remain queued behind the shared bridge repair while the prerequisite is active: {polled_info:#?}"
-        );
-        assert_eq!(
-            polled_info
-                .last_event
-                .as_ref()
-                .map(|event| event.stage.as_str()),
-            Some("start"),
-            "{provider_id} should expose bounded prerequisite progress while waiting on the bridge repair: {polled_info:#?}"
-        );
-    }
-
-    for provider_id in ["acp-crp-bridge", "kimi", "qwen"] {
-        let install_info = wait_for_install_completion(
-            &state,
-            *install_ids
-                .get(provider_id)
-                .expect("missing install id from bulk response"),
-        )
-        .await;
+    for (provider_id, install_id) in [("kimi", kimi_install_id), ("qwen", qwen_install_id)] {
+        let install_info = wait_for_install_completion(&state, install_id).await;
         assert!(
             matches!(install_info.state, InstallStateKind::Succeeded),
             "{provider_id} should succeed after the repaired bulk install finishes: {install_info:#?}"
@@ -1408,19 +1351,6 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when
         "deferred ACP installs should reuse one tracked bridge repair install even when the bridge is listed after them"
     );
     drop(installs);
-
-    for (provider_id, install_id) in [("kimi", kimi_install_id), ("qwen", qwen_install_id)] {
-        let events = get_install_events_api(&app, install_id).await;
-        assert!(
-            events.iter().any(|event| {
-                event.stage == "start"
-                    && event.message.contains(&format!(
-                        "Prerequisite acp-crp-bridge (install {bridge_install_id}"
-                    ))
-            }),
-            "{provider_id} should retain the shared bridge prerequisite in its event history: {events:#?}"
-        );
-    }
 }
 
 #[tokio::test]
@@ -1566,6 +1496,81 @@ async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps
             .pointer("/details/managed_checksum_mismatch")
             .is_none(),
         "successful archive installs must not report checksum drift: {provider_body:#?}"
+    );
+}
+
+#[tokio::test]
+async fn acp_container_install_repairs_invalid_bridge_runtime_and_keeps_registry_entries() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let fixture_dir = data_dir.path().join("fixtures");
+    std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
+    let bridge_fixture = fixture_dir.join("acp-crp-bridge");
+    let provider_fixture = fixture_dir.join("kimi-acp");
+    write_executable(&bridge_fixture, "#!/bin/sh\nexit 0\n");
+    write_executable(&provider_fixture, "#!/bin/sh\nsleep 0.5\nexit 0\n");
+    save_matrix_fixture(
+        data_dir.path(),
+        &provider_fixture_matrix(file_url(&bridge_fixture), file_url(&provider_fixture)),
+    )
+    .await;
+    save_invalid_container_bridge_runtime(data_dir.path()).await;
+
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        "/api/providers/kimi/install?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(
+        install_status,
+        StatusCode::OK,
+        "single-provider install should repair the invalid managed bridge runtime: {install_body:#?}"
+    );
+    let install_id = install_body
+        .get("install_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|raw| raw.parse::<InstallId>().ok())
+        .expect("install id");
+
+    let install_info = wait_for_install_completion(&state, install_id).await;
+    assert!(
+        matches!(install_info.state, InstallStateKind::Succeeded),
+        "kimi install should succeed after repairing the bridge prerequisite: {install_info:#?}"
+    );
+
+    let cfg = load_agent_server_config(data_dir.path())
+        .await
+        .expect("load agent server config");
+    let bridge_command = cfg
+        .managed_provider_targets
+        .get("acp-crp-bridge")
+        .and_then(|targets| targets.get("container"))
+        .expect("bridge target-scoped runtime command");
+    assert_ne!(
+        bridge_command.command, "relative-bridge",
+        "bridge install should replace the stale invalid managed command"
+    );
+    assert!(
+        Path::new(&bridge_command.command).exists(),
+        "bridge install should rewrite the managed command to an on-disk binary: {}",
+        bridge_command.command
+    );
+    assert!(
+        cfg.managed_provider_targets
+            .get("kimi")
+            .and_then(|targets| targets.get("container"))
+            .is_some(),
+        "provider target-scoped runtime command should remain registered after bridge repair"
     );
 }
 

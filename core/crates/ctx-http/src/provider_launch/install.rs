@@ -170,6 +170,10 @@ pub(crate) async fn start_all_provider_installs(
             continue;
         }
         let id = entry.id.as_str();
+        if should_defer_acp_provider_until_stale_bridge_repair(&managed, &matrix, id, target) {
+            deferred_acp_repairs.push(id.to_string());
+            continue;
+        }
         let issue = provider_install_contract::provider_install_viability_issue(
             &state.core.data_root,
             &managed,
@@ -372,6 +376,34 @@ fn should_defer_acp_provider_until_bridge_repair(
     issue.code == "acp_bridge_invalid"
         && crate::daemon::is_acp_provider_id(provider_id)
         && installer::is_supported_managed_provider_for_target(matrix, "acp-crp-bridge", target)
+}
+
+fn should_defer_acp_provider_until_stale_bridge_repair(
+    managed: &installer::AgentServerConfigFile,
+    matrix: &crate::provider_matrix::ProviderMatrix,
+    provider_id: &str,
+    target: InstallTarget,
+) -> bool {
+    if !crate::daemon::is_acp_provider_id(provider_id)
+        || !installer::is_supported_managed_provider_for_target(matrix, "acp-crp-bridge", target)
+    {
+        return false;
+    }
+    match installer::resolve_runtime_provider_command_for_target(
+        managed,
+        "acp-crp-bridge",
+        Some(target),
+    ) {
+        Ok(_) => false,
+        Err(_) => matches!(
+            installer::resolve_runtime_provider_command_for_target_repairable_managed(
+                managed,
+                "acp-crp-bridge",
+                Some(target),
+            ),
+            Ok(None)
+        ),
+    }
 }
 
 async fn queue_deferred_bulk_provider_install(

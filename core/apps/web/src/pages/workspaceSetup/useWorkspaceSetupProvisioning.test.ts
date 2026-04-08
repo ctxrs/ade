@@ -102,6 +102,15 @@ const blockedInstallUsability = {
   recommended_action: "install",
 } as const;
 
+const repairableDependencyUsability = {
+  usable: false,
+  status: "blocked",
+  reason_code: "missing_dependency",
+  reason: "provider is not ready until required dependencies are installed: acp-crp-bridge",
+  blocking_provider_ids: ["acp-crp-bridge"],
+  recommended_action: "resolve_dependency",
+} as const;
+
 describe("useWorkspaceSetupProvisioning", () => {
   let providerProgressSnapshot: ProviderInstallProgressSnapshot;
   let providerProgressListeners: Set<(snapshot: ProviderInstallProgressSnapshot) => void>;
@@ -1042,5 +1051,95 @@ describe("useWorkspaceSetupProvisioning", () => {
         target: "container",
       }),
     );
+  });
+
+  it("keeps repairable dependency-blocked harnesses visible and startable in workspace setup", async () => {
+    vi.mocked(listProviderAuthImportCandidates)
+      .mockResolvedValue({ candidates: [] } as never);
+    vi.mocked(listProviders)
+      .mockResolvedValue([
+        {
+          provider_id: "qwen",
+          installed: false,
+          health: "error",
+          diagnostics: [
+            "Required prerequisite dependency 'acp-crp-bridge' is not viable for target 'container'",
+          ],
+          usability: repairableDependencyUsability,
+          details: {
+            install_supported: "true",
+            install_target: "container",
+          },
+        },
+      ] as never);
+    vi.mocked(getSettings)
+      .mockResolvedValue(configuredTitlingSettings as never);
+    vi.mocked(installProvider)
+      .mockResolvedValue({
+        install_id: "install-qwen",
+        provider_id: "qwen",
+        target: "container",
+      } as never);
+
+    const currentStepKeyRef = { current: "harness-downloads" as const };
+    const setRoutePlan = vi.fn();
+    const setRoutePlanningBusy = vi.fn();
+    const invalidateRoutePlan = vi.fn();
+    const connectDaemonForImport = vi.fn(async () => {});
+
+    let latest: ReturnType<typeof useWorkspaceSetupProvisioning> | null = null;
+
+    const Harness = () => {
+      latest = useWorkspaceSetupProvisioning({
+        currentStepKeyRef,
+        selections: {
+          location: "local",
+          container: "sandbox",
+        },
+        routePlan: {
+          targetKey: "local-route",
+          containerSelection: "sandbox",
+          includeHarnessDownloads: true,
+          includeAuthImport: false,
+          includeTitling: false,
+        },
+        setRoutePlan,
+        setRoutePlanningBusy,
+        invalidateRoutePlan,
+        desktopApp: true,
+        effectiveTarget: deriveWorkspaceSetupEffectiveTarget("local", {
+          remoteHostInput: "",
+          remotePortInput: "4399",
+          remoteDataDirInput: "",
+        }),
+        remoteStatus: "connected",
+        remoteStatusRef: { current: "connected" },
+        connectDaemonForImport,
+      });
+      return null;
+    };
+
+    render(createElement(Harness));
+
+    await act(async () => {
+      await latest!.ensureRoutePlanForSelection("sandbox");
+    });
+
+    expect(latest!.harnessInstallCandidates).toEqual([
+      expect.objectContaining({
+        providerId: "qwen",
+        installSupported: true,
+      }),
+    ]);
+
+    await act(async () => {
+      latest!.setHarnessInstallSelected({ qwen: true });
+    });
+
+    await act(async () => {
+      await latest!.advanceFromHarnessDownloadsStep();
+    });
+
+    expect(installProvider).toHaveBeenCalledWith("qwen", "container");
   });
 });

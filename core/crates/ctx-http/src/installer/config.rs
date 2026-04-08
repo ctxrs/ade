@@ -428,8 +428,23 @@ pub fn resolve_runtime_provider_command_for_target(
     else {
         return Ok(None);
     };
-
     build_provider_runtime_command(provider_id, &candidate, source.as_str(), source).map(Some)
+}
+
+pub fn resolve_runtime_provider_command_for_target_repairable_managed(
+    cfg: &AgentServerConfigFile,
+    provider_id: &str,
+    requested_target: Option<InstallTarget>,
+) -> Result<Option<ProviderRuntimeCommand>> {
+    let Some((candidate, source)) = runtime_command_candidate(cfg, provider_id, requested_target)?
+    else {
+        return Ok(None);
+    };
+    match build_provider_runtime_command(provider_id, &candidate, source.as_str(), source) {
+        Ok(command) => Ok(Some(command)),
+        Err(_err) if matches!(source, ProviderRuntimeCommandSource::ManagedInstall) => Ok(None),
+        Err(err) => Err(err),
+    }
 }
 
 pub fn resolve_runtime_provider_command(

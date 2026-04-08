@@ -198,6 +198,79 @@ fn migration_moves_legacy_managed_provider_entries_into_target_buckets() {
 }
 
 #[test]
+fn resolve_runtime_provider_command_keeps_invalid_managed_commands_invalid_by_default() {
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.managed_provider_targets.insert(
+        "codex".to_string(),
+        HashMap::from([(
+            "container".to_string(),
+            AgentServerCommand {
+                command: "relative-codex".to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: Some(ManagedInstallMetadata {
+                    package: Some("@openai/codex".to_string()),
+                    version: Some("1.0.0".to_string()),
+                    archive_sha256: None,
+                    target: Some(InstallTarget::Container),
+                    install_dir_rel: None,
+                    bin_dir_rel: None,
+                    last_success_at: None,
+                    last_error: None,
+                }),
+            },
+        )]),
+    );
+
+    let err =
+        resolve_runtime_provider_command_for_target(&cfg, "codex", Some(InstallTarget::Container))
+            .expect_err(
+                "invalid managed runtime command should remain invalid for general resolution",
+            );
+    assert!(err
+        .to_string()
+        .contains("runtime_command_not_absolute: provider=codex source=managed_install"));
+}
+
+#[test]
+fn resolve_runtime_provider_command_repairable_managed_treats_invalid_managed_commands_as_missing()
+{
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.managed_provider_targets.insert(
+        "codex".to_string(),
+        HashMap::from([(
+            "container".to_string(),
+            AgentServerCommand {
+                command: "relative-codex".to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: Some(ManagedInstallMetadata {
+                    package: Some("@openai/codex".to_string()),
+                    version: Some("1.0.0".to_string()),
+                    archive_sha256: None,
+                    target: Some(InstallTarget::Container),
+                    install_dir_rel: None,
+                    bin_dir_rel: None,
+                    last_success_at: None,
+                    last_error: None,
+                }),
+            },
+        )]),
+    );
+
+    let resolved = resolve_runtime_provider_command_for_target_repairable_managed(
+        &cfg,
+        "codex",
+        Some(InstallTarget::Container),
+    )
+    .expect("resolve repairable managed runtime command");
+    assert!(
+        resolved.is_none(),
+        "repairable managed resolution should degrade stale managed commands to missing"
+    );
+}
+
+#[test]
 fn migration_preserves_runtime_dependency_entries_and_infers_target_from_id() {
     let mut cfg = AgentServerConfigFile::default();
     cfg.managed_installs.insert(
