@@ -15,7 +15,13 @@ test("workbench active snapshot stream keeps network lean", async ({ page }) => 
   execSync("git commit -m init", { cwd: repo });
 
   const workspaceName = `ws-${Date.now()}`;
+  const startedRequests: { url: string; method: string }[] = [];
   const requests: { url: string; method: string }[] = [];
+  page.on("request", (req) => {
+    const url = req.url();
+    if (!url.includes("/api/")) return;
+    startedRequests.push({ url, method: req.method() });
+  });
   page.on("requestfinished", (req) => {
     const url = req.url();
     if (!url.includes("/api/")) return;
@@ -65,7 +71,7 @@ test("workbench active snapshot stream keeps network lean", async ({ page }) => 
   expect(startupHarnessConfig.length).toBe(0);
 
   const updatesRequests = () =>
-    apiRequests().filter((r) => {
+    startedRequests.filter((r) => {
       if (r.method !== "GET") return false;
       const pathname = new URL(r.url).pathname;
       return pathname.startsWith("/api/updates/");

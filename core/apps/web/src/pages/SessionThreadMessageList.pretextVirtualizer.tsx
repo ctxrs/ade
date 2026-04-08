@@ -568,7 +568,10 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
       viewportHeight: currentSnapshot.viewportHeight,
     });
     const shouldFollowBottom = shouldFollowBottomOnItemsUpdate(
-      followBottomRef.current,
+      {
+        followBottom: followBottomRef.current,
+        atBottom: lastAtBottomRef.current === true,
+      },
       bottomOffsetPx,
       BOTTOM_THRESHOLD_PX,
     );
@@ -591,17 +594,23 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     if (!scroller) return;
     let lastWidth = scroller.clientWidth;
     let lastHeight = scroller.clientHeight;
-    const observer = new ResizeObserver(() => {
+    let resizeFrameId: number | null = null;
+    const processResize = () => {
+      resizeFrameId = null;
       const nextWidth = scroller.clientWidth;
       const nextHeight = scroller.clientHeight;
       const sizeChanged = nextWidth !== lastWidth || nextHeight !== lastHeight;
+      if (!sizeChanged) return;
       lastWidth = nextWidth;
       lastHeight = nextHeight;
       const previousSnapshot = snapshotRef.current;
       if (!previousSnapshot) return;
       const shouldRestoreBottom = shouldRestoreBottomOnViewportResize(
         sizeChanged,
-        followBottomRef.current,
+        {
+          followBottom: followBottomRef.current,
+          atBottom: lastAtBottomRef.current === true,
+        },
       );
       if (sizeChanged) {
         const resizedSnapshot = core.syncViewport({
@@ -625,9 +634,20 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
         return;
       }
       syncFromDom();
+    };
+    const observer = new ResizeObserver(() => {
+      if (resizeFrameId != null) {
+        cancelAnimationFrame(resizeFrameId);
+      }
+      resizeFrameId = requestAnimationFrame(processResize);
     });
     observer.observe(scroller);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (resizeFrameId != null) {
+        cancelAnimationFrame(resizeFrameId);
+      }
+    };
   }, [applySnapshotToDom, core, syncFromDom]);
 
   const handleScroll = useCallback(() => {

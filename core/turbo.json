@@ -1,9 +1,11 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "globalPassThroughEnv": [
+    "CARGO_INCREMENTAL",
     "CARGO_HOME",
     "CARGO_TARGET_DIR",
     "CTX_VERIFY_CARGO_TARGET_DIR",
+    "RUST_TEST_THREADS",
     "RUSTUP_HOME"
   ],
   "globalDependencies": [

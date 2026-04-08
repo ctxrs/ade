@@ -23,6 +23,7 @@ const restoreEnv = () => {
   delete process.env.CTX_BUNDLE_DIR;
   delete process.env.CTX_WEB_DIST;
   delete process.env.CTX_E2E_ALLOW_CONFIGURED_BUNDLE_DIR;
+  delete process.env.CARGO_INCREMENTAL;
 };
 
 const getReporterTuples = (reporter: unknown): ReporterTuple[] => {
@@ -88,6 +89,7 @@ describe("createCtxPlaywrightConfig", () => {
     const webServer = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
     expect(webServer?.env?.CTX_E2E_CARGO_TARGET_DIR).toBe(resolvePlaywrightCargoTargetDir(process.env));
     expect(webServer?.env?.CARGO_TARGET_DIR).toBe(resolvePlaywrightCargoTargetDir(process.env));
+    expect(webServer?.env?.CARGO_INCREMENTAL).toBe("0");
   });
 
   it("defaults e2e tmp and data dirs under separate volatile tmp roots", async () => {
@@ -114,7 +116,7 @@ describe("createCtxPlaywrightConfig", () => {
     const config = await createCtxPlaywrightConfig("all");
     const webServer = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
 
-    expect(webServer?.env?.CTX_WEB_DIST).toBe("");
+    expect(webServer?.env?.CTX_WEB_DIST).toBeUndefined();
     expect(webServer?.env?.CTX_BUNDLE_DIR).not.toBe("/Applications/ctx.app/Contents/Resources/bundles");
   });
 

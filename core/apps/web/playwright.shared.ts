@@ -163,6 +163,7 @@ export async function createCtxPlaywrightConfig(
 
   const docsMirrorBin = path.resolve(__dirname, "e2e/fixtures/ctx-docs-mirror-fixture.sh");
   const cargoTargetDir = resolvePlaywrightCargoTargetDir(process.env);
+  const cargoIncremental = String(process.env.CARGO_INCREMENTAL ?? "").trim() || "0";
 
   const outputDir = path.resolve(__dirname, `e2e/test-results/${profileSlug}`);
   const reportDir = path.resolve(__dirname, `e2e/playwright-report/${profileSlug}`);
@@ -194,6 +195,7 @@ export async function createCtxPlaywrightConfig(
     CTX_DOCS_MIRROR_BIN: docsMirrorBin,
     CTX_E2E_CARGO_TARGET_DIR: cargoTargetDir,
     CARGO_TARGET_DIR: cargoTargetDir,
+    CARGO_INCREMENTAL: cargoIncremental,
     TMPDIR: tmpDir,
     TMP: tmpDir,
     TEMP: tmpDir,

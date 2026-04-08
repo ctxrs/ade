@@ -7,6 +7,11 @@ export type ResolveFollowBottomAfterScrollParams = {
   programmaticScroll: boolean;
 };
 
+type BottomAttachmentParams = {
+  followBottom: boolean;
+  atBottom: boolean;
+};
+
 export function computeBottomOffsetPx(params: {
   totalHeight: number;
   scrollTop: number;
@@ -36,17 +41,21 @@ export function resolveFollowBottomAfterScroll({
   return followBottom;
 }
 
+function isBottomAttached({ followBottom, atBottom }: BottomAttachmentParams): boolean {
+  return followBottom || atBottom;
+}
+
 export function shouldRestoreBottomOnViewportResize(
   sizeChanged: boolean,
-  followBottom: boolean,
+  params: BottomAttachmentParams,
 ): boolean {
-  return sizeChanged && followBottom;
+  return sizeChanged && isBottomAttached(params);
 }
 
 export function shouldFollowBottomOnItemsUpdate(
-  followBottom: boolean,
+  params: BottomAttachmentParams,
   bottomOffsetPx: number,
   thresholdPx: number,
 ): boolean {
-  return followBottom && bottomOffsetPx <= thresholdPx;
+  return isBottomAttached(params) && bottomOffsetPx <= thresholdPx;
 }

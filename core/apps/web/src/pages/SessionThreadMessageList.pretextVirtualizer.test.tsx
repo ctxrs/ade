@@ -88,6 +88,17 @@ describe("SessionThreadPretextVirtualizerList", () => {
   beforeEach(() => {
     resizeObserverInstances.length = 0;
     resetSessionPretextRuntimeCache();
+    Object.defineProperty(globalThis, "requestAnimationFrame", {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      },
+    });
+    Object.defineProperty(globalThis, "cancelAnimationFrame", {
+      configurable: true,
+      value: () => undefined,
+    });
     Object.defineProperty(globalThis, "ResizeObserver", {
       configurable: true,
       value: ResizeObserverStub,

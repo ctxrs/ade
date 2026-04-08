@@ -10,7 +10,9 @@ test("turbo forwards external Rust cache env vars to child tasks", () => {
   const passThroughEnv = new Set(turboConfig.globalPassThroughEnv ?? []);
 
   assert.equal(passThroughEnv.has("CARGO_HOME"), true);
+  assert.equal(passThroughEnv.has("CARGO_INCREMENTAL"), true);
   assert.equal(passThroughEnv.has("CARGO_TARGET_DIR"), true);
   assert.equal(passThroughEnv.has("CTX_VERIFY_CARGO_TARGET_DIR"), true);
+  assert.equal(passThroughEnv.has("RUST_TEST_THREADS"), true);
   assert.equal(passThroughEnv.has("RUSTUP_HOME"), true);
 });

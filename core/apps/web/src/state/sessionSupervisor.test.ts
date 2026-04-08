@@ -2988,7 +2988,7 @@ describe("SessionSupervisor", () => {
         sessionId,
         data: {
           session: mkSession(sessionId),
-          freshness: "replica",
+          freshness: "authoritative",
           turns: [runningTurn],
           messages: [userMessage],
           events: [] as SessionEvent[],

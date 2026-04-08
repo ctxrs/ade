@@ -59,7 +59,26 @@ describe("pretext follow-bottom helpers", () => {
   });
 
   it("restores bottom on resize only while follow-bottom is still attached", () => {
-    expect(shouldRestoreBottomOnViewportResize(true, false)).toBe(false);
-    expect(shouldRestoreBottomOnViewportResize(true, true)).toBe(true);
+    expect(shouldRestoreBottomOnViewportResize(true, { followBottom: false, atBottom: false })).toBe(false);
+    expect(shouldRestoreBottomOnViewportResize(true, { followBottom: true, atBottom: false })).toBe(true);
+  });
+
+  it("treats an observed at-bottom state as attached even if the follow-bottom flag drifted false", () => {
+    expect(
+      shouldRestoreBottomOnViewportResize(true, {
+        followBottom: false,
+        atBottom: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldFollowBottomOnItemsUpdate(
+        {
+          followBottom: false,
+          atBottom: true,
+        },
+        8,
+        16,
+      ),
+    ).toBe(true);
   });
 });
