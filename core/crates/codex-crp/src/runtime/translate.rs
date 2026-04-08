@@ -23,10 +23,25 @@ pub(super) fn translate_notification(
             if payload.thread_id != session_state.thread_id {
                 return Ok(Vec::new());
             }
+            let turn_id = session_state
+                .turn_aliases
+                .ensure_crp_turn_id(payload.turn_id.as_str());
+            let context_window = canonical_context_window_from_thread_usage(&payload.token_usage);
             session_state
                 .turn_aliases
                 .note_token_usage(payload.turn_id.as_str(), payload.token_usage);
-            Ok(Vec::new())
+            if let Some(context_window) = context_window {
+                Ok(vec![(
+                    CrpChannel::Control,
+                    CrpEvent::TurnContextWindowUpdated {
+                        session_id: session_state.tracker.session_id.clone(),
+                        turn_id,
+                        context_window,
+                    },
+                )])
+            } else {
+                Ok(Vec::new())
+            }
         }
         "turn/started" => {
             let payload: TurnStartedNotification = serde_json::from_value(params)?;

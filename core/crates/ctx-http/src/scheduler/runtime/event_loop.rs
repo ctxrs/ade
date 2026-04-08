@@ -174,6 +174,7 @@ async fn fail_turn(
             &[
                 SessionEventType::AssistantChunk,
                 SessionEventType::ThoughtChunk,
+                SessionEventType::ContextWindowUpdate,
             ],
         )
         .await;
@@ -768,7 +769,10 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                     .delete_session_events_for_turn_types(
                         session_id,
                         turn_id,
-                        &[SessionEventType::ThoughtChunk],
+                        &[
+                            SessionEventType::ThoughtChunk,
+                            SessionEventType::ContextWindowUpdate,
+                        ],
                     )
                     .await;
                 let _ = emit_event(
@@ -901,6 +905,7 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                         &[
                             SessionEventType::AssistantChunk,
                             SessionEventType::ThoughtChunk,
+                            SessionEventType::ContextWindowUpdate,
                         ],
                     )
                     .await;

@@ -40,7 +40,9 @@ pub(super) enum HeadBatchPushError {
 fn is_partial_event(event: &SessionEvent) -> bool {
     matches!(
         event.event_type,
-        SessionEventType::AssistantChunk | SessionEventType::ThoughtChunk
+        SessionEventType::AssistantChunk
+            | SessionEventType::ThoughtChunk
+            | SessionEventType::ContextWindowUpdate
     )
 }
 

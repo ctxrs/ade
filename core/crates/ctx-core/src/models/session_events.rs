@@ -8,6 +8,7 @@ pub enum SessionEventType {
     InputQueued,
     TurnQueued,
     TurnStarted,
+    ContextWindowUpdate,
     TurnFinished,
     AuthRequired,
     Notice,

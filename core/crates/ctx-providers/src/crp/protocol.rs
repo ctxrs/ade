@@ -298,6 +298,12 @@ pub(super) enum CrpEvent {
         #[serde(default)]
         item_id: Option<String>,
     },
+    #[serde(rename = "turn.context_window.updated")]
+    TurnContextWindowUpdated {
+        session_id: String,
+        turn_id: String,
+        context_window: Value,
+    },
     #[serde(rename = "tool.started")]
     ToolStarted {
         session_id: String,

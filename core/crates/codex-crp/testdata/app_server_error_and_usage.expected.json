@@ -3,6 +3,22 @@
     {
       "channel": "control",
       "event": {
+        "context_window": {
+          "context_tokens_estimate": 9000,
+          "context_window_tokens": 10000,
+          "remaining_fraction": 0.1,
+          "remaining_tokens_estimate": 1000,
+          "total_input_tokens": 8000,
+          "total_output_tokens": 1000
+        },
+        "session_id": "fixture-session",
+        "turn_id": "turn_crp_3",
+        "type": "turn.context_window.updated"
+      }
+    },
+    {
+      "channel": "control",
+      "event": {
         "error": {
           "details": "{\"type\":\"UsageLimitExceeded\"}\nretry later",
           "kind": "app_server_error",

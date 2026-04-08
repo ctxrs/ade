@@ -314,6 +314,19 @@ fn should_refresh_turn_from_store(event_type: &SessionEventType) -> bool {
     )
 }
 
+async fn turn_from_cached_head_for_read(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+    turn_id: ctx_core::ids::TurnId,
+) -> Option<SessionTurn> {
+    state
+        .workspaces
+        .workspace_active_snapshot
+        .get_cached_session_head_for_read(session_id)
+        .await
+        .and_then(|head| head.turns.into_iter().find(|turn| turn.turn_id == turn_id))
+}
+
 impl SessionRuntime {
     pub async fn get_order_seq_state(
         &self,
@@ -444,7 +457,9 @@ impl SessionRuntime {
 
         let stream_only = matches!(
             event.event_type,
-            SessionEventType::AssistantChunk | SessionEventType::ThoughtChunk
+            SessionEventType::AssistantChunk
+                | SessionEventType::ThoughtChunk
+                | SessionEventType::ContextWindowUpdate
         );
 
         let update_task = matches!(
@@ -503,12 +518,12 @@ impl SessionRuntime {
         let mut turn = turn_from_event(event, message.as_ref());
         if turn.is_none() && tool_event {
             if let Some(turn_id) = event.turn_id {
-                turn = state
-                    .workspaces
-                    .workspace_active_snapshot
-                    .get_session_head(event.session_id)
-                    .await
-                    .and_then(|head| head.turns.into_iter().find(|turn| turn.turn_id == turn_id));
+                turn = turn_from_cached_head_for_read(state, event.session_id, turn_id).await;
+            }
+        }
+        if turn.is_none() && event_context_window(event).is_some() {
+            if let Some(turn_id) = event.turn_id {
+                turn = turn_from_cached_head_for_read(state, event.session_id, turn_id).await;
             }
         }
         if turn.is_none() && (should_refresh_turn_from_store(&event.event_type) || tool_event) {

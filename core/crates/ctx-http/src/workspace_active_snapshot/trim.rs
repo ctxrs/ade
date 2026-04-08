@@ -87,6 +87,7 @@ fn is_partial_event(event: &SessionEvent) -> bool {
         event.event_type,
         SessionEventType::AssistantChunk
             | SessionEventType::AssistantComplete
+            | SessionEventType::ContextWindowUpdate
             | SessionEventType::ThoughtChunk
     )
 }

@@ -50,7 +50,7 @@ export const mergeTurnStatus = (
   return nextPriority >= prevPriority ? next : prev;
 };
 
-const PARTIAL_EVENT_TYPES = new Set(["assistant_chunk", "assistant_complete"]);
+const PARTIAL_EVENT_TYPES = new Set(["assistant_chunk", "assistant_complete", "context_window_update"]);
 
 export const isPartialEvent = (event: SessionEvent | null | undefined): boolean => {
   if (!event) return false;

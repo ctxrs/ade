@@ -235,6 +235,12 @@ pub enum CrpEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         item_id: Option<String>,
     },
+    #[serde(rename = "turn.context_window.updated")]
+    TurnContextWindowUpdated {
+        session_id: String,
+        turn_id: String,
+        context_window: Value,
+    },
     #[serde(rename = "turn.completed")]
     TurnCompleted {
         session_id: String,

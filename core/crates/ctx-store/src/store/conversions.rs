@@ -525,6 +525,7 @@ pub(super) fn session_event_type_to_str(event_type: &SessionEventType) -> &'stat
         SessionEventType::InputQueued => "input_queued",
         SessionEventType::TurnQueued => "turn_queued",
         SessionEventType::TurnStarted => "turn_started",
+        SessionEventType::ContextWindowUpdate => "context_window_update",
         SessionEventType::TurnFinished => "turn_finished",
         SessionEventType::AuthRequired => "auth_required",
         SessionEventType::Notice => "notice",
@@ -555,6 +556,7 @@ pub(super) fn parse_session_event_type(value: &str) -> SessionEventType {
         "input_queued" => SessionEventType::InputQueued,
         "turn_queued" => SessionEventType::TurnQueued,
         "turn_started" => SessionEventType::TurnStarted,
+        "context_window_update" => SessionEventType::ContextWindowUpdate,
         "turn_finished" => SessionEventType::TurnFinished,
         "auth_required" => SessionEventType::AuthRequired,
         "notice" => SessionEventType::Notice,
@@ -601,6 +603,9 @@ pub(super) fn is_transient_session_event(
         return true;
     }
     if matches!(event_type, SessionEventType::AssistantComplete) {
+        return true;
+    }
+    if matches!(event_type, SessionEventType::ContextWindowUpdate) {
         return true;
     }
     if matches!(event_type, SessionEventType::AuthRequired) {

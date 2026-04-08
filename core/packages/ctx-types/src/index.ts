@@ -667,6 +667,7 @@ export type SessionEventType =
   | "input_queued"
   | "turn_queued"
   | "turn_started"
+  | "context_window_update"
   | "turn_finished"
   | "message_queue_added"
   | "message_queue_updated"

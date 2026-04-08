@@ -105,7 +105,11 @@ const isFinalThoughtEvent = (event: SessionEvent | null | undefined): boolean =>
   );
 };
 
-const PARTIAL_EVENT_TYPES = new Set<string>(["assistant_chunk", "assistant_complete"]);
+const PARTIAL_EVENT_TYPES = new Set<string>([
+  "assistant_chunk",
+  "assistant_complete",
+  "context_window_update",
+]);
 
 const isPartialEvent = (event: SessionEvent | null | undefined): boolean => {
   if (!event) return false;

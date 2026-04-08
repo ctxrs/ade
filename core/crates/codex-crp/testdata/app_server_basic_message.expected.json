@@ -40,6 +40,22 @@
           "total_output_tokens": 50
         },
         "session_id": "fixture-session",
+        "turn_id": "turn_crp_1",
+        "type": "turn.context_window.updated"
+      }
+    },
+    {
+      "channel": "control",
+      "event": {
+        "context_window": {
+          "context_tokens_estimate": 120,
+          "context_window_tokens": 200000,
+          "remaining_fraction": 0.9994,
+          "remaining_tokens_estimate": 199880,
+          "total_input_tokens": 70,
+          "total_output_tokens": 50
+        },
+        "session_id": "fixture-session",
         "status": "success",
         "turn_id": "turn_crp_1",
         "type": "turn.completed"

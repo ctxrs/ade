@@ -21,6 +21,20 @@ struct FixtureToolCall {
     output_text: Option<String>,
 }
 
+const LIVE_CONTEXT_WINDOW_MARKER: &str = "emit-live-context-window";
+
+fn live_context_window_metrics(content: &str) -> Option<Value> {
+    if !content.contains(LIVE_CONTEXT_WINDOW_MARKER) {
+        return None;
+    }
+    Some(json!({
+        "context_tokens_estimate": 25,
+        "context_window_tokens": 100,
+        "remaining_tokens_estimate": 75,
+        "remaining_fraction": 0.75,
+    }))
+}
+
 fn parse_fixture_tools(content: &str) -> Option<Vec<FixtureToolCall>> {
     let start = content.find("[[tool_calls]]")?;
     let end = content.find("[[/tool_calls]]")?;
@@ -133,6 +147,7 @@ impl ProviderAdapter for FakeProviderAdapter {
             };
 
             let slow = input.content.contains("slow-diff-test");
+            let live_context_window = live_context_window_metrics(&input.content);
             let delay = if slow {
                 Duration::from_millis(1200)
             } else {
@@ -143,6 +158,14 @@ impl ProviderAdapter for FakeProviderAdapter {
                 _ = async {
                     send(SessionEventType::AssistantChunk, json!({"content": format!("echo: {}", input.content)})).await;
                     sleep(delay).await;
+                    if let Some(context_window) = live_context_window.clone() {
+                        send(
+                            SessionEventType::ContextWindowUpdate,
+                            json!({"context_window": context_window}),
+                        )
+                        .await;
+                        sleep(delay).await;
+                    }
                     if input.content.contains("emit-thought") {
                         // Exercise thought streaming paths. This is intentionally stream-only
                         // and should be safe for tests that opt in via the marker.
@@ -178,7 +201,12 @@ impl ProviderAdapter for FakeProviderAdapter {
                     }
                     send(SessionEventType::AssistantComplete, json!({"content": format!("done: {}", input.content)})).await;
                     sleep(delay).await;
-                    send(SessionEventType::Done, json!({})).await;
+                    let done_payload = if let Some(context_window) = live_context_window {
+                        json!({"context_window": context_window})
+                    } else {
+                        json!({})
+                    };
+                    send(SessionEventType::Done, done_payload).await;
                 } => {}
                 _ = &mut cancel_rx => {
                     send(SessionEventType::Error, json!({"message":"cancelled"})).await;

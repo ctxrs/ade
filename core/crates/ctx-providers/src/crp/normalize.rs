@@ -301,6 +301,16 @@ pub(super) fn map_crp_event(
                 done: false,
             }
         }
+        CrpEvent::TurnContextWindowUpdated { context_window, .. } => MappedCrpEvent {
+            events: vec![NormalizedEvent {
+                event_type: SessionEventType::ContextWindowUpdate,
+                payload_json: json!({
+                    "context_window": context_window,
+                    "crp_seq": seq,
+                }),
+            }],
+            done: false,
+        },
         CrpEvent::ToolStarted {
             tool_call_id,
             tool_name,
@@ -579,6 +589,7 @@ pub(super) fn event_turn_id(event: &CrpEvent) -> Option<&str> {
         | CrpEvent::ReasoningSummary { turn_id, .. }
         | CrpEvent::ReasoningTrace { turn_id, .. }
         | CrpEvent::ReasoningTraceFinal { turn_id, .. }
+        | CrpEvent::TurnContextWindowUpdated { turn_id, .. }
         | CrpEvent::ToolStarted { turn_id, .. }
         | CrpEvent::ToolOutputDelta { turn_id, .. }
         | CrpEvent::ToolCompleted { turn_id, .. }
@@ -596,6 +607,7 @@ pub(super) fn event_matches_session(event: &CrpEvent, session_id: &str) -> bool 
         | CrpEvent::ReasoningSummary { session_id: id, .. }
         | CrpEvent::ReasoningTrace { session_id: id, .. }
         | CrpEvent::ReasoningTraceFinal { session_id: id, .. }
+        | CrpEvent::TurnContextWindowUpdated { session_id: id, .. }
         | CrpEvent::ToolStarted { session_id: id, .. }
         | CrpEvent::ToolOutputDelta { session_id: id, .. }
         | CrpEvent::ToolCompleted { session_id: id, .. }
@@ -849,6 +861,44 @@ mod tests {
                 "provider": "amp",
                 "memory_mb": 1024
             }))
+        );
+    }
+
+    #[test]
+    fn context_window_update_maps_to_partial_session_event() {
+        let mut tool_output_cache: HashMap<String, String> = HashMap::new();
+        let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
+
+        let metrics = json!({
+            "context_tokens_estimate": 4200,
+            "context_window_tokens": 128000,
+            "remaining_tokens_estimate": 123800,
+            "remaining_fraction": 0.9671875,
+        });
+        let mapped = map_crp_event(
+            CrpEvent::TurnContextWindowUpdated {
+                session_id: "session-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                context_window: metrics.clone(),
+            },
+            CrpChannel::Control,
+            9,
+            &mut tool_output_cache,
+            &mut tool_input_cache,
+        );
+
+        assert_eq!(mapped.events.len(), 1);
+        assert!(!mapped.done);
+        assert!(matches!(
+            mapped.events[0].event_type,
+            SessionEventType::ContextWindowUpdate
+        ));
+        assert_eq!(
+            mapped.events[0].payload_json,
+            json!({
+                "context_window": metrics,
+                "crp_seq": 9,
+            })
         );
     }
 

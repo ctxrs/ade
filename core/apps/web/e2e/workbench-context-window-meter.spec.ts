@@ -129,6 +129,58 @@ test("workbench: context window meter renders for a live fake-provider session",
   await expect(contextWindow).toHaveAttribute("title", "Context Window: 7% · 7/100");
 });
 
+test("workbench: context window meter live-updates before the turn finishes", async ({ page, request }) => {
+  test.setTimeout(120_000);
+
+  const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-live-meter-"));
+  execSync("git init", { cwd: repo });
+  execSync("git config user.email test@example.com", { cwd: repo });
+  execSync("git config user.name Test", { cwd: repo });
+  writeFileSync(path.join(repo, "file.txt"), "hello\n");
+  execSync("git add .", { cwd: repo });
+  execSync("git commit -m init", { cwd: repo });
+
+  await createWorkspaceAndOpenWorkbench({
+    page,
+    request: page.request,
+    repo,
+    workspaceName: `ws-live-meter-${Date.now()}`,
+  });
+  await selectHarnessBySearch(page, "fake", /fake/i);
+
+  const prompt = "slow-diff-test emit-live-context-window";
+  const createSessionResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "POST"
+    && /\/api\/tasks\/[^/]+\/sessions$/.test(response.url()),
+  );
+  await page.locator("textarea.wb-composer-textarea").first().fill(prompt);
+  await page.getByRole("button", { name: "Send" }).click();
+  const createSessionResponse = await createSessionResponsePromise;
+  expect(createSessionResponse.ok()).toBe(true);
+  const sessionId = String((await createSessionResponse.json() as { id?: string }).id ?? "");
+  expect(sessionId).not.toBe("");
+
+  const rows = page.locator(".wb-task-row");
+  await expect(rows).toHaveCount(1, { timeout: 20_000 });
+  await rows.first().click();
+
+  const activeTextarea = page.locator(".wb-session-slot textarea.wb-active-textarea");
+  await expect(activeTextarea).toBeVisible({ timeout: 20_000 });
+
+  const contextWindow = page.locator(".wb-session-slot .wb-context-window");
+  await expect(contextWindow).toHaveText("25% · 25/100", { timeout: 20_000 });
+  await expect(contextWindow).toHaveAttribute("title", "Context Window: 25% · 25/100");
+  await expect(page.getByText("Working")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop" })).toBeVisible();
+
+  const terminal = await waitForTerminalState(request, sessionId, {
+    timeoutMs: 60_000,
+    pollMs: 1_000,
+  });
+  expect(terminal.terminalStatus, terminal.errorMessage ?? "fake-provider run did not complete").toBe("completed");
+  await expect(contextWindow).toHaveText("25% · 25/100", { timeout: 20_000 });
+});
+
 test("workbench: seeded context window metrics render in the workbench UI", async ({ page, request }) => {
   test.setTimeout(120_000);
 
