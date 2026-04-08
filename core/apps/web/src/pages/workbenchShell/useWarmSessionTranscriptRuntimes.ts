@@ -4,10 +4,14 @@ import type { WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSn
 import { collectWorkspaceActivePrimarySessionIds } from "../../state/workspaceActiveSnapshot/projection";
 import { selectSessionThreadProjection } from "../../state/sessionThreadProjection/selectors";
 import { collectAskUserQuestionAnswers } from "../SessionPage.workbenchViewModel";
-import { primeWarmWorkbenchThreadViewModel } from "../workbenchThreadViewModelWarmCache";
+import {
+  primeWarmWorkbenchThreadViewModel,
+  pruneWarmWorkbenchThreadViewModelCache,
+} from "../workbenchThreadViewModelWarmCache";
 import {
   createDefaultSessionTranscriptUiState,
   getOrCreateSessionPretextRuntime,
+  pruneSessionPretextRuntimeCache,
   primeSessionPretextRuntime,
 } from "../sessionThread/pretextSessionRuntimeCache";
 import {
@@ -38,6 +42,21 @@ const cancelIdle = (handle: IdleHandle) => {
   window.clearTimeout(handle);
 };
 
+function haveSameLoadingTurns(left: readonly string[], right: readonly string[]): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  const remaining = new Set(left);
+  if (remaining.size !== left.length) {
+    return left.every((value, index) => value === right[index]);
+  }
+  for (const value of right) {
+    if (!remaining.delete(value)) {
+      return false;
+    }
+  }
+  return remaining.size === 0;
+}
+
 export function useWarmSessionTranscriptRuntimes({
   workspaceSnapshot,
   sessionSnap,
@@ -58,6 +77,9 @@ export function useWarmSessionTranscriptRuntimes({
   );
 
   useEffect(() => {
+    pruneWarmWorkbenchThreadViewModelCache(activePrimarySessionIds);
+    pruneSessionPretextRuntimeCache(activePrimarySessionIds);
+
     if (warmState.viewportWidth <= 0) return;
 
     const sessionIds = activePrimarySessionIds.filter((sessionId) => sessionId !== activeSessionId);
@@ -103,11 +125,14 @@ export function useWarmSessionTranscriptRuntimes({
 
         const existingRuntime = getOrCreateSessionPretextRuntime(sessionId);
         const runtimeUiState = existingRuntime.hasVisibleMount
-          ? {
-              ...existingRuntime.uiState,
-              turnToolsLoading: entry.turnToolsLoading,
-              verbosity: warmState.verbosity,
-            }
+          ? existingRuntime.uiState.verbosity === warmState.verbosity &&
+            haveSameLoadingTurns(existingRuntime.uiState.turnToolsLoading, entry.turnToolsLoading)
+            ? existingRuntime.uiState
+            : {
+                ...existingRuntime.uiState,
+                turnToolsLoading: entry.turnToolsLoading,
+                verbosity: warmState.verbosity,
+              }
           : createDefaultSessionTranscriptUiState(warmState.verbosity, entry.turnToolsLoading);
 
         primeSessionPretextRuntime({

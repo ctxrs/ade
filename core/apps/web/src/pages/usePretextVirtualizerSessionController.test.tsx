@@ -66,13 +66,13 @@ describe("usePretextVirtualizerSessionController", () => {
 
     await act(async () => {
       result.current.onScroll({
-        listOffset: -40,
-        visibleListHeight: 600,
+        listOffset: -640,
+        visibleListHeight: 200,
         bottomOffset: 440,
       });
       result.current.onScroll({
-        listOffset: -4,
-        visibleListHeight: 600,
+        listOffset: -580,
+        visibleListHeight: 200,
         bottomOffset: 360,
       });
       await Promise.resolve();
@@ -97,13 +97,13 @@ describe("usePretextVirtualizerSessionController", () => {
 
     await act(async () => {
       result.current.onScroll({
-        listOffset: -4,
-        visibleListHeight: 600,
+        listOffset: -580,
+        visibleListHeight: 200,
         bottomOffset: 440,
       });
       result.current.onScroll({
-        listOffset: -20,
-        visibleListHeight: 600,
+        listOffset: -640,
+        visibleListHeight: 200,
         bottomOffset: 360,
       });
       await Promise.resolve();
@@ -143,6 +143,47 @@ describe("usePretextVirtualizerSessionController", () => {
 
     expect(scrollToBottom).toHaveBeenCalledWith("auto");
     expect(onAtBottomChange).toHaveBeenCalledWith(true);
+  });
+
+  it("keeps bottom-follow attached when the virtualizer reports bottom during resize settle", () => {
+    const onAtBottomChange = vi.fn();
+    const scroller = document.createElement("div");
+    Object.defineProperty(scroller, "scrollTop", { value: 0, writable: true });
+    Object.defineProperty(scroller, "scrollHeight", { value: 400, configurable: true });
+    Object.defineProperty(scroller, "clientHeight", { value: 380, configurable: true });
+    const methods: PretextVirtualizerListMethods<WorkbenchListItem, WorkbenchMessageListContext> = {
+      cancelSmoothScroll: () => undefined,
+      scrollerElement: () => scroller,
+      restoreAnchor: () => undefined,
+      scrollToBottom: () => undefined,
+      scrollToOffset: () => undefined,
+      scrollToItem: () => undefined,
+    };
+    const { result } = renderHook(() =>
+      usePretextVirtualizerSessionController({
+        sessionId: "session-1",
+        isActive: true,
+        loaded: true,
+        listItems,
+        canLoadOlder: false,
+        loadOlder: vi.fn(async () => {}),
+        showDebug: false,
+        onAtBottomChange,
+      }),
+    );
+
+    result.current.methodsRef.current = methods;
+
+    act(() => {
+      result.current.onScroll({
+        listOffset: 0,
+        visibleListHeight: 380,
+        bottomOffset: 0,
+      });
+    });
+
+    expect(onAtBottomChange).toHaveBeenCalledWith(true);
+    expect(onAtBottomChange).not.toHaveBeenCalledWith(false);
   });
 
   it("continues loading older history after a prepend when the scroller remains top-pinned", async () => {
@@ -251,13 +292,13 @@ describe("usePretextVirtualizerSessionController", () => {
 
     await act(async () => {
       result.current.onScroll({
-        listOffset: -120,
-        visibleListHeight: 600,
+        listOffset: -900,
+        visibleListHeight: 200,
         bottomOffset: 540,
       });
       result.current.onScroll({
-        listOffset: -20,
-        visibleListHeight: 600,
+        listOffset: -700,
+        visibleListHeight: 200,
         bottomOffset: 440,
       });
       await Promise.resolve();

@@ -211,7 +211,22 @@ test("workbench: composer stays visible when expanding long messages", async ({ 
 
   const collapsedHeader = page.locator(".wb-turn-header[aria-expanded=\"false\"]").first();
   await expect(collapsedHeader).toBeVisible({ timeout: 20000 });
-  await collapsedHeader.click();
+  const collapsedHeaderHandle = await collapsedHeader.elementHandle();
+  if (!collapsedHeaderHandle) {
+    throw new Error("Expected a collapsed turn header handle");
+  }
+  await collapsedHeaderHandle.evaluate((node) => {
+    const element = node as HTMLElement;
+    element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+  });
+  await expect
+    .poll(
+      () => collapsedHeaderHandle.evaluate((node) => node.getAttribute("aria-expanded")),
+      { timeout: 20000 },
+    )
+    .toBe("true");
 
   const layout = await page.evaluate(() => {
     const threadStack = document.querySelector(".wb-thread-stack") as HTMLElement | null;
@@ -231,5 +246,96 @@ test("workbench: composer stays visible when expanding long messages", async ({ 
   if (layout) {
     expect(layout.stackBottom).toBeLessThanOrEqual(layout.composerTop + 1);
     expect(layout.composerBottom).toBeLessThanOrEqual(layout.viewportHeight + 1);
+  }
+});
+
+test("workbench: short bottom-aligned thread stays pinned while composer gains a line", async ({ page, request }, testInfo) => {
+  test.setTimeout(120000);
+  await page.setViewportSize({ width: 1400, height: 900 });
+
+  const seed = await seedDummyWorkspace(request, {
+    tasks: 1,
+    sessionsPerTask: 1,
+    turnsPerSession: 2,
+    messageBytes: { min: 96, max: 128 },
+    messagePrefix: "composer-short-thread",
+  });
+
+  await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
+  const rows = page.locator(".wb-task-row");
+  await expect(rows).toHaveCount(1, { timeout: 20000 });
+  await rows.first().click();
+
+  const composer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
+  await expect(composer).toBeVisible({ timeout: 20000 });
+
+  const scroller = page.locator(scrollSelector).first();
+  await expect(scroller).toBeVisible({ timeout: 20000 });
+  await expect
+    .poll(async () => scroller.evaluate((el) => Math.max(0, el.scrollHeight - el.clientHeight)), {
+      timeout: 10000,
+    })
+    .toBeLessThanOrEqual(2);
+
+  const readShortThreadLayout = async () =>
+    page.evaluate((selector) => {
+      const scroller = document.querySelector(selector) as HTMLElement | null;
+      if (!scroller) return null;
+      const scrollerRect = scroller.getBoundingClientRect();
+      const rows = Array.from(
+        scroller.querySelectorAll<HTMLElement>("[data-pretext-virtualizer-row='1'][data-pretext-virtualizer-item-id]"),
+      );
+      const lastRow = rows[rows.length - 1] ?? null;
+      const lastRowRect = lastRow?.getBoundingClientRect() ?? null;
+      return {
+        scrollTop: scroller.scrollTop,
+        maxScrollTop: Math.max(0, scroller.scrollHeight - scroller.clientHeight),
+        lastRowBottomGapPx: lastRowRect ? Math.max(0, scrollerRect.bottom - lastRowRect.bottom) : null,
+        rowCount: rows.length,
+      };
+    }, scrollSelector);
+
+  const initialLayout = await readShortThreadLayout();
+  expect(initialLayout).not.toBeNull();
+  if (!initialLayout) {
+    throw new Error("expected initial short-thread layout");
+  }
+  expect(initialLayout.rowCount).toBeGreaterThan(0);
+  expect(initialLayout.maxScrollTop).toBeLessThanOrEqual(2);
+  expect(initialLayout.lastRowBottomGapPx).not.toBeNull();
+  expect(Number(initialLayout.lastRowBottomGapPx)).toBeLessThanOrEqual(32);
+
+  await composer.fill("line one\nline two");
+  await composer.focus();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("line three", { delay: 20 });
+
+  await expect
+    .poll(async () => {
+      const layout = await readShortThreadLayout();
+      return layout?.maxScrollTop ?? 9999;
+    }, { timeout: 10000 })
+    .toBeLessThanOrEqual(2);
+
+  await expect
+    .poll(async () => {
+      const layout = await readShortThreadLayout();
+      return layout?.lastRowBottomGapPx ?? 9999;
+    }, { timeout: 10000 })
+    .toBeLessThanOrEqual(32);
+
+  const finalLayout = await readShortThreadLayout();
+  await testInfo.attach("composer-short-thread-layout.json", {
+    body: JSON.stringify(finalLayout, null, 2),
+    contentType: "application/json",
+  });
+
+  expect(finalLayout).not.toBeNull();
+  if (finalLayout) {
+    expect(finalLayout.scrollTop).toBe(0);
+    expect(finalLayout.maxScrollTop).toBeLessThanOrEqual(2);
+    expect(finalLayout.lastRowBottomGapPx).not.toBeNull();
+    expect(Number(finalLayout.lastRowBottomGapPx)).toBeLessThanOrEqual(32);
   }
 });

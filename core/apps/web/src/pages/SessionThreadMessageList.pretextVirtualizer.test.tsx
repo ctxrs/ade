@@ -8,7 +8,14 @@ import { SessionThreadPretextVirtualizerList } from "./SessionThreadMessageList.
 import type { WorkbenchListItem } from "./SessionPage.types";
 import type { WorkbenchMessageListContext } from "./SessionPage.thread";
 import type { WorkbenchThreadProjectionOp } from "./sessionThreadProjection";
-import { getOrCreateSessionPretextRuntime, resetSessionPretextRuntimeCache } from "./sessionThread/pretextSessionRuntimeCache";
+import {
+  createDefaultSessionTranscriptUiState,
+  getOrCreateSessionPretextRuntime,
+  primeSessionPretextRuntime,
+  readSessionPretextRuntimePreparedState,
+  readSessionPretextRuntimeRestoreSnapshot,
+  resetSessionPretextRuntimeCache,
+} from "./sessionThread/pretextSessionRuntimeCache";
 
 const resizeObserverInstances: Array<{ callback: ResizeObserverCallback }> = [];
 
@@ -46,6 +53,16 @@ const makeItems = (count = 2): WorkbenchListItem[] =>
     created_at: `2026-03-17T00:0${index}:00Z`,
   }));
 
+const makeWrappingItems = (count = 12): WorkbenchListItem[] =>
+  Array.from({ length: count }, (_, index) => ({
+    kind: "message" as const,
+    id: `wrapping-message-${index + 1}`,
+    role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+    content: `${`wrapping message ${index + 1} `.repeat(32)}end`,
+    attachments: [],
+    created_at: `2026-03-18T00:${String(index).padStart(2, "0")}:00Z`,
+  }));
+
 const noopProjectionOp: WorkbenchThreadProjectionOp = {
   kind: "noop",
   projectionRevision: 0,
@@ -57,6 +74,14 @@ function defineScrollerMetrics(scroller: HTMLElement, metrics: { clientHeight: n
   Object.defineProperty(scroller, "clientHeight", { configurable: true, value: metrics.clientHeight });
   Object.defineProperty(scroller, "clientWidth", { configurable: true, value: metrics.clientWidth });
   Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: metrics.scrollHeight, writable: true });
+}
+
+function getRenderedItemIds(container: HTMLElement): string[] {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>("[data-pretext-virtualizer-row='1'][data-pretext-virtualizer-item-id]"),
+  )
+    .map((row) => row.getAttribute("data-pretext-virtualizer-item-id"))
+    .filter((id): id is string => Boolean(id));
 }
 
 describe("SessionThreadPretextVirtualizerList", () => {
@@ -289,6 +314,208 @@ describe("SessionThreadPretextVirtualizerList", () => {
     });
 
     expect(scroller.scrollTop).toBeGreaterThan(beforeResizeScrollTop);
+  });
+
+  it("does not report a short bottom-aligned thread as detached while resize metrics settle", () => {
+    const onAtBottomChange = vi.fn();
+    const { container } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId="session-short-bottom"
+        isActive
+        listItems={makeItems(2)}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div style={{ height: 48 }}>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+        onAtBottomChange={onAtBottomChange}
+        shortSizeAlign="bottom"
+      />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+
+    defineScrollerMetrics(scroller, { clientHeight: 400, clientWidth: 900, scrollHeight: 400 });
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+    });
+
+    expect(onAtBottomChange).toHaveBeenCalledWith(true);
+    onAtBottomChange.mockClear();
+
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 400 });
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+    });
+
+    expect(onAtBottomChange).not.toHaveBeenCalledWith(false);
+  });
+
+  it("revisits a detached session without being pulled back to bottom by background warm priming", () => {
+    const sessionId = "session-detached-revisit";
+    const initial = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={makeItems(20)}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const scroller = initial.container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 1400 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+      scroller.scrollTop = 920;
+      fireEvent.scroll(scroller);
+      fireEvent.wheel(scroller, { deltaY: -120 });
+      scroller.scrollTop = 500;
+      fireEvent.scroll(scroller);
+    });
+
+    const detachedScrollTop = scroller.scrollTop;
+    initial.unmount();
+
+    primeSessionPretextRuntime({
+      sessionId,
+      listItems: makeItems(24),
+      uiState: createDefaultSessionTranscriptUiState(context.verbosity, context.turnToolsLoading),
+      viewportWidth: 900,
+      viewportHeight: 300,
+    });
+
+    const reopened = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={makeItems(24)}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const reopenedScroller = reopened.container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!reopenedScroller) throw new Error("Expected reopened transcript scroller");
+    defineScrollerMetrics(reopenedScroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 1800 });
+
+    act(() => {
+      resizeObserverInstances[resizeObserverInstances.length - 1]?.callback([], {} as ResizeObserver);
+    });
+
+    expect(reopenedScroller.scrollTop).toBeLessThan(900);
+    expect(Math.abs(reopenedScroller.scrollTop - detachedScrollTop)).toBeLessThan(80);
+  });
+
+  it("preserves the detached anchor item when the viewport width changes", () => {
+    const listItems = makeWrappingItems(24);
+    const { container } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId="session-detached-resize"
+        isActive
+        listItems={listItems}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{"content" in item ? item.content : item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 400, clientWidth: 900, scrollHeight: 5200 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+      scroller.scrollTop = 2400;
+      fireEvent.scroll(scroller);
+      fireEvent.wheel(scroller, { deltaY: -120 });
+      scroller.scrollTop = 1900;
+      fireEvent.scroll(scroller);
+    });
+
+    const beforeIds = getRenderedItemIds(container);
+    const anchorId = beforeIds[Math.floor(beforeIds.length / 2)] ?? null;
+    expect(anchorId).not.toBeNull();
+
+    defineScrollerMetrics(scroller, { clientHeight: 400, clientWidth: 420, scrollHeight: 7200 });
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+    });
+
+    const afterIds = getRenderedItemIds(container);
+    expect(afterIds).toContain(String(anchorId));
+  });
+
+  it("does not overwrite the restore snapshot while a hidden session remains mounted", () => {
+    const sessionId = "session-hidden-mounted";
+    const initialItems = makeItems(20);
+    const updatedItems = makeItems(24);
+    const { container, rerender } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={initialItems}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 1400 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+    });
+
+    const runtime = getOrCreateSessionPretextRuntime(sessionId);
+    const restoreBefore = readSessionPretextRuntimeRestoreSnapshot(runtime);
+
+    expect(restoreBefore).not.toBeNull();
+    expect(restoreBefore?.anchor.kind).toBe("bottom");
+
+    rerender(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive={false}
+        listItems={updatedItems}
+        threadProjectionOp={{
+          kind: "append_stream",
+          projectionRevision: 1,
+          changedItemIds: ["message-21", "message-22", "message-23", "message-24"],
+          remeasureItemIds: ["message-20", "message-21", "message-22", "message-23", "message-24"],
+        }}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 1800 });
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+    });
+
+    const preparedAfter = readSessionPretextRuntimePreparedState(runtime);
+    const restoreAfter = readSessionPretextRuntimeRestoreSnapshot(runtime);
+
+    expect(preparedAfter.listItems).toEqual(updatedItems);
+    expect(restoreAfter).toEqual(restoreBefore);
   });
 
   it("resyncs row offsets when only layout context changes", () => {

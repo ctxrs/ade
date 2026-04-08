@@ -210,3 +210,15 @@ export function primeWarmWorkbenchThreadViewModel(
 export function getWarmWorkbenchThreadViewModelCacheSize(): number {
   return warmCache.size;
 }
+
+export function pruneWarmWorkbenchThreadViewModelCache(retainedSessionIds: readonly string[]): void {
+  const retained = new Set(retainedSessionIds);
+  for (const sessionId of warmCache.keys()) {
+    if (retained.has(sessionId)) continue;
+    warmCache.delete(sessionId);
+  }
+}
+
+export function resetWarmWorkbenchThreadViewModelCache(): void {
+  warmCache.clear();
+}

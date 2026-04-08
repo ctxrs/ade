@@ -7,6 +7,7 @@ import type {
 import { PRETEXT_VIRTUALIZER_INITIAL_BOTTOM_LOCATION } from "../state/pretextVirtualizerViewportState";
 import type { WorkbenchListItem } from "./SessionPage.types";
 import type { WorkbenchMessageListContext } from "./SessionPage.thread";
+import { computeHistoryPrefetchThresholdPx } from "./sessionMessageListControllerUtils";
 import { useSessionMessageListDiagnostics } from "./useSessionMessageListDiagnostics";
 
 type Params = {
@@ -29,8 +30,6 @@ type Result = {
   onScroll: (location: PretextVirtualizerScrollLocation) => void;
   onRenderedDataChange: (range: readonly WorkbenchListItem[]) => void;
 };
-
-const PRETEXT_HISTORY_TRIGGER_PX = 8;
 
 export function usePretextVirtualizerSessionController(params: Params): Result {
   const {
@@ -151,11 +150,7 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
     (location: PretextVirtualizerScrollLocation) => {
       if (!isActive) return;
 
-      const scroller = methodsRef.current?.scrollerElement?.() ?? null;
-      const atBottom =
-        scroller != null
-          ? scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight) <= 16
-          : location.bottomOffset <= 16;
+      const atBottom = location.bottomOffset <= 16;
       if (lastAtBottomRef.current !== atBottom) {
         lastAtBottomRef.current = atBottom;
         onAtBottomChange?.(atBottom);
@@ -172,7 +167,7 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
       const previousListOffset = lastListOffsetRef.current;
       lastListOffsetRef.current = location.listOffset;
       const scrollingUp = previousListOffset == null ? false : location.listOffset > previousListOffset;
-      const nearTop = location.listOffset >= -PRETEXT_HISTORY_TRIGGER_PX;
+      const nearTop = location.listOffset > -computeHistoryPrefetchThresholdPx(location.visibleListHeight);
       if (!nearTop || !scrollingUp) {
         return;
       }

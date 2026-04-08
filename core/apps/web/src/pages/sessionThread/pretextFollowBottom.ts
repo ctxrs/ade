@@ -7,6 +7,17 @@ export type ResolveFollowBottomAfterScrollParams = {
   programmaticScroll: boolean;
 };
 
+export function computeBottomOffsetPx(params: {
+  totalHeight: number;
+  scrollTop: number;
+  viewportHeight: number;
+}): number {
+  const totalHeight = Number.isFinite(params.totalHeight) ? Math.max(0, params.totalHeight) : 0;
+  const scrollTop = Number.isFinite(params.scrollTop) ? Math.max(0, params.scrollTop) : 0;
+  const viewportHeight = Number.isFinite(params.viewportHeight) ? Math.max(0, params.viewportHeight) : 0;
+  return Math.max(0, totalHeight - (scrollTop + viewportHeight));
+}
+
 export function resolveFollowBottomAfterScroll({
   followBottom,
   previousScrollTop,
