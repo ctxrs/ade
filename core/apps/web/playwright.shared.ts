@@ -2,13 +2,19 @@ import { defineConfig, type PlaywrightTestConfig } from "playwright/test";
 import crypto from "crypto";
 import fs from "fs";
 import net from "net";
-import os from "os";
 import path from "path";
+import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import { parseBoolishString } from "./src/utils/boolish";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
+const {
+  buildCtxCacheEnv,
+  resolveCtxCacheLayout,
+  resolveConfiguredPath: resolveConfiguredCachePath,
+} = require("../../scripts/lib/cache_roots.cjs");
 
 const HOST = "127.0.0.1";
 const DEFAULT_PORT = 4401;
@@ -25,27 +31,11 @@ const resolveConfiguredPath = (configured: string) => {
     : path.resolve(__dirname, "../..", configured);
 };
 
-const resolveVolatileRoot = (env: NodeJS.ProcessEnv) => {
-  const configured = String(env.CTX_VOLATILE_ROOT ?? "").trim();
-  if (configured) {
-    return resolveConfiguredPath(configured);
-  }
-  return path.join(os.homedir(), ".ctx", "volatile");
-};
-
-const resolveVolatileSubdir = (
-  env: NodeJS.ProcessEnv,
-  envNames: string[],
-  fallbackSegments: string[],
-) => {
-  for (const envName of envNames) {
-    const configured = String(env[envName] ?? "").trim();
-    if (configured) {
-      return resolveConfiguredPath(configured);
-    }
-  }
-  return path.join(resolveVolatileRoot(env), ...fallbackSegments);
-};
+const resolveCacheLayout = (env: NodeJS.ProcessEnv) =>
+  resolveCtxCacheLayout({
+    cwd: path.resolve(__dirname, "../.."),
+    env,
+  });
 
 const resolveWorkers = (defaultWorkers: number | undefined) => {
   const raw = String(process.env.CTX_E2E_WORKERS ?? process.env.PW_WORKERS ?? "").trim();
@@ -76,10 +66,11 @@ const buildWebServerBaseEnv = (env: NodeJS.ProcessEnv) => {
 export const resolvePlaywrightCargoTargetDir = (env: NodeJS.ProcessEnv) => {
   const configured = String(env.CTX_E2E_CARGO_TARGET_DIR ?? env.CARGO_TARGET_DIR ?? "").trim();
   if (configured) {
-    return resolveConfiguredPath(configured);
+    return resolveConfiguredCachePath(configured, { cwd: path.resolve(__dirname, "../..") });
   }
+  const cacheLayout = resolveCacheLayout(env);
   return path.join(
-    resolveVolatileSubdir(env, ["CTX_VOLATILE_TARGETS_DIR"], ["targets"]),
+    cacheLayout.targetsDir,
     "ctx-e2e",
     `e2e-${repoHash}`,
   );
@@ -132,20 +123,35 @@ export async function createCtxPlaywrightConfig(
   const baseURL = `http://${HOST}:${PORT}`;
   const readinessURL = `${baseURL}/api/health`;
 
-  const volatileTmpRoot = resolveVolatileSubdir(
-    process.env,
-    ["CTX_E2E_TMPDIR", "CTX_VOLATILE_TMPDIR"],
-    ["tmp"],
-  );
+  const { env: cacheEnv, layout: cacheLayout } = buildCtxCacheEnv({
+    cwd: path.resolve(__dirname, "../.."),
+    env: process.env,
+    mode: "workspace",
+  });
+  const volatileTmpRoot =
+    process.env.CTX_E2E_TMPDIR
+    ?? process.env.CTX_VOLATILE_TMPDIR
+    ?? cacheLayout.tmpDir;
   const defaultTmpDir = path.join(volatileTmpRoot, `ctx-e2e-${profileSlug}-tmp-${process.pid}`);
   const defaultDataDir = path.join(volatileTmpRoot, `ctx-e2e-${profileSlug}-data-${process.pid}`);
   const tmpDir = process.env.CTX_E2E_TMPDIR ?? defaultTmpDir;
   const dataDir = process.env.CTX_E2E_DATA_DIR ?? defaultDataDir;
   const AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
+  if (cacheEnv.CARGO_HOME) {
+    process.env.CARGO_HOME ??= cacheEnv.CARGO_HOME;
+  }
+  process.env.SCCACHE_DIR ??= cacheEnv.SCCACHE_DIR;
+  process.env.SCCACHE_PATH ??= cacheEnv.SCCACHE_PATH;
+  process.env.RUSTC_WRAPPER ??= cacheEnv.RUSTC_WRAPPER;
+  process.env.CTX_VOLATILE_ROOT ??= cacheEnv.CTX_VOLATILE_ROOT;
+  process.env.CTX_VOLATILE_ROOT_MODE ??= cacheEnv.CTX_VOLATILE_ROOT_MODE;
+  process.env.CTX_VOLATILE_TARGETS_DIR ??= cacheEnv.CTX_VOLATILE_TARGETS_DIR;
+  process.env.CTX_VOLATILE_ARTIFACTS_DIR ??= cacheEnv.CTX_VOLATILE_ARTIFACTS_DIR;
   process.env.CTX_E2E_TMPDIR ??= tmpDir;
   process.env.CTX_E2E_DATA_DIR ??= dataDir;
   process.env.CTX_VOLATILE_TMPDIR ??= volatileTmpRoot;
   process.env.CTX_E2E_AUTH_TOKEN ??= AUTH_TOKEN;
+  process.env.PLAYWRIGHT_BROWSERS_PATH ??= cacheEnv.PLAYWRIGHT_BROWSERS_PATH;
   const defaultBundleDir = path.resolve(__dirname, "../desktop/src-tauri/bundles");
   const bundleManifestPath = path.join(defaultBundleDir, "manifest.json");
   const allowConfiguredBundleDir = parseBool(process.env.CTX_E2E_ALLOW_CONFIGURED_BUNDLE_DIR);
@@ -203,6 +209,7 @@ export async function createCtxPlaywrightConfig(
     CTX_SHOW_FAKE_PROVIDER: "1",
     CTX_DEV_MODE: "1",
     CTX_STORAGE_BACKEND: "sqlite",
+    CTX_WEB_DIST: "",
     ...(process.platform === "win32" ? {} : { SHELL: "/bin/sh" }),
   };
   if (resolvedBundleDir) {

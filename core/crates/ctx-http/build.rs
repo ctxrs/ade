@@ -89,9 +89,12 @@ fn emit_git_rerun_hints(cwd: &Path) {
             cwd.join(p)
         }
     };
-    println!("cargo:rerun-if-changed={}", git_dir.join("HEAD").display());
-    println!(
-        "cargo:rerun-if-changed={}",
-        git_dir.join("packed-refs").display()
-    );
+    let head_path = git_dir.join("HEAD");
+    if head_path.exists() {
+        println!("cargo:rerun-if-changed={}", head_path.display());
+    }
+    let packed_refs_path = git_dir.join("packed-refs");
+    if packed_refs_path.exists() {
+        println!("cargo:rerun-if-changed={}", packed_refs_path.display());
+    }
 }

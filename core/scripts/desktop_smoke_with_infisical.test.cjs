@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { resolveRepoScopeKey } = require("./lib/cache_roots.cjs");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
 const scriptPath = path.join(repoRoot, "scripts", "desktop_smoke_with_infisical.sh");
@@ -118,6 +119,7 @@ test("desktop smoke preserves auto-created tmp dirs when explicitly requested", 
 
 test("desktop smoke defaults automation tmp and cargo target under CTX_VOLATILE_ROOT", () => {
   const volatileRoot = path.join(os.tmpdir(), "ctx-volatile-test-root");
+  const scopeKey = resolveRepoScopeKey(path.join(repoRoot, "core"));
   const { result, capturedEnv } = runDesktopSmoke({
     CTX_VOLATILE_ROOT: volatileRoot,
     CTX_AUTOMATION_TMP_BASE_DIR: "",
@@ -136,6 +138,6 @@ test("desktop smoke defaults automation tmp and cargo target under CTX_VOLATILE_
   assert.equal(capturedEnv.temp, capturedEnv.tmpdir);
   assert.equal(
     capturedEnv.cargoTargetDir,
-    path.join(volatileRoot, "targets", "ctx-monorepo", "ctx-monorepo"),
+    path.join(volatileRoot, "targets", "ctx-monorepo", scopeKey),
   );
 });

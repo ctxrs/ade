@@ -16,9 +16,12 @@ import {
 } from "./start-e2e-server.mjs";
 
 describe("start-e2e-server", () => {
-  it("scopes web dist under the temp root", () => {
-    const resolved = resolveE2EWebDistDir("/tmp/ctx-tests", 4242);
-    expect(resolved).toBe(path.resolve("/tmp/ctx-tests", "ctx-e2e-web-dist-4242"));
+  it("scopes web dist under the volatile artifact root", () => {
+    const resolved = resolveE2EWebDistDir("/repo/core", {
+      CTX_VOLATILE_ROOT: "/tmp/ctx-tests",
+    });
+    expect(resolved).toContain(path.resolve("/tmp/ctx-tests", "artifacts", "web-dist"));
+    expect(resolved).toMatch(/dist$/);
   });
 
   it("targets an isolated dist dir and empties it", () => {
@@ -41,8 +44,12 @@ describe("start-e2e-server", () => {
   it("ignores an ambient CTX_WEB_DIST override without an e2e opt-in", () => {
     const resolved = resolveServeWebDistDir("/repo/core", {
       CTX_WEB_DIST: "/Applications/ctx.app/Contents/Resources/web/dist",
+      CTX_VOLATILE_ROOT: "/tmp/ctx-tests",
     });
-    expect(resolved).toBe(resolveE2EWebDistDir());
+    expect(resolved).toBe(resolveE2EWebDistDir("/repo/core", {
+      CTX_WEB_DIST: "/Applications/ctx.app/Contents/Resources/web/dist",
+      CTX_VOLATILE_ROOT: "/tmp/ctx-tests",
+    }));
   });
 
   it("allows CTX_WEB_DIST only when explicitly opted in for e2e", () => {
@@ -117,7 +124,9 @@ describe("start-e2e-server", () => {
     expect(fs.statSync(sharedDir).isDirectory()).toBe(true);
     expect(fs.existsSync(staleFile)).toBe(false);
 
-    const distDir = resolveE2EWebDistDir(prepared.tmpDir, 4242);
+    const distDir = resolveE2EWebDistDir("/repo/core", {
+      CTX_VOLATILE_ROOT: sharedDir,
+    });
     fs.mkdirSync(distDir, { recursive: true });
     expect(fs.statSync(distDir).isDirectory()).toBe(true);
   });

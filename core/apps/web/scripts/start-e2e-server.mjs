@@ -4,8 +4,20 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { requireLocalNodeBin } from "./localTooling.mjs";
+
+const require = createRequire(import.meta.url);
+const {
+  buildCtxCacheEnv,
+  resolveCtxCacheLayout,
+  resolveConfiguredPath: resolveConfiguredCachePath,
+} = require("../../../scripts/lib/cache_roots.cjs");
+const {
+  ensureWebDistArtifact,
+  resolveWebDistArtifactDir,
+} = require("../../../scripts/lib/web_dist_cache.cjs");
 
 const parseBool = (value) => ["1", "true", "yes", "on"].includes(String(value ?? "").trim().toLowerCase());
 
@@ -66,9 +78,9 @@ const runSync = (command, args, cwd, env) => {
 export const resolveCargoTargetDir = (repoRoot, env) => {
   const configured = String(env.CARGO_TARGET_DIR ?? "").trim();
   if (!configured) {
-    return path.join(repoRoot, "target");
+    return resolveCtxCacheLayout({ cwd: repoRoot, env }).workspaceCargoTargetDir;
   }
-  return path.isAbsolute(configured) ? configured : path.resolve(repoRoot, configured);
+  return resolveConfiguredCachePath(configured, { cwd: repoRoot });
 };
 
 export const ensureCargoTargetDir = (repoRoot, env) => {
@@ -78,9 +90,13 @@ export const ensureCargoTargetDir = (repoRoot, env) => {
 };
 
 export const resolveE2EWebDistDir = (
-  baseTmpDir = os.tmpdir(),
-  pid = process.pid,
-) => path.resolve(baseTmpDir, `ctx-e2e-web-dist-${pid}`);
+  repoRoot = process.cwd(),
+  env = process.env,
+) => resolveWebDistArtifactDir({
+  coreRoot: repoRoot,
+  env,
+  variant: "e2e",
+});
 
 export const resolveWebBuildArgs = (webDistDir) => [
   "build",
@@ -107,7 +123,7 @@ export const resolveServeWebDistDir = (repoRoot, env, skipWebBuild = false) => {
   if (skipWebBuild) {
     return path.join(repoRoot, "apps", "web", "dist");
   }
-  return resolveE2EWebDistDir();
+  return resolveE2EWebDistDir(repoRoot, env);
 };
 
 export const shouldUseConfiguredCtxMcpCommand = (env) =>
@@ -146,16 +162,31 @@ const main = () => {
   );
   const authToken = requireEnv("CTX_E2E_AUTH_TOKEN");
   const skipWebBuild = parseBool(process.env.CTX_E2E_SKIP_WEB_BUILD);
-  const env = { ...process.env };
+  const { env } = buildCtxCacheEnv({
+    cwd: repoRoot,
+    env: process.env,
+    mode: "workspace",
+    mkdir: true,
+  });
   env.TMPDIR = tmpDir;
   env.TMP = tmpDir;
   env.TEMP = tmpDir;
-  ensureCargoTargetDir(repoRoot, env);
   env.CTX_MCP_COMMAND = ensureCtxMcpCommand(repoRoot, env);
-  const webDistDir = resolveServeWebDistDir(repoRoot, env, skipWebBuild);
+  const configuredWebDistDir = resolveServeWebDistDir(repoRoot, env, skipWebBuild);
   const webRoot = path.join(repoRoot, "apps", "web");
+  const shouldBuildCachedWebDist =
+    !skipWebBuild
+    && !String(env.CTX_E2E_WEB_DIST ?? "").trim()
+    && !(String(env.CTX_WEB_DIST ?? "").trim() && shouldUseConfiguredWebDist(env));
+  const webDistDir = shouldBuildCachedWebDist
+    ? ensureWebDistArtifact({
+      coreRoot: repoRoot,
+      env,
+      variant: "e2e",
+    }).distDir
+    : configuredWebDistDir;
 
-  if (!skipWebBuild) {
+  if (!skipWebBuild && !shouldBuildCachedWebDist) {
     const viteBin = requireLocalNodeBin(webRoot, "vite");
     fs.rmSync(webDistDir, { recursive: true, force: true });
     runSync(viteBin, resolveWebBuildArgs(webDistDir), webRoot, env);

@@ -16,13 +16,16 @@ const restoreEnv = () => {
   delete process.env.ARGOS_TOKEN;
   delete process.env.CTX_E2E_REPORTER;
   delete process.env.CTX_VOLATILE_ROOT;
+  delete process.env.CTX_VOLATILE_ROOT_MODE;
   delete process.env.CTX_VOLATILE_TARGETS_DIR;
+  delete process.env.CTX_VOLATILE_ARTIFACTS_DIR;
   delete process.env.CTX_VOLATILE_TMPDIR;
   delete process.env.CTX_E2E_TMPDIR;
   delete process.env.CTX_E2E_DATA_DIR;
   delete process.env.CTX_BUNDLE_DIR;
   delete process.env.CTX_WEB_DIST;
   delete process.env.CTX_E2E_ALLOW_CONFIGURED_BUNDLE_DIR;
+  delete process.env.PLAYWRIGHT_BROWSERS_PATH;
   delete process.env.CARGO_INCREMENTAL;
 };
 
@@ -78,7 +81,7 @@ describe("createCtxPlaywrightConfig", () => {
     delete process.env.CARGO_TARGET_DIR;
 
     const resolved = resolvePlaywrightCargoTargetDir(process.env);
-    expect(resolved).toContain(path.join(".ctx", "volatile", "targets", "ctx-e2e"));
+    expect(resolved).toContain(path.join("targets", "ctx-e2e"));
     expect(resolved).toContain("e2e-");
     expect(resolved).not.toContain("ctx-e2e-cargo-");
   });
@@ -96,16 +99,27 @@ describe("createCtxPlaywrightConfig", () => {
     restoreEnv();
     const config = await createCtxPlaywrightConfig("all");
     const webServer = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
-    const expectedTmpPrefix = path.join(".ctx", "volatile", "tmp", "ctx-e2e-all-tmp-");
-    const expectedDataPrefix = path.join(".ctx", "volatile", "tmp", "ctx-e2e-all-data-");
+    const expectedTmpPrefix = path.join("tmp", "ctx-e2e-all-tmp-");
+    const expectedDataPrefix = path.join("tmp", "ctx-e2e-all-data-");
 
     expect(String(webServer?.env?.CTX_E2E_TMPDIR)).toContain(expectedTmpPrefix);
     expect(String(webServer?.env?.CTX_E2E_DATA_DIR)).toContain(expectedDataPrefix);
     expect(webServer?.env?.CTX_E2E_TMPDIR).not.toBe(webServer?.env?.CTX_E2E_DATA_DIR);
-    expect(webServer?.env?.CTX_VOLATILE_TMPDIR).toContain(path.join(".ctx", "volatile", "tmp"));
+    expect(String(webServer?.env?.CTX_VOLATILE_TMPDIR)).toContain(path.join("volatile", "tmp"));
     expect(webServer?.env?.TMPDIR).toBe(webServer?.env?.CTX_E2E_TMPDIR);
     expect(webServer?.env?.TMP).toBe(webServer?.env?.CTX_E2E_TMPDIR);
     expect(webServer?.env?.TEMP).toBe(webServer?.env?.CTX_E2E_TMPDIR);
+  });
+
+  it("threads shared cache layout env into the webServer env", async () => {
+    restoreEnv();
+    const config = await createCtxPlaywrightConfig("all");
+    const webServer = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
+
+    expect(String(webServer?.env?.CTX_VOLATILE_ROOT)).toContain(path.join("volatile"));
+    expect(["explicit", "preferred-external", "internal-fallback"]).toContain(String(webServer?.env?.CTX_VOLATILE_ROOT_MODE));
+    expect(String(webServer?.env?.CTX_VOLATILE_ARTIFACTS_DIR)).toContain(path.join("volatile", "artifacts"));
+    expect(String(webServer?.env?.PLAYWRIGHT_BROWSERS_PATH)).toContain(path.join("volatile", "cache", "playwright"));
   });
 
   it("does not inherit installed-app dist or bundle env by default", async () => {
@@ -116,7 +130,7 @@ describe("createCtxPlaywrightConfig", () => {
     const config = await createCtxPlaywrightConfig("all");
     const webServer = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
 
-    expect(webServer?.env?.CTX_WEB_DIST).toBeUndefined();
+    expect(webServer?.env?.CTX_WEB_DIST).toBe("");
     expect(webServer?.env?.CTX_BUNDLE_DIR).not.toBe("/Applications/ctx.app/Contents/Resources/bundles");
   });
 

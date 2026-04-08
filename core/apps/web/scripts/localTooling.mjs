@@ -1,9 +1,11 @@
+import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
 const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const lockedInstallArgs = ["install", "--frozen-lockfile"];
+const installStampFile = ".ctx-locked-install.json";
 
 const binNameForTool = (tool) => (process.platform === "win32" ? `${tool}.cmd` : tool);
 
@@ -20,6 +22,9 @@ export const resolveWorkspaceRoot = (startDir) => {
 };
 
 const resolveLockedInstallRoot = (packageRoot) => resolveWorkspaceRoot(packageRoot);
+const resolveLockfilePath = (packageRoot) => path.join(resolveLockedInstallRoot(packageRoot), "pnpm-lock.yaml");
+const resolveInstallStampPath = (packageRoot) =>
+  path.join(resolveLockedInstallRoot(packageRoot), "node_modules", installStampFile);
 
 const resolveLockedInstallEnv = (env) => ({
   ...env,
@@ -29,6 +34,9 @@ const resolveLockedInstallEnv = (env) => ({
 
 export const lockedInstallHint = (packageRoot) =>
   `bash -lc "cd ${resolveLockedInstallRoot(packageRoot)} && pnpm ${lockedInstallArgs.join(" ")}"`;
+
+const sha256File = (filePath) =>
+  crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 
 export const resolveLocalNodeBin = (packageRoot, tool) => {
   const expectedBin = binNameForTool(tool);
@@ -46,13 +54,35 @@ export const resolveLocalNodeBin = (packageRoot, tool) => {
 export const ensureLockedNodeInstall = (
   packageRoot,
   {
+    existsSyncImpl = fs.existsSync,
     spawnSyncImpl = spawnSync,
     env = process.env,
     exitImpl = process.exit,
+    requiredBins = [],
+    writeFileSyncImpl = fs.writeFileSync,
   } = {},
 ) => {
+  const workspaceRoot = resolveLockedInstallRoot(packageRoot);
+  const lockfilePath = resolveLockfilePath(packageRoot);
+  const stampPath = resolveInstallStampPath(packageRoot);
+  const lockfileSha = existsSyncImpl(lockfilePath) ? sha256File(lockfilePath) : "";
+  const hasRequiredBins = requiredBins.every((tool) => existsSyncImpl(resolveLocalNodeBin(packageRoot, tool)));
+  if (
+    lockfileSha
+    && existsSyncImpl(path.join(workspaceRoot, "node_modules", ".modules.yaml"))
+    && existsSyncImpl(stampPath)
+    && hasRequiredBins
+  ) {
+    try {
+      const stamp = JSON.parse(fs.readFileSync(stampPath, "utf8"));
+      if (stamp?.lockfile_sha256 === lockfileSha) {
+        return { reused: true, lockfileSha };
+      }
+    } catch {}
+  }
+
   const result = spawnSyncImpl(pnpmCommand, lockedInstallArgs, {
-    cwd: resolveLockedInstallRoot(packageRoot),
+    cwd: workspaceRoot,
     env: resolveLockedInstallEnv(env),
     stdio: "inherit",
   });
@@ -62,6 +92,20 @@ export const ensureLockedNodeInstall = (
   if (result.status !== 0) {
     exitImpl(result.status ?? 1);
   }
+  fs.mkdirSync(path.dirname(stampPath), { recursive: true });
+  writeFileSyncImpl(
+    stampPath,
+    `${JSON.stringify(
+      {
+        version: 1,
+        lockfile_sha256: lockfileSha,
+        updated_at: new Date().toISOString(),
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return { reused: false, lockfileSha };
 };
 
 export const requireLocalNodeBin = (packageRoot, tool) => {

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -79,6 +80,7 @@ test("ensureLockedNodeInstall installs from the workspace root without prompts",
   const packageRoot = path.join(root, "apps", "web");
   fs.mkdirSync(packageRoot, { recursive: true });
   fs.writeFileSync(path.join(root, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n");
+  fs.writeFileSync(path.join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
 
   const calls = [];
   ensureLockedNodeInstall(packageRoot, {
@@ -107,6 +109,36 @@ test("ensureLockedNodeInstall installs from the workspace root without prompts",
       },
     },
   ]);
+});
+
+test("ensureLockedNodeInstall skips install when the lockfile stamp and required bins are current", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-local-tooling-install-skip-"));
+  const packageRoot = path.join(root, "apps", "web");
+  const binPath = path.join(root, "node_modules", ".bin", process.platform === "win32" ? "playwright.cmd" : "playwright");
+  const modulesYaml = path.join(root, "node_modules", ".modules.yaml");
+  const stampPath = path.join(root, "node_modules", ".ctx-locked-install.json");
+  fs.mkdirSync(packageRoot, { recursive: true });
+  fs.mkdirSync(path.dirname(binPath), { recursive: true });
+  fs.writeFileSync(path.join(root, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n");
+  fs.writeFileSync(path.join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  fs.writeFileSync(modulesYaml, "storeDir: .pnpm-store\n");
+  fs.writeFileSync(binPath, "#!/bin/sh\n");
+  const lockHash = crypto.createHash("sha256")
+    .update(fs.readFileSync(path.join(root, "pnpm-lock.yaml")))
+    .digest("hex");
+  fs.writeFileSync(stampPath, `${JSON.stringify({ version: 1, lockfile_sha256: lockHash }, null, 2)}\n`);
+
+  const calls = [];
+  const result = ensureLockedNodeInstall(packageRoot, {
+    requiredBins: ["playwright"],
+    spawnSyncImpl: (...args) => {
+      calls.push(args);
+      return { status: 0 };
+    },
+  });
+
+  expect(result).toMatchObject({ reused: true, lockfileSha: lockHash });
+  expect(calls).toEqual([]);
 });
 
 test("ensurePlaywrightBrowserInstall skips install when Chromium is already present", () => {

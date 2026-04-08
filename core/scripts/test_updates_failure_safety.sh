@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename "$(git rev-parse --git-dir)")}
-export CARGO_TARGET_DIR
+eval "$(node scripts/print_ctx_cache_env.cjs --mode workspace --format shell --mkdir)"
 
 cargo test -q -p ctx-http --test updates_failure_safety_manifest_parse
 cargo test -q -p ctx-http --test updates_failure_safety_checksum_mismatch

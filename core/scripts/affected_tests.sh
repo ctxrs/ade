@@ -42,8 +42,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 core_root="$(cd "${script_dir}/.." && pwd)"
 repo_root="$(cd "${core_root}/.." && pwd)"
 cd "${core_root}"
-
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename "$(git -C "${repo_root}" rev-parse --git-dir)")}"
+eval "$(node scripts/print_ctx_cache_env.cjs --mode workspace --format shell --mkdir)"
 
 if [[ -n "${base_ref}" ]]; then
   merge_base="$(git -C "${repo_root}" merge-base HEAD "${base_ref}")"

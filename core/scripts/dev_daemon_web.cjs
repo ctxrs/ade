@@ -4,6 +4,7 @@ const childProcess = require("node:child_process");
 const os = require("node:os");
 const path = require("node:path");
 
+const { buildCtxCacheEnv } = require("./lib/cache_roots.cjs");
 const { resolveLaunchMode } = require("./desktop_mode.cjs");
 
 const coreRoot = path.resolve(__dirname, "..");
@@ -38,11 +39,17 @@ const spawn = (command, args, env) => {
 
 const main = () => {
   const mode = resolveLaunchMode({ surface: "daemon-web" });
+  const { env: baseCacheEnv } = buildCtxCacheEnv({
+    cwd: coreRoot,
+    env: process.env,
+    mode: "workspace",
+    mkdir: true,
+  });
   console.log(
     `desktop_mode_start: channel=${mode.channel} profile=${mode.profile} surface=${mode.surface}`,
   );
   const sharedEnv = {
-    ...process.env,
+    ...baseCacheEnv,
     CTX_DESKTOP_CHANNEL: mode.channel,
     CTX_RUNTIME_PROFILE: mode.profile,
     CTX_LAUNCH_SURFACE: mode.surface,

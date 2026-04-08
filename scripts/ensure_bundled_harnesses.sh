@@ -331,6 +331,20 @@ else
 fi
 export CARGO_TARGET_DIR
 
+if [[ -n "${CARGO_HOME:-}" ]]; then
+  mkdir -p "$CARGO_HOME"
+  CARGO_HOME="$(cd "$CARGO_HOME" && pwd)"
+else
+  CARGO_HOME="$bundle_build_dir/cargo-home"
+  mkdir -p "$CARGO_HOME"
+  CARGO_HOME="$(cd "$CARGO_HOME" && pwd)"
+fi
+export CARGO_HOME
+
+bundle_rustup_home="${CTX_BUNDLE_RUSTUP_HOME:-$bundle_build_dir/rustup-home}"
+mkdir -p "$bundle_rustup_home"
+bundle_rustup_home="$(cd "$bundle_rustup_home" && pwd)"
+
 sha256_file() {
   local path="$1"
   if command -v sha256sum >/dev/null 2>&1; then
@@ -583,8 +597,12 @@ require_bridge_binary() {
     local image="${CTX_BUNDLE_RUST_IMAGE:-rust:1}"
     docker run --rm --platform "$platform" \
       -v "$BRIDGE_DIR:/work:rw" \
+      -v "$CARGO_HOME:/cargo-home:rw" \
+      -v "$bundle_rustup_home:/rustup-home:rw" \
       -v "$target_dir:/target:rw" \
       -w /work \
+      -e CARGO_HOME=/cargo-home \
+      -e RUSTUP_HOME=/rustup-home \
       -e CARGO_TARGET_DIR=/target \
       "$image" \
       bash -c "set -euo pipefail; export PATH=\"/usr/local/cargo/bin:\$PATH\"; rustup target add '$rust_target' >/dev/null 2>&1 || true; cargo build --release --target '$rust_target'"

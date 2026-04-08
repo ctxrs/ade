@@ -112,7 +112,7 @@ const files = suite === "all" ? allSpecs : specsBySuite.get(suite);
 console.error(`running suite '${suite}' with ${files.length} spec(s)`);
 
 const configPath = configBySuite[suite];
-ensureLockedNodeInstall(webRoot);
+ensureLockedNodeInstall(webRoot, { requiredBins: ["playwright"] });
 ensurePlaywrightBrowserInstall(webRoot);
 const cmd = requireLocalNodeBin(webRoot, "playwright");
 const args = ["test", "-c", configPath, ...files, ...forwardedArgs];

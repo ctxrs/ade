@@ -235,6 +235,13 @@ test("bundle harnesses pin cargo artifacts under the bundle build dir by default
 
   assert.match(script, /CARGO_TARGET_DIR="\$bundle_build_dir\/cargo\/\$target_key"/);
   assert.match(script, /export CARGO_TARGET_DIR/);
+  assert.match(script, /CARGO_HOME="\$bundle_build_dir\/cargo-home"/);
+  assert.match(script, /export CARGO_HOME/);
+  assert.match(script, /bundle_rustup_home="\$\{CTX_BUNDLE_RUSTUP_HOME:-\$bundle_build_dir\/rustup-home\}"/);
+  assert.match(script, /-v "\$CARGO_HOME:\/cargo-home:rw"/);
+  assert.match(script, /-v "\$bundle_rustup_home:\/rustup-home:rw"/);
+  assert.match(script, /-e CARGO_HOME=\/cargo-home/);
+  assert.match(script, /-e RUSTUP_HOME=\/rustup-home/);
 });
 
 test("bundle runtime downloads use mktemp templates that work on macOS", () => {

@@ -3,23 +3,12 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
 CORE_DIR="${ROOT}/core"
-VOLATILE_ROOT="${CTX_VOLATILE_ROOT:-${HOME}/.ctx/volatile}"
-VOLATILE_TARGETS_DIR="${CTX_VOLATILE_TARGETS_DIR:-${VOLATILE_ROOT}/targets}"
-VOLATILE_ARTIFACTS_DIR="${CTX_VOLATILE_ARTIFACTS_DIR:-${VOLATILE_ROOT}/artifacts}"
-
-resolve_ctx_scope_key() {
-  local repo_dir="$1"
-  local git_dir_basename=""
-  git_dir_basename="$(basename "$(git -C "${repo_dir}" rev-parse --git-dir 2>/dev/null || printf '')")"
-  if [[ -n "${git_dir_basename}" && "${git_dir_basename}" != ".git" ]]; then
-    printf '%s' "${git_dir_basename}"
-    return
-  fi
-  basename "$(git -C "${repo_dir}" rev-parse --show-toplevel 2>/dev/null || printf '%s' "${repo_dir}")"
-}
-
-CTX_SCOPE_KEY="$(resolve_ctx_scope_key "${CORE_DIR}")"
-DEFAULT_CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${CTX_SHARED_CARGO_TARGET_DIR:-${VOLATILE_TARGETS_DIR}/ctx-monorepo/${CTX_SCOPE_KEY}}}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${CTX_SHARED_CARGO_TARGET_DIR:-}}"
+eval "$(node "${CORE_DIR}/scripts/print_ctx_cache_env.cjs" --mode workspace --format shell --mkdir)"
+VOLATILE_ROOT="${CTX_VOLATILE_ROOT}"
+VOLATILE_TARGETS_DIR="${CTX_VOLATILE_TARGETS_DIR}"
+VOLATILE_ARTIFACTS_DIR="${CTX_VOLATILE_ARTIFACTS_DIR}"
+DEFAULT_CARGO_TARGET_DIR="${CARGO_TARGET_DIR}"
 
 SCENARIOS="${CTX_AUTOMATION_SCENARIOS:-local-import}"
 INFISICAL_ENV="${INFISICAL_ENV:-dev}"

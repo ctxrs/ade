@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const { shouldBundleRemoteDaemons } = require("./desktop_sync_resources_remote_daemon_policy.cjs");
 const { parseBoolish, resolveBoolishFlag } = require("./lib/boolish.cjs");
 const { resolveCargoTargetDir } = require("./lib/cargo_target_dir.cjs");
+const { resolveDesktopWebDistSource } = require("./lib/web_dist_cache.cjs");
 const { validateRuntimeLock } = require("./runtime_lock_validate.cjs");
 
 const args = process.argv.slice(2);
@@ -1250,9 +1251,9 @@ const copySidecar = (sourceName, destName = sourceName) => {
 };
 
 const copyWebDist = () => {
-  const srcDist = path.join(coreRoot, "apps", "web", "dist");
+  const srcDist = resolveDesktopWebDistSource(coreRoot, process.env);
   if (!fs.existsSync(srcDist)) {
-    throw new Error(`missing web dist: ${srcDist} (did you run pnpm -C apps/web build?)`);
+    throw new Error(`missing web dist: ${srcDist}`);
   }
 
   fs.rmSync(destWebDistDir, { recursive: true, force: true });

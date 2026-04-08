@@ -1,0 +1,97 @@
+#!/usr/bin/env node
+
+const path = require("node:path");
+
+const {
+  buildCtxCacheEnv,
+  formatShellExports,
+} = require("./lib/cache_roots.cjs");
+
+function usage() {
+  console.error("usage: print_ctx_cache_env.cjs [--mode workspace|verify-quick] [--format shell|json] [--mkdir]");
+}
+
+function main() {
+  const args = process.argv.slice(2);
+  let mode = "workspace";
+  let format = "shell";
+  let mkdir = false;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    switch (arg) {
+      case "--mode":
+        mode = args[index + 1] || "";
+        index += 1;
+        break;
+      case "--format":
+        format = args[index + 1] || "";
+        index += 1;
+        break;
+      case "--mkdir":
+        mkdir = true;
+        break;
+      case "-h":
+      case "--help":
+        usage();
+        process.exit(0);
+        break;
+      default:
+        console.error(`error: unknown option '${arg}'`);
+        usage();
+        process.exit(2);
+    }
+  }
+
+  if (!new Set(["workspace", "verify-quick"]).has(mode)) {
+    console.error(`error: unsupported mode '${mode}'`);
+    process.exit(2);
+  }
+  if (!new Set(["shell", "json"]).has(format)) {
+    console.error(`error: unsupported format '${format}'`);
+    process.exit(2);
+  }
+
+  const cwd = path.resolve(__dirname, "..");
+  const { env, layout, cargoTargetDir } = buildCtxCacheEnv({
+    cwd,
+    env: process.env,
+    mode,
+    mkdir,
+  });
+  const payload = {
+    CTX_EXTERNAL_CACHE_ROOT: env.CTX_EXTERNAL_CACHE_ROOT,
+    CTX_INTERNAL_VOLATILE_ROOT: env.CTX_INTERNAL_VOLATILE_ROOT,
+    CTX_PREFERRED_VOLATILE_ROOT: env.CTX_PREFERRED_VOLATILE_ROOT,
+    CTX_VOLATILE_ROOT: env.CTX_VOLATILE_ROOT,
+    CTX_VOLATILE_ROOT_MODE: env.CTX_VOLATILE_ROOT_MODE,
+    CTX_VOLATILE_TARGETS_DIR: env.CTX_VOLATILE_TARGETS_DIR,
+    CTX_VOLATILE_ARTIFACTS_DIR: env.CTX_VOLATILE_ARTIFACTS_DIR,
+    CTX_VOLATILE_TMPDIR: env.CTX_VOLATILE_TMPDIR,
+    CTX_VOLATILE_CACHE_DIR: env.CTX_VOLATILE_CACHE_DIR,
+    CARGO_TARGET_DIR: cargoTargetDir,
+    CTX_VERIFY_CARGO_TARGET_DIR: env.CTX_VERIFY_CARGO_TARGET_DIR,
+    TURBO_CACHE_DIR: env.TURBO_CACHE_DIR,
+    CTX_BUNDLE_CACHE_DIR: env.CTX_BUNDLE_CACHE_DIR,
+    PLAYWRIGHT_BROWSERS_PATH: env.PLAYWRIGHT_BROWSERS_PATH,
+    SCCACHE_DIR: env.SCCACHE_DIR,
+    ...(env.SCCACHE_BASEDIRS ? { SCCACHE_BASEDIRS: env.SCCACHE_BASEDIRS } : {}),
+    ...(env.SCCACHE_SERVER_UDS ? { SCCACHE_SERVER_UDS: env.SCCACHE_SERVER_UDS } : {}),
+    ...(env.CARGO_INCREMENTAL ? { CARGO_INCREMENTAL: env.CARGO_INCREMENTAL } : {}),
+    ...(env.RUSTFLAGS ? { RUSTFLAGS: env.RUSTFLAGS } : {}),
+    ...(env.CARGO_HOME ? { CARGO_HOME: env.CARGO_HOME } : {}),
+    ...(env.SCCACHE_PATH ? { SCCACHE_PATH: env.SCCACHE_PATH } : {}),
+    ...(env.RUSTC_WRAPPER ? { RUSTC_WRAPPER: env.RUSTC_WRAPPER } : {}),
+  };
+
+  if (format === "json") {
+    process.stdout.write(
+      `${JSON.stringify({ mode, cargo_target_dir: cargoTargetDir, layout, env: payload }, null, 2)}\n`,
+    );
+    return;
+  }
+
+  process.stdout.write(`${formatShellExports(payload)}\n`);
+}
+
+main();

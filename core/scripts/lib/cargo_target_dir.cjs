@@ -1,41 +1,13 @@
-const childProcess = require("node:child_process");
-const os = require("node:os");
-const path = require("node:path");
-
-function resolveGitDirName(cwd) {
-  try {
-    const raw = childProcess
-      .execSync("git rev-parse --git-dir", {
-        cwd,
-        stdio: ["ignore", "pipe", "ignore"],
-      })
-      .toString()
-      .trim();
-    if (!raw) {
-      return "default";
-    }
-    return path.basename(raw);
-  } catch {
-    return "default";
-  }
-}
+const { resolveCtxCacheLayout, resolveRepoScopeKey } = require("./cache_roots.cjs");
 
 function resolveCargoTargetDir({ cwd, env = process.env } = {}) {
-  const raw = String(env.CARGO_TARGET_DIR || "").trim();
-  if (raw) {
-    return raw;
-  }
-  const effectiveCwd = cwd || process.cwd();
-  return path.join(
-    os.homedir(),
-    ".cache",
-    "cargo",
-    "ctx-monorepo",
-    resolveGitDirName(effectiveCwd),
-  );
+  return resolveCtxCacheLayout({
+    cwd: cwd || process.cwd(),
+    env,
+  }).workspaceCargoTargetDir;
 }
 
 module.exports = {
-  resolveGitDirName,
+  resolveGitDirName: resolveRepoScopeKey,
   resolveCargoTargetDir,
 };

@@ -5,7 +5,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const childProcess = require("node:child_process");
-const { resolveCargoTargetDir } = require("./lib/cargo_target_dir.cjs");
+const { buildCtxCacheEnv } = require("./lib/cache_roots.cjs");
+const { readDesktopVersion } = require("./desktop_version.cjs");
+const { ensureWebDistArtifact } = require("./lib/web_dist_cache.cjs");
 const { resolveDefaultLockPath, validateRuntimeLock } = require("./runtime_lock_validate.cjs");
 
 const coreRoot = path.resolve(__dirname, "..");
@@ -42,11 +44,21 @@ const sha256File = (filePath) => {
   return crypto.createHash("sha256").update(data).digest("hex");
 };
 
-const ensureParityPrep = ({ prepEnv }) => {
+const ensureParityPrep = ({ prepEnv, desktopVersion }) => {
   run("node", ["scripts/desktop_check_versions.cjs"], { env: prepEnv });
   run("cargo", ["build", "-p", "ctx-http", "-p", "ctx-mcp"], { env: prepEnv });
-  run("pnpm", ["-C", "apps/web", "exec", "vite", "build"], { env: prepEnv });
-  run("node", ["scripts/desktop_sync_resources.cjs", "--profile", "debug"], { env: prepEnv });
+  const desktopWebDist = ensureWebDistArtifact({
+    coreRoot,
+    env: prepEnv,
+    appVersion: desktopVersion,
+    variant: "desktop-runtime-parity",
+  }).distDir;
+  run("node", ["scripts/desktop_sync_resources.cjs", "--profile", "debug"], {
+    env: {
+      ...prepEnv,
+      CTX_DESKTOP_WEB_DIST: desktopWebDist,
+    },
+  });
 };
 
 const writeRuntimeState = ({
@@ -87,15 +99,20 @@ const writeRuntimeState = ({
 
 const main = () => {
   const profile = resolveProfile();
-  const cargoTargetDir = resolveCargoTargetDir({ cwd: coreRoot });
-  const prepEnv = { ...process.env, CARGO_TARGET_DIR: cargoTargetDir };
+  const { env: prepEnv, cargoTargetDir } = buildCtxCacheEnv({
+    cwd: coreRoot,
+    env: process.env,
+    mode: "workspace",
+    mkdir: true,
+  });
+  const desktopVersion = readDesktopVersion(coreRoot);
   const lockPath = resolveDefaultLockPath();
   const prepMode = profile === "source-all" ? "source-all" : "parity-with-existing-bundles";
 
   if (profile === "source-all") {
     run("pnpm", ["desktop:prep"], { env: prepEnv });
   } else {
-    ensureParityPrep({ prepEnv });
+    ensureParityPrep({ prepEnv, desktopVersion });
   }
 
   const validation = validateRuntimeLock({

@@ -4,8 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 core_root="$(cd "${script_dir}/.." && pwd)"
 cd "${core_root}"
-
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename "$(git rev-parse --git-dir)")}"
+eval "$(node scripts/print_ctx_cache_env.cjs --mode workspace --format shell --mkdir)"
 
 run() {
   echo "+ $*"

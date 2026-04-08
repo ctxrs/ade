@@ -28,6 +28,7 @@ test("desktop_prepare release mode builds web, checks versions, and syncs releas
   const steps = createPrepSteps({
     mode: "release-build",
     cargoTargetDir: "/tmp/cargo-target",
+    desktopWebDist: "/tmp/web-dist",
     desktopVersion: "0.22.0",
     platform: "darwin",
     arch: "arm64",
@@ -45,9 +46,7 @@ test("desktop_prepare release mode builds web, checks versions, and syncs releas
     "--release",
   ]);
   assert.equal(steps[2].env.CTX_DESKTOP_SKIP_TAURI_BUILD, "1");
-  assert.deepEqual(steps[3].args, ["-C", "apps/web", "exec", "vite", "build"]);
-  assert.equal(steps[3].env.VITE_CTX_APP_VERSION, "0.22.0");
-  assert.deepEqual(steps[4].args, [
+  assert.deepEqual(steps[3].args, [
     "scripts/prepare_avf_linux_guest_runtime.sh",
     "--output-dir",
     "/tmp/cargo-target/desktop-avf-linux-guest-runtime",
@@ -55,12 +54,13 @@ test("desktop_prepare release mode builds web, checks versions, and syncs releas
     "arm64",
     "--force",
   ]);
-  assert.deepEqual(steps[5].args, ["scripts/desktop_sync_resources.cjs", "--profile", "release"]);
-  assert.equal(steps[5].env.CTX_DESKTOP_SYNC_BUNDLES, "1");
+  assert.deepEqual(steps[4].args, ["scripts/desktop_sync_resources.cjs", "--profile", "release"]);
+  assert.equal(steps[4].env.CTX_DESKTOP_SYNC_BUNDLES, "1");
   assert.equal(
-    steps[5].env.CTX_AVF_LINUX_GUEST_RUNTIME_DIR,
+    steps[4].env.CTX_AVF_LINUX_GUEST_RUNTIME_DIR,
     "/tmp/cargo-target/desktop-avf-linux-guest-runtime",
   );
+  assert.equal(steps[4].env.CTX_DESKTOP_WEB_DIST, "/tmp/web-dist");
 });
 
 test("desktop_prepare dev mode skips web build and version checks", () => {
@@ -82,6 +82,7 @@ test("desktop_prepare skips AVF guest runtime prep outside darwin arm64 release 
   const steps = createPrepSteps({
     mode: "release-build",
     cargoTargetDir: "/tmp/cargo-target",
+    desktopWebDist: "/tmp/web-dist",
     desktopVersion: "0.22.0",
     platform: "darwin",
     arch: "x64",
@@ -104,6 +105,7 @@ test("desktop_prepare skips AVF guest runtime prep when managed AVF metadata is 
     const steps = createPrepSteps({
       mode: "release-build",
       cargoTargetDir: "/tmp/cargo-target",
+      desktopWebDist: "/tmp/web-dist",
       desktopVersion: "0.22.0",
       platform: "darwin",
       arch: "arm64",

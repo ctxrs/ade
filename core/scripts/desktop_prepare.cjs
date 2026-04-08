@@ -3,8 +3,10 @@
 const childProcess = require("node:child_process");
 const path = require("node:path");
 
+const { buildCtxCacheEnv } = require("./lib/cache_roots.cjs");
 const { readDesktopVersion } = require("./desktop_version.cjs");
 const { resolveCargoTargetDir } = require("./lib/cargo_target_dir.cjs");
+const { ensureWebDistArtifact } = require("./lib/web_dist_cache.cjs");
 
 const coreRoot = path.resolve(__dirname, "..");
 
@@ -57,7 +59,9 @@ function parseArgs(argv) {
 
 function createPrepSteps({
   mode,
-  cargoTargetDir,
+  prepEnv,
+  cargoTargetDir = resolveCargoTargetDir({ cwd: coreRoot, env: prepEnv }),
+  desktopWebDist = "",
   desktopVersion,
   syncBundles = process.env.CTX_DESKTOP_SYNC_BUNDLES || (mode === "dev" ? "0" : "1"),
   platform = process.platform,
@@ -78,10 +82,14 @@ function createPrepSteps({
     avfArgs.push("--release");
   }
 
-  const baseEnv = {
-    ...process.env,
-    CARGO_TARGET_DIR: cargoTargetDir,
-  };
+  const baseEnv = { ...prepEnv, CARGO_TARGET_DIR: cargoTargetDir };
+  if (
+    !baseEnv.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD
+    && process.env.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD
+  ) {
+    baseEnv.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD =
+      process.env.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD;
+  }
   const steps = [];
   const allowManagedAvfRuntimeMissingLocalPayload =
     String(process.env.CTX_DESKTOP_ALLOW_MANAGED_AVF_RUNTIME_MISSING_LOCAL_PAYLOAD || "").trim() === "1";
@@ -119,15 +127,8 @@ function createPrepSteps({
     });
   }
 
-  if (config.buildWeb) {
-    steps.push({
-      command: "pnpm",
-      args: ["-C", "apps/web", "exec", "vite", "build"],
-      env: {
-        ...baseEnv,
-        VITE_CTX_APP_VERSION: desktopVersion,
-      },
-    });
+  if (config.buildWeb && !desktopWebDist) {
+    throw new Error(`desktopWebDist is required for ${mode}`);
   }
 
   if (shouldPrepareAvfGuestRuntime) {
@@ -151,6 +152,7 @@ function createPrepSteps({
     env: {
       ...baseEnv,
       CTX_DESKTOP_SYNC_BUNDLES: syncBundles,
+      ...(desktopWebDist ? { CTX_DESKTOP_WEB_DIST: desktopWebDist } : {}),
       ...(avfGuestRuntimeDir
         ? { CTX_AVF_LINUX_GUEST_RUNTIME_DIR: avfGuestRuntimeDir }
         : {}),
@@ -173,17 +175,36 @@ function runStep(step) {
 
 function main(argv = process.argv) {
   const { mode } = parseArgs(argv);
-  const cargoTargetDir = resolveCargoTargetDir({ cwd: coreRoot });
+  const { env: prepEnv, cargoTargetDir } = buildCtxCacheEnv({
+    cwd: coreRoot,
+    env: process.env,
+    mode: "workspace",
+    mkdir: true,
+  });
   const desktopVersion = readDesktopVersion(coreRoot);
+  const desktopWebDist = PREP_MODES[mode].buildWeb
+    ? ensureWebDistArtifact({
+      coreRoot,
+      env: prepEnv,
+      appVersion: desktopVersion,
+      variant: `desktop-${mode}`,
+    }).distDir
+    : trimDesktopWebDist(process.env.CTX_DESKTOP_WEB_DIST);
   const steps = createPrepSteps({
     mode,
+    prepEnv,
     cargoTargetDir,
+    desktopWebDist,
     desktopVersion,
     arch: process.arch,
   });
   for (const step of steps) {
     runStep(step);
   }
+}
+
+function trimDesktopWebDist(value) {
+  return String(value ?? "").trim();
 }
 
 if (require.main === module) {
