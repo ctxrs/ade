@@ -77,11 +77,19 @@ function main() {
     SCCACHE_DIR: env.SCCACHE_DIR,
     ...(env.SCCACHE_BASEDIRS ? { SCCACHE_BASEDIRS: env.SCCACHE_BASEDIRS } : {}),
     ...(env.SCCACHE_SERVER_UDS ? { SCCACHE_SERVER_UDS: env.SCCACHE_SERVER_UDS } : {}),
+    ...(env.SCCACHE_BUCKET ? { SCCACHE_BUCKET: env.SCCACHE_BUCKET } : {}),
+    ...(env.SCCACHE_ENDPOINT ? { SCCACHE_ENDPOINT: env.SCCACHE_ENDPOINT } : {}),
+    ...(env.SCCACHE_REGION ? { SCCACHE_REGION: env.SCCACHE_REGION } : {}),
+    ...(env.SCCACHE_S3_KEY_PREFIX ? { SCCACHE_S3_KEY_PREFIX: env.SCCACHE_S3_KEY_PREFIX } : {}),
+    ...(env.SCCACHE_S3_USE_SSL ? { SCCACHE_S3_USE_SSL: env.SCCACHE_S3_USE_SSL } : {}),
     ...(env.CARGO_INCREMENTAL ? { CARGO_INCREMENTAL: env.CARGO_INCREMENTAL } : {}),
     ...(env.RUSTFLAGS ? { RUSTFLAGS: env.RUSTFLAGS } : {}),
     ...(env.CARGO_HOME ? { CARGO_HOME: env.CARGO_HOME } : {}),
     ...(env.SCCACHE_PATH ? { SCCACHE_PATH: env.SCCACHE_PATH } : {}),
     ...(env.RUSTC_WRAPPER ? { RUSTC_WRAPPER: env.RUSTC_WRAPPER } : {}),
+    ...(env.TURBO_API ? { TURBO_API: env.TURBO_API } : {}),
+    ...(env.TURBO_TEAM ? { TURBO_TEAM: env.TURBO_TEAM } : {}),
+    ...(env.TURBO_CACHE_MODE ? { TURBO_CACHE_MODE: env.TURBO_CACHE_MODE } : {}),
   };
 
   if (format === "json") {

@@ -9,6 +9,10 @@ const turboConfig = JSON.parse(fs.readFileSync(turboConfigPath, "utf8"));
 test("turbo forwards external Rust cache env vars to child tasks", () => {
   const passThroughEnv = new Set(turboConfig.globalPassThroughEnv ?? []);
 
+  assert.equal(passThroughEnv.has("TURBO_API"), true);
+  assert.equal(passThroughEnv.has("TURBO_TOKEN"), true);
+  assert.equal(passThroughEnv.has("TURBO_TEAM"), true);
+  assert.equal(passThroughEnv.has("TURBO_CACHE_MODE"), true);
   assert.equal(passThroughEnv.has("CARGO_HOME"), true);
   assert.equal(passThroughEnv.has("CARGO_TARGET_DIR"), true);
   assert.equal(passThroughEnv.has("CTX_VERIFY_CARGO_TARGET_DIR"), true);
@@ -21,9 +25,26 @@ test("turbo forwards external Rust cache env vars to child tasks", () => {
   assert.equal(passThroughEnv.has("PLAYWRIGHT_BROWSERS_PATH"), true);
   assert.equal(passThroughEnv.has("RUSTC_WRAPPER"), true);
   assert.equal(passThroughEnv.has("SCCACHE_DIR"), true);
+  assert.equal(passThroughEnv.has("SCCACHE_BUCKET"), true);
+  assert.equal(passThroughEnv.has("SCCACHE_ENDPOINT"), true);
+  assert.equal(passThroughEnv.has("SCCACHE_REGION"), true);
+  assert.equal(passThroughEnv.has("SCCACHE_S3_KEY_PREFIX"), true);
+  assert.equal(passThroughEnv.has("SCCACHE_S3_USE_SSL"), true);
   assert.equal(passThroughEnv.has("SCCACHE_BASEDIRS"), true);
   assert.equal(passThroughEnv.has("SCCACHE_PATH"), true);
   assert.equal(passThroughEnv.has("SCCACHE_SERVER_UDS"), true);
+  assert.equal(passThroughEnv.has("CTX_SCCACHE_R2_BUCKET"), true);
+  assert.equal(passThroughEnv.has("CTX_SCCACHE_R2_ACCOUNT_ID"), true);
+  assert.equal(passThroughEnv.has("CTX_SCCACHE_R2_ENDPOINT"), true);
+  assert.equal(passThroughEnv.has("CTX_SCCACHE_R2_KEY_PREFIX"), true);
+  assert.equal(passThroughEnv.has("CTX_SCCACHE_R2_REGION"), true);
+  assert.equal(passThroughEnv.has("CTX_SCCACHE_R2_JURISDICTION"), true);
+  assert.equal(passThroughEnv.has("CTX_SCCACHE_R2_ACCESS_KEY_ID"), true);
+  assert.equal(passThroughEnv.has("CTX_SCCACHE_R2_SECRET_ACCESS_KEY"), true);
+  assert.equal(passThroughEnv.has("CTX_SCCACHE_R2_SESSION_TOKEN"), true);
+  assert.equal(passThroughEnv.has("AWS_ACCESS_KEY_ID"), true);
+  assert.equal(passThroughEnv.has("AWS_SECRET_ACCESS_KEY"), true);
+  assert.equal(passThroughEnv.has("AWS_SESSION_TOKEN"), true);
   assert.equal(passThroughEnv.has("CARGO_INCREMENTAL"), true);
   assert.equal(passThroughEnv.has("RUSTFLAGS"), true);
   assert.equal(passThroughEnv.has("RUST_TEST_THREADS"), true);

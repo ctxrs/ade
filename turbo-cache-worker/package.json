@@ -1,0 +1,15 @@
+{
+  "name": "ctx-turbo-cache-worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local --port 8789",
+    "test": "node --test src/worker.test.mjs",
+    "smoke:live": "node scripts/live-smoke.mjs",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.81.0"
+  }
+}

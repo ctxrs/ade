@@ -141,6 +141,76 @@ test("buildCtxCacheEnv preserves explicit incremental and existing path normaliz
   assert.match(String(env.RUSTFLAGS), /--remap-path-prefix=.*=\/ctx-workspace/);
 });
 
+test("buildCtxCacheEnv derives standard sccache S3 env from Cloudflare R2-specific inputs", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-r2");
+  const { env } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+      RUSTC_WRAPPER: "/opt/homebrew/bin/sccache",
+      CTX_SCCACHE_R2_BUCKET: "test-sccache-bucket",
+      CTX_SCCACHE_R2_ACCOUNT_ID: "test-r2-account-id",
+      CTX_SCCACHE_R2_KEY_PREFIX: "sccache/dev",
+      CTX_SCCACHE_R2_ACCESS_KEY_ID: "access-key-id",
+      CTX_SCCACHE_R2_SECRET_ACCESS_KEY: "secret-access-key",
+    },
+  });
+
+  assert.equal(env.SCCACHE_BUCKET, "test-sccache-bucket");
+  assert.equal(env.SCCACHE_REGION, "auto");
+  assert.equal(env.SCCACHE_ENDPOINT, "https://test-r2-account-id.r2.cloudflarestorage.com");
+  assert.equal(env.SCCACHE_S3_KEY_PREFIX, "sccache/dev");
+  assert.equal(env.SCCACHE_S3_USE_SSL, "true");
+  assert.equal(env.AWS_ACCESS_KEY_ID, "access-key-id");
+  assert.equal(env.AWS_SECRET_ACCESS_KEY, "secret-access-key");
+});
+
+test("buildCtxCacheEnv preserves explicit standard sccache env over derived R2 defaults", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-r2-explicit");
+  const { env } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+      RUSTC_WRAPPER: "/opt/homebrew/bin/sccache",
+      CTX_SCCACHE_R2_BUCKET: "test-sccache-bucket",
+      CTX_SCCACHE_R2_ACCOUNT_ID: "test-r2-account-id",
+      SCCACHE_ENDPOINT: "https://example.invalid",
+      SCCACHE_S3_KEY_PREFIX: "explicit/prefix",
+      AWS_ACCESS_KEY_ID: "existing-id",
+    },
+  });
+
+  assert.equal(env.SCCACHE_ENDPOINT, "https://example.invalid");
+  assert.equal(env.SCCACHE_S3_KEY_PREFIX, "explicit/prefix");
+  assert.equal(env.AWS_ACCESS_KEY_ID, "existing-id");
+});
+
+test("buildCtxCacheEnv prefers ctx-specific R2 credentials over ambient AWS credentials", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-r2-override");
+  const { env } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+      RUSTC_WRAPPER: "/opt/homebrew/bin/sccache",
+      CTX_SCCACHE_R2_BUCKET: "test-sccache-bucket",
+      CTX_SCCACHE_R2_ACCOUNT_ID: "test-r2-account-id",
+      CTX_SCCACHE_R2_ACCESS_KEY_ID: "r2-access-key",
+      CTX_SCCACHE_R2_SECRET_ACCESS_KEY: "r2-secret-key",
+      CTX_SCCACHE_R2_SESSION_TOKEN: "r2-session-token",
+      AWS_ACCESS_KEY_ID: "ambient-access-key",
+      AWS_SECRET_ACCESS_KEY: "ambient-secret-key",
+      AWS_SESSION_TOKEN: "ambient-session-token",
+    },
+  });
+
+  assert.equal(env.AWS_ACCESS_KEY_ID, "r2-access-key");
+  assert.equal(env.AWS_SECRET_ACCESS_KEY, "r2-secret-key");
+  assert.equal(env.AWS_SESSION_TOKEN, "r2-session-token");
+});
+
 test("buildCtxCacheEnv honors explicit verify target overrides", () => {
   const cwd = path.resolve(__dirname, "..", "..");
   const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-verify");
@@ -171,6 +241,22 @@ test("buildCtxCacheEnv can opt into a volatile cargo home", () => {
 
   assert.equal(env.CARGO_HOME, path.join(volatileRoot, "cache", "cargo-home"));
   assert.equal(env.CTX_BUNDLE_CACHE_DIR, path.join(volatileRoot, "cache", "bundles"));
+});
+
+test("buildCtxCacheEnv derives remote turbo cache mode when the endpoint and credentials are present", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-turbo-remote");
+  const { env } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+      TURBO_API: "https://ctx-turbo-cache.example.workers.dev",
+      TURBO_TOKEN: "turbo-token",
+      TURBO_TEAM: "turbo-team",
+    },
+  });
+
+  assert.equal(env.TURBO_CACHE_MODE, "local:rw,remote:rw");
 });
 
 test("formatShellExports produces stable export lines", () => {

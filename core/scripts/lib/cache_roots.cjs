@@ -83,6 +83,13 @@ function setDefaultEnvValue(targetEnv, key, value) {
   }
 }
 
+function setDefaultEnvValueIfPresent(targetEnv, key, value) {
+  const normalized = trimValue(value);
+  if (normalized) {
+    setDefaultEnvValue(targetEnv, key, normalized);
+  }
+}
+
 function setDerivedPathEnvValue(targetEnv, key, value, { cwd, explicitVolatileRoot }) {
   const currentValue = trimValue(targetEnv[key]);
   if (!currentValue) {
@@ -358,6 +365,21 @@ function resolveAvailableSccachePath(env = process.env) {
   return "";
 }
 
+function buildR2Endpoint(accountId, jurisdiction) {
+  const normalizedAccountId = trimValue(accountId);
+  if (!normalizedAccountId) {
+    return "";
+  }
+  const normalizedJurisdiction = trimValue(jurisdiction).toLowerCase();
+  if (normalizedJurisdiction === "eu") {
+    return `https://${normalizedAccountId}.eu.r2.cloudflarestorage.com`;
+  }
+  if (normalizedJurisdiction === "fedramp") {
+    return `https://${normalizedAccountId}.fedramp.r2.cloudflarestorage.com`;
+  }
+  return `https://${normalizedAccountId}.r2.cloudflarestorage.com`;
+}
+
 function buildCtxCacheEnv({
   cwd = process.cwd(),
   env = process.env,
@@ -423,6 +445,61 @@ function buildCtxCacheEnv({
       cwd,
       explicitVolatileRoot,
     });
+  }
+
+  const turboApi = trimValue(env.TURBO_API);
+  const turboToken = trimValue(env.TURBO_TOKEN);
+  const turboTeam = trimValue(env.TURBO_TEAM);
+  if (!trimValue(resolvedEnv.TURBO_CACHE_MODE) && turboApi && turboToken && turboTeam) {
+    resolvedEnv.TURBO_CACHE_MODE = "local:rw,remote:rw";
+  }
+
+  const remoteSccacheBucket = trimValue(env.CTX_SCCACHE_R2_BUCKET) || trimValue(env.SCCACHE_BUCKET);
+  const remoteSccacheAccountId = trimValue(env.CTX_SCCACHE_R2_ACCOUNT_ID);
+  const remoteSccacheEndpoint =
+    trimValue(env.CTX_SCCACHE_R2_ENDPOINT)
+    || trimValue(env.SCCACHE_ENDPOINT)
+    || buildR2Endpoint(remoteSccacheAccountId, env.CTX_SCCACHE_R2_JURISDICTION);
+  const remoteSccacheKeyPrefix =
+    trimValue(env.CTX_SCCACHE_R2_KEY_PREFIX)
+    || trimValue(env.SCCACHE_S3_KEY_PREFIX)
+    || `sccache/${layout.repoCacheSlug}`;
+  const remoteSccacheAccessKeyId = trimValue(env.CTX_SCCACHE_R2_ACCESS_KEY_ID);
+  const remoteSccacheSecretAccessKey = trimValue(env.CTX_SCCACHE_R2_SECRET_ACCESS_KEY);
+  const remoteSccacheSessionToken = trimValue(env.CTX_SCCACHE_R2_SESSION_TOKEN);
+  if (remoteSccacheBucket) {
+    setDefaultEnvValueIfPresent(resolvedEnv, "SCCACHE_BUCKET", remoteSccacheBucket);
+    setDefaultEnvValueIfPresent(
+      resolvedEnv,
+      "SCCACHE_REGION",
+      trimValue(env.CTX_SCCACHE_R2_REGION) || trimValue(env.SCCACHE_REGION) || "auto",
+    );
+    setDefaultEnvValueIfPresent(resolvedEnv, "SCCACHE_ENDPOINT", remoteSccacheEndpoint);
+    setDefaultEnvValueIfPresent(resolvedEnv, "SCCACHE_S3_KEY_PREFIX", remoteSccacheKeyPrefix);
+    setDefaultEnvValueIfPresent(
+      resolvedEnv,
+      "SCCACHE_S3_USE_SSL",
+      trimValue(env.SCCACHE_S3_USE_SSL) || "true",
+    );
+    if (remoteSccacheAccessKeyId) {
+      resolvedEnv.AWS_ACCESS_KEY_ID = remoteSccacheAccessKeyId;
+    } else {
+      setDefaultEnvValueIfPresent(resolvedEnv, "AWS_ACCESS_KEY_ID", trimValue(env.AWS_ACCESS_KEY_ID));
+    }
+    if (remoteSccacheSecretAccessKey) {
+      resolvedEnv.AWS_SECRET_ACCESS_KEY = remoteSccacheSecretAccessKey;
+    } else {
+      setDefaultEnvValueIfPresent(
+        resolvedEnv,
+        "AWS_SECRET_ACCESS_KEY",
+        trimValue(env.AWS_SECRET_ACCESS_KEY),
+      );
+    }
+    if (remoteSccacheSessionToken) {
+      resolvedEnv.AWS_SESSION_TOKEN = remoteSccacheSessionToken;
+    } else {
+      setDefaultEnvValueIfPresent(resolvedEnv, "AWS_SESSION_TOKEN", trimValue(env.AWS_SESSION_TOKEN));
+    }
   }
 
   const sccachePath = resolveAvailableSccachePath(resolvedEnv);
