@@ -3,6 +3,10 @@ import { idToString } from "../api/client";
 import type { AssistantStreamingState } from "../state/assistantStreaming";
 import type { SessionViewVerbosity } from "../state/uiStateStore";
 import {
+  addPretextPerfBucket,
+  incrementPretextPerfCounter,
+} from "../utils/pretextPerfDiagnostics";
+import {
   buildWorkbenchThreadViewModelFromTurns,
   filterThreadItemsForVerbosity,
 } from "./SessionPage.workbenchViewModel";
@@ -178,8 +182,11 @@ export function readWarmWorkbenchThreadViewModel(
 ): WorkbenchThreadViewModelWarmSnapshot | null {
   const entry = warmCache.get(sessionId);
   if (!entry || entry.warmKey !== warmKey) {
+    incrementPretextPerfCounter("pretext_warm_viewmodel_cache_miss");
     return null;
   }
+  incrementPretextPerfCounter("pretext_warm_viewmodel_cache_hit");
+  addPretextPerfBucket("pretext_warm_viewmodel_session", sessionId);
   return entry.snapshot;
 }
 
@@ -202,7 +209,9 @@ export function primeWarmWorkbenchThreadViewModel(
   if (existing) {
     return existing;
   }
+  incrementPretextPerfCounter("pretext_warm_viewmodel_builds");
   const snapshot = buildWorkbenchThreadViewModelWarmSnapshot(params);
+  incrementPretextPerfCounter("pretext_warm_viewmodel_built_items", snapshot.listItems.length);
   persistWarmWorkbenchThreadViewModel(params.sessionId, snapshot);
   return snapshot;
 }

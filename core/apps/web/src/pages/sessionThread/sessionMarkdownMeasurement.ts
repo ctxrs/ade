@@ -1,6 +1,11 @@
 import { layout, prepare, prepareWithSegments, type PreparedText, type PreparedTextWithSegments } from "@chenglou/pretext";
 import { stripCitationMarkers } from "../../utils/citationMarkers";
 import {
+  addPretextPerfBucket,
+  hashPretextPerfValue,
+  incrementPretextPerfCounter,
+} from "../../utils/pretextPerfDiagnostics";
+import {
   parseSessionMarkdown,
 } from "./sessionMarkdownShared";
 import {
@@ -99,7 +104,11 @@ function getPreparedText(
   whiteSpace: TextWhiteSpace,
 ): PreparedText {
   const cached = preparedCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    incrementPretextPerfCounter("pretext_markdown_prepared_text_hit");
+    return cached;
+  }
+  incrementPretextPerfCounter("pretext_markdown_prepared_text_miss");
   const prepared = prepare(text, font, whiteSpace === "pre-wrap" ? { whiteSpace } : undefined);
   preparedCache.set(cacheKey, prepared);
   pruneCache(preparedCache, PREPARED_CACHE_LIMIT);
@@ -113,7 +122,11 @@ function getPreparedTextWithSegments(
   whiteSpace: TextWhiteSpace,
 ): PreparedTextWithSegments {
   const cached = preparedSegmentsCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    incrementPretextPerfCounter("pretext_markdown_prepared_segments_hit");
+    return cached;
+  }
+  incrementPretextPerfCounter("pretext_markdown_prepared_segments_miss");
   const prepared = prepareWithSegments(text, font, whiteSpace === "pre-wrap" ? { whiteSpace } : undefined);
   preparedSegmentsCache.set(cacheKey, prepared);
   pruneCache(preparedSegmentsCache, PREPARED_CACHE_LIMIT);
@@ -130,8 +143,10 @@ function measureTextWidth(params: {
   const cacheKey = `${params.cacheKey}:${params.font}:${whiteSpace}:${params.text}`;
   const cached = textWidthCache.get(cacheKey);
   if (cached != null) {
+    incrementPretextPerfCounter("pretext_markdown_text_width_hit");
     return cached;
   }
+  incrementPretextPerfCounter("pretext_markdown_text_width_miss");
   const prepared = getPreparedTextWithSegments(cacheKey, params.text, params.font, whiteSpace);
   const width = prepared.widths.reduce((sum, segmentWidth) => sum + (segmentWidth ?? 0), 0);
   textWidthCache.set(cacheKey, width);
@@ -155,7 +170,11 @@ function measureTextHeight(params: {
 function parseMarkdown(content: string): SessionMarkdownBlock[] {
   const normalized = stripCitationMarkers(content);
   const cached = markdownBlocksCache.get(normalized);
-  if (cached) return cached;
+  if (cached) {
+    incrementPretextPerfCounter("pretext_markdown_ast_hit");
+    return cached;
+  }
+  incrementPretextPerfCounter("pretext_markdown_ast_miss");
   const parsed = parseSessionMarkdown(normalized);
   const blocks = normalizeSessionMarkdownBlocks(nodeChildren(parsed));
   markdownBlocksCache.set(normalized, blocks);
@@ -603,6 +622,12 @@ export function clearSessionMarkdownMeasurementCaches(): void {
 }
 
 export function measureSessionMarkdownDocument(markdown: string, width: number): number {
+  const normalizedWidth = Math.max(1, Math.round(width));
+  incrementPretextPerfCounter("pretext_markdown_document_calls");
+  addPretextPerfBucket(
+    "pretext_markdown_document_key",
+    `w${normalizedWidth}:${markdown.length}:${hashPretextPerfValue(markdown)}`,
+  );
   const parsed = parseMarkdown(markdown);
-  return measureBlockChildren(parsed, Math.max(1, width), "root");
+  return measureBlockChildren(parsed, normalizedWidth, "root");
 }

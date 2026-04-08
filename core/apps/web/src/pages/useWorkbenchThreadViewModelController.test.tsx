@@ -207,6 +207,41 @@ describe("useWorkbenchThreadViewModelController", () => {
     });
   });
 
+  it("ignores outer tool-map churn when per-turn tool arrays are unchanged", async () => {
+    const askUserQuestionAnswers = new Map<string, AskUserQuestionAnswerState>();
+    const { rerender } = renderController({ askUserQuestionAnswers });
+
+    await waitFor(() => {
+      const tool = latestResult?.listItems.find(isToolItem);
+      expect(tool?.title).toBe("pnpm test");
+    });
+
+    rerender(
+      <Harness
+        sessionId="session-1"
+        turnsStamp={buildTurnsStamp(turns)}
+        messagesStamp={buildMessagesStamp(messages)}
+        eventsStamp="0:1"
+        verbosity="default"
+        turns={turns}
+        messages={messages}
+        events={events}
+        toolsByTurnId={{ ...toolsByTurnId }}
+        toolSummariesReady
+        askUserQuestionAnswers={askUserQuestionAnswers}
+        enableDebugEvents={false}
+      />,
+    );
+
+    await waitFor(() => {
+      const tool = latestResult?.listItems.find(isToolItem);
+      expect(tool?.title).toBe("pnpm test");
+    });
+
+    expect(latestResult?.listItems.filter(isToolItem).map((item) => item.title)).toEqual(["pnpm test"]);
+    expect(latestResult?.lastOp.kind).toBe("noop");
+  });
+
   it("rebuilds filtered thread items when verbosity changes without transcript stamp changes", async () => {
     const { rerender } = renderController();
 
@@ -370,6 +405,184 @@ describe("useWorkbenchThreadViewModelController", () => {
     expect(expectGroup("turn-turn-1")).not.toBe(firstGroupBefore);
     expect(expectGroup("turn-turn-2")).toBe(secondGroupBefore);
     expect(expectListItem("turn-header-turn-2")).toBe(secondHeaderBefore);
+  });
+
+  it("updates only the dirty turn group on tool-summary changes when transcript stamps stay stable", async () => {
+    const askUserQuestionAnswers = new Map<string, AskUserQuestionAnswerState>();
+    const multiTurns = [
+      {
+        turn_id: "turn-1",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-1",
+        status: "completed",
+        start_seq: 1,
+        end_seq: 2,
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:01.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 2,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 2,
+        tool_failed: 0,
+      },
+      {
+        turn_id: "turn-2",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-2",
+        status: "completed",
+        start_seq: 3,
+        end_seq: 4,
+        started_at: "2025-12-15T00:00:02.000Z",
+        updated_at: "2025-12-15T00:00:03.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 1,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 1,
+        tool_failed: 0,
+      },
+    ] as SessionTurn[];
+    const multiMessages = [
+      {
+        id: "message-1",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-1",
+        turn_sequence: 1,
+        role: "user",
+        content: "First turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        order_seq: 1,
+      },
+      {
+        id: "message-2",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-2",
+        turn_sequence: 2,
+        role: "user",
+        content: "Second turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:02.000Z",
+        order_seq: 3,
+      },
+    ] as unknown as Message[];
+    const baseToolsByTurnId: Record<string, SessionTurnTool[]> = {
+      "turn-1": [
+        {
+          session_id: "session-1",
+          tool_call_id: "tool-1",
+          turn_id: "turn-1",
+          tool_kind: "shell",
+          title: "pwd",
+          status: "completed",
+          input_json: { command: "pwd" },
+          output_text: "/tmp",
+          order_seq: 2,
+          input_truncated: false,
+          input_original_bytes: 3,
+          output_truncated: false,
+          output_original_bytes: 4,
+          created_at: "2025-12-15T00:00:00.500Z",
+          updated_at: "2025-12-15T00:00:01.000Z",
+        },
+      ],
+      "turn-2": [
+        {
+          session_id: "session-1",
+          tool_call_id: "tool-2",
+          turn_id: "turn-2",
+          tool_kind: "shell",
+          title: "echo hi",
+          status: "completed",
+          input_json: { command: "echo hi" },
+          output_text: "hi",
+          order_seq: 4,
+          input_truncated: false,
+          input_original_bytes: 7,
+          output_truncated: false,
+          output_original_bytes: 2,
+          created_at: "2025-12-15T00:00:02.500Z",
+          updated_at: "2025-12-15T00:00:03.000Z",
+        },
+      ],
+    };
+    const turnsStamp = buildTurnsStamp(multiTurns);
+    const messagesStamp = buildMessagesStamp(multiMessages);
+    const { rerender } = renderController({
+      turns: multiTurns,
+      messages: multiMessages,
+      events: [],
+      eventsStamp: "0:0",
+      turnsStamp,
+      messagesStamp,
+      toolsByTurnId: baseToolsByTurnId,
+      askUserQuestionAnswers,
+    });
+
+    await waitFor(() => {
+      expect(latestResult?.listItems.filter(isToolItem).map((item) => item.title)).toEqual(["pwd", "echo hi"]);
+    });
+
+    const firstGroupBefore = expectGroup("turn-turn-1");
+    const secondGroupBefore = expectGroup("turn-turn-2");
+
+    rerender(
+      <Harness
+        sessionId="session-1"
+        turnsStamp={turnsStamp}
+        messagesStamp={messagesStamp}
+        eventsStamp="0:0"
+        verbosity="default"
+        turns={multiTurns}
+        messages={multiMessages}
+        events={[]}
+        toolsByTurnId={{
+          "turn-1": [
+            ...baseToolsByTurnId["turn-1"]!,
+            {
+              session_id: "session-1",
+              tool_call_id: "tool-3",
+              turn_id: "turn-1",
+              tool_kind: "shell",
+              title: "ls",
+              status: "completed",
+              input_json: { command: "ls" },
+              output_text: "file.txt",
+              order_seq: 5,
+              input_truncated: false,
+              input_original_bytes: 2,
+              output_truncated: false,
+              output_original_bytes: 8,
+              created_at: "2025-12-15T00:00:01.500Z",
+              updated_at: "2025-12-15T00:00:01.750Z",
+            },
+          ],
+          "turn-2": baseToolsByTurnId["turn-2"]!,
+        }}
+        toolSummariesReady
+        askUserQuestionAnswers={askUserQuestionAnswers}
+        enableDebugEvents={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(latestResult?.listItems.filter(isToolItem).map((item) => item.title)).toEqual(["pwd", "ls", "echo hi"]);
+    });
+
+    expect(expectGroup("turn-turn-1")).not.toBe(firstGroupBefore);
+    expect(expectGroup("turn-turn-2")).toBe(secondGroupBefore);
+    expect(latestResult?.lastOp.kind).toBe("hydrate_tools");
   });
 
   it("seeds per-turn caches on mount so the first append-only update preserves prior turn context", async () => {

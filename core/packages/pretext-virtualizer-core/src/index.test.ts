@@ -110,6 +110,63 @@ describe("createPretextVirtualizerCore", () => {
     expect(snapshot.visibleItems.at(-1)?.id).toBe("item-4");
   });
 
+  it("measures only appended rows when growing the tail", () => {
+    let measureCalls = 0;
+    const core = createPretextVirtualizerCore<FixtureItem>({
+      initialItems: makeItems(40, 64, 72),
+      getPlannedLayout: (item) => {
+        measureCalls += 1;
+        return { height: item.plannedHeight };
+      },
+      getId: (item) => item.id,
+      getLayoutRevision: (item) => item.layoutRevision,
+      viewportHeight: 100,
+      viewportWidth: 320,
+      overscanPx: 0,
+    });
+
+    core.syncViewport({
+      height: 100,
+      width: 320,
+      scrollTop: 76,
+    });
+    expect(measureCalls).toBe(3);
+
+    core.appendItems([{ id: "item-4", layoutRevision: 0, plannedHeight: 48 }]);
+
+    expect(measureCalls).toBe(4);
+  });
+
+  it("measures only prepended rows when growing history", () => {
+    let measureCalls = 0;
+    const core = createPretextVirtualizerCore<FixtureItem>({
+      initialItems: makeItems(40, 64, 72),
+      getPlannedLayout: (item) => {
+        measureCalls += 1;
+        return { height: item.plannedHeight };
+      },
+      getId: (item) => item.id,
+      getLayoutRevision: (item) => item.layoutRevision,
+      viewportHeight: 100,
+      viewportWidth: 320,
+      overscanPx: 0,
+    });
+
+    core.syncViewport({
+      height: 100,
+      width: 320,
+      scrollTop: 40,
+    });
+    expect(measureCalls).toBe(3);
+
+    core.prependItems([
+      { id: "older-1", layoutRevision: 0, plannedHeight: 24 },
+      { id: "older-2", layoutRevision: 0, plannedHeight: 36 },
+    ]);
+
+    expect(measureCalls).toBe(5);
+  });
+
   it("captures an item anchor instead of bottom when detached near the tail", () => {
     const core = createCore(makeItems(40, 64, 72, 48));
 
@@ -153,6 +210,66 @@ describe("createPretextVirtualizerCore", () => {
     expect(restoredSnapshot.scrollTop).toBe(100);
   });
 
+  it("remeasures only rows whose layout revision changed during sync", () => {
+    let measureCalls = 0;
+    const core = createPretextVirtualizerCore<FixtureItem>({
+      initialItems: makeItems(40, 64, 72),
+      getPlannedLayout: (item) => {
+        measureCalls += 1;
+        return { height: item.plannedHeight };
+      },
+      getId: (item) => item.id,
+      getLayoutRevision: (item) => item.layoutRevision,
+      viewportHeight: 100,
+      viewportWidth: 320,
+      overscanPx: 0,
+    });
+
+    core.syncViewport({
+      height: 100,
+      width: 320,
+      scrollTop: 0,
+    });
+    expect(measureCalls).toBe(3);
+
+    core.syncItems(
+      makeItems(40, 64, 72).map((item) =>
+        item.id === "item-2" ? { ...item, layoutRevision: 1, plannedHeight: 96 } : { ...item },
+      ),
+    );
+
+    expect(measureCalls).toBe(4);
+    expect(core.getHeightForIndex(1)).toBe(96);
+    expect(core.getOffsetForIndex(2)).toBe(136);
+  });
+
+  it("does not remeasure stable rows when synced items only change by reference", () => {
+    let measureCalls = 0;
+    const core = createPretextVirtualizerCore<FixtureItem>({
+      initialItems: makeItems(40, 64, 72),
+      getPlannedLayout: (item) => {
+        measureCalls += 1;
+        return { height: item.plannedHeight };
+      },
+      getId: (item) => item.id,
+      getLayoutRevision: (item) => item.layoutRevision,
+      viewportHeight: 100,
+      viewportWidth: 320,
+      overscanPx: 0,
+    });
+
+    core.syncViewport({
+      height: 100,
+      width: 320,
+      scrollTop: 0,
+    });
+    expect(measureCalls).toBe(3);
+
+    core.syncItems(makeItems(40, 64, 72).map((item) => ({ ...item })));
+
+    expect(measureCalls).toBe(3);
+  });
+
   it("recomputes planned heights when the width bucket changes", () => {
     const core = createPretextVirtualizerCore<FixtureItem>({
       initialItems: makeItems(40, 64, 72),
@@ -183,6 +300,48 @@ describe("createPretextVirtualizerCore", () => {
     expect(wide.widthBucket).toBe("w10");
     expect(wide.totalHeight).toBe(352);
     expect(wide.visibleItems[0]?.height).toBe(80);
+  });
+
+  it("reuses prefix and suffix heights when rows are inserted in the middle", () => {
+    const measuredIds: string[] = [];
+    const core = createPretextVirtualizerCore<FixtureItem>({
+      initialItems: makeItems(40, 64, 72, 80),
+      getPlannedLayout: (item) => {
+        measuredIds.push(item.id);
+        return { height: item.plannedHeight };
+      },
+      getId: (item) => item.id,
+      getLayoutRevision: (item) => item.layoutRevision,
+      viewportHeight: 100,
+      viewportWidth: 320,
+      overscanPx: 0,
+    });
+
+    core.syncViewport({
+      height: 100,
+      width: 320,
+      scrollTop: 0,
+    });
+    measuredIds.length = 0;
+
+    const snapshot = core.syncItems([
+      { id: "item-1", layoutRevision: 0, plannedHeight: 40 },
+      { id: "inserted-1", layoutRevision: 0, plannedHeight: 48 },
+      { id: "inserted-2", layoutRevision: 0, plannedHeight: 52 },
+      { id: "item-2", layoutRevision: 0, plannedHeight: 64 },
+      { id: "item-3", layoutRevision: 0, plannedHeight: 72 },
+      { id: "item-4", layoutRevision: 0, plannedHeight: 80 },
+    ]);
+
+    expect(measuredIds).toEqual(["inserted-1", "inserted-2"]);
+    expect(snapshot.totalHeight).toBe(356);
+    expect(snapshot.visibleItems.map((item) => item.id)).toEqual([
+      "item-1",
+      "inserted-1",
+      "inserted-2",
+    ]);
+    expect(core.getOffsetForIndex(3)).toBe(140);
+    expect(core.getOffsetForIndex(5)).toBe(276);
   });
 
   it("resolves offsets and heights by index against the deterministic layout", () => {

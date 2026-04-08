@@ -58,6 +58,35 @@ function getTurnGroupKey(turnId: string): string {
   return `turn-${turnId}`;
 }
 
+function areToolMapsShallowEqual(
+  previous: Record<string, SessionTurnTool[]>,
+  next: Record<string, SessionTurnTool[]>,
+): boolean {
+  if (previous === next) return true;
+  const previousKeys = Object.keys(previous);
+  const nextKeys = Object.keys(next);
+  if (previousKeys.length !== nextKeys.length) return false;
+  for (const key of previousKeys) {
+    if (!(key in next)) return false;
+    if (previous[key] !== next[key]) return false;
+  }
+  return true;
+}
+
+function collectChangedToolTurnIds(
+  previous: Record<string, SessionTurnTool[]>,
+  next: Record<string, SessionTurnTool[]>,
+): Set<string> {
+  const changed = new Set<string>();
+  const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
+  for (const key of keys) {
+    if (previous[key] !== next[key]) {
+      changed.add(key);
+    }
+  }
+  return changed;
+}
+
 
 /**
  * Narrow sanctioned projector fast path:
@@ -187,6 +216,27 @@ export function useWorkbenchThreadViewModelController(
         projectionRevision: projectionRev,
         fallbackKind: preferredKind,
       });
+      if (
+        lastOp.kind === "noop" &&
+        previous.turnsLen === rebuilt.turnsLen &&
+        previous.messagesLen === rebuilt.messagesLen &&
+        previous.eventsLen === rebuilt.eventsLen
+      ) {
+        const nextView =
+          rebuilt.view.debugEvents === previous.view.debugEvents
+            ? previous.view
+            : { groups: previous.view.groups, debugEvents: rebuilt.view.debugEvents };
+        if (previous.lastOp.kind === "noop") {
+          return previous;
+        }
+        return {
+          ...previous,
+          view: nextView,
+          lastOp,
+          changedItemIds: [],
+          remeasureItemIds: [],
+        };
+      }
       return {
         view: rebuilt.view,
         listItems: rebuilt.listItems,
@@ -213,6 +263,163 @@ export function useWorkbenchThreadViewModelController(
       lastAskUserQuestionAnswersRef.current = askUserQuestionAnswers;
       lastToolSummariesReadyRef.current = toolSummariesReady;
       lastToolsByTurnIdRef.current = toolsByTurnId;
+    };
+
+    const rebuildDirtyTurnGroups = (
+      dirtyTurnIds: ReadonlySet<string>,
+      fallbackKind: WorkbenchThreadProjectionOpKind,
+      nextEventsLen: number,
+    ): boolean => {
+      if (dirtyTurnIds.size === 0) {
+        syncInvalidationRefs();
+        setState((prev) => ({
+          ...prev,
+          projectionRevision: projectionRev,
+          lastOp: createWorkbenchThreadProjectionOp("noop", projectionRev),
+          changedItemIds: [],
+          remeasureItemIds: [],
+          eventsLen: nextEventsLen,
+        }));
+        return true;
+      }
+
+      const currentGroups = state.view.groups;
+      const currentTurnGroupKeys = new Set(
+        currentGroups
+          .map((group) => String(group.key ?? ""))
+          .filter((groupKey) => groupKey.startsWith("turn-")),
+      );
+      for (const turnId of dirtyTurnIds) {
+        const groupKey = getTurnGroupKey(turnId);
+        if (
+          !turnsById.has(turnId)
+          || !state.groupRanges.has(groupKey)
+          || !currentTurnGroupKeys.has(groupKey)
+        ) {
+          return false;
+        }
+      }
+
+      const updatedGroups: WorkbenchThreadView["groups"] = [];
+      const updatedSegments = new Map<string, WorkbenchListItem[]>();
+
+      for (const g of currentGroups) {
+        const key = String(g.key ?? "");
+        if (!key.startsWith("turn-")) {
+          updatedGroups.push(g);
+          continue;
+        }
+        const turnId = key.slice("turn-".length);
+        if (!dirtyTurnIds.has(turnId)) {
+          updatedGroups.push(g);
+          continue;
+        }
+
+        const turn = turnsById.get(turnId);
+        if (!turn) {
+          return false;
+        }
+        const msgs = perTurnCachesRef.current.messagesByTurnId.get(turnId) ?? [];
+        const evs = perTurnCachesRef.current.eventsByTurnId.get(turnId) ?? [];
+        const tools = toolSummariesReady ? { [turnId]: toolsByTurnId[turnId] ?? [] } : {};
+        const assistantStreaming =
+          assistantStreamingByTurnId[turnId] == null ? {} : { [turnId]: assistantStreamingByTurnId[turnId]! };
+
+        const rebuilt = buildWorkbenchThreadViewModelFromTurns(
+          [turn],
+          msgs,
+          tools,
+          evs,
+          assistantStreaming,
+          askUserQuestionAnswers,
+        );
+        const nextGroup = rebuilt.groups.find((group) => group.key === key);
+        if (!nextGroup) {
+          return false;
+        }
+        updatedGroups.push(nextGroup);
+
+        const segment: WorkbenchListItem[] = [];
+        if (nextGroup.header) {
+          segment.push({ kind: "turn_header", id: `turn-header-${nextGroup.header.id}`, header: nextGroup.header });
+        }
+        segment.push(...filterThreadItemsForVerbosity(nextGroup.items, verbosity));
+        updatedSegments.set(key, segment);
+      }
+
+      let nextList = state.listItems;
+      let nextRanges = state.groupRanges;
+      for (const [groupKey, segment] of updatedSegments.entries()) {
+        const range = nextRanges.get(groupKey);
+        if (!range) {
+          return false;
+        }
+        const prevLen = range.end - range.start;
+        const nextLen = segment.length;
+        nextList = [
+          ...nextList.slice(0, range.start),
+          ...segment,
+          ...nextList.slice(range.end),
+        ];
+        if (prevLen === nextLen) {
+          continue;
+        }
+        const deltaLen = nextLen - prevLen;
+        const adjusted = new Map<string, { start: number; end: number }>();
+        for (const [k, r] of nextRanges.entries()) {
+          if (k === groupKey) {
+            adjusted.set(k, { start: r.start, end: r.start + nextLen });
+            continue;
+          }
+          if (r.start >= range.end) {
+            adjusted.set(k, { start: r.start + deltaLen, end: r.end + deltaLen });
+          } else {
+            adjusted.set(k, r);
+          }
+        }
+        nextRanges = adjusted;
+      }
+
+      syncInvalidationRefs();
+      setState((prev) => {
+        const lastOp = classifyWorkbenchThreadProjectionOp({
+          current: prev.listItems,
+          next: nextList,
+          projectionRevision: projectionRev,
+          fallbackKind,
+        });
+        if (
+          lastOp.kind === "noop" &&
+          prev.eventsLen === nextEventsLen
+        ) {
+          const nextView =
+            prev.view.debugEvents === prev.view.debugEvents
+              ? prev.view
+              : { groups: prev.view.groups, debugEvents: prev.view.debugEvents };
+          if (prev.lastOp.kind === "noop") {
+            return prev;
+          }
+          return {
+            ...prev,
+            view: nextView,
+            lastOp,
+            changedItemIds: [],
+            remeasureItemIds: [],
+          };
+        }
+        return {
+          ...prev,
+          view: { groups: updatedGroups, debugEvents: prev.view.debugEvents },
+          listItems: nextList,
+          groupRanges: nextRanges,
+          projectionRevision: projectionRev,
+          lastOp,
+          changedItemIds: lastOp.changedItemIds,
+          remeasureItemIds: lastOp.remeasureItemIds,
+          eventsLen: nextEventsLen,
+        };
+      });
+      return true;
     };
 
     const sessionChanged = lastSessionIdRef.current !== sessionId;
@@ -247,12 +454,28 @@ export function useWorkbenchThreadViewModelController(
 
     const verbosityChanged = lastVerbosityRef.current !== verbosity;
     const askUserQuestionAnswersChanged = lastAskUserQuestionAnswersRef.current !== askUserQuestionAnswers;
-    const toolSummariesChanged =
-      lastToolSummariesReadyRef.current !== toolSummariesReady ||
-      lastToolsByTurnIdRef.current !== toolsByTurnId;
+    const toolSummariesReadyChanged = lastToolSummariesReadyRef.current !== toolSummariesReady;
+    const dirtyToolTurnIds = collectChangedToolTurnIds(lastToolsByTurnIdRef.current, toolsByTurnId);
+    const toolSummariesChanged = toolSummariesReadyChanged || dirtyToolTurnIds.size > 0;
     if (verbosityChanged || askUserQuestionAnswersChanged || toolSummariesChanged) {
+      if (verbosityChanged || askUserQuestionAnswersChanged) {
+        syncInvalidationRefs();
+        fullRebuild.current("reconcile");
+        return;
+      }
+      const localizedToolTurnIds = toolSummariesReadyChanged
+        ? new Set([
+            ...Object.keys(lastToolsByTurnIdRef.current),
+            ...Object.keys(toolsByTurnId),
+          ])
+        : dirtyToolTurnIds;
+      if (!areToolMapsShallowEqual(lastToolsByTurnIdRef.current, toolsByTurnId) || toolSummariesReadyChanged) {
+        if (rebuildDirtyTurnGroups(localizedToolTurnIds, "hydrate_tools", state.eventsLen)) {
+          return;
+        }
+      }
       syncInvalidationRefs();
-      fullRebuild.current(toolSummariesChanged ? "hydrate_tools" : "reconcile");
+      fullRebuild.current("hydrate_tools");
       return;
     }
 
@@ -331,141 +554,14 @@ export function useWorkbenchThreadViewModelController(
       return;
     }
 
-    // Rebuild only the groups for the turns affected by the new events.
-    const currentGroups = state.view.groups;
-    const currentTurnGroupKeys = new Set(
-      currentGroups
-        .map((group) => String(group.key ?? ""))
-        .filter((groupKey) => groupKey.startsWith("turn-")),
-    );
-    for (const turnId of dirtyTurnIds) {
-      const groupKey = getTurnGroupKey(turnId);
-      if (
-        !turnsById.has(turnId)
-        || !state.groupRanges.has(groupKey)
-        || !currentTurnGroupKeys.has(groupKey)
-      ) {
-        syncInvalidationRefs();
-        fullRebuild.current("reconcile");
-        return;
-      }
+    if (rebuildDirtyTurnGroups(dirtyTurnIds, "append_stream", events.length)) {
+      return;
     }
-
-    const updatedGroups: WorkbenchThreadView["groups"] = [];
-    const updatedSegments = new Map<string, WorkbenchListItem[]>();
-
-    for (const g of currentGroups) {
-      const key = String(g.key ?? "");
-      if (!key.startsWith("turn-")) {
-        updatedGroups.push(g);
-        continue;
-      }
-      const turnId = key.slice("turn-".length);
-      if (!dirtyTurnIds.has(turnId)) {
-        updatedGroups.push(g);
-        continue;
-      }
-
-      const turn = turnsById.get(turnId);
-      if (!turn) {
-        syncInvalidationRefs();
-        fullRebuild.current("reconcile");
-        return;
-      }
-      const msgs = perTurnCachesRef.current.messagesByTurnId.get(turnId) ?? [];
-      const evs = perTurnCachesRef.current.eventsByTurnId.get(turnId) ?? [];
-      const tools = toolSummariesReady ? { [turnId]: toolsByTurnId[turnId] ?? [] } : {};
-      const assistantStreaming =
-        assistantStreamingByTurnId[turnId] == null ? {} : { [turnId]: assistantStreamingByTurnId[turnId]! };
-
-      const rebuilt = buildWorkbenchThreadViewModelFromTurns(
-        [turn],
-        msgs,
-        tools,
-        evs,
-        assistantStreaming,
-        askUserQuestionAnswers,
-      );
-      const nextGroup = rebuilt.groups.find((x) => x.key === key);
-      if (!nextGroup) {
-        syncInvalidationRefs();
-        fullRebuild.current("reconcile");
-        return;
-      }
-      updatedGroups.push(nextGroup);
-
-      const segment: WorkbenchListItem[] = [];
-      if (nextGroup.header) {
-        segment.push({ kind: "turn_header", id: `turn-header-${nextGroup.header.id}`, header: nextGroup.header });
-      }
-      segment.push(...filterThreadItemsForVerbosity(nextGroup.items, verbosity));
-      updatedSegments.set(key, segment);
-    }
-
-    // Patch the flat list in O(groups) time by using stored group ranges.
-    let nextList = state.listItems;
-    let nextRanges = state.groupRanges;
-    for (const [groupKey, segment] of updatedSegments.entries()) {
-      const range = nextRanges.get(groupKey);
-      if (!range) {
-        syncInvalidationRefs();
-        fullRebuild.current("reconcile");
-        return;
-      }
-      const prevLen = range.end - range.start;
-      const nextLen = segment.length;
-      if (prevLen === nextLen) {
-        nextList = [
-          ...nextList.slice(0, range.start),
-          ...segment,
-          ...nextList.slice(range.end),
-        ];
-        continue;
-      }
-      // When the segment size changes, adjust subsequent ranges.
-      const deltaLen = nextLen - prevLen;
-      nextList = [
-        ...nextList.slice(0, range.start),
-        ...segment,
-        ...nextList.slice(range.end),
-      ];
-      const adjusted = new Map<string, { start: number; end: number }>();
-      for (const [k, r] of nextRanges.entries()) {
-        if (k === groupKey) {
-          adjusted.set(k, { start: r.start, end: r.start + nextLen });
-          continue;
-        }
-        if (r.start >= range.end) {
-          adjusted.set(k, { start: r.start + deltaLen, end: r.end + deltaLen });
-        } else {
-          adjusted.set(k, r);
-        }
-      }
-      nextRanges = adjusted;
-    }
-
     syncInvalidationRefs();
-    setState((prev) => {
-      const lastOp = classifyWorkbenchThreadProjectionOp({
-        current: prev.listItems,
-        next: nextList,
-        projectionRevision: projectionRev,
-        fallbackKind: "append_stream",
-      });
-      return {
-        ...prev,
-        view: { groups: updatedGroups, debugEvents: prev.view.debugEvents },
-        listItems: nextList,
-        groupRanges: nextRanges,
-        projectionRevision: projectionRev,
-        lastOp,
-        changedItemIds: lastOp.changedItemIds,
-        remeasureItemIds: lastOp.remeasureItemIds,
-        eventsLen: events.length,
-      };
-    });
+    fullRebuild.current("reconcile");
   }, [
     askUserQuestionAnswers,
+    assistantStreamingByTurnId,
     enableDebugEvents,
     events,
     eventsStamp,

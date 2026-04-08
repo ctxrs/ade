@@ -154,15 +154,36 @@ export const createPretextVirtualizerCore = <Item,>({
     layoutCache = null;
   };
 
+  const buildHeightEntry = (
+    item: Item,
+    width: number,
+    widthBucket: `w${number}`,
+  ): PretextVirtualizerComputedLayout<Item>["heights"][number] => ({
+    id: getId(item),
+    item,
+    layoutRevision: getLayoutRevision(item),
+    height: normalizeHeight(getPlannedLayout(item, { width, widthBucket }).height),
+  });
+
+  const recomputeOffsetsFrom = (
+    layout: PretextVirtualizerComputedLayout<Item>,
+    startIndex: number,
+  ) => {
+    let runningTop =
+      startIndex > 0
+        ? (layout.offsets[startIndex - 1] ?? 0) + (layout.heights[startIndex - 1]?.height ?? 0)
+        : 0;
+    for (let index = startIndex; index < layout.heights.length; index += 1) {
+      layout.offsets[index] = runningTop;
+      runningTop += layout.heights[index]!.height;
+    }
+    layout.totalHeight = runningTop;
+  };
+
   const computeLayout = (): PretextVirtualizerComputedLayout<Item> => {
     if (layoutCache) return layoutCache;
     const widthBucket = createWidthBucket(state.viewportWidth, widthBucketSize);
-    const heights = state.items.map((item) => ({
-      id: getId(item),
-      item,
-      layoutRevision: getLayoutRevision(item),
-      height: normalizeHeight(getPlannedLayout(item, { width: state.viewportWidth, widthBucket }).height),
-    }));
+    const heights = state.items.map((item) => buildHeightEntry(item, state.viewportWidth, widthBucket));
     const offsets = new Array<number>(heights.length);
     let runningTop = 0;
     for (let index = 0; index < heights.length; index += 1) {
@@ -296,13 +317,170 @@ export const createPretextVirtualizerCore = <Item,>({
   };
 
   const preserveAnchorAcrossItems = (
-    nextItems: readonly Item[],
+    mutate: () => void,
     anchorOverride?: PretextVirtualizerLogicalAnchor | null,
   ): PretextVirtualizerSnapshot<Item> => {
     const retainedAnchor = anchorOverride ?? createSnapshot().anchor;
+    mutate();
+    return restoreAnchorIntoState(retainedAnchor, "offset");
+  };
+
+  const replaceAllItems = (nextItems: readonly Item[]) => {
     state.items = [...nextItems];
     invalidateLayout();
-    return restoreAnchorIntoState(retainedAnchor, "offset");
+  };
+
+  const appendIntoLayout = (items: readonly Item[]) => {
+    const layout = computeLayout();
+    const nextEntries = items.map((item) => buildHeightEntry(item, state.viewportWidth, layout.widthBucket));
+    let runningTop = layout.totalHeight;
+    for (const entry of nextEntries) {
+      layout.offsets.push(runningTop);
+      layout.heights.push(entry);
+      runningTop += entry.height;
+    }
+    layout.totalHeight = runningTop;
+    state.items = [...state.items, ...items];
+  };
+
+  const prependIntoLayout = (items: readonly Item[]) => {
+    const layout = computeLayout();
+    const nextEntries = items.map((item) => buildHeightEntry(item, state.viewportWidth, layout.widthBucket));
+    const prefixHeight = nextEntries.reduce((sum, entry) => sum + entry.height, 0);
+    let runningTop = 0;
+    const prefixOffsets = new Array<number>(nextEntries.length);
+    for (let index = 0; index < nextEntries.length; index += 1) {
+      prefixOffsets[index] = runningTop;
+      runningTop += nextEntries[index]!.height;
+    }
+    layout.heights = [...nextEntries, ...layout.heights];
+    layout.offsets = [
+      ...prefixOffsets,
+      ...layout.offsets.map((offset) => offset + prefixHeight),
+    ];
+    layout.totalHeight += prefixHeight;
+    state.items = [...items, ...state.items];
+  };
+
+  const syncStableItems = (items: readonly Item[]): boolean => {
+    const layout = computeLayout();
+    if (layout.heights.length !== items.length) return false;
+
+    let firstHeightChangeIndex: number | null = null;
+    for (let index = 0; index < items.length; index += 1) {
+      const nextItem = items[index]!;
+      const existing = layout.heights[index]!;
+      const nextId = getId(nextItem);
+      if (existing.id !== nextId) return false;
+      const nextLayoutRevision = getLayoutRevision(nextItem);
+      if (existing.layoutRevision === nextLayoutRevision) {
+        existing.item = nextItem;
+        continue;
+      }
+      const nextHeight = normalizeHeight(
+        getPlannedLayout(nextItem, { width: state.viewportWidth, widthBucket: layout.widthBucket }).height,
+      );
+      if (existing.height !== nextHeight && firstHeightChangeIndex == null) {
+        firstHeightChangeIndex = index;
+      }
+      existing.item = nextItem;
+      existing.layoutRevision = nextLayoutRevision;
+      existing.height = nextHeight;
+    }
+
+    state.items = [...items];
+    if (firstHeightChangeIndex != null) {
+      recomputeOffsetsFrom(layout, firstHeightChangeIndex);
+    }
+    return true;
+  };
+
+  const syncDiffWindowItems = (items: readonly Item[]): boolean => {
+    const layout = computeLayout();
+    const previousLength = layout.heights.length;
+    const nextLength = items.length;
+    if (previousLength === 0) return false;
+
+    let prefixLength = 0;
+    const sharedPrefixLimit = Math.min(previousLength, nextLength);
+    while (
+      prefixLength < sharedPrefixLimit &&
+      layout.heights[prefixLength]?.id === getId(items[prefixLength]!)
+    ) {
+      prefixLength += 1;
+    }
+
+    let suffixLength = 0;
+    const sharedSuffixLimit = Math.min(previousLength - prefixLength, nextLength - prefixLength);
+    while (
+      suffixLength < sharedSuffixLimit &&
+      layout.heights[previousLength - 1 - suffixLength]?.id === getId(items[nextLength - 1 - suffixLength]!)
+    ) {
+      suffixLength += 1;
+    }
+
+    if (prefixLength === previousLength && previousLength === nextLength) {
+      return syncStableItems(items);
+    }
+    if (prefixLength === 0 && suffixLength === 0) {
+      return false;
+    }
+
+    const widthBucket = layout.widthBucket;
+    const nextHeights = new Array<PretextVirtualizerComputedLayout<Item>["heights"][number]>(nextLength);
+    let firstHeightChangeIndex: number | null = null;
+
+    for (let index = 0; index < prefixLength; index += 1) {
+      const nextItem = items[index]!;
+      const existing = layout.heights[index]!;
+      const nextLayoutRevision = getLayoutRevision(nextItem);
+      if (existing.layoutRevision === nextLayoutRevision) {
+        nextHeights[index] = { ...existing, item: nextItem };
+        continue;
+      }
+      nextHeights[index] = buildHeightEntry(nextItem, state.viewportWidth, widthBucket);
+      if (existing.height !== nextHeights[index]!.height && firstHeightChangeIndex == null) {
+        firstHeightChangeIndex = index;
+      }
+    }
+
+    const middleStart = prefixLength;
+    const middleEnd = nextLength - suffixLength;
+    for (let index = middleStart; index < middleEnd; index += 1) {
+      nextHeights[index] = buildHeightEntry(items[index]!, state.viewportWidth, widthBucket);
+    }
+
+    for (let suffixIndex = 0; suffixIndex < suffixLength; suffixIndex += 1) {
+      const nextIndex = nextLength - suffixLength + suffixIndex;
+      const existingIndex = previousLength - suffixLength + suffixIndex;
+      const nextItem = items[nextIndex]!;
+      const existing = layout.heights[existingIndex]!;
+      const nextLayoutRevision = getLayoutRevision(nextItem);
+      if (existing.layoutRevision === nextLayoutRevision) {
+        nextHeights[nextIndex] = { ...existing, item: nextItem };
+        continue;
+      }
+      nextHeights[nextIndex] = buildHeightEntry(nextItem, state.viewportWidth, widthBucket);
+      if (existing.height !== nextHeights[nextIndex]!.height && firstHeightChangeIndex == null) {
+        firstHeightChangeIndex = nextIndex;
+      }
+    }
+
+    const nextOffsets = new Array<number>(nextLength);
+    for (let index = 0; index < Math.min(prefixLength, layout.offsets.length, nextOffsets.length); index += 1) {
+      nextOffsets[index] = layout.offsets[index] ?? 0;
+    }
+
+    layout.heights = nextHeights;
+    layout.offsets = nextOffsets;
+    state.items = [...items];
+
+    const offsetRecomputeIndex =
+      firstHeightChangeIndex != null
+        ? Math.min(firstHeightChangeIndex, middleStart)
+        : middleStart;
+    recomputeOffsetsFrom(layout, Math.max(0, Math.min(offsetRecomputeIndex, nextLength)));
+    return true;
   };
 
   return {
@@ -330,7 +508,9 @@ export const createPretextVirtualizerCore = <Item,>({
       return snapshot;
     },
     replaceItems: (items, anchorOverride) => {
-      const snapshot = preserveAnchorAcrossItems(items, anchorOverride);
+      const snapshot = preserveAnchorAcrossItems(() => {
+        replaceAllItems(items);
+      }, anchorOverride);
       emitDiagnostic("items:replace", snapshot, {
         itemCount: items.length,
         anchorOverrideKind: anchorOverride?.kind ?? null,
@@ -338,7 +518,9 @@ export const createPretextVirtualizerCore = <Item,>({
       return snapshot;
     },
     appendItems: (items, anchorOverride) => {
-      const snapshot = preserveAnchorAcrossItems([...state.items, ...items], anchorOverride);
+      const snapshot = preserveAnchorAcrossItems(() => {
+        appendIntoLayout(items);
+      }, anchorOverride);
       emitDiagnostic("items:append", snapshot, {
         itemCount: state.items.length,
         deltaCount: items.length,
@@ -347,7 +529,9 @@ export const createPretextVirtualizerCore = <Item,>({
       return snapshot;
     },
     prependItems: (items, anchorOverride) => {
-      const snapshot = preserveAnchorAcrossItems([...items, ...state.items], anchorOverride);
+      const snapshot = preserveAnchorAcrossItems(() => {
+        prependIntoLayout(items);
+      }, anchorOverride);
       emitDiagnostic("items:prepend", snapshot, {
         itemCount: state.items.length,
         deltaCount: items.length,
@@ -356,7 +540,11 @@ export const createPretextVirtualizerCore = <Item,>({
       return snapshot;
     },
     syncItems: (items, anchorOverride) => {
-      const snapshot = preserveAnchorAcrossItems(items, anchorOverride);
+      const snapshot = preserveAnchorAcrossItems(() => {
+        if (!syncStableItems(items) && !syncDiffWindowItems(items)) {
+          replaceAllItems(items);
+        }
+      }, anchorOverride);
       emitDiagnostic("items:sync", snapshot, {
         itemCount: items.length,
         anchorOverrideKind: anchorOverride?.kind ?? null,

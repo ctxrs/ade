@@ -9,6 +9,11 @@ import {
   getWorkbenchListItemHeightRevision,
   type WorkbenchMessageListUiState,
 } from "../sessionMessageListItemIdentity";
+import {
+  addPretextPerfBucket,
+  incrementPretextPerfCounter,
+  recordPretextPerfEvent,
+} from "../../utils/pretextPerfDiagnostics";
 import { getPretextVirtualizerRowLayout } from "./pretextVirtualizerRowLayout";
 
 export const SESSION_PRETEXT_OVERSCAN_PX = 480;
@@ -173,6 +178,7 @@ export function primeSessionPretextRuntime(
   params: PrimeSessionPretextRuntimeParams,
 ): SessionPretextRuntimeRecord {
   const record = getOrCreateSessionPretextRuntime(params.sessionId);
+  incrementPretextPerfCounter("pretext_runtime_prime_calls");
   const nextUiStateRevision = getSessionTranscriptUiStateRevision(params.uiState);
   const uiStateChanged = record.uiStateRevision !== nextUiStateRevision;
   const itemsChanged = record.preparedItems !== params.listItems;
@@ -188,10 +194,12 @@ export function primeSessionPretextRuntime(
     (nextWidth > 0 && record.preparedSnapshot.viewportWidth !== nextWidth) ||
     (nextHeight > 0 && record.preparedSnapshot.viewportHeight !== nextHeight);
   if (!uiStateChanged && !itemsChanged && !viewportChanged) {
+    incrementPretextPerfCounter("pretext_runtime_prime_noop");
     touchRuntime(record);
     return record;
   }
   if (viewportChanged) {
+    incrementPretextPerfCounter("pretext_runtime_prime_viewport_sync");
     record.preparedSnapshot = record.core.syncViewport({
       width: nextWidth,
       height: nextHeight,
@@ -199,8 +207,21 @@ export function primeSessionPretextRuntime(
     });
   }
   if (itemsChanged || uiStateChanged) {
+    incrementPretextPerfCounter("pretext_runtime_prime_replace_items");
+    incrementPretextPerfCounter("pretext_runtime_prime_replace_item_count", params.listItems.length);
+    addPretextPerfBucket(
+      "pretext_runtime_prime_replace_reason",
+      itemsChanged && uiStateChanged ? "items+ui" : itemsChanged ? "items" : "ui",
+    );
+    recordPretextPerfEvent("runtime-prime:replace-items", {
+      sessionId: params.sessionId,
+      itemCount: params.listItems.length,
+      itemsChanged,
+      uiStateChanged,
+      viewportChanged,
+    });
     const anchor = record.restoreSnapshot?.anchor ?? { kind: "bottom" as const };
-    record.preparedSnapshot = record.core.replaceItems(params.listItems, anchor);
+    record.preparedSnapshot = record.core.syncItems(params.listItems, anchor);
     record.preparedItems = params.listItems;
   }
   touchRuntime(record);
@@ -237,24 +258,33 @@ export function readSessionPretextRuntimeRestoreSnapshot(
 export function pruneSessionPretextRuntimeCache(retainedPreparedSessionIds: readonly string[]): void {
   const retained = new Set(retainedPreparedSessionIds);
   const restorableEntries: Array<[string, SessionPretextRuntimeRecord]> = [];
+  let deletedCount = 0;
   for (const [sessionId, record] of runtimeCache.entries()) {
     if (record.isVisible) continue;
     if (retained.has(sessionId)) continue;
     if (!record.restoreSnapshot) {
       runtimeCache.delete(sessionId);
+      deletedCount += 1;
       continue;
     }
     restorableEntries.push([sessionId, record]);
   }
   if (restorableEntries.length <= SESSION_PRETEXT_MAX_RESTORABLE_RUNTIMES) {
+    if (deletedCount > 0) {
+      incrementPretextPerfCounter("pretext_runtime_cache_pruned_entries", deletedCount);
+    }
     return;
   }
-  restorableEntries
+  const overflowEntries = restorableEntries
     .sort(([, left], [, right]) => right.lastTouchedAtMs - left.lastTouchedAtMs)
-    .slice(SESSION_PRETEXT_MAX_RESTORABLE_RUNTIMES)
-    .forEach(([sessionId]) => {
+    .slice(SESSION_PRETEXT_MAX_RESTORABLE_RUNTIMES);
+  overflowEntries.forEach(([sessionId]) => {
       runtimeCache.delete(sessionId);
+      deletedCount += 1;
     });
+  if (deletedCount > 0) {
+    incrementPretextPerfCounter("pretext_runtime_cache_pruned_entries", deletedCount);
+  }
 }
 
 export function getSessionPretextRuntimeCacheSize(): number {

@@ -5,6 +5,10 @@ import {
   normalizeAskUserQuestions,
   type AskUserQuestionItem,
 } from "../../components/askUserQuestionShared";
+import {
+  addPretextPerfBucket,
+  incrementPretextPerfCounter,
+} from "../../utils/pretextPerfDiagnostics";
 import type { WorkbenchListItem, WorkbenchTurnHeader } from "../SessionPage.types";
 import { isExpandableMessageContent, resolveWorkbenchMessageExpanded } from "../sessionMessageListItemIdentity";
 import { measureSessionMarkdownDocument, clearSessionMarkdownMeasurementCaches } from "./sessionMarkdownMeasurement";
@@ -78,6 +82,7 @@ const ASK_OTHER_LABEL_HEIGHT_PX = 16;
 const ASK_OTHER_INPUT_HEIGHT_PX = 34;
 
 const PREPARED_CACHE_LIMIT = 2000;
+const PERF_WIDTH_BUCKET_SIZE = 64;
 const preparedCache = new Map<string, PreparedText>();
 
 const normalizeHeight = (value: number): number =>
@@ -376,6 +381,10 @@ export const getPretextVirtualizerRowLayout = (
   viewportWidth: number,
   context: PretextVirtualizerRowLayoutContext,
 ): PretextVirtualizerPlannedLayout => {
+  const widthBucket = `w${Math.floor(Math.max(0, viewportWidth) / PERF_WIDTH_BUCKET_SIZE)}`;
+  incrementPretextPerfCounter("pretext_row_layout_calls");
+  addPretextPerfBucket("pretext_row_layout_kind", item.kind);
+  addPretextPerfBucket("pretext_row_layout_item", `${item.kind}:${item.id}:${widthBucket}`);
   switch (item.kind) {
     case "spacer":
       return { height: SPACER_HEIGHT_PX };

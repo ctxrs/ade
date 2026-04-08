@@ -47,9 +47,22 @@ export function evictIfNeeded(this: SessionSupervisorSnapshotProjectionHost) {
 }
 
 const cloneSessionEntry = (entry: InternalEntry): SessionCacheEntry => {
-  const baseThreadProjection = buildSessionThreadProjectionFromSnapshot(entry);
   const overlay = entry.overlay;
   const support = entry.support;
+  const baseThreadProjection = buildSessionThreadProjectionFromSnapshot({
+    stateLoaded: support.stateLoaded,
+    turns: entry.turns,
+    turnsRev: entry.turnsRev,
+    assistantStreamingByTurnId: entry.assistantStreamingByTurnId,
+    assistantStreamingRev: entry.assistantStreamingRev,
+    messages: entry.messages,
+    messagesRev: entry.messagesRev,
+    events: entry.events,
+    eventsRev: entry.eventsRev,
+    turnToolsByTurnId: support.turnToolsByTurnId,
+    toolSummariesReady: support.toolSummariesReady,
+    projectionRev: entry.projectionRev,
+  });
   return {
     sessionId: entry.sessionId,
     mode: entry.mode,

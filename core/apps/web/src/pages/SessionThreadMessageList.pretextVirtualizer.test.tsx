@@ -16,6 +16,7 @@ import {
   readSessionPretextRuntimeRestoreSnapshot,
   resetSessionPretextRuntimeCache,
 } from "./sessionThread/pretextSessionRuntimeCache";
+import * as rowLayoutModule from "./sessionThread/pretextVirtualizerRowLayout";
 
 const resizeObserverInstances: Array<{ callback: ResizeObserverCallback }> = [];
 
@@ -645,7 +646,200 @@ describe("SessionThreadPretextVirtualizerList", () => {
     expect(syncItemsSpy).not.toHaveBeenCalled();
   });
 
-  it("replans offsets when context changes even if the projection op is noop", () => {
+  it("consumes a non-noop projection op only once across unrelated rerenders", () => {
+    const sessionId = "session-projection-edge";
+    const initialItems = makeItems(4);
+    const nextItems = initialItems.map((item, index) =>
+      index === 1
+        ? {
+            ...item,
+            content: item.kind === "message" ? `${item.content} updated` : "updated",
+          }
+        : item,
+    );
+
+    const { container, rerender } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={initialItems}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 1400 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+    });
+
+    const runtime = getOrCreateSessionPretextRuntime(sessionId);
+    const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
+    syncItemsSpy.mockClear();
+
+    const projectionOp = {
+      kind: "hydrate_tools" as const,
+      projectionRevision: 1,
+      changedItemIds: [nextItems[1]!.id],
+      remeasureItemIds: [nextItems[1]!.id],
+    };
+
+    rerender(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={nextItems}
+        threadProjectionOp={projectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    expect(syncItemsSpy).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={nextItems}
+        threadProjectionOp={projectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    expect(syncItemsSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not resync when the items array is recreated with the same row objects", () => {
+    const sessionId = "session-stable-item-refs";
+    const initialItems = makeItems(4);
+
+    const { container, rerender } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={initialItems}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 1400 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+    });
+
+    const runtime = getOrCreateSessionPretextRuntime(sessionId);
+    const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
+    syncItemsSpy.mockClear();
+
+    rerender(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={[...initialItems]}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    expect(syncItemsSpy).not.toHaveBeenCalled();
+  });
+
+  it("only replans the changed middle window for non-prefix projection updates", () => {
+    const sessionId = "session-middle-insert";
+    const initialItems = makeItems(4);
+    const insertedItems: WorkbenchListItem[] = [
+      initialItems[0]!,
+      {
+        kind: "message",
+        id: "message-inserted-1",
+        role: "assistant",
+        content: "inserted one",
+        attachments: [],
+        created_at: "2026-03-19T00:00:00Z",
+      },
+      {
+        kind: "message",
+        id: "message-inserted-2",
+        role: "assistant",
+        content: "inserted two",
+        attachments: [],
+        created_at: "2026-03-19T00:00:01Z",
+      },
+      ...initialItems.slice(1),
+    ];
+
+    const rowLayoutSpy = vi.spyOn(rowLayoutModule, "getPretextVirtualizerRowLayout");
+
+    const { container, rerender } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={initialItems}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 1400 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+    });
+
+    rowLayoutSpy.mockClear();
+
+    rerender(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={insertedItems}
+        threadProjectionOp={{
+          kind: "hydrate_tools",
+          projectionRevision: 1,
+          changedItemIds: ["message-inserted-1", "message-inserted-2", "message-2", "message-3", "message-4"],
+          remeasureItemIds: ["message-inserted-1", "message-inserted-2"],
+        }}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    expect(rowLayoutSpy.mock.calls.map(([item]) => item.id)).toEqual([
+      "message-inserted-1",
+      "message-inserted-2",
+    ]);
+  });
+
+  it("replans the affected row when context changes even if the projection op is noop", () => {
     const expandableContent = Array.from(
       { length: 28 },
       (_, index) => `- expanded row ${index + 1} with enough text to wrap and change the measured height`,
@@ -671,10 +865,12 @@ describe("SessionThreadPretextVirtualizerList", () => {
       },
     ];
 
+    const sessionId = "session-noop-layout";
+    const rowLayoutSpy = vi.spyOn(rowLayoutModule, "getPretextVirtualizerRowLayout");
     const { container, rerender } = render(
       <SessionThreadPretextVirtualizerList
         style={{ height: 400 }}
-        sessionId="session-noop-layout"
+        sessionId={sessionId}
         isActive
         listItems={listItems}
         threadProjectionOp={noopProjectionOp}
@@ -692,13 +888,15 @@ describe("SessionThreadPretextVirtualizerList", () => {
       resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
     });
 
-    const shellsBefore = container.querySelectorAll<HTMLElement>("[data-pretext-virtualizer-row-shell='1']");
-    const secondTopBefore = Number.parseFloat(shellsBefore[1]?.style.top ?? "0");
+    const runtime = getOrCreateSessionPretextRuntime(sessionId);
+    const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
+    syncItemsSpy.mockClear();
+    rowLayoutSpy.mockClear();
 
     rerender(
       <SessionThreadPretextVirtualizerList
         style={{ height: 400 }}
-        sessionId="session-noop-layout"
+        sessionId={sessionId}
         isActive
         listItems={listItems}
         threadProjectionOp={noopProjectionOp}
@@ -712,9 +910,52 @@ describe("SessionThreadPretextVirtualizerList", () => {
       resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
     });
 
-    const shellsAfter = container.querySelectorAll<HTMLElement>("[data-pretext-virtualizer-row-shell='1']");
-    const secondTopAfter = Number.parseFloat(shellsAfter[1]?.style.top ?? "0");
+    expect(syncItemsSpy).toHaveBeenCalledTimes(1);
+    expect(rowLayoutSpy.mock.calls.map(([item]) => item.id)).toEqual(["message-expandable-noop"]);
+  });
 
-    expect(secondTopAfter).toBeGreaterThan(secondTopBefore);
+  it("does not replan when context objects change by reference but keep the same layout semantics", () => {
+    const sessionId = "session-noop-semantic";
+    const initialItems = makeItems(3);
+
+    const { container, rerender } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={initialItems}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={{ ...context, expandedMessageById: {} }}
+      />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 1400 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+    });
+
+    const runtime = getOrCreateSessionPretextRuntime(sessionId);
+    const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
+    syncItemsSpy.mockClear();
+
+    rerender(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={initialItems}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={{ ...context, expandedMessageById: {} }}
+      />,
+    );
+
+    expect(syncItemsSpy).not.toHaveBeenCalled();
   });
 });

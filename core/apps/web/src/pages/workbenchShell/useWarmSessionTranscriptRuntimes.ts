@@ -3,6 +3,12 @@ import type { SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
 import { collectWorkspaceActivePrimarySessionIds } from "../../state/workspaceActiveSnapshot/projection";
 import { selectSessionThreadProjection } from "../../state/sessionThreadProjection/selectors";
+import {
+  addPretextPerfBucket,
+  incrementPretextPerfCounter,
+  readPretextPerfQueryFlag,
+  recordPretextPerfEvent,
+} from "../../utils/pretextPerfDiagnostics";
 import { collectAskUserQuestionAnswers } from "../SessionPage.workbenchViewModel";
 import {
   primeWarmWorkbenchThreadViewModel,
@@ -77,13 +83,29 @@ export function useWarmSessionTranscriptRuntimes({
   );
 
   useEffect(() => {
+    const warmMode = readPretextPerfQueryFlag("pretextWarmMode") ?? "full";
+    incrementPretextPerfCounter("pretext_warm_effect_runs");
+    addPretextPerfBucket("pretext_warm_mode", warmMode);
     pruneWarmWorkbenchThreadViewModelCache(activePrimarySessionIds);
     pruneSessionPretextRuntimeCache(activePrimarySessionIds);
 
-    if (warmState.viewportWidth <= 0) return;
+    if (warmState.viewportWidth <= 0) {
+      incrementPretextPerfCounter("pretext_warm_skipped_missing_viewport");
+      return;
+    }
+
+    if (warmMode === "off") {
+      incrementPretextPerfCounter("pretext_warm_skipped_mode_off");
+      return;
+    }
 
     const sessionIds = activePrimarySessionIds.filter((sessionId) => sessionId !== activeSessionId);
-    if (sessionIds.length === 0) return;
+    if (sessionIds.length === 0) {
+      incrementPretextPerfCounter("pretext_warm_skipped_no_sessions");
+      return;
+    }
+
+    incrementPretextPerfCounter("pretext_warm_candidate_sessions", sessionIds.length);
 
     let cancelled = false;
     let idleHandle: IdleHandle | null = null;
@@ -94,6 +116,7 @@ export function useWarmSessionTranscriptRuntimes({
       while (index < sessionIds.length) {
         const sessionId = sessionIds[index]!;
         index += 1;
+        incrementPretextPerfCounter("pretext_warm_session_attempts");
 
         const entry = sessionSnap.sessions[sessionId];
         if (!entry) continue;
@@ -103,7 +126,10 @@ export function useWarmSessionTranscriptRuntimes({
           threadProjection.turns.length > 0 ||
           threadProjection.messages.length > 0 ||
           threadProjection.events.length > 0;
-        if (!hasProjectionData) continue;
+        if (!hasProjectionData) {
+          incrementPretextPerfCounter("pretext_warm_skipped_no_projection");
+          continue;
+        }
 
         const askUserQuestionAnswers = collectAskUserQuestionAnswers(threadProjection.events, {});
         const warmedViewModel = primeWarmWorkbenchThreadViewModel({
@@ -122,6 +148,17 @@ export function useWarmSessionTranscriptRuntimes({
           askUserQuestionAnswers,
           enableDebugEvents: false,
         });
+        incrementPretextPerfCounter("pretext_warm_viewmodel_ready");
+        incrementPretextPerfCounter("pretext_warm_viewmodel_items", warmedViewModel.listItems.length);
+
+        if (warmMode === "view") {
+          incrementPretextPerfCounter("pretext_warm_viewmodel_only_sessions");
+          recordPretextPerfEvent("warm:viewmodel-only", {
+            sessionId,
+            itemCount: warmedViewModel.listItems.length,
+          });
+          break;
+        }
 
         const existingRuntime = getOrCreateSessionPretextRuntime(sessionId);
         const runtimeUiState = existingRuntime.hasVisibleMount
@@ -142,6 +179,9 @@ export function useWarmSessionTranscriptRuntimes({
           viewportWidth: warmState.viewportWidth,
           viewportHeight: warmState.viewportHeight,
         });
+        incrementPretextPerfCounter("pretext_warm_runtime_primes");
+        incrementPretextPerfCounter("pretext_warm_runtime_items", warmedViewModel.listItems.length);
+        addPretextPerfBucket("pretext_warm_runtime_session", sessionId);
         break;
       }
       if (index < sessionIds.length) {

@@ -117,13 +117,10 @@ const applyCanonicalToolSummaries = (
   const support = entry.support;
   entry.toolSummaries = summaries;
   support.toolSummariesReady = true;
-  if (opts?.resetByTurn) {
-    support.turnToolsByTurnId = {};
-  }
-
-  const nextByTurn: Record<string, SessionTurnTool[]> = opts?.resetByTurn
-    ? {}
-    : { ...support.turnToolsByTurnId };
+  const resetByTurn = opts?.resetByTurn === true;
+  const currentByTurn = support.turnToolsByTurnId;
+  let nextByTurn: Record<string, SessionTurnTool[]> = resetByTurn ? {} : currentByTurn;
+  let toolsByTurnChanged = resetByTurn && Object.keys(currentByTurn).length > 0;
 
   for (const summary of summaries) {
     const turnId = idToString(summary.turn_id);
@@ -133,13 +130,19 @@ const applyCanonicalToolSummaries = (
     const key = String(summary.tool_call_id ?? "").trim();
     if (!key) continue;
     if (existing.some((tool) => String(tool.tool_call_id ?? "").trim() === key)) continue;
+    if (!resetByTurn && nextByTurn === currentByTurn) {
+      nextByTurn = { ...currentByTurn };
+    }
     nextByTurn[turnId] = [...existing, summaryOnlyTool(summary)];
+    toolsByTurnChanged = true;
     if (support.turnToolsHydratedByTurnId[turnId] === undefined) {
       support.turnToolsHydratedByTurnId[turnId] = false;
     }
   }
 
-  support.turnToolsByTurnId = nextByTurn;
+  if (toolsByTurnChanged) {
+    support.turnToolsByTurnId = nextByTurn;
+  }
 };
 
 const preserveLocalQueuedMessages = (

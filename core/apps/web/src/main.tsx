@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { applyContextTheme } from "@ctx/design/web";
 import App from "./App";
 import { initLoadTestTelemetry } from "./utils/loadTestTelemetry";
+import { initPretextPerfDiagnostics } from "./utils/pretextPerfDiagnostics";
 import { initWalRecorder } from "./utils/walRecorder";
 import { initTheme } from "./utils/theme";
 import { primeDaemonConnection } from "./api/client";
@@ -18,6 +19,7 @@ primeAuthSession();
 initTheme();
 applyContextTheme();
 initLoadTestTelemetry();
+initPretextPerfDiagnostics();
 installGlobalRuntimeDiagnosticHandlers();
 const wal = initWalRecorder();
 
