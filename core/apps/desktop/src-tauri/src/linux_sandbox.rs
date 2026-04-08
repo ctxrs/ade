@@ -1,4 +1,8 @@
 use super::*;
+pub(crate) use ctx_desktop_ipc::{
+    DesktopLinuxSandboxEnsureResp, DesktopLocalLinuxSandboxEnsureReq,
+    DesktopRemoteLinuxSandboxEnsureReq,
+};
 
 const LOCAL_ADMIN_PASSWORD_REQUIRED_SENTINEL: &str = "CTX_LOCAL_ADMIN_PASSWORD_REQUIRED";
 const REMOTE_ADMIN_PASSWORD_REQUIRED_SENTINEL: &str = "CTX_REMOTE_ADMIN_PASSWORD_REQUIRED";
@@ -26,23 +30,6 @@ struct LinuxSandboxPrepareResponse {
     needs_password: bool,
     #[serde(default)]
     message: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct DesktopLinuxSandboxEnsureResp {
-    pub(crate) ready: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct DesktopLocalLinuxSandboxEnsureReq {
-    #[serde(default)]
-    pub(crate) admin_password_once: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct DesktopRemoteLinuxSandboxEnsureReq {
-    #[serde(default)]
-    pub(crate) admin_password_once: Option<String>,
 }
 
 fn local_prefetch_inflight() -> &'static std::sync::Mutex<bool> {

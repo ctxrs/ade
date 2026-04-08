@@ -26,6 +26,14 @@ type E2EWindow = Window & {
     focusTask?: (taskId: string, sessionId?: string | null) => boolean;
     toggleDiffPane?: () => boolean;
     toggleArtifactsPane?: () => boolean;
+    pasteImageIntoComposer?: (
+      selector: string,
+      options?: { base64?: string; htmlSrc?: string; includeFile?: boolean; text?: string },
+    ) => Promise<{ ok: boolean; error?: string }>;
+    emitDesktopDrop?: (
+      selector: string,
+      filePath: string,
+    ) => Promise<{ ok: boolean; error?: string }>;
     measureTargets?: (selectors: Record<string, string>) => Promise<unknown>;
     measureHarnessOption?: (label: string) => Promise<unknown>;
     measureDiffFile?: (targetPath: string) => Promise<unknown>;
@@ -47,9 +55,13 @@ function TestBridge(props: {
 }
 
 describe("useWorkbenchE2EBridge", () => {
+  const originalDevicePixelRatio = window.devicePixelRatio;
+
   afterEach(() => {
     sessionStorage.clear();
     delete (window as E2EWindow).__ctxE2E;
+    document.body.innerHTML = "";
+    Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: originalDevicePixelRatio });
   });
 
   it("registers diff and artifacts toggles when ctxE2E mode is enabled", () => {
@@ -76,6 +88,8 @@ describe("useWorkbenchE2EBridge", () => {
     expect(typeof e2eWindow.__ctxE2E?.focusTask).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.toggleDiffPane).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.toggleArtifactsPane).toBe("function");
+    expect(typeof e2eWindow.__ctxE2E?.pasteImageIntoComposer).toBe("function");
+    expect(typeof e2eWindow.__ctxE2E?.emitDesktopDrop).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.measureTargets).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.measureHarnessOption).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.measureDiffFile).toBe("function");
@@ -99,11 +113,83 @@ describe("useWorkbenchE2EBridge", () => {
     expect(e2eWindow.__ctxE2E?.focusTask).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.toggleDiffPane).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.toggleArtifactsPane).toBeUndefined();
+    expect(e2eWindow.__ctxE2E?.pasteImageIntoComposer).toBeUndefined();
+    expect(e2eWindow.__ctxE2E?.emitDesktopDrop).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.measureTargets).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.measureHarnessOption).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.measureDiffFile).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.measureMarkdownParity).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.installMarkdownScrollProbe).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.removeMarkdownScrollProbe).toBeUndefined();
+  });
+
+  it("dispatches paste and desktop drop events from the app realm", async () => {
+    Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: 2 });
+
+    sessionStorage.setItem("ctxE2E", "1");
+    const e2eWindow = window as E2EWindow;
+    render(
+      <TestBridge
+        focusNewTask={() => {}}
+        clearDraftHarness={() => {}}
+        focusTask={() => true}
+        toggleDiffPane={() => {}}
+        toggleArtifactsPane={() => {}}
+      />,
+    );
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "wb-new-composer-textarea";
+    document.body.appendChild(textarea);
+
+    let pastedFileCount = 0;
+    let pastedText = "";
+    textarea.addEventListener("paste", (event) => {
+      const clipboardData = (event as unknown as {
+        clipboardData?: {
+          files: File[];
+          items: Array<{ kind: string; getAsFile: () => File }>;
+          types: string[];
+          getData: (type: string) => string;
+        };
+      }).clipboardData;
+      pastedFileCount = clipboardData?.files.length ?? 0;
+      pastedText = clipboardData?.getData("text/plain") ?? "";
+      expect(clipboardData?.items[0]?.kind).toBe("file");
+      expect(clipboardData?.types).toContain("Files");
+    });
+
+    await expect(
+      e2eWindow.__ctxE2E?.pasteImageIntoComposer?.("textarea.wb-new-composer-textarea", { text: "caption" }),
+    ).resolves.toEqual({ ok: true });
+    expect(pastedFileCount).toBe(1);
+    expect(pastedText).toBe("caption");
+
+    const dropScope = document.createElement("div");
+    dropScope.className = "ctx-drop-scope";
+    dropScope.getBoundingClientRect = vi.fn(() => ({
+      left: 10,
+      top: 20,
+      width: 100,
+      height: 40,
+      right: 110,
+      bottom: 60,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    }));
+    document.body.appendChild(dropScope);
+
+    const emittedDrops: unknown[] = [];
+    window.addEventListener("ctx:desktop-drag-drop-test", (event) => {
+      emittedDrops.push((event as CustomEvent).detail);
+    });
+
+    await expect(e2eWindow.__ctxE2E?.emitDesktopDrop?.(".ctx-drop-scope", "/tmp/paste.png")).resolves.toEqual({ ok: true });
+    expect(emittedDrops).toEqual([
+      { type: "enter", paths: ["/tmp/paste.png"], position: { x: 120, y: 80 } },
+      { type: "over", position: { x: 120, y: 80 } },
+      { type: "drop", paths: ["/tmp/paste.png"], position: { x: 120, y: 80 } },
+    ]);
   });
 });

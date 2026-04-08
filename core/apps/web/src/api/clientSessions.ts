@@ -13,6 +13,7 @@ import type {
   SessionTurnTool,
   SubagentInvocation,
 } from "@ctx/types";
+import type { BlobUploadResp } from "../generated/desktop-ipc";
 import { apiAny, authToken } from "./clientBase";
 import { getDaemonConnection, getDaemonHttpUrl } from "./daemonConnection";
 import { desktopUploadBlob, isDesktopApp } from "../utils/desktop";
@@ -25,14 +26,6 @@ import {
 } from "../utils/analytics";
 import { resolveImageMimeType } from "../utils/imageMime";
 import { composeModelId, parseModelId } from "../utils/modelEffort";
-
-export type BlobUploadResp = {
-  blob_id: string;
-  sha256: string;
-  bytes: number;
-  mime_type: string;
-  name?: string | null;
-};
 
 export type WebSessionViewport = {
   width: number;
@@ -375,7 +368,7 @@ export const uploadBlob = async (file: File): Promise<BlobUploadResp> => {
       mime_type: mimeType,
       name: file.name,
     });
-    return resp as BlobUploadResp;
+    return resp;
   }
   const token = authToken();
   const form = new FormData();

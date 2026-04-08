@@ -5,6 +5,10 @@ const { spawnSync } = require("child_process");
 const { waitForTauri, getConnectionInfo } = require("./helpers/tauri.cjs");
 const { daemonJson } = require("./helpers/daemon.cjs");
 
+const E2E_IMAGE_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+lmZYAAAAASUVORK5CYII=";
+const WEBDRIVER_KEY_CONTROL = "\uE009";
+
 const runChecked = (cmd, args) => {
   const res = spawnSync(cmd, args, { encoding: "utf8" });
   if (res.status === 0) return;
@@ -18,22 +22,14 @@ const runChecked = (cmd, args) => {
 };
 
 const initTempRepo = () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-desktop-drop-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-desktop-paste-"));
   runChecked("git", ["init", "--", root]);
   runChecked("git", ["-C", root, "config", "user.email", "ctx-e2e@example.com"]);
   runChecked("git", ["-C", root, "config", "user.name", "ctx-e2e"]);
-  fs.writeFileSync(path.join(root, "README.md"), "# desktop drop\n", "utf8");
+  fs.writeFileSync(path.join(root, "README.md"), "# desktop paste\n", "utf8");
   runChecked("git", ["-C", root, "add", "README.md"]);
   runChecked("git", ["-C", root, "commit", "-m", "init"]);
   return root;
-};
-
-const writeTinyPng = () => {
-  const filePath = path.join(os.tmpdir(), `ctx-desktop-drop-${Date.now()}.png`);
-  const base64 =
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+lmZYAAAAASUVORK5CYII=";
-  fs.writeFileSync(filePath, Buffer.from(base64, "base64"));
-  return filePath;
 };
 
 const createWorkspace = async (rootPath) => {
@@ -57,6 +53,46 @@ const createWorkspace = async (rootPath) => {
   const workspaceId = String(resp.payload?.id || "").trim();
   if (!workspaceId) throw new Error("workspace creation returned no id");
   return workspaceId;
+};
+
+const writeClipboardImage = () => {
+  const filePath = path.join(os.tmpdir(), `ctx-desktop-paste-image-${process.pid}-${Date.now()}.png`);
+  fs.writeFileSync(filePath, Buffer.from(E2E_IMAGE_BASE64, "base64"));
+  return filePath;
+};
+
+const setSystemClipboardImage = (filePath) => {
+  if (process.platform !== "darwin") {
+    throw new Error("desktop image paste automation currently requires macOS clipboard support");
+  }
+  runChecked("osascript", [
+    "-e",
+    `set the clipboard to (read (POSIX file ${JSON.stringify(String(filePath))}) as «class PNGf»)`,
+  ]);
+};
+
+const sendPasteShortcut = async () => {
+  if (process.platform === "darwin") {
+    runChecked("osascript", [
+      "-e",
+      'tell application "ctx" to activate',
+      "-e",
+      'tell application "System Events" to keystroke "v" using command down',
+    ]);
+    return;
+  }
+  const modifier = WEBDRIVER_KEY_CONTROL;
+  await browser.performActions([{
+    type: "key",
+    id: "ctx-paste-keyboard",
+    actions: [
+      { type: "keyDown", value: modifier },
+      { type: "keyDown", value: "v" },
+      { type: "keyUp", value: "v" },
+      { type: "keyUp", value: modifier },
+    ],
+  }]);
+  await browser.releaseActions();
 };
 
 const resolveSessionProvider = async (workspaceId) => {
@@ -96,7 +132,7 @@ const resolveSessionProvider = async (workspaceId) => {
 const createTaskWithSession = async (workspaceId, title) => {
   const resp = await daemonJson("POST", `/api/workspaces/${workspaceId}/tasks`, {
     title,
-    description: "desktop drag drop fake task",
+    description: "desktop paste fake task",
     create_default_session: false,
   });
   if (resp.status !== 200 && resp.status !== 201) {
@@ -111,10 +147,7 @@ const createTaskWithSession = async (workspaceId, title) => {
   }
 
   const executionEnvironment = String(executionConfigResp.payload?.environment || "").trim();
-  if (
-    executionEnvironment !== "host"
-    && executionEnvironment !== "sandbox"
-  ) {
+  if (executionEnvironment !== "host" && executionEnvironment !== "sandbox") {
     throw new Error(`unsupported execution environment: ${executionEnvironment || "<missing>"}`);
   }
 
@@ -140,29 +173,10 @@ const waitForSelector = async (selector, timeoutMs = 30000) => {
   );
 };
 
-const waitForDropScopeReady = async (selector, timeoutMs = 30000) => {
-  await browser.waitUntil(
-    async () => await browser.execute((s) => {
-      const target = document.querySelector(s);
-      if (!(target instanceof HTMLElement)) return false;
-      const scope = target.closest(".ctx-drop-scope");
-      return Boolean(scope && scope.__ctxDropScopeReady === true);
-    }, selector),
-    { timeout: timeoutMs, timeoutMsg: `drop scope not ready: ${selector}` },
-  );
-};
-
 const waitForCtxE2EFocusTask = async (timeoutMs = 30000) => {
   await browser.waitUntil(
     async () => await browser.execute(() => typeof window.__ctxE2E?.focusTask === "function"),
     { timeout: timeoutMs, timeoutMsg: "ctxE2E focusTask bridge not available" },
-  );
-};
-
-const waitForCtxE2EDropBridge = async (timeoutMs = 30000) => {
-  await browser.waitUntil(
-    async () => await browser.execute(() => typeof window.__ctxE2E?.emitDesktopDrop === "function"),
-    { timeout: timeoutMs, timeoutMsg: "ctxE2E desktop drop bridge not available" },
   );
 };
 
@@ -180,9 +194,11 @@ const waitForDesktopUploadInvokeCount = async (expectedCount, timeoutMs = 30000)
     );
   } catch (error) {
     const diagnostics = await browser.execute(() => ({
-      lastDebug: window.__ctxDropLastDebug || null,
+      composerPasteDebug: window.__ctxComposerPasteDebug || null,
+      lastDebug: window.__ctxPasteLastDebug || null,
+      pasteProbe: window.__ctxPasteProbe || null,
       desktopInvokes: Array.isArray(window.__ctxDesktopInvokeLog) ? window.__ctxDesktopInvokeLog.slice(-12) : [],
-      fetchLog: Array.isArray(window.__ctxDropFetchLog) ? window.__ctxDropFetchLog.slice(-12) : [],
+      fetchLog: Array.isArray(window.__ctxPasteFetchLog) ? window.__ctxPasteFetchLog.slice(-12) : [],
       hasTauriInternalsInvoke: typeof window.__TAURI_INTERNALS__?.invoke,
       hasGlobalTauriInvoke: typeof window.__TAURI__?.core?.invoke,
     }));
@@ -190,20 +206,20 @@ const waitForDesktopUploadInvokeCount = async (expectedCount, timeoutMs = 30000)
   }
 };
 
-const emitNativeDrop = async (selector, filePath) => {
-  const result = await browser.execute(async (targetSelector, droppedPath) => {
-    if (!Array.isArray(window.__ctxDropFetchLog)) {
+const installDesktopInvokeLog = async () => {
+  await browser.execute(() => {
+    if (!Array.isArray(window.__ctxPasteFetchLog)) {
       const originalFetch = window.fetch.bind(window);
-      window.__ctxDropFetchLog = [];
+      window.__ctxPasteFetchLog = [];
       window.fetch = async (...args) => {
         const [input] = args;
         const url = typeof input === "string" ? input : String(input?.url || input || "");
         try {
           const response = await originalFetch(...args);
-          window.__ctxDropFetchLog.push({ url, ok: response.ok, status: response.status });
+          window.__ctxPasteFetchLog.push({ url, ok: response.ok, status: response.status });
           return response;
         } catch (error) {
-          window.__ctxDropFetchLog.push({ url, error: String(error) });
+          window.__ctxPasteFetchLog.push({ url, error: String(error) });
           throw error;
         }
       };
@@ -224,47 +240,96 @@ const emitNativeDrop = async (selector, filePath) => {
         }
       }
     }
-    const dispatched = await window.__ctxE2E?.emitDesktopDrop?.(targetSelector, String(droppedPath));
-    if (!dispatched?.ok) {
-      return { ok: false, error: dispatched?.error || "ctxE2E desktop drop dispatch failed" };
-    }
-    const target = document.querySelector(targetSelector);
-    if (!(target instanceof HTMLElement)) return { ok: false, error: `missing target after drop: ${targetSelector}` };
-    const rect = target.getBoundingClientRect();
-    const ratio = window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
-    const cssX = rect.left + rect.width / 2;
-    const cssY = rect.top + rect.height / 2;
-    const pointEl = document.elementFromPoint(cssX, cssY);
-    const pointChain = [];
-    let current = pointEl;
-    while (current instanceof HTMLElement && pointChain.length < 8) {
-      pointChain.push({
-        tag: current.tagName,
-        className: current.className,
-        testId: current.getAttribute("data-testid"),
-      });
-      current = current.parentElement;
-    }
-    window.__ctxDropLastDebug = {
-      selector: targetSelector,
-      droppedPath: String(droppedPath),
-      convertFileSrcType: typeof window.__TAURI__?.core?.convertFileSrc,
-      convertedPath:
-        typeof window.__TAURI__?.core?.convertFileSrc === "function"
-          ? window.__TAURI__.core.convertFileSrc(String(droppedPath))
-          : null,
-      tauriEventEmitType: typeof window.__TAURI__?.event?.emit,
-      ratio,
-      cssPosition: { x: cssX, y: cssY },
-      pointChain,
-      attachmentCounts: Array.from(document.querySelectorAll(".wb-attach-thumb-img")).length,
-    };
-    return { ok: true };
-  }, selector, filePath);
+  });
+};
 
-  if (!result?.ok) {
-    throw new Error(result?.error || "failed to emit native drop");
+const pasteImageFromClipboard = async (selector, clipboardImagePath) => {
+  await installDesktopInvokeLog();
+  await waitForSelector(selector, 30000);
+  await browser.execute((targetSelector) => {
+    const target = document.querySelector(targetSelector);
+    const probe = {
+      keydowns: [],
+      pasteEvents: [],
+      beforeInput: [],
+      inputEvents: [],
+      activeElementTag: document.activeElement?.tagName || null,
+    };
+    window.__ctxPasteProbe = probe;
+    if (!(target instanceof HTMLElement)) return false;
+
+    const recordPaste = (scope, event) => {
+      const clipboardData = event.clipboardData;
+      probe.pasteEvents.push({
+        scope,
+        types: Array.from(clipboardData?.types ?? []),
+        files: Array.from(clipboardData?.files ?? []).map((file) => ({
+          name: file.name,
+          type: file.type,
+          size: file.size,
+        })),
+        items: Array.from(clipboardData?.items ?? []).map((item) => ({
+          kind: item.kind,
+          type: item.type,
+        })),
+      });
+    };
+    const recordBeforeInput = (event) => {
+      probe.beforeInput.push({
+        inputType: event.inputType || null,
+        data: event.data ?? null,
+      });
+    };
+    const recordInput = (event) => {
+      probe.inputEvents.push({
+        inputType: event.inputType || null,
+        data: event.data ?? null,
+      });
+    };
+    const recordKeydown = (event) => {
+      probe.keydowns.push({
+        key: event.key,
+        code: event.code,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+      });
+    };
+
+    document.addEventListener("keydown", recordKeydown, { capture: true, once: false });
+    document.addEventListener("paste", (event) => recordPaste("document", event), { capture: true, once: false });
+    target.addEventListener("paste", (event) => recordPaste("target", event), { once: false });
+    target.addEventListener("beforeinput", recordBeforeInput, { once: false });
+    target.addEventListener("input", recordInput, { once: false });
+    return true;
+  }, selector);
+  setSystemClipboardImage(clipboardImagePath);
+  const focusApplied = await browser.execute((targetSelector) => {
+    const target = document.querySelector(targetSelector);
+    if (!(target instanceof HTMLElement)) return false;
+    target.focus();
+    target.click?.();
+    if (target instanceof HTMLTextAreaElement) {
+      const position = target.value.length;
+      target.setSelectionRange(position, position);
+    }
+    return document.activeElement === target;
+  }, selector);
+  if (!focusApplied) {
+    throw new Error(`failed to focus paste target: ${selector}`);
   }
+  await browser.pause(250);
+  await sendPasteShortcut();
+  await browser.execute((targetSelector) => {
+    window.__ctxPasteLastDebug = {
+      selector: targetSelector,
+      attachmentCounts: Array.from(document.querySelectorAll(".wb-attach-thumb-img")).length,
+      invokeLogSize: Array.isArray(window.__ctxDesktopInvokeLog) ? window.__ctxDesktopInvokeLog.length : 0,
+      activeElementTag: document.activeElement?.tagName || null,
+      composerPasteDebug: window.__ctxComposerPasteDebug || null,
+      pasteProbe: window.__ctxPasteProbe || null,
+      fetchLog: Array.isArray(window.__ctxPasteFetchLog) ? window.__ctxPasteFetchLog.slice(-12) : [],
+    };
+  }, selector);
 };
 
 const waitForAttachmentCount = async (selector, expectedCount, timeoutMs = 30000) => {
@@ -275,18 +340,8 @@ const waitForAttachmentCount = async (selector, expectedCount, timeoutMs = 30000
     );
   } catch (error) {
     const diagnostics = await browser.execute(() => ({
-      lastDebug: window.__ctxDropLastDebug || null,
-      fetchLog: Array.isArray(window.__ctxDropFetchLog) ? window.__ctxDropFetchLog.slice(-12) : [],
-      relevantFetches: Array.isArray(window.__ctxDropFetchLog)
-        ? window.__ctxDropFetchLog.filter((entry) => !String(entry?.url || "").includes("plugin%3Aautomation%7Cresolve")).slice(-12)
-        : [],
-      nativeDropEvents: Array.isArray(window.__ctxNativeDropEvents) ? window.__ctxNativeDropEvents.slice(-12) : [],
-      nativeDropDelivered: window.__ctxNativeDropDelivered || null,
-      droppedImagePathCalls: Array.isArray(window.__ctxDroppedImagePathsCalls)
-        ? window.__ctxDroppedImagePathsCalls.slice(-12)
-        : [],
+      lastDebug: window.__ctxPasteLastDebug || null,
       desktopInvokes: Array.isArray(window.__ctxDesktopInvokeLog) ? window.__ctxDesktopInvokeLog.slice(-12) : [],
-      fetchCount: Array.isArray(window.__ctxDropFetchLog) ? window.__ctxDropFetchLog.length : 0,
       totalThumbs: document.querySelectorAll(".wb-attach-thumb-img").length,
       composerThumbs: document.querySelectorAll(".wb-composer-attachments .wb-attach-thumb-img").length,
     }));
@@ -294,21 +349,21 @@ const waitForAttachmentCount = async (selector, expectedCount, timeoutMs = 30000
   }
 };
 
-describe("desktop workbench image drag drop", () => {
+describe("desktop workbench image paste", () => {
   let repoRoot = "";
-  let imagePath = "";
+  let clipboardImagePath = "";
 
   before(() => {
     repoRoot = initTempRepo();
-    imagePath = writeTinyPng();
+    clipboardImagePath = writeClipboardImage();
   });
 
   after(() => {
     if (repoRoot) fs.rmSync(repoRoot, { recursive: true, force: true });
-    if (imagePath) fs.rmSync(imagePath, { force: true });
+    if (clipboardImagePath) fs.rmSync(clipboardImagePath, { force: true });
   });
 
-  it("attaches dropped images in new-task and active-session desktop composers", async () => {
+  it("attaches pasted images in new-task and active-session desktop composers", async () => {
     await browser.url("tauri://localhost?ctxE2E=1");
     await waitForTauri();
 
@@ -318,20 +373,18 @@ describe("desktop workbench image drag drop", () => {
     }, workspaceId);
 
     await waitForSelector("textarea.wb-new-composer-textarea", 60000);
-    await waitForDropScopeReady("textarea.wb-new-composer-textarea", 30000);
-    await waitForCtxE2EDropBridge(30000);
 
     const connection = await getConnectionInfo();
     if (!connection || connection.kind !== "local") {
       throw new Error(`expected local desktop connection: ${JSON.stringify(connection)}`);
     }
 
-    const uploadCountBeforeNewTaskDrop = await getDesktopUploadInvokeCount();
-    await emitNativeDrop("textarea.wb-new-composer-textarea", imagePath);
-    await waitForDesktopUploadInvokeCount(uploadCountBeforeNewTaskDrop + 1, 30000);
+    const uploadCountBeforeNewTaskPaste = await getDesktopUploadInvokeCount();
+    await pasteImageFromClipboard("textarea.wb-new-composer-textarea", clipboardImagePath);
+    await waitForDesktopUploadInvokeCount(uploadCountBeforeNewTaskPaste + 1, 30000);
     await waitForAttachmentCount(".wb-new-composer-stack .wb-composer-attachments .wb-attach-thumb-img", 1, 30000);
 
-    const taskTitle = `desktop-drop-fake-${Date.now()}`;
+    const taskTitle = `desktop-paste-fake-${Date.now()}`;
     const { taskId, sessionId } = await createTaskWithSession(workspaceId, taskTitle);
     await waitForCtxE2EFocusTask(30000);
     const focusApplied = await browser.execute((nextTaskId, nextSessionId) => {
@@ -341,11 +394,10 @@ describe("desktop workbench image drag drop", () => {
       throw new Error(`ctxE2E focusTask failed for task ${taskId}`);
     }
     await waitForSelector(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea", 60000);
-    await waitForDropScopeReady(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea", 30000);
 
-    const uploadCountBeforeActiveComposerDrop = await getDesktopUploadInvokeCount();
-    await emitNativeDrop(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea", imagePath);
-    await waitForDesktopUploadInvokeCount(uploadCountBeforeActiveComposerDrop + 1, 30000);
+    const uploadCountBeforeActiveComposerPaste = await getDesktopUploadInvokeCount();
+    await pasteImageFromClipboard(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea", clipboardImagePath);
+    await waitForDesktopUploadInvokeCount(uploadCountBeforeActiveComposerPaste + 1, 30000);
     await waitForAttachmentCount(
       ".wb-session-slot[aria-hidden=\"false\"] .wb-composer-attachments .wb-attach-thumb-img",
       1,

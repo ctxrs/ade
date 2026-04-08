@@ -114,9 +114,12 @@ extra_args=("$@")
 for target in "${targets[@]}"; do
   rustup toolchain install "${toolchain}" --profile minimal --no-self-update >/dev/null
   rustup target add --toolchain "${toolchain}" "${target}" >/dev/null
+  toolchain_cargo="$("${rustup_bin}" which --toolchain "${toolchain}" cargo)"
+  toolchain_rustc="$("${rustup_bin}" which --toolchain "${toolchain}" rustc)"
+  toolchain_bindir="$(dirname "${toolchain_cargo}")"
   for package in "${packages[@]}"; do
     cargo_cmd=(
-      "${rustup_bin}" run "${toolchain}" cargo zigbuild
+      "${toolchain_cargo}" zigbuild
       -p "${package}"
       --manifest-path "${repo_root}/Cargo.toml"
       --target "${target}"
@@ -124,7 +127,11 @@ for target in "${targets[@]}"; do
     if ((${#extra_args[@]} > 0)); then
       cargo_cmd+=("${extra_args[@]}")
     fi
-    CARGO_TARGET_DIR="${target_root}" CARGO_ENCODED_RUSTFLAGS="${encoded_rustflags}" "${cargo_cmd[@]}"
+    PATH="${toolchain_bindir}:${PATH}" \
+    RUSTC="${toolchain_rustc}" \
+    CARGO_TARGET_DIR="${target_root}" \
+    CARGO_ENCODED_RUSTFLAGS="${encoded_rustflags}" \
+      "${cargo_cmd[@]}"
   done
 done
 

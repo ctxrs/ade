@@ -1,32 +1,8 @@
 use super::*;
+pub(super) use ctx_desktop_ipc::{DesktopConnectionInfo, DesktopConnectionKind};
 
 #[cfg(test)]
 use std::cell::Cell;
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum DesktopConnectionKind {
-    None,
-    Local,
-    Ssh,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct DesktopConnectionInfo {
-    pub(super) kind: DesktopConnectionKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) base_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) token: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) host: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) user: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) remote_port: Option<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) remote_data_dir: Option<String>,
-}
 
 #[derive(Debug, Clone)]
 pub(super) struct SshConnectionTarget {

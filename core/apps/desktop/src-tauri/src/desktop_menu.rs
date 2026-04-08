@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use serde::{Deserialize, Serialize};
+pub(super) use ctx_desktop_ipc::{DesktopMenuItemStateUpdate, DesktopSetMenuStateReq};
+use serde::Serialize;
 use tauri::menu::{
     CheckMenuItemBuilder, Menu, MenuBuilder, MenuEvent, MenuItemBuilder, MenuItemKind,
     PredefinedMenuItem, Submenu, SubmenuBuilder, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID,
@@ -47,15 +48,6 @@ pub(super) const CMD_HELP_CHECK_FOR_UPDATES: &str = "help.check-for-updates";
 struct DesktopMenuActionEvent {
     #[serde(rename = "commandId")]
     command_id: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct DesktopMenuItemStateUpdate {
-    pub id: String,
-    pub enabled: Option<bool>,
-    pub checked: Option<bool>,
-    pub text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -868,8 +860,9 @@ pub(super) fn desktop_set_menu_state(
     app: tauri::AppHandle,
     webview_window: tauri::WebviewWindow,
     cache: tauri::State<'_, DesktopMenuStateCache>,
-    items: Vec<DesktopMenuItemStateUpdate>,
+    req: DesktopSetMenuStateReq,
 ) -> Result<(), String> {
+    let items = req.items;
     let window_label = webview_window.label().to_string();
     cache.set_state(&window_label, items.clone());
 

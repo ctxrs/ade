@@ -1,86 +1,13 @@
 use super::*;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum DesktopEditorTarget {
-    #[serde(rename = "system")]
-    System,
-    #[serde(rename = "vscode")]
-    VsCode,
-    #[serde(rename = "vscode_insiders")]
-    VsCodeInsiders,
-    #[serde(rename = "cursor")]
-    Cursor,
-    #[serde(rename = "windsurf")]
-    Windsurf,
-    #[serde(rename = "antigravity")]
-    Antigravity,
-    #[serde(rename = "idea")]
-    Idea,
-    #[serde(rename = "pycharm")]
-    Pycharm,
-    #[serde(rename = "xcode")]
-    Xcode,
-    #[serde(rename = "android_studio")]
-    AndroidStudio,
-    #[serde(rename = "custom")]
-    Custom,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct DesktopEditorSettings {
-    pub(super) target: DesktopEditorTarget,
-    #[serde(default)]
-    pub(super) custom_command: Option<String>,
-    #[serde(default)]
-    pub(super) remote_authority: Option<String>,
-}
-
-impl Default for DesktopEditorSettings {
-    fn default() -> Self {
-        Self {
-            target: DesktopEditorTarget::System,
-            custom_command: None,
-            remote_authority: None,
-        }
-    }
-}
+pub(super) use ctx_desktop_ipc::{
+    DesktopEditorSettings, DesktopEditorTarget, DesktopGitCloneReq, DesktopOpenFileReq,
+    DesktopOpenPathReq, DesktopReadBinaryFileResp, DesktopReadFileResp, DesktopSaveTextFileReq,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub(super) struct DesktopSettings {
     #[serde(default)]
     pub(super) editor: DesktopEditorSettings,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct DesktopOpenFileReq {
-    worktree_id: String,
-    path: String,
-    #[serde(default)]
-    line: Option<u32>,
-    #[serde(default)]
-    col: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct DesktopOpenPathReq {
-    path: String,
-    #[serde(default)]
-    line: Option<u32>,
-    #[serde(default)]
-    col: Option<u32>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct DesktopReadFileResp {
-    path: String,
-    text: String,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct DesktopReadBinaryFileResp {
-    path: String,
-    bytes: Vec<u8>,
 }
 
 #[tauri::command]
@@ -99,11 +26,13 @@ pub(super) async fn desktop_pick_folder(app: tauri::AppHandle) -> Result<Option<
 #[tauri::command]
 pub(super) async fn desktop_save_text_file(
     app: tauri::AppHandle,
-    suggested_name: Option<String>,
-    contents: String,
+    req: DesktopSaveTextFileReq,
 ) -> Result<Option<String>, String> {
-    let suggested = suggested_name.unwrap_or_else(|| "conversation.md".to_string());
+    let suggested = req
+        .suggested_name
+        .unwrap_or_else(|| "conversation.md".to_string());
     let suggested = suggested.trim().to_string();
+    let contents = req.contents;
 
     let picked = tauri::async_runtime::spawn_blocking(move || {
         let mut dialog = app
@@ -140,10 +69,10 @@ pub(super) fn desktop_get_editor_settings(
 #[tauri::command]
 pub(super) fn desktop_update_editor_settings(
     app: tauri::AppHandle,
-    settings: DesktopEditorSettings,
+    req: DesktopEditorSettings,
 ) -> Result<DesktopEditorSettings, String> {
     let mut current = load_desktop_settings(&app);
-    current.editor = settings;
+    current.editor = req;
     save_desktop_settings(&app, &current).map_err(to_err)?;
     Ok(current.editor)
 }
@@ -239,16 +168,13 @@ pub(super) fn desktop_read_binary_file(
 }
 
 #[tauri::command]
-pub(super) async fn desktop_git_clone(
-    repo_url: String,
-    dest_parent: String,
-) -> Result<String, String> {
+pub(super) async fn desktop_git_clone(req: DesktopGitCloneReq) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let repo_url = repo_url.trim().to_string();
+        let repo_url = req.repo_url.trim().to_string();
         if repo_url.is_empty() {
             return Err("repo_url is required".to_string());
         }
-        let dest_parent = PathBuf::from(dest_parent);
+        let dest_parent = PathBuf::from(req.dest_parent);
         if !dest_parent.exists() {
             return Err(format!(
                 "destination folder does not exist: {}",

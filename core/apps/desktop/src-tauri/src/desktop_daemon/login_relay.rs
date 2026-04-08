@@ -1,11 +1,5 @@
 use super::*;
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct DesktopCodexLoginRelayReq {
-    login_id: String,
-    callback_url: String,
-    completion_token: String,
-}
+use ctx_desktop_ipc::DesktopCodexLoginRelayReq;
 
 pub(super) fn is_loopback_host_name(host: &str) -> bool {
     let value = host.trim().to_ascii_lowercase();

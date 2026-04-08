@@ -10,6 +10,12 @@ use std::sync::{Once, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
+use ctx_desktop_ipc::{
+    DesktopDeepLinkToken, DesktopDockRecentLocalWorkspace as DockRecentLocalWorkspaceEntry,
+    DesktopOpenWorkspaceInNewWindowReq, DesktopRecordWorkspaceVisitReq,
+    DesktopSetDockRecentLocalWorkspacesReq, DesktopSetOpenWorkspacesReq, DesktopSetWindowTitleReq,
+    DesktopTitlebarColor,
+};
 #[cfg(target_os = "macos")]
 use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
@@ -407,12 +413,6 @@ fn schedule_force_launcher(app: tauri::AppHandle) {
     });
 }
 
-#[derive(Debug, Serialize)]
-struct DesktopDeepLinkToken {
-    token: String,
-    expires_at_ms: u64,
-}
-
 #[derive(Default)]
 struct DeepLinkTokenStore {
     tokens: std::sync::Mutex<HashMap<String, Instant>>,
@@ -431,12 +431,6 @@ const MAX_RECENT_WORKSPACES: usize = 8;
 struct RecentWorkspaceEntry {
     workspace_id: String,
     label: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct DockRecentLocalWorkspaceEntry {
-    label: String,
-    root_path: String,
 }
 
 const DEEP_LINK_TOKEN_TTL: Duration = Duration::from_secs(600);
@@ -724,9 +718,9 @@ fn desktop_get_deep_link_token(
 fn desktop_set_open_workspaces(
     window: tauri::WebviewWindow,
     registry: tauri::State<WorkspaceWindowRegistry>,
-    workspace_ids: Vec<String>,
+    req: DesktopSetOpenWorkspacesReq,
 ) -> Result<(), String> {
-    registry.set_window_workspaces(window.label(), workspace_ids);
+    registry.set_window_workspaces(window.label(), req.workspace_ids);
     Ok(())
 }
 
@@ -734,9 +728,9 @@ fn desktop_set_open_workspaces(
 fn desktop_open_workspace_in_new_window(
     app: tauri::AppHandle,
     registry: tauri::State<WorkspaceWindowRegistry>,
-    workspace_id: String,
+    req: DesktopOpenWorkspaceInNewWindowReq,
 ) -> Result<(), String> {
-    let workspace_id = workspace_id.trim();
+    let workspace_id = req.workspace_id.trim();
     if workspace_id.is_empty() {
         return Err("workspace_id is required".to_string());
     }
@@ -770,26 +764,18 @@ fn desktop_open_workspace_setup_in_new_window(app: tauri::AppHandle) -> Result<(
     Ok(())
 }
 
-#[derive(Deserialize)]
-struct DesktopTitlebarColor {
-    r: f64,
-    g: f64,
-    b: f64,
-    a: Option<f64>,
-}
-
 #[tauri::command]
 fn desktop_set_titlebar_color(
     window: tauri::WebviewWindow,
-    color: DesktopTitlebarColor,
+    req: DesktopTitlebarColor,
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let clamp_unit = |value: f64| (value.max(0.0).min(255.0) / 255.0) as CGFloat;
-        let alpha = color.a.unwrap_or(1.0).max(0.0).min(1.0) as CGFloat;
-        let r = clamp_unit(color.r);
-        let g = clamp_unit(color.g);
-        let b = clamp_unit(color.b);
+        let alpha = req.a.unwrap_or(1.0).max(0.0).min(1.0) as CGFloat;
+        let r = clamp_unit(req.r);
+        let g = clamp_unit(req.g);
+        let b = clamp_unit(req.b);
         window
             .with_webview(move |webview| unsafe {
                 let Some(_mtm) = MainThreadMarker::new() else {
@@ -808,9 +794,12 @@ fn desktop_set_titlebar_color(
 }
 
 #[tauri::command]
-fn desktop_set_window_title(window: tauri::WebviewWindow, title: String) -> Result<(), String> {
+fn desktop_set_window_title(
+    window: tauri::WebviewWindow,
+    req: DesktopSetWindowTitleReq,
+) -> Result<(), String> {
     window
-        .set_title(&title)
+        .set_title(&req.title)
         .map_err(|e| format!("failed to set window title: {e}"))?;
     #[cfg(target_os = "macos")]
     {
@@ -883,24 +872,23 @@ fn desktop_unregister_workspace_window(
 fn desktop_record_workspace_visit(
     window: tauri::WebviewWindow,
     registry: tauri::State<WorkspaceWindowRegistry>,
-    workspace_id: String,
-    workspace_label: String,
+    req: DesktopRecordWorkspaceVisitReq,
 ) -> Result<(), String> {
-    let workspace_id = workspace_id.trim();
+    let workspace_id = req.workspace_id.trim();
     if workspace_id.is_empty() {
         return Err("workspace_id is required".to_string());
     }
     registry.set_window_workspaces(window.label(), vec![workspace_id.to_string()]);
-    registry.record_recent_workspace(workspace_id, Some(&workspace_label));
+    registry.record_recent_workspace(workspace_id, Some(&req.workspace_label));
     Ok(())
 }
 
 #[tauri::command]
 fn desktop_set_dock_recent_local_workspaces(
     registry: tauri::State<WorkspaceWindowRegistry>,
-    entries: Vec<DockRecentLocalWorkspaceEntry>,
+    req: DesktopSetDockRecentLocalWorkspacesReq,
 ) -> Result<(), String> {
-    registry.set_dock_recent_local_workspaces(entries);
+    registry.set_dock_recent_local_workspaces(req.entries);
     Ok(())
 }
 

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use ts_rs::TS;
 
 use ctx_core::ids::{MessageId, SessionId, TaskId, TurnId, WorktreeId};
 use ctx_core::models::{
@@ -166,10 +167,11 @@ pub struct WebSessionInfo {
     pub stream_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct BlobUploadResp {
     pub blob_id: String,
     pub sha256: String,
+    #[ts(type = "number")]
     pub bytes: i64,
     pub mime_type: String,
     #[serde(default)]

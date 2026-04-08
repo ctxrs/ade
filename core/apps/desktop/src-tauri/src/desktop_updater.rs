@@ -1,4 +1,9 @@
 use super::*;
+pub(super) use ctx_desktop_ipc::{
+    DesktopAppRestartResp, DesktopAppUpdateApplyReq, DesktopAppUpdateApplyResp,
+    DesktopAppUpdateAttemptResp, DesktopAppUpdateAttemptStageResp, DesktopAppUpdateCheckReq,
+    DesktopAppUpdateCheckResp, DesktopAppUpdateStateResp,
+};
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -103,105 +108,6 @@ struct DesktopUpdateAttempt {
     finished_at_ms: Option<u64>,
     result: DesktopUpdateAttemptResult,
     stages: Vec<DesktopUpdateAttemptStage>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct DesktopAppUpdateAttemptResp {
-    attempt_id: String,
-    channel: String,
-    current_version: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    target_version: Option<String>,
-    started_at_ms: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    finished_at_ms: Option<u64>,
-    result: String,
-    stages: Vec<DesktopAppUpdateAttemptStageResp>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct DesktopAppUpdateAttemptStageResp {
-    stage: String,
-    started_at_ms: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    finished_at_ms: Option<u64>,
-    result: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error_code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error_message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct DesktopAppUpdateCheckReq {
-    #[serde(default)]
-    channel: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct DesktopAppUpdateCheckResp {
-    configured: bool,
-    available: bool,
-    restart_required: bool,
-    phase: String,
-    staged: bool,
-    current_version: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    latest_version: Option<String>,
-    target: String,
-    endpoint: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    last_attempt_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    last_error: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct DesktopAppUpdateStateResp {
-    configured: bool,
-    available: bool,
-    restart_required: bool,
-    phase: String,
-    staged: bool,
-    current_version: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    latest_version: Option<String>,
-    target: String,
-    endpoint: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    last_attempt_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    last_error: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct DesktopAppUpdateApplyReq {
-    #[serde(default)]
-    confirm: bool,
-    #[serde(default)]
-    channel: Option<String>,
-    #[serde(default)]
-    download_id: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct DesktopAppUpdateApplyResp {
-    applied: bool,
-    needs_restart: bool,
-    up_to_date: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    latest_version: Option<String>,
-    message: String,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct DesktopAppRestartResp {
-    requested: bool,
-    message: String,
 }
 
 #[derive(Debug, Clone)]

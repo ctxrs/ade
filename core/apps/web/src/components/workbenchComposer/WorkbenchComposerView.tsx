@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { ArrowUp, ChevronDown, Ellipsis, Image, Square } from "lucide-react";
 import { shouldSendOnEnter } from "../../utils/keyboard";
 import { buildModelCatalog, formatEffortLabel, parseModelId } from "../../utils/modelEffort";
@@ -11,6 +12,7 @@ import { ComposerAutocompleteMenu } from "../ComposerAutocompleteMenu";
 import { useComposerAutocomplete } from "../../state/useComposerAutocomplete";
 import { imageFilesToMessageAttachments } from "../../utils/messageAttachments";
 import {
+  extractImageFilesFromClipboardTransfer,
   clipboardHasImagePayload,
   imageAttachmentsFromClipboardTransfer,
 } from "../../utils/pastedImageAttachments";
@@ -42,6 +44,23 @@ type OpenMenuId = "harness" | "model" | "effort" | "verbosity";
 
 const logoClasses = (base: string, invertInDark?: boolean, invertInLight?: boolean) =>
   [base, invertInDark ? "wb-invert" : "", invertInLight ? "wb-invert-light" : ""].filter(Boolean).join(" ");
+
+type WorkbenchComposerPasteDebug = {
+  attachedCount: number;
+  hitCount: number;
+  lastAttachedClassName: string | null;
+  lastHit?: {
+    fileCount: number;
+    itemCount: number;
+    extractedFileCount: number;
+    hasImagePayload: boolean;
+    types: string[];
+  };
+  lastQueuedAttachmentCount?: number;
+  lastRenderedAttachmentCount?: number;
+  lastResolvedAttachmentCount?: number;
+  lastError?: string | null;
+};
 
 export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const {
@@ -80,6 +99,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
 
   const [openMenu, setOpenMenu] = useState<OpenMenuId | null>(null);
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
+  const [textareaNode, setTextareaNode] = useState<HTMLTextAreaElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -101,6 +121,11 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     textareaRef,
     slashCommands,
   });
+
+  const setTextareaElement = useCallback((node: HTMLTextAreaElement | null) => {
+    textareaRef.current = node;
+    setTextareaNode(node);
+  }, []);
 
   const resizeTextarea = useCallback(() => {
     const el = textareaRef.current;
@@ -181,6 +206,60 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     setValue(`${textarea.value.slice(0, start)}${text}${textarea.value.slice(end)}`);
   }, [setValue]);
 
+  const handleClipboardPaste = useCallback((
+    textarea: HTMLTextAreaElement,
+    transfer: DataTransfer | null,
+    preventDefault: () => void,
+  ) => {
+    const debugWindow = window as Window & { __ctxComposerPasteDebug?: WorkbenchComposerPasteDebug };
+    const debug = debugWindow.__ctxComposerPasteDebug;
+    const extractedFiles = extractImageFilesFromClipboardTransfer(transfer);
+    const hasImagePayload = extractedFiles.length > 0 || clipboardHasImagePayload(transfer);
+    if (debug) {
+      debug.hitCount += 1;
+      debug.lastHit = {
+        fileCount: Array.from(transfer?.files ?? []).length,
+        itemCount: Array.from(transfer?.items ?? []).length,
+        extractedFileCount: extractedFiles.length,
+        hasImagePayload,
+        types: Array.from(transfer?.types ?? []),
+      };
+      debug.lastResolvedAttachmentCount = undefined;
+      debug.lastError = null;
+    }
+    if (!hasImagePayload) return;
+    preventDefault();
+    const pastedText = transfer?.getData?.("text/plain") ?? "";
+    if (pastedText.length > 0) {
+      flushSync(() => {
+        insertPastedText(textarea, pastedText);
+      });
+    }
+    onAttachmentError?.(null);
+    void imageAttachmentsFromClipboardTransfer(transfer)
+      .then((next) => {
+        if (debug) {
+          debug.lastResolvedAttachmentCount = next.length;
+        }
+        if (next.length === 0) return;
+        flushSync(() => {
+          setAttachments((prev) => {
+            const merged = [...prev, ...next];
+            if (debug) {
+              debug.lastQueuedAttachmentCount = merged.length;
+            }
+            return merged;
+          });
+        });
+      })
+      .catch((error: unknown) => {
+        if (debug) {
+          debug.lastError = errorMessage(error);
+        }
+        onAttachmentError?.(errorMessage(error));
+      });
+  }, [insertPastedText, onAttachmentError, setAttachments]);
+
   const handleTextareaWheelCapture = useCallback((event: React.WheelEvent<HTMLTextAreaElement>) => {
     const textarea = textareaRef.current;
     if (!textarea || event.ctrlKey) return;
@@ -237,6 +316,34 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     textarea.scrollTop = textarea.scrollHeight;
     restoreDraftTailRef.current = false;
   }, [resizeTextarea, value]);
+
+  useEffect(() => {
+    const textarea = textareaNode;
+    if (!textarea) return;
+    const params = new URLSearchParams(window.location.search);
+    const e2eEnabled = window.sessionStorage.getItem("ctxE2E") === "1" || params.get("ctxE2E") === "1";
+    const debugWindow = window as Window & { __ctxComposerPasteDebug?: WorkbenchComposerPasteDebug };
+    if (e2eEnabled) {
+      debugWindow.__ctxComposerPasteDebug ??= {
+        attachedCount: 0,
+        hitCount: 0,
+        lastAttachedClassName: null,
+      };
+      debugWindow.__ctxComposerPasteDebug.attachedCount += 1;
+      debugWindow.__ctxComposerPasteDebug.lastAttachedClassName = textarea.className || null;
+    }
+    const onNativePaste = (event: ClipboardEvent) => {
+      handleClipboardPaste(textarea, event.clipboardData, () => event.preventDefault());
+    };
+    textarea.addEventListener("paste", onNativePaste);
+    return () => textarea.removeEventListener("paste", onNativePaste);
+  }, [handleClipboardPaste, textareaNode]);
+
+  useEffect(() => {
+    const debugWindow = window as Window & { __ctxComposerPasteDebug?: WorkbenchComposerPasteDebug };
+    if (!debugWindow.__ctxComposerPasteDebug) return;
+    debugWindow.__ctxComposerPasteDebug.lastRenderedAttachmentCount = attachments.length;
+  }, [attachments]);
 
   useEffect(() => {
     if (!openMenu) return;
@@ -615,7 +722,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       )}
 
       <textarea
-        ref={textareaRef}
+        ref={setTextareaElement}
         className={
           variant === "newSession"
             ? "wb-composer-textarea wb-new-composer-textarea"
@@ -629,24 +736,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         }}
         disabled={!!inputDisabled}
         onWheelCapture={handleTextareaWheelCapture}
-        onPaste={(e) => {
-          const transfer = e.clipboardData;
-          if (!clipboardHasImagePayload(transfer)) return;
-          e.preventDefault();
-          const pastedText = transfer.getData?.("text/plain") ?? "";
-          if (pastedText.length > 0) {
-            insertPastedText(e.currentTarget, pastedText);
-          }
-          onAttachmentError?.(null);
-          void imageAttachmentsFromClipboardTransfer(transfer)
-            .then((next) => {
-              if (next.length === 0) return;
-              setAttachments((prev) => [...prev, ...next]);
-            })
-            .catch((error: unknown) => {
-              onAttachmentError?.(errorMessage(error));
-            });
-        }}
         onKeyDown={(e) => {
           if (autocomplete.onKeyDown(e)) return;
           if (shouldSendOnEnter(e)) {

@@ -1134,20 +1134,38 @@ const startExternalDaemon = async () => {
   process.env.CTX_DESKTOP_DAEMON_TOKEN = auth.token;
 };
 
+const createAppBuildInvocation = () => {
+  const desktopTauriEntryPath = path.resolve(CORE_ROOT, "scripts/desktop_tauri_entry.cjs");
+  const appPathLooksLikeBundle = process.platform === "darwin" && APP_PATH.endsWith(".app");
+  const darwinBundles = String(process.env.CTX_AUTOMATION_TAURI_BUNDLES || "app").trim() || "app";
+  const args = appPathLooksLikeBundle
+    ? [desktopTauriEntryPath, "build", "--debug", "--bundles", darwinBundles, "--", "--features", "automation"]
+    : [desktopTauriEntryPath, "build", "--debug", "--no-bundle", "--", "--features", "automation"];
+  const env = {
+    ...process.env,
+    CARGO_INCREMENTAL: String(process.env.CARGO_INCREMENTAL || "0").trim() || "0",
+    CTX_DESKTOP_SYNC_BUNDLES: String(process.env.CTX_DESKTOP_SYNC_BUNDLES || "0").trim() || "0",
+  };
+  return {
+    command: process.execPath,
+    args,
+    cwd: CORE_ROOT,
+    env,
+  };
+};
+
 const buildAppIfMissing = () => {
   if (USING_SHIPPED_APP_MODE) return;
   if (SKIP_APP_BUILD) return;
-  const appPathLooksLikeBundle = process.platform === "darwin" && APP_PATH.endsWith(".app");
-  const darwinBundles = String(process.env.CTX_AUTOMATION_TAURI_BUNDLES || "app").trim() || "app";
-  const buildArgs = appPathLooksLikeBundle
-    ? ["tauri", "build", "--debug", "--bundles", darwinBundles, "--", "--features", "automation"]
-    : ["tauri", "build", "--debug", "--no-bundle", "--", "--features", "automation"];
+  const buildInvocation = createAppBuildInvocation();
   const result = spawnSync(
-    "pnpm",
-    // On macOS, default APP_PATH is a .app bundle; build that by default.
-    // On Linux/Windows, keep --no-bundle for faster automation iteration.
-    buildArgs,
-    { stdio: "inherit", cwd: path.resolve(ROOT, "src-tauri"), shell: true },
+    buildInvocation.command,
+    buildInvocation.args,
+    {
+      stdio: "inherit",
+      cwd: buildInvocation.cwd,
+      env: buildInvocation.env,
+    },
   );
   if (result.status !== 0) {
     throw new Error("Failed to build the Tauri app for automation.");
@@ -2120,4 +2138,6 @@ exports.__desktopAutomationConfigTestHooks = {
   readAvfGuestRuntimeVersion,
   resolveMochaTimeoutMs,
   commandMatchesScopedAppProcess,
+  createAppBuildInvocation,
+  buildAppIfMissing,
 };

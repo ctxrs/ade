@@ -5,12 +5,7 @@ use crate::desktop_daemon::{
     probe_local_daemon_health_with_retry, read_daemon_auth_with_retry, resolve_env_local_daemon,
     resolve_existing_local_daemon, spawn_and_validate_local_daemon, SpawnedLocalDaemonReady,
 };
-
-#[derive(Debug, Deserialize)]
-pub(super) struct DesktopRestartLocalDaemonReq {
-    #[serde(default)]
-    confirm: bool,
-}
+pub(super) use ctx_desktop_ipc::DesktopRestartLocalDaemonReq;
 
 fn local_connect_mutex() -> &'static std::sync::Mutex<()> {
     static LOCAL_CONNECT_MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> =

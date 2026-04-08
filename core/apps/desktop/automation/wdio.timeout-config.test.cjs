@@ -89,3 +89,33 @@ test("wdio mocha timeout inherits case timeout when mocha override is unset", as
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
 });
+
+test("wdio app builds route through desktop_tauri_entry so resources are prepared", async () => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-timeout-test-"));
+  try {
+    await withEnv(
+      {
+        CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
+        CTX_AUTOMATION_TAURI_BUNDLES: "app",
+        CTX_DESKTOP_APP_PATH: process.platform === "darwin" ? "/tmp/ctx.app" : "/tmp/ctx",
+      },
+      (mod) => {
+        const invocation = mod.__desktopAutomationConfigTestHooks.createAppBuildInvocation();
+        assert.equal(invocation.command, process.execPath);
+        assert.match(invocation.args[0], /scripts\/desktop_tauri_entry\.cjs$/);
+        assert.deepEqual(invocation.args.slice(-3), ["--", "--features", "automation"]);
+        assert.equal(invocation.args[1], "build");
+        assert.equal(invocation.args[2], "--debug");
+        assert.equal(invocation.env.CARGO_INCREMENTAL, "0");
+        assert.equal(invocation.env.CTX_DESKTOP_SYNC_BUNDLES, "0");
+        if (process.platform === "darwin") {
+          assert.deepEqual(invocation.args.slice(3, 5), ["--bundles", "app"]);
+        } else {
+          assert.equal(invocation.args[3], "--no-bundle");
+        }
+      },
+    );
+  } finally {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});

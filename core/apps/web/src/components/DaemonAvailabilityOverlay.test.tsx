@@ -9,6 +9,7 @@ import {
   desktopGetConnection,
   desktopGetVersion,
   desktopRestartLocalDaemon,
+  type DesktopAppUpdateApplyResp,
   desktopUpdateRemoteDaemon,
   isDesktopApp,
 } from "../utils/desktop";
@@ -58,6 +59,17 @@ const baseHealth = {
   },
 };
 
+const makeDesktopApplyResp = (
+  overrides: Partial<DesktopAppUpdateApplyResp> = {},
+): DesktopAppUpdateApplyResp => ({
+  applied: true,
+  latest_version: "2.0.0",
+  message: "updated",
+  needs_restart: true,
+  up_to_date: false,
+  ...overrides,
+});
+
 describe("DaemonAvailabilityOverlay", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -65,12 +77,7 @@ describe("DaemonAvailabilityOverlay", () => {
     vi.mocked(desktopGetConnection).mockResolvedValue({ kind: "local" });
     vi.mocked(desktopRestartLocalDaemon).mockResolvedValue({ kind: "local" });
     vi.mocked(desktopUpdateRemoteDaemon).mockResolvedValue({ updated: true, message: "ok" });
-    vi.mocked(desktopApplyAppUpdate).mockResolvedValue({
-      applied: true,
-      needs_restart: true,
-      latest_version: "2.0.0",
-      message: "updated",
-    });
+    vi.mocked(desktopApplyAppUpdate).mockResolvedValue(makeDesktopApplyResp());
     vi.mocked(listWorkspaces).mockResolvedValue([]);
     vi.mocked(listWorkspaceTasks).mockResolvedValue([]);
     vi.spyOn(window, "confirm").mockReturnValue(true);

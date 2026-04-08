@@ -24,6 +24,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 anyhow = "1"
 base64 = "0.22"
 ctx-fs = { path = "../../../crates/ctx-fs" }
+ctx-desktop-ipc = { path = "../../../crates/ctx-desktop-ipc" }
 directories = "5"
 flate2 = "1"
 hex = "0.4"

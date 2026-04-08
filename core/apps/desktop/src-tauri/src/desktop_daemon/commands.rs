@@ -1,24 +1,7 @@
 use super::*;
+use ctx_desktop_ipc::{DesktopDaemonRequest, DesktopHttpResponse, DesktopUploadBlobReq};
 
 use crate::desktop_local_daemon::ensure_local_connection;
-
-#[derive(Debug, Deserialize)]
-pub(in super::super) struct DesktopDaemonRequest {
-    pub(in super::super) method: String,
-    pub(in super::super) path: String,
-    #[serde(default)]
-    pub(in super::super) body: Option<String>,
-    #[serde(default)]
-    pub(in super::super) headers: Vec<(String, String)>,
-}
-
-#[derive(Debug, Serialize)]
-pub(in super::super) struct DesktopHttpResponse {
-    pub(in super::super) status: u16,
-    pub(in super::super) body: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(in super::super) content_type: Option<String>,
-}
 
 #[tauri::command]
 pub(in super::super) async fn desktop_daemon_request(
@@ -43,13 +26,13 @@ pub(in super::super) async fn desktop_daemon_request(
 #[tauri::command]
 pub(in super::super) async fn desktop_upload_blob(
     app: tauri::AppHandle,
-    bytes: Vec<u8>,
-    mime_type: String,
-    name: Option<String>,
+    req: DesktopUploadBlobReq,
 ) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<serde_json::Value, String> {
         let state = app.state::<ConnectionManager>();
-        state.upload_blob(bytes, mime_type, name).map_err(to_err)
+        state
+            .upload_blob(req.bytes, req.mime_type, req.name)
+            .map_err(to_err)
     })
     .await
     .map_err(|e| format!("blob upload failed: {e}"))?

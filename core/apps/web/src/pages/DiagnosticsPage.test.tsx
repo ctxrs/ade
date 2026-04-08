@@ -16,6 +16,8 @@ import {
   desktopGetConnection,
   desktopGetLastAppUpdateAttempt,
   desktopRestartLocalDaemon,
+  type DesktopAppUpdateApplyResp,
+  type DesktopAppUpdateCheckResp,
   getDesktopPlatform,
   isDesktopApp,
   openExternalLink,
@@ -68,6 +70,33 @@ const renderPage = (route = "/diagnostics") =>
     </MemoryRouter>,
   );
 
+const makeDesktopCheckResp = (
+  overrides: Partial<DesktopAppUpdateCheckResp> = {},
+): DesktopAppUpdateCheckResp => ({
+  configured: false,
+  available: false,
+  current_version: "1.0.0",
+  latest_version: null,
+  target: "windows-x64",
+  endpoint: "https://api.example/functions/v1/releases/stable/latest-tauri.json",
+  message: "Native updater is not configured (missing CTX_DESKTOP_UPDATER_PUBKEY).",
+  phase: "idle",
+  restart_required: false,
+  staged: false,
+  ...overrides,
+});
+
+const makeDesktopApplyResp = (
+  overrides: Partial<DesktopAppUpdateApplyResp> = {},
+): DesktopAppUpdateApplyResp => ({
+  applied: true,
+  latest_version: "1.0.1",
+  message: "Update takes ~1 second and preserves data. Active agents will be paused.",
+  needs_restart: true,
+  up_to_date: false,
+  ...overrides,
+});
+
 describe("DiagnosticsPage updates", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -108,21 +137,8 @@ describe("DiagnosticsPage updates", () => {
     vi.mocked(getDesktopPlatform).mockResolvedValue("windows");
     vi.mocked(openExternalLink).mockResolvedValue(true);
     vi.mocked(desktopGetLastAppUpdateAttempt).mockResolvedValue(null);
-    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
-      configured: false,
-      available: false,
-      current_version: "1.0.0",
-      latest_version: null,
-      target: "windows-x64",
-      endpoint: "https://api.example/functions/v1/releases/stable/latest-tauri.json",
-      message: "Native updater is not configured (missing CTX_DESKTOP_UPDATER_PUBKEY).",
-    });
-    vi.mocked(desktopApplyAppUpdate).mockResolvedValue({
-      applied: true,
-      needs_restart: true,
-      latest_version: "1.0.1",
-      message: "Update takes ~1 second and preserves data. Active agents will be paused.",
-    });
+    vi.mocked(desktopCheckAppUpdate).mockResolvedValue(makeDesktopCheckResp());
+    vi.mocked(desktopApplyAppUpdate).mockResolvedValue(makeDesktopApplyResp());
   });
 
   it("opens desktop artifact URL for non-linux platforms", async () => {
@@ -247,15 +263,14 @@ describe("DiagnosticsPage updates", () => {
   });
 
   it("uses native updater action when configured for non-linux platforms", async () => {
-    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
-      configured: true,
-      available: true,
-      current_version: "1.0.0",
-      latest_version: "1.0.1",
-      target: "windows-x64",
-      endpoint: "https://api.example/functions/v1/releases/stable/latest-tauri.json",
-      message: null,
-    });
+    vi.mocked(desktopCheckAppUpdate).mockResolvedValue(
+      makeDesktopCheckResp({
+        configured: true,
+        available: true,
+        latest_version: "1.0.1",
+        message: null,
+      }),
+    );
     vi.mocked(checkUpdates).mockResolvedValue({
       channel: "stable",
       base_url: "https://api.example/functions/v1",
@@ -288,21 +303,23 @@ describe("DiagnosticsPage updates", () => {
   });
 
   it("clears pending attribution when native updater does not apply an update", async () => {
-    vi.mocked(desktopApplyAppUpdate).mockResolvedValue({
-      applied: false,
-      needs_restart: false,
-      latest_version: null,
-      message: "No desktop app update is currently available.",
-    });
-    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
-      configured: true,
-      available: true,
-      current_version: "1.0.0",
-      latest_version: "1.0.1",
-      target: "windows-x64",
-      endpoint: "https://api.example/functions/v1/releases/stable/latest-tauri.json",
-      message: null,
-    });
+    vi.mocked(desktopApplyAppUpdate).mockResolvedValue(
+      makeDesktopApplyResp({
+        applied: false,
+        latest_version: null,
+        message: "No desktop app update is currently available.",
+        needs_restart: false,
+        up_to_date: true,
+      }),
+    );
+    vi.mocked(desktopCheckAppUpdate).mockResolvedValue(
+      makeDesktopCheckResp({
+        configured: true,
+        available: true,
+        latest_version: "1.0.1",
+        message: null,
+      }),
+    );
     vi.mocked(checkUpdates).mockResolvedValue({
       channel: "stable",
       base_url: "https://api.example/functions/v1",

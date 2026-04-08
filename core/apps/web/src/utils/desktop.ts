@@ -1,134 +1,84 @@
-export type DesktopConnectionKind = "none" | "local" | "ssh";
+import type {
+  BlobUploadResp,
+  DesktopAppRestartResp,
+  DesktopAppUpdateApplyReq,
+  DesktopAppUpdateApplyResp,
+  DesktopAppUpdateAttemptResp,
+  DesktopAppUpdateCheckReq,
+  DesktopAppUpdateCheckResp,
+  DesktopAppUpdateStateResp,
+  DesktopCodexLoginRelayReq,
+  DesktopConnectionInfo,
+  DesktopDaemonRequest,
+  DesktopDeepLinkToken,
+  DesktopDockRecentLocalWorkspace,
+  DesktopEditorSettings,
+  DesktopGitBranchReq,
+  DesktopGitCloneReq,
+  DesktopHttpResponse,
+  DesktopLinuxSandboxEnsureResp,
+  DesktopLocalLinuxSandboxEnsureReq,
+  DesktopMenuItemStateUpdate,
+  DesktopOpenFileReq,
+  DesktopOpenPathReq,
+  DesktopOpenWorkspaceInNewWindowReq,
+  DesktopReadBinaryFileResp,
+  DesktopReadFileResp,
+  DesktopRecordWorkspaceVisitReq,
+  DesktopRemoteDaemonUpdateReq,
+  DesktopRemoteDaemonUpdateResp,
+  DesktopRemotePrewarmReq,
+  DesktopRemoteLinuxSandboxEnsureReq,
+  DesktopRestartLocalDaemonReq,
+  DesktopSaveTextFileReq,
+  DesktopSetDockRecentLocalWorkspacesReq,
+  DesktopSetMenuStateReq,
+  DesktopSetOpenWorkspacesReq,
+  DesktopSetWindowTitleReq,
+  DesktopSshConnectJobStatus,
+  DesktopSshConnectPollReq,
+  DesktopSshHost,
+  DesktopSshPathEntry,
+  DesktopSshPathReq,
+  DesktopSshTestReq,
+  DesktopStorageBatchOp,
+  DesktopStorageBatchReq,
+  DesktopStorageGetReq,
+  DesktopStorageNotice,
+  DesktopTitlebarColor,
+  DesktopUploadBlobReq,
+  SshConnectReq,
+} from "../generated/desktop-ipc";
+
+export type {
+  BlobUploadResp,
+  DesktopAppRestartResp,
+  DesktopAppUpdateApplyResp,
+  DesktopAppUpdateAttemptResp,
+  DesktopAppUpdateAttemptStageResp,
+  DesktopAppUpdateCheckResp,
+  DesktopAppUpdateStateResp,
+  DesktopCodexLoginRelayReq,
+  DesktopConnectionInfo,
+  DesktopConnectionKind,
+  DesktopDeepLinkToken,
+  DesktopDockRecentLocalWorkspace,
+  DesktopEditorSettings,
+  DesktopHttpResponse,
+  DesktopLinuxSandboxEnsureResp,
+  DesktopMenuItemStateUpdate,
+  DesktopOpenFileReq,
+  DesktopOpenPathReq,
+  DesktopReadBinaryFileResp,
+  DesktopStorageBatchOp,
+  DesktopStorageNotice,
+  DesktopSshHost,
+  DesktopSshPathEntry,
+  DesktopTitlebarColor,
+  SshConnectReq,
+} from "../generated/desktop-ipc";
 
 export type DesktopPlatform = "macos" | "windows" | "linux" | "unknown";
-
-export type DesktopTitlebarColor = {
-  r: number;
-  g: number;
-  b: number;
-  a?: number;
-};
-
-export type DesktopConnectionInfo = {
-  kind: DesktopConnectionKind;
-  base_url?: string | null;
-  token?: string | null;
-  host?: string | null;
-  user?: string | null;
-  remote_port?: number | null;
-  remote_data_dir?: string | null;
-};
-
-export type SshConnectReq = {
-  host: string;
-  user?: string | null;
-  password_once?: string | null;
-  remote_port?: number | null;
-  start_remote?: boolean;
-  remote_data_dir?: string | null;
-};
-
-type DesktopSshConnectJobStatus = {
-  status: string;
-  phase?: string | null;
-  info?: DesktopConnectionInfo | null;
-  error?: string | null;
-  created_at_ms?: number | null;
-  updated_at_ms?: number | null;
-};
-
-export type DesktopHttpResponse = {
-  status: number;
-  body: string;
-  content_type?: string | null;
-};
-
-export type DesktopRemoteDaemonUpdateResp = {
-  updated: boolean;
-  message: string;
-};
-
-export type DesktopLinuxSandboxEnsureResp = {
-  ready: boolean;
-};
-
-export type DesktopAppUpdateCheckResp = {
-  configured: boolean;
-  available: boolean;
-  restart_required?: boolean;
-  phase?: string;
-  staged?: boolean;
-  current_version: string;
-  latest_version?: string | null;
-  target: string;
-  endpoint: string;
-  message?: string | null;
-  last_attempt_id?: string | null;
-  last_error?: string | null;
-};
-
-export type DesktopAppUpdateStateResp = {
-  configured: boolean;
-  available: boolean;
-  restart_required: boolean;
-  phase?: string;
-  staged?: boolean;
-  current_version: string;
-  latest_version?: string | null;
-  target: string;
-  endpoint: string;
-  message?: string | null;
-  last_attempt_id?: string | null;
-  last_error?: string | null;
-};
-
-export type DesktopAppUpdateApplyResp = {
-  applied: boolean;
-  needs_restart: boolean;
-  up_to_date?: boolean;
-  latest_version?: string | null;
-  message: string;
-};
-
-export type DesktopAppRestartResp = {
-  requested: boolean;
-  message: string;
-};
-
-export type DesktopAppUpdateAttemptStageResp = {
-  stage: string;
-  started_at_ms: number;
-  finished_at_ms?: number | null;
-  result: string;
-  error_code?: string | null;
-  error_message?: string | null;
-};
-
-export type DesktopAppUpdateAttemptResp = {
-  attempt_id: string;
-  channel: string;
-  current_version: string;
-  target_version?: string | null;
-  started_at_ms: number;
-  finished_at_ms?: number | null;
-  result: string;
-  stages: DesktopAppUpdateAttemptStageResp[];
-};
-
-export type DesktopStorageBatchOp =
-  | { kind: "set"; key: string; value: unknown }
-  | { kind: "delete"; key: string };
-
-export type DesktopDeepLinkToken = {
-  token: string;
-  expires_at_ms: number;
-};
-
-export type DesktopStorageNotice =
-  | {
-      kind: "ui_state_reset";
-      reason: "schema_mismatch" | "invalid_ui_state_db";
-    };
 
 export type DesktopDragDropPosition = {
   x: number;
@@ -175,66 +125,6 @@ export type DesktopDragDropEvent =
     };
 
 const DESKTOP_DRAG_DROP_TEST_EVENT = "ctx:desktop-drag-drop-test";
-
-export type DesktopSshHost = {
-  host: string;
-  user?: string | null;
-  host_name?: string | null;
-  port?: number | null;
-};
-
-export type DesktopSshPathEntry = {
-  name: string;
-  path: string;
-};
-
-export type DesktopOpenFileReq = {
-  worktree_id: string;
-  path: string;
-  line?: number | null;
-  col?: number | null;
-};
-
-export type DesktopOpenPathReq = {
-  path: string;
-  line?: number | null;
-  col?: number | null;
-};
-
-export type DesktopReadBinaryFileResp = {
-  path: string;
-  bytes: number[];
-};
-
-export type DesktopEditorSettings = {
-  target:
-    | "system"
-    | "vscode"
-    | "vscode_insiders"
-    | "cursor"
-    | "windsurf"
-    | "antigravity"
-    | "idea"
-    | "pycharm"
-    | "xcode"
-    | "android_studio"
-    | "custom";
-  custom_command?: string | null;
-  remote_authority?: string | null;
-};
-
-export type DesktopCodexLoginRelayReq = {
-  login_id: string;
-  callback_url: string;
-  completion_token: string;
-};
-
-export type DesktopMenuItemStateUpdate = {
-  id: string;
-  enabled?: boolean;
-  checked?: boolean;
-  text?: string;
-};
 
 type TauriGlobals = {
   __TAURI_INTERNALS__?: unknown;
@@ -313,6 +203,9 @@ const invoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T
   }
 };
 
+const invokeDesktopReq = async <TReq, TResp>(cmd: string, req: TReq): Promise<TResp> =>
+  invoke<TResp>(cmd, { req });
+
 const DESKTOP_SSH_CONNECT_POLL_MS = 500;
 const DESKTOP_SSH_CONNECT_TIMEOUT_MS = 4 * 60_000;
 
@@ -323,9 +216,11 @@ const sleep = (ms: number) =>
 
 const consumeDesktopSshConnectJob = async (jobId: string) => {
   try {
-    await invoke<DesktopSshConnectJobStatus>("desktop_connect_ssh_poll", {
-      req: { job_id: jobId, consume: true },
-    });
+    const req: DesktopSshConnectPollReq = { job_id: jobId, consume: true };
+    await invokeDesktopReq<DesktopSshConnectPollReq, DesktopSshConnectJobStatus>(
+      "desktop_connect_ssh_poll",
+      req,
+    );
   } catch {
     // Ignore cleanup failures so the primary connect result surfaces cleanly.
   }
@@ -462,19 +357,23 @@ export const desktopConnectLocal = async (): Promise<DesktopConnectionInfo> =>
   invoke<DesktopConnectionInfo>("desktop_connect_local");
 
 export const desktopRestartLocalDaemon = async (): Promise<DesktopConnectionInfo> =>
-  invoke<DesktopConnectionInfo>("desktop_restart_local_daemon", { req: { confirm: true } });
+  invokeDesktopReq<DesktopRestartLocalDaemonReq, DesktopConnectionInfo>(
+    "desktop_restart_local_daemon",
+    { confirm: true },
+  );
 
 export const desktopConnectSsh = async (req: SshConnectReq): Promise<DesktopConnectionInfo> => {
-  const jobId = String(await invoke<string>("desktop_connect_ssh_begin", { req })).trim();
+  const jobId = String(await invokeDesktopReq<SshConnectReq, string>("desktop_connect_ssh_begin", req)).trim();
   if (!jobId) {
     throw new Error("desktop_connect_ssh_begin returned empty job id");
   }
 
   const startedAt = Date.now();
   while (Date.now() - startedAt < DESKTOP_SSH_CONNECT_TIMEOUT_MS) {
-    const snapshot = await invoke<DesktopSshConnectJobStatus>("desktop_connect_ssh_poll", {
-      req: { job_id: jobId, consume: false },
-    });
+    const snapshot = await invokeDesktopReq<DesktopSshConnectPollReq, DesktopSshConnectJobStatus>(
+      "desktop_connect_ssh_poll",
+      { job_id: jobId, consume: false },
+    );
     const status = String(snapshot.status || "").trim().toLowerCase();
     if (status === "succeeded") {
       await consumeDesktopSshConnectJob(jobId);
@@ -495,34 +394,38 @@ export const desktopConnectSsh = async (req: SshConnectReq): Promise<DesktopConn
 };
 
 export const desktopUpdateRemoteDaemon = async (channel?: string): Promise<DesktopRemoteDaemonUpdateResp> =>
-  invoke<DesktopRemoteDaemonUpdateResp>("desktop_update_remote_daemon", {
-    req: {
+  invokeDesktopReq<DesktopRemoteDaemonUpdateReq, DesktopRemoteDaemonUpdateResp>(
+    "desktop_update_remote_daemon",
+    {
       confirm: true,
       ...(channel ? { channel } : {}),
     },
-  });
+  );
 
 export const desktopCheckAppUpdate = async (channel?: string): Promise<DesktopAppUpdateCheckResp> =>
-  invoke<DesktopAppUpdateCheckResp>("desktop_check_app_update", {
-    req: channel ? { channel } : {},
-  });
+  invokeDesktopReq<DesktopAppUpdateCheckReq, DesktopAppUpdateCheckResp>(
+    "desktop_check_app_update",
+    channel ? { channel } : {},
+  );
 
 export const desktopGetAppUpdateState = async (channel?: string): Promise<DesktopAppUpdateStateResp> =>
-  invoke<DesktopAppUpdateStateResp>("desktop_get_app_update_state", {
-    req: channel ? { channel } : {},
-  });
+  invokeDesktopReq<DesktopAppUpdateCheckReq, DesktopAppUpdateStateResp>(
+    "desktop_get_app_update_state",
+    channel ? { channel } : {},
+  );
 
 export const desktopApplyAppUpdate = async (
   channel?: string,
   downloadId?: string,
 ): Promise<DesktopAppUpdateApplyResp> =>
-  invoke<DesktopAppUpdateApplyResp>("desktop_apply_app_update", {
-    req: {
+  invokeDesktopReq<DesktopAppUpdateApplyReq, DesktopAppUpdateApplyResp>(
+    "desktop_apply_app_update",
+    {
       confirm: true,
       ...(channel ? { channel } : {}),
       ...(downloadId ? { download_id: downloadId } : {}),
     },
-  });
+  );
 
 export const desktopRestartApp = async (): Promise<DesktopAppRestartResp> =>
   invoke<DesktopAppRestartResp>("desktop_restart_app");
@@ -534,59 +437,50 @@ export const desktopListSshHosts = async (): Promise<DesktopSshHost[]> =>
   invoke<DesktopSshHost[]>("desktop_list_ssh_hosts");
 
 export const desktopTestSsh = async (req: { host: string; user?: string | null; password_once?: string | null }): Promise<void> =>
-  invoke<void>("desktop_test_ssh", { req });
+  invokeDesktopReq<DesktopSshTestReq, void>("desktop_test_ssh", req);
 
-export const desktopKickoffRemotePrewarm = async (req: {
-  host: string;
-  user?: string | null;
-  remote_port?: number | null;
-  remote_data_dir?: string | null;
-}): Promise<void> =>
-  invoke<void>("desktop_kickoff_remote_prewarm", { req });
+export const desktopKickoffRemotePrewarm = async (req: DesktopRemotePrewarmReq): Promise<void> =>
+  invokeDesktopReq<DesktopRemotePrewarmReq, void>("desktop_kickoff_remote_prewarm", req);
 
-export const desktopEnsureLocalLinuxSandboxReady = async (req?: {
-  admin_password_once?: string | null;
-}): Promise<DesktopLinuxSandboxEnsureResp> =>
-  invoke<DesktopLinuxSandboxEnsureResp>("desktop_ensure_local_linux_sandbox_ready", {
-    req: req ?? {},
-  });
+export const desktopEnsureLocalLinuxSandboxReady = async (
+  req?: DesktopLocalLinuxSandboxEnsureReq,
+): Promise<DesktopLinuxSandboxEnsureResp> =>
+  invokeDesktopReq<DesktopLocalLinuxSandboxEnsureReq, DesktopLinuxSandboxEnsureResp>(
+    "desktop_ensure_local_linux_sandbox_ready",
+    req ?? {},
+  );
 
-export const desktopEnsureRemoteLinuxSandboxReady = async (req?: {
-  admin_password_once?: string | null;
-}): Promise<DesktopLinuxSandboxEnsureResp> =>
-  invoke<DesktopLinuxSandboxEnsureResp>("desktop_ensure_remote_linux_sandbox_ready", {
-    req: req ?? {},
-  });
+export const desktopEnsureRemoteLinuxSandboxReady = async (
+  req?: DesktopRemoteLinuxSandboxEnsureReq,
+): Promise<DesktopLinuxSandboxEnsureResp> =>
+  invokeDesktopReq<DesktopRemoteLinuxSandboxEnsureReq, DesktopLinuxSandboxEnsureResp>(
+    "desktop_ensure_remote_linux_sandbox_ready",
+    req ?? {},
+  );
 
-export const desktopListSshPaths = async (req: { host: string; user?: string | null; path?: string | null }): Promise<DesktopSshPathEntry[]> =>
-  invoke<DesktopSshPathEntry[]>("desktop_list_ssh_paths", { req });
+export const desktopListSshPaths = async (req: DesktopSshPathReq): Promise<DesktopSshPathEntry[]> =>
+  invokeDesktopReq<DesktopSshPathReq, DesktopSshPathEntry[]>("desktop_list_ssh_paths", req);
 
-export const desktopGetGitBranch = async (req: { path: string }): Promise<string | null> =>
-  invoke<string | null>("desktop_get_git_branch", { req });
+export const desktopGetGitBranch = async (req: DesktopGitBranchReq): Promise<string | null> =>
+  invokeDesktopReq<DesktopGitBranchReq, string | null>("desktop_get_git_branch", req);
 
 export const desktopPickFolder = async (): Promise<string | null> =>
   invoke<string | null>("desktop_pick_folder");
 
 export const desktopGitClone = async (repo_url: string, dest_parent: string): Promise<string> =>
-  invoke<string>("desktop_git_clone", { repo_url, dest_parent });
+  invokeDesktopReq<DesktopGitCloneReq, string>("desktop_git_clone", { repo_url, dest_parent });
 
-export const desktopSaveTextFile = async (args: {
-  suggested_name?: string | null;
-  contents: string;
-}): Promise<string | null> =>
-  invoke<string | null>("desktop_save_text_file", args);
+export const desktopSaveTextFile = async (args: DesktopSaveTextFileReq): Promise<string | null> =>
+  invokeDesktopReq<DesktopSaveTextFileReq, string | null>("desktop_save_text_file", args);
 
-export const desktopReadFile = async (args: {
-  path: string;
-  line?: number | null;
-  col?: number | null;
-}): Promise<{ path: string; text: string }> =>
-  invoke<{ path: string; text: string }>("desktop_read_file", { req: args });
+export const desktopReadFile = async (args: DesktopOpenPathReq): Promise<DesktopReadFileResp> =>
+  invokeDesktopReq<DesktopOpenPathReq, DesktopReadFileResp>("desktop_read_file", args);
 
-export const desktopReadBinaryFile = async (args: {
-  path: string;
-}): Promise<DesktopReadBinaryFileResp> =>
-  invoke<DesktopReadBinaryFileResp>("desktop_read_binary_file", { req: args });
+export const desktopReadBinaryFile = async (args: DesktopOpenPathReq): Promise<DesktopReadBinaryFileResp> =>
+  invokeDesktopReq<DesktopOpenPathReq, DesktopReadBinaryFileResp>(
+    "desktop_read_binary_file",
+    args,
+  );
 
 export const desktopGetDeepLinkToken = async (): Promise<DesktopDeepLinkToken> =>
   invoke<DesktopDeepLinkToken>("desktop_get_deep_link_token");
@@ -597,10 +491,10 @@ export const desktopGetVersion = async (): Promise<string> => {
 };
 
 export const desktopOpenFile = async (req: DesktopOpenFileReq): Promise<void> =>
-  invoke<void>("desktop_open_file", { req });
+  invokeDesktopReq<DesktopOpenFileReq, void>("desktop_open_file", req);
 
 export const desktopOpenPath = async (req: DesktopOpenPathReq): Promise<void> =>
-  invoke<void>("desktop_open_path", { req });
+  invokeDesktopReq<DesktopOpenPathReq, void>("desktop_open_path", req);
 
 export const desktopGetEditorSettings = async (): Promise<DesktopEditorSettings> =>
   invoke<DesktopEditorSettings>("desktop_get_editor_settings");
@@ -608,71 +502,74 @@ export const desktopGetEditorSettings = async (): Promise<DesktopEditorSettings>
 export const desktopUpdateEditorSettings = async (
   settings: DesktopEditorSettings,
 ): Promise<DesktopEditorSettings> =>
-  invoke<DesktopEditorSettings>("desktop_update_editor_settings", { settings });
+  invokeDesktopReq<DesktopEditorSettings, DesktopEditorSettings>(
+    "desktop_update_editor_settings",
+    settings,
+  );
 
-export const desktopDaemonRequest = async (req: {
-  method: string;
-  path: string;
-  body?: string | null;
-  headers?: Array<[string, string]>;
-}): Promise<DesktopHttpResponse> =>
-  invoke<DesktopHttpResponse>("desktop_daemon_request", { req });
+export const desktopDaemonRequest = async (req: DesktopDaemonRequest): Promise<DesktopHttpResponse> =>
+  invokeDesktopReq<DesktopDaemonRequest, DesktopHttpResponse>("desktop_daemon_request", req);
 
 export const desktopStartCodexLoginRelay = async (req: DesktopCodexLoginRelayReq): Promise<boolean> =>
-  invoke<boolean>("desktop_start_codex_login_relay", { req });
+  invokeDesktopReq<DesktopCodexLoginRelayReq, boolean>("desktop_start_codex_login_relay", req);
 
 export const desktopStorageGet = async (key: string): Promise<unknown | null> =>
-  invoke<unknown | null>("desktop_storage_get", { key });
+  invokeDesktopReq<DesktopStorageGetReq, unknown | null>("desktop_storage_get", { key });
 
 export const desktopStorageBatch = async (ops: DesktopStorageBatchOp[]): Promise<void> =>
-  invoke<void>("desktop_storage_batch", { ops });
+  invokeDesktopReq<DesktopStorageBatchReq, void>("desktop_storage_batch", { ops });
 
 export const desktopStorageConsumeNotice = async (): Promise<DesktopStorageNotice | null> =>
   invoke<DesktopStorageNotice | null>("desktop_storage_consume_notice");
 
-export const desktopUploadBlob = async (args: {
-  bytes: number[];
-  mime_type: string;
-  name?: string | null;
-}): Promise<unknown> =>
-  invoke<unknown>("desktop_upload_blob", args);
+export const desktopUploadBlob = async (args: DesktopUploadBlobReq): Promise<BlobUploadResp> =>
+  invokeDesktopReq<DesktopUploadBlobReq, BlobUploadResp>("desktop_upload_blob", args);
 
 export const desktopSetOpenWorkspaces = async (workspace_ids: string[]): Promise<void> =>
-  invoke<void>("desktop_set_open_workspaces", { workspace_ids });
+  invokeDesktopReq<DesktopSetOpenWorkspacesReq, void>("desktop_set_open_workspaces", {
+    workspace_ids,
+  });
 
 export const desktopOpenLauncherInNewWindow = async (): Promise<void> =>
   invoke<void>("desktop_open_launcher_in_new_window");
 
 export const desktopOpenWorkspaceInNewWindow = async (workspace_id: string): Promise<void> =>
-  invoke<void>("desktop_open_workspace_in_new_window", { workspace_id });
+  invokeDesktopReq<DesktopOpenWorkspaceInNewWindowReq, void>(
+    "desktop_open_workspace_in_new_window",
+    { workspace_id },
+  );
 
 export const desktopOpenWorkspaceSetupInNewWindow = async (): Promise<void> =>
   invoke<void>("desktop_open_workspace_setup_in_new_window");
 
-export type DesktopDockRecentLocalWorkspace = {
-  label: string;
-  root_path: string;
-};
-
 export const desktopSetDockRecentLocalWorkspaces = async (
   entries: DesktopDockRecentLocalWorkspace[],
-): Promise<void> => invoke<void>("desktop_set_dock_recent_local_workspaces", { entries });
+): Promise<void> =>
+  invokeDesktopReq<DesktopSetDockRecentLocalWorkspacesReq, void>(
+    "desktop_set_dock_recent_local_workspaces",
+    { entries },
+  );
 
 export const desktopRecordWorkspaceVisit = async (
   workspace_id: string,
   workspace_label: string,
 ): Promise<void> => {
   if (!isDesktopApp()) return;
-  await invoke<void>("desktop_record_workspace_visit", { workspace_id, workspace_label });
+  const req: DesktopRecordWorkspaceVisitReq = { workspace_id, workspace_label };
+  await invokeDesktopReq<DesktopRecordWorkspaceVisitReq, void>(
+    "desktop_record_workspace_visit",
+    req,
+  );
 };
 
 export const desktopSetTitlebarColor = async (color: DesktopTitlebarColor): Promise<void> =>
-  invoke<void>("desktop_set_titlebar_color", { color });
+  invokeDesktopReq<DesktopTitlebarColor, void>("desktop_set_titlebar_color", color);
 
 export const desktopSetMenuState = async (items: DesktopMenuItemStateUpdate[]): Promise<void> =>
-  invoke<void>("desktop_set_menu_state", { items });
+  invokeDesktopReq<DesktopSetMenuStateReq, void>("desktop_set_menu_state", { items });
 
 export const desktopSetWindowTitle = async (title: string): Promise<void> => {
   if (!isDesktopApp()) return;
-  await invoke<void>("desktop_set_window_title", { title });
+  const req: DesktopSetWindowTitleReq = { title };
+  await invokeDesktopReq<DesktopSetWindowTitleReq, void>("desktop_set_window_title", req);
 };

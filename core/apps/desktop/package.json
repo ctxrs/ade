@@ -6,6 +6,7 @@
     "dev": "node ../../scripts/desktop_tauri_entry.cjs dev",
     "build": "node ../../scripts/desktop_tauri_entry.cjs build",
     "test:automation": "wdio run automation/wdio.conf.cjs",
+    "test:automation:image-paste": "../../../scripts/desktop_smoke_with_infisical.sh -- --spec automation/specs/workbench-image-paste.spec.cjs",
     "test:automation:image-drag-drop": "../../../scripts/desktop_smoke_with_infisical.sh -- --spec automation/specs/workbench-image-drag-drop.spec.cjs",
     "test:automation:provider-auth-matrix": "../../../scripts/desktop_smoke_with_infisical.sh -- --spec automation/specs/provider-auth-matrix-cell.spec.cjs",
     "test:automation:break-matrix": "../../../scripts/desktop_smoke_with_infisical.sh -- --spec automation/specs/container-daemon-liveness.spec.cjs --spec automation/specs/container-provider-openrouter.spec.cjs --spec automation/specs/harness-install-probe-matrix.spec.cjs --spec automation/specs/remote-container-contract.spec.cjs",

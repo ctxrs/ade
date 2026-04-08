@@ -1,38 +1,8 @@
 use super::*;
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub(super) enum DesktopStorageBatchOp {
-    Set {
-        key: String,
-        value: serde_json::Value,
-    },
-    Delete {
-        key: String,
-    },
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum DesktopUiStateResetReason {
-    SchemaMismatch,
-    InvalidUiStateDb,
-}
-
-impl DesktopUiStateResetReason {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::SchemaMismatch => "schema_mismatch",
-            Self::InvalidUiStateDb => "invalid_ui_state_db",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub(super) enum DesktopStorageNotice {
-    UiStateReset { reason: DesktopUiStateResetReason },
-}
+pub(super) use ctx_desktop_ipc::{
+    DesktopStorageBatchOp, DesktopStorageBatchReq, DesktopStorageGetReq, DesktopStorageNotice,
+    DesktopUiStateResetReason,
+};
 
 #[derive(Default)]
 pub(super) struct DesktopStorage {
@@ -158,8 +128,18 @@ async fn reset_ui_kv_state(pool: &SqlitePool, reason: DesktopUiStateResetReason)
     tx.commit()
         .await
         .context("committing ui state reset transaction")?;
-    eprintln!("desktop_ui_state_db_reset reason={}", reason.as_str());
+    eprintln!(
+        "desktop_ui_state_db_reset reason={}",
+        desktop_ui_state_reset_reason_str(reason)
+    );
     Ok(())
+}
+
+fn desktop_ui_state_reset_reason_str(reason: DesktopUiStateResetReason) -> &'static str {
+    match reason {
+        DesktopUiStateResetReason::SchemaMismatch => "schema_mismatch",
+        DesktopUiStateResetReason::InvalidUiStateDb => "invalid_ui_state_db",
+    }
 }
 
 async fn ensure_ui_kv_schema(pool: &SqlitePool) -> Result<()> {
@@ -343,10 +323,10 @@ mod desktop_storage_tests {
 pub(super) async fn desktop_storage_get(
     app: tauri::AppHandle,
     storage: tauri::State<'_, DesktopStorage>,
-    key: String,
+    req: DesktopStorageGetReq,
 ) -> Result<Option<serde_json::Value>, String> {
     let pool = storage.pool(&app).await.map_err(to_err)?;
-    desktop_storage_get_from_pool(pool, &key)
+    desktop_storage_get_from_pool(pool, &req.key)
         .await
         .map_err(to_err)
 }
@@ -355,8 +335,9 @@ pub(super) async fn desktop_storage_get(
 pub(super) async fn desktop_storage_batch(
     app: tauri::AppHandle,
     storage: tauri::State<'_, DesktopStorage>,
-    ops: Vec<DesktopStorageBatchOp>,
+    req: DesktopStorageBatchReq,
 ) -> Result<(), String> {
+    let ops = req.ops;
     if ops.is_empty() {
         return Ok(());
     }
