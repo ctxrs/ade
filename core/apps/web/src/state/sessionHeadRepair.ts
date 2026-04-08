@@ -7,7 +7,7 @@ type HeadActivityLike = {
 
 type TranscriptCoverageEntry = {
   turnsHydrated?: boolean;
-  turns: readonly Pick<SessionTurn, "turn_id">[];
+  turns: readonly Pick<SessionTurn, "turn_id" | "status">[];
   messages: readonly Pick<Message, "id">[];
   freshness?: string | null;
   loadState?: string | null;
@@ -18,6 +18,8 @@ type TranscriptCoverageEntry = {
 
 const readVersion = (value: number | null | undefined): number =>
   typeof value === "number" && Number.isFinite(value) ? value : -1;
+
+const normalizeId = (value: string | null | undefined): string => String(value ?? "").trim();
 
 export const isBoundedSessionHead = (
   head: Pick<SessionHead | SessionHeadSnapshot, "head_window">,
@@ -36,8 +38,8 @@ const coversTurns = (
 ): boolean => {
   const headTurns = Array.isArray(head.turns) ? head.turns : [];
   if (headTurns.length === 0) return true;
-  const entryTurnIds = new Set(entry.turns.map((turn) => String(turn.turn_id ?? "").trim()).filter(Boolean));
-  return headTurns.every((turn) => entryTurnIds.has(String(turn.turn_id ?? "").trim()));
+  const entryTurnIds = new Set(entry.turns.map((turn) => normalizeId(turn.turn_id)).filter(Boolean));
+  return headTurns.every((turn) => entryTurnIds.has(normalizeId(turn.turn_id)));
 };
 
 const coversMessages = (
@@ -46,8 +48,22 @@ const coversMessages = (
 ): boolean => {
   const headMessages = Array.isArray(head.messages) ? head.messages : [];
   if (headMessages.length === 0) return true;
-  const entryMessageIds = new Set(entry.messages.map((message) => String(message.id ?? "").trim()).filter(Boolean));
-  return headMessages.every((message) => entryMessageIds.has(String(message.id ?? "").trim()));
+  const entryMessageIds = new Set(entry.messages.map((message) => normalizeId(message.id)).filter(Boolean));
+  return headMessages.every((message) => entryMessageIds.has(normalizeId(message.id)));
+};
+
+const hasOmittedNonTerminalTurns = (
+  entry: TranscriptCoverageEntry,
+  head: Pick<SessionHead | SessionHeadSnapshot, "turns">,
+): boolean => {
+  const headTurnIds = new Set(
+    (Array.isArray(head.turns) ? head.turns : []).map((turn) => normalizeId(turn.turn_id)).filter(Boolean),
+  );
+  return entry.turns.some((turn) => {
+    const turnId = normalizeId(turn.turn_id);
+    if (!turnId || headTurnIds.has(turnId)) return false;
+    return turn.status === "queued" || turn.status === "running";
+  });
 };
 
 export function shouldRepairSessionHeadReplace(
@@ -60,10 +76,6 @@ export function shouldRepairSessionHeadReplace(
     entry.messages.length === 0;
   if (missingTranscript) {
     return false;
-  }
-
-  if (isBoundedSessionHead(head)) {
-    return true;
   }
 
   const headLastEventSeq = readVersion(head.last_event_seq);
@@ -84,6 +96,10 @@ export function shouldRepairSessionHeadReplace(
   }
 
   if (!coversMessages(entry, head)) {
+    return true;
+  }
+
+  if (isBoundedSessionHead(head) && hasOmittedNonTerminalTurns(entry, head)) {
     return true;
   }
 

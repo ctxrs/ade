@@ -2940,6 +2940,86 @@ describe("SessionSupervisor", () => {
     expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps in-flight assistant streaming when bounded workspace heads repeat the same covered transcript", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-bounded-streaming-overlay";
+    const runningTurn = mkTurn({ sessionId, turnId: "turn-1", status: "running", startSeq: 1 });
+    const userMessage: Message = {
+      id: "m-user-1",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-1",
+      role: "user",
+      content: "hello",
+      delivery: "immediate",
+      created_at: "2026-03-09T00:00:01.000Z",
+    };
+    const boundedHead: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: [runningTurn],
+      events: [] as SessionEvent[],
+      messages: [userMessage],
+      activity: { is_working: true, last_turn_status: "running" },
+      last_event_seq: 4,
+      projection_rev: 7,
+      state_rev: 7,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+      head_window: {
+        turn_limit: 5,
+        message_limit: 50,
+        event_limit: 800,
+        byte_limit: 200_000,
+        turn_count: 1,
+        message_count: 1,
+        event_count: 0,
+        bytes: 256,
+        truncated: true,
+      },
+    };
+
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    internals.handleReplicaPatches([
+      {
+        op: "replace",
+        sessionId,
+        data: {
+          session: mkSession(sessionId),
+          freshness: "replica",
+          turns: [runningTurn],
+          messages: [userMessage],
+          events: [] as SessionEvent[],
+          activity: { is_working: true, last_turn_status: "running" },
+          lastEventSeq: 4,
+          projectionRev: 7,
+          stateRev: 7,
+          turnsHydrated: true,
+          loading: false,
+          assistantStreamingByTurnId: {
+            "turn-1": {
+              content: "Hi ",
+              providerMessageId: "msg-1",
+            },
+          },
+        },
+      },
+    ]);
+
+    expect(sup.getSnapshot().sessions[sessionId]?.assistantStreamingByTurnId?.["turn-1"]?.content).toBe(
+      "Hi ",
+    );
+
+    sup.setWorkspaceSessionHeads({ [sessionId]: boundedHead });
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.assistantStreamingByTurnId?.["turn-1"]?.content).toBe("Hi ");
+    expect(entry?.turns.map((turn) => turn.turn_id)).toEqual(["turn-1"]);
+    expect(entry?.messages.map((message) => message.id)).toEqual(["m-user-1"]);
+  });
+
   it("evicts omitted stale running turns from bounded active heads", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
