@@ -159,35 +159,115 @@ const waitForCtxE2EFocusTask = async (timeoutMs = 30000) => {
   );
 };
 
+const readTaskSessionDiagnostics = async (taskId, sessionId, taskTitle) =>
+  await browser.execute((expectedTaskId, expectedSessionId, expectedTaskTitle) => {
+    const text = (value) => String(value || "").replace(/\s+/g, " ").trim();
+    const snapshot = window.__ctxE2E?.getWorkspaceSnapshot?.() ?? null;
+    const item = snapshot?.tasksById?.[expectedTaskId] ?? null;
+    const sessionIds = Array.isArray(item?.sessions)
+      ? item.sessions
+        .map((entry) => String(entry?.session?.id || entry?.id || ""))
+        .filter(Boolean)
+      : [];
+    const taskRows = Array.from(document.querySelectorAll(".wb-task-row"))
+      .map((row) => ({
+        title: text(row.querySelector(".wb-task-title")?.textContent),
+        active: row.classList.contains("wb-task-row-active"),
+      }))
+      .filter((row) => row.title);
+    const diagnostics = window.__ctxE2E?.getDiagnostics?.() ?? [];
+    return {
+      location: window.location.href,
+      snapshot: snapshot
+        ? {
+          initialized: Boolean(snapshot.initialized),
+          connection: snapshot.connection ?? null,
+          fetchState: snapshot.fetchState ?? null,
+          activeIds: Array.isArray(snapshot.activeIds) ? snapshot.activeIds.slice(0, 20) : [],
+          totalActive: Number(snapshot.totalActive || 0),
+          taskPresent: Boolean(item),
+          taskTitle: text(item?.task?.title),
+          primarySessionId: String(item?.primarySessionId || ""),
+          sessionIds,
+          expectedSessionPresent:
+            sessionIds.includes(String(expectedSessionId))
+            || String(item?.primarySessionId || "") === String(expectedSessionId),
+        }
+        : null,
+      ui: {
+        expectedTaskTitle: text(expectedTaskTitle),
+        hasVisibleSessionSlot: Boolean(document.querySelector(".wb-session-slot[aria-hidden=\"false\"]")),
+        hasHydratingSlot: Boolean(document.querySelector(".wb-session-slot--hydrating")),
+        hasActiveTextarea: Boolean(document.querySelector(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")),
+        loadIssues: Array.from(document.querySelectorAll(".wb-session-load-issues"))
+          .map((node) => text(node.textContent))
+          .filter(Boolean),
+      },
+      taskRows: taskRows.slice(0, 20),
+      matchingTaskRows: text(expectedTaskTitle)
+        ? taskRows.filter((row) => row.title === text(expectedTaskTitle))
+        : [],
+      diagnostics: Array.isArray(diagnostics)
+        ? diagnostics.slice(-12).map((entry) => ({
+          code: String(entry?.code || ""),
+          source: String(entry?.source || ""),
+          message: text(entry?.message),
+          context: entry?.context ?? null,
+        }))
+        : [],
+    };
+  }, taskId, sessionId, taskTitle);
+
+const waitForWorkspaceTaskSession = async (taskId, sessionId, taskTitle, timeoutMs = 60000) => {
+  try {
+    await browser.waitUntil(
+      async () =>
+        await browser.execute((expectedTaskId, expectedSessionId) => {
+          const snapshot = window.__ctxE2E?.getWorkspaceSnapshot?.() ?? null;
+          if (!snapshot?.initialized) return false;
+          const item = snapshot.tasksById?.[expectedTaskId];
+          if (!item) return false;
+          const sessionIds = Array.isArray(item.sessions)
+            ? item.sessions
+              .map((entry) => String(entry?.session?.id || entry?.id || ""))
+              .filter(Boolean)
+            : [];
+          return (
+            sessionIds.includes(String(expectedSessionId))
+            || String(item.primarySessionId || "") === String(expectedSessionId)
+          );
+        }, taskId, sessionId),
+      { timeout: timeoutMs, timeoutMsg: `task ${taskId} / session ${sessionId} missing from workspace snapshot` },
+    );
+  } catch (error) {
+    const diagnostics = await readTaskSessionDiagnostics(taskId, sessionId, taskTitle);
+    throw new Error(`${String(error)}\nDiagnostics: ${JSON.stringify(diagnostics)}`);
+  }
+};
+
+const waitForActiveSessionTextarea = async (taskId, sessionId, taskTitle, timeoutMs = 60000) => {
+  try {
+    await browser.waitUntil(
+      async () =>
+        await browser.execute(
+          () => Boolean(document.querySelector(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")),
+        ),
+      {
+        timeout: timeoutMs,
+        timeoutMsg: `active-session textarea did not render for task ${taskId} / session ${sessionId}`,
+      },
+    );
+  } catch (error) {
+    const diagnostics = await readTaskSessionDiagnostics(taskId, sessionId, taskTitle);
+    throw new Error(`${String(error)}\nDiagnostics: ${JSON.stringify(diagnostics)}`);
+  }
+};
+
 const waitForCtxE2EDropBridge = async (timeoutMs = 30000) => {
   await browser.waitUntil(
     async () => await browser.execute(() => typeof window.__ctxE2E?.emitDesktopDrop === "function"),
     { timeout: timeoutMs, timeoutMsg: "ctxE2E desktop drop bridge not available" },
   );
-};
-
-const getDesktopUploadInvokeCount = async () =>
-  await browser.execute(() => {
-    if (!Array.isArray(window.__ctxDesktopInvokeLog)) return 0;
-    return window.__ctxDesktopInvokeLog.filter((entry) => entry?.command === "desktop_upload_blob").length;
-  });
-
-const waitForDesktopUploadInvokeCount = async (expectedCount, timeoutMs = 30000) => {
-  try {
-    await browser.waitUntil(
-      async () => (await getDesktopUploadInvokeCount()) >= expectedCount,
-      { timeout: timeoutMs, timeoutMsg: `desktop_upload_blob did not reach count ${expectedCount}` },
-    );
-  } catch (error) {
-    const diagnostics = await browser.execute(() => ({
-      lastDebug: window.__ctxDropLastDebug || null,
-      desktopInvokes: Array.isArray(window.__ctxDesktopInvokeLog) ? window.__ctxDesktopInvokeLog.slice(-12) : [],
-      fetchLog: Array.isArray(window.__ctxDropFetchLog) ? window.__ctxDropFetchLog.slice(-12) : [],
-      hasTauriInternalsInvoke: typeof window.__TAURI_INTERNALS__?.invoke,
-      hasGlobalTauriInvoke: typeof window.__TAURI__?.core?.invoke,
-    }));
-    throw new Error(`${String(error)}\nDiagnostics: ${JSON.stringify(diagnostics)}`);
-  }
 };
 
 const emitNativeDrop = async (selector, filePath) => {
@@ -294,6 +374,40 @@ const waitForAttachmentCount = async (selector, expectedCount, timeoutMs = 30000
   }
 };
 
+const waitForBlobBackedAttachments = async (selector, expectedCount, timeoutMs = 30000) => {
+  await waitForAttachmentCount(selector, expectedCount, timeoutMs);
+  try {
+    await browser.waitUntil(
+      async () =>
+        await browser.execute((s, count) => {
+          const images = Array.from(document.querySelectorAll(s));
+          if (images.length !== count) return false;
+          return images.every((image) => {
+            const src = image.getAttribute("src") || image.src || "";
+            return src.includes("/api/blobs/") && !src.startsWith("data:");
+          });
+        }, selector, expectedCount),
+      { timeout: timeoutMs, timeoutMsg: `attachments were not blob-backed for ${selector}` },
+    );
+  } catch (error) {
+    const diagnostics = await browser.execute((s) => ({
+      lastDebug: window.__ctxDropLastDebug || null,
+      fetchLog: Array.isArray(window.__ctxDropFetchLog) ? window.__ctxDropFetchLog.slice(-12) : [],
+      relevantFetches: Array.isArray(window.__ctxDropFetchLog)
+        ? window.__ctxDropFetchLog.filter((entry) => !String(entry?.url || "").includes("plugin%3Aautomation%7Cresolve")).slice(-12)
+        : [],
+      nativeDropEvents: Array.isArray(window.__ctxNativeDropEvents) ? window.__ctxNativeDropEvents.slice(-12) : [],
+      nativeDropDelivered: window.__ctxNativeDropDelivered || null,
+      droppedImagePathCalls: Array.isArray(window.__ctxDroppedImagePathsCalls)
+        ? window.__ctxDroppedImagePathsCalls.slice(-12)
+        : [],
+      desktopInvokes: Array.isArray(window.__ctxDesktopInvokeLog) ? window.__ctxDesktopInvokeLog.slice(-12) : [],
+      attachmentSrcs: Array.from(document.querySelectorAll(s)).map((image) => image.getAttribute("src") || image.src || ""),
+    }), selector);
+    throw new Error(`${String(error)}\nDiagnostics: ${JSON.stringify(diagnostics)}`);
+  }
+};
+
 describe("desktop workbench image drag drop", () => {
   let repoRoot = "";
   let imagePath = "";
@@ -326,27 +440,24 @@ describe("desktop workbench image drag drop", () => {
       throw new Error(`expected local desktop connection: ${JSON.stringify(connection)}`);
     }
 
-    const uploadCountBeforeNewTaskDrop = await getDesktopUploadInvokeCount();
     await emitNativeDrop("textarea.wb-new-composer-textarea", imagePath);
-    await waitForDesktopUploadInvokeCount(uploadCountBeforeNewTaskDrop + 1, 30000);
-    await waitForAttachmentCount(".wb-new-composer-stack .wb-composer-attachments .wb-attach-thumb-img", 1, 30000);
+    await waitForBlobBackedAttachments(".wb-new-composer-stack .wb-composer-attachments .wb-attach-thumb-img", 1, 30000);
 
     const taskTitle = `desktop-drop-fake-${Date.now()}`;
     const { taskId, sessionId } = await createTaskWithSession(workspaceId, taskTitle);
     await waitForCtxE2EFocusTask(30000);
+    await waitForWorkspaceTaskSession(taskId, sessionId, taskTitle, 60000);
     const focusApplied = await browser.execute((nextTaskId, nextSessionId) => {
       return window.__ctxE2E?.focusTask?.(nextTaskId, nextSessionId) ?? false;
     }, taskId, sessionId);
     if (!focusApplied) {
       throw new Error(`ctxE2E focusTask failed for task ${taskId}`);
     }
-    await waitForSelector(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea", 60000);
+    await waitForActiveSessionTextarea(taskId, sessionId, taskTitle, 60000);
     await waitForDropScopeReady(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea", 30000);
 
-    const uploadCountBeforeActiveComposerDrop = await getDesktopUploadInvokeCount();
     await emitNativeDrop(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea", imagePath);
-    await waitForDesktopUploadInvokeCount(uploadCountBeforeActiveComposerDrop + 1, 30000);
-    await waitForAttachmentCount(
+    await waitForBlobBackedAttachments(
       ".wb-session-slot[aria-hidden=\"false\"] .wb-composer-attachments .wb-attach-thumb-img",
       1,
       30000,
