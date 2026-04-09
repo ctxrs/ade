@@ -26,7 +26,7 @@ use ctx_core::models::{
 
 use crate::daemon::{AppState, AttachmentMaterializationTask};
 use crate::execution_effective;
-use crate::harness_runtime::{
+use crate::workspace_runtime::{
     sandbox_container_command, workspace_container_name, CTX_CONTAINER_WORKSPACE_ROOT,
 };
 use crate::worktree_data_plane::{

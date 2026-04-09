@@ -17,18 +17,17 @@ use url::Url;
 
 use super::errors::ApiErrorResp;
 use crate::daemon::AppState;
-use crate::harness_sources;
-use crate::harness_sources::{
-    HarnessApiShape, HarnessEndpointUpsert, HarnessEndpointVerificationStatus, HarnessSourceKind,
-};
 use crate::installer;
 use crate::installs::{InstallId, InstallTarget};
 use crate::logs;
-use crate::provider_accounts;
-use crate::provider_auth_import;
-use crate::provider_probe;
 use crate::provider_usage;
 use ctx_core::ids::WorkspaceId;
+use ctx_harness_sources as harness_sources;
+use ctx_harness_sources::{
+    HarnessApiShape, HarnessEndpointUpsert, HarnessEndpointVerificationStatus, HarnessSourceKind,
+};
+use ctx_provider_accounts as provider_accounts;
+use ctx_provider_auth_import as provider_auth_import;
 use ctx_providers::adapters::{ProviderRestartMode, ProviderStatus};
 
 mod accounts;

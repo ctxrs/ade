@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 use crate::execution_effective;
-use crate::harness_runtime::{sandbox_container_command, workspace_container_name};
+use crate::workspace_runtime::{sandbox_container_command, workspace_container_name};
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::worktree_data_plane::{
     apply_data_plane_to_execution_settings, resolve_worktree_data_plane,
@@ -711,7 +711,7 @@ mod tests {
                 substrate: SandboxSubstrate::NativeContainer,
                 guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
                 profile: SandboxProfile::Standard,
-                live_workspace_root: crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT
+                live_workspace_root: crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT
                     .to_string(),
                 live_worktree_root: managed_root.to_string_lossy().to_string(),
                 execution_settings_json: Some(

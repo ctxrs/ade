@@ -280,7 +280,7 @@ pub(super) fn provider_supports_system_prompt_append(provider_id: &str) -> bool 
 
 pub(super) fn runtime_provider_id_for_session_provider<'a>(
     session_provider_id: &'a str,
-    _resolved_source: &harness_sources::ResolvedHarnessSource,
+    _resolved_source: &ctx_harness_sources::ResolvedHarnessSource,
 ) -> &'a str {
     session_provider_id
 }

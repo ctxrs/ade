@@ -17,7 +17,7 @@ use ctx_core::models::*;
 
 use crate::daemon::AppState;
 use crate::terminals::{TerminalClientMessage, TerminalServerMessage};
-use crate::workspace_active_snapshot::{
+use ctx_workspace_active_snapshot::{
     is_transient_session_delta, SessionReplayCursor, WorkspaceSessionReplay,
     WorkspaceSessionReplayItem,
 };

@@ -99,7 +99,7 @@ pub(super) async fn stream_dir_to_container(
     src_root: &Path,
     dest_root: &Path,
 ) -> Result<()> {
-    let mut sandbox_cmd = crate::harness_runtime::sandbox_container_command(data_root)?;
+    let mut sandbox_cmd = crate::workspace_runtime::sandbox_container_command(data_root)?;
     sandbox_cmd
         .arg("exec")
         .arg("--interactive")

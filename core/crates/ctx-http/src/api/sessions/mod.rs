@@ -20,20 +20,20 @@ use crate::completions;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::git_status::{load_git_status_snapshot, GitStatusEntry};
-use crate::harness_runtime::{
+use crate::workspace_runtime::{
     command_output_with_timeout, sandbox_container_command, workspace_container_name,
 };
 use crate::installer;
 use crate::logs;
 use crate::oracle;
 use crate::order_seq::attach_order_seq;
-use crate::provider_accounts;
 use crate::scheduler::SchedulerCommand;
 use crate::settings as user_settings;
 use crate::workspace_config;
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_fs::vcs;
+use ctx_provider_accounts as provider_accounts;
 use ctx_providers::events::NormalizedEvent;
 use ctx_providers::{
     ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome},

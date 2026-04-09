@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
 use ctx_core::provider_policy::CODEX_APP_SERVER_ARGS;
+use ctx_provider_accounts as provider_accounts;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -14,7 +15,6 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
 use crate::daemon::AppState;
-use crate::provider_accounts;
 
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(60);
 const CODEX_RPC_TIMEOUT: Duration = Duration::from_secs(10);

@@ -236,7 +236,7 @@ fn install_bundled_runtime_fixture(dir: &Path) -> (EnvGuard, EnvGuard) {
     .expect("write bundled container stack");
     std::fs::write(images_root.join("ctx-harness.tar"), b"ctx-harness-image")
         .expect("write bundled image tar");
-    let default_image = crate::harness_runtime::default_container_image();
+    let default_image = crate::workspace_runtime::default_container_image();
 
     let manifest_path = bundle_root.join("manifest.json");
     std::fs::create_dir_all(manifest_path.parent().expect("bundle manifest parent"))

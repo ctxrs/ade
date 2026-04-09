@@ -14,7 +14,7 @@ use ctx_store::Store;
 
 use crate::order_seq::OrderSeqState;
 use crate::scheduler::session_worker;
-use crate::workspace_active_snapshot::session_metadata_from_session;
+use ctx_workspace_active_snapshot::session_metadata_from_session;
 
 use super::state::{
     ActiveTaskRefreshEntry, AppState, SessionHeadCacheKey, SessionRuntime, TimedEntry,

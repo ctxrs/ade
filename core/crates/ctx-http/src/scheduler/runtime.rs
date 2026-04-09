@@ -19,13 +19,11 @@ use ctx_store::store::SessionTurnToolCountDeltas;
 use crate::api::sessions::compose_model_id;
 use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
 use crate::execution_effective;
-use crate::harness_sources::{self, HarnessSourceKind};
 use crate::installer;
 use crate::installs::InstallTarget;
 use crate::ops_events::OpsEvent;
 use crate::order_seq::{attach_order_seq, read_order_seq, OrderSeqState};
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
-use crate::provider_accounts;
 use crate::settings::{self, ProviderControlMode};
 use crate::storage_guard;
 use crate::telemetry::TelemetryEvent;
@@ -33,6 +31,8 @@ use crate::workspace_config;
 use crate::worktree_data_plane::{
     apply_data_plane_to_execution_settings, resolve_worktree_data_plane,
 };
+use ctx_harness_sources::HarnessSourceKind;
+use ctx_provider_accounts as provider_accounts;
 
 mod event_loop;
 mod helpers;
@@ -345,7 +345,7 @@ pub(crate) async fn start_turn(
         return Err(err);
     }
     let runtime_data_root = runtime_plan.runtime_data_root();
-    let resolved_source = match harness_sources::resolve_provider_source_for_run_with_runtime_root(
+    let resolved_source = match ctx_harness_sources::resolve_provider_source_for_run_with_runtime_root(
         &state.core.data_root,
         &session.provider_id,
         runtime_data_root,
@@ -542,7 +542,7 @@ pub(crate) async fn start_turn(
         "is_container": is_linux_sandbox,
         "runtime_kind": runtime_plan
             .env_overrides
-            .get(crate::harness_runtime::CTX_HARNESS_RUNTIME_KIND_ENV)
+            .get(crate::workspace_runtime::CTX_HARNESS_RUNTIME_KIND_ENV)
             .cloned()
             .unwrap_or_else(|| "host".to_string()),
         "has_openai_api_key": provider_env

@@ -1,11 +1,12 @@
 use super::*;
 use ctx_core::ids::WorkspaceId;
+use ctx_harness_sources::HarnessEndpointRecord;
 use ctx_providers::adapters::ProviderStatus;
 
 fn supplement_models_payload_with_endpoint_metadata(
     models: &mut serde_json::Value,
     provider_id: &str,
-    endpoint: &crate::harness_sources::HarnessEndpointRecord,
+    endpoint: &HarnessEndpointRecord,
     now: chrono::DateTime<chrono::Utc>,
 ) {
     let endpoint_payload = endpoint_models_payload(provider_id, endpoint, now);
@@ -140,7 +141,7 @@ pub(super) async fn attach_static_provider_models_and_modes(
     value: &mut serde_json::Value,
     provider_id: &str,
     provider_status: &ProviderStatus,
-    selected_endpoint: Option<&crate::harness_sources::HarnessEndpointRecord>,
+    selected_endpoint: Option<&HarnessEndpointRecord>,
     cached_models: Option<serde_json::Value>,
     cached_modes: Option<serde_json::Value>,
 ) {
@@ -206,7 +207,7 @@ pub(super) fn attach_verify_cache(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness_sources::{
+    use ctx_harness_sources::{
         EndpointModelCatalogStatus, EndpointModelRecord, HarnessApiShape, HarnessEndpointRecord,
         HarnessEndpointVerificationStatus,
     };

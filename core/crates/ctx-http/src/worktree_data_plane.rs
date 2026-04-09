@@ -5,7 +5,7 @@ use ctx_core::models::{SandboxBinding, Workspace, Worktree};
 
 use crate::daemon::AppState;
 use crate::disk_isolated;
-use crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT;
+use crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT;
 use crate::settings::{ContainerMountMode, ExecutionMode, ExecutionSettings};
 
 #[derive(Debug, Clone)]

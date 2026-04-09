@@ -5,9 +5,7 @@ use std::sync::Arc;
 use crate::api::provider_probe_auth::provider_has_active_auth_config_with_runtime_root;
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::harness_sources::{self, HarnessSourceKind, ResolvedHarnessSource};
 use crate::logs;
-use crate::provider_accounts;
 use crate::settings::{ContainerMountMode, ExecutionMode};
 use crate::worktree_data_plane::{
     apply_data_plane_to_execution_settings, resolve_worktree_data_plane, workspace_data_plane,
@@ -16,6 +14,8 @@ use crate::worktree_data_plane::{
 use chrono::Utc;
 use ctx_core::ids::WorktreeId;
 use ctx_core::models::{Workspace, Worktree};
+use ctx_harness_sources::{HarnessSourceKind, ResolvedHarnessSource};
+use ctx_provider_accounts as provider_accounts;
 
 pub(crate) struct WorkspaceRuntimeProbeContext {
     pub(crate) source: ResolvedHarnessSource,
@@ -36,7 +36,7 @@ async fn provider_env_with_runtime_root(
     runtime_data_root: Option<&Path>,
     require_subscription_account_env: bool,
 ) -> Result<(ResolvedHarnessSource, HashMap<String, String>), String> {
-    let source = harness_sources::resolve_provider_source_for_probe_with_runtime_root(
+    let source = ctx_harness_sources::resolve_provider_source_for_probe_with_runtime_root(
         &state.core.data_root,
         provider_id,
         runtime_data_root,
@@ -396,7 +396,7 @@ pub(crate) async fn provider_has_active_auth_for_workspace_runtime(
     state: &Arc<AppState>,
     workspace: &Workspace,
     provider_id: &str,
-    source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
+    source_config: Option<&ctx_harness_sources::HarnessProviderSourceConfig>,
 ) -> bool {
     let runtime_root = provider_context_for_workspace_runtime(state, workspace, provider_id, false)
         .await
@@ -440,9 +440,9 @@ mod tests {
 
     use crate::daemon::AppState;
     use crate::disk_isolated;
-    use crate::harness_sources::{HarnessSourceKind, ResolvedHarnessSource};
-    use crate::provider_accounts;
-    use crate::provider_accounts::KIMI_SHARE_DIR_ENV;
+    use ctx_ctx_harness_sources::{HarnessSourceKind, ResolvedHarnessSource};
+    use ctx_provider_accounts;
+    use ctx_provider_accounts::KIMI_SHARE_DIR_ENV;
     use crate::settings::{ContainerMountMode, ExecutionMode};
     use crate::worktree_data_plane::WorktreeDataPlane;
 

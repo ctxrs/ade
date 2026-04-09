@@ -28,7 +28,7 @@ test("source file classification distinguishes production from test and ignored 
   assert.equal(classifySourceFile("core/apps/web/src/pages/SessionPage.view.tsx"), "production");
   assert.equal(classifySourceFile("core/crates/ctx-http/src/api/mod.rs"), "production");
   assert.equal(classifySourceFile("core/apps/web/src/pages/SessionPage.view.test.tsx"), "test_or_automation");
-  assert.equal(classifySourceFile("core/crates/ctx-http/src/provider_accounts/tests.rs"), "test_or_automation");
+  assert.equal(classifySourceFile("core/crates/ctx-provider-accounts/src/provider_accounts/tests.rs"), "test_or_automation");
   assert.equal(classifySourceFile("core/apps/web/e2e/workbench-index.spec.ts"), "test_or_automation");
   assert.equal(classifySourceFile("core/scripts/bundled_dependency_updates.cjs"), "test_or_automation");
   assert.equal(classifySourceFile("core/crates/ctx-http/src/bin/ctx-http-lsp-test-server.rs"), "production");
@@ -39,7 +39,7 @@ test("isTrackedSourceFile includes production files and excludes tests and exter
   assert.equal(isTrackedSourceFile("core/apps/web/src/pages/SessionPage.view.tsx"), true);
   assert.equal(isTrackedSourceFile("core/crates/ctx-http/src/api/mod.rs"), true);
   assert.equal(isTrackedSourceFile("core/apps/web/src/pages/SessionPage.view.test.tsx"), false);
-  assert.equal(isTrackedSourceFile("core/crates/ctx-http/src/provider_accounts/tests.rs"), false);
+  assert.equal(isTrackedSourceFile("core/crates/ctx-provider-accounts/src/provider_accounts/tests.rs"), false);
   assert.equal(isTrackedSourceFile("core/apps/web/scripts/replay-loadtest.mjs"), false);
   assert.equal(isTrackedSourceFile("external-harnesses/codex/codex-rs/core/src/codex.rs"), false);
   assert.equal(isTestOrAutomationFile("core/apps/web/e2e/workbench-index.spec.ts"), true);

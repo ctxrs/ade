@@ -23,7 +23,7 @@ use crate::attachments;
 use crate::completions;
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::harness_runtime::HarnessContainerStatus;
+use crate::workspace_runtime::HarnessContainerStatus;
 use crate::logs;
 use crate::telemetry::TelemetryEvent;
 use crate::vcs_hooks;

@@ -11,7 +11,7 @@ use tokio::task::JoinHandle;
 use crate::buffers::BufferStore;
 use crate::edit_plans::{EditPlan, EditPlanId};
 use crate::execution_setup::ExecutionSetupCoordinator;
-use crate::harness_runtime::HarnessRuntimeManager;
+use crate::workspace_runtime::HarnessRuntimeManager;
 use crate::installs::{
     InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent, InstallState,
     InstallStateKind, InstallTarget,
@@ -20,7 +20,6 @@ use crate::mobile_tunnel::MobileTunnelManager;
 use crate::ops_events::{OpsEvent, OpsEvents};
 use crate::order_seq::OrderSeqState;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
-use crate::provider_accounts;
 use crate::provider_guard;
 use crate::provider_restart;
 use crate::provider_usage;
@@ -30,7 +29,8 @@ use crate::scheduler::SchedulerCommand;
 use crate::telemetry::Telemetry;
 use crate::terminals::TerminalManager;
 use crate::web_sessions::WebSessionManager;
-use crate::workspace_active_snapshot::WorkspaceActiveSnapshotHub;
+use ctx_provider_accounts as provider_accounts;
+use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceAttachmentId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Session, SessionEvent, SessionHeadSnapshot, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,

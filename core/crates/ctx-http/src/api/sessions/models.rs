@@ -1,4 +1,6 @@
 use super::*;
+use ctx_harness_sources as harness_sources;
+use ctx_provider_accounts as provider_accounts;
 
 const DEFAULT_REASONING_EFFORT: &str = "medium";
 const KNOWN_EFFORT_IDS: [&str; 6] = ["none", "minimal", "low", "medium", "high", "xhigh"];
@@ -235,7 +237,7 @@ async fn load_pinned_subscription_model_catalog(
         install_target,
     )
     .await;
-    let models_value = crate::provider_accounts::pinned_subscription_models_value(
+    let models_value = provider_accounts::pinned_subscription_models_value(
         provider_id,
         provider_status.version.as_deref(),
     )?;
@@ -425,11 +427,11 @@ async fn load_provider_model_catalog_for_install_target(
     }
 
     let source_config =
-        crate::harness_sources::get_provider_source_config(&state.core.data_root, provider_id)
+        harness_sources::get_provider_source_config(&state.core.data_root, provider_id)
             .await
             .ok();
     if let Some(config) = source_config.as_ref() {
-        if config.selected_source_kind == crate::harness_sources::HarnessSourceKind::Endpoint {
+        if config.selected_source_kind == harness_sources::HarnessSourceKind::Endpoint {
             let selected_endpoint_id = config.selected_endpoint_id.as_deref().ok_or_else(|| {
                 format!(
                     "selected source is endpoint for '{provider_id}' but no endpoint is selected"
@@ -446,12 +448,12 @@ async fn load_provider_model_catalog_for_install_target(
                 })?;
 
             let now = chrono::Utc::now();
-            if crate::harness_sources::endpoint_model_catalog_is_stale(endpoint, now) {
+            if harness_sources::endpoint_model_catalog_is_stale(endpoint, now) {
                 let data_root = state.core.data_root.clone();
                 let provider_id_for_refresh = provider_id.to_string();
                 let endpoint_id_for_refresh = endpoint.id.clone();
                 tokio::spawn(async move {
-                    let _ = crate::harness_sources::refresh_provider_endpoint_model_catalog(
+                    let _ = harness_sources::refresh_provider_endpoint_model_catalog(
                         &data_root,
                         &provider_id_for_refresh,
                         &endpoint_id_for_refresh,
@@ -522,7 +524,7 @@ async fn load_provider_model_catalog_for_install_target(
     let command = runtime_command.command_abs_path;
     let args = runtime_command.args;
 
-    let probe_context = match crate::provider_probe::provider_probe_context_for_workspace_runtime(
+    let probe_context = match crate::provider_launch::probe::provider_probe_context_for_workspace_runtime(
         state,
         workspace,
         provider_id,

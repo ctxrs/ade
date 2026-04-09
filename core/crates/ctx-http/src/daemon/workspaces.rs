@@ -15,7 +15,7 @@ use ctx_lsp::Language as LspLanguage;
 use ctx_store::Store;
 
 use crate::git_status;
-use crate::workspace_active_snapshot::WorkspaceActiveSnapshotHub;
+use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 
 use super::state::{
     AppState, TimedEntry, WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
@@ -725,7 +725,7 @@ mod hydration_tests {
     };
     use std::sync::Mutex;
 
-    use crate::workspace_active_snapshot::WorkspaceActiveSnapshotHub;
+    use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 
     struct FakeHydrationStore {
         snapshot_state: (i64, i64),

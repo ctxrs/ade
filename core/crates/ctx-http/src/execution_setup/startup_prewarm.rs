@@ -54,7 +54,7 @@ impl ExecutionSetupCoordinator {
             }
         };
         let exec = settings.execution.unwrap_or_default();
-        let target = harness_runtime::runtime_prewarm_target(&exec.container);
+        let target = workspace_runtime::runtime_prewarm_target(&exec.container);
         let (initial_machine_ready, initial_image_present) = self
             .startup_runtime_state(&exec.container)
             .await
@@ -64,9 +64,9 @@ impl ExecutionSetupCoordinator {
             inner.startup.last_success_at.clone()
         };
 
-        if !harness_runtime::local_runtime_available(&self.data_root, &exec.container.runtime) {
+        if !workspace_runtime::local_runtime_available(&self.data_root, &exec.container.runtime) {
             let staged_status =
-                match harness_runtime::stage_linux_sandbox_runtime_downloads(&self.data_root, None)
+                match workspace_runtime::stage_linux_sandbox_runtime_downloads(&self.data_root, None)
                     .await
                 {
                     Ok(status) => Some(status),
@@ -315,7 +315,7 @@ impl ExecutionSetupCoordinator {
         machine_ready: bool,
         image_present: bool,
     ) -> Result<PrewarmGate> {
-        let target = harness_runtime::runtime_prewarm_target(settings);
+        let target = workspace_runtime::runtime_prewarm_target(settings);
         let metadata = read_prewarm_metadata(&self.data_root).await?;
         let bundled_image_fingerprint = match settings.runtime {
             crate::settings::ContainerRuntimeKind::NativeContainer => {
@@ -356,19 +356,19 @@ impl ExecutionSetupCoordinator {
     ) -> Result<(bool, bool)> {
         match settings.runtime {
             crate::settings::ContainerRuntimeKind::NativeContainer => {
-                let target = harness_runtime::resolve_container_image(settings);
+                let target = workspace_runtime::resolve_container_image(settings);
                 let machine_ready = normalize_container_engine_ready_for_gate(
-                    harness_runtime::sandbox_engine_ready(&self.data_root).await,
+                    workspace_runtime::sandbox_engine_ready(&self.data_root).await,
                 )?;
                 let image_present = if machine_ready {
-                    harness_runtime::container_image_present(&self.data_root, &target).await?
+                    workspace_runtime::container_image_present(&self.data_root, &target).await?
                 } else {
                     false
                 };
                 Ok((machine_ready, image_present))
             }
             crate::settings::ContainerRuntimeKind::SharedVmContainer => {
-                harness_runtime::selected_runtime_launch_readiness_state(&self.data_root, settings)
+                workspace_runtime::selected_runtime_launch_readiness_state(&self.data_root, settings)
                     .await
             }
         }
@@ -390,7 +390,7 @@ impl ExecutionSetupCoordinator {
             .context("load execution settings")?;
         store.close().await;
         let exec = loaded.execution.unwrap_or_default();
-        Ok(harness_runtime::runtime_prewarm_target(&exec.container))
+        Ok(workspace_runtime::runtime_prewarm_target(&exec.container))
     }
 
     async fn ensure_ready_startup_prewarm_metadata(
@@ -445,7 +445,7 @@ impl ExecutionSetupCoordinator {
         &self,
         settings: &crate::settings::ContainerExecutionSettings,
     ) {
-        let target = harness_runtime::runtime_prewarm_target(settings);
+        let target = workspace_runtime::runtime_prewarm_target(settings);
         let startup_target = match self.configured_startup_target().await {
             Ok(startup_target) => startup_target,
             Err(err) => {

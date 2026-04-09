@@ -118,7 +118,7 @@ impl SharedWarmupOperations for FakeWarmupOperations {
         observer.on_phase(HarnessSetupPhase::MachineCheck, "warming runtime");
         observer.on_progress(HarnessSetupProgressUpdate {
             phase: HarnessSetupPhase::ArtifactDownload,
-            active_download: Some(crate::harness_runtime::HarnessSetupDownloadStatus {
+            active_download: Some(crate::workspace_runtime::HarnessSetupDownloadStatus {
                 artifact: "Required artifacts".to_string(),
                 downloaded_bytes: 512,
                 total_bytes: Some(1024),

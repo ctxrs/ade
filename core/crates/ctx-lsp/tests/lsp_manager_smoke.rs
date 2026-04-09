@@ -12,9 +12,27 @@ async fn write_file(path: &Path, contents: &str) {
     tokio::fs::write(path, contents).await.unwrap();
 }
 
+fn test_server_bin() -> String {
+    let bin = env!("CARGO_BIN_EXE_ctx-lsp-test-server");
+    let path = Path::new(bin);
+    if path.is_absolute() {
+        return bin.to_string();
+    }
+
+    let test_srcdir =
+        std::env::var("TEST_SRCDIR").expect("relative test server path requires TEST_SRCDIR");
+    let test_workspace =
+        std::env::var("TEST_WORKSPACE").expect("relative test server path requires TEST_WORKSPACE");
+    Path::new(&test_srcdir)
+        .join(test_workspace)
+        .join(bin)
+        .to_string_lossy()
+        .to_string()
+}
+
 #[tokio::test]
 async fn test_server_produces_diagnostics() {
-    let bin = env!("CARGO_BIN_EXE_ctx-lsp-test-server");
+    let bin = test_server_bin();
 
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -40,7 +58,7 @@ async fn test_server_produces_diagnostics() {
 
 #[tokio::test]
 async fn test_server_apply_edit_is_applied_to_disk() {
-    let bin = env!("CARGO_BIN_EXE_ctx-lsp-test-server");
+    let bin = test_server_bin();
 
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -66,7 +84,7 @@ async fn test_server_apply_edit_is_applied_to_disk() {
 
 #[tokio::test]
 async fn test_server_supports_semantic_actions() {
-    let bin = env!("CARGO_BIN_EXE_ctx-lsp-test-server");
+    let bin = test_server_bin();
 
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -244,7 +262,7 @@ async fn test_server_supports_semantic_actions() {
 
 #[tokio::test]
 async fn test_server_supports_agent_text_only_extensions() {
-    let bin = env!("CARGO_BIN_EXE_ctx-lsp-test-server");
+    let bin = test_server_bin();
 
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

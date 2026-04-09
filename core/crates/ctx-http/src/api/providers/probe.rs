@@ -124,9 +124,12 @@ pub(super) async fn bootstrap_provider_probe_summary(
         return (true, false, None);
     }
 
-    match provider_probe::provider_probe_env_for_workspace_runtime(state, workspace, provider_id)
-        .await
-    {
+    match crate::provider_launch::probe::provider_probe_env_for_workspace_runtime(
+        state,
+        workspace,
+        provider_id,
+    )
+    .await {
         Ok(_) => (true, false, None),
         Err(err) => {
             let probe_error = logs::redact_sensitive(&err);

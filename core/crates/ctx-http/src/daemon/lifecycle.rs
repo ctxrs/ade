@@ -69,12 +69,12 @@ async fn refresh_stale_selected_endpoint_model_catalogs(
 
     for provider_id in provider_ids {
         let Ok(config) =
-            crate::harness_sources::get_provider_source_config(&state.core.data_root, &provider_id)
+            ctx_harness_sources::get_provider_source_config(&state.core.data_root, &provider_id)
                 .await
         else {
             continue;
         };
-        if config.selected_source_kind != crate::harness_sources::HarnessSourceKind::Endpoint {
+        if config.selected_source_kind != ctx_harness_sources::HarnessSourceKind::Endpoint {
             continue;
         }
         let Some(selected_endpoint_id) = config.selected_endpoint_id.as_deref() else {
@@ -87,11 +87,11 @@ async fn refresh_stale_selected_endpoint_model_catalogs(
         else {
             continue;
         };
-        if !crate::harness_sources::endpoint_model_catalog_is_stale(endpoint, now) {
+        if !ctx_harness_sources::endpoint_model_catalog_is_stale(endpoint, now) {
             continue;
         }
 
-        match crate::harness_sources::refresh_provider_endpoint_model_catalog(
+        match ctx_harness_sources::refresh_provider_endpoint_model_catalog(
             &state.core.data_root,
             &provider_id,
             selected_endpoint_id,

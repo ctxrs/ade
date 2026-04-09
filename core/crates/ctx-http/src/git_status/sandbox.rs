@@ -10,7 +10,7 @@ use ctx_fs::vcs;
 
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::harness_runtime::{sandbox_container_command, workspace_container_name};
+use crate::workspace_runtime::{sandbox_container_command, workspace_container_name};
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::worktree_data_plane::{
     apply_data_plane_to_execution_settings, resolve_worktree_data_plane,
@@ -78,7 +78,7 @@ async fn container_git_output(
                 .arg(&container_name)
                 .arg("git")
                 .args(args);
-            crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_GIT_TIMEOUT)
+            crate::workspace_runtime::command_output_with_timeout(cmd, SANDBOX_GIT_TIMEOUT)
                 .await
                 .context("sandbox exec git timed out")
         }

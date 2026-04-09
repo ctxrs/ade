@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use ctx_core::ids::WorkspaceId;
 use tokio::sync::{broadcast, watch, Mutex};
 
-use crate::harness_runtime::{
+use crate::workspace_runtime::{
     self, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase, HarnessSetupProgressUpdate,
 };
 use crate::settings::ExecutionSettings;
@@ -59,7 +59,7 @@ impl SharedWarmupOperations for DefaultWarmupOperations {
         settings: ExecutionSettings,
         observer: Arc<dyn HarnessSetupObserver>,
     ) -> Result<()> {
-        harness_runtime::prewarm_selected_runtime_with_observer(
+        workspace_runtime::prewarm_selected_runtime_with_observer(
             &self.data_root,
             &settings.container,
             Some(observer.as_ref()),
@@ -72,13 +72,13 @@ impl SharedWarmupOperations for DefaultWarmupOperations {
         settings: ExecutionSettings,
         observer: Arc<dyn HarnessSetupObserver>,
     ) -> Result<()> {
-        harness_runtime::prewarm_selected_runtime_for_launch_with_observer(
+        workspace_runtime::prewarm_selected_runtime_for_launch_with_observer(
             &self.data_root,
             &settings.container,
             Some(observer.as_ref()),
         )
         .await?;
-        if let Some(record) = harness_runtime::selected_shared_substrate_lifecycle(&self.data_root)?
+        if let Some(record) = workspace_runtime::selected_shared_substrate_lifecycle(&self.data_root)?
         {
             self.ops_events
                 .emit(crate::ops_events::substrate_lifecycle_observed_event(
@@ -95,7 +95,7 @@ impl SharedWarmupOperations for DefaultWarmupOperations {
     async fn warm_builder(&self, observer: Arc<dyn HarnessSetupObserver>) -> Result<()> {
         observer.on_phase(HarnessSetupPhase::ImageLoad, "warming container builder");
         crate::container_builder::ensure_builder_ready(&self.data_root).await?;
-        if let Some(record) = harness_runtime::selected_shared_substrate_lifecycle(&self.data_root)?
+        if let Some(record) = workspace_runtime::selected_shared_substrate_lifecycle(&self.data_root)?
         {
             self.ops_events
                 .emit(crate::ops_events::substrate_lifecycle_observed_event(
@@ -330,13 +330,13 @@ impl PrewarmLaunchJobKey {
     pub(crate) fn for_request(settings: &ExecutionSettings, scope: RuntimePrewarmScope) -> Self {
         match scope {
             RuntimePrewarmScope::Runtime => Self::Runtime {
-                target: harness_runtime::runtime_prewarm_target(&settings.container),
+                target: workspace_runtime::runtime_prewarm_target(&settings.container),
             },
             RuntimePrewarmScope::LaunchReady => Self::LaunchReady {
-                target: harness_runtime::runtime_prewarm_target(&settings.container),
+                target: workspace_runtime::runtime_prewarm_target(&settings.container),
             },
             RuntimePrewarmScope::All => Self::All {
-                target: harness_runtime::runtime_prewarm_target(&settings.container),
+                target: workspace_runtime::runtime_prewarm_target(&settings.container),
             },
             RuntimePrewarmScope::Builder => Self::Builder,
         }
@@ -424,7 +424,7 @@ impl PrewarmJobRegistry {
         settings: &ExecutionSettings,
         requested_scope: RuntimePrewarmScope,
     ) -> Option<Arc<SharedPrewarmLaunchJob>> {
-        let target = harness_runtime::runtime_prewarm_target(&settings.container);
+        let target = workspace_runtime::runtime_prewarm_target(&settings.container);
         match requested_scope {
             RuntimePrewarmScope::Runtime
             | RuntimePrewarmScope::LaunchReady
@@ -622,7 +622,7 @@ fn exact_runtime_task_key(
     settings: &ExecutionSettings,
     requires_launch_ready: bool,
 ) -> SharedWarmupKey {
-    let target = harness_runtime::runtime_prewarm_target(&settings.container);
+    let target = workspace_runtime::runtime_prewarm_target(&settings.container);
     if requires_launch_ready {
         SharedWarmupKey::LaunchReady { target }
     } else {
@@ -634,7 +634,7 @@ fn runtime_task_keys(
     settings: &ExecutionSettings,
     requires_launch_ready: bool,
 ) -> Vec<SharedWarmupKey> {
-    let target = harness_runtime::runtime_prewarm_target(&settings.container);
+    let target = workspace_runtime::runtime_prewarm_target(&settings.container);
     if requires_launch_ready {
         vec![SharedWarmupKey::LaunchReady {
             target: target.clone(),

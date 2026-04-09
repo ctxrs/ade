@@ -90,12 +90,6 @@ test("generated turbo tasks include dependency-closure inputs", () => {
   );
   assert.equal(
     ctxHttpWorkspaceStreamSuiteTask.inputs.includes(
-      "crates/ctx-http/src/workspace_active_snapshot.rs",
-    ),
-    true,
-  );
-  assert.equal(
-    ctxHttpWorkspaceStreamSuiteTask.inputs.includes(
       "crates/ctx-http/src/workspace_active_snapshot/**",
     ),
     false,

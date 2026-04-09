@@ -189,12 +189,12 @@ async fn archive_task_only_dematerializes_sandbox_state() {
             substrate: SandboxSubstrate::SharedVmContainer,
             guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
             profile: SandboxProfile::Standard,
-            live_workspace_root: crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+            live_workspace_root: crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
             live_worktree_root: crate::disk_isolated::container_worktree_root(worktree.id)
                 .to_string_lossy()
                 .to_string(),
             execution_settings_json: None,
-            container_name: Some(crate::harness_runtime::workspace_container_name(
+            container_name: Some(crate::workspace_runtime::workspace_container_name(
                 workspace.id,
             )),
             host_materialization_root: Some(
@@ -209,7 +209,7 @@ async fn archive_task_only_dematerializes_sandbox_state() {
     let sandbox_cli_path = crate::test_support::write_running_container_sandbox_cli_shim(
         temp.path(),
         &log_path,
-        &crate::harness_runtime::workspace_container_name(workspace.id),
+        &crate::workspace_runtime::workspace_container_name(workspace.id),
     );
     let _sandbox_cli = EnvVarGuard::set(
         "CTX_HARNESS_SANDBOX_CLI_PATH",
@@ -335,14 +335,14 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
             substrate: SandboxSubstrate::NativeContainer,
             guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
             profile: SandboxProfile::Standard,
-            live_workspace_root: crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+            live_workspace_root: crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
             live_worktree_root: crate::disk_isolated::container_worktree_root(worktree.id)
                 .to_string_lossy()
                 .to_string(),
             execution_settings_json: Some(
                 serde_json::to_string(&persisted_snapshot).expect("serialize binding snapshot"),
             ),
-            container_name: Some(crate::harness_runtime::workspace_container_name(
+            container_name: Some(crate::workspace_runtime::workspace_container_name(
                 workspace.id,
             )),
             host_materialization_root: None,
@@ -355,7 +355,7 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
     let sandbox_cli_path = crate::test_support::write_running_container_sandbox_cli_shim(
         temp.path(),
         &log_path,
-        &crate::harness_runtime::workspace_container_name(workspace.id),
+        &crate::workspace_runtime::workspace_container_name(workspace.id),
     );
     let _sandbox_cli = EnvVarGuard::set(
         "CTX_HARNESS_SANDBOX_CLI_PATH",
@@ -504,7 +504,7 @@ async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {
             substrate: SandboxSubstrate::NativeContainer,
             guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
             profile: SandboxProfile::Standard,
-            live_workspace_root: crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+            live_workspace_root: crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
             live_worktree_root: crate::disk_isolated::container_worktree_root(worktree.id)
                 .to_string_lossy()
                 .to_string(),
@@ -521,7 +521,7 @@ async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {
                 })
                 .to_string(),
             ),
-            container_name: Some(crate::harness_runtime::workspace_container_name(
+            container_name: Some(crate::workspace_runtime::workspace_container_name(
                 workspace.id,
             )),
             host_materialization_root: None,
@@ -534,7 +534,7 @@ async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {
     let sandbox_cli_path = crate::test_support::write_running_container_sandbox_cli_shim(
         temp.path(),
         &log_path,
-        &crate::harness_runtime::workspace_container_name(workspace.id),
+        &crate::workspace_runtime::workspace_container_name(workspace.id),
     );
     let _sandbox_cli = EnvVarGuard::set(
         "CTX_HARNESS_SANDBOX_CLI_PATH",

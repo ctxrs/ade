@@ -9,12 +9,12 @@ use tokio::time::MissedTickBehavior;
 
 use crate::buffers::BufferStoreStats;
 use crate::daemon::AppState;
-use crate::harness_runtime::HarnessRuntimeStats;
+use crate::workspace_runtime::HarnessRuntimeStats;
 use crate::logs;
 use crate::perf_telemetry::PerfTelemetryStats;
 use crate::terminals::TerminalManagerStats;
 use crate::web_sessions::WebSessionManagerStats;
-use crate::workspace_active_snapshot::WorkspaceActiveSnapshotStats;
+use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotStats;
 use ctx_lsp::LspManagerStats;
 use ctx_store::StoreManagerStats;
 

@@ -12,7 +12,7 @@ use tokio::sync::{Barrier, Notify, Semaphore};
 use tokio::task::JoinHandle;
 
 use crate::execution_setup::warmup_coordination::SharedWarmupOperations;
-use crate::harness_runtime::HarnessRuntimeManager;
+use crate::workspace_runtime::HarnessRuntimeManager;
 use crate::ops_events::OpsEvents;
 use crate::perf_telemetry::PerfTelemetry;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode, ExecutionSettings, Settings};
@@ -748,10 +748,10 @@ impl SharedWarmupOperations for BlockingSandboxCliLoadWarmupOperations {
             HarnessSetupPhase::ImageLoad,
             "loading harness image into local sandbox runtime",
         );
-        let mut cmd = crate::harness_runtime::sandbox_container_command(&self.data_root)?;
+        let mut cmd = crate::workspace_runtime::sandbox_container_command(&self.data_root)?;
         cmd.arg("load").arg("-i").arg(&self.image_tar);
         let output =
-            crate::harness_runtime::command_output_with_timeout(cmd, Duration::from_secs(60))
+            crate::workspace_runtime::command_output_with_timeout(cmd, Duration::from_secs(60))
                 .await?;
         if output.status.success() {
             return Ok(());
@@ -1149,7 +1149,7 @@ async fn startup_prewarm_backfills_metadata_when_runtime_is_already_ready() {
         .expect("expected prewarm metadata");
     assert_eq!(
         metadata.image_ref,
-        crate::harness_runtime::default_container_image()
+        crate::workspace_runtime::default_container_image()
     );
     assert_eq!(metadata.bundled_image_fingerprint, None);
     assert_eq!(
@@ -1172,7 +1172,7 @@ async fn startup_prewarm_preserves_existing_ready_timestamp_when_reusing_ready_r
     write_prewarm_metadata(
         data_dir.path(),
         &StartupPrewarmMetadata {
-            image_ref: crate::harness_runtime::default_container_image().to_string(),
+            image_ref: crate::workspace_runtime::default_container_image().to_string(),
             bundled_image_fingerprint: None,
             ready_at: "2026-03-20T00:00:00Z".to_string(),
         },
@@ -1246,7 +1246,7 @@ async fn startup_prewarm_keeps_existing_metadata_when_machine_stays_down() {
         &sandbox_cli_path.to_string_lossy(),
     );
 
-    let image = crate::harness_runtime::default_container_image();
+    let image = crate::workspace_runtime::default_container_image();
     write_prewarm_metadata(
         data_dir.path(),
         &StartupPrewarmMetadata {
@@ -1298,7 +1298,7 @@ async fn startup_prewarm_does_not_record_success_for_stale_loaded_default_image(
     std::fs::create_dir_all(&bundle_images_dir).expect("create bundle images dir");
     let tar_path = bundle_images_dir.join("ctx-harness.tar");
     std::fs::write(&tar_path, b"bundle image tar").expect("write bundled image tar");
-    let default_image = crate::harness_runtime::default_container_image();
+    let default_image = crate::workspace_runtime::default_container_image();
     let manifest = serde_json::json!({
         "version": 1,
         "providers": [],
@@ -1397,7 +1397,7 @@ async fn successful_workspace_launch_writes_missing_prewarm_metadata() {
     std::fs::create_dir_all(&bundle_images_dir).expect("create bundle images dir");
     let tar_path = bundle_images_dir.join("ctx-harness.tar");
     std::fs::write(&tar_path, b"bundle image tar").expect("write bundled image tar");
-    let default_image = crate::harness_runtime::default_container_image();
+    let default_image = crate::workspace_runtime::default_container_image();
     let manifest = serde_json::json!({
         "version": 1,
         "providers": [],
@@ -1508,7 +1508,7 @@ async fn successful_workspace_launch_refresh_clears_stale_prewarm_metadata() {
     std::fs::create_dir_all(&bundle_images_dir).expect("create bundle images dir");
     let tar_path = bundle_images_dir.join("ctx-harness.tar");
     std::fs::write(&tar_path, b"bundle image tar").expect("write bundled image tar");
-    let default_image = crate::harness_runtime::default_container_image();
+    let default_image = crate::workspace_runtime::default_container_image();
     let manifest = serde_json::json!({
         "version": 1,
         "providers": [],
@@ -1643,7 +1643,7 @@ async fn successful_workspace_launch_refreshes_prewarm_metadata_when_image_ref_c
     std::fs::create_dir_all(&bundle_images_dir).expect("create bundle images dir");
     let tar_path = bundle_images_dir.join("ctx-harness.tar");
     std::fs::write(&tar_path, b"bundle image tar").expect("write bundled image tar");
-    let default_image = crate::harness_runtime::default_container_image();
+    let default_image = crate::workspace_runtime::default_container_image();
     let manifest = serde_json::json!({
         "version": 1,
         "providers": [],
@@ -1758,7 +1758,7 @@ async fn workspace_override_image_does_not_clobber_startup_prewarm_metadata() {
     let workspace_root = data_dir.path().join("ws");
     std::fs::create_dir_all(&workspace_root).expect("create workspace root");
 
-    let default_image = crate::harness_runtime::default_container_image();
+    let default_image = crate::workspace_runtime::default_container_image();
     write_prewarm_metadata(
         data_dir.path(),
         &StartupPrewarmMetadata {
@@ -2018,7 +2018,7 @@ async fn compute_prewarm_gate_keeps_prefetched_avf_runtime_unready_without_vm_bo
     );
     let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli_path = EnvVarGuard::set(
-        crate::harness_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         &sandbox_cli_path.to_string_lossy(),
     );
     let (_runtime_fixture, servers) = install_test_managed_avf_linux_runtime_source().await;
@@ -2030,7 +2030,7 @@ async fn compute_prewarm_gate_keeps_prefetched_avf_runtime_unready_without_vm_bo
         },
     };
     let coordinator = test_coordinator(data_dir.path().to_path_buf());
-    crate::harness_runtime::prewarm_selected_runtime_with_observer(
+    crate::workspace_runtime::prewarm_selected_runtime_with_observer(
         data_dir.path(),
         &settings.container,
         None,
@@ -2072,7 +2072,7 @@ async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtim
     );
     let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli_path = EnvVarGuard::set(
-        crate::harness_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         &sandbox_cli_path.to_string_lossy(),
     );
     let (_runtime_fixture, servers) = install_test_managed_avf_linux_runtime_source().await;
@@ -2110,12 +2110,12 @@ async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtim
         .expect("read AVF startup state");
     assert_eq!(runtime_state, (false, false));
     let artifact_state =
-        crate::harness_runtime::selected_runtime_state(data_dir.path(), &settings.container)
+        crate::workspace_runtime::selected_runtime_state(data_dir.path(), &settings.container)
             .await
             .expect("read AVF runtime artifact state");
     assert_eq!(artifact_state, (true, true));
     let launch_ready =
-        crate::harness_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
+        crate::workspace_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
             .await
             .expect("read AVF launch-ready state");
     assert!(
@@ -2140,7 +2140,7 @@ async fn runtime_prewarm_launch_ready_scope_starts_shared_vm_and_reports_launch_
     );
     let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli_path = EnvVarGuard::set(
-        crate::harness_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         &sandbox_cli_path.to_string_lossy(),
     );
     let (_runtime_fixture, servers) = install_test_managed_avf_linux_runtime_source().await;
@@ -2172,7 +2172,7 @@ async fn runtime_prewarm_launch_ready_scope_starts_shared_vm_and_reports_launch_
             && line.message == "shared VM substrate and launch image are ready"
     }));
     let launch_ready =
-        crate::harness_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
+        crate::workspace_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
             .await
             .expect("read AVF launch-ready state");
     assert!(
@@ -2726,7 +2726,7 @@ async fn runtime_prewarm_launch_ready_scope_starts_native_runtime_before_loading
     std::fs::create_dir_all(&bundle_images_dir).expect("create bundle images dir");
     let tar_path = bundle_images_dir.join("ctx-harness.tar");
     std::fs::write(&tar_path, b"bundle image tar").expect("write bundled image tar");
-    let default_image = crate::harness_runtime::default_container_image();
+    let default_image = crate::workspace_runtime::default_container_image();
     let manifest = serde_json::json!({
         "version": 1,
         "providers": [],
@@ -2789,7 +2789,7 @@ async fn runtime_prewarm_launch_ready_scope_starts_native_runtime_before_loading
             && line.message == "local sandbox runtime and launch image are ready"
     }));
     let launch_ready =
-        crate::harness_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
+        crate::workspace_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
             .await
             .expect("read native launch-ready state");
     assert!(

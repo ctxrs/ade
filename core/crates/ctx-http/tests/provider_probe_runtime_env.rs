@@ -11,7 +11,7 @@ use ctx_http::installer::{
     load_agent_server_config, save_agent_server_config, AgentServerCommand, ManagedInstallMetadata,
 };
 use ctx_http::installs::InstallTarget;
-use ctx_http::provider_accounts::{
+use ctx_provider_accounts::{
     add_copilot_account, add_gemini_account, add_kimi_account, upsert_amp_account,
 };
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};

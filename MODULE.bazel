@@ -20,6 +20,7 @@ crate.spec(package = "base64", version = "0.22")
 crate.spec(package = "chrono", version = "0.4", features = ["serde"])
 crate.spec(package = "directories", version = "5")
 crate.spec(package = "hex", version = "0.4")
+crate.spec(package = "lsp-types", version = "0.97", features = ["proposed"])
 crate.spec(
     package = "reqwest",
     version = "0.12",

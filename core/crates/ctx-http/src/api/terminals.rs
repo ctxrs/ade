@@ -11,7 +11,7 @@ use super::errors::ApiErrorResp;
 use crate::buffers::BufferStore;
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::harness_runtime;
+use crate::workspace_runtime;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::terminals::{
     NativeContainerTerminalSpec, SharedVmContainerTerminalSpec, TerminalCreateRequest,
@@ -542,7 +542,7 @@ pub(super) async fn create_workspace_terminal(
                         )
                     })?;
                 }
-                let inv = harness_runtime::sandbox_cli_invocation(&state.core.data_root).map_err(
+                let inv = workspace_runtime::sandbox_cli_invocation(&state.core.data_root).map_err(
                     |e| {
                         (
                             StatusCode::INTERNAL_SERVER_ERROR,
@@ -556,7 +556,7 @@ pub(super) async fn create_workspace_terminal(
                     Some(NativeContainerTerminalSpec {
                         cli_bin: inv.bin,
                         cli_env: inv.env,
-                        container_name: harness_runtime::workspace_container_name(workspace_id),
+                        container_name: workspace_runtime::workspace_container_name(workspace_id),
                         workdir: cwd.to_string_lossy().to_string(),
                         user: Some(crate::workspace_runtime::CONTAINER_TERMINAL_USER.to_string()),
                     }),
@@ -613,7 +613,7 @@ pub(super) async fn create_workspace_terminal(
                         )
                     })?;
                 }
-                let helper_path = harness_runtime::avf_linux_helper_path().map_err(|e| {
+                let helper_path = workspace_runtime::avf_linux_helper_path().map_err(|e| {
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ApiErrorResp {

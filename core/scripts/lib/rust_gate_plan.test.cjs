@@ -30,9 +30,9 @@ test("mixed test strategy keeps ctx-http and ctx-store on cargo test and routes 
   );
 
   assert.deepEqual(plan, {
-    bazelTestCrates: ["ctx-provider-accounts"],
+    bazelTestCrates: ["ctx-provider-accounts", "ctx-workspace-active-snapshot"],
     cargoTestCrates: ["ctx-http", "ctx-store"],
-    nextestCrates: ["ctx-workspace-active-snapshot"],
+    nextestCrates: [],
   });
 });
 
@@ -44,9 +44,11 @@ test("mixed test strategy keeps the Bazel-covered slice explicit", () => {
   assert.deepEqual([...BAZEL_TEST_CRATES].sort(), [
     "ctx-core",
     "ctx-harness-sources",
+    "ctx-lsp",
     "ctx-provider-accounts",
     "ctx-provider-auth-import",
     "ctx-providers",
+    "ctx-workspace-active-snapshot",
   ]);
 });
 

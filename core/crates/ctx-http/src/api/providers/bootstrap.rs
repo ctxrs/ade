@@ -94,7 +94,7 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                 .await
                 .ok();
                 let has_active_auth =
-                    provider_probe::provider_has_active_auth_for_workspace_runtime(
+                    crate::provider_launch::probe::provider_has_active_auth_for_workspace_runtime(
                         &state,
                         &workspace,
                         &provider_id,

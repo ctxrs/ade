@@ -82,13 +82,13 @@ pub(in crate::api) async fn materialize_sandbox_binding_for_worktree(
         substrate: materialization.substrate.substrate,
         guest_identity: materialization.substrate.guest_identity,
         profile: SandboxProfile::Standard,
-        live_workspace_root: crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+        live_workspace_root: crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
         live_worktree_root: materialization
             .live_worktree_root
             .to_string_lossy()
             .to_string(),
         execution_settings_json: Some(serde_json::to_string(effective)?),
-        container_name: Some(crate::harness_runtime::workspace_container_name(
+        container_name: Some(crate::workspace_runtime::workspace_container_name(
             workspace.id,
         )),
         host_materialization_root: materialization

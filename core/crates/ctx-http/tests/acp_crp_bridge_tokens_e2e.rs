@@ -7,12 +7,12 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 
 use ctx_core::models::SessionEventType;
+use ctx_provider_accounts::KIMI_SHARE_DIR_ENV;
 use ctx_providers::adapters::{ProviderAdapter, TurnInput};
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_providers::events::NormalizedEvent;
 
 use ctx_http::installer::{load_agent_server_config, resolve_provider_command, AgentServerCommand};
-use ctx_http::provider_accounts::KIMI_SHARE_DIR_ENV;
 
 const DEFAULT_OPENROUTER_MODEL: &str = "openai/gpt-4.1-mini";
 const DEFAULT_GEMINI_MODEL: &str = "google/gemini-3-flash-preview";

@@ -14,7 +14,7 @@ use ctx_store::WorktreeBootstrapResultUpdate;
 
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::harness_runtime;
+use crate::workspace_runtime;
 use crate::logs;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::workspace_config;
@@ -498,8 +498,8 @@ async fn run_bootstrap_step_in_container(
 
     let mut cmd = match sandbox.settings.container.runtime {
         ContainerRuntimeKind::NativeContainer => {
-            let container_name = harness_runtime::workspace_container_name(workspace.id);
-            let mut cmd = harness_runtime::sandbox_container_command(&state.core.data_root)?;
+            let container_name = workspace_runtime::workspace_container_name(workspace.id);
+            let mut cmd = workspace_runtime::sandbox_container_command(&state.core.data_root)?;
             cmd.arg("exec")
                 .arg("--workdir")
                 .arg(sandbox.live_worktree_root);

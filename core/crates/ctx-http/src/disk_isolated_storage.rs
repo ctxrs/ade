@@ -74,7 +74,7 @@ async fn sandbox_storage_sample(
     label: &str,
 ) -> Result<StorageAdmissionSample> {
     const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
-    let mut cmd = crate::harness_runtime::sandbox_container_command(data_root)?;
+    let mut cmd = crate::workspace_runtime::sandbox_container_command(data_root)?;
     cmd.arg("exec")
         .arg("--interactive")
         .arg(container_id)
@@ -82,7 +82,7 @@ async fn sandbox_storage_sample(
         .arg("-Pk")
         .arg("--")
         .arg(path);
-    let out = crate::harness_runtime::command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
+    let out = crate::workspace_runtime::command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
         .await
         .with_context(|| format!("querying sandbox free space for {}", path.display()))?;
     if !out.status.success() {

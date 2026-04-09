@@ -1,7 +1,7 @@
 use super::helpers::strip_emitted_prefix;
 use super::provider_mode_id_for;
 use super::runtime_provider_id_for_session_provider;
-use crate::harness_sources::{
+use ctx_harness_sources::{
     HarnessApiShape, HarnessEndpointRecord, HarnessEndpointVerificationStatus, HarnessSourceKind,
     ResolvedHarnessSource,
 };
@@ -91,7 +91,7 @@ fn gemini_bearer_endpoint_keeps_gemini_runtime_provider() {
             last_verification_at: None,
             last_error: None,
             has_api_key: true,
-            model_catalog_status: crate::harness_sources::EndpointModelCatalogStatus::Unknown,
+            model_catalog_status: EndpointModelCatalogStatus::Unknown,
             model_catalog_fetched_at: None,
             model_catalog_error: None,
             model_catalog_models: Vec::new(),
@@ -260,7 +260,7 @@ fn runtime_path_includes_target_specific_managed_provider_dependency_bin_dirs() 
     let mut provider_env = HashMap::new();
     provider_env.insert("PATH".to_string(), "/usr/bin".to_string());
     provider_env.insert(
-        crate::harness_runtime::CTX_HARNESS_LINUX_SANDBOX_ENV.to_string(),
+        crate::workspace_runtime::CTX_HARNESS_LINUX_SANDBOX_ENV.to_string(),
         "1".to_string(),
     );
     installer::prepend_runtime_bin_dirs_to_provider_path_for_target(

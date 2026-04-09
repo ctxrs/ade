@@ -29,7 +29,7 @@ const avfLinuxHelperEntitlementsPath = path.join(
   "ctx-avf-linux-helper.entitlements",
 );
 const bundleScript = path.join(coreRoot, "..", "scripts", "ensure_bundled_harnesses.sh");
-const harnessRuntimeRs = path.join(coreRoot, "crates", "ctx-http", "src", "harness_runtime.rs");
+const harnessRuntimeRs = path.join(coreRoot, "crates", "ctx-http", "src", "workspace_runtime.rs");
 const hostManifestOs = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
 const hostManifestArch = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch;
 const parityProviderTargets = [

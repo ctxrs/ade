@@ -26,10 +26,6 @@ use super::provider_catalog::{
 use super::provider_probe_auth::provider_auth_mode;
 use super::redact_json_value;
 use crate::daemon::AppState;
-use crate::harness_sources;
-use crate::harness_sources::{
-    HarnessApiShape, HarnessEndpointRecord, HarnessEndpointVerificationStatus, HarnessSourceKind,
-};
 use crate::installs::{InstallId, InstallInfo, InstallProgressEvent, InstallTarget};
 use crate::logs;
 use crate::provider_launch::install as provider_launch_install;
@@ -44,6 +40,11 @@ use crate::provider_launch::status::{
 };
 use crate::provider_usability::{provider_status_is_usable, provider_status_unusable_reason};
 use ctx_core::ids::WorkspaceId;
+use ctx_harness_sources as harness_sources;
+use ctx_harness_sources::{
+    HarnessApiShape, HarnessEndpointRecord, HarnessEndpointVerificationStatus, HarnessSourceKind,
+};
+use ctx_provider_accounts as provider_accounts;
 use ctx_providers::crp::{probe_crp_models, probe_crp_runtime_launch};
 
 #[derive(Debug, Deserialize)]
@@ -335,7 +336,7 @@ pub(crate) fn subscription_models_payload_from_status(
             },
         }));
     }
-    crate::provider_accounts::pinned_subscription_models_value(
+    provider_accounts::pinned_subscription_models_value(
         &provider_status.provider_id,
         provider_status.version.as_deref(),
     )

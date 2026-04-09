@@ -8,17 +8,21 @@ const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
     "//core/crates/ctx-core:workspace_payload_corpus",
   ],
   "ctx-harness-sources": ["//core/crates/ctx-harness-sources:unit_tests"],
+  "ctx-lsp": ["//core/crates/ctx-lsp:lsp_manager_smoke"],
   "ctx-provider-accounts": ["//core/crates/ctx-provider-accounts:unit_tests"],
   "ctx-provider-auth-import": ["//core/crates/ctx-provider-auth-import:unit_tests"],
   "ctx-providers": ["//core/crates/ctx-providers:unit_tests"],
+  "ctx-workspace-active-snapshot": ["//core/crates/ctx-workspace-active-snapshot:unit_tests"],
 });
 
 const BAZEL_BUILD_TARGETS_BY_CRATE = Object.freeze({
   "ctx-core": ["//core/crates/ctx-core:lib"],
   "ctx-harness-sources": ["//core/crates/ctx-harness-sources:lib"],
+  "ctx-lsp": ["//core/crates/ctx-lsp:ctx-lsp-test-server", "//core/crates/ctx-lsp:lib"],
   "ctx-provider-accounts": ["//core/crates/ctx-provider-accounts:lib"],
   "ctx-provider-auth-import": ["//core/crates/ctx-provider-auth-import:lib"],
   "ctx-providers": ["//core/crates/ctx-providers:lib"],
+  "ctx-workspace-active-snapshot": ["//core/crates/ctx-workspace-active-snapshot:lib"],
 });
 
 function getBazelCoveredCrates() {

@@ -2055,7 +2055,7 @@ async fn kimi_login_start_and_status_success_persists_oauth_account() {
     assert_eq!(accounts.active_account_id, status.account_id);
     assert_eq!(accounts.accounts[0].label.as_deref(), Some("Kimi Google"));
 
-    let registry = ctx_http::provider_accounts::load_kimi_registry(data_dir.path()).await;
+    let registry = ctx_provider_accounts::load_kimi_registry(data_dir.path()).await;
     assert_eq!(registry.accounts.len(), 1);
     assert_eq!(registry.accounts[0].kind, "oauth");
 

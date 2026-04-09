@@ -64,7 +64,7 @@ pub async fn ensure_worktree_from_host_copy(
         data_root,
         &container_id,
         estimated_copy_bytes,
-        Path::new(crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT),
+        Path::new(crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT),
         StorageAdmissionOperation::DiskIsolatedWorktreeMaterialization,
     )
     .await
@@ -125,7 +125,7 @@ pub async fn ensure_workspace_root_from_host_copy(
     workspace: &Workspace,
 ) -> Result<PathBuf> {
     let container_id = sandbox_container_id(workspace.id);
-    let dest_root = PathBuf::from(crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT);
+    let dest_root = PathBuf::from(crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT);
     if sandbox::verify_container_git_repo(data_root, &container_id, &dest_root)
         .await
         .is_ok()
