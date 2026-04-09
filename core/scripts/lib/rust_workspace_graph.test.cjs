@@ -8,6 +8,7 @@ const {
   buildWorkspaceGraph,
   collectChangedCrates,
   expandReverseDependencies,
+  getCtxHttpSuiteTaskName,
   getTurboTaskNamesForCrates,
 } = require("./rust_workspace_graph.cjs");
 
@@ -32,36 +33,38 @@ test("workspace graph expands reverse dependencies through extracted ctx-http le
   assert.equal(impacted.includes("ctx-http"), true);
 });
 
-test("generated package scripts include per-crate clippy, test, and nextest tasks", () => {
+test("generated package scripts include per-crate and ctx-http suite tasks", () => {
   const graph = buildWorkspaceGraph(coreRoot);
   const scripts = buildGeneratedPackageScripts(graph);
 
   assert.equal(typeof scripts["rust:crate:clippy:ctx-http"], "string");
   assert.equal(typeof scripts["rust:crate:test:ctx-http"], "string");
   assert.equal(typeof scripts["rust:crate:nextest:ctx-http"], "string");
+  assert.equal(typeof scripts["rust:ctx-http:test:workspace-stream"], "string");
 });
 
 test("generated turbo tasks include dependency-closure inputs", () => {
   const graph = buildWorkspaceGraph(coreRoot);
   const tasks = buildGeneratedTurboTasks(graph);
-  const ctxHttpTestTask = tasks["rust:crate:test:ctx-http"];
+  const ctxHttpWorkspaceSuiteTask = tasks["rust:ctx-http:test:workspace-stream"];
 
-  assert.equal(Array.isArray(ctxHttpTestTask.inputs), true);
-  assert.equal(ctxHttpTestTask.inputs.includes("crates/ctx-http/**"), true);
-  assert.equal(ctxHttpTestTask.inputs.includes("crates/ctx-provider-accounts/**"), true);
-  assert.equal(ctxHttpTestTask.inputs.includes("scripts/rust_crate_task.cjs"), true);
+  assert.equal(Array.isArray(ctxHttpWorkspaceSuiteTask.inputs), true);
+  assert.equal(ctxHttpWorkspaceSuiteTask.inputs.includes("crates/ctx-http/src/**"), true);
+  assert.equal(
+    ctxHttpWorkspaceSuiteTask.inputs.includes("crates/ctx-http/tests/workspace_active_snapshot_http.rs"),
+    true,
+  );
+  assert.equal(ctxHttpWorkspaceSuiteTask.inputs.includes("crates/ctx-provider-accounts/**"), true);
+  assert.equal(ctxHttpWorkspaceSuiteTask.inputs.includes("scripts/ctx_http_suite_task.cjs"), true);
 });
 
-test("turbo task names are stable for impacted crates", () => {
+test("ctx-http test expansion returns explicit suite task names", () => {
   const taskNames = getTurboTaskNamesForCrates(
-    ["ctx-provider-accounts", "ctx-http"],
-    ["clippy", "test"],
+    ["ctx-http"],
+    ["test"],
   );
 
-  assert.deepEqual(taskNames, [
-    "rust:crate:clippy:ctx-http",
-    "rust:crate:test:ctx-http",
-    "rust:crate:clippy:ctx-provider-accounts",
-    "rust:crate:test:ctx-provider-accounts",
-  ]);
+  assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("base")), true);
+  assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("workspace-stream")), true);
+  assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("sandbox-cloud")), true);
 });

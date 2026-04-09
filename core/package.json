@@ -179,7 +179,7 @@
     "rust:crate:test:ctx-harness-sources": "node scripts/rust_crate_task.cjs --crate ctx-harness-sources --task test",
     "rust:crate:nextest:ctx-harness-sources": "node scripts/rust_crate_task.cjs --crate ctx-harness-sources --task nextest",
     "rust:crate:clippy:ctx-http": "node scripts/rust_crate_task.cjs --crate ctx-http --task clippy",
-    "rust:crate:test:ctx-http": "node scripts/rust_crate_task.cjs --crate ctx-http --task test",
+    "rust:crate:test:ctx-http": "node scripts/ctx_http_suite_task.cjs --suite all",
     "rust:crate:nextest:ctx-http": "node scripts/rust_crate_task.cjs --crate ctx-http --task nextest",
     "rust:crate:clippy:ctx-load-test": "node scripts/rust_crate_task.cjs --crate ctx-load-test --task clippy",
     "rust:crate:test:ctx-load-test": "node scripts/rust_crate_task.cjs --crate ctx-load-test --task test",
@@ -216,7 +216,17 @@
     "rust:crate:nextest:ctx-worker-protocol": "node scripts/rust_crate_task.cjs --crate ctx-worker-protocol --task nextest",
     "rust:crate:clippy:ctx-worker-shim": "node scripts/rust_crate_task.cjs --crate ctx-worker-shim --task clippy",
     "rust:crate:test:ctx-worker-shim": "node scripts/rust_crate_task.cjs --crate ctx-worker-shim --task test",
-    "rust:crate:nextest:ctx-worker-shim": "node scripts/rust_crate_task.cjs --crate ctx-worker-shim --task nextest"
+    "rust:crate:nextest:ctx-worker-shim": "node scripts/rust_crate_task.cjs --crate ctx-worker-shim --task nextest",
+    "rust:ctx-http:test:base": "node scripts/ctx_http_suite_task.cjs --suite base",
+    "rust:ctx-http:test:workspace-stream": "node scripts/ctx_http_suite_task.cjs --suite workspace-stream",
+    "rust:ctx-http:test:provider-auth": "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
+    "rust:ctx-http:test:provider-runtime": "node scripts/ctx_http_suite_task.cjs --suite provider-runtime",
+    "rust:ctx-http:test:repo-vcs": "node scripts/ctx_http_suite_task.cjs --suite repo-vcs",
+    "rust:ctx-http:test:lsp": "node scripts/ctx_http_suite_task.cjs --suite lsp",
+    "rust:ctx-http:test:turns-terminal": "node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
+    "rust:ctx-http:test:artifacts-updates": "node scripts/ctx_http_suite_task.cjs --suite artifacts-updates",
+    "rust:ctx-http:test:sandbox-cloud": "node scripts/ctx_http_suite_task.cjs --suite sandbox-cloud",
+    "rust:ctx-http:test:all": "node scripts/ctx_http_suite_task.cjs --suite all"
   },
   "devDependencies": {
     "@supabase/supabase-js": "2.49.1",

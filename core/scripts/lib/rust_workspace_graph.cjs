@@ -1,6 +1,12 @@
 const childProcess = require("node:child_process");
 const path = require("node:path");
 
+const {
+  CTX_HTTP_SUITE_SCRIPT_INPUTS,
+  getCtxHttpSuiteNames,
+  getCtxHttpSuiteTaskName,
+} = require("./ctx_http_suites.cjs");
+
 const ROOT_RUST_INPUTS = [
   "Cargo.toml",
   "Cargo.lock",
@@ -9,9 +15,11 @@ const ROOT_RUST_INPUTS = [
   "clippy.toml",
   ".cargo/config.toml",
   "scripts/lib/cache_roots.cjs",
+  "scripts/lib/ctx_http_suites.cjs",
   "scripts/lib/turbo_runner.cjs",
   "scripts/lib/rust_workspace_graph.cjs",
   "scripts/lib/rust_gate_plan.cjs",
+  "scripts/ctx_http_suite_task.cjs",
   "scripts/rust_crate_task.cjs",
   "scripts/run_rust_gate.cjs",
   "scripts/run_rust_turbo.cjs",
@@ -22,6 +30,7 @@ const GENERATED_PACKAGE_SCRIPT_PREFIXES = [
   "rust:crate:clippy:",
   "rust:crate:test:",
   "rust:crate:nextest:",
+  "rust:ctx-http:test:",
 ];
 
 const GENERATED_PACKAGE_SCRIPT_NAMES = new Set([
@@ -33,6 +42,7 @@ const GENERATED_TURBO_TASK_PREFIXES = [
   "rust:crate:clippy:",
   "rust:crate:test:",
   "rust:crate:nextest:",
+  "rust:ctx-http:test:",
 ];
 
 function runCargoMetadata(coreRoot) {
@@ -182,6 +192,18 @@ function getClosureInputGlobs(graph, crateName) {
   return [...new Set([...ROOT_RUST_INPUTS, ...globs])];
 }
 
+function getDependencyInputGlobsWithoutSelf(graph, crateName) {
+  const closure = expandDependencies(graph, [crateName]).filter((name) => name !== crateName);
+  const globs = [];
+  for (const name of closure) {
+    const crate = graph.cratesByName.get(name);
+    if (crate) {
+      globs.push(`${crate.relDir}/**`);
+    }
+  }
+  return [...new Set([...ROOT_RUST_INPUTS, ...globs])];
+}
+
 function getTurboClippyTaskName(crateName) {
   return `rust:crate:clippy:${crateName}`;
 }
@@ -194,6 +216,34 @@ function getTurboNextestTaskName(crateName) {
   return `rust:crate:nextest:${crateName}`;
 }
 
+function getCtxHttpSuiteInputGlobs(graph, suiteName) {
+  const dependencyInputs = getDependencyInputGlobsWithoutSelf(graph, "ctx-http");
+  const baseInputs = [
+    ...dependencyInputs,
+    ...CTX_HTTP_SUITE_SCRIPT_INPUTS,
+    "crates/ctx-http/src/**",
+  ];
+  if (suiteName === "all") {
+    return [...new Set([...baseInputs, "crates/ctx-http/tests/**"])];
+  }
+  if (suiteName === "base") {
+    return [...new Set(baseInputs)];
+  }
+
+  const { getCtxHttpSuiteByName } = require("./ctx_http_suites.cjs");
+  const suite = getCtxHttpSuiteByName(suiteName);
+  if (!suite) {
+    throw new Error(`unknown ctx-http suite: ${suiteName}`);
+  }
+  return [
+    ...new Set([
+      ...baseInputs,
+      "crates/ctx-http/tests/common/**",
+      ...suite.testFiles.map((testFile) => `crates/ctx-http/tests/${testFile}.rs`),
+    ]),
+  ];
+}
+
 function buildGeneratedPackageScripts(graph) {
   const scripts = {
     "rust:turbo:sync": "node scripts/sync_rust_turbo_tasks.cjs",
@@ -202,10 +252,19 @@ function buildGeneratedPackageScripts(graph) {
   for (const crate of graph.crates) {
     scripts[getTurboClippyTaskName(crate.crateName)] =
       `node scripts/rust_crate_task.cjs --crate ${crate.crateName} --task clippy`;
-    scripts[getTurboTestTaskName(crate.crateName)] =
-      `node scripts/rust_crate_task.cjs --crate ${crate.crateName} --task test`;
+    if (crate.crateName === "ctx-http") {
+      scripts[getTurboTestTaskName(crate.crateName)] =
+        "node scripts/ctx_http_suite_task.cjs --suite all";
+    } else {
+      scripts[getTurboTestTaskName(crate.crateName)] =
+        `node scripts/rust_crate_task.cjs --crate ${crate.crateName} --task test`;
+    }
     scripts[getTurboNextestTaskName(crate.crateName)] =
       `node scripts/rust_crate_task.cjs --crate ${crate.crateName} --task nextest`;
+  }
+  for (const suiteName of getCtxHttpSuiteNames({ includeAll: true })) {
+    scripts[getCtxHttpSuiteTaskName(suiteName)] =
+      `node scripts/ctx_http_suite_task.cjs --suite ${suiteName}`;
   }
   return scripts;
 }
@@ -227,6 +286,12 @@ function buildGeneratedTurboTasks(graph) {
       outputs: [],
     };
   }
+  for (const suiteName of getCtxHttpSuiteNames({ includeAll: true })) {
+    tasks[getCtxHttpSuiteTaskName(suiteName)] = {
+      inputs: getCtxHttpSuiteInputGlobs(graph, suiteName),
+      outputs: [],
+    };
+  }
   return tasks;
 }
 
@@ -237,7 +302,11 @@ function getTurboTaskNamesForCrates(crateNames, taskKinds) {
       if (taskKind === "clippy") {
         taskNames.push(getTurboClippyTaskName(crateName));
       } else if (taskKind === "test") {
-        taskNames.push(getTurboTestTaskName(crateName));
+        if (crateName === "ctx-http") {
+          taskNames.push(...getCtxHttpSuiteNames().map((suiteName) => getCtxHttpSuiteTaskName(suiteName)));
+        } else {
+          taskNames.push(getTurboTestTaskName(crateName));
+        }
       } else if (taskKind === "nextest") {
         taskNames.push(getTurboNextestTaskName(crateName));
       } else {
@@ -259,6 +328,7 @@ module.exports = {
   collectChangedCrates,
   expandDependencies,
   expandReverseDependencies,
+  getCtxHttpSuiteTaskName,
   getClosureInputGlobs,
   getCrateByChangedPath,
   getTurboClippyTaskName,
