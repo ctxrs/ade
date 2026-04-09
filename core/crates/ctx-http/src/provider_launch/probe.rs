@@ -7,15 +7,16 @@ use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::logs;
 use crate::settings::{ContainerMountMode, ExecutionMode};
-use crate::worktree_data_plane::{
-    apply_data_plane_to_execution_settings, resolve_worktree_data_plane, workspace_data_plane,
-    WorktreeDataPlane,
-};
 use chrono::Utc;
 use ctx_core::ids::WorktreeId;
 use ctx_core::models::{Workspace, Worktree};
 use ctx_harness_sources::{HarnessSourceKind, ResolvedHarnessSource};
 use ctx_provider_accounts as provider_accounts;
+use ctx_worktree_data_plane::{
+    apply_data_plane_to_execution_settings, workspace_data_plane, WorktreeDataPlane,
+};
+
+use crate::worktree_data_plane::resolve_worktree_data_plane;
 
 pub(crate) struct WorkspaceRuntimeProbeContext {
     pub(crate) source: ResolvedHarnessSource,
@@ -441,10 +442,10 @@ mod tests {
     use crate::daemon::AppState;
     use crate::disk_isolated;
     use crate::settings::{ContainerMountMode, ExecutionMode};
-    use crate::worktree_data_plane::WorktreeDataPlane;
     use ctx_harness_sources::{HarnessSourceKind, ResolvedHarnessSource};
     use ctx_provider_accounts as provider_accounts;
     use ctx_provider_accounts::KIMI_SHARE_DIR_ENV;
+    use ctx_worktree_data_plane::WorktreeDataPlane;
 
     static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 

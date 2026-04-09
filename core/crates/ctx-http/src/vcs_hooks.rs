@@ -7,9 +7,8 @@ use tokio::process::Command;
 use crate::execution_effective;
 use crate::workspace_runtime::{sandbox_container_command, workspace_container_name};
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
-use crate::worktree_data_plane::{
-    apply_data_plane_to_execution_settings, resolve_worktree_data_plane,
-};
+use crate::worktree_data_plane::resolve_worktree_data_plane;
+use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
 const COMMIT_MSG_HOOK: &str = r#"#!/bin/sh
 set -e

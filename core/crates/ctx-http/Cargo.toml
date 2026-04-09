@@ -18,6 +18,7 @@ ctx-provider-accounts = { path = "../ctx-provider-accounts" }
 ctx-provider-auth-import = { path = "../ctx-provider-auth-import" }
 ctx-providers = { path = "../ctx-providers" }
 ctx-sandbox-contract = { path = "../ctx-sandbox-contract" }
+ctx-worktree-data-plane = { path = "../ctx-worktree-data-plane" }
 ctx-workspace-active-snapshot = { path = "../ctx-workspace-active-snapshot" }
 ctx-worker-protocol = { path = "../ctx-worker-protocol" }
 ctx-lsp = { path = "../ctx-lsp" }

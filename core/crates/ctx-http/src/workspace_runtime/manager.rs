@@ -183,11 +183,9 @@ impl HarnessRuntimeManager {
             "CTX_HARNESS_CONTAINER_ID".to_string(),
             container.name.clone(),
         );
-        let guest_workspace_root = crate::worktree_data_plane::live_workspace_root_for_mode(
-            workspace,
-            ExecutionMode::Sandbox,
-        );
-        let guest_worktree_root = crate::worktree_data_plane::live_worktree_root_for_mode(
+        let guest_workspace_root =
+            ctx_worktree_data_plane::live_workspace_root_for_mode(workspace, ExecutionMode::Sandbox);
+        let guest_worktree_root = ctx_worktree_data_plane::live_worktree_root_for_mode(
             workspace,
             worktree,
             ExecutionMode::Sandbox,

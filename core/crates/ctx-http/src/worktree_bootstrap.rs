@@ -18,9 +18,8 @@ use crate::workspace_runtime;
 use crate::logs;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::workspace_config;
-use crate::worktree_data_plane::{
-    apply_data_plane_to_execution_settings, resolve_worktree_data_plane,
-};
+use crate::worktree_data_plane::resolve_worktree_data_plane;
+use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
 const DEFAULT_TIMEOUT_SEC: u64 = 60;
 const MAX_LOG_BYTES: usize = 200 * 1024;

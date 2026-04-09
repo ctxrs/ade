@@ -18,19 +18,34 @@ test("agent gate crate list keeps the expected ctx-http-centered fast gate", () 
     "ctx-provider-accounts",
     "ctx-provider-auth-import",
     "ctx-providers",
+    "ctx-sandbox-contract",
     "ctx-store",
+    "ctx-worktree-data-plane",
     "ctx-workspace-active-snapshot",
   ]);
 });
 
 test("mixed test strategy keeps ctx-http and ctx-store on cargo test and routes the rest to nextest", () => {
   const plan = partitionCratesForTestStrategy(
-    ["ctx-http", "ctx-store", "ctx-provider-accounts", "ctx-workspace-active-snapshot", "ctx-http"],
+    [
+      "ctx-http",
+      "ctx-store",
+      "ctx-provider-accounts",
+      "ctx-sandbox-contract",
+      "ctx-worktree-data-plane",
+      "ctx-workspace-active-snapshot",
+      "ctx-http",
+    ],
     "mixed",
   );
 
   assert.deepEqual(plan, {
-    bazelTestCrates: ["ctx-provider-accounts", "ctx-workspace-active-snapshot"],
+    bazelTestCrates: [
+      "ctx-provider-accounts",
+      "ctx-sandbox-contract",
+      "ctx-workspace-active-snapshot",
+      "ctx-worktree-data-plane",
+    ],
     cargoTestCrates: ["ctx-http", "ctx-store"],
     nextestCrates: [],
   });
@@ -48,7 +63,9 @@ test("mixed test strategy keeps the Bazel-covered slice explicit", () => {
     "ctx-provider-accounts",
     "ctx-provider-auth-import",
     "ctx-providers",
+    "ctx-sandbox-contract",
     "ctx-workspace-active-snapshot",
+    "ctx-worktree-data-plane",
   ]);
 });
 

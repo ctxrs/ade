@@ -888,9 +888,11 @@
         "crates/ctx-provider-accounts/**",
         "crates/ctx-provider-auth-import/**",
         "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**",
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
-        "crates/ctx-workspace-active-snapshot/**"
+        "crates/ctx-workspace-active-snapshot/**",
+        "crates/ctx-worktree-data-plane/**"
       ],
       "outputs": []
     },
@@ -921,9 +923,11 @@
         "crates/ctx-provider-accounts/**",
         "crates/ctx-provider-auth-import/**",
         "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**",
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
-        "crates/ctx-workspace-active-snapshot/**"
+        "crates/ctx-workspace-active-snapshot/**",
+        "crates/ctx-worktree-data-plane/**"
       ],
       "outputs": []
     },
@@ -954,9 +958,11 @@
         "crates/ctx-provider-accounts/**",
         "crates/ctx-provider-auth-import/**",
         "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**",
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
-        "crates/ctx-workspace-active-snapshot/**"
+        "crates/ctx-workspace-active-snapshot/**",
+        "crates/ctx-worktree-data-plane/**"
       ],
       "outputs": []
     },
@@ -1132,9 +1138,11 @@
         "crates/ctx-provider-accounts/**",
         "crates/ctx-provider-auth-import/**",
         "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**",
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
-        "crates/ctx-workspace-active-snapshot/**"
+        "crates/ctx-workspace-active-snapshot/**",
+        "crates/ctx-worktree-data-plane/**"
       ],
       "outputs": []
     },
@@ -1166,9 +1174,11 @@
         "crates/ctx-provider-accounts/**",
         "crates/ctx-provider-auth-import/**",
         "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**",
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
-        "crates/ctx-workspace-active-snapshot/**"
+        "crates/ctx-workspace-active-snapshot/**",
+        "crates/ctx-worktree-data-plane/**"
       ],
       "outputs": []
     },
@@ -1200,9 +1210,11 @@
         "crates/ctx-provider-accounts/**",
         "crates/ctx-provider-auth-import/**",
         "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**",
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
-        "crates/ctx-workspace-active-snapshot/**"
+        "crates/ctx-workspace-active-snapshot/**",
+        "crates/ctx-worktree-data-plane/**"
       ],
       "outputs": []
     },
@@ -1410,6 +1422,75 @@
         "scripts/sync_rust_turbo_tasks.cjs",
         "crates/ctx-core/**",
         "crates/ctx-providers/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:clippy:ctx-sandbox-contract": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-core/**",
+        "crates/ctx-sandbox-contract/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:test:ctx-sandbox-contract": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-core/**",
+        "crates/ctx-sandbox-contract/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:nextest:ctx-sandbox-contract": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-core/**",
+        "crates/ctx-sandbox-contract/**"
       ],
       "outputs": []
     },
@@ -1959,6 +2040,78 @@
       ],
       "outputs": []
     },
+    "rust:crate:clippy:ctx-worktree-data-plane": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-core/**",
+        "crates/ctx-sandbox-contract/**",
+        "crates/ctx-worktree-data-plane/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:test:ctx-worktree-data-plane": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-core/**",
+        "crates/ctx-sandbox-contract/**",
+        "crates/ctx-worktree-data-plane/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:nextest:ctx-worktree-data-plane": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-core/**",
+        "crates/ctx-sandbox-contract/**",
+        "crates/ctx-worktree-data-plane/**"
+      ],
+      "outputs": []
+    },
     "rust:ctx-http:test:base": {
       "inputs": [
         "Cargo.toml",
@@ -1985,9 +2138,11 @@
         "crates/ctx-provider-accounts/**",
         "crates/ctx-provider-auth-import/**",
         "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**",
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
         "crates/ctx-workspace-active-snapshot/**",
+        "crates/ctx-worktree-data-plane/**",
         "crates/ctx-http/src/**"
       ],
       "outputs": []
@@ -2503,9 +2658,11 @@
         "crates/ctx-provider-accounts/**",
         "crates/ctx-provider-auth-import/**",
         "crates/ctx-providers/**",
+        "crates/ctx-sandbox-contract/**",
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
         "crates/ctx-workspace-active-snapshot/**",
+        "crates/ctx-worktree-data-plane/**",
         "crates/ctx-http/src/**",
         "crates/ctx-http/tests/**"
       ],

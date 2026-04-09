@@ -17,9 +17,8 @@ use crate::workspace_runtime;
 use crate::logs;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::settings::ContainerRuntimeKind;
-use crate::worktree_data_plane::{
-    apply_data_plane_to_execution_settings, resolve_worktree_data_plane,
-};
+use crate::worktree_data_plane::resolve_worktree_data_plane;
+use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
 pub(super) fn status_code_for_internal_error(err: &anyhow::Error) -> StatusCode {
     if err

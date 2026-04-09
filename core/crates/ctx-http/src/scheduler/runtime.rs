@@ -28,11 +28,11 @@ use crate::settings::{self, ProviderControlMode};
 use crate::storage_guard;
 use crate::telemetry::TelemetryEvent;
 use crate::workspace_config;
-use crate::worktree_data_plane::{
-    apply_data_plane_to_execution_settings, resolve_worktree_data_plane,
-};
 use ctx_harness_sources::HarnessSourceKind;
 use ctx_provider_accounts as provider_accounts;
+use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
+
+use crate::worktree_data_plane::resolve_worktree_data_plane;
 
 mod event_loop;
 mod helpers;

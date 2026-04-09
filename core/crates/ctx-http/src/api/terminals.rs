@@ -16,12 +16,14 @@ use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::terminals::{
     NativeContainerTerminalSpec, SharedVmContainerTerminalSpec, TerminalCreateRequest,
 };
-use crate::worktree_data_plane::{
-    apply_data_plane_to_execution_settings, map_host_or_live_path_to_live_path,
-    resolve_worktree_data_plane, workspace_data_plane, WorktreeDataPlane,
-};
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::TerminalSession;
+use ctx_worktree_data_plane::{
+    apply_data_plane_to_execution_settings, map_host_or_live_path_to_live_path,
+    workspace_data_plane, WorktreeDataPlane,
+};
+
+use crate::worktree_data_plane::resolve_worktree_data_plane;
 
 #[cfg(test)]
 mod tests;

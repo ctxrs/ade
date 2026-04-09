@@ -1,0 +1,14 @@
+[package]
+name = "ctx-worktree-data-plane"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow.workspace = true
+ctx-core = { path = "../ctx-core" }
+ctx-sandbox-contract = { path = "../ctx-sandbox-contract" }
+
+[dev-dependencies]
+chrono.workspace = true
+serde_json.workspace = true
+uuid.workspace = true

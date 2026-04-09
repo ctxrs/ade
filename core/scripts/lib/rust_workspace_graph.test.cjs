@@ -20,6 +20,8 @@ test("workspace graph maps extracted leaf crate paths to crate names", () => {
     "core/crates/ctx-provider-accounts/src/lib.rs",
     "core/crates/ctx-provider-auth-import/src/lib.rs",
     "core/crates/ctx-harness-sources/src/lib.rs",
+    "core/crates/ctx-sandbox-contract/src/lib.rs",
+    "core/crates/ctx-worktree-data-plane/src/lib.rs",
     "core/crates/ctx-workspace-active-snapshot/src/lib.rs",
   ]);
 
@@ -27,7 +29,9 @@ test("workspace graph maps extracted leaf crate paths to crate names", () => {
     "ctx-harness-sources",
     "ctx-provider-accounts",
     "ctx-provider-auth-import",
+    "ctx-sandbox-contract",
     "ctx-workspace-active-snapshot",
+    "ctx-worktree-data-plane",
   ]);
 });
 

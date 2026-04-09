@@ -3,6 +3,7 @@ use super::*;
 pub(crate) use ctx_sandbox_contract::sandbox_execution_settings_from_binding;
 #[cfg(test)]
 use ctx_sandbox_contract::SANDBOX_BINDING_EXECUTION_SETTINGS_SCHEMA_V1;
+use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
 pub(in crate::api) struct ResolvedExistingWorktreeExecution {
     pub worktree: Worktree,
@@ -32,11 +33,8 @@ pub(in crate::api) async fn resolve_existing_worktree_execution(
     let data_plane = crate::worktree_data_plane::resolve_worktree_data_plane(state, &worktree)
         .await
         .context("resolving worktree data plane")?;
-    let effective = crate::worktree_data_plane::apply_data_plane_to_execution_settings(
-        &base_effective,
-        &data_plane,
-    )
-    .context("applying worktree data plane to execution settings")?;
+    let effective = apply_data_plane_to_execution_settings(&base_effective, &data_plane)
+        .context("applying worktree data plane to execution settings")?;
     Ok(ResolvedExistingWorktreeExecution {
         worktree,
         effective,

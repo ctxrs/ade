@@ -12,6 +12,8 @@ const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
   "ctx-provider-accounts": ["//core/crates/ctx-provider-accounts:unit_tests"],
   "ctx-provider-auth-import": ["//core/crates/ctx-provider-auth-import:unit_tests"],
   "ctx-providers": ["//core/crates/ctx-providers:unit_tests"],
+  "ctx-sandbox-contract": ["//core/crates/ctx-sandbox-contract:unit_tests"],
+  "ctx-worktree-data-plane": ["//core/crates/ctx-worktree-data-plane:unit_tests"],
   "ctx-workspace-active-snapshot": ["//core/crates/ctx-workspace-active-snapshot:unit_tests"],
 });
 
@@ -22,6 +24,8 @@ const BAZEL_BUILD_TARGETS_BY_CRATE = Object.freeze({
   "ctx-provider-accounts": ["//core/crates/ctx-provider-accounts:lib"],
   "ctx-provider-auth-import": ["//core/crates/ctx-provider-auth-import:lib"],
   "ctx-providers": ["//core/crates/ctx-providers:lib"],
+  "ctx-sandbox-contract": ["//core/crates/ctx-sandbox-contract:lib"],
+  "ctx-worktree-data-plane": ["//core/crates/ctx-worktree-data-plane:lib"],
   "ctx-workspace-active-snapshot": ["//core/crates/ctx-workspace-active-snapshot:lib"],
 });
 

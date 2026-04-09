@@ -1500,6 +1500,7 @@ dependencies = [
  "ctx-store",
  "ctx-worker-protocol",
  "ctx-workspace-active-snapshot",
+ "ctx-worktree-data-plane",
  "directories",
  "flate2",
  "fs2",
@@ -1833,6 +1834,18 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "ctx-worktree-data-plane"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "ctx-core",
+ "ctx-sandbox-contract",
+ "serde_json",
  "uuid",
 ]
 

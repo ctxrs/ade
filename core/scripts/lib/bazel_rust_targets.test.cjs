@@ -15,7 +15,9 @@ test("Bazel-covered crates stay on the intended explicit Rust slice", () => {
     "ctx-provider-accounts",
     "ctx-provider-auth-import",
     "ctx-providers",
+    "ctx-sandbox-contract",
     "ctx-workspace-active-snapshot",
+    "ctx-worktree-data-plane",
   ]);
 });
 
@@ -36,12 +38,14 @@ test("Bazel build target mapping expands per-crate libraries deterministically",
     getBazelBuildTargetsForCrates([
       "ctx-provider-auth-import",
       "ctx-workspace-active-snapshot",
+      "ctx-worktree-data-plane",
       "ctx-core",
     ]),
     [
       "//core/crates/ctx-core:lib",
       "//core/crates/ctx-provider-auth-import:lib",
       "//core/crates/ctx-workspace-active-snapshot:lib",
+      "//core/crates/ctx-worktree-data-plane:lib",
     ],
   );
 });
