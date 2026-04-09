@@ -222,6 +222,23 @@ describe("useWorkbenchThreadViewModelController", () => {
       expect(tool?.title).toBe("pnpm test");
     });
 
+    const warmKey = buildWorkbenchThreadViewModelWarmKey({
+      sessionId: "session-1",
+      projectionRev: 0,
+      turnsStamp: buildTurnsStamp(turns),
+      messagesStamp: buildMessagesStamp(messages),
+      eventsStamp: "0:1",
+      verbosity: "default",
+      turns,
+      messages,
+      events,
+      toolsByTurnId,
+      toolSummariesReady: true,
+      askUserQuestionAnswers,
+      enableDebugEvents: false,
+    });
+    const beforeWarmSnapshot = readWarmWorkbenchThreadViewModel("session-1", warmKey);
+
     rerender(
       <Harness
         sessionId="session-1"
@@ -246,6 +263,7 @@ describe("useWorkbenchThreadViewModelController", () => {
 
     expect(latestResult?.listItems.filter(isToolItem).map((item) => item.title)).toEqual(["pnpm test"]);
     expect(latestResult?.lastOp.kind).toBe("noop");
+    expect(readWarmWorkbenchThreadViewModel("session-1", warmKey)).toBe(beforeWarmSnapshot);
   });
 
   it("rebuilds filtered thread items when verbosity changes without transcript stamp changes", async () => {

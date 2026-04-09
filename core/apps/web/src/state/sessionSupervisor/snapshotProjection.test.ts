@@ -96,4 +96,28 @@ describe("sessionSupervisor snapshotProjection", () => {
     expect(secondPublished).toBe(firstPublished);
     expect(secondPublished?.threadProjection).toBe(firstPublished?.threadProjection);
   });
+
+  it("skips listener notification when publish is a true no-op", () => {
+    const entry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
+    entry.support.stateLoaded = true;
+    entry.turns = [];
+    entry.messages = [];
+    entry.events = [];
+
+    let notifications = 0;
+    const host = {
+      maxCachedSessions: 10,
+      listeners: new Set<() => void>([() => {
+        notifications += 1;
+      }]),
+      snapshot: { connection: "idle", sessions: {} } as SessionSupervisorSnapshot,
+      entries: new Map([[entry.sessionId, entry]]),
+    };
+
+    publish.call(host);
+    expect(notifications).toBe(1);
+
+    publish.call(host);
+    expect(notifications).toBe(1);
+  });
 });

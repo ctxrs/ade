@@ -195,7 +195,7 @@ export function classifyWorkbenchThreadProjectionOp(params: {
           "terminalize_turn",
           projectionRevision,
           changedItemIds,
-          expandLocalizedRemeasureItemIds(next, changedItemIds),
+          changedItemIds,
         );
       }
     }
@@ -206,7 +206,7 @@ export function classifyWorkbenchThreadProjectionOp(params: {
           "hydrate_tools",
           projectionRevision,
           changedItemIds,
-          expandLocalizedRemeasureItemIds(next, changedItemIds),
+          changedItemIds,
         );
       }
     }

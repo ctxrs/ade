@@ -55,6 +55,34 @@ type InternalState = {
   eventsLen: number;
 };
 
+function haveSameIds(previous: readonly string[], next: readonly string[]): boolean {
+  if (previous === next) return true;
+  if (previous.length !== next.length) return false;
+  for (let index = 0; index < previous.length; index += 1) {
+    if (previous[index] !== next[index]) return false;
+  }
+  return true;
+}
+
+function areInternalStatesEquivalent(previous: InternalState, next: InternalState): boolean {
+  return (
+    previous === next ||
+    (previous.view === next.view &&
+      previous.listItems === next.listItems &&
+      previous.groupRanges === next.groupRanges &&
+      previous.projectionRevision === next.projectionRevision &&
+      previous.lastOp.kind === next.lastOp.kind &&
+      previous.lastOp.projectionRevision === next.lastOp.projectionRevision &&
+      haveSameIds(previous.lastOp.changedItemIds, next.lastOp.changedItemIds) &&
+      haveSameIds(previous.lastOp.remeasureItemIds, next.lastOp.remeasureItemIds) &&
+      haveSameIds(previous.changedItemIds, next.changedItemIds) &&
+      haveSameIds(previous.remeasureItemIds, next.remeasureItemIds) &&
+      previous.turnsLen === next.turnsLen &&
+      previous.messagesLen === next.messagesLen &&
+      previous.eventsLen === next.eventsLen)
+  );
+}
+
 function getTurnGroupKey(turnId: string): string {
   return `turn-${turnId}`;
 }
@@ -238,51 +266,58 @@ export function useWorkbenchThreadViewModelController(
   const lastToolsByTurnIdRef = useRef(toolsByTurnId);
 
   const fullRebuild = useRef((_preferredKind?: WorkbenchThreadProjectionOpKind) => {});
+  const commitNextState = (previous: InternalState, next: InternalState): boolean => {
+    if (areInternalStatesEquivalent(previous, next)) {
+      return false;
+    }
+    persistCurrentWarmSnapshot(next);
+    setState(next);
+    return true;
+  };
   fullRebuild.current = (preferredKind = "reconcile") => {
     const rebuilt = buildWarmSnapshot();
 
     perTurnCachesRef.current = rebuilt.caches;
 
-    setState((previous) => {
-      const lastOp = classifyWorkbenchThreadProjectionOp({
-        current: previous.listItems,
-        next: rebuilt.listItems,
-        projectionRevision: projectionRev,
-        fallbackKind: preferredKind,
-      });
-      if (
-        lastOp.kind === "noop" &&
-        previous.turnsLen === rebuilt.turnsLen &&
-        previous.messagesLen === rebuilt.messagesLen &&
-        previous.eventsLen === rebuilt.eventsLen
-      ) {
-        const nextView =
-          rebuilt.view.debugEvents === previous.view.debugEvents
-            ? previous.view
-            : { groups: previous.view.groups, debugEvents: rebuilt.view.debugEvents };
-        if (previous.lastOp.kind === "noop") {
-          return previous;
-        }
-        return {
-          ...previous,
-          view: nextView,
-          lastOp,
-          changedItemIds: [],
-          remeasureItemIds: [],
-        };
+    const lastOp = classifyWorkbenchThreadProjectionOp({
+      current: state.listItems,
+      next: rebuilt.listItems,
+      projectionRevision: projectionRev,
+      fallbackKind: preferredKind,
+    });
+    if (
+      lastOp.kind === "noop" &&
+      state.turnsLen === rebuilt.turnsLen &&
+      state.messagesLen === rebuilt.messagesLen &&
+      state.eventsLen === rebuilt.eventsLen
+    ) {
+      const nextView =
+        rebuilt.view.debugEvents === state.view.debugEvents
+          ? state.view
+          : { groups: state.view.groups, debugEvents: rebuilt.view.debugEvents };
+      if (state.lastOp.kind === "noop" && nextView === state.view) {
+        return;
       }
-      return {
-        view: rebuilt.view,
-        listItems: rebuilt.listItems,
-        groupRanges: rebuilt.groupRanges,
-        projectionRevision: projectionRev,
+      commitNextState(state, {
+        ...state,
+        view: nextView,
         lastOp,
-        changedItemIds: lastOp.changedItemIds,
-        remeasureItemIds: lastOp.remeasureItemIds,
-        turnsLen: rebuilt.turnsLen,
-        messagesLen: rebuilt.messagesLen,
-        eventsLen: rebuilt.eventsLen,
-      };
+        changedItemIds: [],
+        remeasureItemIds: [],
+      });
+      return;
+    }
+    commitNextState(state, {
+      view: rebuilt.view,
+      listItems: rebuilt.listItems,
+      groupRanges: rebuilt.groupRanges,
+      projectionRevision: projectionRev,
+      lastOp,
+      changedItemIds: lastOp.changedItemIds,
+      remeasureItemIds: lastOp.remeasureItemIds,
+      turnsLen: rebuilt.turnsLen,
+      messagesLen: rebuilt.messagesLen,
+      eventsLen: rebuilt.eventsLen,
     });
   };
 
@@ -314,8 +349,7 @@ export function useWorkbenchThreadViewModelController(
           remeasureItemIds: [],
           eventsLen: nextEventsLen,
         };
-        persistCurrentWarmSnapshot(nextState);
-        setState(nextState);
+        commitNextState(state, nextState);
         return true;
       }
 
@@ -443,8 +477,7 @@ export function useWorkbenchThreadViewModelController(
               remeasureItemIds: lastOp.remeasureItemIds,
               eventsLen: nextEventsLen,
             };
-      persistCurrentWarmSnapshot(nextState);
-      setState(nextState);
+      commitNextState(state, nextState);
       return true;
     };
 
@@ -577,8 +610,7 @@ export function useWorkbenchThreadViewModelController(
         remeasureItemIds: [],
         eventsLen: events.length,
       };
-      persistCurrentWarmSnapshot(nextState);
-      setState(nextState);
+      commitNextState(state, nextState);
       return;
     }
 

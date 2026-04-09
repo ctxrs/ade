@@ -234,8 +234,29 @@ export function publish(this: SessionSupervisorSnapshotProjectionHost) {
   evictIfNeeded.call(this);
   const sessions: Record<string, SessionCacheEntry> = {};
   const previousSessions = this.snapshot.sessions;
+  let changed = false;
   for (const [id, entry] of this.entries) {
-    sessions[id] = cloneSessionEntry(entry, previousSessions[id]);
+    const nextEntry = cloneSessionEntry(entry, previousSessions[id]);
+    sessions[id] = nextEntry;
+    if (nextEntry !== previousSessions[id]) {
+      changed = true;
+    }
+  }
+  if (!changed) {
+    const previousIds = Object.keys(previousSessions);
+    if (previousIds.length !== this.entries.size) {
+      changed = true;
+    } else {
+      for (const id of previousIds) {
+        if (!(id in sessions)) {
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+  if (!changed) {
+    return;
   }
   this.snapshot = { connection: this.snapshot.connection, sessions };
   for (const listener of this.listeners) listener();

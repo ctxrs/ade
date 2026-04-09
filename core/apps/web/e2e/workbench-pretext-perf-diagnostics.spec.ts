@@ -4,6 +4,7 @@ import type { CDPSession } from "playwright/test";
 import { seedDummyWorkspace, startStreamingMessages } from "./utils/seedDummyWorkspace";
 
 const PERF_PROBE_ENABLED = process.env.CTX_PRETEXT_PERF_PROBE === "1";
+const PERF_GUARDRAIL_ENABLED = process.env.CTX_PRETEXT_PERF_GUARDRAIL === "1";
 const TASK_COUNT = Number(process.env.CTX_PRETEXT_PERF_TASKS ?? "5");
 const TURNS_PER_SESSION = Number(process.env.CTX_PRETEXT_PERF_TURNS ?? "28");
 const STREAM_DURATION_MS = Number(process.env.CTX_PRETEXT_PERF_STREAM_DURATION_MS ?? "7000");
@@ -97,8 +98,12 @@ async function resetPageDiagnostics(page: Parameters<typeof test>[0]["page"]): P
 
 for (const mode of PERF_MODES) {
   test(`workbench: pretext perf diagnostics (${mode.name})`, async ({ page, request, browserName }, testInfo) => {
-    test.skip(!PERF_PROBE_ENABLED, "Set CTX_PRETEXT_PERF_PROBE=1 to run the pretext perf probe.");
+    test.skip(
+      !PERF_PROBE_ENABLED && !PERF_GUARDRAIL_ENABLED,
+      "Set CTX_PRETEXT_PERF_PROBE=1 or CTX_PRETEXT_PERF_GUARDRAIL=1 to run the pretext perf diagnostics.",
+    );
     test.skip(browserName !== "chromium", "CDP metrics require chromium.");
+    test.skip(PERF_GUARDRAIL_ENABLED && mode.name !== "warm-off", "Guardrail mode only runs the warm-off baseline.");
     test.setTimeout(240_000);
 
     const messagePrefix = [
@@ -195,6 +200,17 @@ for (const mode of PERF_MODES) {
         "utf8",
       );
       expect(initialOpenDiagnostics.pretextPerf).not.toBeNull();
+      if (PERF_GUARDRAIL_ENABLED) {
+        const counters = initialOpenDiagnostics.pretextPerf?.counters ?? {};
+        expect(counters.pretext_full_relayout_calls ?? 0).toBeLessThanOrEqual(8);
+        expect(counters.pretext_visible_sync_items_calls ?? 0).toBeLessThanOrEqual(48);
+        expect(counters.pretext_row_layout_calls ?? 0).toBeLessThanOrEqual(1100);
+        expect(counters.pretext_markdown_document_calls ?? 0).toBeLessThanOrEqual(128);
+        expect(openOnlySummary.initialOpen.longTaskCount).toBeLessThanOrEqual(4);
+        expect(openOnlySummary.initialOpen.maxLongTaskMs).toBeLessThanOrEqual(250);
+        expect(openOnlySummary.initialOpen.peakUsedJsHeapSize).toBeLessThanOrEqual(40_000_000);
+        expect(openOnlySummary.initialOpen.cdpMetrics.TaskDuration ?? 0).toBeLessThanOrEqual(1.5);
+      }
       return;
     }
 

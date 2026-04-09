@@ -33,6 +33,39 @@ const makeUserMessage = (expanded = false): WorkbenchListItem => ({
   attachments: [],
 });
 
+const makeToolGroup = (tools: Array<Extract<WorkbenchListItem, { kind: "tool" }>> = []): WorkbenchListItem => ({
+  id: "tool-group-turn-1",
+  kind: "tool_group",
+  turn_id: "turn-1",
+  created_at: "2026-03-19T00:00:00.000Z",
+  updated_at: "2026-03-19T00:00:00.000Z",
+  thought: "",
+  tool_total: 1,
+  tool_pending: 0,
+  tool_running: 0,
+  tool_completed: 0,
+  tool_failed: 0,
+  tools,
+});
+
+const makeTool = (): Extract<WorkbenchListItem, { kind: "tool" }> => ({
+  id: "tool-1",
+  kind: "tool",
+  created_at: "2026-03-19T00:00:00.000Z",
+  updated_at: "2026-03-19T00:00:00.000Z",
+  tool_call_id: "tool-call-1",
+  tool_kind: "shell",
+  provider_tool_name: "shell",
+  title: "pnpm test",
+  subtitle: "",
+  status: "completed",
+  input: "",
+  output_text: "",
+  locations: [],
+  raw: null,
+  updates_seen: 1,
+});
+
 describe("classifyWorkbenchThreadProjectionOp", () => {
   it("expands localized streaming remeasure to include the adjacent row boundary", () => {
     const status = makeTurnStatus();
@@ -48,6 +81,29 @@ describe("classifyWorkbenchThreadProjectionOp", () => {
     expect(op.kind).toBe("reconcile");
     expect(op.changedItemIds).toEqual(["assistant-turn-1-pending"]);
     expect(op.remeasureItemIds).toEqual(["assistant-turn-1-pending", "turn-status-turn-1"]);
+  });
+
+  it("keeps tool hydration remeasurement localized to the changed rows", () => {
+    const current = [
+      makeAssistant("stable markdown"),
+      makeToolGroup(),
+      makeTurnStatus(),
+    ];
+    const next = [
+      current[0]!,
+      makeToolGroup([makeTool()]),
+      current[2]!,
+    ];
+
+    const op = classifyWorkbenchThreadProjectionOp({
+      current,
+      next,
+      projectionRevision: 4,
+    });
+
+    expect(op.kind).toBe("hydrate_tools");
+    expect(op.changedItemIds).toEqual(["tool-group-turn-1"]);
+    expect(op.remeasureItemIds).toEqual(["tool-group-turn-1"]);
   });
 });
 
