@@ -32,7 +32,7 @@ const CTX_HTTP_SUITES = [
     type: "base",
   },
   {
-    dependencyCrates: ["ctx-core", "ctx-events", "ctx-store"],
+    dependencyCrates: ["ctx-core", "ctx-events", "ctx-store", "ctx-workspace-active-snapshot"],
     name: "workspace-stream",
     description: "workspace snapshot, stream, cache, and replay behavior",
     sourceGlobs: [
@@ -43,7 +43,6 @@ const CTX_HTTP_SUITES = [
       "crates/ctx-http/src/api/ws/**",
       "crates/ctx-http/src/order_seq.rs",
       "crates/ctx-http/src/workspace_active_snapshot.rs",
-      "crates/ctx-http/src/workspace_active_snapshot/**",
     ],
     testFiles: [
       "cache_rehydration",

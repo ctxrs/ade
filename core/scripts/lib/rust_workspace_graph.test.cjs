@@ -20,12 +20,14 @@ test("workspace graph maps extracted leaf crate paths to crate names", () => {
     "core/crates/ctx-provider-accounts/src/lib.rs",
     "core/crates/ctx-provider-auth-import/src/lib.rs",
     "core/crates/ctx-harness-sources/src/lib.rs",
+    "core/crates/ctx-workspace-active-snapshot/src/lib.rs",
   ]);
 
   assert.deepEqual(crates, [
     "ctx-harness-sources",
     "ctx-provider-accounts",
     "ctx-provider-auth-import",
+    "ctx-workspace-active-snapshot",
   ]);
 });
 
@@ -37,6 +39,12 @@ test("workspace graph expands reverse dependencies through extracted ctx-http le
   assert.equal(impacted.includes("ctx-harness-sources"), true);
   assert.equal(impacted.includes("ctx-provider-auth-import"), true);
   assert.equal(impacted.includes("ctx-http"), true);
+
+  const workspaceSnapshotImpacted = expandReverseDependencies(graph, [
+    "ctx-workspace-active-snapshot",
+  ]);
+  assert.equal(workspaceSnapshotImpacted.includes("ctx-workspace-active-snapshot"), true);
+  assert.equal(workspaceSnapshotImpacted.includes("ctx-http"), true);
 });
 
 test("generated package scripts include per-crate and ctx-http suite tasks", () => {
@@ -70,6 +78,26 @@ test("generated turbo tasks include dependency-closure inputs", () => {
   assert.equal(ctxHttpProviderAuthSuiteTask.inputs.includes("crates/ctx-http/src/api/providers/imports.rs"), true);
   assert.equal(
     ctxHttpProviderAuthSuiteTask.inputs.includes("crates/ctx-http/src/workspace_runtime/**"),
+    false,
+  );
+
+  const ctxHttpWorkspaceStreamSuiteTask = tasks["rust:ctx-http:test:workspace-stream"];
+  assert.equal(
+    ctxHttpWorkspaceStreamSuiteTask.inputs.includes(
+      "crates/ctx-workspace-active-snapshot/**",
+    ),
+    true,
+  );
+  assert.equal(
+    ctxHttpWorkspaceStreamSuiteTask.inputs.includes(
+      "crates/ctx-http/src/workspace_active_snapshot.rs",
+    ),
+    true,
+  );
+  assert.equal(
+    ctxHttpWorkspaceStreamSuiteTask.inputs.includes(
+      "crates/ctx-http/src/workspace_active_snapshot/**",
+    ),
     false,
   );
 });

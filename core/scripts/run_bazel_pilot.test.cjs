@@ -3,15 +3,23 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  DEFAULT_BUILD_TARGETS,
   DEFAULT_TEST_TARGETS,
   buildBazelPilotInvocation,
   parseArgs,
 } = require("./run_bazel_pilot.cjs");
 
-test("bazel pilot defaults to the provider-auth slice test targets", () => {
+test("bazel pilot defaults to the expanded Rust slice test targets", () => {
   assert.deepEqual(parseArgs([]), {
     command: "test",
     targets: DEFAULT_TEST_TARGETS,
+  });
+});
+
+test("bazel pilot build defaults to the expanded Rust slice library targets", () => {
+  assert.deepEqual(parseArgs(["build"]), {
+    command: "build",
+    targets: DEFAULT_BUILD_TARGETS,
   });
 });
 

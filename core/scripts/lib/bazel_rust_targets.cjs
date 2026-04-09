@@ -1,0 +1,54 @@
+function sortUnique(values) {
+  return [...new Set(values)].filter(Boolean).sort();
+}
+
+const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
+  "ctx-core": [
+    "//core/crates/ctx-core:unit_tests",
+    "//core/crates/ctx-core:workspace_payload_corpus",
+  ],
+  "ctx-harness-sources": ["//core/crates/ctx-harness-sources:unit_tests"],
+  "ctx-provider-accounts": ["//core/crates/ctx-provider-accounts:unit_tests"],
+  "ctx-provider-auth-import": ["//core/crates/ctx-provider-auth-import:unit_tests"],
+  "ctx-providers": ["//core/crates/ctx-providers:unit_tests"],
+});
+
+const BAZEL_BUILD_TARGETS_BY_CRATE = Object.freeze({
+  "ctx-core": ["//core/crates/ctx-core:lib"],
+  "ctx-harness-sources": ["//core/crates/ctx-harness-sources:lib"],
+  "ctx-provider-accounts": ["//core/crates/ctx-provider-accounts:lib"],
+  "ctx-provider-auth-import": ["//core/crates/ctx-provider-auth-import:lib"],
+  "ctx-providers": ["//core/crates/ctx-providers:lib"],
+});
+
+function getBazelCoveredCrates() {
+  return Object.keys(BAZEL_TEST_TARGETS_BY_CRATE).sort();
+}
+
+function getBazelTargetsForCrates(mapping, crateNames) {
+  const targets = [];
+  for (const crateName of sortUnique(crateNames)) {
+    const crateTargets = mapping[crateName];
+    if (!crateTargets) {
+      continue;
+    }
+    targets.push(...crateTargets);
+  }
+  return sortUnique(targets);
+}
+
+function getBazelTestTargetsForCrates(crateNames) {
+  return getBazelTargetsForCrates(BAZEL_TEST_TARGETS_BY_CRATE, crateNames);
+}
+
+function getBazelBuildTargetsForCrates(crateNames) {
+  return getBazelTargetsForCrates(BAZEL_BUILD_TARGETS_BY_CRATE, crateNames);
+}
+
+module.exports = {
+  BAZEL_BUILD_TARGETS_BY_CRATE,
+  BAZEL_TEST_TARGETS_BY_CRATE,
+  getBazelBuildTargetsForCrates,
+  getBazelCoveredCrates,
+  getBazelTestTargetsForCrates,
+};

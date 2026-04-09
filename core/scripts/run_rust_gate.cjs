@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
+const childProcess = require("node:child_process");
 const path = require("node:path");
 
 const { buildCtxCacheEnv } = require("./lib/cache_roots.cjs");
+const { getBazelTestTargetsForCrates } = require("./lib/bazel_rust_targets.cjs");
 const {
   ISOLATED_CARGO_TEST_CRATES,
   partitionCratesForTestStrategy,
@@ -88,6 +90,31 @@ function runTaskPhase({ coreRoot, env, crateNames, taskKind }) {
   });
 }
 
+function runBazelPhase({ coreRoot, env, crateNames }) {
+  if (crateNames.length === 0) {
+    return;
+  }
+  const targets = getBazelTestTargetsForCrates(crateNames);
+  if (targets.length === 0) {
+    return;
+  }
+  const result = childProcess.spawnSync(
+    "node",
+    ["scripts/run_bazel_pilot.cjs", "test", ...targets],
+    {
+      cwd: coreRoot,
+      env,
+      stdio: "inherit",
+    },
+  );
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const coreRoot = path.resolve(__dirname, "..");
@@ -103,7 +130,7 @@ function main() {
     mode: args.mode,
     mkdir: true,
   });
-  const { cargoTestCrates, nextestCrates } = partitionCratesForTestStrategy(
+  const { bazelTestCrates, cargoTestCrates, nextestCrates } = partitionCratesForTestStrategy(
     crateNames,
     args.testStrategy,
   );
@@ -122,6 +149,11 @@ function main() {
       taskKind: "clippy",
     });
   }
+  runBazelPhase({
+    coreRoot,
+    env,
+    crateNames: bazelTestCrates,
+  });
   runTaskPhase({
     coreRoot,
     env,

@@ -1498,6 +1498,7 @@ dependencies = [
  "ctx-providers",
  "ctx-store",
  "ctx-worker-protocol",
+ "ctx-workspace-active-snapshot",
  "directories",
  "flate2",
  "fs2",
@@ -1808,6 +1809,18 @@ dependencies = [
  "tokio-tungstenite 0.26.2",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "ctx-workspace-active-snapshot"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "ctx-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

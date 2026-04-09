@@ -5,12 +5,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { resolveCtxCacheLayout } = require("./lib/cache_roots.cjs");
+const {
+  getBazelBuildTargetsForCrates,
+  getBazelCoveredCrates,
+  getBazelTestTargetsForCrates,
+} = require("./lib/bazel_rust_targets.cjs");
 
-const DEFAULT_TEST_TARGETS = [
-  "//core/crates/ctx-provider-accounts:unit_tests",
-  "//core/crates/ctx-harness-sources:unit_tests",
-  "//core/crates/ctx-provider-auth-import:unit_tests",
-];
+const DEFAULT_TEST_TARGETS = getBazelTestTargetsForCrates(getBazelCoveredCrates());
+const DEFAULT_BUILD_TARGETS = getBazelBuildTargetsForCrates(getBazelCoveredCrates());
 
 function parseArgs(argv) {
   const [command = "test", ...targets] = argv;
@@ -19,7 +21,12 @@ function parseArgs(argv) {
   }
   return {
     command,
-    targets: targets.length > 0 ? targets : DEFAULT_TEST_TARGETS,
+    targets:
+      targets.length > 0
+        ? targets
+        : command === "build"
+          ? DEFAULT_BUILD_TARGETS
+          : DEFAULT_TEST_TARGETS,
   };
 }
 
@@ -86,6 +93,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  DEFAULT_BUILD_TARGETS,
   DEFAULT_TEST_TARGETS,
   buildBazelPilotInvocation,
   parseArgs,

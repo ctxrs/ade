@@ -889,7 +889,8 @@
         "crates/ctx-provider-auth-import/**",
         "crates/ctx-providers/**",
         "crates/ctx-store/**",
-        "crates/ctx-worker-protocol/**"
+        "crates/ctx-worker-protocol/**",
+        "crates/ctx-workspace-active-snapshot/**"
       ],
       "outputs": []
     },
@@ -921,7 +922,8 @@
         "crates/ctx-provider-auth-import/**",
         "crates/ctx-providers/**",
         "crates/ctx-store/**",
-        "crates/ctx-worker-protocol/**"
+        "crates/ctx-worker-protocol/**",
+        "crates/ctx-workspace-active-snapshot/**"
       ],
       "outputs": []
     },
@@ -953,7 +955,8 @@
         "crates/ctx-provider-auth-import/**",
         "crates/ctx-providers/**",
         "crates/ctx-store/**",
-        "crates/ctx-worker-protocol/**"
+        "crates/ctx-worker-protocol/**",
+        "crates/ctx-workspace-active-snapshot/**"
       ],
       "outputs": []
     },
@@ -1130,7 +1133,8 @@
         "crates/ctx-provider-auth-import/**",
         "crates/ctx-providers/**",
         "crates/ctx-store/**",
-        "crates/ctx-worker-protocol/**"
+        "crates/ctx-worker-protocol/**",
+        "crates/ctx-workspace-active-snapshot/**"
       ],
       "outputs": []
     },
@@ -1163,7 +1167,8 @@
         "crates/ctx-provider-auth-import/**",
         "crates/ctx-providers/**",
         "crates/ctx-store/**",
-        "crates/ctx-worker-protocol/**"
+        "crates/ctx-worker-protocol/**",
+        "crates/ctx-workspace-active-snapshot/**"
       ],
       "outputs": []
     },
@@ -1196,7 +1201,8 @@
         "crates/ctx-provider-auth-import/**",
         "crates/ctx-providers/**",
         "crates/ctx-store/**",
-        "crates/ctx-worker-protocol/**"
+        "crates/ctx-worker-protocol/**",
+        "crates/ctx-workspace-active-snapshot/**"
       ],
       "outputs": []
     },
@@ -1884,6 +1890,75 @@
       ],
       "outputs": []
     },
+    "rust:crate:clippy:ctx-workspace-active-snapshot": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-core/**",
+        "crates/ctx-workspace-active-snapshot/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:test:ctx-workspace-active-snapshot": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-core/**",
+        "crates/ctx-workspace-active-snapshot/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:nextest:ctx-workspace-active-snapshot": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-core/**",
+        "crates/ctx-workspace-active-snapshot/**"
+      ],
+      "outputs": []
+    },
     "rust:ctx-http:test:base": {
       "inputs": [
         "Cargo.toml",
@@ -1912,6 +1987,7 @@
         "crates/ctx-providers/**",
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
+        "crates/ctx-workspace-active-snapshot/**",
         "crates/ctx-http/src/**"
       ],
       "outputs": []
@@ -1954,7 +2030,6 @@
         "crates/ctx-http/src/api/ws/**",
         "crates/ctx-http/src/order_seq.rs",
         "crates/ctx-http/src/workspace_active_snapshot.rs",
-        "crates/ctx-http/src/workspace_active_snapshot/**",
         "crates/ctx-http/tests/common/**",
         "crates/ctx-http/tests/cache_rehydration.rs",
         "crates/ctx-http/tests/fault_matrix.rs",
@@ -1966,7 +2041,8 @@
         "crates/ctx-http/tests/workspace_stream_stress_active_heads_lag.rs",
         "crates/ctx-core/**",
         "crates/ctx-events/**",
-        "crates/ctx-store/**"
+        "crates/ctx-store/**",
+        "crates/ctx-workspace-active-snapshot/**"
       ],
       "outputs": []
     },
@@ -2431,6 +2507,7 @@
         "crates/ctx-providers/**",
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
+        "crates/ctx-workspace-active-snapshot/**",
         "crates/ctx-http/src/**",
         "crates/ctx-http/tests/**"
       ],
