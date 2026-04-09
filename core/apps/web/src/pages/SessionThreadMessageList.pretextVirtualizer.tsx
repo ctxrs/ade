@@ -39,10 +39,8 @@ import {
 import type { WorkbenchThreadProjectionOp } from "./sessionThreadProjection";
 import {
   getOrCreateSessionPretextRuntime,
-  markSessionPretextRuntimeVisible,
   noteSessionPretextRuntimeSnapshot,
   readSessionPretextRuntimePreparedState,
-  readSessionPretextRuntimeRestoreSnapshot,
   SESSION_PRETEXT_BOTTOM_THRESHOLD_PX,
 } from "./sessionThread/pretextSessionRuntimeCache";
 import {
@@ -244,7 +242,7 @@ function isLocalizedProjectionOp(kind: WorkbenchThreadProjectionOp["kind"]): boo
 export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPretextVirtualizerList({
   style,
   sessionId,
-  isActive,
+  isActive: _isActive,
   listItems,
   threadProjectionOp,
   initialLocation = PRETEXT_VIRTUALIZER_INITIAL_BOTTOM_LOCATION,
@@ -326,13 +324,6 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
   });
   snapshotRef.current = snapshot;
 
-  useLayoutEffect(() => {
-    markSessionPretextRuntimeVisible(runtime, isActive);
-    return () => {
-      markSessionPretextRuntimeVisible(runtime, false);
-    };
-  }, [isActive, runtime]);
-
   const emitRenderedData = useCallback((nextSnapshot: PretextVirtualizerSnapshot<WorkbenchListItem>) => {
     onRenderedDataChangeRef.current?.(
       nextSnapshot.visibleItems.map((visibleItem) => listItemsRef.current[visibleItem.index] ?? visibleItem.item),
@@ -399,7 +390,10 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
         followBottomRef.current = options.followBottom;
       }
       lastScrollTopRef.current = targetTop;
-      commitRuntimeSnapshot(nextSnapshot, options?.nextItems ?? readSessionPretextRuntimePreparedState(runtime).listItems);
+      commitRuntimeSnapshot(
+        nextSnapshot,
+        options?.nextItems ?? readSessionPretextRuntimePreparedState(runtime).listItems,
+      );
       setSnapshot(nextSnapshot);
       emitScrollState(nextSnapshot);
       if (Math.abs(scroller.scrollTop - targetTop) <= 1) {
@@ -567,44 +561,27 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
       setSnapshot(nextSnapshot);
       return;
     }
-    const restoreSnapshot = readSessionPretextRuntimeRestoreSnapshot(runtime);
     const preparedState = readSessionPretextRuntimePreparedState(runtime);
     const currentItems = listItemsRef.current;
-    const revisitWithWarmRuntime = runtime.hasVisibleMount && restoreSnapshot != null;
     let baseSnapshot = core.syncViewport({
       height: scroller.clientHeight,
       width: scroller.clientWidth,
-      scrollTop: revisitWithWarmRuntime ? restoreSnapshot.scrollTop : scroller.scrollTop,
+      scrollTop: scroller.scrollTop,
     });
     lastSyncedItemCountRef.current = preparedState.listItems.length;
     if (!haveSameLayoutInputs(preparedState.listItems, currentItems, runtime.callbacks.getLayoutRevision)) {
       incrementPretextPerfCounter("pretext_full_relayout_calls");
       incrementPretextPerfCounter("pretext_full_relayout_item_count", currentItems.length);
       addPretextPerfBucket("pretext_full_relayout_reason", "visible:mount-sync-items");
-      const initialAnchor = revisitWithWarmRuntime
-        ? restoreSnapshot.anchor
-        : followBottomRef.current
-          ? ({ kind: "bottom" } satisfies PretextVirtualizerLogicalAnchor)
-          : null;
+      const initialAnchor = followBottomRef.current
+        ? ({ kind: "bottom" } satisfies PretextVirtualizerLogicalAnchor)
+        : null;
       baseSnapshot = haveSameItemIds(preparedState.listItems, currentItems)
         ? core.patchItems(currentItems, currentItems.map((item) => item.id), [], initialAnchor)
         : core.syncItems(currentItems, initialAnchor);
       lastSyncedItemCountRef.current = currentItems.length;
     }
     commitRuntimeSnapshot(baseSnapshot, currentItems);
-    if (revisitWithWarmRuntime) {
-      const followBottom = restoreSnapshot.anchor.kind === "bottom";
-      followBottomRef.current = followBottom;
-      const widthChanged =
-        restoreSnapshot.viewportWidth !== baseSnapshot.viewportWidth ||
-        restoreSnapshot.widthBucket !== baseSnapshot.widthBucket;
-      const restoredSnapshot = widthChanged ||
-        !haveSameLayoutInputs(preparedState.listItems, currentItems, runtime.callbacks.getLayoutRevision)
-        ? core.restoreAnchor(restoreSnapshot.anchor, restoreSnapshot.anchor.kind === "item" ? "ratio" : "offset")
-        : baseSnapshot;
-      applySnapshotToDom(restoredSnapshot, { behavior: "auto", followBottom, nextItems: currentItems });
-      return;
-    }
     if (followBottomRef.current) {
       applySnapshotToDom(core.restoreAnchor({ kind: "bottom" }), {
         behavior: "auto",
@@ -621,15 +598,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
       );
       scrollToOffset(targetTop, initialLocation?.behavior ?? "auto");
     }
-  }, [
-    applySnapshotToDom,
-    commitRuntimeSnapshot,
-    core,
-    initialLocation,
-    runtime,
-    scrollToOffset,
-    sessionId,
-  ]);
+  }, [applySnapshotToDom, commitRuntimeSnapshot, core, initialLocation, runtime, scrollToOffset, sessionId]);
 
   useLayoutEffect(() => {
     const scroller = containerRef.current;

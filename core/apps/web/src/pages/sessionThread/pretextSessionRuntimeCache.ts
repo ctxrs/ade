@@ -18,7 +18,6 @@ import { getPretextVirtualizerRowLayout } from "./pretextVirtualizerRowLayout";
 
 export const SESSION_PRETEXT_OVERSCAN_PX = 480;
 export const SESSION_PRETEXT_BOTTOM_THRESHOLD_PX = 16;
-export const SESSION_PRETEXT_MAX_RESTORABLE_RUNTIMES = 12;
 
 type PlannedLayoutGetter = (
   item: WorkbenchListItem,
@@ -44,12 +43,6 @@ type SessionPretextRuntimeRecord = {
   preparedLayoutKey: string | null;
   preparedSnapshot: PretextVirtualizerSnapshot<WorkbenchListItem>;
   preparedItems: readonly WorkbenchListItem[];
-  restoreSnapshot: PretextVirtualizerSnapshot<WorkbenchListItem> | null;
-  restoreSourceKey: string | null;
-  restoreLayoutKey: string | null;
-  hasVisibleMount: boolean;
-  isVisible: boolean;
-  lastTouchedAtMs: number;
 };
 
 export type SessionTranscriptWarmCacheEntry = {
@@ -88,10 +81,6 @@ function getSessionTranscriptUiStateRevision(uiState: WorkbenchMessageListUiStat
   return getWorkbenchMessageListLayoutRevision(uiState, {
     verbosity: uiState.verbosity,
   });
-}
-
-function touchRuntime(record: SessionPretextRuntimeRecord): void {
-  record.lastTouchedAtMs = Date.now();
 }
 
 function fingerprintString(value: string): string {
@@ -242,12 +231,6 @@ function createSessionPretextRuntime(sessionId: string): SessionPretextRuntimeRe
     preparedLayoutKey: null,
     preparedSnapshot: core.getSnapshot(),
     preparedItems: [],
-    restoreSnapshot: null,
-    restoreSourceKey: null,
-    restoreLayoutKey: null,
-    hasVisibleMount: false,
-    isVisible: false,
-    lastTouchedAtMs: Date.now(),
   };
   bindRuntime(record, {
     uiState: record.uiState,
@@ -269,7 +252,6 @@ export function getOrCreateSessionPretextRuntime(
   if (bindings) {
     bindRuntime(record, bindings);
   }
-  touchRuntime(record);
   return record;
 }
 
@@ -280,13 +262,6 @@ export function noteSessionPretextRuntimeSnapshot(
 ): void {
   record.preparedSnapshot = snapshot;
   record.preparedItems = listItems;
-  if (record.isVisible) {
-    record.restoreSnapshot = snapshot;
-    record.restoreSourceKey = record.preparedSourceKey;
-    record.restoreLayoutKey = record.preparedLayoutKey;
-    record.hasVisibleMount = true;
-  }
-  touchRuntime(record);
 }
 
 export function primeSessionPretextRuntime(
@@ -319,7 +294,6 @@ export function primeSessionPretextRuntime(
   const requiresItemSync = itemsChanged || uiStateChanged || layoutChanged;
   if (!requiresItemSync && !viewportChanged) {
     incrementPretextPerfCounter("pretext_runtime_prime_noop");
-    touchRuntime(record);
     return record;
   }
   if (viewportChanged) {
@@ -351,25 +325,13 @@ export function primeSessionPretextRuntime(
       layoutChanged,
       viewportChanged,
     });
-    const anchor = record.restoreSnapshot?.anchor ?? { kind: "bottom" as const };
+    const anchor = { kind: "bottom" as const };
     record.preparedSnapshot = record.core.syncItems(params.listItems, anchor);
     record.preparedItems = params.listItems;
   }
   record.preparedSourceKey = nextSourceKey;
   record.preparedLayoutKey = nextLayoutKey;
-  touchRuntime(record);
   return record;
-}
-
-export function markSessionPretextRuntimeVisible(
-  record: SessionPretextRuntimeRecord,
-  visible: boolean,
-): void {
-  record.isVisible = visible;
-  if (visible) {
-    record.hasVisibleMount = true;
-  }
-  touchRuntime(record);
 }
 
 export function readSessionPretextRuntimePreparedState(record: SessionPretextRuntimeRecord): {
@@ -386,43 +348,17 @@ export function readSessionPretextRuntimePreparedState(record: SessionPretextRun
   };
 }
 
-export function readSessionPretextRuntimeRestoreSnapshot(
-  record: SessionPretextRuntimeRecord,
-): PretextVirtualizerSnapshot<WorkbenchListItem> | null {
-  return record.restoreSnapshot;
-}
-
 export function pruneSessionPretextRuntimeCache(retainedPreparedSessionIds: readonly string[]): void {
   const retained = new Set(retainedPreparedSessionIds);
-  const restorableEntries: SessionTranscriptCacheRecord[] = [];
   let deletedCount = 0;
   for (const cacheRecord of sessionTranscriptCache.values()) {
     const record = cacheRecord.runtime;
     if (!record) continue;
-    if (record.isVisible) continue;
     if (retained.has(cacheRecord.sessionId)) continue;
-    if (!record.restoreSnapshot) {
-      cacheRecord.runtime = null;
-      deleteSessionTranscriptCacheRecordIfEmpty(cacheRecord);
-      deletedCount += 1;
-      continue;
-    }
-    restorableEntries.push(cacheRecord);
-  }
-  if (restorableEntries.length <= SESSION_PRETEXT_MAX_RESTORABLE_RUNTIMES) {
-    if (deletedCount > 0) {
-      incrementPretextPerfCounter("pretext_runtime_cache_pruned_entries", deletedCount);
-    }
-    return;
-  }
-  const overflowEntries = restorableEntries
-    .sort((left, right) => (right.runtime?.lastTouchedAtMs ?? 0) - (left.runtime?.lastTouchedAtMs ?? 0))
-    .slice(SESSION_PRETEXT_MAX_RESTORABLE_RUNTIMES);
-  overflowEntries.forEach((cacheRecord) => {
     cacheRecord.runtime = null;
     deleteSessionTranscriptCacheRecordIfEmpty(cacheRecord);
     deletedCount += 1;
-  });
+  }
   if (deletedCount > 0) {
     incrementPretextPerfCounter("pretext_runtime_cache_pruned_entries", deletedCount);
   }

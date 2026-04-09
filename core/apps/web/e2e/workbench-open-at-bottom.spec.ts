@@ -24,7 +24,7 @@ async function expectAtBottom(page: import("playwright/test").Page) {
     .toBeLessThanOrEqual(16);
 }
 
-test("workbench: opening a different session starts at bottom", async ({ page, request }) => {
+test("workbench: opening a different session reopens at bottom", async ({ page, request }) => {
   const seed = await seedDummyWorkspace(request, {
     tasks: 2,
     sessionsPerTask: 1,

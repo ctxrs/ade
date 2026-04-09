@@ -16,7 +16,6 @@ import {
 } from "../workbenchThreadViewModelWarmCache";
 import {
   buildSessionPretextRuntimeLayoutKey,
-  createDefaultSessionTranscriptUiState,
   getOrCreateSessionPretextRuntime,
   pruneSessionPretextRuntimeCache,
   primeSessionPretextRuntime,
@@ -162,16 +161,15 @@ export function useWarmSessionTranscriptRuntimes({
         }
 
         const existingRuntime = getOrCreateSessionPretextRuntime(sessionId);
-        const runtimeUiState = existingRuntime.hasVisibleMount
-          ? existingRuntime.uiState.verbosity === warmState.verbosity &&
-            haveSameLoadingTurns(existingRuntime.uiState.turnToolsLoading, entry.turnToolsLoading)
+        const runtimeUiState =
+          existingRuntime.uiState.verbosity === warmState.verbosity &&
+          haveSameLoadingTurns(existingRuntime.uiState.turnToolsLoading, entry.turnToolsLoading)
             ? existingRuntime.uiState
             : {
                 ...existingRuntime.uiState,
                 turnToolsLoading: entry.turnToolsLoading,
                 verbosity: warmState.verbosity,
-              }
-          : createDefaultSessionTranscriptUiState(warmState.verbosity, entry.turnToolsLoading);
+              };
 
         primeSessionPretextRuntime({
           sessionId,

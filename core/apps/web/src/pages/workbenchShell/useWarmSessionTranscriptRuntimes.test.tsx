@@ -8,9 +8,7 @@ import type { SessionThreadProjection } from "../../state/sessionThreadProjectio
 import {
   buildSessionPretextRuntimeLayoutKey,
   getOrCreateSessionPretextRuntime,
-  noteSessionPretextRuntimeSnapshot,
   createDefaultSessionTranscriptUiState,
-  markSessionPretextRuntimeVisible,
   primeSessionPretextRuntime,
   readSessionPretextRuntimePreparedState,
   resetSessionPretextRuntimeCache,
@@ -209,14 +207,6 @@ describe("useWarmSessionTranscriptRuntimes", () => {
     });
     const initialHeight = readSessionPretextRuntimePreparedState(runtime).snapshot.totalHeight;
 
-    markSessionPretextRuntimeVisible(runtime, true);
-    noteSessionPretextRuntimeSnapshot(
-      runtime,
-      readSessionPretextRuntimePreparedState(runtime).snapshot,
-      [toolGroupItem],
-    );
-    markSessionPretextRuntimeVisible(runtime, false);
-
     const sessionSnap = buildSessionSnapshot(
       buildEntry({
         turnToolsLoading: ["turn-1"],
@@ -264,14 +254,6 @@ describe("useWarmSessionTranscriptRuntimes", () => {
       viewportWidth: 900,
       viewportHeight: 300,
     });
-
-    markSessionPretextRuntimeVisible(runtime, true);
-    noteSessionPretextRuntimeSnapshot(
-      runtime,
-      readSessionPretextRuntimePreparedState(runtime).snapshot,
-      [toolGroupItem],
-    );
-    markSessionPretextRuntimeVisible(runtime, false);
 
     const initialSessionSnap = buildSessionSnapshot(
       buildEntry({

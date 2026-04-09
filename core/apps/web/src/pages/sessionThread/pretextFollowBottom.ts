@@ -11,7 +11,6 @@ type BottomAttachmentParams = {
   followBottom: boolean;
   atBottom: boolean;
 };
-
 export function computeBottomOffsetPx(params: {
   totalHeight: number;
   scrollTop: number;

@@ -10,14 +10,11 @@ import {
   buildSessionPretextRuntimeSourceKey,
   createDefaultSessionTranscriptUiState,
   getOrCreateSessionPretextRuntime,
-  SESSION_PRETEXT_MAX_RESTORABLE_RUNTIMES,
   getSessionPretextRuntimeCacheSize,
-  markSessionPretextRuntimeVisible,
   noteSessionPretextRuntimeSnapshot,
   primeSessionPretextRuntime,
   pruneSessionPretextRuntimeCache,
   readSessionPretextRuntimePreparedState,
-  readSessionPretextRuntimeRestoreSnapshot,
   resetSessionPretextRuntimeCache,
 } from "./pretextSessionRuntimeCache";
 
@@ -41,7 +38,7 @@ describe("pretextSessionRuntimeCache", () => {
     vi.useRealTimers();
   });
 
-  it("preserves detached restore state when priming newer items in the background", () => {
+  it("re-primes detached prepared state for bottom reopen semantics", () => {
     const sessionId = "session-detached";
     const initialItems = makeItems(10);
     const updatedItems = makeItems(12);
@@ -50,16 +47,13 @@ describe("pretextSessionRuntimeCache", () => {
     });
 
     runtime.core.replaceItems(initialItems, { kind: "bottom" });
-    markSessionPretextRuntimeVisible(runtime, true);
     const detachedSnapshot = runtime.core.syncViewport({
       width: 900,
       height: 300,
       scrollTop: 420,
     });
     noteSessionPretextRuntimeSnapshot(runtime, detachedSnapshot, initialItems);
-    markSessionPretextRuntimeVisible(runtime, false);
 
-    const restoreBefore = readSessionPretextRuntimeRestoreSnapshot(runtime);
     primeSessionPretextRuntime({
       sessionId,
       listItems: updatedItems,
@@ -67,12 +61,10 @@ describe("pretextSessionRuntimeCache", () => {
       viewportWidth: 900,
       viewportHeight: 300,
     });
-    const restoreAfter = readSessionPretextRuntimeRestoreSnapshot(runtime);
+    const preparedAfter = readSessionPretextRuntimePreparedState(runtime);
 
-    expect(restoreBefore).not.toBeNull();
-    expect(restoreAfter).not.toBeNull();
-    expect(restoreAfter?.anchor).toEqual(restoreBefore?.anchor);
-    expect(restoreAfter?.scrollTop).toBe(restoreBefore?.scrollTop);
+    expect(preparedAfter.listItems).toEqual(updatedItems);
+    expect(preparedAfter.snapshot.anchor.kind).toBe("bottom");
   });
 
   it("skips item replacement when the ui state is semantically unchanged", () => {
@@ -84,7 +76,7 @@ describe("pretextSessionRuntimeCache", () => {
       viewportWidth: 900,
       viewportHeight: 300,
     });
-    const replaceItemsSpy = vi.spyOn(runtime.core, "replaceItems");
+    const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
 
     primeSessionPretextRuntime({
       sessionId: "session-stable-ui",
@@ -94,7 +86,7 @@ describe("pretextSessionRuntimeCache", () => {
       viewportHeight: 300,
     });
 
-    expect(replaceItemsSpy).not.toHaveBeenCalled();
+    expect(syncItemsSpy).not.toHaveBeenCalled();
   });
 
   it("records explicit source and layout keys for prepared runtimes", () => {
@@ -168,25 +160,7 @@ describe("pretextSessionRuntimeCache", () => {
     expect(readWarmWorkbenchThreadViewModel(sessionId, "warm-1")).not.toBeNull();
   });
 
-  it("evicts cold prepared runtimes while retaining detached restore state", () => {
-    const restorableRuntime = getOrCreateSessionPretextRuntime("session-restorable", {
-      uiState: createDefaultSessionTranscriptUiState(),
-    });
-    const restorableItems = makeItems(6);
-
-    restorableRuntime.core.replaceItems(restorableItems, { kind: "bottom" });
-    markSessionPretextRuntimeVisible(restorableRuntime, true);
-    noteSessionPretextRuntimeSnapshot(
-      restorableRuntime,
-      restorableRuntime.core.syncViewport({
-        width: 900,
-        height: 300,
-        scrollTop: 360,
-      }),
-      restorableItems,
-    );
-    markSessionPretextRuntimeVisible(restorableRuntime, false);
-
+  it("evicts unretained prepared runtimes because reopen no longer depends on cached scroll state", () => {
     primeSessionPretextRuntime({
       sessionId: "session-retained",
       listItems: makeItems(4),
@@ -201,55 +175,39 @@ describe("pretextSessionRuntimeCache", () => {
       viewportWidth: 900,
       viewportHeight: 300,
     });
+    primeSessionPretextRuntime({
+      sessionId: "session-evicted-2",
+      listItems: makeItems(6),
+      uiState: createDefaultSessionTranscriptUiState(),
+      viewportWidth: 900,
+      viewportHeight: 300,
+    });
 
     expect(getSessionPretextRuntimeCacheSize()).toBe(3);
 
     pruneSessionPretextRuntimeCache(["session-retained"]);
 
-    expect(getSessionPretextRuntimeCacheSize()).toBe(2);
-    expect(readSessionPretextRuntimeRestoreSnapshot(getOrCreateSessionPretextRuntime("session-restorable"))).not.toBeNull();
-    expect(readSessionPretextRuntimeRestoreSnapshot(getOrCreateSessionPretextRuntime("session-retained"))).toBeNull();
-    expect(getSessionPretextRuntimeCacheSize()).toBe(2);
+    expect(getSessionPretextRuntimeCacheSize()).toBe(1);
   });
 
-  it("bounds detached restore entries by recency", () => {
-    vi.useFakeTimers();
-    const width = 900;
-    const height = 300;
-
-    for (let index = 0; index < SESSION_PRETEXT_MAX_RESTORABLE_RUNTIMES + 3; index += 1) {
-      vi.setSystemTime(new Date(`2026-03-17T00:${String(index).padStart(2, "0")}:00Z`));
-      const sessionId = `session-restorable-${index}`;
-      const runtime = getOrCreateSessionPretextRuntime(sessionId, {
-        uiState: createDefaultSessionTranscriptUiState(),
-      });
-      const items = makeItems(index + 1);
-      runtime.core.replaceItems(items, { kind: "bottom" });
-      markSessionPretextRuntimeVisible(runtime, true);
-      noteSessionPretextRuntimeSnapshot(
-        runtime,
-        runtime.core.syncViewport({
-          width,
-          height,
-          scrollTop: 120 + index,
-        }),
-        items,
-      );
-      markSessionPretextRuntimeVisible(runtime, false);
-    }
+  it("clears prepared runtimes when no sessions are retained", () => {
+    primeSessionPretextRuntime({
+      sessionId: "session-a",
+      listItems: makeItems(3),
+      uiState: createDefaultSessionTranscriptUiState(),
+      viewportWidth: 900,
+      viewportHeight: 300,
+    });
+    primeSessionPretextRuntime({
+      sessionId: "session-b",
+      listItems: makeItems(4),
+      uiState: createDefaultSessionTranscriptUiState(),
+      viewportWidth: 900,
+      viewportHeight: 300,
+    });
 
     pruneSessionPretextRuntimeCache([]);
 
-    expect(getSessionPretextRuntimeCacheSize()).toBe(SESSION_PRETEXT_MAX_RESTORABLE_RUNTIMES);
-    expect(
-      readSessionPretextRuntimeRestoreSnapshot(getOrCreateSessionPretextRuntime("session-restorable-0")),
-    ).toBeNull();
-    expect(
-      readSessionPretextRuntimeRestoreSnapshot(
-        getOrCreateSessionPretextRuntime(
-          `session-restorable-${SESSION_PRETEXT_MAX_RESTORABLE_RUNTIMES + 2}`,
-        ),
-      ),
-    ).not.toBeNull();
+    expect(getSessionPretextRuntimeCacheSize()).toBe(0);
   });
 });
