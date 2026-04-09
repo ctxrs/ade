@@ -15,8 +15,9 @@ import {
   type WorkbenchThreadProjectionOpKind,
 } from "./sessionThreadProjection";
 import {
+  buildWorkbenchThreadViewModelLayoutKey,
+  buildWorkbenchThreadViewModelSourceKey,
   buildWorkbenchThreadViewModelWarmKey,
-  buildWorkbenchThreadViewModelWarmSnapshot,
   persistWarmWorkbenchThreadViewModel,
   primeWarmWorkbenchThreadViewModel,
   type WorkbenchThreadViewModelPerTurnCaches,
@@ -141,6 +142,54 @@ export function useWorkbenchThreadViewModelController(
       enableDebugEvents,
     });
 
+  const persistCurrentWarmSnapshot = (nextState: InternalState) => {
+    const sourceKey = buildWorkbenchThreadViewModelSourceKey({
+      sessionId,
+      projectionRev,
+      turnsStamp,
+      messagesStamp,
+      eventsStamp,
+      verbosity,
+      turns,
+      assistantStreamingByTurnId,
+      messages,
+      events,
+      toolsByTurnId,
+      toolSummariesReady,
+      askUserQuestionAnswers,
+      enableDebugEvents,
+    });
+    const layoutKey = buildWorkbenchThreadViewModelLayoutKey({ verbosity });
+    persistWarmWorkbenchThreadViewModel(sessionId, {
+      sourceKey,
+      layoutKey,
+      warmKey: buildWorkbenchThreadViewModelWarmKey({
+        sessionId,
+        projectionRev,
+        turnsStamp,
+        messagesStamp,
+        eventsStamp,
+        verbosity,
+        turns,
+        assistantStreamingByTurnId,
+        messages,
+        events,
+        toolsByTurnId,
+        toolSummariesReady,
+        askUserQuestionAnswers,
+        enableDebugEvents,
+      }),
+      projectionRevision: nextState.projectionRevision,
+      view: nextState.view,
+      listItems: nextState.listItems,
+      groupRanges: nextState.groupRanges,
+      turnsLen: nextState.turnsLen,
+      messagesLen: nextState.messagesLen,
+      eventsLen: nextState.eventsLen,
+      caches: perTurnCachesRef.current,
+    });
+  };
+
   const initialBuildRef = useRef<{ state: InternalState; caches: WorkbenchThreadViewModelPerTurnCaches } | null>(null);
   if (initialBuildRef.current === null) {
     const initialState = buildWarmSnapshot();
@@ -190,22 +239,7 @@ export function useWorkbenchThreadViewModelController(
 
   const fullRebuild = useRef((_preferredKind?: WorkbenchThreadProjectionOpKind) => {});
   fullRebuild.current = (preferredKind = "reconcile") => {
-    const rebuilt = buildWorkbenchThreadViewModelWarmSnapshot({
-      sessionId,
-      projectionRev,
-      turnsStamp,
-      messagesStamp,
-      eventsStamp,
-      verbosity,
-      turns,
-      assistantStreamingByTurnId,
-      messages,
-      events,
-      toolsByTurnId,
-      toolSummariesReady,
-      askUserQuestionAnswers,
-      enableDebugEvents,
-    });
+    const rebuilt = buildWarmSnapshot();
 
     perTurnCachesRef.current = rebuilt.caches;
 
@@ -272,14 +306,16 @@ export function useWorkbenchThreadViewModelController(
     ): boolean => {
       if (dirtyTurnIds.size === 0) {
         syncInvalidationRefs();
-        setState((prev) => ({
-          ...prev,
+        const nextState: InternalState = {
+          ...state,
           projectionRevision: projectionRev,
           lastOp: createWorkbenchThreadProjectionOp("noop", projectionRev),
           changedItemIds: [],
           remeasureItemIds: [],
           eventsLen: nextEventsLen,
-        }));
+        };
+        persistCurrentWarmSnapshot(nextState);
+        setState(nextState);
         return true;
       }
 
@@ -381,44 +417,34 @@ export function useWorkbenchThreadViewModelController(
       }
 
       syncInvalidationRefs();
-      setState((prev) => {
-        const lastOp = classifyWorkbenchThreadProjectionOp({
-          current: prev.listItems,
-          next: nextList,
-          projectionRevision: projectionRev,
-          fallbackKind,
-        });
-        if (
-          lastOp.kind === "noop" &&
-          prev.eventsLen === nextEventsLen
-        ) {
-          const nextView =
-            prev.view.debugEvents === prev.view.debugEvents
-              ? prev.view
-              : { groups: prev.view.groups, debugEvents: prev.view.debugEvents };
-          if (prev.lastOp.kind === "noop") {
-            return prev;
-          }
-          return {
-            ...prev,
-            view: nextView,
-            lastOp,
-            changedItemIds: [],
-            remeasureItemIds: [],
-          };
-        }
-        return {
-          ...prev,
-          view: { groups: updatedGroups, debugEvents: prev.view.debugEvents },
-          listItems: nextList,
-          groupRanges: nextRanges,
-          projectionRevision: projectionRev,
-          lastOp,
-          changedItemIds: lastOp.changedItemIds,
-          remeasureItemIds: lastOp.remeasureItemIds,
-          eventsLen: nextEventsLen,
-        };
+      const lastOp = classifyWorkbenchThreadProjectionOp({
+        current: state.listItems,
+        next: nextList,
+        projectionRevision: projectionRev,
+        fallbackKind,
       });
+      const nextState: InternalState =
+        lastOp.kind === "noop" && state.eventsLen === nextEventsLen
+          ? {
+              ...state,
+              projectionRevision: projectionRev,
+              lastOp,
+              changedItemIds: [],
+              remeasureItemIds: [],
+            }
+          : {
+              ...state,
+              view: { groups: updatedGroups, debugEvents: state.view.debugEvents },
+              listItems: nextList,
+              groupRanges: nextRanges,
+              projectionRevision: projectionRev,
+              lastOp,
+              changedItemIds: lastOp.changedItemIds,
+              remeasureItemIds: lastOp.remeasureItemIds,
+              eventsLen: nextEventsLen,
+            };
+      persistCurrentWarmSnapshot(nextState);
+      setState(nextState);
       return true;
     };
 
@@ -543,14 +569,16 @@ export function useWorkbenchThreadViewModelController(
     }
     if (dirtyTurnIds.size === 0) {
       syncInvalidationRefs();
-      setState((prev) => ({
-        ...prev,
+      const nextState: InternalState = {
+        ...state,
         projectionRevision: projectionRev,
         lastOp: createWorkbenchThreadProjectionOp("noop", projectionRev),
         changedItemIds: [],
         remeasureItemIds: [],
         eventsLen: events.length,
-      }));
+      };
+      persistCurrentWarmSnapshot(nextState);
+      setState(nextState);
       return;
     }
 
@@ -582,51 +610,6 @@ export function useWorkbenchThreadViewModelController(
     turns,
     turnsStamp,
     turnsById,
-  ]);
-
-  useLayoutEffect(() => {
-    persistWarmWorkbenchThreadViewModel(sessionId, {
-      warmKey: buildWorkbenchThreadViewModelWarmKey({
-        sessionId,
-        projectionRev,
-        turnsStamp,
-        messagesStamp,
-        eventsStamp,
-        verbosity,
-        turns,
-        assistantStreamingByTurnId,
-        messages,
-        events,
-        toolsByTurnId,
-        toolSummariesReady,
-        askUserQuestionAnswers,
-        enableDebugEvents,
-      }),
-      projectionRevision: state.projectionRevision,
-      view: state.view,
-      listItems: state.listItems,
-      groupRanges: state.groupRanges,
-      turnsLen: state.turnsLen,
-      messagesLen: state.messagesLen,
-      eventsLen: state.eventsLen,
-      caches: perTurnCachesRef.current,
-    });
-  }, [
-    askUserQuestionAnswers,
-    assistantStreamingByTurnId,
-    enableDebugEvents,
-    events,
-    eventsStamp,
-    messages,
-    messagesStamp,
-    projectionRev,
-    sessionId,
-    state,
-    toolSummariesReady,
-    toolsByTurnId,
-    turns,
-    turnsStamp,
-    verbosity,
   ]);
 
   return {

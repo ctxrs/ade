@@ -1,4 +1,3 @@
-import { layout, prepare, type PreparedText } from "@chenglou/pretext";
 import type { PretextVirtualizerPlannedLayout } from "@pretext-virtualizer/core";
 import type { MessageAttachment } from "../../api/client";
 import {
@@ -11,7 +10,11 @@ import {
 } from "../../utils/pretextPerfDiagnostics";
 import type { WorkbenchListItem, WorkbenchTurnHeader } from "../SessionPage.types";
 import { isExpandableMessageContent, resolveWorkbenchMessageExpanded } from "../sessionMessageListItemIdentity";
-import { measureSessionMarkdownDocument, clearSessionMarkdownMeasurementCaches } from "./sessionMarkdownMeasurement";
+import {
+  clearSessionMarkdownMeasurementCaches,
+  measureSessionMarkdownDocument,
+  measureSessionTextHeight,
+} from "./sessionMarkdownMeasurement";
 import {
   SESSION_THREAD_CONTENT_MAX_WIDTH_PX,
   SESSION_THREAD_HORIZONTAL_INSET_PX,
@@ -81,10 +84,7 @@ const ASK_HINT_HEIGHT_PX = 14;
 const ASK_OTHER_LABEL_HEIGHT_PX = 16;
 const ASK_OTHER_INPUT_HEIGHT_PX = 34;
 
-const PREPARED_CACHE_LIMIT = 2000;
 const PERF_WIDTH_BUCKET_SIZE = 64;
-const preparedCache = new Map<string, PreparedText>();
-
 const normalizeHeight = (value: number): number =>
   Number.isFinite(value) && value > 0 ? Math.max(1, Math.round(value * 16) / 16) : 1;
 
@@ -119,24 +119,6 @@ const resolveAssistantTextWidth = (viewportWidth: number): number =>
 const resolveAskCardWidth = (viewportWidth: number): number =>
   Math.max(280, Math.min(resolveSessionThreadContentWidth(viewportWidth) - SESSION_THREAD_INDENT_LEFT_PX, 680));
 
-function getPreparedText(
-  cacheKey: string,
-  text: string,
-  font: string,
-  whiteSpace: "normal" | "pre-wrap",
-): PreparedText {
-  const cached = preparedCache.get(cacheKey);
-  if (cached) return cached;
-  const prepared = prepare(text, font, whiteSpace === "pre-wrap" ? { whiteSpace } : undefined);
-  preparedCache.set(cacheKey, prepared);
-  while (preparedCache.size > PREPARED_CACHE_LIMIT) {
-    const oldestKey = preparedCache.keys().next().value;
-    if (typeof oldestKey !== "string") break;
-    preparedCache.delete(oldestKey);
-  }
-  return prepared;
-}
-
 function measureTextHeight(params: {
   cacheKey: string;
   text: string;
@@ -145,9 +127,7 @@ function measureTextHeight(params: {
   lineHeight: number;
   whiteSpace?: "normal" | "pre-wrap";
 }): number {
-  const whiteSpace = params.whiteSpace ?? "normal";
-  const prepared = getPreparedText(params.cacheKey, params.text, params.font, whiteSpace);
-  return normalizeHeight(layout(prepared, Math.max(1, params.width), params.lineHeight).height);
+  return measureSessionTextHeight(params);
 }
 
 const isExpandedTurnHeader = (
@@ -372,7 +352,6 @@ function measureAskUserQuestionHeight(item: Extract<WorkbenchListItem, { kind: "
 }
 
 export const clearPretextVirtualizerRowLayoutCache = (): void => {
-  preparedCache.clear();
   clearSessionMarkdownMeasurementCaches();
 };
 

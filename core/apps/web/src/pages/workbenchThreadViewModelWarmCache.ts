@@ -11,6 +11,13 @@ import {
   filterThreadItemsForVerbosity,
 } from "./SessionPage.workbenchViewModel";
 import type { AskUserQuestionAnswerState, WorkbenchListItem, WorkbenchThreadView } from "./SessionPage.types";
+import {
+  countSessionTranscriptWarmEntries,
+  persistSessionTranscriptWarmEntry,
+  pruneSessionTranscriptWarmEntries,
+  readSessionTranscriptWarmEntry,
+  resetSessionTranscriptWarmEntries,
+} from "./sessionThread/pretextSessionRuntimeCache";
 
 export type WorkbenchThreadViewModelWarmParams = {
   sessionId: string;
@@ -35,6 +42,8 @@ export type WorkbenchThreadViewModelPerTurnCaches = {
 };
 
 export type WorkbenchThreadViewModelWarmSnapshot = {
+  sourceKey: string;
+  layoutKey: string;
   warmKey: string;
   projectionRevision: number;
   view: WorkbenchThreadView;
@@ -45,14 +54,6 @@ export type WorkbenchThreadViewModelWarmSnapshot = {
   eventsLen: number;
   caches: WorkbenchThreadViewModelPerTurnCaches;
 };
-
-type WarmEntry = {
-  warmKey: string;
-  snapshot: WorkbenchThreadViewModelWarmSnapshot;
-  updatedAtMs: number;
-};
-
-const warmCache = new Map<string, WarmEntry>();
 
 function getTurnGroupKey(turnId: string): string {
   return `turn-${turnId}`;
@@ -108,7 +109,7 @@ function fingerprintAskUserQuestionAnswers(
     .join("|");
 }
 
-export function buildWorkbenchThreadViewModelWarmKey(
+export function buildWorkbenchThreadViewModelSourceKey(
   params: WorkbenchThreadViewModelWarmParams,
 ): string {
   const projectionRev = params.projectionRev ?? 0;
@@ -118,10 +119,24 @@ export function buildWorkbenchThreadViewModelWarmKey(
     params.turnsStamp,
     params.messagesStamp,
     params.eventsStamp,
-    params.verbosity,
     params.toolSummariesReady ? "tools:1" : "tools:0",
     params.enableDebugEvents ? "debug:1" : "debug:0",
     `ask:${askAnswers}`,
+  ].join("|");
+}
+
+export function buildWorkbenchThreadViewModelLayoutKey(
+  params: Pick<WorkbenchThreadViewModelWarmParams, "verbosity">,
+): string {
+  return `verbosity:${params.verbosity}`;
+}
+
+export function buildWorkbenchThreadViewModelWarmKey(
+  params: WorkbenchThreadViewModelWarmParams,
+): string {
+  return [
+    buildWorkbenchThreadViewModelSourceKey(params),
+    buildWorkbenchThreadViewModelLayoutKey(params),
   ].join("|");
 }
 
@@ -164,6 +179,8 @@ export function buildWorkbenchThreadViewModelWarmSnapshot(
   }
 
   return {
+    sourceKey: buildWorkbenchThreadViewModelSourceKey(params),
+    layoutKey: buildWorkbenchThreadViewModelLayoutKey(params),
     warmKey: buildWorkbenchThreadViewModelWarmKey(params),
     projectionRevision: projectionRev ?? 0,
     view,
@@ -180,21 +197,23 @@ export function readWarmWorkbenchThreadViewModel(
   sessionId: string,
   warmKey: string,
 ): WorkbenchThreadViewModelWarmSnapshot | null {
-  const entry = warmCache.get(sessionId);
+  const entry = readSessionTranscriptWarmEntry(sessionId);
   if (!entry || entry.warmKey !== warmKey) {
     incrementPretextPerfCounter("pretext_warm_viewmodel_cache_miss");
     return null;
   }
   incrementPretextPerfCounter("pretext_warm_viewmodel_cache_hit");
   addPretextPerfBucket("pretext_warm_viewmodel_session", sessionId);
-  return entry.snapshot;
+  return entry.snapshot as WorkbenchThreadViewModelWarmSnapshot;
 }
 
 export function persistWarmWorkbenchThreadViewModel(
   sessionId: string,
   snapshot: WorkbenchThreadViewModelWarmSnapshot,
 ): void {
-  warmCache.set(sessionId, {
+  persistSessionTranscriptWarmEntry(sessionId, {
+    sourceKey: snapshot.sourceKey,
+    layoutKey: snapshot.layoutKey,
     warmKey: snapshot.warmKey,
     snapshot,
     updatedAtMs: Date.now(),
@@ -217,17 +236,13 @@ export function primeWarmWorkbenchThreadViewModel(
 }
 
 export function getWarmWorkbenchThreadViewModelCacheSize(): number {
-  return warmCache.size;
+  return countSessionTranscriptWarmEntries();
 }
 
 export function pruneWarmWorkbenchThreadViewModelCache(retainedSessionIds: readonly string[]): void {
-  const retained = new Set(retainedSessionIds);
-  for (const sessionId of warmCache.keys()) {
-    if (retained.has(sessionId)) continue;
-    warmCache.delete(sessionId);
-  }
+  pruneSessionTranscriptWarmEntries(retainedSessionIds);
 }
 
 export function resetWarmWorkbenchThreadViewModelCache(): void {
-  warmCache.clear();
+  resetSessionTranscriptWarmEntries();
 }

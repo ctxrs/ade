@@ -680,7 +680,9 @@ describe("SessionThreadPretextVirtualizerList", () => {
     });
 
     const runtime = getOrCreateSessionPretextRuntime(sessionId);
+    const patchItemsSpy = vi.spyOn(runtime.core, "patchItems");
     const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
+    patchItemsSpy.mockClear();
     syncItemsSpy.mockClear();
 
     const projectionOp = {
@@ -703,7 +705,8 @@ describe("SessionThreadPretextVirtualizerList", () => {
       />,
     );
 
-    expect(syncItemsSpy).toHaveBeenCalledTimes(1);
+    expect(patchItemsSpy).toHaveBeenCalledTimes(1);
+    expect(syncItemsSpy).not.toHaveBeenCalled();
 
     rerender(
       <SessionThreadPretextVirtualizerList
@@ -718,7 +721,8 @@ describe("SessionThreadPretextVirtualizerList", () => {
       />,
     );
 
-    expect(syncItemsSpy).toHaveBeenCalledTimes(1);
+    expect(patchItemsSpy).toHaveBeenCalledTimes(1);
+    expect(syncItemsSpy).not.toHaveBeenCalled();
   });
 
   it("does not resync when the items array is recreated with the same row objects", () => {

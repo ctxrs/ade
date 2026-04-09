@@ -225,6 +225,22 @@ function haveSameLayoutInputs(
   return true;
 }
 
+function haveSameItemIds(
+  current: readonly WorkbenchListItem[],
+  next: readonly WorkbenchListItem[],
+): boolean {
+  if (current === next) return true;
+  if (current.length !== next.length) return false;
+  for (let index = 0; index < current.length; index += 1) {
+    if (current[index]?.id !== next[index]?.id) return false;
+  }
+  return true;
+}
+
+function isLocalizedProjectionOp(kind: WorkbenchThreadProjectionOp["kind"]): boolean {
+  return kind === "hydrate_tools" || kind === "terminalize_turn" || kind === "toggle_expansion";
+}
+
 export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPretextVirtualizerList({
   style,
   sessionId,
@@ -496,6 +512,16 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
           }
           nextSnapshot = core.syncItems(items, anchorOverride);
           break;
+        case "hydrate_tools":
+        case "terminalize_turn":
+        case "toggle_expansion":
+          nextSnapshot = core.patchItems(
+            items,
+            projectionOp.changedItemIds,
+            projectionOp.remeasureItemIds,
+            anchorOverride,
+          );
+          break;
         default:
           nextSnapshot = core.syncItems(items, anchorOverride);
           break;
@@ -560,7 +586,9 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
         : followBottomRef.current
           ? ({ kind: "bottom" } satisfies PretextVirtualizerLogicalAnchor)
           : null;
-      baseSnapshot = core.syncItems(currentItems, initialAnchor);
+      baseSnapshot = haveSameItemIds(preparedState.listItems, currentItems)
+        ? core.patchItems(currentItems, currentItems.map((item) => item.id), [], initialAnchor)
+        : core.syncItems(currentItems, initialAnchor);
       lastSyncedItemCountRef.current = currentItems.length;
     }
     commitRuntimeSnapshot(baseSnapshot, currentItems);
@@ -628,12 +656,22 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     if (!itemsChanged && !projectionChanged && !uiStateChanged) {
       return;
     }
-    incrementPretextPerfCounter("pretext_full_relayout_calls");
-    incrementPretextPerfCounter("pretext_full_relayout_item_count", listItems.length);
-    addPretextPerfBucket(
-      "pretext_full_relayout_reason",
-      projectionChanged ? `visible:${threadProjectionOp.kind}` : uiStateChanged ? "visible:ui-state" : "visible:items",
-    );
+    const shouldCountFullRelayout =
+      uiStateChanged ||
+      !projectionChanged ||
+      !isLocalizedProjectionOp(threadProjectionOp.kind);
+    if (shouldCountFullRelayout) {
+      incrementPretextPerfCounter("pretext_full_relayout_calls");
+      incrementPretextPerfCounter("pretext_full_relayout_item_count", listItems.length);
+      addPretextPerfBucket(
+        "pretext_full_relayout_reason",
+        projectionChanged ? `visible:${threadProjectionOp.kind}` : uiStateChanged ? "visible:ui-state" : "visible:items",
+      );
+    } else {
+      incrementPretextPerfCounter("pretext_localized_patch_calls");
+      incrementPretextPerfCounter("pretext_localized_patch_item_count", threadProjectionOp.remeasureItemIds.length);
+      addPretextPerfBucket("pretext_localized_patch_kind", threadProjectionOp.kind);
+    }
     if (uiStateChanged) {
       addPretextPerfBucket(
         "pretext_ui_state_revision",

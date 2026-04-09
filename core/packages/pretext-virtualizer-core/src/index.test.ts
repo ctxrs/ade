@@ -270,6 +270,41 @@ describe("createPretextVirtualizerCore", () => {
     expect(measureCalls).toBe(3);
   });
 
+  it("patches same-sequence items by explicit remeasure ids", () => {
+    let measureCalls = 0;
+    const core = createPretextVirtualizerCore<FixtureItem>({
+      initialItems: makeItems(40, 64, 72),
+      getPlannedLayout: (item) => {
+        measureCalls += 1;
+        return { height: item.plannedHeight };
+      },
+      getId: (item) => item.id,
+      getLayoutRevision: (item) => item.layoutRevision,
+      viewportHeight: 100,
+      viewportWidth: 320,
+      overscanPx: 0,
+    });
+
+    core.syncViewport({
+      height: 100,
+      width: 320,
+      scrollTop: 0,
+    });
+    expect(measureCalls).toBe(3);
+
+    core.patchItems(
+      makeItems(40, 96, 72).map((item) =>
+        item.id === "item-2" ? { ...item, layoutRevision: 1 } : { ...item },
+      ),
+      ["item-2"],
+      ["item-2"],
+    );
+
+    expect(measureCalls).toBe(4);
+    expect(core.getHeightForIndex(1)).toBe(96);
+    expect(core.getOffsetForIndex(2)).toBe(136);
+  });
+
   it("recomputes planned heights when the width bucket changes", () => {
     const core = createPretextVirtualizerCore<FixtureItem>({
       initialItems: makeItems(40, 64, 72),

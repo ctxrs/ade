@@ -4,6 +4,11 @@ import type { Message, SessionEvent, SessionTurn, SessionTurnTool } from "../api
 import type { AskUserQuestionAnswerState } from "./SessionPage.types";
 import { deriveMessagesKey, deriveTurnsKey } from "./SessionPage.workbenchViewModel";
 import { useWorkbenchThreadViewModelController } from "./useWorkbenchThreadViewModelController";
+import {
+  buildWorkbenchThreadViewModelWarmKey,
+  readWarmWorkbenchThreadViewModel,
+  resetWarmWorkbenchThreadViewModelCache,
+} from "./workbenchThreadViewModelWarmCache";
 
 type ControllerProps = Parameters<typeof useWorkbenchThreadViewModelController>[0];
 type ControllerResult = ReturnType<typeof useWorkbenchThreadViewModelController>;
@@ -26,6 +31,7 @@ function Harness(props: ControllerProps) {
 afterEach(() => {
   cleanup();
   latestResult = null;
+  resetWarmWorkbenchThreadViewModelCache();
 });
 
 const turns: SessionTurn[] = [
@@ -697,6 +703,139 @@ describe("useWorkbenchThreadViewModelController", () => {
       expect(expectGroup("turn-turn-1").header?.content).toBe("First turn");
       expect(latestResult?.listItems.filter(isToolItem).map((item) => item.title)).toEqual(["ls -la", "echo hi"]);
     });
+  });
+
+  it("persists localized append updates into the warm snapshot cache", async () => {
+    const askUserQuestionAnswers = new Map<string, AskUserQuestionAnswerState>();
+    const emptyToolsByTurnId: Record<string, SessionTurnTool[]> = {};
+    const singleTurn = [
+      {
+        turn_id: "turn-1",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-1",
+        status: "running",
+        start_seq: 1,
+        end_seq: 2,
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:01.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ] as SessionTurn[];
+    const singleMessages = [
+      {
+        id: "message-1",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-1",
+        turn_sequence: 1,
+        role: "user",
+        content: "First turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        order_seq: 1,
+      },
+    ] as unknown as Message[];
+    const baseEvents: SessionEvent[] = [
+      {
+        seq: 1,
+        id: "event-tool-1",
+        session_id: "session-1",
+        run_id: "run-1",
+        turn_id: "turn-1",
+        event_type: "tool_call",
+        payload_json: {
+          tool_call_id: "tool-1",
+          title: "ls -la",
+          order_seq: 2,
+        },
+        created_at: "2025-12-15T00:00:01.500Z",
+      },
+    ];
+    const turnsStamp = buildTurnsStamp(singleTurn);
+    const messagesStamp = buildMessagesStamp(singleMessages);
+    const { rerender } = renderController({
+      turns: singleTurn,
+      messages: singleMessages,
+      events: baseEvents,
+      eventsStamp: "1:1",
+      turnsStamp,
+      messagesStamp,
+      toolsByTurnId: emptyToolsByTurnId,
+      askUserQuestionAnswers,
+    });
+
+    await waitFor(() => {
+      expect(latestResult?.listItems.filter(isToolItem).map((item) => item.title)).toEqual(["ls -la"]);
+    });
+
+    const nextEvents: SessionEvent[] = [
+      ...baseEvents,
+      {
+        seq: 2,
+        id: "event-tool-2",
+        session_id: "session-1",
+        run_id: "run-1",
+        turn_id: "turn-1",
+        event_type: "tool_call",
+        payload_json: {
+          tool_call_id: "tool-2",
+          title: "echo hi",
+          order_seq: 3,
+        },
+        created_at: "2025-12-15T00:00:01.750Z",
+      },
+    ];
+
+    rerender(
+      <Harness
+        sessionId="session-1"
+        turnsStamp={turnsStamp}
+        messagesStamp={messagesStamp}
+        eventsStamp="2:2"
+        verbosity="default"
+        turns={singleTurn}
+        messages={singleMessages}
+        events={nextEvents}
+        toolsByTurnId={emptyToolsByTurnId}
+        toolSummariesReady
+        askUserQuestionAnswers={askUserQuestionAnswers}
+        enableDebugEvents={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(latestResult?.listItems.filter(isToolItem).map((item) => item.title)).toEqual(["ls -la", "echo hi"]);
+    });
+
+    const warmSnapshot = readWarmWorkbenchThreadViewModel(
+      "session-1",
+      buildWorkbenchThreadViewModelWarmKey({
+        sessionId: "session-1",
+        projectionRev: 0,
+        turnsStamp,
+        messagesStamp,
+        eventsStamp: "2:2",
+        verbosity: "default",
+        turns: singleTurn,
+        messages: singleMessages,
+        events: nextEvents,
+        toolsByTurnId: emptyToolsByTurnId,
+        toolSummariesReady: true,
+        askUserQuestionAnswers,
+        enableDebugEvents: false,
+      }),
+    );
+
+    expect(warmSnapshot?.listItems.filter(isToolItem).map((item) => item.title)).toEqual(["ls -la", "echo hi"]);
   });
 
   it("falls back to a full rebuild when an existing event changes during an append tick", async () => {

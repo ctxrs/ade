@@ -40,12 +40,30 @@ type SessionPretextRuntimeRecord = {
   };
   uiState: WorkbenchMessageListUiState;
   uiStateRevision: string;
+  preparedSourceKey: string | null;
+  preparedLayoutKey: string | null;
   preparedSnapshot: PretextVirtualizerSnapshot<WorkbenchListItem>;
   preparedItems: readonly WorkbenchListItem[];
   restoreSnapshot: PretextVirtualizerSnapshot<WorkbenchListItem> | null;
+  restoreSourceKey: string | null;
+  restoreLayoutKey: string | null;
   hasVisibleMount: boolean;
   isVisible: boolean;
   lastTouchedAtMs: number;
+};
+
+export type SessionTranscriptWarmCacheEntry = {
+  sourceKey: string;
+  layoutKey: string;
+  warmKey: string;
+  snapshot: unknown;
+  updatedAtMs: number;
+};
+
+type SessionTranscriptCacheRecord = {
+  sessionId: string;
+  warmEntry: SessionTranscriptWarmCacheEntry | null;
+  runtime: SessionPretextRuntimeRecord | null;
 };
 
 type RuntimeBindings = {
@@ -60,9 +78,11 @@ type PrimeSessionPretextRuntimeParams = {
   uiState: WorkbenchMessageListUiState;
   viewportWidth: number;
   viewportHeight?: number;
+  sourceKey?: string;
+  layoutKey?: string;
 };
 
-const runtimeCache = new Map<string, SessionPretextRuntimeRecord>();
+const sessionTranscriptCache = new Map<string, SessionTranscriptCacheRecord>();
 
 function getSessionTranscriptUiStateRevision(uiState: WorkbenchMessageListUiState): string {
   return getWorkbenchMessageListLayoutRevision(uiState, {
@@ -72,6 +92,82 @@ function getSessionTranscriptUiStateRevision(uiState: WorkbenchMessageListUiStat
 
 function touchRuntime(record: SessionPretextRuntimeRecord): void {
   record.lastTouchedAtMs = Date.now();
+}
+
+function fingerprintString(value: string): string {
+  const normalized = String(value ?? "");
+  let hash = 2166136261;
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash ^= normalized.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${normalized.length}:${(hash >>> 0).toString(36)}`;
+}
+
+function normalizeViewportDimension(value: number | undefined): number {
+  return Number.isFinite(value) && (value ?? 0) > 0 ? Math.round(value ?? 0) : 0;
+}
+
+function createSessionTranscriptCacheRecord(sessionId: string): SessionTranscriptCacheRecord {
+  return {
+    sessionId,
+    warmEntry: null,
+    runtime: null,
+  };
+}
+
+function getOrCreateSessionTranscriptCacheRecord(sessionId: string): SessionTranscriptCacheRecord {
+  let record = sessionTranscriptCache.get(sessionId);
+  if (!record) {
+    record = createSessionTranscriptCacheRecord(sessionId);
+    sessionTranscriptCache.set(sessionId, record);
+  }
+  return record;
+}
+
+function deleteSessionTranscriptCacheRecordIfEmpty(record: SessionTranscriptCacheRecord): void {
+  if (record.warmEntry != null || record.runtime != null) {
+    return;
+  }
+  sessionTranscriptCache.delete(record.sessionId);
+}
+
+export function readSessionTranscriptWarmEntry(sessionId: string): SessionTranscriptWarmCacheEntry | null {
+  return sessionTranscriptCache.get(sessionId)?.warmEntry ?? null;
+}
+
+export function persistSessionTranscriptWarmEntry(
+  sessionId: string,
+  warmEntry: SessionTranscriptWarmCacheEntry,
+): void {
+  const record = getOrCreateSessionTranscriptCacheRecord(sessionId);
+  record.warmEntry = warmEntry;
+}
+
+export function pruneSessionTranscriptWarmEntries(retainedSessionIds: readonly string[]): void {
+  const retained = new Set(retainedSessionIds);
+  for (const record of sessionTranscriptCache.values()) {
+    if (record.warmEntry == null || retained.has(record.sessionId)) continue;
+    record.warmEntry = null;
+    deleteSessionTranscriptCacheRecordIfEmpty(record);
+  }
+}
+
+export function countSessionTranscriptWarmEntries(): number {
+  let count = 0;
+  for (const record of sessionTranscriptCache.values()) {
+    if (record.warmEntry != null) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+export function resetSessionTranscriptWarmEntries(): void {
+  for (const record of sessionTranscriptCache.values()) {
+    record.warmEntry = null;
+    deleteSessionTranscriptCacheRecordIfEmpty(record);
+  }
 }
 
 export function createDefaultSessionTranscriptUiState(
@@ -86,6 +182,18 @@ export function createDefaultSessionTranscriptUiState(
     turnToolsLoading,
     verbosity,
   };
+}
+
+export function buildSessionPretextRuntimeSourceKey(
+  listItems: readonly WorkbenchListItem[],
+): string {
+  return `items:${fingerprintString(listItems.map((item) => item.id).join("|"))}`;
+}
+
+export function buildSessionPretextRuntimeLayoutKey(
+  params: { uiState: WorkbenchMessageListUiState },
+): string {
+  return `ui:${fingerprintString(getSessionTranscriptUiStateRevision(params.uiState))}`;
 }
 
 function bindRuntime(record: SessionPretextRuntimeRecord, bindings: RuntimeBindings): void {
@@ -130,9 +238,13 @@ function createSessionPretextRuntime(sessionId: string): SessionPretextRuntimeRe
     callbacks,
     uiState,
     uiStateRevision: getSessionTranscriptUiStateRevision(uiState),
+    preparedSourceKey: null,
+    preparedLayoutKey: null,
     preparedSnapshot: core.getSnapshot(),
     preparedItems: [],
     restoreSnapshot: null,
+    restoreSourceKey: null,
+    restoreLayoutKey: null,
     hasVisibleMount: false,
     isVisible: false,
     lastTouchedAtMs: Date.now(),
@@ -148,10 +260,11 @@ export function getOrCreateSessionPretextRuntime(
   sessionId: string,
   bindings?: RuntimeBindings,
 ): SessionPretextRuntimeRecord {
-  let record = runtimeCache.get(sessionId);
+  const cacheRecord = getOrCreateSessionTranscriptCacheRecord(sessionId);
+  let record = cacheRecord.runtime;
   if (!record) {
     record = createSessionPretextRuntime(sessionId);
-    runtimeCache.set(sessionId, record);
+    cacheRecord.runtime = record;
   }
   if (bindings) {
     bindRuntime(record, bindings);
@@ -169,6 +282,8 @@ export function noteSessionPretextRuntimeSnapshot(
   record.preparedItems = listItems;
   if (record.isVisible) {
     record.restoreSnapshot = snapshot;
+    record.restoreSourceKey = record.preparedSourceKey;
+    record.restoreLayoutKey = record.preparedLayoutKey;
     record.hasVisibleMount = true;
   }
   touchRuntime(record);
@@ -180,20 +295,29 @@ export function primeSessionPretextRuntime(
   const record = getOrCreateSessionPretextRuntime(params.sessionId);
   incrementPretextPerfCounter("pretext_runtime_prime_calls");
   const nextUiStateRevision = getSessionTranscriptUiStateRevision(params.uiState);
+  const nextSourceKey = params.sourceKey ?? buildSessionPretextRuntimeSourceKey(params.listItems);
+  const nextLayoutKey =
+    params.layoutKey ??
+    buildSessionPretextRuntimeLayoutKey({
+      uiState: params.uiState,
+    });
   const uiStateChanged = record.uiStateRevision !== nextUiStateRevision;
-  const itemsChanged = record.preparedItems !== params.listItems;
+  const itemsChanged =
+    record.preparedItems !== params.listItems || record.preparedSourceKey !== nextSourceKey;
+  const layoutChanged = record.preparedLayoutKey !== nextLayoutKey;
   if (uiStateChanged) {
     bindRuntime(record, {
       uiState: params.uiState,
       uiStateRevision: nextUiStateRevision,
     });
   }
-  const nextWidth = Number.isFinite(params.viewportWidth) ? params.viewportWidth : 0;
-  const nextHeight = Number.isFinite(params.viewportHeight) ? params.viewportHeight ?? 0 : 0;
+  const nextWidth = normalizeViewportDimension(params.viewportWidth);
+  const nextHeight = normalizeViewportDimension(params.viewportHeight);
   const viewportChanged =
     (nextWidth > 0 && record.preparedSnapshot.viewportWidth !== nextWidth) ||
     (nextHeight > 0 && record.preparedSnapshot.viewportHeight !== nextHeight);
-  if (!uiStateChanged && !itemsChanged && !viewportChanged) {
+  const requiresItemSync = itemsChanged || uiStateChanged || layoutChanged;
+  if (!requiresItemSync && !viewportChanged) {
     incrementPretextPerfCounter("pretext_runtime_prime_noop");
     touchRuntime(record);
     return record;
@@ -206,24 +330,33 @@ export function primeSessionPretextRuntime(
       scrollTop: record.preparedSnapshot.scrollTop,
     });
   }
-  if (itemsChanged || uiStateChanged) {
+  if (requiresItemSync) {
     incrementPretextPerfCounter("pretext_runtime_prime_replace_items");
     incrementPretextPerfCounter("pretext_runtime_prime_replace_item_count", params.listItems.length);
     addPretextPerfBucket(
       "pretext_runtime_prime_replace_reason",
-      itemsChanged && uiStateChanged ? "items+ui" : itemsChanged ? "items" : "ui",
+      itemsChanged && uiStateChanged
+        ? "items+ui"
+        : itemsChanged
+          ? "items"
+          : layoutChanged
+            ? "layout"
+            : "ui",
     );
     recordPretextPerfEvent("runtime-prime:replace-items", {
       sessionId: params.sessionId,
       itemCount: params.listItems.length,
       itemsChanged,
       uiStateChanged,
+      layoutChanged,
       viewportChanged,
     });
     const anchor = record.restoreSnapshot?.anchor ?? { kind: "bottom" as const };
     record.preparedSnapshot = record.core.syncItems(params.listItems, anchor);
     record.preparedItems = params.listItems;
   }
+  record.preparedSourceKey = nextSourceKey;
+  record.preparedLayoutKey = nextLayoutKey;
   touchRuntime(record);
   return record;
 }
@@ -242,10 +375,14 @@ export function markSessionPretextRuntimeVisible(
 export function readSessionPretextRuntimePreparedState(record: SessionPretextRuntimeRecord): {
   snapshot: PretextVirtualizerSnapshot<WorkbenchListItem>;
   listItems: readonly WorkbenchListItem[];
+  sourceKey: string | null;
+  layoutKey: string | null;
 } {
   return {
     snapshot: record.preparedSnapshot,
     listItems: record.preparedItems,
+    sourceKey: record.preparedSourceKey,
+    layoutKey: record.preparedLayoutKey,
   };
 }
 
@@ -257,17 +394,20 @@ export function readSessionPretextRuntimeRestoreSnapshot(
 
 export function pruneSessionPretextRuntimeCache(retainedPreparedSessionIds: readonly string[]): void {
   const retained = new Set(retainedPreparedSessionIds);
-  const restorableEntries: Array<[string, SessionPretextRuntimeRecord]> = [];
+  const restorableEntries: SessionTranscriptCacheRecord[] = [];
   let deletedCount = 0;
-  for (const [sessionId, record] of runtimeCache.entries()) {
+  for (const cacheRecord of sessionTranscriptCache.values()) {
+    const record = cacheRecord.runtime;
+    if (!record) continue;
     if (record.isVisible) continue;
-    if (retained.has(sessionId)) continue;
+    if (retained.has(cacheRecord.sessionId)) continue;
     if (!record.restoreSnapshot) {
-      runtimeCache.delete(sessionId);
+      cacheRecord.runtime = null;
+      deleteSessionTranscriptCacheRecordIfEmpty(cacheRecord);
       deletedCount += 1;
       continue;
     }
-    restorableEntries.push([sessionId, record]);
+    restorableEntries.push(cacheRecord);
   }
   if (restorableEntries.length <= SESSION_PRETEXT_MAX_RESTORABLE_RUNTIMES) {
     if (deletedCount > 0) {
@@ -276,21 +416,31 @@ export function pruneSessionPretextRuntimeCache(retainedPreparedSessionIds: read
     return;
   }
   const overflowEntries = restorableEntries
-    .sort(([, left], [, right]) => right.lastTouchedAtMs - left.lastTouchedAtMs)
+    .sort((left, right) => (right.runtime?.lastTouchedAtMs ?? 0) - (left.runtime?.lastTouchedAtMs ?? 0))
     .slice(SESSION_PRETEXT_MAX_RESTORABLE_RUNTIMES);
-  overflowEntries.forEach(([sessionId]) => {
-      runtimeCache.delete(sessionId);
-      deletedCount += 1;
-    });
+  overflowEntries.forEach((cacheRecord) => {
+    cacheRecord.runtime = null;
+    deleteSessionTranscriptCacheRecordIfEmpty(cacheRecord);
+    deletedCount += 1;
+  });
   if (deletedCount > 0) {
     incrementPretextPerfCounter("pretext_runtime_cache_pruned_entries", deletedCount);
   }
 }
 
 export function getSessionPretextRuntimeCacheSize(): number {
-  return runtimeCache.size;
+  let count = 0;
+  for (const record of sessionTranscriptCache.values()) {
+    if (record.runtime != null) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 export function resetSessionPretextRuntimeCache(): void {
-  runtimeCache.clear();
+  for (const record of sessionTranscriptCache.values()) {
+    record.runtime = null;
+    deleteSessionTranscriptCacheRecordIfEmpty(record);
+  }
 }

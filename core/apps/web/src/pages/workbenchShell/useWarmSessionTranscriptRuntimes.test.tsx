@@ -6,6 +6,7 @@ import type { SessionCacheEntry, SessionSupervisorSnapshot } from "../../state/s
 import type { WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
 import type { SessionThreadProjection } from "../../state/sessionThreadProjection/types";
 import {
+  buildSessionPretextRuntimeLayoutKey,
   getOrCreateSessionPretextRuntime,
   noteSessionPretextRuntimeSnapshot,
   createDefaultSessionTranscriptUiState,
@@ -169,6 +170,8 @@ describe("useWarmSessionTranscriptRuntimes", () => {
     noteSessionTranscriptWarmViewport({ width: 900, height: 300 });
     noteSessionTranscriptWarmVerbosity("default");
     primeWarmWorkbenchThreadViewModelMock.mockReturnValue({
+      sourceKey: "source-1",
+      layoutKey: "verbosity:default",
       warmKey: "warm-1",
       projectionRevision: 1,
       view: {
@@ -239,6 +242,12 @@ describe("useWarmSessionTranscriptRuntimes", () => {
     expect(primeWarmWorkbenchThreadViewModelMock).toHaveBeenCalledTimes(1);
     expect(pruneWarmWorkbenchThreadViewModelCacheMock).toHaveBeenCalledWith([sessionId]);
     expect(warmedRuntime.uiState.turnToolsLoading).toEqual(["turn-1"]);
+    expect(warmedPreparedState.sourceKey).toBe("warm-1");
+    expect(warmedPreparedState.layoutKey).toBe(
+      buildSessionPretextRuntimeLayoutKey({
+        uiState: warmedRuntime.uiState,
+      }),
+    );
     expect(warmedPreparedState.snapshot.totalHeight).toBeGreaterThan(initialHeight);
   });
 

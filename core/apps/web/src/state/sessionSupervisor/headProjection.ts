@@ -279,7 +279,10 @@ export function applyToolSummaries(
   const hydrated = support.turnToolsHydratedByTurnId;
   let changed = false;
   const nextByTurn: Record<string, SessionTurnTool[]> = {};
-  entry.toolSummaries = summaries;
+  if (entry.toolSummaries !== summaries) {
+    entry.toolSummaries = summaries;
+    changed = true;
+  }
 
   for (const summary of summaries) {
     const turnId = idToString(summary.turn_id);
@@ -314,18 +317,22 @@ export function applyToolSummaries(
     const existing = support.turnToolsByTurnId[turnId] ?? [];
     const seen = new Set(existing.map((tool) => String(tool.tool_call_id)));
     const merged = existing.slice();
+    let turnChanged = false;
     for (const tool of incoming) {
       const key = String(tool.tool_call_id);
       if (seen.has(key)) continue;
       seen.add(key);
       merged.push(tool);
+      turnChanged = true;
     }
-    support.turnToolsByTurnId = {
-      ...support.turnToolsByTurnId,
-      [turnId]: merged,
-    };
-    if (!hydrated[turnId]) hydrated[turnId] = false;
-    changed = true;
+    if (turnChanged) {
+      support.turnToolsByTurnId = {
+        ...support.turnToolsByTurnId,
+        [turnId]: merged,
+      };
+      if (!hydrated[turnId]) hydrated[turnId] = false;
+      changed = true;
+    }
   }
 
   if (changed) {

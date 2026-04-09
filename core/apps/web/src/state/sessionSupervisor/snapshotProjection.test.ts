@@ -72,4 +72,28 @@ describe("sessionSupervisor snapshotProjection", () => {
     expect(projected?.toolsByTurnId["turn-1"]?.[0]?.tool_call_id).toBe("tool-1");
     expect(projected?.projectionRev).toBe(6);
   });
+
+  it("reuses the published session entry when transcript-facing inputs are unchanged", () => {
+    const entry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
+    entry.support.stateLoaded = true;
+    entry.turns = [];
+    entry.messages = [];
+    entry.events = [];
+
+    const host = {
+      maxCachedSessions: 10,
+      listeners: new Set<() => void>(),
+      snapshot: { connection: "idle", sessions: {} } as SessionSupervisorSnapshot,
+      entries: new Map([[entry.sessionId, entry]]),
+    };
+
+    publish.call(host);
+    const firstPublished = host.snapshot.sessions["session-1"];
+
+    publish.call(host);
+    const secondPublished = host.snapshot.sessions["session-1"];
+
+    expect(secondPublished).toBe(firstPublished);
+    expect(secondPublished?.threadProjection).toBe(firstPublished?.threadProjection);
+  });
 });

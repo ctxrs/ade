@@ -4,11 +4,14 @@ import {
   getWarmWorkbenchThreadViewModelCacheSize,
   persistWarmWorkbenchThreadViewModel,
   pruneWarmWorkbenchThreadViewModelCache,
+  readWarmWorkbenchThreadViewModel,
   resetWarmWorkbenchThreadViewModelCache,
 } from "./workbenchThreadViewModelWarmCache";
 
 function makeSnapshot(warmKey: string): WorkbenchThreadViewModelWarmSnapshot {
   return {
+    sourceKey: `source:${warmKey}`,
+    layoutKey: "verbosity:default",
     warmKey,
     projectionRevision: 1,
     view: {
@@ -42,5 +45,14 @@ describe("workbenchThreadViewModelWarmCache", () => {
     pruneWarmWorkbenchThreadViewModelCache(["session-2"]);
 
     expect(getWarmWorkbenchThreadViewModelCacheSize()).toBe(1);
+  });
+
+  it("reads snapshots through the shared session transcript cache", () => {
+    const snapshot = makeSnapshot("warm-1");
+
+    persistWarmWorkbenchThreadViewModel("session-1", snapshot);
+
+    expect(readWarmWorkbenchThreadViewModel("session-1", "warm-1")).toBe(snapshot);
+    expect(readWarmWorkbenchThreadViewModel("session-1", "warm-miss")).toBeNull();
   });
 });

@@ -86,6 +86,12 @@ type PretextVirtualizerCore<Item> = {
     items: readonly Item[],
     anchorOverride?: PretextVirtualizerLogicalAnchor | null,
   ) => PretextVirtualizerSnapshot<Item>;
+  patchItems: (
+    items: readonly Item[],
+    changedItemIds: readonly string[],
+    remeasureItemIds: readonly string[],
+    anchorOverride?: PretextVirtualizerLogicalAnchor | null,
+  ) => PretextVirtualizerSnapshot<Item>;
   restoreAnchor: (
     anchor: PretextVirtualizerLogicalAnchor,
     mode?: PretextVirtualizerAnchorRestoreMode,
@@ -395,6 +401,57 @@ export const createPretextVirtualizerCore = <Item,>({
     return true;
   };
 
+  const patchStableItems = (
+    items: readonly Item[],
+    changedItemIds: readonly string[],
+    remeasureItemIds: readonly string[],
+  ): boolean => {
+    const layout = computeLayout();
+    if (layout.heights.length !== items.length) return false;
+    const changedIds = new Set(changedItemIds);
+    const remeasureIds = new Set(remeasureItemIds);
+
+    let firstHeightChangeIndex: number | null = null;
+    for (let index = 0; index < items.length; index += 1) {
+      const nextItem = items[index]!;
+      const existing = layout.heights[index]!;
+      const nextId = getId(nextItem);
+      if (existing.id !== nextId) {
+        return false;
+      }
+
+      const nextLayoutRevision = getLayoutRevision(nextItem);
+      const shouldRemeasure =
+        remeasureIds.has(nextId) ||
+        existing.layoutRevision !== nextLayoutRevision;
+      if (shouldRemeasure) {
+        const nextHeight = normalizeHeight(
+          getPlannedLayout(nextItem, { width: state.viewportWidth, widthBucket: layout.widthBucket }).height,
+        );
+        if (existing.height !== nextHeight && firstHeightChangeIndex == null) {
+          firstHeightChangeIndex = index;
+        }
+        existing.item = nextItem;
+        existing.layoutRevision = nextLayoutRevision;
+        existing.height = nextHeight;
+        continue;
+      }
+
+      if (changedIds.has(nextId) || existing.item !== nextItem) {
+        existing.item = nextItem;
+      }
+      if (existing.layoutRevision !== nextLayoutRevision) {
+        existing.layoutRevision = nextLayoutRevision;
+      }
+    }
+
+    state.items = [...items];
+    if (firstHeightChangeIndex != null) {
+      recomputeOffsetsFrom(layout, firstHeightChangeIndex);
+    }
+    return true;
+  };
+
   const syncDiffWindowItems = (items: readonly Item[]): boolean => {
     const layout = computeLayout();
     const previousLength = layout.heights.length;
@@ -547,6 +604,22 @@ export const createPretextVirtualizerCore = <Item,>({
       }, anchorOverride);
       emitDiagnostic("items:sync", snapshot, {
         itemCount: items.length,
+        anchorOverrideKind: anchorOverride?.kind ?? null,
+      });
+      return snapshot;
+    },
+    patchItems: (items, changedItemIds, remeasureItemIds, anchorOverride) => {
+      const snapshot = preserveAnchorAcrossItems(() => {
+        if (!patchStableItems(items, changedItemIds, remeasureItemIds)) {
+          if (!syncStableItems(items) && !syncDiffWindowItems(items)) {
+            replaceAllItems(items);
+          }
+        }
+      }, anchorOverride);
+      emitDiagnostic("items:patch", snapshot, {
+        itemCount: items.length,
+        changedItemCount: changedItemIds.length,
+        remeasureItemCount: remeasureItemIds.length,
         anchorOverrideKind: anchorOverride?.kind ?? null,
       });
       return snapshot;

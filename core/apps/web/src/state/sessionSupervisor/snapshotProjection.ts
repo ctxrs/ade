@@ -46,24 +46,78 @@ export function evictIfNeeded(this: SessionSupervisorSnapshotProjectionHost) {
   }
 }
 
-const cloneSessionEntry = (entry: InternalEntry): SessionCacheEntry => {
+function haveSameStringMembers(previous: readonly string[], next: ReadonlySet<string>): boolean {
+  if (previous.length !== next.size) return false;
+  let index = 0;
+  for (const value of next) {
+    if (previous[index] !== value) return false;
+    index += 1;
+  }
+  return true;
+}
+
+function haveSameRecordEntries(
+  previous: Record<string, unknown> | undefined,
+  next: Record<string, unknown> | undefined,
+): boolean {
+  if (previous === next) return true;
+  if (!previous || !next) return false;
+  const previousKeys = Object.keys(previous);
+  const nextKeys = Object.keys(next);
+  if (previousKeys.length !== nextKeys.length) return false;
+  for (const key of previousKeys) {
+    if (previous[key] !== next[key]) return false;
+  }
+  return true;
+}
+
+const cloneSessionEntry = (entry: InternalEntry, previous?: SessionCacheEntry): SessionCacheEntry => {
   const overlay = entry.overlay;
   const support = entry.support;
-  const baseThreadProjection = buildSessionThreadProjectionFromSnapshot({
-    stateLoaded: support.stateLoaded,
-    turns: entry.turns,
-    turnsRev: entry.turnsRev,
-    assistantStreamingByTurnId: entry.assistantStreamingByTurnId,
-    assistantStreamingRev: entry.assistantStreamingRev,
-    messages: entry.messages,
-    messagesRev: entry.messagesRev,
-    events: entry.events,
-    eventsRev: entry.eventsRev,
-    turnToolsByTurnId: support.turnToolsByTurnId,
-    toolSummariesReady: support.toolSummariesReady,
-    projectionRev: entry.projectionRev,
-  });
-  return {
+  const canReuseThreadProjection =
+    previous?.threadProjection != null &&
+    previous.turns === entry.turns &&
+    previous.turnsRev === entry.turnsRev &&
+    previous.assistantStreamingByTurnId === entry.assistantStreamingByTurnId &&
+    previous.assistantStreamingRev === entry.assistantStreamingRev &&
+    previous.messages === entry.messages &&
+    previous.messagesRev === entry.messagesRev &&
+    previous.events === entry.events &&
+    previous.eventsRev === entry.eventsRev &&
+    previous.turnToolsByTurnId === support.turnToolsByTurnId &&
+    previous.toolSummariesReady === support.toolSummariesReady &&
+    previous.projectionRev === (entry.projectionRev ?? 0) &&
+    previous.stateLoaded === support.stateLoaded;
+  const baseThreadProjection = canReuseThreadProjection
+    ? previous.threadProjection!
+    : buildSessionThreadProjectionFromSnapshot({
+        stateLoaded: support.stateLoaded,
+        turns: entry.turns,
+        turnsRev: entry.turnsRev,
+        assistantStreamingByTurnId: entry.assistantStreamingByTurnId,
+        assistantStreamingRev: entry.assistantStreamingRev,
+        messages: entry.messages,
+        messagesRev: entry.messagesRev,
+        events: entry.events,
+        eventsRev: entry.eventsRev,
+        turnToolsByTurnId: support.turnToolsByTurnId,
+        toolSummariesReady: support.toolSummariesReady,
+        projectionRev: entry.projectionRev,
+      });
+  const turnToolsLoading =
+    previous && haveSameStringMembers(previous.turnToolsLoading, support.turnToolsLoadingSet)
+      ? previous.turnToolsLoading
+      : [...support.turnToolsLoadingSet];
+  const loadErrors =
+    previous && haveSameRecordEntries(previous.loadErrors, support.loadErrors)
+      ? (previous.loadErrors ?? {})
+      : { ...support.loadErrors };
+  const fetching =
+    previous && previous.fetching && previous.fetching.head === support.fetching.head && previous.fetching.history === support.fetching.history
+      ? previous.fetching
+      : { ...support.fetching };
+
+  const nextEntry: SessionCacheEntry = {
     sessionId: entry.sessionId,
     mode: entry.mode,
     loadState: entry.loadState,
@@ -77,7 +131,7 @@ const cloneSessionEntry = (entry: InternalEntry): SessionCacheEntry => {
     acpSlashCommands: entry.acpSlashCommands,
     turns: entry.turns,
     turnToolsByTurnId: support.turnToolsByTurnId,
-    turnToolsLoading: [...support.turnToolsLoadingSet],
+    turnToolsLoading,
     toolSummaries: entry.toolSummaries,
     toolSummariesReady: support.toolSummariesReady,
     hasMoreTurns: entry.hasMoreTurns,
@@ -96,7 +150,7 @@ const cloneSessionEntry = (entry: InternalEntry): SessionCacheEntry => {
     stateLoaded: support.stateLoaded,
     stateLoading: support.stateLoading,
     stateRev: entry.stateRev,
-    loadErrors: { ...support.loadErrors },
+    loadErrors,
     queue: entry.queue,
     optimisticThreadMessages: overlay.optimisticThreadMessages,
     optimisticQueuedMessages: overlay.optimisticQueuedMessages,
@@ -114,16 +168,74 @@ const cloneSessionEntry = (entry: InternalEntry): SessionCacheEntry => {
     error: entry.error,
     subscribed: entry.subscribed,
     oldestTurnSeq: entry.oldestTurnSeq,
-    fetching: { ...support.fetching },
+    fetching,
     updatedAtMs: entry.updatedAtMs,
   };
+  if (
+    previous &&
+    previous.mode === nextEntry.mode &&
+    previous.loadState === nextEntry.loadState &&
+    previous.freshness === nextEntry.freshness &&
+    previous.session === nextEntry.session &&
+    previous.activity === nextEntry.activity &&
+    previous.acpModels === nextEntry.acpModels &&
+    previous.acpModes === nextEntry.acpModes &&
+    previous.acpCurrentModelId === nextEntry.acpCurrentModelId &&
+    previous.acpCommands === nextEntry.acpCommands &&
+    previous.acpSlashCommands === nextEntry.acpSlashCommands &&
+    previous.turns === nextEntry.turns &&
+    previous.turnToolsByTurnId === nextEntry.turnToolsByTurnId &&
+    previous.turnToolsLoading === nextEntry.turnToolsLoading &&
+    previous.toolSummaries === nextEntry.toolSummaries &&
+    previous.toolSummariesReady === nextEntry.toolSummariesReady &&
+    previous.hasMoreTurns === nextEntry.hasMoreTurns &&
+    previous.events === nextEntry.events &&
+    previous.eventsRev === nextEntry.eventsRev &&
+    previous.messages === nextEntry.messages &&
+    previous.messagesRev === nextEntry.messagesRev &&
+    previous.turnsRev === nextEntry.turnsRev &&
+    previous.assistantStreamingByTurnId === nextEntry.assistantStreamingByTurnId &&
+    previous.assistantStreamingRev === nextEntry.assistantStreamingRev &&
+    previous.artifacts === nextEntry.artifacts &&
+    previous.artifactsLoading === nextEntry.artifactsLoading &&
+    previous.subagentInvocations === nextEntry.subagentInvocations &&
+    previous.subagentInvocationsLoaded === nextEntry.subagentInvocationsLoaded &&
+    previous.subagentInvocationsLoading === nextEntry.subagentInvocationsLoading &&
+    previous.stateLoaded === nextEntry.stateLoaded &&
+    previous.stateLoading === nextEntry.stateLoading &&
+    previous.stateRev === nextEntry.stateRev &&
+    previous.loadErrors === nextEntry.loadErrors &&
+    previous.queue === nextEntry.queue &&
+    previous.optimisticThreadMessages === nextEntry.optimisticThreadMessages &&
+    previous.optimisticQueuedMessages === nextEntry.optimisticQueuedMessages &&
+    previous.optimisticQueueRemovalIds === nextEntry.optimisticQueueRemovalIds &&
+    previous.overlayRev === nextEntry.overlayRev &&
+    previous.diff === nextEntry.diff &&
+    previous.gitStatusSummary === nextEntry.gitStatusSummary &&
+    previous.summaryCheckpoint === nextEntry.summaryCheckpoint &&
+    previous.headWindow === nextEntry.headWindow &&
+    previous.projectionRev === nextEntry.projectionRev &&
+    previous.threadProjection === nextEntry.threadProjection &&
+    previous.diagnosticsByPath === nextEntry.diagnosticsByPath &&
+    previous.lastEventSeq === nextEntry.lastEventSeq &&
+    previous.loading === nextEntry.loading &&
+    previous.error === nextEntry.error &&
+    previous.subscribed === nextEntry.subscribed &&
+    previous.oldestTurnSeq === nextEntry.oldestTurnSeq &&
+    previous.fetching === nextEntry.fetching &&
+    previous.updatedAtMs === nextEntry.updatedAtMs
+  ) {
+    return previous;
+  }
+  return nextEntry;
 };
 
 export function publish(this: SessionSupervisorSnapshotProjectionHost) {
   evictIfNeeded.call(this);
   const sessions: Record<string, SessionCacheEntry> = {};
+  const previousSessions = this.snapshot.sessions;
   for (const [id, entry] of this.entries) {
-    sessions[id] = cloneSessionEntry(entry);
+    sessions[id] = cloneSessionEntry(entry, previousSessions[id]);
   }
   this.snapshot = { connection: this.snapshot.connection, sessions };
   for (const listener of this.listeners) listener();

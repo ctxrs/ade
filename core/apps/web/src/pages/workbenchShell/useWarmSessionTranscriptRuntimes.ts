@@ -15,6 +15,7 @@ import {
   pruneWarmWorkbenchThreadViewModelCache,
 } from "../workbenchThreadViewModelWarmCache";
 import {
+  buildSessionPretextRuntimeLayoutKey,
   createDefaultSessionTranscriptUiState,
   getOrCreateSessionPretextRuntime,
   pruneSessionPretextRuntimeCache,
@@ -178,6 +179,10 @@ export function useWarmSessionTranscriptRuntimes({
           uiState: runtimeUiState,
           viewportWidth: warmState.viewportWidth,
           viewportHeight: warmState.viewportHeight,
+          sourceKey: warmedViewModel.warmKey,
+          layoutKey: buildSessionPretextRuntimeLayoutKey({
+            uiState: runtimeUiState,
+          }),
         });
         incrementPretextPerfCounter("pretext_warm_runtime_primes");
         incrementPretextPerfCounter("pretext_warm_runtime_items", warmedViewModel.listItems.length);

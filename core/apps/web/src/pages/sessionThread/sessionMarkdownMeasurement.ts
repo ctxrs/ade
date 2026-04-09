@@ -60,6 +60,7 @@ const CODE_BLOCK_VERTICAL_PADDING_PX =
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_TOP_PX +
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_BOTTOM_PX;
 const CHECKBOX_GUTTER_PX = 18;
+export const SESSION_TRANSCRIPT_LAYOUT_ENGINE_REVISION = "2026-04-08-1";
 
 type TextWhiteSpace = "normal" | "pre-wrap";
 
@@ -165,6 +166,17 @@ function measureTextHeight(params: {
   const whiteSpace = params.whiteSpace ?? "normal";
   const prepared = getPreparedText(params.cacheKey, params.text, params.font, whiteSpace);
   return clampHeight(layout(prepared, Math.max(1, params.width), params.lineHeight).height);
+}
+
+export function measureSessionTextHeight(params: {
+  cacheKey: string;
+  text: string;
+  font: string;
+  width: number;
+  lineHeight: number;
+  whiteSpace?: TextWhiteSpace;
+}): number {
+  return normalizeHeight(measureTextHeight(params));
 }
 
 function parseMarkdown(content: string): SessionMarkdownBlock[] {

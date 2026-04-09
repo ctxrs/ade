@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkbenchListItem } from "../SessionPage.types";
 import {
+  persistWarmWorkbenchThreadViewModel,
+  readWarmWorkbenchThreadViewModel,
+  resetWarmWorkbenchThreadViewModelCache,
+} from "../workbenchThreadViewModelWarmCache";
+import {
+  buildSessionPretextRuntimeLayoutKey,
+  buildSessionPretextRuntimeSourceKey,
   createDefaultSessionTranscriptUiState,
   getOrCreateSessionPretextRuntime,
   SESSION_PRETEXT_MAX_RESTORABLE_RUNTIMES,
@@ -9,6 +16,7 @@ import {
   noteSessionPretextRuntimeSnapshot,
   primeSessionPretextRuntime,
   pruneSessionPretextRuntimeCache,
+  readSessionPretextRuntimePreparedState,
   readSessionPretextRuntimeRestoreSnapshot,
   resetSessionPretextRuntimeCache,
 } from "./pretextSessionRuntimeCache";
@@ -26,6 +34,7 @@ const makeItems = (count = 2): WorkbenchListItem[] =>
 describe("pretextSessionRuntimeCache", () => {
   beforeEach(() => {
     resetSessionPretextRuntimeCache();
+    resetWarmWorkbenchThreadViewModelCache();
   });
 
   afterEach(() => {
@@ -86,6 +95,77 @@ describe("pretextSessionRuntimeCache", () => {
     });
 
     expect(replaceItemsSpy).not.toHaveBeenCalled();
+  });
+
+  it("records explicit source and layout keys for prepared runtimes", () => {
+    const listItems = makeItems(3);
+    const uiState = createDefaultSessionTranscriptUiState("default", ["turn-1"]);
+    const runtime = primeSessionPretextRuntime({
+      sessionId: "session-keyed",
+      listItems,
+      uiState,
+      viewportWidth: 900,
+      viewportHeight: 300,
+      sourceKey: "warm-key-1",
+      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState }),
+    });
+
+    expect(readSessionPretextRuntimePreparedState(runtime)).toMatchObject({
+      sourceKey: "warm-key-1",
+      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState }),
+    });
+
+    const updatedItems = [...listItems, makeItems(4)[3]!];
+    primeSessionPretextRuntime({
+      sessionId: "session-keyed",
+      listItems: updatedItems,
+      uiState,
+      viewportWidth: 900,
+      viewportHeight: 300,
+      sourceKey: buildSessionPretextRuntimeSourceKey(updatedItems),
+      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState }),
+    });
+
+    expect(readSessionPretextRuntimePreparedState(runtime)).toMatchObject({
+      sourceKey: buildSessionPretextRuntimeSourceKey(updatedItems),
+      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState }),
+    });
+  });
+
+  it("keeps warm snapshots when pruning only the runtime slice", () => {
+    const sessionId = "session-shared";
+    persistWarmWorkbenchThreadViewModel(sessionId, {
+      sourceKey: "source-1",
+      layoutKey: "verbosity:default",
+      warmKey: "warm-1",
+      projectionRevision: 1,
+      view: {
+        groups: [],
+        debugEvents: [],
+      },
+      listItems: [],
+      groupRanges: new Map(),
+      turnsLen: 0,
+      messagesLen: 0,
+      eventsLen: 0,
+      caches: {
+        messagesByTurnId: new Map(),
+        eventsByTurnId: new Map(),
+      },
+    });
+
+    primeSessionPretextRuntime({
+      sessionId,
+      listItems: makeItems(2),
+      uiState: createDefaultSessionTranscriptUiState(),
+      viewportWidth: 900,
+      viewportHeight: 300,
+    });
+
+    pruneSessionPretextRuntimeCache([]);
+
+    expect(getSessionPretextRuntimeCacheSize()).toBe(0);
+    expect(readWarmWorkbenchThreadViewModel(sessionId, "warm-1")).not.toBeNull();
   });
 
   it("evicts cold prepared runtimes while retaining detached restore state", () => {

@@ -45,6 +45,26 @@ export type SessionSupervisorReplicaPatchHost = {
   syncSupportLoadsForOpenSession(entry: InternalEntry): void;
 };
 
+function haveSameArrayRefs<T>(previous: readonly T[], next: readonly T[]): boolean {
+  if (previous === next) return true;
+  if (previous.length !== next.length) return false;
+  for (let index = 0; index < previous.length; index += 1) {
+    if (previous[index] !== next[index]) return false;
+  }
+  return true;
+}
+
+function haveSameRecordRefs<T>(previous: Record<string, T>, next: Record<string, T>): boolean {
+  if (previous === next) return true;
+  const previousKeys = Object.keys(previous);
+  const nextKeys = Object.keys(next);
+  if (previousKeys.length !== nextKeys.length) return false;
+  for (const key of previousKeys) {
+    if (previous[key] !== next[key]) return false;
+  }
+  return true;
+}
+
 const repairReplaceIsCoveredByEntry = (
   entry: Pick<InternalEntry, "turns" | "messages">,
   data: Pick<Exclude<SessionReplicaPatch, { op: "evict" }>["data"], "turns" | "messages">,
@@ -115,6 +135,7 @@ const applyCanonicalToolSummaries = (
   opts?: { resetByTurn?: boolean },
 ) => {
   const support = entry.support;
+  let changed = entry.toolSummaries !== summaries;
   entry.toolSummaries = summaries;
   support.toolSummariesReady = true;
   const resetByTurn = opts?.resetByTurn === true;
@@ -142,7 +163,9 @@ const applyCanonicalToolSummaries = (
 
   if (toolsByTurnChanged) {
     support.turnToolsByTurnId = nextByTurn;
+    changed = true;
   }
+  return changed;
 };
 
 const preserveLocalQueuedMessages = (
@@ -212,7 +235,7 @@ const applyCanonicalTranscriptPatch = (
   entry: InternalEntry,
   patch: Exclude<SessionReplicaPatch, { op: "evict" }>,
   normalizedFreshness: InternalEntry["freshness"] | undefined,
-) => {
+): boolean => {
   const data = patch.data;
   const support = entry.support;
   const replaceMode = patch.op === "replace" ? data.replaceMode ?? null : null;
@@ -227,89 +250,142 @@ const applyCanonicalTranscriptPatch = (
     Array.isArray(data.messages) ? preserveLocalQueuedMessages(entry.messages, data.messages) : [];
   const previousTurns = entry.turns;
   let nextTurnsForAnalytics: SessionTurn[] | null = null;
+  let changed = false;
 
   if (patch.op === "replace" && shouldApplyReplace && !preserveCoveredHistoryOnRepair) {
     host.resetEntryProjectionForReplace(entry, { skipPublish: true });
+    changed = true;
   }
 
   const shouldCopyCanonicalTranscript = patch.op !== "replace" || shouldApplyReplace;
 
   if (shouldCopyCanonicalTranscript && !preserveCoveredHistoryOnRepair) {
     if (Array.isArray(data.turns)) {
-      entry.turns = preserveMonotonicTurns(previousTurns, data.turns);
-      entry.turnsRev = data.turnsRev ?? (entry.turnsRev + 1);
-      nextTurnsForAnalytics = entry.turns;
+      const nextTurns = preserveMonotonicTurns(previousTurns, data.turns);
+      if (!haveSameArrayRefs(entry.turns, nextTurns)) {
+        entry.turns = nextTurns;
+        entry.turnsRev = data.turnsRev ?? (entry.turnsRev + 1);
+        nextTurnsForAnalytics = entry.turns;
+        changed = true;
+      }
     }
     if (Array.isArray(data.messages)) {
-      entry.messages = mergeSessionMessages(data.messages, localQueuedMessages);
-      entry.messagesRev = data.messagesRev ?? (entry.messagesRev + 1);
-      entry.queue = entry.messages.filter((message) => message.delivery === "queued");
+      const nextMessages = mergeSessionMessages(data.messages, localQueuedMessages);
+      if (!haveSameArrayRefs(entry.messages, nextMessages)) {
+        entry.messages = nextMessages;
+        entry.messagesRev = data.messagesRev ?? (entry.messagesRev + 1);
+        entry.queue = entry.messages.filter((message) => message.delivery === "queued");
+        changed = true;
+      }
     }
     if (Array.isArray(data.events)) {
-      entry.events = data.events;
-      entry.eventsRev = data.eventsRev ?? (entry.eventsRev + 1);
+      if (!haveSameArrayRefs(entry.events, data.events)) {
+        entry.events = data.events;
+        entry.eventsRev = data.eventsRev ?? (entry.eventsRev + 1);
+        changed = true;
+      }
     }
-    rebuildSeqAndStartState(entry);
+    if (changed) {
+      rebuildSeqAndStartState(entry);
+    }
     if (data.turnsHydrated !== undefined) {
-      entry.turnsHydrated = data.turnsHydrated;
-    } else if (Array.isArray(data.turns) || Array.isArray(data.messages) || Array.isArray(data.events)) {
+      if (entry.turnsHydrated !== data.turnsHydrated) {
+        entry.turnsHydrated = data.turnsHydrated;
+        changed = true;
+      }
+    } else if ((Array.isArray(data.turns) || Array.isArray(data.messages) || Array.isArray(data.events)) && !entry.turnsHydrated) {
       entry.turnsHydrated = true;
+      changed = true;
     }
     if (Array.isArray(data.toolSummaries)) {
-      applyCanonicalToolSummaries(entry, data.toolSummaries, {
-        resetByTurn: patch.op === "replace",
-      });
+      changed =
+        applyCanonicalToolSummaries(entry, data.toolSummaries, {
+          resetByTurn: patch.op === "replace",
+        }) || changed;
     }
   } else if (shouldCopyCanonicalTranscript && preserveCoveredHistoryOnRepair) {
     if (Array.isArray(data.turns)) {
-      entry.turns = preserveMonotonicTurns(entry.turns, mergeSessionTurns(entry.turns, data.turns));
-      entry.turnsRev = data.turnsRev ?? (entry.turnsRev + 1);
-      nextTurnsForAnalytics = entry.turns;
+      const nextTurns = preserveMonotonicTurns(entry.turns, mergeSessionTurns(entry.turns, data.turns));
+      if (!haveSameArrayRefs(entry.turns, nextTurns)) {
+        entry.turns = nextTurns;
+        entry.turnsRev = data.turnsRev ?? (entry.turnsRev + 1);
+        nextTurnsForAnalytics = entry.turns;
+        changed = true;
+      }
     }
     if (Array.isArray(data.messages)) {
-      entry.messages = mergeSessionMessages(entry.messages, data.messages);
-      entry.messagesRev = data.messagesRev ?? (entry.messagesRev + 1);
-      entry.queue = entry.messages.filter((message) => message.delivery === "queued");
+      const nextMessages = mergeSessionMessages(entry.messages, data.messages);
+      if (!haveSameArrayRefs(entry.messages, nextMessages)) {
+        entry.messages = nextMessages;
+        entry.messagesRev = data.messagesRev ?? (entry.messagesRev + 1);
+        entry.queue = entry.messages.filter((message) => message.delivery === "queued");
+        changed = true;
+      }
     }
     if (Array.isArray(data.events)) {
-      entry.events = mergeSessionEvents(entry.events, data.events);
-      entry.eventsRev = data.eventsRev ?? (entry.eventsRev + 1);
+      const nextEvents = mergeSessionEvents(entry.events, data.events);
+      if (!haveSameArrayRefs(entry.events, nextEvents)) {
+        entry.events = nextEvents;
+        entry.eventsRev = data.eventsRev ?? (entry.eventsRev + 1);
+        changed = true;
+      }
     }
-    rebuildSeqAndStartState(entry);
+    if (changed) {
+      rebuildSeqAndStartState(entry);
+    }
     if (data.turnsHydrated !== undefined) {
-      entry.turnsHydrated = data.turnsHydrated;
-    } else if (Array.isArray(data.turns) || Array.isArray(data.messages) || Array.isArray(data.events)) {
+      if (entry.turnsHydrated !== data.turnsHydrated) {
+        entry.turnsHydrated = data.turnsHydrated;
+        changed = true;
+      }
+    } else if ((Array.isArray(data.turns) || Array.isArray(data.messages) || Array.isArray(data.events)) && !entry.turnsHydrated) {
       entry.turnsHydrated = true;
+      changed = true;
     }
     if (Array.isArray(data.toolSummaries)) {
-      applyCanonicalToolSummaries(
-        entry,
-        mergeSessionToolSummaries(entry.toolSummaries, data.toolSummaries, entry.turns),
-      );
+      const nextSummaries = mergeSessionToolSummaries(entry.toolSummaries, data.toolSummaries, entry.turns);
+      changed = applyCanonicalToolSummaries(entry, nextSummaries) || changed;
     }
   }
   if (data.assistantStreamingByTurnId) {
-    entry.assistantStreamingByTurnId = data.assistantStreamingByTurnId;
-    entry.assistantStreamingRev = data.assistantStreamingRev ?? (entry.assistantStreamingRev + 1);
+    if (!haveSameRecordRefs(entry.assistantStreamingByTurnId, data.assistantStreamingByTurnId)) {
+      entry.assistantStreamingByTurnId = data.assistantStreamingByTurnId;
+      entry.assistantStreamingRev = data.assistantStreamingRev ?? (entry.assistantStreamingRev + 1);
+      changed = true;
+    }
   }
 
   if (data.session) {
-    entry.session = data.session;
+    if (entry.session !== data.session) {
+      entry.session = data.session;
+      changed = true;
+    }
     if (!entry.mode) {
       const resolvedMode = host.resolveSessionMode(entry.sessionId, entry);
       if (resolvedMode) {
         entry.mode = resolvedMode;
+        changed = true;
       }
     }
   }
   if (data.activity !== undefined) {
-    entry.activity = data.activity ?? null;
+    const nextActivity = data.activity ?? null;
+    if (entry.activity !== nextActivity) {
+      entry.activity = nextActivity;
+      changed = true;
+    }
   }
   if (normalizedFreshness !== undefined) {
-    entry.freshness = normalizedFreshness;
+    if (entry.freshness !== normalizedFreshness) {
+      entry.freshness = normalizedFreshness;
+      changed = true;
+    }
   }
   if (data.projectionRev !== undefined) {
-    entry.projectionRev = data.projectionRev;
+    if (entry.projectionRev !== data.projectionRev) {
+      entry.projectionRev = data.projectionRev;
+      changed = true;
+    }
   }
   if (data.stateRev !== undefined) {
     entry.stateRev = data.stateRev;
@@ -321,18 +397,31 @@ const applyCanonicalTranscriptPatch = (
     host.adoptLoadedSubagentInvocationsRevision(entry, data.stateRev);
   }
   if (data.summaryCheckpoint !== undefined) {
-    entry.summaryCheckpoint = data.summaryCheckpoint;
+    if (entry.summaryCheckpoint !== data.summaryCheckpoint) {
+      entry.summaryCheckpoint = data.summaryCheckpoint;
+      changed = true;
+    }
   }
   if (data.headWindow !== undefined) {
-    entry.headWindow = data.headWindow;
+    if (entry.headWindow !== data.headWindow) {
+      entry.headWindow = data.headWindow;
+      changed = true;
+    }
   }
   if (data.lastEventSeq !== undefined) {
-    entry.lastEventSeq = data.lastEventSeq;
+    if (entry.lastEventSeq !== data.lastEventSeq) {
+      entry.lastEventSeq = data.lastEventSeq;
+      changed = true;
+    }
   }
   if (data.hasMoreTurns !== undefined) {
     const preserveHasMoreHistory =
       patch.op === "replace" && data.hasMoreTurns === false && entry.historyExtended;
-    entry.hasMoreTurns = preserveHasMoreHistory ? true : data.hasMoreTurns;
+    const nextHasMoreTurns = preserveHasMoreHistory ? true : data.hasMoreTurns;
+    if (entry.hasMoreTurns !== nextHasMoreTurns) {
+      entry.hasMoreTurns = nextHasMoreTurns;
+      changed = true;
+    }
     if (preserveHasMoreHistory) {
       entry.historyExtended = true;
     }
@@ -352,6 +441,7 @@ const applyCanonicalTranscriptPatch = (
       nextTurns: nextTurnsForAnalytics,
     });
   }
+  return changed;
 };
 
 export const applyReplicaPatches = (
@@ -389,7 +479,7 @@ export const applyReplicaPatches = (
         ? "replica"
         : patch.data.freshness;
 
-    applyCanonicalTranscriptPatch(host, entry, patch, normalizedFreshness);
+    let entryChanged = applyCanonicalTranscriptPatch(host, entry, patch, normalizedFreshness);
 
     const data = patch.data;
     if (Array.isArray(data.events) && data.events.length > 0) {
@@ -397,7 +487,10 @@ export const applyReplicaPatches = (
       host.applyGitStatusSnapshotFromEvents(entry, data.events);
     }
     if (data.gitStatusSummary !== undefined) {
-      entry.support.gitStatusSummary = data.gitStatusSummary ?? null;
+      if (entry.support.gitStatusSummary !== (data.gitStatusSummary ?? null)) {
+        entry.support.gitStatusSummary = data.gitStatusSummary ?? null;
+        entryChanged = true;
+      }
       host.syncStateCache(entry);
     }
     if (data.artifacts) {
@@ -453,14 +546,17 @@ export const applyReplicaPatches = (
     if (patch.op === "replace" && priorHistoryExtended && data.hasMoreTurns === false) {
       entry.hasMoreTurns = true;
       entry.historyExtended = true;
+      entryChanged = true;
     }
 
     if (data.lastEventSeq !== undefined && entry.subscribed) {
       subscriptionCursorsChanged = true;
     }
     host.syncSupportLoadsForOpenSession(entry);
-    entry.updatedAtMs = Date.now();
-    changed = true;
+    if (entryChanged) {
+      entry.updatedAtMs = Date.now();
+      changed = true;
+    }
   }
 
   return { changed, subscriptionCursorsChanged };
