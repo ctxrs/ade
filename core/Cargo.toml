@@ -17,6 +17,7 @@ members = [
   "crates/ctx-harness-setup",
   "crates/ctx-bundled-assets",
   "crates/ctx-linux-sandbox-runtime",
+  "crates/ctx-sandbox-container-runtime",
   "crates/ctx-runtime-assets",
   "crates/ctx-sandbox-contract",
   "crates/ctx-worktree-data-plane",

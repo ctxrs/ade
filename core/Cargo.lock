@@ -1517,6 +1517,7 @@ dependencies = [
  "ctx-provider-auth-import",
  "ctx-providers",
  "ctx-runtime-assets",
+ "ctx-sandbox-container-runtime",
  "ctx-sandbox-contract",
  "ctx-store",
  "ctx-worker-protocol",
@@ -1588,7 +1589,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "which",
 ]
 
 [[package]]
@@ -1722,6 +1722,22 @@ dependencies = [
  "url",
  "zip",
  "zstd",
+]
+
+[[package]]
+name = "ctx-sandbox-container-runtime"
+version = "0.34.0"
+dependencies = [
+ "anyhow",
+ "ctx-bundled-assets",
+ "ctx-core",
+ "ctx-harness-setup",
+ "ctx-linux-sandbox-runtime",
+ "ctx-runtime-assets",
+ "hex",
+ "sha2",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

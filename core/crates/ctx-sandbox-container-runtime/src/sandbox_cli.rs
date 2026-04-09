@@ -1,24 +1,35 @@
-use super::*;
+use std::collections::HashMap;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::Duration;
 
-pub(crate) const SHARED_VM_SANDBOX_CLI_GUEST_BIN: &str = "/usr/local/bin/nerdctl";
-const SHARED_VM_SANDBOX_CLI_GUEST_HOME: &str = "/ctx/home/root";
-const SHARED_VM_SANDBOX_CLI_GUEST_XDG_CONFIG: &str = "/ctx/cache/xdg/config";
-const SHARED_VM_SANDBOX_CLI_GUEST_XDG_DATA: &str = "/ctx/cache/xdg/data";
-const SHARED_VM_SANDBOX_CLI_GUEST_XDG_CACHE: &str = "/ctx/cache/xdg/cache";
-const SHARED_VM_SANDBOX_CLI_GUEST_XDG_RUNTIME: &str = "/ctx/tmp/xdg-runtime-root";
-const SHARED_VM_SANDBOX_CLI_GUEST_TMP: &str = "/ctx/tmp";
+use anyhow::{Context, Result};
+use ctx_core::ids::WorkspaceId;
+use ctx_linux_sandbox_runtime::preferred_native_sandbox_cli_path;
+use tokio::process::Command;
+
+use crate::{
+    CTX_HARNESS_SANDBOX_CLI_PATH_ENV, SANDBOX_INFO_TIMEOUT, SANDBOX_OP_TIMEOUT,
+    SandboxCommandMode,
+};
+
+pub const SHARED_VM_SANDBOX_CLI_GUEST_BIN: &str = "/usr/local/bin/nerdctl";
+
+fn find_binary_in_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
+}
 
 fn explicit_sandbox_cli_binary_path() -> Option<PathBuf> {
     let raw = std::env::var(CTX_HARNESS_SANDBOX_CLI_PATH_ENV).ok()?;
     let path = PathBuf::from(raw.trim());
-    if path.exists() {
-        Some(path)
-    } else {
-        None
-    }
+    if path.exists() { Some(path) } else { None }
 }
 
-fn sandbox_cli_available(data_root: &Path) -> bool {
+fn sandbox_cli_available(_data_root: &Path) -> bool {
     if explicit_sandbox_cli_binary_path().is_some() {
         return true;
     }
@@ -28,38 +39,37 @@ fn sandbox_cli_available(data_root: &Path) -> bool {
             return matches!(value.as_str(), "1" | "true" | "yes" | "y");
         }
     }
-    #[cfg(target_os = "macos")]
-    if super::avf_linux_runtime_available() && super::avf_linux_vm::helper_path().is_ok() {
-        return true;
-    }
-    sandbox_cli_binary_path(data_root).is_some()
+    preferred_native_sandbox_cli_path().is_some() || find_binary_in_path("nerdctl").is_some()
 }
 
-pub(super) fn sandbox_cli_binary_path(data_root: &Path) -> Option<PathBuf> {
+pub fn native_container_runtime_available(data_root: &Path) -> bool {
+    sandbox_cli_available(data_root)
+}
+
+pub fn sandbox_cli_binary_path(_data_root: &Path) -> Option<PathBuf> {
     if let Some(path) = explicit_sandbox_cli_binary_path() {
         return Some(path);
     }
     if let Some(path) = preferred_native_sandbox_cli_path() {
         return Some(path);
     }
-    let _ = data_root;
-    which::which("nerdctl").ok()
+    find_binary_in_path("nerdctl")
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct SandboxCliInvocation {
-    pub(crate) bin: PathBuf,
-    pub(crate) env: HashMap<String, String>,
+pub struct SandboxCliInvocation {
+    pub bin: PathBuf,
+    pub env: HashMap<String, String>,
 }
 
-pub(crate) fn sandbox_cli_invocation(data_root: &Path) -> Result<SandboxCliInvocation> {
+pub fn sandbox_cli_invocation(data_root: &Path) -> Result<SandboxCliInvocation> {
     let bin = sandbox_cli_binary_path(data_root)
         .ok_or_else(|| anyhow::anyhow!("sandbox container CLI unavailable"))?;
     let env = sandbox_cli_env_for_data_root(data_root)?;
     Ok(SandboxCliInvocation { bin, env })
 }
 
-pub(crate) fn sandbox_cli_env_for_data_root(data_root: &Path) -> Result<HashMap<String, String>> {
+pub fn sandbox_cli_env_for_data_root(data_root: &Path) -> Result<HashMap<String, String>> {
     let xdg_root = data_root.join("sandbox").join("xdg");
     let xdg_config = xdg_root.join("config");
     let xdg_data = xdg_root.join("data");
@@ -112,84 +122,7 @@ pub(crate) fn sandbox_cli_env_for_data_root(data_root: &Path) -> Result<HashMap<
     Ok(env)
 }
 
-pub(crate) fn shared_vm_sandbox_cli_guest_env() -> HashMap<String, String> {
-    let tmp = SHARED_VM_SANDBOX_CLI_GUEST_TMP.to_string();
-    HashMap::from([
-        (
-            "XDG_CONFIG_HOME".to_string(),
-            SHARED_VM_SANDBOX_CLI_GUEST_XDG_CONFIG.to_string(),
-        ),
-        (
-            "XDG_DATA_HOME".to_string(),
-            SHARED_VM_SANDBOX_CLI_GUEST_XDG_DATA.to_string(),
-        ),
-        (
-            "XDG_CACHE_HOME".to_string(),
-            SHARED_VM_SANDBOX_CLI_GUEST_XDG_CACHE.to_string(),
-        ),
-        (
-            "XDG_RUNTIME_DIR".to_string(),
-            SHARED_VM_SANDBOX_CLI_GUEST_XDG_RUNTIME.to_string(),
-        ),
-        (
-            "HOME".to_string(),
-            SHARED_VM_SANDBOX_CLI_GUEST_HOME.to_string(),
-        ),
-        (
-            "CONTAINERD_ADDRESS".to_string(),
-            "/run/containerd/containerd.sock".to_string(),
-        ),
-        ("CONTAINERD_NAMESPACE".to_string(), "default".to_string()),
-        ("TMPDIR".to_string(), tmp.clone()),
-        ("TMP".to_string(), tmp.clone()),
-        ("TEMP".to_string(), tmp),
-    ])
-}
-
-pub(crate) fn shared_vm_sandbox_cli_env_for_data_root(
-    data_root: &Path,
-) -> Result<HashMap<String, String>> {
-    let state = super::avf_linux_vm::shared_vm_state(data_root)
-        .context("determine shared VM execution scope for sandbox CLI")?;
-    if state.simulated {
-        sandbox_cli_env_for_data_root(data_root)
-    } else {
-        Ok(shared_vm_sandbox_cli_guest_env())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct SandboxContainerLaunchNetworking {
-    pub(super) network: Option<&'static str>,
-    pub(super) add_host: &'static str,
-}
-
-pub(super) fn sandbox_container_launch_networking(
-    settings: &ContainerExecutionSettings,
-) -> SandboxContainerLaunchNetworking {
-    SandboxContainerLaunchNetworking {
-        network: if matches!(settings.runtime, ContainerRuntimeKind::SharedVmContainer) {
-            None
-        } else {
-            Some("slirp4netns:allow_host_loopback=true")
-        },
-        add_host: "host.containers.internal:host-gateway",
-    }
-}
-
-pub(super) fn append_sandbox_container_launch_network_args(
-    cmd: &mut Command,
-    settings: &ContainerExecutionSettings,
-) {
-    let networking = sandbox_container_launch_networking(settings);
-    if let Some(network) = networking.network {
-        cmd.arg("--network").arg(network);
-    }
-    cmd.arg("--cap-add").arg("NET_ADMIN");
-    cmd.arg("--add-host").arg(networking.add_host);
-}
-
-pub(crate) fn sandbox_container_command(data_root: &Path) -> Result<Command> {
+pub fn sandbox_container_command(data_root: &Path, mode: &SandboxCommandMode) -> Result<Command> {
     if let Some(bin) = explicit_sandbox_cli_binary_path() {
         let env = sandbox_cli_env_for_data_root(data_root)?;
         let mut cmd = Command::new(bin);
@@ -198,37 +131,40 @@ pub(crate) fn sandbox_container_command(data_root: &Path) -> Result<Command> {
         }
         return Ok(cmd);
     }
-    #[cfg(target_os = "macos")]
-    if super::avf_linux_runtime_available() && super::avf_linux_vm::helper_path().is_ok() {
-        let helper = super::avf_linux_vm::helper_path()?;
-        let env = shared_vm_sandbox_cli_env_for_data_root(data_root)?;
-        let mut cmd = Command::new(helper);
-        cmd.arg("shared-vm-exec")
-            .arg("--data-root")
-            .arg(data_root)
-            .arg("--cwd")
-            .arg("/")
-            .arg("--command")
-            .arg(SHARED_VM_SANDBOX_CLI_GUEST_BIN)
-            .arg("--user")
-            .arg("root");
-        let mut env_pairs = env.into_iter().collect::<Vec<_>>();
-        env_pairs.sort_by(|(left, _), (right, _)| left.cmp(right));
-        for (key, value) in env_pairs {
-            cmd.arg("--env").arg(format!("{key}={value}"));
+
+    match mode {
+        SandboxCommandMode::NativeContainer => {
+            let inv = sandbox_cli_invocation(data_root)?;
+            let mut cmd = Command::new(inv.bin);
+            for (key, value) in inv.env {
+                cmd.env(key, value);
+            }
+            Ok(cmd)
         }
-        cmd.arg("--");
-        return Ok(cmd);
+        SandboxCommandMode::SharedVm { helper_path } => {
+            let env = sandbox_cli_env_for_data_root(data_root)?;
+            let mut cmd = Command::new(helper_path);
+            cmd.arg("shared-vm-exec")
+                .arg("--data-root")
+                .arg(data_root)
+                .arg("--cwd")
+                .arg("/")
+                .arg("--command")
+                .arg(SHARED_VM_SANDBOX_CLI_GUEST_BIN)
+                .arg("--user")
+                .arg("root");
+            let mut env_pairs = env.into_iter().collect::<Vec<_>>();
+            env_pairs.sort_by(|(left, _), (right, _)| left.cmp(right));
+            for (key, value) in env_pairs {
+                cmd.arg("--env").arg(format!("{key}={value}"));
+            }
+            cmd.arg("--");
+            Ok(cmd)
+        }
     }
-    let inv = sandbox_cli_invocation(data_root)?;
-    let mut cmd = Command::new(inv.bin);
-    for (key, value) in inv.env {
-        cmd.env(key, value);
-    }
-    Ok(cmd)
 }
 
-pub(crate) async fn command_output_with_timeout(
+pub async fn command_output_with_timeout(
     mut cmd: Command,
     timeout: Duration,
 ) -> Result<std::process::Output> {
@@ -242,34 +178,14 @@ pub(crate) async fn command_output_with_timeout(
     }
 }
 
-pub fn container_runtime_available(data_root: &Path) -> bool {
-    sandbox_cli_available(data_root)
+pub fn command_output_message(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    format!("{stderr}\n{stdout}").trim().to_string()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SandboxCommandBackend {
-    NativeContainer,
-    // EXCEPTION: dead-code — this backend is only constructed on the macOS AVF shared-VM path.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    SharedVmContainer,
-}
-
-pub(crate) fn selected_sandbox_command_backend(data_root: &Path) -> Result<SandboxCommandBackend> {
-    if explicit_sandbox_cli_binary_path().is_some() {
-        return Ok(SandboxCommandBackend::NativeContainer);
-    }
-    #[cfg(target_os = "macos")]
-    if super::avf_linux_runtime_available() && super::avf_linux_vm::helper_path().is_ok() {
-        return Ok(SandboxCommandBackend::SharedVmContainer);
-    }
-    if sandbox_cli_binary_path(data_root).is_some() {
-        return Ok(SandboxCommandBackend::NativeContainer);
-    }
-    anyhow::bail!("sandbox container CLI unavailable");
-}
-
-pub async fn sandbox_engine_ready(data_root: &Path) -> Result<bool> {
-    let mut cmd = sandbox_container_command(data_root)?;
+pub async fn sandbox_engine_ready(data_root: &Path, mode: &SandboxCommandMode) -> Result<bool> {
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("info");
     match command_output_with_timeout(cmd, SANDBOX_INFO_TIMEOUT).await {
         Ok(out) => Ok(out.status.success()),
@@ -277,21 +193,23 @@ pub async fn sandbox_engine_ready(data_root: &Path) -> Result<bool> {
     }
 }
 
-pub(super) fn command_output_message(output: &std::process::Output) -> String {
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    format!("{stderr}\n{stdout}").trim().to_string()
-}
-
-pub(super) async fn container_exists(data_root: &Path, name: &str) -> Result<bool> {
-    let mut cmd = sandbox_container_command(data_root)?;
+pub async fn container_exists(
+    data_root: &Path,
+    mode: &SandboxCommandMode,
+    name: &str,
+) -> Result<bool> {
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("container").arg("inspect").arg(name);
     let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
     Ok(output.status.success())
 }
 
-pub(super) async fn container_running(data_root: &Path, name: &str) -> Result<Option<bool>> {
-    let mut cmd = sandbox_container_command(data_root)?;
+pub async fn container_running(
+    data_root: &Path,
+    mode: &SandboxCommandMode,
+    name: &str,
+) -> Result<Option<bool>> {
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("container")
         .arg("inspect")
         .arg("--format")
@@ -305,18 +223,19 @@ pub(super) async fn container_running(data_root: &Path, name: &str) -> Result<Op
     Ok(Some(stdout.trim() == "true"))
 }
 
-pub(super) async fn ensure_workspace_volume(
+pub async fn ensure_workspace_volume(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     workspace_id: WorkspaceId,
 ) -> Result<String> {
     let name = format!("ctx-ws-{}", workspace_id.0);
-    let mut inspect = sandbox_container_command(data_root)?;
+    let mut inspect = sandbox_container_command(data_root, mode)?;
     inspect.arg("volume").arg("inspect").arg(&name);
     let out = command_output_with_timeout(inspect, SANDBOX_OP_TIMEOUT).await?;
     if out.status.success() {
         return Ok(name);
     }
-    let mut create = sandbox_container_command(data_root)?;
+    let mut create = sandbox_container_command(data_root, mode)?;
     create.arg("volume").arg("create").arg(&name);
     let out = command_output_with_timeout(create, SANDBOX_OP_TIMEOUT).await?;
     if !out.status.success() {
@@ -366,7 +285,7 @@ mod tests {
     }
 
     fn env_var_test_lock() -> &'static tokio::sync::Mutex<()> {
-        crate::test_support::sandbox_cli_env_test_lock()
+        crate::sandbox_cli_env_test_lock()
     }
 
     #[cfg(unix)]
@@ -410,14 +329,12 @@ mod tests {
         std::fs::set_permissions(&cli_path, std::fs::Permissions::from_mode(0o755))
             .expect("chmod sandbox cli shim");
         let _override = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
-        let _guard = EnvVarGuard::set(
-            CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
-            &cli_path.to_string_lossy(),
-        );
+        let _guard =
+            EnvVarGuard::set(CTX_HARNESS_SANDBOX_CLI_PATH_ENV, &cli_path.to_string_lossy());
 
         assert!(sandbox_cli_available(temp.path()));
         assert!(
-            sandbox_engine_ready(temp.path())
+            sandbox_engine_ready(temp.path(), &SandboxCommandMode::NativeContainer)
                 .await
                 .expect("sandbox engine ready check"),
             "sandbox engine should honor the explicit CLI override even when the negative test override is set",
@@ -437,13 +354,11 @@ mod tests {
         .expect("write sandbox cli shim");
         std::fs::set_permissions(&cli_path, std::fs::Permissions::from_mode(0o755))
             .expect("chmod sandbox cli shim");
-        let _guard = EnvVarGuard::set(
-            CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
-            &cli_path.to_string_lossy(),
-        );
+        let _guard =
+            EnvVarGuard::set(CTX_HARNESS_SANDBOX_CLI_PATH_ENV, &cli_path.to_string_lossy());
 
         assert!(
-            sandbox_engine_ready(temp.path())
+            sandbox_engine_ready(temp.path(), &SandboxCommandMode::NativeContainer)
                 .await
                 .expect("sandbox engine ready check"),
             "sandbox engine should honor the explicit CLI override",
@@ -467,15 +382,17 @@ mod tests {
         .expect("write sandbox cli shim");
         std::fs::set_permissions(&cli_path, std::fs::Permissions::from_mode(0o755))
             .expect("chmod sandbox cli shim");
-        let _guard = EnvVarGuard::set(
-            CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
-            &cli_path.to_string_lossy(),
-        );
+        let _guard =
+            EnvVarGuard::set(CTX_HARNESS_SANDBOX_CLI_PATH_ENV, &cli_path.to_string_lossy());
 
         assert!(
-            container_exists(temp.path(), "ctx-harness-test")
-                .await
-                .expect("container exists probe"),
+            container_exists(
+                temp.path(),
+                &SandboxCommandMode::NativeContainer,
+                "ctx-harness-test",
+            )
+            .await
+            .expect("container exists probe"),
             "inspect-based probe should treat the container as existing",
         );
 
@@ -488,99 +405,5 @@ mod tests {
             !log.contains("container exists"),
             "inspect-based probe should not call unsupported container exists:\n{log}"
         );
-    }
-
-    #[test]
-    fn shared_vm_container_launch_networking_uses_default_bridge() {
-        let settings = ContainerExecutionSettings {
-            runtime: ContainerRuntimeKind::SharedVmContainer,
-            ..ContainerExecutionSettings::default()
-        };
-
-        let networking = sandbox_container_launch_networking(&settings);
-        assert_eq!(networking.network, None);
-        assert_eq!(networking.add_host, "host.containers.internal:host-gateway");
-    }
-
-    #[test]
-    fn native_container_launch_networking_keeps_slirp() {
-        let settings = ContainerExecutionSettings {
-            runtime: ContainerRuntimeKind::NativeContainer,
-            ..ContainerExecutionSettings::default()
-        };
-
-        let networking = sandbox_container_launch_networking(&settings);
-        assert_eq!(
-            networking.network,
-            Some("slirp4netns:allow_host_loopback=true")
-        );
-        assert_eq!(networking.add_host, "host.containers.internal:host-gateway");
-    }
-
-    #[test]
-    fn sandbox_cli_env_for_data_root_sets_cache_home() {
-        let temp = tempdir().expect("tempdir");
-        let env = sandbox_cli_env_for_data_root(temp.path()).expect("sandbox env");
-        let sandbox_root = temp.path().join("sandbox");
-        assert_eq!(
-            env.get("XDG_CACHE_HOME").map(PathBuf::from),
-            Some(sandbox_root.join("xdg").join("cache"))
-        );
-    }
-
-    #[test]
-    fn shared_vm_sandbox_cli_guest_env_uses_ctx_paths() {
-        let env = shared_vm_sandbox_cli_guest_env();
-        assert_eq!(
-            env.get("XDG_CONFIG_HOME").map(String::as_str),
-            Some("/ctx/cache/xdg/config")
-        );
-        assert_eq!(
-            env.get("XDG_DATA_HOME").map(String::as_str),
-            Some("/ctx/cache/xdg/data")
-        );
-        assert_eq!(
-            env.get("XDG_CACHE_HOME").map(String::as_str),
-            Some("/ctx/cache/xdg/cache")
-        );
-        assert_eq!(
-            env.get("XDG_RUNTIME_DIR").map(String::as_str),
-            Some("/ctx/tmp/xdg-runtime-root")
-        );
-        assert_eq!(env.get("HOME").map(String::as_str), Some("/ctx/home/root"));
-        assert_eq!(env.get("TMPDIR").map(String::as_str), Some("/ctx/tmp"));
-        assert_eq!(env.get("TMP").map(String::as_str), Some("/ctx/tmp"));
-        assert_eq!(env.get("TEMP").map(String::as_str), Some("/ctx/tmp"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn shared_vm_sandbox_cli_env_uses_host_scoped_paths_when_vm_is_simulated() {
-        let _serial = env_var_test_lock().blocking_lock();
-        let temp = tempdir().expect("tempdir");
-        let (_helper_path, _helper_guard) = write_shared_vm_state_helper(temp.path(), true);
-        let env =
-            shared_vm_sandbox_cli_env_for_data_root(temp.path()).expect("shared vm sandbox env");
-        let sandbox_root = temp.path().join("sandbox");
-        assert_eq!(
-            env.get("HOME").map(PathBuf::from),
-            Some(sandbox_root.join("home"))
-        );
-        assert_eq!(
-            env.get("TMPDIR").map(PathBuf::from),
-            Some(sandbox_root.join("tmp"))
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn shared_vm_sandbox_cli_env_uses_guest_scoped_paths_when_vm_is_real() {
-        let _serial = env_var_test_lock().blocking_lock();
-        let temp = tempdir().expect("tempdir");
-        let (_helper_path, _helper_guard) = write_shared_vm_state_helper(temp.path(), false);
-        let env =
-            shared_vm_sandbox_cli_env_for_data_root(temp.path()).expect("shared vm sandbox env");
-        assert_eq!(env.get("HOME").map(String::as_str), Some("/ctx/home/root"));
-        assert_eq!(env.get("TMPDIR").map(String::as_str), Some("/ctx/tmp"));
     }
 }

@@ -18,6 +18,7 @@ pub(in crate::workspace_runtime) use self::helper_cleanup::{
 };
 
 use ctx_store::Store;
+use ctx_harness_setup::observe_progress;
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 

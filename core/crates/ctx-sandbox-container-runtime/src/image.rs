@@ -1,6 +1,23 @@
-use super::*;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+#[cfg(test)]
+use std::sync::Mutex as StdMutex;
+use std::sync::OnceLock;
+use std::time::Duration;
+
+use anyhow::{Context, Result};
 use ctx_bundled_assets as bundled_assets;
+use ctx_runtime_assets::download_managed_artifact;
 use tokio::io::AsyncReadExt;
+use tokio::{fs, sync::Mutex};
+
+use crate::{
+    command_output_message, command_output_with_timeout, observe_log, observe_phase,
+    observe_progress, sandbox_container_command, sandbox_engine_ready, sha256_hex_file,
+    HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase, HarnessSetupProgressUpdate,
+    ManagedArtifactDownloadReporter, ManagedDownloadAggregate, SandboxCommandMode,
+    DEFAULT_CONTAINER_IMAGE, SANDBOX_IMAGE_LOAD_TIMEOUT, SANDBOX_OP_TIMEOUT,
+};
 
 fn image_load_heartbeat_interval() -> Duration {
     if cfg!(test) {
@@ -37,19 +54,6 @@ fn format_image_load_elapsed(elapsed: Duration) -> String {
     }
 }
 
-pub(crate) fn resolve_container_image(settings: &ContainerExecutionSettings) -> String {
-    if let Ok(value) = std::env::var("CTX_HARNESS_CONTAINER_IMAGE") {
-        if !value.trim().is_empty() {
-            return value;
-        }
-    }
-    settings
-        .image
-        .clone()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_CONTAINER_IMAGE.to_string())
-}
-
 pub fn default_container_image() -> &'static str {
     DEFAULT_CONTAINER_IMAGE
 }
@@ -62,10 +66,21 @@ pub fn bundled_default_container_image_tar() -> Option<PathBuf> {
     bundled_assets::bundled_ctx_harness_image_tar(DEFAULT_CONTAINER_IMAGE)
 }
 
-pub(crate) async fn prefetch_container_startup_artifacts_with_overrides(
+pub async fn prefetch_container_startup_artifacts_with_observer(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     image: &str,
-    overrides: Option<&ManagedContainerBootstrapOverrides>,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<()> {
+    prefetch_container_startup_artifacts_with_source_override(data_root, mode, image, None, observer)
+        .await
+}
+
+async fn prefetch_container_startup_artifacts_with_source_override(
+    data_root: &Path,
+    _mode: &SandboxCommandMode,
+    image: &str,
+    source_override: Option<&bundled_assets::ManagedArtifactSource>,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<()> {
     let image = image.trim();
@@ -78,7 +93,7 @@ pub(crate) async fn prefetch_container_startup_artifacts_with_overrides(
         if prefetch_default_image_tar {
             return ensure_managed_default_container_image_tar_with_override(
                 data_root,
-                overrides.and_then(|value| value.default_image_source.as_ref()),
+                source_override,
                 observer,
                 Some(ManagedDownloadAggregate::default()),
             )
@@ -102,35 +117,19 @@ pub(crate) async fn prefetch_container_startup_artifacts_with_overrides(
     Ok(())
 }
 
-pub async fn prefetch_container_startup_artifacts_with_observer(
-    data_root: &Path,
-    image: &str,
-    observer: Option<&dyn HarnessSetupObserver>,
-) -> Result<()> {
-    prefetch_container_startup_artifacts_with_overrides(data_root, image, None, observer).await
-}
-
 pub async fn prefetch_container_image_with_observer(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     image: &str,
-    observer: Option<&dyn HarnessSetupObserver>,
-) -> Result<()> {
-    prefetch_container_image_with_overrides(data_root, image, None, observer).await
-}
-
-pub(crate) async fn prefetch_container_image_with_overrides(
-    data_root: &Path,
-    image: &str,
-    overrides: Option<&ManagedContainerBootstrapOverrides>,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<()> {
     let image = image.trim();
     if image.is_empty() {
         anyhow::bail!("image is required");
     }
-    prefetch_container_startup_artifacts_with_overrides(data_root, image, overrides, observer)
+    prefetch_container_startup_artifacts_with_source_override(data_root, mode, image, None, observer)
         .await?;
-    if !sandbox_engine_ready(data_root).await.unwrap_or(false) {
+    if !sandbox_engine_ready(data_root, mode).await.unwrap_or(false) {
         anyhow::bail!("native sandbox container runtime is not reachable for image prewarm");
     }
     observe_phase(
@@ -138,7 +137,7 @@ pub(crate) async fn prefetch_container_image_with_overrides(
         HarnessSetupPhase::ImageCheck,
         "checking harness image availability",
     );
-    if container_image_present(data_root, image).await? {
+    if container_image_present(data_root, mode, image).await? {
         observe_log(
             observer,
             HarnessSetupPhase::ImageCheck,
@@ -152,19 +151,27 @@ pub(crate) async fn prefetch_container_image_with_overrides(
         HarnessSetupPhase::ImageLoad,
         "loading harness image into local sandbox runtime",
     );
-    ensure_container_image_available(data_root, image, observer).await
+    ensure_container_image_available(data_root, mode, image, observer).await
 }
 
-pub async fn prefetch_container_image(data_root: &Path, image: &str) -> Result<()> {
-    prefetch_container_image_with_observer(data_root, image, None).await
+pub async fn prefetch_container_image(
+    data_root: &Path,
+    mode: &SandboxCommandMode,
+    image: &str,
+) -> Result<()> {
+    prefetch_container_image_with_observer(data_root, mode, image, None).await
 }
 
-pub async fn container_image_present(data_root: &Path, image: &str) -> Result<bool> {
+pub async fn container_image_present(
+    data_root: &Path,
+    mode: &SandboxCommandMode,
+    image: &str,
+) -> Result<bool> {
     let image = image.trim();
     if image.is_empty() {
         anyhow::bail!("image is required");
     }
-    let mut cmd = sandbox_container_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("image").arg("inspect").arg(image);
     let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
     if output.status.success() {
@@ -179,8 +186,9 @@ pub async fn container_image_present(data_root: &Path, image: &str) -> Result<bo
     }
 }
 
-pub(super) async fn ensure_container_image_available(
+pub async fn ensure_container_image_available(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     image: &str,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<()> {
@@ -189,7 +197,7 @@ pub(super) async fn ensure_container_image_available(
         anyhow::bail!("image is required");
     }
 
-    if container_image_present(data_root, image).await? {
+    if container_image_present(data_root, mode, image).await? {
         return Ok(());
     }
 
@@ -219,7 +227,7 @@ pub(super) async fn ensure_container_image_available(
             );
             managed_tar
         };
-        load_container_image_tar(data_root, &image_tar, image, observer).await?;
+        load_container_image_tar(data_root, mode, &image_tar, image, observer).await?;
         return Ok(());
     }
 
@@ -229,8 +237,9 @@ pub(super) async fn ensure_container_image_available(
     );
 }
 
-pub(super) async fn force_reload_default_container_image(
+pub async fn force_reload_default_container_image(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<()> {
     let image_tar = if let Some(tar) =
@@ -259,7 +268,7 @@ pub(super) async fn force_reload_default_container_image(
         );
         managed_tar
     };
-    load_container_image_tar(data_root, &image_tar, DEFAULT_CONTAINER_IMAGE, observer).await
+    load_container_image_tar(data_root, mode, &image_tar, DEFAULT_CONTAINER_IMAGE, observer).await
 }
 
 fn managed_default_container_image_tar_path(data_root: &Path, sha256: &str) -> PathBuf {
@@ -272,7 +281,7 @@ fn managed_default_container_image_tar_path(data_root: &Path, sha256: &str) -> P
         .join(format!("sha256-{}.tar", sha256.trim().to_ascii_lowercase()))
 }
 
-pub(super) fn managed_default_image_install_lock() -> &'static Mutex<()> {
+pub fn managed_default_image_install_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
@@ -284,7 +293,7 @@ async fn ensure_managed_default_container_image_tar(
     ensure_managed_default_container_image_tar_with_override(data_root, None, observer, None).await
 }
 
-pub(super) async fn ensure_managed_default_container_image_tar_with_override(
+async fn ensure_managed_default_container_image_tar_with_override(
     data_root: &Path,
     source_override: Option<&bundled_assets::ManagedArtifactSource>,
     observer: Option<&dyn HarnessSetupObserver>,
@@ -308,7 +317,7 @@ pub(super) async fn ensure_managed_default_container_image_tar_with_override(
     .await
 }
 
-pub(super) async fn ensure_managed_default_container_image_tar_with_source(
+pub async fn ensure_managed_default_container_image_tar_with_source(
     data_root: &Path,
     source: &bundled_assets::ManagedArtifactSource,
     observer: Option<&dyn HarnessSetupObserver>,
@@ -318,7 +327,7 @@ pub(super) async fn ensure_managed_default_container_image_tar_with_source(
 
     let final_tar = managed_default_container_image_tar_path(data_root, &source.sha256);
     if final_tar.exists() {
-        let digest = updates::sha256_hex_file(&final_tar)
+        let digest = sha256_hex_file(&final_tar)
             .await
             .with_context(|| format!("computing sha256 for {}", final_tar.display()))?;
         if digest.eq_ignore_ascii_case(source.sha256.trim()) {
@@ -365,7 +374,7 @@ pub(super) async fn ensure_managed_default_container_image_tar_with_source(
     )
     .await?;
 
-    let digest = updates::sha256_hex_file(&tmp_tar)
+    let digest = sha256_hex_file(&tmp_tar)
         .await
         .with_context(|| format!("computing sha256 for {}", tmp_tar.display()))?;
     if !digest.eq_ignore_ascii_case(source.sha256.trim()) {
@@ -397,11 +406,12 @@ where
 
 async fn load_container_image_tar(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     tar: &Path,
     image: &str,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<()> {
-    let mut cmd = sandbox_container_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("load").arg("-i").arg(tar);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -504,7 +514,7 @@ async fn load_container_image_tar(
     let load_message = command_output_message(&output);
     let visibility_deadline = tokio::time::Instant::now() + image_post_load_visibility_timeout();
     while tokio::time::Instant::now() < visibility_deadline {
-        if container_image_present(data_root, image).await? {
+        if container_image_present(data_root, mode, image).await? {
             return Ok(());
         }
         tokio::time::sleep(image_load_poll_interval()).await;
@@ -531,12 +541,16 @@ pub struct ContainerImageStatus {
     pub error: Option<String>,
 }
 
-pub async fn container_image_status(data_root: &Path, image: &str) -> Result<ContainerImageStatus> {
+pub async fn container_image_status(
+    data_root: &Path,
+    mode: &SandboxCommandMode,
+    image: &str,
+) -> Result<ContainerImageStatus> {
     let image = image.trim();
     if image.is_empty() {
         anyhow::bail!("image is required");
     }
-    let output = match sandbox_container_command(data_root) {
+    let output = match sandbox_container_command(data_root, mode) {
         Ok(mut cmd) => {
             cmd.arg("image").arg("inspect").arg(image);
             command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await
@@ -583,11 +597,11 @@ pub async fn container_image_status(data_root: &Path, image: &str) -> Result<Con
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::PermissionsExt;
-    use std::sync::Mutex as StdMutex;
 
     use tempfile::tempdir;
 
     use super::*;
+    use crate::CTX_HARNESS_SANDBOX_CLI_PATH_ENV;
 
     struct EnvGuard {
         key: &'static str,
@@ -613,7 +627,7 @@ mod tests {
     }
 
     fn env_var_test_lock() -> &'static tokio::sync::Mutex<()> {
-        crate::test_support::sandbox_cli_env_test_lock()
+        crate::sandbox_cli_env_test_lock()
     }
 
     #[derive(Default)]
@@ -658,14 +672,13 @@ mod tests {
         .expect("write sandbox CLI shim");
         std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
             .expect("chmod sandbox CLI shim");
-        let _guard = EnvGuard::set(
-            CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
-            &sandbox_cli_path.to_string_lossy(),
-        );
+        let _guard =
+            EnvGuard::set(CTX_HARNESS_SANDBOX_CLI_PATH_ENV, &sandbox_cli_path.to_string_lossy());
         let observer = RecordingObserver::default();
 
         load_container_image_tar(
             temp.path(),
+            &SandboxCommandMode::NativeContainer,
             &tar_path,
             "ghcr.io/ctxrs/ctx-harness:test",
             Some(&observer),
@@ -712,13 +725,12 @@ mod tests {
         .expect("write sandbox CLI shim");
         std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
             .expect("chmod sandbox CLI shim");
-        let _guard = EnvGuard::set(
-            CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
-            &sandbox_cli_path.to_string_lossy(),
-        );
+        let _guard =
+            EnvGuard::set(CTX_HARNESS_SANDBOX_CLI_PATH_ENV, &sandbox_cli_path.to_string_lossy());
 
         load_container_image_tar(
             temp.path(),
+            &SandboxCommandMode::NativeContainer,
             &tar_path,
             "ghcr.io/ctxrs/ctx-harness:test",
             None,

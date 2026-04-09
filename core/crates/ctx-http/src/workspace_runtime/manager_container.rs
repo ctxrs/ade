@@ -213,7 +213,7 @@ impl HarnessRuntimeManager {
                 if let Some(user) = container_user() {
                     cmd.arg("--user").arg(user);
                 }
-                sandbox_cli::append_sandbox_container_launch_network_args(&mut cmd, settings);
+                append_sandbox_container_launch_network_args(&mut cmd, settings);
                 for mount in &mount_plan.mounts {
                     cmd.arg("--mount").arg(mount);
                 }

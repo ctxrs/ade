@@ -13,6 +13,13 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
+fn find_binary_in_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
+}
+
 fn redact_sensitive(input: &str) -> String {
     fn redact_after_marker(mut s: String, marker: &str) -> String {
         let redacted = "[REDACTED]";
@@ -411,7 +418,7 @@ fn build_status(
             .map(|path| path.to_string_lossy().to_string()),
         activation_script_path: Some(paths.activation_script_path.to_string_lossy().to_string()),
         runtime_cli_path: preferred_native_sandbox_cli_path()
-            .or_else(|| which::which("nerdctl").ok())
+            .or_else(|| find_binary_in_path("nerdctl"))
             .map(|path| path.to_string_lossy().to_string()),
         message,
     }
@@ -437,7 +444,7 @@ fn bootstrap_failed_status(
             .map(|path| path.to_string_lossy().to_string()),
         activation_script_path: Some(paths.activation_script_path.to_string_lossy().to_string()),
         runtime_cli_path: preferred_native_sandbox_cli_path()
-            .or_else(|| which::which("nerdctl").ok())
+            .or_else(|| find_binary_in_path("nerdctl"))
             .map(|path| path.to_string_lossy().to_string()),
         message,
     }

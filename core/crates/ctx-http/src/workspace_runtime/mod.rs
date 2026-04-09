@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 #[cfg(test)]
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -10,7 +9,6 @@ use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
-use ctx_bundled_assets as bundled_assets;
 #[cfg(test)]
 use sysinfo::System;
 use tokio::process::Command;
@@ -35,7 +33,6 @@ use crate::settings::{
 };
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use crate::terminals::TerminalManager;
-use crate::updates;
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use ctx_core::ids::SessionId;
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
@@ -46,7 +43,6 @@ use url::Url;
 
 mod avf_linux_vm;
 mod container;
-mod image;
 mod lifecycle_manager;
 mod machine;
 mod manager;
@@ -55,7 +51,6 @@ mod materialization;
 mod network_policy_transition;
 #[cfg(test)]
 mod reclaim_unit_tests;
-mod sandbox_cli;
 #[cfg(test)]
 mod sandbox_machine_lifecycle;
 #[cfg(test)]
@@ -102,28 +97,43 @@ use self::container::{
     verify_disk_isolated_container_mounts, workspace_container_hostname,
 };
 pub(crate) use self::container::{CONTAINER_TERMINAL_HOME, CONTAINER_TERMINAL_USER};
-pub(crate) use self::image::resolve_container_image;
-pub use self::image::{
-    bundled_default_container_image_tar, container_image_present, container_image_status,
-    default_container_image, is_default_container_image, prefetch_container_image,
-    prefetch_container_image_with_observer, prefetch_container_startup_artifacts_with_observer,
-    ContainerImageStatus,
-};
-use self::image::{ensure_container_image_available, force_reload_default_container_image};
-#[cfg(test)]
-use self::image::{
-    ensure_managed_default_container_image_tar_with_source, managed_default_image_install_lock,
-};
 pub(crate) use self::lifecycle_manager::{
     SharedSubstrateLifecycleManager, SubstrateLifecycleRecord,
 };
 pub(crate) use ctx_linux_sandbox_runtime::{
-    linux_sandbox_runtime_status, preferred_native_sandbox_cli_path, prepare_linux_sandbox_runtime,
+    linux_sandbox_runtime_status, prepare_linux_sandbox_runtime,
     stage_linux_sandbox_runtime_downloads, LinuxSandboxActivationMode,
     LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeStatus,
 };
+pub(crate) use ctx_sandbox_container_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV;
+pub use ctx_sandbox_container_runtime::{
+    bundled_default_container_image_tar, command_output_message, command_output_with_timeout,
+    default_container_image, is_default_container_image, sandbox_cli_env_for_data_root,
+    sandbox_cli_invocation, ContainerImageStatus, SHARED_VM_SANDBOX_CLI_GUEST_BIN,
+};
+use ctx_sandbox_container_runtime::{
+    container_exists as runtime_container_exists,
+    container_image_present as runtime_container_image_present,
+    container_image_status as runtime_container_image_status,
+    container_running as runtime_container_running,
+    ensure_container_image_available as runtime_ensure_container_image_available,
+    ensure_workspace_volume as runtime_ensure_workspace_volume,
+    force_reload_default_container_image as runtime_force_reload_default_container_image,
+    native_container_runtime_available,
+    prefetch_container_image as runtime_prefetch_container_image,
+    prefetch_container_image_with_observer as runtime_prefetch_container_image_with_observer,
+    prefetch_container_startup_artifacts_with_observer as runtime_prefetch_container_startup_artifacts_with_observer,
+    resolve_container_image as resolve_configured_container_image,
+    sandbox_container_command as runtime_sandbox_container_command,
+    sandbox_engine_ready as runtime_sandbox_engine_ready,
+    SandboxCommandMode,
+};
+#[cfg(test)]
+use ctx_sandbox_container_runtime::{
+    ensure_managed_default_container_image_tar_with_source, managed_default_image_install_lock,
+    sandbox_cli_binary_path,
+};
 use self::machine::sandbox_machine_name;
-use ctx_runtime_assets::download_managed_artifact;
 #[cfg(test)]
 use self::machine::{
     ensure_managed_sandbox_cli_runtime, ensure_managed_sandbox_machine_cache,
@@ -135,16 +145,6 @@ use self::machine::{
 pub(crate) use self::materialization::materialize_sandbox_worktree;
 use self::network_policy_transition::apply_container_network_policy;
 #[cfg(test)]
-use self::sandbox_cli::sandbox_cli_binary_path;
-use self::sandbox_cli::{
-    command_output_message, container_exists, container_running, ensure_workspace_volume,
-};
-pub(crate) use self::sandbox_cli::{
-    command_output_with_timeout, container_runtime_available, sandbox_cli_env_for_data_root,
-    sandbox_cli_invocation, sandbox_container_command, sandbox_engine_ready,
-    selected_sandbox_command_backend, SandboxCommandBackend, SHARED_VM_SANDBOX_CLI_GUEST_BIN,
-};
-#[cfg(test)]
 use self::sandbox_machine_recovery::{
     run_sandbox_machine_init, sandbox_machine_present, sandbox_machine_singleflight_lock,
 };
@@ -153,6 +153,191 @@ pub(crate) use self::substrate::{
     SubstrateShutdownOutcome, SubstrateShutdownReason, SubstrateStartupOutcome,
     SubstrateStartupReason, SubstrateStartupSelection, UbuntuSandboxSubstrate,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SandboxCommandBackend {
+    NativeContainer,
+    SharedVmContainer,
+}
+
+fn explicit_sandbox_cli_override_path() -> Option<PathBuf> {
+    let raw = std::env::var(CTX_HARNESS_SANDBOX_CLI_PATH_ENV).ok()?;
+    let path = PathBuf::from(raw.trim());
+    if path.exists() { Some(path) } else { None }
+}
+
+fn selected_sandbox_command_mode(data_root: &Path) -> Result<SandboxCommandMode> {
+    if explicit_sandbox_cli_override_path().is_some() {
+        return Ok(SandboxCommandMode::NativeContainer);
+    }
+    #[cfg(target_os = "macos")]
+    if avf_linux_runtime_available() {
+        return Ok(SandboxCommandMode::SharedVm {
+            helper_path: avf_linux_helper_path()?,
+        });
+    }
+    if native_container_runtime_available(data_root) {
+        return Ok(SandboxCommandMode::NativeContainer);
+    }
+    anyhow::bail!("sandbox container CLI unavailable");
+}
+
+pub(crate) fn selected_sandbox_command_backend(data_root: &Path) -> Result<SandboxCommandBackend> {
+    match selected_sandbox_command_mode(data_root)? {
+        SandboxCommandMode::NativeContainer => Ok(SandboxCommandBackend::NativeContainer),
+        SandboxCommandMode::SharedVm { .. } => Ok(SandboxCommandBackend::SharedVmContainer),
+    }
+}
+
+pub(crate) fn container_runtime_available(data_root: &Path) -> bool {
+    selected_sandbox_command_mode(data_root).is_ok()
+}
+
+pub(crate) fn sandbox_container_command(data_root: &Path) -> Result<Command> {
+    let mode = selected_sandbox_command_mode(data_root)?;
+    runtime_sandbox_container_command(data_root, &mode)
+}
+
+pub(crate) async fn sandbox_engine_ready(data_root: &Path) -> Result<bool> {
+    let mode = selected_sandbox_command_mode(data_root)?;
+    runtime_sandbox_engine_ready(data_root, &mode).await
+}
+
+pub(crate) async fn container_exists(data_root: &Path, name: &str) -> Result<bool> {
+    let mode = selected_sandbox_command_mode(data_root)?;
+    runtime_container_exists(data_root, &mode, name).await
+}
+
+pub(crate) async fn container_running(data_root: &Path, name: &str) -> Result<Option<bool>> {
+    let mode = selected_sandbox_command_mode(data_root)?;
+    runtime_container_running(data_root, &mode, name).await
+}
+
+pub(crate) async fn ensure_workspace_volume(
+    data_root: &Path,
+    workspace_id: WorkspaceId,
+) -> Result<String> {
+    let mode = selected_sandbox_command_mode(data_root)?;
+    runtime_ensure_workspace_volume(data_root, &mode, workspace_id).await
+}
+
+pub(crate) fn resolve_container_image(settings: &ContainerExecutionSettings) -> String {
+    resolve_configured_container_image(settings.image.as_deref())
+}
+
+pub async fn container_image_present(data_root: &Path, image: &str) -> Result<bool> {
+    let mode = selected_sandbox_command_mode(data_root)?;
+    runtime_container_image_present(data_root, &mode, image).await
+}
+
+pub async fn container_image_status(data_root: &Path, image: &str) -> Result<ContainerImageStatus> {
+    let mode = selected_sandbox_command_mode(data_root)?;
+    runtime_container_image_status(data_root, &mode, image).await
+}
+
+pub async fn prefetch_container_startup_artifacts_with_observer(
+    data_root: &Path,
+    image: &str,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<()> {
+    let mode = selected_sandbox_command_mode(data_root)?;
+    runtime_prefetch_container_startup_artifacts_with_observer(data_root, &mode, image, observer)
+        .await
+}
+
+pub async fn prefetch_container_image_with_observer(
+    data_root: &Path,
+    image: &str,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<()> {
+    let mode = selected_sandbox_command_mode(data_root)?;
+    runtime_prefetch_container_image_with_observer(data_root, &mode, image, observer).await
+}
+
+pub async fn prefetch_container_image(data_root: &Path, image: &str) -> Result<()> {
+    let mode = selected_sandbox_command_mode(data_root)?;
+    runtime_prefetch_container_image(data_root, &mode, image).await
+}
+
+async fn ensure_container_image_available(
+    data_root: &Path,
+    image: &str,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<()> {
+    let mode = selected_sandbox_command_mode(data_root)?;
+    runtime_ensure_container_image_available(data_root, &mode, image, observer).await
+}
+
+async fn force_reload_default_container_image(
+    data_root: &Path,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<()> {
+    let mode = selected_sandbox_command_mode(data_root)?;
+    runtime_force_reload_default_container_image(data_root, &mode, observer).await
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SandboxContainerLaunchNetworking {
+    network: Option<&'static str>,
+    add_host: &'static str,
+}
+
+fn sandbox_container_launch_networking(
+    settings: &ContainerExecutionSettings,
+) -> SandboxContainerLaunchNetworking {
+    SandboxContainerLaunchNetworking {
+        network: if matches!(settings.runtime, ContainerRuntimeKind::SharedVmContainer) {
+            None
+        } else {
+            Some("slirp4netns:allow_host_loopback=true")
+        },
+        add_host: "host.containers.internal:host-gateway",
+    }
+}
+
+fn append_sandbox_container_launch_network_args(
+    cmd: &mut Command,
+    settings: &ContainerExecutionSettings,
+) {
+    let networking = sandbox_container_launch_networking(settings);
+    if let Some(network) = networking.network {
+        cmd.arg("--network").arg(network);
+    }
+    cmd.arg("--cap-add").arg("NET_ADMIN");
+    cmd.arg("--add-host").arg(networking.add_host);
+}
+
+#[cfg(test)]
+mod launch_networking_tests {
+    use super::*;
+
+    #[test]
+    fn shared_vm_container_launch_networking_uses_default_bridge() {
+        let settings = ContainerExecutionSettings {
+            runtime: ContainerRuntimeKind::SharedVmContainer,
+            ..ContainerExecutionSettings::default()
+        };
+
+        let networking = sandbox_container_launch_networking(&settings);
+        assert_eq!(networking.network, None);
+        assert_eq!(networking.add_host, "host.containers.internal:host-gateway");
+    }
+
+    #[test]
+    fn native_container_launch_networking_keeps_slirp() {
+        let settings = ContainerExecutionSettings {
+            runtime: ContainerRuntimeKind::NativeContainer,
+            ..ContainerExecutionSettings::default()
+        };
+
+        let networking = sandbox_container_launch_networking(&settings);
+        assert_eq!(
+            networking.network,
+            Some("slirp4netns:allow_host_loopback=true")
+        );
+        assert_eq!(networking.add_host, "host.containers.internal:host-gateway");
+    }
+}
 
 pub(crate) fn local_runtime_available(data_root: &Path, runtime: &ContainerRuntimeKind) -> bool {
     match runtime {
@@ -457,13 +642,6 @@ pub(crate) async fn ensure_builder_backend_launch_ready_with_observer(
     }
 }
 
-// Default container image for ctx-managed execution.
-//
-// This must include:
-// - iptables (for restricted egress enforcement)
-// - /usr/local/bin/ctx-egress-proxy (Linux binary executed inside the container)
-const DEFAULT_CONTAINER_IMAGE: &str = "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04";
-pub(crate) const CTX_HARNESS_SANDBOX_CLI_PATH_ENV: &str = "CTX_HARNESS_SANDBOX_CLI_PATH";
 #[cfg(test)]
 const SANDBOX_MACHINE_CACHE_DIR_ENV: &str = "CTX_SANDBOX_MACHINE_CACHE_DIR";
 const EGRESS_PROXY_BINARY: &str = "ctx-egress-proxy";
@@ -485,6 +663,7 @@ pub(crate) const CTX_AVF_WORKSPACE_ID_ENV: &str = "CTX_AVF_WORKSPACE_ID";
 pub(crate) const CTX_AVF_WORKTREE_ID_ENV: &str = "CTX_AVF_WORKTREE_ID";
 pub(crate) const CTX_AVF_HOST_WORKTREE_ROOT_ENV: &str = "CTX_AVF_HOST_WORKTREE_ROOT";
 pub(crate) const CTX_AVF_REAL_GUEST_EXEC_ENV: &str = "CTX_AVF_REAL_GUEST_EXEC";
+#[cfg(test)]
 const SANDBOX_INFO_TIMEOUT: Duration = Duration::from_secs(5);
 const SANDBOX_MACHINE_START_TIMEOUT: Duration = Duration::from_secs(180);
 // Bound machine init so wedged sandbox CLI subprocesses cannot stall launch indefinitely.
@@ -494,7 +673,6 @@ const SANDBOX_MACHINE_INIT_TIMEOUT: Duration = Duration::from_secs(8 * 60);
 // must remain bounded tightly enough to surface actionable errors quickly.
 const SANDBOX_MACHINE_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 const SANDBOX_OP_TIMEOUT: Duration = Duration::from_secs(60);
-const SANDBOX_IMAGE_LOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 #[cfg(test)]
 const DEFAULT_PRESET_HOST_MEMORY_MB: u32 = 32 * 1024;
 #[cfg(test)]
@@ -788,15 +966,7 @@ pub use ctx_harness_setup::{
     HarnessSetupDownloadStatus, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,
     HarnessSetupProgressUpdate,
 };
-pub(crate) use ctx_harness_setup::{
-    observe_log, observe_phase, observe_progress, ManagedArtifactDownloadReporter,
-    ManagedDownloadAggregate,
-};
-
-#[derive(Debug, Clone, Default)]
-pub(crate) struct ManagedContainerBootstrapOverrides {
-    pub(crate) default_image_source: Option<bundled_assets::ManagedArtifactSource>,
-}
+use ctx_harness_setup::{observe_log, observe_phase};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct HarnessRuntimeStats {

@@ -2,6 +2,10 @@ use super::*;
 #[cfg(test)]
 use ctx_bundled_assets as bundled_assets;
 #[cfg(test)]
+use ctx_harness_setup::{observe_log, ManagedArtifactDownloadReporter, ManagedDownloadAggregate};
+#[cfg(test)]
+use crate::updates;
+#[cfg(test)]
 use ctx_runtime_assets::{
     acquire_managed_artifact_file_lock, download_managed_artifact, extract_archive_to_dir,
     finalize_managed_artifact_download, managed_artifact_lock_path,
