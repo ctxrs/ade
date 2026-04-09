@@ -14,10 +14,8 @@ import {
 import { defaultUrlTransform } from "react-markdown";
 import { Check, Copy } from "lucide-react";
 import { ExternalLink } from "../components/ExternalLink";
-import { parseSessionMarkdown } from "./sessionThread/sessionMarkdownShared";
 import {
-  nodeChildren,
-  normalizeSessionMarkdownBlocks,
+  createSessionMarkdownDocument,
   resolveSessionMarkdownBlockEntryGapPx,
   resolveSessionMarkdownBlockGapPx,
   type SessionMarkdownBlock,
@@ -28,7 +26,6 @@ import {
   type SessionMarkdownTableCell,
 } from "./sessionThread/sessionMarkdownContract";
 import { copyTextToClipboard } from "../utils/clipboard";
-import { stripCitationMarkers } from "../utils/citationMarkers";
 import {
   type FileRef,
   isAbsolutePath,
@@ -276,8 +273,7 @@ const handleUrlTokenClick = (event: MouseEvent<HTMLElement>, href: string) => {
   void openExternalLink(href);
 };
 
-const buildCodeTokenNodes = (text: string, opts: CodeTokenOptions): ReactNode[] => {
-  const parts = splitWhitespaceTokens(text);
+const buildCodeTokenNodes = (text: string, opts: CodeTokenOptions, parts = splitWhitespaceTokens(text)): ReactNode[] => {
   return parts.map((part, idx) => {
     if (!part) return null;
     if (part.trim() === "") return part;
@@ -324,12 +320,14 @@ const buildCodeTokenNodes = (text: string, opts: CodeTokenOptions): ReactNode[] 
 
 function TokenizedInlineCode({
   codeString,
+  codeParts,
   className,
   enableLinks,
   worktreeId,
   onFileOpenError,
 }: {
   codeString: string;
+  codeParts: readonly string[];
   className?: string;
   enableLinks: boolean;
   worktreeId: string | null;
@@ -345,12 +343,16 @@ function TokenizedInlineCode({
     selection.addRange(range);
   }, []);
 
-  const content = buildCodeTokenNodes(codeString, {
-    enableLinks,
-    worktreeId,
-    onFileOpenError,
-    wrapPlainTokens: true,
-  });
+  const content = buildCodeTokenNodes(
+    codeString,
+    {
+      enableLinks,
+      worktreeId,
+      onFileOpenError,
+      wrapPlainTokens: true,
+    },
+    [...codeParts],
+  );
   return (
     <code className={className} onDoubleClick={handleDoubleClick}>
       {content}
@@ -512,6 +514,7 @@ function renderInlineNodes(
           <TokenizedInlineCode
             key={key}
             codeString={node.text}
+            codeParts={node.parts}
             enableLinks={opts.enableLinks}
             worktreeId={opts.worktreeId}
             onFileOpenError={opts.onFileOpenError}
@@ -748,11 +751,7 @@ export function Markdown({
   worktreeId?: string | null;
   onFileOpenError?: (message: string | null) => void;
 }) {
-  const normalized = stripCitationMarkers(content);
-  const blocks = useMemo(
-    () => normalizeSessionMarkdownBlocks(nodeChildren(parseSessionMarkdown(normalized))),
-    [normalized],
-  );
+  const blocks = useMemo(() => createSessionMarkdownDocument(content).blocks, [content]);
   const renderOptions = useMemo<MarkdownRenderOptions>(
     () => ({
       enableLinks: Boolean(linkifyFiles),

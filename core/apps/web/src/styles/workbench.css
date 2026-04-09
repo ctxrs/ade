@@ -3494,7 +3494,8 @@
 }
 
 .wb-assistant-body {
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
   min-width: 0;
   max-width: 100%;
 }
@@ -3502,7 +3503,9 @@
 /* Workbench markdown typography (Cursor-like). */
 .wb-turn-header-content,
 .wb-tool-markdown,
-.wb-assistant-body {
+.wb-assistant-body,
+.msg :where(.wb-markdown-root) {
+  font-family: var(--wb-markdown-body-font-family);
   font-size: var(--wb-markdown-body-font-size);
   line-height: var(--wb-markdown-body-line-height);
 }
@@ -3526,7 +3529,8 @@
 
 .wb-turn-header-content :where(.wb-markdown-root, .wb-md-stack, .wb-md-list-item-body),
 .wb-tool-markdown :where(.wb-markdown-root, .wb-md-stack, .wb-md-list-item-body),
-.wb-assistant-body :where(.wb-markdown-root, .wb-md-stack, .wb-md-list-item-body) {
+.wb-assistant-body :where(.wb-markdown-root, .wb-md-stack, .wb-md-list-item-body),
+.msg :where(.wb-markdown-root, .wb-md-stack, .wb-md-list-item-body) {
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -3534,19 +3538,22 @@
 
 .wb-turn-header-content :where(.wb-md-block),
 .wb-tool-markdown :where(.wb-md-block),
-.wb-assistant-body :where(.wb-md-block) {
+.wb-assistant-body :where(.wb-md-block),
+.msg :where(.wb-md-block) {
   min-width: 0;
 }
 
 .wb-turn-header-content :where(p, ul, ol, pre, .wb-md-blockquote, hr, .wb-md-table-scroll, .codeblock, h1, h2, h3, h4),
 .wb-tool-markdown :where(p, ul, ol, pre, .wb-md-blockquote, hr, .wb-md-table-scroll, .codeblock, h1, h2, h3, h4),
-.wb-assistant-body :where(p, ul, ol, pre, .wb-md-blockquote, hr, .wb-md-table-scroll, .codeblock, h1, h2, h3, h4) {
+.wb-assistant-body :where(p, ul, ol, pre, .wb-md-blockquote, hr, .wb-md-table-scroll, .codeblock, h1, h2, h3, h4),
+.msg :where(p, ul, ol, pre, .wb-md-blockquote, hr, .wb-md-table-scroll, .codeblock, h1, h2, h3, h4) {
   margin: 0;
 }
 
 .wb-turn-header-content :where(h1, h2, h3, h4),
 .wb-tool-markdown :where(h1, h2, h3, h4),
-.wb-assistant-body :where(h1, h2, h3, h4) {
+.wb-assistant-body :where(h1, h2, h3, h4),
+.msg :where(h1, h2, h3, h4) {
   line-height: 1.25;
   font-weight: 600;
   color: var(--text);
@@ -3554,50 +3561,58 @@
 
 .wb-turn-header-content :where(h1),
 .wb-tool-markdown :where(h1),
-.wb-assistant-body :where(h1) {
+.wb-assistant-body :where(h1),
+.msg :where(h1) {
   font-size: 18px;
 }
 
 .wb-turn-header-content :where(h2),
 .wb-tool-markdown :where(h2),
-.wb-assistant-body :where(h2) {
+.wb-assistant-body :where(h2),
+.msg :where(h2) {
   font-size: 16px;
 }
 
 .wb-turn-header-content :where(h3),
 .wb-tool-markdown :where(h3),
-.wb-assistant-body :where(h3) {
+.wb-assistant-body :where(h3),
+.msg :where(h3) {
   font-size: 14px;
 }
 
 .wb-turn-header-content :where(h4),
 .wb-tool-markdown :where(h4),
-.wb-assistant-body :where(h4) {
+.wb-assistant-body :where(h4),
+.msg :where(h4) {
   font-size: 13px;
 }
 
 .wb-turn-header-content :where(ul, ol),
 .wb-tool-markdown :where(ul, ol),
-.wb-assistant-body :where(ul, ol) {
+.wb-assistant-body :where(ul, ol),
+.msg :where(ul, ol) {
   margin: 0;
   padding-left: var(--wb-markdown-list-indent);
 }
 
 .wb-turn-header-content :where(li + li),
 .wb-tool-markdown :where(li + li),
-.wb-assistant-body :where(li + li) {
+.wb-assistant-body :where(li + li),
+.msg :where(li + li) {
   margin-top: var(--wb-markdown-list-gap);
 }
 
 .wb-turn-header-content :where(.wb-md-task-item),
 .wb-tool-markdown :where(.wb-md-task-item),
-.wb-assistant-body :where(.wb-md-task-item) {
+.wb-assistant-body :where(.wb-md-task-item),
+.msg :where(.wb-md-task-item) {
   list-style: none;
 }
 
 .wb-turn-header-content :where(.wb-md-task-row),
 .wb-tool-markdown :where(.wb-md-task-row),
-.wb-assistant-body :where(.wb-md-task-row) {
+.wb-assistant-body :where(.wb-md-task-row),
+.msg :where(.wb-md-task-row) {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: start;
@@ -3606,7 +3621,8 @@
 
 .wb-turn-header-content :where(.wb-md-task-checkbox),
 .wb-tool-markdown :where(.wb-md-task-checkbox),
-.wb-assistant-body :where(.wb-md-task-checkbox) {
+.wb-assistant-body :where(.wb-md-task-checkbox),
+.msg :where(.wb-md-task-checkbox) {
   width: 14px;
   height: 14px;
   margin: 2px 0 0 0;
@@ -3614,7 +3630,8 @@
 
 .wb-turn-header-content :where(p, li, td, th, h1, h2, h3, h4, h5, h6)>code,
 .wb-tool-markdown :where(p, li, td, th, h1, h2, h3, h4, h5, h6)>code,
-.wb-assistant-body :where(p, li, td, th, h1, h2, h3, h4, h5, h6)>code {
+.wb-assistant-body :where(p, li, td, th, h1, h2, h3, h4, h5, h6)>code,
+.msg :where(p, li, td, th, h1, h2, h3, h4, h5, h6)>code {
   display: inline;
   font-family: var(--wb-markdown-inline-code-font-family);
   font-size: var(--wb-markdown-inline-code-font-size);
@@ -3634,14 +3651,16 @@
 
 .wb-turn-header-content :where(hr),
 .wb-tool-markdown :where(hr),
-.wb-assistant-body :where(hr) {
+.wb-assistant-body :where(hr),
+.msg :where(hr) {
   border: none;
   border-top: 1px solid var(--surface-selected);
 }
 
 .wb-turn-header-content :where(.wb-md-blockquote),
 .wb-tool-markdown :where(.wb-md-blockquote),
-.wb-assistant-body :where(.wb-md-blockquote) {
+.wb-assistant-body :where(.wb-md-blockquote),
+.msg :where(.wb-md-blockquote) {
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -3653,7 +3672,8 @@
 
 .wb-turn-header-content :where(.wb-md-table-scroll),
 .wb-tool-markdown :where(.wb-md-table-scroll),
-.wb-assistant-body :where(.wb-md-table-scroll) {
+.wb-assistant-body :where(.wb-md-table-scroll),
+.msg :where(.wb-md-table-scroll) {
   max-width: 100%;
   overflow-x: auto;
   scrollbar-gutter: stable;
@@ -3661,13 +3681,15 @@
 
 .wb-turn-header-content :where(.codeblock),
 .wb-tool-markdown :where(.codeblock),
-.wb-assistant-body :where(.codeblock) {
+.wb-assistant-body :where(.codeblock),
+.msg :where(.codeblock) {
   margin: 0;
 }
 
 .wb-turn-header-content :where(.wb-md-table),
 .wb-tool-markdown :where(.wb-md-table),
-.wb-assistant-body :where(.wb-md-table) {
+.wb-assistant-body :where(.wb-md-table),
+.msg :where(.wb-md-table) {
   width: 100%;
   table-layout: fixed;
   border-collapse: collapse;
@@ -3676,7 +3698,8 @@
 
 .wb-turn-header-content :where(.wb-md-table-cell),
 .wb-tool-markdown :where(.wb-md-table-cell),
-.wb-assistant-body :where(.wb-md-table-cell) {
+.wb-assistant-body :where(.wb-md-table-cell),
+.msg :where(.wb-md-table-cell) {
   padding: var(--wb-markdown-table-cell-padding-block) var(--wb-markdown-table-cell-padding-inline);
   border: var(--wb-markdown-table-border-width) solid var(--surface-active);
   vertical-align: top;
@@ -3688,7 +3711,8 @@
 
 .wb-turn-header-content :where(.wb-md-table-cell-head),
 .wb-tool-markdown :where(.wb-md-table-cell-head),
-.wb-assistant-body :where(.wb-md-table-cell-head) {
+.wb-assistant-body :where(.wb-md-table-cell-head),
+.msg :where(.wb-md-table-cell-head) {
   font-weight: 600;
   color: var(--text);
 }

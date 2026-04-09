@@ -19,6 +19,9 @@ import {
   SESSION_THREAD_CONTENT_MAX_WIDTH_PX,
   SESSION_THREAD_HORIZONTAL_INSET_PX,
   SESSION_THREAD_INDENT_LEFT_PX,
+  SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY,
+  SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX,
+  SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
   resolveSessionThreadContentWidth,
 } from "./sessionThreadLayoutTokens";
 
@@ -29,9 +32,9 @@ export type PretextVirtualizerRowLayoutContext = {
   turnToolsLoading?: readonly string[];
 };
 
-const BODY_FONT = "13px system-ui, sans-serif";
-const BODY_LINE_HEIGHT_PX = 20.15;
-const SMALL_FONT = "12px system-ui, sans-serif";
+const BODY_FONT = `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`;
+const BODY_LINE_HEIGHT_PX = SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX;
+const SMALL_FONT = `12px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`;
 const SMALL_LINE_HEIGHT_PX = 16;
 const MONO_FONT =
   '12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';

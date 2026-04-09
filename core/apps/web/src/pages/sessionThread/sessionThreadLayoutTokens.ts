@@ -8,7 +8,7 @@ export const SESSION_THREAD_CONTENT_MAX_WIDTH_PX =
 export const SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX = 13;
 export const SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX = 20.15;
 export const SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY =
-  "system-ui, sans-serif";
+  '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 export const SESSION_THREAD_MARKDOWN_BLOCK_MARGIN_BOTTOM_PX = 12;
 export const SESSION_THREAD_MARKDOWN_HEADING_MARGIN_TOP_PX = 16;
 export const SESSION_THREAD_MARKDOWN_HEADING_MARGIN_BOTTOM_PX = 8;
@@ -21,7 +21,7 @@ export const SESSION_THREAD_MARKDOWN_INLINE_CODE_BORDER_RADIUS_PX = 6;
 export const SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_SIZE_PX =
   SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX;
 export const SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY =
-  'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+  '"SF Mono", Menlo, Monaco, Consolas, "Courier New", monospace';
 export const SESSION_THREAD_MARKDOWN_INLINE_CODE_EDGE_BLOCK_PX =
   SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_BLOCK_PX + SESSION_THREAD_MARKDOWN_INLINE_CODE_BORDER_WIDTH_PX;
 export const SESSION_THREAD_MARKDOWN_INLINE_CODE_EDGE_PX =
@@ -49,6 +49,7 @@ export const SESSION_THREAD_LAYOUT_STYLE = {
   "--wb-transcript-max-width": `${SESSION_THREAD_ROW_MAX_WIDTH_PX}px`,
   "--wb-markdown-body-font-size": `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px`,
   "--wb-markdown-body-line-height": `${SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX}px`,
+  "--wb-markdown-body-font-family": SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY,
   "--wb-markdown-block-margin-bottom": `${SESSION_THREAD_MARKDOWN_BLOCK_MARGIN_BOTTOM_PX}px`,
   "--wb-markdown-heading-margin-top": `${SESSION_THREAD_MARKDOWN_HEADING_MARGIN_TOP_PX}px`,
   "--wb-markdown-heading-margin-bottom": `${SESSION_THREAD_MARKDOWN_HEADING_MARGIN_BOTTOM_PX}px`,

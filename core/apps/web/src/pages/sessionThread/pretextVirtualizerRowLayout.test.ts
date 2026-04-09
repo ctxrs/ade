@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkbenchListItem } from "../SessionPage.types";
 
-const { prepareMock, prepareWithSegmentsMock, layoutMock } = vi.hoisted(() => ({
+const { prepareMock, prepareWithSegmentsMock, layoutMock, layoutNextLineMock } = vi.hoisted(() => ({
   prepareMock: vi.fn((text: string, font: string, options?: { whiteSpace?: "normal" | "pre-wrap" }) => ({
     text,
     font,
@@ -32,6 +32,37 @@ const { prepareMock, prepareWithSegmentsMock, layoutMock } = vi.hoisted(() => ({
       chunks: [],
     };
   }),
+  layoutNextLineMock: vi.fn(
+    (
+      prepared: { text: string },
+      start: { segmentIndex: number; graphemeIndex: number },
+      maxWidth: number,
+    ) => {
+      const text = prepared.text ?? "";
+      const startIndex = Math.max(0, start.segmentIndex);
+      if (startIndex >= text.length) {
+        return null;
+      }
+      const maxChars = Math.max(1, Math.floor(maxWidth / 10));
+      let endIndex = Math.min(text.length, startIndex + maxChars);
+      if (endIndex < text.length) {
+        const lastSpace = text.lastIndexOf(" ", endIndex - 1);
+        if (lastSpace >= startIndex) {
+          endIndex = lastSpace + 1;
+        }
+      }
+      if (endIndex <= startIndex) {
+        endIndex = Math.min(text.length, startIndex + 1);
+      }
+      const lineText = text.slice(startIndex, endIndex);
+      return {
+        text: lineText,
+        width: Math.max(1, lineText.length) * 6,
+        start,
+        end: { segmentIndex: endIndex, graphemeIndex: 0 },
+      };
+    },
+  ),
   layoutMock: vi.fn((prepared: { text: string }, maxWidth: number, lineHeight: number) => ({
     height: Math.max(
       lineHeight,
@@ -44,6 +75,7 @@ const { prepareMock, prepareWithSegmentsMock, layoutMock } = vi.hoisted(() => ({
 vi.mock("@chenglou/pretext", () => ({
   prepare: prepareMock,
   prepareWithSegments: prepareWithSegmentsMock,
+  layoutNextLine: layoutNextLineMock,
   layout: layoutMock,
 }));
 
@@ -53,6 +85,7 @@ import {
 } from "./pretextVirtualizerRowLayout";
 import { measureSessionMarkdownDocument } from "./sessionMarkdownMeasurement";
 import {
+  SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_BORDER_WIDTH_PX,
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_BOTTOM_PX,
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_TOP_PX,
@@ -64,6 +97,7 @@ describe("getPretextVirtualizerRowLayout", () => {
     clearPretextVirtualizerRowLayoutCache();
     prepareMock.mockClear();
     prepareWithSegmentsMock.mockClear();
+    layoutNextLineMock.mockClear();
     layoutMock.mockClear();
   });
 
@@ -99,7 +133,7 @@ describe("getPretextVirtualizerRowLayout", () => {
     const result = getPretextVirtualizerRowLayout(item, 640, {});
 
     expect(result.height).toBeGreaterThan(40);
-    expect(prepareMock).toHaveBeenCalled();
+    expect(prepareMock.mock.calls.length + prepareWithSegmentsMock.mock.calls.length).toBeGreaterThan(0);
   });
 
   it("measures markdown tables with deterministic width-sensitive heights", () => {
@@ -158,6 +192,48 @@ describe("getPretextVirtualizerRowLayout", () => {
         3 * (Math.max(20.15, 17.4) + SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_BLOCK_PX) * 16,
       ) / 16,
     );
+  });
+
+  it("treats markdown hard breaks as forced line breaks in wide paragraphs", () => {
+    const markdown = [
+      "Short version:  ",
+      "the next system should answer not just which title wins.  ",
+      "It should answer which article shape wins.",
+    ].join("\n");
+
+    const height = measureSessionMarkdownDocument(markdown, 1600);
+
+    expect(height).toBe(Math.round(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 3 * 16) / 16);
+  });
+
+  it("uses styled inline runs when bold markdown changes line breaking", () => {
+    const markdown =
+      "**Most predictive overall, but not usable directly pre-submit** These are still the strongest overall signal family.";
+
+    const height = measureSessionMarkdownDocument(markdown, 340);
+
+    expect(prepareWithSegmentsMock).toHaveBeenCalled();
+    expect(height).toBeGreaterThan(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 2);
+  });
+
+  it("does not reuse prepared mixed-inline segments across different markdown documents", () => {
+    const first = measureSessionMarkdownDocument("`supercalifragilisticexpialidocious` tail", 120);
+    const second = measureSessionMarkdownDocument("`x` tail", 120);
+
+    expect(first).toBeGreaterThan(second);
+    expect(
+      prepareWithSegmentsMock.mock.calls.some(
+        ([text, font]) =>
+          text === "supercalifragilisticexpialidocious" &&
+          typeof font === "string" &&
+          font.toLowerCase().includes("mono"),
+      ),
+    ).toBe(true);
+    expect(
+      prepareWithSegmentsMock.mock.calls.some(
+        ([text, font]) => text === "x" && typeof font === "string" && font.toLowerCase().includes("mono"),
+      ),
+    ).toBe(true);
   });
 
   it("includes fenced code block border chrome in deterministic markdown height", () => {

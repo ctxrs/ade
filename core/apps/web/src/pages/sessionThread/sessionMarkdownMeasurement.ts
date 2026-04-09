@@ -1,21 +1,25 @@
-import { layout, prepare, prepareWithSegments, type PreparedText, type PreparedTextWithSegments } from "@chenglou/pretext";
-import { stripCitationMarkers } from "../../utils/citationMarkers";
+import {
+  layout,
+  layoutNextLine,
+  prepare,
+  prepareWithSegments,
+  type LayoutCursor,
+  type PreparedText,
+  type PreparedTextWithSegments,
+} from "@chenglou/pretext";
 import {
   addPretextPerfBucket,
   hashPretextPerfValue,
   incrementPretextPerfCounter,
 } from "../../utils/pretextPerfDiagnostics";
 import {
-  parseSessionMarkdown,
-} from "./sessionMarkdownShared";
-import {
-  nodeChildren,
-  normalizeSessionMarkdownBlocks,
+  createSessionMarkdownDocument,
   resolveSessionMarkdownBlockEntryGapPx,
   resolveSessionMarkdownBlockGapPx,
   type SessionMarkdownBlock,
   type SessionMarkdownBlockContext,
-  type SessionMarkdownInlineNode,
+  type SessionMarkdownDocument,
+  type SessionMarkdownInlineRun,
 } from "./sessionMarkdownContract";
 import {
   SESSION_THREAD_MARKDOWN_BLOCKQUOTE_INSET_PX,
@@ -40,13 +44,12 @@ import {
 const PREPARED_CACHE_LIMIT = 4000;
 const AST_CACHE_LIMIT = 1000;
 
-const BODY_FONT = `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`;
 const BODY_LINE_HEIGHT_PX = SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX;
-const HEADING_FONT_BY_DEPTH = {
-  1: `600 18px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`,
-  2: `600 16px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`,
-  3: `600 14px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`,
-  4: `600 13px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`,
+const HEADING_FONT_SIZE_BY_DEPTH = {
+  1: 18,
+  2: 16,
+  3: 14,
+  4: 13,
 } as const;
 const HEADING_LINE_HEIGHT_BY_DEPTH = {
   1: 22.5,
@@ -60,35 +63,55 @@ const CODE_BLOCK_VERTICAL_PADDING_PX =
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_TOP_PX +
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_BOTTOM_PX;
 const CHECKBOX_GUTTER_PX = 18;
-export const SESSION_TRANSCRIPT_LAYOUT_ENGINE_REVISION = "2026-04-08-1";
+export const SESSION_TRANSCRIPT_LAYOUT_ENGINE_REVISION = "2026-04-08-2";
+const LINE_START_CURSOR: LayoutCursor = { segmentIndex: 0, graphemeIndex: 0 };
+const UNBOUNDED_WIDTH_PX = 100_000;
 
 type TextWhiteSpace = "normal" | "pre-wrap";
-
-type InlineRun =
+type TextBlockTypography = {
+  body: string;
+  strong: string;
+  emphasis: string;
+  strongEmphasis: string;
+  lineHeight: number;
+};
+type PreparedInlineLayoutItem =
+  | { kind: "hardBreak" }
+  | { kind: "space"; width: number; codeGroupId: number | null }
   | {
-      kind: "hardBreak";
-    }
-  | {
-      kind: "text";
-      text: string;
-    }
-  | {
-      kind: "inlineCode";
-      text: string;
+      kind: "segment";
+      codeGroupId: number | null;
+      chromeWidth: number;
+      endCursor: LayoutCursor;
+      fullWidth: number;
+      lineHeight: number;
+      prepared: PreparedTextWithSegments;
     };
-
-type TextInlineRun = Extract<InlineRun, { kind: "text" }>;
 
 const preparedCache = new Map<string, PreparedText>();
 const preparedSegmentsCache = new Map<string, PreparedTextWithSegments>();
-const markdownBlocksCache = new Map<string, SessionMarkdownBlock[]>();
-const textWidthCache = new Map<string, number>();
+const markdownDocumentCache = new Map<string, SessionMarkdownDocument>();
+const collapsedSpaceWidthCache = new Map<string, number>();
 
 const clampHeight = (value: number): number =>
   Number.isFinite(value) && value > 0 ? Math.max(1, value) : 1;
 
 const normalizeHeight = (value: number): number =>
   Math.round(clampHeight(value) * 16) / 16;
+
+const buildBodyFont = (weight: number, italic = false): string =>
+  `${italic ? "italic " : ""}${weight} ${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`;
+
+const buildHeadingFont = (depth: keyof typeof HEADING_FONT_SIZE_BY_DEPTH, weight: number, italic = false): string =>
+  `${italic ? "italic " : ""}${weight} ${HEADING_FONT_SIZE_BY_DEPTH[depth]}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`;
+
+const BODY_TYPOGRAPHY: TextBlockTypography = {
+  body: buildBodyFont(400),
+  strong: buildBodyFont(600),
+  emphasis: buildBodyFont(400, true),
+  strongEmphasis: buildBodyFont(600, true),
+  lineHeight: BODY_LINE_HEIGHT_PX,
+};
 
 function pruneCache<T>(cache: Map<string, T>, limit: number) {
   while (cache.size > limit) {
@@ -134,27 +157,6 @@ function getPreparedTextWithSegments(
   return prepared;
 }
 
-function measureTextWidth(params: {
-  cacheKey: string;
-  text: string;
-  font: string;
-  whiteSpace?: TextWhiteSpace;
-}): number {
-  const whiteSpace = params.whiteSpace ?? "normal";
-  const cacheKey = `${params.cacheKey}:${params.font}:${whiteSpace}:${params.text}`;
-  const cached = textWidthCache.get(cacheKey);
-  if (cached != null) {
-    incrementPretextPerfCounter("pretext_markdown_text_width_hit");
-    return cached;
-  }
-  incrementPretextPerfCounter("pretext_markdown_text_width_miss");
-  const prepared = getPreparedTextWithSegments(cacheKey, params.text, params.font, whiteSpace);
-  const width = prepared.widths.reduce((sum, segmentWidth) => sum + (segmentWidth ?? 0), 0);
-  textWidthCache.set(cacheKey, width);
-  pruneCache(textWidthCache, PREPARED_CACHE_LIMIT);
-  return width;
-}
-
 function measureTextHeight(params: {
   cacheKey: string;
   text: string;
@@ -179,82 +181,17 @@ export function measureSessionTextHeight(params: {
   return normalizeHeight(measureTextHeight(params));
 }
 
-function parseMarkdown(content: string): SessionMarkdownBlock[] {
-  const normalized = stripCitationMarkers(content);
-  const cached = markdownBlocksCache.get(normalized);
+function parseMarkdown(content: string): SessionMarkdownDocument {
+  const cached = markdownDocumentCache.get(content);
   if (cached) {
     incrementPretextPerfCounter("pretext_markdown_ast_hit");
     return cached;
   }
   incrementPretextPerfCounter("pretext_markdown_ast_miss");
-  const parsed = parseSessionMarkdown(normalized);
-  const blocks = normalizeSessionMarkdownBlocks(nodeChildren(parsed));
-  markdownBlocksCache.set(normalized, blocks);
-  pruneCache(markdownBlocksCache, AST_CACHE_LIMIT);
-  return blocks;
-}
-
-function flattenInlineText(nodes: readonly SessionMarkdownInlineNode[]): string {
-  let text = "";
-  for (const node of nodes) {
-    switch (node.kind) {
-      case "text":
-      case "inlineCode":
-        text += node.text;
-        break;
-      case "break":
-        text += "\n";
-        break;
-      case "image":
-        text += node.alt.trim();
-        break;
-      default:
-        text += flattenInlineText(node.children);
-        break;
-    }
-  }
-  return text.replace(/\u00a0/g, " ");
-}
-
-function containsInlineCode(nodes: readonly SessionMarkdownInlineNode[]): boolean {
-  for (const node of nodes) {
-    if (node.kind === "inlineCode") return true;
-    if ("children" in node && containsInlineCode(node.children)) return true;
-  }
-  return false;
-}
-
-function appendTextRun(runs: InlineRun[], text: string) {
-  if (text.length === 0) return;
-  const last = runs[runs.length - 1];
-  if (last?.kind === "text") {
-    last.text += text;
-    return;
-  }
-  runs.push({ kind: "text", text });
-}
-
-function collectInlineRuns(nodes: readonly SessionMarkdownInlineNode[], runs: InlineRun[] = []): InlineRun[] {
-  for (const node of nodes) {
-    switch (node.kind) {
-      case "text":
-        appendTextRun(runs, node.text.replace(/\u00a0/g, " "));
-        break;
-      case "inlineCode":
-        runs.push({ kind: "inlineCode", text: node.text });
-        break;
-      case "break":
-        runs.push({ kind: "hardBreak" });
-        break;
-      case "image":
-        appendTextRun(runs, node.alt.trim());
-        break;
-      default:
-        collectInlineRuns(node.children, runs);
-        break;
-    }
-  }
-  return runs;
+  const parsed = createSessionMarkdownDocument(content);
+  markdownDocumentCache.set(content, parsed);
+  pruneCache(markdownDocumentCache, AST_CACHE_LIMIT);
+  return parsed;
 }
 
 function resolveInlineCodeFont(textFont: string): string {
@@ -262,238 +199,428 @@ function resolveInlineCodeFont(textFont: string): string {
   return `${SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY}`;
 }
 
-function splitNormalTextTokens(text: string): TextInlineRun[] {
-  const normalized = text.replace(/\s+/g, " ");
-  if (normalized.length === 0) {
-    return [];
+function resolveTextRunFont(run: Extract<SessionMarkdownInlineRun, { kind: "text" }>, typography: TextBlockTypography): string {
+  switch (run.style) {
+    case "strong":
+      return typography.strong;
+    case "emphasis":
+      return typography.emphasis;
+    case "strongEmphasis":
+      return typography.strongEmphasis;
+    case "body":
+    default:
+      return typography.body;
   }
-  const parts = normalized.split(/(\s+)/).filter((part) => part.length > 0);
-  return parts.map((part) => (/\s+/.test(part) ? { kind: "text" as const, text: " " } : { kind: "text" as const, text: part }));
 }
 
-function measureGraphemeWidths(
-  text: string,
-  font: string,
-  cacheKeyPrefix: string,
-): number[] {
-  return Array.from(text).map((grapheme, index) =>
-    measureTextWidth({
-      cacheKey: `${cacheKeyPrefix}:grapheme:${index}`,
-      text: grapheme,
-      font,
-      whiteSpace: "pre-wrap",
-    }),
-  );
+function cursorsMatch(a: LayoutCursor, b: LayoutCursor): boolean {
+  return a.segmentIndex === b.segmentIndex && a.graphemeIndex === b.graphemeIndex;
+}
+
+function measureSingleLineLayout(prepared: PreparedTextWithSegments) {
+  return layoutNextLine(prepared, LINE_START_CURSOR, UNBOUNDED_WIDTH_PX);
+}
+
+function measureCollapsedSpaceWidth(font: string): number {
+  const cached = collapsedSpaceWidthCache.get(font);
+  if (cached != null) {
+    return cached;
+  }
+  const joined = measureSingleLineLayout(getPreparedTextWithSegments(`collapsed-space:${font}:joined`, "A A", font, "normal"));
+  const compact = measureSingleLineLayout(getPreparedTextWithSegments(`collapsed-space:${font}:compact`, "AA", font, "normal"));
+  const width = Math.max(0, (joined?.width ?? 0) - (compact?.width ?? 0));
+  collapsedSpaceWidthCache.set(font, width);
+  return width;
+}
+
+function buildPreparedContentKey(prefix: string, text: string): string {
+  return `${prefix}:${text.length}:${hashPretextPerfValue(text)}`;
+}
+
+function measureInlineSpaceWidth(cacheKey: string, text: string, font: string, whiteSpace: TextWhiteSpace): number {
+  const prepared = getPreparedTextWithSegments(cacheKey, text, font, whiteSpace);
+  return Math.max(0, measureSingleLineLayout(prepared)?.width ?? 0);
+}
+
+function pushTextRunItems(
+  items: PreparedInlineLayoutItem[],
+  params: {
+    text: string;
+    font: string;
+    lineHeight: number;
+    cacheKeyPrefix: string;
+    collapsedSpaceWidth: number;
+  },
+): void {
+  const normalized = params.text.replace(/\u00a0/g, " ");
+  if (normalized.length === 0) {
+    return;
+  }
+  const leadingWhitespace = normalized.match(/^\s+/)?.[0] ?? "";
+  const trailingWhitespace = normalized.match(/\s+$/)?.[0] ?? "";
+  const core = normalized.slice(leadingWhitespace.length, normalized.length - trailingWhitespace.length);
+
+  if (leadingWhitespace.length > 0) {
+    items.push({ kind: "space", width: params.collapsedSpaceWidth, codeGroupId: null });
+  }
+
+  if (core.length > 0) {
+    const prepared = getPreparedTextWithSegments(
+      buildPreparedContentKey(params.cacheKeyPrefix, core),
+      core,
+      params.font,
+      "normal",
+    );
+    const wholeLine = measureSingleLineLayout(prepared);
+    if (wholeLine != null) {
+      items.push({
+        kind: "segment",
+        codeGroupId: null,
+        chromeWidth: 0,
+        endCursor: wholeLine.end,
+        fullWidth: wholeLine.width,
+        lineHeight: params.lineHeight,
+        prepared,
+      });
+    }
+  }
+
+  if (trailingWhitespace.length > 0) {
+    items.push({ kind: "space", width: params.collapsedSpaceWidth, codeGroupId: null });
+  }
+}
+
+function pushInlineCodeWhitespaceItems(
+  items: PreparedInlineLayoutItem[],
+  params: {
+    text: string;
+    font: string;
+    codeGroupId: number;
+    cacheKeyPrefix: string;
+  },
+): void {
+  const normalized = params.text.replace(/\r\n/g, "\n");
+  let spaces = "";
+  let partIndex = 0;
+
+  const flushSpaces = () => {
+    if (spaces.length === 0) {
+      return;
+    }
+    items.push({
+      kind: "space",
+      width: measureInlineSpaceWidth(
+        buildPreparedContentKey(`${params.cacheKeyPrefix}:space:${partIndex}`, spaces),
+        spaces,
+        params.font,
+        "pre-wrap",
+      ),
+      codeGroupId: params.codeGroupId,
+    });
+    spaces = "";
+    partIndex += 1;
+  };
+
+  for (let index = 0; index < normalized.length; index += 1) {
+    const character = normalized[index]!;
+    if (character === "\n") {
+      flushSpaces();
+      items.push({ kind: "hardBreak" });
+      continue;
+    }
+    spaces += character;
+  }
+  flushSpaces();
+}
+
+function prepareInlineLayoutItems(params: {
+  runs: readonly SessionMarkdownInlineRun[];
+  typography: TextBlockTypography;
+  cacheKeyPrefix: string;
+}): PreparedInlineLayoutItem[] {
+  const items: PreparedInlineLayoutItem[] = [];
+  const inlineCodeFont = resolveInlineCodeFont(params.typography.body);
+  const inlineCodeLineHeight =
+    Math.max(params.typography.lineHeight, MONO_LINE_HEIGHT_PX) + SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_BLOCK_PX;
+  const preserveBodyTextRuns =
+    params.runs.some((run) => run.kind === "inlineCode") &&
+    params.runs.every((run) => run.kind !== "text" || run.style === "body");
+
+  for (let index = 0; index < params.runs.length; index += 1) {
+    const run = params.runs[index]!;
+    if (run.kind === "hardBreak") {
+      items.push({ kind: "hardBreak" });
+      continue;
+    }
+
+    if (run.kind === "inlineCode") {
+      if (run.text.length === 0) {
+        continue;
+      }
+      const codeGroupId = index;
+      for (let partIndex = 0; partIndex < run.parts.length; partIndex += 1) {
+        const part = run.parts[partIndex]!;
+        if (part.length === 0) {
+          continue;
+        }
+        if (/^\s+$/.test(part)) {
+          pushInlineCodeWhitespaceItems(items, {
+            text: part,
+            font: inlineCodeFont,
+            codeGroupId,
+            cacheKeyPrefix: `${params.cacheKeyPrefix}:${run.kind}:${index}:${partIndex}`,
+          });
+          continue;
+        }
+        const prepared = getPreparedTextWithSegments(
+          buildPreparedContentKey(`${params.cacheKeyPrefix}:${run.kind}:${index}:${partIndex}`, part),
+          part,
+          inlineCodeFont,
+          "pre-wrap",
+        );
+        const wholeLine = measureSingleLineLayout(prepared);
+        if (wholeLine == null) {
+          continue;
+        }
+        items.push({
+          kind: "segment",
+          codeGroupId,
+          chromeWidth: SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX,
+          endCursor: wholeLine.end,
+          fullWidth: wholeLine.width,
+          lineHeight: inlineCodeLineHeight,
+          prepared,
+        });
+      }
+      continue;
+    }
+
+    const font = resolveTextRunFont(run, params.typography);
+    const collapsedSpaceWidth = measureCollapsedSpaceWidth(font);
+    if (preserveBodyTextRuns) {
+      pushTextRunItems(items, {
+        text: run.text,
+        font,
+        lineHeight: params.typography.lineHeight,
+        cacheKeyPrefix: `${params.cacheKeyPrefix}:${run.kind}:${index}`,
+        collapsedSpaceWidth,
+      });
+      continue;
+    }
+    const tokens = run.text.replace(/\u00a0/g, " ").match(/\s+|\S+/g) ?? [];
+    for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex += 1) {
+      const token = tokens[tokenIndex]!;
+      if (/^\s+$/.test(token)) {
+        items.push({ kind: "space", width: collapsedSpaceWidth, codeGroupId: null });
+        continue;
+      }
+
+      const prepared = getPreparedTextWithSegments(
+        buildPreparedContentKey(`${params.cacheKeyPrefix}:${run.kind}:${index}:${tokenIndex}`, token),
+        token,
+        font,
+        "normal",
+      );
+      const wholeLine = measureSingleLineLayout(prepared);
+      if (wholeLine == null) {
+        continue;
+      }
+
+      items.push({
+        kind: "segment",
+        codeGroupId: null,
+        chromeWidth: 0,
+        endCursor: wholeLine.end,
+        fullWidth: wholeLine.width,
+        lineHeight: params.typography.lineHeight,
+        prepared,
+      });
+    }
+  }
+
+  return items;
 }
 
 function measureInlineRunsHeight(params: {
-  runs: readonly InlineRun[];
+  runs: readonly SessionMarkdownInlineRun[];
   width: number;
-  textFont: string;
-  lineHeight: number;
+  typography: TextBlockTypography;
   cacheKeyPrefix: string;
 }): number {
   const maxWidth = Math.max(1, params.width);
-  const inlineCodeFont = resolveInlineCodeFont(params.textFont);
-  const inlineCodeLineHeight = Math.max(params.lineHeight, MONO_LINE_HEIGHT_PX) + SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_BLOCK_PX;
+  const items = prepareInlineLayoutItems(params);
   let totalHeight = 0;
-  let currentLineWidth = 0;
-  let pendingWhitespaceWidth = 0;
-  let currentLineHeight = params.lineHeight;
+  let itemIndex = 0;
+  let cursor: LayoutCursor | null = null;
 
-  const advanceLine = () => {
-    totalHeight += currentLineHeight;
-    currentLineWidth = 0;
-    pendingWhitespaceWidth = 0;
-    currentLineHeight = params.lineHeight;
-  };
+  while (itemIndex < items.length) {
+    let lineHeight = params.typography.lineHeight;
+    let lineHasContent = false;
+    let forcedBreak = false;
+    let remainingWidth = maxWidth;
+    let pendingSpaceWidth = 0;
+    const chargedCodeGroups = new Set<number>();
 
-  const consumePendingWhitespace = () => {
-    if (currentLineWidth > 0) {
-      currentLineWidth += pendingWhitespaceWidth;
-    }
-    pendingWhitespaceWidth = 0;
-  };
-
-  const placeBreakableToken = (tokenWidth: number, graphemeWidths: readonly number[]) => {
-    if (currentLineWidth > 0) {
-      advanceLine();
-    }
-    for (let graphemeIndex = 0; graphemeIndex < graphemeWidths.length; graphemeIndex += 1) {
-      const graphemeWidth = graphemeWidths[graphemeIndex] ?? 0;
-      if (currentLineWidth > 0 && currentLineWidth + graphemeWidth > maxWidth + 0.01) {
-        advanceLine();
+    while (itemIndex < items.length) {
+      const item = items[itemIndex]!;
+      if (item.kind === "hardBreak") {
+        itemIndex += 1;
+        cursor = null;
+        forcedBreak = true;
+        break;
       }
-      currentLineWidth += graphemeWidth;
-    }
-    if (tokenWidth === 0 && graphemeWidths.length === 0) {
-      currentLineWidth += tokenWidth;
-    }
-  };
-
-  const placeTextToken = (tokenText: string, tokenIndex: number) => {
-    if (tokenText === " ") {
-      if (currentLineWidth > 0) {
-        pendingWhitespaceWidth = measureTextWidth({
-          cacheKey: `${params.cacheKeyPrefix}:space:${tokenIndex}`,
-          text: tokenText,
-          font: params.textFont,
-          whiteSpace: "pre-wrap",
-        });
+      if (item.kind === "space") {
+        itemIndex += 1;
+        if (lineHasContent) {
+          pendingSpaceWidth = item.width;
+        }
+        continue;
       }
-      return;
-    }
 
-    const tokenWidth = measureTextWidth({
-      cacheKey: `${params.cacheKeyPrefix}:text:${tokenIndex}`,
-      text: tokenText,
-      font: params.textFont,
-    });
-    const prefixWhitespaceWidth = currentLineWidth > 0 ? pendingWhitespaceWidth : 0;
+      const codeGroupId = item.codeGroupId;
+      const chromeWidth =
+        codeGroupId != null && !chargedCodeGroups.has(codeGroupId) ? item.chromeWidth : 0;
+      const reservedWidth = (lineHasContent ? pendingSpaceWidth : 0) + chromeWidth;
+      const startCursor = cursor ?? LINE_START_CURSOR;
 
-    if (currentLineWidth > 0 && currentLineWidth + prefixWhitespaceWidth + tokenWidth > maxWidth + 0.01) {
-      if (tokenWidth <= maxWidth + 0.01) {
-        advanceLine();
-      } else {
-        placeBreakableToken(
-          tokenWidth,
-          measureGraphemeWidths(tokenText, params.textFont, `${params.cacheKeyPrefix}:text:${tokenIndex}`),
-        );
-        pendingWhitespaceWidth = 0;
-        return;
+      if (cursor === null && codeGroupId != null) {
+        const fullWidth = reservedWidth + item.fullWidth;
+        if (fullWidth <= remainingWidth + 0.01) {
+          remainingWidth = Math.max(0, remainingWidth - fullWidth);
+          lineHasContent = true;
+          lineHeight = Math.max(lineHeight, item.lineHeight);
+          chargedCodeGroups.add(codeGroupId);
+          itemIndex += 1;
+          pendingSpaceWidth = 0;
+          continue;
+        }
       }
-    }
 
-    consumePendingWhitespace();
-    currentLineWidth += tokenWidth;
-  };
-
-  const placeInlineCodeRun = (run: Extract<InlineRun, { kind: "inlineCode" }>, runIndex: number) => {
-    const textWidth = measureTextWidth({
-      cacheKey: `${params.cacheKeyPrefix}:inline-code:${runIndex}`,
-      text: run.text,
-      font: inlineCodeFont,
-      whiteSpace: "pre-wrap",
-    });
-    const fullWidth = SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX + textWidth;
-    const prefixWhitespaceWidth = currentLineWidth > 0 ? pendingWhitespaceWidth : 0;
-
-    if (currentLineWidth > 0 && currentLineWidth + prefixWhitespaceWidth + fullWidth <= maxWidth + 0.01) {
-      consumePendingWhitespace();
-      currentLineWidth += fullWidth;
-      currentLineHeight = Math.max(currentLineHeight, inlineCodeLineHeight);
-      return;
-    }
-
-    if (fullWidth <= maxWidth + 0.01) {
-      if (currentLineWidth > 0) {
-        advanceLine();
+      if (lineHasContent && remainingWidth < reservedWidth - 0.01) {
+        cursor = null;
+        break;
       }
-      currentLineWidth = fullWidth;
-      currentLineHeight = Math.max(currentLineHeight, inlineCodeLineHeight);
-      pendingWhitespaceWidth = 0;
-      return;
-    }
 
-    if (currentLineWidth > 0) {
-      consumePendingWhitespace();
-    }
-    let fragmentWidth = currentLineWidth + SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX;
-    if (fragmentWidth > maxWidth + 0.01 && currentLineWidth > 0) {
-      advanceLine();
-      fragmentWidth = SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX;
-    }
-    const graphemeWidths = measureGraphemeWidths(run.text, inlineCodeFont, `${params.cacheKeyPrefix}:inline-code:${runIndex}`);
-    currentLineHeight = Math.max(currentLineHeight, inlineCodeLineHeight);
-    for (let graphemeIndex = 0; graphemeIndex < graphemeWidths.length; graphemeIndex += 1) {
-      const graphemeWidth = graphemeWidths[graphemeIndex] ?? 0;
-      if (
-        fragmentWidth > currentLineWidth + SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX &&
-        fragmentWidth + graphemeWidth > maxWidth + 0.01
-      ) {
-        currentLineWidth = fragmentWidth;
-        advanceLine();
-        fragmentWidth = SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX;
-        currentLineHeight = Math.max(currentLineHeight, inlineCodeLineHeight);
+      const availableWidth = Math.max(1, remainingWidth - reservedWidth);
+      const line = layoutNextLine(item.prepared, startCursor, availableWidth);
+      if (line == null || cursorsMatch(startCursor, line.end)) {
+        if (!lineHasContent) {
+          itemIndex += 1;
+        }
+        cursor = null;
+        break;
       }
-      fragmentWidth += graphemeWidth;
-    }
-    currentLineWidth = fragmentWidth;
-    currentLineHeight = Math.max(currentLineHeight, inlineCodeLineHeight);
-  };
 
-  for (let runIndex = 0; runIndex < params.runs.length; runIndex += 1) {
-    const run = params.runs[runIndex]!;
-    if (run.kind === "hardBreak") {
-      advanceLine();
-      continue;
+      remainingWidth = Math.max(0, remainingWidth - reservedWidth - line.width);
+      lineHasContent = true;
+      lineHeight = Math.max(lineHeight, item.lineHeight);
+      if (codeGroupId != null) {
+        chargedCodeGroups.add(codeGroupId);
+      }
+      pendingSpaceWidth = 0;
+
+      if (cursorsMatch(line.end, item.endCursor)) {
+        itemIndex += 1;
+        cursor = null;
+        continue;
+      }
+
+      cursor = line.end;
+      break;
     }
-    if (run.kind === "inlineCode") {
-      placeInlineCodeRun(run, runIndex);
-      continue;
+
+    if (!lineHasContent && !forcedBreak) {
+      break;
     }
-    if (run.kind !== "text") {
-      continue;
-    }
-    const tokens = splitNormalTextTokens(run.text);
-    for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex += 1) {
-      const token = tokens[tokenIndex]!;
-      placeTextToken(token.text, runIndex * 1_000 + tokenIndex);
-    }
+
+    totalHeight += lineHeight;
   }
 
-  return clampHeight(totalHeight + currentLineHeight);
+  return clampHeight(totalHeight);
 }
 
-function headingTypography(depth: number): { font: string; lineHeight: number } {
+function headingTypography(depth: number): TextBlockTypography {
   const normalizedDepth = Math.max(1, Math.min(4, depth));
+  const normalizedKey = normalizedDepth as keyof typeof HEADING_FONT_SIZE_BY_DEPTH;
   return {
-    font: HEADING_FONT_BY_DEPTH[normalizedDepth as keyof typeof HEADING_FONT_BY_DEPTH],
+    body: buildHeadingFont(normalizedKey, 600),
+    strong: buildHeadingFont(normalizedKey, 600),
+    emphasis: buildHeadingFont(normalizedKey, 600, true),
+    strongEmphasis: buildHeadingFont(normalizedKey, 600, true),
     lineHeight: HEADING_LINE_HEIGHT_BY_DEPTH[normalizedDepth as keyof typeof HEADING_LINE_HEIGHT_BY_DEPTH],
   };
 }
 
-function measureParagraph(block: Extract<SessionMarkdownBlock, { kind: "paragraph" }>, width: number): number {
-  const text = flattenInlineText(block.inlines).trim();
+function measureTextBlock(params: {
+  text: {
+    plainText: string;
+    runs: readonly SessionMarkdownInlineRun[];
+    hasInlineCode: boolean;
+    hasHardBreak: boolean;
+    hasStyledText: boolean;
+  };
+  width: number;
+  typography: TextBlockTypography;
+  cacheKeyPrefix: string;
+}): number {
+  const text = params.text.plainText.trim();
   if (!text) {
     return 0;
   }
-  if (containsInlineCode(block.inlines)) {
-    return measureInlineRunsHeight({
-      runs: collectInlineRuns(block.inlines),
-      width,
-      textFont: BODY_FONT,
-      lineHeight: BODY_LINE_HEIGHT_PX,
-      cacheKeyPrefix: "paragraph-inline",
+  if (params.text.hasHardBreak && !params.text.hasInlineCode && !params.text.hasStyledText) {
+    return normalizeHeight(
+      params.text.plainText
+        .split("\n")
+        .reduce(
+          (sum, line) =>
+            sum +
+            (line.length === 0
+              ? params.typography.lineHeight
+              : measureTextHeight({
+                  cacheKey: `${params.cacheKeyPrefix}:line:${line}`,
+                  text: line,
+                  font: params.typography.body,
+                  width: params.width,
+                  lineHeight: params.typography.lineHeight,
+                })),
+          0,
+        ),
+    );
+  }
+  if (!params.text.hasInlineCode && !params.text.hasHardBreak && !params.text.hasStyledText) {
+    return measureTextHeight({
+      cacheKey: `${params.cacheKeyPrefix}:${text}`,
+      text,
+      font: params.typography.body,
+      width: params.width,
+      lineHeight: params.typography.lineHeight,
     });
   }
-  return measureTextHeight({
-    cacheKey: `paragraph:${text}`,
-    text,
-    font: BODY_FONT,
+  return measureInlineRunsHeight({
+    runs: params.text.runs,
+    width: params.width,
+    typography: params.typography,
+    cacheKeyPrefix: params.cacheKeyPrefix,
+  });
+}
+
+function measureParagraph(block: Extract<SessionMarkdownBlock, { kind: "paragraph" }>, width: number): number {
+  return measureTextBlock({
+    text: block.text,
     width,
-    lineHeight: BODY_LINE_HEIGHT_PX,
+    typography: BODY_TYPOGRAPHY,
+    cacheKeyPrefix: "paragraph-inline",
   });
 }
 
 function measureHeading(block: Extract<SessionMarkdownBlock, { kind: "heading" }>, width: number): number {
-  const text = flattenInlineText(block.inlines).trim();
   const typography = headingTypography(block.depth);
-  return containsInlineCode(block.inlines)
-    ? measureInlineRunsHeight({
-        runs: collectInlineRuns(block.inlines),
-        width,
-        textFont: typography.font,
-        lineHeight: typography.lineHeight,
-        cacheKeyPrefix: `heading-inline:${block.depth}`,
-      })
-    : measureTextHeight({
-        cacheKey: `heading:${block.depth}:${text}`,
-        text,
-        font: typography.font,
-        width,
-        lineHeight: typography.lineHeight,
-      });
+  return measureTextBlock({
+    text: block.text,
+    width,
+    typography,
+    cacheKeyPrefix: `heading-inline:${block.depth}`,
+  });
 }
 
 function measureCodeBlock(block: Extract<SessionMarkdownBlock, { kind: "code" }>): number {
@@ -629,8 +756,8 @@ function measureBlockChildren(
 export function clearSessionMarkdownMeasurementCaches(): void {
   preparedCache.clear();
   preparedSegmentsCache.clear();
-  markdownBlocksCache.clear();
-  textWidthCache.clear();
+  markdownDocumentCache.clear();
+  collapsedSpaceWidthCache.clear();
 }
 
 export function measureSessionMarkdownDocument(markdown: string, width: number): number {
@@ -641,5 +768,5 @@ export function measureSessionMarkdownDocument(markdown: string, width: number):
     `w${normalizedWidth}:${markdown.length}:${hashPretextPerfValue(markdown)}`,
   );
   const parsed = parseMarkdown(markdown);
-  return measureBlockChildren(parsed, normalizedWidth, "root");
+  return measureBlockChildren(parsed.blocks, normalizedWidth, "root");
 }

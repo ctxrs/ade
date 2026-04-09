@@ -63,6 +63,16 @@ const makeWrappingItems = (count = 12): WorkbenchListItem[] =>
     created_at: `2026-03-18T00:${String(index).padStart(2, "0")}:00Z`,
   }));
 
+const makePendingAssistantItem = (content: string): WorkbenchListItem => ({
+  kind: "assistant",
+  id: "assistant-turn-1-pending",
+  turn_id: "turn-1",
+  created_at: "2026-04-08T00:00:00Z",
+  content,
+  thought: "",
+  is_complete: false,
+});
+
 const noopProjectionOp: WorkbenchThreadProjectionOp = {
   kind: "noop",
   projectionRevision: 0,
@@ -786,6 +796,65 @@ describe("SessionThreadPretextVirtualizerList", () => {
     );
 
     expect(syncItemsSpy).not.toHaveBeenCalled();
+  });
+
+  it("remeasures a same-id streaming assistant row when partial markdown introduces hard breaks", () => {
+    const sessionId = "session-streaming-hard-breaks";
+    const initialItems = [makePendingAssistantItem("Short version:")];
+    const streamedItems = [
+      makePendingAssistantItem(
+        "Short version:  \nthe next system should answer not just which title wins.  \nIt should answer which article shape wins.",
+      ),
+    ];
+
+    const { container, rerender } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={initialItems}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 900 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+    });
+
+    const runtime = getOrCreateSessionPretextRuntime(sessionId);
+    const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
+    syncItemsSpy.mockClear();
+    const beforeHeight = runtime.core.getHeightForIndex(0);
+
+    rerender(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={streamedItems}
+        threadProjectionOp={{
+          kind: "reconcile",
+          projectionRevision: 1,
+          changedItemIds: ["assistant-turn-1-pending"],
+          remeasureItemIds: ["assistant-turn-1-pending"],
+        }}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const afterHeight = runtime.core.getHeightForIndex(0);
+
+    expect(syncItemsSpy).toHaveBeenCalledTimes(1);
+    expect(afterHeight).toBeGreaterThan(beforeHeight + 30);
   });
 
   it("only replans the changed middle window for non-prefix projection updates", () => {
