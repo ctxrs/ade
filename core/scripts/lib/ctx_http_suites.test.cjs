@@ -3,6 +3,8 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  CTX_HTTP_SHARED_SOURCE_GLOBS,
+  CTX_HTTP_SUITES,
   buildCtxHttpSuiteCommands,
   getCtxHttpSuiteNames,
   getCtxHttpSuiteTaskName,
@@ -57,4 +59,16 @@ test("ctx-http suite command builder expands base and meta suites predictably", 
     args: ["test", "-q", "-p", "ctx-http", "--lib", "--bins"],
     command: "cargo",
   });
+});
+
+test("ctx-http integration suites declare source ownership and dependency crates", () => {
+  assert.equal(CTX_HTTP_SHARED_SOURCE_GLOBS.includes("crates/ctx-http/src/daemon/**"), true);
+
+  for (const suite of CTX_HTTP_SUITES) {
+    assert.equal(Array.isArray(suite.dependencyCrates), true);
+    assert.equal(Array.isArray(suite.sourceGlobs), true);
+    if (suite.type === "integration") {
+      assert.equal(suite.sourceGlobs.length > 0, true, `${suite.name} should own source globs`);
+    }
+  }
 });

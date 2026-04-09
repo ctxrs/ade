@@ -18,10 +18,15 @@ test("workspace graph maps extracted leaf crate paths to crate names", () => {
   const graph = buildWorkspaceGraph(coreRoot);
   const crates = collectChangedCrates(graph, [
     "core/crates/ctx-provider-accounts/src/lib.rs",
+    "core/crates/ctx-provider-auth-import/src/lib.rs",
     "core/crates/ctx-harness-sources/src/lib.rs",
   ]);
 
-  assert.deepEqual(crates, ["ctx-harness-sources", "ctx-provider-accounts"]);
+  assert.deepEqual(crates, [
+    "ctx-harness-sources",
+    "ctx-provider-accounts",
+    "ctx-provider-auth-import",
+  ]);
 });
 
 test("workspace graph expands reverse dependencies through extracted ctx-http leaves", () => {
@@ -30,6 +35,7 @@ test("workspace graph expands reverse dependencies through extracted ctx-http le
 
   assert.equal(impacted.includes("ctx-provider-accounts"), true);
   assert.equal(impacted.includes("ctx-harness-sources"), true);
+  assert.equal(impacted.includes("ctx-provider-auth-import"), true);
   assert.equal(impacted.includes("ctx-http"), true);
 });
 
@@ -46,16 +52,26 @@ test("generated package scripts include per-crate and ctx-http suite tasks", () 
 test("generated turbo tasks include dependency-closure inputs", () => {
   const graph = buildWorkspaceGraph(coreRoot);
   const tasks = buildGeneratedTurboTasks(graph);
-  const ctxHttpWorkspaceSuiteTask = tasks["rust:ctx-http:test:workspace-stream"];
+  const ctxHttpLspSuiteTask = tasks["rust:ctx-http:test:lsp"];
+  const ctxHttpProviderAuthSuiteTask = tasks["rust:ctx-http:test:provider-auth"];
 
-  assert.equal(Array.isArray(ctxHttpWorkspaceSuiteTask.inputs), true);
-  assert.equal(ctxHttpWorkspaceSuiteTask.inputs.includes("crates/ctx-http/src/**"), true);
+  assert.equal(Array.isArray(ctxHttpLspSuiteTask.inputs), true);
+  assert.equal(ctxHttpLspSuiteTask.inputs.includes("crates/ctx-http/src/api/lsp/**"), true);
+  assert.equal(ctxHttpLspSuiteTask.inputs.includes("crates/ctx-http/src/workspace_runtime/**"), false);
+  assert.equal(ctxHttpLspSuiteTask.inputs.includes("crates/ctx-lsp/**"), true);
+  assert.equal(ctxHttpLspSuiteTask.inputs.includes("crates/ctx-http/src/api/providers/imports.rs"), false);
   assert.equal(
-    ctxHttpWorkspaceSuiteTask.inputs.includes("crates/ctx-http/tests/workspace_active_snapshot_http.rs"),
+    ctxHttpLspSuiteTask.inputs.includes("crates/ctx-http/tests/lsp_http_e2e.rs"),
     true,
   );
-  assert.equal(ctxHttpWorkspaceSuiteTask.inputs.includes("crates/ctx-provider-accounts/**"), true);
-  assert.equal(ctxHttpWorkspaceSuiteTask.inputs.includes("scripts/ctx_http_suite_task.cjs"), true);
+  assert.equal(ctxHttpLspSuiteTask.inputs.includes("scripts/ctx_http_suite_task.cjs"), true);
+
+  assert.equal(ctxHttpProviderAuthSuiteTask.inputs.includes("crates/ctx-provider-auth-import/**"), true);
+  assert.equal(ctxHttpProviderAuthSuiteTask.inputs.includes("crates/ctx-http/src/api/providers/imports.rs"), true);
+  assert.equal(
+    ctxHttpProviderAuthSuiteTask.inputs.includes("crates/ctx-http/src/workspace_runtime/**"),
+    false,
+  );
 });
 
 test("ctx-http test expansion returns explicit suite task names", () => {

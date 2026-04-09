@@ -3,6 +3,7 @@ const test = require("node:test");
 
 const {
   AGENT_GATE_CRATES,
+  ISOLATED_CARGO_TEST_CRATES,
   partitionCratesForTestStrategy,
 } = require("./rust_gate_plan.cjs");
 
@@ -14,6 +15,7 @@ test("agent gate crate list keeps the expected ctx-http-centered fast gate", () 
     "ctx-lsp",
     "ctx-mcp",
     "ctx-provider-accounts",
+    "ctx-provider-auth-import",
     "ctx-providers",
     "ctx-store",
   ]);
@@ -29,6 +31,10 @@ test("mixed test strategy keeps ctx-http and ctx-store on cargo test and routes 
     cargoTestCrates: ["ctx-http", "ctx-store"],
     nextestCrates: ["ctx-provider-accounts"],
   });
+});
+
+test("ctx-store remains isolated from the parallel cargo tail", () => {
+  assert.deepEqual([...ISOLATED_CARGO_TEST_CRATES].sort(), ["ctx-store"]);
 });
 
 test("nextest strategy keeps every crate on nextest", () => {

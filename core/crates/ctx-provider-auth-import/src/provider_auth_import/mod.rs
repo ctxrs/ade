@@ -7,8 +7,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::harness_sources;
-use crate::provider_accounts;
+use ctx_harness_sources as harness_sources;
+use ctx_provider_accounts as provider_accounts;
 
 const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 const CTX_PROVIDER_AUTH_IMPORT_HOME_ENV: &str = "CTX_PROVIDER_AUTH_IMPORT_HOME";

@@ -1,6 +1,6 @@
 [package]
 name = "ctx-http"
-version = "0.33.0"
+version = "0.34.0"
 edition.workspace = true
 build = "build.rs"
 
@@ -15,6 +15,7 @@ ctx-events = { path = "../ctx-events" }
 ctx-fs = { path = "../ctx-fs" }
 ctx-harness-sources = { path = "../ctx-harness-sources" }
 ctx-provider-accounts = { path = "../ctx-provider-accounts" }
+ctx-provider-auth-import = { path = "../ctx-provider-auth-import" }
 ctx-providers = { path = "../ctx-providers" }
 ctx-worker-protocol = { path = "../ctx-worker-protocol" }
 ctx-lsp = { path = "../ctx-lsp" }

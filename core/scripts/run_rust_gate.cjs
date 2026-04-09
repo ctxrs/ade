@@ -3,7 +3,10 @@
 const path = require("node:path");
 
 const { buildCtxCacheEnv } = require("./lib/cache_roots.cjs");
-const { partitionCratesForTestStrategy } = require("./lib/rust_gate_plan.cjs");
+const {
+  ISOLATED_CARGO_TEST_CRATES,
+  partitionCratesForTestStrategy,
+} = require("./lib/rust_gate_plan.cjs");
 const {
   buildWorkspaceGraph,
   collectChangedCrates,
@@ -125,12 +128,26 @@ function main() {
     crateNames: nextestCrates,
     taskKind: "nextest",
   });
+  const parallelCargoTestCrates = cargoTestCrates.filter(
+    (crateName) => !ISOLATED_CARGO_TEST_CRATES.has(crateName),
+  );
+  const isolatedCargoTestCrates = cargoTestCrates.filter((crateName) =>
+    ISOLATED_CARGO_TEST_CRATES.has(crateName),
+  );
   runTaskPhase({
     coreRoot,
     env,
-    crateNames: cargoTestCrates,
+    crateNames: parallelCargoTestCrates,
     taskKind: "test",
   });
+  for (const crateName of isolatedCargoTestCrates) {
+    runTaskPhase({
+      coreRoot,
+      env,
+      crateNames: [crateName],
+      taskKind: "test",
+    });
+  }
 }
 
 main();

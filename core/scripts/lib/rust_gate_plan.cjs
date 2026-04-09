@@ -5,11 +5,13 @@ const AGENT_GATE_CRATES = [
   "ctx-lsp",
   "ctx-mcp",
   "ctx-provider-accounts",
+  "ctx-provider-auth-import",
   "ctx-providers",
   "ctx-store",
 ];
 
 const SERIAL_CARGO_TEST_CRATES = new Set(["ctx-http", "ctx-store"]);
+const ISOLATED_CARGO_TEST_CRATES = new Set(["ctx-store"]);
 
 function sortUnique(values) {
   return [...new Set(values)].filter(Boolean).sort();
@@ -49,6 +51,7 @@ function partitionCratesForTestStrategy(crateNames, strategy) {
 
 module.exports = {
   AGENT_GATE_CRATES,
+  ISOLATED_CARGO_TEST_CRATES,
   SERIAL_CARGO_TEST_CRATES,
   partitionCratesForTestStrategy,
 };

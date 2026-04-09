@@ -12,6 +12,7 @@ members = [
   "crates/ctx-lsp",
   "crates/ctx-mcp",
   "crates/ctx-provider-accounts",
+  "crates/ctx-provider-auth-import",
   "crates/ctx-harness-sources",
   "crates/ctx-http",
   "crates/ctx-egress-proxy",

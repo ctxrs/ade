@@ -2,6 +2,7 @@ const childProcess = require("node:child_process");
 const path = require("node:path");
 
 const {
+  CTX_HTTP_SHARED_SOURCE_GLOBS,
   CTX_HTTP_SUITE_SCRIPT_INPUTS,
   getCtxHttpSuiteNames,
   getCtxHttpSuiteTaskName,
@@ -182,24 +183,22 @@ function collectChangedCrates(graph, changedPaths) {
 
 function getClosureInputGlobs(graph, crateName) {
   const closure = expandDependencies(graph, [crateName]);
-  const globs = [];
-  for (const name of closure) {
-    const crate = graph.cratesByName.get(name);
-    if (crate) {
-      globs.push(`${crate.relDir}/**`);
-    }
-  }
-  return [...new Set([...ROOT_RUST_INPUTS, ...globs])];
+  return getInputGlobsForCrates(graph, closure);
 }
 
 function getDependencyInputGlobsWithoutSelf(graph, crateName) {
   const closure = expandDependencies(graph, [crateName]).filter((name) => name !== crateName);
+  return getInputGlobsForCrates(graph, closure);
+}
+
+function getInputGlobsForCrates(graph, crateNames) {
   const globs = [];
-  for (const name of closure) {
+  for (const name of [...new Set(crateNames)].sort()) {
     const crate = graph.cratesByName.get(name);
-    if (crate) {
-      globs.push(`${crate.relDir}/**`);
+    if (!crate) {
+      throw new Error(`unknown crate in input-glob request: ${name}`);
     }
+    globs.push(`${crate.relDir}/**`);
   }
   return [...new Set([...ROOT_RUST_INPUTS, ...globs])];
 }
@@ -218,16 +217,13 @@ function getTurboNextestTaskName(crateName) {
 
 function getCtxHttpSuiteInputGlobs(graph, suiteName) {
   const dependencyInputs = getDependencyInputGlobsWithoutSelf(graph, "ctx-http");
-  const baseInputs = [
-    ...dependencyInputs,
-    ...CTX_HTTP_SUITE_SCRIPT_INPUTS,
-    "crates/ctx-http/src/**",
-  ];
+  const suiteScriptInputs = [...ROOT_RUST_INPUTS, ...CTX_HTTP_SUITE_SCRIPT_INPUTS];
+  const baseInputs = [...dependencyInputs, ...CTX_HTTP_SUITE_SCRIPT_INPUTS];
   if (suiteName === "all") {
-    return [...new Set([...baseInputs, "crates/ctx-http/tests/**"])];
+    return [...new Set([...baseInputs, "crates/ctx-http/src/**", "crates/ctx-http/tests/**"])];
   }
   if (suiteName === "base") {
-    return [...new Set(baseInputs)];
+    return [...new Set([...baseInputs, "crates/ctx-http/src/**"])];
   }
 
   const { getCtxHttpSuiteByName } = require("./ctx_http_suites.cjs");
@@ -235,11 +231,18 @@ function getCtxHttpSuiteInputGlobs(graph, suiteName) {
   if (!suite) {
     throw new Error(`unknown ctx-http suite: ${suiteName}`);
   }
+  const dependencyCrates = suite.dependencyCrates || [];
+  const suiteDependencyInputs = getInputGlobsForCrates(graph, dependencyCrates).filter(
+    (input) => !ROOT_RUST_INPUTS.includes(input),
+  );
   return [
     ...new Set([
-      ...baseInputs,
+      ...suiteScriptInputs,
+      ...CTX_HTTP_SHARED_SOURCE_GLOBS,
+      ...(suite.sourceGlobs || []),
       "crates/ctx-http/tests/common/**",
       ...suite.testFiles.map((testFile) => `crates/ctx-http/tests/${testFile}.rs`),
+      ...suiteDependencyInputs,
     ]),
   ];
 }

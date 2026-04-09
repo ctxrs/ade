@@ -26,11 +26,13 @@ pub struct ProviderMatrix {
 
 impl Default for ProviderMatrix {
     fn default() -> Self {
-        serde_json::from_str(include_str!("provider_matrix.json")).unwrap_or(ProviderMatrix {
-            version: MATRIX_SCHEMA_VERSION,
-            generated_at: None,
-            providers: vec![],
-        })
+        serde_json::from_str(ctx_provider_accounts::PROVIDER_MATRIX_JSON).unwrap_or(
+            ProviderMatrix {
+                version: MATRIX_SCHEMA_VERSION,
+                generated_at: None,
+                providers: vec![],
+            },
+        )
     }
 }
 

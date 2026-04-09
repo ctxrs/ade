@@ -1474,7 +1474,7 @@ dependencies = [
 
 [[package]]
 name = "ctx-http"
-version = "0.33.0"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1494,6 +1494,7 @@ dependencies = [
  "ctx-harness-sources",
  "ctx-lsp",
  "ctx-provider-accounts",
+ "ctx-provider-auth-import",
  "ctx-providers",
  "ctx-store",
  "ctx-worker-protocol",
@@ -1622,6 +1623,25 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "ctx-provider-auth-import"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "ctx-harness-sources",
+ "ctx-provider-accounts",
+ "directories",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
  "uuid",
 ]
 

@@ -64,7 +64,8 @@ fn normalize_version(version: &str) -> String {
 
 fn managed_gemini_version() -> String {
     let matrix: serde_json::Value =
-        serde_json::from_str(include_str!("../src/provider_matrix.json")).expect("provider matrix");
+        serde_json::from_str(ctx_http::provider_accounts::PROVIDER_MATRIX_JSON)
+            .expect("provider matrix");
     matrix
         .get("providers")
         .and_then(serde_json::Value::as_array)

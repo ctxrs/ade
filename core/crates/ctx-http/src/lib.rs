@@ -29,7 +29,6 @@ pub mod ops_events;
 pub mod oracle;
 pub mod order_seq;
 pub mod perf_telemetry;
-pub mod provider_auth_import;
 pub mod provider_child_reclassifier;
 pub mod provider_guard;
 pub(crate) mod provider_install_contract;
@@ -62,6 +61,7 @@ pub mod worktree_bootstrap;
 pub mod worktree_data_plane;
 pub use ctx_harness_sources as harness_sources;
 pub use ctx_provider_accounts as provider_accounts;
+pub use ctx_provider_auth_import as provider_auth_import;
 
 #[cfg(feature = "fault_injection")]
 pub mod fault_injection;
