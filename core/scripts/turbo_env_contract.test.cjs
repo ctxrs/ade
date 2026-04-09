@@ -46,6 +46,7 @@ test("turbo forwards external Rust cache env vars to child tasks", () => {
   assert.equal(passThroughEnv.has("AWS_SECRET_ACCESS_KEY"), true);
   assert.equal(passThroughEnv.has("AWS_SESSION_TOKEN"), true);
   assert.equal(passThroughEnv.has("CARGO_INCREMENTAL"), true);
+  assert.equal(passThroughEnv.has("NEXTEST_TEST_THREADS"), true);
   assert.equal(passThroughEnv.has("RUSTFLAGS"), true);
   assert.equal(passThroughEnv.has("RUST_TEST_THREADS"), true);
   assert.equal(passThroughEnv.has("RUSTUP_HOME"), true);

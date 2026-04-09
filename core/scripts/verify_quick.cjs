@@ -4,6 +4,7 @@ const childProcess = require("node:child_process");
 const path = require("node:path");
 
 const { buildCtxCacheEnv } = require("./lib/cache_roots.cjs");
+const { runTurbo } = require("./lib/turbo_runner.cjs");
 
 const coreRoot = path.resolve(__dirname, "..");
 
@@ -38,29 +39,33 @@ function main() {
   run("pnpm", ["source:file-size:enforce"], env);
   run("pnpm", ["desktop:ipc:check"], env);
   run("pnpm", ["-C", "apps/web", "lint"], env);
+  run("pnpm", ["rust:fmt"], env);
+  run("pnpm", ["rust:panic-traps"], env);
+  run("pnpm", ["rust:turbo:check"], env);
   run(
-    "turbo",
+    "node",
     [
-      "run",
-      "rust:fmt",
-      "rust:panic-traps",
-      "rust:clippy",
-      "rust:test",
+      "scripts/run_rust_gate.cjs",
+      "--mode",
+      "verify-quick",
+      "--all",
+      "--clippy",
+      "--test-strategy",
+      "mixed",
+    ],
+    env,
+  );
+  runTurbo({
+    coreRoot,
+    env,
+    taskNames: [
       "supabase:migrations:check",
       "supabase:functions:check",
       "typecheck",
       "any:enforce",
-      "--filter=ctx-monorepo",
-      "--filter=ctx-web",
-      `--cache-dir=${env.TURBO_CACHE_DIR}`,
-      "--output-logs=errors-only",
-      "--log-order=grouped",
-      `--concurrency=${env.CTX_VERIFY_TURBO_CONCURRENCY || "4"}`,
-      "--ui=stream",
-      `--cache=${env.TURBO_CACHE_MODE || "local:rw"}`,
     ],
-    env,
-  );
+    extraArgs: ["--filter=ctx-monorepo", "--filter=ctx-web"],
+  });
 }
 
 main();

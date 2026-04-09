@@ -64,18 +64,7 @@ high_risk=0
 needs_premerge=0
 needs_web_unit=0
 needs_rust=0
-declare -a rust_crates=()
-
-contains_crate() {
-  local needle="$1"
-  shift
-  for x in "$@"; do
-    if [[ "$x" == "$needle" ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
+declare -a rust_changed_paths=()
 
 while IFS= read -r path; do
   [[ -z "${path}" ]] && continue
@@ -90,17 +79,14 @@ while IFS= read -r path; do
       ;;
   esac
   case "${path}" in
-    core/crates/*)
+    core/crates/*|core/tools/*)
       needs_rust=1
-      crate_name="$(printf '%s' "${path}" | cut -d/ -f3)"
-      if ! contains_crate "${crate_name}" "${rust_crates[@]:-}"; then
-        rust_crates+=("${crate_name}")
-      fi
+      rust_changed_paths+=("${path}")
       ;;
   esac
 
   case "${path}" in
-    core/crates/ctx-http/*|core/crates/ctx-store/*|core/crates/ctx-mcp/*|core/crates/ctx-providers/*|core/apps/web/src/state/*|core/apps/web/src/api/*|core/apps/web/e2e/*)
+    core/apps/web/src/state/*|core/apps/web/src/api/*|core/apps/web/e2e/*)
       high_risk=1
       ;;
   esac
@@ -120,10 +106,13 @@ fi
 
 ran_any=0
 if [[ "${needs_rust}" -eq 1 ]]; then
-  for crate in "${rust_crates[@]}"; do
-    run cargo test -q -p "${crate}"
-    ran_any=1
+  run pnpm rust:turbo:check
+  rust_args=(exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed)
+  for changed_path in "${rust_changed_paths[@]}"; do
+    rust_args+=(--changed-file "${changed_path}")
   done
+  run pnpm "${rust_args[@]}"
+  ran_any=1
 fi
 
 if [[ "${needs_web_unit}" -eq 1 ]]; then

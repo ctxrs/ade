@@ -85,11 +85,23 @@ printf 'pnpm %s\n' "$*" >> "\${COMMAND_LOG_PATH}"
 test("leaf Rust crate changes stay on the targeted fast path", () => {
   const commands = runScenario(["core/crates/ctx-provider-accounts/src/lib.rs"]);
 
-  assert.deepEqual(commands, ["cargo test -q -p ctx-provider-accounts"]);
+  assert.deepEqual(commands, [
+    "pnpm rust:turbo:check",
+    "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/crates/ctx-provider-accounts/src/lib.rs",
+  ]);
 });
 
-test("ctx-http changes still trigger the high-risk fallback", () => {
+test("ctx-http changes stay on the targeted Rust graph path", () => {
   const commands = runScenario(["core/crates/ctx-http/src/api/mod.rs"]);
+
+  assert.deepEqual(commands, [
+    "pnpm rust:turbo:check",
+    "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/crates/ctx-http/src/api/mod.rs",
+  ]);
+});
+
+test("web high-risk changes still trigger the safety fallback", () => {
+  const commands = runScenario(["core/apps/web/src/state/providerOnboardingCoordinator.ts"]);
 
   assert.deepEqual(commands, ["pnpm test:agent", "pnpm verify:e2e"]);
 });
