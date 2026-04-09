@@ -6,7 +6,13 @@ const path = require('node:path');
 const coreRoot = path.resolve(__dirname, '..');
 
 const defaultLockPath = path.join(coreRoot, 'apps', 'desktop', 'src-tauri', 'bundles', 'runtime_lock.v2.json');
-const defaultMatrixPath = path.join(coreRoot, 'crates', 'ctx-http', 'src', 'provider_matrix.json');
+const defaultMatrixPath = path.join(
+  coreRoot,
+  'crates',
+  'ctx-provider-accounts',
+  'src',
+  'provider_matrix.json',
+);
 
 const normalizeOs = (value) => {
   if (value === 'darwin') return 'macos';

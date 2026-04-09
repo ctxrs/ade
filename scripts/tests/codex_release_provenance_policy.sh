@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-MATRIX_JSON="$ROOT/core/crates/ctx-http/src/provider_matrix.json"
+MATRIX_JSON="$ROOT/core/crates/ctx-provider-accounts/src/provider_matrix.json"
 
 python_cmd="python3"
 if ! command -v "$python_cmd" >/dev/null 2>&1; then

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MATRIX_JSON="${PROVIDER_MATRIX_JSON:-$ROOT/core/crates/ctx-http/src/provider_matrix.json}"
+MATRIX_JSON="${PROVIDER_MATRIX_JSON:-$ROOT/core/crates/ctx-provider-accounts/src/provider_matrix.json}"
 OUT_DIR=""
 OS_OVERRIDE=""
 ARCH_OVERRIDE=""

@@ -60,7 +60,7 @@ test("default fixture carries explicit linux-arm OpenRouter model overrides", ()
 test("droid managed dependencies are attached to droid instead of the ACP bridge", () => {
   const providerMatrixPath = path.resolve(
     __dirname,
-    "../crates/ctx-http/src/provider_matrix.json",
+    "../crates/ctx-provider-accounts/src/provider_matrix.json",
   );
   const providerMatrix = JSON.parse(fs.readFileSync(providerMatrixPath, "utf8"));
   const droid = providerMatrix.providers.find((entry) => entry.id === "droid");

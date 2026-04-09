@@ -228,7 +228,7 @@ ensure_docker_ready_for_builds() {
 }
 
 INSTALLER_RS="$ROOT/core/crates/ctx-http/src/installer.rs"
-DEFAULT_MATRIX_JSON="$ROOT/core/crates/ctx-http/src/provider_matrix.json"
+DEFAULT_MATRIX_JSON="$ROOT/core/crates/ctx-provider-accounts/src/provider_matrix.json"
 CACHED_MATRIX_JSON="${HOME:-}/.ctx/providers/provider_matrix.json"
 if [[ -n "${CTX_BUNDLE_MATRIX_JSON:-}" ]]; then
   MATRIX_JSON="${CTX_BUNDLE_MATRIX_JSON}"

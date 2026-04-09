@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-MATRIX_JSON="$ROOT/core/crates/ctx-http/src/provider_matrix.json"
+MATRIX_JSON="$ROOT/core/crates/ctx-provider-accounts/src/provider_matrix.json"
 LOCK_JSON="$ROOT/core/apps/desktop/src-tauri/bundles/runtime_lock.v2.json"
 
 python_cmd="python3"

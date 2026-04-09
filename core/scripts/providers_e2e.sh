@@ -148,7 +148,7 @@ ensure_endpoint_ui_bundles() {
   # can see them reliably on macOS hosts.
   local bundle_dir="${CTX_E2E_BUNDLE_DIR:-${cache_root}/bundles-${cache_key}}"
   local first_pass_providers="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,cline,copilot,gemini,goose,openhands,qwen,pi,opencode,mistral,droid,kimi}"
-  local matrix_json="${CTX_BUNDLE_MATRIX_JSON:-${repo_root}/crates/ctx-http/src/provider_matrix.json}"
+  local matrix_json="${CTX_BUNDLE_MATRIX_JSON:-${repo_root}/crates/ctx-provider-accounts/src/provider_matrix.json}"
   local canonical_runtime_lock="${repo_root}/apps/desktop/src-tauri/bundles/runtime_lock.v2.json"
   local bundle_build_dir="${CTX_E2E_BUNDLE_BUILD_DIR:-${volatile_artifacts_dir}/ctx-e2e-build/${cache_key}}"
   local cargo_target_dir="${CTX_E2E_CARGO_TARGET_DIR:-${volatile_targets_dir}/ctx-e2e/${cache_key}}"
