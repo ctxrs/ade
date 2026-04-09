@@ -1364,6 +1364,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctx-bundled-assets"
+version = "0.34.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "ctx-client"
 version = "0.1.0"
 dependencies = [
@@ -1495,6 +1505,7 @@ dependencies = [
  "chacha20poly1305",
  "chrono",
  "clap",
+ "ctx-bundled-assets",
  "ctx-core",
  "ctx-events",
  "ctx-fs",

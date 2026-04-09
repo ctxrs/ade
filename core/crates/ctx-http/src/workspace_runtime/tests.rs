@@ -11,6 +11,12 @@ use super::sandbox_machine_recovery::{
 };
 use super::*;
 use chrono::Utc;
+use ctx_bundled_assets as bundled_assets;
+use ctx_bundled_assets::test_support::{
+    override_managed_ctx_harness_image_source_for_test,
+    override_managed_sandbox_machine_cache_source_for_test,
+    TestManagedCtxHarnessImageSourceGuard, TestManagedSandboxMachineCacheSourceGuard,
+};
 #[cfg(target_os = "macos")]
 use ctx_core::ids::SessionId;
 #[cfg(target_os = "macos")]
@@ -347,7 +353,7 @@ async fn spawn_static_http_server_with_suffix(
 async fn install_test_managed_machine_cache_source(
     body: Vec<u8>,
 ) -> (
-    crate::bundled_assets::TestManagedSandboxMachineCacheSourceGuard,
+    TestManagedSandboxMachineCacheSourceGuard,
     JoinHandle<()>,
 ) {
     let digest = {
@@ -356,7 +362,7 @@ async fn install_test_managed_machine_cache_source(
         hex::encode(hasher.finalize())
     };
     let (url, server) = spawn_static_http_server(body).await;
-    let guard = crate::bundled_assets::override_managed_sandbox_machine_cache_source_for_test(
+    let guard = override_managed_sandbox_machine_cache_source_for_test(
         bundled_assets::ManagedArtifactSource {
             uri: url,
             sha256: digest,
@@ -368,7 +374,7 @@ async fn install_test_managed_machine_cache_source(
 async fn install_test_managed_harness_image_source(
     body: Vec<u8>,
 ) -> (
-    crate::bundled_assets::TestManagedCtxHarnessImageSourceGuard,
+    TestManagedCtxHarnessImageSourceGuard,
     JoinHandle<()>,
 ) {
     let digest = {
@@ -377,7 +383,7 @@ async fn install_test_managed_harness_image_source(
         hex::encode(hasher.finalize())
     };
     let (url, server) = spawn_static_http_server_with_suffix(body, "ctx-harness.tar").await;
-    let guard = crate::bundled_assets::override_managed_ctx_harness_image_source_for_test(
+    let guard = override_managed_ctx_harness_image_source_for_test(
         bundled_assets::ManagedArtifactSource {
             uri: url,
             sha256: digest,
@@ -388,7 +394,7 @@ async fn install_test_managed_harness_image_source(
 
 struct TestManagedAvfLinuxRuntimeFixtureGuard {
     _runtime: super::avf_linux_vm::TestManagedAvfLinuxRuntimeSourceGuard,
-    _image: crate::bundled_assets::TestManagedCtxHarnessImageSourceGuard,
+    _image: TestManagedCtxHarnessImageSourceGuard,
 }
 fn avf_runtime_archive_bytes() -> Vec<u8> {
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());

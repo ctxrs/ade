@@ -2,7 +2,6 @@ pub mod api;
 pub mod async_util;
 pub mod attachments;
 pub mod buffers;
-pub mod bundled_assets;
 pub mod completions;
 pub mod container_builder;
 pub mod container_fs;

@@ -206,7 +206,7 @@ async fn spawn_static_http_server_with_suffix(
 async fn install_test_managed_harness_image_source(
     body: Vec<u8>,
 ) -> (
-    crate::bundled_assets::TestManagedCtxHarnessImageSourceGuard,
+    ctx_bundled_assets::test_support::TestManagedCtxHarnessImageSourceGuard,
     JoinHandle<()>,
 ) {
     let digest = {
@@ -215,8 +215,8 @@ async fn install_test_managed_harness_image_source(
         hex::encode(hasher.finalize())
     };
     let (url, server) = spawn_static_http_server_with_suffix(body, "ctx-harness.tar").await;
-    let guard = crate::bundled_assets::override_managed_ctx_harness_image_source_for_test(
-        crate::bundled_assets::ManagedArtifactSource {
+    let guard = ctx_bundled_assets::test_support::override_managed_ctx_harness_image_source_for_test(
+        ctx_bundled_assets::ManagedArtifactSource {
             uri: url,
             sha256: digest,
         },
@@ -227,7 +227,7 @@ async fn install_test_managed_harness_image_source(
 #[cfg(test)]
 pub(crate) struct TestManagedAvfLinuxRuntimeFixtureGuard {
     _runtime: crate::workspace_runtime::TestManagedAvfLinuxRuntimeSourceGuard,
-    _image: crate::bundled_assets::TestManagedCtxHarnessImageSourceGuard,
+    _image: ctx_bundled_assets::test_support::TestManagedCtxHarnessImageSourceGuard,
 }
 
 #[cfg(test)]
@@ -279,7 +279,7 @@ pub(crate) async fn install_test_managed_avf_linux_runtime_source(
     .await;
     let (image_guard, image_server) =
         install_test_managed_harness_image_source(b"ctx-harness-image".to_vec()).await;
-    let source = crate::bundled_assets::ManagedRuntimeSource {
+    let source = ctx_bundled_assets::ManagedRuntimeSource {
         uri: archive_url,
         sha256: hex::encode(Sha256::digest(&archive_bytes)),
         version: "ubuntu-minimal-test".to_string(),
@@ -287,35 +287,35 @@ pub(crate) async fn install_test_managed_avf_linux_runtime_source(
         helpers: [
             (
                 "kernel".to_string(),
-                crate::bundled_assets::ManagedArtifactSource {
+                ctx_bundled_assets::ManagedArtifactSource {
                     uri: kernel_url,
                     sha256: hex::encode(Sha256::digest(&kernel_bytes)),
                 },
             ),
             (
                 "initrd".to_string(),
-                crate::bundled_assets::ManagedArtifactSource {
+                ctx_bundled_assets::ManagedArtifactSource {
                     uri: initrd_url,
                     sha256: hex::encode(Sha256::digest(&initrd_bytes)),
                 },
             ),
             (
                 "guest-agent".to_string(),
-                crate::bundled_assets::ManagedArtifactSource {
+                ctx_bundled_assets::ManagedArtifactSource {
                     uri: guest_agent_url,
                     sha256: hex::encode(Sha256::digest(&guest_agent_bytes)),
                 },
             ),
             (
                 "egress-proxy".to_string(),
-                crate::bundled_assets::ManagedArtifactSource {
+                ctx_bundled_assets::ManagedArtifactSource {
                     uri: egress_proxy_url,
                     sha256: hex::encode(Sha256::digest(&egress_proxy_bytes)),
                 },
             ),
             (
                 "container-stack".to_string(),
-                crate::bundled_assets::ManagedArtifactSource {
+                ctx_bundled_assets::ManagedArtifactSource {
                     uri: container_stack_url,
                     sha256: hex::encode(Sha256::digest(&container_stack_bytes)),
                 },

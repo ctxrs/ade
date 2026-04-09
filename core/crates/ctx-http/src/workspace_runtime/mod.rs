@@ -10,6 +10,7 @@ use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
+use ctx_bundled_assets as bundled_assets;
 #[cfg(test)]
 use sysinfo::System;
 use tokio::process::Command;
@@ -21,7 +22,6 @@ use ctx_core::models::{Workspace, Worktree};
 use ctx_fs::worktrees::worktrees_root;
 use serde::{Deserialize, Serialize};
 
-use crate::bundled_assets;
 use crate::network_allowlist;
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use crate::resource_utilization::SystemSnapshot;

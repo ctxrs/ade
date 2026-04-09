@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-#[cfg(not(test))]
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
@@ -156,7 +155,7 @@ struct RuntimeLockV2 {
 }
 
 fn bundle_dir() -> Option<PathBuf> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if let Some((root, _)) = test_manifest_override()
         .lock()
         .expect("test bundled assets manifest override lock poisoned")
@@ -276,7 +275,7 @@ fn read_manifest_from_root(root: &Path) -> Option<BundledAssetsManifest> {
     Some(parsed)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 fn load_manifest_for_tests() -> Option<BundledAssetsManifest> {
     if let Some((_, manifest)) = test_manifest_override()
         .lock()
@@ -291,12 +290,12 @@ fn load_manifest_for_tests() -> Option<BundledAssetsManifest> {
 }
 
 fn load_manifest() -> Option<BundledAssetsManifest> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     {
         load_manifest_for_tests()
     }
 
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-support")))]
     {
         static MANIFEST: OnceLock<Option<BundledAssetsManifest>> = OnceLock::new();
         let res = MANIFEST.get_or_init(|| {
@@ -328,19 +327,19 @@ fn read_runtime_lock_from_root(root: &Path) -> Option<RuntimeLockV2> {
     Some(parsed)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 fn load_runtime_lock_for_tests() -> Option<RuntimeLockV2> {
     let root = bundle_dir()?;
     read_runtime_lock_from_root(&root)
 }
 
 fn load_runtime_lock() -> Option<RuntimeLockV2> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     {
         load_runtime_lock_for_tests()
     }
 
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-support")))]
     {
         static LOCK: OnceLock<Option<RuntimeLockV2>> = OnceLock::new();
         let res = LOCK.get_or_init(|| {
@@ -566,7 +565,7 @@ pub fn bundled_python_runtime_version(version: &str) -> Option<BundledRuntimePat
     bundled_runtime_from_manifest_for_target(&root, &manifest, "python", Some(version), os, arch)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn bundled_sandbox_cli_runtime() -> Option<BundledRuntimePaths> {
     bundled_runtime("sandbox-cli")
 }
@@ -678,7 +677,7 @@ pub fn managed_ctx_harness_image_source(_expected_image: &str) -> Option<Managed
     managed_image_source("ctx-harness", "linux", current_arch())
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn managed_sandbox_machine_cache_source() -> Option<ManagedArtifactSource> {
     #[cfg(test)]
     if let Some(source) = test_managed_sandbox_machine_cache_source_override()
@@ -696,7 +695,7 @@ pub fn managed_sandbox_machine_cache_source() -> Option<ManagedArtifactSource> {
     )
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 fn test_managed_sandbox_machine_cache_source_override(
 ) -> &'static std::sync::Mutex<Option<ManagedArtifactSource>> {
     static OVERRIDE: std::sync::OnceLock<std::sync::Mutex<Option<ManagedArtifactSource>>> =
@@ -704,7 +703,7 @@ fn test_managed_sandbox_machine_cache_source_override(
     OVERRIDE.get_or_init(|| std::sync::Mutex::new(None))
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 fn test_managed_ctx_harness_image_source_override(
 ) -> &'static std::sync::Mutex<Option<ManagedArtifactSource>> {
     static OVERRIDE: std::sync::OnceLock<std::sync::Mutex<Option<ManagedArtifactSource>>> =
@@ -712,7 +711,7 @@ fn test_managed_ctx_harness_image_source_override(
     OVERRIDE.get_or_init(|| std::sync::Mutex::new(None))
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 fn test_manifest_override() -> &'static std::sync::Mutex<Option<(PathBuf, BundledAssetsManifest)>> {
     static OVERRIDE: std::sync::OnceLock<
         std::sync::Mutex<Option<(PathBuf, BundledAssetsManifest)>>,
@@ -720,17 +719,18 @@ fn test_manifest_override() -> &'static std::sync::Mutex<Option<(PathBuf, Bundle
     OVERRIDE.get_or_init(|| std::sync::Mutex::new(None))
 }
 
-#[cfg(test)]
-pub(crate) fn bundled_assets_manifest_test_lock() -> &'static tokio::sync::Mutex<()> {
-    crate::test_support::process_env_test_lock()
+#[cfg(any(test, feature = "test-support"))]
+pub fn bundled_assets_manifest_test_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
 }
 
-#[cfg(test)]
-pub(crate) struct TestManagedSandboxMachineCacheSourceGuard {
+#[cfg(any(test, feature = "test-support"))]
+pub struct TestManagedSandboxMachineCacheSourceGuard {
     previous: Option<ManagedArtifactSource>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Drop for TestManagedSandboxMachineCacheSourceGuard {
     fn drop(&mut self) {
         let mut guard = test_managed_sandbox_machine_cache_source_override()
@@ -740,12 +740,12 @@ impl Drop for TestManagedSandboxMachineCacheSourceGuard {
     }
 }
 
-#[cfg(test)]
-pub(crate) struct TestManagedCtxHarnessImageSourceGuard {
+#[cfg(any(test, feature = "test-support"))]
+pub struct TestManagedCtxHarnessImageSourceGuard {
     previous: Option<ManagedArtifactSource>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Drop for TestManagedCtxHarnessImageSourceGuard {
     fn drop(&mut self) {
         let mut guard = test_managed_ctx_harness_image_source_override()
@@ -755,13 +755,13 @@ impl Drop for TestManagedCtxHarnessImageSourceGuard {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[allow(dead_code)]
-pub(crate) struct TestBundledAssetsManifestGuard {
+pub struct TestBundledAssetsManifestGuard {
     previous: Option<(PathBuf, BundledAssetsManifest)>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Drop for TestBundledAssetsManifestGuard {
     fn drop(&mut self) {
         let mut guard = test_manifest_override()
@@ -771,8 +771,8 @@ impl Drop for TestBundledAssetsManifestGuard {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn override_managed_sandbox_machine_cache_source_for_test(
+#[cfg(any(test, feature = "test-support"))]
+pub fn override_managed_sandbox_machine_cache_source_for_test(
     source: ManagedArtifactSource,
 ) -> TestManagedSandboxMachineCacheSourceGuard {
     let mut guard = test_managed_sandbox_machine_cache_source_override()
@@ -783,8 +783,8 @@ pub(crate) fn override_managed_sandbox_machine_cache_source_for_test(
     TestManagedSandboxMachineCacheSourceGuard { previous }
 }
 
-#[cfg(test)]
-pub(crate) fn override_managed_ctx_harness_image_source_for_test(
+#[cfg(any(test, feature = "test-support"))]
+pub fn override_managed_ctx_harness_image_source_for_test(
     source: ManagedArtifactSource,
 ) -> TestManagedCtxHarnessImageSourceGuard {
     let mut guard = test_managed_ctx_harness_image_source_override()
@@ -795,9 +795,9 @@ pub(crate) fn override_managed_ctx_harness_image_source_for_test(
     TestManagedCtxHarnessImageSourceGuard { previous }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[allow(dead_code)]
-pub(crate) fn override_bundled_assets_manifest_for_test(
+pub fn override_bundled_assets_manifest_for_test(
     root: PathBuf,
     manifest: BundledAssetsManifest,
 ) -> TestBundledAssetsManifestGuard {
@@ -807,6 +807,17 @@ pub(crate) fn override_bundled_assets_manifest_for_test(
     let previous = guard.clone();
     *guard = Some((root, manifest));
     TestBundledAssetsManifestGuard { previous }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support {
+    pub use super::{
+        bundled_assets_manifest_test_lock, override_bundled_assets_manifest_for_test,
+        override_managed_ctx_harness_image_source_for_test,
+        override_managed_sandbox_machine_cache_source_for_test, BundledAssetsManifest,
+        ManagedArtifactSource, TestBundledAssetsManifestGuard,
+        TestManagedCtxHarnessImageSourceGuard, TestManagedSandboxMachineCacheSourceGuard,
+    };
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 use super::helper_wrappers::{shared_vm_state, start_shared_vm, stop_shared_vm};
 use super::runtime_install as runtime_assets;
 use super::*;
+use ctx_bundled_assets as bundled_assets;
 use crate::settings::{ContainerExecutionSettings, ContainerRuntimeKind};
 use crate::workspace_runtime::{
     SharedSubstrateLifecycleManager, SubstrateShutdownOutcome, SubstrateShutdownReason,

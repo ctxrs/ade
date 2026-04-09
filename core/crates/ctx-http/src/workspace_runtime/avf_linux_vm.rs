@@ -26,7 +26,6 @@ use super::{
     observe_log, observe_phase, ContainerExecutionSettings, HarnessSetupLogLevel,
     HarnessSetupObserver, HarnessSetupPhase,
 };
-use crate::bundled_assets;
 use crate::updates;
 use ctx_harness_setup::{ManagedArtifactDownloadReporter, ManagedDownloadAggregate};
 

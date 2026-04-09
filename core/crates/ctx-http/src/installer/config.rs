@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
+use ctx_bundled_assets as bundled_assets;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -11,7 +12,6 @@ use self::targeting::{
     migrate_managed_provider_command_args, requested_target_or_host, target_bucket_lookup,
 };
 use super::expected_managed_dependency_version;
-use crate::bundled_assets;
 use crate::installs::{truncate_for_storage, InstallErrorCode, InstallTarget};
 
 mod lsp_config;

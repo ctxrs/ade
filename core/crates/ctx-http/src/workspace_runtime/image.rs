@@ -1,4 +1,5 @@
 use super::*;
+use ctx_bundled_assets as bundled_assets;
 use tokio::io::AsyncReadExt;
 
 fn image_load_heartbeat_interval() -> Duration {

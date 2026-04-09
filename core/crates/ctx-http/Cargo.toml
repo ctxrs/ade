@@ -13,6 +13,7 @@ clap.workspace = true
 ctx-core = { path = "../ctx-core" }
 ctx-events = { path = "../ctx-events" }
 ctx-fs = { path = "../ctx-fs" }
+ctx-bundled-assets = { path = "../ctx-bundled-assets", features = ["test-support"] }
 ctx-harness-sources = { path = "../ctx-harness-sources" }
 ctx-harness-setup = { path = "../ctx-harness-setup" }
 ctx-runtime-assets = { path = "../ctx-runtime-assets" }

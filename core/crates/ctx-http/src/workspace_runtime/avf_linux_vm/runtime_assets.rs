@@ -1,4 +1,5 @@
 use super::*;
+use ctx_bundled_assets as bundled_assets;
 
 pub(super) fn managed_avf_linux_guest_source() -> Option<bundled_assets::ManagedRuntimeSource> {
     #[cfg(test)]

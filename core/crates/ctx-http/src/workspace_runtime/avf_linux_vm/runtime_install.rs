@@ -1,4 +1,5 @@
 use super::*;
+use ctx_bundled_assets as bundled_assets;
 use std::time::Instant;
 
 fn emit_runtime_install_info(observer: Option<&dyn HarnessSetupObserver>, message: &str) {

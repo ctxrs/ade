@@ -2,9 +2,9 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]
-use crate::bundled_assets;
-#[cfg(test)]
 use url::Url;
+#[cfg(test)]
+use ctx_bundled_assets as bundled_assets;
 
 #[cfg(test)]
 fn managed_artifact_extension(uri: &str) -> &'static str {

@@ -17,6 +17,7 @@ const coreRoot = path.resolve(__dirname, "../..");
 test("workspace graph maps extracted leaf crate paths to crate names", () => {
   const graph = buildWorkspaceGraph(coreRoot);
   const crates = collectChangedCrates(graph, [
+    "core/crates/ctx-bundled-assets/src/lib.rs",
     "core/crates/ctx-harness-setup/src/lib.rs",
     "core/crates/ctx-provider-accounts/src/lib.rs",
     "core/crates/ctx-provider-auth-import/src/lib.rs",
@@ -28,6 +29,7 @@ test("workspace graph maps extracted leaf crate paths to crate names", () => {
   ]);
 
   assert.deepEqual(crates, [
+    "ctx-bundled-assets",
     "ctx-harness-setup",
     "ctx-harness-sources",
     "ctx-provider-accounts",

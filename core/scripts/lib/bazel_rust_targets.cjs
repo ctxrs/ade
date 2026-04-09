@@ -7,6 +7,7 @@ const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
     "//core/crates/ctx-core:unit_tests",
     "//core/crates/ctx-core:workspace_payload_corpus",
   ],
+  "ctx-bundled-assets": ["//core/crates/ctx-bundled-assets:unit_tests"],
   "ctx-harness-setup": ["//core/crates/ctx-harness-setup:unit_tests"],
   "ctx-harness-sources": ["//core/crates/ctx-harness-sources:unit_tests"],
   "ctx-lsp": ["//core/crates/ctx-lsp:lsp_manager_smoke"],
@@ -21,6 +22,7 @@ const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
 
 const BAZEL_BUILD_TARGETS_BY_CRATE = Object.freeze({
   "ctx-core": ["//core/crates/ctx-core:lib"],
+  "ctx-bundled-assets": ["//core/crates/ctx-bundled-assets:lib"],
   "ctx-harness-setup": ["//core/crates/ctx-harness-setup:lib"],
   "ctx-harness-sources": ["//core/crates/ctx-harness-sources:lib"],
   "ctx-lsp": ["//core/crates/ctx-lsp:ctx-lsp-test-server", "//core/crates/ctx-lsp:lib"],

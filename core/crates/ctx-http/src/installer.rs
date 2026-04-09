@@ -6,12 +6,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
+use ctx_bundled_assets as bundled_assets;
 use sha2::Digest;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
-use crate::bundled_assets;
 use crate::container_builder;
 use crate::daemon::{self, AppState};
 use crate::installs::{

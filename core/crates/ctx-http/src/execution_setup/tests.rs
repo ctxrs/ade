@@ -5,6 +5,14 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
+#[cfg(windows)]
+use ctx_bundled_assets as bundled_assets;
+use ctx_bundled_assets::test_support::{
+    override_managed_ctx_harness_image_source_for_test,
+    override_managed_sandbox_machine_cache_source_for_test,
+    ManagedArtifactSource, TestManagedCtxHarnessImageSourceGuard,
+    TestManagedSandboxMachineCacheSourceGuard,
+};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -310,7 +318,7 @@ async fn spawn_static_http_server(body: Vec<u8>) -> (String, JoinHandle<()>) {
 async fn install_test_managed_machine_cache_source(
     body: Vec<u8>,
 ) -> (
-    crate::bundled_assets::TestManagedSandboxMachineCacheSourceGuard,
+    TestManagedSandboxMachineCacheSourceGuard,
     JoinHandle<()>,
 ) {
     let digest = {
@@ -319,19 +327,17 @@ async fn install_test_managed_machine_cache_source(
         hex::encode(hasher.finalize())
     };
     let (url, server) = spawn_static_http_server(body).await;
-    let guard = crate::bundled_assets::override_managed_sandbox_machine_cache_source_for_test(
-        crate::bundled_assets::ManagedArtifactSource {
+    let guard = override_managed_sandbox_machine_cache_source_for_test(ManagedArtifactSource {
             uri: url,
             sha256: digest,
-        },
-    );
+        });
     (guard, server)
 }
 
 async fn install_test_managed_harness_image_source(
     body: Vec<u8>,
 ) -> (
-    crate::bundled_assets::TestManagedCtxHarnessImageSourceGuard,
+    TestManagedCtxHarnessImageSourceGuard,
     JoinHandle<()>,
 ) {
     let digest = {
@@ -340,12 +346,10 @@ async fn install_test_managed_harness_image_source(
         hex::encode(hasher.finalize())
     };
     let (url, server) = spawn_static_http_server(body).await;
-    let guard = crate::bundled_assets::override_managed_ctx_harness_image_source_for_test(
-        crate::bundled_assets::ManagedArtifactSource {
+    let guard = override_managed_ctx_harness_image_source_for_test(ManagedArtifactSource {
             uri: url,
             sha256: digest,
-        },
-    );
+        });
     (guard, server)
 }
 
@@ -442,7 +446,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
     reason = "legacy Windows-only AVF helper fixture kept until the shared lifecycle helper is ported"
 )]
 async fn make_test_managed_avf_linux_runtime_source() -> (
-    crate::bundled_assets::ManagedRuntimeSource,
+    bundled_assets::ManagedRuntimeSource,
     Vec<JoinHandle<()>>,
 ) {
     let archive_bytes = avf_runtime_archive_bytes();
@@ -470,7 +474,7 @@ async fn make_test_managed_avf_linux_runtime_source() -> (
     )
     .await;
 
-    let source = crate::bundled_assets::ManagedRuntimeSource {
+    let source = bundled_assets::ManagedRuntimeSource {
         uri: archive_url,
         sha256: sha256_hex(&archive_bytes),
         version: "ubuntu-minimal-test".to_string(),
@@ -478,35 +482,35 @@ async fn make_test_managed_avf_linux_runtime_source() -> (
         helpers: [
             (
                 "kernel".to_string(),
-                crate::bundled_assets::ManagedArtifactSource {
+                bundled_assets::ManagedArtifactSource {
                     uri: kernel_url,
                     sha256: sha256_hex(&kernel_bytes),
                 },
             ),
             (
                 "initrd".to_string(),
-                crate::bundled_assets::ManagedArtifactSource {
+                bundled_assets::ManagedArtifactSource {
                     uri: initrd_url,
                     sha256: sha256_hex(&initrd_bytes),
                 },
             ),
             (
                 "guest-agent".to_string(),
-                crate::bundled_assets::ManagedArtifactSource {
+                bundled_assets::ManagedArtifactSource {
                     uri: guest_agent_url,
                     sha256: sha256_hex(&guest_agent_bytes),
                 },
             ),
             (
                 "egress-proxy".to_string(),
-                crate::bundled_assets::ManagedArtifactSource {
+                bundled_assets::ManagedArtifactSource {
                     uri: egress_proxy_url,
                     sha256: sha256_hex(&egress_proxy_bytes),
                 },
             ),
             (
                 "container-stack".to_string(),
-                crate::bundled_assets::ManagedArtifactSource {
+                bundled_assets::ManagedArtifactSource {
                     uri: container_stack_url,
                     sha256: sha256_hex(&container_stack_bytes),
                 },
