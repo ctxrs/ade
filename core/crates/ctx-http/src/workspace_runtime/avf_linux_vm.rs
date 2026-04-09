@@ -6,6 +6,11 @@ use std::sync::OnceLock;
 
 use anyhow::{bail, Context, Result};
 use ctx_core::ids::{WorkspaceId, WorktreeId};
+use ctx_runtime_assets::{
+    acquire_managed_artifact_file_lock, download_managed_artifact, extract_archive_to_dir,
+    finalize_managed_artifact_download, managed_artifact_lock_path,
+    managed_artifact_partial_path, resolve_single_extracted_root,
+};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
@@ -17,11 +22,6 @@ mod runtime_install;
 #[cfg(test)]
 mod tests;
 
-use super::machine::archive::{extract_archive_to_dir, resolve_single_extracted_root};
-use super::machine::downloads::{
-    acquire_managed_artifact_file_lock, download_managed_artifact,
-    finalize_managed_artifact_download, managed_artifact_lock_path, managed_artifact_partial_path,
-};
 use super::{
     observe_log, observe_phase, ContainerExecutionSettings, HarnessSetupLogLevel,
     HarnessSetupObserver, HarnessSetupPhase,

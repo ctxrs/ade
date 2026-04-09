@@ -1504,6 +1504,7 @@ dependencies = [
  "ctx-provider-accounts",
  "ctx-provider-auth-import",
  "ctx-providers",
+ "ctx-runtime-assets",
  "ctx-sandbox-contract",
  "ctx-store",
  "ctx-worker-protocol",
@@ -1676,6 +1677,26 @@ dependencies = [
  "tracing",
  "uuid",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "ctx-runtime-assets"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ctx-harness-setup",
+ "flate2",
+ "fs2",
+ "futures",
+ "hex",
+ "reqwest 0.12.28",
+ "sha2",
+ "tar",
+ "tempfile",
+ "tokio",
+ "url",
+ "zip",
+ "zstd",
 ]
 
 [[package]]

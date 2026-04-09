@@ -10,7 +10,6 @@ use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
-use futures::StreamExt;
 #[cfg(test)]
 use sysinfo::System;
 use tokio::process::Command;
@@ -125,7 +124,7 @@ pub(crate) use self::linux_sandbox_runtime::{
     LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeStatus,
 };
 use self::machine::sandbox_machine_name;
-use self::machine::download_managed_artifact;
+use ctx_runtime_assets::download_managed_artifact;
 #[cfg(test)]
 use self::machine::{
     ensure_managed_sandbox_cli_runtime, ensure_managed_sandbox_machine_cache,

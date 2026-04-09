@@ -1,0 +1,34 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "lib",
+    crate_name = "ctx_runtime_assets",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    srcs = glob(["src/**/*.rs"]),
+    deps = [
+        "//core/crates/ctx-harness-setup:lib",
+        "@crates//:anyhow",
+        "@crates//:flate2",
+        "@crates//:fs2",
+        "@crates//:futures",
+        "@crates//:hex",
+        "@crates//:reqwest",
+        "@crates//:sha2",
+        "@crates//:tar",
+        "@crates//:tokio",
+        "@crates//:url",
+        "@crates//:zip",
+        "@crates//:zstd",
+    ],
+)
+
+rust_test(
+    name = "unit_tests",
+    crate = ":lib",
+    deps = [
+        "@crates//:tempfile",
+    ],
+)

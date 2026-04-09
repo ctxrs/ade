@@ -1,22 +1,19 @@
 use super::*;
+#[cfg(test)]
+use ctx_runtime_assets::{
+    acquire_managed_artifact_file_lock, download_managed_artifact, extract_archive_to_dir,
+    finalize_managed_artifact_download, managed_artifact_lock_path,
+    managed_artifact_partial_path, resolve_single_extracted_root,
+};
 use sha2::Digest;
 
 #[cfg(test)]
 const SANDBOX_MACHINE_CACHE_ID: &str = "sandbox-machine";
 
 pub(super) mod archive;
-pub(super) mod downloads;
 
 #[cfg(test)]
 use self::archive::managed_sandbox_cli_archive_path;
-#[cfg(test)]
-use self::archive::{extract_archive_to_dir, resolve_single_extracted_root};
-#[cfg(test)]
-use self::downloads::{
-    acquire_managed_artifact_file_lock, finalize_managed_artifact_download,
-    managed_artifact_lock_path, managed_artifact_partial_path,
-};
-pub(super) use self::downloads::download_managed_artifact;
 
 pub(super) fn sandbox_machine_name(data_root: &Path) -> String {
     let hash = sandbox_machine_data_root_hash(data_root);
