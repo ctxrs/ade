@@ -479,7 +479,7 @@ const EGRESS_PROXY_CONTAINER_PATH: &str = "/usr/local/bin/ctx-egress-proxy";
 // the sandbox CLI helper's host-global machine temp/socket state.
 const CTX_SANDBOX_MACHINE_PREFIX: &str = "ctx";
 // In-container root for disk-isolated workspaces (sandbox workspace volume mounted here).
-pub(crate) const CTX_CONTAINER_WORKSPACE_ROOT: &str = "/ctx/ws";
+pub(crate) use ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT;
 pub(crate) const CTX_HARNESS_RUNTIME_KIND_ENV: &str = "CTX_HARNESS_RUNTIME_KIND";
 pub(crate) const CTX_HARNESS_LINUX_SANDBOX_ENV: &str = "CTX_HARNESS_LINUX_SANDBOX";
 pub(crate) const CTX_AVF_HOST_DATA_ROOT_ENV: &str = "CTX_AVF_HOST_DATA_ROOT";

@@ -1,6 +1,8 @@
 use super::*;
-use serde::Deserialize;
-use serde_json::Value;
+
+pub(crate) use ctx_sandbox_contract::sandbox_execution_settings_from_binding;
+#[cfg(test)]
+use ctx_sandbox_contract::SANDBOX_BINDING_EXECUTION_SETTINGS_SCHEMA_V1;
 
 pub(in crate::api) struct ResolvedExistingWorktreeExecution {
     pub worktree: Worktree,
@@ -39,109 +41,6 @@ pub(in crate::api) async fn resolve_existing_worktree_execution(
         worktree,
         effective,
     })
-}
-
-const SANDBOX_BINDING_EXECUTION_SETTINGS_SCHEMA_V1: i64 = 1;
-
-#[derive(Debug, Deserialize)]
-struct VersionedSandboxBindingExecutionSettings {
-    schema_version: i64,
-    execution_settings: Value,
-}
-
-pub(crate) fn sandbox_execution_settings_from_binding(
-    binding: &SandboxBinding,
-) -> anyhow::Result<ExecutionSettings> {
-    if !binding.uses_workspace_mapped_sandbox_instance() {
-        let expected = ctx_core::models::sandbox_instance_id_for_workspace(binding.workspace_id);
-        return Err(anyhow::anyhow!(
-            "sandbox binding {} maps workspace {} to unsupported sandbox_instance_id {}; expected {}",
-            binding.worktree_id.0,
-            binding.workspace_id.0,
-            binding.sandbox_instance_id.0,
-            expected.0
-        ));
-    }
-    let substrate = crate::workspace_runtime::UbuntuSandboxSubstrate::from_binding(binding)?;
-    if let Some(raw) = binding.execution_settings_json.as_deref() {
-        return parse_sandbox_binding_execution_settings(raw)
-            .and_then(|settings| validate_sandbox_binding_execution_settings(binding, settings))
-            .context("parsing sandbox binding execution settings");
-    }
-
-    let mut settings = ExecutionSettings {
-        mode: ExecutionMode::Sandbox,
-        ..ExecutionSettings::default()
-    };
-    settings.container.runtime = substrate.runtime_kind();
-    settings.container.mount_mode = crate::settings::ContainerMountMode::DiskIsolated;
-    Ok(settings)
-}
-
-fn validate_sandbox_binding_execution_settings(
-    binding: &SandboxBinding,
-    settings: ExecutionSettings,
-) -> anyhow::Result<ExecutionSettings> {
-    if !matches!(settings.mode, ExecutionMode::Sandbox) {
-        return Err(anyhow::anyhow!(
-            "sandbox binding execution settings snapshot must keep mode=sandbox"
-        ));
-    }
-
-    let expected_runtime =
-        crate::workspace_runtime::UbuntuSandboxSubstrate::from_binding(binding)?.runtime_kind();
-    if settings.container.runtime != expected_runtime {
-        let observed = match settings.container.runtime {
-            crate::settings::ContainerRuntimeKind::NativeContainer => "native_container",
-            crate::settings::ContainerRuntimeKind::SharedVmContainer => "shared_vm_container",
-        };
-        let expected = match expected_runtime {
-            crate::settings::ContainerRuntimeKind::NativeContainer => "native_container",
-            crate::settings::ContainerRuntimeKind::SharedVmContainer => "shared_vm_container",
-        };
-        return Err(anyhow::anyhow!(
-            "sandbox binding execution settings snapshot runtime {observed} does not match binding substrate {expected}"
-        ));
-    }
-
-    Ok(settings)
-}
-
-fn parse_sandbox_binding_execution_settings(raw: &str) -> anyhow::Result<ExecutionSettings> {
-    let value: Value =
-        serde_json::from_str(raw).context("parsing sandbox binding execution settings JSON")?;
-    parse_sandbox_binding_execution_settings_value(value)
-}
-
-fn parse_sandbox_binding_execution_settings_value(
-    value: Value,
-) -> anyhow::Result<ExecutionSettings> {
-    match value {
-        Value::Object(map) if map.contains_key("schema_version") => {
-            let versioned: VersionedSandboxBindingExecutionSettings =
-                serde_json::from_value(Value::Object(map))
-                    .context("parsing versioned sandbox binding execution settings")?;
-            match versioned.schema_version {
-                SANDBOX_BINDING_EXECUTION_SETTINGS_SCHEMA_V1 => {
-                    parse_and_normalize_execution_settings(versioned.execution_settings)
-                }
-                other => Err(anyhow::anyhow!(
-                    "unsupported sandbox binding execution settings schema version {other}"
-                )),
-            }
-        }
-        Value::Object(map) => parse_and_normalize_execution_settings(Value::Object(map)),
-        other => Err(anyhow::anyhow!(
-            "sandbox binding execution settings snapshot must be a JSON object, found {other}"
-        )),
-    }
-}
-
-fn parse_and_normalize_execution_settings(value: Value) -> anyhow::Result<ExecutionSettings> {
-    let mut settings: ExecutionSettings =
-        serde_json::from_value(value).context("parsing execution settings payload")?;
-    crate::settings::normalize_container_execution_settings(&mut settings.container);
-    Ok(settings)
 }
 
 #[cfg(test)]

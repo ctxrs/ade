@@ -1496,6 +1496,7 @@ dependencies = [
  "ctx-provider-accounts",
  "ctx-provider-auth-import",
  "ctx-providers",
+ "ctx-sandbox-contract",
  "ctx-store",
  "ctx-worker-protocol",
  "ctx-workspace-active-snapshot",
@@ -1666,6 +1667,18 @@ dependencies = [
  "tracing",
  "uuid",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "ctx-sandbox-contract"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "ctx-core",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

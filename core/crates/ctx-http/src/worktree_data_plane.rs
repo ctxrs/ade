@@ -2,10 +2,15 @@ use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
 
 use ctx_core::models::{SandboxBinding, Workspace, Worktree};
+pub(crate) use ctx_sandbox_contract::{
+    live_worktree_root_for_mode, live_workspace_root_for_mode,
+};
+use ctx_sandbox_contract::{
+    map_host_or_live_path_to_live_roots, sandbox_execution_settings_from_binding,
+    UbuntuSandboxSubstrate,
+};
 
 use crate::daemon::AppState;
-use crate::disk_isolated;
-use crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT;
 use crate::settings::{ContainerMountMode, ExecutionMode, ExecutionSettings};
 
 #[derive(Debug, Clone)]
@@ -15,32 +20,6 @@ pub(crate) struct WorktreeDataPlane {
     pub execution_mode: ExecutionMode,
     pub live_workspace_root: PathBuf,
     pub live_worktree_root: PathBuf,
-}
-
-pub(crate) fn map_host_or_live_path_to_live_roots(
-    live_workspace_root: &Path,
-    live_worktree_root: &Path,
-    host_workspace_root: &Path,
-    host_worktree_root: Option<&Path>,
-    requested: &Path,
-) -> Option<PathBuf> {
-    if requested.starts_with(live_workspace_root) || requested.starts_with(live_worktree_root) {
-        return Some(requested.to_path_buf());
-    }
-
-    if let Some(host_worktree_root) = host_worktree_root {
-        if requested.starts_with(host_worktree_root) {
-            let relative = requested.strip_prefix(host_worktree_root).ok()?;
-            return Some(live_worktree_root.join(relative));
-        }
-    }
-
-    if requested.starts_with(host_workspace_root) {
-        let relative = requested.strip_prefix(host_workspace_root).ok()?;
-        return Some(live_workspace_root.join(relative));
-    }
-
-    None
 }
 
 pub(crate) fn map_host_or_live_path_to_live_path(
@@ -56,37 +35,6 @@ pub(crate) fn map_host_or_live_path_to_live_path(
         host_worktree_root,
         requested,
     )
-}
-
-pub(crate) fn sandbox_workspace_root() -> PathBuf {
-    PathBuf::from(CTX_CONTAINER_WORKSPACE_ROOT)
-}
-
-pub(crate) fn sandbox_worktree_root(workspace: &Workspace, worktree: &Worktree) -> PathBuf {
-    if worktree.root_path == workspace.root_path {
-        return sandbox_workspace_root();
-    }
-    // Sandbox worktree roots are runtime-managed and deterministic by worktree id.
-    // Callers should not infer sandbox semantics from stored host-path shapes.
-    disk_isolated::container_worktree_root(worktree.id)
-}
-
-pub(crate) fn live_workspace_root_for_mode(workspace: &Workspace, mode: ExecutionMode) -> PathBuf {
-    match mode {
-        ExecutionMode::Host => PathBuf::from(&workspace.root_path),
-        ExecutionMode::Sandbox => sandbox_workspace_root(),
-    }
-}
-
-pub(crate) fn live_worktree_root_for_mode(
-    workspace: &Workspace,
-    worktree: &Worktree,
-    mode: ExecutionMode,
-) -> PathBuf {
-    match mode {
-        ExecutionMode::Host => PathBuf::from(&worktree.root_path),
-        ExecutionMode::Sandbox => sandbox_worktree_root(workspace, worktree),
-    }
 }
 
 pub(crate) async fn resolve_worktree_data_plane(
@@ -162,16 +110,14 @@ pub(crate) fn apply_data_plane_to_execution_settings(
     settings.mode = data_plane.execution_mode.clone();
     if let Some(binding) = data_plane.binding.as_ref() {
         ensure_supported_sandbox_instance_mapping(binding)?;
-        let substrate = crate::workspace_runtime::UbuntuSandboxSubstrate::from_binding(binding)?;
+        let substrate = UbuntuSandboxSubstrate::from_binding(binding)?;
         if binding.execution_settings_json.is_some() {
-            return crate::api::tasks::sandbox_execution_settings_from_binding(binding).map_err(
-                |err| {
-                    anyhow!(
-                        "sandbox binding {} had invalid execution settings snapshot: {err:#}",
-                        binding.worktree_id.0
-                    )
-                },
-            );
+            return sandbox_execution_settings_from_binding(binding).map_err(|err| {
+                anyhow!(
+                    "sandbox binding {} had invalid execution settings snapshot: {err:#}",
+                    binding.worktree_id.0
+                )
+            });
         }
         settings.mode = ExecutionMode::Sandbox;
         settings.container.runtime = substrate.runtime_kind();

@@ -14,6 +14,7 @@ members = [
   "crates/ctx-provider-accounts",
   "crates/ctx-provider-auth-import",
   "crates/ctx-harness-sources",
+  "crates/ctx-sandbox-contract",
   "crates/ctx-workspace-active-snapshot",
   "crates/ctx-http",
   "crates/ctx-egress-proxy",
