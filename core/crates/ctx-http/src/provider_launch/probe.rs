@@ -440,11 +440,11 @@ mod tests {
 
     use crate::daemon::AppState;
     use crate::disk_isolated;
-    use ctx_ctx_harness_sources::{HarnessSourceKind, ResolvedHarnessSource};
-    use ctx_provider_accounts;
-    use ctx_provider_accounts::KIMI_SHARE_DIR_ENV;
     use crate::settings::{ContainerMountMode, ExecutionMode};
     use crate::worktree_data_plane::WorktreeDataPlane;
+    use ctx_harness_sources::{HarnessSourceKind, ResolvedHarnessSource};
+    use ctx_provider_accounts as provider_accounts;
+    use ctx_provider_accounts::KIMI_SHARE_DIR_ENV;
 
     static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 

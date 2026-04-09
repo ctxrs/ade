@@ -1,0 +1,392 @@
+use super::query::extract_version;
+use super::*;
+
+pub async fn apply_matrix_to_status(
+    data_root: &Path,
+    cfg: &AgentServerConfigFile,
+    entry: &ProviderMatrixEntry,
+    status: &mut ctx_providers::adapters::ProviderStatus,
+) {
+    status
+        .details
+        .insert("provider_kind".to_string(), entry.kind.as_str().to_string());
+    let context_version = updates::normalize_version_str(env!("CARGO_PKG_VERSION"));
+    let context_version = context_version.as_ref();
+
+    let detected_version = detect_provider_version(data_root, cfg, entry, status).await;
+    if let Some(version) = detected_version.clone() {
+        status.version = Some(version);
+    }
+
+    if let Some(rec) = recommended_release(entry, context_version) {
+        status.details.insert(
+            "matrix_recommended_version".to_string(),
+            rec.version.clone(),
+        );
+        if let Some(upstream) = rec.upstream_version.as_ref() {
+            status.details.insert(
+                "matrix_recommended_upstream_version".to_string(),
+                upstream.clone(),
+            );
+        }
+    }
+    if let Some(latest) = latest_release(entry) {
+        status
+            .details
+            .insert("matrix_latest_version".to_string(), latest.version.clone());
+        if let Some(upstream) = latest.upstream_version.as_ref() {
+            status.details.insert(
+                "matrix_latest_upstream_version".to_string(),
+                upstream.clone(),
+            );
+        }
+    }
+
+    let mut diagnostics = Vec::new();
+    if let Some((expected_archive_sha256, detected_archive_sha256)) =
+        detect_managed_archive_checksum_mismatch(cfg, entry, status, detected_version.as_deref())
+            .await
+    {
+        status
+            .details
+            .insert("managed_checksum_mismatch".to_string(), "true".to_string());
+        status.details.insert(
+            "managed_expected_archive_sha256".to_string(),
+            expected_archive_sha256.clone(),
+        );
+        status.details.insert(
+            "managed_detected_archive_sha256".to_string(),
+            detected_archive_sha256.clone(),
+        );
+        status
+            .details
+            .insert("matrix_update_available".to_string(), "true".to_string());
+        status.installed = false;
+        status.capabilities = None;
+        status.health = ctx_providers::adapters::ProviderHealth::Error;
+        diagnostics.push(format!(
+            "Managed provider archive checksum mismatch; expected {expected_archive_sha256}, found {detected_archive_sha256}. Reinstall {} to restore the pinned release.",
+            status.provider_id
+        ));
+    }
+
+    if status.installed {
+        if let Some(version) = detected_version.as_deref() {
+            match release_for_version(entry, version) {
+                Some(release) => {
+                    if let Some(upstream) = release.upstream_version.as_ref() {
+                        status.details.insert(
+                            "matrix_detected_upstream_version".to_string(),
+                            upstream.clone(),
+                        );
+                    }
+                    if release.status != ProviderReleaseStatus::Supported {
+                        diagnostics.push(format!(
+                            "Provider version {} is blocked by the support matrix",
+                            release.version
+                        ));
+                    } else if !release_matches_context(release, context_version) {
+                        let mut msg = "Provider version requires a newer ctx build".to_string();
+                        if let Some(min) = release.context_min.as_ref() {
+                            msg = format!("Provider version requires ctx >= {min}");
+                        }
+                        diagnostics.push(msg);
+                    }
+                }
+                None => {
+                    diagnostics.push(format!(
+                        "Provider version {} is not in the support matrix",
+                        version
+                    ));
+                }
+            }
+        } else {
+            diagnostics.push("Unable to determine provider version".to_string());
+        }
+    }
+
+    if !diagnostics.is_empty() {
+        status.diagnostics.extend(diagnostics);
+    }
+
+    let release_update_available = match (
+        detected_version.as_deref(),
+        status.details.get("matrix_recommended_version"),
+    ) {
+        (Some(installed), Some(recommended)) => {
+            normalize_version(installed) != normalize_version(recommended)
+        }
+        _ => false,
+    };
+    let dependency_update_available =
+        status.installed && managed_dependency_update_available(cfg, status);
+    if dependency_update_available {
+        status.details.insert(
+            "managed_dependency_update_available".to_string(),
+            "true".to_string(),
+        );
+    }
+    let update_available = release_update_available || dependency_update_available;
+    if update_available {
+        status
+            .details
+            .insert("matrix_update_available".to_string(), "true".to_string());
+    }
+
+    let update_requires_context = match (
+        status.details.get("matrix_recommended_version"),
+        status.details.get("matrix_latest_version"),
+    ) {
+        (Some(recommended), Some(latest)) => {
+            normalize_version(recommended) != normalize_version(latest)
+        }
+        _ => false,
+    };
+    if update_requires_context {
+        status.details.insert(
+            "matrix_update_requires_context".to_string(),
+            "true".to_string(),
+        );
+    }
+}
+
+pub(super) fn managed_dependency_update_available(
+    cfg: &AgentServerConfigFile,
+    status: &ctx_providers::adapters::ProviderStatus,
+) -> bool {
+    let requested_target = install_target_from_status(status);
+    let command = crate::installer::managed_provider_command_for_target(
+        cfg,
+        &status.provider_id,
+        requested_target,
+    )
+    .or_else(|| {
+        cfg.providers
+            .get(&status.provider_id)
+            .filter(|command| command.managed.is_none())
+            .cloned()
+    });
+    let Some(command) = command else {
+        return false;
+    };
+    command.dependencies.iter().any(|dependency_id| {
+        let Some(expected_version) =
+            crate::installer::expected_managed_dependency_version(dependency_id)
+        else {
+            return false;
+        };
+        let installed_version = cfg
+            .managed_installs
+            .get(dependency_id)
+            .and_then(|meta| meta.version.as_deref());
+        match installed_version {
+            Some(installed) => normalize_version(installed) != normalize_version(expected_version),
+            None => true,
+        }
+    })
+}
+
+pub(super) fn install_target_from_status(
+    status: &ctx_providers::adapters::ProviderStatus,
+) -> Option<crate::installs::InstallTarget> {
+    status
+        .details
+        .get("install_target")
+        .or_else(|| status.details.get("managed_target"))
+        .and_then(|value| crate::installer::parse_install_target(Some(value.as_str())).ok())
+}
+
+pub(super) async fn detect_managed_archive_checksum_mismatch(
+    cfg: &AgentServerConfigFile,
+    entry: &ProviderMatrixEntry,
+    status: &ctx_providers::adapters::ProviderStatus,
+    detected_version: Option<&str>,
+) -> Option<(String, String)> {
+    if !status.installed {
+        return None;
+    }
+    let requested_target = install_target_from_status(status)?;
+    let meta = crate::installer::managed_install_metadata_for_target(
+        cfg,
+        &status.provider_id,
+        Some(requested_target),
+    )?;
+    let version = detected_version.or(meta.version.as_deref())?;
+    let release = release_for_version(entry, version)?;
+    let expected_target = managed_archive_target_for_release(entry, release, requested_target)?;
+    let expected_archive_sha256 = expected_target.sha256.as_deref()?.trim();
+    if expected_archive_sha256.is_empty() {
+        return None;
+    }
+    let detected_archive_sha256 = meta.archive_sha256.as_deref()?.trim();
+    if detected_archive_sha256.is_empty() {
+        return None;
+    }
+    if detected_archive_sha256.eq_ignore_ascii_case(expected_archive_sha256) {
+        return None;
+    }
+    Some((
+        expected_archive_sha256.to_string(),
+        detected_archive_sha256.to_string(),
+    ))
+}
+
+pub(super) fn managed_archive_target_for_release<'a>(
+    entry: &'a ProviderMatrixEntry,
+    release: &ProviderRelease,
+    requested_target: crate::installs::InstallTarget,
+) -> Option<&'a ProviderArchiveTarget> {
+    let ProviderInstall::Archive {
+        version, targets, ..
+    } = entry.managed_install.as_ref()?
+    else {
+        return None;
+    };
+    if normalize_version(version) != normalize_version(&release.version) {
+        return None;
+    }
+    let target_key = crate::installer::resolve_matrix_target_key(requested_target).ok()?;
+    targets.get(target_key)
+}
+
+pub(super) async fn detect_provider_version(
+    data_root: &Path,
+    cfg: &AgentServerConfigFile,
+    entry: &ProviderMatrixEntry,
+    status: &ctx_providers::adapters::ProviderStatus,
+) -> Option<String> {
+    if !status.installed {
+        return None;
+    }
+    let requested_target = install_target_from_status(status);
+    if let Some(meta) = crate::installer::managed_install_metadata_for_target(
+        cfg,
+        &status.provider_id,
+        requested_target,
+    ) {
+        if let Some(version) = meta.version.clone() {
+            return Some(version);
+        }
+    }
+
+    let probe = entry.version_probe.as_ref()?;
+    let command = match crate::installer::resolve_runtime_provider_command_for_target(
+        cfg,
+        &status.provider_id,
+        requested_target,
+    ) {
+        Ok(Some(command)) => ProviderCommand {
+            command: command.command_abs_path,
+            args: command.args,
+        },
+        Ok(None) => return None,
+        Err(err) => {
+            tracing::debug!(
+                provider_id = %status.provider_id,
+                "skipping version probe: {err}"
+            );
+            return None;
+        }
+    };
+
+    match probe {
+        VersionProbe::Command { args } => probe_command_version(&command.command, args).await,
+        VersionProbe::NodePackage { package } => {
+            probe_node_package_version(&command, package, data_root)
+        }
+    }
+}
+
+pub(super) async fn probe_command_version(command: &str, args: &[String]) -> Option<String> {
+    let mut cmd = Command::new(command);
+    cmd.args(args)
+        .kill_on_drop(true)
+        .env("NO_COLOR", "1")
+        .env("CLICOLOR", "0");
+
+    let output = timeout(VERSION_PROBE_TIMEOUT, cmd.output())
+        .await
+        .ok()?
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    extract_version(&format!("{}\n{}", stdout, stderr))
+}
+
+pub(super) fn probe_node_package_version(
+    command: &ProviderCommand,
+    package: &str,
+    data_root: &Path,
+) -> Option<String> {
+    let script_path = if package == "@google/gemini-cli" {
+        crate::provider_launch::resolver::resolve_explicit_gemini_cli_paths(
+            &command.command,
+            &command.args,
+        )
+        .ok()
+        .map(|paths| paths.cli_entry_path)
+    } else {
+        resolve_explicit_node_package_script_path(command)
+    };
+
+    let script_path = script_path?;
+    let resolved = std::fs::canonicalize(&script_path).unwrap_or(script_path);
+
+    if resolved.starts_with(data_root) {
+        if let Some(version) = find_package_version(&resolved, package) {
+            return Some(version);
+        }
+    }
+
+    find_package_version(&resolved, package)
+}
+
+fn find_package_version(path: &Path, package: &str) -> Option<String> {
+    for ancestor in path.ancestors() {
+        let direct = ancestor.join("package.json");
+        if let Some(version) = read_package_version(&direct, package) {
+            return Some(version);
+        }
+        let nested = ancestor
+            .join("node_modules")
+            .join(package)
+            .join("package.json");
+        if let Some(version) = read_package_version(&nested, package) {
+            return Some(version);
+        }
+    }
+    None
+}
+
+pub(super) fn read_package_version(path: &Path, package: &str) -> Option<String> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let name = json.get("name")?.as_str()?;
+    if name != package {
+        return None;
+    }
+    json.get("version")?.as_str().map(|s| s.to_string())
+}
+
+fn resolve_explicit_node_package_script_path(command: &ProviderCommand) -> Option<PathBuf> {
+    let command_path = Path::new(&command.command);
+    if command_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("node"))
+    {
+        return command
+            .args
+            .first()
+            .and_then(|arg| resolve_existing_absolute_path(arg));
+    }
+    resolve_existing_absolute_path(&command.command)
+}
+
+fn resolve_existing_absolute_path(raw: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(raw);
+    (path.is_absolute() && path.exists()).then_some(path)
+}

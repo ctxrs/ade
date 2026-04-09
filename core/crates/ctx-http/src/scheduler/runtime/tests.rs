@@ -1,10 +1,6 @@
 use super::helpers::strip_emitted_prefix;
 use super::provider_mode_id_for;
 use super::runtime_provider_id_for_session_provider;
-use ctx_harness_sources::{
-    HarnessApiShape, HarnessEndpointRecord, HarnessEndpointVerificationStatus, HarnessSourceKind,
-    ResolvedHarnessSource,
-};
 use crate::installer;
 use crate::installer::{
     prepend_runtime_bin_dirs_to_provider_path, AgentServerCommand, AgentServerConfigFile,
@@ -13,6 +9,10 @@ use crate::installer::{
 use crate::installs::InstallTarget;
 use crate::settings::ProviderControlMode;
 use chrono::Utc;
+use ctx_harness_sources::{
+    EndpointModelCatalogStatus, HarnessApiShape, HarnessEndpointRecord,
+    HarnessEndpointVerificationStatus, HarnessSourceKind, ResolvedHarnessSource,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tempfile::tempdir;
