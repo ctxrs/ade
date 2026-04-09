@@ -11,6 +11,8 @@ members = [
   "crates/codex-crp",
   "crates/ctx-lsp",
   "crates/ctx-mcp",
+  "crates/ctx-provider-accounts",
+  "crates/ctx-harness-sources",
   "crates/ctx-http",
   "crates/ctx-egress-proxy",
   "crates/ctx-avf-linux-guest-agent",

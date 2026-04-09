@@ -14,7 +14,6 @@ pub mod execution_effective;
 pub mod execution_setup;
 pub mod git_status;
 pub mod harness_runtime;
-pub mod harness_sources;
 pub mod installer;
 pub mod installs;
 pub mod llm;
@@ -30,7 +29,6 @@ pub mod ops_events;
 pub mod oracle;
 pub mod order_seq;
 pub mod perf_telemetry;
-pub mod provider_accounts;
 pub mod provider_auth_import;
 pub mod provider_child_reclassifier;
 pub mod provider_guard;
@@ -62,6 +60,8 @@ pub(crate) mod workspace_provider_model_preferences;
 pub mod workspace_runtime;
 pub mod worktree_bootstrap;
 pub mod worktree_data_plane;
+pub use ctx_harness_sources as harness_sources;
+pub use ctx_provider_accounts as provider_accounts;
 
 #[cfg(feature = "fault_injection")]
 pub mod fault_injection;

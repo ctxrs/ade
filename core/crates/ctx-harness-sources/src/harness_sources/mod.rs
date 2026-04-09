@@ -8,7 +8,7 @@ use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::provider_accounts::CODEX_AUTH_TYPE_BEARER;
+use ctx_provider_accounts::CODEX_AUTH_TYPE_BEARER;
 
 const REGISTRY_VERSION: u32 = 1;
 const SECRET_VERSION: u32 = 1;
@@ -70,7 +70,7 @@ pub use validation::{
     default_shape_for_provider, ensure_shape_compatible, supports_harness_endpoint,
 };
 
-pub(crate) fn droid_cli_model_id_for_endpoint_model(
+pub fn droid_cli_model_id_for_endpoint_model(
     model_id: Option<&str>,
     base_url: Option<&str>,
 ) -> Option<String> {

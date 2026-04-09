@@ -186,7 +186,7 @@ fn gemini_models_value_for_version(version: &str) -> Option<serde_json::Value> {
     }
 }
 
-pub(crate) fn pinned_subscription_models_value(
+pub fn pinned_subscription_models_value(
     provider_id: &str,
     provider_version: Option<&str>,
 ) -> Option<serde_json::Value> {
@@ -294,7 +294,8 @@ mod tests {
     #[test]
     fn gemini_pinned_catalog_supports_the_managed_matrix_release() {
         let matrix: serde_json::Value =
-            serde_json::from_str(include_str!("../provider_matrix.json")).expect("provider matrix");
+            serde_json::from_str(include_str!("../../../ctx-http/src/provider_matrix.json"))
+                .expect("provider matrix");
         let managed_release = matrix
             .get("providers")
             .and_then(serde_json::Value::as_array)

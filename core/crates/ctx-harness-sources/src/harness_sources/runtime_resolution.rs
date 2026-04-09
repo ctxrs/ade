@@ -1,5 +1,5 @@
 use super::*;
-use crate::provider_accounts::{
+use ctx_provider_accounts::{
     apply_gemini_api_key_runtime_auth_env, apply_gemini_vertex_runtime_auth_env,
     write_gemini_auth_settings, GEMINI_AUTH_SELECTED_TYPE_API_KEY,
     GEMINI_AUTH_SELECTED_TYPE_VERTEX_AI, KIMI_SHARE_DIR_ENV,
@@ -15,11 +15,18 @@ use self::provider_fs::{
     prepare_qwen_home_with_openai_settings, prepend_pythonpath,
 };
 pub(super) use self::provider_fs::{
-    cline_endpoint_home, codex_endpoint_home, droid_cli_model_id_for_endpoint_model,
-    droid_endpoint_home, gemini_endpoint_home, goose_endpoint_path_root, qwen_endpoint_home,
+    cline_endpoint_home, codex_endpoint_home, droid_endpoint_home, gemini_endpoint_home,
+    goose_endpoint_path_root, qwen_endpoint_home,
 };
 #[cfg(test)]
 pub(super) use self::provider_fs::{openhands_endpoint_home, seed_droid_auth_from_host_path};
+
+pub fn droid_cli_model_id_for_endpoint_model(
+    model_id: Option<&str>,
+    base_url: Option<&str>,
+) -> Option<String> {
+    provider_fs::droid_cli_model_id_for_endpoint_model(model_id, base_url)
+}
 
 pub async fn resolve_provider_source_for_probe(
     data_root: &Path,

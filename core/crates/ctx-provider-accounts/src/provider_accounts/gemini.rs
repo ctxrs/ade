@@ -227,15 +227,12 @@ pub(crate) fn clear_gemini_runtime_auth_env(env: &mut HashMap<String, String>) {
     }
 }
 
-pub(crate) fn apply_gemini_api_key_runtime_auth_env(
-    env: &mut HashMap<String, String>,
-    api_key: String,
-) {
+pub fn apply_gemini_api_key_runtime_auth_env(env: &mut HashMap<String, String>, api_key: String) {
     clear_gemini_runtime_auth_env(env);
     env.insert("GEMINI_API_KEY".to_string(), api_key);
 }
 
-pub(crate) fn apply_gemini_vertex_runtime_auth_env(
+pub fn apply_gemini_vertex_runtime_auth_env(
     env: &mut HashMap<String, String>,
     credentials_path: PathBuf,
     project_id: String,
@@ -399,10 +396,7 @@ async fn ensure_gemini_account_home(
     Ok(home)
 }
 
-pub(crate) async fn write_gemini_auth_settings(
-    gemini_dir: &Path,
-    selected_type: &str,
-) -> Result<()> {
+pub async fn write_gemini_auth_settings(gemini_dir: &Path, selected_type: &str) -> Result<()> {
     let settings = serde_json::json!({
         "security": {
             "auth": {

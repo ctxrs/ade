@@ -1455,6 +1455,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctx-harness-sources"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "ctx-provider-accounts",
+ "directories",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "ctx-http"
 version = "0.33.0"
 dependencies = [
@@ -1473,7 +1491,9 @@ dependencies = [
  "ctx-core",
  "ctx-events",
  "ctx-fs",
+ "ctx-harness-sources",
  "ctx-lsp",
+ "ctx-provider-accounts",
  "ctx-providers",
  "ctx-store",
  "ctx-worker-protocol",
@@ -1587,6 +1607,21 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "urlencoding",
+ "uuid",
+]
+
+[[package]]
+name = "ctx-provider-accounts"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "directories",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 

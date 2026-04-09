@@ -363,7 +363,7 @@ pub(crate) fn copilot_model_catalog_for_version(version: &str) -> Option<Copilot
     }
 }
 
-pub(crate) fn copilot_models_value_for_version(version: &str) -> Option<serde_json::Value> {
+pub fn copilot_models_value_for_version(version: &str) -> Option<serde_json::Value> {
     let catalog = copilot_model_catalog_for_version(version)?;
     Some(serde_json::json!({
         "catalog_source": "copilot_version_pinned",

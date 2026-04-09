@@ -4,7 +4,7 @@
   "packageManager": "pnpm@9.15.1",
   "scripts": {
     "test": "node scripts/run_with_ctx_cache_env.cjs --mode workspace -- cargo test -q && pnpm -C apps/web test",
-    "test:agent": "node scripts/run_with_ctx_cache_env.cjs --mode workspace -- cargo test -q -p ctx-core -p ctx-providers -p ctx-http -p ctx-mcp -p ctx-lsp -p ctx-store && pnpm -C apps/web test:quiet",
+    "test:agent": "node scripts/run_with_ctx_cache_env.cjs --mode workspace -- cargo test -q -p ctx-core -p ctx-providers -p ctx-provider-accounts -p ctx-harness-sources -p ctx-http -p ctx-mcp -p ctx-lsp -p ctx-store && pnpm -C apps/web test:quiet",
     "test:e2e": "pnpm -C apps/web test:e2e",
     "test:e2e:list": "pnpm -C apps/web test:e2e:list",
     "test:e2e:premerge": "pnpm -C apps/web test:e2e:premerge",

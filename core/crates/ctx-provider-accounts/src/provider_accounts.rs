@@ -44,7 +44,7 @@ pub use self::amp::{
     save_amp_registry, set_active_amp_account, upsert_amp_account, AmpAccountEntry,
     AmpAccountRegistry, AmpLoginStatus,
 };
-pub(crate) use self::bootstrap_models::pinned_subscription_models_value;
+pub use self::bootstrap_models::pinned_subscription_models_value;
 pub use self::claude::{
     add_claude_account, claude_env_for_account, claude_env_for_active_account,
     ensure_claude_account_dir, load_claude_registry, normalize_claude_label, remove_claude_account,
@@ -59,7 +59,7 @@ pub use self::codex_auth::{
     ingest_codex_account_auth_to_secret_store, probe_host_codex_auth_candidate,
     seed_codex_auth_from_host, seeding_codex_auth_from_host_enabled,
 };
-pub(crate) use self::copilot::copilot_models_value_for_version;
+pub use self::copilot::copilot_models_value_for_version;
 pub use self::copilot::{
     add_copilot_account, copilot_env_for_account, copilot_env_for_active_account,
     ensure_copilot_account_dir, load_copilot_registry, normalize_copilot_label,
@@ -77,7 +77,7 @@ pub use self::gemini::{
     load_gemini_registry, normalize_gemini_label, remove_gemini_account, save_gemini_registry,
     set_active_gemini_account, GeminiAccountEntry, GeminiAccountRegistry, GeminiLoginStatus,
 };
-pub(crate) use self::gemini::{
+pub use self::gemini::{
     apply_gemini_api_key_runtime_auth_env, apply_gemini_vertex_runtime_auth_env,
     write_gemini_auth_settings,
 };
