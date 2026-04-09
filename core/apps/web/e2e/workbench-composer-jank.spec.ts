@@ -8,6 +8,7 @@ type ComposerJankSample = {
   top: number;
   height: number;
   clientHeight: number;
+  bottomOffset: number;
 };
 
 type ComposerJankShiftEntry = {
@@ -23,6 +24,32 @@ type ComposerJankWindow = Window & {
   __composerJankCleanup?: () => void;
   __composerJankObserver?: PerformanceObserver;
 };
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitForSessionIdle(request: Parameters<typeof test>[0]["request"], sessionId: string, timeoutMs = 20_000) {
+  const startedAt = Date.now();
+  while (true) {
+    const resp = await request.get(`/api/sessions/${sessionId}/snapshot?limit=1`);
+    if (!resp.ok()) {
+      throw new Error(`failed to read session snapshot for ${sessionId}: ${resp.status()}`);
+    }
+    const snapshot = (await resp.json()) as {
+      head?: {
+        turns?: Array<{ status?: string | null }>;
+      };
+    };
+    const turns = Array.isArray(snapshot?.head?.turns) ? snapshot.head.turns : [];
+    const lastStatus = typeof turns.at(-1)?.status === "string" ? turns.at(-1)?.status : null;
+    if (turns.length === 0 || lastStatus === "completed" || lastStatus === "done") {
+      return;
+    }
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(`session ${sessionId} did not become idle within ${timeoutMs}ms`);
+    }
+    await sleep(50);
+  }
+}
 
 test("workbench: composer jank stays stable on third line", async ({ page, request }, testInfo) => {
   test.setTimeout(120000);
@@ -40,6 +67,7 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
   if (!seedSessionId) {
     throw new Error("failed to resolve seeded session id");
   }
+  await waitForSessionIdle(request, seedSessionId, 60_000);
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
   const rows = page.locator(".wb-task-row");
@@ -61,6 +89,7 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
       },
     });
     expect(extraResp.ok(), `failed to append overflow seed ${attempt}`).toBeTruthy();
+    await waitForSessionIdle(request, seedSessionId);
     await page.waitForTimeout(120);
   }
   await expect
@@ -98,6 +127,7 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
       timeout: 10000,
     })
     .toBeLessThanOrEqual(8);
+  await waitForSessionIdle(request, seedSessionId);
   await page.waitForTimeout(100);
 
   await page.evaluate(() => {
@@ -120,6 +150,7 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
         top: scroller.scrollTop,
         height: scroller.scrollHeight,
         clientHeight: scroller.clientHeight,
+        bottomOffset: Math.max(0, scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight)),
       });
     };
 
@@ -185,6 +216,7 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
 
   expect(metrics.samples.length).toBeGreaterThan(5);
   expect(metrics.maxDelta).toBeLessThanOrEqual(2);
+  expect(metrics.samples.every((sample) => sample.bottomOffset <= 8)).toBeTruthy();
   expect(metrics.clsTotal).toBeLessThan(0.02);
   expect(metrics.clsNoInput).toBeLessThan(0.001);
 });

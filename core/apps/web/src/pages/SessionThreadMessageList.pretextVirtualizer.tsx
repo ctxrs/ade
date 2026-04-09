@@ -500,10 +500,8 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
           nextSnapshot = core.syncItems(items, anchorOverride);
           break;
         case "prepend_history":
-          if (changedCount > 0 && items.length === previousCount + changedCount) {
-            nextSnapshot = core.prependItems(items.slice(0, changedCount), anchorOverride);
-            break;
-          }
+          // History extension can arrive alongside overlapping mixed-row changes, so the
+          // prefix-only fast path is not reliable enough to expose the full fetched prefix.
           nextSnapshot = core.syncItems(items, anchorOverride);
           break;
         case "hydrate_tools":
@@ -563,22 +561,31 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     }
     const preparedState = readSessionPretextRuntimePreparedState(runtime);
     const currentItems = listItemsRef.current;
+    const preparedWidthMismatch =
+      scroller.clientWidth > 0 && preparedState.snapshot.viewportWidth !== scroller.clientWidth;
     let baseSnapshot = core.syncViewport({
       height: scroller.clientHeight,
       width: scroller.clientWidth,
       scrollTop: scroller.scrollTop,
     });
     lastSyncedItemCountRef.current = preparedState.listItems.length;
-    if (!haveSameLayoutInputs(preparedState.listItems, currentItems, runtime.callbacks.getLayoutRevision)) {
+    if (
+      preparedWidthMismatch ||
+      !haveSameLayoutInputs(preparedState.listItems, currentItems, runtime.callbacks.getLayoutRevision)
+    ) {
       incrementPretextPerfCounter("pretext_full_relayout_calls");
       incrementPretextPerfCounter("pretext_full_relayout_item_count", currentItems.length);
-      addPretextPerfBucket("pretext_full_relayout_reason", "visible:mount-sync-items");
+      addPretextPerfBucket(
+        "pretext_full_relayout_reason",
+        preparedWidthMismatch ? "visible:mount-width-mismatch" : "visible:mount-sync-items",
+      );
       const initialAnchor = followBottomRef.current
         ? ({ kind: "bottom" } satisfies PretextVirtualizerLogicalAnchor)
         : null;
-      baseSnapshot = haveSameItemIds(preparedState.listItems, currentItems)
-        ? core.patchItems(currentItems, currentItems.map((item) => item.id), [], initialAnchor)
-        : core.syncItems(currentItems, initialAnchor);
+      baseSnapshot =
+        preparedWidthMismatch || !haveSameItemIds(preparedState.listItems, currentItems)
+          ? core.syncItems(currentItems, initialAnchor)
+          : core.patchItems(currentItems, currentItems.map((item) => item.id), [], initialAnchor);
       lastSyncedItemCountRef.current = currentItems.length;
     }
     commitRuntimeSnapshot(baseSnapshot, currentItems);
@@ -718,11 +725,21 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
           incrementPretextPerfCounter("pretext_full_relayout_item_count", listItemsRef.current.length);
           addPretextPerfBucket("pretext_full_relayout_reason", "visible:resize-width");
         }
-        const resizedSnapshot = core.syncViewport({
+        core.syncViewport({
           height: nextHeight,
           width: nextWidth,
           scrollTop: scroller.scrollTop,
         });
+        if (nextWidth !== previousSnapshot.viewportWidth) {
+          core.syncItems(
+            listItemsRef.current,
+            shouldRestoreBottom
+              ? { kind: "bottom" }
+              : previousSnapshot.anchor.kind === "item"
+                ? previousSnapshot.anchor
+                : null,
+          );
+        }
         if (!shouldRestoreBottom && previousSnapshot.anchor.kind === "item") {
           followBottomRef.current = false;
           applySnapshotToDom(
@@ -731,7 +748,6 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
           );
           return;
         }
-        void resizedSnapshot;
       }
       if (shouldRestoreBottom) {
         followBottomRef.current = true;
@@ -889,7 +905,8 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
           style={{ position: "relative", height: `${innerHeight}px` }}
         >
           {renderedItems.map((visibleItem) => {
-            const currentItem = listItemsRef.current[visibleItem.index] ?? visibleItem.item;
+            const latestItem = listItemsRef.current[visibleItem.index];
+            const currentItem = latestItem?.id === visibleItem.id ? latestItem : visibleItem.item;
             return (
             <div
               key={itemKey(currentItem)}
@@ -905,7 +922,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
               <div
                 className="wb-pretext-virtualizer-row"
                 data-pretext-virtualizer-row="1"
-                data-pretext-virtualizer-item-id={visibleItem.id}
+                data-pretext-virtualizer-item-id={currentItem.id}
                 data-pretext-virtualizer-planned-height={String(visibleItem.height)}
               >
                 <AuditedPretextRow

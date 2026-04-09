@@ -244,22 +244,24 @@ const applyCanonicalTranscriptPatch = (
     patch,
     normalizedFreshness,
   });
-  const preserveCoveredHistoryOnRepair =
-    replaceMode === "repair_replace" && repairReplaceIsCoveredByEntry(entry, data);
+  const preserveCoveredHistoryOnReplace =
+    patch.op === "replace" &&
+    repairReplaceIsCoveredByEntry(entry, data) &&
+    (entry.historyExtended || replaceMode === "repair_replace");
   const localQueuedMessages =
     Array.isArray(data.messages) ? preserveLocalQueuedMessages(entry.messages, data.messages) : [];
   const previousTurns = entry.turns;
   let nextTurnsForAnalytics: SessionTurn[] | null = null;
   let changed = false;
 
-  if (patch.op === "replace" && shouldApplyReplace && !preserveCoveredHistoryOnRepair) {
+  if (patch.op === "replace" && shouldApplyReplace && !preserveCoveredHistoryOnReplace) {
     host.resetEntryProjectionForReplace(entry, { skipPublish: true });
     changed = true;
   }
 
   const shouldCopyCanonicalTranscript = patch.op !== "replace" || shouldApplyReplace;
 
-  if (shouldCopyCanonicalTranscript && !preserveCoveredHistoryOnRepair) {
+  if (shouldCopyCanonicalTranscript && !preserveCoveredHistoryOnReplace) {
     if (Array.isArray(data.turns)) {
       const nextTurns = preserveMonotonicTurns(previousTurns, data.turns);
       if (!haveSameArrayRefs(entry.turns, nextTurns)) {
@@ -303,7 +305,7 @@ const applyCanonicalTranscriptPatch = (
           resetByTurn: patch.op === "replace",
         }) || changed;
     }
-  } else if (shouldCopyCanonicalTranscript && preserveCoveredHistoryOnRepair) {
+  } else if (shouldCopyCanonicalTranscript && preserveCoveredHistoryOnReplace) {
     if (Array.isArray(data.turns)) {
       const nextTurns = preserveMonotonicTurns(entry.turns, mergeSessionTurns(entry.turns, data.turns));
       if (!haveSameArrayRefs(entry.turns, nextTurns)) {
@@ -424,6 +426,13 @@ const applyCanonicalTranscriptPatch = (
     }
     if (preserveHasMoreHistory) {
       entry.historyExtended = true;
+    }
+  }
+  if (Array.isArray(data.turns) && entry.turns.length > 0) {
+    const nextOldestTurnSeq = entry.turns[0]?.start_seq;
+    if (typeof nextOldestTurnSeq === "number" && entry.oldestTurnSeq !== nextOldestTurnSeq) {
+      entry.oldestTurnSeq = nextOldestTurnSeq;
+      changed = true;
     }
   }
   // Only emit analytics for live incoming deltas (append). Historical replaces

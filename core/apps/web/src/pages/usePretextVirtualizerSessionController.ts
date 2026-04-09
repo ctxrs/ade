@@ -51,6 +51,7 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
   const lastListOffsetRef = useRef<number | null>(null);
   const pendingHistoryRef = useRef(false);
   const continueHistoryAtTopRef = useRef(false);
+  const blockedTopPinnedHistoryRef = useRef(false);
   const initialContentRenderedSessionIdRef = useRef<string | null>(null);
   const renderedAnchorIdRef = useRef<string | null>(null);
   const renderedTopIdRef = useRef<string | null>(null);
@@ -76,6 +77,7 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
         return false;
       }
 
+      blockedTopPinnedHistoryRef.current = false;
       continueHistoryAtTopRef.current = true;
       pendingHistoryRef.current = true;
       setLoadingOlder(true);
@@ -99,6 +101,7 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
     lastSessionIdRef.current = sessionId;
     pendingHistoryRef.current = false;
     continueHistoryAtTopRef.current = false;
+    blockedTopPinnedHistoryRef.current = false;
     lastListOffsetRef.current = null;
     setLoadingOlder(false);
     lastAtBottomRef.current = true;
@@ -123,11 +126,9 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
 
   useLayoutEffect(() => {
     if (!isActive || !loaded) return;
-    if (!continueHistoryAtTopRef.current) return;
+    if (!continueHistoryAtTopRef.current && !blockedTopPinnedHistoryRef.current) return;
     if (!canLoadOlder || pendingHistoryRef.current) {
-      if (!canLoadOlder) {
-        continueHistoryAtTopRef.current = false;
-      }
+      continueHistoryAtTopRef.current = false;
       return;
     }
 
@@ -136,7 +137,10 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
 
     const stillTopPinned = scroller.scrollTop <= 1;
     continueHistoryAtTopRef.current = false;
-    if (!stillTopPinned) return;
+    if (!stillTopPinned) {
+      blockedTopPinnedHistoryRef.current = false;
+      return;
+    }
 
     requestOlderHistory("top-pinned-continue", {
       scrollTop: Math.round(scroller.scrollTop * 100) / 100,
@@ -156,8 +160,17 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
         onAtBottomChange?.(atBottom);
       }
 
+      const topPinned = location.listOffset >= -1;
+      if (!topPinned) {
+        blockedTopPinnedHistoryRef.current = false;
+      }
+
       if (!canLoadOlder || atBottom || pendingHistoryRef.current) {
-        if (!canLoadOlder || atBottom) {
+        if (!canLoadOlder) {
+          blockedTopPinnedHistoryRef.current = topPinned;
+          continueHistoryAtTopRef.current = false;
+        } else if (atBottom) {
+          blockedTopPinnedHistoryRef.current = false;
           continueHistoryAtTopRef.current = false;
         }
         lastListOffsetRef.current = location.listOffset;
@@ -166,8 +179,8 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
 
       const previousListOffset = lastListOffsetRef.current;
       lastListOffsetRef.current = location.listOffset;
-      const scrollingUp = previousListOffset == null ? false : location.listOffset > previousListOffset;
       const nearTop = location.listOffset > -computeHistoryPrefetchThresholdPx(location.visibleListHeight);
+      const scrollingUp = previousListOffset == null ? topPinned : location.listOffset > previousListOffset;
       if (!nearTop || !scrollingUp) {
         return;
       }

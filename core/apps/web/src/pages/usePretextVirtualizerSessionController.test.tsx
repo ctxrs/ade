@@ -112,6 +112,112 @@ describe("usePretextVirtualizerSessionController", () => {
     expect(loadOlder).not.toHaveBeenCalled();
   });
 
+  it("requests older history on the first top-edge sample even without a previous list offset", async () => {
+    const loadOlder = vi.fn(async () => {});
+    const { result } = renderHook(() =>
+      usePretextVirtualizerSessionController({
+        sessionId: "session-1",
+        isActive: true,
+        loaded: true,
+        listItems,
+        canLoadOlder: true,
+        loadOlder,
+        showDebug: false,
+      }),
+    );
+
+    await act(async () => {
+      result.current.onScroll({
+        listOffset: 0,
+        visibleListHeight: 600,
+        bottomOffset: 360,
+      });
+      await Promise.resolve();
+    });
+
+    expect(loadOlder).toHaveBeenCalledTimes(1);
+  });
+
+  it("requests older history after a session change when the first post-reset sample is top-pinned", async () => {
+    const loadOlder = vi.fn(async () => {});
+    const { result, rerender } = renderHook(
+      ({ sessionId }: { sessionId: string }) =>
+        usePretextVirtualizerSessionController({
+          sessionId,
+          isActive: true,
+          loaded: true,
+          listItems,
+          canLoadOlder: true,
+          loadOlder,
+          showDebug: false,
+        }),
+      { initialProps: { sessionId: "session-1" } },
+    );
+
+    rerender({ sessionId: "session-2" });
+
+    await act(async () => {
+      result.current.onScroll({
+        listOffset: 0,
+        visibleListHeight: 600,
+        bottomOffset: 360,
+      });
+      await Promise.resolve();
+    });
+
+    expect(loadOlder).toHaveBeenCalledTimes(1);
+  });
+
+  it("requests older history once pagination becomes available after a blocked top-edge attempt", async () => {
+    const loadOlder = vi.fn(async () => {});
+    const scroller = document.createElement("div");
+    Object.defineProperty(scroller, "scrollTop", { value: 0, writable: true });
+    Object.defineProperty(scroller, "scrollHeight", { value: 3000, configurable: true });
+    Object.defineProperty(scroller, "clientHeight", { value: 600, configurable: true });
+    const methods: PretextVirtualizerListMethods<WorkbenchListItem, WorkbenchMessageListContext> = {
+      cancelSmoothScroll: () => undefined,
+      scrollerElement: () => scroller,
+      restoreAnchor: () => undefined,
+      scrollToBottom: () => undefined,
+      scrollToOffset: () => undefined,
+      scrollToItem: () => undefined,
+    };
+
+    const { result, rerender } = renderHook(
+      ({ canLoadOlder }: { canLoadOlder: boolean }) =>
+        usePretextVirtualizerSessionController({
+          sessionId: "session-1",
+          isActive: true,
+          loaded: true,
+          listItems,
+          canLoadOlder,
+          loadOlder,
+          showDebug: false,
+        }),
+      { initialProps: { canLoadOlder: false } },
+    );
+
+    result.current.methodsRef.current = methods;
+
+    act(() => {
+      result.current.onScroll({
+        listOffset: 0,
+        visibleListHeight: 600,
+        bottomOffset: 360,
+      });
+    });
+
+    expect(loadOlder).not.toHaveBeenCalled();
+
+    act(() => {
+      rerender({ canLoadOlder: true });
+    });
+
+    await waitFor(() => {
+      expect(loadOlder).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("reopens at bottom when the same pane reactivates", () => {
     const onAtBottomChange = vi.fn();
     const scrollToBottom = vi.fn();

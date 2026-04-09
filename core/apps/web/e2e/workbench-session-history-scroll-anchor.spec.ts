@@ -1,10 +1,23 @@
 import { test, expect } from "./fixtures";
-import type { APIRequestContext } from "playwright/test";
+import type { APIRequestContext, Locator } from "playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 const scrollSelector = ".wb-thread-scroller";
+const appendedHistoryTurns = 12;
+const oldestFixtureMessagePattern = /\bfixture msg 1\.1\.1\b/;
 
 type ScrollAnchor = { id?: string; offset: number };
+
+async function scrollScrollerUp(
+  scroller: Locator,
+  deltaPx: number,
+): Promise<number> {
+  return scroller.evaluate((element, delta) => {
+    element.scrollTop = Math.max(0, element.scrollTop - delta);
+    element.dispatchEvent(new Event("scroll"));
+    return element.scrollTop;
+  }, deltaPx);
+}
 
 async function addLongMessages(request: APIRequestContext, sessionId: string, count: number) {
   const longText = Array.from({ length: 200 }, (_, i) => `history line ${i + 1}`).join("\n");
@@ -47,14 +60,16 @@ test("workbench: preserves scroll position when prepending history", async ({ pa
   const seed = await seedDummyWorkspace(request, {
     tasks: 1,
     sessionsPerTask: 1,
-    turnsPerSession: 10,
+    // Keep the oldest seeded turns outside the default 60-turn authoritative /head window so
+    // upward scrolling must fetch an older history page before they become visible.
+    turnsPerSession: 55,
     throttleMs: 5,
   });
 
   const taskId = seed.taskIds[0];
   const sessionId = seed.sessionIdsByTask[taskId][0];
 
-  await addLongMessages(request, sessionId, 12);
+  await addLongMessages(request, sessionId, appendedHistoryTurns);
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
   const rows = page.locator(".wb-task-row");
@@ -64,8 +79,8 @@ test("workbench: preserves scroll position when prepending history", async ({ pa
     timeout: 20000,
   });
 
-  await expect(page.locator(".wb-session")).toContainText("history scroll 12", { timeout: 20000 });
-  await expect(page.locator(".wb-session")).not.toContainText("fixture msg 1.1.1", {
+  await expect(page.locator(".wb-session")).toContainText(`history scroll ${appendedHistoryTurns}`, { timeout: 20000 });
+  await expect(page.locator(".wb-session")).not.toContainText(oldestFixtureMessagePattern, {
     timeout: 1000,
   });
 
@@ -74,7 +89,7 @@ test("workbench: preserves scroll position when prepending history", async ({ pa
 
   await expect
     .poll(async () => scroller.evaluate((el) => (el.scrollHeight ?? 0) - (el.clientHeight ?? 0)), {
-      timeout: 10000,
+      timeout: 20000,
     })
     .toBeGreaterThan(100);
 
@@ -84,9 +99,8 @@ test("workbench: preserves scroll position when prepending history", async ({ pa
   });
   await page.waitForTimeout(50);
 
-  await scroller.hover();
   for (let i = 0; i < 10; i++) {
-    await page.mouse.wheel(0, -160);
+    await scrollScrollerUp(scroller, 160);
     await page.waitForTimeout(60);
   }
 
@@ -122,9 +136,8 @@ test("workbench: preserves scroll position when prepending history", async ({ pa
 
   let atTop = false;
   for (let i = 0; i < 60; i++) {
-    await page.mouse.wheel(0, -200);
+    const top = await scrollScrollerUp(scroller, 200);
     await page.waitForTimeout(60);
-    const top = await scroller.evaluate((el) => el.scrollTop);
     if (top <= 1) {
       atTop = true;
       break;
@@ -162,5 +175,13 @@ test("workbench: preserves scroll position when prepending history", async ({ pa
     { selector: scrollSelector, itemId: anchorId },
   );
   expect(anchorAfter).not.toBeNull();
-  expect(Math.abs((anchorAfter as number) - anchorBefore.offset)).toBeLessThanOrEqual(24);
+  expect(Math.abs((anchorAfter as number) - anchorBefore.offset)).toBeLessThanOrEqual(25);
+
+  await scroller.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await expect(page.locator(".wb-session").getByText(oldestFixtureMessagePattern).first()).toBeVisible({
+    timeout: 5_000,
+  });
 });

@@ -22,6 +22,7 @@ struct FixtureToolCall {
 }
 
 const LIVE_CONTEXT_WINDOW_MARKER: &str = "emit-live-context-window";
+const STREAM_ASSISTANT_PARTIALS_MARKER: &str = "stream-assistant-partials";
 
 fn live_context_window_metrics(content: &str) -> Option<Value> {
     if !content.contains(LIVE_CONTEXT_WINDOW_MARKER) {
@@ -33,6 +34,26 @@ fn live_context_window_metrics(content: &str) -> Option<Value> {
         "remaining_tokens_estimate": 75,
         "remaining_fraction": 0.75,
     }))
+}
+
+fn split_assistant_fragments(content: &str, chunk_count: usize) -> Vec<String> {
+    if content.is_empty() {
+        return vec![String::new()];
+    }
+    let chars: Vec<char> = content.chars().collect();
+    let total = chars.len();
+    let target_chunks = chunk_count.max(1).min(total);
+    let mut fragments = Vec::with_capacity(target_chunks);
+    let mut start = 0usize;
+    for index in 0..target_chunks {
+        let remaining = total.saturating_sub(start);
+        let remaining_chunks = target_chunks - index;
+        let take = remaining.div_ceil(remaining_chunks);
+        let end = (start + take).min(total);
+        fragments.push(chars[start..end].iter().collect());
+        start = end;
+    }
+    fragments
 }
 
 fn parse_fixture_tools(content: &str) -> Option<Vec<FixtureToolCall>> {
@@ -147,17 +168,38 @@ impl ProviderAdapter for FakeProviderAdapter {
             };
 
             let slow = input.content.contains("slow-diff-test");
+            let stream_assistant_partials =
+                input.content.contains(STREAM_ASSISTANT_PARTIALS_MARKER);
             let live_context_window = live_context_window_metrics(&input.content);
             let delay = if slow {
                 Duration::from_millis(1200)
             } else {
                 Duration::from_millis(10)
             };
+            let assistant_message_id = Uuid::new_v4().to_string();
+            let assistant_output = format!("done: {}", input.content);
+            let assistant_fragments = if stream_assistant_partials {
+                split_assistant_fragments(&assistant_output, 3)
+            } else {
+                vec![assistant_output.clone()]
+            };
+            let assistant_order_seq = 2_i64;
 
             tokio::select! {
                 _ = async {
-                    send(SessionEventType::AssistantChunk, json!({"content": format!("echo: {}", input.content)})).await;
-                    sleep(delay).await;
+                    for fragment in assistant_fragments {
+                        send(
+                            SessionEventType::AssistantChunk,
+                            json!({
+                                "content": fragment,
+                                "content_fragment": fragment,
+                                "message_id": assistant_message_id.clone(),
+                                "order_seq": assistant_order_seq,
+                            }),
+                        )
+                        .await;
+                        sleep(delay).await;
+                    }
                     if let Some(context_window) = live_context_window.clone() {
                         send(
                             SessionEventType::ContextWindowUpdate,
@@ -199,7 +241,16 @@ impl ProviderAdapter for FakeProviderAdapter {
                         send(SessionEventType::ToolResult, json!({"tool_call_id": tool_call_id, "result": "ok"})).await;
                         sleep(delay).await;
                     }
-                    send(SessionEventType::AssistantComplete, json!({"content": format!("done: {}", input.content)})).await;
+                    send(
+                        SessionEventType::AssistantComplete,
+                        json!({
+                            "content": assistant_output,
+                            "full_content": assistant_output,
+                            "message_id": assistant_message_id.clone(),
+                            "order_seq": assistant_order_seq,
+                        }),
+                    )
+                    .await;
                     sleep(delay).await;
                     let done_payload = if let Some(context_window) = live_context_window {
                         json!({"context_window": context_window})

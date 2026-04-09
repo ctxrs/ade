@@ -54,7 +54,7 @@ const buildSlowPrompt = (marker: string, index: number) => {
     input: { command: `printf '${marker}-${index}-${toolIndex + 1}'` },
     output_text: `${marker} output ${toolIndex + 1}`,
   }));
-  return `slow-diff-test emit-thought ${marker} ${index}
+  return `slow-diff-test stream-assistant-partials emit-thought ${marker} ${index}
 ${longBody}
 [[tool_calls]]
 ${JSON.stringify(toolCalls)}

@@ -2935,6 +2935,7 @@
   flex-direction: column;
   min-height: 0;
   overflow-x: hidden;
+  overflow-y: hidden;
   overflow-anchor: none;
   box-sizing: border-box;
   padding-left: var(--wb-session-padding-inline);
@@ -3020,6 +3021,8 @@
   min-width: 0;
   padding-inline: 0;
   overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
   overflow-anchor: none;
   scrollbar-width: none;
   -ms-overflow-style: none;

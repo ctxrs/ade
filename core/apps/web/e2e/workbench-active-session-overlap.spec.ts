@@ -37,7 +37,7 @@ const buildSlowPrompt = (marker: string, index: number) => {
     input: { command: `printf '${marker}-${index}-${toolIndex + 1}'` },
     output_text: `${marker} output ${toolIndex + 1}`,
   }));
-  return `slow-diff-test emit-thought ${marker} ${index}
+  return `slow-diff-test stream-assistant-partials emit-thought ${marker} ${index}
 ${longBody}
 [[tool_calls]]
 ${JSON.stringify(toolCalls)}
@@ -49,6 +49,13 @@ async function waitForVisibleSession(page: Page, sessionId: string) {
     timeout: 20_000,
   });
   await expect(page.locator(visibleScrollerSelector).first()).toBeVisible({ timeout: 20_000 });
+}
+
+async function waitForVisiblePendingAssistantRow(page: Page) {
+  const pendingAssistant = page
+    .locator(`${visibleSessionSelector} [data-thread-item-id^="assistant-"][data-thread-item-id$="-pending"]`)
+    .first();
+  await expect(pendingAssistant).toBeVisible({ timeout: 20_000 });
 }
 
 async function readVisibleThreadGeometry(page: Page): Promise<GeometrySnapshot> {
@@ -186,6 +193,7 @@ test("workbench: active session streaming never overlaps visible rows", async ({
   await request.post(`/api/sessions/${sessionId}/messages`, {
     data: { content: buildSlowPrompt("ACTIVE-OVERLAP", 1), delivery: "immediate" },
   });
+  await waitForVisiblePendingAssistantRow(page);
   await monitorNoOverlap(page, testInfo, sessionId!, debugLogs, "first");
 
   await expect(page.locator(visibleStatusSelector).last()).toHaveText(/Completed/i, { timeout: 60_000 });
@@ -194,6 +202,7 @@ test("workbench: active session streaming never overlaps visible rows", async ({
   await request.post(`/api/sessions/${sessionId}/messages`, {
     data: { content: buildSlowPrompt("ACTIVE-OVERLAP", 2), delivery: "immediate" },
   });
+  await waitForVisiblePendingAssistantRow(page);
   await monitorNoOverlap(page, testInfo, sessionId!, debugLogs, "second");
 
   await expect(page.locator(visibleStatusSelector).last()).toHaveText(/Completed/i, { timeout: 60_000 });

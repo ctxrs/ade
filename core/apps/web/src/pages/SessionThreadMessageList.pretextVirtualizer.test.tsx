@@ -63,6 +63,16 @@ const makeWrappingItems = (count = 12): WorkbenchListItem[] =>
     created_at: `2026-03-18T00:${String(index).padStart(2, "0")}:00Z`,
   }));
 
+const makeMessageRange = (prefix: string, count: number, startAt = 1): WorkbenchListItem[] =>
+  Array.from({ length: count }, (_, index) => ({
+    kind: "message" as const,
+    id: `${prefix}-${startAt + index}`,
+    role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+    content: `${prefix} message ${startAt + index}`,
+    attachments: [],
+    created_at: `2026-03-18T01:${String(index).padStart(2, "0")}:00Z`,
+  }));
+
 const makePendingAssistantItem = (content: string): WorkbenchListItem => ({
   kind: "assistant",
   id: "assistant-turn-1-pending",
@@ -305,6 +315,64 @@ describe("SessionThreadPretextVirtualizerList", () => {
     expect(mounts.get("message-4")).toBe(1);
   });
 
+  it("reveals the earliest prepended history row after scrolling to the top", () => {
+    const sessionId = "session-prepend-history-top";
+    const initialItems = makeMessageRange("message", 24);
+    const olderItems = makeMessageRange("older", 4);
+    const nextItems = [...olderItems, ...initialItems];
+
+    const { container, rerender } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={initialItems}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 3200 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+      scroller.scrollTop = 640;
+      fireEvent.scroll(scroller);
+      fireEvent.wheel(scroller, { deltaY: -120 });
+      scroller.scrollTop = 320;
+      fireEvent.scroll(scroller);
+    });
+
+    rerender(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={nextItems}
+        threadProjectionOp={{
+          kind: "prepend_history",
+          projectionRevision: 1,
+          changedItemIds: olderItems.map((item) => item.id),
+          remeasureItemIds: olderItems.map((item) => item.id),
+        }}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    act(() => {
+      scroller.scrollTop = 0;
+      fireEvent.scroll(scroller);
+    });
+
+    expect(getRenderedItemIds(container)[0]).toBe("older-1");
+  });
+
   it("keeps the viewport pinned to bottom when the viewport height shrinks while attached", () => {
     const { container } = render(
       <SessionThreadPretextVirtualizerList
@@ -490,6 +558,78 @@ describe("SessionThreadPretextVirtualizerList", () => {
     expect(screen.queryByRole("button", { name: "Jump to latest" })).not.toBeInTheDocument();
   });
 
+  it("remeasures immediately when a warmed runtime reopens at a different visible width", () => {
+    const sessionId = "session-reopen-warm-width-mismatch";
+    const listItems = makeWrappingItems(24);
+    primeSessionPretextRuntime({
+      sessionId,
+      listItems,
+      uiState: createDefaultSessionTranscriptUiState(context.verbosity, context.turnToolsLoading),
+      viewportWidth: 900,
+      viewportHeight: 300,
+    });
+
+    const runtime = getOrCreateSessionPretextRuntime(sessionId);
+    const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
+    syncItemsSpy.mockClear();
+
+    const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get() {
+        return this.getAttribute?.("data-pretext-virtualizer-list") === "1" ? 1280 : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return this.getAttribute?.("data-pretext-virtualizer-list") === "1" ? 420 : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return this.getAttribute?.("data-pretext-virtualizer-list") === "1" ? 5200 : 0;
+      },
+    });
+
+    try {
+      render(
+        <SessionThreadPretextVirtualizerList
+          style={{ height: 420 }}
+          sessionId={sessionId}
+          isActive
+          listItems={listItems}
+          threadProjectionOp={noopProjectionOp}
+          itemContent={(_, item) => <div>{"content" in item ? item.content : item.id}</div>}
+          itemKey={(item) => item.id}
+          context={context}
+        />,
+      );
+    } finally {
+      if (originalClientWidth) {
+        Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
+      } else {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).clientWidth;
+      }
+      if (originalClientHeight) {
+        Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      } else {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).clientHeight;
+      }
+      if (originalScrollHeight) {
+        Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      } else {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).scrollHeight;
+      }
+    }
+
+    expect(syncItemsSpy).toHaveBeenCalled();
+  });
+
   it("preserves the detached anchor item when the viewport width changes", () => {
     const listItems = makeWrappingItems(24);
     const { container } = render(
@@ -529,6 +669,42 @@ describe("SessionThreadPretextVirtualizerList", () => {
 
     const afterIds = getRenderedItemIds(container);
     expect(afterIds).toContain(String(anchorId));
+  });
+
+  it("remeasures items when the visible viewport width changes", () => {
+    const sessionId = "session-width-remeasure";
+    const listItems = makeWrappingItems(16);
+    const { container } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={listItems}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{"content" in item ? item.content : item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 400, clientWidth: 420, scrollHeight: 7200 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+    });
+
+    const runtime = getOrCreateSessionPretextRuntime(sessionId);
+    const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
+    syncItemsSpy.mockClear();
+
+    defineScrollerMetrics(scroller, { clientHeight: 400, clientWidth: 900, scrollHeight: 5200 });
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+    });
+
+    expect(syncItemsSpy).toHaveBeenCalled();
   });
 
   it("primes hidden-session transcript state for bottom reopen semantics", () => {
