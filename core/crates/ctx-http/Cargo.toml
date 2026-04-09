@@ -16,6 +16,7 @@ ctx-fs = { path = "../ctx-fs" }
 ctx-bundled-assets = { path = "../ctx-bundled-assets", features = ["test-support"] }
 ctx-harness-sources = { path = "../ctx-harness-sources" }
 ctx-harness-setup = { path = "../ctx-harness-setup" }
+ctx-linux-sandbox-runtime = { path = "../ctx-linux-sandbox-runtime" }
 ctx-runtime-assets = { path = "../ctx-runtime-assets" }
 ctx-provider-accounts = { path = "../ctx-provider-accounts" }
 ctx-provider-auth-import = { path = "../ctx-provider-auth-import" }

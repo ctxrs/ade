@@ -1511,6 +1511,7 @@ dependencies = [
  "ctx-fs",
  "ctx-harness-setup",
  "ctx-harness-sources",
+ "ctx-linux-sandbox-runtime",
  "ctx-lsp",
  "ctx-provider-accounts",
  "ctx-provider-auth-import",
@@ -1575,6 +1576,19 @@ dependencies = [
  "x25519-dalek",
  "zip",
  "zstd",
+]
+
+[[package]]
+name = "ctx-linux-sandbox-runtime"
+version = "0.34.0"
+dependencies = [
+ "anyhow",
+ "ctx-harness-setup",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "which",
 ]
 
 [[package]]

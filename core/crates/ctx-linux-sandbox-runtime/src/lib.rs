@@ -1,6 +1,88 @@
-use super::*;
+use std::io::ErrorKind;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::Duration;
 
-use crate::logs;
+use anyhow::{Context, Result};
+use ctx_harness_setup::{
+    observe_log, observe_phase, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,
+};
+use serde::{Deserialize, Serialize};
+use tokio::fs;
+use tokio::io::AsyncWriteExt;
+use tokio::process::Command;
+
+fn redact_sensitive(input: &str) -> String {
+    fn redact_after_marker(mut s: String, marker: &str) -> String {
+        let redacted = "[REDACTED]";
+        let mut search_from = 0usize;
+        while let Some(rel) = s[search_from..].find(marker) {
+            let marker_start = search_from + rel;
+            let start = marker_start + marker.len();
+            if start >= s.len() {
+                break;
+            }
+            if s[start..].starts_with(redacted) {
+                search_from = start + redacted.len();
+                continue;
+            }
+
+            let mut end = s.len();
+            for (i, ch) in s[start..].char_indices() {
+                if ch.is_whitespace() || ch == '"' || ch == '\'' || ch == '&' {
+                    end = start + i;
+                    break;
+                }
+            }
+
+            s.replace_range(start..end, redacted);
+            search_from = start + redacted.len();
+        }
+        s
+    }
+
+    let mut out = input.to_string();
+    out = redact_after_marker(out, "Bearer ");
+    out = redact_after_marker(out, "bearer ");
+    out = redact_after_marker(out, "Authorization: Bearer ");
+    out = redact_after_marker(out, "authorization: Bearer ");
+    out = redact_after_marker(out, "token=");
+    out = redact_after_marker(out, "TOKEN=");
+    out = redact_after_marker(out, "CTX_AUTH_TOKEN=");
+    out = redact_after_marker(out, "CLAUDE_CODE_OAUTH_TOKEN=");
+    out = redact_after_marker(out, "AUGMENT_SESSION_AUTH=");
+    out = redact_after_marker(out, "AUGMENT_API_TOKEN=");
+    out = redact_after_marker(out, "\"CLAUDE_CODE_OAUTH_TOKEN\":\"");
+    out = redact_after_marker(out, "\"claude_code_oauth_token\":\"");
+    out = redact_after_marker(out, "\"AUGMENT_SESSION_AUTH\":\"");
+    out = redact_after_marker(out, "\"augment_session_auth\":\"");
+    out = redact_after_marker(out, "\"AUGMENT_API_TOKEN\":\"");
+    out = redact_after_marker(out, "\"augment_api_token\":\"");
+    out = redact_after_marker(out, "ctxAuthToken\":\"");
+    out = redact_after_marker(out, "ctx_auth_token\":\"");
+    out
+}
+
+pub fn command_output_message(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    format!("{stderr}\n{stdout}").trim().to_string()
+}
+
+async fn command_output_with_timeout(
+    mut command: Command,
+    timeout: Duration,
+) -> Result<std::process::Output> {
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    command.kill_on_drop(true);
+    let child = command.spawn().context("spawning command")?;
+    match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Ok(res) => Ok(res?),
+        Err(_) => anyhow::bail!("command timed out after {}s", timeout.as_secs()),
+    }
+}
 
 const NERDCTL_VERSION: &str = "v2.2.1";
 const ROOTFUL_WRAPPER_PATH: &str = "/usr/local/bin/ctx-rootful-nerdctl";
@@ -180,7 +262,7 @@ fn current_username() -> Result<String> {
     if !output.status.success() {
         let detail = command_output_message(&output);
         if !detail.is_empty() {
-            tracing::warn!(target: "linux_sandbox", detail = %crate::logs::redact_sensitive(&detail), "id -un failed while preparing Linux sandbox runtime");
+            tracing::warn!(target: "linux_sandbox", detail = %redact_sensitive(&detail), "id -un failed while preparing Linux sandbox runtime");
         }
         anyhow::bail!("Failed to determine current user while preparing Linux sandbox runtime");
     }
@@ -196,7 +278,7 @@ fn current_username() -> Result<String> {
     Ok(value)
 }
 
-pub(crate) fn preferred_native_sandbox_cli_path() -> Option<PathBuf> {
+pub fn preferred_native_sandbox_cli_path() -> Option<PathBuf> {
     let wrapper = PathBuf::from(ROOTFUL_WRAPPER_PATH);
     if wrapper.is_file() {
         return Some(wrapper);
@@ -401,13 +483,13 @@ async fn status_via_bootstrap(
         parsed
     } else {
         let detail = command_output_message(&output);
-        tracing::warn!(target: "linux_sandbox", detail = %crate::logs::redact_sensitive(&detail), "Linux sandbox bootstrap status failed");
+        tracing::warn!(target: "linux_sandbox", detail = %redact_sensitive(&detail), "Linux sandbox bootstrap status failed");
         anyhow::bail!("Linux sandbox runtime status check failed");
     };
     Ok(build_status(paths, platform, bootstrap))
 }
 
-pub(crate) async fn linux_sandbox_runtime_status(
+pub async fn linux_sandbox_runtime_status(
     data_root: &Path,
 ) -> Result<LinuxSandboxRuntimeStatus> {
     let platform = linux_sandbox_platform();
@@ -415,7 +497,7 @@ pub(crate) async fn linux_sandbox_runtime_status(
     match status_via_bootstrap(data_root, &paths, &platform).await {
         Ok(status) => Ok(status),
         Err(err) => {
-            tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_status failed");
+            tracing::warn!(target: "linux_sandbox", error = %redact_sensitive(&err.to_string()), "linux_sandbox_runtime_status failed");
             Ok(bootstrap_failed_status(
                 &paths,
                 &platform,
@@ -425,7 +507,7 @@ pub(crate) async fn linux_sandbox_runtime_status(
     }
 }
 
-pub(crate) async fn stage_linux_sandbox_runtime_downloads(
+pub async fn stage_linux_sandbox_runtime_downloads(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<LinuxSandboxRuntimeStatus> {
@@ -450,7 +532,7 @@ pub(crate) async fn stage_linux_sandbox_runtime_downloads(
         parsed
     } else {
         let detail = command_output_message(&output);
-        tracing::warn!(target: "linux_sandbox", detail = %crate::logs::redact_sensitive(&detail), "Linux sandbox runtime downloads failed to stage");
+        tracing::warn!(target: "linux_sandbox", detail = %redact_sensitive(&detail), "Linux sandbox runtime downloads failed to stage");
         anyhow::bail!("Linux sandbox runtime downloads failed to stage");
     };
     Ok(build_status(&paths, &platform, bootstrap))
@@ -524,7 +606,7 @@ async fn try_sudo_non_interactive(args: &[String]) -> Result<std::process::Outpu
     run_command_with_stdin(command, BOOTSTRAP_SCRIPT.as_bytes()).await
 }
 
-pub(crate) async fn prepare_linux_sandbox_runtime(
+pub async fn prepare_linux_sandbox_runtime(
     data_root: &Path,
     activation_mode: LinuxSandboxActivationMode,
     sudo_password: Option<&str>,
@@ -616,7 +698,7 @@ pub(crate) async fn prepare_linux_sandbox_runtime(
                     }
                 } else {
                     let detail = command_output_message(&output);
-                    tracing::warn!(target: "linux_sandbox", detail = %crate::logs::redact_sensitive(&detail), "Preparing Linux sandbox runtime failed during activation");
+                    tracing::warn!(target: "linux_sandbox", detail = %redact_sensitive(&detail), "Preparing Linux sandbox runtime failed during activation");
                     anyhow::bail!("Preparing Linux sandbox runtime failed. ctx couldn't prepare the sandbox runtime on this machine.");
                 }
             }
@@ -660,12 +742,12 @@ pub(crate) async fn prepare_linux_sandbox_runtime(
                             });
                         }
                         let detail = command_output_message(&output);
-                        tracing::warn!(target: "linux_sandbox", detail = %crate::logs::redact_sensitive(&detail), "Preparing sandbox on remote host failed during activation");
+                        tracing::warn!(target: "linux_sandbox", detail = %redact_sensitive(&detail), "Preparing sandbox on remote host failed during activation");
                         anyhow::bail!("Preparing sandbox on remote host failed. ctx couldn't prepare the sandbox runtime on this host.");
                     }
                 } else {
                     let detail = command_output_message(&output);
-                    tracing::warn!(target: "linux_sandbox", detail = %crate::logs::redact_sensitive(&detail), "Preparing sandbox on remote host failed during activation");
+                    tracing::warn!(target: "linux_sandbox", detail = %redact_sensitive(&detail), "Preparing sandbox on remote host failed during activation");
                     anyhow::bail!("Preparing sandbox on remote host failed. ctx couldn't prepare the sandbox runtime on this host.");
                 }
             }
