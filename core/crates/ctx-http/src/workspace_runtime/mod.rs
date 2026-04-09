@@ -486,6 +486,7 @@ pub(crate) const CTX_AVF_HOST_DATA_ROOT_ENV: &str = "CTX_AVF_HOST_DATA_ROOT";
 pub(crate) const CTX_AVF_WORKSPACE_ID_ENV: &str = "CTX_AVF_WORKSPACE_ID";
 pub(crate) const CTX_AVF_WORKTREE_ID_ENV: &str = "CTX_AVF_WORKTREE_ID";
 pub(crate) const CTX_AVF_HOST_WORKTREE_ROOT_ENV: &str = "CTX_AVF_HOST_WORKTREE_ROOT";
+pub(crate) const CTX_AVF_REAL_GUEST_EXEC_ENV: &str = "CTX_AVF_REAL_GUEST_EXEC";
 const SANDBOX_INFO_TIMEOUT: Duration = Duration::from_secs(5);
 const SANDBOX_MACHINE_START_TIMEOUT: Duration = Duration::from_secs(180);
 // Bound machine init so wedged sandbox CLI subprocesses cannot stall launch indefinitely.

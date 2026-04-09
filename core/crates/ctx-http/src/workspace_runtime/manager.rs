@@ -247,6 +247,10 @@ impl HarnessRuntimeManager {
                 "CTX_AVF_GUEST_WORKTREE_ROOT".to_string(),
                 guest_worktree_root.to_string_lossy().to_string(),
             );
+            env_overrides.insert(
+                CTX_AVF_REAL_GUEST_EXEC_ENV.to_string(),
+                if workspace_vm.simulated { "0" } else { "1" }.to_string(),
+            );
             if let Some(log_path) = workspace_vm.log_path.as_ref() {
                 env_overrides.insert(
                     "CTX_AVF_WORKSPACE_VM_LOG".to_string(),

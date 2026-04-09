@@ -108,6 +108,24 @@ pub(super) fn shared_vm_guest_agent_log_path(data_root: &Path) -> PathBuf {
     shared_vm_logs_root(data_root).join(SHARED_VM_GUEST_AGENT_LOG_FILE)
 }
 
+pub(super) fn shared_vm_guest_host_share_root() -> PathBuf {
+    PathBuf::from(SHARED_VM_GUEST_HOST_DATA_ROOT)
+}
+
+pub(super) fn shared_vm_guest_host_share_path(
+    data_root: &Path,
+    host_path: &Path,
+) -> Result<PathBuf> {
+    let relative = host_path.strip_prefix(data_root).with_context(|| {
+        format!(
+            "host path {} did not live under shared data root {}",
+            host_path.display(),
+            data_root.display()
+        )
+    })?;
+    Ok(shared_vm_guest_host_share_root().join(relative))
+}
+
 pub(super) fn shared_vm_kernel_cmdline_path(runtime_root: &Path) -> PathBuf {
     runtime_root
         .join("helpers")

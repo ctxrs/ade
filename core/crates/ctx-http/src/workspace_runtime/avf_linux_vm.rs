@@ -32,7 +32,7 @@ use crate::updates;
 
 pub(crate) use self::helper_wrappers::{
     build_guest_exec_command, helper_path, prepare_guest_worktree, prepare_runtime_layout,
-    probe_helper, run_guest_exec_capture, start_workspace_vm, stop_shared_vm,
+    probe_helper, run_guest_exec_capture, shared_vm_state, start_workspace_vm, stop_shared_vm,
     workspace_vm_data_root, workspace_vm_state,
 };
 pub(crate) use self::runtime_bootstrap::{

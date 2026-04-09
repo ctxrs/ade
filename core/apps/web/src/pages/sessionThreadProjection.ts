@@ -77,6 +77,14 @@ function startsWithIds(current: readonly WorkbenchListItem[], next: readonly Wor
   return true;
 }
 
+function startsWithSameItems(current: readonly WorkbenchListItem[], next: readonly WorkbenchListItem[]): boolean {
+  if (next.length < current.length) return false;
+  for (let index = 0; index < current.length; index += 1) {
+    if (current[index] !== next[index]) return false;
+  }
+  return true;
+}
+
 function endsWithIds(current: readonly WorkbenchListItem[], next: readonly WorkbenchListItem[]): boolean {
   if (next.length < current.length) return false;
   const offset = next.length - current.length;
@@ -162,7 +170,7 @@ export function classifyWorkbenchThreadProjectionOp(params: {
     );
   }
 
-  if (next.length > current.length && startsWithIds(current, next)) {
+  if (next.length > current.length && startsWithIds(current, next) && startsWithSameItems(current, next)) {
     const changedItemIds = next.slice(current.length).map((item) => item.id);
     return createWorkbenchThreadProjectionOp(
       "append_stream",

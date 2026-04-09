@@ -92,6 +92,7 @@ const preparedCache = new Map<string, PreparedText>();
 const preparedSegmentsCache = new Map<string, PreparedTextWithSegments>();
 const markdownDocumentCache = new Map<string, SessionMarkdownDocument>();
 const collapsedSpaceWidthCache = new Map<string, number>();
+const plainTextBlockHeightCache = new Map<string, number>();
 
 const clampHeight = (value: number): number =>
   Number.isFinite(value) && value > 0 ? Math.max(1, value) : 1;
@@ -179,6 +180,115 @@ export function measureSessionTextHeight(params: {
   whiteSpace?: TextWhiteSpace;
 }): number {
   return normalizeHeight(measureTextHeight(params));
+}
+
+function measureCollapsedPlainTextLineHeight(params: {
+  cacheKey: string;
+  text: string;
+  font: string;
+  width: number;
+  lineHeight: number;
+}): number {
+  const typography: TextBlockTypography = {
+    body: params.font,
+    strong: params.font,
+    emphasis: params.font,
+    strongEmphasis: params.font,
+    lineHeight: params.lineHeight,
+  };
+  return measureInlineRunsHeight({
+    runs: [{ kind: "text", text: params.text, style: "body" }],
+    width: params.width,
+    typography,
+    cacheKeyPrefix: params.cacheKey,
+  });
+}
+
+function measureRenderedPlainTextBlockHeight(params: {
+  text: string;
+  width: number;
+}): number | null {
+  if (typeof document === "undefined" || !document.body) {
+    return null;
+  }
+
+  const host = document.createElement("div");
+  host.className = "wb-turn-header-content";
+  host.style.position = "fixed";
+  host.style.left = "-10000px";
+  host.style.top = "0";
+  host.style.width = `${Math.max(1, params.width)}px`;
+  host.style.margin = "0";
+  host.style.padding = "0";
+  host.style.border = "0";
+  host.style.boxSizing = "border-box";
+  host.style.visibility = "hidden";
+
+  const fragment = document.createDocumentFragment();
+  const lines = params.text.split("\n");
+  lines.forEach((line, index) => {
+    const span = document.createElement("span");
+    span.textContent = line;
+    fragment.appendChild(span);
+    if (index < lines.length - 1) {
+      fragment.appendChild(document.createElement("br"));
+    }
+  });
+  host.appendChild(fragment);
+  document.body.appendChild(host);
+  const height = host.getBoundingClientRect().height;
+  host.remove();
+  return height > 0 ? normalizeHeight(height) : null;
+}
+
+export function measureSessionPlainTextBlockHeight(params: {
+  cacheKey: string;
+  text: string;
+  font: string;
+  width: number;
+  lineHeight: number;
+}): number {
+  const normalizedText = String(params.text ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[\r\f]/g, "\n");
+
+  const measurementKey = `${params.cacheKey}:plain-text:${params.font}:${params.width}:${params.lineHeight}`;
+  const cached = plainTextBlockHeightCache.get(measurementKey);
+  if (cached != null) {
+    return cached;
+  }
+
+  const renderedHeight = measureRenderedPlainTextBlockHeight({
+    text: normalizedText,
+    width: params.width,
+  });
+  if (renderedHeight != null) {
+    plainTextBlockHeightCache.set(measurementKey, renderedHeight);
+    pruneCache(plainTextBlockHeightCache, PREPARED_CACHE_LIMIT);
+    return renderedHeight;
+  }
+
+  // EXCEPTION: jsdom has no real layout engine, so browser-faithful DOM measurement
+  // returns 0 there. Keep a deterministic token estimate for test environments.
+  const totalHeight = normalizedText.split("\n").reduce((sum, line, index) => {
+    if (line.length === 0) {
+      return sum + params.lineHeight;
+    }
+    return (
+      sum +
+      measureCollapsedPlainTextLineHeight({
+        cacheKey: `${params.cacheKey}:line:${index}`,
+        text: line,
+        font: params.font,
+        width: params.width,
+        lineHeight: params.lineHeight,
+      })
+    );
+  }, 0);
+  const fallbackHeight = normalizeHeight(totalHeight);
+  plainTextBlockHeightCache.set(measurementKey, fallbackHeight);
+  pruneCache(plainTextBlockHeightCache, PREPARED_CACHE_LIMIT);
+  return fallbackHeight;
 }
 
 function parseMarkdown(content: string): SessionMarkdownDocument {
@@ -758,6 +868,7 @@ export function clearSessionMarkdownMeasurementCaches(): void {
   preparedSegmentsCache.clear();
   markdownDocumentCache.clear();
   collapsedSpaceWidthCache.clear();
+  plainTextBlockHeightCache.clear();
 }
 
 export function measureSessionMarkdownDocument(markdown: string, width: number): number {

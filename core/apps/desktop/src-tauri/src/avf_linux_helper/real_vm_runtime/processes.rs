@@ -7,6 +7,27 @@ use super::readiness::{
 };
 use super::*;
 
+pub(in super::super) fn stop_shared_vm_owner_after_readiness_failure(
+    data_root: &Path,
+    owner_pid: u32,
+) -> Result<()> {
+    append_shared_vm_log_line(
+        data_root,
+        &format!(
+            "shared AVF Linux VM launch-ready failed; waiting up to {} for owner {owner_pid} to exit before writable-rootfs reset",
+            format_duration_ms(SHARED_VM_SHUTDOWN_WAIT_TIMEOUT)
+        ),
+    )?;
+    stop_shared_vm_server(owner_pid);
+    if wait_for_process_exit(owner_pid, SHARED_VM_SHUTDOWN_WAIT_TIMEOUT) {
+        return Ok(());
+    }
+    bail!(
+        "shared AVF Linux VM owner {owner_pid} did not exit within {} after launch-ready failure",
+        format_duration_ms(SHARED_VM_SHUTDOWN_WAIT_TIMEOUT)
+    );
+}
+
 pub(super) fn spawn_shared_vm_memory_watchdog(data_root: &Path, owner_pid: u32) -> Result<u32> {
     let current_exe = std::env::current_exe().context("resolving helper executable path")?;
     let log_path = shared_vm_log_path(data_root);
@@ -74,7 +95,8 @@ fn spawn_real_shared_vm_owner_once(data_root: &Path, readiness_timeout: Duration
     ) {
         Ok(report) => report,
         Err(err) => {
-            stop_shared_vm_server(child.id());
+            stop_shared_vm_owner_after_readiness_failure(data_root, child.id())
+                .context("stopping failed shared AVF VM owner after launch-ready error")?;
             return Err(err);
         }
     };
@@ -116,10 +138,12 @@ pub(in super::super) fn spawn_real_shared_vm_owner(
         Ok(pid) => Ok(pid),
         Err(err) if shared_vm_readiness_failure_requires_writable_rootfs_reset(&err) => {
             eprintln!(
-                "[ctx-avf-linux] guest readiness failed bridge probe; resetting writable rootfs and retrying once: {err:#}"
+                "[ctx-avf-linux] guest readiness detected a writable-surface contract failure; resetting writable rootfs and retrying once: {err:#}"
             );
             reset_writable_shared_vm_runtime_state(data_root)
-                .context("resetting writable shared VM runtime state after bridge probe failure")?;
+                .context(
+                    "resetting writable shared VM runtime state after a writable-surface readiness failure",
+                )?;
             spawn_real_shared_vm_owner_once(data_root, cold_boot_real_guest_exec_ready_timeout())
                 .context("retrying shared AVF VM owner boot after writable rootfs reset")
         }

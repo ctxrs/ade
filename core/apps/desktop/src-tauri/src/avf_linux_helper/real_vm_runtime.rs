@@ -28,6 +28,8 @@ pub(super) use self::guest_control::{
 };
 pub(super) use self::owner::{run_shared_vm, run_shared_vm_memory_watchdog};
 #[cfg(test)]
+pub(super) use self::processes::stop_shared_vm_owner_after_readiness_failure;
+#[cfg(test)]
 pub(super) use self::processes::wait_for_socket_accepting_connections;
 pub(super) use self::processes::{
     spawn_guest_agent_server, spawn_real_shared_vm_owner, spawn_shared_vm_server,

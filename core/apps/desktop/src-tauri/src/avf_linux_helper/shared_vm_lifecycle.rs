@@ -253,7 +253,7 @@ pub(super) fn start_shared_vm(
         runtime_version.as_str(),
     );
     let requested_writable_surface_contract_digest =
-        shared_vm_writable_surface_contract_digest(data_root);
+        shared_vm_writable_surface_contract_digest(data_root)?;
     let runtime_shape_changed = match state.runtime_shape_digest.as_deref() {
         Some(previous_digest) => previous_digest != requested_runtime_shape_digest.as_str(),
         None => {
@@ -745,12 +745,45 @@ pub(super) fn shared_vm_shutdown_requested(data_root: &Path) -> bool {
 pub(super) fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
-        if !shared_vm_server_process_alive(pid) {
+        if process_has_exited(pid) {
             return true;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+    process_has_exited(pid)
+}
+
+#[cfg(unix)]
+fn process_has_exited(pid: u32) -> bool {
+    if let Some(exited) = try_reap_owned_process(pid) {
+        return exited;
+    }
     !shared_vm_server_process_alive(pid)
+}
+
+#[cfg(not(unix))]
+fn process_has_exited(pid: u32) -> bool {
+    !shared_vm_server_process_alive(pid)
+}
+
+#[cfg(unix)]
+fn try_reap_owned_process(pid: u32) -> Option<bool> {
+    loop {
+        let mut status = 0_i32;
+        let result = unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) };
+        if result == pid as i32 {
+            return Some(true);
+        }
+        if result == 0 {
+            return Some(false);
+        }
+        let err = std::io::Error::last_os_error();
+        match err.raw_os_error() {
+            Some(code) if code == libc::EINTR => continue,
+            Some(code) if code == libc::ECHILD => return None,
+            _ => return None,
+        }
+    }
 }
 
 #[cfg(unix)]

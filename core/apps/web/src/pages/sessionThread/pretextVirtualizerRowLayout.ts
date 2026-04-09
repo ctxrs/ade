@@ -13,6 +13,7 @@ import { isExpandableMessageContent, resolveWorkbenchMessageExpanded } from "../
 import {
   clearSessionMarkdownMeasurementCaches,
   measureSessionMarkdownDocument,
+  measureSessionPlainTextBlockHeight,
   measureSessionTextHeight,
 } from "./sessionMarkdownMeasurement";
 import {
@@ -158,13 +159,12 @@ function measureTurnHeaderHeight(
 ): number {
   const plainText = header.plain_text ?? header.content ?? "";
   const expanded = isExpandedTurnHeader(header, plainText, context);
-  const textHeight = measureTextHeight({
+  const textHeight = measureSessionPlainTextBlockHeight({
     cacheKey: `turn-header:${header.id}:${plainText}`,
     text: plainText,
     font: BODY_FONT,
     width: resolveTurnHeaderTextWidth(viewportWidth),
     lineHeight: BODY_LINE_HEIGHT_PX,
-    whiteSpace: "pre-wrap",
   });
   const collapsedTextHeight = expanded ? textHeight : Math.min(textHeight, TURN_HEADER_COLLAPSED_MAX_HEIGHT_PX);
   const imageCount = expanded ? countImageAttachments(header.attachments) : 0;

@@ -757,7 +757,7 @@ case "$subcmd" in
       if [ "$mount_type" = "volume" ]; then
         printf '{{"Type":"volume","Name":"%s","Destination":"%s"}}' "$mount_src" "$mount_dst"
       else
-        printf '{{"Type":"bind","Destination":"%s"}}' "$mount_dst"
+        printf '{{"Type":"bind","Source":"%s","Destination":"%s"}}' "$mount_src" "$mount_dst"
       fi
       first=0
     done < "$mounts_file"

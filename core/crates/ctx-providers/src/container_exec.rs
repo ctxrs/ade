@@ -20,6 +20,13 @@ const CTX_AVF_WORKSPACE_ID_ENV: &str = "CTX_AVF_WORKSPACE_ID";
 const CTX_AVF_WORKTREE_ID_ENV: &str = "CTX_AVF_WORKTREE_ID";
 const CTX_AVF_HOST_WORKTREE_ROOT_ENV: &str = "CTX_AVF_HOST_WORKTREE_ROOT";
 const CTX_AVF_GUEST_WORKTREE_ROOT_ENV: &str = "CTX_AVF_GUEST_WORKTREE_ROOT";
+const CTX_AVF_REAL_GUEST_EXEC_ENV: &str = "CTX_AVF_REAL_GUEST_EXEC";
+const SHARED_VM_SANDBOX_CLI_GUEST_HOME: &str = "/ctx/home/root";
+const SHARED_VM_SANDBOX_CLI_GUEST_XDG_CONFIG: &str = "/ctx/cache/xdg/config";
+const SHARED_VM_SANDBOX_CLI_GUEST_XDG_DATA: &str = "/ctx/cache/xdg/data";
+const SHARED_VM_SANDBOX_CLI_GUEST_XDG_CACHE: &str = "/ctx/cache/xdg/cache";
+const SHARED_VM_SANDBOX_CLI_GUEST_XDG_RUNTIME: &str = "/ctx/tmp/xdg-runtime-root";
+const SHARED_VM_SANDBOX_CLI_GUEST_TMP: &str = "/ctx/tmp";
 
 #[derive(Debug, Clone)]
 pub enum ContainerExecSpec {
@@ -34,6 +41,7 @@ pub enum ContainerExecSpec {
     SharedVmContainer {
         helper_path: String,
         data_root: PathBuf,
+        real_guest_exec: bool,
         workspace_id: String,
         worktree_id: String,
         host_worktree_root: PathBuf,
@@ -48,6 +56,9 @@ pub fn container_exec_spec(env: &HashMap<String, String>) -> Option<ContainerExe
         return Some(ContainerExecSpec::SharedVmContainer {
             helper_path: env.get(CTX_AVF_LINUX_HELPER_PATH_ENV)?.to_string(),
             data_root: PathBuf::from(env.get(CTX_AVF_HOST_DATA_ROOT_ENV)?),
+            real_guest_exec: env
+                .get(CTX_AVF_REAL_GUEST_EXEC_ENV)
+                .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes")),
             workspace_id: env.get(CTX_AVF_WORKSPACE_ID_ENV)?.to_string(),
             worktree_id: env.get(CTX_AVF_WORKTREE_ID_ENV)?.to_string(),
             host_worktree_root: PathBuf::from(env.get(CTX_AVF_HOST_WORKTREE_ROOT_ENV)?),
@@ -135,6 +146,7 @@ pub fn build_container_exec_command(
         ContainerExecSpec::SharedVmContainer {
             helper_path,
             data_root,
+            real_guest_exec,
             workspace_id,
             worktree_id: _,
             host_worktree_root,
@@ -158,7 +170,12 @@ pub fn build_container_exec_command(
                 .arg("nerdctl")
                 .arg("--user")
                 .arg("root");
-            for (key, value) in sandbox_cli_env_for_data_root(&data_root.to_string_lossy()) {
+            let sandbox_env = if *real_guest_exec {
+                shared_vm_sandbox_cli_guest_env()
+            } else {
+                sandbox_cli_env_for_data_root(&data_root.to_string_lossy())
+            };
+            for (key, value) in sandbox_env {
                 cmd.arg("--env").arg(format!("{key}={value}"));
             }
             cmd.arg("--");
@@ -330,12 +347,50 @@ fn sandbox_cli_env_for_data_root(data_root: &str) -> HashMap<String, String> {
             xdg_data.to_string_lossy().to_string(),
         ),
         (
+            "XDG_CACHE_HOME".to_string(),
+            xdg_root.join("cache").to_string_lossy().to_string(),
+        ),
+        (
             "XDG_RUNTIME_DIR".to_string(),
             xdg_run.to_string_lossy().to_string(),
         ),
         (
             "HOME".to_string(),
             sandbox_home.to_string_lossy().to_string(),
+        ),
+        (
+            "CONTAINERD_ADDRESS".to_string(),
+            "/run/containerd/containerd.sock".to_string(),
+        ),
+        ("CONTAINERD_NAMESPACE".to_string(), "default".to_string()),
+        ("TMPDIR".to_string(), tmp.clone()),
+        ("TMP".to_string(), tmp.clone()),
+        ("TEMP".to_string(), tmp),
+    ])
+}
+
+fn shared_vm_sandbox_cli_guest_env() -> HashMap<String, String> {
+    let tmp = SHARED_VM_SANDBOX_CLI_GUEST_TMP.to_string();
+    HashMap::from([
+        (
+            "XDG_CONFIG_HOME".to_string(),
+            SHARED_VM_SANDBOX_CLI_GUEST_XDG_CONFIG.to_string(),
+        ),
+        (
+            "XDG_DATA_HOME".to_string(),
+            SHARED_VM_SANDBOX_CLI_GUEST_XDG_DATA.to_string(),
+        ),
+        (
+            "XDG_CACHE_HOME".to_string(),
+            SHARED_VM_SANDBOX_CLI_GUEST_XDG_CACHE.to_string(),
+        ),
+        (
+            "XDG_RUNTIME_DIR".to_string(),
+            SHARED_VM_SANDBOX_CLI_GUEST_XDG_RUNTIME.to_string(),
+        ),
+        (
+            "HOME".to_string(),
+            SHARED_VM_SANDBOX_CLI_GUEST_HOME.to_string(),
         ),
         (
             "CONTAINERD_ADDRESS".to_string(),
@@ -375,6 +430,10 @@ mod tests {
             Some(sandbox_root.join("xdg").join("data"))
         );
         assert_eq!(
+            env.get("XDG_CACHE_HOME").map(PathBuf::from),
+            Some(sandbox_root.join("xdg").join("cache"))
+        );
+        assert_eq!(
             env.get("CONTAINERD_ADDRESS").map(String::as_str),
             Some("/run/containerd/containerd.sock")
         );
@@ -382,6 +441,31 @@ mod tests {
             env.get("CONTAINERD_NAMESPACE").map(String::as_str),
             Some("default")
         );
+    }
+
+    #[test]
+    fn shared_vm_sandbox_cli_guest_env_uses_ctx_paths() {
+        let env = shared_vm_sandbox_cli_guest_env();
+        assert_eq!(
+            env.get("XDG_CONFIG_HOME").map(String::as_str),
+            Some("/ctx/cache/xdg/config")
+        );
+        assert_eq!(
+            env.get("XDG_DATA_HOME").map(String::as_str),
+            Some("/ctx/cache/xdg/data")
+        );
+        assert_eq!(
+            env.get("XDG_CACHE_HOME").map(String::as_str),
+            Some("/ctx/cache/xdg/cache")
+        );
+        assert_eq!(
+            env.get("XDG_RUNTIME_DIR").map(String::as_str),
+            Some("/ctx/tmp/xdg-runtime-root")
+        );
+        assert_eq!(env.get("HOME").map(String::as_str), Some("/ctx/home/root"));
+        assert_eq!(env.get("TMPDIR").map(String::as_str), Some("/ctx/tmp"));
+        assert_eq!(env.get("TMP").map(String::as_str), Some("/ctx/tmp"));
+        assert_eq!(env.get("TEMP").map(String::as_str), Some("/ctx/tmp"));
     }
 
     #[test]
@@ -508,6 +592,7 @@ mod tests {
             CTX_AVF_HOST_DATA_ROOT_ENV.to_string(),
             "/tmp/ctx-data-root".to_string(),
         );
+        env.insert(CTX_AVF_REAL_GUEST_EXEC_ENV.to_string(), "1".to_string());
         env.insert(CTX_AVF_WORKSPACE_ID_ENV.to_string(), "ws-123".to_string());
         env.insert(CTX_AVF_WORKTREE_ID_ENV.to_string(), "wt-456".to_string());
         env.insert(
@@ -528,6 +613,7 @@ mod tests {
             ContainerExecSpec::SharedVmContainer {
                 helper_path,
                 data_root,
+                real_guest_exec,
                 workspace_id,
                 worktree_id,
                 host_worktree_root,
@@ -537,6 +623,7 @@ mod tests {
             } => {
                 assert_eq!(helper_path, "/tmp/ctx-avf-linux-helper");
                 assert_eq!(data_root, PathBuf::from("/tmp/ctx-data-root"));
+                assert!(real_guest_exec);
                 assert_eq!(workspace_id, "ws-123");
                 assert_eq!(worktree_id, "wt-456");
                 assert_eq!(host_worktree_root, PathBuf::from("/Users/example-user/code/repo"));
@@ -570,6 +657,7 @@ mod tests {
             CTX_AVF_HOST_DATA_ROOT_ENV.to_string(),
             "/tmp/ctx-data-root".to_string(),
         );
+        env.insert(CTX_AVF_REAL_GUEST_EXEC_ENV.to_string(), "1".to_string());
         env.insert(CTX_AVF_WORKSPACE_ID_ENV.to_string(), "ws-123".to_string());
         env.insert(CTX_AVF_WORKTREE_ID_ENV.to_string(), "wt-456".to_string());
         env.insert(
@@ -626,6 +714,7 @@ mod tests {
         let spec = ContainerExecSpec::SharedVmContainer {
             helper_path: helper_path.to_string_lossy().to_string(),
             data_root: tmp.path().join("ctx-data-root"),
+            real_guest_exec: true,
             workspace_id: "ws-123".to_string(),
             worktree_id: "wt-456".to_string(),
             host_worktree_root: host_worktree_root.clone(),
@@ -708,6 +797,53 @@ mod tests {
         assert!(
             args.iter().any(|arg| arg == "--version"),
             "missing passthrough argument in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_container_exec_command_keeps_host_scoped_env_on_simulated_shared_vm() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let helper_path = tmp.path().join("ctx-avf-linux-helper");
+        fs::write(&helper_path, b"#!/bin/sh\nexit 0\n").expect("write helper");
+        let host_worktree_root = tmp.path().join("repo");
+        fs::create_dir_all(&host_worktree_root).expect("mkdir worktree");
+        let data_root = tmp.path().join("ctx-data-root");
+
+        let spec = ContainerExecSpec::SharedVmContainer {
+            helper_path: helper_path.to_string_lossy().to_string(),
+            data_root: data_root.clone(),
+            real_guest_exec: false,
+            workspace_id: "ws-123".to_string(),
+            worktree_id: "wt-456".to_string(),
+            host_worktree_root: host_worktree_root.clone(),
+            guest_worktree_root: PathBuf::from("/ctx/ws/worktrees/wt-456"),
+            guest_workspace_root: PathBuf::from("/ctx/ws"),
+            user: Some("ctx-ws-123".to_string()),
+        };
+
+        let env = HashMap::new();
+        let cmd =
+            build_container_exec_command(&spec, &host_worktree_root, &env, "/usr/bin/env", &[])
+                .expect("build AVF shared-vm container exec command");
+
+        let args = cmd
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            args.windows(2).any(|window| {
+                window[0] == "--env"
+                    && window[1]
+                        == format!("HOME={}", data_root.join("sandbox").join("home").display())
+            }),
+            "missing host-scoped HOME env in args: {args:?}"
+        );
+        assert!(
+            !args
+                .windows(2)
+                .any(|window| window[0] == "--env" && window[1] == "HOME=/ctx/home/root"),
+            "unexpected guest HOME env in args: {args:?}"
         );
     }
 }

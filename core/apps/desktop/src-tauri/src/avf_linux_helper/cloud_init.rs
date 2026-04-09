@@ -64,9 +64,9 @@ pub(super) fn render_shared_vm_guest_agent_service(
     )
 }
 
-pub(super) fn render_shared_vm_host_data_mount_service(host_data_root: &Path) -> String {
-    let mount_root = host_data_root.display().to_string();
-    let escaped_mount_root = shell_escape_single_quotes(&mount_root);
+pub(super) fn render_shared_vm_host_data_mount_service() -> String {
+    let mount_root = SHARED_VM_GUEST_HOST_DATA_ROOT;
+    let escaped_mount_root = shell_escape_single_quotes(mount_root);
     let escaped_tag = shell_escape_single_quotes(SHARED_VM_DATA_ROOT_SHARE_TAG);
     format!(
         "[Unit]\nDescription=ctx AVF Host Data Mount\nDefaultDependencies=no\nAfter=local-fs.target\nBefore={guest_agent_service}\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -lc 'mkdir -p '\\''{mount_root}'\\'' && mountpoint -q '\\''{mount_root}'\\'' || mount -t virtiofs '\\''{tag}'\\'' '\\''{mount_root}'\\''' \nExecStop=/bin/sh -lc 'mountpoint -q '\\''{mount_root}'\\'' && umount '\\''{mount_root}'\\'' || true'\n\n[Install]\nWantedBy=multi-user.target\n# {service_name}\n",
@@ -79,29 +79,51 @@ pub(super) fn render_shared_vm_host_data_mount_service(host_data_root: &Path) ->
 
 pub(super) fn render_shared_vm_data_disk_script() -> String {
     format!(
-        "#!/bin/sh\nset -eu\nmount_root='/ctx'\ndata_label='{data_label}'\nmarker_name='.ctx-avf-data-disk-ready'\nroot_device=\"$(findmnt -n -o SOURCE /)\"\nif [ -z \"$root_device\" ]; then\n  echo \"[ctx-avf-linux] could not determine root device\" >/dev/hvc0\n  exit 1\nfi\nroot_device=\"$(readlink -f \"$root_device\" 2>/dev/null || printf '%s' \"$root_device\")\"\nroot_disk=\"$(lsblk -nro PKNAME \"$root_device\" | head -n1)\"\nif [ -z \"$root_disk\" ]; then\n  echo \"[ctx-avf-linux] could not resolve parent disk for $root_device\" >/dev/hvc0\n  exit 1\nfi\ndata_device=\"$(lsblk -dnbo NAME,SIZE,RO,TYPE | awk -v root_disk=\"$root_disk\" '$4 == \"disk\" && $1 != root_disk && $3 == 0 && $2 >= 1073741824 {{ print \"/dev/\" $1; exit }}')\"\nif [ -z \"$data_device\" ]; then\n  echo \"[ctx-avf-linux] could not locate writable data disk\" >/dev/hvc0\n  exit 1\nfi\nmkdir -p \"$mount_root\"\nif ! blkid -s TYPE -o value \"$data_device\" >/dev/null 2>&1; then\n  mkfs.ext4 -F -L \"$data_label\" \"$data_device\" >/dev/hvc0 2>&1\nfi\ncurrent_mount_source=\"$(findmnt -n -o SOURCE \"$mount_root\" 2>/dev/null || true)\"\nif [ -n \"$current_mount_source\" ] && [ \"$current_mount_source\" != \"$data_device\" ]; then\n  umount \"$mount_root\" >/dev/null 2>&1 || true\n  current_mount_source=\"\"\nfi\nif [ \"$current_mount_source\" != \"$data_device\" ]; then\n  mount \"$data_device\" \"$mount_root\" >/dev/hvc0 2>&1\nfi\nmkdir -p \"$mount_root/ws/worktrees\" \"$mount_root/home\" \"$mount_root/cache\" \"$mount_root/tmp\" \"$mount_root/system/containerd\" \"$mount_root/system/buildkit\" /var/lib/containerd /var/lib/buildkit /tmp /var/tmp\nchmod 1777 \"$mount_root/tmp\"\ncurrent_tmp_source=\"$(findmnt -n -o SOURCE /tmp 2>/dev/null || true)\"\nif [ \"$current_tmp_source\" != \"$mount_root/tmp\" ]; then\n  mountpoint -q /tmp && umount /tmp >/dev/null 2>&1 || true\n  mount --bind \"$mount_root/tmp\" /tmp >/dev/hvc0 2>&1\nfi\nchmod 1777 /tmp\ncurrent_var_tmp_source=\"$(findmnt -n -o SOURCE /var/tmp 2>/dev/null || true)\"\nif [ \"$current_var_tmp_source\" != \"$mount_root/tmp\" ]; then\n  mountpoint -q /var/tmp && umount /var/tmp >/dev/null 2>&1 || true\n  mount --bind \"$mount_root/tmp\" /var/tmp >/dev/hvc0 2>&1\nfi\nchmod 1777 /var/tmp\nif [ ! -f \"$mount_root/$marker_name\" ]; then\n  printf 'ready\\n' > \"$mount_root/$marker_name\"\nfi\necho \"[ctx-avf-linux] mounted data disk $data_device at $mount_root\" >/dev/hvc0\nmountpoint -q /var/lib/containerd || mount --bind \"$mount_root/system/containerd\" /var/lib/containerd >/dev/hvc0 2>&1\nmountpoint -q /var/lib/buildkit || mount --bind \"$mount_root/system/buildkit\" /var/lib/buildkit >/dev/hvc0 2>&1\n",
+        "#!/bin/sh\nset -eu\nmount_root='{writable_root}'\nworktrees_root='{worktrees_root}'\nhome_root='{home_root}'\ncache_root='{cache_root}'\ntmp_root='{tmp_root}'\nroot_home='{root_home}'\nroot_xdg_config='{root_xdg_config}'\nroot_xdg_data='{root_xdg_data}'\nroot_xdg_cache='{root_xdg_cache}'\nroot_xdg_runtime='{root_xdg_runtime}'\ncontainerd_root='{containerd_root}'\nbuildkit_root='{buildkit_root}'\nnerdctl_root='{nerdctl_root}'\ndata_label='{data_label}'\nmarker_name='.ctx-avf-data-disk-ready'\nroot_device=\"$(findmnt -n -o SOURCE /)\"\nif [ -z \"$root_device\" ]; then\n  echo \"[ctx-avf-linux] could not determine root device\" >/dev/hvc0\n  exit 1\nfi\nroot_device=\"$(readlink -f \"$root_device\" 2>/dev/null || printf '%s' \"$root_device\")\"\nroot_disk=\"$(lsblk -nro PKNAME \"$root_device\" | head -n1)\"\nif [ -z \"$root_disk\" ]; then\n  echo \"[ctx-avf-linux] could not resolve parent disk for $root_device\" >/dev/hvc0\n  exit 1\nfi\ndata_device=\"$(lsblk -dnbo NAME,SIZE,RO,TYPE | awk -v root_disk=\"$root_disk\" '$4 == \"disk\" && $1 != root_disk && $3 == 0 && $2 >= 1073741824 {{ print \"/dev/\" $1; exit }}')\"\nif [ -z \"$data_device\" ]; then\n  echo \"[ctx-avf-linux] could not locate writable data disk\" >/dev/hvc0\n  exit 1\nfi\nmkdir -p \"$mount_root\"\nif ! blkid -s TYPE -o value \"$data_device\" >/dev/null 2>&1; then\n  mkfs.ext4 -F -L \"$data_label\" \"$data_device\" >/dev/hvc0 2>&1\nfi\ncurrent_mount_source=\"$(findmnt -n -o SOURCE \"$mount_root\" 2>/dev/null || true)\"\nif [ -n \"$current_mount_source\" ] && [ \"$current_mount_source\" != \"$data_device\" ]; then\n  umount \"$mount_root\" >/dev/null 2>&1 || true\n  current_mount_source=\"\"\nfi\nif [ \"$current_mount_source\" != \"$data_device\" ]; then\n  mount \"$data_device\" \"$mount_root\" >/dev/hvc0 2>&1\nfi\nmkdir -p \"$worktrees_root\" \"$home_root\" \"$cache_root\" \"$tmp_root\" \"$root_home\" \"$root_xdg_config\" \"$root_xdg_data\" \"$root_xdg_cache\" \"$root_xdg_runtime\" \"$containerd_root\" \"$buildkit_root\" \"$nerdctl_root\" /var/lib/containerd /var/lib/buildkit /var/lib/nerdctl /tmp /var/tmp\nchmod 1777 \"$tmp_root\"\nchmod 0700 \"$root_home\" \"$root_xdg_config\" \"$root_xdg_data\" \"$root_xdg_cache\" \"$root_xdg_runtime\"\ncurrent_tmp_source=\"$(findmnt -n -o SOURCE /tmp 2>/dev/null || true)\"\nif [ \"$current_tmp_source\" != \"$tmp_root\" ]; then\n  mountpoint -q /tmp && umount /tmp >/dev/null 2>&1 || true\n  mount --bind \"$tmp_root\" /tmp >/dev/hvc0 2>&1\nfi\nchmod 1777 /tmp\ncurrent_var_tmp_source=\"$(findmnt -n -o SOURCE /var/tmp 2>/dev/null || true)\"\nif [ \"$current_var_tmp_source\" != \"$tmp_root\" ]; then\n  mountpoint -q /var/tmp && umount /var/tmp >/dev/null 2>&1 || true\n  mount --bind \"$tmp_root\" /var/tmp >/dev/hvc0 2>&1\nfi\nchmod 1777 /var/tmp\nif [ ! -f \"$mount_root/$marker_name\" ]; then\n  printf 'ready\\n' > \"$mount_root/$marker_name\"\nfi\necho \"[ctx-avf-linux] mounted data disk $data_device at $mount_root\" >/dev/hvc0\ncurrent_containerd_source=\"$(findmnt -n -o SOURCE /var/lib/containerd 2>/dev/null || true)\"\nif [ \"$current_containerd_source\" != \"$containerd_root\" ]; then\n  mountpoint -q /var/lib/containerd && umount /var/lib/containerd >/dev/null 2>&1 || true\n  mount --bind \"$containerd_root\" /var/lib/containerd >/dev/hvc0 2>&1\nfi\ncurrent_buildkit_source=\"$(findmnt -n -o SOURCE /var/lib/buildkit 2>/dev/null || true)\"\nif [ \"$current_buildkit_source\" != \"$buildkit_root\" ]; then\n  mountpoint -q /var/lib/buildkit && umount /var/lib/buildkit >/dev/null 2>&1 || true\n  mount --bind \"$buildkit_root\" /var/lib/buildkit >/dev/hvc0 2>&1\nfi\ncurrent_nerdctl_source=\"$(findmnt -n -o SOURCE /var/lib/nerdctl 2>/dev/null || true)\"\nif [ \"$current_nerdctl_source\" != \"$nerdctl_root\" ]; then\n  mountpoint -q /var/lib/nerdctl && umount /var/lib/nerdctl >/dev/null 2>&1 || true\n  mount --bind \"$nerdctl_root\" /var/lib/nerdctl >/dev/hvc0 2>&1\nfi\n",
+        writable_root = SHARED_VM_GUEST_WRITABLE_ROOT,
+        worktrees_root = SHARED_VM_GUEST_WORKTREES_ROOT,
+        home_root = SHARED_VM_GUEST_HOME_ROOT,
+        cache_root = SHARED_VM_GUEST_CACHE_ROOT,
+        tmp_root = SHARED_VM_GUEST_TMP_ROOT,
+        root_home = SHARED_VM_GUEST_ROOT_HOME,
+        root_xdg_config = SHARED_VM_GUEST_ROOT_XDG_CONFIG_ROOT,
+        root_xdg_data = SHARED_VM_GUEST_ROOT_XDG_DATA_ROOT,
+        root_xdg_cache = SHARED_VM_GUEST_ROOT_XDG_CACHE_ROOT,
+        root_xdg_runtime = SHARED_VM_GUEST_ROOT_XDG_RUNTIME_ROOT,
+        containerd_root = SHARED_VM_GUEST_CONTAINERD_ROOT,
+        buildkit_root = SHARED_VM_GUEST_BUILDKIT_ROOT,
+        nerdctl_root = SHARED_VM_GUEST_NERDCTL_ROOT,
         data_label = SHARED_VM_DATA_DISK_LABEL,
     )
 }
 
-pub(super) fn shared_vm_writable_surface_contract_digest(data_root: &Path) -> String {
+pub(super) fn shared_vm_writable_surface_contract_digest(data_root: &Path) -> Result<String> {
+    let guest_ready_marker_path =
+        shared_vm_guest_host_share_path(data_root, &shared_vm_guest_control_ready_path(data_root))
+            .context("guest ready-marker path should live under shared data root")?;
+    let guest_failure_marker_path =
+        shared_vm_guest_host_share_path(data_root, &shared_vm_guest_control_failed_path(data_root))
+            .context("guest failure-marker path should live under shared data root")?;
+    let guest_agent_log_path =
+        shared_vm_guest_host_share_path(data_root, &shared_vm_guest_agent_log_path(data_root))
+            .context("guest agent log path should live under shared data root")?;
     let mut hasher = Sha256::new();
     for rendered in [
-        render_shared_vm_host_data_mount_service(data_root),
+        render_shared_vm_host_data_mount_service(),
         render_shared_vm_data_disk_script(),
         render_shared_vm_data_disk_service(),
         render_shared_vm_containerd_service(),
         render_shared_vm_buildkit_service(),
         render_shared_vm_guest_agent_service(
-            &shared_vm_guest_control_ready_path(data_root),
-            &shared_vm_guest_control_failed_path(data_root),
-            &shared_vm_guest_agent_log_path(data_root),
+            &guest_ready_marker_path,
+            &guest_failure_marker_path,
+            &guest_agent_log_path,
         ),
     ] {
         hasher.update(rendered.as_bytes());
         hasher.update(b"\0");
     }
-    hex::encode(hasher.finalize())
+    Ok(hex::encode(hasher.finalize()))
 }
 
 pub(super) fn render_shared_vm_data_disk_service() -> String {
@@ -184,7 +206,16 @@ pub(super) fn render_shared_vm_cloud_init_meta_data(
     guest_agent_bytes: &[u8],
     egress_proxy_bytes: Option<&[u8]>,
     container_stack_sha256: &str,
-) -> String {
+) -> Result<String> {
+    let guest_ready_marker_path =
+        shared_vm_guest_host_share_path(data_root, &shared_vm_guest_control_ready_path(data_root))
+            .context("guest ready-marker path should live under shared data root")?;
+    let guest_failure_marker_path =
+        shared_vm_guest_host_share_path(data_root, &shared_vm_guest_control_failed_path(data_root))
+            .context("guest failure-marker path should live under shared data root")?;
+    let guest_agent_log_path =
+        shared_vm_guest_host_share_path(data_root, &shared_vm_guest_agent_log_path(data_root))
+            .context("guest agent log path should live under shared data root")?;
     let mut seed_material = Vec::with_capacity(guest_agent_bytes.len() + 256);
     seed_material.extend_from_slice(guest_agent_bytes);
     if let Some(egress_proxy_bytes) = egress_proxy_bytes {
@@ -195,16 +226,18 @@ pub(super) fn render_shared_vm_cloud_init_meta_data(
     seed_material.extend_from_slice(render_shared_vm_data_disk_service().as_bytes());
     seed_material.extend_from_slice(
         render_shared_vm_guest_agent_service(
-            &shared_vm_guest_control_ready_path(data_root),
-            &shared_vm_guest_control_failed_path(data_root),
-            &shared_vm_guest_agent_log_path(data_root),
+            &guest_ready_marker_path,
+            &guest_failure_marker_path,
+            &guest_agent_log_path,
         )
         .as_bytes(),
     );
     seed_material.extend_from_slice(render_shared_vm_containerd_service().as_bytes());
     seed_material.extend_from_slice(render_shared_vm_buildkit_service().as_bytes());
     let seed_hash = hash_shared_vm_seed_component(&seed_material);
-    format!("instance-id: ctx-avf-linux-{seed_hash}\nlocal-hostname: ctx-avf-linux\n")
+    Ok(format!(
+        "instance-id: ctx-avf-linux-{seed_hash}\nlocal-hostname: ctx-avf-linux\n"
+    ))
 }
 
 pub(super) fn render_shared_vm_cloud_init_user_data(
@@ -213,33 +246,44 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
     egress_proxy_bytes: Option<&[u8]>,
     container_stack_host_path: &Path,
     container_stack_sha256: &str,
-) -> String {
+) -> Result<String> {
+    let guest_ready_marker_path =
+        shared_vm_guest_host_share_path(data_root, &shared_vm_guest_control_ready_path(data_root))
+            .context("guest ready-marker path should live under shared data root")?;
+    let guest_failure_marker_path =
+        shared_vm_guest_host_share_path(data_root, &shared_vm_guest_control_failed_path(data_root))
+            .context("guest failure-marker path should live under shared data root")?;
+    let guest_agent_log_path =
+        shared_vm_guest_host_share_path(data_root, &shared_vm_guest_agent_log_path(data_root))
+            .context("guest agent log path should live under shared data root")?;
+    let guest_container_stack_payload_path =
+        shared_vm_guest_host_share_path(data_root, container_stack_host_path)
+            .context("guest container-stack payload path should live under shared data root")?;
     let guest_agent_b64 = indent_cloud_init_block(&wrap_cloud_init_base64(guest_agent_bytes), 6);
     let guest_agent_service = indent_cloud_init_block(
         &render_shared_vm_guest_agent_service(
-            &shared_vm_guest_control_ready_path(data_root),
-            &shared_vm_guest_control_failed_path(data_root),
-            &shared_vm_guest_agent_log_path(data_root),
+            &guest_ready_marker_path,
+            &guest_failure_marker_path,
+            &guest_agent_log_path,
         ),
         6,
     );
     let guest_agent_launcher = indent_cloud_init_block(
         &render_shared_vm_guest_agent_launcher_script(
-            &shared_vm_guest_control_ready_path(data_root),
-            &shared_vm_guest_control_failed_path(data_root),
-            &shared_vm_guest_agent_log_path(data_root),
+            &guest_ready_marker_path,
+            &guest_failure_marker_path,
+            &guest_agent_log_path,
         ),
         6,
     );
-    let host_data_service =
-        indent_cloud_init_block(&render_shared_vm_host_data_mount_service(data_root), 6);
+    let host_data_service = indent_cloud_init_block(&render_shared_vm_host_data_mount_service(), 6);
     let data_disk_script = indent_cloud_init_block(&render_shared_vm_data_disk_script(), 6);
     let data_disk_service = indent_cloud_init_block(&render_shared_vm_data_disk_service(), 6);
     let containerd_service = indent_cloud_init_block(&render_shared_vm_containerd_service(), 6);
     let buildkit_service = indent_cloud_init_block(&render_shared_vm_buildkit_service(), 6);
     let install_script = indent_cloud_init_block(
         &render_shared_vm_container_stack_install_script(
-            container_stack_host_path,
+            &guest_container_stack_payload_path,
             container_stack_sha256,
         ),
         6,
@@ -251,7 +295,7 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
         )
     });
     let escaped_container_stack_host_path =
-        shell_escape_single_quotes(&container_stack_host_path.display().to_string());
+        shell_escape_single_quotes(&guest_container_stack_payload_path.display().to_string());
     let mut write_files = String::new();
     write_files.push_str(&format!(
         "  - path: /usr/local/bin/ctx-avf-linux-guest-agent\n    permissions: '0755'\n    encoding: b64\n    content: |\n{guest_agent_b64}\n"
@@ -342,7 +386,7 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
         ),
         4,
     );
-    format!(
+    Ok(format!(
         "#cloud-config\nwrite_files:\n{write_files}runcmd:\n  - [ systemctl, daemon-reload ]\n  - |\n{enable_host_data_cmd}\n  - |\n{enable_data_disk_cmd}\n  - |\n{prepare_guest_agent_cmd}\n  - |\n{install_container_stack_cmd}\n  - |\n{enable_containerd_cmd}\n  - |\n{enable_buildkit_cmd}\n  - |\n{enable_guest_agent_cmd}\n",
         prepare_guest_agent_cmd = prepare_guest_agent_cmd,
         enable_host_data_cmd = enable_host_data_cmd,
@@ -351,7 +395,7 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
         enable_containerd_cmd = enable_containerd_cmd,
         enable_buildkit_cmd = enable_buildkit_cmd,
         enable_guest_agent_cmd = enable_guest_agent_cmd,
-    )
+    ))
 }
 
 pub(super) fn render_shared_vm_cloud_init_network_config() -> &'static str {
@@ -436,14 +480,14 @@ pub(super) fn stage_shared_vm_cloud_init_seed(
         &guest_agent_bytes,
         egress_proxy_bytes.as_deref(),
         &container_stack_sha256,
-    );
+    )?;
     let user_data = render_shared_vm_cloud_init_user_data(
         data_root,
         &guest_agent_bytes,
         egress_proxy_bytes.as_deref(),
         &container_stack_payload_path,
         &container_stack_sha256,
-    );
+    )?;
     let network_config = render_shared_vm_cloud_init_network_config();
     let seed_digest = shared_vm_cloud_init_seed_digest(&meta_data, &user_data, &network_config);
     let seed_digest_path = shared_vm_cloud_init_seed_digest_path(data_root);

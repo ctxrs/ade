@@ -83,6 +83,30 @@ describe("classifyWorkbenchThreadProjectionOp", () => {
     expect(op.remeasureItemIds).toEqual(["assistant-turn-1-pending", "turn-status-turn-1"]);
   });
 
+  it("does not classify a mixed streaming growth plus tail append as append-only", () => {
+    const status = makeTurnStatus();
+    const appendedTool = makeTool();
+    const current = [makeAssistant("short reply"), status];
+    const next = [makeAssistant("short reply\nwith another line"), status, appendedTool];
+
+    const op = classifyWorkbenchThreadProjectionOp({
+      current,
+      next,
+      projectionRevision: 3,
+    });
+
+    expect(op.kind).toBe("reconcile");
+    expect(op.changedItemIds).toEqual([
+      "assistant-turn-1-pending",
+      "tool-1",
+    ]);
+    expect(op.remeasureItemIds).toEqual([
+      "assistant-turn-1-pending",
+      "turn-status-turn-1",
+      "tool-1",
+    ]);
+  });
+
   it("keeps tool hydration remeasurement localized to the changed rows", () => {
     const current = [
       makeAssistant("stable markdown"),

@@ -138,6 +138,7 @@ const SHARED_VM_GUEST_CONTROL_READY_FILE: &str = "guest-control-ready";
 const SHARED_VM_GUEST_CONTROL_FAILED_FILE: &str = "guest-control-failed";
 const SHARED_VM_GUEST_AGENT_LOG_FILE: &str = "guest-agent.log";
 const SHARED_VM_DATA_ROOT_SHARE_TAG: &str = "ctx-data-root";
+const SHARED_VM_GUEST_HOST_DATA_ROOT: &str = "/mnt/ctx-host";
 const SHARED_VM_HOST_DATA_SERVICE_NAME: &str = "ctx-avf-host-data.service";
 const SHARED_VM_DATA_DISK_LABEL: &str = "ctx-avf-data";
 const SHARED_VM_DATA_DISK_SERVICE_NAME: &str = "ctx-avf-data-disk.service";
@@ -146,6 +147,19 @@ const SHARED_VM_GUEST_AGENT_LAUNCHER_PATH: &str =
     "/usr/local/lib/ctx/ctx-avf-linux-guest-agent-launch.sh";
 const SHARED_VM_CONTAINERD_SERVICE_NAME: &str = "containerd.service";
 const SHARED_VM_BUILDKIT_SERVICE_NAME: &str = "buildkit.service";
+const SHARED_VM_GUEST_WRITABLE_ROOT: &str = "/ctx";
+const SHARED_VM_GUEST_WORKTREES_ROOT: &str = "/ctx/ws/worktrees";
+const SHARED_VM_GUEST_HOME_ROOT: &str = "/ctx/home";
+const SHARED_VM_GUEST_CACHE_ROOT: &str = "/ctx/cache";
+const SHARED_VM_GUEST_TMP_ROOT: &str = "/ctx/tmp";
+const SHARED_VM_GUEST_ROOT_HOME: &str = "/ctx/home/root";
+const SHARED_VM_GUEST_ROOT_XDG_CONFIG_ROOT: &str = "/ctx/cache/xdg/config";
+const SHARED_VM_GUEST_ROOT_XDG_DATA_ROOT: &str = "/ctx/cache/xdg/data";
+const SHARED_VM_GUEST_ROOT_XDG_CACHE_ROOT: &str = "/ctx/cache/xdg/cache";
+const SHARED_VM_GUEST_ROOT_XDG_RUNTIME_ROOT: &str = "/ctx/tmp/xdg-runtime-root";
+const SHARED_VM_GUEST_CONTAINERD_ROOT: &str = "/ctx/system/containerd";
+const SHARED_VM_GUEST_BUILDKIT_ROOT: &str = "/ctx/system/buildkit";
+const SHARED_VM_GUEST_NERDCTL_ROOT: &str = "/ctx/system/nerdctl";
 const SHARED_VM_PAYLOADS_DIR: &str = "payloads";
 const SHARED_VM_GUEST_CONTAINER_STACK_INSTALL_PATH: &str =
     "/usr/local/lib/ctx/ctx-avf-install-container-stack.sh";
