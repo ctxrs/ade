@@ -21,7 +21,6 @@ use super::machine::archive::{extract_archive_to_dir, resolve_single_extracted_r
 use super::machine::downloads::{
     acquire_managed_artifact_file_lock, download_managed_artifact,
     finalize_managed_artifact_download, managed_artifact_lock_path, managed_artifact_partial_path,
-    ManagedArtifactDownloadReporter, ManagedDownloadAggregate,
 };
 use super::{
     observe_log, observe_phase, ContainerExecutionSettings, HarnessSetupLogLevel,
@@ -29,6 +28,7 @@ use super::{
 };
 use crate::bundled_assets;
 use crate::updates;
+use ctx_harness_setup::{ManagedArtifactDownloadReporter, ManagedDownloadAggregate};
 
 pub(crate) use self::helper_wrappers::{
     build_guest_exec_command, helper_path, prepare_guest_worktree, prepare_runtime_layout,

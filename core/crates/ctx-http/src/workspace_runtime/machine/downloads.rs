@@ -1,8 +1,6 @@
 use super::*;
-use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::ErrorKind;
-use std::sync::Mutex as StdMutex;
 
 use fs2::FileExt;
 
@@ -225,130 +223,6 @@ fn managed_artifact_error_is_retryable(err: &anyhow::Error) -> bool {
     !rendered.contains("insufficient disk space")
         && !rendered.contains("managed artifact server did not provide content length")
         && !rendered.contains("managed artifact total size is unavailable")
-}
-
-#[derive(Debug, Default)]
-struct ManagedDownloadAggregateState {
-    downloads: BTreeMap<String, ManagedDownloadArtifactState>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub(crate) struct ManagedDownloadAggregate {
-    inner: Arc<StdMutex<ManagedDownloadAggregateState>>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct ManagedDownloadArtifactState {
-    downloaded_bytes: u64,
-    total_bytes: Option<u64>,
-    bytes_per_sec: Option<u64>,
-    finished: bool,
-}
-
-impl ManagedDownloadAggregate {
-    fn update(
-        &self,
-        artifact: &str,
-        downloaded_bytes: u64,
-        total_bytes: Option<u64>,
-        bytes_per_sec: Option<u64>,
-        finished: bool,
-    ) -> Option<HarnessSetupDownloadStatus> {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let entry = inner.downloads.entry(artifact.to_string()).or_default();
-        entry.downloaded_bytes = downloaded_bytes;
-        entry.total_bytes = total_bytes;
-        entry.bytes_per_sec = bytes_per_sec;
-        entry.finished = finished;
-
-        let all_finished = inner.downloads.values().all(|download| download.finished);
-        if all_finished {
-            return None;
-        }
-
-        let downloaded_total = inner
-            .downloads
-            .values()
-            .map(|download| download.downloaded_bytes)
-            .sum();
-        let total_bytes = inner.downloads.values().try_fold(0u64, |acc, download| {
-            download.total_bytes.map(|value| acc.saturating_add(value))
-        });
-        let bytes_per_sec = inner
-            .downloads
-            .values()
-            .filter_map(|download| download.bytes_per_sec)
-            .fold(None, |acc: Option<u64>, value| {
-                Some(acc.unwrap_or(0u64).saturating_add(value))
-            });
-        Some(HarnessSetupDownloadStatus {
-            artifact: "Required artifacts".to_string(),
-            downloaded_bytes: downloaded_total,
-            total_bytes,
-            bytes_per_sec,
-        })
-    }
-}
-
-#[derive(Clone)]
-pub(crate) struct ManagedArtifactDownloadReporter<'a> {
-    observer: Option<&'a dyn HarnessSetupObserver>,
-    aggregate: Option<ManagedDownloadAggregate>,
-    phase: HarnessSetupPhase,
-    artifact: String,
-}
-
-impl<'a> ManagedArtifactDownloadReporter<'a> {
-    pub(crate) fn new(
-        observer: Option<&'a dyn HarnessSetupObserver>,
-        aggregate: Option<ManagedDownloadAggregate>,
-        phase: HarnessSetupPhase,
-        artifact: impl Into<String>,
-    ) -> Self {
-        Self {
-            observer,
-            aggregate,
-            phase,
-            artifact: artifact.into(),
-        }
-    }
-
-    fn emit_progress(
-        &self,
-        downloaded_bytes: u64,
-        total_bytes: Option<u64>,
-        bytes_per_sec: Option<u64>,
-        finished: bool,
-    ) {
-        let active_download = if let Some(aggregate) = &self.aggregate {
-            aggregate.update(
-                &self.artifact,
-                downloaded_bytes,
-                total_bytes,
-                bytes_per_sec,
-                finished,
-            )
-        } else if finished {
-            None
-        } else {
-            Some(HarnessSetupDownloadStatus {
-                artifact: self.artifact.clone(),
-                downloaded_bytes,
-                total_bytes,
-                bytes_per_sec,
-            })
-        };
-        observe_progress(
-            self.observer,
-            HarnessSetupProgressUpdate {
-                phase: self.phase,
-                active_download,
-            },
-        );
-    }
 }
 
 pub(crate) async fn download_managed_artifact(

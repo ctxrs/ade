@@ -2,6 +2,7 @@ const { getBazelCoveredCrates } = require("./bazel_rust_targets.cjs");
 
 const AGENT_GATE_CRATES = [
   "ctx-core",
+  "ctx-harness-setup",
   "ctx-harness-sources",
   "ctx-http",
   "ctx-lsp",

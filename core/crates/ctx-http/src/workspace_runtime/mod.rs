@@ -3,8 +3,10 @@ use std::io::ErrorKind;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+#[cfg(test)]
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
@@ -123,9 +125,7 @@ pub(crate) use self::linux_sandbox_runtime::{
     LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeStatus,
 };
 use self::machine::sandbox_machine_name;
-use self::machine::{
-    download_managed_artifact, ManagedArtifactDownloadReporter, ManagedDownloadAggregate,
-};
+use self::machine::download_managed_artifact;
 #[cfg(test)]
 use self::machine::{
     ensure_managed_sandbox_cli_runtime, ensure_managed_sandbox_machine_cache,
@@ -786,44 +786,14 @@ fn sandbox_machine_ready_poll_interval() -> Duration {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum HarnessSetupPhase {
-    ArtifactDownload,
-    MachineCheck,
-    MachineStartOrInit,
-    ImageCheck,
-    ImageLoad,
-    ContainerCheck,
-    ContainerStartOrCreate,
-    RuntimeNetworkSetup,
-    Ready,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum HarnessSetupLogLevel {
-    Info,
-    Warn,
-    Error,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct HarnessSetupDownloadStatus {
-    pub artifact: String,
-    pub downloaded_bytes: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_bytes: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bytes_per_sec: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct HarnessSetupProgressUpdate {
-    pub phase: HarnessSetupPhase,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub active_download: Option<HarnessSetupDownloadStatus>,
-}
+pub use ctx_harness_setup::{
+    HarnessSetupDownloadStatus, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,
+    HarnessSetupProgressUpdate,
+};
+pub(crate) use ctx_harness_setup::{
+    observe_log, observe_phase, observe_progress, ManagedArtifactDownloadReporter,
+    ManagedDownloadAggregate,
+};
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ManagedContainerBootstrapOverrides {
@@ -836,42 +806,6 @@ pub struct HarnessRuntimeStats {
     pub container_allowlist_entries: usize,
     pub container_external_mounts: usize,
     pub container_egress_guards: usize,
-}
-
-pub trait HarnessSetupObserver: Send + Sync {
-    fn on_phase(&self, phase: HarnessSetupPhase, message: &str);
-    fn on_log(&self, phase: HarnessSetupPhase, level: HarnessSetupLogLevel, message: &str);
-    fn on_progress(&self, _progress: HarnessSetupProgressUpdate) {}
-}
-
-fn observe_phase(
-    observer: Option<&dyn HarnessSetupObserver>,
-    phase: HarnessSetupPhase,
-    message: &str,
-) {
-    if let Some(observer) = observer {
-        observer.on_phase(phase, message);
-    }
-}
-
-fn observe_log(
-    observer: Option<&dyn HarnessSetupObserver>,
-    phase: HarnessSetupPhase,
-    level: HarnessSetupLogLevel,
-    message: &str,
-) {
-    if let Some(observer) = observer {
-        observer.on_log(phase, level, message);
-    }
-}
-
-fn observe_progress(
-    observer: Option<&dyn HarnessSetupObserver>,
-    progress: HarnessSetupProgressUpdate,
-) {
-    if let Some(observer) = observer {
-        observer.on_progress(progress);
-    }
 }
 
 pub(crate) fn workspace_container_name(workspace_id: WorkspaceId) -> String {

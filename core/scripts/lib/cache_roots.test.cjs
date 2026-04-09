@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
@@ -241,6 +242,32 @@ test("buildCtxCacheEnv can opt into a volatile cargo home", () => {
 
   assert.equal(env.CARGO_HOME, path.join(volatileRoot, "cache", "cargo-home"));
   assert.equal(env.CTX_BUNDLE_CACHE_DIR, path.join(volatileRoot, "cache", "bundles"));
+});
+
+test("buildCtxCacheEnv falls back to the internal volatile root when preferred external layout creation fails", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const tempRoot = path.join(os.tmpdir(), "ctx-cache-roots-mkdir-fallback");
+  const blockedPreferredRoot = path.join(tempRoot, "blocked-preferred-root");
+  const internalRoot = path.join(tempRoot, "internal-root");
+
+  fs.rmSync(tempRoot, { recursive: true, force: true });
+  fs.mkdirSync(tempRoot, { recursive: true });
+  fs.writeFileSync(blockedPreferredRoot, "blocked");
+
+  const { env, layout } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_PREFERRED_VOLATILE_ROOT: blockedPreferredRoot,
+      CTX_INTERNAL_VOLATILE_ROOT: internalRoot,
+    },
+    mkdir: true,
+  });
+
+  assert.equal(layout.volatileRoot, internalRoot);
+  assert.equal(layout.volatileRootMode, "internal-fallback");
+  assert.equal(env.CTX_VOLATILE_ROOT, internalRoot);
+  assert.equal(env.CTX_VOLATILE_ROOT_MODE, "internal-fallback");
+  assert.equal(fs.existsSync(path.join(internalRoot, ".ctx-volatile-root.json")), true);
 });
 
 test("buildCtxCacheEnv derives remote turbo cache mode when the endpoint and credentials are present", () => {

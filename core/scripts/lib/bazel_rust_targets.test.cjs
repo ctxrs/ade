@@ -10,6 +10,7 @@ const {
 test("Bazel-covered crates stay on the intended explicit Rust slice", () => {
   assert.deepEqual(getBazelCoveredCrates(), [
     "ctx-core",
+    "ctx-harness-setup",
     "ctx-harness-sources",
     "ctx-lsp",
     "ctx-provider-accounts",
@@ -37,12 +38,14 @@ test("Bazel build target mapping expands per-crate libraries deterministically",
   assert.deepEqual(
     getBazelBuildTargetsForCrates([
       "ctx-provider-auth-import",
+      "ctx-harness-setup",
       "ctx-workspace-active-snapshot",
       "ctx-worktree-data-plane",
       "ctx-core",
     ]),
     [
       "//core/crates/ctx-core:lib",
+      "//core/crates/ctx-harness-setup:lib",
       "//core/crates/ctx-provider-auth-import:lib",
       "//core/crates/ctx-workspace-active-snapshot:lib",
       "//core/crates/ctx-worktree-data-plane:lib",

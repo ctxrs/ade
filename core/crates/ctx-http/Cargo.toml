@@ -14,6 +14,7 @@ ctx-core = { path = "../ctx-core" }
 ctx-events = { path = "../ctx-events" }
 ctx-fs = { path = "../ctx-fs" }
 ctx-harness-sources = { path = "../ctx-harness-sources" }
+ctx-harness-setup = { path = "../ctx-harness-setup" }
 ctx-provider-accounts = { path = "../ctx-provider-accounts" }
 ctx-provider-auth-import = { path = "../ctx-provider-auth-import" }
 ctx-providers = { path = "../ctx-providers" }

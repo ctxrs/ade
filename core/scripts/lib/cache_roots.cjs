@@ -386,152 +386,201 @@ function buildCtxCacheEnv({
   mode = "workspace",
   mkdir = false,
 } = {}) {
-  const layout = resolveCtxCacheLayout({ cwd, env });
-  const resolvedEnv = { ...env };
-  const cargoTargetDir =
-    mode === "verify-quick" ? layout.verifyCargoTargetDir : layout.workspaceCargoTargetDir;
-  const explicitVolatileRoot = trimValue(env.CTX_VOLATILE_ROOT)
-    ? layout.volatileRoot
-    : "";
   const useVolatileCargoHome = parseEnabledFlag(env.CTX_USE_VOLATILE_CARGO_HOME);
 
-  setDefaultEnvValue(resolvedEnv, "CTX_EXTERNAL_CACHE_ROOT", layout.externalCacheRoot);
-  setDefaultEnvValue(resolvedEnv, "CTX_INTERNAL_VOLATILE_ROOT", layout.internalVolatileRoot);
-  setDefaultEnvValue(resolvedEnv, "CTX_PREFERRED_VOLATILE_ROOT", layout.preferredVolatileRoot);
-  setDefaultEnvValue(resolvedEnv, "CTX_VOLATILE_ROOT", layout.volatileRoot);
-  setDefaultEnvValue(resolvedEnv, "CTX_VOLATILE_ROOT_MODE", layout.volatileRootMode);
-  setDerivedPathEnvValue(resolvedEnv, "CTX_VOLATILE_TARGETS_DIR", layout.targetsDir, {
-    cwd,
-    explicitVolatileRoot,
-  });
-  setDerivedPathEnvValue(resolvedEnv, "CTX_VOLATILE_ARTIFACTS_DIR", layout.artifactsDir, {
-    cwd,
-    explicitVolatileRoot,
-  });
-  setDerivedPathEnvValue(resolvedEnv, "CTX_VOLATILE_TMPDIR", layout.tmpDir, {
-    cwd,
-    explicitVolatileRoot,
-  });
-  setDerivedPathEnvValue(resolvedEnv, "CTX_VOLATILE_CACHE_DIR", layout.cacheDir, {
-    cwd,
-    explicitVolatileRoot,
-  });
-  setDerivedPathEnvValue(resolvedEnv, "SCCACHE_DIR", layout.sccacheDir, {
-    cwd,
-    explicitVolatileRoot,
-  });
-  setDerivedPathEnvValue(resolvedEnv, "TURBO_CACHE_DIR", layout.turboCacheDir, {
-    cwd,
-    explicitVolatileRoot,
-  });
-  setDerivedPathEnvValue(resolvedEnv, "CTX_BUNDLE_CACHE_DIR", layout.bundleCacheDir, {
-    cwd,
-    explicitVolatileRoot,
-  });
-  setDerivedPathEnvValue(resolvedEnv, "PLAYWRIGHT_BROWSERS_PATH", layout.playwrightBrowsersPath, {
-    cwd,
-    explicitVolatileRoot,
-  });
-  setDerivedPathEnvValue(resolvedEnv, "CARGO_TARGET_DIR", cargoTargetDir, {
-    cwd,
-    explicitVolatileRoot,
-  });
-  setDerivedPathEnvValue(resolvedEnv, "CTX_VERIFY_CARGO_TARGET_DIR", layout.verifyCargoTargetDir, {
-    cwd,
-    explicitVolatileRoot,
-  });
-  if (useVolatileCargoHome) {
-    setDerivedPathEnvValue(resolvedEnv, "CARGO_HOME", layout.cargoHome, {
+  function buildForLayout(layout) {
+    const resolvedEnv = { ...env };
+    const cargoTargetDir =
+      mode === "verify-quick" ? layout.verifyCargoTargetDir : layout.workspaceCargoTargetDir;
+    const explicitVolatileRoot = trimValue(env.CTX_VOLATILE_ROOT)
+      ? layout.volatileRoot
+      : "";
+
+    setDefaultEnvValue(resolvedEnv, "CTX_EXTERNAL_CACHE_ROOT", layout.externalCacheRoot);
+    setDefaultEnvValue(resolvedEnv, "CTX_INTERNAL_VOLATILE_ROOT", layout.internalVolatileRoot);
+    setDefaultEnvValue(resolvedEnv, "CTX_PREFERRED_VOLATILE_ROOT", layout.preferredVolatileRoot);
+    setDefaultEnvValue(resolvedEnv, "CTX_VOLATILE_ROOT", layout.volatileRoot);
+    setDefaultEnvValue(resolvedEnv, "CTX_VOLATILE_ROOT_MODE", layout.volatileRootMode);
+    setDerivedPathEnvValue(resolvedEnv, "CTX_VOLATILE_TARGETS_DIR", layout.targetsDir, {
       cwd,
       explicitVolatileRoot,
     });
-  }
-
-  const turboApi = trimValue(env.TURBO_API);
-  const turboToken = trimValue(env.TURBO_TOKEN);
-  const turboTeam = trimValue(env.TURBO_TEAM);
-  if (!trimValue(resolvedEnv.TURBO_CACHE_MODE) && turboApi && turboToken && turboTeam) {
-    resolvedEnv.TURBO_CACHE_MODE = "local:rw,remote:rw";
-  }
-
-  const remoteSccacheBucket = trimValue(env.CTX_SCCACHE_R2_BUCKET) || trimValue(env.SCCACHE_BUCKET);
-  const remoteSccacheAccountId = trimValue(env.CTX_SCCACHE_R2_ACCOUNT_ID);
-  const remoteSccacheEndpoint =
-    trimValue(env.CTX_SCCACHE_R2_ENDPOINT)
-    || trimValue(env.SCCACHE_ENDPOINT)
-    || buildR2Endpoint(remoteSccacheAccountId, env.CTX_SCCACHE_R2_JURISDICTION);
-  const remoteSccacheKeyPrefix =
-    trimValue(env.CTX_SCCACHE_R2_KEY_PREFIX)
-    || trimValue(env.SCCACHE_S3_KEY_PREFIX)
-    || `sccache/${layout.repoCacheSlug}`;
-  const remoteSccacheAccessKeyId = trimValue(env.CTX_SCCACHE_R2_ACCESS_KEY_ID);
-  const remoteSccacheSecretAccessKey = trimValue(env.CTX_SCCACHE_R2_SECRET_ACCESS_KEY);
-  const remoteSccacheSessionToken = trimValue(env.CTX_SCCACHE_R2_SESSION_TOKEN);
-  if (remoteSccacheBucket) {
-    setDefaultEnvValueIfPresent(resolvedEnv, "SCCACHE_BUCKET", remoteSccacheBucket);
-    setDefaultEnvValueIfPresent(
+    setDerivedPathEnvValue(resolvedEnv, "CTX_VOLATILE_ARTIFACTS_DIR", layout.artifactsDir, {
+      cwd,
+      explicitVolatileRoot,
+    });
+    setDerivedPathEnvValue(resolvedEnv, "CTX_VOLATILE_TMPDIR", layout.tmpDir, {
+      cwd,
+      explicitVolatileRoot,
+    });
+    setDerivedPathEnvValue(resolvedEnv, "CTX_VOLATILE_CACHE_DIR", layout.cacheDir, {
+      cwd,
+      explicitVolatileRoot,
+    });
+    setDerivedPathEnvValue(resolvedEnv, "SCCACHE_DIR", layout.sccacheDir, {
+      cwd,
+      explicitVolatileRoot,
+    });
+    setDerivedPathEnvValue(resolvedEnv, "TURBO_CACHE_DIR", layout.turboCacheDir, {
+      cwd,
+      explicitVolatileRoot,
+    });
+    setDerivedPathEnvValue(resolvedEnv, "CTX_BUNDLE_CACHE_DIR", layout.bundleCacheDir, {
+      cwd,
+      explicitVolatileRoot,
+    });
+    setDerivedPathEnvValue(
       resolvedEnv,
-      "SCCACHE_REGION",
-      trimValue(env.CTX_SCCACHE_R2_REGION) || trimValue(env.SCCACHE_REGION) || "auto",
+      "PLAYWRIGHT_BROWSERS_PATH",
+      layout.playwrightBrowsersPath,
+      {
+        cwd,
+        explicitVolatileRoot,
+      },
     );
-    setDefaultEnvValueIfPresent(resolvedEnv, "SCCACHE_ENDPOINT", remoteSccacheEndpoint);
-    setDefaultEnvValueIfPresent(resolvedEnv, "SCCACHE_S3_KEY_PREFIX", remoteSccacheKeyPrefix);
-    setDefaultEnvValueIfPresent(
+    setDerivedPathEnvValue(resolvedEnv, "CARGO_TARGET_DIR", cargoTargetDir, {
+      cwd,
+      explicitVolatileRoot,
+    });
+    setDerivedPathEnvValue(
       resolvedEnv,
-      "SCCACHE_S3_USE_SSL",
-      trimValue(env.SCCACHE_S3_USE_SSL) || "true",
+      "CTX_VERIFY_CARGO_TARGET_DIR",
+      layout.verifyCargoTargetDir,
+      {
+        cwd,
+        explicitVolatileRoot,
+      },
     );
-    if (remoteSccacheAccessKeyId) {
-      resolvedEnv.AWS_ACCESS_KEY_ID = remoteSccacheAccessKeyId;
-    } else {
-      setDefaultEnvValueIfPresent(resolvedEnv, "AWS_ACCESS_KEY_ID", trimValue(env.AWS_ACCESS_KEY_ID));
+    if (useVolatileCargoHome) {
+      setDerivedPathEnvValue(resolvedEnv, "CARGO_HOME", layout.cargoHome, {
+        cwd,
+        explicitVolatileRoot,
+      });
     }
-    if (remoteSccacheSecretAccessKey) {
-      resolvedEnv.AWS_SECRET_ACCESS_KEY = remoteSccacheSecretAccessKey;
-    } else {
+
+    const turboApi = trimValue(env.TURBO_API);
+    const turboToken = trimValue(env.TURBO_TOKEN);
+    const turboTeam = trimValue(env.TURBO_TEAM);
+    if (!trimValue(resolvedEnv.TURBO_CACHE_MODE) && turboApi && turboToken && turboTeam) {
+      resolvedEnv.TURBO_CACHE_MODE = "local:rw,remote:rw";
+    }
+
+    const remoteSccacheBucket =
+      trimValue(env.CTX_SCCACHE_R2_BUCKET) || trimValue(env.SCCACHE_BUCKET);
+    const remoteSccacheAccountId = trimValue(env.CTX_SCCACHE_R2_ACCOUNT_ID);
+    const remoteSccacheEndpoint =
+      trimValue(env.CTX_SCCACHE_R2_ENDPOINT)
+      || trimValue(env.SCCACHE_ENDPOINT)
+      || buildR2Endpoint(remoteSccacheAccountId, env.CTX_SCCACHE_R2_JURISDICTION);
+    const remoteSccacheKeyPrefix =
+      trimValue(env.CTX_SCCACHE_R2_KEY_PREFIX)
+      || trimValue(env.SCCACHE_S3_KEY_PREFIX)
+      || `sccache/${layout.repoCacheSlug}`;
+    const remoteSccacheAccessKeyId = trimValue(env.CTX_SCCACHE_R2_ACCESS_KEY_ID);
+    const remoteSccacheSecretAccessKey = trimValue(env.CTX_SCCACHE_R2_SECRET_ACCESS_KEY);
+    const remoteSccacheSessionToken = trimValue(env.CTX_SCCACHE_R2_SESSION_TOKEN);
+    if (remoteSccacheBucket) {
+      setDefaultEnvValueIfPresent(resolvedEnv, "SCCACHE_BUCKET", remoteSccacheBucket);
       setDefaultEnvValueIfPresent(
         resolvedEnv,
-        "AWS_SECRET_ACCESS_KEY",
-        trimValue(env.AWS_SECRET_ACCESS_KEY),
+        "SCCACHE_REGION",
+        trimValue(env.CTX_SCCACHE_R2_REGION) || trimValue(env.SCCACHE_REGION) || "auto",
       );
+      setDefaultEnvValueIfPresent(resolvedEnv, "SCCACHE_ENDPOINT", remoteSccacheEndpoint);
+      setDefaultEnvValueIfPresent(resolvedEnv, "SCCACHE_S3_KEY_PREFIX", remoteSccacheKeyPrefix);
+      setDefaultEnvValueIfPresent(
+        resolvedEnv,
+        "SCCACHE_S3_USE_SSL",
+        trimValue(env.SCCACHE_S3_USE_SSL) || "true",
+      );
+      if (remoteSccacheAccessKeyId) {
+        resolvedEnv.AWS_ACCESS_KEY_ID = remoteSccacheAccessKeyId;
+      } else {
+        setDefaultEnvValueIfPresent(
+          resolvedEnv,
+          "AWS_ACCESS_KEY_ID",
+          trimValue(env.AWS_ACCESS_KEY_ID),
+        );
+      }
+      if (remoteSccacheSecretAccessKey) {
+        resolvedEnv.AWS_SECRET_ACCESS_KEY = remoteSccacheSecretAccessKey;
+      } else {
+        setDefaultEnvValueIfPresent(
+          resolvedEnv,
+          "AWS_SECRET_ACCESS_KEY",
+          trimValue(env.AWS_SECRET_ACCESS_KEY),
+        );
+      }
+      if (remoteSccacheSessionToken) {
+        resolvedEnv.AWS_SESSION_TOKEN = remoteSccacheSessionToken;
+      } else {
+        setDefaultEnvValueIfPresent(
+          resolvedEnv,
+          "AWS_SESSION_TOKEN",
+          trimValue(env.AWS_SESSION_TOKEN),
+        );
+      }
     }
-    if (remoteSccacheSessionToken) {
-      resolvedEnv.AWS_SESSION_TOKEN = remoteSccacheSessionToken;
-    } else {
-      setDefaultEnvValueIfPresent(resolvedEnv, "AWS_SESSION_TOKEN", trimValue(env.AWS_SESSION_TOKEN));
+
+    const sccachePath = resolveAvailableSccachePath(resolvedEnv);
+    if (sccachePath && !trimValue(resolvedEnv.RUSTC_WRAPPER)) {
+      resolvedEnv.RUSTC_WRAPPER = sccachePath;
+      setDefaultEnvValue(resolvedEnv, "SCCACHE_PATH", sccachePath);
     }
+    if (trimValue(resolvedEnv.RUSTC_WRAPPER) === trimValue(sccachePath) && sccachePath) {
+      if (process.platform !== "win32" && !trimValue(resolvedEnv.SCCACHE_SERVER_UDS)) {
+        resolvedEnv.SCCACHE_SERVER_UDS = resolveSccacheServerUds(cargoTargetDir);
+      }
+      appendEnvPathListValue(resolvedEnv, "SCCACHE_BASEDIRS", [
+        path.resolve(cwd),
+        path.resolve(cargoTargetDir),
+      ]);
+      setDefaultEnvValue(resolvedEnv, "CARGO_INCREMENTAL", "0");
+      appendSpaceSeparatedFlags(resolvedEnv, "RUSTFLAGS", [
+        `--remap-path-prefix=${path.resolve(cwd)}=/ctx-workspace`,
+        `--remap-path-prefix=${path.resolve(layout.volatileRoot)}=/ctx-volatile`,
+      ]);
+    }
+
+    return {
+      env: resolvedEnv,
+      layout,
+      cargoTargetDir: resolvedEnv.CARGO_TARGET_DIR,
+    };
   }
 
-  const sccachePath = resolveAvailableSccachePath(resolvedEnv);
-  if (sccachePath && !trimValue(resolvedEnv.RUSTC_WRAPPER)) {
-    resolvedEnv.RUSTC_WRAPPER = sccachePath;
-    setDefaultEnvValue(resolvedEnv, "SCCACHE_PATH", sccachePath);
-  }
-  if (trimValue(resolvedEnv.RUSTC_WRAPPER) === trimValue(sccachePath) && sccachePath) {
-    if (process.platform !== "win32" && !trimValue(resolvedEnv.SCCACHE_SERVER_UDS)) {
-      resolvedEnv.SCCACHE_SERVER_UDS = resolveSccacheServerUds(cargoTargetDir);
-    }
-    appendEnvPathListValue(resolvedEnv, "SCCACHE_BASEDIRS", [
-      path.resolve(cwd),
-      path.resolve(cargoTargetDir),
-    ]);
-    setDefaultEnvValue(resolvedEnv, "CARGO_INCREMENTAL", "0");
-    appendSpaceSeparatedFlags(resolvedEnv, "RUSTFLAGS", [
-      `--remap-path-prefix=${path.resolve(cwd)}=/ctx-workspace`,
-      `--remap-path-prefix=${path.resolve(layout.volatileRoot)}=/ctx-volatile`,
-    ]);
-  }
+  const initialLayout = resolveCtxCacheLayout({ cwd, env });
+  let result = buildForLayout(initialLayout);
 
   if (mkdir) {
-    ensureCacheLayout(layout);
-    fs.mkdirSync(resolvedEnv.CARGO_TARGET_DIR, { recursive: true });
+    try {
+      ensureCacheLayout(result.layout);
+      fs.mkdirSync(result.env.CARGO_TARGET_DIR, { recursive: true });
+    } catch (error) {
+      const hasExplicitVolatileRoot = Boolean(trimValue(env.CTX_VOLATILE_ROOT));
+      const shouldFallback =
+        !hasExplicitVolatileRoot && result.layout.volatileRootMode === "preferred-external";
+      if (!shouldFallback) {
+        throw error;
+      }
+      const fallbackLayout = {
+        ...resolveCtxCacheLayout({
+          cwd,
+          env: {
+            ...env,
+            CTX_VOLATILE_ROOT: result.layout.internalVolatileRoot,
+          },
+        }),
+        volatileRootMode: "internal-fallback",
+      };
+      result = buildForLayout(fallbackLayout);
+      result.env.CTX_VOLATILE_ROOT_MODE = "internal-fallback";
+      ensureCacheLayout(result.layout);
+      fs.mkdirSync(result.env.CARGO_TARGET_DIR, { recursive: true });
+    }
   }
 
-  return {
-    env: resolvedEnv,
-    layout,
-    cargoTargetDir: resolvedEnv.CARGO_TARGET_DIR,
-  };
+  return result;
 }
 
 function shellQuote(value) {

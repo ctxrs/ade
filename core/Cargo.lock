@@ -1455,6 +1455,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctx-harness-setup"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "ctx-harness-sources"
 version = "0.1.0"
 dependencies = [
@@ -1491,6 +1498,7 @@ dependencies = [
  "ctx-core",
  "ctx-events",
  "ctx-fs",
+ "ctx-harness-setup",
  "ctx-harness-sources",
  "ctx-lsp",
  "ctx-provider-accounts",

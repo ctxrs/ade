@@ -5,39 +5,6 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-#[test]
-fn managed_download_aggregate_combines_parallel_artifact_progress() {
-    let aggregate = ManagedDownloadAggregate::default();
-
-    let first = aggregate
-        .update("Sandbox CLI runtime", 10, Some(40), Some(3), false)
-        .expect("first aggregate snapshot");
-    assert_eq!(first.artifact, "Required artifacts");
-    assert_eq!(first.downloaded_bytes, 10);
-    assert_eq!(first.total_bytes, Some(40));
-    assert_eq!(first.bytes_per_sec, Some(3));
-
-    let combined = aggregate
-        .update("Harness image", 5, Some(20), Some(2), false)
-        .expect("combined aggregate snapshot");
-    assert_eq!(combined.downloaded_bytes, 15);
-    assert_eq!(combined.total_bytes, Some(60));
-    assert_eq!(combined.bytes_per_sec, Some(5));
-
-    let still_running = aggregate
-        .update("Sandbox CLI runtime", 40, Some(40), Some(4), true)
-        .expect("remaining artifact should keep aggregate active");
-    assert_eq!(still_running.downloaded_bytes, 45);
-    assert_eq!(still_running.total_bytes, Some(60));
-    assert_eq!(still_running.bytes_per_sec, Some(6));
-
-    let finished = aggregate.update("Harness image", 20, Some(20), Some(2), true);
-    assert!(
-        finished.is_none(),
-        "aggregate should clear once all downloads finish"
-    );
-}
-
 #[tokio::test]
 async fn finalize_managed_artifact_download_tolerates_parallel_committers() {
     let temp = tempfile::tempdir().expect("tempdir");
