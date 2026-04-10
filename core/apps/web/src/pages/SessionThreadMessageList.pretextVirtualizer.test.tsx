@@ -111,13 +111,15 @@ const makeTurnStatusItem = (): WorkbenchListItem => ({
 function InteractiveTurnHeaderHarness({
   sessionId,
   listItems,
+  projectionKind = "toggle_expansion",
 }: {
   sessionId: string;
   listItems: WorkbenchListItem[];
+  projectionKind?: WorkbenchThreadProjectionOp["kind"];
 }) {
   const [expandedTurnHeaders, setExpandedTurnHeaders] = useState<Record<string, boolean>>({});
   const projectionOp: WorkbenchThreadProjectionOp = {
-    kind: "toggle_expansion",
+    kind: projectionKind,
     projectionRevision: Object.keys(expandedTurnHeaders).length,
     changedItemIds: ["turn-header-live-regression"],
     remeasureItemIds: [
@@ -466,6 +468,176 @@ describe("SessionThreadPretextVirtualizerList", () => {
     const { container } = render(
       <InteractiveTurnHeaderHarness sessionId="session-turn-header-click" listItems={listItems} />,
     );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 2400 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+      scroller.scrollTop = 920;
+      fireEvent.scroll(scroller);
+      scroller.scrollTop = 80;
+      fireEvent.scroll(scroller);
+    });
+
+    const detachedScrollTop = scroller.scrollTop;
+    const header = container.querySelector<HTMLElement>(".wb-turn-header");
+    if (!header) throw new Error("Expected visible turn header");
+
+    act(() => {
+      fireEvent.mouseDown(header);
+      fireEvent.click(header);
+    });
+
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    expect(Math.abs(scroller.scrollTop - detachedScrollTop)).toBeLessThan(80);
+  });
+
+  it("does not jump when expansion is merged into a reconcile update while detached", () => {
+    const listItems: WorkbenchListItem[] = [
+      {
+        kind: "turn_header",
+        id: "turn-header-live-regression",
+        header: {
+          id: "header-live-regression",
+          content: EXPANDABLE_TURN_HEADER_TEXT,
+          attachments: [],
+          created_at: "2026-04-09T22:00:56.315133Z",
+        },
+      },
+      {
+        kind: "assistant",
+        id: "assistant-live-regression",
+        turn_id: "turn-live-regression",
+        created_at: "2026-04-09T22:01:00.000Z",
+        content: "Yes. That is one of the best ideas so far.",
+        thought: "",
+        is_complete: true,
+      },
+      {
+        kind: "turn_status",
+        id: "turn-status-live-regression",
+        turn_id: "turn-live-regression",
+        created_at: "2026-04-09T22:01:01.000Z",
+        started_at: "2026-04-09T22:00:56.315133Z",
+        updated_at: "2026-04-09T22:01:17.596920Z",
+        status: "completed",
+        assistant_messages_content: "Yes. That is one of the best ideas so far.",
+      },
+      ...makeMessageRange("after", 24),
+    ];
+
+    const { container } = render(
+      <InteractiveTurnHeaderHarness
+        sessionId="session-turn-header-click-reconcile"
+        listItems={listItems}
+        projectionKind="reconcile"
+      />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 2400 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+      scroller.scrollTop = 920;
+      fireEvent.scroll(scroller);
+      scroller.scrollTop = 80;
+      fireEvent.scroll(scroller);
+    });
+
+    const detachedScrollTop = scroller.scrollTop;
+    const header = container.querySelector<HTMLElement>(".wb-turn-header");
+    if (!header) throw new Error("Expected visible turn header");
+
+    act(() => {
+      fireEvent.mouseDown(header);
+      fireEvent.click(header);
+    });
+
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    expect(Math.abs(scroller.scrollTop - detachedScrollTop)).toBeLessThan(80);
+  });
+
+  it("keeps the interacted row anchored when reconcile changes include streaming rows too", () => {
+    const listItems: WorkbenchListItem[] = [
+      {
+        kind: "turn_header",
+        id: "turn-header-live-regression",
+        header: {
+          id: "header-live-regression",
+          content: EXPANDABLE_TURN_HEADER_TEXT,
+          attachments: [],
+          created_at: "2026-04-09T22:00:56.315133Z",
+        },
+      },
+      {
+        kind: "assistant",
+        id: "assistant-live-regression",
+        turn_id: "turn-live-regression",
+        created_at: "2026-04-09T22:01:00.000Z",
+        content: "Yes. That is one of the best ideas so far.",
+        thought: "",
+        is_complete: true,
+      },
+      {
+        kind: "turn_status",
+        id: "turn-status-live-regression",
+        turn_id: "turn-live-regression",
+        created_at: "2026-04-09T22:01:01.000Z",
+        started_at: "2026-04-09T22:00:56.315133Z",
+        updated_at: "2026-04-09T22:01:17.596920Z",
+        status: "completed",
+        assistant_messages_content: "Yes. That is one of the best ideas so far.",
+      },
+      ...makeMessageRange("after", 24),
+    ];
+
+    function MixedReconcileHarness() {
+      const [expandedTurnHeaders, setExpandedTurnHeaders] = useState<Record<string, boolean>>({});
+      const projectionOp: WorkbenchThreadProjectionOp = {
+        kind: "reconcile",
+        projectionRevision: Object.keys(expandedTurnHeaders).length,
+        changedItemIds: ["turn-header-live-regression", "assistant-live-regression"],
+        remeasureItemIds: [
+          "turn-header-live-regression",
+          "assistant-live-regression",
+          "turn-status-live-regression",
+        ],
+      };
+      return (
+        <SessionThreadPretextVirtualizerList
+          style={{ height: 400 }}
+          sessionId="session-turn-header-click-reconcile-streaming"
+          isActive
+          listItems={listItems}
+          threadProjectionOp={projectionOp}
+          itemContent={(_, item) => {
+            if (item.kind === "turn_header") {
+              const plainText = item.header.plain_text ?? item.header.content;
+              const expanded = expandedTurnHeaders[item.header.id] ?? false;
+              return (
+                <WorkbenchTurnHeaderView
+                  header={item.header}
+                  plainText={plainText}
+                  expanded={expanded}
+                  onToggle={() =>
+                    setExpandedTurnHeaders((prev) => ({ ...prev, [item.header.id]: !expanded }))
+                  }
+                />
+              );
+            }
+            return <div>{item.id}</div>;
+          }}
+          itemKey={(item) => item.id}
+          context={{ ...context, expandedTurnHeaders }}
+        />
+      );
+    }
+
+    const { container } = render(<MixedReconcileHarness />);
 
     const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
     if (!scroller) throw new Error("Expected transcript scroller");

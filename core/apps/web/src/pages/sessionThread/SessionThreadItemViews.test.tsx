@@ -10,7 +10,7 @@ vi.mock("../../utils/clipboard", () => ({
   copyTextToClipboard: copyTextToClipboardMock,
 }));
 
-import { AssistantEntry, WorkbenchToolRow, WorkbenchTurnHeaderView } from "./SessionThreadItemViews";
+import { AssistantEntry, ThreadItemView, WorkbenchToolRow, WorkbenchTurnHeaderView } from "./SessionThreadItemViews";
 
 function TestHeader({ plainText = "line 1\nline 2\nline 3\nline 4\nline 5" }: { plainText?: string }) {
   const [expanded, setExpanded] = useState(false);
@@ -139,6 +139,32 @@ describe("WorkbenchTurnHeaderView", () => {
     expect(copyTextToClipboardMock).toHaveBeenCalledWith("copy me");
     expect(header).toHaveAttribute("aria-expanded", "false");
     expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
+});
+
+describe("ThreadItemView", () => {
+  it("wraps message rows in an explicit transcript shell", () => {
+    const { container } = render(
+      <ThreadItemView
+        item={{
+          kind: "message",
+          id: "message-1",
+          role: "user",
+          content: Array.from({ length: 24 }, (_, index) => `line ${index + 1}`).join("\n"),
+          attachments: [],
+          created_at: "2025-01-01T00:00:00.000Z",
+        }}
+        worktreeId={null}
+        onFileOpenError={() => {}}
+        messageExpanded={false}
+        onToggleMessageExpanded={() => {}}
+      />,
+    );
+
+    const row = container.querySelector(".wb-message-row");
+    expect(row).not.toBeNull();
+    expect(row?.querySelector(".msg")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Show more" })).toBeInTheDocument();
   });
 });
 

@@ -3,8 +3,10 @@ e2e/meaningful-repaints.spec.ts
 e2e/workbench-markdown-parity.spec.ts
 e2e/workbench-message-list-acceptance.spec.ts
 e2e/workbench-message-list-bottom-hit.spec.ts
+e2e/workbench-message-row-parity.spec.ts
 e2e/workbench-claude-subscription-setup-token-real.spec.ts
 e2e/workbench-composer-scroll-ownership.spec.ts
+e2e/workbench-open-at-bottom.spec.ts
 e2e/workbench-pretext-detached-wheel.spec.ts
 e2e/workbench-pretext-virtualizer-acceptance.spec.ts
 e2e/workbench-pretext-virtualizer-bottom-rehit.spec.ts
@@ -15,10 +17,10 @@ e2e/workbench-composer-jank.spec.ts
 e2e/workbench-message-list-overscroll.spec.ts
 e2e/workbench-interrupt-transition-stability.spec.ts
 e2e/workbench-scrollback-jank-video.spec.ts
-e2e/workbench-scroll-restore.spec.ts
 e2e/workbench-scroll-stickiness.spec.ts
 e2e/workbench-session-history-scroll-anchor.spec.ts
 e2e/workbench-tool-summaries-stability.spec.ts
+e2e/workbench-turn-header-parity.spec.ts
 e2e/workbench-warm-switch-large.spec.ts
 e2e/ws-snapshot-delivery-large.spec.ts
 e2e/ws-stream-recovery-large.spec.ts

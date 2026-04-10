@@ -465,13 +465,14 @@ button.linklike:hover {
 .attachments {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
+  gap: var(--wb-message-attachment-gap, 8px);
+  margin-top: var(--wb-message-attachment-margin-top, 8px);
 }
 
 .attachment-img {
-  width: 240px;
-  height: 180px;
+  width: var(--wb-message-attachment-width, 240px);
+  height: var(--wb-message-attachment-height, 180px);
+  box-sizing: border-box;
   border-radius: 6px;
   border: 1px solid var(--border);
   object-fit: contain;
@@ -483,7 +484,9 @@ button.linklike:hover {
   border: none;
   color: var(--accent);
   padding: 0;
-  margin-top: 6px;
+  margin-top: var(--wb-message-toggle-margin-top, 6px);
+  font-size: var(--wb-message-toggle-font-size, 13px);
+  line-height: var(--wb-message-toggle-line-height, 16px);
   cursor: pointer;
   text-align: left;
 }
@@ -574,13 +577,18 @@ button.linklike:hover {
 }
 
 .msg {
-  padding: 10px 12px;
-  margin: 6px 0;
+  padding: var(--wb-message-bubble-padding-block, 10px)
+    var(--wb-message-bubble-padding-inline, 12px);
+  margin: 0;
   border-radius: 6px;
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: var(--wb-message-bubble-border-width, 1px) solid var(--border);
   box-shadow: var(--shadow);
-  max-width: 92%;
+  max-width: var(--wb-message-max-width, 92%);
+}
+
+.wb-message-row {
+  padding-block: var(--wb-message-row-padding-block, 6px);
 }
 
 .msg.user {
@@ -603,7 +611,8 @@ button.linklike:hover {
 }
 
 .role {
-  font-size: 0.75em;
+  font-size: var(--wb-message-role-font-size, 11px);
+  line-height: var(--wb-message-role-line-height, 11px);
   text-transform: uppercase;
   color: var(--muted);
 }

@@ -42,6 +42,20 @@ export const SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_BOTTOM_PX = 12;
 export const SESSION_THREAD_MARKDOWN_TABLE_BORDER_WIDTH_PX = 1;
 export const SESSION_THREAD_MARKDOWN_TABLE_CELL_PADDING_BLOCK_PX = 8;
 export const SESSION_THREAD_MARKDOWN_TABLE_CELL_PADDING_INLINE_PX = 12;
+export const SESSION_THREAD_MESSAGE_ROW_PADDING_BLOCK_PX = 6;
+export const SESSION_THREAD_MESSAGE_BUBBLE_PADDING_BLOCK_PX = 10;
+export const SESSION_THREAD_MESSAGE_BUBBLE_PADDING_INLINE_PX = 12;
+export const SESSION_THREAD_MESSAGE_BUBBLE_BORDER_WIDTH_PX = 1;
+export const SESSION_THREAD_MESSAGE_MAX_WIDTH_RATIO = 0.92;
+export const SESSION_THREAD_MESSAGE_ROLE_FONT_SIZE_PX = 11;
+export const SESSION_THREAD_MESSAGE_ROLE_LINE_HEIGHT_PX = 11;
+export const SESSION_THREAD_MESSAGE_TOGGLE_MARGIN_TOP_PX = 6;
+export const SESSION_THREAD_MESSAGE_TOGGLE_FONT_SIZE_PX = SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX;
+export const SESSION_THREAD_MESSAGE_TOGGLE_LINE_HEIGHT_PX = 16;
+export const SESSION_THREAD_MESSAGE_ATTACHMENT_WIDTH_PX = 240;
+export const SESSION_THREAD_MESSAGE_ATTACHMENT_HEIGHT_PX = 180;
+export const SESSION_THREAD_MESSAGE_ATTACHMENT_GAP_PX = 8;
+export const SESSION_THREAD_MESSAGE_ATTACHMENT_MARGIN_TOP_PX = 8;
 
 export const SESSION_THREAD_LAYOUT_STYLE = {
   "--wb-thread-max-width": `${SESSION_THREAD_ROW_MAX_WIDTH_PX}px`,
@@ -68,6 +82,20 @@ export const SESSION_THREAD_LAYOUT_STYLE = {
   "--wb-markdown-table-border-width": `${SESSION_THREAD_MARKDOWN_TABLE_BORDER_WIDTH_PX}px`,
   "--wb-markdown-table-cell-padding-block": `${SESSION_THREAD_MARKDOWN_TABLE_CELL_PADDING_BLOCK_PX}px`,
   "--wb-markdown-table-cell-padding-inline": `${SESSION_THREAD_MARKDOWN_TABLE_CELL_PADDING_INLINE_PX}px`,
+  "--wb-message-row-padding-block": `${SESSION_THREAD_MESSAGE_ROW_PADDING_BLOCK_PX}px`,
+  "--wb-message-bubble-padding-block": `${SESSION_THREAD_MESSAGE_BUBBLE_PADDING_BLOCK_PX}px`,
+  "--wb-message-bubble-padding-inline": `${SESSION_THREAD_MESSAGE_BUBBLE_PADDING_INLINE_PX}px`,
+  "--wb-message-bubble-border-width": `${SESSION_THREAD_MESSAGE_BUBBLE_BORDER_WIDTH_PX}px`,
+  "--wb-message-max-width": `${SESSION_THREAD_MESSAGE_MAX_WIDTH_RATIO * 100}%`,
+  "--wb-message-role-font-size": `${SESSION_THREAD_MESSAGE_ROLE_FONT_SIZE_PX}px`,
+  "--wb-message-role-line-height": `${SESSION_THREAD_MESSAGE_ROLE_LINE_HEIGHT_PX}px`,
+  "--wb-message-toggle-margin-top": `${SESSION_THREAD_MESSAGE_TOGGLE_MARGIN_TOP_PX}px`,
+  "--wb-message-toggle-font-size": `${SESSION_THREAD_MESSAGE_TOGGLE_FONT_SIZE_PX}px`,
+  "--wb-message-toggle-line-height": `${SESSION_THREAD_MESSAGE_TOGGLE_LINE_HEIGHT_PX}px`,
+  "--wb-message-attachment-width": `${SESSION_THREAD_MESSAGE_ATTACHMENT_WIDTH_PX}px`,
+  "--wb-message-attachment-height": `${SESSION_THREAD_MESSAGE_ATTACHMENT_HEIGHT_PX}px`,
+  "--wb-message-attachment-gap": `${SESSION_THREAD_MESSAGE_ATTACHMENT_GAP_PX}px`,
+  "--wb-message-attachment-margin-top": `${SESSION_THREAD_MESSAGE_ATTACHMENT_MARGIN_TOP_PX}px`,
 } as CSSProperties;
 
 export function resolveSessionThreadRowWidth(viewportWidth: number): number {

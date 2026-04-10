@@ -20,6 +20,18 @@ import {
   SESSION_THREAD_CONTENT_MAX_WIDTH_PX,
   SESSION_THREAD_HORIZONTAL_INSET_PX,
   SESSION_THREAD_INDENT_LEFT_PX,
+  SESSION_THREAD_MESSAGE_ATTACHMENT_GAP_PX,
+  SESSION_THREAD_MESSAGE_ATTACHMENT_HEIGHT_PX,
+  SESSION_THREAD_MESSAGE_ATTACHMENT_MARGIN_TOP_PX,
+  SESSION_THREAD_MESSAGE_ATTACHMENT_WIDTH_PX,
+  SESSION_THREAD_MESSAGE_BUBBLE_BORDER_WIDTH_PX,
+  SESSION_THREAD_MESSAGE_BUBBLE_PADDING_BLOCK_PX,
+  SESSION_THREAD_MESSAGE_BUBBLE_PADDING_INLINE_PX,
+  SESSION_THREAD_MESSAGE_MAX_WIDTH_RATIO,
+  SESSION_THREAD_MESSAGE_ROLE_LINE_HEIGHT_PX,
+  SESSION_THREAD_MESSAGE_ROW_PADDING_BLOCK_PX,
+  SESSION_THREAD_MESSAGE_TOGGLE_LINE_HEIGHT_PX,
+  SESSION_THREAD_MESSAGE_TOGGLE_MARGIN_TOP_PX,
   SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY,
   SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX,
   SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
@@ -60,16 +72,16 @@ const TURN_HEADER_ATTACHMENT_SIZE_PX = 44;
 const TURN_HEADER_ATTACHMENT_GAP_PX = 6;
 const TURN_HEADER_ATTACHMENT_MARGIN_TOP_PX = 8;
 
-const MESSAGE_ROLE_HEIGHT_PX = 12;
-const MESSAGE_BUBBLE_HORIZONTAL_PX = 24;
-const MESSAGE_BUBBLE_VERTICAL_PX = 20;
-const MESSAGE_TOGGLE_HEIGHT_PX = 22;
-const MESSAGE_MAX_WIDTH_RATIO = 0.92;
-const MESSAGE_BUBBLE_MARGIN_VERTICAL_PX = 12;
-const FIXED_ATTACHMENT_WIDTH_PX = 240;
-const FIXED_ATTACHMENT_HEIGHT_PX = 180;
-const ATTACHMENT_GAP_PX = 8;
-const ATTACHMENT_MARGIN_TOP_PX = 8;
+const MESSAGE_ROLE_HEIGHT_PX = SESSION_THREAD_MESSAGE_ROLE_LINE_HEIGHT_PX;
+const MESSAGE_BUBBLE_HORIZONTAL_PX =
+  SESSION_THREAD_MESSAGE_BUBBLE_PADDING_INLINE_PX * 2 +
+  SESSION_THREAD_MESSAGE_BUBBLE_BORDER_WIDTH_PX * 2;
+const MESSAGE_BUBBLE_VERTICAL_PX =
+  SESSION_THREAD_MESSAGE_BUBBLE_PADDING_BLOCK_PX * 2 +
+  SESSION_THREAD_MESSAGE_BUBBLE_BORDER_WIDTH_PX * 2;
+const MESSAGE_TOGGLE_HEIGHT_PX =
+  SESSION_THREAD_MESSAGE_TOGGLE_MARGIN_TOP_PX + SESSION_THREAD_MESSAGE_TOGGLE_LINE_HEIGHT_PX;
+const MESSAGE_ROW_VERTICAL_PX = SESSION_THREAD_MESSAGE_ROW_PADDING_BLOCK_PX * 2;
 
 const ASSISTANT_HORIZONTAL_PADDING_PX = 4;
 const ASSISTANT_VERTICAL_PADDING_PX = 20;
@@ -106,7 +118,8 @@ const resolveTurnHeaderTextWidth = (viewportWidth: number): number =>
 const resolveMessageOuterWidth = (viewportWidth: number): number =>
   Math.max(
     1,
-    (resolveSessionThreadContentWidth(viewportWidth) - SESSION_THREAD_INDENT_LEFT_PX) * MESSAGE_MAX_WIDTH_RATIO,
+    (resolveSessionThreadContentWidth(viewportWidth) - SESSION_THREAD_INDENT_LEFT_PX) *
+      SESSION_THREAD_MESSAGE_MAX_WIDTH_RATIO,
   );
 
 const resolveMessageTextWidth = (viewportWidth: number): number =>
@@ -148,7 +161,13 @@ const countImageAttachments = (attachments: readonly MessageAttachment[]): numbe
 
 function countAttachmentRows(attachmentCount: number, width: number): number {
   if (attachmentCount <= 0) return 0;
-  const perRow = Math.max(1, Math.floor((width + ATTACHMENT_GAP_PX) / (FIXED_ATTACHMENT_WIDTH_PX + ATTACHMENT_GAP_PX)));
+  const perRow = Math.max(
+    1,
+    Math.floor(
+      (width + SESSION_THREAD_MESSAGE_ATTACHMENT_GAP_PX) /
+        (SESSION_THREAD_MESSAGE_ATTACHMENT_WIDTH_PX + SESSION_THREAD_MESSAGE_ATTACHMENT_GAP_PX),
+    ),
+  );
   return Math.ceil(attachmentCount / perRow);
 }
 
@@ -206,8 +225,12 @@ function measureThoughtHeight(item: Extract<WorkbenchListItem, { kind: "thought"
 function measureMessageAttachmentsHeight(item: Extract<WorkbenchListItem, { kind: "message" }>, viewportWidth: number): number {
   const imageCount = countImageAttachments(item.attachments ?? []);
   if (imageCount === 0) return 0;
-  const rows = countAttachmentRows(imageCount, resolveMessageOuterWidth(viewportWidth));
-  return ATTACHMENT_MARGIN_TOP_PX + rows * FIXED_ATTACHMENT_HEIGHT_PX + Math.max(0, rows - 1) * ATTACHMENT_GAP_PX;
+  const rows = countAttachmentRows(imageCount, resolveMessageTextWidth(viewportWidth));
+  return (
+    SESSION_THREAD_MESSAGE_ATTACHMENT_MARGIN_TOP_PX +
+    rows * SESSION_THREAD_MESSAGE_ATTACHMENT_HEIGHT_PX +
+    Math.max(0, rows - 1) * SESSION_THREAD_MESSAGE_ATTACHMENT_GAP_PX
+  );
 }
 
 function measureMessageHeight(
@@ -223,7 +246,7 @@ function measureMessageHeight(
   const attachmentsHeight = measureMessageAttachmentsHeight(item, viewportWidth);
   const toggleHeight = isExpandableMessageContent(item.content) ? MESSAGE_TOGGLE_HEIGHT_PX : 0;
   return normalizeHeight(
-    MESSAGE_BUBBLE_MARGIN_VERTICAL_PX +
+    MESSAGE_ROW_VERTICAL_PX +
       MESSAGE_ROLE_HEIGHT_PX +
       MESSAGE_BUBBLE_VERTICAL_PX +
       textHeight +

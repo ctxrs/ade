@@ -260,37 +260,39 @@ function CollapsibleMessage({
   const shown = expanded ? content : lines.slice(0, 20).join("\n");
 
   return (
-    <div className={`msg ${role}`}>
-      <div className="role">{role}</div>
-      <div id={`msg-${id}`}>
-        <MemoMarkdown
-          content={shown}
-          linkifyFiles={role === "assistant"}
-          worktreeId={worktreeId}
-          onFileOpenError={onFileOpenError}
-        />
-      </div>
-      {attachments?.length > 0 && (
-        <div className="attachments">
-          {attachments.map((a, idx) => {
-            if (a.kind !== "image" && a.kind !== "image_ref") return null;
-            const src =
-              a.kind === "image_ref" ? blobUrl(a.blob_id) : `data:${a.mime_type};base64,${a.data_base64}`;
-            return <img key={idx} className="attachment-img" src={src} alt={a.name ?? `image-${idx}`} />;
-          })}
+    <div className="wb-message-row">
+      <div className={`msg ${role}`}>
+        <div className="role">{role}</div>
+        <div id={`msg-${id}`}>
+          <MemoMarkdown
+            content={shown}
+            linkifyFiles={role === "assistant"}
+            worktreeId={worktreeId}
+            onFileOpenError={onFileOpenError}
+          />
         </div>
-      )}
-      {canToggle && (
-        <button
-          type="button"
-          className="link"
-          aria-expanded={expanded}
-          aria-controls={`msg-${id}`}
-          onClick={() => onToggleExpanded?.(!expanded)}
-        >
-          {expanded ? "Show less" : "Show more"}
-        </button>
-      )}
+        {attachments?.length > 0 && (
+          <div className="attachments">
+            {attachments.map((a, idx) => {
+              if (a.kind !== "image" && a.kind !== "image_ref") return null;
+              const src =
+                a.kind === "image_ref" ? blobUrl(a.blob_id) : `data:${a.mime_type};base64,${a.data_base64}`;
+              return <img key={idx} className="attachment-img" src={src} alt={a.name ?? `image-${idx}`} />;
+            })}
+          </div>
+        )}
+        {canToggle && (
+          <button
+            type="button"
+            className="link"
+            aria-expanded={expanded}
+            aria-controls={`msg-${id}`}
+            onClick={() => onToggleExpanded?.(!expanded)}
+          >
+            {expanded ? "Show less" : "Show more"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
