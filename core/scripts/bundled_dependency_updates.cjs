@@ -8,7 +8,7 @@ const https = require("node:https");
 const coreRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(coreRoot, "..");
 
-const providerMatrixPath = path.join(coreRoot, "crates", "ctx-http", "src", "provider_matrix.json");
+const providerMatrixPath = path.join(coreRoot, "crates", "ctx-provider-accounts", "src", "provider_matrix.json");
 const runtimeLockPath = path.join(coreRoot, "apps", "desktop", "src-tauri", "bundles", "runtime_lock.v2.json");
 const installerRsPath = path.join(coreRoot, "crates", "ctx-http", "src", "installer.rs");
 

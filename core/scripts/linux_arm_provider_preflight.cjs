@@ -10,7 +10,7 @@ const {
 } = require("./linux_arm_provider_reliability_matrix.cjs");
 
 const coreRoot = path.resolve(__dirname, "..");
-const defaultProviderMatrixPath = path.join(coreRoot, "crates", "ctx-http", "src", "provider_matrix.json");
+const defaultProviderMatrixPath = path.join(coreRoot, "crates", "ctx-provider-accounts", "src", "provider_matrix.json");
 const defaultRuntimeLockPath = path.join(coreRoot, "apps", "desktop", "src-tauri", "bundles", "runtime_lock.v2.json");
 
 const LINUX_ARCH_TARGET_KEY = "linux-aarch64";

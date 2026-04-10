@@ -49,7 +49,7 @@ pub async fn invalidate_matrix_cache(cache: &tokio::sync::Mutex<ProviderMatrixCa
     guard.matrix = None;
 }
 
-pub(super) fn load_cached_matrix(data_root: &Path) -> Option<ProviderMatrix> {
+pub(crate) fn load_cached_matrix(data_root: &Path) -> Option<ProviderMatrix> {
     let path = matrix_cache_path(data_root);
     let txt = std::fs::read_to_string(&path).ok()?;
     let parsed: ProviderMatrix = serde_json::from_str(&txt).ok()?;
@@ -60,7 +60,7 @@ pub(super) fn load_cached_matrix(data_root: &Path) -> Option<ProviderMatrix> {
 }
 
 #[cfg(test)]
-pub(super) async fn save_cached_matrix(
+pub async fn save_cached_matrix(
     data_root: &Path,
     matrix: &ProviderMatrix,
 ) -> anyhow::Result<()> {

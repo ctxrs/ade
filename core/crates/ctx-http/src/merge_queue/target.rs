@@ -7,7 +7,7 @@ use ctx_fs::git::rev_parse_ref;
 use tokio::fs;
 
 use crate::daemon::AppState;
-use crate::workspace_config::MergeQueueConfig;
+use ctx_workspace_config::MergeQueueConfig;
 
 use super::context::jj_rev_parse_bookmark;
 use super::{

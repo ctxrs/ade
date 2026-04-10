@@ -1,4 +1,5 @@
 use super::*;
+use ctx_workspace_config as workspace_config;
 
 #[derive(Debug, Deserialize, Default)]
 pub(crate) struct SessionSnapshotQuery {

@@ -13,7 +13,7 @@ use ctx_fs::vcs::{self, ApplyPatchTarget, VcsDriver};
 use ctx_fs::worktrees::{create_worktree, remove_worktree};
 
 use crate::daemon::AppState;
-use crate::workspace_config::MergeQueueConfig;
+use ctx_workspace_config::MergeQueueConfig;
 
 use super::context::{find_checked_out_worktree_for_branch, resolve_target_head};
 use super::storage::{merge_queue_worktree_path, read_patch_file, write_log_line};

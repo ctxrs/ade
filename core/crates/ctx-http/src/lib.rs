@@ -48,7 +48,6 @@ pub mod tool_cgroup;
 pub mod updates;
 pub mod vcs_hooks;
 pub mod web_sessions;
-pub mod workspace_config;
 pub(crate) mod workspace_provider_model_preferences;
 pub mod workspace_runtime;
 pub mod worktree_bootstrap;

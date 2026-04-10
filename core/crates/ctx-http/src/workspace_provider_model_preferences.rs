@@ -4,7 +4,7 @@ use anyhow::Result;
 use ctx_core::ids::WorkspaceId;
 
 use crate::daemon::AppState;
-use crate::workspace_config;
+use ctx_workspace_config as workspace_config;
 
 async fn invalidate_provider_options_cache(
     state: &AppState,

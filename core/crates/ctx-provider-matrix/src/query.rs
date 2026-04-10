@@ -13,15 +13,18 @@ pub fn is_user_facing_harness_id(matrix: &ProviderMatrix, provider_id: &str) -> 
         .unwrap_or(true)
 }
 
-pub fn is_managed_supported(matrix: &ProviderMatrix, provider_id: &str) -> bool {
+pub fn is_managed_supported_for_context(
+    matrix: &ProviderMatrix,
+    provider_id: &str,
+    context_version: Option<&Version>,
+) -> bool {
     let Some(entry) = get_entry(matrix, provider_id) else {
         return false;
     };
     if entry.managed_install.is_none() {
         return false;
     }
-    let context_version = updates::normalize_version_str(env!("CARGO_PKG_VERSION"));
-    recommended_release(entry, context_version.as_ref()).is_some()
+    recommended_release(entry, context_version).is_some()
 }
 
 pub fn recommended_release<'a>(
@@ -57,7 +60,7 @@ pub fn release_for_version<'a>(
         .find(|r| version_matches(&r.version, version))
 }
 
-pub(super) fn release_matches_context(
+pub fn release_matches_context(
     release: &ProviderRelease,
     context_version: Option<&Version>,
 ) -> bool {
@@ -81,7 +84,7 @@ pub(super) fn release_matches_context(
     true
 }
 
-pub(super) fn select_latest_release<'a>(
+pub fn select_latest_release<'a>(
     candidates: &[&'a ProviderRelease],
 ) -> Option<&'a ProviderRelease> {
     let mut best: Option<(&ProviderRelease, Version)> = None;
@@ -99,7 +102,7 @@ pub(super) fn select_latest_release<'a>(
     candidates.last().copied()
 }
 
-pub(super) fn parse_version_loose(raw: &str) -> Option<Version> {
+pub fn parse_version_loose(raw: &str) -> Option<Version> {
     let trimmed = raw.trim().trim_start_matches('v');
     if trimmed.is_empty() {
         return None;
@@ -126,7 +129,7 @@ fn strip_cli_suffix(raw: &str) -> &str {
         .unwrap_or(raw)
 }
 
-pub(super) fn version_matches(release: &str, detected: &str) -> bool {
+pub fn version_matches(release: &str, detected: &str) -> bool {
     let a = normalize_version(release);
     let b = normalize_version(detected);
     if a == b {
@@ -135,7 +138,7 @@ pub(super) fn version_matches(release: &str, detected: &str) -> bool {
     strip_cli_suffix(&a) == strip_cli_suffix(&b)
 }
 
-pub(super) fn extract_version(text: &str) -> Option<String> {
+pub fn extract_version(text: &str) -> Option<String> {
     let mut buf = String::new();
     let mut started = false;
     for ch in text.chars() {

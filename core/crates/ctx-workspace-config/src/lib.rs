@@ -3,11 +3,10 @@ use std::sync::OnceLock;
 
 use anyhow::{bail, Context, Result};
 pub use ctx_core::models::ExecutionEnvironment;
+use ctx_sandbox_contract::{ContainerNetworkMode, ExecutionMode, ExecutionSettings};
 use ctx_store::Store;
 use serde::{Deserialize, Deserializer, Serialize};
 use tokio::sync::Mutex as AsyncMutex;
-
-use crate::settings::{ContainerNetworkMode, ExecutionMode, ExecutionSettings};
 
 mod execution;
 mod merge_queue;

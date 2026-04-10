@@ -1,5 +1,5 @@
 use super::*;
-use crate::workspace_config;
+use ctx_workspace_config as workspace_config;
 
 fn parse_workspace_id(ws_id: &str) -> Result<WorkspaceId, (StatusCode, Json<serde_json::Value>)> {
     Ok(WorkspaceId(uuid::Uuid::parse_str(ws_id).map_err(|_| {

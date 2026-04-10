@@ -1,5 +1,14 @@
-use super::query::extract_version;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
 use super::*;
+use tokio::process::Command;
+use tokio::time::timeout;
+
+use crate::installer::AgentServerConfigFile;
+use crate::updates;
+
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
 
 pub async fn apply_matrix_to_status(
     data_root: &Path,

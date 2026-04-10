@@ -17,7 +17,6 @@ mod lifecycle;
 mod persistence;
 mod reconcile;
 mod runtime;
-mod tools;
 
 pub(crate) use interrupt_telemetry::{latency_bucket, metric_labels, InterruptTelemetryContext};
 use lifecycle::{

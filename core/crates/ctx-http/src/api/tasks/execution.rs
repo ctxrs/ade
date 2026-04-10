@@ -46,7 +46,7 @@ mod tests {
     use super::*;
     use crate::daemon::AppState;
     use crate::settings::{ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind};
-    use crate::workspace_config::{self, ExecutionConfigUpdate};
+    use ctx_workspace_config::{self, ExecutionConfigUpdate};
     use chrono::Utc;
     use ctx_core::ids::{SandboxInstanceId, WorkspaceId, WorktreeId};
     use ctx_core::models::{
@@ -251,7 +251,7 @@ mod tests {
             .store_for_workspace(workspace.id)
             .await
             .expect("workspace store");
-        workspace_config::update_execution_config(
+        ctx_workspace_config::update_execution_config(
             &store,
             ExecutionConfigUpdate {
                 environment: ExecutionEnvironment::Sandbox,

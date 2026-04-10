@@ -1,0 +1,10 @@
+[package]
+name = "ctx-session-tools"
+version = "0.36.0"
+edition.workspace = true
+
+[dependencies]
+chrono.workspace = true
+ctx-core = { path = "../ctx-core" }
+serde_json.workspace = true
+tracing.workspace = true

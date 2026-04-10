@@ -46,14 +46,14 @@ async fn write_merge_queue_config_with_options(
     push_branch: Option<&str>,
 ) {
     let canonical_sync = match canonical_sync {
-        "never" => ctx_http::workspace_config::MergeQueueCanonicalSync::Never,
-        "clean_only" => ctx_http::workspace_config::MergeQueueCanonicalSync::CleanOnly,
-        "force" => ctx_http::workspace_config::MergeQueueCanonicalSync::Force,
+        "never" => ctx_workspace_config::MergeQueueCanonicalSync::Never,
+        "clean_only" => ctx_workspace_config::MergeQueueCanonicalSync::CleanOnly,
+        "force" => ctx_workspace_config::MergeQueueCanonicalSync::Force,
         _ => panic!("unsupported canonical sync mode: {canonical_sync}"),
     };
-    ctx_http::workspace_config::update_merge_queue_config(
+    ctx_workspace_config::update_merge_queue_config(
         store,
-        ctx_http::workspace_config::MergeQueueConfigUpdate {
+        ctx_workspace_config::MergeQueueConfigUpdate {
             enabled: true,
             target_branch: Some(target_branch.to_string()),
             verify_commands: verify_commands

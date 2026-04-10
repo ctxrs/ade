@@ -433,9 +433,9 @@ async fn subagent_interrupt_all_includes_context_window() {
 async fn subagent_init_worktree_new_runs_bootstrap() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
     let (_data_dir, _state, server, store, parent_id) = setup_state(repo.path()).await;
-    ctx_http::workspace_config::update_worktree_bootstrap_config(
+    ctx_workspace_config::update_worktree_bootstrap_config(
         &store,
-        ctx_http::workspace_config::WorktreeBootstrapConfigUpdate {
+        ctx_workspace_config::WorktreeBootstrapConfigUpdate {
             setup_command: Some(
                 "sh -c \"mkdir -p .ctx && echo bootstrapped > .ctx/bootstrap.txt\"".to_string(),
             ),

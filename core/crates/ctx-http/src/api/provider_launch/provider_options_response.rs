@@ -100,7 +100,7 @@ pub(super) async fn load_workspace_preferred_model_id(
                 })),
             )
         })?;
-    crate::workspace_config::load_preferred_new_session_model_id(&store, provider_id)
+    ctx_workspace_config::load_preferred_new_session_model_id(&store, provider_id)
         .await
         .map_err(|error| {
             (

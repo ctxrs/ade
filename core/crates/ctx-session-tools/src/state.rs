@@ -3,23 +3,23 @@ use serde_json::Value;
 use ctx_core::models::SessionTurnTool;
 
 #[derive(Clone, Debug)]
-pub(in crate::scheduler) struct TurnToolUpdate {
-    pub(in crate::scheduler) tool_call_id: String,
-    pub(in crate::scheduler) order_seq: Option<i64>,
-    pub(in crate::scheduler) tool_kind: Option<String>,
-    pub(in crate::scheduler) provider_tool_name: Option<String>,
-    pub(in crate::scheduler) title: Option<String>,
-    pub(in crate::scheduler) subtitle: Option<String>,
-    pub(in crate::scheduler) status: Option<String>,
-    pub(in crate::scheduler) input_json: Option<Value>,
-    pub(in crate::scheduler) output_text: Option<String>,
-    pub(in crate::scheduler) input_truncated: Option<bool>,
-    pub(in crate::scheduler) input_original_bytes: Option<i64>,
-    pub(in crate::scheduler) output_truncated: Option<bool>,
-    pub(in crate::scheduler) output_original_bytes: Option<i64>,
+pub struct TurnToolUpdate {
+    pub tool_call_id: String,
+    pub order_seq: Option<i64>,
+    pub tool_kind: Option<String>,
+    pub provider_tool_name: Option<String>,
+    pub title: Option<String>,
+    pub subtitle: Option<String>,
+    pub status: Option<String>,
+    pub input_json: Option<Value>,
+    pub output_text: Option<String>,
+    pub input_truncated: Option<bool>,
+    pub input_original_bytes: Option<i64>,
+    pub output_truncated: Option<bool>,
+    pub output_original_bytes: Option<i64>,
 }
 
-pub(in crate::scheduler) fn merge_tool_update(
+pub fn merge_tool_update(
     prev: Option<&SessionTurnTool>,
     update: TurnToolUpdate,
     session_id: ctx_core::ids::SessionId,
@@ -113,7 +113,7 @@ pub(in crate::scheduler) fn merge_tool_update(
     })
 }
 
-pub(in crate::scheduler) fn tool_count_deltas(
+pub fn tool_count_deltas(
     prev: Option<&SessionTurnTool>,
     next: &SessionTurnTool,
 ) -> (i64, i64, i64, i64, i64) {

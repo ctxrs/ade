@@ -5,7 +5,7 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
 const coreRoot = path.resolve(__dirname, "..");
-const defaultBaseMatrix = path.join(coreRoot, "crates", "ctx-http", "src", "provider_matrix.json");
+const defaultBaseMatrix = path.join(coreRoot, "crates", "ctx-provider-accounts", "src", "provider_matrix.json");
 
 const resolveInputPath = (raw) => {
   const value = String(raw || "").trim();

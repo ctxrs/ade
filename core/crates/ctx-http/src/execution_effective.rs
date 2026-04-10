@@ -1,10 +1,11 @@
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::ExecutionEnvironment as SessionExecutionEnvironment;
+use ctx_workspace_config as workspace_config;
 
 use crate::daemon::AppState;
 use crate::installs::InstallTarget;
 use crate::settings::ExecutionSettings;
-use crate::{settings, workspace_config};
+use crate::settings;
 
 #[derive(Debug)]
 pub enum EffectiveExecutionSettingsError {

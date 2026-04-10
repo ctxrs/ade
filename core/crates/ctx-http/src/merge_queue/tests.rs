@@ -1,5 +1,5 @@
 use super::*;
-use crate::workspace_config::{update_merge_queue_config, MergeQueueConfigUpdate};
+use ctx_workspace_config::{update_merge_queue_config, MergeQueueConfigUpdate};
 use chrono::TimeDelta;
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_store::StoreManager;

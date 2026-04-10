@@ -288,26 +288,6 @@ mod tests {
         crate::sandbox_cli_env_test_lock()
     }
 
-    #[cfg(unix)]
-    fn write_shared_vm_state_helper(root: &Path, simulated: bool) -> (PathBuf, EnvVarGuard) {
-        let helper_path = root.join("avf-linux-helper.sh");
-        let simulated_value = if simulated { "true" } else { "false" };
-        std::fs::write(
-            &helper_path,
-            format!(
-                "#!/bin/sh\ncmd=\"$1\"\nshift\ncase \"$cmd\" in\n  workspace-vm-state)\n    data_root=\"$1\"\n    vm_root=\"$data_root/managed/vms/avf-linux/test/shared\"\n    logs_root=\"$vm_root/logs\"\n    state_path=\"$vm_root/shared-vm-state.json\"\n    log_path=\"$logs_root/shared-vm.log\"\n    mkdir -p \"$logs_root\"\n    printf '{{\"protocol_version\":1,\"protocol_schema\":\"ctx.avf_linux_helper.v1\",\"state\":\"running\",\"vm_root\":\"%s\",\"logs_root\":\"%s\",\"state_path\":\"%s\",\"log_path\":\"%s\",\"transition_status\":\"ready\",\"last_start_outcome\":\"already_running\",\"simulated\":{simulated_value},\"notes\":[\"sandbox cli test helper\"]}}\\n' \"$vm_root\" \"$logs_root\" \"$state_path\" \"$log_path\"\n    ;;\n  *)\n    echo \"unexpected helper invocation: $cmd $*\" >&2\n    exit 1\n    ;;\nesac\n"
-            ),
-        )
-        .expect("write AVF Linux helper shim");
-        std::fs::set_permissions(&helper_path, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod AVF Linux helper shim");
-        let guard = EnvVarGuard::set(
-            super::super::avf_linux_vm::AVF_LINUX_HELPER_PATH_ENV,
-            &helper_path.to_string_lossy(),
-        );
-        (helper_path, guard)
-    }
-
     #[tokio::test]
     async fn sandbox_cli_available_uses_test_override() {
         let _serial = env_var_test_lock().lock().await;

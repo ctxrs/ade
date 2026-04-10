@@ -1559,15 +1559,18 @@ dependencies = [
  "ctx-lsp",
  "ctx-provider-accounts",
  "ctx-provider-auth-import",
+ "ctx-provider-matrix",
  "ctx-providers",
  "ctx-runtime-assets",
  "ctx-sandbox-container-runtime",
  "ctx-sandbox-contract",
  "ctx-sandbox-materialization",
+ "ctx-session-tools",
  "ctx-storage-admission",
  "ctx-store",
  "ctx-worker-protocol",
  "ctx-workspace-active-snapshot",
+ "ctx-workspace-config",
  "ctx-workspace-container",
  "ctx-worktree-data-plane",
  "directories",
@@ -1730,6 +1733,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctx-provider-matrix"
+version = "0.36.0"
+dependencies = [
+ "anyhow",
+ "ctx-provider-accounts",
+ "semver",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "ctx-providers"
 version = "0.1.0"
 dependencies = [
@@ -1816,6 +1832,16 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "ctx-session-tools"
+version = "0.36.0"
+dependencies = [
+ "chrono",
+ "ctx-core",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -1978,6 +2004,20 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "ctx-workspace-config"
+version = "0.34.0"
+dependencies = [
+ "anyhow",
+ "ctx-core",
+ "ctx-sandbox-contract",
+ "ctx-store",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

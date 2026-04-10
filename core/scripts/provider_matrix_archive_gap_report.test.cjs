@@ -71,7 +71,7 @@ test("archive gap report fails when required target is missing", () => {
 
 test("archive gap report resolves --matrix relative to caller cwd", () => {
   const repoRoot = path.resolve(__dirname, "..", "..");
-  const relativeMatrixPath = path.join("core", "crates", "ctx-http", "src", "provider_matrix.json");
+  const relativeMatrixPath = path.join("core", "crates", "ctx-provider-accounts", "src", "provider_matrix.json");
   const result = run(["--matrix", relativeMatrixPath, "--include-providers", "acp-crp-bridge"], { cwd: repoRoot });
   assert.notEqual(result.status, null, `stdout=${result.stdout}\nstderr=${result.stderr}`);
   assert.doesNotMatch(result.stderr, /ENOENT|no such file/i, `stdout=${result.stdout}\nstderr=${result.stderr}`);

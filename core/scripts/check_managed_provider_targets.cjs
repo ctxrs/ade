@@ -45,7 +45,7 @@ const main = () => {
     throw err;
   }
 
-  const matrixPath = path.resolve(__dirname, "..", "crates", "ctx-http", "src", "provider_matrix.json");
+  const matrixPath = path.resolve(__dirname, "..", "crates", "ctx-provider-accounts", "src", "provider_matrix.json");
   const raw = JSON.parse(fs.readFileSync(matrixPath, "utf8"));
   const providers = Array.isArray(raw?.providers) ? raw.providers : [];
   const provider = providers.find((entry) => entry?.id === options.providerId);

@@ -22,12 +22,15 @@ ctx-linux-sandbox-runtime = { path = "../ctx-linux-sandbox-runtime" }
 ctx-sandbox-container-runtime = { path = "../ctx-sandbox-container-runtime" }
 ctx-runtime-assets = { path = "../ctx-runtime-assets" }
 ctx-provider-accounts = { path = "../ctx-provider-accounts" }
+ctx-provider-matrix = { path = "../ctx-provider-matrix" }
 ctx-provider-auth-import = { path = "../ctx-provider-auth-import" }
 ctx-providers = { path = "../ctx-providers" }
 ctx-sandbox-contract = { path = "../ctx-sandbox-contract" }
 ctx-sandbox-materialization = { path = "../ctx-sandbox-materialization" }
+ctx-session-tools = { path = "../ctx-session-tools" }
 ctx-storage-admission = { path = "../ctx-storage-admission" }
 ctx-worktree-data-plane = { path = "../ctx-worktree-data-plane" }
+ctx-workspace-config = { path = "../ctx-workspace-config" }
 ctx-workspace-container = { path = "../ctx-workspace-container" }
 ctx-workspace-active-snapshot = { path = "../ctx-workspace-active-snapshot" }
 ctx-worker-protocol = { path = "../ctx-worker-protocol" }

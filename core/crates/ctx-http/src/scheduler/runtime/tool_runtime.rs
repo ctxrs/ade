@@ -3,10 +3,8 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use crate::daemon::AppState;
-
-use super::super::tools::normalize::NormalizedToolEvent;
-use super::super::tools::projections::ToolOutputArtifactRef;
 use ctx_core::models::Artifact;
+use ctx_session_tools::{NormalizedToolEvent, ToolOutputArtifactRef};
 
 pub(super) struct ToolOutputArtifactScope {
     pub(super) session_id: ctx_core::ids::SessionId,

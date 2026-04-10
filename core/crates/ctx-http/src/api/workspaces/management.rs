@@ -1,5 +1,6 @@
 use super::*;
 use crate::git_status::emit_worktree_vcs_snapshot_for_worktree;
+use ctx_workspace_config as workspace_config;
 
 mod prompt_config;
 mod provider_model_preferences;
@@ -617,7 +618,7 @@ pub(in crate::api) async fn update_execution_config(
         ))?;
 
     let environment = match req.environment.trim() {
-        "host" => crate::workspace_config::ExecutionEnvironment::Host,
+        "host" => ctx_workspace_config::ExecutionEnvironment::Host,
         "sandbox" => {
             #[cfg(target_os = "macos")]
             {
@@ -633,7 +634,7 @@ pub(in crate::api) async fn update_execution_config(
                     ));
                 }
             }
-            crate::workspace_config::ExecutionEnvironment::Sandbox
+            ctx_workspace_config::ExecutionEnvironment::Sandbox
         }
         _ => {
             return Err((

@@ -10,21 +10,21 @@ pub(super) struct DiffStats {
 }
 
 pub(super) const MAX_PREVIEW_PATHS: usize = 5;
-pub(super) const TOOL_PREVIEW_MAX_LINES: usize = 5;
-pub(super) const TOOL_PREVIEW_MAX_LINE_CHARS: usize = 80;
+pub const TOOL_PREVIEW_MAX_LINES: usize = 5;
+pub const TOOL_PREVIEW_MAX_LINE_CHARS: usize = 80;
 
 #[derive(Debug, Clone)]
-pub(in crate::scheduler) struct ToolTextPreview {
-    pub(in crate::scheduler) preview: String,
-    pub(in crate::scheduler) truncated: bool,
-    pub(in crate::scheduler) original_bytes: usize,
+pub struct ToolTextPreview {
+    pub preview: String,
+    pub truncated: bool,
+    pub original_bytes: usize,
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::scheduler) struct ToolJsonPreview {
-    pub(super) preview: Option<Value>,
-    pub(super) truncated: Option<bool>,
-    pub(super) original_bytes: Option<i64>,
+pub struct ToolJsonPreview {
+    pub preview: Option<Value>,
+    pub truncated: Option<bool>,
+    pub original_bytes: Option<i64>,
 }
 
 pub(super) fn push_preview_line(out: &mut Vec<String>, truncated: &mut bool, line: &str) {
@@ -691,7 +691,7 @@ pub(super) fn truncate_preview_value(value: &Value, truncated: &mut bool) -> Val
     }
 }
 
-pub(super) fn build_text_preview(text: &str) -> ToolTextPreview {
+pub fn build_text_preview(text: &str) -> ToolTextPreview {
     let original_bytes = text.len();
     let mut truncated = false;
     let lines: Vec<&str> = text.lines().collect();

@@ -1,4 +1,5 @@
 use super::*;
+use ctx_workspace_config as workspace_config;
 
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct AgentSystemPromptConfigResponse {

@@ -26,7 +26,7 @@ use crate::execution_effective;
 use crate::logs;
 use crate::telemetry::TelemetryEvent;
 use crate::vcs_hooks;
-use crate::workspace_config;
+use ctx_workspace_config as workspace_config;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, VcsKind, Workspace, WorkspaceActiveHeadBatch,

@@ -1,33 +1,30 @@
 use serde_json::Value;
 
-#[cfg(test)]
 use ctx_core::models::SessionEventType;
 
-#[cfg(test)]
 use super::normalize::normalize_tool_event;
 use super::normalize::NormalizedToolEvent;
 use super::state::TurnToolUpdate;
 
 #[derive(Debug, Clone)]
-pub(in crate::scheduler) struct ToolOutputArtifactRef {
-    pub(in crate::scheduler) artifact_id: String,
-    pub(in crate::scheduler) name: Option<String>,
-    pub(in crate::scheduler) mime_type: String,
-    pub(in crate::scheduler) bytes: i64,
+pub struct ToolOutputArtifactRef {
+    pub artifact_id: String,
+    pub name: Option<String>,
+    pub mime_type: String,
+    pub bytes: i64,
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::scheduler) struct ToolOpsMeta {
-    pub(in crate::scheduler) tool_call_id: Option<String>,
-    pub(in crate::scheduler) tool_kind: Option<String>,
-    pub(in crate::scheduler) title: Option<String>,
-    pub(in crate::scheduler) status: Option<String>,
-    pub(in crate::scheduler) input_preview: Option<Value>,
-    pub(in crate::scheduler) cwd: Option<String>,
+pub struct ToolOpsMeta {
+    pub tool_call_id: Option<String>,
+    pub tool_kind: Option<String>,
+    pub title: Option<String>,
+    pub status: Option<String>,
+    pub input_preview: Option<Value>,
+    pub cwd: Option<String>,
 }
 
-#[cfg(test)]
-pub(in crate::scheduler) fn sanitize_tool_event_payload(
+pub fn sanitize_tool_event_payload(
     event_type: &SessionEventType,
     raw_payload: &Value,
     output_artifact: Option<&ToolOutputArtifactRef>,
@@ -36,7 +33,7 @@ pub(in crate::scheduler) fn sanitize_tool_event_payload(
     sanitize_normalized_tool_event_payload(&normalized, output_artifact)
 }
 
-pub(in crate::scheduler) fn sanitize_normalized_tool_event_payload(
+pub fn sanitize_normalized_tool_event_payload(
     normalized: &NormalizedToolEvent,
     output_artifact: Option<&ToolOutputArtifactRef>,
 ) -> Value {
@@ -131,8 +128,7 @@ pub(in crate::scheduler) fn sanitize_normalized_tool_event_payload(
     Value::Object(object)
 }
 
-#[cfg(test)]
-pub(in crate::scheduler) fn build_tool_ops_meta(
+pub fn build_tool_ops_meta(
     event_type: &SessionEventType,
     raw_payload: &Value,
 ) -> ToolOpsMeta {
@@ -140,7 +136,7 @@ pub(in crate::scheduler) fn build_tool_ops_meta(
     build_tool_ops_meta_from_normalized(&normalized)
 }
 
-pub(in crate::scheduler) fn build_tool_ops_meta_from_normalized(
+pub fn build_tool_ops_meta_from_normalized(
     normalized: &NormalizedToolEvent,
 ) -> ToolOpsMeta {
     ToolOpsMeta {
@@ -153,8 +149,7 @@ pub(in crate::scheduler) fn build_tool_ops_meta_from_normalized(
     }
 }
 
-#[cfg(test)]
-pub(in crate::scheduler) fn build_turn_tool_update_from_payload(
+pub fn build_turn_tool_update_from_payload(
     event_type: &SessionEventType,
     payload_json: &Value,
 ) -> Option<TurnToolUpdate> {
@@ -162,7 +157,7 @@ pub(in crate::scheduler) fn build_turn_tool_update_from_payload(
     build_turn_tool_update(&normalized, extract_order_seq_value(payload_json))
 }
 
-pub(in crate::scheduler) fn build_turn_tool_update(
+pub fn build_turn_tool_update(
     normalized: &NormalizedToolEvent,
     order_seq: Option<i64>,
 ) -> Option<TurnToolUpdate> {
@@ -192,7 +187,6 @@ pub(in crate::scheduler) fn build_turn_tool_update(
     })
 }
 
-#[cfg(test)]
 fn extract_order_seq_value(payload: &Value) -> Option<i64> {
     payload
         .get("order_seq")

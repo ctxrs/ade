@@ -27,7 +27,6 @@ use crate::order_seq::attach_order_seq;
 use crate::scheduler::SchedulerCommand;
 use crate::settings as user_settings;
 use ctx_harness_runtime::sandbox_container_command;
-use crate::workspace_config;
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_fs::vcs;

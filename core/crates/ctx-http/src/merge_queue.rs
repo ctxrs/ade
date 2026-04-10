@@ -26,7 +26,7 @@ use crate::ops_events::OpsEvent;
 use crate::tool_cgroup::TOOL_SLICE_UNIT;
 #[cfg(not(target_os = "linux"))]
 const TOOL_SLICE_UNIT: &str = "ctx-tools.slice";
-use crate::workspace_config::{load_merge_queue_config, MergeQueueCanonicalSync, MergeQueueConfig};
+use ctx_workspace_config::{load_merge_queue_config, MergeQueueCanonicalSync, MergeQueueConfig};
 
 mod context;
 mod execution;

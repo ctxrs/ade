@@ -14,6 +14,10 @@ use ctx_core::models::{
 };
 use ctx_providers::adapters::TurnInput;
 use ctx_providers::events::NormalizedEvent;
+use ctx_session_tools::{
+    build_tool_ops_meta_from_normalized, build_turn_tool_update, merge_tool_update,
+    normalize_tool_event, sanitize_normalized_tool_event_payload, tool_count_deltas,
+};
 use ctx_store::store::SessionTurnToolCountDeltas;
 
 use crate::api::sessions::compose_model_id;
@@ -27,7 +31,7 @@ use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::settings::{self, ProviderControlMode};
 use crate::storage_guard;
 use crate::telemetry::TelemetryEvent;
-use crate::workspace_config;
+use ctx_workspace_config as workspace_config;
 use ctx_harness_sources::HarnessSourceKind;
 use ctx_provider_accounts as provider_accounts;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
@@ -49,14 +53,6 @@ use self::helpers::{
 use self::tool_runtime::{cwd_outside_worktree, maybe_spool_tool_output};
 use super::lifecycle::RunningTurn;
 use super::persistence::{append_session_event_with_retry, emit_event, persist_assistant_message};
-use super::tools::{
-    normalize::normalize_tool_event,
-    projections::{
-        build_tool_ops_meta_from_normalized, build_turn_tool_update,
-        sanitize_normalized_tool_event_payload,
-    },
-    state::{merge_tool_update, tool_count_deltas},
-};
 use super::QueuedMessage;
 
 fn provider_mode_id_for(

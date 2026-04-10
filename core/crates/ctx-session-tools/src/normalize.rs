@@ -14,27 +14,27 @@ struct InferredToolIdentity {
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::scheduler) struct NormalizedToolEvent {
-    pub(in crate::scheduler) tool_call_id: Option<String>,
-    pub(in crate::scheduler) raw_tool_kind: Option<String>,
-    pub(in crate::scheduler) tool_label: Option<String>,
-    pub(in crate::scheduler) raw_title: Option<String>,
-    pub(in crate::scheduler) status: String,
-    pub(in crate::scheduler) input_preview: Option<Value>,
-    pub(in crate::scheduler) input_meta: ToolJsonPreview,
-    pub(in crate::scheduler) output_preview: Option<ToolTextPreview>,
-    pub(in crate::scheduler) raw_output_text: Option<String>,
-    pub(in crate::scheduler) tool_kind: Option<String>,
-    pub(in crate::scheduler) provider_tool_name: Option<String>,
-    pub(in crate::scheduler) title: Option<String>,
-    pub(in crate::scheduler) subtitle: Option<String>,
-    pub(in crate::scheduler) cwd: Option<String>,
-    pub(in crate::scheduler) crp_seq: Option<Value>,
-    pub(in crate::scheduler) crp_channel: Option<Value>,
-    pub(in crate::scheduler) raw_order_seq: Option<Value>,
+pub struct NormalizedToolEvent {
+    pub tool_call_id: Option<String>,
+    pub raw_tool_kind: Option<String>,
+    pub tool_label: Option<String>,
+    pub raw_title: Option<String>,
+    pub status: String,
+    pub input_preview: Option<Value>,
+    pub input_meta: ToolJsonPreview,
+    pub output_preview: Option<ToolTextPreview>,
+    pub raw_output_text: Option<String>,
+    pub tool_kind: Option<String>,
+    pub provider_tool_name: Option<String>,
+    pub title: Option<String>,
+    pub subtitle: Option<String>,
+    pub cwd: Option<String>,
+    pub crp_seq: Option<Value>,
+    pub crp_channel: Option<Value>,
+    pub raw_order_seq: Option<Value>,
 }
 
-pub(in crate::scheduler) fn normalize_tool_event(
+pub fn normalize_tool_event(
     event_type: &SessionEventType,
     raw_payload: &Value,
 ) -> NormalizedToolEvent {

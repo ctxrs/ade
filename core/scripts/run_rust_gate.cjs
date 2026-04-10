@@ -6,6 +6,7 @@ const path = require("node:path");
 const { buildCtxCacheEnv } = require("./lib/cache_roots.cjs");
 const { getBazelTestTargetsForCrates } = require("./lib/bazel_rust_targets.cjs");
 const {
+  AGENT_GATE_CRATES,
   ISOLATED_CARGO_TEST_CRATES,
   partitionCratesForTestStrategy,
 } = require("./lib/rust_gate_plan.cjs");
@@ -19,6 +20,7 @@ const { runTurbo } = require("./lib/turbo_runner.cjs");
 
 function parseArgs(argv) {
   const args = {
+    agentGate: false,
     all: false,
     changedFiles: [],
     crates: [],
@@ -30,7 +32,9 @@ function parseArgs(argv) {
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === "--all") {
+    if (arg === "--agent-gate") {
+      args.agentGate = true;
+    } else if (arg === "--all") {
       args.all = true;
     } else if (arg === "--changed-file") {
       args.changedFiles.push(argv[index + 1] || "");
@@ -53,7 +57,10 @@ function parseArgs(argv) {
     }
   }
 
-  if (!args.all && args.changedFiles.length === 0 && args.crates.length === 0) {
+  if (args.agentGate && (args.all || args.changedFiles.length > 0 || args.crates.length > 0)) {
+    throw new Error("--agent-gate cannot be combined with --all, --crate, or --changed-file");
+  }
+  if (!args.agentGate && !args.all && args.changedFiles.length === 0 && args.crates.length === 0) {
     throw new Error("one of --all, --crate, or --changed-file is required");
   }
   if (!new Set(["cargo", "mixed", "nextest"]).has(args.testStrategy)) {
@@ -63,6 +70,9 @@ function parseArgs(argv) {
 }
 
 function resolveCrates(graph, args) {
+  if (args.agentGate) {
+    return [...AGENT_GATE_CRATES];
+  }
   if (args.all) {
     return graph.crates.map((crate) => crate.crateName);
   }
@@ -182,4 +192,11 @@ function main() {
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  parseArgs,
+  resolveCrates,
+};
