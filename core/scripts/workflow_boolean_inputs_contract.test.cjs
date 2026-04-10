@@ -57,7 +57,7 @@ test("release supabase installs chromium headless shell before updater UI semant
   const text = workflowText("release-supabase.yml");
   assert.match(
     text,
-    /name:\s+Install Playwright Chromium \(updater semantics contract\)[\s\S]*playwright install chromium chromium-headless-shell[\s\S]*name:\s+Updater UI semantics contract \(desktop-mode harnessed\)/s,
+    /name:\s+Install Playwright Chromium \(updater semantics contract\)[\s\S]*print_ctx_cache_env\.cjs --mode workspace --format shell --mkdir[\s\S]*playwright install chromium chromium-headless-shell[\s\S]*name:\s+Updater UI semantics contract \(desktop-mode harnessed\)/s,
   );
 });
 

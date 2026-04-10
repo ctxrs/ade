@@ -22,6 +22,7 @@ import {
   type SessionMarkdownInlineRun,
 } from "./sessionMarkdownContract";
 import {
+  SESSION_THREAD_LAYOUT_STYLE,
   SESSION_THREAD_MARKDOWN_BLOCKQUOTE_INSET_PX,
   SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY,
   SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX,
@@ -223,6 +224,9 @@ function measureRenderedPlainTextBlockHeight(params: {
   host.style.border = "0";
   host.style.boxSizing = "border-box";
   host.style.visibility = "hidden";
+  for (const [key, value] of Object.entries(SESSION_THREAD_LAYOUT_STYLE)) {
+    host.style.setProperty(key, String(value));
+  }
 
   const fragment = document.createDocumentFragment();
   const lines = params.text.split("\n");

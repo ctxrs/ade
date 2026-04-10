@@ -27,6 +27,7 @@ const ASSISTANT_MARKDOWN = [
   "const x = 1;",
   "```",
 ].join("\n");
+const TURN_HEADER_TEXT = "and what about the CI smoke failure?";
 
 const IMAGE_DATA_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2VzJ8AAAAASUVORK5CYII=";
@@ -193,6 +194,79 @@ async function measureAssistantParity(page: Page, content: string): Promise<RowP
   }, { content });
 }
 
+async function measureTurnHeaderParity(page: Page, plainText: string): Promise<RowParityMeasurement> {
+  return page.evaluate(async ({ plainText }) => {
+    const ReactModule = await import("/node_modules/.vite/deps/react.js");
+    const React = ReactModule.default ?? ReactModule;
+    const ReactDomClientModule = await import("/node_modules/.vite/deps/react-dom_client.js");
+    const ReactDOMClient = ReactDomClientModule.default ?? ReactDomClientModule;
+    const { WorkbenchTurnHeaderView } = await import("/src/pages/sessionThread/SessionThreadItemViews.tsx");
+    const { getPretextVirtualizerRowLayout } = await import("/src/pages/sessionThread/pretextVirtualizerRowLayout.ts");
+    const {
+      SESSION_THREAD_LAYOUT_STYLE,
+      resolveSessionThreadContentWidth,
+    } = await import("/src/pages/sessionThread/sessionThreadLayoutTokens.ts");
+
+    const viewportWidth = 820;
+    const contentWidth = resolveSessionThreadContentWidth(viewportWidth);
+    const host = document.createElement("div");
+    host.style.position = "fixed";
+    host.style.left = "-10000px";
+    host.style.top = "0";
+    host.style.width = `${contentWidth}px`;
+    host.style.margin = "0";
+    host.style.padding = "0";
+    host.style.border = "0";
+    host.style.boxSizing = "border-box";
+    for (const [key, value] of Object.entries(SESSION_THREAD_LAYOUT_STYLE)) {
+      host.style.setProperty(key, String(value));
+    }
+    document.body.appendChild(host);
+
+    const header = {
+      id: "turn-header-parity",
+      content: plainText,
+      plain_text: plainText,
+      attachments: [],
+      created_at: "2026-04-10T00:00:00Z",
+    };
+    const item = {
+      kind: "turn_header" as const,
+      id: "turn-header-parity-row",
+      header,
+    };
+
+    const root = ReactDOMClient.createRoot(host);
+    root.render(
+      React.createElement(
+        "div",
+        { style: { display: "contents" } },
+        React.createElement(WorkbenchTurnHeaderView, {
+          header,
+          plainText,
+          expanded: true,
+          onToggle: () => {},
+        }),
+      ),
+    );
+    await new Promise((resolve) => window.setTimeout(resolve, 75));
+
+    const actual = host.querySelector<HTMLElement>(".wb-turn-header")?.getBoundingClientRect().height ?? 0;
+    const planned = getPretextVirtualizerRowLayout(item, viewportWidth, {
+      expandedTurnHeaders: { [header.id]: true },
+    }).height;
+
+    root.unmount();
+    host.remove();
+
+    return {
+      planned,
+      actual,
+      delta: planned - actual,
+    };
+  }, { plainText });
+}
+
 test("workbench: exact multi-paragraph user message planner matches rendered height", async ({ page }) => {
   test.setTimeout(120000);
   await openWorkbenchShell(page);
@@ -251,5 +325,17 @@ test("workbench: assistant markdown planner matches rendered height", async ({ p
   expect(
     Math.abs(measurement.delta),
     `assistant drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual})`,
+  ).toBeLessThanOrEqual(1);
+});
+
+test("workbench: turn header planner matches rendered height", async ({ page }) => {
+  test.setTimeout(120000);
+  await openWorkbenchShell(page);
+
+  const measurement = await measureTurnHeaderParity(page, TURN_HEADER_TEXT);
+
+  expect(
+    Math.abs(measurement.delta),
+    `turn header drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual})`,
   ).toBeLessThanOrEqual(1);
 });
