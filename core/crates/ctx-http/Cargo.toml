@@ -17,6 +17,7 @@ ctx-fs = { path = "../ctx-fs" }
 ctx-bundled-assets = { path = "../ctx-bundled-assets", features = ["test-support"] }
 ctx-harness-sources = { path = "../ctx-harness-sources" }
 ctx-harness-setup = { path = "../ctx-harness-setup" }
+ctx-harness-runtime = { path = "../ctx-harness-runtime" }
 ctx-linux-sandbox-runtime = { path = "../ctx-linux-sandbox-runtime" }
 ctx-sandbox-container-runtime = { path = "../ctx-sandbox-container-runtime" }
 ctx-runtime-assets = { path = "../ctx-runtime-assets" }
@@ -27,6 +28,7 @@ ctx-sandbox-contract = { path = "../ctx-sandbox-contract" }
 ctx-sandbox-materialization = { path = "../ctx-sandbox-materialization" }
 ctx-storage-admission = { path = "../ctx-storage-admission" }
 ctx-worktree-data-plane = { path = "../ctx-worktree-data-plane" }
+ctx-workspace-container = { path = "../ctx-workspace-container" }
 ctx-workspace-active-snapshot = { path = "../ctx-workspace-active-snapshot" }
 ctx-worker-protocol = { path = "../ctx-worker-protocol" }
 ctx-lsp = { path = "../ctx-lsp" }

@@ -621,7 +621,7 @@ pub(in crate::api) async fn update_execution_config(
         "sandbox" => {
             #[cfg(target_os = "macos")]
             {
-                if !crate::workspace_runtime::local_runtime_available(
+                if !ctx_harness_runtime::local_runtime_available(
                     &state.core.data_root,
                     &crate::settings::ContainerRuntimeKind::SharedVmContainer,
                 ) {

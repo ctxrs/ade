@@ -272,10 +272,10 @@ pub(super) async fn write_prewarm_metadata(
 }
 
 pub(super) async fn bundled_image_fingerprint(image: &str) -> Result<Option<String>> {
-    if !workspace_runtime::is_default_container_image(image) {
+    if !ctx_sandbox_container_runtime::is_default_container_image(image) {
         return Ok(None);
     }
-    let Some(tar_path) = workspace_runtime::bundled_default_container_image_tar() else {
+    let Some(tar_path) = ctx_sandbox_container_runtime::bundled_default_container_image_tar() else {
         return Ok(None);
     };
     let metadata = tokio::fs::metadata(&tar_path)

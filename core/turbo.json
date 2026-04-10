@@ -945,6 +945,102 @@
       ],
       "outputs": []
     },
+    "rust:crate:clippy:ctx-harness-runtime": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-avf-linux-runtime/**",
+        "crates/ctx-bundled-assets/**",
+        "crates/ctx-core/**",
+        "crates/ctx-fs/**",
+        "crates/ctx-harness-runtime/**",
+        "crates/ctx-harness-setup/**",
+        "crates/ctx-linux-sandbox-runtime/**",
+        "crates/ctx-runtime-assets/**",
+        "crates/ctx-sandbox-container-runtime/**",
+        "crates/ctx-sandbox-contract/**",
+        "crates/ctx-workspace-container/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:test:ctx-harness-runtime": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-avf-linux-runtime/**",
+        "crates/ctx-bundled-assets/**",
+        "crates/ctx-core/**",
+        "crates/ctx-fs/**",
+        "crates/ctx-harness-runtime/**",
+        "crates/ctx-harness-setup/**",
+        "crates/ctx-linux-sandbox-runtime/**",
+        "crates/ctx-runtime-assets/**",
+        "crates/ctx-sandbox-container-runtime/**",
+        "crates/ctx-sandbox-contract/**",
+        "crates/ctx-workspace-container/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:nextest:ctx-harness-runtime": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-avf-linux-runtime/**",
+        "crates/ctx-bundled-assets/**",
+        "crates/ctx-core/**",
+        "crates/ctx-fs/**",
+        "crates/ctx-harness-runtime/**",
+        "crates/ctx-harness-setup/**",
+        "crates/ctx-linux-sandbox-runtime/**",
+        "crates/ctx-runtime-assets/**",
+        "crates/ctx-sandbox-container-runtime/**",
+        "crates/ctx-sandbox-contract/**",
+        "crates/ctx-workspace-container/**"
+      ],
+      "outputs": []
+    },
     "rust:crate:clippy:ctx-harness-setup": {
       "inputs": [
         "Cargo.toml",
@@ -1103,6 +1199,7 @@
         "crates/ctx-core/**",
         "crates/ctx-events/**",
         "crates/ctx-fs/**",
+        "crates/ctx-harness-runtime/**",
         "crates/ctx-harness-setup/**",
         "crates/ctx-harness-sources/**",
         "crates/ctx-http/**",
@@ -1119,6 +1216,7 @@
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
         "crates/ctx-workspace-active-snapshot/**",
+        "crates/ctx-workspace-container/**",
         "crates/ctx-worktree-data-plane/**"
       ],
       "outputs": []
@@ -1146,6 +1244,7 @@
         "crates/ctx-core/**",
         "crates/ctx-events/**",
         "crates/ctx-fs/**",
+        "crates/ctx-harness-runtime/**",
         "crates/ctx-harness-setup/**",
         "crates/ctx-harness-sources/**",
         "crates/ctx-http/**",
@@ -1162,6 +1261,7 @@
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
         "crates/ctx-workspace-active-snapshot/**",
+        "crates/ctx-workspace-container/**",
         "crates/ctx-worktree-data-plane/**"
       ],
       "outputs": []
@@ -1189,6 +1289,7 @@
         "crates/ctx-core/**",
         "crates/ctx-events/**",
         "crates/ctx-fs/**",
+        "crates/ctx-harness-runtime/**",
         "crates/ctx-harness-setup/**",
         "crates/ctx-harness-sources/**",
         "crates/ctx-http/**",
@@ -1205,6 +1306,7 @@
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
         "crates/ctx-workspace-active-snapshot/**",
+        "crates/ctx-workspace-container/**",
         "crates/ctx-worktree-data-plane/**"
       ],
       "outputs": []
@@ -1445,6 +1547,7 @@
         "crates/ctx-core/**",
         "crates/ctx-events/**",
         "crates/ctx-fs/**",
+        "crates/ctx-harness-runtime/**",
         "crates/ctx-harness-setup/**",
         "crates/ctx-harness-sources/**",
         "crates/ctx-http/**",
@@ -1462,6 +1565,7 @@
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
         "crates/ctx-workspace-active-snapshot/**",
+        "crates/ctx-workspace-container/**",
         "crates/ctx-worktree-data-plane/**"
       ],
       "outputs": []
@@ -1489,6 +1593,7 @@
         "crates/ctx-core/**",
         "crates/ctx-events/**",
         "crates/ctx-fs/**",
+        "crates/ctx-harness-runtime/**",
         "crates/ctx-harness-setup/**",
         "crates/ctx-harness-sources/**",
         "crates/ctx-http/**",
@@ -1506,6 +1611,7 @@
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
         "crates/ctx-workspace-active-snapshot/**",
+        "crates/ctx-workspace-container/**",
         "crates/ctx-worktree-data-plane/**"
       ],
       "outputs": []
@@ -1533,6 +1639,7 @@
         "crates/ctx-core/**",
         "crates/ctx-events/**",
         "crates/ctx-fs/**",
+        "crates/ctx-harness-runtime/**",
         "crates/ctx-harness-setup/**",
         "crates/ctx-harness-sources/**",
         "crates/ctx-http/**",
@@ -1550,6 +1657,7 @@
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
         "crates/ctx-workspace-active-snapshot/**",
+        "crates/ctx-workspace-container/**",
         "crates/ctx-worktree-data-plane/**"
       ],
       "outputs": []
@@ -2007,7 +2115,8 @@
         "crates/ctx-sandbox-container-runtime/**",
         "crates/ctx-sandbox-contract/**",
         "crates/ctx-sandbox-materialization/**",
-        "crates/ctx-storage-admission/**"
+        "crates/ctx-storage-admission/**",
+        "crates/ctx-workspace-container/**"
       ],
       "outputs": []
     },
@@ -2038,7 +2147,8 @@
         "crates/ctx-sandbox-container-runtime/**",
         "crates/ctx-sandbox-contract/**",
         "crates/ctx-sandbox-materialization/**",
-        "crates/ctx-storage-admission/**"
+        "crates/ctx-storage-admission/**",
+        "crates/ctx-workspace-container/**"
       ],
       "outputs": []
     },
@@ -2069,7 +2179,8 @@
         "crates/ctx-sandbox-container-runtime/**",
         "crates/ctx-sandbox-contract/**",
         "crates/ctx-sandbox-materialization/**",
-        "crates/ctx-storage-admission/**"
+        "crates/ctx-storage-admission/**",
+        "crates/ctx-workspace-container/**"
       ],
       "outputs": []
     },
@@ -2685,6 +2796,96 @@
       ],
       "outputs": []
     },
+    "rust:crate:clippy:ctx-workspace-container": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-bundled-assets/**",
+        "crates/ctx-core/**",
+        "crates/ctx-fs/**",
+        "crates/ctx-harness-setup/**",
+        "crates/ctx-linux-sandbox-runtime/**",
+        "crates/ctx-runtime-assets/**",
+        "crates/ctx-sandbox-container-runtime/**",
+        "crates/ctx-sandbox-contract/**",
+        "crates/ctx-workspace-container/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:test:ctx-workspace-container": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-bundled-assets/**",
+        "crates/ctx-core/**",
+        "crates/ctx-fs/**",
+        "crates/ctx-harness-setup/**",
+        "crates/ctx-linux-sandbox-runtime/**",
+        "crates/ctx-runtime-assets/**",
+        "crates/ctx-sandbox-container-runtime/**",
+        "crates/ctx-sandbox-contract/**",
+        "crates/ctx-workspace-container/**"
+      ],
+      "outputs": []
+    },
+    "rust:crate:nextest:ctx-workspace-container": {
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        "clippy.toml",
+        ".cargo/config.toml",
+        "scripts/lib/cache_roots.cjs",
+        "scripts/lib/ctx_http_suites.cjs",
+        "scripts/lib/turbo_runner.cjs",
+        "scripts/lib/rust_workspace_graph.cjs",
+        "scripts/lib/rust_gate_plan.cjs",
+        "scripts/ctx_http_suite_task.cjs",
+        "scripts/rust_crate_task.cjs",
+        "scripts/run_rust_gate.cjs",
+        "scripts/run_rust_turbo.cjs",
+        "scripts/sync_rust_turbo_tasks.cjs",
+        "crates/ctx-bundled-assets/**",
+        "crates/ctx-core/**",
+        "crates/ctx-fs/**",
+        "crates/ctx-harness-setup/**",
+        "crates/ctx-linux-sandbox-runtime/**",
+        "crates/ctx-runtime-assets/**",
+        "crates/ctx-sandbox-container-runtime/**",
+        "crates/ctx-sandbox-contract/**",
+        "crates/ctx-workspace-container/**"
+      ],
+      "outputs": []
+    },
     "rust:crate:clippy:ctx-worktree-data-plane": {
       "inputs": [
         "Cargo.toml",
@@ -2780,6 +2981,7 @@
         "crates/ctx-core/**",
         "crates/ctx-events/**",
         "crates/ctx-fs/**",
+        "crates/ctx-harness-runtime/**",
         "crates/ctx-harness-setup/**",
         "crates/ctx-harness-sources/**",
         "crates/ctx-linux-sandbox-runtime/**",
@@ -2795,6 +2997,7 @@
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
         "crates/ctx-workspace-active-snapshot/**",
+        "crates/ctx-workspace-container/**",
         "crates/ctx-worktree-data-plane/**",
         "crates/ctx-http/src/**"
       ],
@@ -3308,6 +3511,7 @@
         "crates/ctx-core/**",
         "crates/ctx-events/**",
         "crates/ctx-fs/**",
+        "crates/ctx-harness-runtime/**",
         "crates/ctx-harness-setup/**",
         "crates/ctx-harness-sources/**",
         "crates/ctx-linux-sandbox-runtime/**",
@@ -3323,6 +3527,7 @@
         "crates/ctx-store/**",
         "crates/ctx-worker-protocol/**",
         "crates/ctx-workspace-active-snapshot/**",
+        "crates/ctx-workspace-container/**",
         "crates/ctx-worktree-data-plane/**",
         "crates/ctx-http/src/**",
         "crates/ctx-http/tests/**"

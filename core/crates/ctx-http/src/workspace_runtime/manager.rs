@@ -1,4 +1,10 @@
 use super::*;
+use ctx_avf_linux_runtime::{SharedSubstrateLifecycleManager, SubstrateLifecycleRecord};
+use ctx_harness_setup::{observe_log, observe_phase};
+use ctx_workspace_container::{
+    container_data_root, container_user, daemon_port_from_url, rewrite_daemon_url_for_container,
+    EnsureWorkspaceContainerRequest, WorkspaceContainerReadiness,
+};
 
 impl HarnessRuntimeManager {
     pub fn new(data_root: PathBuf) -> Self {
@@ -13,8 +19,8 @@ impl HarnessRuntimeManager {
         ops_events: crate::ops_events::OpsEvents,
     ) -> Self {
         Self {
-            data_root,
-            containers: Mutex::new(HashMap::new()),
+            data_root: data_root.clone(),
+            workspace_containers: WorkspaceContainerOwner::new(data_root.clone()),
             last_activity: StdMutex::new(Instant::now()),
             active_runtime_operations: AtomicUsize::new(0),
             active_prewarm_artifact_operations: AtomicUsize::new(0),
@@ -70,22 +76,12 @@ impl HarnessRuntimeManager {
     }
 
     pub async fn stats(&self) -> HarnessRuntimeStats {
-        let containers = self.containers.lock().await;
-        let mut container_allowlist_entries = 0;
-        let mut container_external_mounts = 0;
-        let mut container_egress_guards = 0;
-        for container in containers.values() {
-            container_allowlist_entries += container.allowlist.len();
-            container_external_mounts += container.external_mounts.len();
-            if container.egress_guard {
-                container_egress_guards += 1;
-            }
-        }
+        let stats = self.workspace_containers.stats().await;
         HarnessRuntimeStats {
-            container_count: containers.len(),
-            container_allowlist_entries,
-            container_external_mounts,
-            container_egress_guards,
+            container_count: stats.container_count,
+            container_allowlist_entries: stats.container_allowlist_entries,
+            container_external_mounts: stats.container_external_mounts,
+            container_egress_guards: stats.container_egress_guards,
         }
     }
 
@@ -350,7 +346,7 @@ impl HarnessRuntimeManager {
             settings,
             daemon_url,
             observer,
-            ContainerReadinessState::MachineReady,
+            WorkspaceContainerReadiness::MachineReady,
         )
         .await
     }
@@ -361,7 +357,7 @@ impl HarnessRuntimeManager {
         settings: &ExecutionSettings,
         daemon_url: &str,
         observer: Option<&dyn HarnessSetupObserver>,
-        readiness: ContainerReadinessState,
+        readiness: WorkspaceContainerReadiness,
     ) -> Result<()> {
         if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(());
@@ -387,7 +383,7 @@ impl HarnessRuntimeManager {
         };
         let daemon_port = daemon_port_from_url(daemon_url).unwrap_or(4399);
         let _ = self
-            .ensure_container_after_machine_ready(EnsureContainerRequest {
+            .ensure_container_after_machine_ready(EnsureWorkspaceContainerRequest {
                 workspace,
                 worktree: None,
                 settings: &settings.container,
@@ -416,7 +412,7 @@ impl HarnessRuntimeManager {
             settings,
             daemon_url,
             observer,
-            ContainerReadinessState::RuntimeReady,
+            WorkspaceContainerReadiness::RuntimeReady,
         )
         .await
     }
@@ -460,8 +456,12 @@ impl HarnessRuntimeManager {
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<bool> {
-        let name = workspace_container_name(workspace_id);
-        match container_exists(&self.data_root, &name).await {
+        let mode = selected_sandbox_command_mode(&self.data_root)?;
+        match self
+            .workspace_containers
+            .workspace_container_exists(&mode, workspace_id)
+            .await
+        {
             Ok(exists) => Ok(exists),
             Err(err) => {
                 if sandbox_engine_ready(&self.data_root).await.unwrap_or(false) {
@@ -473,155 +473,52 @@ impl HarnessRuntimeManager {
         }
     }
 
-    pub(super) async fn ensure_container_image_ready(
-        &self,
-        settings: &ContainerExecutionSettings,
-        observer: Option<&dyn HarnessSetupObserver>,
-    ) -> Result<()> {
-        let image = resolve_container_image(settings);
-        observe_phase(
-            observer,
-            HarnessSetupPhase::ImageCheck,
-            "checking harness image availability",
-        );
-        if container_image_present(&self.data_root, &image).await? {
-            observe_log(
-                observer,
-                HarnessSetupPhase::ImageCheck,
-                HarnessSetupLogLevel::Info,
-                "harness image already present",
-            );
-            return Ok(());
-        }
-        observe_phase(
-            observer,
-            HarnessSetupPhase::ImageLoad,
-            "loading harness image into local sandbox runtime",
-        );
-        ensure_container_image_available(&self.data_root, &image, observer).await
-    }
-
     pub async fn container_status(
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<Option<HarnessContainerStatus>> {
-        let name = format!("ctx-harness-{}", workspace_id.0);
-        let container_present = match container_exists(&self.data_root, &name).await {
-            Ok(exists) => exists,
-            Err(err) => {
+        let mode = match selected_sandbox_command_mode(&self.data_root) {
+            Ok(mode) => mode,
+            Err(err)
                 if err
                     .to_string()
                     .to_ascii_lowercase()
-                    .contains("sandbox container cli unavailable")
-                {
-                    false
-                } else {
-                    return Err(err);
-                }
+                    .contains("sandbox container cli unavailable") =>
+            {
+                return Ok(None);
             }
+            Err(err) => return Err(err),
         };
-        if container_present {
-            let running = container_running(&self.data_root, &name)
-                .await?
-                .unwrap_or(false);
-            let container = {
-                let containers = self.containers.lock().await;
-                containers.get(&workspace_id).cloned()
-            };
-            let (known, mount_mode, network_mode, allowlist, egress_guard) =
-                if let Some(container) = container {
-                    (
-                        true,
-                        Some(container.mount_mode),
-                        Some(container.network_mode),
-                        container.allowlist,
-                        Some(container.egress_guard),
-                    )
-                } else {
-                    (false, None, None, Vec::new(), None)
-                };
-            return Ok(Some(HarnessContainerStatus {
-                name,
-                running,
-                known,
-                mount_mode,
-                network_mode,
-                allowlist,
-                egress_guard,
-            }));
-        }
-        Ok(None)
+        self.workspace_containers
+            .container_status(&mode, workspace_id)
+            .await
     }
 
     pub async fn stop_container(&self, workspace_id: WorkspaceId) -> Result<bool> {
         let _activity = self.begin_runtime_operation();
-        let name = format!("ctx-harness-{}", workspace_id.0);
-        let container_present = match container_exists(&self.data_root, &name).await {
-            Ok(exists) => exists,
-            Err(err) => {
+        let mode = match selected_sandbox_command_mode(&self.data_root) {
+            Ok(mode) => mode,
+            Err(err)
                 if err
                     .to_string()
                     .to_ascii_lowercase()
-                    .contains("sandbox container cli unavailable")
-                {
-                    false
-                } else {
-                    return Err(err);
-                }
+                    .contains("sandbox container cli unavailable") =>
+            {
+                return Ok(false);
             }
+            Err(err) => return Err(err),
         };
-        if container_present {
-            let mut containers = self.containers.lock().await;
-            containers.remove(&workspace_id);
-            let mut cmd = sandbox_container_command(&self.data_root)?;
-            cmd.arg("rm").arg("-f").arg(&name);
-            let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
-            if output.status.success() {
-                return Ok(true);
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                let combined = format!("{stderr}\n{stdout}").trim().to_string();
-                if combined.is_empty() {
-                    anyhow::bail!("container rm failed for {name} (status: {})", output.status);
-                }
-                anyhow::bail!("container rm failed for {name}: {combined}");
-            }
-        }
-
-        let mut containers = self.containers.lock().await;
-        containers.remove(&workspace_id);
-        Ok(false)
+        self.workspace_containers
+            .stop_container(&mode, workspace_id)
+            .await
     }
 
     pub async fn remove_workspace_volume(&self, workspace_id: WorkspaceId) -> Result<bool> {
         let _activity = self.begin_runtime_operation();
-        // Best-effort cleanup: callers (e.g. workspace deletion) may ignore failures.
-        let name = format!("ctx-ws-{}", workspace_id.0);
-        let mut inspect = sandbox_container_command(&self.data_root)?;
-        inspect.arg("volume").arg("inspect").arg(&name);
-        let out = command_output_with_timeout(inspect, SANDBOX_OP_TIMEOUT).await?;
-        if !out.status.success() {
-            return Ok(false);
-        }
-
-        let mut cmd = sandbox_container_command(&self.data_root)?;
-        cmd.arg("volume").arg("rm").arg("-f").arg(&name);
-        let out = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
-        if out.status.success() {
-            Ok(true)
-        } else {
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            let combined = format!("{stderr}\n{stdout}").trim().to_string();
-            if combined.is_empty() {
-                anyhow::bail!(
-                    "container volume rm failed for {name} (status: {})",
-                    out.status
-                );
-            }
-            anyhow::bail!("container volume rm failed for {name}: {combined}");
-        }
+        let mode = selected_sandbox_command_mode(&self.data_root)?;
+        self.workspace_containers
+            .remove_workspace_volume(&mode, workspace_id)
+            .await
     }
 }
 

@@ -10,12 +10,12 @@ use tokio::sync::{broadcast, Mutex};
 
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::Workspace;
-use ctx_store::Store;
-
-use crate::workspace_runtime::{
-    self, HarnessRuntimeManager, HarnessSetupDownloadStatus, HarnessSetupLogLevel,
-    HarnessSetupObserver, HarnessSetupPhase, HarnessSetupProgressUpdate,
+use ctx_harness_setup::{
+    HarnessSetupDownloadStatus, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,
+    HarnessSetupProgressUpdate,
 };
+
+use crate::workspace_runtime::HarnessRuntimeManager;
 use crate::ops_events::{OpsEvent, OpsEvents};
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use crate::settings::{ExecutionMode, ExecutionSettings};
@@ -51,7 +51,7 @@ fn runtime_prewarm_ready_phase_message(
     launch_ready: bool,
 ) -> &'static str {
     if runtime_requested {
-        workspace_runtime::runtime_prewarm_ready_message(runtime_kind, launch_ready)
+        ctx_harness_runtime::runtime_prewarm_ready_message(runtime_kind, launch_ready)
     } else {
         "container builder is ready"
     }
@@ -280,7 +280,7 @@ impl ExecutionSetupCoordinator {
         }
     }
 
-    pub fn spawn_startup_prewarm(self: &Arc<Self>) {
+    pub fn spawn_startup_prewarm(self: &Arc<Self>, execution: ExecutionSettings) {
         let coordinator = Arc::clone(self);
         tokio::spawn(async move {
             #[cfg(test)]
@@ -289,8 +289,29 @@ impl ExecutionSetupCoordinator {
             let _sandbox_cli_env_test_lock = crate::test_support::sandbox_cli_env_test_lock()
                 .lock()
                 .await;
-            coordinator.run_startup_prewarm().await;
+            coordinator.run_startup_prewarm(execution).await;
         });
+    }
+
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) async fn record_startup_prewarm_error(&self, message: String) {
+        let attempted_at = format_ts(Utc::now());
+        let snapshot = StartupPrewarmSnapshot {
+            state: StartupPrewarmState::Error,
+            target_image: String::new(),
+            needs_prewarm: false,
+            machine_ready: false,
+            image_present: false,
+            image_ref_changed: false,
+            bundled_image_digest_changed: false,
+            last_attempt_at: Some(attempted_at),
+            last_success_at: None,
+            error: Some(message.clone()),
+        };
+        self.set_startup_snapshot(snapshot).await;
+        let mut event = OpsEvent::new("warn", "execution.startup_prewarm_error");
+        event.meta = Some(json!({"error": message}));
+        self.ops_events.emit(event);
     }
 
     pub async fn start_workspace_launch(
@@ -496,7 +517,7 @@ impl ExecutionSetupCoordinator {
                     };
 
                     if joined_shared_runtime {
-                        let launch_ready = workspace_runtime::selected_runtime_launch_ready(
+                        let launch_ready = ctx_harness_runtime::selected_runtime_launch_ready(
                             &self.data_root,
                             &settings.container,
                         )
@@ -554,7 +575,7 @@ impl ExecutionSetupCoordinator {
                     self.emit_phase(
                         &job,
                         HarnessSetupPhase::Ready,
-                        workspace_runtime::workspace_launch_ready_message(
+                        ctx_harness_runtime::workspace_launch_ready_message(
                             &settings.container.runtime,
                         ),
                     );
@@ -612,7 +633,7 @@ impl ExecutionSetupCoordinator {
             job: Arc::clone(&job),
         };
         let is_host_mode = matches!(settings.mode, ExecutionMode::Host);
-        let runtime_target = workspace_runtime::runtime_prewarm_target(&settings.container);
+        let runtime_target = ctx_harness_runtime::runtime_prewarm_target(&settings.container);
         if is_host_mode {
             if let Some(terminal) = shared_job.complete_ready() {
                 if let Some(completed) = terminal.completed_phase {
@@ -635,7 +656,7 @@ impl ExecutionSetupCoordinator {
             loop {
                 let requested_scope = shared_job.requested_scope();
                 if requested_scope.requires_launch_ready_runtime() && !launch_ready {
-                    if !workspace_runtime::local_runtime_available(
+                    if !ctx_harness_runtime::local_runtime_available(
                         &self.data_root,
                         &settings.container.runtime,
                     ) {
@@ -653,7 +674,7 @@ impl ExecutionSetupCoordinator {
                 }
 
                 if requested_scope.runtime_requested() && !runtime_ready {
-                    if !workspace_runtime::local_runtime_available(
+                    if !ctx_harness_runtime::local_runtime_available(
                         &self.data_root,
                         &settings.container.runtime,
                     ) {
@@ -725,7 +746,7 @@ impl ExecutionSetupCoordinator {
         requires_launch_ready_runtime: bool,
     ) -> Result<()> {
         if requires_launch_ready_runtime {
-            match workspace_runtime::selected_runtime_launch_readiness_state(
+            match ctx_harness_runtime::selected_runtime_launch_readiness_state(
                 &self.data_root,
                 &settings.container,
             )
@@ -733,7 +754,7 @@ impl ExecutionSetupCoordinator {
             {
                 Ok((true, true)) => Ok(()),
                 Ok((vm_ready, image_ready)) => {
-                    Err(anyhow::anyhow!(workspace_runtime::launch_ready_gap_message(
+                    Err(anyhow::anyhow!(ctx_harness_runtime::launch_ready_gap_message(
                         settings.container.runtime.clone(),
                         runtime_target,
                         vm_ready,
@@ -743,7 +764,7 @@ impl ExecutionSetupCoordinator {
                 Err(err) => Err(err),
             }
         } else {
-            match workspace_runtime::selected_runtime_state(&self.data_root, &settings.container).await
+            match ctx_harness_runtime::selected_runtime_state(&self.data_root, &settings.container).await
             {
                 Ok((machine_ready, image_present)) if machine_ready && image_present => Ok(()),
                 Ok((machine_ready, _image_present)) if machine_ready => Err(anyhow::anyhow!(

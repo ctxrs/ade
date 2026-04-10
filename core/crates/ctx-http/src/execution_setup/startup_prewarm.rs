@@ -1,60 +1,9 @@
 use super::*;
 
 impl ExecutionSetupCoordinator {
-    pub(crate) async fn run_startup_prewarm(&self) {
+    pub(crate) async fn run_startup_prewarm(&self, exec: ExecutionSettings) {
         let attempted_at = format_ts(Utc::now());
-        let db_path = self.data_root.join("db").join("db.sqlite");
-        let settings = match Store::open_sqlite(&db_path, None).await {
-            Ok(store) => {
-                let loaded = crate::settings::load_settings(&store).await;
-                store.close().await;
-                match loaded {
-                    Ok(settings) => settings,
-                    Err(err) => {
-                        let message = format!("failed to load execution settings: {err:#}");
-                        let snapshot = StartupPrewarmSnapshot {
-                            state: StartupPrewarmState::Error,
-                            target_image: String::new(),
-                            needs_prewarm: false,
-                            machine_ready: false,
-                            image_present: false,
-                            image_ref_changed: false,
-                            bundled_image_digest_changed: false,
-                            last_attempt_at: Some(attempted_at.clone()),
-                            last_success_at: None,
-                            error: Some(message.clone()),
-                        };
-                        self.set_startup_snapshot(snapshot).await;
-                        let mut event = OpsEvent::new("warn", "execution.startup_prewarm_error");
-                        event.meta = Some(json!({"error": message}));
-                        self.ops_events.emit(event);
-                        return;
-                    }
-                }
-            }
-            Err(err) => {
-                let message = format!("failed to open global settings store: {err:#}");
-                let snapshot = StartupPrewarmSnapshot {
-                    state: StartupPrewarmState::Error,
-                    target_image: String::new(),
-                    needs_prewarm: false,
-                    machine_ready: false,
-                    image_present: false,
-                    image_ref_changed: false,
-                    bundled_image_digest_changed: false,
-                    last_attempt_at: Some(attempted_at.clone()),
-                    last_success_at: None,
-                    error: Some(message.clone()),
-                };
-                self.set_startup_snapshot(snapshot).await;
-                let mut event = OpsEvent::new("warn", "execution.startup_prewarm_error");
-                event.meta = Some(json!({"error": message}));
-                self.ops_events.emit(event);
-                return;
-            }
-        };
-        let exec = settings.execution.unwrap_or_default();
-        let target = workspace_runtime::runtime_prewarm_target(&exec.container);
+        let target = ctx_harness_runtime::runtime_prewarm_target(&exec.container);
         let (initial_machine_ready, initial_image_present) = self
             .startup_runtime_state(&exec.container)
             .await
@@ -64,9 +13,9 @@ impl ExecutionSetupCoordinator {
             inner.startup.last_success_at.clone()
         };
 
-        if !workspace_runtime::local_runtime_available(&self.data_root, &exec.container.runtime) {
+        if !ctx_harness_runtime::local_runtime_available(&self.data_root, &exec.container.runtime) {
             let staged_status =
-                match workspace_runtime::stage_linux_sandbox_runtime_downloads(&self.data_root, None)
+                match ctx_linux_sandbox_runtime::stage_linux_sandbox_runtime_downloads(&self.data_root, None)
                     .await
                 {
                     Ok(status) => Some(status),
@@ -315,7 +264,7 @@ impl ExecutionSetupCoordinator {
         machine_ready: bool,
         image_present: bool,
     ) -> Result<PrewarmGate> {
-        let target = workspace_runtime::runtime_prewarm_target(settings);
+        let target = ctx_harness_runtime::runtime_prewarm_target(settings);
         let metadata = read_prewarm_metadata(&self.data_root).await?;
         let bundled_image_fingerprint = match settings.runtime {
             crate::settings::ContainerRuntimeKind::NativeContainer => {
@@ -356,19 +305,19 @@ impl ExecutionSetupCoordinator {
     ) -> Result<(bool, bool)> {
         match settings.runtime {
             crate::settings::ContainerRuntimeKind::NativeContainer => {
-                let target = workspace_runtime::resolve_container_image(settings);
+                let target = ctx_harness_runtime::resolve_container_image(settings);
                 let machine_ready = normalize_container_engine_ready_for_gate(
-                    workspace_runtime::sandbox_engine_ready(&self.data_root).await,
+                    ctx_harness_runtime::sandbox_engine_ready(&self.data_root).await,
                 )?;
                 let image_present = if machine_ready {
-                    workspace_runtime::container_image_present(&self.data_root, &target).await?
+                    ctx_harness_runtime::container_image_present(&self.data_root, &target).await?
                 } else {
                     false
                 };
                 Ok((machine_ready, image_present))
             }
             crate::settings::ContainerRuntimeKind::SharedVmContainer => {
-                workspace_runtime::selected_runtime_launch_readiness_state(&self.data_root, settings)
+                ctx_harness_runtime::selected_runtime_launch_readiness_state(&self.data_root, settings)
                     .await
             }
         }
@@ -380,17 +329,8 @@ impl ExecutionSetupCoordinator {
         self.prewarm.ensure_scope(exec, scope, None).await
     }
 
-    async fn configured_startup_target(&self) -> Result<String> {
-        let db_path = self.data_root.join("db").join("db.sqlite");
-        let store = Store::open_sqlite(&db_path, None)
-            .await
-            .context("open global settings store")?;
-        let loaded = crate::settings::load_settings(&store)
-            .await
-            .context("load execution settings")?;
-        store.close().await;
-        let exec = loaded.execution.unwrap_or_default();
-        Ok(workspace_runtime::runtime_prewarm_target(&exec.container))
+    async fn configured_startup_target(&self, exec: &ExecutionSettings) -> Result<String> {
+        Ok(ctx_harness_runtime::runtime_prewarm_target(&exec.container))
     }
 
     async fn ensure_ready_startup_prewarm_metadata(
@@ -445,8 +385,13 @@ impl ExecutionSetupCoordinator {
         &self,
         settings: &crate::settings::ContainerExecutionSettings,
     ) {
-        let target = workspace_runtime::runtime_prewarm_target(settings);
-        let startup_target = match self.configured_startup_target().await {
+        let target = ctx_harness_runtime::runtime_prewarm_target(settings);
+        let startup_target = match self.configured_startup_target(&ExecutionSettings {
+            mode: ExecutionMode::Sandbox,
+            container: settings.clone(),
+        })
+        .await
+        {
             Ok(startup_target) => startup_target,
             Err(err) => {
                 tracing::warn!(
@@ -539,7 +484,7 @@ impl ExecutionSetupCoordinator {
         inner.startup.error = None;
     }
 
-    async fn set_startup_snapshot(&self, snapshot: StartupPrewarmSnapshot) {
+    pub(super) async fn set_startup_snapshot(&self, snapshot: StartupPrewarmSnapshot) {
         let mut inner = self.inner.lock().await;
         inner.startup = snapshot;
     }

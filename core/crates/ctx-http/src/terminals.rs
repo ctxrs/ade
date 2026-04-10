@@ -399,10 +399,10 @@ impl TerminalManager {
             cmd.arg("--cwd");
             cmd.arg("/");
             cmd.arg("--command");
-            cmd.arg(crate::workspace_runtime::SHARED_VM_SANDBOX_CLI_GUEST_BIN);
+            cmd.arg(ctx_sandbox_container_runtime::SHARED_VM_SANDBOX_CLI_GUEST_BIN);
             cmd.arg("--user");
             cmd.arg("root");
-            if let Ok(sandbox_env) = crate::workspace_runtime::sandbox_cli_env_for_data_root(
+            if let Ok(sandbox_env) = ctx_sandbox_container_runtime::sandbox_cli_env_for_data_root(
                 &shared_vm_container.data_root,
             ) {
                 let mut env_pairs = sandbox_env.into_iter().collect::<Vec<_>>();

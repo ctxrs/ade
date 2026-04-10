@@ -1,4 +1,11 @@
 use super::*;
+use crate::settings::ContainerMountMode;
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Mutex;
+
+const SANDBOX_OP_TIMEOUT: Duration = Duration::from_secs(60);
 
 impl HarnessRuntimeManager {
     pub(crate) async fn ensure_sandbox_machine_download(&self) -> Result<()> {

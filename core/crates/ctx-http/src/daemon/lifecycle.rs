@@ -195,7 +195,7 @@ pub(crate) async fn shutdown_provider_adapters(state: &Arc<AppState>, reason: &s
 pub(crate) async fn shutdown_shared_substrate(
     state: &Arc<AppState>,
     reason: &str,
-) -> Result<Option<crate::workspace_runtime::SubstrateLifecycleRecord>> {
+) -> Result<Option<ctx_avf_linux_runtime::SubstrateLifecycleRecord>> {
     let Some(record) = state
         .execution
         .harness

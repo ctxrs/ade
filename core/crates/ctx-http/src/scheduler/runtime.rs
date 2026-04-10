@@ -542,7 +542,7 @@ pub(crate) async fn start_turn(
         "is_container": is_linux_sandbox,
         "runtime_kind": runtime_plan
             .env_overrides
-            .get(crate::workspace_runtime::CTX_HARNESS_RUNTIME_KIND_ENV)
+            .get(ctx_harness_runtime::CTX_HARNESS_RUNTIME_KIND_ENV)
             .cloned()
             .unwrap_or_else(|| "host".to_string()),
         "has_openai_api_key": provider_env

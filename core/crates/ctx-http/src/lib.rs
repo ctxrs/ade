@@ -21,7 +21,6 @@ pub mod memleak_debug;
 pub mod merge_queue;
 pub mod mobile_e2ee;
 pub mod mobile_tunnel;
-pub mod network_allowlist;
 pub mod ops_events;
 pub mod oracle;
 pub mod order_seq;

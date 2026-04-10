@@ -20,15 +20,13 @@ use crate::completions;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::git_status::{load_git_status_snapshot, GitStatusEntry};
-use crate::workspace_runtime::{
-    command_output_with_timeout, sandbox_container_command, workspace_container_name,
-};
 use crate::installer;
 use crate::logs;
 use crate::oracle;
 use crate::order_seq::attach_order_seq;
 use crate::scheduler::SchedulerCommand;
 use crate::settings as user_settings;
+use ctx_harness_runtime::sandbox_container_command;
 use crate::workspace_config;
 use ctx_core::ids::*;
 use ctx_core::models::*;
@@ -39,7 +37,9 @@ use ctx_providers::{
     ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome},
     crp::probe_crp_models,
 };
+use ctx_sandbox_container_runtime::command_output_with_timeout;
 use ctx_store::is_unique_constraint_violation;
+use ctx_workspace_container::workspace_container_name;
 use tokio::sync::mpsc;
 
 mod subagents;

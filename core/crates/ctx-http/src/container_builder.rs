@@ -4,8 +4,6 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
-use crate::workspace_runtime;
-
 const BUILDER_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
 fn builder_platform_for_arch(arch: &str) -> Result<&'static str> {
@@ -57,23 +55,23 @@ fn builder_run_args(
         args.push("--env".to_string());
         args.push(format!("{key}={value}"));
     }
-    args.push(workspace_runtime::default_container_image().to_string());
+    args.push(ctx_sandbox_container_runtime::default_container_image().to_string());
     args.extend(argv.iter().cloned());
     Ok(args)
 }
 
 pub async fn ensure_builder_ready(data_root: &Path) -> Result<()> {
-    workspace_runtime::ensure_builder_backend_launch_ready_with_observer(data_root, None)
+    ctx_harness_runtime::ensure_builder_backend_launch_ready_with_observer(data_root, None)
         .await
         .context("ensuring sandbox runtime launch readiness")?;
-    workspace_runtime::prefetch_container_image(
+    ctx_harness_runtime::prefetch_container_image(
         data_root,
-        workspace_runtime::default_container_image(),
+        ctx_sandbox_container_runtime::default_container_image(),
     )
     .await
     .context("ensuring builder image availability")?;
 
-    let mut cmd = workspace_runtime::sandbox_container_command(data_root)?;
+    let mut cmd = ctx_harness_runtime::sandbox_container_command(data_root)?;
     configure_builder_run(
         &mut cmd,
         data_root,
@@ -81,7 +79,10 @@ pub async fn ensure_builder_ready(data_root: &Path) -> Result<()> {
         &[],
         &["/bin/sh".to_string(), "-lc".to_string(), "true".to_string()],
     )?;
-    let output = workspace_runtime::command_output_with_timeout(cmd, BUILDER_READY_TIMEOUT)
+    let output = ctx_sandbox_container_runtime::command_output_with_timeout(
+        cmd,
+        BUILDER_READY_TIMEOUT,
+    )
         .await
         .context("running builder readiness command")?;
     if !output.status.success() {
@@ -110,9 +111,9 @@ pub async fn run_command(
     argv: &[String],
     timeout_dur: Duration,
 ) -> Result<std::process::Output> {
-    let mut cmd = workspace_runtime::sandbox_container_command(data_root)?;
+    let mut cmd = ctx_harness_runtime::sandbox_container_command(data_root)?;
     configure_builder_run(&mut cmd, data_root, cwd, env, argv)?;
-    workspace_runtime::command_output_with_timeout(cmd, timeout_dur)
+    ctx_sandbox_container_runtime::command_output_with_timeout(cmd, timeout_dur)
         .await
         .context("running container builder command")
 }
@@ -175,7 +176,7 @@ mod tests {
             ],
         )
         .expect("builder args");
-        let image = workspace_runtime::default_container_image();
+        let image = ctx_sandbox_container_runtime::default_container_image();
         let image_index = args.iter().position(|arg| arg == image).expect("image arg");
         let env_flag_index = args
             .iter()
@@ -193,7 +194,10 @@ mod tests {
         let cmd = make_shell_command("ping -n 6 127.0.0.1 >NUL");
         #[cfg(not(windows))]
         let cmd = make_shell_command("sleep 5");
-        let err = workspace_runtime::command_output_with_timeout(cmd, Duration::from_millis(50))
+        let err = ctx_sandbox_container_runtime::command_output_with_timeout(
+            cmd,
+            Duration::from_millis(50),
+        )
             .await
             .expect_err("command should time out");
         assert!(err.to_string().contains("timed out"));
@@ -202,7 +206,10 @@ mod tests {
     #[tokio::test]
     async fn timeout_helper_returns_output_for_fast_process() {
         let cmd = make_shell_command("echo ok");
-        let out = workspace_runtime::command_output_with_timeout(cmd, Duration::from_secs(2))
+        let out = ctx_sandbox_container_runtime::command_output_with_timeout(
+            cmd,
+            Duration::from_secs(2),
+        )
             .await
             .expect("fast command should succeed");
         assert!(out.status.success());
@@ -255,7 +262,7 @@ mod tests {
                 "arch": std::env::consts::ARCH,
                 "sha256": "test-sha",
                 "tar": "images/ctx-harness.tar",
-                "image": workspace_runtime::default_container_image(),
+                "image": ctx_sandbox_container_runtime::default_container_image(),
             }],
         });
         fs::write(
@@ -293,7 +300,7 @@ mod tests {
                 machine_present = machine_present.display(),
                 machine_started = machine_started.display(),
                 image_present = image_present.display(),
-                image = workspace_runtime::default_container_image(),
+                image = ctx_sandbox_container_runtime::default_container_image(),
             ),
         )
         .expect("write sandbox CLI shim");
@@ -302,7 +309,7 @@ mod tests {
 
         let _bundle = EnvVarGuard::set("CTX_BUNDLE_DIR", &bundle_dir.to_string_lossy());
         let _sandbox_cli = EnvVarGuard::set(
-            crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+            ctx_sandbox_container_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
             &sandbox_cli_path.to_string_lossy(),
         );
         let _test_override = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");

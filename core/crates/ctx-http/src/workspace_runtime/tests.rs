@@ -1,4 +1,3 @@
-use super::network_policy_transition::transparent_proxy_policy;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use super::sandbox_machine_recovery::ensure_sandbox_machine_running_with_observer;
 use super::sandbox_machine_recovery::{
@@ -17,6 +16,8 @@ use ctx_bundled_assets::test_support::{
     override_managed_sandbox_machine_cache_source_for_test,
     TestManagedCtxHarnessImageSourceGuard, TestManagedSandboxMachineCacheSourceGuard,
 };
+use ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT;
+use ctx_workspace_container::workspace_container_name;
 #[cfg(target_os = "macos")]
 use ctx_core::ids::SessionId;
 #[cfg(target_os = "macos")]
@@ -26,7 +27,14 @@ use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::ExecutionEnvironment;
 #[cfg(target_os = "macos")]
 use ctx_store::StoreManager;
+use crate::settings::{ContainerMountMode, ContainerNetworkMode};
+use ctx_workspace_container::{
+    apply_container_network_policy, build_mounts, rewrite_daemon_url_for_avf_guest,
+    should_use_keep_id_userns, WorkspaceContainer,
+};
+use ctx_sandbox_container_runtime::SandboxCommandMode;
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -288,30 +296,6 @@ async fn create_session_with_environment(
         .await
         .expect("create session")
         .id
-}
-
-fn sample_cached_container() -> HarnessContainer {
-    let mut external_mounts = HashSet::new();
-    external_mounts.insert("/tmp/external".to_string());
-    HarnessContainer {
-        name: "ctx-harness-sample".to_string(),
-        mount_mode: ContainerMountMode::DiskIsolated,
-        network_mode: ContainerNetworkMode::Allowlist,
-        allowlist: vec!["github.com".to_string()],
-        external_mounts,
-        egress_guard: true,
-    }
-}
-
-fn sample_container_settings() -> ContainerExecutionSettings {
-    ContainerExecutionSettings {
-        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
-        mount_mode: ContainerMountMode::DiskIsolated,
-        network_mode: ContainerNetworkMode::Allowlist,
-        allowlist: vec!["github.com".to_string()],
-        image: None,
-        machine: crate::settings::ContainerMachineSettings::default(),
-    }
 }
 
 async fn spawn_static_http_server(body: Vec<u8>) -> (String, JoinHandle<()>) {
@@ -1037,7 +1021,7 @@ async fn ready_runtime_sandbox_cli_short_circuits_network_cleanup_scripts_for_sh
         .arg("sh")
         .arg("-c")
         .arg("iptables -t nat -F OUTPUT");
-    let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT)
+    let output = command_output_with_timeout(cmd, Duration::from_secs(60))
         .await
         .expect("run fake network cleanup");
     assert!(
@@ -1240,17 +1224,20 @@ async fn prepare_starts_cached_workspace_container_when_sandbox_cli_reports_it_s
         &settings.container,
     );
 
-    manager.containers.lock().await.insert(
-        workspace.id,
-        HarnessContainer {
+    manager
+        .workspace_containers
+        .put_cached_container_for_test(
+            workspace.id,
+            WorkspaceContainer {
             name: container_name.clone(),
             mount_mode: settings.container.mount_mode.clone(),
             network_mode: settings.container.network_mode.clone(),
             allowlist: settings.container.allowlist.clone(),
             external_mounts: mount_plan.external_mounts,
             egress_guard: false,
-        },
-    );
+            },
+        )
+        .await;
 
     std::fs::write(
             &sandbox_cli_path,
@@ -1359,7 +1346,7 @@ fn keep_id_userns_is_only_enabled_on_linux() {
 
 #[test]
 fn rewrite_daemon_url_for_avf_guest_uses_guest_gateway_host() {
-    let rewritten = super::container::rewrite_daemon_url_for_avf_guest("http://127.0.0.1:4399");
+    let rewritten = rewrite_daemon_url_for_avf_guest("http://127.0.0.1:4399");
     assert_eq!(rewritten, "http://192.168.64.1:4399/");
 }
 
@@ -2676,7 +2663,7 @@ async fn prepare_returns_avf_linux_vm_plan_after_workspace_vm_and_container_read
     }
     assert_eq!(
         plan.env_overrides
-            .get(crate::workspace_runtime::CTX_HARNESS_RUNTIME_KIND_ENV)
+            .get(ctx_harness_runtime::CTX_HARNESS_RUNTIME_KIND_ENV)
             .map(String::as_str),
         Some("shared_vm_container")
     );
@@ -3126,28 +3113,6 @@ async fn sandbox_machine_singleflight_lock_isolated_by_machine_name() {
     assert!(second.try_lock().is_ok());
 }
 
-#[test]
-fn transparent_proxy_policy_maps_llm_only_to_explicit_allowlist_entries() {
-    let settings = ContainerExecutionSettings::default();
-    let (mode, allowlist) = transparent_proxy_policy(&settings);
-    assert_eq!(mode, ContainerNetworkMode::Allowlist);
-    assert!(allowlist.iter().any(|entry| entry == "openrouter.ai"));
-    assert!(allowlist.iter().any(|entry| entry == "api.openai.com"));
-}
-
-#[test]
-fn transparent_proxy_policy_preserves_custom_allowlist_mode() {
-    let settings = ContainerExecutionSettings {
-        network_mode: ContainerNetworkMode::Allowlist,
-        allowlist: vec!["example.com".to_string(), "api.example.com".to_string()],
-        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
-        ..Default::default()
-    };
-    let (mode, allowlist) = transparent_proxy_policy(&settings);
-    assert_eq!(mode, ContainerNetworkMode::Allowlist);
-    assert_eq!(allowlist, settings.allowlist);
-}
-
 #[cfg(unix)]
 #[tokio::test]
 async fn unrestricted_network_transition_surfaces_teardown_failures() {
@@ -3214,6 +3179,7 @@ async fn unrestricted_network_transition_surfaces_teardown_failures() {
     };
     let err = apply_container_network_policy(
         temp.path(),
+        &SandboxCommandMode::NativeContainer,
         WorkspaceId::new(),
         "ctx-harness-test",
         &settings,
@@ -3311,6 +3277,7 @@ async fn unrestricted_network_transition_ignores_stale_proxy_pid_file() {
     };
     let applied = apply_container_network_policy(
         temp.path(),
+        &SandboxCommandMode::NativeContainer,
         WorkspaceId::new(),
         "ctx-harness-test",
         &settings,
@@ -3576,130 +3543,6 @@ fn kill_ctx_managed_sandbox_helper_processes_skips_reused_pid_after_command_scop
     assert_eq!(outcome.skipped, vec![6622]);
     let pkill_log = std::fs::read_to_string(&pkill_log_path).expect("read pkill log");
     assert!(pkill_log.contains(&format!("-9 -f -x {}", literal_pkill_pattern(&gvproxy))));
-}
-
-#[test]
-fn cached_container_action_reuses_when_mounts_and_network_match() {
-    let cached = sample_cached_container();
-    let settings = sample_container_settings();
-    let action = cached_container_action(&cached, &settings, &cached.external_mounts);
-    assert_eq!(action, CachedContainerAction::Reuse);
-}
-
-#[test]
-fn cached_container_action_recreates_when_mount_mode_changes() {
-    let cached = sample_cached_container();
-    let mut settings = sample_container_settings();
-    settings.mount_mode = ContainerMountMode::Legacy;
-    let action = cached_container_action(&cached, &settings, &cached.external_mounts);
-    assert_eq!(action, CachedContainerAction::Recreate);
-}
-
-#[test]
-fn cached_container_action_recreates_when_external_mounts_change() {
-    let cached = sample_cached_container();
-    let settings = sample_container_settings();
-    let mut changed_mounts = cached.external_mounts.clone();
-    changed_mounts.insert("/tmp/another".to_string());
-    let action = cached_container_action(&cached, &settings, &changed_mounts);
-    assert_eq!(action, CachedContainerAction::Recreate);
-}
-
-#[test]
-fn cached_container_action_reconfigures_when_network_mode_changes() {
-    let cached = sample_cached_container();
-    let mut settings = sample_container_settings();
-    settings.network_mode = ContainerNetworkMode::All;
-    let action = cached_container_action(&cached, &settings, &cached.external_mounts);
-    assert_eq!(action, CachedContainerAction::Reconfigure);
-}
-
-#[test]
-fn cached_container_action_reconfigures_when_allowlist_changes() {
-    let cached = sample_cached_container();
-    let mut settings = sample_container_settings();
-    settings.allowlist = vec!["example.com".to_string()];
-    let action = cached_container_action(&cached, &settings, &cached.external_mounts);
-    assert_eq!(action, CachedContainerAction::Reconfigure);
-}
-
-#[test]
-fn bundle_dir_mount_policy_matches_platform_expectations() {
-    // Linux runtime is host-native; bundle mounts are always reachable.
-    if cfg!(target_os = "linux") {
-        assert!(should_mount_bundle_dir_in_container(Path::new(
-            "/Applications/ctx.app/Contents/Resources/bundles"
-        )));
-        return;
-    }
-
-    // Sandbox-machine platforms cannot bind-mount raw host bundle paths into guest containers,
-    // even when the path is under the host user's home directory.
-    if cfg!(target_os = "macos") || cfg!(target_os = "windows") {
-        assert!(!should_mount_bundle_dir_in_container(Path::new(
-            "/Applications/ctx.app/Contents/Resources/bundles"
-        )));
-        let home_var = if cfg!(target_os = "windows") {
-            "USERPROFILE"
-        } else {
-            "HOME"
-        };
-        if let Some(home) = std::env::var_os(home_var).map(PathBuf::from) {
-            assert!(!should_mount_bundle_dir_in_container(
-                &home.join("ctx-bundles")
-            ));
-        }
-    }
-}
-
-#[test]
-fn build_mounts_only_includes_bundle_dir_when_shareable() {
-    let _process_env = crate::test_support::process_env_test_lock().blocking_lock();
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let bundle_dir = tmp.path().join("bundles");
-    std::fs::create_dir_all(&bundle_dir).expect("create bundle dir");
-    let _guard = EnvGuard::set("CTX_BUNDLE_DIR", &bundle_dir.to_string_lossy());
-
-    let workspace = sample_workspace(&tmp);
-    let mounts = build_mounts(
-        tmp.path(),
-        &workspace,
-        None,
-        &ContainerExecutionSettings::default(),
-    )
-    .mounts;
-    let expected = bind_mount(&bundle_dir, &bundle_dir, true);
-    let has_bundle_mount = mounts.iter().any(|mount| mount == &expected);
-    assert_eq!(
-        has_bundle_mount,
-        should_mount_bundle_dir_in_container(&bundle_dir)
-    );
-}
-
-#[test]
-fn build_mounts_includes_vcs_hooks_bind_mount() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let workspace = sample_workspace(&tmp);
-    let mount_plan = build_mounts(
-        tmp.path(),
-        &workspace,
-        None,
-        &ContainerExecutionSettings::default(),
-    );
-    let hooks_root = crate::vcs_hooks::vcs_hooks_root(tmp.path());
-    let expected = bind_mount(&hooks_root, &hooks_root, false);
-    assert!(
-        mount_plan.mounts.iter().any(|mount| mount == &expected),
-        "expected vcs hooks bind mount in {:?}",
-        mount_plan.mounts
-    );
-    assert!(
-        mount_plan
-            .external_mounts
-            .contains(&hooks_root.to_string_lossy().to_string()),
-        "expected vcs hooks root in external mount tracking: {:?}",
-        mount_plan.external_mounts
-    );
 }
 
 #[tokio::test]

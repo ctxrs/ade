@@ -1,7 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::ErrorKind;
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -11,16 +12,9 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context, Result};
 #[cfg(test)]
 use sysinfo::System;
-use tokio::process::Command;
-use tokio::sync::Mutex;
-use tokio::{fs, io::AsyncWriteExt};
-
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
-use ctx_fs::worktrees::worktrees_root;
-use serde::{Deserialize, Serialize};
 
-use crate::network_allowlist;
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use crate::resource_utilization::SystemSnapshot;
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
@@ -28,8 +22,7 @@ use crate::settings::normalize_container_machine_idle_shutdown_seconds;
 #[cfg(test)]
 use crate::settings::ContainerMachineMemoryProfile;
 use crate::settings::{
-    ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind,
-    ExecutionMode, ExecutionSettings,
+    ContainerExecutionSettings, ContainerRuntimeKind, ExecutionMode, ExecutionSettings,
 };
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use crate::terminals::TerminalManager;
@@ -41,12 +34,10 @@ use ctx_core::models::ExecutionEnvironment;
 use ctx_store::StoreManager;
 use url::Url;
 
-mod container;
 mod machine;
 mod manager;
 mod manager_container;
 mod materialization;
-mod network_policy_transition;
 #[cfg(test)]
 mod reclaim_unit_tests;
 #[cfg(test)]
@@ -63,29 +54,17 @@ struct AvfDaemonGatewayProxy {
 static AVF_DAEMON_GATEWAY_PROXIES: OnceLock<StdMutex<HashMap<u16, AvfDaemonGatewayProxy>>> =
     OnceLock::new();
 
-pub(crate) use ctx_avf_linux_runtime::{
-    build_guest_exec_command as build_avf_linux_guest_exec_command,
+use ctx_avf_linux_runtime::{
     helper_path as avf_linux_helper_path,
-    run_guest_exec_capture as run_avf_linux_guest_exec_capture,
     workspace_vm_data_root as avf_linux_workspace_vm_data_root,
 };
-use ctx_avf_linux_runtime::{
-    runtime_available as avf_linux_runtime_available,
-    runtime_state as avf_linux_runtime_state, runtime_target_label as avf_linux_runtime_target_label,
-    AVF_LINUX_HELPER_PATH_ENV,
+use ctx_avf_linux_runtime::AVF_LINUX_HELPER_PATH_ENV;
+use ctx_workspace_container::{
+    AVF_GUEST_HOST_GATEWAY, WorkspaceContainerStatus as HarnessContainerStatus,
 };
-use self::container::sandbox_machine_required;
-pub(crate) use self::container::AVF_GUEST_HOST_GATEWAY;
+use ctx_workspace_container::{rewrite_daemon_url_for_avf_guest, WorkspaceContainerOwner};
 #[cfg(test)]
-use self::container::{bind_mount, should_mount_bundle_dir_in_container};
-use self::container::{
-    build_mounts, container_data_root, container_terminal_identity_missing_sudo, container_user,
-    daemon_port_from_url, proxy_runtime_path, proxy_runtime_root, rewrite_daemon_url_for_avf_guest,
-    rewrite_daemon_url_for_container, should_use_keep_id_userns, sync_container_terminal_identity,
-    verify_disk_isolated_container_mounts, workspace_container_hostname,
-};
-pub(crate) use self::container::{CONTAINER_TERMINAL_HOME, CONTAINER_TERMINAL_USER};
-pub(crate) use ctx_avf_linux_runtime::{SharedSubstrateLifecycleManager, SubstrateLifecycleRecord};
+use ctx_workspace_container::sandbox_machine_required;
 pub(crate) use ctx_linux_sandbox_runtime::{
     linux_sandbox_runtime_status, prepare_linux_sandbox_runtime,
     stage_linux_sandbox_runtime_downloads, LinuxSandboxActivationMode,
@@ -97,29 +76,11 @@ pub use ctx_sandbox_container_runtime::{
     default_container_image, is_default_container_image, sandbox_cli_env_for_data_root,
     sandbox_cli_invocation, ContainerImageStatus, SHARED_VM_SANDBOX_CLI_GUEST_BIN,
 };
-use ctx_sandbox_container_runtime::{
-    container_exists as runtime_container_exists,
-    container_image_present as runtime_container_image_present,
-    container_image_status as runtime_container_image_status,
-    container_running as runtime_container_running,
-    ensure_container_image_available as runtime_ensure_container_image_available,
-    ensure_workspace_volume as runtime_ensure_workspace_volume,
-    force_reload_default_container_image as runtime_force_reload_default_container_image,
-    native_container_runtime_available,
-    prefetch_container_image as runtime_prefetch_container_image,
-    prefetch_container_image_with_observer as runtime_prefetch_container_image_with_observer,
-    prefetch_container_startup_artifacts_with_observer as runtime_prefetch_container_startup_artifacts_with_observer,
-    resolve_container_image as resolve_configured_container_image,
-    sandbox_container_command as runtime_sandbox_container_command,
-    sandbox_engine_ready as runtime_sandbox_engine_ready,
-    SandboxCommandMode,
-};
 #[cfg(test)]
 use ctx_sandbox_container_runtime::{
     ensure_managed_default_container_image_tar_with_source, managed_default_image_install_lock,
     sandbox_cli_binary_path,
 };
-use self::machine::sandbox_machine_name;
 #[cfg(test)]
 use self::machine::{
     ensure_managed_sandbox_cli_runtime, ensure_managed_sandbox_machine_cache,
@@ -129,501 +90,33 @@ use self::machine::{
     seed_shared_sandbox_machine_cache_best_effort,
 };
 pub(crate) use self::materialization::materialize_sandbox_worktree;
-use self::network_policy_transition::apply_container_network_policy;
 #[cfg(test)]
 use self::sandbox_machine_recovery::{
     run_sandbox_machine_init, sandbox_machine_present, sandbox_machine_singleflight_lock,
 };
 pub(crate) use ctx_avf_linux_runtime::SharedVmLifecycleOrchestrator;
 pub(crate) use ctx_sandbox_contract::UbuntuSandboxSubstrate;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SandboxCommandBackend {
-    NativeContainer,
-    SharedVmContainer,
-}
-
-fn explicit_sandbox_cli_override_path() -> Option<PathBuf> {
-    let raw = std::env::var(CTX_HARNESS_SANDBOX_CLI_PATH_ENV).ok()?;
-    let path = PathBuf::from(raw.trim());
-    if path.exists() { Some(path) } else { None }
-}
-
-pub(crate) fn selected_sandbox_command_mode(data_root: &Path) -> Result<SandboxCommandMode> {
-    if explicit_sandbox_cli_override_path().is_some() {
-        return Ok(SandboxCommandMode::NativeContainer);
-    }
-    #[cfg(target_os = "macos")]
-    if avf_linux_runtime_available() {
-        return Ok(SandboxCommandMode::SharedVm {
-            helper_path: avf_linux_helper_path()?,
-        });
-    }
-    if native_container_runtime_available(data_root) {
-        return Ok(SandboxCommandMode::NativeContainer);
-    }
-    anyhow::bail!("sandbox container CLI unavailable");
-}
-
-pub(crate) fn selected_sandbox_command_backend(data_root: &Path) -> Result<SandboxCommandBackend> {
-    match selected_sandbox_command_mode(data_root)? {
-        SandboxCommandMode::NativeContainer => Ok(SandboxCommandBackend::NativeContainer),
-        SandboxCommandMode::SharedVm { .. } => Ok(SandboxCommandBackend::SharedVmContainer),
-    }
-}
-
-pub(crate) fn container_runtime_available(data_root: &Path) -> bool {
-    selected_sandbox_command_mode(data_root).is_ok()
-}
-
-pub(crate) fn sandbox_container_command(data_root: &Path) -> Result<Command> {
-    let mode = selected_sandbox_command_mode(data_root)?;
-    runtime_sandbox_container_command(data_root, &mode)
-}
-
-pub(crate) async fn sandbox_engine_ready(data_root: &Path) -> Result<bool> {
-    let mode = selected_sandbox_command_mode(data_root)?;
-    runtime_sandbox_engine_ready(data_root, &mode).await
-}
-
-pub(crate) async fn container_exists(data_root: &Path, name: &str) -> Result<bool> {
-    let mode = selected_sandbox_command_mode(data_root)?;
-    runtime_container_exists(data_root, &mode, name).await
-}
-
-pub(crate) async fn container_running(data_root: &Path, name: &str) -> Result<Option<bool>> {
-    let mode = selected_sandbox_command_mode(data_root)?;
-    runtime_container_running(data_root, &mode, name).await
-}
-
-pub(crate) async fn ensure_workspace_volume(
-    data_root: &Path,
-    workspace_id: WorkspaceId,
-) -> Result<String> {
-    let mode = selected_sandbox_command_mode(data_root)?;
-    runtime_ensure_workspace_volume(data_root, &mode, workspace_id).await
-}
-
-pub(crate) fn resolve_container_image(settings: &ContainerExecutionSettings) -> String {
-    resolve_configured_container_image(settings.image.as_deref())
-}
-
-pub async fn container_image_present(data_root: &Path, image: &str) -> Result<bool> {
-    let mode = selected_sandbox_command_mode(data_root)?;
-    runtime_container_image_present(data_root, &mode, image).await
-}
-
-pub async fn container_image_status(data_root: &Path, image: &str) -> Result<ContainerImageStatus> {
-    let mode = selected_sandbox_command_mode(data_root)?;
-    runtime_container_image_status(data_root, &mode, image).await
-}
-
-pub async fn prefetch_container_startup_artifacts_with_observer(
-    data_root: &Path,
-    image: &str,
-    observer: Option<&dyn HarnessSetupObserver>,
-) -> Result<()> {
-    let mode = selected_sandbox_command_mode(data_root)?;
-    runtime_prefetch_container_startup_artifacts_with_observer(data_root, &mode, image, observer)
-        .await
-}
-
-pub async fn prefetch_container_image_with_observer(
-    data_root: &Path,
-    image: &str,
-    observer: Option<&dyn HarnessSetupObserver>,
-) -> Result<()> {
-    let mode = selected_sandbox_command_mode(data_root)?;
-    runtime_prefetch_container_image_with_observer(data_root, &mode, image, observer).await
-}
-
-pub async fn prefetch_container_image(data_root: &Path, image: &str) -> Result<()> {
-    let mode = selected_sandbox_command_mode(data_root)?;
-    runtime_prefetch_container_image(data_root, &mode, image).await
-}
-
-async fn ensure_container_image_available(
-    data_root: &Path,
-    image: &str,
-    observer: Option<&dyn HarnessSetupObserver>,
-) -> Result<()> {
-    let mode = selected_sandbox_command_mode(data_root)?;
-    runtime_ensure_container_image_available(data_root, &mode, image, observer).await
-}
-
-async fn force_reload_default_container_image(
-    data_root: &Path,
-    observer: Option<&dyn HarnessSetupObserver>,
-) -> Result<()> {
-    let mode = selected_sandbox_command_mode(data_root)?;
-    runtime_force_reload_default_container_image(data_root, &mode, observer).await
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SandboxContainerLaunchNetworking {
-    network: Option<&'static str>,
-    add_host: &'static str,
-}
-
-fn sandbox_container_launch_networking(
-    settings: &ContainerExecutionSettings,
-) -> SandboxContainerLaunchNetworking {
-    SandboxContainerLaunchNetworking {
-        network: if matches!(settings.runtime, ContainerRuntimeKind::SharedVmContainer) {
-            None
-        } else {
-            Some("slirp4netns:allow_host_loopback=true")
-        },
-        add_host: "host.containers.internal:host-gateway",
-    }
-}
-
-fn append_sandbox_container_launch_network_args(
-    cmd: &mut Command,
-    settings: &ContainerExecutionSettings,
-) {
-    let networking = sandbox_container_launch_networking(settings);
-    if let Some(network) = networking.network {
-        cmd.arg("--network").arg(network);
-    }
-    cmd.arg("--cap-add").arg("NET_ADMIN");
-    cmd.arg("--add-host").arg(networking.add_host);
-}
-
+pub(crate) use ctx_harness_runtime::{
+    sandbox_engine_ready,
+    selected_sandbox_command_backend, selected_sandbox_command_mode,
+    CTX_AVF_HOST_DATA_ROOT_ENV,
+    CTX_AVF_HOST_WORKTREE_ROOT_ENV, CTX_AVF_WORKSPACE_ID_ENV, CTX_AVF_WORKTREE_ID_ENV,
+    CTX_HARNESS_LINUX_SANDBOX_ENV, CTX_HARNESS_RUNTIME_KIND_ENV, HarnessExecutionPlan,
+    HarnessRuntimeKind, HarnessRuntimeStats, SandboxCommandBackend,
+};
 #[cfg(test)]
-mod launch_networking_tests {
-    use super::*;
-
-    #[test]
-    fn shared_vm_container_launch_networking_uses_default_bridge() {
-        let settings = ContainerExecutionSettings {
-            runtime: ContainerRuntimeKind::SharedVmContainer,
-            ..ContainerExecutionSettings::default()
-        };
-
-        let networking = sandbox_container_launch_networking(&settings);
-        assert_eq!(networking.network, None);
-        assert_eq!(networking.add_host, "host.containers.internal:host-gateway");
-    }
-
-    #[test]
-    fn native_container_launch_networking_keeps_slirp() {
-        let settings = ContainerExecutionSettings {
-            runtime: ContainerRuntimeKind::NativeContainer,
-            ..ContainerExecutionSettings::default()
-        };
-
-        let networking = sandbox_container_launch_networking(&settings);
-        assert_eq!(
-            networking.network,
-            Some("slirp4netns:allow_host_loopback=true")
-        );
-        assert_eq!(networking.add_host, "host.containers.internal:host-gateway");
-    }
-}
-
-pub(crate) fn local_runtime_available(data_root: &Path, runtime: &ContainerRuntimeKind) -> bool {
-    match runtime {
-        ContainerRuntimeKind::NativeContainer => container_runtime_available(data_root),
-        ContainerRuntimeKind::SharedVmContainer => avf_linux_runtime_available(),
-    }
-}
-
-pub(crate) fn runtime_prewarm_target(settings: &ContainerExecutionSettings) -> String {
-    match settings.runtime {
-        ContainerRuntimeKind::NativeContainer => resolve_container_image(settings),
-        ContainerRuntimeKind::SharedVmContainer => avf_linux_runtime_target_label(),
-    }
-}
-
-pub(crate) async fn selected_runtime_state(
-    data_root: &Path,
-    settings: &ContainerExecutionSettings,
-) -> Result<(bool, bool)> {
-    match settings.runtime {
-        ContainerRuntimeKind::NativeContainer => {
-            let machine_ready = normalize_container_engine_ready_for_runtime(
-                sandbox_engine_ready(data_root).await,
-            )?;
-            let image_present = if machine_ready {
-                container_image_present(data_root, &resolve_container_image(settings)).await?
-            } else {
-                false
-            };
-            Ok((machine_ready, image_present))
-        }
-        ContainerRuntimeKind::SharedVmContainer => avf_linux_runtime_state(data_root),
-    }
-}
-
-pub(crate) async fn prewarm_selected_runtime_with_observer(
-    data_root: &Path,
-    settings: &ContainerExecutionSettings,
-    observer: Option<&dyn HarnessSetupObserver>,
-) -> Result<()> {
-    match settings.runtime {
-        ContainerRuntimeKind::NativeContainer => {
-            let image = resolve_container_image(settings);
-            let machine_ready = normalize_container_engine_ready_for_runtime(
-                sandbox_engine_ready(data_root).await,
-            )?;
-            if machine_ready {
-                prefetch_container_image_with_observer(data_root, &image, observer).await
-            } else {
-                prefetch_container_startup_artifacts_with_observer(data_root, &image, observer)
-                    .await
-            }
-        }
-        ContainerRuntimeKind::SharedVmContainer => {
-            SharedVmLifecycleOrchestrator::new(data_root)
-                .prefetch_runtime(settings, observer)
-                .await
-        }
-    }
-}
-
-pub(crate) async fn prewarm_selected_runtime_for_launch_with_observer(
-    data_root: &Path,
-    settings: &ContainerExecutionSettings,
-    observer: Option<&dyn HarnessSetupObserver>,
-) -> Result<()> {
-    match settings.runtime {
-        ContainerRuntimeKind::NativeContainer => {
-            ensure_native_container_runtime_launch_ready_with_observer(
-                data_root, settings, observer,
-            )
-            .await
-        }
-        ContainerRuntimeKind::SharedVmContainer => SharedVmLifecycleOrchestrator::new(data_root)
-            .ensure_shared_runtime_ready(settings, observer)
-            .await
-            .map(|_| ()),
-    }
-}
-
-pub(crate) fn selected_shared_substrate_lifecycle(
-    data_root: &Path,
-) -> Result<Option<SubstrateLifecycleRecord>> {
-    if !matches!(
-        selected_sandbox_command_backend(data_root),
-        Ok(SandboxCommandBackend::SharedVmContainer)
-    ) {
-        return Ok(None);
-    }
-
-    let settings = ContainerExecutionSettings {
-        runtime: ContainerRuntimeKind::SharedVmContainer,
-        ..ContainerExecutionSettings::default()
-    };
-    SharedSubstrateLifecycleManager::new(data_root)
-        .read_shared_runtime_lifecycle(&settings)
-        .map(Some)
-}
-
-pub(crate) async fn selected_runtime_launch_ready(
-    data_root: &Path,
-    settings: &ContainerExecutionSettings,
-) -> Result<bool> {
-    let (vm_ready, image_ready) =
-        selected_runtime_launch_readiness_state(data_root, settings).await?;
-    Ok(vm_ready && image_ready)
-}
-
-pub(crate) async fn selected_runtime_launch_readiness_state(
-    data_root: &Path,
-    settings: &ContainerExecutionSettings,
-) -> Result<(bool, bool)> {
-    let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime.clone());
-    match substrate.substrate {
-        ctx_core::models::SandboxSubstrate::NativeContainer => {
-            selected_runtime_state(data_root, settings).await
-        }
-        ctx_core::models::SandboxSubstrate::SharedVmContainer => {
-            SharedVmLifecycleOrchestrator::new(data_root)
-                .launch_readiness_state(settings)
-                .await
-        }
-    }
-}
-
-pub(crate) fn launch_ready_gap_message(
-    runtime_kind: ContainerRuntimeKind,
-    runtime_target: &str,
-    vm_ready: bool,
-    image_ready: bool,
-) -> String {
-    UbuntuSandboxSubstrate::from_runtime_kind(runtime_kind).launch_ready_gap_message(
-        runtime_target,
-        vm_ready,
-        image_ready,
-    )
-}
-
-#[cfg(test)]
-pub(crate) fn launch_ready_detail_message(runtime_kind: &ContainerRuntimeKind) -> &'static str {
-    UbuntuSandboxSubstrate::from_runtime_kind(runtime_kind.clone()).launch_ready_detail_message()
-}
-
-pub(crate) fn runtime_prewarm_ready_message(
-    runtime_kind: &ContainerRuntimeKind,
-    launch_ready: bool,
-) -> &'static str {
-    UbuntuSandboxSubstrate::from_runtime_kind(runtime_kind.clone())
-        .runtime_prewarm_ready_message(launch_ready)
-}
-
-pub(crate) fn workspace_launch_ready_message(runtime_kind: &ContainerRuntimeKind) -> &'static str {
-    UbuntuSandboxSubstrate::from_runtime_kind(runtime_kind.clone()).workspace_launch_ready_message()
-}
-
-fn normalize_container_engine_ready_for_runtime(result: Result<bool>) -> Result<bool> {
-    match result {
-        Ok(value) => Ok(value),
-        Err(err) => {
-            let lowered = err.to_string().to_ascii_lowercase();
-            if lowered.contains("sandbox container cli unavailable")
-                || lowered.contains("native sandbox container runtime is unavailable")
-            {
-                return Ok(false);
-            }
-            Err(err)
-        }
-    }
-}
-
-async fn ensure_native_container_runtime_engine_ready_with_observer(
-    data_root: &Path,
-    _settings: &ContainerExecutionSettings,
-    observer: Option<&dyn HarnessSetupObserver>,
-) -> Result<()> {
-    observe_phase(
-        observer,
-        HarnessSetupPhase::MachineCheck,
-        "checking container runtime",
-    );
-    if sandbox_engine_ready(data_root).await.unwrap_or(false) {
-        observe_log(
-            observer,
-            HarnessSetupPhase::MachineCheck,
-            HarnessSetupLogLevel::Info,
-            "local sandbox runtime is already reachable",
-        );
-        return Ok(());
-    }
-
-    if sandbox_machine_required() {
-        let machine_name = sandbox_machine_name(data_root);
-        observe_phase(
-            observer,
-            HarnessSetupPhase::MachineStartOrInit,
-            "starting local sandbox runtime",
-        );
-        let mut start = sandbox_container_command(data_root)?;
-        start.arg("machine").arg("start").arg(&machine_name);
-        let output = command_output_with_timeout(start, SANDBOX_MACHINE_START_TIMEOUT).await?;
-        if !output.status.success() {
-            let combined = command_output_message(&output);
-            let combined_lc = combined.to_ascii_lowercase();
-            if !(combined_lc.contains("already running")
-                || combined_lc.contains("already starting")
-                || combined_lc.contains("already started"))
-            {
-                if combined_lc.contains("not found")
-                    || combined_lc.contains("does not exist")
-                    || combined_lc.contains("no machine")
-                {
-                    anyhow::bail!(
-                        "native sandbox container runtime machine '{machine_name}' is not initialized"
-                    );
-                }
-                if combined.is_empty() {
-                    anyhow::bail!(
-                        "sandbox machine start failed with non-zero exit {}",
-                        output.status
-                    );
-                }
-                anyhow::bail!("sandbox machine start failed: {combined}");
-            }
-            observe_log(
-                observer,
-                HarnessSetupPhase::MachineStartOrInit,
-                HarnessSetupLogLevel::Warn,
-                "sandbox machine start reported an already-running state; waiting for runtime readiness",
-            );
-        }
-        observe_phase(
-            observer,
-            HarnessSetupPhase::MachineStartOrInit,
-            "waiting for local sandbox runtime readiness",
-        );
-        let deadline = Instant::now() + sandbox_machine_ready_timeout();
-        loop {
-            if sandbox_engine_ready(data_root).await.unwrap_or(false) {
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::MachineStartOrInit,
-                    HarnessSetupLogLevel::Info,
-                    "local sandbox runtime is ready",
-                );
-                return Ok(());
-            }
-            if Instant::now() >= deadline {
-                anyhow::bail!(
-                    "native sandbox container runtime did not become reachable after starting machine '{machine_name}'"
-                );
-            }
-            tokio::time::sleep(sandbox_machine_ready_poll_interval()).await;
-        }
-    }
-
-    if sandbox_cli_invocation(data_root).is_err() {
-        anyhow::bail!(
-            "native sandbox container runtime is unavailable; install nerdctl or set {}",
-            CTX_HARNESS_SANDBOX_CLI_PATH_ENV
-        );
-    }
-
-    anyhow::bail!("native sandbox container runtime is installed but not reachable");
-}
-
-async fn ensure_native_container_runtime_launch_ready_with_observer(
-    data_root: &Path,
-    settings: &ContainerExecutionSettings,
-    observer: Option<&dyn HarnessSetupObserver>,
-) -> Result<()> {
-    ensure_native_container_runtime_engine_ready_with_observer(data_root, settings, observer)
-        .await?;
-    let image = resolve_container_image(settings);
-    prefetch_container_image_with_observer(data_root, &image, observer).await
-}
-
-pub(crate) async fn ensure_builder_backend_launch_ready_with_observer(
-    data_root: &Path,
-    observer: Option<&dyn HarnessSetupObserver>,
-) -> Result<()> {
-    match selected_sandbox_command_backend(data_root)? {
-        SandboxCommandBackend::NativeContainer => {
-            let settings = ContainerExecutionSettings {
-                runtime: ContainerRuntimeKind::NativeContainer,
-                ..ContainerExecutionSettings::default()
-            };
-            ensure_native_container_runtime_engine_ready_with_observer(
-                data_root, &settings, observer,
-            )
-            .await
-        }
-        SandboxCommandBackend::SharedVmContainer => {
-            let settings = ContainerExecutionSettings {
-                runtime: ContainerRuntimeKind::SharedVmContainer,
-                ..ContainerExecutionSettings::default()
-            };
-            SharedSubstrateLifecycleManager::new(data_root)
-                .ensure_shared_runtime_ready(&settings, observer)
-                .await
-                .map(|_| ())
-        }
-    }
-}
+#[allow(unused_imports)]
+pub(crate) use ctx_harness_runtime::{
+    container_image_present, ensure_builder_backend_launch_ready_with_observer,
+    launch_ready_detail_message, launch_ready_gap_message, local_runtime_available,
+    prefetch_container_image, prewarm_selected_runtime_for_launch_with_observer,
+    prewarm_selected_runtime_with_observer, resolve_container_image,
+    runtime_prewarm_ready_message, runtime_prewarm_target, sandbox_container_command,
+    sandbox_machine_name,
+    selected_runtime_launch_ready,
+    selected_runtime_launch_readiness_state, selected_runtime_state,
+    selected_shared_substrate_lifecycle, workspace_launch_ready_message,
+};
 
 #[cfg(test)]
 const SANDBOX_MACHINE_CACHE_DIR_ENV: &str = "CTX_SANDBOX_MACHINE_CACHE_DIR";
@@ -639,23 +132,16 @@ const EGRESS_PROXY_CONTAINER_PATH: &str = "/usr/local/bin/ctx-egress-proxy";
 const CTX_SANDBOX_MACHINE_PREFIX: &str = "ctx";
 // In-container root for disk-isolated workspaces (sandbox workspace volume mounted here).
 pub(crate) use ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT;
-pub(crate) const CTX_HARNESS_RUNTIME_KIND_ENV: &str = "CTX_HARNESS_RUNTIME_KIND";
-pub(crate) const CTX_HARNESS_LINUX_SANDBOX_ENV: &str = "CTX_HARNESS_LINUX_SANDBOX";
-pub(crate) const CTX_AVF_HOST_DATA_ROOT_ENV: &str = "CTX_AVF_HOST_DATA_ROOT";
-pub(crate) const CTX_AVF_WORKSPACE_ID_ENV: &str = "CTX_AVF_WORKSPACE_ID";
-pub(crate) const CTX_AVF_WORKTREE_ID_ENV: &str = "CTX_AVF_WORKTREE_ID";
-pub(crate) const CTX_AVF_HOST_WORKTREE_ROOT_ENV: &str = "CTX_AVF_HOST_WORKTREE_ROOT";
 pub(crate) const CTX_AVF_REAL_GUEST_EXEC_ENV: &str = "CTX_AVF_REAL_GUEST_EXEC";
 #[cfg(test)]
 const SANDBOX_INFO_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(test)]
 const SANDBOX_MACHINE_START_TIMEOUT: Duration = Duration::from_secs(180);
 // Bound machine init so wedged sandbox CLI subprocesses cannot stall launch indefinitely.
 #[cfg(test)]
 const SANDBOX_MACHINE_INIT_TIMEOUT: Duration = Duration::from_secs(8 * 60);
 // First boot can be slow on fresh installs (image download + provisioning), but readiness loops
 // must remain bounded tightly enough to surface actionable errors quickly.
-const SANDBOX_MACHINE_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
-const SANDBOX_OP_TIMEOUT: Duration = Duration::from_secs(60);
 #[cfg(test)]
 const DEFAULT_PRESET_HOST_MEMORY_MB: u32 = 32 * 1024;
 #[cfg(test)]
@@ -929,142 +415,26 @@ fn sandbox_machine_init_poll_interval() -> Duration {
     }
 }
 
+#[cfg(test)]
 fn sandbox_machine_ready_timeout() -> Duration {
-    if cfg!(test) {
-        Duration::from_millis(300)
-    } else {
-        SANDBOX_MACHINE_READY_TIMEOUT
-    }
+    Duration::from_millis(300)
 }
 
+#[cfg(test)]
 fn sandbox_machine_ready_poll_interval() -> Duration {
-    if cfg!(test) {
-        Duration::from_millis(25)
-    } else {
-        Duration::from_secs(1)
-    }
+    Duration::from_millis(25)
 }
 
 pub use ctx_harness_setup::{
     HarnessSetupDownloadStatus, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,
     HarnessSetupProgressUpdate,
 };
+#[cfg(test)]
 use ctx_harness_setup::{observe_log, observe_phase};
-
-#[derive(Debug, Clone, Serialize)]
-pub struct HarnessRuntimeStats {
-    pub container_count: usize,
-    pub container_allowlist_entries: usize,
-    pub container_external_mounts: usize,
-    pub container_egress_guards: usize,
-}
-
-pub(crate) fn workspace_container_name(workspace_id: WorkspaceId) -> String {
-    format!("ctx-harness-{}", workspace_id.0)
-}
-
-#[derive(Debug, Clone)]
-pub enum HarnessRuntimeKind {
-    Host,
-    NativeContainer { name: String },
-    SharedVmContainer,
-}
-
-impl HarnessRuntimeKind {
-    pub fn is_linux_sandbox(&self) -> bool {
-        !matches!(self, Self::Host)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct HarnessExecutionPlan {
-    pub runtime: HarnessRuntimeKind,
-    pub env_overrides: HashMap<String, String>,
-}
-
-impl HarnessExecutionPlan {
-    pub fn is_linux_sandbox(&self) -> bool {
-        self.runtime.is_linux_sandbox()
-            || self
-                .env_overrides
-                .get(CTX_HARNESS_LINUX_SANDBOX_ENV)
-                .is_some_and(|value| value == "1")
-    }
-
-    pub fn runtime_data_root(&self) -> Option<&Path> {
-        self.env_overrides.get("CTX_DATA_ROOT").map(Path::new)
-    }
-}
-
-#[derive(Debug, Clone)]
-struct HarnessContainer {
-    name: String,
-    mount_mode: ContainerMountMode,
-    network_mode: ContainerNetworkMode,
-    allowlist: Vec<String>,
-    external_mounts: HashSet<String>,
-    egress_guard: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CachedContainerAction {
-    Reuse,
-    Reconfigure,
-    Recreate,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ContainerReadinessState {
-    MachineReady,
-    RuntimeReady,
-}
-
-struct EnsureContainerRequest<'a> {
-    workspace: &'a Workspace,
-    worktree: Option<&'a Worktree>,
-    settings: &'a ContainerExecutionSettings,
-    daemon_host: &'a str,
-    daemon_port: u16,
-    observer: Option<&'a dyn HarnessSetupObserver>,
-    readiness: ContainerReadinessState,
-}
-
-fn cached_container_action(
-    cached: &HarnessContainer,
-    settings: &ContainerExecutionSettings,
-    external_mounts: &HashSet<String>,
-) -> CachedContainerAction {
-    if cached.mount_mode != settings.mount_mode || cached.external_mounts != *external_mounts {
-        return CachedContainerAction::Recreate;
-    }
-    if cached.network_mode != settings.network_mode || cached.allowlist != settings.allowlist {
-        return CachedContainerAction::Reconfigure;
-    }
-    CachedContainerAction::Reuse
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct HarnessContainerStatus {
-    pub name: String,
-    pub running: bool,
-    pub known: bool,
-    pub mount_mode: Option<ContainerMountMode>,
-    pub network_mode: Option<ContainerNetworkMode>,
-    pub allowlist: Vec<String>,
-    pub egress_guard: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct TransparentProxyConfig {
-    listen: String,
-    mode: ContainerNetworkMode,
-    allowlist: Vec<String>,
-    max_peek_bytes: usize,
-}
 
 pub struct HarnessRuntimeManager {
     data_root: PathBuf,
-    containers: Mutex<HashMap<WorkspaceId, HarnessContainer>>,
+    workspace_containers: WorkspaceContainerOwner,
     last_activity: StdMutex<Instant>,
     active_runtime_operations: AtomicUsize,
     active_prewarm_artifact_operations: AtomicUsize,

@@ -7,10 +7,11 @@ use anyhow::{Context, Result};
 
 use ctx_core::models::Worktree;
 use ctx_fs::vcs;
+use ctx_workspace_container::workspace_container_name;
 
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::workspace_runtime::{sandbox_container_command, workspace_container_name};
+use ctx_harness_runtime::sandbox_container_command;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::worktree_data_plane::resolve_worktree_data_plane;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
@@ -77,7 +78,10 @@ async fn container_git_output(
                 .arg(&container_name)
                 .arg("git")
                 .args(args);
-            crate::workspace_runtime::command_output_with_timeout(cmd, SANDBOX_GIT_TIMEOUT)
+            ctx_sandbox_container_runtime::command_output_with_timeout(
+                cmd,
+                SANDBOX_GIT_TIMEOUT,
+            )
                 .await
                 .context("sandbox exec git timed out")
         }
@@ -88,7 +92,7 @@ async fn container_git_output(
                 .collect::<Vec<_>>();
             tokio::time::timeout(
                 SANDBOX_GIT_TIMEOUT,
-                crate::workspace_runtime::run_avf_linux_guest_exec_capture(
+                ctx_avf_linux_runtime::run_guest_exec_capture(
                     &state.core.data_root,
                     worktree.workspace_id,
                     worktree.id,
@@ -305,7 +309,7 @@ printf '%s %s\n' "$count" "$adds"
         }
         SandboxGitTarget::SharedVmContainer => tokio::time::timeout(
             Duration::from_secs(30),
-            crate::workspace_runtime::run_avf_linux_guest_exec_capture(
+            ctx_avf_linux_runtime::run_guest_exec_capture(
                 &state.core.data_root,
                 worktree.workspace_id,
                 worktree.id,

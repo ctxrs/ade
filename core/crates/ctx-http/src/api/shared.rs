@@ -13,7 +13,6 @@ use serde::Deserialize;
 use super::errors::ApiErrorResp;
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::workspace_runtime;
 use crate::logs;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::settings::ContainerRuntimeKind;
@@ -276,19 +275,22 @@ async fn container_git_ls_files(
     const SANDBOX_GIT_LS_FILES_TIMEOUT: Duration = Duration::from_secs(30);
     let out = match runtime {
         ContainerRuntimeKind::NativeContainer => {
-            let mut cmd = workspace_runtime::sandbox_container_command(&state.core.data_root)
+            let mut cmd = ctx_harness_runtime::sandbox_container_command(&state.core.data_root)
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             cmd.arg("exec")
                 .arg("--workdir")
                 .arg(workdir)
-                .arg(workspace_runtime::workspace_container_name(
+                .arg(ctx_workspace_container::workspace_container_name(
                     worktree.workspace_id,
                 ))
                 .arg("git");
             for arg in git_args {
                 cmd.arg(arg);
             }
-            workspace_runtime::command_output_with_timeout(cmd, SANDBOX_GIT_LS_FILES_TIMEOUT)
+            ctx_sandbox_container_runtime::command_output_with_timeout(
+                cmd,
+                SANDBOX_GIT_LS_FILES_TIMEOUT,
+            )
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         }
@@ -300,7 +302,7 @@ async fn container_git_ls_files(
             let guest_cwd = PathBuf::from(workdir);
             tokio::time::timeout(
                 SANDBOX_GIT_LS_FILES_TIMEOUT,
-                crate::workspace_runtime::run_avf_linux_guest_exec_capture(
+                ctx_avf_linux_runtime::run_guest_exec_capture(
                     &state.core.data_root,
                     worktree.workspace_id,
                     worktree.id,

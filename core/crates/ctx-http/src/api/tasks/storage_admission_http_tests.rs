@@ -134,7 +134,7 @@ async fn create_task_rejects_before_disk_isolated_copy_when_host_reserve_is_unre
         .expect("create workspace");
 
     let log_path = temp.path().join("sandbox-cli.log");
-    let container_name = crate::workspace_runtime::workspace_container_name(workspace.id);
+    let container_name = ctx_workspace_container::workspace_container_name(workspace.id);
     let sandbox_cli_path = crate::test_support::write_running_container_sandbox_cli_shim(
         temp.path(),
         &log_path,
@@ -174,7 +174,7 @@ async fn create_task_rejects_before_disk_isolated_copy_when_host_reserve_is_unre
                   required_bytes| {
                 assert_eq!(
                     container_id,
-                    crate::workspace_runtime::workspace_container_name(workspace_id)
+                    ctx_workspace_container::workspace_container_name(workspace_id)
                 );
                 assert_eq!(
                     operation,
@@ -182,7 +182,7 @@ async fn create_task_rejects_before_disk_isolated_copy_when_host_reserve_is_unre
                 );
                 assert_eq!(
                     destination_probe_root,
-                    Path::new(crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT)
+                    Path::new(ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT)
                 );
 
                 let guard = StorageGuardStatus::default();
@@ -201,7 +201,7 @@ async fn create_task_rejects_before_disk_isolated_copy_when_host_reserve_is_unre
                     StorageAdmissionSample {
                         label: "sandbox workspace volume".to_string(),
                         path: destination_probe_root.to_string_lossy().to_string(),
-                        mount_point: crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT
+                        mount_point: ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT
                             .to_string(),
                         free_bytes: required_bytes.saturating_add(reserve),
                         total_bytes,

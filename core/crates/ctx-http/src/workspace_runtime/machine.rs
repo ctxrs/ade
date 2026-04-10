@@ -1,4 +1,7 @@
+#[cfg(test)]
 use super::*;
+#[cfg(test)]
+use std::path::{Path, PathBuf};
 #[cfg(test)]
 use ctx_bundled_assets as bundled_assets;
 #[cfg(test)]
@@ -11,6 +14,15 @@ use ctx_runtime_assets::{
     finalize_managed_artifact_download, managed_artifact_lock_path,
     managed_artifact_partial_path, resolve_single_extracted_root,
 };
+#[cfg(all(test, unix))]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(test)]
+use std::sync::OnceLock;
+#[cfg(test)]
+use tokio::fs;
+#[cfg(test)]
+use tokio::sync::Mutex;
+#[cfg(test)]
 use sha2::Digest;
 
 #[cfg(test)]
@@ -21,11 +33,7 @@ pub(super) mod archive;
 #[cfg(test)]
 use self::archive::managed_sandbox_cli_archive_path;
 
-pub(super) fn sandbox_machine_name(data_root: &Path) -> String {
-    let hash = sandbox_machine_data_root_hash(data_root);
-    format!("{CTX_SANDBOX_MACHINE_PREFIX}-{hash}")
-}
-
+#[cfg(test)]
 fn sandbox_machine_data_root_hash(data_root: &Path) -> String {
     let mut hasher = sha2::Sha256::new();
     hasher.update(data_root.to_string_lossy().as_bytes());

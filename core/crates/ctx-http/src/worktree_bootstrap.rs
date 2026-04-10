@@ -14,7 +14,6 @@ use ctx_store::WorktreeBootstrapResultUpdate;
 
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::workspace_runtime;
 use crate::logs;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::workspace_config;
@@ -497,8 +496,8 @@ async fn run_bootstrap_step_in_container(
 
     let mut cmd = match sandbox.settings.container.runtime {
         ContainerRuntimeKind::NativeContainer => {
-            let container_name = workspace_runtime::workspace_container_name(workspace.id);
-            let mut cmd = workspace_runtime::sandbox_container_command(&state.core.data_root)?;
+            let container_name = ctx_workspace_container::workspace_container_name(workspace.id);
+            let mut cmd = ctx_harness_runtime::sandbox_container_command(&state.core.data_root)?;
             cmd.arg("exec")
                 .arg("--workdir")
                 .arg(sandbox.live_worktree_root);
@@ -515,7 +514,7 @@ async fn run_bootstrap_step_in_container(
         }
         ContainerRuntimeKind::SharedVmContainer => match &step.kind {
             BootstrapStepKind::Command { command } => {
-                crate::workspace_runtime::build_avf_linux_guest_exec_command(
+                ctx_avf_linux_runtime::build_guest_exec_command(
                     &state.core.data_root,
                     workspace.id,
                     worktree.id,

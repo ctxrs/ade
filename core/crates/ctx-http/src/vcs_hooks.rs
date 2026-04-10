@@ -1,11 +1,12 @@
 use anyhow::{bail, Context, Result};
 use ctx_core::ids::{TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{VcsKind, Workspace, Worktree};
+use ctx_workspace_container::workspace_container_name;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 use crate::execution_effective;
-use crate::workspace_runtime::{sandbox_container_command, workspace_container_name};
+use ctx_harness_runtime::sandbox_container_command;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::worktree_data_plane::resolve_worktree_data_plane;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
@@ -353,7 +354,7 @@ async fn sandbox_command(
             Ok(cmd)
         }
         ContainerRuntimeKind::SharedVmContainer => {
-            crate::workspace_runtime::build_avf_linux_guest_exec_command(
+            ctx_avf_linux_runtime::build_guest_exec_command(
                 &state.core.data_root,
                 workspace.id,
                 worktree.id,
@@ -710,7 +711,7 @@ mod tests {
                 substrate: SandboxSubstrate::NativeContainer,
                 guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
                 profile: SandboxProfile::Standard,
-                live_workspace_root: crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT
+                live_workspace_root: ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT
                     .to_string(),
                 live_worktree_root: managed_root.to_string_lossy().to_string(),
                 execution_settings_json: Some(

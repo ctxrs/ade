@@ -61,7 +61,7 @@ async fn container_exec_stdout(
                 .context("sandbox exec command timed out")?
         }
         SandboxExecTarget::SharedVmContainer => {
-            crate::workspace_runtime::run_avf_linux_guest_exec_capture(
+            ctx_avf_linux_runtime::run_guest_exec_capture(
                 &state.core.data_root,
                 worktree.workspace_id,
                 worktree.id,

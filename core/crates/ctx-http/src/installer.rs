@@ -235,7 +235,7 @@ fn dependency_target_compatible_with_context(
 
 fn provider_env_targets_linux_sandbox(provider_env: &HashMap<String, String>) -> bool {
     provider_env
-        .get(crate::workspace_runtime::CTX_HARNESS_LINUX_SANDBOX_ENV)
+        .get(ctx_harness_runtime::CTX_HARNESS_LINUX_SANDBOX_ENV)
         .is_some_and(|value| value == "1")
         || provider_env.contains_key("CTX_HARNESS_CONTAINER_ID")
 }

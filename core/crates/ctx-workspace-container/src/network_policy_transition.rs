@@ -1,14 +1,43 @@
-use super::*;
 use std::borrow::Cow;
 use std::net::IpAddr;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
+use ctx_core::ids::WorkspaceId;
+use ctx_sandbox_container_runtime::{
+    command_output_message, command_output_with_timeout, sandbox_container_command,
+    SandboxCommandMode,
+};
+use ctx_sandbox_contract::{ContainerExecutionSettings, ContainerNetworkMode};
+use serde::Serialize;
+use tokio::{fs, io::AsyncWriteExt};
+
+use crate::allowlist;
+use crate::container::container_data_root;
+use crate::SANDBOX_OP_TIMEOUT;
+
+const EGRESS_PROXY_BINARY: &str = "ctx-egress-proxy";
+const EGRESS_PROXY_CONFIG_NAME: &str = "egress-proxy.json";
+const EGRESS_PROXY_CONTAINER_PATH: &str = "/usr/local/bin/ctx-egress-proxy";
+const TRANSPARENT_PROXY_PORT: u16 = 15001;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct AppliedContainerNetworkPolicy {
-    pub(super) egress_guard: bool,
+pub struct AppliedContainerNetworkPolicy {
+    pub egress_guard: bool,
 }
 
-pub(super) async fn apply_container_network_policy(
+#[derive(Debug, Clone, Serialize)]
+struct TransparentProxyConfig {
+    listen: String,
+    mode: ContainerNetworkMode,
+    allowlist: Vec<String>,
+    max_peek_bytes: usize,
+}
+
+pub async fn apply_container_network_policy(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     workspace_id: WorkspaceId,
     name: &str,
     settings: &ContainerExecutionSettings,
@@ -16,11 +45,12 @@ pub(super) async fn apply_container_network_policy(
     daemon_port: u16,
 ) -> Result<AppliedContainerNetworkPolicy> {
     if matches!(settings.network_mode, ContainerNetworkMode::All) {
-        return transition_to_unrestricted_network(data_root, name).await;
+        return transition_to_unrestricted_network(data_root, mode, name).await;
     }
 
     transition_to_restricted_network(
         data_root,
+        mode,
         workspace_id,
         name,
         settings,
@@ -30,14 +60,24 @@ pub(super) async fn apply_container_network_policy(
     .await
 }
 
-fn llm_only_proxy_allowlist_entries() -> Vec<String> {
-    let mut entries: Vec<String> = network_allowlist::LLM_ALLOWLIST
-        .iter()
-        .filter_map(|entry| network_allowlist::normalize_allowlist_entry(entry))
-        .collect();
-    entries.sort();
-    entries.dedup();
-    entries
+pub fn transparent_proxy_policy(
+    settings: &ContainerExecutionSettings,
+) -> (ContainerNetworkMode, Vec<String>) {
+    match settings.network_mode {
+        ContainerNetworkMode::LlmOnly => {
+            let mut entries: Vec<String> = allowlist::LLM_ALLOWLIST
+                .iter()
+                .filter_map(|entry| allowlist::normalize_allowlist_entry(entry))
+                .collect();
+            entries.sort();
+            entries.dedup();
+            (ContainerNetworkMode::Allowlist, entries)
+        }
+        ContainerNetworkMode::Allowlist => {
+            (ContainerNetworkMode::Allowlist, settings.allowlist.clone())
+        }
+        ContainerNetworkMode::All => (ContainerNetworkMode::All, Vec::new()),
+    }
 }
 
 fn transparent_proxy_pid_file() -> Cow<'static, str> {
@@ -64,36 +104,13 @@ fi"#,
     }
 }
 
-pub(super) fn transparent_proxy_policy(
-    settings: &ContainerExecutionSettings,
-) -> (ContainerNetworkMode, Vec<String>) {
-    match settings.network_mode {
-        // Use explicit allowlist mode for llm_only so policy is fully driven by daemon-side
-        // config and does not depend on baked allowlist constants inside container images.
-        ContainerNetworkMode::LlmOnly => (
-            ContainerNetworkMode::Allowlist,
-            llm_only_proxy_allowlist_entries(),
-        ),
-        ContainerNetworkMode::Allowlist => {
-            (ContainerNetworkMode::Allowlist, settings.allowlist.clone())
-        }
-        ContainerNetworkMode::All => (ContainerNetworkMode::All, Vec::new()),
-    }
-}
-
 async fn transition_to_unrestricted_network(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     name: &str,
 ) -> Result<AppliedContainerNetworkPolicy> {
-    let stop_err = stop_transparent_proxy(data_root, name).await.err();
-    let clear_err = clear_egress_guard(data_root, name).await.err();
-    finalize_unrestricted_transition(stop_err, clear_err)
-}
-
-fn finalize_unrestricted_transition(
-    stop_err: Option<anyhow::Error>,
-    clear_err: Option<anyhow::Error>,
-) -> Result<AppliedContainerNetworkPolicy> {
+    let stop_err = stop_transparent_proxy(data_root, mode, name).await.err();
+    let clear_err = clear_egress_guard(data_root, mode, name).await.err();
     let mut failures = Vec::new();
     if let Some(err) = stop_err {
         failures.push(format!("stop transparent proxy: {err:#}"));
@@ -114,20 +131,16 @@ fn finalize_unrestricted_transition(
 
 async fn transition_to_restricted_network(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     workspace_id: WorkspaceId,
     name: &str,
     settings: &ContainerExecutionSettings,
     daemon_host: &str,
     daemon_port: u16,
 ) -> Result<AppliedContainerNetworkPolicy> {
-    // Prefer the in-image proxy binary (required for out-of-the-box behavior on macOS/Windows).
-    // If the image doesn't have it, we also allow an explicit override via CTX_EGRESS_PROXY_PATH,
-    // but restricted modes must not silently fall back to full network access.
-    let proxy_bin = match ensure_egress_proxy_available(data_root, name).await {
+    let proxy_bin = match ensure_egress_proxy_available(data_root, mode, name).await {
         Ok(()) => EGRESS_PROXY_CONTAINER_PATH.to_string(),
         Err(img_err) => {
-            // Optional escape hatch: allow a Linux proxy binary to be provided via the host
-            // (it is bind-mounted into the container under ~/.ctx/runtimes/...).
             if std::env::var("CTX_EGRESS_PROXY_PATH").ok().is_some() {
                 let host_bin = ensure_egress_proxy_binary(data_root).await?;
                 host_bin.to_string_lossy().to_string()
@@ -148,9 +161,11 @@ async fn transition_to_restricted_network(
     let config_path =
         write_transparent_proxy_config(&container_data_root(data_root, workspace_id), proxy_config)
             .await?;
-    start_transparent_proxy(data_root, name, &PathBuf::from(proxy_bin), &config_path).await?;
+    start_transparent_proxy(data_root, mode, name, &PathBuf::from(proxy_bin), &config_path)
+        .await?;
     let egress_guard = configure_transparent_egress_guard(
         data_root,
+        mode,
         name,
         TRANSPARENT_PROXY_PORT,
         daemon_host,
@@ -158,6 +173,14 @@ async fn transition_to_restricted_network(
     )
     .await?;
     Ok(AppliedContainerNetworkPolicy { egress_guard })
+}
+
+fn proxy_runtime_root(data_root: &Path) -> PathBuf {
+    data_root.join("runtimes").join(EGRESS_PROXY_BINARY)
+}
+
+fn proxy_runtime_path(data_root: &Path) -> PathBuf {
+    proxy_runtime_root(data_root).join(EGRESS_PROXY_BINARY)
 }
 
 async fn ensure_egress_proxy_binary(data_root: &Path) -> Result<PathBuf> {
@@ -184,14 +207,15 @@ async fn ensure_egress_proxy_binary(data_root: &Path) -> Result<PathBuf> {
     Ok(dest)
 }
 
-async fn ensure_egress_proxy_available(data_root: &Path, container_name: &str) -> Result<()> {
-    // Validate required tooling inside the container for restricted network modes.
-    //
-    // This is a hard requirement: without these, we cannot enforce allowlist/llm-only safely.
+async fn ensure_egress_proxy_available(
+    data_root: &Path,
+    mode: &SandboxCommandMode,
+    container_name: &str,
+) -> Result<()> {
     let script = format!(
         "set -e; command -v iptables >/dev/null 2>&1; test -x '{EGRESS_PROXY_CONTAINER_PATH}'"
     );
-    let mut cmd = sandbox_container_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")
         .arg("--user")
         .arg("0")
@@ -223,6 +247,7 @@ async fn write_transparent_proxy_config(
 
 async fn start_transparent_proxy(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     name: &str,
     bin_path: &Path,
     config_path: &Path,
@@ -252,7 +277,7 @@ echo $! > "$pid_file"
 exit 0
 "#
     );
-    let mut cmd = sandbox_container_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")
         .arg("--user")
         .arg("0")
@@ -271,9 +296,14 @@ exit 0
     }
 }
 
-async fn stop_transparent_proxy(data_root: &Path, name: &str) -> Result<()> {
+async fn stop_transparent_proxy(
+    data_root: &Path,
+    mode: &SandboxCommandMode,
+    name: &str,
+) -> Result<()> {
     let pid_file = transparent_proxy_pid_file();
-    let script = r#"
+    let script = format!(
+        r#"
 set -e
 pid_file="{pid_file}"
 if [ -f "$pid_file" ]; then
@@ -290,9 +320,9 @@ if [ -f "$pid_file" ]; then
   fi
   rm -f "$pid_file"
 fi
-"#;
-    let script = script.replace("{pid_file}", pid_file.as_ref());
-    let mut cmd = sandbox_container_command(data_root)?;
+"#
+    );
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")
         .arg("--user")
         .arg("0")
@@ -317,6 +347,7 @@ fi
 
 async fn configure_transparent_egress_guard(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     name: &str,
     proxy_port: u16,
     daemon_host: &str,
@@ -349,7 +380,7 @@ exit 0
         daemon_port = daemon_port,
         proxy_port = proxy_port,
     );
-    let mut cmd = sandbox_container_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")
         .arg("--user")
         .arg("0")
@@ -379,7 +410,11 @@ exit 0
     anyhow::bail!("failed to configure egress guard: {combined}");
 }
 
-async fn clear_egress_guard(data_root: &Path, name: &str) -> Result<()> {
+async fn clear_egress_guard(
+    data_root: &Path,
+    mode: &SandboxCommandMode,
+    name: &str,
+) -> Result<()> {
     let script = r#"
 set -e
 if ! command -v iptables >/dev/null 2>&1; then
@@ -389,7 +424,7 @@ iptables -t nat -F OUTPUT
 iptables -F OUTPUT
 iptables -P OUTPUT ACCEPT
 "#;
-    let mut cmd = sandbox_container_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")
         .arg("--user")
         .arg("0")
@@ -412,6 +447,7 @@ iptables -P OUTPUT ACCEPT
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ctx_sandbox_contract::ContainerRuntimeKind;
 
     #[test]
     fn daemon_ip_resolution_uses_literal_ip_without_getent() {
@@ -425,5 +461,27 @@ mod tests {
         let script = daemon_ip_resolution_script("host.containers.internal");
         assert!(script.contains("getent hosts 'host.containers.internal'"));
         assert!(script.contains("exit 44"));
+    }
+
+    #[test]
+    fn transparent_proxy_policy_maps_llm_only_to_explicit_allowlist_entries() {
+        let settings = ContainerExecutionSettings::default();
+        let (mode, allowlist) = transparent_proxy_policy(&settings);
+        assert_eq!(mode, ContainerNetworkMode::Allowlist);
+        assert!(allowlist.iter().any(|entry| entry == "openrouter.ai"));
+        assert!(allowlist.iter().any(|entry| entry == "api.openai.com"));
+    }
+
+    #[test]
+    fn transparent_proxy_policy_preserves_custom_allowlist_mode() {
+        let settings = ContainerExecutionSettings {
+            network_mode: ContainerNetworkMode::Allowlist,
+            allowlist: vec!["example.com".to_string(), "api.example.com".to_string()],
+            runtime: ContainerRuntimeKind::NativeContainer,
+            ..Default::default()
+        };
+        let (mode, allowlist) = transparent_proxy_policy(&settings);
+        assert_eq!(mode, ContainerNetworkMode::Allowlist);
+        assert_eq!(allowlist, settings.allowlist);
     }
 }

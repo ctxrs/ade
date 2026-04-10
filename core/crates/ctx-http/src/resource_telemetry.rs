@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tokio::time::MissedTickBehavior;
 
+use ctx_avf_linux_runtime::SubstrateLifecycleRecord;
 use ctx_providers::adapters::ProviderProcessInfo;
 
 use crate::daemon::AppState;
@@ -16,7 +17,6 @@ use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use crate::resource_utilization::{
     ProviderMemoryRollup, ResourceProcess, ResourceProcesses, SystemSnapshot,
 };
-use crate::workspace_runtime::SubstrateLifecycleRecord;
 
 const RESOURCE_LOG_PREFIX: &str = "resource-util-";
 const RESOURCE_LOG_SUFFIX: &str = ".jsonl";
@@ -119,7 +119,7 @@ async fn sample_once(
 
     let provider_sessions = provider_session_counts(state).await;
     let shared_substrate_lifecycle =
-        crate::workspace_runtime::selected_shared_substrate_lifecycle(&state.core.data_root)
+        ctx_harness_runtime::selected_shared_substrate_lifecycle(&state.core.data_root)
             .ok()
             .flatten();
     let processes = trim_processes(processes, cfg.child_limit);

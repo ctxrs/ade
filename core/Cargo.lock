@@ -1490,6 +1490,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctx-harness-runtime"
+version = "0.34.0"
+dependencies = [
+ "anyhow",
+ "ctx-avf-linux-runtime",
+ "ctx-core",
+ "ctx-harness-setup",
+ "ctx-linux-sandbox-runtime",
+ "ctx-sandbox-container-runtime",
+ "ctx-sandbox-contract",
+ "ctx-workspace-container",
+ "serde",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
 name = "ctx-harness-setup"
 version = "0.1.0"
 dependencies = [
@@ -1535,6 +1552,7 @@ dependencies = [
  "ctx-core",
  "ctx-events",
  "ctx-fs",
+ "ctx-harness-runtime",
  "ctx-harness-setup",
  "ctx-harness-sources",
  "ctx-linux-sandbox-runtime",
@@ -1550,6 +1568,7 @@ dependencies = [
  "ctx-store",
  "ctx-worker-protocol",
  "ctx-workspace-active-snapshot",
+ "ctx-workspace-container",
  "ctx-worktree-data-plane",
  "directories",
  "flate2",
@@ -1791,6 +1810,7 @@ dependencies = [
  "ctx-sandbox-container-runtime",
  "ctx-sandbox-contract",
  "ctx-storage-admission",
+ "ctx-workspace-container",
  "fs2",
  "tempfile",
  "tokio",
@@ -1958,6 +1978,26 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "ctx-workspace-container"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "ctx-core",
+ "ctx-fs",
+ "ctx-harness-setup",
+ "ctx-sandbox-container-runtime",
+ "ctx-sandbox-contract",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]

@@ -142,7 +142,7 @@ async fn avf_run_capture(
     command: &str,
     args: &[String],
 ) -> Result<std::process::Output> {
-    crate::workspace_runtime::run_avf_linux_guest_exec_capture(
+    ctx_avf_linux_runtime::run_guest_exec_capture(
         &state.core.data_root,
         workspace_id,
         worktree_id,
@@ -240,7 +240,7 @@ async fn import_dir_to_avf_worktree(
         .context("spawning tar for AVF attachment import")?;
     let mut tar_out = tar_child.stdout.take().context("taking tar stdout")?;
 
-    let mut guest_cmd = crate::workspace_runtime::build_avf_linux_guest_exec_command(
+    let mut guest_cmd = ctx_avf_linux_runtime::build_guest_exec_command(
         &state.core.data_root,
         workspace_id,
         worktree_id,
@@ -297,7 +297,7 @@ async fn import_file_to_avf_worktree(
     dest: &Path,
 ) -> Result<()> {
     let dest_rel = avf_guest_rel_path(worktree_root, dest)?;
-    let mut guest_cmd = crate::workspace_runtime::build_avf_linux_guest_exec_command(
+    let mut guest_cmd = ctx_avf_linux_runtime::build_guest_exec_command(
         &state.core.data_root,
         workspace_id,
         worktree_id,

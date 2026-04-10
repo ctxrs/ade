@@ -1,13 +1,35 @@
-use super::*;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
-pub(crate) const CONTAINER_TERMINAL_USER: &str = "ctx-user";
-pub(crate) const CONTAINER_TERMINAL_HOME: &str = "/home/example-user";
+use anyhow::{Context, Result};
+use ctx_core::ids::WorkspaceId;
+use ctx_core::models::{Workspace, Worktree};
+use ctx_fs::worktrees::worktrees_root;
+use ctx_sandbox_container_runtime::{
+    command_output_message, command_output_with_timeout, sandbox_container_command,
+    SandboxCommandMode,
+};
+use ctx_sandbox_contract::{
+    ContainerExecutionSettings, ContainerMountMode, CTX_CONTAINER_WORKSPACE_ROOT,
+};
+use serde::Deserialize;
+use url::Url;
+
+use crate::SANDBOX_OP_TIMEOUT;
+
+pub const CONTAINER_TERMINAL_USER: &str = "ctx-user";
+pub const CONTAINER_TERMINAL_HOME: &str = "/home/example-user";
 
 const CONTAINER_HOSTNAME_SUFFIX: &str = "-container";
 const MAX_CONTAINER_HOSTNAME_LEN: usize = 63;
 const CONTAINER_TERMINAL_SUDO_MISSING_SENTINEL: &str = "__CTX_CONTAINER_TERMINAL_SUDO_MISSING__";
 
-pub(super) fn container_data_root(data_root: &Path, workspace_id: WorkspaceId) -> PathBuf {
+pub struct MountPlan {
+    pub mounts: Vec<String>,
+    pub external_mounts: HashSet<String>,
+}
+
+pub fn container_data_root(data_root: &Path, workspace_id: WorkspaceId) -> PathBuf {
     data_root
         .join("containers")
         .join("workspaces")
@@ -15,9 +37,8 @@ pub(super) fn container_data_root(data_root: &Path, workspace_id: WorkspaceId) -
         .join("data")
 }
 
-pub(super) struct MountPlan {
-    pub(super) mounts: Vec<String>,
-    pub(super) external_mounts: HashSet<String>,
+fn vcs_hooks_root(data_root: &Path) -> PathBuf {
+    data_root.join("vcs-hooks")
 }
 
 fn volume_mount(name: &str, dst: &str, read_only: bool) -> String {
@@ -25,7 +46,21 @@ fn volume_mount(name: &str, dst: &str, read_only: bool) -> String {
     format!("type=volume,src={name},dst={dst},{mode}")
 }
 
-pub(super) fn build_mounts(
+pub fn bind_mount(src: &Path, dst: &Path, read_only: bool) -> String {
+    let mode = if read_only { "ro" } else { "rw" };
+    format!(
+        "type=bind,src={},dst={},{}",
+        src.to_string_lossy(),
+        dst.to_string_lossy(),
+        mode
+    )
+}
+
+fn ensure_dir(path: &Path) {
+    let _ = std::fs::create_dir_all(path);
+}
+
+pub fn build_mounts(
     data_root: &Path,
     workspace: &Workspace,
     _worktree: Option<&Worktree>,
@@ -58,7 +93,7 @@ pub(super) fn build_mounts(
     ensure_dir(&runtimes);
     mounts.push(bind_mount(&runtimes, &runtimes, true));
 
-    let vcs_hooks = crate::vcs_hooks::vcs_hooks_root(data_root);
+    let vcs_hooks = vcs_hooks_root(data_root);
     ensure_dir(&vcs_hooks);
     mounts.push(bind_mount(&vcs_hooks, &vcs_hooks, false));
     external_mounts.insert(vcs_hooks.to_string_lossy().to_string());
@@ -83,7 +118,7 @@ pub(super) fn build_mounts(
     }
 }
 
-pub(super) fn should_mount_bundle_dir_in_container(bundle_dir: &Path) -> bool {
+pub fn should_mount_bundle_dir_in_container(bundle_dir: &Path) -> bool {
     if cfg!(target_os = "linux") {
         return true;
     }
@@ -97,21 +132,7 @@ pub(super) fn should_mount_bundle_dir_in_container(bundle_dir: &Path) -> bool {
     true
 }
 
-pub(super) fn bind_mount(src: &Path, dst: &Path, read_only: bool) -> String {
-    let mode = if read_only { "ro" } else { "rw" };
-    format!(
-        "type=bind,src={},dst={},{}",
-        src.to_string_lossy(),
-        dst.to_string_lossy(),
-        mode
-    )
-}
-
-fn ensure_dir(path: &Path) {
-    let _ = std::fs::create_dir_all(path);
-}
-
-pub(super) fn rewrite_daemon_url_for_container(daemon_url: &str, host: &str) -> String {
+pub fn rewrite_daemon_url_for_container(daemon_url: &str, host: &str) -> String {
     if let Ok(mut url) = Url::parse(daemon_url) {
         let _ = url.set_host(Some(host));
         return url.to_string();
@@ -119,13 +140,13 @@ pub(super) fn rewrite_daemon_url_for_container(daemon_url: &str, host: &str) -> 
     daemon_url.to_string()
 }
 
-pub(crate) const AVF_GUEST_HOST_GATEWAY: &str = "192.168.64.1";
+pub const AVF_GUEST_HOST_GATEWAY: &str = "192.168.64.1";
 
-pub(super) fn rewrite_daemon_url_for_avf_guest(daemon_url: &str) -> String {
+pub fn rewrite_daemon_url_for_avf_guest(daemon_url: &str) -> String {
     rewrite_daemon_url_for_container(daemon_url, AVF_GUEST_HOST_GATEWAY)
 }
 
-pub(crate) fn workspace_container_hostname(workspace: &Workspace) -> String {
+pub fn workspace_container_hostname(workspace: &Workspace) -> String {
     let max_base_len = MAX_CONTAINER_HOSTNAME_LEN - CONTAINER_HOSTNAME_SUFFIX.len();
     let mut slug = String::with_capacity(workspace.name.len().min(max_base_len));
     let mut last_was_dash = false;
@@ -169,19 +190,11 @@ pub(crate) fn workspace_container_hostname(workspace: &Workspace) -> String {
     format!("{slug}{CONTAINER_HOSTNAME_SUFFIX}")
 }
 
-pub(super) fn daemon_port_from_url(daemon_url: &str) -> Option<u16> {
+pub fn daemon_port_from_url(daemon_url: &str) -> Option<u16> {
     Url::parse(daemon_url).ok()?.port_or_known_default()
 }
 
-pub(super) fn proxy_runtime_root(data_root: &Path) -> PathBuf {
-    data_root.join("runtimes").join(EGRESS_PROXY_RUNTIME_ID)
-}
-
-pub(super) fn proxy_runtime_path(data_root: &Path) -> PathBuf {
-    proxy_runtime_root(data_root).join(EGRESS_PROXY_BINARY)
-}
-
-pub(super) fn sandbox_machine_required() -> bool {
+pub fn sandbox_machine_required() -> bool {
     cfg!(target_os = "macos") || cfg!(target_os = "windows")
 }
 
@@ -201,18 +214,17 @@ struct SandboxInspectMount {
     destination: Option<String>,
 }
 
-pub(super) async fn verify_disk_isolated_container_mounts(
+pub async fn verify_disk_isolated_container_mounts(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     workspace: &Workspace,
     container_name: &str,
 ) -> Result<()> {
-    let mut cmd = sandbox_container_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("inspect").arg(container_name);
     let out = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
     if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        let combined = format!("{stderr}\n{stdout}").trim().to_string();
+        let combined = command_output_message(&out);
         if combined.is_empty() {
             anyhow::bail!(
                 "container inspect failed for {container_name} (status: {})",
@@ -257,42 +269,42 @@ pub(super) async fn verify_disk_isolated_container_mounts(
             "disk-isolated container {container_name} unexpectedly bind-mounted host workspace/worktrees"
         );
     }
-
     Ok(())
 }
 
 #[cfg(unix)]
-pub(super) fn current_container_uid_gid() -> Option<(u32, u32)> {
+fn current_container_uid_gid() -> Option<(u32, u32)> {
     let uid = unsafe { libc::geteuid() };
     let gid = unsafe { libc::getegid() };
     Some((uid, gid))
 }
 
 #[cfg(not(unix))]
-pub(super) fn current_container_uid_gid() -> Option<(u32, u32)> {
+fn current_container_uid_gid() -> Option<(u32, u32)> {
     None
 }
 
 #[cfg(unix)]
-pub(super) fn container_user() -> Option<String> {
+pub fn container_user() -> Option<String> {
     current_container_uid_gid().map(|(uid, gid)| format!("{uid}:{gid}"))
 }
 
 #[cfg(not(unix))]
-pub(super) fn container_user() -> Option<String> {
+pub fn container_user() -> Option<String> {
     None
 }
 
-pub(super) fn container_terminal_identity_missing_sudo(err: &anyhow::Error) -> bool {
+pub fn container_terminal_identity_missing_sudo(err: &anyhow::Error) -> bool {
     err.to_string()
         .contains(CONTAINER_TERMINAL_SUDO_MISSING_SENTINEL)
 }
 
-pub(super) async fn sync_container_terminal_identity(
+pub async fn sync_container_terminal_identity(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     container_name: &str,
 ) -> Result<()> {
-    let mut cmd = sandbox_container_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")
         .arg("--user")
         .arg("0")
@@ -366,7 +378,7 @@ chmod 0440 \"/etc/sudoers.d/$user\"\n",
     anyhow::bail!("container terminal identity sync failed for {container_name}: {combined}");
 }
 
-pub(super) fn should_use_keep_id_userns() -> bool {
+pub fn should_use_keep_id_userns() -> bool {
     cfg!(target_os = "linux")
 }
 

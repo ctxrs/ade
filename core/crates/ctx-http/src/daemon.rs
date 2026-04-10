@@ -434,7 +434,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
             let mut binds = binds;
             binds.push(format!(
                 "{}:4399",
-                crate::workspace_runtime::AVF_GUEST_HOST_GATEWAY
+                ctx_workspace_container::AVF_GUEST_HOST_GATEWAY
             ));
             binds
         };
@@ -445,7 +445,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
         {
             Some(format!(
                 "{}:4399",
-                crate::workspace_runtime::AVF_GUEST_HOST_GATEWAY
+                ctx_workspace_container::AVF_GUEST_HOST_GATEWAY
             ))
         }
         #[cfg(not(target_os = "macos"))]

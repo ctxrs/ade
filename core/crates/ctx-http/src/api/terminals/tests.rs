@@ -4,12 +4,12 @@ use super::{
 };
 use crate::daemon::AppState;
 use crate::settings::ExecutionMode;
-use crate::workspace_runtime::{CONTAINER_TERMINAL_HOME, CONTAINER_TERMINAL_USER};
 use chrono::Utc;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{VcsKind, Workspace, Worktree};
 use ctx_sandbox_contract::{container_worktree_root, sandbox_worktree_root};
 use ctx_store::StoreManager;
+use ctx_workspace_container::{CONTAINER_TERMINAL_HOME, CONTAINER_TERMINAL_USER};
 use ctx_worktree_data_plane::WorktreeDataPlane;
 use std::path::PathBuf;
 use std::sync::Arc;

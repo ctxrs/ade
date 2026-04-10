@@ -67,15 +67,15 @@ fn container_terminal_env() -> HashMap<String, String> {
     HashMap::from([
         (
             "HOME".to_string(),
-            crate::workspace_runtime::CONTAINER_TERMINAL_HOME.to_string(),
+            ctx_workspace_container::CONTAINER_TERMINAL_HOME.to_string(),
         ),
         (
             "USER".to_string(),
-            crate::workspace_runtime::CONTAINER_TERMINAL_USER.to_string(),
+            ctx_workspace_container::CONTAINER_TERMINAL_USER.to_string(),
         ),
         (
             "LOGNAME".to_string(),
-            crate::workspace_runtime::CONTAINER_TERMINAL_USER.to_string(),
+            ctx_workspace_container::CONTAINER_TERMINAL_USER.to_string(),
         ),
     ])
 }
@@ -530,7 +530,7 @@ pub(super) async fn create_workspace_terminal(
                         )
                     })?;
                 if worktree.is_none() {
-                    let sandbox_mode = workspace_runtime::selected_sandbox_command_mode(
+                    let sandbox_mode = ctx_harness_runtime::selected_sandbox_command_mode(
                         &state.core.data_root,
                     )
                     .map_err(|err| {
@@ -570,9 +570,9 @@ pub(super) async fn create_workspace_terminal(
                     Some(NativeContainerTerminalSpec {
                         cli_bin: inv.bin,
                         cli_env: inv.env,
-                        container_name: workspace_runtime::workspace_container_name(workspace_id),
+                        container_name: ctx_workspace_container::workspace_container_name(workspace_id),
                         workdir: cwd.to_string_lossy().to_string(),
-                        user: Some(crate::workspace_runtime::CONTAINER_TERMINAL_USER.to_string()),
+                        user: Some(ctx_workspace_container::CONTAINER_TERMINAL_USER.to_string()),
                     }),
                     None,
                 )
@@ -613,7 +613,7 @@ pub(super) async fn create_workspace_terminal(
                         })?;
                 }
                 if worktree.is_none() {
-                    let sandbox_mode = workspace_runtime::selected_sandbox_command_mode(
+                    let sandbox_mode = ctx_harness_runtime::selected_sandbox_command_mode(
                         &state.core.data_root,
                     )
                     .map_err(|err| {
@@ -639,7 +639,7 @@ pub(super) async fn create_workspace_terminal(
                         )
                     })?;
                 }
-                let helper_path = workspace_runtime::avf_linux_helper_path().map_err(|e| {
+                let helper_path = ctx_avf_linux_runtime::helper_path().map_err(|e| {
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ApiErrorResp {
@@ -654,7 +654,7 @@ pub(super) async fn create_workspace_terminal(
                         data_root: state.core.data_root.clone(),
                         workspace_id,
                         workdir: cwd.to_string_lossy().to_string(),
-                        user: Some(crate::workspace_runtime::CONTAINER_TERMINAL_USER.to_string()),
+                        user: Some(ctx_workspace_container::CONTAINER_TERMINAL_USER.to_string()),
                     }),
                 )
             }

@@ -89,7 +89,7 @@ impl ContainerFs {
         Ok(match effective.container.runtime {
             ContainerRuntimeKind::NativeContainer => Self::new(
                 state.core.data_root.clone(),
-                crate::workspace_runtime::workspace_container_name(workspace_id),
+                ctx_workspace_container::workspace_container_name(workspace_id),
             ),
             ContainerRuntimeKind::SharedVmContainer => {
                 Self::avf_linux_vm(state.core.data_root.clone(), workspace_id, worktree_id)
@@ -115,14 +115,17 @@ impl ContainerFs {
             ContainerFsBackend::NativeContainer { .. } => {
                 let mut cmd = self.base_exec().await?;
                 cmd.arg("cat").arg("--").arg(path);
-                crate::workspace_runtime::command_output_with_timeout(cmd, SANDBOX_FS_TIMEOUT)
+                ctx_sandbox_container_runtime::command_output_with_timeout(
+                    cmd,
+                    SANDBOX_FS_TIMEOUT,
+                )
                     .await
                     .context("sandbox exec cat")?
             }
             ContainerFsBackend::SharedVmContainer {
                 workspace_id,
                 worktree_id,
-            } => crate::workspace_runtime::run_avf_linux_guest_exec_capture(
+            } => ctx_avf_linux_runtime::run_guest_exec_capture(
                 &self.data_root,
                 *workspace_id,
                 *worktree_id,
@@ -160,7 +163,7 @@ impl ContainerFs {
             ContainerFsBackend::SharedVmContainer {
                 workspace_id,
                 worktree_id,
-            } => crate::workspace_runtime::build_avf_linux_guest_exec_command(
+            } => ctx_avf_linux_runtime::build_guest_exec_command(
                 &self.data_root,
                 *workspace_id,
                 *worktree_id,
@@ -198,7 +201,7 @@ impl ContainerFs {
     }
 
     async fn base_exec(&self) -> Result<Command> {
-        let mut cmd = crate::workspace_runtime::sandbox_container_command(&self.data_root)?;
+        let mut cmd = ctx_harness_runtime::sandbox_container_command(&self.data_root)?;
         let ContainerFsBackend::NativeContainer { container_id } = &self.backend else {
             anyhow::bail!("container exec requested for non-native-container filesystem backend");
         };

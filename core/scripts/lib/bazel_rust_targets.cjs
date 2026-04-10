@@ -11,6 +11,7 @@ const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
   "ctx-bundled-assets": ["//core/crates/ctx-bundled-assets:unit_tests"],
   "ctx-fs": ["//core/crates/ctx-fs:unit_tests"],
   "ctx-harness-setup": ["//core/crates/ctx-harness-setup:unit_tests"],
+  "ctx-harness-runtime": ["//core/crates/ctx-harness-runtime:unit_tests"],
   "ctx-harness-sources": ["//core/crates/ctx-harness-sources:unit_tests"],
   "ctx-lsp": ["//core/crates/ctx-lsp:lsp_manager_smoke"],
   "ctx-linux-sandbox-runtime": ["//core/crates/ctx-linux-sandbox-runtime:unit_tests"],
@@ -23,6 +24,7 @@ const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
   "ctx-sandbox-materialization": ["//core/crates/ctx-sandbox-materialization:unit_tests"],
   "ctx-storage-admission": ["//core/crates/ctx-storage-admission:unit_tests"],
   "ctx-worktree-data-plane": ["//core/crates/ctx-worktree-data-plane:unit_tests"],
+  "ctx-workspace-container": ["//core/crates/ctx-workspace-container:unit_tests"],
   "ctx-workspace-active-snapshot": ["//core/crates/ctx-workspace-active-snapshot:unit_tests"],
 });
 
@@ -32,6 +34,7 @@ const BAZEL_BUILD_TARGETS_BY_CRATE = Object.freeze({
   "ctx-bundled-assets": ["//core/crates/ctx-bundled-assets:lib"],
   "ctx-fs": ["//core/crates/ctx-fs:lib"],
   "ctx-harness-setup": ["//core/crates/ctx-harness-setup:lib"],
+  "ctx-harness-runtime": ["//core/crates/ctx-harness-runtime:lib"],
   "ctx-harness-sources": ["//core/crates/ctx-harness-sources:lib"],
   "ctx-lsp": ["//core/crates/ctx-lsp:ctx-lsp-test-server", "//core/crates/ctx-lsp:lib"],
   "ctx-linux-sandbox-runtime": ["//core/crates/ctx-linux-sandbox-runtime:lib"],
@@ -44,6 +47,7 @@ const BAZEL_BUILD_TARGETS_BY_CRATE = Object.freeze({
   "ctx-sandbox-materialization": ["//core/crates/ctx-sandbox-materialization:lib"],
   "ctx-storage-admission": ["//core/crates/ctx-storage-admission:lib"],
   "ctx-worktree-data-plane": ["//core/crates/ctx-worktree-data-plane:lib"],
+  "ctx-workspace-container": ["//core/crates/ctx-workspace-container:lib"],
   "ctx-workspace-active-snapshot": ["//core/crates/ctx-workspace-active-snapshot:lib"],
 });
 

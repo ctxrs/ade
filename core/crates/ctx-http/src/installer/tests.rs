@@ -415,7 +415,7 @@ fn provider_env_linux_sandbox_marker_enables_container_targeting() {
     assert!(!provider_env_targets_linux_sandbox(&env));
 
     env.insert(
-        crate::workspace_runtime::CTX_HARNESS_LINUX_SANDBOX_ENV.to_string(),
+        ctx_harness_runtime::CTX_HARNESS_LINUX_SANDBOX_ENV.to_string(),
         "1".to_string(),
     );
     assert!(provider_env_targets_linux_sandbox(&env));

@@ -4,24 +4,25 @@ package(default_visibility = ["//visibility:public"])
 
 rust_library(
     name = "lib",
-    crate_name = "ctx_sandbox_materialization",
+    crate_name = "ctx_workspace_container",
     crate_root = "src/lib.rs",
     edition = "2021",
     srcs = glob(["src/**/*.rs"]),
     deps = [
         "//core/crates/ctx-core:lib",
         "//core/crates/ctx-fs:lib",
+        "//core/crates/ctx-harness-setup:lib",
         "//core/crates/ctx-sandbox-container-runtime:lib",
         "//core/crates/ctx-sandbox-contract:lib",
-        "//core/crates/ctx-storage-admission:lib",
-        "//core/crates/ctx-workspace-container:lib",
         "@crates//:anyhow",
         "@crates//:chrono",
-        "@crates//:fs2",
+        "@crates//:libc",
+        "@crates//:serde",
+        "@crates//:serde_json",
         "@crates//:tempfile",
         "@crates//:tokio",
         "@crates//:tracing",
-        "@crates//:uuid",
+        "@crates//:url",
     ],
 )
 

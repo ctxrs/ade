@@ -5,9 +5,10 @@ use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::Workspace;
 use ctx_fs::worktrees::standaloneize_worktree_git_dir;
 use ctx_sandbox_container_runtime::SandboxCommandMode;
-pub use ctx_sandbox_contract::container_worktree_root;
+use ctx_sandbox_contract::container_worktree_root;
 use ctx_sandbox_contract::sandbox_workspace_root;
 use ctx_storage_admission::StorageAdmissionOperation;
+use ctx_workspace_container::workspace_container_name;
 
 mod copy;
 mod sandbox;
@@ -15,17 +16,13 @@ mod storage;
 
 pub use storage::set_test_preflight_storage_samples_override;
 
-fn sandbox_container_id(workspace_id: WorkspaceId) -> String {
-    format!("ctx-harness-{}", workspace_id.0)
-}
-
 pub async fn remove_live_worktree_root(
     data_root: &Path,
     mode: &SandboxCommandMode,
     workspace_id: WorkspaceId,
     live_worktree_root: &Path,
 ) -> Result<()> {
-    let container_id = sandbox_container_id(workspace_id);
+    let container_id = workspace_container_name(workspace_id);
     sandbox::remove_live_worktree_root(data_root, mode, &container_id, live_worktree_root).await
 }
 
@@ -38,7 +35,7 @@ pub async fn ensure_worktree_from_host_copy(
     base_commit_sha: &str,
     branch_name: &str,
 ) -> Result<PathBuf> {
-    let container_id = sandbox_container_id(workspace_id);
+    let container_id = workspace_container_name(workspace_id);
     let dest_root = container_worktree_root(worktree_id);
     tracing::info!(
         workspace_id = %workspace_id.0,
@@ -133,7 +130,7 @@ pub async fn ensure_workspace_root_from_host_copy(
     mode: &SandboxCommandMode,
     workspace: &Workspace,
 ) -> Result<PathBuf> {
-    let container_id = sandbox_container_id(workspace.id);
+    let container_id = workspace_container_name(workspace.id);
     let dest_root = sandbox_workspace_root();
     if sandbox::verify_container_git_repo(data_root, mode, &container_id, &dest_root)
         .await
@@ -301,7 +298,7 @@ mod tests {
         let cli_path = temp.path().join("fake-sandbox-cli.sh");
         let workspace_id = WorkspaceId(Uuid::new_v4());
         let worktree_id = WorktreeId(Uuid::new_v4());
-        let container_id = sandbox_container_id(workspace_id);
+        let container_id = workspace_container_name(workspace_id);
         fs::write(
             &cli_path,
             format!(

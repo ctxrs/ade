@@ -7,8 +7,9 @@ use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio::time::MissedTickBehavior;
 
+use ctx_avf_linux_runtime::SubstrateLifecycleRecord;
+
 use crate::logs;
-use crate::workspace_runtime::SubstrateLifecycleRecord;
 
 const OPS_LOG_PREFIX: &str = "ops-events-";
 const OPS_LOG_SUFFIX: &str = ".jsonl";

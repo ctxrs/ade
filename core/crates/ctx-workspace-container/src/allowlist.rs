@@ -1,6 +1,7 @@
 use url::Url;
 
-use crate::settings::ContainerNetworkMode;
+#[cfg(test)]
+use ctx_sandbox_contract::ContainerNetworkMode;
 
 pub const LLM_ALLOWLIST: &[&str] = &[
     "api.anthropic.com",
@@ -39,10 +40,12 @@ pub fn normalize_allowlist_entry(entry: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
 
+#[cfg(test)]
 pub fn host_matches(host: &str, entry: &str) -> bool {
     host == entry || host.ends_with(&format!(".{entry}"))
 }
 
+#[cfg(test)]
 pub fn allowed_host(host: &str, mode: ContainerNetworkMode, allowlist: &[String]) -> bool {
     if matches!(mode, ContainerNetworkMode::All) {
         return true;
@@ -84,30 +87,7 @@ mod tests {
             ContainerNetworkMode::LlmOnly,
             &[]
         ));
-        assert!(allowed_host(
-            "openrouter.ai",
-            ContainerNetworkMode::LlmOnly,
-            &[]
-        ));
-        assert!(!allowed_host(
-            "example.com",
-            ContainerNetworkMode::LlmOnly,
-            &[]
-        ));
-    }
-
-    #[test]
-    fn allowlist_enforces_custom() {
-        let allowlist = vec!["example.com".to_string()];
-        assert!(allowed_host(
-            "api.example.com",
-            ContainerNetworkMode::Allowlist,
-            &allowlist
-        ));
-        assert!(!allowed_host(
-            "api.openai.com",
-            ContainerNetworkMode::Allowlist,
-            &allowlist
-        ));
+        assert!(allowed_host("openrouter.ai", ContainerNetworkMode::LlmOnly, &[]));
+        assert!(!allowed_host("example.com", ContainerNetworkMode::LlmOnly, &[]));
     }
 }

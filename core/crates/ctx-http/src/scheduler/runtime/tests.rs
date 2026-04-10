@@ -260,7 +260,7 @@ fn runtime_path_includes_target_specific_managed_provider_dependency_bin_dirs() 
     let mut provider_env = HashMap::new();
     provider_env.insert("PATH".to_string(), "/usr/bin".to_string());
     provider_env.insert(
-        crate::workspace_runtime::CTX_HARNESS_LINUX_SANDBOX_ENV.to_string(),
+        ctx_harness_runtime::CTX_HARNESS_LINUX_SANDBOX_ENV.to_string(),
         "1".to_string(),
     );
     installer::prepend_runtime_bin_dirs_to_provider_path_for_target(

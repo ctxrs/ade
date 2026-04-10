@@ -2,6 +2,8 @@
 #![cfg(target_os = "macos")]
 
 use super::*;
+use std::collections::HashSet;
+use tokio::sync::Mutex;
 use std::time::{Duration, Instant};
 
 struct EnvGuard {

@@ -23,6 +23,7 @@ crate.spec(package = "flate2", version = "1")
 crate.spec(package = "fs2", version = "0.4")
 crate.spec(package = "futures", version = "0.3")
 crate.spec(package = "hex", version = "0.4")
+crate.spec(package = "libc", version = "0.2")
 crate.spec(package = "lsp-types", version = "0.97", features = ["proposed"])
 crate.spec(
     package = "reqwest",

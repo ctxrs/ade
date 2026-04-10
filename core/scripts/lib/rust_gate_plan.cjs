@@ -6,6 +6,7 @@ const AGENT_GATE_CRATES = [
   "ctx-core",
   "ctx-fs",
   "ctx-harness-setup",
+  "ctx-harness-runtime",
   "ctx-harness-sources",
   "ctx-http",
   "ctx-lsp",
@@ -21,6 +22,7 @@ const AGENT_GATE_CRATES = [
   "ctx-store",
   "ctx-storage-admission",
   "ctx-worktree-data-plane",
+  "ctx-workspace-container",
   "ctx-workspace-active-snapshot",
 ];
 

@@ -82,13 +82,13 @@ pub(in crate::api) async fn materialize_sandbox_binding_for_worktree(
         substrate: materialization.substrate.substrate,
         guest_identity: materialization.substrate.guest_identity,
         profile: SandboxProfile::Standard,
-        live_workspace_root: crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+        live_workspace_root: ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
         live_worktree_root: materialization
             .live_worktree_root
             .to_string_lossy()
             .to_string(),
         execution_settings_json: Some(serde_json::to_string(effective)?),
-        container_name: Some(crate::workspace_runtime::workspace_container_name(
+        container_name: Some(ctx_workspace_container::workspace_container_name(
             workspace.id,
         )),
         host_materialization_root: materialization
@@ -602,7 +602,7 @@ pub(in crate::api) async fn cleanup_task_worktrees(
             );
         }
         if let Some(binding) = target.sandbox_binding.as_ref() {
-            let sandbox_mode = match crate::workspace_runtime::selected_sandbox_command_mode(
+            let sandbox_mode = match ctx_harness_runtime::selected_sandbox_command_mode(
                 &state.core.data_root,
             ) {
                 Ok(mode) => mode,

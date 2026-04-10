@@ -155,7 +155,39 @@ impl AppState {
             ops_events.clone(),
         ));
         #[cfg(not(test))]
-        execution_setup.spawn_startup_prewarm();
+        {
+            let execution_setup = Arc::clone(&execution_setup);
+            let startup_data_root = data_root.clone();
+            tokio::spawn(async move {
+                let db_path = startup_data_root.join("db").join("db.sqlite");
+                match Store::open_sqlite(&db_path, None).await {
+                    Ok(store) => {
+                        let loaded = crate::settings::load_settings(&store).await;
+                        store.close().await;
+                        match loaded {
+                            Ok(settings) => {
+                                execution_setup
+                                    .spawn_startup_prewarm(settings.execution.unwrap_or_default());
+                            }
+                            Err(err) => {
+                                execution_setup
+                                    .record_startup_prewarm_error(format!(
+                                        "failed to load execution settings: {err:#}"
+                                    ))
+                                    .await;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        execution_setup
+                            .record_startup_prewarm_error(format!(
+                                "failed to open global settings store: {err:#}"
+                            ))
+                            .await;
+                    }
+                }
+            });
+        }
         let workspace_active_snapshot = Arc::new(WorkspaceActiveSnapshotHub::new());
         let web_sessions = Arc::new(WebSessionManager::new());
         let merge_queue_notify = Arc::new(Notify::new());

@@ -23,7 +23,6 @@ use crate::attachments;
 use crate::completions;
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::workspace_runtime::HarnessContainerStatus;
 use crate::logs;
 use crate::telemetry::TelemetryEvent;
 use crate::vcs_hooks;
@@ -35,6 +34,7 @@ use ctx_core::models::{
 };
 use ctx_fs::git::{assert_git_repo, git_default_branch};
 use ctx_fs::vcs;
+use ctx_workspace_container::WorkspaceContainerStatus as HarnessContainerStatus;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateMergeQueueConfigReq {

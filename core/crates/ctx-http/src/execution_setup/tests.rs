@@ -29,6 +29,7 @@ use crate::test_support::{
     write_avf_linux_lifecycle_helper, write_running_container_sandbox_cli_shim,
     TrackedExecutionLaunch,
 };
+use ctx_store::Store;
 
 struct EnvVarGuard {
     key: &'static str,
@@ -131,6 +132,28 @@ async fn init_settings_store(data_root: &Path) {
         .await
         .expect("save default settings");
     store.close().await;
+}
+
+async fn load_execution_settings_from_store(data_root: &Path) -> ExecutionSettings {
+    let db_path = data_root.join("db").join("db.sqlite");
+    let store = Store::open_sqlite(&db_path, Some(1))
+        .await
+        .expect("open sqlite store");
+    let settings = crate::settings::load_settings(&store)
+        .await
+        .expect("load settings");
+    store.close().await;
+    settings.execution.unwrap_or_default()
+}
+
+async fn run_startup_prewarm_from_store(coordinator: &Arc<ExecutionSetupCoordinator>) {
+    let execution = load_execution_settings_from_store(&coordinator.data_root).await;
+    coordinator.run_startup_prewarm(execution).await;
+}
+
+async fn spawn_startup_prewarm_from_store(coordinator: &Arc<ExecutionSetupCoordinator>) {
+    let execution = load_execution_settings_from_store(&coordinator.data_root).await;
+    coordinator.spawn_startup_prewarm(execution);
 }
 
 async fn wait_for_startup_prewarm_terminal(
@@ -275,7 +298,10 @@ fn count_matching_lines(contents: &str, needle: &str) -> usize {
 }
 
 async fn run_startup_prewarm_with_timeout(coordinator: &Arc<ExecutionSetupCoordinator>) {
-    tokio::time::timeout(QUICK_ASYNC_TEST_TIMEOUT, coordinator.run_startup_prewarm())
+    tokio::time::timeout(
+        QUICK_ASYNC_TEST_TIMEOUT,
+        run_startup_prewarm_from_store(&coordinator),
+    )
         .await
         .expect("timed out running startup prewarm");
 }
@@ -752,7 +778,7 @@ impl SharedWarmupOperations for BlockingSandboxCliLoadWarmupOperations {
             HarnessSetupPhase::ImageLoad,
             "loading harness image into local sandbox runtime",
         );
-        let mut cmd = crate::workspace_runtime::sandbox_container_command(&self.data_root)?;
+        let mut cmd = ctx_harness_runtime::sandbox_container_command(&self.data_root)?;
         cmd.arg("load").arg("-i").arg(&self.image_tar);
         let output =
             crate::workspace_runtime::command_output_with_timeout(cmd, Duration::from_secs(60))
@@ -1070,7 +1096,7 @@ async fn startup_prewarm_runs_runtime_warmup_for_cold_container_settings() {
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
     let coordinator_task = Arc::clone(&coordinator);
     let startup = tokio::spawn(async move {
-        coordinator_task.run_startup_prewarm().await;
+        run_startup_prewarm_from_store(&coordinator_task).await;
     });
 
     ops.wait_for_runtime_runs(1).await;
@@ -1103,7 +1129,7 @@ async fn spawned_startup_prewarm_respects_sandbox_cli_env_test_lock() {
     save_test_execution_settings(data_dir.path(), sandbox_execution_settings()).await;
     let coordinator = test_coordinator(data_dir.path().to_path_buf());
 
-    coordinator.spawn_startup_prewarm();
+    spawn_startup_prewarm_from_store(&coordinator).await;
     for _ in 0..8 {
         tokio::task::yield_now().await;
     }
@@ -1267,7 +1293,7 @@ async fn startup_prewarm_keeps_existing_metadata_when_machine_stays_down() {
 
     let ops = Arc::new(RecordingStartupWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    coordinator.run_startup_prewarm().await;
+    run_startup_prewarm_from_store(&coordinator).await;
 
     let snapshot = coordinator.startup_status().await;
     assert_eq!(snapshot.state, StartupPrewarmState::Ready);
@@ -1358,7 +1384,7 @@ async fn startup_prewarm_does_not_record_success_for_stale_loaded_default_image(
 
     let ops = Arc::new(RecordingStartupWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
-    coordinator.run_startup_prewarm().await;
+    run_startup_prewarm_from_store(&coordinator).await;
 
     let snapshot = coordinator.startup_status().await;
     assert_eq!(snapshot.state, StartupPrewarmState::Skipped);
@@ -1597,7 +1623,7 @@ async fn successful_workspace_launch_refresh_clears_stale_prewarm_metadata() {
     let ops = Arc::new(RecordingStartupWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
 
-    coordinator.run_startup_prewarm().await;
+    run_startup_prewarm_from_store(&coordinator).await;
     let startup = coordinator.startup_status().await;
     assert!(startup.bundled_image_digest_changed);
 
@@ -1620,7 +1646,7 @@ async fn successful_workspace_launch_refresh_clears_stale_prewarm_metadata() {
     );
     assert_ne!(metadata.ready_at, "2026-03-19T00:00:00Z");
 
-    coordinator.run_startup_prewarm().await;
+    run_startup_prewarm_from_store(&coordinator).await;
     let refreshed = coordinator.startup_status().await;
     assert_eq!(refreshed.state, StartupPrewarmState::Ready);
     assert!(!refreshed.needs_prewarm);
@@ -2034,7 +2060,7 @@ async fn compute_prewarm_gate_keeps_prefetched_avf_runtime_unready_without_vm_bo
         },
     };
     let coordinator = test_coordinator(data_dir.path().to_path_buf());
-    crate::workspace_runtime::prewarm_selected_runtime_with_observer(
+    ctx_harness_runtime::prewarm_selected_runtime_with_observer(
         data_dir.path(),
         &settings.container,
         None,
@@ -2114,12 +2140,12 @@ async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtim
         .expect("read AVF startup state");
     assert_eq!(runtime_state, (false, false));
     let artifact_state =
-        crate::workspace_runtime::selected_runtime_state(data_dir.path(), &settings.container)
+        ctx_harness_runtime::selected_runtime_state(data_dir.path(), &settings.container)
             .await
             .expect("read AVF runtime artifact state");
     assert_eq!(artifact_state, (true, true));
     let launch_ready =
-        crate::workspace_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
+        ctx_harness_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
             .await
             .expect("read AVF launch-ready state");
     assert!(
@@ -2176,7 +2202,7 @@ async fn runtime_prewarm_launch_ready_scope_starts_shared_vm_and_reports_launch_
             && line.message == "shared VM substrate and launch image are ready"
     }));
     let launch_ready =
-        crate::workspace_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
+        ctx_harness_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
             .await
             .expect("read AVF launch-ready state");
     assert!(
@@ -2253,7 +2279,7 @@ async fn workspace_launch_waits_for_running_startup_prewarm_without_duplicate_ru
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
     let coordinator_task = Arc::clone(&coordinator);
     let startup = tokio::spawn(async move {
-        coordinator_task.run_startup_prewarm().await;
+        run_startup_prewarm_from_store(&coordinator_task).await;
     });
 
     ops.wait_for_runtime_runs(1).await;
@@ -2478,7 +2504,7 @@ async fn workspace_launch_reuses_startup_prewarm_without_second_image_load_when_
     );
     let coordinator_task = Arc::clone(&coordinator);
     let startup = tokio::spawn(async move {
-        coordinator_task.run_startup_prewarm().await;
+        run_startup_prewarm_from_store(&coordinator_task).await;
     });
 
     tokio::time::timeout(Duration::from_secs(20), async {
@@ -2793,7 +2819,7 @@ async fn runtime_prewarm_launch_ready_scope_starts_native_runtime_before_loading
             && line.message == "local sandbox runtime and launch image are ready"
     }));
     let launch_ready =
-        crate::workspace_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
+        ctx_harness_runtime::selected_runtime_launch_ready(data_dir.path(), &settings.container)
             .await
             .expect("read native launch-ready state");
     assert!(
@@ -2865,7 +2891,7 @@ async fn startup_prewarm_enters_shared_runtime_warmup_when_machine_is_not_ready(
     let ops = Arc::new(RecordingStartupWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
 
-    coordinator.run_startup_prewarm().await;
+    run_startup_prewarm_from_store(&coordinator).await;
 
     let snapshot = coordinator.startup_status().await;
     assert_eq!(snapshot.state, StartupPrewarmState::Ready);
@@ -2903,7 +2929,7 @@ async fn startup_prewarm_uses_runtime_scope_for_sandbox_mode_avf_linux_runtime()
     let ops = Arc::new(RecordingStartupWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
 
-    coordinator.run_startup_prewarm().await;
+    run_startup_prewarm_from_store(&coordinator).await;
 
     let snapshot = coordinator.startup_status().await;
     assert_eq!(snapshot.state, StartupPrewarmState::Ready);
@@ -2941,7 +2967,7 @@ async fn startup_prewarm_uses_runtime_scope_for_host_mode_avf_linux_runtime() {
     let ops = Arc::new(RecordingStartupWarmupOperations::default());
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
 
-    coordinator.run_startup_prewarm().await;
+    run_startup_prewarm_from_store(&coordinator).await;
 
     let snapshot = coordinator.startup_status().await;
     assert_eq!(snapshot.state, StartupPrewarmState::Ready);
@@ -3059,7 +3085,7 @@ async fn workspace_launch_reuses_existing_container_without_waiting_for_startup_
     let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
     let coordinator_task = Arc::clone(&coordinator);
     let startup = tokio::spawn(async move {
-        coordinator_task.run_startup_prewarm().await;
+        run_startup_prewarm_from_store(&coordinator_task).await;
     });
 
     ops.wait_for_runtime_runs(1).await;
