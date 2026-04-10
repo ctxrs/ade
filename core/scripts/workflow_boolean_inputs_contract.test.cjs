@@ -53,6 +53,14 @@ test("release supabase uses typed updater drill booleans", () => {
   assert.match(text, /CTX_UPDATER_E2E_EXPECT_VERSION_CHANGE:\s*\$\{\{\s*github\.event_name == 'workflow_dispatch'/);
 });
 
+test("release supabase installs chromium headless shell before updater UI semantics contract", () => {
+  const text = workflowText("release-supabase.yml");
+  assert.match(
+    text,
+    /name:\s+Install Playwright Chromium \(updater semantics contract\)[\s\S]*playwright install chromium chromium-headless-shell[\s\S]*name:\s+Updater UI semantics contract \(desktop-mode harnessed\)/s,
+  );
+});
+
 test("release supabase uses repo-configurable Linux runner labels", () => {
   const text = workflowText("release-supabase.yml");
   assert.match(text, /runs-on:\s*\$\{\{\s*vars\.RELEASE_RUNNER_LINUX_X64 \|\| 'linux-x64-8core'\s*\}\}/);
