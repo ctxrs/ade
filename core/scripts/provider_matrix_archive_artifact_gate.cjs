@@ -11,7 +11,7 @@ const coreRoot = path.resolve(__dirname, "..");
 const defaultMatrixPath = path.join(
   coreRoot,
   "crates",
-  "ctx-http",
+  "ctx-provider-accounts",
   "src",
   "provider_matrix.json",
 );
