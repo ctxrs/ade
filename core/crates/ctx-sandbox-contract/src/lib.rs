@@ -18,6 +18,7 @@ pub use execution::{
 pub use layout::{
     container_worktree_root, live_workspace_root_for_mode, live_worktree_root_for_mode,
     map_host_or_live_path_to_live_roots, sandbox_workspace_root, sandbox_worktree_root,
-    CTX_CONTAINER_WORKSPACE_ROOT,
+    shared_vm_guest_host_share_path, shared_vm_guest_host_share_root, CTX_CONTAINER_WORKSPACE_ROOT,
+    SHARED_VM_GUEST_HOST_DATA_ROOT,
 };
 pub use substrate::{guest_identity_label, UbuntuSandboxSubstrate};

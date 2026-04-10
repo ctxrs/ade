@@ -10,7 +10,8 @@ use ctx_sandbox_container_runtime::{
     SandboxCommandMode,
 };
 use ctx_sandbox_contract::{
-    ContainerExecutionSettings, ContainerMountMode, CTX_CONTAINER_WORKSPACE_ROOT,
+    shared_vm_guest_host_share_path, ContainerExecutionSettings, ContainerMountMode,
+    ContainerRuntimeKind, CTX_CONTAINER_WORKSPACE_ROOT,
 };
 use serde::Deserialize;
 use url::Url;
@@ -60,6 +61,22 @@ fn ensure_dir(path: &Path) {
     let _ = std::fs::create_dir_all(path);
 }
 
+fn bind_mount_for_runtime(
+    data_root: &Path,
+    settings: &ContainerExecutionSettings,
+    src: &Path,
+    dst: &Path,
+    read_only: bool,
+) -> String {
+    let mount_src = match settings.runtime {
+        ContainerRuntimeKind::SharedVmContainer => {
+            shared_vm_guest_host_share_path(data_root, src).unwrap_or_else(|| src.to_path_buf())
+        }
+        ContainerRuntimeKind::NativeContainer => src.to_path_buf(),
+    };
+    bind_mount(&mount_src, dst, read_only)
+}
+
 pub fn build_mounts(
     data_root: &Path,
     workspace: &Workspace,
@@ -76,33 +93,67 @@ pub fn build_mounts(
         mounts.push(volume_mount(&vol_name, CTX_CONTAINER_WORKSPACE_ROOT, false));
     } else {
         ensure_dir(&workspace_root);
-        mounts.push(bind_mount(&workspace_root, &workspace_root, false));
+        mounts.push(bind_mount_for_runtime(
+            data_root,
+            settings,
+            &workspace_root,
+            &workspace_root,
+            false,
+        ));
         ensure_dir(&worktrees_root);
-        mounts.push(bind_mount(&worktrees_root, &worktrees_root, false));
+        mounts.push(bind_mount_for_runtime(
+            data_root,
+            settings,
+            &worktrees_root,
+            &worktrees_root,
+            false,
+        ));
     }
 
     let container_data = container_data_root(data_root, workspace.id);
     ensure_dir(&container_data);
-    mounts.push(bind_mount(&container_data, &container_data, false));
+    mounts.push(bind_mount_for_runtime(
+        data_root,
+        settings,
+        &container_data,
+        &container_data,
+        false,
+    ));
 
     let agent_servers = data_root.join("providers").join("agent-servers");
     ensure_dir(&agent_servers);
-    mounts.push(bind_mount(&agent_servers, &agent_servers, true));
+    mounts.push(bind_mount_for_runtime(
+        data_root,
+        settings,
+        &agent_servers,
+        &agent_servers,
+        true,
+    ));
 
     let runtimes = data_root.join("runtimes");
     ensure_dir(&runtimes);
-    mounts.push(bind_mount(&runtimes, &runtimes, true));
+    mounts.push(bind_mount_for_runtime(
+        data_root, settings, &runtimes, &runtimes, true,
+    ));
 
     let vcs_hooks = vcs_hooks_root(data_root);
     ensure_dir(&vcs_hooks);
-    mounts.push(bind_mount(&vcs_hooks, &vcs_hooks, false));
+    mounts.push(bind_mount_for_runtime(
+        data_root, settings, &vcs_hooks, &vcs_hooks, false,
+    ));
     external_mounts.insert(vcs_hooks.to_string_lossy().to_string());
 
     if let Ok(raw) = std::env::var("CTX_BUNDLE_DIR") {
         let bundle_dir = PathBuf::from(raw.trim());
         if bundle_dir.exists() {
             if should_mount_bundle_dir_in_container(&bundle_dir) {
-                mounts.push(bind_mount(&bundle_dir, &bundle_dir, true));
+                mounts.push(bind_mount_for_runtime(
+                    data_root,
+                    settings,
+                    &bundle_dir,
+                    &bundle_dir,
+                    true,
+                ));
             } else {
                 tracing::info!(
                     "skipping CTX_BUNDLE_DIR container mount (path not shareable by runtime): {}",
@@ -386,6 +437,8 @@ pub fn should_use_keep_id_userns() -> bool {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use ctx_sandbox_contract::ContainerRuntimeKind;
+    use tempfile::TempDir;
 
     fn workspace_named(name: &str) -> Workspace {
         Workspace {
@@ -425,5 +478,62 @@ mod tests {
             workspace_container_hostname(&workspace),
             "workspace-container"
         );
+    }
+
+    #[test]
+    fn shared_vm_build_mounts_rewrite_ctx_data_root_sources_to_guest_host_share() {
+        let temp = TempDir::new().expect("tempdir");
+        let data_root = temp.path().join(".ctx");
+        let workspace = Workspace {
+            id: WorkspaceId::new(),
+            name: "ws".to_string(),
+            root_path: temp.path().join("repo").to_string_lossy().to_string(),
+            created_at: Utc::now(),
+            vcs_kind: None,
+        };
+        let settings = ContainerExecutionSettings {
+            runtime: ContainerRuntimeKind::SharedVmContainer,
+            mount_mode: ContainerMountMode::DiskIsolated,
+            ..ContainerExecutionSettings::default()
+        };
+
+        let plan = build_mounts(&data_root, &workspace, None, &settings);
+        let container_data = container_data_root(&data_root, workspace.id);
+        let agent_servers = data_root.join("providers").join("agent-servers");
+        let runtimes = data_root.join("runtimes");
+        let vcs_hooks = vcs_hooks_root(&data_root);
+
+        for (src_suffix, dst_path) in [
+            (
+                format!(
+                    "/mnt/ctx-host/containers/workspaces/{}/data",
+                    workspace.id.0
+                ),
+                container_data,
+            ),
+            (
+                "/mnt/ctx-host/providers/agent-servers".to_string(),
+                agent_servers,
+            ),
+            ("/mnt/ctx-host/runtimes".to_string(), runtimes),
+            ("/mnt/ctx-host/vcs-hooks".to_string(), vcs_hooks),
+        ] {
+            let dst = dst_path.to_string_lossy().to_string();
+            assert!(
+                plan.mounts
+                    .iter()
+                    .any(|mount| mount.contains(&format!("src={src_suffix},dst={dst},"))),
+                "expected guest-share mount src={src_suffix} dst={dst}; mounts={:?}",
+                plan.mounts
+            );
+            assert!(
+                !plan
+                    .mounts
+                    .iter()
+                    .any(|mount| mount.contains(&format!("src={},dst={dst},", dst_path.display()))),
+                "host data-root source leaked into shared-VM mount plan for {dst}: {:?}",
+                plan.mounts
+            );
+        }
     }
 }

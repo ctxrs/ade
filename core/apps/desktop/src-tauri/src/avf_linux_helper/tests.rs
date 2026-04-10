@@ -487,6 +487,8 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
     assert!(user_data.contains("containerd_root='/ctx/system/containerd'"));
     assert!(user_data.contains("buildkit_root='/ctx/system/buildkit'"));
     assert!(user_data.contains("nerdctl_root='/ctx/system/nerdctl'"));
+    assert!(user_data.contains("cni_config_root='/ctx/system/cni/net.d'"));
+    assert!(user_data.contains("cni_state_root='/ctx/system/cni/lib'"));
     assert!(user_data.contains("root_home='/ctx/home/root'"));
     assert!(user_data.contains("root_xdg_config='/ctx/cache/xdg/config'"));
     assert!(user_data.contains("root_xdg_data='/ctx/cache/xdg/data'"));
@@ -495,6 +497,10 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
     assert!(user_data.contains("mount --bind \"$containerd_root\" /var/lib/containerd"));
     assert!(user_data.contains("mount --bind \"$buildkit_root\" /var/lib/buildkit"));
     assert!(user_data.contains("mount --bind \"$nerdctl_root\" /var/lib/nerdctl"));
+    assert!(user_data.contains("mount --bind \"$cni_config_root\" /etc/cni/net.d"));
+    assert!(user_data.contains("mount --bind \"$cni_state_root\" /var/lib/cni"));
+    assert!(user_data.contains("/etc/cni/net.d/10-nerdctl.conflist"));
+    assert!(user_data.contains("\"bridge\": \"nerdctl0\""));
     assert!(user_data.contains(
         "chmod 0700 \"$root_home\" \"$root_xdg_config\" \"$root_xdg_data\" \"$root_xdg_cache\" \"$root_xdg_runtime\""
     ));
@@ -2170,8 +2176,12 @@ fn shared_vm_guest_readiness_args_include_bridge_probe() {
     assert!(rendered.contains("containerd-root-on-writable-root"));
     assert!(rendered.contains("buildkit-root-on-writable-root"));
     assert!(rendered.contains("nerdctl-root-on-writable-root"));
+    assert!(rendered.contains("cni-config-on-writable-root"));
+    assert!(rendered.contains("cni-state-on-writable-root"));
     assert!(rendered.contains("stat -fc %d"));
     assert!(rendered.contains("/var/lib/nerdctl"));
+    assert!(rendered.contains("/etc/cni/net.d"));
+    assert!(rendered.contains("/var/lib/cni"));
     assert!(rendered.contains(SHARED_VM_GUEST_NERDCTL_BIN));
     assert!(rendered.contains(SHARED_VM_GUEST_BUILDKITCTL_BIN));
     assert!(rendered.contains(&format!(

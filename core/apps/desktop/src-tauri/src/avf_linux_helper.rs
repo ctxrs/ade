@@ -138,7 +138,7 @@ const SHARED_VM_GUEST_CONTROL_READY_FILE: &str = "guest-control-ready";
 const SHARED_VM_GUEST_CONTROL_FAILED_FILE: &str = "guest-control-failed";
 const SHARED_VM_GUEST_AGENT_LOG_FILE: &str = "guest-agent.log";
 const SHARED_VM_DATA_ROOT_SHARE_TAG: &str = "ctx-data-root";
-const SHARED_VM_GUEST_HOST_DATA_ROOT: &str = "/mnt/ctx-host";
+const SHARED_VM_GUEST_HOST_DATA_ROOT: &str = ctx_sandbox_contract::SHARED_VM_GUEST_HOST_DATA_ROOT;
 const SHARED_VM_HOST_DATA_SERVICE_NAME: &str = "ctx-avf-host-data.service";
 const SHARED_VM_DATA_DISK_LABEL: &str = "ctx-avf-data";
 const SHARED_VM_DATA_DISK_SERVICE_NAME: &str = "ctx-avf-data-disk.service";
@@ -160,6 +160,8 @@ const SHARED_VM_GUEST_ROOT_XDG_RUNTIME_ROOT: &str = "/ctx/tmp/xdg-runtime-root";
 const SHARED_VM_GUEST_CONTAINERD_ROOT: &str = "/ctx/system/containerd";
 const SHARED_VM_GUEST_BUILDKIT_ROOT: &str = "/ctx/system/buildkit";
 const SHARED_VM_GUEST_NERDCTL_ROOT: &str = "/ctx/system/nerdctl";
+const SHARED_VM_GUEST_CNI_CONFIG_ROOT: &str = "/ctx/system/cni/net.d";
+const SHARED_VM_GUEST_CNI_STATE_ROOT: &str = "/ctx/system/cni/lib";
 const SHARED_VM_PAYLOADS_DIR: &str = "payloads";
 const SHARED_VM_GUEST_CONTAINER_STACK_INSTALL_PATH: &str =
     "/usr/local/lib/ctx/ctx-avf-install-container-stack.sh";

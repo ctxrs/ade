@@ -2912,6 +2912,44 @@ async fn shared_vm_container_launch_omits_slirp_network_flag() {
         run_line.contains("--hostname ws-container"),
         "shared VM run should use the human-readable workspace hostname: {run_line}"
     );
+    for (guest_src, dst_suffix) in [
+        (
+            format!(
+                "/mnt/ctx-host/containers/workspaces/{}/data",
+                workspace.id.0
+            ),
+            format!("/containers/workspaces/{}/data", workspace.id.0),
+        ),
+        (
+            "/mnt/ctx-host/providers/agent-servers".to_string(),
+            "/providers/agent-servers".to_string(),
+        ),
+        (
+            "/mnt/ctx-host/runtimes".to_string(),
+            "/runtimes".to_string(),
+        ),
+        (
+            "/mnt/ctx-host/vcs-hooks".to_string(),
+            "/vcs-hooks".to_string(),
+        ),
+    ] {
+        assert!(
+            run_line.contains(&format!("src={guest_src}")),
+            "shared VM run should use guest-visible mount source {guest_src}: {run_line}"
+        );
+        assert!(
+            run_line.contains(&format!("dst={}{}", temp.path().display(), dst_suffix)),
+            "shared VM run should preserve destination path {}{}: {run_line}",
+            temp.path().display(),
+            dst_suffix
+        );
+        assert!(
+            !run_line.contains(&format!("src={}{}", temp.path().display(), dst_suffix)),
+            "shared VM run should not leak host data-root source {}{}: {run_line}",
+            temp.path().display(),
+            dst_suffix
+        );
+    }
     assert!(
         log.lines().any(|line| {
             line.contains("exec --user 0")

@@ -6,9 +6,19 @@ use ctx_core::models::{Workspace, Worktree};
 use crate::ExecutionMode;
 
 pub const CTX_CONTAINER_WORKSPACE_ROOT: &str = "/ctx/ws";
+pub const SHARED_VM_GUEST_HOST_DATA_ROOT: &str = "/mnt/ctx-host";
 
 pub fn container_worktree_root(worktree_id: WorktreeId) -> PathBuf {
     PathBuf::from("/ctx/ws/worktrees").join(worktree_id.0.to_string())
+}
+
+pub fn shared_vm_guest_host_share_root() -> PathBuf {
+    PathBuf::from(SHARED_VM_GUEST_HOST_DATA_ROOT)
+}
+
+pub fn shared_vm_guest_host_share_path(data_root: &Path, host_path: &Path) -> Option<PathBuf> {
+    let relative = host_path.strip_prefix(data_root).ok()?;
+    Some(shared_vm_guest_host_share_root().join(relative))
 }
 
 pub fn map_host_or_live_path_to_live_roots(
@@ -126,6 +136,25 @@ mod tests {
         assert_eq!(
             sandbox_worktree_root(&workspace, &worktree),
             container_worktree_root(worktree.id)
+        );
+    }
+
+    #[test]
+    fn shared_vm_guest_host_share_path_projects_under_guest_host_mount_root() {
+        let data_root = Path::new("/Users/example-user/.ctx");
+        let host_path = data_root.join("runtimes/ctx-egress-proxy");
+        assert_eq!(
+            shared_vm_guest_host_share_path(data_root, &host_path),
+            Some(PathBuf::from("/mnt/ctx-host/runtimes/ctx-egress-proxy"))
+        );
+    }
+
+    #[test]
+    fn shared_vm_guest_host_share_path_rejects_paths_outside_data_root() {
+        let data_root = Path::new("/Users/example-user/.ctx");
+        assert_eq!(
+            shared_vm_guest_host_share_path(data_root, Path::new("/tmp/outside")),
+            None
         );
     }
 }
