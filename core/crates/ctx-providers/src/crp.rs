@@ -89,7 +89,7 @@ impl Tier1CrpAdapter {
     }
 
     pub fn from_provider_runtime(id: &str, command: String, args: Vec<String>) -> Self {
-        Self::new(id, &command, args, true)
+        Self::new(id, &command, args, false)
     }
 
     pub fn from_raw_with_session_status(
@@ -235,13 +235,21 @@ impl ProviderAdapter for Tier1CrpAdapter {
         session.touch();
         let mut rx = session.process.events.subscribe();
         let mut shutdown_rx = session.process.shutdown.subscribe();
-        session
+        if let Err(err) = session
             .process
             .send(CrpCommand::SessionSetModel {
                 session_id: Some(session_key.clone()),
                 model_id: Some(model_id.clone()),
             })
-            .await?;
+            .await
+        {
+            drop(busy_guard);
+            self.pool
+                .drain_session_if_needed(&session_key, &session)
+                .await;
+            self.pool.trigger_background_reap();
+            return Err(err);
+        }
 
         let result = tokio::time::timeout(CRP_SESSION_MODEL_UPDATE_TIMEOUT, async {
             loop {
@@ -329,16 +337,32 @@ impl ProviderAdapter for Tier1CrpAdapter {
                 .await
             {
                 session.opening.store(false, Ordering::SeqCst);
+                drop(busy_guard);
+                self.pool
+                    .drain_session_if_needed(&auth_session_key, &session)
+                    .await;
+                self.pool.trigger_background_reap();
                 return Err(err);
             }
         }
-        session
+        if let Err(err) = session
             .process
             .send(CrpCommand::SessionAuthenticate {
                 session_id: Some(session_key),
                 method_id,
             })
-            .await?;
+            .await
+        {
+            if !session.opened.load(Ordering::SeqCst) {
+                session.opening.store(false, Ordering::SeqCst);
+            }
+            drop(busy_guard);
+            self.pool
+                .drain_session_if_needed(&auth_session_key, &session)
+                .await;
+            self.pool.trigger_background_reap();
+            return Err(err);
+        }
         let session_for_events = Arc::clone(&session);
         let pool_for_reap = Arc::clone(&self.pool);
         tokio::spawn(async move {

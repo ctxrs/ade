@@ -595,17 +595,19 @@ async fn reap_idle_sessions_reaps_quiescent_live_session() -> Result<()> {
 }
 
 #[tokio::test]
-async fn provider_runtime_sessions_keep_status_probe_when_opened_metadata_omits_capability(
+async fn provider_runtime_sessions_skip_status_probe_when_opened_metadata_omits_capability(
 ) -> Result<()> {
     let _env_lock = ENV_LOCK.lock().await;
     let tempdir = tempfile::tempdir()?;
     let workdir = tempdir.path().to_path_buf();
     let script_path = workdir.join("provider-runtime-status-default.sh");
+    let log_path = workdir.join("provider-runtime-status-default.log");
 
     fs::write(
         &script_path,
         r#"#!/bin/sh
 while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
   case "$line" in
     *'"type":"session.open"'*)
       session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
@@ -638,6 +640,10 @@ done
         "CTX_SESSION_ID".to_string(),
         "runtime-status-default".to_string(),
     );
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
 
     let (event_sink, _event_rx) = mpsc::channel(8);
     let handle = adapter
@@ -661,14 +667,18 @@ done
         .pool
         .reap_idle_sessions(immediate_sweep_config())
         .await;
-    assert_eq!(
-        stats,
-        ProviderSessionSweepStats {
-            reaped: 1,
-            ..ProviderSessionSweepStats::default()
-        }
+    assert_eq!(stats, ProviderSessionSweepStats::default());
+    assert!(adapter.has_live_session("runtime-status-default").await);
+    let log_contents = fs::read_to_string(&log_path)?;
+    assert!(
+        !log_contents.contains(r#""type":"session.status""#),
+        "provider runtimes must opt in before ctx probes session.status"
     );
-    assert!(!adapter.has_live_session("runtime-status-default").await);
+    let session = adapter
+        .pool
+        .require_open_session("runtime-status-default")
+        .await?;
+    session.process.shutdown("test complete").await;
     Ok(())
 }
 
@@ -1089,6 +1099,41 @@ done
     }
 
     assert!(adapter.pool.list_processes().await.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn draining_model_update_send_failure_shuts_down_session() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("set-model-closed-stdin.sh");
+
+    fs::write(&script_path, "#!/bin/sh\nexec <&-\nsleep 30\n")?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "draining-model-send-failure";
+    let env = HashMap::new();
+
+    let session = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &env)
+        .await?;
+    session.opened.store(true, Ordering::SeqCst);
+    session.draining.store(true, Ordering::SeqCst);
+
+    let err = adapter
+        .set_session_model(session_key.to_string(), "amp-medium".to_string())
+        .await
+        .expect_err("closed stdin should fail session.set_model");
+    assert!(!err.to_string().trim().is_empty());
+    assert!(!adapter.has_live_session(session_key).await);
     Ok(())
 }
 

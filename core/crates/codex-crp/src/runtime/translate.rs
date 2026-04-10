@@ -186,6 +186,7 @@ pub(super) fn translate_notification(
             if payload.thread_id != session_state.thread_id {
                 return Ok(Vec::new());
             }
+            session_state.command_execution_seen = true;
             Ok(vec![(
                 CrpChannel::Data,
                 CrpEvent::ToolOutputDelta {
@@ -293,6 +294,7 @@ fn translate_item_lifecycle(
             duration_ms,
             ..
         } => {
+            session_state.command_execution_seen = true;
             let input_preview = json!({
                 "command": command,
                 "cwd": cwd,

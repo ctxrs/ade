@@ -72,8 +72,6 @@ pub struct ThreadLoadedListResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ThreadReadResponse {
     pub thread: ThreadStatusRef,
-    #[serde(default)]
-    pub turns: Vec<ThreadReadTurn>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -101,15 +99,6 @@ pub enum ThreadStatus {
 pub enum ThreadActiveFlag {
     WaitingOnApproval,
     WaitingOnUserInput,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThreadReadTurn {
-    #[serde(rename = "id")]
-    pub _id: String,
-    #[serde(default)]
-    pub items: Vec<ThreadItem>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

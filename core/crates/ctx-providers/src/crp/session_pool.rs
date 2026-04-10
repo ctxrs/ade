@@ -464,9 +464,10 @@ impl CrpSessionPool {
                             {
                                 session.opened.store(true, Ordering::SeqCst);
                                 session.opening.store(false, Ordering::SeqCst);
+                                let default_support =
+                                    session.status_supported.load(Ordering::SeqCst);
                                 session.status_supported.store(
-                                    supports_session_status
-                                        .unwrap_or(self.supports_session_status),
+                                    supports_session_status.unwrap_or(default_support),
                                     Ordering::SeqCst,
                                 );
                             }

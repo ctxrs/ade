@@ -52,7 +52,8 @@ fn replay_fixture(file: &str) -> SnapshotOutput {
         opened_commands: Vec::new(),
         opened_slash_commands: Vec::new(),
         turn_aliases: TurnAliasState::new(),
-        thread_turns_available: false,
+        resumed_from_provider_session: false,
+        command_execution_seen: false,
     };
     let input = fs::read_to_string(testdata_path(file)).expect("fixture should exist");
     let mut events = Vec::new();
@@ -157,16 +158,16 @@ fn session_status_details_report_quiescent_when_loaded_threads_are_idle() {
     let details = build_session_status_details(
         "thr_root",
         None,
+        false,
+        false,
         vec![
             ThreadStatusSnapshot {
                 thread_id: "thr_root".to_string(),
                 status: crate::app_server::ThreadStatus::Idle,
-                in_progress_command_ids: Vec::new(),
             },
             ThreadStatusSnapshot {
                 thread_id: "thr_child".to_string(),
                 status: crate::app_server::ThreadStatus::Idle,
-                in_progress_command_ids: Vec::new(),
             },
         ],
     );
@@ -181,18 +182,18 @@ fn session_status_details_report_busy_for_active_loaded_thread_or_turn() {
     let details = build_session_status_details(
         "thr_root",
         Some("turn-1".to_string()),
+        false,
+        false,
         vec![
             ThreadStatusSnapshot {
                 thread_id: "thr_root".to_string(),
                 status: crate::app_server::ThreadStatus::Active {
                     active_flags: Vec::new(),
                 },
-                in_progress_command_ids: Vec::new(),
             },
             ThreadStatusSnapshot {
                 thread_id: "thr_child".to_string(),
                 status: crate::app_server::ThreadStatus::Idle,
-                in_progress_command_ids: Vec::new(),
             },
         ],
     );
@@ -207,26 +208,44 @@ fn session_status_details_report_busy_for_active_loaded_thread_or_turn() {
 }
 
 #[test]
-fn session_status_details_report_busy_for_background_command_execution() {
+fn session_status_details_report_busy_for_observed_command_execution() {
     let details = build_session_status_details(
         "thr_root",
         None,
+        false,
+        true,
         vec![ThreadStatusSnapshot {
             thread_id: "thr_root".to_string(),
             status: crate::app_server::ThreadStatus::Idle,
-            in_progress_command_ids: vec!["cmd-1".to_string()],
         }],
     );
 
     assert_eq!(details["quiescent"], json!(false));
-    assert_eq!(
-        details["background_command_thread_ids"],
-        json!(["thr_root"])
-    );
-    assert_eq!(details["background_command_item_ids"], json!(["cmd-1"]));
+    assert_eq!(details["command_execution_observed"], json!(true));
     assert_eq!(
         details["busy_reasons"],
-        json!(["background_command_execution"])
+        json!(["command_execution_observed"])
+    );
+}
+
+#[test]
+fn session_status_details_report_busy_for_resumed_provider_session() {
+    let details = build_session_status_details(
+        "thr_root",
+        None,
+        true,
+        false,
+        vec![ThreadStatusSnapshot {
+            thread_id: "thr_root".to_string(),
+            status: crate::app_server::ThreadStatus::Idle,
+        }],
+    );
+
+    assert_eq!(details["quiescent"], json!(false));
+    assert_eq!(details["resumed_from_provider_session"], json!(true));
+    assert_eq!(
+        details["busy_reasons"],
+        json!(["resumed_session_state_unknown"])
     );
 }
 
