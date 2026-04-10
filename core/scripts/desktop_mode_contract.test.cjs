@@ -71,7 +71,7 @@ test("tracked desktop bundle manifest remains thin by default", () => {
 });
 
 test("desktop mode defaults to dev/parity/desktop", () => {
-  const mode = resolveLaunchMode({});
+  const mode = resolveLaunchMode({ channel: "", profile: "", surface: "" });
   assert.deepEqual(mode, {
     channel: "dev",
     profile: "parity",
@@ -81,15 +81,15 @@ test("desktop mode defaults to dev/parity/desktop", () => {
 
 test("desktop mode parser validates expected enum values", () => {
   assert.throws(
-    () => resolveLaunchMode({ channel: "qa" }),
+    () => resolveLaunchMode({ channel: "qa", profile: "parity", surface: "desktop" }),
     /invalid CTX_DESKTOP_CHANNEL/,
   );
   assert.throws(
-    () => resolveLaunchMode({ profile: "legacy" }),
+    () => resolveLaunchMode({ channel: "dev", profile: "legacy", surface: "desktop" }),
     /invalid CTX_RUNTIME_PROFILE/,
   );
   assert.throws(
-    () => resolveLaunchMode({ surface: "desktop-local" }),
+    () => resolveLaunchMode({ channel: "dev", profile: "parity", surface: "desktop-local" }),
     /invalid CTX_LAUNCH_SURFACE/,
   );
 });

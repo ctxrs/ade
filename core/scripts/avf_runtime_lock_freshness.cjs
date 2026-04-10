@@ -178,7 +178,7 @@ const validateAvfRuntimeFreshness = ({
   }
 
   const manifestEntry = findManifestRuntimeEntry(manifest);
-  if (!manifestEntry) {
+  if (!manifestEntry && !allowManagedRuntime) {
     errors.push(`manifest.json is missing bundled runtime ${AVF_RUNTIME_ID} for ${TARGET_OS}/${TARGET_ARCH}`);
   }
 

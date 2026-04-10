@@ -2,7 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { createCtxPlaywrightConfig, resolvePlaywrightCargoTargetDir } from "./playwright.shared";
+import {
+  applyProcessEnvDefaultIfPresent,
+  createCtxPlaywrightConfig,
+  resolvePlaywrightCargoTargetDir,
+} from "./playwright.shared";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,6 +45,15 @@ afterEach(() => {
 });
 
 describe("createCtxPlaywrightConfig", () => {
+  it("skips undefined cache defaults instead of stringifying them into process.env", async () => {
+    restoreEnv();
+    delete process.env.RUSTC_WRAPPER;
+
+    applyProcessEnvDefaultIfPresent(process.env, "RUSTC_WRAPPER", undefined);
+
+    expect(process.env.RUSTC_WRAPPER).toBeUndefined();
+  });
+
   it("writes reports under e2e artifact roots", async () => {
     restoreEnv();
     const config = await createCtxPlaywrightConfig("all");

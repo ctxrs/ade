@@ -63,6 +63,18 @@ const buildWebServerBaseEnv = (env: NodeJS.ProcessEnv) => {
   );
 };
 
+export const applyProcessEnvDefaultIfPresent = (
+  env: NodeJS.ProcessEnv,
+  key: string,
+  value: string | undefined,
+) => {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return;
+  }
+  env[key] ??= normalized;
+};
+
 export const resolvePlaywrightCargoTargetDir = (env: NodeJS.ProcessEnv) => {
   const configured = String(env.CTX_E2E_CARGO_TARGET_DIR ?? env.CARGO_TARGET_DIR ?? "").trim();
   if (configured) {
@@ -137,21 +149,27 @@ export async function createCtxPlaywrightConfig(
   const tmpDir = process.env.CTX_E2E_TMPDIR ?? defaultTmpDir;
   const dataDir = process.env.CTX_E2E_DATA_DIR ?? defaultDataDir;
   const AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
-  if (cacheEnv.CARGO_HOME) {
-    process.env.CARGO_HOME ??= cacheEnv.CARGO_HOME;
-  }
-  process.env.SCCACHE_DIR ??= cacheEnv.SCCACHE_DIR;
-  process.env.SCCACHE_PATH ??= cacheEnv.SCCACHE_PATH;
-  process.env.RUSTC_WRAPPER ??= cacheEnv.RUSTC_WRAPPER;
-  process.env.CTX_VOLATILE_ROOT ??= cacheEnv.CTX_VOLATILE_ROOT;
-  process.env.CTX_VOLATILE_ROOT_MODE ??= cacheEnv.CTX_VOLATILE_ROOT_MODE;
-  process.env.CTX_VOLATILE_TARGETS_DIR ??= cacheEnv.CTX_VOLATILE_TARGETS_DIR;
-  process.env.CTX_VOLATILE_ARTIFACTS_DIR ??= cacheEnv.CTX_VOLATILE_ARTIFACTS_DIR;
+  applyProcessEnvDefaultIfPresent(process.env, "CARGO_HOME", cacheEnv.CARGO_HOME);
+  applyProcessEnvDefaultIfPresent(process.env, "SCCACHE_DIR", cacheEnv.SCCACHE_DIR);
+  applyProcessEnvDefaultIfPresent(process.env, "SCCACHE_PATH", cacheEnv.SCCACHE_PATH);
+  applyProcessEnvDefaultIfPresent(process.env, "RUSTC_WRAPPER", cacheEnv.RUSTC_WRAPPER);
+  applyProcessEnvDefaultIfPresent(process.env, "CTX_VOLATILE_ROOT", cacheEnv.CTX_VOLATILE_ROOT);
+  applyProcessEnvDefaultIfPresent(process.env, "CTX_VOLATILE_ROOT_MODE", cacheEnv.CTX_VOLATILE_ROOT_MODE);
+  applyProcessEnvDefaultIfPresent(process.env, "CTX_VOLATILE_TARGETS_DIR", cacheEnv.CTX_VOLATILE_TARGETS_DIR);
+  applyProcessEnvDefaultIfPresent(
+    process.env,
+    "CTX_VOLATILE_ARTIFACTS_DIR",
+    cacheEnv.CTX_VOLATILE_ARTIFACTS_DIR,
+  );
   process.env.CTX_E2E_TMPDIR ??= tmpDir;
   process.env.CTX_E2E_DATA_DIR ??= dataDir;
   process.env.CTX_VOLATILE_TMPDIR ??= volatileTmpRoot;
   process.env.CTX_E2E_AUTH_TOKEN ??= AUTH_TOKEN;
-  process.env.PLAYWRIGHT_BROWSERS_PATH ??= cacheEnv.PLAYWRIGHT_BROWSERS_PATH;
+  applyProcessEnvDefaultIfPresent(
+    process.env,
+    "PLAYWRIGHT_BROWSERS_PATH",
+    cacheEnv.PLAYWRIGHT_BROWSERS_PATH,
+  );
   const defaultBundleDir = path.resolve(__dirname, "../desktop/src-tauri/bundles");
   const bundleManifestPath = path.join(defaultBundleDir, "manifest.json");
   const allowConfiguredBundleDir = parseBool(process.env.CTX_E2E_ALLOW_CONFIGURED_BUNDLE_DIR);

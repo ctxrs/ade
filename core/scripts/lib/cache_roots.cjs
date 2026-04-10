@@ -277,14 +277,12 @@ function resolveCtxCacheLayout({ cwd = process.cwd(), env = process.env } = {}) 
     env.PLAYWRIGHT_BROWSERS_PATH,
     path.join(cacheDir, "playwright"),
   );
-  const workspaceCargoTargetDir = sanitizeExplicitPath(
-    env.CARGO_TARGET_DIR,
-    path.join(targetsDir, DEFAULT_REPO_CACHE_SLUG, scopeKey),
-  );
-  const verifyCargoTargetDir = sanitizeExplicitPath(
-    env.CTX_VERIFY_CARGO_TARGET_DIR,
-    workspaceCargoTargetDir,
-  );
+  const workspaceCargoTargetDir =
+    resolveConfiguredPath(env.CARGO_TARGET_DIR || env.CTX_E2E_CARGO_TARGET_DIR, { cwd })
+    || path.join(targetsDir, DEFAULT_REPO_CACHE_SLUG, scopeKey);
+  const verifyCargoTargetDir =
+    resolveConfiguredPath(env.CTX_VERIFY_CARGO_TARGET_DIR, { cwd })
+    || workspaceCargoTargetDir;
 
   return {
     scopeKey,

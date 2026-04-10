@@ -229,6 +229,42 @@ test("buildCtxCacheEnv honors explicit verify target overrides", () => {
   assert.equal(env.CTX_VERIFY_CARGO_TARGET_DIR, verifyTargetDir);
 });
 
+test("buildCtxCacheEnv preserves explicit cargo target overrides outside an explicit volatile root", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-explicit-volatile");
+  const cargoTargetDir = path.join(os.tmpdir(), "ctx-cache-roots-external-target");
+  const verifyTargetDir = path.join(os.tmpdir(), "ctx-cache-roots-external-verify");
+  const { env, layout } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+      CARGO_TARGET_DIR: cargoTargetDir,
+      CTX_VERIFY_CARGO_TARGET_DIR: verifyTargetDir,
+    },
+  });
+
+  assert.equal(layout.workspaceCargoTargetDir, cargoTargetDir);
+  assert.equal(layout.verifyCargoTargetDir, verifyTargetDir);
+  assert.equal(env.CARGO_TARGET_DIR, cargoTargetDir);
+  assert.equal(env.CTX_VERIFY_CARGO_TARGET_DIR, verifyTargetDir);
+});
+
+test("buildCtxCacheEnv falls back to CTX_E2E_CARGO_TARGET_DIR when CARGO_TARGET_DIR is unset", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-e2e-target");
+  const cargoTargetDir = path.join(os.tmpdir(), "ctx-cache-roots-ctx-e2e-target");
+  const { env, layout } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+      CTX_E2E_CARGO_TARGET_DIR: cargoTargetDir,
+    },
+  });
+
+  assert.equal(layout.workspaceCargoTargetDir, cargoTargetDir);
+  assert.equal(env.CARGO_TARGET_DIR, cargoTargetDir);
+});
+
 test("buildCtxCacheEnv can opt into a volatile cargo home", () => {
   const cwd = path.resolve(__dirname, "..", "..");
   const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-cargo-home");

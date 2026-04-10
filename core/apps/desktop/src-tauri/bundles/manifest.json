@@ -1,34 +1,7 @@
 {
   "version": 1,
-  "generated_at": "2026-04-08T19:52:42Z",
   "providers": [],
-  "runtimes": [
-    {
-      "id": "node",
-      "version": "24.14.0",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "20a18709f0154d668f1bd6f6ea8c2a7ae001447b4b2c339732f22e57a8767a55",
-      "root": "runtimes/node/macos/aarch64/node-v24.14.0-darwin-arm64",
-      "bin": "bin/node",
-      "npm_cli": "lib/node_modules/npm/bin/npm-cli.js"
-    }
-  ],
+  "runtimes": [],
   "images": [],
-  "daemons": [
-    {
-      "id": "ctx-daemon",
-      "os": "linux",
-      "arch": "aarch64",
-      "sha256": "3d5baa40ef4ede4b16a3161eaaecb24a489a1a43e7fc3810cb708e5b49ab2554",
-      "bin": "daemons/ctx-daemon-linux-aarch64"
-    },
-    {
-      "id": "ctx-daemon",
-      "os": "linux",
-      "arch": "x86_64",
-      "sha256": "7fca82eff92783db3419cedf4327e0a0eac62badc2c7c1173fcc6b2709e4750c",
-      "bin": "daemons/ctx-daemon-linux-x86_64"
-    }
-  ]
+  "daemons": []
 }

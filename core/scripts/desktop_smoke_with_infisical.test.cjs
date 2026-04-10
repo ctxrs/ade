@@ -124,6 +124,7 @@ test("desktop smoke defaults automation tmp and cargo target under CTX_VOLATILE_
     CTX_VOLATILE_ROOT: volatileRoot,
     CTX_AUTOMATION_TMP_BASE_DIR: "",
     CARGO_TARGET_DIR: "",
+    CTX_SHARED_CARGO_TARGET_DIR: "",
   });
 
   assert.equal(result.status, 0, `script should succeed: ${result.stderr || result.stdout}`);
