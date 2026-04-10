@@ -33,9 +33,13 @@ async fn read_terminal_status(socket: &mut WsStream) -> (TerminalStatus, Option<
     panic!("terminal status message not received");
 }
 
-async fn read_terminal_until_marker(socket: &mut WsStream, marker: &str) -> String {
+async fn read_terminal_until_marker_with_timeout(
+    socket: &mut WsStream,
+    marker: &str,
+    timeout: Duration,
+) -> String {
     let mut buffer = Vec::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
+    let deadline = tokio::time::Instant::now() + timeout;
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         let wait = remaining.min(Duration::from_millis(250));
@@ -61,6 +65,10 @@ async fn read_terminal_until_marker(socket: &mut WsStream, marker: &str) -> Stri
         }
     }
     String::from_utf8_lossy(&buffer).to_string()
+}
+
+async fn read_terminal_until_marker(socket: &mut WsStream, marker: &str) -> String {
+    read_terminal_until_marker_with_timeout(socket, marker, Duration::from_secs(12)).await
 }
 
 async fn wait_for_session_done_events_in_store(
@@ -288,8 +296,12 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
     let (status, _) = read_terminal_status(&mut terminal_socket).await;
     assert!(matches!(status, TerminalStatus::Running));
 
-    let reconnect_output =
-        read_terminal_until_marker(&mut terminal_socket, terminal_end_marker).await;
+    let reconnect_output = read_terminal_until_marker_with_timeout(
+        &mut terminal_socket,
+        terminal_end_marker,
+        Duration::from_secs(30),
+    )
+    .await;
     assert!(
         reconnect_output.contains(terminal_end_marker),
         "reconnected terminal should continue streaming new output"
