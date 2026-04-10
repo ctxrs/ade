@@ -1,44 +1,40 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-
-use crate::storage_guard::StorageAdmissionOperation;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::Workspace;
+use ctx_fs::worktrees::standaloneize_worktree_git_dir;
+use ctx_sandbox_container_runtime::SandboxCommandMode;
+pub use ctx_sandbox_contract::container_worktree_root;
+use ctx_sandbox_contract::sandbox_workspace_root;
+use ctx_storage_admission::StorageAdmissionOperation;
 
-#[path = "disk_isolated_copy.rs"]
 mod copy;
-#[path = "disk_isolated_sandbox.rs"]
 mod sandbox;
-#[path = "disk_isolated_storage.rs"]
 mod storage;
 
-#[cfg(test)]
-pub(crate) use storage::set_test_preflight_storage_samples_override;
+pub use storage::set_test_preflight_storage_samples_override;
 
 fn sandbox_container_id(workspace_id: WorkspaceId) -> String {
     format!("ctx-harness-{}", workspace_id.0)
 }
 
-/// Container path for a disk-isolated worktree root.
-pub fn container_worktree_root(worktree_id: WorktreeId) -> PathBuf {
-    PathBuf::from("/ctx/ws/worktrees").join(worktree_id.0.to_string())
-}
-
 pub async fn remove_live_worktree_root(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     workspace_id: WorkspaceId,
     live_worktree_root: &Path,
 ) -> Result<()> {
     let container_id = sandbox_container_id(workspace_id);
-    sandbox::remove_live_worktree_root(data_root, &container_id, live_worktree_root).await
+    sandbox::remove_live_worktree_root(data_root, mode, &container_id, live_worktree_root).await
 }
 
 pub async fn ensure_worktree_from_host_copy(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
-    host_workspace_root: &Path,
+    host_source_root: &Path,
     base_commit_sha: &str,
     branch_name: &str,
 ) -> Result<PathBuf> {
@@ -52,38 +48,49 @@ pub async fn ensure_worktree_from_host_copy(
         "provisioning disk-isolated worktree from host copy"
     );
 
-    let estimated_copy_bytes = copy::estimate_self_contained_copy_size_bytes(host_workspace_root)
+    standaloneize_worktree_git_dir(host_source_root)
+        .await
+        .with_context(|| {
+            format!(
+                "stabilizing sandbox worktree git metadata at {}",
+                host_source_root.display()
+            )
+        })?;
+
+    let estimated_copy_bytes = copy::estimate_self_contained_copy_size_bytes(host_source_root)
         .await
         .with_context(|| {
             format!(
                 "estimating self-contained sandbox copy size from {}",
-                host_workspace_root.display()
+                host_source_root.display()
             )
         })?;
+    let workspace_root = sandbox_workspace_root();
     storage::preflight_disk_isolated_copy(
         data_root,
+        mode,
         &container_id,
         estimated_copy_bytes,
-        Path::new(crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT),
+        &workspace_root,
         StorageAdmissionOperation::DiskIsolatedWorktreeMaterialization,
     )
     .await
     .context("preflighting disk-isolated worktree materialization")?;
 
     let (copy_root, _staging_guard) =
-        copy::prepare_self_contained_copy_root(data_root, host_workspace_root)
+        copy::prepare_self_contained_copy_root(data_root, host_source_root)
             .await
             .with_context(|| {
                 format!(
                     "preparing self-contained sandbox copy root from {}",
-                    host_workspace_root.display()
+                    host_source_root.display()
                 )
             })?;
 
-    sandbox::ensure_directory(data_root, &container_id, &dest_root)
+    sandbox::ensure_directory(data_root, mode, &container_id, &dest_root)
         .await
         .context("creating disk-isolated worktree root")?;
-    copy::stream_dir_to_container(data_root, &container_id, &copy_root, &dest_root)
+    copy::stream_dir_to_container(data_root, mode, &container_id, &copy_root, &dest_root)
         .await
         .context("streaming host copy into disk-isolated worktree")?;
     tracing::debug!(
@@ -91,10 +98,11 @@ pub async fn ensure_worktree_from_host_copy(
         worktree_id = %worktree_id.0,
         "disk-isolated host copy completed"
     );
-    sandbox::best_effort_make_user_writable(data_root, &container_id, &dest_root).await?;
+    sandbox::best_effort_make_user_writable(data_root, mode, &container_id, &dest_root).await?;
 
     sandbox::checkout_branch_at_base(
         data_root,
+        mode,
         &container_id,
         &dest_root,
         branch_name,
@@ -110,7 +118,7 @@ pub async fn ensure_worktree_from_host_copy(
         "disk-isolated checkout completed"
     );
 
-    sandbox::verify_container_git_repo(data_root, &container_id, &dest_root).await?;
+    sandbox::verify_container_git_repo(data_root, mode, &container_id, &dest_root).await?;
     tracing::info!(
         workspace_id = %workspace_id.0,
         worktree_id = %worktree_id.0,
@@ -122,11 +130,12 @@ pub async fn ensure_worktree_from_host_copy(
 
 pub async fn ensure_workspace_root_from_host_copy(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     workspace: &Workspace,
 ) -> Result<PathBuf> {
     let container_id = sandbox_container_id(workspace.id);
-    let dest_root = PathBuf::from(crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT);
-    if sandbox::verify_container_git_repo(data_root, &container_id, &dest_root)
+    let dest_root = sandbox_workspace_root();
+    if sandbox::verify_container_git_repo(data_root, mode, &container_id, &dest_root)
         .await
         .is_ok()
     {
@@ -148,6 +157,15 @@ pub async fn ensure_workspace_root_from_host_copy(
         );
     }
 
+    standaloneize_worktree_git_dir(host_workspace_root)
+        .await
+        .with_context(|| {
+            format!(
+                "stabilizing sandbox workspace git metadata at {}",
+                host_workspace_root.display()
+            )
+        })?;
+
     let estimated_copy_bytes = copy::estimate_self_contained_copy_size_bytes(host_workspace_root)
         .await
         .with_context(|| {
@@ -158,6 +176,7 @@ pub async fn ensure_workspace_root_from_host_copy(
         })?;
     storage::preflight_disk_isolated_copy(
         data_root,
+        mode,
         &container_id,
         estimated_copy_bytes,
         &dest_root,
@@ -175,14 +194,14 @@ pub async fn ensure_workspace_root_from_host_copy(
                     host_workspace_root.display()
                 )
             })?;
-    sandbox::ensure_empty_container_root(data_root, &container_id, &dest_root)
+    sandbox::ensure_empty_container_root(data_root, mode, &container_id, &dest_root)
         .await
         .context("preparing disk-isolated workspace root")?;
-    copy::stream_dir_to_container(data_root, &container_id, &copy_root, &dest_root)
+    copy::stream_dir_to_container(data_root, mode, &container_id, &copy_root, &dest_root)
         .await
         .context("streaming host copy into disk-isolated workspace root")?;
-    sandbox::best_effort_make_user_writable(data_root, &container_id, &dest_root).await?;
-    sandbox::verify_container_git_repo(data_root, &container_id, &dest_root)
+    sandbox::best_effort_make_user_writable(data_root, mode, &container_id, &dest_root).await?;
+    sandbox::verify_container_git_repo(data_root, mode, &container_id, &dest_root)
         .await
         .context("verifying seeded disk-isolated workspace root")?;
     Ok(dest_root)
@@ -193,6 +212,8 @@ mod tests {
     use super::*;
     use std::fs;
     use uuid::Uuid;
+    use ctx_sandbox_container_runtime::sandbox_cli_env_test_lock;
+    use ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT;
 
     struct EnvGuard {
         key: &'static str,
@@ -219,9 +240,7 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_workspace_root_from_host_copy_fails_when_host_workspace_is_missing() {
-        let _env_lock = crate::test_support::sandbox_cli_env_test_lock()
-            .lock()
-            .await;
+        let _env_lock = sandbox_cli_env_test_lock().lock().await;
         let temp = tempfile::tempdir().expect("tempdir");
         let log_path = temp.path().join("sandbox-cli.log");
         let cli_path = temp.path().join("fake-sandbox-cli.sh");
@@ -255,9 +274,13 @@ mod tests {
             vcs_kind: Some(ctx_core::models::VcsKind::Git),
         };
 
-        let err = ensure_workspace_root_from_host_copy(temp.path(), &workspace)
-            .await
-            .expect_err("missing host workspace should fail");
+        let err = ensure_workspace_root_from_host_copy(
+            temp.path(),
+            &ctx_sandbox_container_runtime::SandboxCommandMode::NativeContainer,
+            &workspace,
+        )
+        .await
+        .expect_err("missing host workspace should fail");
         assert!(format!("{err:#}").contains("host workspace root is unavailable"));
 
         let log = fs::read_to_string(&log_path).unwrap_or_default();
@@ -272,9 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_worktree_from_host_copy_preflights_against_workspace_volume_root() {
-        let _env_lock = crate::test_support::sandbox_cli_env_test_lock()
-            .lock()
-            .await;
+        let _env_lock = sandbox_cli_env_test_lock().lock().await;
         let temp = tempfile::tempdir().expect("tempdir");
         let log_path = temp.path().join("sandbox-cli.log");
         let cli_path = temp.path().join("fake-sandbox-cli.sh");
@@ -304,9 +325,48 @@ mod tests {
         fs::write(src.join(".git").join("HEAD"), "ref: refs/heads/main\n").expect("write git head");
 
         let _cli = EnvGuard::set("CTX_HARNESS_SANDBOX_CLI_PATH", &cli_path);
+        let expected_container_id = container_id.clone();
+        let _storage_override = set_test_preflight_storage_samples_override(std::sync::Arc::new(
+            move |data_root,
+                  mode,
+                  observed_container_id,
+                  _estimated_copy_bytes,
+                  destination_probe_root,
+                  operation,
+                  required_bytes| {
+                assert!(matches!(
+                    mode,
+                    ctx_sandbox_container_runtime::SandboxCommandMode::NativeContainer
+                ));
+                assert_eq!(observed_container_id, expected_container_id);
+                assert_eq!(
+                    operation,
+                    StorageAdmissionOperation::DiskIsolatedWorktreeMaterialization
+                );
+                assert_eq!(destination_probe_root, Path::new(CTX_CONTAINER_WORKSPACE_ROOT));
+                let total_bytes = required_bytes.saturating_add(2 * 1024 * 1024 * 1024);
+                Ok((
+                    ctx_storage_admission::StorageAdmissionSample {
+                        label: "CTX data root".to_string(),
+                        path: data_root.to_string_lossy().to_string(),
+                        mount_point: "/".to_string(),
+                        free_bytes: required_bytes.saturating_add(1024),
+                        total_bytes,
+                    },
+                    ctx_storage_admission::StorageAdmissionSample {
+                        label: "sandbox workspace volume".to_string(),
+                        path: destination_probe_root.to_string_lossy().to_string(),
+                        mount_point: CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+                        free_bytes: required_bytes.saturating_add(1024),
+                        total_bytes,
+                    },
+                ))
+            },
+        ));
 
         let dest_root = ensure_worktree_from_host_copy(
             temp.path(),
+            &ctx_sandbox_container_runtime::SandboxCommandMode::NativeContainer,
             workspace_id,
             worktree_id,
             &src,
@@ -318,12 +378,6 @@ mod tests {
         assert_eq!(dest_root, container_worktree_root(worktree_id));
 
         let log = fs::read_to_string(&log_path).expect("read sandbox cli log");
-        assert!(
-            log.contains(&format!(
-                "exec --interactive {container_id} df -Pk -- /ctx/ws"
-            )),
-            "preflight should query the stable workspace volume root: {log}"
-        );
         assert!(
             !log.contains(&format!(
                 "exec --interactive {container_id} df -Pk -- /ctx/ws/worktrees"

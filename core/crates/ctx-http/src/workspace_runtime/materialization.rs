@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use ctx_core::ids::SandboxInstanceId;
 use ctx_core::models::{sandbox_instance_id_for_workspace, Workspace, Worktree};
-use ctx_fs::worktrees::standaloneize_worktree_git_dir;
+use ctx_sandbox_materialization::ensure_worktree_from_host_copy;
 
 use crate::daemon::AppState;
 use crate::settings::{ContainerMountMode, ExecutionMode, ExecutionSettings};
@@ -33,15 +33,6 @@ pub(crate) async fn materialize_sandbox_worktree(
     {
         return Ok(None);
     }
-
-    standaloneize_worktree_git_dir(canonical_root)
-        .await
-        .with_context(|| {
-            format!(
-                "stabilizing sandbox worktree git metadata at {}",
-                canonical_root.display()
-            )
-        })?;
 
     state
         .execution
@@ -77,8 +68,10 @@ pub(crate) async fn materialize_sandbox_worktree(
     let host_source_root = host_materialization_root
         .as_deref()
         .unwrap_or(canonical_root);
-    let live_worktree_root = crate::disk_isolated::ensure_worktree_from_host_copy(
+    let sandbox_mode = super::selected_sandbox_command_mode(&state.core.data_root)?;
+    let live_worktree_root = ensure_worktree_from_host_copy(
         &state.core.data_root,
+        &sandbox_mode,
         workspace.id,
         worktree.id,
         host_source_root,

@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use tempfile::TempDir;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+use ctx_sandbox_container_runtime::{sandbox_container_command, SandboxCommandMode};
 
 fn collect_tree_size_bytes(root: &Path) -> Result<u64> {
     fn recurse(path: &Path) -> Result<u64> {
@@ -95,11 +96,12 @@ fn host_tar_stream_command(src_root: &Path) -> Result<Option<Command>> {
 
 pub(super) async fn stream_dir_to_container(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     container_id: &str,
     src_root: &Path,
     dest_root: &Path,
 ) -> Result<()> {
-    let mut sandbox_cmd = crate::workspace_runtime::sandbox_container_command(data_root)?;
+    let mut sandbox_cmd = sandbox_container_command(data_root, mode)?;
     sandbox_cmd
         .arg("exec")
         .arg("--interactive")
@@ -304,6 +306,7 @@ pub(super) async fn prepare_self_contained_copy_root(
 mod tests {
     use super::*;
     use std::fs;
+    use ctx_sandbox_container_runtime::sandbox_cli_env_test_lock;
 
     struct EnvGuard {
         key: &'static str,
@@ -423,9 +426,7 @@ mod tests {
 
     #[tokio::test]
     async fn stream_dir_to_container_uses_tar_exec_instead_of_container_cp() {
-        let _env_lock = crate::test_support::sandbox_cli_env_test_lock()
-            .lock()
-            .await;
+        let _env_lock = sandbox_cli_env_test_lock().lock().await;
         let temp = tempfile::tempdir().expect("tempdir");
         let log_path = temp.path().join("sandbox-cli.log");
         let cli_path = temp.path().join("fake-sandbox-cli.sh");
@@ -453,9 +454,15 @@ mod tests {
 
         let _cli = EnvGuard::set("CTX_HARNESS_SANDBOX_CLI_PATH", &cli_path);
 
-        stream_dir_to_container(temp.path(), "ctx-harness-test", &src, Path::new("/ctx/ws"))
-            .await
-            .expect("stream dir to container");
+        stream_dir_to_container(
+            temp.path(),
+            &ctx_sandbox_container_runtime::SandboxCommandMode::NativeContainer,
+            "ctx-harness-test",
+            &src,
+            Path::new("/ctx/ws"),
+        )
+        .await
+        .expect("stream dir to container");
 
         let log = fs::read_to_string(&log_path).expect("read sandbox cli log");
         assert!(log.contains("exec --interactive --workdir /ctx/ws ctx-harness-test tar -xf -"));

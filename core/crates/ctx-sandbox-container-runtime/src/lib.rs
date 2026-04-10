@@ -76,8 +76,7 @@ pub(crate) async fn sha256_hex_file(path: &Path) -> Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-#[cfg(test)]
-pub(crate) fn sandbox_cli_env_test_lock() -> &'static tokio::sync::Mutex<()> {
+pub fn sandbox_cli_env_test_lock() -> &'static tokio::sync::Mutex<()> {
     use std::sync::OnceLock;
 
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();

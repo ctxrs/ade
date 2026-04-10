@@ -2,8 +2,13 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-
-use crate::storage_guard::{self, StorageAdmissionOperation, StorageAdmissionSample};
+use ctx_sandbox_container_runtime::{
+    command_output_with_timeout, sandbox_container_command, SandboxCommandMode,
+};
+use ctx_storage_admission::{
+    check_storage_admission, storage_admission_required_bytes, StorageAdmissionOperation,
+    StorageAdmissionSample,
+};
 
 const DISK_ISOLATED_COPY_OVERHEAD_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -69,12 +74,13 @@ fn parse_df_pk_output(output: &str, label: &str, path: &Path) -> Result<StorageA
 
 async fn sandbox_storage_sample(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     container_id: &str,
     path: &Path,
     label: &str,
 ) -> Result<StorageAdmissionSample> {
     const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
-    let mut cmd = crate::workspace_runtime::sandbox_container_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")
         .arg("--interactive")
         .arg(container_id)
@@ -82,7 +88,7 @@ async fn sandbox_storage_sample(
         .arg("-Pk")
         .arg("--")
         .arg(path);
-    let out = crate::workspace_runtime::command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
+    let out = command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
         .await
         .with_context(|| format!("querying sandbox free space for {}", path.display()))?;
     if !out.status.success() {
@@ -96,9 +102,9 @@ async fn sandbox_storage_sample(
     parse_df_pk_output(String::from_utf8_lossy(&out.stdout).trim(), label, path)
 }
 
-#[cfg(test)]
 type TestPreflightStorageSamplesFn = dyn Fn(
         &Path,
+        &SandboxCommandMode,
         &str,
         u64,
         &Path,
@@ -109,7 +115,6 @@ type TestPreflightStorageSamplesFn = dyn Fn(
     + Sync
     + 'static;
 
-#[cfg(test)]
 fn test_preflight_storage_samples_override(
 ) -> &'static std::sync::Mutex<Option<std::sync::Arc<TestPreflightStorageSamplesFn>>> {
     static OVERRIDE: std::sync::OnceLock<
@@ -118,10 +123,8 @@ fn test_preflight_storage_samples_override(
     OVERRIDE.get_or_init(|| std::sync::Mutex::new(None))
 }
 
-#[cfg(test)]
-pub(crate) struct TestPreflightStorageSamplesOverrideGuard;
+pub struct TestPreflightStorageSamplesOverrideGuard;
 
-#[cfg(test)]
 impl Drop for TestPreflightStorageSamplesOverrideGuard {
     fn drop(&mut self) {
         let mut slot = test_preflight_storage_samples_override()
@@ -131,8 +134,7 @@ impl Drop for TestPreflightStorageSamplesOverrideGuard {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn set_test_preflight_storage_samples_override(
+pub fn set_test_preflight_storage_samples_override(
     override_fn: std::sync::Arc<TestPreflightStorageSamplesFn>,
 ) -> TestPreflightStorageSamplesOverrideGuard {
     let mut slot = test_preflight_storage_samples_override()
@@ -146,9 +148,9 @@ pub(crate) fn set_test_preflight_storage_samples_override(
     TestPreflightStorageSamplesOverrideGuard
 }
 
-#[cfg(test)]
 fn maybe_test_preflight_storage_samples(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     container_id: &str,
     estimated_copy_bytes: u64,
     destination_probe_root: &Path,
@@ -162,6 +164,7 @@ fn maybe_test_preflight_storage_samples(
     match override_fn {
         Some(override_fn) => override_fn(
             data_root,
+            mode,
             container_id,
             estimated_copy_bytes,
             destination_probe_root,
@@ -175,52 +178,39 @@ fn maybe_test_preflight_storage_samples(
 
 pub(super) async fn preflight_disk_isolated_copy(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     container_id: &str,
     estimated_copy_bytes: u64,
     destination_probe_root: &Path,
     operation: StorageAdmissionOperation,
 ) -> Result<()> {
-    let required_bytes = storage_guard::storage_admission_required_bytes(
+    let required_bytes = storage_admission_required_bytes(
         disk_isolated_copy_budget_bytes(estimated_copy_bytes),
     );
-    let (host_sample, sandbox_sample) = {
-        #[cfg(test)]
-        if let Some(samples) = maybe_test_preflight_storage_samples(
-            data_root,
-            container_id,
-            estimated_copy_bytes,
-            destination_probe_root,
-            operation,
-            required_bytes,
-        )? {
-            samples
-        } else {
-            (
-                host_storage_sample(data_root, "CTX data root")?,
-                sandbox_storage_sample(
-                    data_root,
-                    container_id,
-                    destination_probe_root,
-                    "sandbox workspace volume",
-                )
-                .await?,
+    let (host_sample, sandbox_sample) = if let Some(samples) = maybe_test_preflight_storage_samples(
+        data_root,
+        mode,
+        container_id,
+        estimated_copy_bytes,
+        destination_probe_root,
+        operation,
+        required_bytes,
+    )? {
+        samples
+    } else {
+        (
+            host_storage_sample(data_root, "CTX data root")?,
+            sandbox_storage_sample(
+                data_root,
+                mode,
+                container_id,
+                destination_probe_root,
+                "sandbox workspace volume",
             )
-        }
-        #[cfg(not(test))]
-        {
-            (
-                host_storage_sample(data_root, "CTX data root")?,
-                sandbox_storage_sample(
-                    data_root,
-                    container_id,
-                    destination_probe_root,
-                    "sandbox workspace volume",
-                )
-                .await?,
-            )
-        }
+            .await?,
+        )
     };
-    storage_guard::check_storage_admission(
+    check_storage_admission(
         operation,
         required_bytes,
         &[host_sample.clone(), sandbox_sample.clone()],
@@ -282,10 +272,10 @@ mod tests {
 
     #[test]
     fn disk_isolated_storage_admission_denial_mentions_task_worktree() {
-        let required_bytes = storage_guard::storage_admission_required_bytes(
+        let required_bytes = storage_admission_required_bytes(
             disk_isolated_copy_budget_bytes(512 * 1024 * 1024),
         );
-        let err = storage_guard::check_storage_admission(
+        let err = check_storage_admission(
             StorageAdmissionOperation::DiskIsolatedWorktreeMaterialization,
             required_bytes,
             &[

@@ -4,6 +4,7 @@ const AGENT_GATE_CRATES = [
   "ctx-avf-linux-runtime",
   "ctx-bundled-assets",
   "ctx-core",
+  "ctx-fs",
   "ctx-harness-setup",
   "ctx-harness-sources",
   "ctx-http",
@@ -16,7 +17,9 @@ const AGENT_GATE_CRATES = [
   "ctx-runtime-assets",
   "ctx-sandbox-contract",
   "ctx-sandbox-container-runtime",
+  "ctx-sandbox-materialization",
   "ctx-store",
+  "ctx-storage-admission",
   "ctx-worktree-data-plane",
   "ctx-workspace-active-snapshot",
 ];

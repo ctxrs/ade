@@ -190,7 +190,7 @@ async fn archive_task_only_dematerializes_sandbox_state() {
             guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
             profile: SandboxProfile::Standard,
             live_workspace_root: crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
-            live_worktree_root: crate::disk_isolated::container_worktree_root(worktree.id)
+            live_worktree_root: ctx_sandbox_contract::container_worktree_root(worktree.id)
                 .to_string_lossy()
                 .to_string(),
             execution_settings_json: None,
@@ -336,7 +336,7 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
             guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
             profile: SandboxProfile::Standard,
             live_workspace_root: crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
-            live_worktree_root: crate::disk_isolated::container_worktree_root(worktree.id)
+            live_worktree_root: ctx_sandbox_contract::container_worktree_root(worktree.id)
                 .to_string_lossy()
                 .to_string(),
             execution_settings_json: Some(
@@ -505,7 +505,7 @@ async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {
             guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
             profile: SandboxProfile::Standard,
             live_workspace_root: crate::workspace_runtime::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
-            live_worktree_root: crate::disk_isolated::container_worktree_root(worktree.id)
+            live_worktree_root: ctx_sandbox_contract::container_worktree_root(worktree.id)
                 .to_string_lossy()
                 .to_string(),
             execution_settings_json: Some(

@@ -2,15 +2,19 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use ctx_sandbox_container_runtime::{
+    command_output_with_timeout, sandbox_container_command, SandboxCommandMode,
+};
 
 const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub(super) async fn remove_live_worktree_root(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     container_id: &str,
     live_worktree_root: &Path,
 ) -> Result<()> {
-    let mut cmd = crate::workspace_runtime::sandbox_container_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")
         .arg("--interactive")
         .arg(container_id)
@@ -18,7 +22,7 @@ pub(super) async fn remove_live_worktree_root(
         .arg("-rf")
         .arg("--")
         .arg(live_worktree_root);
-    let out = crate::workspace_runtime::command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
+    let out = command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
         .await
         .context("sandbox exec rm -rf disk-isolated worktree")?;
     if !out.status.success() {
@@ -34,10 +38,11 @@ pub(super) async fn remove_live_worktree_root(
 
 pub(super) async fn verify_container_git_repo(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     container_id: &str,
     worktree_root: &Path,
 ) -> Result<()> {
-    let mut cmd = crate::workspace_runtime::sandbox_container_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")
         .arg("--interactive")
         .arg("--workdir")
@@ -46,7 +51,7 @@ pub(super) async fn verify_container_git_repo(
         .arg("sh")
         .arg("-lc")
         .arg("git rev-parse --is-inside-work-tree && git rev-parse HEAD >/dev/null");
-    let out = crate::workspace_runtime::command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
+    let out = command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
         .await
         .context("sandbox exec git repo verification")?;
     if !out.status.success() {
@@ -70,10 +75,11 @@ pub(super) async fn verify_container_git_repo(
 
 pub(super) async fn ensure_directory(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     container_id: &str,
     dest_root: &Path,
 ) -> Result<()> {
-    let mut cmd = crate::workspace_runtime::sandbox_container_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")
         .arg("--interactive")
         .arg(container_id)
@@ -81,7 +87,7 @@ pub(super) async fn ensure_directory(
         .arg("-p")
         .arg("--")
         .arg(dest_root);
-    let out = crate::workspace_runtime::command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
+    let out = command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
         .await
         .context("sandbox exec mkdir")?;
     if !out.status.success() {
@@ -96,10 +102,11 @@ pub(super) async fn ensure_directory(
 
 pub(super) async fn ensure_empty_container_root(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     container_id: &str,
     dest_root: &Path,
 ) -> Result<()> {
-    let mut normalize = crate::workspace_runtime::sandbox_container_command(data_root)?;
+    let mut normalize = sandbox_container_command(data_root, mode)?;
     normalize
         .arg("exec")
         .arg("--interactive")
@@ -111,7 +118,7 @@ pub(super) async fn ensure_empty_container_root(
         .arg(r#"mkdir -p -- "$1" && chmod 0777 "$1""#)
         .arg("sh")
         .arg(dest_root);
-    let out = crate::workspace_runtime::command_output_with_timeout(normalize, SANDBOX_EXEC_TIMEOUT)
+    let out = command_output_with_timeout(normalize, SANDBOX_EXEC_TIMEOUT)
         .await
         .context("sandbox exec normalize disk-isolated root")?;
     if !out.status.success() {
@@ -123,7 +130,7 @@ pub(super) async fn ensure_empty_container_root(
         );
     }
 
-    let mut clear = crate::workspace_runtime::sandbox_container_command(data_root)?;
+    let mut clear = sandbox_container_command(data_root, mode)?;
     clear
         .arg("exec")
         .arg("--interactive")
@@ -135,7 +142,7 @@ pub(super) async fn ensure_empty_container_root(
         .arg(r#"find "$1" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +"#)
         .arg("sh")
         .arg(dest_root);
-    let out = crate::workspace_runtime::command_output_with_timeout(clear, SANDBOX_EXEC_TIMEOUT)
+    let out = command_output_with_timeout(clear, SANDBOX_EXEC_TIMEOUT)
         .await
         .context("sandbox exec clear disk-isolated root")?;
     if !out.status.success() {
@@ -147,13 +154,13 @@ pub(super) async fn ensure_empty_container_root(
         );
     }
 
-    let uid = resolve_container_exec_id(data_root, container_id, "-u")
+    let uid = resolve_container_exec_id(data_root, mode, container_id, "-u")
         .await
         .context("resolving sandbox exec uid for disk-isolated root")?;
-    let gid = resolve_container_exec_id(data_root, container_id, "-g")
+    let gid = resolve_container_exec_id(data_root, mode, container_id, "-g")
         .await
         .context("resolving sandbox exec gid for disk-isolated root")?;
-    let mut chown = crate::workspace_runtime::sandbox_container_command(data_root)?;
+    let mut chown = sandbox_container_command(data_root, mode)?;
     chown
         .arg("exec")
         .arg("--interactive")
@@ -163,7 +170,7 @@ pub(super) async fn ensure_empty_container_root(
         .arg("chown")
         .arg(format!("{uid}:{gid}"))
         .arg(dest_root);
-    let out = crate::workspace_runtime::command_output_with_timeout(chown, SANDBOX_EXEC_TIMEOUT)
+    let out = command_output_with_timeout(chown, SANDBOX_EXEC_TIMEOUT)
         .await
         .context("sandbox exec chown disk-isolated root")?;
     if !out.status.success() {
@@ -182,10 +189,11 @@ pub(super) async fn ensure_empty_container_root(
 
 pub(super) async fn best_effort_make_user_writable(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     container_id: &str,
     dest_root: &Path,
 ) -> Result<()> {
-    let mut chmod = crate::workspace_runtime::sandbox_container_command(data_root)?;
+    let mut chmod = sandbox_container_command(data_root, mode)?;
     chmod
         .arg("exec")
         .arg("--interactive")
@@ -195,18 +203,19 @@ pub(super) async fn best_effort_make_user_writable(
         .arg("sh")
         .arg("-lc")
         .arg("chmod -R u+rwX . >/dev/null 2>&1 || true");
-    let _ = crate::workspace_runtime::command_output_with_timeout(chmod, SANDBOX_EXEC_TIMEOUT).await;
+    let _ = command_output_with_timeout(chmod, SANDBOX_EXEC_TIMEOUT).await;
     Ok(())
 }
 
 pub(super) async fn checkout_branch_at_base(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     container_id: &str,
     dest_root: &Path,
     branch_name: &str,
     base_commit_sha: &str,
 ) -> Result<()> {
-    let mut cmd = crate::workspace_runtime::sandbox_container_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")
         .arg("--interactive")
         .arg("--workdir")
@@ -217,7 +226,7 @@ pub(super) async fn checkout_branch_at_base(
         .arg("-B")
         .arg(branch_name)
         .arg(base_commit_sha);
-    let out = crate::workspace_runtime::command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
+    let out = command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
         .await
         .context("sandbox exec git checkout")?;
     if !out.status.success() {
@@ -232,16 +241,17 @@ pub(super) async fn checkout_branch_at_base(
 
 async fn resolve_container_exec_id(
     data_root: &Path,
+    mode: &SandboxCommandMode,
     container_id: &str,
     id_flag: &str,
 ) -> Result<u32> {
-    let mut cmd = crate::workspace_runtime::sandbox_container_command(data_root)?;
+    let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")
         .arg("--interactive")
         .arg(container_id)
         .arg("id")
         .arg(id_flag);
-    let out = crate::workspace_runtime::command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
+    let out = command_output_with_timeout(cmd, SANDBOX_EXEC_TIMEOUT)
         .await
         .with_context(|| format!("sandbox exec id {id_flag}"))?;
     if !out.status.success() {

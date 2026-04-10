@@ -3,13 +3,12 @@ use super::{
     resolve_terminal_host_root,
 };
 use crate::daemon::AppState;
-use crate::disk_isolated;
 use crate::settings::ExecutionMode;
 use crate::workspace_runtime::{CONTAINER_TERMINAL_HOME, CONTAINER_TERMINAL_USER};
 use chrono::Utc;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{VcsKind, Workspace, Worktree};
-use ctx_sandbox_contract::sandbox_worktree_root;
+use ctx_sandbox_contract::{container_worktree_root, sandbox_worktree_root};
 use ctx_store::StoreManager;
 use ctx_worktree_data_plane::WorktreeDataPlane;
 use std::path::PathBuf;
@@ -81,7 +80,7 @@ fn sandbox_worktree_root_maps_managed_host_worktree_to_container_root() {
 
     assert_eq!(
         sandbox_worktree_root(&workspace, &worktree),
-        disk_isolated::container_worktree_root(worktree_id)
+        container_worktree_root(worktree_id)
     );
 }
 
@@ -107,7 +106,7 @@ fn resolve_container_terminal_cwd_maps_host_subdir_into_managed_container_worktr
 
     assert_eq!(
         cwd,
-        disk_isolated::container_worktree_root(worktree_id).join("src/bin")
+        container_worktree_root(worktree_id).join("src/bin")
     );
 }
 

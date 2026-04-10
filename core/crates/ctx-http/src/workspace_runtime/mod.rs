@@ -149,7 +149,7 @@ fn explicit_sandbox_cli_override_path() -> Option<PathBuf> {
     if path.exists() { Some(path) } else { None }
 }
 
-fn selected_sandbox_command_mode(data_root: &Path) -> Result<SandboxCommandMode> {
+pub(crate) fn selected_sandbox_command_mode(data_root: &Path) -> Result<SandboxCommandMode> {
     if explicit_sandbox_cli_override_path().is_some() {
         return Ok(SandboxCommandMode::NativeContainer);
     }

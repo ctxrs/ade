@@ -12,9 +12,12 @@ use crate::settings::{
     ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind,
     ExecutionMode, ExecutionSettings, Settings,
 };
-use crate::storage_guard::{StorageAdmissionOperation, StorageAdmissionSample, StorageGuardStatus};
 use ctx_core::models::VcsKind;
+use ctx_sandbox_materialization::set_test_preflight_storage_samples_override;
 use ctx_store::StoreManager;
+use ctx_storage_admission::{StorageAdmissionOperation, StorageAdmissionSample};
+
+use crate::storage_guard::StorageGuardStatus;
 
 fn git(args: &[&str], cwd: &Path) {
     let status = std::process::Command::new("git")
@@ -161,8 +164,9 @@ async fn create_task_rejects_before_disk_isolated_copy_when_host_reserve_is_unre
     let app = crate::api::router(Arc::clone(&state));
     let workspace_id = workspace.id;
     let _storage_override =
-        crate::disk_isolated::set_test_preflight_storage_samples_override(Arc::new(
+        set_test_preflight_storage_samples_override(Arc::new(
             move |data_root,
+                  _mode,
                   container_id,
                   _estimated_copy_bytes,
                   destination_probe_root,

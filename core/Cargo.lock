@@ -1545,6 +1545,8 @@ dependencies = [
  "ctx-runtime-assets",
  "ctx-sandbox-container-runtime",
  "ctx-sandbox-contract",
+ "ctx-sandbox-materialization",
+ "ctx-storage-admission",
  "ctx-store",
  "ctx-worker-protocol",
  "ctx-workspace-active-snapshot",
@@ -1776,6 +1778,31 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "ctx-sandbox-materialization"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "ctx-core",
+ "ctx-fs",
+ "ctx-sandbox-container-runtime",
+ "ctx-sandbox-contract",
+ "ctx-storage-admission",
+ "fs2",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "ctx-storage-admission"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

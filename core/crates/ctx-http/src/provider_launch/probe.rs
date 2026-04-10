@@ -295,13 +295,19 @@ async fn provider_context_for_workspace_runtime(
         .map_err(|err| {
             logs::redact_sensitive(&format!("probe runtime preparation failed: {err:#}"))
         })?;
-    crate::disk_isolated::ensure_workspace_root_from_host_copy(&state.core.data_root, workspace)
-        .await
-        .map_err(|err| {
-            logs::redact_sensitive(&format!(
-                "sandbox workspace root materialization failed: {err:#}"
-            ))
-        })?;
+    let sandbox_mode = crate::workspace_runtime::selected_sandbox_command_mode(&state.core.data_root)
+        .map_err(|err| logs::redact_sensitive(&format!("sandbox command selection failed: {err:#}")))?;
+    ctx_sandbox_materialization::ensure_workspace_root_from_host_copy(
+        &state.core.data_root,
+        &sandbox_mode,
+        workspace,
+    )
+    .await
+    .map_err(|err| {
+        logs::redact_sensitive(&format!(
+            "sandbox workspace root materialization failed: {err:#}"
+        ))
+    })?;
     let runtime_root = runtime_plan
         .env_overrides
         .get("CTX_DATA_ROOT")
@@ -436,11 +442,11 @@ mod tests {
     use ctx_core::ids::{WorkspaceId, WorktreeId};
     use ctx_core::models::{Workspace, Worktree};
     use ctx_fs::worktrees::managed_worktree_path;
+    use ctx_sandbox_contract::container_worktree_root;
     use ctx_store::StoreManager;
     use uuid::Uuid;
 
     use crate::daemon::AppState;
-    use crate::disk_isolated;
     use crate::settings::{ContainerMountMode, ExecutionMode};
     use ctx_harness_sources::{HarnessSourceKind, ResolvedHarnessSource};
     use ctx_provider_accounts as provider_accounts;
@@ -782,7 +788,7 @@ mod tests {
             workspace: workspace.clone(),
             execution_mode: ExecutionMode::Sandbox,
             live_workspace_root: PathBuf::from("/ctx/ws"),
-            live_worktree_root: disk_isolated::container_worktree_root(worktree_id),
+            live_worktree_root: container_worktree_root(worktree_id),
         };
 
         let cwd = probe_cwd_for_workspace_runtime(
@@ -792,7 +798,7 @@ mod tests {
             ContainerMountMode::DiskIsolated,
         );
 
-        assert_eq!(cwd, disk_isolated::container_worktree_root(worktree_id));
+        assert_eq!(cwd, container_worktree_root(worktree_id));
     }
 
     #[tokio::test]

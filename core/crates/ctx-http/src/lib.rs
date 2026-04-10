@@ -7,7 +7,6 @@ pub mod container_builder;
 pub mod container_fs;
 pub mod daemon;
 pub mod dictation_livekit;
-pub mod disk_isolated;
 pub mod edit_plans;
 pub mod execution_effective;
 pub mod execution_setup;

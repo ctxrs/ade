@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -12,6 +11,11 @@ use serde_json::json;
 use tokio::sync::Mutex;
 
 use ctx_core::ids::SessionId;
+use ctx_storage_admission::StorageAdmissionPathStatus;
+#[cfg(test)]
+use ctx_storage_admission::{
+    check_storage_admission, StorageAdmissionOperation, StorageAdmissionSample,
+};
 
 use crate::daemon::AppState;
 use crate::ops_events::OpsEvent;
@@ -35,14 +39,7 @@ pub enum StorageGuardLevel {
     Emergency,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct StorageGuardPathStatus {
-    pub label: String,
-    pub path: String,
-    pub mount_point: String,
-    pub free_bytes: u64,
-    pub total_bytes: u64,
-}
+pub type StorageGuardPathStatus = StorageAdmissionPathStatus;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct StorageGuardStatus {
@@ -54,64 +51,6 @@ pub struct StorageGuardStatus {
     pub active: Option<StorageGuardPathStatus>,
     pub updated_at: String,
 }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StorageAdmissionOperation {
-    DiskIsolatedWorktreeMaterialization,
-    DiskIsolatedWorkspaceMaterialization,
-}
-
-impl StorageAdmissionOperation {
-    fn action_label(self) -> &'static str {
-        match self {
-            Self::DiskIsolatedWorktreeMaterialization => "creating an isolated task worktree",
-            Self::DiskIsolatedWorkspaceMaterialization => "creating an isolated workspace copy",
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StorageAdmissionSample {
-    pub label: String,
-    pub path: String,
-    pub mount_point: String,
-    pub free_bytes: u64,
-    pub total_bytes: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StorageAdmissionFailure {
-    operation: StorageAdmissionOperation,
-    required_bytes: u64,
-    active: StorageGuardPathStatus,
-}
-
-impl StorageAdmissionFailure {
-    pub fn operation(&self) -> StorageAdmissionOperation {
-        self.operation
-    }
-
-    pub fn required_bytes(&self) -> u64 {
-        self.required_bytes
-    }
-
-    pub fn active(&self) -> &StorageGuardPathStatus {
-        &self.active
-    }
-}
-
-impl fmt::Display for StorageAdmissionFailure {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            storage_admission_message(self.operation, self.required_bytes, &self.active)
-        )
-    }
-}
-
-impl std::error::Error for StorageAdmissionFailure {}
 
 impl Default for StorageGuardStatus {
     fn default() -> Self {
@@ -237,24 +176,6 @@ pub fn storage_emergency_message(active: Option<&StorageGuardPathStatus>) -> Str
     }
 }
 
-pub fn storage_admission_required_bytes(estimated_write_bytes: u64) -> u64 {
-    estimated_write_bytes.saturating_add(EMERGENCY_FREE_BYTES)
-}
-
-pub fn storage_admission_message(
-    operation: StorageAdmissionOperation,
-    required_bytes: u64,
-    active: &StorageGuardPathStatus,
-) -> String {
-    format!(
-        "Insufficient storage capacity for {} on {}. CTX needs {} free before starting this operation, but only {} is available. Free space, then retry.",
-        operation.action_label(),
-        format_path_label(active),
-        format_storage_bytes(required_bytes),
-        format_storage_bytes(active.free_bytes),
-    )
-}
-
 pub fn is_storage_exhaustion_error(message: &str) -> bool {
     let normalized = message.to_ascii_lowercase();
     normalized.contains("database or disk is full")
@@ -262,44 +183,6 @@ pub fn is_storage_exhaustion_error(message: &str) -> bool {
         || normalized.contains("sqlite_full")
         || normalized.contains("os error 28")
         || normalized.contains("insufficient storage capacity")
-}
-
-// Admission is based on bytes that are free right now. The storage reserve file is only released
-// later by the live guard once the system reaches Emergency on the reserve-backed mount.
-pub fn check_storage_admission(
-    operation: StorageAdmissionOperation,
-    required_bytes: u64,
-    samples: &[StorageAdmissionSample],
-) -> std::result::Result<(), StorageAdmissionFailure> {
-    let mut active: Option<StorageGuardPathStatus> = None;
-    for sample in samples {
-        let path = StorageGuardPathStatus {
-            label: sample.label.clone(),
-            path: sample.path.clone(),
-            mount_point: sample.mount_point.clone(),
-            free_bytes: sample.free_bytes,
-            total_bytes: sample.total_bytes,
-        };
-        let should_replace = active
-            .as_ref()
-            .map(|current| path.free_bytes < current.free_bytes)
-            .unwrap_or(true);
-        if should_replace {
-            active = Some(path);
-        }
-    }
-
-    let Some(active) = active else {
-        return Ok(());
-    };
-    if active.free_bytes >= required_bytes {
-        return Ok(());
-    }
-    Err(StorageAdmissionFailure {
-        operation,
-        required_bytes,
-        active,
-    })
 }
 
 pub async fn evaluate_storage_guard(
@@ -603,17 +486,6 @@ fn format_path_label(path: &StorageGuardPathStatus) -> String {
         return path.label.clone();
     }
     format!("{} ({})", path.label, path.mount_point)
-}
-
-fn format_storage_bytes(bytes: u64) -> String {
-    let value = bytes as f64;
-    if value >= GIB as f64 {
-        format!("{:.1} GiB", value / GIB as f64)
-    } else if value >= MIB as f64 {
-        format!("{:.1} MiB", value / MIB as f64)
-    } else {
-        format!("{bytes} B")
-    }
 }
 
 impl AppState {

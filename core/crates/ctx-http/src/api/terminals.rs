@@ -530,8 +530,20 @@ pub(super) async fn create_workspace_terminal(
                         )
                     })?;
                 if worktree.is_none() {
-                    crate::disk_isolated::ensure_workspace_root_from_host_copy(
+                    let sandbox_mode = workspace_runtime::selected_sandbox_command_mode(
                         &state.core.data_root,
+                    )
+                    .map_err(|err| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiErrorResp {
+                                error: err.to_string(),
+                            }),
+                        )
+                    })?;
+                    ctx_sandbox_materialization::ensure_workspace_root_from_host_copy(
+                        &state.core.data_root,
+                        &sandbox_mode,
                         &workspace,
                     )
                     .await
@@ -601,8 +613,20 @@ pub(super) async fn create_workspace_terminal(
                         })?;
                 }
                 if worktree.is_none() {
-                    crate::disk_isolated::ensure_workspace_root_from_host_copy(
+                    let sandbox_mode = workspace_runtime::selected_sandbox_command_mode(
                         &state.core.data_root,
+                    )
+                    .map_err(|err| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiErrorResp {
+                                error: err.to_string(),
+                            }),
+                        )
+                    })?;
+                    ctx_sandbox_materialization::ensure_workspace_root_from_host_copy(
+                        &state.core.data_root,
+                        &sandbox_mode,
                         &workspace,
                     )
                     .await
