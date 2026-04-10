@@ -89,7 +89,7 @@ impl Tier1CrpAdapter {
     }
 
     pub fn from_provider_runtime(id: &str, command: String, args: Vec<String>) -> Self {
-        Self::new(id, &command, args, false)
+        Self::new(id, &command, args, true)
     }
 
     pub fn from_raw_with_session_status(
@@ -287,6 +287,9 @@ impl ProviderAdapter for Tier1CrpAdapter {
         .await
         .map_err(|_| anyhow::anyhow!("timed out waiting for session model update"));
         drop(busy_guard);
+        self.pool
+            .drain_session_if_needed(&session_key, &session)
+            .await;
         self.pool.trigger_background_reap();
         result??;
         Ok(())
@@ -316,14 +319,18 @@ impl ProviderAdapter for Tier1CrpAdapter {
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty());
             session.opening.store(true, Ordering::SeqCst);
-            session
+            if let Err(err) = session
                 .process
                 .send(CrpCommand::SessionOpen {
                     session_id: Some(session_key.clone()),
                     provider_session_id,
                     config: Some(config),
                 })
-                .await?;
+                .await
+            {
+                session.opening.store(false, Ordering::SeqCst);
+                return Err(err);
+            }
         }
         session
             .process
@@ -340,7 +347,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
             let mut last_seq = 0u64;
             let mut tool_output_cache: HashMap<String, String> = HashMap::new();
             let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
-            loop {
+            'auth_forward: loop {
                 let now = tokio::time::Instant::now();
                 if now >= deadline {
                     break;
@@ -407,7 +414,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
                                 );
                                 for event in mapped.events {
                                     if event_sink.send(event).await.is_err() {
-                                        return;
+                                        break 'auth_forward;
                                     }
                                 }
                                 if auth_terminal_event {
@@ -444,7 +451,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
                                         .await
                                         .is_err()
                                     {
-                                        return;
+                                        break 'auth_forward;
                                     }
                                 }
                                 if let Some(message) = extract_auth_error_from_stderr_line(&line) {
@@ -468,7 +475,13 @@ impl ProviderAdapter for Tier1CrpAdapter {
                     }
                 }
             }
+            if !session_for_events.opened.load(Ordering::SeqCst) {
+                session_for_events.opening.store(false, Ordering::SeqCst);
+            }
             drop(_busy_guard);
+            pool_for_reap
+                .drain_session_if_needed(&auth_session_key, &session_for_events)
+                .await;
             pool_for_reap.trigger_background_reap();
         });
         Ok(())

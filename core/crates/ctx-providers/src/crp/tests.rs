@@ -595,6 +595,84 @@ async fn reap_idle_sessions_reaps_quiescent_live_session() -> Result<()> {
 }
 
 #[tokio::test]
+async fn provider_runtime_sessions_keep_status_probe_when_opened_metadata_omits_capability(
+) -> Result<()> {
+    let _env_lock = ENV_LOCK.lock().await;
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("provider-runtime-status-default.sh");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"session.open"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      printf '{"v":1,"seq":1,"channel":"control","type":"session.opened","session_id":"%s"}\n' "$session_id"
+      ;;
+    *'"type":"session.prompt"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      turn_id=$(printf '%s' "$line" | sed -n 's/.*"turn_id":"\([^"]*\)".*/\1/p')
+      printf '{"v":1,"seq":2,"channel":"control","type":"turn.completed","session_id":"%s","turn_id":"%s","status":"success"}\n' "$session_id" "$turn_id"
+      ;;
+    *'"type":"session.status"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      printf '{"v":1,"seq":3,"channel":"control","type":"session.notice","session_id":"%s","code":"session_status","severity":"info","details":{"quiescent":true}}\n' "$session_id"
+      ;;
+  esac
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_provider_runtime(
+        "codex",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let mut env = HashMap::new();
+    env.insert(
+        "CTX_SESSION_ID".to_string(),
+        "runtime-status-default".to_string(),
+    );
+
+    let (event_sink, _event_rx) = mpsc::channel(8);
+    let handle = adapter
+        .run(
+            TurnInput {
+                content: "ping".to_string(),
+                attachments: Vec::new(),
+                context_blocks: Vec::new(),
+                model_id: None,
+            },
+            workdir.clone(),
+            env,
+            event_sink,
+        )
+        .await?;
+    tokio::time::timeout(Duration::from_secs(5), handle.done)
+        .await
+        .context("prompt run should finish")??;
+
+    let stats = adapter
+        .pool
+        .reap_idle_sessions(immediate_sweep_config())
+        .await;
+    assert_eq!(
+        stats,
+        ProviderSessionSweepStats {
+            reaped: 1,
+            ..ProviderSessionSweepStats::default()
+        }
+    );
+    assert!(!adapter.has_live_session("runtime-status-default").await);
+    Ok(())
+}
+
+#[tokio::test]
 async fn reap_idle_sessions_reaps_unopened_session_without_status_probe() -> Result<()> {
     let tempdir = tempfile::tempdir()?;
     let workdir = tempdir.path().to_path_buf();
@@ -925,6 +1003,182 @@ done
 }
 
 #[tokio::test]
+async fn draining_model_update_session_shuts_down_after_completion() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("set-model-drain.sh");
+    let log_path = workdir.join("set-model-drain.log");
+    let model_seen_path = workdir.join("model-seen");
+    let allow_model_path = workdir.join("allow-model");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
+  case "$line" in
+    *'"type":"session.set_model"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      : > "$MODEL_SEEN_FILE"
+      while [ ! -f "$ALLOW_MODEL_FILE" ]; do
+        sleep 0.02
+      done
+      printf '{"v":1,"seq":1,"channel":"control","type":"session.notice","session_id":"%s","code":"session_model_updated","severity":"info","details":{"model_id":"amp-medium"}}\n' "$session_id"
+      ;;
+  esac
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "codex",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "draining-model-update";
+    let mut env = HashMap::new();
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "MODEL_SEEN_FILE".to_string(),
+        model_seen_path.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "ALLOW_MODEL_FILE".to_string(),
+        allow_model_path.to_string_lossy().to_string(),
+    );
+
+    let session = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &env)
+        .await?;
+    session.opened.store(true, Ordering::SeqCst);
+
+    let adapter_for_task = adapter.clone();
+    let set_model = tokio::spawn(async move {
+        adapter_for_task
+            .set_session_model(session_key.to_string(), "amp-medium".to_string())
+            .await
+    });
+
+    let started = Instant::now();
+    while !model_seen_path.exists() {
+        if started.elapsed() > Duration::from_secs(5) {
+            anyhow::bail!("timed out waiting for session.set_model");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    adapter.pool.restart_drain("test drain").await;
+    assert_eq!(adapter.pool.list_processes().await.len(), 1);
+
+    fs::write(&allow_model_path, "")?;
+    set_model.await??;
+
+    let shutdown_started = Instant::now();
+    while adapter.has_live_session(session_key).await {
+        if shutdown_started.elapsed() > Duration::from_secs(5) {
+            anyhow::bail!("timed out waiting for draining model-update session shutdown");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    assert!(adapter.pool.list_processes().await.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn canceled_prompt_clears_opening_and_reaps_unopened_session() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("opening-cancel.sh");
+    let log_path = workdir.join("opening-cancel.log");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "opening-cancel";
+    let mut env = HashMap::new();
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+
+    let (event_tx, _event_rx) = mpsc::channel(8);
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let request = CrpPromptRequest {
+        session_key: session_key.to_string(),
+        input: TurnInput {
+            content: "work".to_string(),
+            attachments: Vec::new(),
+            context_blocks: Vec::new(),
+            model_id: None,
+        },
+        workdir: workdir.clone(),
+        env: env.clone(),
+        event_sink: event_tx,
+        cancel_rx,
+    };
+
+    let pool = Arc::clone(&adapter.pool);
+    let prompt_task = tokio::spawn(async move { pool.prompt(request).await });
+
+    let started = Instant::now();
+    loop {
+        if let Ok(contents) = fs::read_to_string(&log_path) {
+            if contents.contains(r#""type":"session.open""#)
+                && contents.contains(r#""type":"session.prompt""#)
+            {
+                break;
+            }
+        }
+        if started.elapsed() > Duration::from_secs(5) {
+            anyhow::bail!("timed out waiting for startup commands");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    cancel_tx.send(()).expect("cancel signal should send");
+    let _ = tokio::time::timeout(Duration::from_secs(5), prompt_task)
+        .await
+        .context("timed out waiting for canceled prompt")??;
+
+    let stats = adapter
+        .pool
+        .reap_idle_sessions(immediate_sweep_config())
+        .await;
+
+    assert_eq!(
+        stats,
+        ProviderSessionSweepStats {
+            reaped: 1,
+            ..ProviderSessionSweepStats::default()
+        }
+    );
+    assert!(!adapter.has_live_session(session_key).await);
+    Ok(())
+}
+
+#[tokio::test]
 async fn completed_prompt_reaps_oldest_idle_session_in_background() -> Result<()> {
     let _env_lock = ENV_LOCK.lock().await;
     let _max_idle_guard = ScopedEnvVar::set("CTX_PROVIDER_WORKER_MAX_IDLE_SESSIONS", "1");
@@ -1076,6 +1330,99 @@ done
     assert!(!adapter.has_live_session("newest-quiescent").await);
 
     oldest.process.shutdown("test complete").await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn background_reap_runs_followup_sweep_for_sessions_that_finish_mid_sweep() -> Result<()> {
+    let _env_lock = ENV_LOCK.lock().await;
+    let _max_idle_guard = ScopedEnvVar::set("CTX_PROVIDER_WORKER_MAX_IDLE_SESSIONS", "0");
+
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("status-followup.sh");
+    let log_path = workdir.join("status-followup.log");
+    let first_status_seen_path = workdir.join("first-status-seen");
+    let allow_first_status_path = workdir.join("allow-first-status");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
+  case "$line" in
+    *'"type":"session.status"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      if [ "$session_id" = "first-idle" ]; then
+        : > "$FIRST_STATUS_SEEN_FILE"
+        while [ ! -f "$ALLOW_FIRST_STATUS_FILE" ]; do
+          sleep 0.02
+        done
+      fi
+      printf '{"v":1,"seq":1,"channel":"control","type":"session.notice","session_id":"%s","code":"session_status","severity":"info","details":{"quiescent":true}}\n' "$session_id"
+      ;;
+  esac
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "codex",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let mut env = HashMap::new();
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "FIRST_STATUS_SEEN_FILE".to_string(),
+        first_status_seen_path.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "ALLOW_FIRST_STATUS_FILE".to_string(),
+        allow_first_status_path.to_string_lossy().to_string(),
+    );
+
+    let first = adapter
+        .pool
+        .get_or_create_session("first-idle", &workdir, &env)
+        .await?;
+    first.opened.store(true, Ordering::SeqCst);
+
+    adapter.pool.trigger_background_reap();
+
+    let started = Instant::now();
+    while !first_status_seen_path.exists() {
+        if started.elapsed() > Duration::from_secs(5) {
+            anyhow::bail!("timed out waiting for first session.status probe");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let second = adapter
+        .pool
+        .get_or_create_session("second-idle", &workdir, &env)
+        .await?;
+    second.opened.store(true, Ordering::SeqCst);
+
+    adapter.pool.trigger_background_reap();
+    fs::write(&allow_first_status_path, "")?;
+
+    let drain_started = Instant::now();
+    while !adapter.pool.list_processes().await.is_empty() {
+        if drain_started.elapsed() > Duration::from_secs(5) {
+            anyhow::bail!("timed out waiting for queued background reaps");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    assert!(!adapter.has_live_session("first-idle").await);
+    assert!(!adapter.has_live_session("second-idle").await);
     Ok(())
 }
 

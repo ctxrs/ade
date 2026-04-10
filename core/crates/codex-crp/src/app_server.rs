@@ -28,10 +28,32 @@ pub enum AppServerInbound {
         params: Value,
     },
     Request {
-        id: i64,
+        id: AppServerRequestId,
         method: String,
         params: Value,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppServerRequestId {
+    Integer(i64),
+    String(String),
+}
+
+impl AppServerRequestId {
+    fn from_inbound_value(value: &Value) -> Option<Self> {
+        if let Some(id) = value.as_i64() {
+            return Some(Self::Integer(id));
+        }
+        value.as_str().map(|id| Self::String(id.to_string()))
+    }
+
+    fn json_value(&self) -> Value {
+        match self {
+            Self::Integer(id) => Value::from(*id),
+            Self::String(id) => Value::from(id.clone()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -50,6 +72,8 @@ pub struct ThreadLoadedListResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ThreadReadResponse {
     pub thread: ThreadStatusRef,
+    #[serde(default)]
+    pub turns: Vec<ThreadReadTurn>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -77,6 +101,15 @@ pub enum ThreadStatus {
 pub enum ThreadActiveFlag {
     WaitingOnApproval,
     WaitingOnUserInput,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadReadTurn {
+    #[serde(rename = "id")]
+    pub _id: String,
+    #[serde(default)]
+    pub items: Vec<ThreadItem>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -486,10 +519,10 @@ impl AppServerClient {
         .await
     }
 
-    pub async fn reject_request(&mut self, id: i64, message: String) -> Result<()> {
+    pub async fn reject_request(&mut self, id: AppServerRequestId, message: String) -> Result<()> {
         self.send_json(&json!({
             "jsonrpc": "2.0",
-            "id": id,
+            "id": id.json_value(),
             "error": {
                 "code": -32000,
                 "message": message,
@@ -537,23 +570,25 @@ async fn stdout_reader_task(
             continue;
         };
 
-        if let Some(id) = object.get("id").and_then(request_id_from_value) {
+        if let Some(id) = object.get("id") {
             if object.get("method").is_none() {
-                let pending_entry = pending.lock().await.remove(&id);
-                if let Some(pending_entry) = pending_entry {
-                    let result = if let Some(error) = object.get("error") {
-                        Err(anyhow!(
-                            "{}: {}",
-                            pending_entry.method,
-                            error
-                                .get("message")
-                                .and_then(Value::as_str)
-                                .unwrap_or("unknown app-server error")
-                        ))
-                    } else {
-                        Ok(object.get("result").cloned().unwrap_or(Value::Null))
-                    };
-                    let _ = pending_entry.respond_to.send(result);
+                if let Some(response_id) = response_id_from_value(id) {
+                    let pending_entry = pending.lock().await.remove(&response_id);
+                    if let Some(pending_entry) = pending_entry {
+                        let result = if let Some(error) = object.get("error") {
+                            Err(anyhow!(
+                                "{}: {}",
+                                pending_entry.method,
+                                error
+                                    .get("message")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("unknown app-server error")
+                            ))
+                        } else {
+                            Ok(object.get("result").cloned().unwrap_or(Value::Null))
+                        };
+                        let _ = pending_entry.respond_to.send(result);
+                    }
                 }
                 continue;
             }
@@ -564,7 +599,13 @@ async fn stdout_reader_task(
                 .unwrap_or("unknown")
                 .to_string();
             let params = object.get("params").cloned().unwrap_or(Value::Null);
-            let _ = inbound_tx.send(AppServerInbound::Request { id, method, params });
+            if let Some(request_id) = AppServerRequestId::from_inbound_value(id) {
+                let _ = inbound_tx.send(AppServerInbound::Request {
+                    id: request_id,
+                    method,
+                    params,
+                });
+            }
             continue;
         }
 
@@ -585,7 +626,7 @@ async fn stderr_reader_task(stderr: tokio::process::ChildStderr) {
     }
 }
 
-fn request_id_from_value(value: &Value) -> Option<i64> {
+fn response_id_from_value(value: &Value) -> Option<i64> {
     if let Some(id) = value.as_i64() {
         return Some(id);
     }
@@ -612,5 +653,39 @@ impl AppServerClient {
             child,
             next_id: 1,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{response_id_from_value, AppServerRequestId};
+    use serde_json::json;
+
+    #[test]
+    fn inbound_request_id_preserves_original_type() {
+        assert_eq!(
+            AppServerRequestId::from_inbound_value(&json!(42)),
+            Some(AppServerRequestId::Integer(42))
+        );
+        assert_eq!(
+            AppServerRequestId::from_inbound_value(&json!("request-42")),
+            Some(AppServerRequestId::String("request-42".to_string()))
+        );
+    }
+
+    #[test]
+    fn inbound_request_id_serializes_without_coercion() {
+        assert_eq!(AppServerRequestId::Integer(7).json_value(), json!(7));
+        assert_eq!(
+            AppServerRequestId::String("server-req".to_string()).json_value(),
+            json!("server-req")
+        );
+    }
+
+    #[test]
+    fn response_id_accepts_numeric_strings_only() {
+        assert_eq!(response_id_from_value(&json!(12)), Some(12));
+        assert_eq!(response_id_from_value(&json!("12")), Some(12));
+        assert_eq!(response_id_from_value(&json!("req-12")), None);
     }
 }

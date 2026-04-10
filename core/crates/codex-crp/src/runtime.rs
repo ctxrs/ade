@@ -4,8 +4,9 @@ mod tests;
 mod translate;
 
 use crate::app_server::{
-    AppServerClient, AppServerInbound, ModelListResponse, ThreadLoadedListResponse,
-    ThreadReadResponse, ThreadStartLikeResponse, ThreadStatus, TurnStartResponse,
+    AppServerClient, AppServerInbound, AppServerRequestId, ModelListResponse, ThreadItem,
+    ThreadLoadedListResponse, ThreadReadResponse, ThreadStartLikeResponse, ThreadStatus,
+    TurnStartResponse,
 };
 use crate::builtins::{
     build_app_server_config_overrides, build_current_model_id, build_model_infos,
@@ -171,6 +172,7 @@ struct AppServerSessionState {
     opened_commands: Vec<CrpCommandInfo>,
     opened_slash_commands: Vec<String>,
     turn_aliases: TurnAliasState,
+    thread_turns_available: bool,
 }
 
 enum RuntimeInput {
@@ -346,6 +348,7 @@ async fn handle_parsed_command(
             let (model, effort_override) = split_model_and_effort(&requested_model);
             let effort = effort_override.or(reasoning_effort);
             let requested_turn_id = turn_id.clone();
+            state.thread_turns_available = true;
 
             match state
                 .client
@@ -735,7 +738,9 @@ async fn open_session(
         build_app_server_config_overrides(&session_config),
     );
     let effort = session_effort(&session_config);
-    let (thread_response, thread_id) = if let Some(provider_session_id) = provider_session_id {
+    let (thread_response, thread_id, thread_turns_available) = if let Some(provider_session_id) =
+        provider_session_id
+    {
         match client
             .request::<ThreadStartLikeResponse>(
                 "thread/resume",
@@ -757,7 +762,7 @@ async fn open_session(
         {
             Ok(response) => {
                 let thread_id = response.thread.id.clone();
-                (response, thread_id)
+                (response, thread_id, true)
             }
             Err(err) => {
                 warn!(provider_session_id = %provider_session_id, ?err, "thread/resume failed; starting a new thread");
@@ -765,7 +770,7 @@ async fn open_session(
                     start_thread(&mut client, &session_config, developer_instructions, options)
                         .await?;
                 let thread_id = response.thread.id.clone();
-                (response, thread_id)
+                (response, thread_id, false)
             }
         }
     } else {
@@ -777,7 +782,7 @@ async fn open_session(
         )
         .await?;
         let thread_id = response.thread.id.clone();
-        (response, thread_id)
+        (response, thread_id, false)
     };
 
     let codex_home = resolve_codex_home();
@@ -794,6 +799,7 @@ async fn open_session(
         opened_commands,
         opened_slash_commands,
         turn_aliases: TurnAliasState::new(),
+        thread_turns_available,
     })
 }
 
@@ -831,15 +837,26 @@ async fn start_thread(
 fn build_session_status_details(
     root_thread_id: &str,
     active_turn_id: Option<String>,
-    thread_statuses: Vec<(String, ThreadStatus)>,
+    thread_statuses: Vec<ThreadStatusSnapshot>,
 ) -> Value {
     let mut loaded_thread_ids = Vec::new();
     let mut active_thread_ids = Vec::new();
     let mut system_error_thread_ids = Vec::new();
+    let mut in_progress_command_ids = Vec::new();
+    let mut background_command_thread_ids = Vec::new();
     let mut busy_reasons = Vec::new();
 
-    for (thread_id, status) in thread_statuses {
+    for snapshot in thread_statuses {
+        let ThreadStatusSnapshot {
+            thread_id,
+            status,
+            in_progress_command_ids: thread_command_ids,
+        } = snapshot;
         loaded_thread_ids.push(thread_id.clone());
+        if !thread_command_ids.is_empty() {
+            background_command_thread_ids.push(thread_id.clone());
+            in_progress_command_ids.extend(thread_command_ids);
+        }
         match status {
             ThreadStatus::Active { .. } => active_thread_ids.push(thread_id),
             ThreadStatus::SystemError => system_error_thread_ids.push(thread_id),
@@ -853,6 +870,10 @@ fn build_session_status_details(
     active_thread_ids.dedup();
     system_error_thread_ids.sort();
     system_error_thread_ids.dedup();
+    background_command_thread_ids.sort();
+    background_command_thread_ids.dedup();
+    in_progress_command_ids.sort();
+    in_progress_command_ids.dedup();
 
     if active_turn_id.is_some() {
         busy_reasons.push("active_turn".to_string());
@@ -860,16 +881,30 @@ fn build_session_status_details(
     if !active_thread_ids.is_empty() {
         busy_reasons.push("loaded_thread_active".to_string());
     }
+    if !in_progress_command_ids.is_empty() {
+        busy_reasons.push("background_command_execution".to_string());
+    }
 
     json!({
-        "quiescent": active_turn_id.is_none() && active_thread_ids.is_empty(),
+        "quiescent": active_turn_id.is_none()
+            && active_thread_ids.is_empty()
+            && in_progress_command_ids.is_empty(),
         "root_thread_id": root_thread_id,
         "active_turn_id": active_turn_id,
         "loaded_thread_ids": loaded_thread_ids,
         "active_thread_ids": active_thread_ids,
         "system_error_thread_ids": system_error_thread_ids,
+        "background_command_thread_ids": background_command_thread_ids,
+        "background_command_item_ids": in_progress_command_ids,
         "busy_reasons": busy_reasons,
     })
+}
+
+#[derive(Debug, Clone)]
+struct ThreadStatusSnapshot {
+    thread_id: String,
+    status: ThreadStatus,
+    in_progress_command_ids: Vec<String>,
 }
 
 async fn query_session_status(session: &mut AppServerSessionState) -> Result<Value> {
@@ -897,11 +932,26 @@ async fn query_session_status(session: &mut AppServerSessionState) -> Result<Val
                 "thread/read",
                 json!({
                     "threadId": thread_id,
-                    "includeTurns": false,
+                    "includeTurns": session.thread_turns_available,
                 }),
             )
             .await?;
-        thread_statuses.push((response.thread.id, response.thread.status));
+        let in_progress_command_ids = response
+            .turns
+            .into_iter()
+            .flat_map(|turn| turn.items.into_iter())
+            .filter_map(|item| match item {
+                ThreadItem::CommandExecution { id, status, .. } if status == "inProgress" => {
+                    Some(id)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        thread_statuses.push(ThreadStatusSnapshot {
+            thread_id: response.thread.id,
+            status: response.thread.status,
+            in_progress_command_ids,
+        });
     }
     Ok(build_session_status_details(
         &session.thread_id,
@@ -970,7 +1020,7 @@ async fn handle_app_server_event(
 async fn handle_server_request(
     session_state: &mut AppServerSessionState,
     router: &CrpEventRouter,
-    id: i64,
+    id: AppServerRequestId,
     method: &str,
     params: Value,
 ) {

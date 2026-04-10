@@ -52,6 +52,7 @@ pub(super) struct CrpSessionPool {
     default_sweep_config: ProviderSessionSweepConfig,
     supports_session_status: bool,
     reap_in_flight: AtomicBool,
+    reap_requested: AtomicBool,
 }
 
 pub(super) fn session_shutdown_reason(session: &CrpSession) -> Option<String> {
@@ -72,6 +73,7 @@ impl CrpSessionPool {
             default_sweep_config: ProviderSessionSweepConfig::from_env(),
             supports_session_status,
             reap_in_flight: AtomicBool::new(false),
+            reap_requested: AtomicBool::new(false),
         }
     }
 
@@ -181,17 +183,53 @@ impl CrpSessionPool {
     }
 
     pub(super) fn trigger_background_reap(self: &Arc<Self>) {
+        self.reap_requested.store(true, Ordering::SeqCst);
         if self.reap_in_flight.swap(true, Ordering::SeqCst) {
             return;
         }
 
         let pool = Arc::clone(self);
         tokio::spawn(async move {
-            let _ = pool
-                .reap_idle_sessions(pool.default_sweep_config.clone())
-                .await;
-            pool.reap_in_flight.store(false, Ordering::SeqCst);
+            loop {
+                pool.reap_requested.store(false, Ordering::SeqCst);
+                let _ = pool
+                    .reap_idle_sessions(pool.default_sweep_config.clone())
+                    .await;
+                if pool.reap_requested.swap(false, Ordering::SeqCst) {
+                    continue;
+                }
+                pool.reap_in_flight.store(false, Ordering::SeqCst);
+                if pool.reap_requested.swap(false, Ordering::SeqCst)
+                    && !pool.reap_in_flight.swap(true, Ordering::SeqCst)
+                {
+                    continue;
+                }
+                break;
+            }
         });
+    }
+
+    async fn send_session_open(
+        &self,
+        session: &Arc<CrpSession>,
+        session_key: &str,
+        provider_session_id: Option<String>,
+        config: super::protocol::CrpSessionConfig,
+    ) -> Result<()> {
+        session.opening.store(true, Ordering::SeqCst);
+        if let Err(err) = session
+            .process
+            .send(CrpCommand::SessionOpen {
+                session_id: Some(session_key.to_string()),
+                provider_session_id,
+                config: Some(config),
+            })
+            .await
+        {
+            session.opening.store(false, Ordering::SeqCst);
+            return Err(err);
+        }
+        Ok(())
     }
 
     pub(super) async fn drain_session_if_needed(
@@ -259,14 +297,7 @@ impl CrpSessionPool {
                 .get("CTX_PROVIDER_SESSION_REF")
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty());
-            session.opening.store(true, Ordering::SeqCst);
-            session
-                .process
-                .send(CrpCommand::SessionOpen {
-                    session_id: Some(req.session_key.clone()),
-                    provider_session_id,
-                    config: Some(config),
-                })
+            self.send_session_open(&session, &req.session_key, provider_session_id, config)
                 .await?;
         }
 
@@ -504,6 +535,9 @@ impl CrpSessionPool {
             }
         }
 
+        if !session.opened.load(Ordering::SeqCst) {
+            session.opening.store(false, Ordering::SeqCst);
+        }
         session.touch();
         self.drain_session_if_needed(&req.session_key, &session)
             .await;
