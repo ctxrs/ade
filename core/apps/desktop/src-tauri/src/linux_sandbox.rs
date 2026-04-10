@@ -14,7 +14,7 @@ const PREFETCH_WAIT_POLL_MS: u64 = 250;
 const PREFETCH_WAIT_TIMEOUT_MS: u64 = 180_000;
 
 const BOOTSTRAP_SCRIPT: &str =
-    include_str!("../../../../crates/ctx-http/src/workspace_runtime/linux_sandbox_bootstrap.sh");
+    include_str!("../../../../crates/ctx-linux-sandbox-runtime/src/linux_sandbox_bootstrap.sh");
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -715,5 +715,14 @@ mod tests {
             Some("~/.ctx/bin/ctx-active")
         );
         assert_eq!(updated.admin_password_once.as_deref(), Some("admin-secret"));
+    }
+
+    #[test]
+    fn bootstrap_script_embeds_expected_runtime_markers() {
+        assert!(BOOTSTRAP_SCRIPT.contains("allowed_gid="));
+        assert!(BOOTSTRAP_SCRIPT.contains("local exec_user="));
+        assert!(BOOTSTRAP_SCRIPT.contains("exec --user \"\\${exec_user}\""));
+        assert!(BOOTSTRAP_SCRIPT.contains("CTX_CONTAINER_TERMINAL_USER"));
+        assert!(BOOTSTRAP_SCRIPT.contains("iptables -P OUTPUT DROP"));
     }
 }
