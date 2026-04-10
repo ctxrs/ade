@@ -2,10 +2,11 @@ use super::helper_wrappers::{shared_vm_state, start_shared_vm, stop_shared_vm};
 use super::runtime_install as runtime_assets;
 use super::*;
 use ctx_bundled_assets as bundled_assets;
-use crate::settings::{ContainerExecutionSettings, ContainerRuntimeKind};
-use crate::workspace_runtime::{
+use crate::{
+    default_container_image, ContainerExecutionSettings, ContainerRuntimeKind,
     SharedSubstrateLifecycleManager, SubstrateShutdownOutcome, SubstrateShutdownReason,
     SubstrateStartupOutcome, SubstrateStartupReason, SubstrateStartupSelection,
+    CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
 };
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -209,7 +210,9 @@ else:
     helper
 }
 
-fn install_bundled_runtime_fixture(dir: &Path) -> (EnvGuard, EnvGuard) {
+async fn install_bundled_runtime_fixture(
+    dir: &Path,
+) -> (EnvGuard, EnvGuard, JoinHandle<Result<()>>) {
     let bundle_root = dir.join("bundle");
     let runtime_root = bundle_root
         .join("runtimes")
@@ -237,7 +240,11 @@ fn install_bundled_runtime_fixture(dir: &Path) -> (EnvGuard, EnvGuard) {
     .expect("write bundled container stack");
     std::fs::write(images_root.join("ctx-harness.tar"), b"ctx-harness-image")
         .expect("write bundled image tar");
-    let default_image = crate::workspace_runtime::default_container_image();
+    let default_image = default_container_image();
+    let image_bytes = b"ctx-harness-image".to_vec();
+    let (image_url, image_server) = spawn_static_http_server(image_bytes.clone(), 1)
+        .await
+        .expect("spawn bundled harness image server");
 
     let manifest_path = bundle_root.join("manifest.json");
     std::fs::create_dir_all(manifest_path.parent().expect("bundle manifest parent"))
@@ -275,9 +282,35 @@ fn install_bundled_runtime_fixture(dir: &Path) -> (EnvGuard, EnvGuard) {
         .to_string(),
     )
     .expect("write bundled manifest");
+    let runtime_lock_path = bundle_root.join("runtime_lock.v2.json");
+    std::fs::write(
+        &runtime_lock_path,
+        serde_json::json!({
+            "version": 2,
+            "profiles": {
+                "parity": {
+                    "allowed_source_types": ["http"]
+                }
+            },
+            "components": [{
+                "kind": "image",
+                "id": "ctx-harness",
+                "os": "linux",
+                "arch": std::env::consts::ARCH,
+                "version": "bundled-image",
+                "sources": [{
+                    "source_type": "http",
+                    "uri": image_url.to_string(),
+                    "sha256": sha256_hex(&image_bytes),
+                }]
+            }]
+        })
+        .to_string(),
+    )
+    .expect("write bundled runtime lock");
     let bundle_dir = EnvGuard::set("CTX_BUNDLE_DIR", bundle_root.to_str().unwrap());
     let bundle_manifest = EnvGuard::set("CTX_BUNDLE_MANIFEST", manifest_path.to_str().unwrap());
-    (bundle_dir, bundle_manifest)
+    (bundle_dir, bundle_manifest, image_server)
 }
 
 fn write_stateful_lifecycle_helper(dir: &Path) -> (PathBuf, PathBuf) {
@@ -855,7 +888,8 @@ async fn ensure_workspace_vm_ready_reports_machine_check_after_runtime_download(
     let temp = tempfile::tempdir().unwrap();
     let helper = write_lifecycle_helper(temp.path());
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
-    let (_bundle_root_guard, _bundle_manifest_guard) = install_bundled_runtime_fixture(temp.path());
+    let (_bundle_root_guard, _bundle_manifest_guard, image_server) =
+        install_bundled_runtime_fixture(temp.path()).await;
     let observer = std::sync::Arc::new(RecordingObserver::default());
 
     ensure_workspace_vm_ready_with_observer(
@@ -886,6 +920,7 @@ async fn ensure_workspace_vm_ready_reports_machine_check_after_runtime_download(
         }),
         "expected a machine-start phase after machine-check, saw: {phases:?}"
     );
+    image_server.abort();
 }
 
 #[tokio::test]
@@ -1211,10 +1246,11 @@ async fn shared_substrate_lifecycle_manager_reports_cold_boot_startup() {
     let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(temp.path());
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
     let _sandbox_cli_guard = EnvGuard::set(
-        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         sandbox_cli_path.to_str().unwrap(),
     );
-    let (_bundle_dir, _bundle_manifest) = install_bundled_runtime_fixture(temp.path());
+    let (_bundle_dir, _bundle_manifest, image_server) =
+        install_bundled_runtime_fixture(temp.path()).await;
     let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "cold_boot");
 
     let record = SharedSubstrateLifecycleManager::new(temp.path())
@@ -1239,6 +1275,7 @@ async fn shared_substrate_lifecycle_manager_reports_cold_boot_startup() {
             .any(|line| line.starts_with("start-workspace-vm ")),
         "expected cold boot start invocation in log:\n{log}"
     );
+    image_server.abort();
 }
 
 #[tokio::test]
@@ -1279,10 +1316,11 @@ async fn shared_substrate_lifecycle_manager_joins_running_vm_until_launch_ready(
     let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(temp.path());
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
     let _sandbox_cli_guard = EnvGuard::set(
-        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         sandbox_cli_path.to_str().unwrap(),
     );
-    let (_bundle_dir, _bundle_manifest) = install_bundled_runtime_fixture(temp.path());
+    let (_bundle_dir, _bundle_manifest, image_server) =
+        install_bundled_runtime_fixture(temp.path()).await;
     let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "running_not_ready");
 
     let record = SharedSubstrateLifecycleManager::new(temp.path())
@@ -1304,6 +1342,7 @@ async fn shared_substrate_lifecycle_manager_joins_running_vm_until_launch_ready(
             .any(|line| line.starts_with("start-workspace-vm ")),
         "running-but-not-ready state should be joined instead of restarted:\n{log}"
     );
+    image_server.abort();
 }
 
 #[tokio::test]
@@ -1315,10 +1354,11 @@ async fn shared_substrate_lifecycle_manager_reports_restore_startup() {
     let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(temp.path());
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
     let _sandbox_cli_guard = EnvGuard::set(
-        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         sandbox_cli_path.to_str().unwrap(),
     );
-    let (_bundle_dir, _bundle_manifest) = install_bundled_runtime_fixture(temp.path());
+    let (_bundle_dir, _bundle_manifest, image_server) =
+        install_bundled_runtime_fixture(temp.path()).await;
     let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "restore");
     let _restore_supported = EnvGuard::set("CTX_TEST_AVF_RESTORE_SUPPORTED", "1");
 
@@ -1338,6 +1378,7 @@ async fn shared_substrate_lifecycle_manager_reports_restore_startup() {
     assert_eq!(record.startup_reason, None);
     assert!(record.restore_attempted);
     assert!(!record.restore_error_present);
+    image_server.abort();
 }
 
 #[tokio::test]
@@ -1349,10 +1390,11 @@ async fn shared_substrate_lifecycle_manager_normalizes_restore_failure_to_cold_b
     let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(temp.path());
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
     let _sandbox_cli_guard = EnvGuard::set(
-        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         sandbox_cli_path.to_str().unwrap(),
     );
-    let (_bundle_dir, _bundle_manifest) = install_bundled_runtime_fixture(temp.path());
+    let (_bundle_dir, _bundle_manifest, image_server) =
+        install_bundled_runtime_fixture(temp.path()).await;
     let _start_scenario = EnvGuard::set("CTX_TEST_AVF_START_SCENARIO", "restore_failure");
     let _restore_supported = EnvGuard::set("CTX_TEST_AVF_RESTORE_SUPPORTED", "1");
 
@@ -1375,6 +1417,7 @@ async fn shared_substrate_lifecycle_manager_normalizes_restore_failure_to_cold_b
     );
     assert!(record.restore_attempted);
     assert!(record.restore_error_present);
+    image_server.abort();
 }
 
 #[tokio::test]
@@ -1465,7 +1508,7 @@ async fn helper_prepare_guest_worktree_round_trips_structured_state() {
     let (helper, capture_path) = write_guest_exec_helper(temp.path());
     let _guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
     let _sandbox_cli = EnvGuard::set(
-        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         helper.to_str().unwrap(),
     );
 
@@ -1540,7 +1583,7 @@ async fn run_guest_exec_capture_invokes_helper_with_expected_args() {
     let (helper, capture_path) = write_guest_exec_helper(temp.path());
     let _guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
     let _sandbox_cli = EnvGuard::set(
-        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         helper.to_str().unwrap(),
     );
 

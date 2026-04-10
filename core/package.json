@@ -4,7 +4,7 @@
   "packageManager": "pnpm@9.15.1",
   "scripts": {
     "test": "node scripts/run_with_ctx_cache_env.cjs --mode workspace -- cargo test -q && pnpm -C apps/web test",
-    "test:agent": "node scripts/run_rust_gate.cjs --mode workspace --crate ctx-core --crate ctx-providers --crate ctx-provider-accounts --crate ctx-provider-auth-import --crate ctx-harness-sources --crate ctx-http --crate ctx-mcp --crate ctx-lsp --crate ctx-store --crate ctx-workspace-active-snapshot --test-strategy mixed && pnpm -C apps/web test:quiet",
+    "test:agent": "node scripts/run_rust_gate.cjs --mode workspace --crate ctx-avf-linux-runtime --crate ctx-core --crate ctx-providers --crate ctx-provider-accounts --crate ctx-provider-auth-import --crate ctx-harness-sources --crate ctx-http --crate ctx-mcp --crate ctx-lsp --crate ctx-store --crate ctx-workspace-active-snapshot --test-strategy mixed && pnpm -C apps/web test:quiet",
     "bazel:pilot:test": "node scripts/run_bazel_pilot.cjs test",
     "bazel:pilot:build": "node scripts/run_bazel_pilot.cjs build",
     "test:e2e": "pnpm -C apps/web test:e2e",
@@ -156,6 +156,9 @@
     "rust:crate:clippy:ctx-avf-linux-guest-agent": "node scripts/rust_crate_task.cjs --crate ctx-avf-linux-guest-agent --task clippy",
     "rust:crate:test:ctx-avf-linux-guest-agent": "node scripts/rust_crate_task.cjs --crate ctx-avf-linux-guest-agent --task test",
     "rust:crate:nextest:ctx-avf-linux-guest-agent": "node scripts/rust_crate_task.cjs --crate ctx-avf-linux-guest-agent --task nextest",
+    "rust:crate:clippy:ctx-avf-linux-runtime": "node scripts/rust_crate_task.cjs --crate ctx-avf-linux-runtime --task clippy",
+    "rust:crate:test:ctx-avf-linux-runtime": "node scripts/rust_crate_task.cjs --crate ctx-avf-linux-runtime --task test",
+    "rust:crate:nextest:ctx-avf-linux-runtime": "node scripts/rust_crate_task.cjs --crate ctx-avf-linux-runtime --task nextest",
     "rust:crate:clippy:ctx-bundled-assets": "node scripts/rust_crate_task.cjs --crate ctx-bundled-assets --task clippy",
     "rust:crate:test:ctx-bundled-assets": "node scripts/rust_crate_task.cjs --crate ctx-bundled-assets --task test",
     "rust:crate:nextest:ctx-bundled-assets": "node scripts/rust_crate_task.cjs --crate ctx-bundled-assets --task nextest",

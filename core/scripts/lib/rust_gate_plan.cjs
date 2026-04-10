@@ -1,6 +1,7 @@
 const { getBazelCoveredCrates } = require("./bazel_rust_targets.cjs");
 
 const AGENT_GATE_CRATES = [
+  "ctx-avf-linux-runtime",
   "ctx-bundled-assets",
   "ctx-core",
   "ctx-harness-setup",

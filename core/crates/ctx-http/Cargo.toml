@@ -10,6 +10,7 @@ async-trait.workspace = true
 axum.workspace = true
 chrono.workspace = true
 clap.workspace = true
+ctx-avf-linux-runtime = { path = "../ctx-avf-linux-runtime" }
 ctx-core = { path = "../ctx-core" }
 ctx-events = { path = "../ctx-events" }
 ctx-fs = { path = "../ctx-fs" }

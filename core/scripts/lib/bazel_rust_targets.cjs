@@ -3,6 +3,7 @@ function sortUnique(values) {
 }
 
 const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
+  "ctx-avf-linux-runtime": ["//core/crates/ctx-avf-linux-runtime:unit_tests"],
   "ctx-core": [
     "//core/crates/ctx-core:unit_tests",
     "//core/crates/ctx-core:workspace_payload_corpus",
@@ -23,6 +24,7 @@ const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
 });
 
 const BAZEL_BUILD_TARGETS_BY_CRATE = Object.freeze({
+  "ctx-avf-linux-runtime": ["//core/crates/ctx-avf-linux-runtime:lib"],
   "ctx-core": ["//core/crates/ctx-core:lib"],
   "ctx-bundled-assets": ["//core/crates/ctx-bundled-assets:lib"],
   "ctx-harness-setup": ["//core/crates/ctx-harness-setup:lib"],

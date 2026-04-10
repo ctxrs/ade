@@ -216,7 +216,7 @@ impl HarnessRuntimeManager {
                 workspace_vm.vm_root.to_string_lossy().to_string(),
             );
             env_overrides.insert(
-                avf_linux_vm::AVF_LINUX_HELPER_PATH_ENV.to_string(),
+                AVF_LINUX_HELPER_PATH_ENV.to_string(),
                 avf_linux_helper_path()?.to_string_lossy().to_string(),
             );
             env_overrides.insert(

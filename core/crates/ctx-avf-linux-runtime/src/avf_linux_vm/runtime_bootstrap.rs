@@ -5,11 +5,11 @@ const EXISTING_SHARED_VM_START_WAIT_TIMEOUT: std::time::Duration =
 const EXISTING_SHARED_VM_START_POLL_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(250);
 
-pub(crate) fn runtime_available() -> bool {
+pub fn runtime_available() -> bool {
     probe_helper().map(|probe| probe.supported).unwrap_or(false)
 }
 
-pub(crate) fn runtime_state(data_root: &Path) -> Result<(bool, bool)> {
+pub fn runtime_state(data_root: &Path) -> Result<(bool, bool)> {
     let helper_ready = probe_helper().map(|probe| probe.supported).unwrap_or(false);
     let runtime_ready = if let Some(runtime) = staged_avf_linux_guest_runtime()? {
         avf_linux_runtime_is_ready(&runtime)
@@ -27,7 +27,7 @@ pub(crate) fn runtime_state(data_root: &Path) -> Result<(bool, bool)> {
     Ok((true, runtime_ready))
 }
 
-pub(crate) async fn ensure_workspace_vm_ready_with_observer(
+pub async fn ensure_workspace_vm_ready_with_observer(
     data_root: &Path,
     workspace_id: WorkspaceId,
     _settings: &ContainerExecutionSettings,
@@ -173,7 +173,7 @@ pub(crate) async fn ensure_workspace_vm_ready_with_observer(
     Ok(started)
 }
 
-pub(crate) async fn ensure_shared_vm_ready_with_observer(
+pub async fn ensure_shared_vm_ready_with_observer(
     data_root: &Path,
     settings: &ContainerExecutionSettings,
     observer: Option<&dyn HarnessSetupObserver>,
@@ -231,7 +231,7 @@ async fn wait_for_existing_workspace_vm_launch_ready_with_observer(
     }
 }
 
-pub(crate) async fn ensure_guest_worktree_from_host_copy(
+pub async fn ensure_guest_worktree_from_host_copy(
     data_root: &Path,
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
@@ -279,7 +279,7 @@ pub(crate) async fn ensure_guest_worktree_from_host_copy(
     Ok(prepared)
 }
 
-pub(crate) async fn prefetch_runtime_with_observer(
+pub async fn prefetch_runtime_with_observer(
     data_root: &Path,
     _settings: &ContainerExecutionSettings,
     observer: Option<&dyn HarnessSetupObserver>,

@@ -773,7 +773,7 @@ async fn shutdown_shared_substrate_requests_save_or_stop_when_shared_backend_ava
     ));
     let (helper_path, log_path) = write_shared_vm_shutdown_helper(temp.path());
     let _helper_guard = EnvGuard::set(
-        crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
+        ctx_avf_linux_runtime::AVF_LINUX_HELPER_PATH_ENV,
         &helper_path.to_string_lossy(),
     );
 
@@ -784,7 +784,7 @@ async fn shutdown_shared_substrate_requests_save_or_stop_when_shared_backend_ava
 
     assert_eq!(
         record.shutdown_outcome,
-        Some(crate::workspace_runtime::SubstrateShutdownOutcome::Saved)
+        Some(ctx_avf_linux_runtime::SubstrateShutdownOutcome::Saved)
     );
     assert_eq!(record.shutdown_reason, None);
     assert!(!record.save_error_present);

@@ -1,6 +1,7 @@
 use super::*;
+use ctx_sandbox_container_runtime::{sandbox_container_command, SandboxCommandMode};
 
-pub(crate) fn helper_path() -> Result<PathBuf> {
+pub fn helper_path() -> Result<PathBuf> {
     if !cfg!(target_os = "macos") && !cfg!(test) {
         bail!("AVF Linux VM runtime is only supported on macOS");
     }
@@ -41,23 +42,23 @@ where
     })
 }
 
-pub(crate) fn probe_helper() -> Result<AvfLinuxHelperProbe> {
+pub fn probe_helper() -> Result<AvfLinuxHelperProbe> {
     invoke_helper_json(&["probe"])
 }
 
-pub(crate) fn prepare_runtime_layout(data_root: &Path) -> Result<AvfLinuxRuntimeLayout> {
+pub fn prepare_runtime_layout(data_root: &Path) -> Result<AvfLinuxRuntimeLayout> {
     invoke_helper_json(&["prepare-runtime-layout", &data_root.to_string_lossy()])
 }
 
-pub(crate) fn workspace_vm_data_root(data_root: &Path, _workspace_id: WorkspaceId) -> PathBuf {
+pub fn workspace_vm_data_root(data_root: &Path, _workspace_id: WorkspaceId) -> PathBuf {
     data_root.to_path_buf()
 }
 
-pub(crate) fn shared_vm_state(data_root: &Path) -> Result<AvfLinuxSharedVmState> {
+pub fn shared_vm_state(data_root: &Path) -> Result<AvfLinuxSharedVmState> {
     invoke_helper_json(&["workspace-vm-state", &data_root.to_string_lossy()])
 }
 
-pub(crate) fn workspace_vm_state(
+pub fn workspace_vm_state(
     data_root: &Path,
     workspace_id: WorkspaceId,
 ) -> Result<AvfLinuxSharedVmState> {
@@ -65,7 +66,7 @@ pub(crate) fn workspace_vm_state(
     shared_vm_state(&vm_data_root)
 }
 
-pub(crate) fn prepare_guest_worktree(
+pub fn prepare_guest_worktree(
     data_root: &Path,
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
@@ -86,7 +87,7 @@ pub(crate) fn prepare_guest_worktree(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_guest_exec_command(
+pub fn build_guest_exec_command(
     data_root: &Path,
     workspace_id: WorkspaceId,
     _worktree_id: WorktreeId,
@@ -97,7 +98,12 @@ pub(crate) fn build_guest_exec_command(
     user: Option<&str>,
     pty: bool,
 ) -> Result<tokio::process::Command> {
-    let mut child = super::super::sandbox_container_command(data_root)?;
+    let mut child = sandbox_container_command(
+        data_root,
+        &SandboxCommandMode::SharedVm {
+            helper_path: helper_path()?,
+        },
+    )?;
     child.arg("exec").arg("--interactive");
     if pty {
         child.arg("--tty");
@@ -120,7 +126,7 @@ pub(crate) fn build_guest_exec_command(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn run_guest_exec_capture(
+pub async fn run_guest_exec_capture(
     data_root: &Path,
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
@@ -151,7 +157,7 @@ pub(crate) async fn run_guest_exec_capture(
     })
 }
 
-pub(crate) fn start_shared_vm(
+pub fn start_shared_vm(
     data_root: &Path,
     runtime: &AvfLinuxGuestRuntime,
 ) -> Result<AvfLinuxSharedVmState> {
@@ -166,7 +172,7 @@ pub(crate) fn start_shared_vm(
     ])
 }
 
-pub(crate) fn start_workspace_vm(
+pub fn start_workspace_vm(
     data_root: &Path,
     workspace_id: WorkspaceId,
     runtime: &AvfLinuxGuestRuntime,
@@ -175,13 +181,13 @@ pub(crate) fn start_workspace_vm(
     start_shared_vm(&vm_data_root, runtime)
 }
 
-pub(crate) fn stop_shared_vm(data_root: &Path) -> Result<AvfLinuxSharedVmState> {
+pub fn stop_shared_vm(data_root: &Path) -> Result<AvfLinuxSharedVmState> {
     invoke_helper_json(&["stop-workspace-vm", &data_root.to_string_lossy()])
 }
 
 #[cfg(test)]
 #[allow(dead_code)]
-pub(crate) fn stop_workspace_vm(
+pub fn stop_workspace_vm(
     data_root: &Path,
     workspace_id: WorkspaceId,
 ) -> Result<AvfLinuxSharedVmState> {

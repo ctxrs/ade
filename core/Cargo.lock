@@ -1364,6 +1364,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctx-avf-linux-runtime"
+version = "0.34.0"
+dependencies = [
+ "anyhow",
+ "ctx-bundled-assets",
+ "ctx-core",
+ "ctx-harness-setup",
+ "ctx-runtime-assets",
+ "ctx-sandbox-container-runtime",
+ "ctx-sandbox-contract",
+ "flate2",
+ "futures",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "ctx-bundled-assets"
 version = "0.34.0"
 dependencies = [
@@ -1505,6 +1530,7 @@ dependencies = [
  "chacha20poly1305",
  "chrono",
  "clap",
+ "ctx-avf-linux-runtime",
  "ctx-bundled-assets",
  "ctx-core",
  "ctx-events",

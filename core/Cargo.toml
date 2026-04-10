@@ -3,6 +3,7 @@ members = [
   "crates/ctx-docs-mirror",
   "crates/ctx-core",
   "crates/ctx-client",
+  "crates/ctx-avf-linux-runtime",
   "crates/ctx-desktop-ipc",
   "crates/ctx-store",
   "crates/ctx-fs",

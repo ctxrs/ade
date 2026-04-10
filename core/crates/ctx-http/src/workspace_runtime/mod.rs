@@ -41,9 +41,7 @@ use ctx_core::models::ExecutionEnvironment;
 use ctx_store::StoreManager;
 use url::Url;
 
-mod avf_linux_vm;
 mod container;
-mod lifecycle_manager;
 mod machine;
 mod manager;
 mod manager_container;
@@ -55,8 +53,6 @@ mod reclaim_unit_tests;
 mod sandbox_machine_lifecycle;
 #[cfg(test)]
 mod sandbox_machine_recovery;
-mod shared_vm_orchestrator;
-mod substrate;
 
 struct AvfDaemonGatewayProxy {
     gateway_addr: String,
@@ -67,24 +63,16 @@ struct AvfDaemonGatewayProxy {
 static AVF_DAEMON_GATEWAY_PROXIES: OnceLock<StdMutex<HashMap<u16, AvfDaemonGatewayProxy>>> =
     OnceLock::new();
 
-pub(crate) use self::avf_linux_vm::build_guest_exec_command as build_avf_linux_guest_exec_command;
-pub(crate) use self::avf_linux_vm::helper_path as avf_linux_helper_path;
-#[cfg(test)]
-pub(crate) use self::avf_linux_vm::override_managed_avf_linux_runtime_source_for_test;
-pub(crate) use self::avf_linux_vm::run_guest_exec_capture as run_avf_linux_guest_exec_capture;
-#[cfg(test)]
-pub(crate) use self::avf_linux_vm::TestManagedAvfLinuxRuntimeSourceGuard;
-#[cfg(test)]
-pub(crate) use self::avf_linux_vm::AVF_LINUX_HELPER_PATH_ENV;
-pub(crate) use self::avf_linux_vm::{
-    ensure_shared_vm_ready_with_observer as ensure_avf_linux_shared_vm_ready_with_observer,
-    ensure_workspace_vm_ready_with_observer as ensure_avf_linux_workspace_vm_ready_with_observer,
-    prefetch_runtime_with_observer as prefetch_avf_linux_runtime_with_observer,
+pub(crate) use ctx_avf_linux_runtime::{
+    build_guest_exec_command as build_avf_linux_guest_exec_command,
+    helper_path as avf_linux_helper_path,
+    run_guest_exec_capture as run_avf_linux_guest_exec_capture,
     workspace_vm_data_root as avf_linux_workspace_vm_data_root,
 };
-use self::avf_linux_vm::{
-    runtime_available as avf_linux_runtime_available, runtime_state as avf_linux_runtime_state,
-    runtime_target_label as avf_linux_runtime_target_label,
+use ctx_avf_linux_runtime::{
+    runtime_available as avf_linux_runtime_available,
+    runtime_state as avf_linux_runtime_state, runtime_target_label as avf_linux_runtime_target_label,
+    AVF_LINUX_HELPER_PATH_ENV,
 };
 use self::container::sandbox_machine_required;
 pub(crate) use self::container::AVF_GUEST_HOST_GATEWAY;
@@ -97,9 +85,7 @@ use self::container::{
     verify_disk_isolated_container_mounts, workspace_container_hostname,
 };
 pub(crate) use self::container::{CONTAINER_TERMINAL_HOME, CONTAINER_TERMINAL_USER};
-pub(crate) use self::lifecycle_manager::{
-    SharedSubstrateLifecycleManager, SubstrateLifecycleRecord,
-};
+pub(crate) use ctx_avf_linux_runtime::{SharedSubstrateLifecycleManager, SubstrateLifecycleRecord};
 pub(crate) use ctx_linux_sandbox_runtime::{
     linux_sandbox_runtime_status, prepare_linux_sandbox_runtime,
     stage_linux_sandbox_runtime_downloads, LinuxSandboxActivationMode,
@@ -148,11 +134,8 @@ use self::network_policy_transition::apply_container_network_policy;
 use self::sandbox_machine_recovery::{
     run_sandbox_machine_init, sandbox_machine_present, sandbox_machine_singleflight_lock,
 };
-pub(crate) use self::shared_vm_orchestrator::SharedVmLifecycleOrchestrator;
-pub(crate) use self::substrate::{
-    SubstrateShutdownOutcome, SubstrateShutdownReason, SubstrateStartupOutcome,
-    SubstrateStartupReason, SubstrateStartupSelection, UbuntuSandboxSubstrate,
-};
+pub(crate) use ctx_avf_linux_runtime::SharedVmLifecycleOrchestrator;
+pub(crate) use ctx_sandbox_contract::UbuntuSandboxSubstrate;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SandboxCommandBackend {

@@ -2017,7 +2017,7 @@ async fn compute_prewarm_gate_keeps_prefetched_avf_runtime_unready_without_vm_bo
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
     let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(data_dir.path());
     let _helper = EnvVarGuard::set(
-        crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
+        ctx_avf_linux_runtime::AVF_LINUX_HELPER_PATH_ENV,
         &helper_path.to_string_lossy(),
     );
     let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
@@ -2071,7 +2071,7 @@ async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtim
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
     let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(data_dir.path());
     let _helper = EnvVarGuard::set(
-        crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
+        ctx_avf_linux_runtime::AVF_LINUX_HELPER_PATH_ENV,
         &helper_path.to_string_lossy(),
     );
     let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
@@ -2139,7 +2139,7 @@ async fn runtime_prewarm_launch_ready_scope_starts_shared_vm_and_reports_launch_
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
     let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(data_dir.path());
     let _helper = EnvVarGuard::set(
-        crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
+        ctx_avf_linux_runtime::AVF_LINUX_HELPER_PATH_ENV,
         &helper_path.to_string_lossy(),
     );
     let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
@@ -2885,7 +2885,7 @@ async fn startup_prewarm_uses_runtime_scope_for_sandbox_mode_avf_linux_runtime()
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
     let _helper = EnvVarGuard::set(
-        crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
+        ctx_avf_linux_runtime::AVF_LINUX_HELPER_PATH_ENV,
         &helper_path.to_string_lossy(),
     );
     save_test_execution_settings(
@@ -2923,7 +2923,7 @@ async fn startup_prewarm_uses_runtime_scope_for_host_mode_avf_linux_runtime() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
     let _helper = EnvVarGuard::set(
-        crate::workspace_runtime::AVF_LINUX_HELPER_PATH_ENV,
+        ctx_avf_linux_runtime::AVF_LINUX_HELPER_PATH_ENV,
         &helper_path.to_string_lossy(),
     );
     save_test_execution_settings(

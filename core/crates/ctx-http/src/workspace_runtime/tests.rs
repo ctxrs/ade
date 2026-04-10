@@ -393,7 +393,7 @@ async fn install_test_managed_harness_image_source(
 }
 
 struct TestManagedAvfLinuxRuntimeFixtureGuard {
-    _runtime: super::avf_linux_vm::TestManagedAvfLinuxRuntimeSourceGuard,
+    _runtime: ctx_avf_linux_runtime::TestManagedAvfLinuxRuntimeSourceGuard,
     _image: TestManagedCtxHarnessImageSourceGuard,
 }
 fn avf_runtime_archive_bytes() -> Vec<u8> {
@@ -489,7 +489,7 @@ async fn install_test_managed_avf_linux_runtime_source(
         .collect(),
     };
     let runtime_guard =
-        crate::workspace_runtime::override_managed_avf_linux_runtime_source_for_test(source);
+        ctx_avf_linux_runtime::override_managed_avf_linux_runtime_source_for_test(source);
     (
         TestManagedAvfLinuxRuntimeFixtureGuard {
             _runtime: runtime_guard,
@@ -2706,13 +2706,13 @@ async fn prepare_returns_avf_linux_vm_plan_after_workspace_vm_and_container_read
     );
     assert!(plan
         .env_overrides
-        .contains_key(super::avf_linux_vm::AVF_LINUX_HELPER_PATH_ENV));
+        .contains_key(super::AVF_LINUX_HELPER_PATH_ENV));
 
-    let state = super::avf_linux_vm::workspace_vm_state(temp.path(), workspace.id)
+    let state = ctx_avf_linux_runtime::workspace_vm_state(temp.path(), workspace.id)
         .expect("workspace VM state");
     assert_eq!(
         state.state,
-        super::avf_linux_vm::AvfLinuxSharedVmLifecycleState::Running
+        ctx_avf_linux_runtime::AvfLinuxSharedVmLifecycleState::Running
     );
 
     for server in servers {
@@ -2804,11 +2804,11 @@ async fn ensure_workspace_container_starts_avf_workspace_vm() {
         .await
         .expect("AVF workspace VM should be started for workspace container callers");
 
-    let state = super::avf_linux_vm::workspace_vm_state(temp.path(), workspace.id)
+    let state = ctx_avf_linux_runtime::workspace_vm_state(temp.path(), workspace.id)
         .expect("workspace VM state");
     assert_eq!(
         state.state,
-        super::avf_linux_vm::AvfLinuxSharedVmLifecycleState::Running
+        ctx_avf_linux_runtime::AvfLinuxSharedVmLifecycleState::Running
     );
 
     for server in servers {
@@ -2996,11 +2996,11 @@ async fn ensure_workspace_container_after_runtime_ready_starts_avf_workspace_vm(
         .await
         .expect("AVF workspace VM should start from runtime-ready path");
 
-    let state = super::avf_linux_vm::workspace_vm_state(temp.path(), workspace.id)
+    let state = ctx_avf_linux_runtime::workspace_vm_state(temp.path(), workspace.id)
         .expect("workspace VM state");
     assert_eq!(
         state.state,
-        super::avf_linux_vm::AvfLinuxSharedVmLifecycleState::Running
+        ctx_avf_linux_runtime::AvfLinuxSharedVmLifecycleState::Running
     );
     let log_path = temp.path().join(format!(
         "managed/vms/avf-linux/{}/{}/shared/sandbox-cli-invocations.log",

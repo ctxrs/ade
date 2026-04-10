@@ -10,6 +10,7 @@ const {
 
 test("agent gate crate list keeps the expected ctx-http-centered fast gate", () => {
   assert.deepEqual(AGENT_GATE_CRATES, [
+    "ctx-avf-linux-runtime",
     "ctx-bundled-assets",
     "ctx-core",
     "ctx-harness-setup",
@@ -35,6 +36,7 @@ test("mixed test strategy keeps ctx-http and ctx-store on cargo test and routes 
     [
       "ctx-http",
       "ctx-store",
+      "ctx-avf-linux-runtime",
       "ctx-bundled-assets",
       "ctx-provider-accounts",
       "ctx-harness-setup",
@@ -49,6 +51,7 @@ test("mixed test strategy keeps ctx-http and ctx-store on cargo test and routes 
 
   assert.deepEqual(plan, {
     bazelTestCrates: [
+      "ctx-avf-linux-runtime",
       "ctx-bundled-assets",
       "ctx-harness-setup",
       "ctx-provider-accounts",
@@ -68,6 +71,7 @@ test("ctx-store remains isolated from the parallel cargo tail", () => {
 
 test("mixed test strategy keeps the Bazel-covered slice explicit", () => {
   assert.deepEqual([...BAZEL_TEST_CRATES].sort(), [
+    "ctx-avf-linux-runtime",
     "ctx-bundled-assets",
     "ctx-core",
     "ctx-harness-setup",

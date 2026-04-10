@@ -1,8 +1,5 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::sync::Mutex as StdMutex;
-use std::sync::OnceLock;
 
 use anyhow::{bail, Context, Result};
 use ctx_core::ids::{WorkspaceId, WorktreeId};
@@ -23,31 +20,29 @@ mod runtime_install;
 mod tests;
 
 use super::{
-    observe_log, observe_phase, ContainerExecutionSettings, HarnessSetupLogLevel,
-    HarnessSetupObserver, HarnessSetupPhase,
+    observe_log, observe_phase, sha256_hex_file, ContainerExecutionSettings,
+    HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,
 };
-use crate::updates;
 use ctx_harness_setup::{ManagedArtifactDownloadReporter, ManagedDownloadAggregate};
 
-pub(crate) use self::helper_wrappers::{
+pub use self::helper_wrappers::{
     build_guest_exec_command, helper_path, prepare_guest_worktree, prepare_runtime_layout,
     probe_helper, run_guest_exec_capture, shared_vm_state, start_workspace_vm, stop_shared_vm,
     workspace_vm_data_root, workspace_vm_state,
 };
-pub(crate) use self::runtime_bootstrap::{
+pub use self::runtime_bootstrap::{
     ensure_guest_worktree_from_host_copy, ensure_shared_vm_ready_with_observer,
     ensure_workspace_vm_ready_with_observer, prefetch_runtime_with_observer, runtime_available,
     runtime_state,
 };
-pub(crate) use self::runtime_install::runtime_target_label;
+pub use self::runtime_install::runtime_target_label;
 use self::runtime_install::*;
-#[cfg(test)]
-pub(crate) use self::runtime_install::{
+pub use self::runtime_install::{
     override_managed_avf_linux_runtime_source_for_test, TestManagedAvfLinuxRuntimeSourceGuard,
 };
 
-pub(crate) const AVF_LINUX_HELPER_PATH_ENV: &str = "CTX_AVF_LINUX_HELPER_PATH";
-pub(crate) const AVF_LINUX_GUEST_RUNTIME_DIR_ENV: &str = "CTX_AVF_LINUX_GUEST_RUNTIME_DIR";
+pub const AVF_LINUX_HELPER_PATH_ENV: &str = "CTX_AVF_LINUX_HELPER_PATH";
+pub const AVF_LINUX_GUEST_RUNTIME_DIR_ENV: &str = "CTX_AVF_LINUX_GUEST_RUNTIME_DIR";
 const AVF_LINUX_GUEST_RUNTIME_ID: &str = "avf-linux-guest";
 const AVF_LINUX_RUNTIME_READY_MARKER: &str = ".ctx-managed-ready";
 const AVF_LINUX_ROOTFS_LABEL: &str = "Ubuntu guest runtime";
@@ -59,7 +54,7 @@ const AVF_LINUX_CONTAINER_STACK_HELPER: &str = "container-stack";
 const AVF_LINUX_CONTAINER_STACK_FILE: &str = "container-stack.tar.gz";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct AvfLinuxHelperProbe {
+pub struct AvfLinuxHelperProbe {
     pub protocol_version: u32,
     pub protocol_schema: String,
     pub helper_version: String,
@@ -74,7 +69,7 @@ pub(crate) struct AvfLinuxHelperProbe {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AvfLinuxSharedVmLifecycleState {
+pub enum AvfLinuxSharedVmLifecycleState {
     Missing,
     Stopped,
     Starting,
@@ -84,14 +79,14 @@ pub(crate) enum AvfLinuxSharedVmLifecycleState {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AvfLinuxRuntimeLayoutStatus {
+pub enum AvfLinuxRuntimeLayoutStatus {
     Prepared,
     AlreadyPresent,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AvfLinuxSharedVmTransitionStatus {
+pub enum AvfLinuxSharedVmTransitionStatus {
     Scaffolded,
     Ready,
     Stopped,
@@ -101,7 +96,7 @@ pub(crate) enum AvfLinuxSharedVmTransitionStatus {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AvfLinuxSharedVmStartOutcome {
+pub enum AvfLinuxSharedVmStartOutcome {
     AlreadyRunning,
     ColdBoot,
     Restored,
@@ -110,7 +105,7 @@ pub(crate) enum AvfLinuxSharedVmStartOutcome {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AvfLinuxSharedVmStopOutcome {
+pub enum AvfLinuxSharedVmStopOutcome {
     SavedStateWritten,
     ColdStop,
     ColdStopAfterSaveFailure,
@@ -118,7 +113,7 @@ pub(crate) enum AvfLinuxSharedVmStopOutcome {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct AvfLinuxRuntimeLayout {
+pub struct AvfLinuxRuntimeLayout {
     pub protocol_version: u32,
     pub protocol_schema: String,
     pub vm_root: PathBuf,
@@ -130,7 +125,7 @@ pub(crate) struct AvfLinuxRuntimeLayout {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct AvfLinuxSharedVmState {
+pub struct AvfLinuxSharedVmState {
     pub protocol_version: u32,
     pub protocol_schema: String,
     pub state: AvfLinuxSharedVmLifecycleState,
@@ -181,13 +176,13 @@ pub(crate) struct AvfLinuxSharedVmState {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AvfLinuxGuestWorktreeStatus {
+pub enum AvfLinuxGuestWorktreeStatus {
     Prepared,
     AlreadyPresent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct AvfLinuxGuestWorktree {
+pub struct AvfLinuxGuestWorktree {
     pub protocol_version: u32,
     pub protocol_schema: String,
     pub workspace_id: String,
@@ -203,7 +198,7 @@ pub(crate) struct AvfLinuxGuestWorktree {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct AvfLinuxGuestRuntime {
+pub struct AvfLinuxGuestRuntime {
     pub runtime_root: PathBuf,
     pub rootfs_image: PathBuf,
     pub kernel_path: PathBuf,
@@ -215,7 +210,7 @@ pub(crate) struct AvfLinuxGuestRuntime {
     pub managed: bool,
 }
 
-pub(crate) fn shared_vm_is_launch_ready(state: &AvfLinuxSharedVmState) -> bool {
+pub fn shared_vm_is_launch_ready(state: &AvfLinuxSharedVmState) -> bool {
     matches!(state.state, AvfLinuxSharedVmLifecycleState::Running)
         && matches!(
             state.transition_status,
@@ -223,7 +218,7 @@ pub(crate) fn shared_vm_is_launch_ready(state: &AvfLinuxSharedVmState) -> bool {
         )
 }
 
-pub(crate) fn shared_vm_start_in_progress(state: &AvfLinuxSharedVmState) -> bool {
+pub fn shared_vm_start_in_progress(state: &AvfLinuxSharedVmState) -> bool {
     matches!(
         state.state,
         AvfLinuxSharedVmLifecycleState::Starting | AvfLinuxSharedVmLifecycleState::Running

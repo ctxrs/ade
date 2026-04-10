@@ -226,7 +226,7 @@ async fn install_test_managed_harness_image_source(
 
 #[cfg(test)]
 pub(crate) struct TestManagedAvfLinuxRuntimeFixtureGuard {
-    _runtime: crate::workspace_runtime::TestManagedAvfLinuxRuntimeSourceGuard,
+    _runtime: ctx_avf_linux_runtime::TestManagedAvfLinuxRuntimeSourceGuard,
     _image: ctx_bundled_assets::test_support::TestManagedCtxHarnessImageSourceGuard,
 }
 
@@ -325,7 +325,7 @@ pub(crate) async fn install_test_managed_avf_linux_runtime_source(
         .collect(),
     };
     let runtime_guard =
-        crate::workspace_runtime::override_managed_avf_linux_runtime_source_for_test(source);
+        ctx_avf_linux_runtime::override_managed_avf_linux_runtime_source_for_test(source);
     (
         TestManagedAvfLinuxRuntimeFixtureGuard {
             _runtime: runtime_guard,

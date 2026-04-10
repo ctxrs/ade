@@ -1,9 +1,8 @@
 use serde::{Deserialize, Serialize};
-pub(crate) use ctx_sandbox_contract::UbuntuSandboxSubstrate;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum SubstrateStartupSelection {
+pub enum SubstrateStartupSelection {
     Reuse,
     Restore,
     ColdBoot,
@@ -11,7 +10,7 @@ pub(crate) enum SubstrateStartupSelection {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum SubstrateStartupOutcome {
+pub enum SubstrateStartupOutcome {
     Reuse,
     Restore,
     ColdBoot,
@@ -19,13 +18,13 @@ pub(crate) enum SubstrateStartupOutcome {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum SubstrateStartupReason {
+pub enum SubstrateStartupReason {
     RestoreFailed,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum SubstrateShutdownOutcome {
+pub enum SubstrateShutdownOutcome {
     Saved,
     ColdStop,
     ColdStopAfterSaveFailure,
@@ -33,7 +32,7 @@ pub(crate) enum SubstrateShutdownOutcome {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum SubstrateShutdownReason {
+pub enum SubstrateShutdownReason {
     SaveUnsupported,
     SaveFailed,
 }

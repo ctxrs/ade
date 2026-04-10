@@ -5,41 +5,39 @@ use ctx_core::ids::SandboxInstanceId;
 use ctx_core::models::SandboxSubstrate;
 use serde::Serialize;
 
-use super::avf_linux_vm::{
+use crate::{
     probe_helper, shared_vm_is_launch_ready, AvfLinuxSharedVmLifecycleState,
     AvfLinuxSharedVmStartOutcome, AvfLinuxSharedVmState, AvfLinuxSharedVmStopOutcome,
-};
-use super::{
     ContainerExecutionSettings, HarnessSetupObserver, SharedVmLifecycleOrchestrator,
     SubstrateShutdownOutcome, SubstrateShutdownReason, SubstrateStartupOutcome,
     SubstrateStartupReason, SubstrateStartupSelection, UbuntuSandboxSubstrate,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct SubstrateLifecycleRecord {
-    pub(crate) substrate: SandboxSubstrate,
-    pub(crate) startup_selection: Option<SubstrateStartupSelection>,
-    pub(crate) startup_outcome: Option<SubstrateStartupOutcome>,
-    pub(crate) startup_reason: Option<SubstrateStartupReason>,
-    pub(crate) shutdown_outcome: Option<SubstrateShutdownOutcome>,
-    pub(crate) shutdown_reason: Option<SubstrateShutdownReason>,
-    pub(crate) restore_attempted: bool,
-    pub(crate) restore_error_present: bool,
-    pub(crate) save_error_present: bool,
-    pub(crate) saved_state_written_on_shutdown: bool,
-    pub(crate) simulated: bool,
+pub struct SubstrateLifecycleRecord {
+    pub substrate: SandboxSubstrate,
+    pub startup_selection: Option<SubstrateStartupSelection>,
+    pub startup_outcome: Option<SubstrateStartupOutcome>,
+    pub startup_reason: Option<SubstrateStartupReason>,
+    pub shutdown_outcome: Option<SubstrateShutdownOutcome>,
+    pub shutdown_reason: Option<SubstrateShutdownReason>,
+    pub restore_attempted: bool,
+    pub restore_error_present: bool,
+    pub save_error_present: bool,
+    pub saved_state_written_on_shutdown: bool,
+    pub simulated: bool,
 }
 
-pub(crate) struct SharedSubstrateLifecycleManager<'a> {
+pub struct SharedSubstrateLifecycleManager<'a> {
     data_root: &'a Path,
 }
 
 impl<'a> SharedSubstrateLifecycleManager<'a> {
-    pub(crate) fn new(data_root: &'a Path) -> Self {
+    pub fn new(data_root: &'a Path) -> Self {
         Self { data_root }
     }
 
-    pub(crate) fn read_shared_runtime_lifecycle(
+    pub fn read_shared_runtime_lifecycle(
         &self,
         settings: &ContainerExecutionSettings,
     ) -> Result<SubstrateLifecycleRecord> {
@@ -57,7 +55,7 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
         current_lifecycle_record_from_state(substrate.substrate, &state)
     }
 
-    pub(crate) async fn ensure_shared_runtime_ready(
+    pub async fn ensure_shared_runtime_ready(
         &self,
         settings: &ContainerExecutionSettings,
         observer: Option<&dyn HarnessSetupObserver>,
@@ -92,7 +90,7 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
         ))
     }
 
-    pub(crate) async fn ensure_workspace_runtime_ready(
+    pub async fn ensure_workspace_runtime_ready(
         &self,
         sandbox_instance_id: SandboxInstanceId,
         settings: &ContainerExecutionSettings,
@@ -102,7 +100,7 @@ impl<'a> SharedSubstrateLifecycleManager<'a> {
             .await
     }
 
-    pub(crate) async fn save_or_stop_shared_runtime(
+    pub async fn save_or_stop_shared_runtime(
         &self,
         settings: &ContainerExecutionSettings,
     ) -> Result<SubstrateLifecycleRecord> {
@@ -333,7 +331,7 @@ fn build_lifecycle_record(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace_runtime::avf_linux_vm::AvfLinuxSharedVmTransitionStatus;
+    use crate::AvfLinuxSharedVmTransitionStatus;
 
     fn sample_state(
         state: AvfLinuxSharedVmLifecycleState,
