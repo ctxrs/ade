@@ -29,7 +29,13 @@ const avfLinuxHelperEntitlementsPath = path.join(
   "ctx-avf-linux-helper.entitlements",
 );
 const bundleScript = path.join(coreRoot, "..", "scripts", "ensure_bundled_harnesses.sh");
-const harnessRuntimeRs = path.join(coreRoot, "crates", "ctx-http", "src", "workspace_runtime.rs");
+const sandboxContainerRuntimeRs = path.join(
+  coreRoot,
+  "crates",
+  "ctx-sandbox-container-runtime",
+  "src",
+  "lib.rs",
+);
 const hostManifestOs = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
 const hostManifestArch = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch;
 const parityProviderTargets = [
@@ -163,6 +169,9 @@ const readRustStringConst = (filePath, constName) => {
   }
   return match[1];
 };
+
+const readDefaultContainerImage = () =>
+  readRustStringConst(sandboxContainerRuntimeRs, "DEFAULT_CONTAINER_IMAGE");
 
 const readBundleManifest = (bundleDir) => {
   const manifestPath = path.join(bundleDir, MANIFEST_FILENAME);
@@ -1095,7 +1104,7 @@ const syncBundles = () => {
     && requiredImageIds.includes("ctx-harness")
     && bundleHarnessImages
   ) {
-    const expectedImage = readRustStringConst(harnessRuntimeRs, "DEFAULT_CONTAINER_IMAGE");
+    const expectedImage = readDefaultContainerImage();
     assertBundledHarnessImageTargets(destBundleDir, expectedImage, requiredImageTargets);
   }
 
@@ -1303,6 +1312,7 @@ if (require.main === module) {
       buildLinuxCtxMcpContainerArgs,
       buildRemoteDaemonContainerArgs,
       filterManagedAvfLocalPayloadErrors,
+      readDefaultContainerImage,
       resetBundleDir,
       resolveBundleCacheRoot,
       shouldBundleLinuxCtxMcpRuntime,

@@ -28,6 +28,13 @@ test("linux ctx-mcp runtime bundling stays enabled on desktop platforms with Lin
   assert.equal(__desktopSyncResourcesTestHooks.shouldBundleLinuxCtxMcpRuntime("win32"), false);
 });
 
+test("desktop sync resources reads the default container image from the sandbox container runtime crate", () => {
+  assert.equal(
+    __desktopSyncResourcesTestHooks.readDefaultContainerImage(),
+    "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04",
+  );
+});
+
 test("stageAvfLinuxGuestRuntime leaves the bundle untouched when no guest artifact is present", () => {
   const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bundle-"));
   const staged = stageAvfLinuxGuestRuntime(bundleDir);
