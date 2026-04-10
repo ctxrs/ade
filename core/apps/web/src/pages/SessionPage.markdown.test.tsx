@@ -10,10 +10,19 @@ vi.mock("../utils/desktop", () => ({
   desktopOpenPath: vi.fn(async () => true),
 }));
 
+function selectNodeContents(node: Node) {
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
 describe("MemoMarkdown", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(desktop.isDesktopApp).mockReturnValue(false);
+    window.getSelection()?.removeAllRanges();
   });
 
   it("applies the shared markdown link class to external links", () => {
@@ -89,5 +98,38 @@ describe("MemoMarkdown", () => {
     const blockquote = document.querySelector("blockquote.wb-md-blockquote");
     expect(blockquote).not.toBeNull();
     expect(blockquote?.textContent).toContain("Quoted transcript guidance");
+  });
+
+  it("renders explicit list-marker columns and preserves markers in selection text", () => {
+    const { container } = render(<MemoMarkdown content={"- first bullet\n- second bullet"} />);
+
+    const markers = Array.from(container.querySelectorAll(".wb-md-list-item-marker")).map((node) => node.textContent);
+    expect(markers).toEqual(["•", "•"]);
+
+    const root = container.querySelector(".wb-markdown-root");
+    if (!(root instanceof HTMLElement)) {
+      throw new Error("Expected markdown root");
+    }
+    selectNodeContents(root);
+
+    expect(window.getSelection()?.toString()).toContain("•");
+    expect(window.getSelection()?.toString()).toContain("first bullet");
+    expect(container.querySelector("ul.wb-md-unordered-list")).not.toBeNull();
+  });
+
+  it("renders ordered-list marker text as explicit DOM content", () => {
+    const { container } = render(<MemoMarkdown content={"1. alpha\n2. beta\n10. gamma"} />);
+
+    const markers = Array.from(container.querySelectorAll(".wb-md-list-item-marker")).map((node) => node.textContent);
+    expect(markers).toEqual(["1.", "2.", "3."]);
+    expect(container.querySelector("ol.wb-md-ordered-list")).not.toBeNull();
+  });
+
+  it("renders incomplete streaming tails as plain text instead of unstable list structure", () => {
+    const { container } = render(<MemoMarkdown content={"Before\n\n- partial item"} streamingIncomplete />);
+
+    expect(container.querySelector(".wb-md-streaming-tail")?.textContent).toContain("- partial item");
+    expect(container.querySelector("ul.wb-md-unordered-list")).toBeNull();
+    expect(container.textContent).toContain("Before");
   });
 });

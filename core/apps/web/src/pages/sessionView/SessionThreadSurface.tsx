@@ -31,7 +31,6 @@ import type {
 } from "../../utils/useDictationController";
 import type { SlashCommandDescriptor } from "../../state/useComposerAutocomplete";
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
-import { markdownToPlainText } from "../SessionPage.helpers";
 import type { WorkbenchMessageListContext } from "../SessionPage.thread";
 import type {
   AskUserQuestionAnswerState,
@@ -40,6 +39,9 @@ import type {
 } from "../SessionPage.types";
 import type { WorkbenchThreadProjectionOp } from "../sessionThreadProjection";
 import { resolveWorkbenchMessageExpanded } from "../sessionMessageListItemIdentity";
+import {
+  getWorkbenchTurnHeaderLayoutState,
+} from "../sessionThread/transcriptRowLayoutModel";
 import { SessionThreadPane } from "../sessionThread/SessionThreadPane";
 import {
   AssistantEntry,
@@ -182,6 +184,7 @@ export function SessionThreadSurface({
       return (
         <AssistantEntry
           content={item.content}
+          isComplete={item.is_complete}
           worktreeId={worktreeId}
           onFileOpenError={handleFileOpenError}
         />
@@ -283,17 +286,15 @@ export function SessionThreadSurface({
     const itemId = item.id;
     if (item.kind === "turn_header") {
       const header = (item as Extract<WorkbenchListItem, { kind: "turn_header" }>).header;
-      const plainText = header.plain_text ?? markdownToPlainText(header.content ?? "");
-      const isLong = plainText.split("\n").length > 4 || plainText.length > 280;
-      const expanded = transcript.expandedTurnHeaders[header.id] ?? !isLong;
+      const layout = getWorkbenchTurnHeaderLayoutState(item, transcript.expandedTurnHeaders);
       return (
         <div data-thread-item-id={itemId} style={{ display: "contents" }}>
           <WorkbenchTurnHeaderView
             header={header}
-            plainText={plainText}
-            expanded={expanded}
+            plainText={layout.displayPlainText}
+            expanded={layout.expanded}
             onToggle={() => {
-              transcript.setExpandedTurnHeaders((prev) => ({ ...prev, [header.id]: !expanded }));
+              transcript.setExpandedTurnHeaders((prev) => ({ ...prev, [header.id]: !layout.expanded }));
             }}
           />
         </div>

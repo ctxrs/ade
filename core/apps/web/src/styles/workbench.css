@@ -3595,7 +3595,8 @@
 .wb-assistant-body :where(ul, ol),
 .msg :where(ul, ol) {
   margin: 0;
-  padding-left: var(--wb-markdown-list-indent);
+  padding-left: 0;
+  list-style: none;
 }
 
 .wb-turn-header-content :where(li + li),
@@ -3620,6 +3621,31 @@
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: start;
   column-gap: 0;
+}
+
+.wb-turn-header-content :where(.wb-md-list-row),
+.wb-tool-markdown :where(.wb-md-list-row),
+.wb-assistant-body :where(.wb-md-list-row),
+.msg :where(.wb-md-list-row) {
+  display: grid;
+  grid-template-columns:
+    var(--wb-md-marker-column-width, var(--wb-markdown-list-marker-min-width))
+    minmax(0, 1fr);
+  align-items: start;
+  column-gap: var(--wb-markdown-list-marker-gap);
+}
+
+.wb-turn-header-content :where(.wb-md-list-item-marker),
+.wb-tool-markdown :where(.wb-md-list-item-marker),
+.wb-assistant-body :where(.wb-md-list-item-marker),
+.msg :where(.wb-md-list-item-marker) {
+  display: inline-flex;
+  justify-content: flex-end;
+  min-width: 0;
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+  user-select: text;
 }
 
 .wb-turn-header-content :where(.wb-md-task-checkbox),
@@ -3718,6 +3744,15 @@
 .msg :where(.wb-md-table-cell-head) {
   font-weight: 600;
   color: var(--text);
+}
+
+.wb-turn-header-content :where(.wb-md-streaming-tail),
+.wb-tool-markdown :where(.wb-md-streaming-tail),
+.wb-assistant-body :where(.wb-md-streaming-tail),
+.msg :where(.wb-md-streaming-tail) {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .wb-tool-markdown img,
@@ -4825,10 +4860,15 @@
 }
 
 .askq-tabs {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
   gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
+  align-items: center;
+  min-height: var(--wb-askq-tabs-height);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
 
 .askq-tab {
@@ -4858,9 +4898,9 @@
 }
 
 .askq-body {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 12px;
+  min-height: 0;
 }
 
 .askq-question {
@@ -4870,8 +4910,7 @@
 }
 
 .askq-options {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 8px;
 }
 
@@ -4928,7 +4967,14 @@
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  margin-top: 14px;
+  align-items: center;
+  min-height: var(--wb-askq-actions-height);
+}
+
+.askq-actions-readonly {
+  justify-content: flex-start;
+  font-size: 12px;
+  color: var(--text-subtle);
 }
 
 .askq-cancel,
@@ -4951,6 +4997,8 @@
 .askq-error {
   font-size: 12px;
   color: rgba(255, 150, 150, 0.95);
+  line-height: 1.3;
+  overflow: hidden;
 }
 
 /* AskUserQuestion inline card */
@@ -4961,7 +5009,16 @@
   padding: 12px;
   margin: 8px 0;
   display: grid;
-  gap: 12px;
+  gap: var(--wb-askq-card-gap, 12px);
+  grid-template-rows:
+    minmax(var(--wb-askq-tabs-height), auto)
+    minmax(0, var(--wb-askq-panel-height))
+    minmax(var(--wb-askq-status-height), auto)
+    minmax(var(--wb-askq-actions-height), auto)
+    minmax(var(--wb-askq-hint-height), auto);
+  height: var(--wb-askq-shell-height);
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .askq-card:focus-visible {
@@ -4971,6 +5028,12 @@
 
 .askq-card-readonly {
   background: rgba(18, 18, 22, 0.85);
+}
+
+.askq-panel-viewport {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .askq-options {
@@ -5021,6 +5084,7 @@
 .askq-submit-panel {
   display: grid;
   gap: 12px;
+  min-height: 0;
 }
 
 .askq-submit-title {
@@ -5055,4 +5119,9 @@
 .askq-hint {
   font-size: 11px;
   color: var(--text-subtle);
+  line-height: 1.3;
+}
+
+.askq-status-slot {
+  min-height: var(--wb-askq-status-height);
 }

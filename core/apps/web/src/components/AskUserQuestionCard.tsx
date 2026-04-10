@@ -27,25 +27,28 @@ export function AskUserQuestionCard({
   onCancel?: () => Promise<void>;
 }) {
   const questions = useMemo(() => normalizeAskUserQuestions(input), [input]);
+  const initialSelections = useMemo(
+    () => deriveAskUserQuestionSelectionState(questions, answers),
+    [questions, answers],
+  );
   const [activeIdx, setActiveIdx] = useState(0);
-  const [selectedByQuestion, setSelectedByQuestion] = useState<Record<string, Set<string>>>({});
-  const [otherByQuestion, setOtherByQuestion] = useState<Record<string, string>>({});
+  const [selectedByQuestion, setSelectedByQuestion] = useState<Record<string, Set<string>>>(
+    () => initialSelections.selectedByQuestion,
+  );
+  const [otherByQuestion, setOtherByQuestion] = useState<Record<string, string>>(
+    () => initialSelections.otherByQuestion,
+  );
   const [cursorIndexByQuestion, setCursorIndexByQuestion] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const otherInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const derivedSelections = useMemo(
-    () => deriveAskUserQuestionSelectionState(questions, answers),
-    [questions, answers],
-  );
-
   useEffect(() => {
     if (!answers && !readOnly) return;
-    setSelectedByQuestion(derivedSelections.selectedByQuestion);
-    setOtherByQuestion(derivedSelections.otherByQuestion);
-  }, [answers, derivedSelections, readOnly]);
+    setSelectedByQuestion(initialSelections.selectedByQuestion);
+    setOtherByQuestion(initialSelections.otherByQuestion);
+  }, [answers, initialSelections, readOnly]);
 
   useEffect(() => {
     const maxIndex = Math.max(0, questions.length);
@@ -265,95 +268,99 @@ export function AskUserQuestionCard({
         </button>
       </div>
 
-      {isSubmitTab ? (
-        <div className="askq-submit-panel">
-          <div className="askq-submit-title">
-            {readOnly
-              ? outcome === "cancelled"
-                ? "Submission cancelled."
-                : "Submitted answers."
-              : "Review answers before submitting."}
-          </div>
-          <div className="askq-summary">
-            {questions.map((q) => {
-              const answer = String(effectiveAnswers[q.question] ?? "").trim();
-              return (
-                <div key={q.question} className="askq-summary-row">
-                  <div className="askq-summary-question">{q.question}</div>
-                  <div className={`askq-summary-answer${answer ? "" : " askq-summary-missing"}`}>
-                    {answer || "Missing"}
+      <div className="askq-panel-viewport">
+        {isSubmitTab ? (
+          <div className="askq-submit-panel">
+            <div className="askq-submit-title">
+              {readOnly
+                ? outcome === "cancelled"
+                  ? "Submission cancelled."
+                  : "Submitted answers."
+                : "Review answers before submitting."}
+            </div>
+            <div className="askq-summary">
+              {questions.map((q) => {
+                const answer = String(effectiveAnswers[q.question] ?? "").trim();
+                return (
+                  <div key={q.question} className="askq-summary-row">
+                    <div className="askq-summary-question">{q.question}</div>
+                    <div className={`askq-summary-answer${answer ? "" : " askq-summary-missing"}`}>
+                      {answer || "Missing"}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
-      ) : activeQuestion ? (
-        <div className="askq-body">
-          <div className="askq-question">{activeQuestion.question}</div>
-          <div className="askq-options" role="listbox" aria-label={activeQuestion.header}>
-            {displayOptions.map((opt, idx) => {
-              const selected = selectedByQuestion[activeQuestion.question]?.has(opt.label) ?? false;
-              const isActive = idx === cursorIndex;
+        ) : activeQuestion ? (
+          <div className="askq-body">
+            <div className="askq-question">{activeQuestion.question}</div>
+            <div className="askq-options" role="listbox" aria-label={activeQuestion.header}>
+              {displayOptions.map((opt, idx) => {
+                const selected = selectedByQuestion[activeQuestion.question]?.has(opt.label) ?? false;
+                const isActive = idx === cursorIndex;
+                return (
+                  <div
+                    key={`${opt.label}-${idx}`}
+                    className={`askq-option${selected ? " askq-option-selected" : ""}${isActive ? " askq-option-active" : ""}${opt.isOther ? " askq-option-other" : ""}`}
+                    role="option"
+                    aria-selected={selected}
+                    onClick={() => selectOption(opt, idx)}
+                  >
+                    <span className="askq-option-marker" aria-hidden="true">
+                      {isActive ? ">" : ""}
+                    </span>
+                    <span className="askq-option-index">{idx + 1}.</span>
+                    <span className="askq-option-label">{opt.label}</span>
+                    {opt.description ? <span className="askq-option-desc">{opt.description}</span> : null}
+                  </div>
+                );
+              })}
+            </div>
+            {(() => {
+              const otherValue = otherByQuestion[activeQuestion.question] ?? "";
+              const otherLabel =
+                activeQuestion.otherLabel ??
+                (otherValue.trim() ? DEFAULT_OTHER_LABEL : undefined);
+              if (!otherLabel) return null;
+              const isSelected =
+                selectedByQuestion[activeQuestion.question]?.has(otherLabel) ?? otherValue.trim().length > 0;
+              if (!isSelected && readOnly) return null;
               return (
-                <div
-                  key={`${opt.label}-${idx}`}
-                  className={`askq-option${selected ? " askq-option-selected" : ""}${isActive ? " askq-option-active" : ""}${opt.isOther ? " askq-option-other" : ""}`}
-                  role="option"
-                  aria-selected={selected}
-                  onClick={() => selectOption(opt, idx)}
-                >
-                  <span className="askq-option-marker" aria-hidden="true">
-                    {isActive ? ">" : ""}
-                  </span>
-                  <span className="askq-option-index">{idx + 1}.</span>
-                  <span className="askq-option-label">{opt.label}</span>
-                  {opt.description ? <span className="askq-option-desc">{opt.description}</span> : null}
+                <div className="askq-other">
+                  <div className="askq-other-label">{otherLabel}</div>
+                  <input
+                    ref={(node) => {
+                      otherInputRefs.current[activeQuestion.question] = node;
+                    }}
+                    className="askq-other-input"
+                    value={otherValue}
+                    disabled={readOnly || busy}
+                    placeholder="Type something"
+                    onChange={(e) => {
+                      if (readOnly || busy) return;
+                      const v = e.target.value;
+                      setError(null);
+                      setOtherByQuestion((prev) => ({ ...prev, [activeQuestion.question]: v }));
+                      setSelectedByQuestion((prev) => {
+                        const next = { ...prev };
+                        const set = new Set(next[activeQuestion.question] ?? []);
+                        set.add(otherLabel);
+                        next[activeQuestion.question] = set;
+                        return next;
+                      });
+                    }}
+                  />
                 </div>
               );
-            })}
+            })()}
           </div>
-          {(() => {
-            const otherValue = otherByQuestion[activeQuestion.question] ?? "";
-            const otherLabel =
-              activeQuestion.otherLabel ??
-              (otherValue.trim() ? DEFAULT_OTHER_LABEL : undefined);
-            if (!otherLabel) return null;
-            const isSelected =
-              selectedByQuestion[activeQuestion.question]?.has(otherLabel) ?? otherValue.trim().length > 0;
-            if (!isSelected && readOnly) return null;
-            return (
-              <div className="askq-other">
-                <div className="askq-other-label">{otherLabel}</div>
-                <input
-                  ref={(node) => {
-                    otherInputRefs.current[activeQuestion.question] = node;
-                  }}
-                  className="askq-other-input"
-                  value={otherValue}
-                  disabled={readOnly || busy}
-                  placeholder="Type something"
-                  onChange={(e) => {
-                    if (readOnly || busy) return;
-                    const v = e.target.value;
-                    setError(null);
-                    setOtherByQuestion((prev) => ({ ...prev, [activeQuestion.question]: v }));
-                    setSelectedByQuestion((prev) => {
-                      const next = { ...prev };
-                      const set = new Set(next[activeQuestion.question] ?? []);
-                      set.add(otherLabel);
-                      next[activeQuestion.question] = set;
-                      return next;
-                    });
-                  }}
-                />
-              </div>
-            );
-          })()}
-        </div>
-      ) : null}
+        ) : null}
+      </div>
 
-      {error ? <div className="askq-error">{error}</div> : null}
+      <div className="askq-status-slot" aria-live="polite">
+        {error ? <div className="askq-error">{error}</div> : null}
+      </div>
 
       {!readOnly ? (
         <div className="askq-actions">
@@ -392,16 +399,16 @@ export function AskUserQuestionCard({
           </button>
         </div>
       ) : (
-        <div className="askq-hint">
-          {outcome === "cancelled" ? "Cancelled." : "Read-only answers. Use left/right to switch tabs."}
+        <div className="askq-actions askq-actions-readonly">
+          {outcome === "cancelled" ? "Cancelled." : "Submitted answers are read-only."}
         </div>
       )}
 
-      {!readOnly ? (
-        <div className="askq-hint">
-          Use left/right or Tab to change tabs. Use arrows or 1-9 to select. Enter selects the highlighted option.
-        </div>
-      ) : null}
+      <div className="askq-hint">
+        {!readOnly
+          ? "Use left/right or Tab to change tabs. Use arrows or 1-9 to select. Enter selects the highlighted option."
+          : "Read-only answers. Use left/right to switch tabs."}
+      </div>
     </div>
   );
 }

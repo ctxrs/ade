@@ -14,6 +14,7 @@ type E2EWindow = Window & {
       actual: number;
       delta: number;
     }>>;
+    measureMarkdownSelectionText?: (markdown: string, width: number) => Promise<string>;
     installMarkdownScrollProbe?: (markdown: string, width?: number) => Promise<boolean>;
     removeMarkdownScrollProbe?: () => boolean;
   };
@@ -32,6 +33,12 @@ async function measureMarkdownParity(page: Page, samples: readonly MarkdownSampl
   return page.evaluate(({ samples, width }) => {
     return (window as E2EWindow).__ctxE2E?.measureMarkdownParity?.(samples, width) ?? Promise.resolve([]);
   }, { samples, width });
+}
+
+async function measureMarkdownSelectionText(page: Page, markdown: string, width: number) {
+  return page.evaluate(({ markdown, width }) => {
+    return (window as E2EWindow).__ctxE2E?.measureMarkdownSelectionText?.(markdown, width) ?? Promise.resolve("");
+  }, { markdown, width });
 }
 
 test("workbench: deterministic markdown planner matches rendered block geometry", async ({ page }) => {
@@ -132,4 +139,20 @@ test("workbench: vertical wheel over code blocks and tables still scrolls the tr
   await page.evaluate(() => {
     (window as E2EWindow).__ctxE2E?.removeMarkdownScrollProbe?.();
   });
+});
+
+test("workbench: normal markdown selection text includes explicit list markers", async ({ page }) => {
+  test.setTimeout(120000);
+  await openEmptyWorkspace(page);
+
+  const selectionText = await measureMarkdownSelectionText(
+    page,
+    ["1. first item", "2. second item", "", "- bullet item"].join("\n"),
+    788,
+  );
+
+  expect(selectionText).toContain("1.");
+  expect(selectionText).toContain("2.");
+  expect(selectionText).toContain("•");
+  expect(selectionText).toContain("bullet item");
 });

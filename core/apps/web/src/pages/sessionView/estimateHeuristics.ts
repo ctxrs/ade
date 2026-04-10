@@ -1,5 +1,6 @@
 import type { ContextWindowInfo } from "../../components/WorkbenchComposer";
 import type { WorkbenchListItem } from "../SessionPage.types";
+import { getWorkbenchTurnHeaderDisplayPlainText } from "../sessionThread/transcriptRowLayoutModel";
 
 const getEstimateBucket = (length: number): string => {
   if (length > 8000) return "xxl";
@@ -52,7 +53,7 @@ export const estimateItemHeight = (item: WorkbenchListItem): number => {
     }
     case "turn_header": {
       const header = (item as Extract<WorkbenchListItem, { kind: "turn_header" }>).header;
-      const text = header?.plain_text ?? header?.content ?? "";
+      const text = header ? getWorkbenchTurnHeaderDisplayPlainText(header) : "";
       return estimateTextHeight(text, header?.attachments?.length ?? 0);
     }
     case "tool": {
@@ -132,7 +133,7 @@ export const getItemEstimateKey = (item: WorkbenchListItem): string => {
     }
     case "turn_header": {
       const header = (item as Extract<WorkbenchListItem, { kind: "turn_header" }>).header;
-      const text = header?.plain_text ?? header?.content ?? "";
+      const text = header ? getWorkbenchTurnHeaderDisplayPlainText(header) : "";
       return `${kind}:${getEstimateBucket(text.length)}`;
     }
     default:

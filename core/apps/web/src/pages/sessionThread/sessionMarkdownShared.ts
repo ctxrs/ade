@@ -9,6 +9,7 @@ export type SessionMarkdownNode = {
   depth?: unknown;
   lang?: unknown;
   ordered?: unknown;
+  start?: unknown;
   checked?: unknown;
   [key: string]: unknown;
 };
@@ -110,6 +111,11 @@ export function readMarkdownDepth(node: SessionMarkdownNode, fallback = 1): numb
 
 export function readMarkdownOrdered(node: SessionMarkdownNode): boolean {
   return Boolean(node.ordered);
+}
+
+export function readMarkdownStart(node: SessionMarkdownNode, fallback = 1): number {
+  const start = Number(node.start ?? fallback);
+  return Number.isFinite(start) && start > 0 ? Math.floor(start) : fallback;
 }
 
 export function readMarkdownChecked(node: SessionMarkdownNode): boolean | null {

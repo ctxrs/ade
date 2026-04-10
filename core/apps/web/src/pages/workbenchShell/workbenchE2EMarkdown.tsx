@@ -57,6 +57,37 @@ export async function measureWorkbenchMarkdownParity(
   return out;
 }
 
+export async function measureWorkbenchMarkdownSelectionText(markdown: string, width: number): Promise<string> {
+  const host = document.createElement("div");
+  host.style.position = "fixed";
+  host.style.left = "-10000px";
+  host.style.top = "0";
+  applyMarkdownLayoutStyle(host, width);
+  document.body.appendChild(host);
+  const root = ReactDOMClient.createRoot(host);
+  root.render(React.createElement(MemoMarkdown, { content: markdown }));
+  await new Promise((resolve) => window.setTimeout(resolve, 20));
+
+  const markdownRoot = host.querySelector(".wb-markdown-root");
+  if (!markdownRoot) {
+    root.unmount();
+    host.remove();
+    return "";
+  }
+
+  const selection = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(markdownRoot);
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  const text = selection?.toString() ?? "";
+  selection?.removeAllRanges();
+
+  root.unmount();
+  host.remove();
+  return text;
+}
+
 export async function installWorkbenchMarkdownScrollProbe(markdown: string, width = 788): Promise<boolean> {
   removeWorkbenchMarkdownScrollProbe();
 

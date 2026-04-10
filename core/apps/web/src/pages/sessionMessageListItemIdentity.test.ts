@@ -78,6 +78,21 @@ describe("sessionMessageListItemIdentity", () => {
     expect(getWorkbenchListItemKey(item, expandedUiState)).toContain("turn-header-1:turn-header:expanded:");
   });
 
+  it("normalizes markdown turn-header content into display plain text when plain_text is absent", () => {
+    const item: Extract<WorkbenchListItem, { kind: "turn_header" }> = {
+      kind: "turn_header",
+      id: "turn-header-markdown",
+      header: {
+        id: "header-markdown",
+        content: "# Heading\n\n- bullet",
+        attachments: [],
+        created_at: "2025-01-01T00:00:00.000Z",
+      },
+    };
+
+    expect(getWorkbenchListItemKey(item, baseUiState)).toContain("turn-header-markdown:turn-header:collapsed:");
+  });
+
   it("captures nested tool expansion inside a tool-group height key", () => {
     const item: Extract<WorkbenchListItem, { kind: "tool_group" }> = {
       kind: "tool_group",

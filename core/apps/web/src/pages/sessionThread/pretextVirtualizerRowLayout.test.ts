@@ -85,6 +85,8 @@ import {
 } from "./pretextVirtualizerRowLayout";
 import { measureSessionMarkdownDocument } from "./sessionMarkdownMeasurement";
 import {
+  SESSION_THREAD_ASK_USER_MARGIN_VERTICAL_PX,
+  SESSION_THREAD_ASK_USER_SHELL_HEIGHT_PX,
   SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_BORDER_WIDTH_PX,
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_BOTTOM_PX,
@@ -134,6 +136,30 @@ describe("getPretextVirtualizerRowLayout", () => {
 
     expect(result.height).toBeGreaterThan(40);
     expect(prepareMock.mock.calls.length + prepareWithSegmentsMock.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  it("keeps incomplete assistant list tails in plain-text streaming mode until the block closes", () => {
+    const partialItem: WorkbenchListItem = {
+      kind: "assistant",
+      id: "assistant-streaming-partial",
+      turn_id: "turn-1",
+      created_at: "2026-04-05T00:00:00Z",
+      content: "Before\n\n- partial item",
+      thought: "",
+      is_complete: false,
+    };
+    const closedItem: WorkbenchListItem = {
+      ...partialItem,
+      id: "assistant-streaming-closed",
+      content: "Before\n\n- partial item\n\nAfter",
+    };
+
+    const partial = getPretextVirtualizerRowLayout(partialItem, 640, {});
+    const closed = getPretextVirtualizerRowLayout(closedItem, 640, {});
+
+    expect(partial.height).toBeGreaterThan(0);
+    expect(closed.height).toBeGreaterThan(partial.height);
+    expect(prepareMock).toHaveBeenCalled();
   });
 
   it("measures markdown tables with deterministic width-sensitive heights", () => {
@@ -341,6 +367,40 @@ describe("getPretextVirtualizerRowLayout", () => {
 
     const result = getPretextVirtualizerRowLayout(item, 640, {});
 
-    expect(result.height).toBeGreaterThan(180);
+    expect(result.height).toBe(
+      Math.round((SESSION_THREAD_ASK_USER_MARGIN_VERTICAL_PX + SESSION_THREAD_ASK_USER_SHELL_HEIGHT_PX) * 16) / 16,
+    );
+  });
+
+  it("keeps ask-user-question height fixed after the row is answered", () => {
+    const pendingItem: WorkbenchListItem = {
+      kind: "ask_user_question",
+      id: "ask-2",
+      turn_id: "turn-1",
+      created_at: "2026-04-05T00:00:00Z",
+      tool_call_id: "tool-call-2",
+      answered: false,
+      input: {
+        questions: [
+          {
+            header: "Priority",
+            question: "Which option should I choose?",
+            options: [{ label: "Fast", description: "Get it done quickly." }],
+            allowOther: true,
+          },
+        ],
+      },
+    };
+    const answeredItem: WorkbenchListItem = {
+      ...pendingItem,
+      answered: true,
+      answers: { "Which option should I choose?": "Fast" },
+      outcome: "submitted",
+    };
+
+    const pending = getPretextVirtualizerRowLayout(pendingItem, 640, {});
+    const answered = getPretextVirtualizerRowLayout(answeredItem, 640, {});
+
+    expect(answered.height).toBe(pending.height);
   });
 });

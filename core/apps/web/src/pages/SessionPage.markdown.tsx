@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type MouseEvent,
   type ReactNode,
   type WheelEvent,
@@ -26,6 +27,7 @@ import {
   type SessionMarkdownTableCell,
 } from "./sessionThread/sessionMarkdownContract";
 import { copyTextToClipboard } from "../utils/clipboard";
+import { resolveSessionStreamingMarkdownLayout } from "./sessionThread/sessionStreamingMarkdown";
 import {
   type FileRef,
   isAbsolutePath,
@@ -589,7 +591,7 @@ function renderListItem(item: SessionMarkdownListItem, opts: MarkdownRenderOptio
       />
     );
   return (
-    <li key={keyPrefix} className={item.checked != null ? "wb-md-task-item" : undefined}>
+    <li key={keyPrefix} className={item.checked != null ? "wb-md-task-item" : "wb-md-list-item"}>
       {checkbox ? (
         <div className="wb-md-task-row">
           {checkbox}
@@ -598,8 +600,13 @@ function renderListItem(item: SessionMarkdownListItem, opts: MarkdownRenderOptio
           </div>
         </div>
       ) : (
-        <div className="wb-md-list-item-body wb-md-stack">
-          {renderBlockStack(item.blocks, opts, "listItem", `${keyPrefix}-body`)}
+        <div className="wb-md-list-row">
+          <span className="wb-md-list-item-marker" aria-hidden="true">
+            {item.markerText}
+          </span>
+          <div className="wb-md-list-item-body wb-md-stack">
+            {renderBlockStack(item.blocks, opts, "listItem", `${keyPrefix}-body`)}
+          </div>
         </div>
       )}
     </li>
@@ -612,8 +619,14 @@ function renderListBlock(
   keyPrefix: string,
 ): ReactNode {
   const ListTag = (block.ordered ? "ol" : "ul") as "ol" | "ul";
+  const style = {
+    "--wb-md-marker-column-width": `${block.markerColumnWidthPx}px`,
+  } as CSSProperties;
   return (
-    <ListTag className={block.ordered ? "wb-md-ordered-list" : "wb-md-unordered-list"}>
+    <ListTag
+      className={block.ordered ? "wb-md-ordered-list" : "wb-md-unordered-list"}
+      style={style}
+    >
       {block.items.map((item, index) => renderListItem(item, opts, `${keyPrefix}-item-${index}`))}
     </ListTag>
   );
@@ -745,13 +758,24 @@ export function Markdown({
   linkifyFiles = false,
   worktreeId = null,
   onFileOpenError,
+  streamingIncomplete = false,
 }: {
   content: string;
   linkifyFiles?: boolean;
   worktreeId?: string | null;
   onFileOpenError?: (message: string | null) => void;
+  streamingIncomplete?: boolean;
 }) {
-  const blocks = useMemo(() => createSessionMarkdownDocument(content).blocks, [content]);
+  const streamingLayout = useMemo(
+    () => (streamingIncomplete ? resolveSessionStreamingMarkdownLayout(content) : null),
+    [content, streamingIncomplete],
+  );
+  const blocks = useMemo(
+    () =>
+      streamingLayout?.stableBlocks ??
+      createSessionMarkdownDocument(content).blocks,
+    [content, streamingLayout],
+  );
   const renderOptions = useMemo<MarkdownRenderOptions>(
     () => ({
       enableLinks: Boolean(linkifyFiles),
@@ -760,10 +784,25 @@ export function Markdown({
     }),
     [linkifyFiles, onFileOpenError, worktreeId],
   );
+  const trailingTail = streamingLayout?.trailingTail ?? "";
+  const tailMarginTopPx =
+    trailingTail.length === 0
+      ? 0
+      : blocks.length === 0
+        ? resolveSessionMarkdownBlockEntryGapPx("paragraph", "root")
+        : resolveSessionMarkdownBlockGapPx(blocks[blocks.length - 1]!.kind, "paragraph", "root");
 
   return (
     <div className="wb-markdown-root wb-md-stack">
       {renderBlockStack(blocks, renderOptions, "root", "markdown")}
+      {trailingTail.length > 0 ? (
+        <div
+          className="wb-md-streaming-tail"
+          style={tailMarginTopPx > 0 ? { marginTop: `${tailMarginTopPx}px` } : undefined}
+        >
+          {trailingTail}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -774,5 +813,6 @@ export const MemoMarkdown = memo(
   (prev, next) =>
     prev.content === next.content &&
     prev.linkifyFiles === next.linkifyFiles &&
-    prev.worktreeId === next.worktreeId,
+    prev.worktreeId === next.worktreeId &&
+    prev.streamingIncomplete === next.streamingIncomplete,
 );

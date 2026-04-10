@@ -1,15 +1,11 @@
 import type { PretextVirtualizerPlannedLayout } from "@pretext-virtualizer/core";
 import type { MessageAttachment } from "../../api/client";
-import {
-  normalizeAskUserQuestions,
-  type AskUserQuestionItem,
-} from "../../components/askUserQuestionShared";
+import { resolveAskUserQuestionShellLayout } from "../../components/askUserQuestionLayout";
 import {
   addPretextPerfBucket,
   incrementPretextPerfCounter,
 } from "../../utils/pretextPerfDiagnostics";
 import type { WorkbenchListItem, WorkbenchTurnHeader } from "../SessionPage.types";
-import { isExpandableMessageContent, resolveWorkbenchMessageExpanded } from "../sessionMessageListItemIdentity";
 import {
   clearSessionMarkdownMeasurementCaches,
   measureSessionMarkdownDocument,
@@ -17,8 +13,14 @@ import {
   measureSessionTextHeight,
 } from "./sessionMarkdownMeasurement";
 import {
-  SESSION_THREAD_CONTENT_MAX_WIDTH_PX,
-  SESSION_THREAD_HORIZONTAL_INSET_PX,
+  resolveSessionMarkdownBlockEntryGapPx,
+  resolveSessionMarkdownBlockGapPx,
+} from "./sessionMarkdownContract";
+import {
+  clearSessionStreamingMarkdownCaches,
+  resolveSessionStreamingMarkdownLayout,
+} from "./sessionStreamingMarkdown";
+import {
   SESSION_THREAD_INDENT_LEFT_PX,
   SESSION_THREAD_MESSAGE_ATTACHMENT_GAP_PX,
   SESSION_THREAD_MESSAGE_ATTACHMENT_HEIGHT_PX,
@@ -27,7 +29,6 @@ import {
   SESSION_THREAD_MESSAGE_BUBBLE_BORDER_WIDTH_PX,
   SESSION_THREAD_MESSAGE_BUBBLE_PADDING_BLOCK_PX,
   SESSION_THREAD_MESSAGE_BUBBLE_PADDING_INLINE_PX,
-  SESSION_THREAD_MESSAGE_MAX_WIDTH_RATIO,
   SESSION_THREAD_MESSAGE_ROLE_LINE_HEIGHT_PX,
   SESSION_THREAD_MESSAGE_ROW_PADDING_BLOCK_PX,
   SESSION_THREAD_MESSAGE_TOGGLE_LINE_HEIGHT_PX,
@@ -35,8 +36,18 @@ import {
   SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY,
   SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX,
   SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
+  SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_INLINE_PX,
+  resolveSessionThreadAssistantTextWidth,
   resolveSessionThreadContentWidth,
+  resolveSessionThreadIndentedContentWidth,
+  resolveSessionThreadMessageTextWidth,
+  resolveSessionThreadTurnHeaderTextWidth,
 } from "./sessionThreadLayoutTokens";
+import {
+  getWorkbenchMessageLayoutState,
+  getWorkbenchTurnHeaderDisplayPlainText,
+  getWorkbenchTurnHeaderLayoutState,
+} from "./transcriptRowLayoutModel";
 
 export type PretextVirtualizerRowLayoutContext = {
   expandedTurnHeaders?: Readonly<Record<string, boolean>>;
@@ -47,7 +58,6 @@ export type PretextVirtualizerRowLayoutContext = {
 
 const BODY_FONT = `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`;
 const BODY_LINE_HEIGHT_PX = SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX;
-const SMALL_FONT = `12px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`;
 const SMALL_LINE_HEIGHT_PX = 16;
 const MONO_FONT =
   '12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
@@ -64,9 +74,7 @@ const THOUGHT_HORIZONTAL_PADDING_PX = 8;
 const THOUGHT_VERTICAL_PADDING_PX = 16;
 
 const TURN_HEADER_OUTER_VERTICAL_PX = 14;
-const TURN_HEADER_BUBBLE_HORIZONTAL_PX = 22;
 const TURN_HEADER_BUBBLE_VERTICAL_PX = 18;
-const TURN_HEADER_COPY_GUTTER_PX = 24;
 const TURN_HEADER_COLLAPSED_MAX_HEIGHT_PX = 66;
 const TURN_HEADER_ATTACHMENT_SIZE_PX = 44;
 const TURN_HEADER_ATTACHMENT_GAP_PX = 6;
@@ -83,58 +91,14 @@ const MESSAGE_TOGGLE_HEIGHT_PX =
   SESSION_THREAD_MESSAGE_TOGGLE_MARGIN_TOP_PX + SESSION_THREAD_MESSAGE_TOGGLE_LINE_HEIGHT_PX;
 const MESSAGE_ROW_VERTICAL_PX = SESSION_THREAD_MESSAGE_ROW_PADDING_BLOCK_PX * 2;
 
-const ASSISTANT_HORIZONTAL_PADDING_PX = 4;
 const ASSISTANT_VERTICAL_PADDING_PX = 20;
-
-const ASK_CARD_MARGIN_VERTICAL_PX = 16;
-const ASK_CARD_PADDING_PX = 24;
-const ASK_CARD_GAP_PX = 12;
-const ASK_TAB_HEIGHT_PX = 28;
-const ASK_BODY_GAP_PX = 12;
-const ASK_OPTION_PADDING_VERTICAL_PX = 12;
-const ASK_OPTION_PADDING_HORIZONTAL_PX = 16;
-const ASK_OPTION_LABEL_LINE_HEIGHT_PX = 18;
-const ASK_OPTION_DESC_LINE_HEIGHT_PX = 16;
-const ASK_ACTIONS_HEIGHT_PX = 34;
-const ASK_HINT_HEIGHT_PX = 14;
-const ASK_OTHER_LABEL_HEIGHT_PX = 16;
-const ASK_OTHER_INPUT_HEIGHT_PX = 34;
 
 const PERF_WIDTH_BUCKET_SIZE = 64;
 const normalizeHeight = (value: number): number =>
   Number.isFinite(value) && value > 0 ? Math.max(1, Math.round(value * 16) / 16) : 1;
 
 const resolveThoughtTextWidth = (viewportWidth: number): number =>
-  Math.max(1, resolveSessionThreadContentWidth(viewportWidth) - SESSION_THREAD_INDENT_LEFT_PX - THOUGHT_HORIZONTAL_PADDING_PX);
-
-const resolveTurnHeaderTextWidth = (viewportWidth: number): number =>
-  Math.max(
-    1,
-    resolveSessionThreadContentWidth(viewportWidth) -
-      TURN_HEADER_BUBBLE_HORIZONTAL_PX -
-      TURN_HEADER_COPY_GUTTER_PX,
-  );
-
-const resolveMessageOuterWidth = (viewportWidth: number): number =>
-  Math.max(
-    1,
-    (resolveSessionThreadContentWidth(viewportWidth) - SESSION_THREAD_INDENT_LEFT_PX) *
-      SESSION_THREAD_MESSAGE_MAX_WIDTH_RATIO,
-  );
-
-const resolveMessageTextWidth = (viewportWidth: number): number =>
-  Math.max(1, resolveMessageOuterWidth(viewportWidth) - MESSAGE_BUBBLE_HORIZONTAL_PX);
-
-const resolveAssistantTextWidth = (viewportWidth: number): number =>
-  Math.max(
-    1,
-    resolveSessionThreadContentWidth(viewportWidth) -
-      SESSION_THREAD_INDENT_LEFT_PX -
-      ASSISTANT_HORIZONTAL_PADDING_PX,
-  );
-
-const resolveAskCardWidth = (viewportWidth: number): number =>
-  Math.max(280, Math.min(resolveSessionThreadContentWidth(viewportWidth) - SESSION_THREAD_INDENT_LEFT_PX, 680));
+  Math.max(1, resolveSessionThreadIndentedContentWidth(viewportWidth) - THOUGHT_HORIZONTAL_PADDING_PX);
 
 function measureTextHeight(params: {
   cacheKey: string;
@@ -146,15 +110,6 @@ function measureTextHeight(params: {
 }): number {
   return measureSessionTextHeight(params);
 }
-
-const isExpandedTurnHeader = (
-  header: WorkbenchTurnHeader,
-  plainText: string,
-  context: PretextVirtualizerRowLayoutContext,
-): boolean => {
-  const isLong = plainText.split("\n").length > 4 || plainText.length > 280;
-  return context.expandedTurnHeaders?.[header.id] ?? !isLong;
-};
 
 const countImageAttachments = (attachments: readonly MessageAttachment[]): number =>
   attachments.filter((attachment) => attachment.kind === "image" || attachment.kind === "image_ref").length;
@@ -176,22 +131,25 @@ function measureTurnHeaderHeight(
   viewportWidth: number,
   context: PretextVirtualizerRowLayoutContext,
 ): number {
-  const plainText = header.plain_text ?? header.content ?? "";
-  const expanded = isExpandedTurnHeader(header, plainText, context);
+  const displayPlainText = getWorkbenchTurnHeaderDisplayPlainText(header);
+  const expanded = getWorkbenchTurnHeaderLayoutState(
+    { kind: "turn_header", id: `turn-header-${header.id}`, header },
+    context.expandedTurnHeaders ?? {},
+  ).expanded;
   const textHeight = measureSessionPlainTextBlockHeight({
-    cacheKey: `turn-header:${header.id}:${plainText}`,
-    text: plainText,
+    cacheKey: `turn-header:${header.id}:${displayPlainText}`,
+    text: displayPlainText,
     font: BODY_FONT,
-    width: resolveTurnHeaderTextWidth(viewportWidth),
+    width: resolveSessionThreadTurnHeaderTextWidth(viewportWidth),
     lineHeight: BODY_LINE_HEIGHT_PX,
   });
   const collapsedTextHeight = expanded ? textHeight : Math.min(textHeight, TURN_HEADER_COLLAPSED_MAX_HEIGHT_PX);
   const imageCount = expanded ? countImageAttachments(header.attachments) : 0;
   const perRow = Math.max(
     1,
-      Math.floor(
+    Math.floor(
       (resolveSessionThreadContentWidth(viewportWidth) -
-        TURN_HEADER_BUBBLE_HORIZONTAL_PX +
+        SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_INLINE_PX * 2 +
         TURN_HEADER_ATTACHMENT_GAP_PX) /
         (TURN_HEADER_ATTACHMENT_SIZE_PX + TURN_HEADER_ATTACHMENT_GAP_PX),
     ),
@@ -225,7 +183,7 @@ function measureThoughtHeight(item: Extract<WorkbenchListItem, { kind: "thought"
 function measureMessageAttachmentsHeight(item: Extract<WorkbenchListItem, { kind: "message" }>, viewportWidth: number): number {
   const imageCount = countImageAttachments(item.attachments ?? []);
   if (imageCount === 0) return 0;
-  const rows = countAttachmentRows(imageCount, resolveMessageTextWidth(viewportWidth));
+  const rows = countAttachmentRows(imageCount, resolveSessionThreadMessageTextWidth(viewportWidth));
   return (
     SESSION_THREAD_MESSAGE_ATTACHMENT_MARGIN_TOP_PX +
     rows * SESSION_THREAD_MESSAGE_ATTACHMENT_HEIGHT_PX +
@@ -238,13 +196,10 @@ function measureMessageHeight(
   viewportWidth: number,
   context: PretextVirtualizerRowLayoutContext,
 ): number {
-  const expanded = resolveWorkbenchMessageExpanded(item, {
-    ...(context.expandedMessageById ?? {}),
-  });
-  const shownContent = expanded ? item.content : item.content.split("\n").slice(0, 20).join("\n");
-  const textHeight = measureSessionMarkdownDocument(shownContent, resolveMessageTextWidth(viewportWidth));
+  const layout = getWorkbenchMessageLayoutState(item, context.expandedMessageById ?? {});
+  const textHeight = measureSessionMarkdownDocument(layout.shownContent, resolveSessionThreadMessageTextWidth(viewportWidth));
   const attachmentsHeight = measureMessageAttachmentsHeight(item, viewportWidth);
-  const toggleHeight = isExpandableMessageContent(item.content) ? MESSAGE_TOGGLE_HEIGHT_PX : 0;
+  const toggleHeight = layout.expandable ? MESSAGE_TOGGLE_HEIGHT_PX : 0;
   return normalizeHeight(
     MESSAGE_ROW_VERTICAL_PX +
       MESSAGE_ROLE_HEIGHT_PX +
@@ -262,7 +217,36 @@ function measureAssistantHeight(
   if (!item.is_complete && item.content.trim().length === 0) {
     return SPACER_HEIGHT_PX;
   }
-  const textHeight = measureSessionMarkdownDocument(item.content, resolveAssistantTextWidth(viewportWidth));
+  const textWidth = resolveSessionThreadAssistantTextWidth(viewportWidth);
+  const textHeight = item.is_complete
+    ? measureSessionMarkdownDocument(item.content, textWidth)
+    : (() => {
+        const layout = resolveSessionStreamingMarkdownLayout(item.content);
+        const stableHeight =
+          layout.stableMarkdown.length > 0
+            ? measureSessionMarkdownDocument(layout.stableMarkdown, textWidth)
+            : 0;
+        if (layout.trailingTail.length === 0) {
+          return stableHeight;
+        }
+        const tailHeight = measureTextHeight({
+          cacheKey: `assistant-tail:${item.id}:${layout.trailingTail}`,
+          text: layout.trailingTail,
+          font: BODY_FONT,
+          width: textWidth,
+          lineHeight: BODY_LINE_HEIGHT_PX,
+          whiteSpace: "pre-wrap",
+        });
+        const tailGap =
+          layout.stableBlocks.length === 0
+            ? resolveSessionMarkdownBlockEntryGapPx("paragraph", "root")
+            : resolveSessionMarkdownBlockGapPx(
+                layout.stableBlocks[layout.stableBlocks.length - 1]!.kind,
+                "paragraph",
+                "root",
+              );
+        return stableHeight + tailGap + tailHeight;
+      })();
   return normalizeHeight(ASSISTANT_VERTICAL_PADDING_PX + textHeight);
 }
 
@@ -305,80 +289,14 @@ function measureToolGroupHeight(
   return normalizeHeight(summaryHeight + (detailsHeight > 0 ? TOOL_GROUP_GAP_PX + detailsHeight : 0));
 }
 
-function measureAskUserQuestionOption(option: AskUserQuestionItem["options"][number], width: number): number {
-  const labelHeight = measureTextHeight({
-    cacheKey: `ask-opt-label:${option.label}`,
-    text: option.label,
-    font: BODY_FONT,
-    width,
-    lineHeight: ASK_OPTION_LABEL_LINE_HEIGHT_PX,
-  });
-  const description = option.description?.trim() ?? "";
-  const descriptionHeight =
-    description.length > 0
-      ? measureTextHeight({
-          cacheKey: `ask-opt-desc:${description}`,
-          text: description,
-          font: SMALL_FONT,
-          width,
-          lineHeight: ASK_OPTION_DESC_LINE_HEIGHT_PX,
-        }) + 2
-      : 0;
-  return ASK_OPTION_PADDING_VERTICAL_PX + labelHeight + descriptionHeight;
-}
-
-function measureAskUserQuestionPanel(question: AskUserQuestionItem, width: number): number {
-  const questionHeight = measureTextHeight({
-    cacheKey: `ask-question:${question.question}`,
-    text: question.question,
-    font: BODY_FONT,
-    width,
-    lineHeight: 18.9,
-  });
-  const optionWidth = Math.max(1, width - ASK_OPTION_PADDING_HORIZONTAL_PX - 38);
-  const options = [...question.options];
-  if (question.otherLabel) {
-    options.push({ label: question.otherLabel, isOther: true });
-  }
-  let optionsHeight = 0;
-  for (let index = 0; index < options.length; index += 1) {
-    optionsHeight += measureAskUserQuestionOption(options[index]!, optionWidth);
-    if (index < options.length - 1) optionsHeight += 6;
-  }
-  const otherHeight = question.otherLabel ? ASK_BODY_GAP_PX + ASK_OTHER_LABEL_HEIGHT_PX + 6 + ASK_OTHER_INPUT_HEIGHT_PX : 0;
-  return questionHeight + ASK_BODY_GAP_PX + optionsHeight + otherHeight;
-}
-
 function measureAskUserQuestionHeight(item: Extract<WorkbenchListItem, { kind: "ask_user_question" }>, viewportWidth: number): number {
-  const questions = normalizeAskUserQuestions(item.input);
-  if (questions.length === 0) {
-    return normalizeHeight(ASK_CARD_MARGIN_VERTICAL_PX + ASK_CARD_PADDING_PX + ASK_ACTIONS_HEIGHT_PX + ASK_HINT_HEIGHT_PX);
-  }
-
-  const cardWidth = resolveAskCardWidth(viewportWidth);
-  const innerWidth = Math.max(1, cardWidth - ASK_CARD_PADDING_PX);
-  const maxPanelHeight = Math.max(
-    ...questions.map((question) => measureAskUserQuestionPanel(question, innerWidth)),
-    questions.length * 34,
-  );
-  const tabsHeight = ASK_TAB_HEIGHT_PX;
-  const bottomChromeHeight = item.answered
-    ? ASK_HINT_HEIGHT_PX
-    : ASK_ACTIONS_HEIGHT_PX + ASK_CARD_GAP_PX + ASK_HINT_HEIGHT_PX;
-
-  return normalizeHeight(
-    ASK_CARD_MARGIN_VERTICAL_PX +
-      ASK_CARD_PADDING_PX +
-      tabsHeight +
-      ASK_CARD_GAP_PX +
-      maxPanelHeight +
-      ASK_CARD_GAP_PX +
-      bottomChromeHeight,
-  );
+  void item;
+  return normalizeHeight(resolveAskUserQuestionShellLayout(viewportWidth).outerHeight);
 }
 
 export const clearPretextVirtualizerRowLayoutCache = (): void => {
   clearSessionMarkdownMeasurementCaches();
+  clearSessionStreamingMarkdownCaches();
 };
 
 export const getPretextVirtualizerRowLayout = (

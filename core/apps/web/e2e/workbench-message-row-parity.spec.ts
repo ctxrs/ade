@@ -123,8 +123,8 @@ async function measureMessageParity(
   }, params);
 }
 
-async function measureAssistantParity(page: Page, content: string): Promise<RowParityMeasurement> {
-  return page.evaluate(async ({ content }) => {
+async function measureAssistantParity(page: Page, content: string, isComplete = true): Promise<RowParityMeasurement> {
+  return page.evaluate(async ({ content, isComplete }) => {
     const ReactModule = await import("/node_modules/.vite/deps/react.js");
     const React = ReactModule.default ?? ReactModule;
     const ReactDomClientModule = await import("/node_modules/.vite/deps/react-dom_client.js");
@@ -159,7 +159,7 @@ async function measureAssistantParity(page: Page, content: string): Promise<RowP
       created_at: "2026-04-09T00:00:00Z",
       content,
       thought: "",
-      is_complete: true,
+      is_complete: isComplete,
     };
 
     const root = ReactDOMClient.createRoot(host);
@@ -172,6 +172,7 @@ async function measureAssistantParity(page: Page, content: string): Promise<RowP
           { className: "wb-thread-indent" },
           React.createElement(AssistantEntry, {
             content,
+            isComplete,
             worktreeId: null,
             onFileOpenError: () => {},
           }),
@@ -191,7 +192,7 @@ async function measureAssistantParity(page: Page, content: string): Promise<RowP
       actual,
       delta: planned - actual,
     };
-  }, { content });
+  }, { content, isComplete });
 }
 
 async function measureTurnHeaderParity(page: Page, plainText: string): Promise<RowParityMeasurement> {
@@ -325,6 +326,18 @@ test("workbench: assistant markdown planner matches rendered height", async ({ p
   expect(
     Math.abs(measurement.delta),
     `assistant drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual})`,
+  ).toBeLessThanOrEqual(1);
+});
+
+test("workbench: incomplete assistant streaming tails stay in parity with the planner", async ({ page }) => {
+  test.setTimeout(120000);
+  await openWorkbenchShell(page);
+
+  const measurement = await measureAssistantParity(page, "Before\n\n- partial item", false);
+
+  expect(
+    Math.abs(measurement.delta),
+    `incomplete assistant drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual})`,
   ).toBeLessThanOrEqual(1);
 });
 

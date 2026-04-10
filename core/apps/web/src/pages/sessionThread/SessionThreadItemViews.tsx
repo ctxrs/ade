@@ -16,7 +16,6 @@ import { type SessionViewVerbosity } from "../../state/uiStateStore";
 import { copyTextToClipboard } from "../../utils/clipboard";
 import { useRelativeNowMs } from "../../utils/useRelativeNowMs";
 import { MemoMarkdown } from "../SessionPage.markdown";
-import { isExpandableMessageContent } from "../sessionMessageListItemIdentity";
 import {
   attachmentDisplayName,
   formatElapsedMs,
@@ -34,6 +33,7 @@ import {
   truncateMiddle,
 } from "../SessionPage.helpers";
 import type { ThreadItem, WorkbenchTurnHeader } from "../SessionPage.types";
+import { isExpandableMessageContent } from "./transcriptRowLayoutModel";
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -299,17 +299,25 @@ function CollapsibleMessage({
 
 export const AssistantEntry = memo(function AssistantEntry({
   content,
+  isComplete = true,
   worktreeId,
   onFileOpenError,
 }: {
   content: string;
+  isComplete?: boolean;
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
 }) {
   return (
     <div className="wb-assistant-entry">
       <div className="wb-assistant-body">
-        <MemoMarkdown content={content} linkifyFiles worktreeId={worktreeId} onFileOpenError={onFileOpenError} />
+        <MemoMarkdown
+          content={content}
+          linkifyFiles
+          worktreeId={worktreeId}
+          onFileOpenError={onFileOpenError}
+          streamingIncomplete={!isComplete}
+        />
       </div>
     </div>
   );

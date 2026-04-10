@@ -36,7 +36,7 @@ import {
   SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_SIZE_PX,
   SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_BLOCK_PX,
   SESSION_THREAD_MARKDOWN_LIST_GAP_PX,
-  SESSION_THREAD_MARKDOWN_LIST_INDENT_PX,
+  SESSION_THREAD_MARKDOWN_LIST_MARKER_GAP_PX,
   SESSION_THREAD_MARKDOWN_TABLE_BORDER_WIDTH_PX,
   SESSION_THREAD_MARKDOWN_TABLE_CELL_PADDING_BLOCK_PX,
   SESSION_THREAD_MARKDOWN_TABLE_CELL_PADDING_INLINE_PX,
@@ -760,12 +760,14 @@ function measureListItem(
 }
 
 function measureList(block: Extract<SessionMarkdownBlock, { kind: "list" }>, width: number): number {
-  const bulletInsetPx = SESSION_THREAD_MARKDOWN_LIST_INDENT_PX;
   let total = 0;
   for (let index = 0; index < block.items.length; index += 1) {
     const item = block.items[index]!;
-    const checkedInset = item.checked != null ? CHECKBOX_GUTTER_PX : 0;
-    total += measureListItem(item, width, bulletInsetPx + checkedInset);
+    const markerInsetPx =
+      item.checked != null
+        ? CHECKBOX_GUTTER_PX
+        : block.markerColumnWidthPx + SESSION_THREAD_MARKDOWN_LIST_MARKER_GAP_PX;
+    total += measureListItem(item, width, markerInsetPx);
     if (index < block.items.length - 1) total += SESSION_THREAD_MARKDOWN_LIST_GAP_PX;
   }
   return total;

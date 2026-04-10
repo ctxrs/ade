@@ -18,6 +18,7 @@ import {
   resetSessionPretextRuntimeCache,
 } from "./sessionThread/pretextSessionRuntimeCache";
 import * as rowLayoutModule from "./sessionThread/pretextVirtualizerRowLayout";
+import { getWorkbenchTurnHeaderLayoutState } from "./sessionThread/transcriptRowLayoutModel";
 
 const resizeObserverInstances: Array<{ callback: ResizeObserverCallback }> = [];
 
@@ -137,15 +138,14 @@ function InteractiveTurnHeaderHarness({
       threadProjectionOp={projectionOp}
       itemContent={(_, item) => {
         if (item.kind === "turn_header") {
-          const plainText = item.header.plain_text ?? item.header.content;
-          const expanded = expandedTurnHeaders[item.header.id] ?? false;
+          const layout = getWorkbenchTurnHeaderLayoutState(item, expandedTurnHeaders);
           return (
             <WorkbenchTurnHeaderView
               header={item.header}
-              plainText={plainText}
-              expanded={expanded}
+              plainText={layout.displayPlainText}
+              expanded={layout.expanded}
               onToggle={() =>
-                setExpandedTurnHeaders((prev) => ({ ...prev, [item.header.id]: !expanded }))
+                setExpandedTurnHeaders((prev) => ({ ...prev, [item.header.id]: !layout.expanded }))
               }
             />
           );
@@ -616,15 +616,14 @@ describe("SessionThreadPretextVirtualizerList", () => {
           threadProjectionOp={projectionOp}
           itemContent={(_, item) => {
             if (item.kind === "turn_header") {
-              const plainText = item.header.plain_text ?? item.header.content;
-              const expanded = expandedTurnHeaders[item.header.id] ?? false;
+              const layout = getWorkbenchTurnHeaderLayoutState(item, expandedTurnHeaders);
               return (
                 <WorkbenchTurnHeaderView
                   header={item.header}
-                  plainText={plainText}
-                  expanded={expanded}
+                  plainText={layout.displayPlainText}
+                  expanded={layout.expanded}
                   onToggle={() =>
-                    setExpandedTurnHeaders((prev) => ({ ...prev, [item.header.id]: !expanded }))
+                    setExpandedTurnHeaders((prev) => ({ ...prev, [item.header.id]: !layout.expanded }))
                   }
                 />
               );

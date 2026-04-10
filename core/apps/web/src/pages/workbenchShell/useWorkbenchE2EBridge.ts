@@ -9,6 +9,7 @@ import {
 import {
   installWorkbenchMarkdownScrollProbe,
   measureWorkbenchMarkdownParity,
+  measureWorkbenchMarkdownSelectionText,
   removeWorkbenchMarkdownScrollProbe,
   type WorkbenchMarkdownParityMeasurement,
   type WorkbenchMarkdownParitySample,
@@ -150,6 +151,7 @@ type WorkbenchE2EWindow = Window & {
       samples: readonly WorkbenchMarkdownParitySample[],
       width: number,
     ) => Promise<WorkbenchMarkdownParityMeasurement[]>;
+    measureMarkdownSelectionText?: (markdown: string, width: number) => Promise<string>;
     installMarkdownScrollProbe?: (markdown: string, width?: number) => Promise<boolean>;
     removeMarkdownScrollProbe?: () => boolean;
   };
@@ -248,6 +250,8 @@ export function useWorkbenchE2EBridge({
       samples: readonly WorkbenchMarkdownParitySample[],
       width: number,
     ) => measureWorkbenchMarkdownParity(samples, width);
+    win.__ctxE2E.measureMarkdownSelectionText = (markdown: string, width: number) =>
+      measureWorkbenchMarkdownSelectionText(markdown, width);
     win.__ctxE2E.installMarkdownScrollProbe = (markdown: string, width?: number) =>
       installWorkbenchMarkdownScrollProbe(markdown, width);
     win.__ctxE2E.removeMarkdownScrollProbe = () => {
@@ -268,6 +272,7 @@ export function useWorkbenchE2EBridge({
       delete win.__ctxE2E.measureHarnessOption;
       delete win.__ctxE2E.measureDiffFile;
       delete win.__ctxE2E.measureMarkdownParity;
+      delete win.__ctxE2E.measureMarkdownSelectionText;
       delete win.__ctxE2E.installMarkdownScrollProbe;
       delete win.__ctxE2E.removeMarkdownScrollProbe;
     };

@@ -1,10 +1,14 @@
 import type { WorkbenchListItem } from "./SessionPage.types";
 import { humanTurnStatus } from "./SessionPage.helpers";
-
-const MESSAGE_COLLAPSE_LINE_THRESHOLD = 20;
-const MESSAGE_COLLAPSE_CHAR_THRESHOLD = 1500;
-const TURN_HEADER_COLLAPSE_LINE_THRESHOLD = 1;
-const TURN_HEADER_COLLAPSE_CHAR_THRESHOLD = 140;
+import {
+  getWorkbenchMessageLayoutState,
+  getWorkbenchTurnHeaderDisplayPlainText,
+  getWorkbenchTurnHeaderLayoutState,
+  isExpandableMessageContent,
+  isExpandableTurnHeaderPlainText,
+  resolveWorkbenchMessageExpandedFromContent,
+} from "./sessionThread/transcriptRowLayoutModel";
+import { resolveSessionStreamingMarkdownLayout } from "./sessionThread/sessionStreamingMarkdown";
 
 export type WorkbenchMessageListUiState = {
   expandedTurnHeaders: Record<string, boolean>;
@@ -74,33 +78,18 @@ export function getWorkbenchMessageListLayoutRevision(
   });
 }
 
-export function isExpandableMessageContent(content: string): boolean {
-  const normalized = String(content ?? "");
-  const lines = normalized.split("\n").length;
-  return lines > MESSAGE_COLLAPSE_LINE_THRESHOLD || normalized.length > MESSAGE_COLLAPSE_CHAR_THRESHOLD;
-}
-
 export function resolveWorkbenchMessageExpanded(
   item: Extract<WorkbenchListItem, { kind: "message" }>,
   expandedMessageById: Record<string, boolean>,
 ): boolean {
-  if (!isExpandableMessageContent(item.content)) return true;
-  return expandedMessageById[item.id] ?? false;
-}
-
-export function isExpandableTurnHeaderPlainText(plainText: string): boolean {
-  const normalized = String(plainText ?? "");
-  const lines = normalized.split("\n").length;
-  return lines > TURN_HEADER_COLLAPSE_LINE_THRESHOLD || normalized.length > TURN_HEADER_COLLAPSE_CHAR_THRESHOLD;
+  return resolveWorkbenchMessageExpandedFromContent(item, expandedMessageById);
 }
 
 export function resolveWorkbenchTurnHeaderExpanded(
   item: Extract<WorkbenchListItem, { kind: "turn_header" }>,
   expandedTurnHeaders: Record<string, boolean>,
 ): boolean {
-  const plainText = item.header.plain_text ?? item.header.content ?? "";
-  if (!isExpandableTurnHeaderPlainText(plainText)) return true;
-  return expandedTurnHeaders[item.header.id] ?? false;
+  return getWorkbenchTurnHeaderLayoutState(item, expandedTurnHeaders).expanded;
 }
 
 function toolGroupChildExpansionKey(
@@ -143,19 +132,23 @@ export function getWorkbenchListItemHeightRevision(
   const verbosity = options?.verbosity ?? uiState.verbosity;
   switch (item.kind) {
     case "message":
-      if (!isExpandableMessageContent(item.content)) {
-        return `message:fixed:${fingerprintString(item.content)}:${fingerprintAttachmentLayout(item.attachments)}`;
+      {
+        const layout = getWorkbenchMessageLayoutState(item, uiState.expandedMessageById);
+        if (!layout.expandable) {
+          return `message:fixed:${fingerprintString(item.content)}:${fingerprintAttachmentLayout(item.attachments)}`;
+        }
+        return layout.expanded ? "message:expanded" : "message:collapsed";
       }
-      return resolveWorkbenchMessageExpanded(item, uiState.expandedMessageById) ? "message:expanded" : "message:collapsed";
     case "turn_header":
       {
-        const plainText = item.header.plain_text ?? item.header.content ?? "";
-        const contentRevision = fingerprintString(plainText);
+        const displayPlainText = getWorkbenchTurnHeaderDisplayPlainText(item.header);
+        const layout = getWorkbenchTurnHeaderLayoutState(item, uiState.expandedTurnHeaders);
+        const contentRevision = fingerprintString(displayPlainText);
         const attachmentRevision = fingerprintAttachmentLayout(item.header.attachments);
-        if (!isExpandableTurnHeaderPlainText(plainText)) {
+        if (!layout.expandable) {
           return `turn-header:fixed:${contentRevision}:${attachmentRevision}`;
         }
-        return resolveWorkbenchTurnHeaderExpanded(item, uiState.expandedTurnHeaders)
+        return layout.expanded
           ? `turn-header:expanded:${contentRevision}:${attachmentRevision}`
           : `turn-header:collapsed:${contentRevision}:attachments:hidden`;
       }
@@ -180,7 +173,8 @@ export function getWorkbenchListItemHeightRevision(
     }
     case "assistant":
       if (!item.is_complete) {
-        return `assistant:pending:${fingerprintString(item.content)}`;
+        const layout = resolveSessionStreamingMarkdownLayout(item.content);
+        return `assistant:pending:${fingerprintString(layout.stableMarkdown)}:${fingerprintString(layout.trailingTail)}`;
       }
       return `assistant:complete:fixed:${fingerprintString(item.content)}`;
     case "thought":

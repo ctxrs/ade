@@ -14,6 +14,9 @@ export const SESSION_THREAD_MARKDOWN_HEADING_MARGIN_TOP_PX = 16;
 export const SESSION_THREAD_MARKDOWN_HEADING_MARGIN_BOTTOM_PX = 8;
 export const SESSION_THREAD_MARKDOWN_LIST_INDENT_PX = 16.25;
 export const SESSION_THREAD_MARKDOWN_LIST_GAP_PX = 4;
+export const SESSION_THREAD_MARKDOWN_LIST_MARKER_MIN_WIDTH_PX = 18;
+export const SESSION_THREAD_MARKDOWN_LIST_MARKER_GAP_PX = 6;
+export const SESSION_THREAD_MARKDOWN_LIST_MARKER_ADVANCE_PX = 7.25;
 export const SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_BLOCK_PX = 1;
 export const SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_INLINE_PX = 6;
 export const SESSION_THREAD_MARKDOWN_INLINE_CODE_BORDER_WIDTH_PX = 1;
@@ -56,6 +59,30 @@ export const SESSION_THREAD_MESSAGE_ATTACHMENT_WIDTH_PX = 240;
 export const SESSION_THREAD_MESSAGE_ATTACHMENT_HEIGHT_PX = 180;
 export const SESSION_THREAD_MESSAGE_ATTACHMENT_GAP_PX = 8;
 export const SESSION_THREAD_MESSAGE_ATTACHMENT_MARGIN_TOP_PX = 8;
+export const SESSION_THREAD_ASSISTANT_ENTRY_PADDING_INLINE_PX = 2;
+export const SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_INLINE_PX = 10;
+export const SESSION_THREAD_TURN_HEADER_COPY_GUTTER_PX = 24;
+export const SESSION_THREAD_ASK_USER_MARGIN_VERTICAL_PX = 16;
+export const SESSION_THREAD_ASK_USER_CARD_MAX_WIDTH_PX = 680;
+export const SESSION_THREAD_ASK_USER_CARD_MIN_WIDTH_PX = 280;
+export const SESSION_THREAD_ASK_USER_CARD_PADDING_PX = 12;
+export const SESSION_THREAD_ASK_USER_CARD_GAP_PX = 12;
+export const SESSION_THREAD_ASK_USER_TABS_HEIGHT_PX = 32;
+export const SESSION_THREAD_ASK_USER_PANEL_HEIGHT_PX = 208;
+export const SESSION_THREAD_ASK_USER_STATUS_HEIGHT_PX = 16;
+export const SESSION_THREAD_ASK_USER_ACTIONS_HEIGHT_PX = 34;
+export const SESSION_THREAD_ASK_USER_HINT_HEIGHT_PX = 14;
+export const SESSION_THREAD_ASK_USER_SHELL_HEIGHT_PX =
+  SESSION_THREAD_ASK_USER_CARD_PADDING_PX * 2 +
+  SESSION_THREAD_ASK_USER_TABS_HEIGHT_PX +
+  SESSION_THREAD_ASK_USER_CARD_GAP_PX +
+  SESSION_THREAD_ASK_USER_PANEL_HEIGHT_PX +
+  SESSION_THREAD_ASK_USER_CARD_GAP_PX +
+  SESSION_THREAD_ASK_USER_STATUS_HEIGHT_PX +
+  SESSION_THREAD_ASK_USER_CARD_GAP_PX +
+  SESSION_THREAD_ASK_USER_ACTIONS_HEIGHT_PX +
+  SESSION_THREAD_ASK_USER_CARD_GAP_PX +
+  SESSION_THREAD_ASK_USER_HINT_HEIGHT_PX;
 
 export const SESSION_THREAD_LAYOUT_STYLE = {
   "--wb-thread-max-width": `${SESSION_THREAD_ROW_MAX_WIDTH_PX}px`,
@@ -69,6 +96,8 @@ export const SESSION_THREAD_LAYOUT_STYLE = {
   "--wb-markdown-heading-margin-bottom": `${SESSION_THREAD_MARKDOWN_HEADING_MARGIN_BOTTOM_PX}px`,
   "--wb-markdown-list-indent": `${SESSION_THREAD_MARKDOWN_LIST_INDENT_PX}px`,
   "--wb-markdown-list-gap": `${SESSION_THREAD_MARKDOWN_LIST_GAP_PX}px`,
+  "--wb-markdown-list-marker-min-width": `${SESSION_THREAD_MARKDOWN_LIST_MARKER_MIN_WIDTH_PX}px`,
+  "--wb-markdown-list-marker-gap": `${SESSION_THREAD_MARKDOWN_LIST_MARKER_GAP_PX}px`,
   "--wb-markdown-inline-code-padding-block": `${SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_BLOCK_PX}px`,
   "--wb-markdown-inline-code-padding-inline": `${SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_INLINE_PX}px`,
   "--wb-markdown-inline-code-border-width": `${SESSION_THREAD_MARKDOWN_INLINE_CODE_BORDER_WIDTH_PX}px`,
@@ -96,6 +125,13 @@ export const SESSION_THREAD_LAYOUT_STYLE = {
   "--wb-message-attachment-height": `${SESSION_THREAD_MESSAGE_ATTACHMENT_HEIGHT_PX}px`,
   "--wb-message-attachment-gap": `${SESSION_THREAD_MESSAGE_ATTACHMENT_GAP_PX}px`,
   "--wb-message-attachment-margin-top": `${SESSION_THREAD_MESSAGE_ATTACHMENT_MARGIN_TOP_PX}px`,
+  "--wb-askq-shell-height": `${SESSION_THREAD_ASK_USER_SHELL_HEIGHT_PX}px`,
+  "--wb-askq-card-gap": `${SESSION_THREAD_ASK_USER_CARD_GAP_PX}px`,
+  "--wb-askq-tabs-height": `${SESSION_THREAD_ASK_USER_TABS_HEIGHT_PX}px`,
+  "--wb-askq-panel-height": `${SESSION_THREAD_ASK_USER_PANEL_HEIGHT_PX}px`,
+  "--wb-askq-status-height": `${SESSION_THREAD_ASK_USER_STATUS_HEIGHT_PX}px`,
+  "--wb-askq-actions-height": `${SESSION_THREAD_ASK_USER_ACTIONS_HEIGHT_PX}px`,
+  "--wb-askq-hint-height": `${SESSION_THREAD_ASK_USER_HINT_HEIGHT_PX}px`,
 } as CSSProperties;
 
 export function resolveSessionThreadRowWidth(viewportWidth: number): number {
@@ -104,4 +140,49 @@ export function resolveSessionThreadRowWidth(viewportWidth: number): number {
 
 export function resolveSessionThreadContentWidth(viewportWidth: number): number {
   return Math.max(1, resolveSessionThreadRowWidth(viewportWidth) - SESSION_THREAD_HORIZONTAL_INSET_PX * 2);
+}
+
+export function resolveSessionThreadIndentedContentWidth(viewportWidth: number): number {
+  return Math.max(1, resolveSessionThreadContentWidth(viewportWidth) - SESSION_THREAD_INDENT_LEFT_PX);
+}
+
+export function resolveSessionThreadMessageBubbleBorderBoxWidth(viewportWidth: number): number {
+  return Math.max(1, resolveSessionThreadIndentedContentWidth(viewportWidth) * SESSION_THREAD_MESSAGE_MAX_WIDTH_RATIO);
+}
+
+export function resolveSessionThreadMessageTextWidth(viewportWidth: number): number {
+  return Math.max(
+    1,
+    resolveSessionThreadMessageBubbleBorderBoxWidth(viewportWidth) -
+      SESSION_THREAD_MESSAGE_BUBBLE_PADDING_INLINE_PX * 2 -
+      SESSION_THREAD_MESSAGE_BUBBLE_BORDER_WIDTH_PX * 2,
+  );
+}
+
+export function resolveSessionThreadAssistantTextWidth(viewportWidth: number): number {
+  return Math.max(1, resolveSessionThreadIndentedContentWidth(viewportWidth) - SESSION_THREAD_ASSISTANT_ENTRY_PADDING_INLINE_PX * 2);
+}
+
+export function resolveSessionThreadTurnHeaderTextWidth(viewportWidth: number): number {
+  return Math.max(
+    1,
+    resolveSessionThreadContentWidth(viewportWidth) -
+      SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_INLINE_PX * 2 -
+      SESSION_THREAD_TURN_HEADER_COPY_GUTTER_PX,
+  );
+}
+
+export function resolveSessionThreadAskUserCardWidth(viewportWidth: number): number {
+  return Math.max(
+    SESSION_THREAD_ASK_USER_CARD_MIN_WIDTH_PX,
+    Math.min(resolveSessionThreadIndentedContentWidth(viewportWidth), SESSION_THREAD_ASK_USER_CARD_MAX_WIDTH_PX),
+  );
+}
+
+export function resolveSessionMarkdownListMarkerColumnWidthPx(markerTexts: readonly string[]): number {
+  const maxTextLength = markerTexts.reduce((max, text) => Math.max(max, String(text ?? "").length), 0);
+  return Math.max(
+    SESSION_THREAD_MARKDOWN_LIST_MARKER_MIN_WIDTH_PX,
+    Math.ceil(maxTextLength * SESSION_THREAD_MARKDOWN_LIST_MARKER_ADVANCE_PX),
+  );
 }

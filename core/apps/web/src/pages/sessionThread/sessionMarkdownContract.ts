@@ -5,8 +5,10 @@ import {
   readMarkdownChecked,
   readMarkdownDepth,
   readMarkdownOrdered,
+  readMarkdownStart,
   type SessionMarkdownNode,
 } from "./sessionMarkdownShared";
+import { resolveSessionMarkdownListMarkerColumnWidthPx } from "./sessionThreadLayoutTokens";
 
 export type SessionMarkdownInlineNode =
   | { kind: "text"; text: string }
@@ -70,6 +72,7 @@ export type SessionMarkdownHeadingBlock = {
 
 export type SessionMarkdownListItem = {
   checked: boolean | null;
+  markerText: string | null;
   blocks: SessionMarkdownBlock[];
 };
 
@@ -77,6 +80,8 @@ export type SessionMarkdownListBlock = {
   kind: "list";
   node: SessionMarkdownNode;
   ordered: boolean;
+  start: number;
+  markerColumnWidthPx: number;
   items: SessionMarkdownListItem[];
 };
 
@@ -316,13 +321,22 @@ function normalizeTableRows(node: SessionMarkdownNode): SessionMarkdownTableRow[
     }));
 }
 
-function normalizeListItems(node: SessionMarkdownNode): SessionMarkdownListItem[] {
+function buildListMarkerText(ordered: boolean, start: number, index: number, checked: boolean | null): string | null {
+  if (checked != null) return null;
+  return ordered ? `${start + index}.` : "•";
+}
+
+function normalizeListItems(node: SessionMarkdownNode, ordered: boolean, start: number): SessionMarkdownListItem[] {
   return nodeChildren(node)
     .filter((child) => child.type === "listItem")
-    .map((item) => ({
-      checked: readMarkdownChecked(item),
-      blocks: normalizeSessionMarkdownBlocks(nodeChildren(item)),
-    }));
+    .map((item, index) => {
+      const checked = readMarkdownChecked(item);
+      return {
+        checked,
+        markerText: buildListMarkerText(ordered, start, index, checked),
+        blocks: normalizeSessionMarkdownBlocks(nodeChildren(item)),
+      };
+    });
 }
 
 export function normalizeSessionMarkdownBlocks(nodes: readonly SessionMarkdownNode[]): SessionMarkdownBlock[] {
@@ -346,12 +360,21 @@ export function normalizeSessionMarkdownBlocks(nodes: readonly SessionMarkdownNo
         }
         break;
       case "list":
+        {
+          const ordered = readMarkdownOrdered(node);
+          const start = readMarkdownStart(node, 1);
+          const items = normalizeListItems(node, ordered, start);
         normalized.push({
           kind: "list",
           node,
-          ordered: readMarkdownOrdered(node),
-          items: normalizeListItems(node),
+          ordered,
+          start,
+          markerColumnWidthPx: resolveSessionMarkdownListMarkerColumnWidthPx(
+            items.map((item) => item.markerText ?? ""),
+          ),
+          items,
         });
+        }
         break;
       case "blockquote":
         normalized.push({

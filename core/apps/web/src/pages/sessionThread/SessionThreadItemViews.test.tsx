@@ -168,6 +168,22 @@ describe("ThreadItemView", () => {
   });
 });
 
+describe("AssistantEntry", () => {
+  it("renders incomplete assistant tails as plain text instead of unstable list structure", () => {
+    const { container } = render(
+      <AssistantEntry
+        content={"Before\n\n- partial item"}
+        isComplete={false}
+        worktreeId={null}
+        onFileOpenError={() => {}}
+      />,
+    );
+
+    expect(container.querySelector(".wb-md-streaming-tail")?.textContent).toContain("- partial item");
+    expect(container.querySelector("ul.wb-md-unordered-list")).toBeNull();
+  });
+});
+
 describe("WorkbenchToolRow", () => {
   it("keeps action-style tool summaries on the primary line", () => {
     const onToggle = vi.fn();

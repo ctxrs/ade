@@ -1,5 +1,6 @@
 import type { AutoscrollToBottom, VirtuosoMessageListMethods } from "@virtuoso.dev/message-list";
 import type { WorkbenchListItem } from "./SessionPage.types";
+import { getWorkbenchTurnHeaderDisplayPlainText } from "./sessionThread/transcriptRowLayoutModel";
 import type { WorkbenchMessageListContext } from "./SessionPage.thread";
 
 type MessageListMethods = VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext>;
@@ -77,7 +78,7 @@ export const getWorkbenchListItemLayoutKey = (item: WorkbenchListItem): string =
     case "thought":
       return `thought:${textLayoutKey(item.content)}`;
     case "turn_header":
-      return `turn_header:${textLayoutKey(item.header.plain_text ?? item.header.content)}:${item.header.attachments.length}`;
+      return `turn_header:${textLayoutKey(getWorkbenchTurnHeaderDisplayPlainText(item.header))}:${item.header.attachments.length}`;
     case "tool":
       return [
         "tool",
