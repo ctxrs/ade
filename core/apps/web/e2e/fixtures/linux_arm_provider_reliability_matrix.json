@@ -7,25 +7,25 @@
   "critical_providers": [
     {
       "provider_id": "codex",
-      "openrouter_model_override": "liquid/lfm-2.5-1.2b-instruct-20260120:free"
+      "openrouter_model_override": "google/gemma-4-26b-a4b-it:free"
     }
   ],
   "full_nightly_providers": [
     {
       "provider_id": "codex",
-      "openrouter_model_override": "liquid/lfm-2.5-1.2b-instruct-20260120:free"
+      "openrouter_model_override": "google/gemma-4-26b-a4b-it:free"
     },
     {
       "provider_id": "opencode",
-      "openrouter_model_override": "liquid/lfm-2.5-1.2b-instruct-20260120:free"
+      "openrouter_model_override": "google/gemma-4-26b-a4b-it:free"
     },
     {
       "provider_id": "goose",
-      "openrouter_model_override": "liquid/lfm-2.5-1.2b-instruct-20260120:free"
+      "openrouter_model_override": "google/gemma-4-26b-a4b-it:free"
     },
     {
       "provider_id": "droid",
-      "openrouter_model_override": "liquid/lfm-2.5-1.2b-instruct-20260120:free"
+      "openrouter_model_override": "google/gemma-4-26b-a4b-it:free"
     }
   ],
   "deferred_providers": [

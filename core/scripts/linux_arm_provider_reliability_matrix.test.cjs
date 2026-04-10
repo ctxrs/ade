@@ -45,7 +45,7 @@ test("default fixture includes droid in nightly once managed dependencies exist"
 
 test("default fixture carries explicit linux-arm OpenRouter model overrides", () => {
   const { matrix } = loadMatrix();
-  const expectedModel = "liquid/lfm-2.5-1.2b-instruct-20260120:free";
+  const expectedModel = "google/gemma-4-26b-a4b-it:free";
 
   assert.deepEqual(modelOverrideMapForLane(matrix, "critical"), {
     codex: expectedModel,
