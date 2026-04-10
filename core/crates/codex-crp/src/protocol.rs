@@ -162,6 +162,8 @@ pub enum CrpEvent {
         session_id: String,
         provider_session_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        supports_session_status: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         commands: Option<Vec<CrpCommandInfo>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         slash_commands: Option<Vec<String>>,

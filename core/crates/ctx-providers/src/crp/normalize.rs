@@ -109,6 +109,7 @@ pub(super) fn map_crp_event(
         CrpEvent::SessionOpened {
             session_id,
             provider_session_id,
+            supports_session_status,
             commands,
             slash_commands,
             models,
@@ -130,6 +131,12 @@ pub(super) fn map_crp_event(
                 payload.insert(
                     "provider_session_id".to_string(),
                     json!(provider_session_id),
+                );
+            }
+            if let Some(supports_session_status) = supports_session_status {
+                payload.insert(
+                    "supports_session_status".to_string(),
+                    json!(supports_session_status),
                 );
             }
             if let Some(commands) = commands {
@@ -688,6 +695,7 @@ mod tests {
             CrpEvent::SessionOpened {
                 session_id: "session-1".to_string(),
                 provider_session_id: Some("provider-session-1".to_string()),
+                supports_session_status: Some(true),
                 commands: Some(json!([
                     {
                         "name": "compact",
@@ -741,6 +749,7 @@ mod tests {
             payload.get("provider_session_id"),
             Some(&json!("provider-session-1"))
         );
+        assert_eq!(payload.get("supports_session_status"), Some(&json!(true)));
         assert_eq!(payload.pointer("/commands/0/name"), Some(&json!("compact")));
         assert_eq!(
             payload.pointer("/commands/0/description"),

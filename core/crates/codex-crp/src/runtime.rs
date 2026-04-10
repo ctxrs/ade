@@ -296,6 +296,7 @@ async fn handle_parsed_command(
             let _ = router.send_control(CrpEvent::SessionOpened {
                 session_id,
                 provider_session_id: Some(provider_session_id),
+                supports_session_status: Some(true),
                 commands: Some(state.opened_commands.clone()),
                 slash_commands: Some(state.opened_slash_commands.clone()),
             });
@@ -592,7 +593,21 @@ async fn handle_parsed_command(
         }
         CrpCommand::SessionStatus { session_id } => {
             let Some(state) = session.as_mut() else {
-                warn!("session.status ignored: no active session");
+                let failed_session_id = session_id.unwrap_or_else(|| "unknown".to_string());
+                warn!(session_id = %failed_session_id, "session.status failed: no active session");
+                dispatch_event(
+                    router,
+                    CrpChannel::Control,
+                    CrpEvent::SessionNotice {
+                        session_id: failed_session_id,
+                        turn_id: None,
+                        code: "session_status_failed".to_string(),
+                        severity: Some("error".to_string()),
+                        message: Some("session status query failed: no active session".to_string()),
+                        details: None,
+                        transient: Some(false),
+                    },
+                );
                 return Ok(());
             };
             if let Some(expected) = session_id.as_deref() {

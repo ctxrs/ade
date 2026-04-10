@@ -2,6 +2,7 @@ use super::translate::{canonical_context_window_from_thread_usage, translate_not
 use super::*;
 use pretty_assertions::assert_eq;
 use std::fs;
+use tokio::sync::mpsc;
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -198,4 +199,40 @@ fn session_status_details_report_busy_for_active_loaded_thread_or_turn() {
         details["busy_reasons"],
         json!(["active_turn", "loaded_thread_active"])
     );
+}
+
+#[tokio::test]
+async fn session_status_without_active_session_emits_failure_notice() {
+    let (control_tx, mut control_rx) = mpsc::unbounded_channel();
+    let (data_tx, _data_rx) = mpsc::channel(1);
+    let router = CrpEventRouter::new(control_tx, data_tx);
+    let mut session = None;
+
+    handle_command(
+        RuntimeCommand::Parsed(Box::new(CrpCommand::SessionStatus {
+            session_id: Some("fixture-session".to_string()),
+        })),
+        &mut session,
+        &router,
+        &RuntimeOptions::default(),
+    )
+    .await
+    .expect("session.status handling should not fail");
+
+    match control_rx.try_recv().expect("expected control event") {
+        CrpEvent::SessionNotice {
+            session_id,
+            code,
+            message,
+            ..
+        } => {
+            assert_eq!(session_id, "fixture-session");
+            assert_eq!(code, "session_status_failed");
+            assert_eq!(
+                message.as_deref(),
+                Some("session status query failed: no active session")
+            );
+        }
+        other => panic!("expected session notice, got {other:?}"),
+    }
 }

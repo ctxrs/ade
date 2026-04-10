@@ -188,7 +188,8 @@ export function buildSessionOpenedMetadataEnvelope(params: {
     channel: "control",
     type: "session.opened",
     session_id: params.sessionId,
-    provider_session_id: params.providerSessionId ?? params.sessionId
+    provider_session_id: params.providerSessionId ?? params.sessionId,
+    supports_session_status: true
   };
 
   const initializationResult = params.initializationResult ?? null;
@@ -641,7 +642,8 @@ async function openSession(command: CrpCommand, state: { session: SessionState |
     channel: "control",
     type: "session.opened",
     session_id: sessionId,
-    provider_session_id: providerSessionId
+    provider_session_id: providerSessionId,
+    supports_session_status: true
   });
 }
 

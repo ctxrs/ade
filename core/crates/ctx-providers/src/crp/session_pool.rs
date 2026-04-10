@@ -48,8 +48,10 @@ pub(super) struct CrpSessionPool {
     agent: CrpAgentConfig,
     sessions: Mutex<HashMap<String, Arc<CrpSession>>>,
     active_prompts: Arc<StdMutex<HashSet<String>>>,
+    busy_sessions: Arc<StdMutex<HashMap<String, usize>>>,
     default_sweep_config: ProviderSessionSweepConfig,
     supports_session_status: bool,
+    reap_in_flight: AtomicBool,
 }
 
 pub(super) fn session_shutdown_reason(session: &CrpSession) -> Option<String> {
@@ -66,8 +68,10 @@ impl CrpSessionPool {
             agent,
             sessions: Mutex::new(HashMap::new()),
             active_prompts: Arc::new(StdMutex::new(HashSet::new())),
+            busy_sessions: Arc::new(StdMutex::new(HashMap::new())),
             default_sweep_config: ProviderSessionSweepConfig::from_env(),
             supports_session_status,
+            reap_in_flight: AtomicBool::new(false),
         }
     }
 
@@ -87,20 +91,14 @@ impl CrpSessionPool {
     }
 
     async fn prune_dead_sessions(&self) -> usize {
-        let dead_session_keys = {
-            let guard = self.sessions.lock().await;
-            guard
-                .iter()
-                .filter_map(|(session_key, session)| {
-                    session_shutdown_reason(session).map(|_| session_key.clone())
-                })
-                .collect::<Vec<_>>()
-        };
-        if dead_session_keys.is_empty() {
-            return 0;
-        }
-        let mut removed = 0usize;
         let mut guard = self.sessions.lock().await;
+        let dead_session_keys = guard
+            .iter()
+            .filter_map(|(session_key, session)| {
+                session_shutdown_reason(session).map(|_| session_key.clone())
+            })
+            .collect::<Vec<_>>();
+        let mut removed = 0usize;
         for session_key in dead_session_keys {
             if guard.remove(&session_key).is_some() {
                 removed += 1;
@@ -147,7 +145,7 @@ impl CrpSessionPool {
     }
 
     pub(super) async fn restart_drain(&self, reason: &str) {
-        let active = self.active_prompt_snapshot();
+        let active = self.busy_session_snapshot();
         let sessions_to_kill = {
             let mut guard = self.sessions.lock().await;
             let mut to_kill = Vec::new();
@@ -171,11 +169,29 @@ impl CrpSessionPool {
         }
     }
 
-    fn active_prompt_snapshot(&self) -> HashSet<String> {
-        let Ok(guard) = self.active_prompts.lock() else {
+    fn busy_session_snapshot(&self) -> HashSet<String> {
+        let Ok(guard) = self.busy_sessions.lock() else {
             return HashSet::new();
         };
-        guard.iter().cloned().collect()
+        guard.keys().cloned().collect()
+    }
+
+    pub(super) fn session_busy_guard(&self, session_key: String) -> BusySessionGuard {
+        BusySessionGuard::new(Arc::clone(&self.busy_sessions), session_key)
+    }
+
+    pub(super) fn trigger_background_reap(self: &Arc<Self>) {
+        if self.reap_in_flight.swap(true, Ordering::SeqCst) {
+            return;
+        }
+
+        let pool = Arc::clone(self);
+        tokio::spawn(async move {
+            let _ = pool
+                .reap_idle_sessions(pool.default_sweep_config.clone())
+                .await;
+            pool.reap_in_flight.store(false, Ordering::SeqCst);
+        });
     }
 
     pub(super) async fn drain_session_if_needed(
@@ -206,8 +222,11 @@ impl CrpSessionPool {
     }
 
     pub(super) async fn prompt(&self, req: CrpPromptRequest) -> Result<()> {
-        let _guard =
-            ActivePromptGuard::new(Arc::clone(&self.active_prompts), req.session_key.clone())?;
+        let _guard = ActivePromptGuard::new(
+            Arc::clone(&self.active_prompts),
+            Arc::clone(&self.busy_sessions),
+            req.session_key.clone(),
+        )?;
         let session = self
             .get_or_create_session(&req.session_key, &req.workdir, &req.env)
             .await?;
@@ -400,9 +419,25 @@ impl CrpSessionPool {
                                 continue;
                             }
                             last_seq = env.seq;
-                            if matches!(&env.event, CrpEvent::SessionOpened { .. }) {
+                            if matches!(
+                                &env.event,
+                                CrpEvent::SessionNotice { code, .. }
+                                    if code == "session_status" || code == "session_status_failed"
+                            ) {
+                                continue;
+                            }
+                            if let CrpEvent::SessionOpened {
+                                supports_session_status,
+                                ..
+                            } = &env.event
+                            {
                                 session.opened.store(true, Ordering::SeqCst);
                                 session.opening.store(false, Ordering::SeqCst);
+                                session.status_supported.store(
+                                    supports_session_status
+                                        .unwrap_or(self.supports_session_status),
+                                    Ordering::SeqCst,
+                                );
                             }
                             let auth_required = matches!(
                                 &env.event,
@@ -516,6 +551,7 @@ impl CrpSessionPool {
             process,
             opened: AtomicBool::new(false),
             opening: AtomicBool::new(false),
+            status_supported: AtomicBool::new(self.supports_session_status),
             draining: AtomicBool::new(false),
             last_used: StdMutex::new(Instant::now()),
         });
@@ -528,7 +564,7 @@ impl CrpSessionPool {
         &self,
         config: ProviderSessionSweepConfig,
     ) -> ProviderSessionSweepStats {
-        let active = self.active_prompt_snapshot();
+        let active = self.busy_session_snapshot();
         let now = Instant::now();
         let sessions = {
             let guard = self.sessions.lock().await;
@@ -545,11 +581,11 @@ impl CrpSessionPool {
         };
 
         let mut stats = ProviderSessionSweepStats::default();
-        let mut dead_session_keys = Vec::new();
+        let mut dead_candidates = Vec::new();
         let mut idle_candidates = Vec::new();
         for snapshot in sessions {
             if snapshot.shutdown_reason.is_some() {
-                dead_session_keys.push(snapshot.session_key);
+                dead_candidates.push(snapshot);
                 continue;
             }
             if snapshot.draining {
@@ -561,29 +597,38 @@ impl CrpSessionPool {
             idle_candidates.push(snapshot);
         }
 
-        if !dead_session_keys.is_empty() {
+        if !dead_candidates.is_empty() {
             let mut guard = self.sessions.lock().await;
-            for session_key in dead_session_keys {
-                if guard.remove(&session_key).is_some() {
+            for candidate in dead_candidates {
+                let should_remove = matches!(
+                    guard.get(&candidate.session_key),
+                    Some(current)
+                        if Arc::ptr_eq(current, &candidate.session)
+                            && session_shutdown_reason(current).is_some()
+                );
+                if should_remove && guard.remove(&candidate.session_key).is_some() {
                     stats.dead_removed += 1;
                 }
             }
         }
 
-        if !self.supports_session_status {
-            return stats;
-        }
-
         idle_candidates.sort_by_key(|candidate| candidate.last_used);
-        let over_cap = idle_candidates
-            .len()
-            .saturating_sub(config.max_idle_sessions);
-
         let mut to_reap = Vec::new();
-        for (index, candidate) in idle_candidates.into_iter().enumerate() {
+        let mut remaining_idle = idle_candidates.len();
+        for candidate in idle_candidates {
             let ttl_expired = now.duration_since(candidate.last_used) >= config.idle_ttl;
-            let cap_expired = index < over_cap;
+            let cap_expired = remaining_idle > config.max_idle_sessions;
             if !ttl_expired && !cap_expired {
+                break;
+            }
+            if !candidate.session.opened.load(Ordering::SeqCst)
+                && !candidate.session.opening.load(Ordering::SeqCst)
+            {
+                to_reap.push(candidate);
+                remaining_idle = remaining_idle.saturating_sub(1);
+                continue;
+            }
+            if !candidate.session.status_supported.load(Ordering::SeqCst) {
                 continue;
             }
 
@@ -591,7 +636,10 @@ impl CrpSessionPool {
                 .query_session_status(&candidate.session_key, &candidate.session)
                 .await
             {
-                Ok(status) if status.quiescent => to_reap.push(candidate),
+                Ok(status) if status.quiescent => {
+                    to_reap.push(candidate);
+                    remaining_idle = remaining_idle.saturating_sub(1);
+                }
                 Ok(_) => stats.skipped_busy += 1,
                 Err(_) => stats.status_errors += 1,
             }
@@ -599,7 +647,7 @@ impl CrpSessionPool {
 
         for candidate in to_reap {
             if self
-                .active_prompt_snapshot()
+                .busy_session_snapshot()
                 .contains(&candidate.session_key)
             {
                 continue;
@@ -685,12 +733,17 @@ impl CrpSessionPool {
 }
 
 struct ActivePromptGuard {
+    _busy_guard: BusySessionGuard,
     session_key: String,
     active_prompts: Arc<StdMutex<HashSet<String>>>,
 }
 
 impl ActivePromptGuard {
-    fn new(active_prompts: Arc<StdMutex<HashSet<String>>>, session_key: String) -> Result<Self> {
+    fn new(
+        active_prompts: Arc<StdMutex<HashSet<String>>>,
+        busy_sessions: Arc<StdMutex<HashMap<String, usize>>>,
+        session_key: String,
+    ) -> Result<Self> {
         if let Ok(mut active) = active_prompts.lock() {
             if active.contains(&session_key) {
                 anyhow::bail!("session {session_key} already has an active prompt");
@@ -698,6 +751,7 @@ impl ActivePromptGuard {
             active.insert(session_key.clone());
         }
         Ok(Self {
+            _busy_guard: BusySessionGuard::new(busy_sessions, session_key.clone()),
             session_key,
             active_prompts,
         })
@@ -712,10 +766,44 @@ impl Drop for ActivePromptGuard {
     }
 }
 
+pub(super) struct BusySessionGuard {
+    session_key: String,
+    busy_sessions: Arc<StdMutex<HashMap<String, usize>>>,
+}
+
+impl BusySessionGuard {
+    fn new(busy_sessions: Arc<StdMutex<HashMap<String, usize>>>, session_key: String) -> Self {
+        if let Ok(mut guard) = busy_sessions.lock() {
+            *guard.entry(session_key.clone()).or_default() += 1;
+        }
+        Self {
+            session_key,
+            busy_sessions,
+        }
+    }
+}
+
+impl Drop for BusySessionGuard {
+    fn drop(&mut self) {
+        let Ok(mut guard) = self.busy_sessions.lock() else {
+            return;
+        };
+        let Some(count) = guard.get_mut(&self.session_key) else {
+            return;
+        };
+        if *count > 1 {
+            *count -= 1;
+            return;
+        }
+        guard.remove(&self.session_key);
+    }
+}
+
 pub(super) struct CrpSession {
     pub(super) process: Arc<CrpProcess>,
     pub(super) opened: AtomicBool,
     pub(super) opening: AtomicBool,
+    pub(super) status_supported: AtomicBool,
     pub(super) draining: AtomicBool,
     last_used: StdMutex<Instant>,
 }

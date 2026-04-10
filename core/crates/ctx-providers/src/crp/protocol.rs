@@ -222,6 +222,8 @@ pub(super) enum CrpEvent {
         session_id: String,
         provider_session_id: Option<String>,
         #[serde(default)]
+        supports_session_status: Option<bool>,
+        #[serde(default)]
         commands: Option<Value>,
         #[serde(default)]
         slash_commands: Option<Vec<String>>,

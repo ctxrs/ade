@@ -70,10 +70,6 @@ pub struct Tier1CrpAdapter {
     pool: Arc<CrpSessionPool>,
 }
 
-fn provider_supports_session_status(id: &str) -> bool {
-    matches!(id, "codex" | "codex-crp" | "claude" | "claude-crp")
-}
-
 impl Tier1CrpAdapter {
     fn new(id: &str, command: &str, args: Vec<String>, supports_session_status: bool) -> Self {
         let agent = CrpAgentConfig {
@@ -93,7 +89,7 @@ impl Tier1CrpAdapter {
     }
 
     pub fn from_provider_runtime(id: &str, command: String, args: Vec<String>) -> Self {
-        Self::new(id, &command, args, provider_supports_session_status(id))
+        Self::new(id, &command, args, false)
     }
 
     pub fn from_raw_with_session_status(
@@ -185,6 +181,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
                     })
                     .await;
             }
+            pool.trigger_background_reap();
             let _ = done_tx.send(());
         });
         let abort = join.abort_handle();
@@ -233,6 +230,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
     }
 
     async fn set_session_model(&self, session_key: String, model_id: String) -> Result<()> {
+        let busy_guard = self.pool.session_busy_guard(session_key.clone());
         let session = self.pool.require_open_session(&session_key).await?;
         session.touch();
         let mut rx = session.process.events.subscribe();
@@ -245,7 +243,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
             })
             .await?;
 
-        tokio::time::timeout(CRP_SESSION_MODEL_UPDATE_TIMEOUT, async {
+        let result = tokio::time::timeout(CRP_SESSION_MODEL_UPDATE_TIMEOUT, async {
             loop {
                 tokio::select! {
                     _ = shutdown_rx.changed() => {
@@ -287,7 +285,10 @@ impl ProviderAdapter for Tier1CrpAdapter {
             }
         })
         .await
-        .map_err(|_| anyhow::anyhow!("timed out waiting for session model update"))??;
+        .map_err(|_| anyhow::anyhow!("timed out waiting for session model update"));
+        drop(busy_guard);
+        self.pool.trigger_background_reap();
+        result??;
         Ok(())
     }
 
@@ -299,6 +300,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
         method_id: Option<String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
     ) -> Result<()> {
+        let busy_guard = self.pool.session_busy_guard(session_key.clone());
         let session = self
             .pool
             .get_or_create_session(&session_key, &workdir, &env)
@@ -331,7 +333,9 @@ impl ProviderAdapter for Tier1CrpAdapter {
             })
             .await?;
         let session_for_events = Arc::clone(&session);
+        let pool_for_reap = Arc::clone(&self.pool);
         tokio::spawn(async move {
+            let _busy_guard = busy_guard;
             let deadline = tokio::time::Instant::now() + CRP_AUTH_EVENT_FORWARD_TIMEOUT;
             let mut last_seq = 0u64;
             let mut tool_output_cache: HashMap<String, String> = HashMap::new();
@@ -359,9 +363,27 @@ impl ProviderAdapter for Tier1CrpAdapter {
                                     continue;
                                 }
                                 last_seq = env.seq;
-                                if matches!(&env.event, CrpEvent::SessionOpened { .. }) {
+                                if matches!(
+                                    &env.event,
+                                    CrpEvent::SessionNotice { code, .. }
+                                        if code == "session_status" || code == "session_status_failed"
+                                ) {
+                                    continue;
+                                }
+                                if let CrpEvent::SessionOpened {
+                                    supports_session_status,
+                                    ..
+                                } = &env.event
+                                {
                                     session_for_events.opened.store(true, Ordering::SeqCst);
                                     session_for_events.opening.store(false, Ordering::SeqCst);
+                                    let default_support = session_for_events
+                                        .status_supported
+                                        .load(Ordering::SeqCst);
+                                    session_for_events.status_supported.store(
+                                        supports_session_status.unwrap_or(default_support),
+                                        Ordering::SeqCst,
+                                    );
                                 }
                                 let auth_terminal_event = matches!(
                                     &env.event,
@@ -446,6 +468,8 @@ impl ProviderAdapter for Tier1CrpAdapter {
                     }
                 }
             }
+            drop(_busy_guard);
+            pool_for_reap.trigger_background_reap();
         });
         Ok(())
     }

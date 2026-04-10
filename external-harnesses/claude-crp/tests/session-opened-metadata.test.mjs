@@ -60,6 +60,7 @@ test("buildSessionOpenedMetadataEnvelope preserves supported command metadata", 
   assert.equal(envelope.type, "session.opened");
   assert.equal(envelope.session_id, "session-1");
   assert.equal(envelope.provider_session_id, "provider-session-1");
+  assert.equal(envelope.supports_session_status, true);
   assert.deepEqual(envelope.commands, [
     {
       name: "compact",
