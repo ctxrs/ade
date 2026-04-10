@@ -83,6 +83,7 @@ export function SessionView({
   isActive = true,
   autoOpenSession = true,
   sessionMode = "active",
+  hideSessionLoadIssuesBanner = false,
   draft,
   onDraftChange,
   onDraftAttachmentsChange,
@@ -98,6 +99,7 @@ export function SessionView({
   onDraftPersistNow?: (() => void | Promise<void>) | null;
   onModeChange?: ((modeId: WorkbenchModeId) => void) | null;
   autoOpenSession?: boolean;
+  hideSessionLoadIssuesBanner?: boolean;
 }) {
   const id = sessionId;
   const supervisor = useSessionSupervisor();
@@ -827,7 +829,7 @@ export function SessionView({
       entryError={entry?.error}
       session={session}
       sessionError={sessionError}
-      sessionLoadIssues={sessionLoadIssues}
+      sessionLoadIssues={hideSessionLoadIssuesBanner ? [] : sessionLoadIssues}
       dropActive={dropActive}
       dropScopeRef={dropScopeRef}
       listItems={listItems}

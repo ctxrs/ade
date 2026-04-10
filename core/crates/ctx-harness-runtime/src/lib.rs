@@ -7,12 +7,9 @@ use serde::Serialize;
 use tokio::process::Command;
 
 use ctx_avf_linux_runtime::{
-    runtime_available as avf_linux_runtime_available,
-    runtime_state as avf_linux_runtime_state,
-    runtime_target_label as avf_linux_runtime_target_label,
-    SharedSubstrateLifecycleManager,
-    SharedVmLifecycleOrchestrator,
-    SubstrateLifecycleRecord,
+    runtime_available as avf_linux_runtime_available, runtime_state as avf_linux_runtime_state,
+    runtime_target_label as avf_linux_runtime_target_label, SharedSubstrateLifecycleManager,
+    SharedVmLifecycleOrchestrator, SubstrateLifecycleRecord,
 };
 use ctx_harness_setup::{
     observe_log, observe_phase, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,
@@ -21,17 +18,13 @@ use ctx_linux_sandbox_runtime::linux_sandbox_runtime_status;
 use ctx_sandbox_container_runtime::{
     command_output_message, command_output_with_timeout,
     container_image_present as runtime_container_image_present,
-    container_image_status as runtime_container_image_status,
-    native_container_runtime_available,
+    container_image_status as runtime_container_image_status, native_container_runtime_available,
     prefetch_container_image as runtime_prefetch_container_image,
     prefetch_container_image_with_observer as runtime_prefetch_container_image_with_observer,
     prefetch_container_startup_artifacts_with_observer as runtime_prefetch_container_startup_artifacts_with_observer,
-    resolve_container_image as resolve_configured_container_image,
-    sandbox_cli_invocation,
+    resolve_container_image as resolve_configured_container_image, sandbox_cli_invocation,
     sandbox_container_command as runtime_sandbox_container_command,
-    sandbox_engine_ready as runtime_sandbox_engine_ready,
-    ContainerImageStatus,
-    SandboxCommandMode,
+    sandbox_engine_ready as runtime_sandbox_engine_ready, ContainerImageStatus, SandboxCommandMode,
     CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
 };
 use ctx_sandbox_contract::{
@@ -113,7 +106,11 @@ pub fn sandbox_machine_name(data_root: &Path) -> String {
 fn explicit_sandbox_cli_override_path() -> Option<PathBuf> {
     let raw = std::env::var(CTX_HARNESS_SANDBOX_CLI_PATH_ENV).ok()?;
     let path = PathBuf::from(raw.trim());
-    if path.exists() { Some(path) } else { None }
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 pub fn selected_sandbox_command_mode(data_root: &Path) -> Result<SandboxCommandMode> {
@@ -258,8 +255,10 @@ pub async fn prewarm_selected_runtime_for_launch_with_observer(
 ) -> Result<()> {
     match settings.runtime {
         ContainerRuntimeKind::NativeContainer => {
-            ensure_native_container_runtime_launch_ready_with_observer(data_root, settings, observer)
-                .await
+            ensure_native_container_runtime_launch_ready_with_observer(
+                data_root, settings, observer,
+            )
+            .await
         }
         ContainerRuntimeKind::SharedVmContainer => SharedVmLifecycleOrchestrator::new(data_root)
             .ensure_shared_runtime_ready(settings, observer)
@@ -291,7 +290,8 @@ pub async fn selected_runtime_launch_ready(
     data_root: &Path,
     settings: &ContainerExecutionSettings,
 ) -> Result<bool> {
-    let (vm_ready, image_ready) = selected_runtime_launch_readiness_state(data_root, settings).await?;
+    let (vm_ready, image_ready) =
+        selected_runtime_launch_readiness_state(data_root, settings).await?;
     Ok(vm_ready && image_ready)
 }
 
@@ -318,8 +318,11 @@ pub fn launch_ready_gap_message(
     vm_ready: bool,
     image_ready: bool,
 ) -> String {
-    UbuntuSandboxSubstrate::from_runtime_kind(runtime_kind)
-        .launch_ready_gap_message(runtime_target, vm_ready, image_ready)
+    UbuntuSandboxSubstrate::from_runtime_kind(runtime_kind).launch_ready_gap_message(
+        runtime_target,
+        vm_ready,
+        image_ready,
+    )
 }
 
 pub fn launch_ready_detail_message(runtime_kind: &ContainerRuntimeKind) -> &'static str {
@@ -348,8 +351,10 @@ pub async fn ensure_builder_backend_launch_ready_with_observer(
                 runtime: ContainerRuntimeKind::NativeContainer,
                 ..ContainerExecutionSettings::default()
             };
-            ensure_native_container_runtime_engine_ready_with_observer(data_root, &settings, observer)
-                .await
+            ensure_native_container_runtime_engine_ready_with_observer(
+                data_root, &settings, observer,
+            )
+            .await
         }
         SandboxCommandBackend::SharedVmContainer => {
             let settings = ContainerExecutionSettings {
@@ -478,7 +483,8 @@ async fn ensure_native_container_runtime_launch_ready_with_observer(
     settings: &ContainerExecutionSettings,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<()> {
-    ensure_native_container_runtime_engine_ready_with_observer(data_root, settings, observer).await?;
+    ensure_native_container_runtime_engine_ready_with_observer(data_root, settings, observer)
+        .await?;
     let image = resolve_container_image(settings);
     prefetch_container_image_with_observer(data_root, &image, observer).await
 }

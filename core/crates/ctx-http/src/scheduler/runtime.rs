@@ -31,9 +31,9 @@ use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::settings::{self, ProviderControlMode};
 use crate::storage_guard;
 use crate::telemetry::TelemetryEvent;
-use ctx_workspace_config as workspace_config;
 use ctx_harness_sources::HarnessSourceKind;
 use ctx_provider_accounts as provider_accounts;
+use ctx_workspace_config as workspace_config;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
 use crate::worktree_data_plane::resolve_worktree_data_plane;
@@ -341,24 +341,26 @@ pub(crate) async fn start_turn(
         return Err(err);
     }
     let runtime_data_root = runtime_plan.runtime_data_root();
-    let resolved_source = match ctx_harness_sources::resolve_provider_source_for_run_with_runtime_root(
-        &state.core.data_root,
-        &session.provider_id,
-        runtime_data_root,
-    )
-    .await
-    {
-        Ok(source) => source,
-        Err(err) => {
-            let err = anyhow!(
-                "provider source resolution failed for {}: {}",
-                session.provider_id,
-                err
-            );
-            emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err).await;
-            return Err(err);
-        }
-    };
+    let resolved_source =
+        match ctx_harness_sources::resolve_provider_source_for_run_with_runtime_root(
+            &state.core.data_root,
+            &session.provider_id,
+            runtime_data_root,
+        )
+        .await
+        {
+            Ok(source) => source,
+            Err(err) => {
+                let err = anyhow!(
+                    "provider source resolution failed for {}: {}",
+                    session.provider_id,
+                    err
+                );
+                emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err)
+                    .await;
+                return Err(err);
+            }
+        };
     let using_endpoint_source = resolved_source.source_kind == HarnessSourceKind::Endpoint;
     provider_env.insert(
         "CTX_PROVIDER_SOURCE_KIND".to_string(),

@@ -496,9 +496,7 @@ async fn status_via_bootstrap(
     Ok(build_status(paths, platform, bootstrap))
 }
 
-pub async fn linux_sandbox_runtime_status(
-    data_root: &Path,
-) -> Result<LinuxSandboxRuntimeStatus> {
+pub async fn linux_sandbox_runtime_status(data_root: &Path) -> Result<LinuxSandboxRuntimeStatus> {
     let platform = linux_sandbox_platform();
     let paths = linux_sandbox_bootstrap_paths(data_root);
     match status_via_bootstrap(data_root, &paths, &platform).await {

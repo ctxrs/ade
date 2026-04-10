@@ -115,10 +115,7 @@ impl ContainerFs {
             ContainerFsBackend::NativeContainer { .. } => {
                 let mut cmd = self.base_exec().await?;
                 cmd.arg("cat").arg("--").arg(path);
-                ctx_sandbox_container_runtime::command_output_with_timeout(
-                    cmd,
-                    SANDBOX_FS_TIMEOUT,
-                )
+                ctx_sandbox_container_runtime::command_output_with_timeout(cmd, SANDBOX_FS_TIMEOUT)
                     .await
                     .context("sandbox exec cat")?
             }

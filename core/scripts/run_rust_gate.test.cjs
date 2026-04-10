@@ -30,3 +30,43 @@ test("resolveCrates returns the curated agent gate crate list for --agent-gate",
     AGENT_GATE_CRATES,
   );
 });
+
+test("resolveCrates expands reverse deps automatically for ctx-execution-runtime", () => {
+  const crates = [
+    {
+      crateName: "ctx-execution-runtime",
+      deps: [],
+      reverseDeps: ["ctx-http"],
+    },
+    {
+      crateName: "ctx-http",
+      deps: ["ctx-execution-runtime"],
+      reverseDeps: ["ctx-mcp"],
+    },
+    {
+      crateName: "ctx-mcp",
+      deps: ["ctx-http"],
+      reverseDeps: [],
+    },
+    {
+      crateName: "ctx-lsp",
+      deps: [],
+      reverseDeps: [],
+    },
+  ];
+  const graph = {
+    crates,
+    cratesByName: new Map(crates.map((crate) => [crate.crateName, crate])),
+  };
+
+  assert.deepEqual(
+    resolveCrates(graph, {
+      agentGate: false,
+      all: false,
+      changedFiles: [],
+      crates: ["ctx-execution-runtime"],
+      includeReverseDeps: false,
+    }),
+    ["ctx-execution-runtime", "ctx-http", "ctx-mcp"],
+  );
+});

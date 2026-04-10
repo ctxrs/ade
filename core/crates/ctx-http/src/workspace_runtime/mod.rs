@@ -1,19 +1,18 @@
 use std::collections::HashMap;
 use std::io::ErrorKind;
-#[cfg(test)]
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(test)]
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
-#[cfg(test)]
-use sysinfo::System;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
+#[cfg(test)]
+use sysinfo::System;
 
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use crate::resource_utilization::SystemSnapshot;
@@ -54,17 +53,42 @@ struct AvfDaemonGatewayProxy {
 static AVF_DAEMON_GATEWAY_PROXIES: OnceLock<StdMutex<HashMap<u16, AvfDaemonGatewayProxy>>> =
     OnceLock::new();
 
+#[cfg(test)]
+use self::machine::{
+    ensure_managed_sandbox_cli_runtime, ensure_managed_sandbox_machine_cache,
+    persist_sandbox_machine_cache_to_shared, persist_sandbox_machine_cache_to_shared_best_effort,
+    sandbox_machine_cache_root, sandbox_machine_home_root, sandbox_machine_runtime_root,
+    sandbox_machine_temp_root, seed_shared_sandbox_machine_cache,
+    seed_shared_sandbox_machine_cache_best_effort,
+};
+pub(crate) use self::materialization::materialize_sandbox_worktree;
+#[cfg(test)]
+use self::sandbox_machine_recovery::{
+    run_sandbox_machine_init, sandbox_machine_present, sandbox_machine_singleflight_lock,
+};
+pub(crate) use ctx_avf_linux_runtime::SharedVmLifecycleOrchestrator;
+use ctx_avf_linux_runtime::AVF_LINUX_HELPER_PATH_ENV;
 use ctx_avf_linux_runtime::{
     helper_path as avf_linux_helper_path,
     workspace_vm_data_root as avf_linux_workspace_vm_data_root,
 };
-use ctx_avf_linux_runtime::AVF_LINUX_HELPER_PATH_ENV;
-use ctx_workspace_container::{
-    AVF_GUEST_HOST_GATEWAY, WorkspaceContainerStatus as HarnessContainerStatus,
-};
-use ctx_workspace_container::{rewrite_daemon_url_for_avf_guest, WorkspaceContainerOwner};
 #[cfg(test)]
-use ctx_workspace_container::sandbox_machine_required;
+#[allow(unused_imports)]
+pub(crate) use ctx_harness_runtime::{
+    container_image_present, ensure_builder_backend_launch_ready_with_observer,
+    launch_ready_detail_message, launch_ready_gap_message, local_runtime_available,
+    prefetch_container_image, prewarm_selected_runtime_for_launch_with_observer,
+    prewarm_selected_runtime_with_observer, resolve_container_image, runtime_prewarm_ready_message,
+    runtime_prewarm_target, sandbox_container_command, sandbox_machine_name,
+    selected_runtime_launch_readiness_state, selected_runtime_launch_ready, selected_runtime_state,
+    selected_shared_substrate_lifecycle, workspace_launch_ready_message,
+};
+pub(crate) use ctx_harness_runtime::{
+    sandbox_engine_ready, selected_sandbox_command_backend, selected_sandbox_command_mode,
+    HarnessExecutionPlan, HarnessRuntimeKind, HarnessRuntimeStats, SandboxCommandBackend,
+    CTX_AVF_HOST_DATA_ROOT_ENV, CTX_AVF_HOST_WORKTREE_ROOT_ENV, CTX_AVF_WORKSPACE_ID_ENV,
+    CTX_AVF_WORKTREE_ID_ENV, CTX_HARNESS_LINUX_SANDBOX_ENV, CTX_HARNESS_RUNTIME_KIND_ENV,
+};
 pub(crate) use ctx_linux_sandbox_runtime::{
     linux_sandbox_runtime_status, prepare_linux_sandbox_runtime,
     stage_linux_sandbox_runtime_downloads, LinuxSandboxActivationMode,
@@ -81,41 +105,12 @@ use ctx_sandbox_container_runtime::{
     ensure_managed_default_container_image_tar_with_source, managed_default_image_install_lock,
     sandbox_cli_binary_path,
 };
-#[cfg(test)]
-use self::machine::{
-    ensure_managed_sandbox_cli_runtime, ensure_managed_sandbox_machine_cache,
-    persist_sandbox_machine_cache_to_shared, persist_sandbox_machine_cache_to_shared_best_effort,
-    sandbox_machine_cache_root, sandbox_machine_home_root, sandbox_machine_runtime_root,
-    sandbox_machine_temp_root, seed_shared_sandbox_machine_cache,
-    seed_shared_sandbox_machine_cache_best_effort,
-};
-pub(crate) use self::materialization::materialize_sandbox_worktree;
-#[cfg(test)]
-use self::sandbox_machine_recovery::{
-    run_sandbox_machine_init, sandbox_machine_present, sandbox_machine_singleflight_lock,
-};
-pub(crate) use ctx_avf_linux_runtime::SharedVmLifecycleOrchestrator;
 pub(crate) use ctx_sandbox_contract::UbuntuSandboxSubstrate;
-pub(crate) use ctx_harness_runtime::{
-    sandbox_engine_ready,
-    selected_sandbox_command_backend, selected_sandbox_command_mode,
-    CTX_AVF_HOST_DATA_ROOT_ENV,
-    CTX_AVF_HOST_WORKTREE_ROOT_ENV, CTX_AVF_WORKSPACE_ID_ENV, CTX_AVF_WORKTREE_ID_ENV,
-    CTX_HARNESS_LINUX_SANDBOX_ENV, CTX_HARNESS_RUNTIME_KIND_ENV, HarnessExecutionPlan,
-    HarnessRuntimeKind, HarnessRuntimeStats, SandboxCommandBackend,
-};
 #[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use ctx_harness_runtime::{
-    container_image_present, ensure_builder_backend_launch_ready_with_observer,
-    launch_ready_detail_message, launch_ready_gap_message, local_runtime_available,
-    prefetch_container_image, prewarm_selected_runtime_for_launch_with_observer,
-    prewarm_selected_runtime_with_observer, resolve_container_image,
-    runtime_prewarm_ready_message, runtime_prewarm_target, sandbox_container_command,
-    sandbox_machine_name,
-    selected_runtime_launch_ready,
-    selected_runtime_launch_readiness_state, selected_runtime_state,
-    selected_shared_substrate_lifecycle, workspace_launch_ready_message,
+use ctx_workspace_container::sandbox_machine_required;
+use ctx_workspace_container::{rewrite_daemon_url_for_avf_guest, WorkspaceContainerOwner};
+use ctx_workspace_container::{
+    WorkspaceContainerStatus as HarnessContainerStatus, AVF_GUEST_HOST_GATEWAY,
 };
 
 #[cfg(test)]
@@ -413,12 +408,12 @@ fn sandbox_machine_ready_poll_interval() -> Duration {
     Duration::from_millis(25)
 }
 
+#[cfg(test)]
+use ctx_harness_setup::{observe_log, observe_phase};
 pub use ctx_harness_setup::{
     HarnessSetupDownloadStatus, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,
     HarnessSetupProgressUpdate,
 };
-#[cfg(test)]
-use ctx_harness_setup::{observe_log, observe_phase};
 
 pub struct HarnessRuntimeManager {
     data_root: PathBuf,
@@ -427,6 +422,12 @@ pub struct HarnessRuntimeManager {
     active_runtime_operations: AtomicUsize,
     active_prewarm_artifact_operations: AtomicUsize,
     ops_events: crate::ops_events::OpsEvents,
+}
+
+impl HarnessRuntimeManager {
+    pub(crate) fn data_root(&self) -> &Path {
+        &self.data_root
+    }
 }
 
 #[cfg(test)]

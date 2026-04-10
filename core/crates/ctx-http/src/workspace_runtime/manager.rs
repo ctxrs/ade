@@ -5,6 +5,7 @@ use ctx_workspace_container::{
     container_data_root, container_user, daemon_port_from_url, rewrite_daemon_url_for_container,
     EnsureWorkspaceContainerRequest, WorkspaceContainerReadiness,
 };
+use std::sync::Arc;
 
 impl HarnessRuntimeManager {
     pub fn new(data_root: PathBuf) -> Self {
@@ -68,11 +69,42 @@ impl HarnessRuntimeManager {
         RuntimeOperationGuard { manager: self }
     }
 
+    #[cfg(test)]
     pub(crate) fn begin_prewarm_artifact_activity(&self) -> PrewarmArtifactActivityGuard<'_> {
         self.note_runtime_activity();
         self.active_prewarm_artifact_operations
             .fetch_add(1, Ordering::SeqCst);
         PrewarmArtifactActivityGuard { manager: self }
+    }
+
+    pub(crate) fn begin_runtime_operation_scope(
+        self: &Arc<Self>,
+    ) -> ctx_execution_runtime::RuntimeActivityScope {
+        self.note_runtime_activity();
+        self.active_runtime_operations
+            .fetch_add(1, Ordering::SeqCst);
+        let manager = Arc::clone(self);
+        ctx_execution_runtime::RuntimeActivityScope::new(move || {
+            manager.note_runtime_activity();
+            manager
+                .active_runtime_operations
+                .fetch_sub(1, Ordering::SeqCst);
+        })
+    }
+
+    pub(crate) fn begin_prewarm_artifact_activity_scope(
+        self: &Arc<Self>,
+    ) -> ctx_execution_runtime::RuntimeActivityScope {
+        self.note_runtime_activity();
+        self.active_prewarm_artifact_operations
+            .fetch_add(1, Ordering::SeqCst);
+        let manager = Arc::clone(self);
+        ctx_execution_runtime::RuntimeActivityScope::new(move || {
+            manager.note_runtime_activity();
+            manager
+                .active_prewarm_artifact_operations
+                .fetch_sub(1, Ordering::SeqCst);
+        })
     }
 
     pub async fn stats(&self) -> HarnessRuntimeStats {
@@ -179,8 +211,10 @@ impl HarnessRuntimeManager {
             "CTX_HARNESS_CONTAINER_ID".to_string(),
             container.name.clone(),
         );
-        let guest_workspace_root =
-            ctx_worktree_data_plane::live_workspace_root_for_mode(workspace, ExecutionMode::Sandbox);
+        let guest_workspace_root = ctx_worktree_data_plane::live_workspace_root_for_mode(
+            workspace,
+            ExecutionMode::Sandbox,
+        );
         let guest_worktree_root = ctx_worktree_data_plane::live_worktree_root_for_mode(
             workspace,
             worktree,
@@ -535,10 +569,12 @@ impl Drop for RuntimeOperationGuard<'_> {
     }
 }
 
+#[cfg(test)]
 pub(crate) struct PrewarmArtifactActivityGuard<'a> {
     manager: &'a HarnessRuntimeManager,
 }
 
+#[cfg(test)]
 impl Drop for PrewarmArtifactActivityGuard<'_> {
     fn drop(&mut self) {
         self.manager.note_runtime_activity();

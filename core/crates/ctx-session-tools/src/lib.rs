@@ -7,8 +7,8 @@ mod tests;
 
 pub use normalize::{normalize_tool_event, NormalizedToolEvent};
 pub use preview::{
-    build_text_preview, ToolJsonPreview, ToolTextPreview, TOOL_PREVIEW_MAX_LINE_CHARS,
-    TOOL_PREVIEW_MAX_LINES,
+    build_text_preview, ToolJsonPreview, ToolTextPreview, TOOL_PREVIEW_MAX_LINES,
+    TOOL_PREVIEW_MAX_LINE_CHARS,
 };
 pub use projections::{
     build_tool_ops_meta, build_tool_ops_meta_from_normalized, build_turn_tool_update,

@@ -10,8 +10,7 @@ use ctx_linux_sandbox_runtime::preferred_native_sandbox_cli_path;
 use tokio::process::Command;
 
 use crate::{
-    CTX_HARNESS_SANDBOX_CLI_PATH_ENV, SANDBOX_INFO_TIMEOUT, SANDBOX_OP_TIMEOUT,
-    SandboxCommandMode,
+    SandboxCommandMode, CTX_HARNESS_SANDBOX_CLI_PATH_ENV, SANDBOX_INFO_TIMEOUT, SANDBOX_OP_TIMEOUT,
 };
 
 pub const SHARED_VM_SANDBOX_CLI_GUEST_BIN: &str = "/usr/local/bin/nerdctl";
@@ -32,7 +31,11 @@ fn find_binary_in_path(name: &str) -> Option<PathBuf> {
 fn explicit_sandbox_cli_binary_path() -> Option<PathBuf> {
     let raw = std::env::var(CTX_HARNESS_SANDBOX_CLI_PATH_ENV).ok()?;
     let path = PathBuf::from(raw.trim());
-    if path.exists() { Some(path) } else { None }
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 fn sandbox_cli_available(_data_root: &Path) -> bool {
@@ -359,8 +362,10 @@ mod tests {
         std::fs::set_permissions(&cli_path, std::fs::Permissions::from_mode(0o755))
             .expect("chmod sandbox cli shim");
         let _override = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
-        let _guard =
-            EnvVarGuard::set(CTX_HARNESS_SANDBOX_CLI_PATH_ENV, &cli_path.to_string_lossy());
+        let _guard = EnvVarGuard::set(
+            CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+            &cli_path.to_string_lossy(),
+        );
 
         assert!(sandbox_cli_available(temp.path()));
         assert!(
@@ -384,8 +389,10 @@ mod tests {
         .expect("write sandbox cli shim");
         std::fs::set_permissions(&cli_path, std::fs::Permissions::from_mode(0o755))
             .expect("chmod sandbox cli shim");
-        let _guard =
-            EnvVarGuard::set(CTX_HARNESS_SANDBOX_CLI_PATH_ENV, &cli_path.to_string_lossy());
+        let _guard = EnvVarGuard::set(
+            CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+            &cli_path.to_string_lossy(),
+        );
 
         assert!(
             sandbox_engine_ready(temp.path(), &SandboxCommandMode::NativeContainer)
@@ -412,8 +419,10 @@ mod tests {
         .expect("write sandbox cli shim");
         std::fs::set_permissions(&cli_path, std::fs::Permissions::from_mode(0o755))
             .expect("chmod sandbox cli shim");
-        let _guard =
-            EnvVarGuard::set(CTX_HARNESS_SANDBOX_CLI_PATH_ENV, &cli_path.to_string_lossy());
+        let _guard = EnvVarGuard::set(
+            CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+            &cli_path.to_string_lossy(),
+        );
 
         assert!(
             container_exists(
@@ -451,8 +460,14 @@ mod tests {
             env.get("XDG_RUNTIME_DIR").map(String::as_str),
             Some(SHARED_VM_GUEST_ROOT_XDG_RUNTIME_ROOT)
         );
-        assert_eq!(env.get("HOME").map(String::as_str), Some(SHARED_VM_GUEST_ROOT_HOME));
-        assert_eq!(env.get("TMPDIR").map(String::as_str), Some(SHARED_VM_GUEST_TMP_ROOT));
+        assert_eq!(
+            env.get("HOME").map(String::as_str),
+            Some(SHARED_VM_GUEST_ROOT_HOME)
+        );
+        assert_eq!(
+            env.get("TMPDIR").map(String::as_str),
+            Some(SHARED_VM_GUEST_TMP_ROOT)
+        );
         assert_eq!(
             env.get("XDG_CONFIG_HOME").map(String::as_str),
             Some(SHARED_VM_GUEST_ROOT_XDG_CONFIG_ROOT)

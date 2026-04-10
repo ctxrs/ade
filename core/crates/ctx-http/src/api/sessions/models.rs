@@ -524,23 +524,24 @@ async fn load_provider_model_catalog_for_install_target(
     let command = runtime_command.command_abs_path;
     let args = runtime_command.args;
 
-    let probe_context = match crate::provider_launch::probe::provider_probe_context_for_workspace_runtime(
-        state,
-        workspace,
-        provider_id,
-    )
-    .await
-    {
-        Ok(context) => context,
-        Err(err) => {
-            tracing::warn!(
-                provider_id = provider_id,
-                "provider probe runtime context failed: {}",
-                logs::redact_sensitive(&err)
-            );
-            return Ok(pinned_catalog);
-        }
-    };
+    let probe_context =
+        match crate::provider_launch::probe::provider_probe_context_for_workspace_runtime(
+            state,
+            workspace,
+            provider_id,
+        )
+        .await
+        {
+            Ok(context) => context,
+            Err(err) => {
+                tracing::warn!(
+                    provider_id = provider_id,
+                    "provider probe runtime context failed: {}",
+                    logs::redact_sensitive(&err)
+                );
+                return Ok(pinned_catalog);
+            }
+        };
     let mut env = probe_context.env;
     installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
         &mut env,

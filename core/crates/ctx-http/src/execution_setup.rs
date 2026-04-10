@@ -15,10 +15,10 @@ use ctx_harness_setup::{
     HarnessSetupProgressUpdate,
 };
 
-use crate::workspace_runtime::HarnessRuntimeManager;
 use crate::ops_events::{OpsEvent, OpsEvents};
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use crate::settings::{ExecutionMode, ExecutionSettings};
+use crate::workspace_runtime::HarnessRuntimeManager;
 
 mod launch_state;
 mod progress;
@@ -196,6 +196,9 @@ pub struct ExecutionLaunchSnapshot {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+// EXCEPTION: clippy::enum_variant_names — these stable serde tags are part of the
+// execution launch stream API, so the shared `Launch*` prefix is deliberate.
+#[allow(clippy::enum_variant_names)]
 pub enum ExecutionLaunchStreamEvent {
     LaunchSnapshot {
         snapshot: ExecutionLaunchSnapshot,
@@ -753,14 +756,14 @@ impl ExecutionSetupCoordinator {
             .await
             {
                 Ok((true, true)) => Ok(()),
-                Ok((vm_ready, image_ready)) => {
-                    Err(anyhow::anyhow!(ctx_harness_runtime::launch_ready_gap_message(
+                Ok((vm_ready, image_ready)) => Err(anyhow::anyhow!(
+                    ctx_harness_runtime::launch_ready_gap_message(
                         settings.container.runtime.clone(),
                         runtime_target,
                         vm_ready,
                         image_ready,
-                    )))
-                }
+                    )
+                )),
                 Err(err) => Err(err),
             }
         } else {

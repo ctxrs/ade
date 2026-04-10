@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -116,20 +117,24 @@ type TestPreflightStorageSamplesFn = dyn Fn(
     + 'static;
 
 fn test_preflight_storage_samples_override(
-) -> &'static std::sync::Mutex<Option<std::sync::Arc<TestPreflightStorageSamplesFn>>> {
-    static OVERRIDE: std::sync::OnceLock<
-        std::sync::Mutex<Option<std::sync::Arc<TestPreflightStorageSamplesFn>>>,
-    > = std::sync::OnceLock::new();
-    OVERRIDE.get_or_init(|| std::sync::Mutex::new(None))
+) -> &'static Mutex<Option<std::sync::Arc<TestPreflightStorageSamplesFn>>> {
+    static OVERRIDE: OnceLock<Mutex<Option<std::sync::Arc<TestPreflightStorageSamplesFn>>>> =
+        OnceLock::new();
+    OVERRIDE.get_or_init(|| Mutex::new(None))
+}
+
+fn lock_test_preflight_storage_samples_override(
+) -> MutexGuard<'static, Option<std::sync::Arc<TestPreflightStorageSamplesFn>>> {
+    test_preflight_storage_samples_override()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 pub struct TestPreflightStorageSamplesOverrideGuard;
 
 impl Drop for TestPreflightStorageSamplesOverrideGuard {
     fn drop(&mut self) {
-        let mut slot = test_preflight_storage_samples_override()
-            .lock()
-            .expect("lock test storage override");
+        let mut slot = lock_test_preflight_storage_samples_override();
         *slot = None;
     }
 }
@@ -137,9 +142,7 @@ impl Drop for TestPreflightStorageSamplesOverrideGuard {
 pub fn set_test_preflight_storage_samples_override(
     override_fn: std::sync::Arc<TestPreflightStorageSamplesFn>,
 ) -> TestPreflightStorageSamplesOverrideGuard {
-    let mut slot = test_preflight_storage_samples_override()
-        .lock()
-        .expect("lock test storage override");
+    let mut slot = lock_test_preflight_storage_samples_override();
     assert!(
         slot.is_none(),
         "test storage override already installed for disk-isolated preflight"
@@ -157,10 +160,7 @@ fn maybe_test_preflight_storage_samples(
     operation: StorageAdmissionOperation,
     required_bytes: u64,
 ) -> Result<Option<(StorageAdmissionSample, StorageAdmissionSample)>> {
-    let override_fn = test_preflight_storage_samples_override()
-        .lock()
-        .expect("lock test storage override")
-        .clone();
+    let override_fn = lock_test_preflight_storage_samples_override().clone();
     match override_fn {
         Some(override_fn) => override_fn(
             data_root,
@@ -184,9 +184,8 @@ pub(super) async fn preflight_disk_isolated_copy(
     destination_probe_root: &Path,
     operation: StorageAdmissionOperation,
 ) -> Result<()> {
-    let required_bytes = storage_admission_required_bytes(
-        disk_isolated_copy_budget_bytes(estimated_copy_bytes),
-    );
+    let required_bytes =
+        storage_admission_required_bytes(disk_isolated_copy_budget_bytes(estimated_copy_bytes));
     let (host_sample, sandbox_sample) = if let Some(samples) = maybe_test_preflight_storage_samples(
         data_root,
         mode,
@@ -242,7 +241,7 @@ mod tests {
             "sandbox workspace volume",
             Path::new("/ctx/ws/worktrees"),
         )
-        .expect("parse df output");
+        .unwrap_or_else(|err| panic!("parse df output: {err:#}"));
         assert_eq!(sample.label, "sandbox workspace volume");
         assert_eq!(sample.mount_point, "/ctx/ws");
         assert_eq!(sample.total_bytes, 10485760_u64 * 1024);
@@ -256,7 +255,7 @@ mod tests {
             "sandbox workspace volume",
             Path::new("/ctx/ws"),
         )
-        .expect("parse df output");
+        .unwrap_or_else(|err| panic!("parse df output: {err:#}"));
         assert_eq!(sample.mount_point, "/ctx/ws");
         assert_eq!(sample.total_bytes, 10485760_u64 * 1024);
         assert_eq!(sample.free_bytes, 7340032_u64 * 1024);
@@ -272,9 +271,8 @@ mod tests {
 
     #[test]
     fn disk_isolated_storage_admission_denial_mentions_task_worktree() {
-        let required_bytes = storage_admission_required_bytes(
-            disk_isolated_copy_budget_bytes(512 * 1024 * 1024),
-        );
+        let required_bytes =
+            storage_admission_required_bytes(disk_isolated_copy_budget_bytes(512 * 1024 * 1024));
         let err = check_storage_admission(
             StorageAdmissionOperation::DiskIsolatedWorktreeMaterialization,
             required_bytes,

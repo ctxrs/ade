@@ -215,12 +215,13 @@ async fn install_test_managed_harness_image_source(
         hex::encode(hasher.finalize())
     };
     let (url, server) = spawn_static_http_server_with_suffix(body, "ctx-harness.tar").await;
-    let guard = ctx_bundled_assets::test_support::override_managed_ctx_harness_image_source_for_test(
-        ctx_bundled_assets::ManagedArtifactSource {
-            uri: url,
-            sha256: digest,
-        },
-    );
+    let guard =
+        ctx_bundled_assets::test_support::override_managed_ctx_harness_image_source_for_test(
+            ctx_bundled_assets::ManagedArtifactSource {
+                uri: url,
+                sha256: digest,
+            },
+        );
     (guard, server)
 }
 

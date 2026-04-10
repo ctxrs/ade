@@ -11,9 +11,9 @@ use ctx_workspace_container::workspace_container_name;
 
 use crate::daemon::AppState;
 use crate::execution_effective;
-use ctx_harness_runtime::sandbox_container_command;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::worktree_data_plane::resolve_worktree_data_plane;
+use ctx_harness_runtime::sandbox_container_command;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
 enum SandboxGitTarget {
@@ -78,10 +78,7 @@ async fn container_git_output(
                 .arg(&container_name)
                 .arg("git")
                 .args(args);
-            ctx_sandbox_container_runtime::command_output_with_timeout(
-                cmd,
-                SANDBOX_GIT_TIMEOUT,
-            )
+            ctx_sandbox_container_runtime::command_output_with_timeout(cmd, SANDBOX_GIT_TIMEOUT)
                 .await
                 .context("sandbox exec git timed out")
         }

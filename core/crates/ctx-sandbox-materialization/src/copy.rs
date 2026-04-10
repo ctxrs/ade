@@ -2,10 +2,10 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use anyhow::{Context, Result};
+use ctx_sandbox_container_runtime::{sandbox_container_command, SandboxCommandMode};
 use tempfile::TempDir;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
-use ctx_sandbox_container_runtime::{sandbox_container_command, SandboxCommandMode};
 
 fn collect_tree_size_bytes(root: &Path) -> Result<u64> {
     fn recurse(path: &Path) -> Result<u64> {
@@ -305,8 +305,8 @@ pub(super) async fn prepare_self_contained_copy_root(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use ctx_sandbox_container_runtime::sandbox_cli_env_test_lock;
+    use std::fs;
 
     struct EnvGuard {
         key: &'static str,

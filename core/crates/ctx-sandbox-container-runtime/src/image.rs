@@ -72,8 +72,10 @@ pub async fn prefetch_container_startup_artifacts_with_observer(
     image: &str,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<()> {
-    prefetch_container_startup_artifacts_with_source_override(data_root, mode, image, None, observer)
-        .await
+    prefetch_container_startup_artifacts_with_source_override(
+        data_root, mode, image, None, observer,
+    )
+    .await
 }
 
 async fn prefetch_container_startup_artifacts_with_source_override(
@@ -127,8 +129,10 @@ pub async fn prefetch_container_image_with_observer(
     if image.is_empty() {
         anyhow::bail!("image is required");
     }
-    prefetch_container_startup_artifacts_with_source_override(data_root, mode, image, None, observer)
-        .await?;
+    prefetch_container_startup_artifacts_with_source_override(
+        data_root, mode, image, None, observer,
+    )
+    .await?;
     if !sandbox_engine_ready(data_root, mode).await.unwrap_or(false) {
         anyhow::bail!("native sandbox container runtime is not reachable for image prewarm");
     }
@@ -268,7 +272,14 @@ pub async fn force_reload_default_container_image(
         );
         managed_tar
     };
-    load_container_image_tar(data_root, mode, &image_tar, DEFAULT_CONTAINER_IMAGE, observer).await
+    load_container_image_tar(
+        data_root,
+        mode,
+        &image_tar,
+        DEFAULT_CONTAINER_IMAGE,
+        observer,
+    )
+    .await
 }
 
 fn managed_default_container_image_tar_path(data_root: &Path, sha256: &str) -> PathBuf {
@@ -672,8 +683,10 @@ mod tests {
         .expect("write sandbox CLI shim");
         std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
             .expect("chmod sandbox CLI shim");
-        let _guard =
-            EnvGuard::set(CTX_HARNESS_SANDBOX_CLI_PATH_ENV, &sandbox_cli_path.to_string_lossy());
+        let _guard = EnvGuard::set(
+            CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+            &sandbox_cli_path.to_string_lossy(),
+        );
         let observer = RecordingObserver::default();
 
         load_container_image_tar(
@@ -725,8 +738,10 @@ mod tests {
         .expect("write sandbox CLI shim");
         std::fs::set_permissions(&sandbox_cli_path, std::fs::Permissions::from_mode(0o755))
             .expect("chmod sandbox CLI shim");
-        let _guard =
-            EnvGuard::set(CTX_HARNESS_SANDBOX_CLI_PATH_ENV, &sandbox_cli_path.to_string_lossy());
+        let _guard = EnvGuard::set(
+            CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+            &sandbox_cli_path.to_string_lossy(),
+        );
 
         load_container_image_tar(
             temp.path(),

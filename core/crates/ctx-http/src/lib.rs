@@ -9,7 +9,6 @@ pub mod daemon;
 pub mod dictation_livekit;
 pub mod edit_plans;
 pub mod execution_effective;
-pub mod execution_setup;
 pub mod git_status;
 pub mod installer;
 pub mod installs;
@@ -37,6 +36,7 @@ pub mod provider_usage;
 pub mod resource_governance;
 pub mod resource_telemetry;
 pub mod resource_utilization;
+mod runtime_adapters;
 pub mod scheduler;
 pub mod settings;
 pub mod storage_guard;
@@ -58,6 +58,9 @@ pub mod fault_injection;
 
 #[cfg(test)]
 pub(crate) mod test_support;
+
+#[cfg(test)]
+mod execution_setup;
 
 #[cfg(not(feature = "fault_injection"))]
 pub mod fault_injection {
@@ -85,15 +88,15 @@ mod tests {
     use tokio::process::Command;
     use tower::ServiceExt;
 
+    use ctx_execution_runtime::{
+        ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionSetupJobKind,
+    };
     use ctx_providers::adapters::ProviderStatus;
     use ctx_providers::fake::FakeProviderAdapter;
     use ctx_store::StoreManager;
 
     use crate::api;
     use crate::daemon::AppState;
-    use crate::execution_setup::{
-        ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionSetupJobKind,
-    };
 
     async fn run_git(root: &Path, args: &[&str]) {
         let output = Command::new("git")

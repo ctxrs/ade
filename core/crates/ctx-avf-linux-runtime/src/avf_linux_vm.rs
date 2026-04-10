@@ -5,8 +5,8 @@ use anyhow::{bail, Context, Result};
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_runtime_assets::{
     acquire_managed_artifact_file_lock, download_managed_artifact, extract_archive_to_dir,
-    finalize_managed_artifact_download, managed_artifact_lock_path,
-    managed_artifact_partial_path, resolve_single_extracted_root,
+    finalize_managed_artifact_download, managed_artifact_lock_path, managed_artifact_partial_path,
+    resolve_single_extracted_root,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -20,8 +20,8 @@ mod runtime_install;
 mod tests;
 
 use super::{
-    observe_log, observe_phase, sha256_hex_file, ContainerExecutionSettings,
-    HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,
+    observe_log, observe_phase, sha256_hex_file, ContainerExecutionSettings, HarnessSetupLogLevel,
+    HarnessSetupObserver, HarnessSetupPhase,
 };
 use ctx_harness_setup::{ManagedArtifactDownloadReporter, ManagedDownloadAggregate};
 
@@ -37,6 +37,7 @@ pub use self::runtime_bootstrap::{
 };
 pub use self::runtime_install::runtime_target_label;
 use self::runtime_install::*;
+#[cfg(any(test, feature = "test-support"))]
 pub use self::runtime_install::{
     override_managed_avf_linux_runtime_source_for_test, TestManagedAvfLinuxRuntimeSourceGuard,
 };

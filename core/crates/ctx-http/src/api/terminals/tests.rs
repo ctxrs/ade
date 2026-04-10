@@ -104,10 +104,7 @@ fn resolve_container_terminal_cwd_maps_host_subdir_into_managed_container_worktr
     )
     .unwrap();
 
-    assert_eq!(
-        cwd,
-        container_worktree_root(worktree_id).join("src/bin")
-    );
+    assert_eq!(cwd, container_worktree_root(worktree_id).join("src/bin"));
 }
 
 #[test]

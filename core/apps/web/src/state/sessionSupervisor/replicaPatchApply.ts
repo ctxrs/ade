@@ -524,15 +524,25 @@ export const applyReplicaPatches = (
       }
     }
     if (data.stateLoading !== undefined) {
-      entry.support.stateLoading = data.stateLoading;
+      if (entry.support.stateLoading !== data.stateLoading) {
+        entry.support.stateLoading = data.stateLoading;
+        entryChanged = true;
+      }
     }
     if (data.loading !== undefined) {
+      const prevLoading = entry.loading;
+      const prevLoadState = entry.loadState;
       entry.loading = data.loading;
       if (data.loading && entry.loadState !== "live") {
         host.setSessionLoadState(entry, "pending_hydration");
       }
+      if (entry.loading !== prevLoading || entry.loadState !== prevLoadState) {
+        entryChanged = true;
+      }
     }
     if (data.error !== undefined) {
+      const prevError = entry.error;
+      const prevLoadState = entry.loadState;
       if (data.error) {
         host.setFatalError(entry, data.error);
       } else {
@@ -541,9 +551,16 @@ export const applyReplicaPatches = (
           host.setSessionLoadState(entry, "pending_hydration");
         }
       }
+      if (entry.error !== prevError || entry.loadState !== prevLoadState) {
+        entryChanged = true;
+      }
     } else if (hasSessionReplicaRecoveryData(data)) {
+      const prevLoadState = entry.loadState;
       entry.error = undefined;
       host.setSessionLoadState(entry, resolveReplicaReadyLoadState(entry));
+      if (entry.loadState !== prevLoadState) {
+        entryChanged = true;
+      }
     }
     if (data.subagentNotice) {
       void host.ensureSubagentInvocations(entry, { force: true });

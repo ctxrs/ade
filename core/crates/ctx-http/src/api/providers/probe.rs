@@ -129,7 +129,8 @@ pub(super) async fn bootstrap_provider_probe_summary(
         workspace,
         provider_id,
     )
-    .await {
+    .await
+    {
         Ok(_) => (true, false, None),
         Err(err) => {
             let probe_error = logs::redact_sensitive(&err);

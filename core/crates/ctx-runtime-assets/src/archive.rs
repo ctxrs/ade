@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use url::Url;
@@ -61,7 +61,9 @@ fn extract_zstd_to_dir(archive_path: &Path, source_uri: &str, out_dir: &Path) ->
         .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| !name.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("unable to derive zstd output filename from {source_uri}"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("unable to derive zstd output filename from {source_uri}")
+        })?;
     let output_name = file_name
         .strip_suffix(".zst")
         .filter(|name| !name.trim().is_empty())

@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 use crate::execution_effective;
-use ctx_harness_runtime::sandbox_container_command;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::worktree_data_plane::resolve_worktree_data_plane;
+use ctx_harness_runtime::sandbox_container_command;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
 const COMMIT_MSG_HOOK: &str = r#"#!/bin/sh
@@ -353,19 +353,17 @@ async fn sandbox_command(
             cmd.args(args);
             Ok(cmd)
         }
-        ContainerRuntimeKind::SharedVmContainer => {
-            ctx_avf_linux_runtime::build_guest_exec_command(
-                &state.core.data_root,
-                workspace.id,
-                worktree.id,
-                &live_worktree_root,
-                command,
-                args,
-                &std::collections::HashMap::new(),
-                None,
-                false,
-            )
-        }
+        ContainerRuntimeKind::SharedVmContainer => ctx_avf_linux_runtime::build_guest_exec_command(
+            &state.core.data_root,
+            workspace.id,
+            worktree.id,
+            &live_worktree_root,
+            command,
+            args,
+            &std::collections::HashMap::new(),
+            None,
+            false,
+        ),
     }
 }
 
@@ -711,8 +709,7 @@ mod tests {
                 substrate: SandboxSubstrate::NativeContainer,
                 guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
                 profile: SandboxProfile::Standard,
-                live_workspace_root: ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT
-                    .to_string(),
+                live_workspace_root: ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
                 live_worktree_root: managed_root.to_string_lossy().to_string(),
                 execution_settings_json: Some(
                     serde_json::to_string(&execution).expect("serialize execution snapshot"),

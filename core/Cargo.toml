@@ -27,6 +27,7 @@ members = [
   "crates/ctx-session-tools",
   "crates/ctx-storage-admission",
   "crates/ctx-worktree-data-plane",
+  "crates/ctx-execution-runtime",
   "crates/ctx-workspace-config",
   "crates/ctx-workspace-container",
   "crates/ctx-workspace-active-snapshot",

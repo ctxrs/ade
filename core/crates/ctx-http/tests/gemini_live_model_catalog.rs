@@ -6,10 +6,10 @@ use std::process::Command;
 use std::sync::Arc;
 
 use axum::http::StatusCode;
-use ctx_provider_accounts::add_gemini_account;
 use ctx_http::api;
 use ctx_http::daemon::AppState;
 use ctx_http::installer::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
+use ctx_provider_accounts::add_gemini_account;
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_store::StoreManager;
 
@@ -64,8 +64,7 @@ fn normalize_version(version: &str) -> String {
 
 fn managed_gemini_version() -> String {
     let matrix: serde_json::Value =
-        serde_json::from_str(ctx_provider_accounts::PROVIDER_MATRIX_JSON)
-            .expect("provider matrix");
+        serde_json::from_str(ctx_provider_accounts::PROVIDER_MATRIX_JSON).expect("provider matrix");
     matrix
         .get("providers")
         .and_then(serde_json::Value::as_array)

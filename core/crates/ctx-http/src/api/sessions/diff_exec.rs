@@ -60,24 +60,22 @@ async fn container_exec_stdout(
                 .await
                 .context("sandbox exec command timed out")?
         }
-        SandboxExecTarget::SharedVmContainer => {
-            ctx_avf_linux_runtime::run_guest_exec_capture(
-                &state.core.data_root,
-                worktree.workspace_id,
-                worktree.id,
-                &data_plane.live_worktree_root,
-                program,
-                &args
-                    .iter()
-                    .map(|arg| (*arg).to_string())
-                    .collect::<Vec<_>>(),
-                &std::collections::HashMap::new(),
-                None,
-                false,
-            )
-            .await
-            .context("shared VM container exec command failed")?
-        }
+        SandboxExecTarget::SharedVmContainer => ctx_avf_linux_runtime::run_guest_exec_capture(
+            &state.core.data_root,
+            worktree.workspace_id,
+            worktree.id,
+            &data_plane.live_worktree_root,
+            program,
+            &args
+                .iter()
+                .map(|arg| (*arg).to_string())
+                .collect::<Vec<_>>(),
+            &std::collections::HashMap::new(),
+            None,
+            false,
+        )
+        .await
+        .context("shared VM container exec command failed")?,
     };
     if out.status.success() {
         Ok(out.stdout)

@@ -79,12 +79,10 @@ pub async fn ensure_builder_ready(data_root: &Path) -> Result<()> {
         &[],
         &["/bin/sh".to_string(), "-lc".to_string(), "true".to_string()],
     )?;
-    let output = ctx_sandbox_container_runtime::command_output_with_timeout(
-        cmd,
-        BUILDER_READY_TIMEOUT,
-    )
-        .await
-        .context("running builder readiness command")?;
+    let output =
+        ctx_sandbox_container_runtime::command_output_with_timeout(cmd, BUILDER_READY_TIMEOUT)
+            .await
+            .context("running builder readiness command")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -198,20 +196,18 @@ mod tests {
             cmd,
             Duration::from_millis(50),
         )
-            .await
-            .expect_err("command should time out");
+        .await
+        .expect_err("command should time out");
         assert!(err.to_string().contains("timed out"));
     }
 
     #[tokio::test]
     async fn timeout_helper_returns_output_for_fast_process() {
         let cmd = make_shell_command("echo ok");
-        let out = ctx_sandbox_container_runtime::command_output_with_timeout(
-            cmd,
-            Duration::from_secs(2),
-        )
-            .await
-            .expect("fast command should succeed");
+        let out =
+            ctx_sandbox_container_runtime::command_output_with_timeout(cmd, Duration::from_secs(2))
+                .await
+                .expect("fast command should succeed");
         assert!(out.status.success());
     }
 

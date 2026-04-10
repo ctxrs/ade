@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::{Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 
@@ -156,11 +158,7 @@ struct RuntimeLockV2 {
 
 fn bundle_dir() -> Option<PathBuf> {
     #[cfg(any(test, feature = "test-support"))]
-    if let Some((root, _)) = test_manifest_override()
-        .lock()
-        .expect("test bundled assets manifest override lock poisoned")
-        .clone()
-    {
+    if let Some((root, _)) = lock_test_manifest_override().clone() {
         return Some(root);
     }
 
@@ -277,11 +275,7 @@ fn read_manifest_from_root(root: &Path) -> Option<BundledAssetsManifest> {
 
 #[cfg(any(test, feature = "test-support"))]
 fn load_manifest_for_tests() -> Option<BundledAssetsManifest> {
-    if let Some((_, manifest)) = test_manifest_override()
-        .lock()
-        .expect("test bundled assets manifest override lock poisoned")
-        .clone()
-    {
+    if let Some((_, manifest)) = lock_test_manifest_override().clone() {
         return Some(manifest);
     }
 
@@ -665,12 +659,8 @@ pub fn managed_runtime_source(id: &str, os: &str, arch: &str) -> Option<ManagedR
 }
 
 pub fn managed_ctx_harness_image_source(_expected_image: &str) -> Option<ManagedArtifactSource> {
-    #[cfg(test)]
-    if let Some(source) = test_managed_ctx_harness_image_source_override()
-        .lock()
-        .expect("test managed harness image override lock poisoned")
-        .clone()
-    {
+    #[cfg(any(test, feature = "test-support"))]
+    if let Some(source) = lock_test_managed_ctx_harness_image_source_override().clone() {
         return Some(source);
     }
 
@@ -679,12 +669,8 @@ pub fn managed_ctx_harness_image_source(_expected_image: &str) -> Option<Managed
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn managed_sandbox_machine_cache_source() -> Option<ManagedArtifactSource> {
-    #[cfg(test)]
-    if let Some(source) = test_managed_sandbox_machine_cache_source_override()
-        .lock()
-        .expect("test managed machine cache override lock poisoned")
-        .clone()
-    {
+    #[cfg(any(test, feature = "test-support"))]
+    if let Some(source) = lock_test_managed_sandbox_machine_cache_source_override().clone() {
         return Some(source);
     }
 
@@ -697,32 +683,51 @@ pub fn managed_sandbox_machine_cache_source() -> Option<ManagedArtifactSource> {
 
 #[cfg(any(test, feature = "test-support"))]
 fn test_managed_sandbox_machine_cache_source_override(
-) -> &'static std::sync::Mutex<Option<ManagedArtifactSource>> {
-    static OVERRIDE: std::sync::OnceLock<std::sync::Mutex<Option<ManagedArtifactSource>>> =
-        std::sync::OnceLock::new();
-    OVERRIDE.get_or_init(|| std::sync::Mutex::new(None))
+) -> &'static Mutex<Option<ManagedArtifactSource>> {
+    static OVERRIDE: OnceLock<Mutex<Option<ManagedArtifactSource>>> = OnceLock::new();
+    OVERRIDE.get_or_init(|| Mutex::new(None))
 }
 
 #[cfg(any(test, feature = "test-support"))]
-fn test_managed_ctx_harness_image_source_override(
-) -> &'static std::sync::Mutex<Option<ManagedArtifactSource>> {
-    static OVERRIDE: std::sync::OnceLock<std::sync::Mutex<Option<ManagedArtifactSource>>> =
-        std::sync::OnceLock::new();
-    OVERRIDE.get_or_init(|| std::sync::Mutex::new(None))
+fn test_managed_ctx_harness_image_source_override() -> &'static Mutex<Option<ManagedArtifactSource>>
+{
+    static OVERRIDE: OnceLock<Mutex<Option<ManagedArtifactSource>>> = OnceLock::new();
+    OVERRIDE.get_or_init(|| Mutex::new(None))
 }
 
 #[cfg(any(test, feature = "test-support"))]
-fn test_manifest_override() -> &'static std::sync::Mutex<Option<(PathBuf, BundledAssetsManifest)>> {
-    static OVERRIDE: std::sync::OnceLock<
-        std::sync::Mutex<Option<(PathBuf, BundledAssetsManifest)>>,
-    > = std::sync::OnceLock::new();
-    OVERRIDE.get_or_init(|| std::sync::Mutex::new(None))
+fn test_manifest_override() -> &'static Mutex<Option<(PathBuf, BundledAssetsManifest)>> {
+    static OVERRIDE: OnceLock<Mutex<Option<(PathBuf, BundledAssetsManifest)>>> = OnceLock::new();
+    OVERRIDE.get_or_init(|| Mutex::new(None))
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub fn bundled_assets_manifest_test_lock() -> &'static std::sync::Mutex<()> {
-    static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+fn lock_test_managed_sandbox_machine_cache_source_override(
+) -> MutexGuard<'static, Option<ManagedArtifactSource>> {
+    test_managed_sandbox_machine_cache_source_override()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn lock_test_managed_ctx_harness_image_source_override(
+) -> MutexGuard<'static, Option<ManagedArtifactSource>> {
+    test_managed_ctx_harness_image_source_override()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn lock_test_manifest_override() -> MutexGuard<'static, Option<(PathBuf, BundledAssetsManifest)>> {
+    test_manifest_override()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn bundled_assets_manifest_test_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -733,9 +738,7 @@ pub struct TestManagedSandboxMachineCacheSourceGuard {
 #[cfg(any(test, feature = "test-support"))]
 impl Drop for TestManagedSandboxMachineCacheSourceGuard {
     fn drop(&mut self) {
-        let mut guard = test_managed_sandbox_machine_cache_source_override()
-            .lock()
-            .expect("test managed machine cache override lock poisoned");
+        let mut guard = lock_test_managed_sandbox_machine_cache_source_override();
         *guard = self.previous.take();
     }
 }
@@ -748,9 +751,7 @@ pub struct TestManagedCtxHarnessImageSourceGuard {
 #[cfg(any(test, feature = "test-support"))]
 impl Drop for TestManagedCtxHarnessImageSourceGuard {
     fn drop(&mut self) {
-        let mut guard = test_managed_ctx_harness_image_source_override()
-            .lock()
-            .expect("test managed harness image override lock poisoned");
+        let mut guard = lock_test_managed_ctx_harness_image_source_override();
         *guard = self.previous.take();
     }
 }
@@ -764,9 +765,7 @@ pub struct TestBundledAssetsManifestGuard {
 #[cfg(any(test, feature = "test-support"))]
 impl Drop for TestBundledAssetsManifestGuard {
     fn drop(&mut self) {
-        let mut guard = test_manifest_override()
-            .lock()
-            .expect("test bundled assets manifest override lock poisoned");
+        let mut guard = lock_test_manifest_override();
         *guard = self.previous.take();
     }
 }
@@ -775,9 +774,7 @@ impl Drop for TestBundledAssetsManifestGuard {
 pub fn override_managed_sandbox_machine_cache_source_for_test(
     source: ManagedArtifactSource,
 ) -> TestManagedSandboxMachineCacheSourceGuard {
-    let mut guard = test_managed_sandbox_machine_cache_source_override()
-        .lock()
-        .expect("test managed machine cache override lock poisoned");
+    let mut guard = lock_test_managed_sandbox_machine_cache_source_override();
     let previous = guard.clone();
     *guard = Some(source);
     TestManagedSandboxMachineCacheSourceGuard { previous }
@@ -787,9 +784,7 @@ pub fn override_managed_sandbox_machine_cache_source_for_test(
 pub fn override_managed_ctx_harness_image_source_for_test(
     source: ManagedArtifactSource,
 ) -> TestManagedCtxHarnessImageSourceGuard {
-    let mut guard = test_managed_ctx_harness_image_source_override()
-        .lock()
-        .expect("test managed harness image override lock poisoned");
+    let mut guard = lock_test_managed_ctx_harness_image_source_override();
     let previous = guard.clone();
     *guard = Some(source);
     TestManagedCtxHarnessImageSourceGuard { previous }
@@ -801,9 +796,7 @@ pub fn override_bundled_assets_manifest_for_test(
     root: PathBuf,
     manifest: BundledAssetsManifest,
 ) -> TestBundledAssetsManifestGuard {
-    let mut guard = test_manifest_override()
-        .lock()
-        .expect("test bundled assets manifest override lock poisoned");
+    let mut guard = lock_test_manifest_override();
     let previous = guard.clone();
     *guard = Some((root, manifest));
     TestBundledAssetsManifestGuard { previous }

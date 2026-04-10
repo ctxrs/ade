@@ -1,6 +1,10 @@
 use super::*;
 use ctx_bundled_assets as bundled_assets;
-use std::sync::{Mutex as StdMutex, OnceLock};
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::Mutex as StdMutex;
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::MutexGuard as StdMutexGuard;
+use std::sync::OnceLock;
 use std::time::Instant;
 
 fn emit_runtime_install_info(observer: Option<&dyn HarnessSetupObserver>, message: &str) {
@@ -149,12 +153,8 @@ pub(super) fn staged_avf_linux_guest_runtime() -> Result<Option<AvfLinuxGuestRun
 }
 
 pub(super) fn managed_avf_linux_guest_source() -> Option<bundled_assets::ManagedRuntimeSource> {
-    #[cfg(test)]
-    if let Some(source) = test_runtime_source_override()
-        .lock()
-        .expect("AVF Linux runtime override mutex poisoned")
-        .clone()
-    {
+    #[cfg(any(test, feature = "test-support"))]
+    if let Some(source) = lock_test_runtime_source_override().clone() {
         return Some(source);
     }
     let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
@@ -669,6 +669,7 @@ pub async fn ensure_managed_avf_linux_guest_runtime_with_override(
     Ok(runtime)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn test_runtime_source_override() -> &'static StdMutex<Option<bundled_assets::ManagedRuntimeSource>>
 {
     static OVERRIDE: OnceLock<StdMutex<Option<bundled_assets::ManagedRuntimeSource>>> =
@@ -676,25 +677,32 @@ fn test_runtime_source_override() -> &'static StdMutex<Option<bundled_assets::Ma
     OVERRIDE.get_or_init(|| StdMutex::new(None))
 }
 
+#[cfg(any(test, feature = "test-support"))]
+fn lock_test_runtime_source_override(
+) -> StdMutexGuard<'static, Option<bundled_assets::ManagedRuntimeSource>> {
+    test_runtime_source_override()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(any(test, feature = "test-support"))]
 pub struct TestManagedAvfLinuxRuntimeSourceGuard {
     previous: Option<bundled_assets::ManagedRuntimeSource>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl Drop for TestManagedAvfLinuxRuntimeSourceGuard {
     fn drop(&mut self) {
-        let mut guard = test_runtime_source_override()
-            .lock()
-            .expect("AVF Linux runtime override mutex poisoned");
+        let mut guard = lock_test_runtime_source_override();
         *guard = self.previous.take();
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn override_managed_avf_linux_runtime_source_for_test(
     source: bundled_assets::ManagedRuntimeSource,
 ) -> TestManagedAvfLinuxRuntimeSourceGuard {
-    let mut guard = test_runtime_source_override()
-        .lock()
-        .expect("AVF Linux runtime override mutex poisoned");
+    let mut guard = lock_test_runtime_source_override();
     let previous = guard.replace(source);
     TestManagedAvfLinuxRuntimeSourceGuard { previous }
 }

@@ -6,9 +6,7 @@ fn env_lock() -> &'static std::sync::Mutex<()> {
 
 #[test]
 fn manifest_path_uses_explicit_absolute_override() {
-    let _guard = env_lock()
-        .lock()
-        .expect("bundled assets env lock poisoned");
+    let _guard = env_lock().lock().expect("bundled assets env lock poisoned");
     let root = PathBuf::from("/tmp/ctx-bundles-root");
     let absolute = PathBuf::from("/tmp/ctx-manifest-absolute.json");
     std::env::set_var(BUNDLE_ENV_MANIFEST, absolute.to_string_lossy().to_string());
@@ -19,9 +17,7 @@ fn manifest_path_uses_explicit_absolute_override() {
 
 #[test]
 fn manifest_path_uses_relative_override_with_bundle_root() {
-    let _guard = env_lock()
-        .lock()
-        .expect("bundled assets env lock poisoned");
+    let _guard = env_lock().lock().expect("bundled assets env lock poisoned");
     let root = PathBuf::from("/tmp/ctx-bundles-root");
     std::env::set_var(BUNDLE_ENV_MANIFEST, "runtime_manifest.effective.json");
     let resolved = manifest_path(&root);
@@ -31,9 +27,7 @@ fn manifest_path_uses_relative_override_with_bundle_root() {
 
 #[test]
 fn manifest_path_defaults_to_bundle_manifest() {
-    let _guard = env_lock()
-        .lock()
-        .expect("bundled assets env lock poisoned");
+    let _guard = env_lock().lock().expect("bundled assets env lock poisoned");
     std::env::remove_var(BUNDLE_ENV_MANIFEST);
     let root = PathBuf::from("/tmp/ctx-bundles-root");
     let resolved = manifest_path(&root);

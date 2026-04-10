@@ -128,17 +128,12 @@ pub fn sanitize_normalized_tool_event_payload(
     Value::Object(object)
 }
 
-pub fn build_tool_ops_meta(
-    event_type: &SessionEventType,
-    raw_payload: &Value,
-) -> ToolOpsMeta {
+pub fn build_tool_ops_meta(event_type: &SessionEventType, raw_payload: &Value) -> ToolOpsMeta {
     let normalized = normalize_tool_event(event_type, raw_payload);
     build_tool_ops_meta_from_normalized(&normalized)
 }
 
-pub fn build_tool_ops_meta_from_normalized(
-    normalized: &NormalizedToolEvent,
-) -> ToolOpsMeta {
+pub fn build_tool_ops_meta_from_normalized(normalized: &NormalizedToolEvent) -> ToolOpsMeta {
     ToolOpsMeta {
         tool_call_id: normalized.tool_call_id.clone(),
         tool_kind: normalized.raw_tool_kind.clone(),

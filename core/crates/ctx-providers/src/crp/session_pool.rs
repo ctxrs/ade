@@ -192,9 +192,7 @@ impl CrpSessionPool {
         tokio::spawn(async move {
             loop {
                 pool.reap_requested.store(false, Ordering::SeqCst);
-                let _ = pool
-                    .reap_idle_sessions(pool.default_sweep_config.clone())
-                    .await;
+                let _ = pool.reap_idle_sessions(pool.default_sweep_config).await;
                 if pool.reap_requested.swap(false, Ordering::SeqCst) {
                     continue;
                 }

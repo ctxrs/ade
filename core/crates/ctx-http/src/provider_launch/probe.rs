@@ -296,7 +296,9 @@ async fn provider_context_for_workspace_runtime(
             logs::redact_sensitive(&format!("probe runtime preparation failed: {err:#}"))
         })?;
     let sandbox_mode = ctx_harness_runtime::selected_sandbox_command_mode(&state.core.data_root)
-        .map_err(|err| logs::redact_sensitive(&format!("sandbox command selection failed: {err:#}")))?;
+        .map_err(|err| {
+            logs::redact_sensitive(&format!("sandbox command selection failed: {err:#}"))
+        })?;
     ctx_sandbox_materialization::ensure_workspace_root_from_host_copy(
         &state.core.data_root,
         &sandbox_mode,

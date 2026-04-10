@@ -1,8 +1,8 @@
 use super::*;
-use ctx_workspace_config::{update_merge_queue_config, MergeQueueConfigUpdate};
 use chrono::TimeDelta;
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_store::StoreManager;
+use ctx_workspace_config::{update_merge_queue_config, MergeQueueConfigUpdate};
 
 async fn setup_state() -> (tempfile::TempDir, Arc<AppState>) {
     let data_dir = tempfile::tempdir().unwrap();

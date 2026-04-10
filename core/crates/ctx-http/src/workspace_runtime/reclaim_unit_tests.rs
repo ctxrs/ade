@@ -3,8 +3,8 @@
 
 use super::*;
 use std::collections::HashSet;
-use tokio::sync::Mutex;
 use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 
 struct EnvGuard {
     key: &'static str,

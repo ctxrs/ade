@@ -15,6 +15,20 @@ rust_library(
     ],
 )
 
+rust_library(
+    name = "lib_test_support",
+    crate_name = "ctx_bundled_assets",
+    crate_root = "src/lib.rs",
+    crate_features = ["test-support"],
+    edition = "2021",
+    srcs = glob(["src/**/*.rs"]),
+    deps = [
+        "@crates//:serde",
+        "@crates//:serde_json",
+        "@crates//:tracing",
+    ],
+)
+
 rust_test(
     name = "unit_tests",
     crate = ":lib",

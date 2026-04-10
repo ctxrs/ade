@@ -12,9 +12,8 @@ mod tests;
 
 pub use cache::{
     builtin_matrix, invalidate_matrix_cache, load_matrix, load_matrix_cached, matrix_cache_path,
+    save_cached_matrix,
 };
-#[cfg(test)]
-pub use cache::save_cached_matrix;
 pub use query::{
     extract_version, get_entry, is_managed_supported_for_context, is_user_facing_harness_id,
     latest_release, normalize_version, parse_version_loose, recommended_release,

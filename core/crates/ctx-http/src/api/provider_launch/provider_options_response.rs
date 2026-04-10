@@ -207,11 +207,11 @@ pub(super) fn attach_verify_cache(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
     use ctx_harness_sources::{
         EndpointModelCatalogStatus, EndpointModelRecord, HarnessApiShape, HarnessEndpointRecord,
         HarnessEndpointVerificationStatus,
     };
-    use chrono::Utc;
 
     fn test_endpoint() -> HarnessEndpointRecord {
         HarnessEndpointRecord {

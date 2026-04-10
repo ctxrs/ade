@@ -4,8 +4,8 @@ use ctx_workspace_config as workspace_config;
 
 use crate::daemon::AppState;
 use crate::installs::InstallTarget;
-use crate::settings::ExecutionSettings;
 use crate::settings;
+use crate::settings::ExecutionSettings;
 
 #[derive(Debug)]
 pub enum EffectiveExecutionSettingsError {

@@ -7,6 +7,7 @@ const { buildCtxCacheEnv } = require("./lib/cache_roots.cjs");
 const { getBazelTestTargetsForCrates } = require("./lib/bazel_rust_targets.cjs");
 const {
   AGENT_GATE_CRATES,
+  FORCE_REVERSE_DEP_CRATES,
   ISOLATED_CARGO_TEST_CRATES,
   partitionCratesForTestStrategy,
 } = require("./lib/rust_gate_plan.cjs");
@@ -83,7 +84,10 @@ function resolveCrates(graph, args) {
   }
 
   const resolved = [...directCrates].filter(Boolean).sort();
-  if (!args.includeReverseDeps) {
+  const forcedReverseDeps = resolved.some((crateName) =>
+    FORCE_REVERSE_DEP_CRATES.has(crateName),
+  );
+  if (!args.includeReverseDeps && !forcedReverseDeps) {
     return resolved;
   }
   return expandReverseDependencies(graph, resolved);

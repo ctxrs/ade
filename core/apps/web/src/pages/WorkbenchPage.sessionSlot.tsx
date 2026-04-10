@@ -45,6 +45,7 @@ export function WorkbenchSessionSlot({
           key={sessionId}
           sessionId={sessionId}
           autoOpenSession={false}
+          hideSessionLoadIssuesBanner
           draft={draft.value}
           onDraftChange={(text) => draft.setValue((prev) => ({ ...prev, text }))}
           onDraftAttachmentsChange={(attachments) =>

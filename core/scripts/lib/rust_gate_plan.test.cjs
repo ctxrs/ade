@@ -4,6 +4,7 @@ const test = require("node:test");
 const {
   AGENT_GATE_CRATES,
   BAZEL_TEST_CRATES,
+  FORCE_REVERSE_DEP_CRATES,
   ISOLATED_CARGO_TEST_CRATES,
   partitionCratesForTestStrategy,
 } = require("./rust_gate_plan.cjs");
@@ -13,6 +14,7 @@ test("agent gate crate list keeps the expected ctx-http-centered fast gate", () 
     "ctx-avf-linux-runtime",
     "ctx-bundled-assets",
     "ctx-core",
+    "ctx-execution-runtime",
     "ctx-fs",
     "ctx-harness-setup",
     "ctx-harness-runtime",
@@ -35,16 +37,20 @@ test("agent gate crate list keeps the expected ctx-http-centered fast gate", () 
     "ctx-worktree-data-plane",
     "ctx-workspace-container",
     "ctx-workspace-active-snapshot",
+    "ctx-workspace-config",
   ]);
 });
 
-test("mixed test strategy keeps ctx-http and ctx-store on cargo test and routes the rest to nextest", () => {
+test("mixed test strategy keeps the known nextest-incompatible crates on cargo test and routes the rest to nextest", () => {
   const plan = partitionCratesForTestStrategy(
     [
       "ctx-http",
+      "ctx-mcp",
+      "ctx-providers",
       "ctx-store",
       "ctx-avf-linux-runtime",
       "ctx-bundled-assets",
+      "ctx-execution-runtime",
       "ctx-fs",
       "ctx-provider-accounts",
       "ctx-provider-matrix",
@@ -56,6 +62,7 @@ test("mixed test strategy keeps ctx-http and ctx-store on cargo test and routes 
       "ctx-storage-admission",
       "ctx-worktree-data-plane",
       "ctx-workspace-active-snapshot",
+      "ctx-workspace-config",
       "ctx-http",
     ],
     "mixed",
@@ -65,7 +72,7 @@ test("mixed test strategy keeps ctx-http and ctx-store on cargo test and routes 
     bazelTestCrates: [
       "ctx-avf-linux-runtime",
       "ctx-bundled-assets",
-      "ctx-fs",
+      "ctx-execution-runtime",
       "ctx-harness-setup",
       "ctx-provider-accounts",
       "ctx-provider-matrix",
@@ -77,13 +84,21 @@ test("mixed test strategy keeps ctx-http and ctx-store on cargo test and routes 
       "ctx-workspace-active-snapshot",
       "ctx-worktree-data-plane",
     ],
-    cargoTestCrates: ["ctx-http", "ctx-store"],
-    nextestCrates: [],
+    cargoTestCrates: ["ctx-http", "ctx-mcp", "ctx-providers", "ctx-store"],
+    nextestCrates: ["ctx-fs", "ctx-workspace-config"],
   });
 });
 
-test("ctx-store remains isolated from the parallel cargo tail", () => {
-  assert.deepEqual([...ISOLATED_CARGO_TEST_CRATES].sort(), ["ctx-store"]);
+test("ctx-mcp and the heavier integration crates remain isolated from the parallel cargo tail", () => {
+  assert.deepEqual([...ISOLATED_CARGO_TEST_CRATES].sort(), [
+    "ctx-mcp",
+    "ctx-providers",
+    "ctx-store",
+  ]);
+});
+
+test("ctx-execution-runtime changes force reverse-dependency coverage", () => {
+  assert.deepEqual([...FORCE_REVERSE_DEP_CRATES].sort(), ["ctx-execution-runtime"]);
 });
 
 test("mixed test strategy keeps the Bazel-covered slice explicit", () => {
@@ -91,7 +106,7 @@ test("mixed test strategy keeps the Bazel-covered slice explicit", () => {
     "ctx-avf-linux-runtime",
     "ctx-bundled-assets",
     "ctx-core",
-    "ctx-fs",
+    "ctx-execution-runtime",
     "ctx-harness-runtime",
     "ctx-harness-setup",
     "ctx-harness-sources",
@@ -100,7 +115,6 @@ test("mixed test strategy keeps the Bazel-covered slice explicit", () => {
     "ctx-provider-accounts",
     "ctx-provider-auth-import",
     "ctx-provider-matrix",
-    "ctx-providers",
     "ctx-runtime-assets",
     "ctx-sandbox-container-runtime",
     "ctx-sandbox-contract",

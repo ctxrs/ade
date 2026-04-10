@@ -16,13 +16,13 @@ pub use avf_linux_vm::{
     ensure_shared_vm_ready_with_observer, ensure_workspace_vm_ready_with_observer, helper_path,
     prefetch_runtime_with_observer, probe_helper, run_guest_exec_capture, runtime_available,
     runtime_state, runtime_target_label, shared_vm_is_launch_ready, start_workspace_vm,
-    stop_shared_vm, workspace_vm_data_root, workspace_vm_state, AvfLinuxGuestWorktree,
-    AvfLinuxGuestWorktreeStatus, AvfLinuxGuestRuntime, AvfLinuxHelperProbe,
-    AvfLinuxRuntimeLayout, AvfLinuxRuntimeLayoutStatus, AvfLinuxSharedVmLifecycleState,
-    AvfLinuxSharedVmStartOutcome, AvfLinuxSharedVmState, AvfLinuxSharedVmStopOutcome,
-    AvfLinuxSharedVmTransitionStatus, AVF_LINUX_GUEST_RUNTIME_DIR_ENV,
-    AVF_LINUX_HELPER_PATH_ENV,
+    stop_shared_vm, workspace_vm_data_root, workspace_vm_state, AvfLinuxGuestRuntime,
+    AvfLinuxGuestWorktree, AvfLinuxGuestWorktreeStatus, AvfLinuxHelperProbe, AvfLinuxRuntimeLayout,
+    AvfLinuxRuntimeLayoutStatus, AvfLinuxSharedVmLifecycleState, AvfLinuxSharedVmStartOutcome,
+    AvfLinuxSharedVmState, AvfLinuxSharedVmStopOutcome, AvfLinuxSharedVmTransitionStatus,
+    AVF_LINUX_GUEST_RUNTIME_DIR_ENV, AVF_LINUX_HELPER_PATH_ENV,
 };
+#[cfg(any(test, feature = "test-support"))]
 pub use avf_linux_vm::{
     override_managed_avf_linux_runtime_source_for_test, TestManagedAvfLinuxRuntimeSourceGuard,
 };
@@ -33,11 +33,11 @@ pub use substrate::{
     SubstrateStartupReason, SubstrateStartupSelection,
 };
 
+pub(crate) use ctx_harness_setup::{observe_log, observe_phase};
 pub use ctx_harness_setup::{
     HarnessSetupDownloadStatus, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,
     HarnessSetupProgressUpdate,
 };
-pub(crate) use ctx_harness_setup::{observe_log, observe_phase};
 pub use ctx_sandbox_container_runtime::{
     default_container_image, CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
 };

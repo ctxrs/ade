@@ -46,11 +46,8 @@ pub(crate) async fn provider_has_active_auth_config_with_runtime_root(
     if provider_id == "codex" {
         return match runtime_data_root {
             Some(runtime_root) => {
-                provider_accounts::codex_has_active_auth_with_runtime_root(
-                    data_root,
-                    runtime_root,
-                )
-                .await
+                provider_accounts::codex_has_active_auth_with_runtime_root(data_root, runtime_root)
+                    .await
             }
             None => provider_accounts::codex_has_active_auth(data_root).await,
         }
@@ -66,8 +63,7 @@ pub(crate) async fn provider_has_active_auth_config_with_runtime_root(
             .await
         }
         None => {
-            provider_accounts::subscription_env_for_active_account(data_root, provider_id)
-                .await
+            provider_accounts::subscription_env_for_active_account(data_root, provider_id).await
         }
     };
     match env {

@@ -379,7 +379,13 @@ vi.mock("../components/DiffReviewPane", () => ({
 }));
 
 vi.mock("./SessionPage", () => ({
-  SessionView: ({ sessionId: mockedSessionId }: { sessionId: string }) => {
+  SessionView: ({
+    sessionId: mockedSessionId,
+    hideSessionLoadIssuesBanner,
+  }: {
+    sessionId: string;
+    hideSessionLoadIssuesBanner?: boolean;
+  }) => {
     const loadErrors = sessionSnap.sessions[mockedSessionId]?.loadErrors ?? {};
     const issues = [
       loadErrors.state,
@@ -393,7 +399,7 @@ vi.mock("./SessionPage", () => ({
     }, [mockedSessionId]);
     return (
       <div data-testid="session-view-mock" data-session-id={mockedSessionId}>
-        {issues.length > 0 ? (
+        {!hideSessionLoadIssuesBanner && issues.length > 0 ? (
           <div className="banner" data-testid="workbench-session-load-issues">
             <div>Some session details failed to load.</div>
             {issues.map((issue) => (

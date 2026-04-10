@@ -161,8 +161,14 @@ async fn transition_to_restricted_network(
     let config_path =
         write_transparent_proxy_config(&container_data_root(data_root, workspace_id), proxy_config)
             .await?;
-    start_transparent_proxy(data_root, mode, name, &PathBuf::from(proxy_bin), &config_path)
-        .await?;
+    start_transparent_proxy(
+        data_root,
+        mode,
+        name,
+        &PathBuf::from(proxy_bin),
+        &config_path,
+    )
+    .await?;
     let egress_guard = configure_transparent_egress_guard(
         data_root,
         mode,
@@ -410,11 +416,7 @@ exit 0
     anyhow::bail!("failed to configure egress guard: {combined}");
 }
 
-async fn clear_egress_guard(
-    data_root: &Path,
-    mode: &SandboxCommandMode,
-    name: &str,
-) -> Result<()> {
+async fn clear_egress_guard(data_root: &Path, mode: &SandboxCommandMode, name: &str) -> Result<()> {
     let script = r#"
 set -e
 if ! command -v iptables >/dev/null 2>&1; then

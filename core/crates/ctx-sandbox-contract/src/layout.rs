@@ -113,13 +113,19 @@ mod tests {
     fn sandbox_root_for_workspace_root_reuses_workspace_mount() {
         let workspace = sample_workspace("/repo");
         let worktree = sample_worktree(workspace.id, "/repo");
-        assert_eq!(sandbox_worktree_root(&workspace, &worktree), sandbox_workspace_root());
+        assert_eq!(
+            sandbox_worktree_root(&workspace, &worktree),
+            sandbox_workspace_root()
+        );
     }
 
     #[test]
     fn sandbox_root_for_managed_worktree_is_deterministic() {
         let workspace = sample_workspace("/repo");
         let worktree = sample_worktree(workspace.id, "/repo/.ctx/worktree");
-        assert_eq!(sandbox_worktree_root(&workspace, &worktree), container_worktree_root(worktree.id));
+        assert_eq!(
+            sandbox_worktree_root(&workspace, &worktree),
+            container_worktree_root(worktree.id)
+        );
     }
 }

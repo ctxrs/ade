@@ -1,4 +1,5 @@
 use super::*;
+use ctx_store::Store;
 
 impl ExecutionSetupCoordinator {
     pub(crate) async fn run_startup_prewarm(&self, exec: ExecutionSettings) {
@@ -15,8 +16,11 @@ impl ExecutionSetupCoordinator {
 
         if !ctx_harness_runtime::local_runtime_available(&self.data_root, &exec.container.runtime) {
             let staged_status =
-                match ctx_linux_sandbox_runtime::stage_linux_sandbox_runtime_downloads(&self.data_root, None)
-                    .await
+                match ctx_linux_sandbox_runtime::stage_linux_sandbox_runtime_downloads(
+                    &self.data_root,
+                    None,
+                )
+                .await
                 {
                     Ok(status) => Some(status),
                     Err(err) => {
@@ -317,8 +321,11 @@ impl ExecutionSetupCoordinator {
                 Ok((machine_ready, image_present))
             }
             crate::settings::ContainerRuntimeKind::SharedVmContainer => {
-                ctx_harness_runtime::selected_runtime_launch_readiness_state(&self.data_root, settings)
-                    .await
+                ctx_harness_runtime::selected_runtime_launch_readiness_state(
+                    &self.data_root,
+                    settings,
+                )
+                .await
             }
         }
     }
@@ -329,8 +336,14 @@ impl ExecutionSetupCoordinator {
         self.prewarm.ensure_scope(exec, scope, None).await
     }
 
-    async fn configured_startup_target(&self, exec: &ExecutionSettings) -> Result<String> {
-        Ok(ctx_harness_runtime::runtime_prewarm_target(&exec.container))
+    async fn configured_startup_target(&self, _exec: &ExecutionSettings) -> Result<String> {
+        let db_path = self.data_root.join("db").join("db.sqlite");
+        let store = Store::open_sqlite(&db_path, Some(1)).await?;
+        let settings = crate::settings::load_settings(&store).await?;
+        store.close().await;
+        Ok(ctx_harness_runtime::runtime_prewarm_target(
+            &settings.execution.unwrap_or_default().container,
+        ))
     }
 
     async fn ensure_ready_startup_prewarm_metadata(
@@ -386,11 +399,12 @@ impl ExecutionSetupCoordinator {
         settings: &crate::settings::ContainerExecutionSettings,
     ) {
         let target = ctx_harness_runtime::runtime_prewarm_target(settings);
-        let startup_target = match self.configured_startup_target(&ExecutionSettings {
-            mode: ExecutionMode::Sandbox,
-            container: settings.clone(),
-        })
-        .await
+        let startup_target = match self
+            .configured_startup_target(&ExecutionSettings {
+                mode: ExecutionMode::Sandbox,
+                container: settings.clone(),
+            })
+            .await
         {
             Ok(startup_target) => startup_target,
             Err(err) => {

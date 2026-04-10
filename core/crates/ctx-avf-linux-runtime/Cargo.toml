@@ -3,6 +3,9 @@ name = "ctx-avf-linux-runtime"
 version = "0.34.0"
 edition.workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 ctx-bundled-assets = { path = "../ctx-bundled-assets" }
@@ -22,6 +25,7 @@ url = "2"
 uuid.workspace = true
 
 [dev-dependencies]
+ctx-bundled-assets = { path = "../ctx-bundled-assets", features = ["test-support"] }
 flate2 = "1"
 tar = "0.4"
 tempfile = "3"

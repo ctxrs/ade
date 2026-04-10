@@ -87,7 +87,15 @@ mod tests {
             ContainerNetworkMode::LlmOnly,
             &[]
         ));
-        assert!(allowed_host("openrouter.ai", ContainerNetworkMode::LlmOnly, &[]));
-        assert!(!allowed_host("example.com", ContainerNetworkMode::LlmOnly, &[]));
+        assert!(allowed_host(
+            "openrouter.ai",
+            ContainerNetworkMode::LlmOnly,
+            &[]
+        ));
+        assert!(!allowed_host(
+            "example.com",
+            ContainerNetworkMode::LlmOnly,
+            &[]
+        ));
     }
 }

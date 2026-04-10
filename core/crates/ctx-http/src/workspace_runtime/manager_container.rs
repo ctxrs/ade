@@ -14,7 +14,8 @@ impl HarnessRuntimeManager {
         daemon_port: u16,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<WorkspaceContainer> {
-        self.ensure_container_machine_ready(settings, observer).await?;
+        self.ensure_container_machine_ready(settings, observer)
+            .await?;
         let substrate = UbuntuSandboxSubstrate::from_runtime_kind(settings.runtime.clone());
         substrate.ensure_enabled()?;
         if substrate.is_shared_vm_backed() {

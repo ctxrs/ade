@@ -1479,6 +1479,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctx-execution-runtime"
+version = "0.38.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "ctx-avf-linux-runtime",
+ "ctx-core",
+ "ctx-harness-runtime",
+ "ctx-harness-setup",
+ "ctx-linux-sandbox-runtime",
+ "ctx-sandbox-container-runtime",
+ "ctx-sandbox-contract",
+ "ctx-workspace-container",
+ "ctx-worktree-data-plane",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "ctx-fs"
 version = "0.1.0"
 dependencies = [
@@ -1551,6 +1576,7 @@ dependencies = [
  "ctx-bundled-assets",
  "ctx-core",
  "ctx-events",
+ "ctx-execution-runtime",
  "ctx-fs",
  "ctx-harness-runtime",
  "ctx-harness-setup",

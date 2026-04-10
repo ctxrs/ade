@@ -14,10 +14,9 @@ pub use ctx_provider_matrix::{
     parse_version_loose, recommended_release, release_for_version, release_matches_context,
     select_latest_release, version_matches, DependencyInstall, ProviderArchiveKind,
     ProviderArchiveTarget, ProviderCommand, ProviderDependency, ProviderInstall,
-    ProviderInstallDependency, ProviderInstallDependencyRole,
-    ProviderInstallDependencyTarget, ProviderMatrix, ProviderMatrixCache, ProviderMatrixEntry,
-    ProviderMatrixEntryKind, ProviderRelease, ProviderReleaseProvenance, ProviderReleaseStatus,
-    VersionProbe,
+    ProviderInstallDependency, ProviderInstallDependencyRole, ProviderInstallDependencyTarget,
+    ProviderMatrix, ProviderMatrixCache, ProviderMatrixEntry, ProviderMatrixEntryKind,
+    ProviderRelease, ProviderReleaseProvenance, ProviderReleaseStatus, VersionProbe,
 };
 pub use status::apply_matrix_to_status;
 
@@ -33,5 +32,9 @@ const MATRIX_SCHEMA_VERSION: u32 = 2;
 
 pub fn is_managed_supported(matrix: &ProviderMatrix, provider_id: &str) -> bool {
     let context_version = crate::updates::normalize_version_str(env!("CARGO_PKG_VERSION"));
-    ctx_provider_matrix::is_managed_supported_for_context(matrix, provider_id, context_version.as_ref())
+    ctx_provider_matrix::is_managed_supported_for_context(
+        matrix,
+        provider_id,
+        context_version.as_ref(),
+    )
 }

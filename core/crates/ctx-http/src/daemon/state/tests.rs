@@ -1,4 +1,5 @@
 use super::*;
+use ctx_execution_runtime::StartupPrewarmState;
 
 async fn test_state(temp: &tempfile::TempDir) -> Arc<AppState> {
     Arc::new(AppState::new(
@@ -19,10 +20,7 @@ async fn test_state_does_not_auto_spawn_startup_prewarm_in_unit_tests() {
     tokio::time::sleep(std::time::Duration::from_millis(25)).await;
 
     let startup = state.execution.setup.startup_status().await;
-    assert_eq!(
-        startup.state,
-        crate::execution_setup::StartupPrewarmState::Idle
-    );
+    assert_eq!(startup.state, StartupPrewarmState::Idle);
     assert!(startup.last_attempt_at.is_none(), "{startup:?}");
 }
 

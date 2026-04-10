@@ -9,15 +9,14 @@ use super::sandbox_machine_recovery::{
     looks_like_running_but_unreachable_machine_start_error, sandbox_machine_temp_state_paths,
 };
 use super::*;
+use crate::settings::{ContainerMountMode, ContainerNetworkMode};
 use chrono::Utc;
 use ctx_bundled_assets as bundled_assets;
 use ctx_bundled_assets::test_support::{
     override_managed_ctx_harness_image_source_for_test,
-    override_managed_sandbox_machine_cache_source_for_test,
-    TestManagedCtxHarnessImageSourceGuard, TestManagedSandboxMachineCacheSourceGuard,
+    override_managed_sandbox_machine_cache_source_for_test, TestManagedCtxHarnessImageSourceGuard,
+    TestManagedSandboxMachineCacheSourceGuard,
 };
-use ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT;
-use ctx_workspace_container::workspace_container_name;
 #[cfg(target_os = "macos")]
 use ctx_core::ids::SessionId;
 #[cfg(target_os = "macos")]
@@ -25,14 +24,15 @@ use ctx_core::ids::TaskId;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 #[cfg(target_os = "macos")]
 use ctx_core::models::ExecutionEnvironment;
+use ctx_sandbox_container_runtime::SandboxCommandMode;
+use ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT;
 #[cfg(target_os = "macos")]
 use ctx_store::StoreManager;
-use crate::settings::{ContainerMountMode, ContainerNetworkMode};
+use ctx_workspace_container::workspace_container_name;
 use ctx_workspace_container::{
     apply_container_network_policy, build_mounts, rewrite_daemon_url_for_avf_guest,
     should_use_keep_id_userns, WorkspaceContainer,
 };
-use ctx_sandbox_container_runtime::SandboxCommandMode;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -336,10 +336,7 @@ async fn spawn_static_http_server_with_suffix(
 
 async fn install_test_managed_machine_cache_source(
     body: Vec<u8>,
-) -> (
-    TestManagedSandboxMachineCacheSourceGuard,
-    JoinHandle<()>,
-) {
+) -> (TestManagedSandboxMachineCacheSourceGuard, JoinHandle<()>) {
     let digest = {
         let mut hasher = Sha256::new();
         hasher.update(&body);
@@ -357,22 +354,18 @@ async fn install_test_managed_machine_cache_source(
 
 async fn install_test_managed_harness_image_source(
     body: Vec<u8>,
-) -> (
-    TestManagedCtxHarnessImageSourceGuard,
-    JoinHandle<()>,
-) {
+) -> (TestManagedCtxHarnessImageSourceGuard, JoinHandle<()>) {
     let digest = {
         let mut hasher = Sha256::new();
         hasher.update(&body);
         hex::encode(hasher.finalize())
     };
     let (url, server) = spawn_static_http_server_with_suffix(body, "ctx-harness.tar").await;
-    let guard = override_managed_ctx_harness_image_source_for_test(
-        bundled_assets::ManagedArtifactSource {
+    let guard =
+        override_managed_ctx_harness_image_source_for_test(bundled_assets::ManagedArtifactSource {
             uri: url,
             sha256: digest,
-        },
-    );
+        });
     (guard, server)
 }
 
@@ -1229,12 +1222,12 @@ async fn prepare_starts_cached_workspace_container_when_sandbox_cli_reports_it_s
         .put_cached_container_for_test(
             workspace.id,
             WorkspaceContainer {
-            name: container_name.clone(),
-            mount_mode: settings.container.mount_mode.clone(),
-            network_mode: settings.container.network_mode.clone(),
-            allowlist: settings.container.allowlist.clone(),
-            external_mounts: mount_plan.external_mounts,
-            egress_guard: false,
+                name: container_name.clone(),
+                mount_mode: settings.container.mount_mode.clone(),
+                network_mode: settings.container.network_mode.clone(),
+                allowlist: settings.container.allowlist.clone(),
+                external_mounts: mount_plan.external_mounts,
+                egress_guard: false,
             },
         )
         .await;

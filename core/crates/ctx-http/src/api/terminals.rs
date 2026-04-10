@@ -11,11 +11,11 @@ use super::errors::ApiErrorResp;
 use crate::buffers::BufferStore;
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::workspace_runtime;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::terminals::{
     NativeContainerTerminalSpec, SharedVmContainerTerminalSpec, TerminalCreateRequest,
 };
+use crate::workspace_runtime;
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::TerminalSession;
 use ctx_worktree_data_plane::{
@@ -530,17 +530,16 @@ pub(super) async fn create_workspace_terminal(
                         )
                     })?;
                 if worktree.is_none() {
-                    let sandbox_mode = ctx_harness_runtime::selected_sandbox_command_mode(
-                        &state.core.data_root,
-                    )
-                    .map_err(|err| {
-                        (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(ApiErrorResp {
-                                error: err.to_string(),
-                            }),
-                        )
-                    })?;
+                    let sandbox_mode =
+                        ctx_harness_runtime::selected_sandbox_command_mode(&state.core.data_root)
+                            .map_err(|err| {
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(ApiErrorResp {
+                                    error: err.to_string(),
+                                }),
+                            )
+                        })?;
                     ctx_sandbox_materialization::ensure_workspace_root_from_host_copy(
                         &state.core.data_root,
                         &sandbox_mode,
@@ -556,21 +555,22 @@ pub(super) async fn create_workspace_terminal(
                         )
                     })?;
                 }
-                let inv = workspace_runtime::sandbox_cli_invocation(&state.core.data_root).map_err(
-                    |e| {
+                let inv = workspace_runtime::sandbox_cli_invocation(&state.core.data_root)
+                    .map_err(|e| {
                         (
                             StatusCode::INTERNAL_SERVER_ERROR,
                             Json(ApiErrorResp {
                                 error: format!("sandbox container CLI unavailable: {e}"),
                             }),
                         )
-                    },
-                )?;
+                    })?;
                 (
                     Some(NativeContainerTerminalSpec {
                         cli_bin: inv.bin,
                         cli_env: inv.env,
-                        container_name: ctx_workspace_container::workspace_container_name(workspace_id),
+                        container_name: ctx_workspace_container::workspace_container_name(
+                            workspace_id,
+                        ),
                         workdir: cwd.to_string_lossy().to_string(),
                         user: Some(ctx_workspace_container::CONTAINER_TERMINAL_USER.to_string()),
                     }),
@@ -613,17 +613,16 @@ pub(super) async fn create_workspace_terminal(
                         })?;
                 }
                 if worktree.is_none() {
-                    let sandbox_mode = ctx_harness_runtime::selected_sandbox_command_mode(
-                        &state.core.data_root,
-                    )
-                    .map_err(|err| {
-                        (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(ApiErrorResp {
-                                error: err.to_string(),
-                            }),
-                        )
-                    })?;
+                    let sandbox_mode =
+                        ctx_harness_runtime::selected_sandbox_command_mode(&state.core.data_root)
+                            .map_err(|err| {
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(ApiErrorResp {
+                                    error: err.to_string(),
+                                }),
+                            )
+                        })?;
                     ctx_sandbox_materialization::ensure_workspace_root_from_host_copy(
                         &state.core.data_root,
                         &sandbox_mode,

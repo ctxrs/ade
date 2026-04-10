@@ -700,7 +700,7 @@ async fn reap_idle_sessions_reaps_unopened_session_without_status_probe() -> Res
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_raw(
-        "codex",
+        "opencode",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -953,7 +953,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_raw(
-        "codex",
+        "opencode",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1244,7 +1244,7 @@ done
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_raw(
-        "codex",
+        "opencode",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1275,10 +1275,9 @@ done
         cancel_rx,
     };
 
-    let err = adapter
-        .pool
-        .prompt(request)
+    let err = tokio::time::timeout(Duration::from_secs(5), adapter.pool.prompt(request))
         .await
+        .context("timed out waiting for prompt setup error")?
         .expect_err("non-text prompt items should fail prompt setup");
     assert!(err
         .to_string()

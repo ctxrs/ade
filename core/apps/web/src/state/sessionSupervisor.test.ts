@@ -3385,8 +3385,8 @@ describe("SessionSupervisor", () => {
     sup.openSession(sessionId);
 
     await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
-    expect(getSessionState).not.toHaveBeenCalled();
-    expect(listSessionSubagentInvocations).not.toHaveBeenCalled();
+    expect(getSessionState).toHaveBeenCalledTimes(1);
+    expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(1);
 
     resolveHead(head);
     await waitForCondition(() => {
@@ -3467,8 +3467,8 @@ describe("SessionSupervisor", () => {
     expect(reopened?.stateRev).toBeUndefined();
     expect(reopened?.support.stateLoaded).toBe(false);
     expect(reopened?.support.subagentInvocationsLoaded).toBe(false);
-    expect(getSessionState).toHaveBeenCalledTimes(1);
-    expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(1);
+    expect(getSessionState).toHaveBeenCalledTimes(2);
+    expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(2);
 
     internals.handleReplicaPatches([
       {

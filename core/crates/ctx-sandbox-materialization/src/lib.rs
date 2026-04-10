@@ -207,10 +207,10 @@ pub async fn ensure_workspace_root_from_host_copy(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use uuid::Uuid;
     use ctx_sandbox_container_runtime::sandbox_cli_env_test_lock;
     use ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT;
+    use std::fs;
+    use uuid::Uuid;
 
     struct EnvGuard {
         key: &'static str,
@@ -340,7 +340,10 @@ mod tests {
                     operation,
                     StorageAdmissionOperation::DiskIsolatedWorktreeMaterialization
                 );
-                assert_eq!(destination_probe_root, Path::new(CTX_CONTAINER_WORKSPACE_ROOT));
+                assert_eq!(
+                    destination_probe_root,
+                    Path::new(CTX_CONTAINER_WORKSPACE_ROOT)
+                );
                 let total_bytes = required_bytes.saturating_add(2 * 1024 * 1024 * 1024);
                 Ok((
                     ctx_storage_admission::StorageAdmissionSample {

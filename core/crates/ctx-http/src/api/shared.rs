@@ -291,8 +291,8 @@ async fn container_git_ls_files(
                 cmd,
                 SANDBOX_GIT_LS_FILES_TIMEOUT,
             )
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         }
         ContainerRuntimeKind::SharedVmContainer => {
             let args = git_args

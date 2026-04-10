@@ -9,9 +9,8 @@ use chrono::Utc;
 use ctx_bundled_assets as bundled_assets;
 use ctx_bundled_assets::test_support::{
     override_managed_ctx_harness_image_source_for_test,
-    override_managed_sandbox_machine_cache_source_for_test,
-    ManagedArtifactSource, TestManagedCtxHarnessImageSourceGuard,
-    TestManagedSandboxMachineCacheSourceGuard,
+    override_managed_sandbox_machine_cache_source_for_test, ManagedArtifactSource,
+    TestManagedCtxHarnessImageSourceGuard, TestManagedSandboxMachineCacheSourceGuard,
 };
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -20,7 +19,6 @@ use tokio::sync::{Barrier, Notify, Semaphore};
 use tokio::task::JoinHandle;
 
 use crate::execution_setup::warmup_coordination::SharedWarmupOperations;
-use crate::workspace_runtime::HarnessRuntimeManager;
 use crate::ops_events::OpsEvents;
 use crate::perf_telemetry::PerfTelemetry;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode, ExecutionSettings, Settings};
@@ -29,6 +27,7 @@ use crate::test_support::{
     write_avf_linux_lifecycle_helper, write_running_container_sandbox_cli_shim,
     TrackedExecutionLaunch,
 };
+use crate::workspace_runtime::HarnessRuntimeManager;
 use ctx_store::Store;
 
 struct EnvVarGuard {
@@ -299,11 +298,11 @@ fn count_matching_lines(contents: &str, needle: &str) -> usize {
 
 async fn run_startup_prewarm_with_timeout(coordinator: &Arc<ExecutionSetupCoordinator>) {
     tokio::time::timeout(
-        QUICK_ASYNC_TEST_TIMEOUT,
-        run_startup_prewarm_from_store(&coordinator),
+        BACKGROUND_TEST_TIMEOUT,
+        run_startup_prewarm_from_store(coordinator),
     )
-        .await
-        .expect("timed out running startup prewarm");
+    .await
+    .expect("timed out running startup prewarm");
 }
 
 async fn spawn_static_http_server_with_suffix(
@@ -343,10 +342,7 @@ async fn spawn_static_http_server(body: Vec<u8>) -> (String, JoinHandle<()>) {
 
 async fn install_test_managed_machine_cache_source(
     body: Vec<u8>,
-) -> (
-    TestManagedSandboxMachineCacheSourceGuard,
-    JoinHandle<()>,
-) {
+) -> (TestManagedSandboxMachineCacheSourceGuard, JoinHandle<()>) {
     let digest = {
         let mut hasher = Sha256::new();
         hasher.update(&body);
@@ -354,18 +350,15 @@ async fn install_test_managed_machine_cache_source(
     };
     let (url, server) = spawn_static_http_server(body).await;
     let guard = override_managed_sandbox_machine_cache_source_for_test(ManagedArtifactSource {
-            uri: url,
-            sha256: digest,
-        });
+        uri: url,
+        sha256: digest,
+    });
     (guard, server)
 }
 
 async fn install_test_managed_harness_image_source(
     body: Vec<u8>,
-) -> (
-    TestManagedCtxHarnessImageSourceGuard,
-    JoinHandle<()>,
-) {
+) -> (TestManagedCtxHarnessImageSourceGuard, JoinHandle<()>) {
     let digest = {
         let mut hasher = Sha256::new();
         hasher.update(&body);
@@ -373,9 +366,9 @@ async fn install_test_managed_harness_image_source(
     };
     let (url, server) = spawn_static_http_server(body).await;
     let guard = override_managed_ctx_harness_image_source_for_test(ManagedArtifactSource {
-            uri: url,
-            sha256: digest,
-        });
+        uri: url,
+        sha256: digest,
+    });
     (guard, server)
 }
 
@@ -471,10 +464,8 @@ fn sha256_hex(bytes: &[u8]) -> String {
     dead_code,
     reason = "legacy Windows-only AVF helper fixture kept until the shared lifecycle helper is ported"
 )]
-async fn make_test_managed_avf_linux_runtime_source() -> (
-    bundled_assets::ManagedRuntimeSource,
-    Vec<JoinHandle<()>>,
-) {
+async fn make_test_managed_avf_linux_runtime_source(
+) -> (bundled_assets::ManagedRuntimeSource, Vec<JoinHandle<()>>) {
     let archive_bytes = avf_runtime_archive_bytes();
     let kernel_bytes = b"kernel".to_vec();
     let initrd_bytes = b"initrd".to_vec();
@@ -588,11 +579,10 @@ impl BlockingWarmupOperations {
     async fn wait_for_runtime_runs(&self, expected: usize) {
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                let notified = self.runtime_notify.notified();
                 if self.runtime_runs.load(Ordering::SeqCst) >= expected {
                     break;
                 }
-                notified.await;
+                tokio::task::yield_now().await;
             }
         })
         .await
@@ -602,11 +592,10 @@ impl BlockingWarmupOperations {
     async fn wait_for_builder_runs(&self, expected: usize) {
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                let notified = self.builder_notify.notified();
                 if self.builder_runs.load(Ordering::SeqCst) >= expected {
                     break;
                 }
-                notified.await;
+                tokio::task::yield_now().await;
             }
         })
         .await
@@ -616,11 +605,10 @@ impl BlockingWarmupOperations {
     async fn wait_for_launch_ready_runs(&self, expected: usize) {
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                let notified = self.launch_ready_notify.notified();
                 if self.launch_ready_runs.load(Ordering::SeqCst) >= expected {
                     break;
                 }
-                notified.await;
+                tokio::task::yield_now().await;
             }
         })
         .await
@@ -1783,6 +1771,7 @@ async fn successful_workspace_launch_refreshes_prewarm_metadata_when_image_ref_c
 async fn workspace_override_image_does_not_clobber_startup_prewarm_metadata() {
     use std::os::unix::fs::PermissionsExt;
 
+    let _process_env = process_env_test_lock().lock().await;
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let workspace_root = data_dir.path().join("ws");
@@ -2038,6 +2027,7 @@ async fn runtime_prewarm_launch_ready_request_reuses_running_runtime_job_and_pro
 
 #[tokio::test]
 async fn compute_prewarm_gate_keeps_prefetched_avf_runtime_unready_without_vm_boot() {
+    let _process_env = process_env_test_lock().lock().await;
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
@@ -2092,6 +2082,7 @@ async fn compute_prewarm_gate_keeps_prefetched_avf_runtime_unready_without_vm_bo
 
 #[tokio::test]
 async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtime() {
+    let _process_env = process_env_test_lock().lock().await;
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
@@ -2160,6 +2151,7 @@ async fn runtime_prewarm_runtime_scope_stays_substrate_only_for_avf_linux_runtim
 
 #[tokio::test]
 async fn runtime_prewarm_launch_ready_scope_starts_shared_vm_and_reports_launch_ready() {
+    let _process_env = process_env_test_lock().lock().await;
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
@@ -2232,6 +2224,7 @@ async fn runtime_prewarm_launch_ready_scope_starts_shared_vm_and_reports_launch_
 async fn workspace_launch_waits_for_running_startup_prewarm_without_duplicate_runtime_warmup() {
     use std::os::unix::fs::PermissionsExt;
 
+    let _process_env = process_env_test_lock().lock().await;
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let workspace_root = data_dir.path().join("ws");
@@ -2907,6 +2900,7 @@ async fn startup_prewarm_enters_shared_runtime_warmup_when_machine_is_not_ready(
 
 #[tokio::test]
 async fn startup_prewarm_uses_runtime_scope_for_sandbox_mode_avf_linux_runtime() {
+    let _process_env = process_env_test_lock().lock().await;
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());
@@ -2945,6 +2939,7 @@ async fn startup_prewarm_uses_runtime_scope_for_sandbox_mode_avf_linux_runtime()
 
 #[tokio::test]
 async fn startup_prewarm_uses_runtime_scope_for_host_mode_avf_linux_runtime() {
+    let _process_env = process_env_test_lock().lock().await;
     let _serial = env_var_test_lock().lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let helper_path = write_avf_linux_lifecycle_helper(data_dir.path());

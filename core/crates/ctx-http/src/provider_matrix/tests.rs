@@ -1,5 +1,5 @@
 use super::*;
-use crate::installer::{AgentServerCommand, ManagedInstallMetadata};
+use crate::installer::{AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata};
 use crate::installs::InstallTarget;
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;

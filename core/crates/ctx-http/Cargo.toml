@@ -13,8 +13,9 @@ clap.workspace = true
 ctx-avf-linux-runtime = { path = "../ctx-avf-linux-runtime" }
 ctx-core = { path = "../ctx-core" }
 ctx-events = { path = "../ctx-events" }
+ctx-execution-runtime = { path = "../ctx-execution-runtime" }
 ctx-fs = { path = "../ctx-fs" }
-ctx-bundled-assets = { path = "../ctx-bundled-assets", features = ["test-support"] }
+ctx-bundled-assets = { path = "../ctx-bundled-assets" }
 ctx-harness-sources = { path = "../ctx-harness-sources" }
 ctx-harness-setup = { path = "../ctx-harness-setup" }
 ctx-harness-runtime = { path = "../ctx-harness-runtime" }
@@ -96,6 +97,8 @@ hyper-util = { version = "0.1", features = ["tokio", "server"] }
 http-body-util = "0.1"
 
 [dev-dependencies]
+ctx-avf-linux-runtime = { path = "../ctx-avf-linux-runtime", features = ["test-support"] }
+ctx-bundled-assets = { path = "../ctx-bundled-assets", features = ["test-support"] }
 azure_identity = { version = "0.21", default-features = false, features = ["development", "old_azure_cli", "enable_reqwest_rustls"] }
 azure_core = { version = "0.21", default-features = false, features = ["enable_reqwest_rustls"] }
 gcp_auth = "0.12"

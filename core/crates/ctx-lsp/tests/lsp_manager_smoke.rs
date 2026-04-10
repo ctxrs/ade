@@ -25,7 +25,7 @@ fn test_server_bin() -> String {
         std::env::var("TEST_WORKSPACE").expect("relative test server path requires TEST_WORKSPACE");
     Path::new(&test_srcdir)
         .join(test_workspace)
-        .join(bin)
+        .join(path)
         .to_string_lossy()
         .to_string()
 }

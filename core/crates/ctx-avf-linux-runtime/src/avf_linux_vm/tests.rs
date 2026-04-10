@@ -1,13 +1,13 @@
 use super::helper_wrappers::{shared_vm_state, start_shared_vm, stop_shared_vm};
 use super::runtime_install as runtime_assets;
 use super::*;
-use ctx_bundled_assets as bundled_assets;
 use crate::{
     default_container_image, ContainerExecutionSettings, ContainerRuntimeKind,
     SharedSubstrateLifecycleManager, SubstrateShutdownOutcome, SubstrateShutdownReason,
     SubstrateStartupOutcome, SubstrateStartupReason, SubstrateStartupSelection,
     CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
 };
+use ctx_bundled_assets as bundled_assets;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -1507,10 +1507,7 @@ async fn helper_prepare_guest_worktree_round_trips_structured_state() {
     let temp = tempfile::tempdir().unwrap();
     let (helper, capture_path) = write_guest_exec_helper(temp.path());
     let _guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
-    let _sandbox_cli = EnvGuard::set(
-        CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
-        helper.to_str().unwrap(),
-    );
+    let _sandbox_cli = EnvGuard::set(CTX_HARNESS_SANDBOX_CLI_PATH_ENV, helper.to_str().unwrap());
 
     let workspace_id = WorkspaceId::new();
     let worktree_id = WorktreeId::new();
@@ -1582,10 +1579,7 @@ async fn run_guest_exec_capture_invokes_helper_with_expected_args() {
     let temp = tempfile::tempdir().unwrap();
     let (helper, capture_path) = write_guest_exec_helper(temp.path());
     let _guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, helper.to_str().unwrap());
-    let _sandbox_cli = EnvGuard::set(
-        CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
-        helper.to_str().unwrap(),
-    );
+    let _sandbox_cli = EnvGuard::set(CTX_HARNESS_SANDBOX_CLI_PATH_ENV, helper.to_str().unwrap());
 
     let workspace_id = WorkspaceId::new();
     let worktree_id = WorktreeId::new();

@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use ctx_harness_setup::{
-    HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase, ManagedArtifactDownloadReporter,
-    observe_log, observe_phase,
+    observe_log, observe_phase, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,
+    ManagedArtifactDownloadReporter,
 };
 use fs2::FileExt;
 use futures::StreamExt;
@@ -19,8 +19,7 @@ const MANAGED_ARTIFACT_RETRY_COUNT: u32 = 4;
 const MANAGED_ARTIFACT_DISK_HEADROOM_BYTES: u64 = 64 * 1024 * 1024;
 
 fn default_download_base_url() -> String {
-    std::env::var("CTX_DOWNLOAD_BASE_URL")
-        .unwrap_or_else(|_| DEFAULT_DOWNLOAD_BASE_URL.to_string())
+    std::env::var("CTX_DOWNLOAD_BASE_URL").unwrap_or_else(|_| DEFAULT_DOWNLOAD_BASE_URL.to_string())
 }
 
 fn join_url(base_url: &str, url_path: &str) -> String {
@@ -533,8 +532,8 @@ pub async fn download_managed_artifact(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -581,7 +580,10 @@ mod tests {
                 .expect("verify final checksum"),
             "final cache artifact should exist with the expected checksum"
         );
-        assert!(!first_tmp.exists(), "first tmp path should be consumed during finalization");
+        assert!(
+            !first_tmp.exists(),
+            "first tmp path should be consumed during finalization"
+        );
         assert!(
             !second_tmp.exists(),
             "second tmp path should be cleaned up during finalization"

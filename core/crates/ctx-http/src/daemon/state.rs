@@ -10,8 +10,6 @@ use tokio::task::JoinHandle;
 
 use crate::buffers::BufferStore;
 use crate::edit_plans::{EditPlan, EditPlanId};
-use crate::execution_setup::ExecutionSetupCoordinator;
-use crate::workspace_runtime::HarnessRuntimeManager;
 use crate::installs::{
     InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent, InstallState,
     InstallStateKind, InstallTarget,
@@ -25,21 +23,26 @@ use crate::provider_restart;
 use crate::provider_usage;
 use crate::resource_governance::ResourceGovernanceRuntime;
 use crate::resource_utilization::ResourceSampler;
+use crate::runtime_adapters::{
+    CtxExecutionHarness, CtxRuntimeEventSink, CtxRuntimeMetricsSink, DefaultWarmupOperations,
+};
 use crate::scheduler::SchedulerCommand;
 use crate::telemetry::Telemetry;
 use crate::terminals::TerminalManager;
 use crate::web_sessions::WebSessionManager;
-use ctx_provider_accounts as provider_accounts;
-use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
+use crate::workspace_runtime::HarnessRuntimeManager;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceAttachmentId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Session, SessionEvent, SessionHeadSnapshot, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
     WorktreeVcsSnapshot,
 };
+use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_lsp::{LspManager, LspManagerConfig};
+use ctx_provider_accounts as provider_accounts;
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use ctx_providers::ask_user_question::AskUserQuestionBroker;
 use ctx_store::{Store, StoreManager};
+use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 
 mod installs;
 mod metrics;
@@ -145,14 +148,22 @@ impl AppState {
             data_root.clone(),
             ops_events.clone(),
         ));
+        let runtime_events = Arc::new(CtxRuntimeEventSink::new(ops_events.clone()));
+        let runtime_metrics = Arc::new(CtxRuntimeMetricsSink::new(perf_telemetry.clone()));
+        let execution_harness = Arc::new(CtxExecutionHarness::new(harness_runtime.clone()));
+        let warmup_operations = Arc::new(DefaultWarmupOperations::new(
+            data_root.clone(),
+            runtime_events.clone(),
+        ));
         let storage_guard = crate::storage_guard::StorageGuardRuntime::new(&data_root);
         let running_sessions = Arc::new(Mutex::new(HashSet::new()));
         let terminals = Arc::new(TerminalManager::default());
-        let execution_setup = Arc::new(ExecutionSetupCoordinator::new(
+        let execution_setup = Arc::new(ExecutionSetupCoordinator::new_with_operations(
             data_root.clone(),
-            harness_runtime.clone(),
-            perf_telemetry.clone(),
-            ops_events.clone(),
+            execution_harness,
+            runtime_events,
+            runtime_metrics,
+            warmup_operations,
         ));
         #[cfg(not(test))]
         {

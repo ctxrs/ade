@@ -14,8 +14,8 @@ use crate::settings::{
 };
 use ctx_core::models::VcsKind;
 use ctx_sandbox_materialization::set_test_preflight_storage_samples_override;
-use ctx_store::StoreManager;
 use ctx_storage_admission::{StorageAdmissionOperation, StorageAdmissionSample};
+use ctx_store::StoreManager;
 
 use crate::storage_guard::StorageGuardStatus;
 
@@ -163,52 +163,50 @@ async fn create_task_rejects_before_disk_isolated_copy_when_host_reserve_is_unre
 
     let app = crate::api::router(Arc::clone(&state));
     let workspace_id = workspace.id;
-    let _storage_override =
-        set_test_preflight_storage_samples_override(Arc::new(
-            move |data_root,
-                  _mode,
-                  container_id,
-                  _estimated_copy_bytes,
-                  destination_probe_root,
-                  operation,
-                  required_bytes| {
-                assert_eq!(
-                    container_id,
-                    ctx_workspace_container::workspace_container_name(workspace_id)
-                );
-                assert_eq!(
-                    operation,
-                    StorageAdmissionOperation::DiskIsolatedWorktreeMaterialization
-                );
-                assert_eq!(
-                    destination_probe_root,
-                    Path::new(ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT)
-                );
+    let _storage_override = set_test_preflight_storage_samples_override(Arc::new(
+        move |data_root,
+              _mode,
+              container_id,
+              _estimated_copy_bytes,
+              destination_probe_root,
+              operation,
+              required_bytes| {
+            assert_eq!(
+                container_id,
+                ctx_workspace_container::workspace_container_name(workspace_id)
+            );
+            assert_eq!(
+                operation,
+                StorageAdmissionOperation::DiskIsolatedWorktreeMaterialization
+            );
+            assert_eq!(
+                destination_probe_root,
+                Path::new(ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT)
+            );
 
-                let guard = StorageGuardStatus::default();
-                let reserve = guard.reserve_bytes;
-                let total_bytes = required_bytes
-                    .saturating_add(reserve)
-                    .saturating_add(guard.warning_threshold_bytes);
-                Ok((
-                    StorageAdmissionSample {
-                        label: "CTX data root".to_string(),
-                        path: data_root.to_string_lossy().to_string(),
-                        mount_point: "/".to_string(),
-                        free_bytes: required_bytes.saturating_sub(1),
-                        total_bytes,
-                    },
-                    StorageAdmissionSample {
-                        label: "sandbox workspace volume".to_string(),
-                        path: destination_probe_root.to_string_lossy().to_string(),
-                        mount_point: ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT
-                            .to_string(),
-                        free_bytes: required_bytes.saturating_add(reserve),
-                        total_bytes,
-                    },
-                ))
-            },
-        ));
+            let guard = StorageGuardStatus::default();
+            let reserve = guard.reserve_bytes;
+            let total_bytes = required_bytes
+                .saturating_add(reserve)
+                .saturating_add(guard.warning_threshold_bytes);
+            Ok((
+                StorageAdmissionSample {
+                    label: "CTX data root".to_string(),
+                    path: data_root.to_string_lossy().to_string(),
+                    mount_point: "/".to_string(),
+                    free_bytes: required_bytes.saturating_sub(1),
+                    total_bytes,
+                },
+                StorageAdmissionSample {
+                    label: "sandbox workspace volume".to_string(),
+                    path: destination_probe_root.to_string_lossy().to_string(),
+                    mount_point: ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+                    free_bytes: required_bytes.saturating_add(reserve),
+                    total_bytes,
+                },
+            ))
+        },
+    ));
 
     let (status, body) = post_json(
         &app,

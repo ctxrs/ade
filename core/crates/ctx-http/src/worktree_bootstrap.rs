@@ -16,8 +16,8 @@ use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::logs;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
-use ctx_workspace_config as workspace_config;
 use crate::worktree_data_plane::resolve_worktree_data_plane;
+use ctx_workspace_config as workspace_config;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
 const DEFAULT_TIMEOUT_SEC: u64 = 60;

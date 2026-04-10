@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
 
 use ctx_core::models::{SandboxBinding, Workspace, Worktree};
-pub use ctx_sandbox_contract::{live_worktree_root_for_mode, live_workspace_root_for_mode};
+pub use ctx_sandbox_contract::{live_workspace_root_for_mode, live_worktree_root_for_mode};
 use ctx_sandbox_contract::{
     map_host_or_live_path_to_live_roots, sandbox_execution_settings_from_binding,
     ContainerMountMode, ExecutionMode, ExecutionSettings, UbuntuSandboxSubstrate,
@@ -123,7 +123,9 @@ mod tests {
     use chrono::Utc;
     use ctx_core::ids::{SandboxInstanceId, WorkspaceId, WorktreeId};
     use ctx_core::models::{SandboxGuestIdentity, SandboxSubstrate};
-    use ctx_sandbox_contract::{ContainerExecutionSettings, ContainerNetworkMode, ContainerRuntimeKind};
+    use ctx_sandbox_contract::{
+        ContainerExecutionSettings, ContainerNetworkMode, ContainerRuntimeKind,
+    };
     use uuid::Uuid;
 
     use super::*;

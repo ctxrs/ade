@@ -16,8 +16,8 @@ pub use execution::{
     ExecutionSettings, MIN_CONTAINER_MACHINE_IDLE_SHUTDOWN_SECONDS,
 };
 pub use layout::{
-    container_worktree_root, live_worktree_root_for_mode, live_workspace_root_for_mode,
-    map_host_or_live_path_to_live_roots, sandbox_worktree_root, sandbox_workspace_root,
+    container_worktree_root, live_workspace_root_for_mode, live_worktree_root_for_mode,
+    map_host_or_live_path_to_live_roots, sandbox_workspace_root, sandbox_worktree_root,
     CTX_CONTAINER_WORKSPACE_ROOT,
 };
 pub use substrate::{guest_identity_label, UbuntuSandboxSubstrate};

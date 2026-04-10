@@ -25,10 +25,9 @@ mod network_policy_transition;
 
 pub use container::{
     bind_mount, build_mounts, container_data_root, container_user, daemon_port_from_url,
-    rewrite_daemon_url_for_avf_guest, rewrite_daemon_url_for_container,
-    sandbox_machine_required, should_mount_bundle_dir_in_container, should_use_keep_id_userns,
-    workspace_container_hostname, AVF_GUEST_HOST_GATEWAY, CONTAINER_TERMINAL_HOME,
-    CONTAINER_TERMINAL_USER, MountPlan,
+    rewrite_daemon_url_for_avf_guest, rewrite_daemon_url_for_container, sandbox_machine_required,
+    should_mount_bundle_dir_in_container, should_use_keep_id_userns, workspace_container_hostname,
+    MountPlan, AVF_GUEST_HOST_GATEWAY, CONTAINER_TERMINAL_HOME, CONTAINER_TERMINAL_USER,
 };
 pub use network_policy_transition::{
     apply_container_network_policy, transparent_proxy_policy, AppliedContainerNetworkPolicy,
@@ -179,7 +178,12 @@ impl WorkspaceContainerOwner {
         mode: &SandboxCommandMode,
         workspace_id: WorkspaceId,
     ) -> Result<bool> {
-        container_exists(&self.data_root, mode, &workspace_container_name(workspace_id)).await
+        container_exists(
+            &self.data_root,
+            mode,
+            &workspace_container_name(workspace_id),
+        )
+        .await
     }
 
     pub async fn container_status(
@@ -269,7 +273,10 @@ impl WorkspaceContainerOwner {
         }
         let combined = command_output_message(&out);
         if combined.is_empty() {
-            anyhow::bail!("container volume rm failed for {name} (status: {})", out.status);
+            anyhow::bail!(
+                "container volume rm failed for {name} (status: {})",
+                out.status
+            );
         }
         anyhow::bail!("container volume rm failed for {name}: {combined}");
     }
@@ -451,9 +458,7 @@ impl WorkspaceContainerOwner {
                     let combined_lower = combined.to_ascii_lowercase();
                     let can_adopt_existing = combined_lower.contains("name-store error")
                         || combined_lower.contains("already used by id");
-                    if can_adopt_existing
-                        && container_exists(&self.data_root, mode, &name).await?
-                    {
+                    if can_adopt_existing && container_exists(&self.data_root, mode, &name).await? {
                         observe_log(
                             observer,
                             HarnessSetupPhase::ContainerStartOrCreate,
@@ -542,8 +547,13 @@ impl WorkspaceContainerOwner {
         }
 
         if matches!(settings.mount_mode, ContainerMountMode::DiskIsolated) {
-            container::verify_disk_isolated_container_mounts(&self.data_root, mode, workspace, &name)
-                .await?;
+            container::verify_disk_isolated_container_mounts(
+                &self.data_root,
+                mode,
+                workspace,
+                &name,
+            )
+            .await?;
         }
 
         observe_phase(

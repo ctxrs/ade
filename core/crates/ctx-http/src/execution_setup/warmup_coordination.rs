@@ -78,7 +78,8 @@ impl SharedWarmupOperations for DefaultWarmupOperations {
             Some(observer.as_ref()),
         )
         .await?;
-        if let Some(record) = ctx_harness_runtime::selected_shared_substrate_lifecycle(&self.data_root)?
+        if let Some(record) =
+            ctx_harness_runtime::selected_shared_substrate_lifecycle(&self.data_root)?
         {
             self.ops_events
                 .emit(crate::ops_events::substrate_lifecycle_observed_event(
@@ -95,7 +96,8 @@ impl SharedWarmupOperations for DefaultWarmupOperations {
     async fn warm_builder(&self, observer: Arc<dyn HarnessSetupObserver>) -> Result<()> {
         observer.on_phase(HarnessSetupPhase::ImageLoad, "warming container builder");
         crate::container_builder::ensure_builder_ready(&self.data_root).await?;
-        if let Some(record) = ctx_harness_runtime::selected_shared_substrate_lifecycle(&self.data_root)?
+        if let Some(record) =
+            ctx_harness_runtime::selected_shared_substrate_lifecycle(&self.data_root)?
         {
             self.ops_events
                 .emit(crate::ops_events::substrate_lifecycle_observed_event(

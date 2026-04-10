@@ -59,11 +59,7 @@ pub(crate) fn load_cached_matrix(data_root: &Path) -> Option<ProviderMatrix> {
     Some(parsed)
 }
 
-#[cfg(test)]
-pub async fn save_cached_matrix(
-    data_root: &Path,
-    matrix: &ProviderMatrix,
-) -> anyhow::Result<()> {
+pub async fn save_cached_matrix(data_root: &Path, matrix: &ProviderMatrix) -> anyhow::Result<()> {
     use anyhow::Context;
 
     let path = matrix_cache_path(data_root);
