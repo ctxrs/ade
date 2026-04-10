@@ -262,6 +262,10 @@ export function noteSessionPretextRuntimeSnapshot(
 ): void {
   record.preparedSnapshot = snapshot;
   record.preparedItems = listItems;
+  record.preparedSourceKey = buildSessionPretextRuntimeSourceKey(listItems);
+  record.preparedLayoutKey = buildSessionPretextRuntimeLayoutKey({
+    uiState: record.uiState,
+  });
 }
 
 export function primeSessionPretextRuntime(

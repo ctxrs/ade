@@ -1207,6 +1207,239 @@ describe("SessionThreadPretextVirtualizerList", () => {
     expect(secondTopAfter).toBeGreaterThan(secondTopBefore);
   });
 
+  it("does not reuse expanded prepared geometry when reopening the same session collapsed", () => {
+    const sessionId = "session-reopen-collapsed-layout";
+    const expandableContent = Array.from(
+      { length: 28 },
+      (_, index) => `- expanded row ${index + 1} with enough text to wrap and change the measured height`,
+    ).join("\n");
+    const listItems: WorkbenchListItem[] = [
+      {
+        kind: "message",
+        id: "message-expandable",
+        role: "user",
+        content: expandableContent,
+        attachments: [],
+        created_at: "2026-04-10T00:00:00Z",
+      },
+      {
+        kind: "turn_status",
+        id: "status-1",
+        turn_id: "turn-1",
+        created_at: "2026-04-10T00:01:00Z",
+        started_at: "2026-04-10T00:01:00Z",
+        updated_at: "2026-04-10T00:01:05Z",
+        status: "completed",
+        assistant_messages_content: "done",
+      },
+    ];
+
+    const expandedContext = { ...context, expandedMessageById: { "message-expandable": true } };
+    const collapsedContext = { ...context, expandedMessageById: {} };
+    const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get() {
+        return this.getAttribute?.("data-pretext-virtualizer-list") === "1" ? 900 : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return this.getAttribute?.("data-pretext-virtualizer-list") === "1" ? 300 : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return this.getAttribute?.("data-pretext-virtualizer-list") === "1" ? 2200 : 0;
+      },
+    });
+
+    try {
+      const expandedRender = render(
+        <SessionThreadPretextVirtualizerList
+          style={{ height: 400 }}
+          sessionId={sessionId}
+          isActive
+          listItems={listItems}
+          threadProjectionOp={noopProjectionOp}
+          itemContent={(_, item) => <div>{item.id}</div>}
+          itemKey={(item) => item.id}
+          context={expandedContext}
+        />,
+      );
+
+      const expandedShells = expandedRender.container.querySelectorAll<HTMLElement>("[data-pretext-virtualizer-row-shell='1']");
+      const expandedStatusTop = Number.parseFloat(expandedShells[1]?.style.top ?? "0");
+
+      expandedRender.unmount();
+
+      const runtime = getOrCreateSessionPretextRuntime(sessionId);
+      const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
+      syncItemsSpy.mockClear();
+
+      const reopenedRender = render(
+        <SessionThreadPretextVirtualizerList
+          style={{ height: 400 }}
+          sessionId={sessionId}
+          isActive
+          listItems={listItems}
+          threadProjectionOp={noopProjectionOp}
+          itemContent={(_, item) => <div>{item.id}</div>}
+          itemKey={(item) => item.id}
+          context={collapsedContext}
+        />,
+      );
+
+      const reopenedShells = reopenedRender.container.querySelectorAll<HTMLElement>("[data-pretext-virtualizer-row-shell='1']");
+      const reopenedStatusTop = Number.parseFloat(reopenedShells[1]?.style.top ?? "0");
+
+      const freshCollapsedRender = render(
+        <SessionThreadPretextVirtualizerList
+          style={{ height: 400 }}
+          sessionId="session-reopen-collapsed-layout-fresh"
+          isActive
+          listItems={listItems}
+          threadProjectionOp={noopProjectionOp}
+          itemContent={(_, item) => <div>{item.id}</div>}
+          itemKey={(item) => item.id}
+          context={collapsedContext}
+        />,
+      );
+
+      const freshCollapsedShells = freshCollapsedRender.container.querySelectorAll<HTMLElement>("[data-pretext-virtualizer-row-shell='1']");
+      const freshCollapsedStatusTop = Number.parseFloat(freshCollapsedShells[1]?.style.top ?? "0");
+
+      expect(syncItemsSpy).toHaveBeenCalled();
+      expect(expandedStatusTop).toBeGreaterThan(freshCollapsedStatusTop);
+      expect(reopenedStatusTop).toBe(freshCollapsedStatusTop);
+    } finally {
+      if (originalClientWidth) {
+        Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
+      }
+      if (originalClientHeight) {
+        Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
+      }
+      if (originalScrollHeight) {
+        Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
+      }
+    }
+  });
+
+  it("treats prepared snapshots without layout metadata as stale on reopen", () => {
+    const sessionId = "session-reopen-missing-layout-key";
+    const listItems: WorkbenchListItem[] = [
+      {
+        kind: "message",
+        id: "message-expandable",
+        role: "user",
+        content: Array.from(
+          { length: 24 },
+          (_, index) => `- expanded row ${index + 1} with enough text to wrap and change the measured height`,
+        ).join("\n"),
+        attachments: [],
+        created_at: "2026-04-10T00:00:00Z",
+      },
+      {
+        kind: "turn_status",
+        id: "status-1",
+        turn_id: "turn-1",
+        created_at: "2026-04-10T00:01:00Z",
+        started_at: "2026-04-10T00:01:00Z",
+        updated_at: "2026-04-10T00:01:05Z",
+        status: "completed",
+        assistant_messages_content: "done",
+      },
+    ];
+
+    const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get() {
+        return this.getAttribute?.("data-pretext-virtualizer-list") === "1" ? 900 : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return this.getAttribute?.("data-pretext-virtualizer-list") === "1" ? 300 : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return this.getAttribute?.("data-pretext-virtualizer-list") === "1" ? 2200 : 0;
+      },
+    });
+
+    try {
+      const firstRender = render(
+        <SessionThreadPretextVirtualizerList
+          style={{ height: 400 }}
+          sessionId={sessionId}
+          isActive
+          listItems={listItems}
+          threadProjectionOp={noopProjectionOp}
+          itemContent={(_, item) => <div>{item.id}</div>}
+          itemKey={(item) => item.id}
+          context={{ ...context, expandedMessageById: { "message-expandable": true } }}
+        />,
+      );
+      firstRender.unmount();
+
+      const runtime = getOrCreateSessionPretextRuntime(sessionId) as ReturnType<typeof getOrCreateSessionPretextRuntime> & {
+        preparedLayoutKey: string | null;
+      };
+      runtime.preparedLayoutKey = null;
+      const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
+      syncItemsSpy.mockClear();
+
+      render(
+        <SessionThreadPretextVirtualizerList
+          style={{ height: 400 }}
+          sessionId={sessionId}
+          isActive
+          listItems={listItems}
+          threadProjectionOp={noopProjectionOp}
+          itemContent={(_, item) => <div>{item.id}</div>}
+          itemKey={(item) => item.id}
+          context={{ ...context, expandedMessageById: {} }}
+        />,
+      );
+
+      expect(syncItemsSpy).toHaveBeenCalled();
+    } finally {
+      if (originalClientWidth) {
+        Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
+      }
+      if (originalClientHeight) {
+        Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
+      }
+      if (originalScrollHeight) {
+        Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
+      }
+    }
+  });
+
   it("does not re-enter projection sync during ordinary scroll with unchanged items", () => {
     const sessionId = "session-scroll";
     const { container } = render(

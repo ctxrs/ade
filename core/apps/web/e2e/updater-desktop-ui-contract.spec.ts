@@ -40,6 +40,7 @@ type HarnessState = {
   updateState: DesktopUpdateState;
   applyResponse: DesktopApplyResponse;
   invokeCalls: string[];
+  invokeArgsByCommand: Record<string, unknown[]>;
   menuItemsById: Record<string, { id: string; enabled?: boolean; checked?: boolean; text?: string }>;
   emitMenuAction?: (commandId: string) => void;
 };
@@ -89,6 +90,7 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
       updateState: { ...initial.updateState },
       applyResponse: { ...initial.applyResponse },
       invokeCalls: [],
+      invokeArgsByCommand: {},
       menuItemsById: {},
     };
     const callbacks = new Map<number, (payload: unknown) => void>();
@@ -116,9 +118,22 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
     const invoke: TauriInvoke = async (cmd, rawArgs) => {
       const name = String(cmd || "");
       state.invokeCalls.push(name);
+      try {
+        const recordedArgs = state.invokeArgsByCommand[name] ?? [];
+        recordedArgs.push(rawArgs == null ? null : JSON.parse(JSON.stringify(rawArgs)));
+        state.invokeArgsByCommand[name] = recordedArgs;
+      } catch {
+        const recordedArgs = state.invokeArgsByCommand[name] ?? [];
+        recordedArgs.push(null);
+        state.invokeArgsByCommand[name] = recordedArgs;
+      }
       const args =
         rawArgs && typeof rawArgs === "object"
           ? (rawArgs as Record<string, unknown>)
+          : {};
+      const req =
+        args.req && typeof args.req === "object"
+          ? (args.req as Record<string, unknown>)
           : {};
       if (name === "plugin:app|version") {
         return state.updateState.current_version;
@@ -178,7 +193,7 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
         return { requested: true, message: "Restart requested." };
       }
       if (name === "desktop_set_menu_state") {
-        const items = Array.isArray(args.items) ? args.items : [];
+        const items = Array.isArray(req.items) ? req.items : [];
         const nextMenuItemsById: HarnessState["menuItemsById"] = {};
         for (const rawItem of items) {
           if (!rawItem || typeof rawItem !== "object") continue;
@@ -196,10 +211,6 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
         return null;
       }
       if (name === "desktop_daemon_request") {
-        const req =
-          args.req && typeof args.req === "object"
-            ? (args.req as Record<string, unknown>)
-            : {};
         const path = String(req.path ?? "/");
         const method = String(req.method ?? "GET").toUpperCase();
         const body = typeof req.body === "string" ? req.body : "";
@@ -302,6 +313,14 @@ const desktopCommandCallCount = async (page: Page, command: string): Promise<num
   }, command);
 };
 
+const desktopLastCommandArgs = async (page: Page, command: string): Promise<unknown | null> => {
+  return await page.evaluate((name: string) => {
+    const w = window as Window & { __ctxDesktopUpdaterE2E?: HarnessState };
+    const calls = w.__ctxDesktopUpdaterE2E?.invokeArgsByCommand?.[name] ?? [];
+    return calls.length > 0 ? calls[calls.length - 1] : null;
+  }, command);
+};
+
 const desktopMenuItemState = async (
   page: Page,
   commandId: string,
@@ -377,6 +396,28 @@ test("desktop updater remains silent while staging", async ({ page }) => {
   await createWorkspaceAndOpenWorkbench(page, `ws-desktop-banner-${Date.now()}`);
   await expect.poll(async () => desktopCommandCallCount(page, "desktop_get_app_update_state")).toBeGreaterThan(0);
   await expect(page.getByTestId("update-available-snackbar")).toHaveCount(0);
+  await expect.poll(async () => {
+    const rawArgs = await desktopLastCommandArgs(page, "desktop_set_menu_state");
+    if (!rawArgs || typeof rawArgs !== "object") return null;
+    const req =
+      "req" in rawArgs && rawArgs.req && typeof rawArgs.req === "object"
+        ? (rawArgs.req as { items?: unknown[] })
+        : null;
+    if (!req || !Array.isArray(req.items)) return null;
+    const updateItem = req.items.find((item) => {
+      return (
+        item &&
+        typeof item === "object" &&
+        "id" in item &&
+        item.id === "help.check-for-updates"
+      );
+    });
+    return updateItem ?? null;
+  }).toMatchObject({
+    id: "help.check-for-updates",
+    enabled: false,
+    text: "Downloading Update",
+  });
   await expect.poll(async () => desktopMenuItemState(page, "help.check-for-updates")).toMatchObject({
     id: "help.check-for-updates",
     enabled: false,

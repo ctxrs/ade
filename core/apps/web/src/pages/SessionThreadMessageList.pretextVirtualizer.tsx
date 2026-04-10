@@ -36,6 +36,7 @@ import {
 } from "./sessionMessageListItemIdentity";
 import type { WorkbenchThreadProjectionOp } from "./sessionThreadProjection";
 import {
+  buildSessionPretextRuntimeLayoutKey,
   getOrCreateSessionPretextRuntime,
   noteSessionPretextRuntimeSnapshot,
   readSessionPretextRuntimePreparedState,
@@ -102,6 +103,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
   const onRenderedDataChangeRef = useRef(onRenderedDataChange);
   const onAtBottomChangeRef = useRef(onAtBottomChange);
   const onDiagnosticEventRef = useRef(onDiagnosticEvent);
+  const runtimeUiStateLayoutKeyRef = useRef<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const followBottomRef = useRef(true);
   const lastScrollTopRef = useRef(0);
@@ -144,6 +146,11 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     () => getWorkbenchMessageListLayoutRevision(runtimeUiState),
     [runtimeUiState],
   );
+  const runtimeUiStateLayoutKey = useMemo(
+    () => buildSessionPretextRuntimeLayoutKey({ uiState: runtimeUiState }),
+    [runtimeUiState],
+  );
+  runtimeUiStateLayoutKeyRef.current = runtimeUiStateLayoutKey;
 
   const runtime = useMemo(
     () =>
@@ -403,6 +410,8 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     }
     const preparedState = readSessionPretextRuntimePreparedState(runtime);
     const currentItems = listItemsRef.current;
+    const preparedLayoutMismatch =
+      preparedState.layoutKey == null || preparedState.layoutKey !== runtimeUiStateLayoutKeyRef.current;
     const preparedWidthMismatch =
       scroller.clientWidth > 0 && preparedState.snapshot.viewportWidth !== scroller.clientWidth;
     let baseSnapshot = core.syncViewport({
@@ -412,6 +421,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     });
     lastSyncedItemCountRef.current = preparedState.listItems.length;
     if (
+      preparedLayoutMismatch ||
       preparedWidthMismatch ||
       !haveSameLayoutInputs(preparedState.listItems, currentItems, runtime.callbacks.getLayoutRevision)
     ) {
@@ -419,13 +429,17 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
       incrementPretextPerfCounter("pretext_full_relayout_item_count", currentItems.length);
       addPretextPerfBucket(
         "pretext_full_relayout_reason",
-        preparedWidthMismatch ? "visible:mount-width-mismatch" : "visible:mount-sync-items",
+        preparedLayoutMismatch
+          ? "visible:mount-layout-key-mismatch"
+          : preparedWidthMismatch
+            ? "visible:mount-width-mismatch"
+            : "visible:mount-sync-items",
       );
       const initialAnchor = followBottomRef.current
         ? ({ kind: "bottom" } satisfies PretextVirtualizerLogicalAnchor)
         : null;
       baseSnapshot =
-        preparedWidthMismatch || !haveSameItemIds(preparedState.listItems, currentItems)
+        preparedLayoutMismatch || preparedWidthMismatch || !haveSameItemIds(preparedState.listItems, currentItems)
           ? core.syncItems(currentItems, initialAnchor)
           : core.patchItems(currentItems, currentItems.map((item) => item.id), [], initialAnchor);
       lastSyncedItemCountRef.current = currentItems.length;
@@ -447,7 +461,15 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
       );
       scrollToOffset(targetTop, initialLocation?.behavior ?? "auto");
     }
-  }, [applySnapshotToDom, commitRuntimeSnapshot, core, initialLocation, runtime, scrollToOffset, sessionId]);
+  }, [
+    applySnapshotToDom,
+    commitRuntimeSnapshot,
+    core,
+    initialLocation,
+    runtime,
+    scrollToOffset,
+    sessionId,
+  ]);
 
   useLayoutEffect(() => {
     const scroller = containerRef.current;

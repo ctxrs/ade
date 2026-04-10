@@ -50,4 +50,25 @@ describe("desktop request envelopes", () => {
       ["desktop_update_editor_settings", { req: { target: "cursor" } }],
     ]);
   });
+
+  it("wraps updater desktop commands in req payloads", async () => {
+    invokeMock.mockResolvedValue(undefined);
+
+    const desktop = await import("./desktop");
+
+    await desktop.desktopUpdateRemoteDaemon("canary");
+    await desktop.desktopCheckAppUpdate("stable");
+    await desktop.desktopGetAppUpdateState("stable");
+    await desktop.desktopApplyAppUpdate("stable", "download-42");
+
+    expect(invokeMock.mock.calls).toEqual([
+      ["desktop_update_remote_daemon", { req: { confirm: true, channel: "canary" } }],
+      ["desktop_check_app_update", { req: { channel: "stable" } }],
+      ["desktop_get_app_update_state", { req: { channel: "stable" } }],
+      [
+        "desktop_apply_app_update",
+        { req: { confirm: true, channel: "stable", download_id: "download-42" } },
+      ],
+    ]);
+  });
 });

@@ -124,6 +124,37 @@ describe("pretextSessionRuntimeCache", () => {
     });
   });
 
+  it("refreshes the prepared source and layout keys when recording a snapshot under a new ui state", () => {
+    const sessionId = "session-layout-key-refresh";
+    const listItems = makeItems(2);
+    const updatedItems = makeItems(3);
+    const expandedUiState = createDefaultSessionTranscriptUiState();
+    expandedUiState.expandedMessageById = { "message-1": true };
+    const collapsedUiState = createDefaultSessionTranscriptUiState();
+
+    const runtime = getOrCreateSessionPretextRuntime(sessionId, {
+      uiState: expandedUiState,
+    });
+    const expandedSnapshot = runtime.core.replaceItems(listItems, { kind: "bottom" });
+    noteSessionPretextRuntimeSnapshot(runtime, expandedSnapshot, listItems);
+
+    expect(readSessionPretextRuntimePreparedState(runtime)).toMatchObject({
+      sourceKey: buildSessionPretextRuntimeSourceKey(listItems),
+      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState: expandedUiState }),
+    });
+
+    getOrCreateSessionPretextRuntime(sessionId, {
+      uiState: collapsedUiState,
+    });
+    const collapsedSnapshot = runtime.core.syncItems(updatedItems, { kind: "bottom" });
+    noteSessionPretextRuntimeSnapshot(runtime, collapsedSnapshot, updatedItems);
+
+    expect(readSessionPretextRuntimePreparedState(runtime)).toMatchObject({
+      sourceKey: buildSessionPretextRuntimeSourceKey(updatedItems),
+      layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState: collapsedUiState }),
+    });
+  });
+
   it("keeps warm snapshots when pruning only the runtime slice", () => {
     const sessionId = "session-shared";
     persistWarmWorkbenchThreadViewModel(sessionId, {
