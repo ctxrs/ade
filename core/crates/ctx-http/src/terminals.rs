@@ -402,8 +402,11 @@ impl TerminalManager {
             cmd.arg(ctx_sandbox_container_runtime::SHARED_VM_SANDBOX_CLI_GUEST_BIN);
             cmd.arg("--user");
             cmd.arg("root");
-            if let Ok(sandbox_env) = ctx_sandbox_container_runtime::sandbox_cli_env_for_data_root(
+            if let Ok(sandbox_env) = ctx_sandbox_container_runtime::sandbox_cli_env_for_mode(
                 &shared_vm_container.data_root,
+                &ctx_sandbox_container_runtime::SandboxCommandMode::SharedVm {
+                    helper_path: shared_vm_container.helper_path.clone(),
+                },
             ) {
                 let mut env_pairs = sandbox_env.into_iter().collect::<Vec<_>>();
                 env_pairs.sort_by(|(left, _), (right, _)| left.cmp(right));

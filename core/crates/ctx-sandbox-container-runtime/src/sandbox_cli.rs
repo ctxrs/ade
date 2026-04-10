@@ -15,6 +15,12 @@ use crate::{
 };
 
 pub const SHARED_VM_SANDBOX_CLI_GUEST_BIN: &str = "/usr/local/bin/nerdctl";
+const SHARED_VM_GUEST_ROOT_HOME: &str = "/ctx/home/root";
+const SHARED_VM_GUEST_ROOT_XDG_CONFIG_ROOT: &str = "/ctx/cache/xdg/config";
+const SHARED_VM_GUEST_ROOT_XDG_DATA_ROOT: &str = "/ctx/cache/xdg/data";
+const SHARED_VM_GUEST_ROOT_XDG_CACHE_ROOT: &str = "/ctx/cache/xdg/cache";
+const SHARED_VM_GUEST_ROOT_XDG_RUNTIME_ROOT: &str = "/ctx/tmp/xdg-runtime-root";
+const SHARED_VM_GUEST_TMP_ROOT: &str = "/ctx/tmp";
 
 fn find_binary_in_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
@@ -65,11 +71,11 @@ pub struct SandboxCliInvocation {
 pub fn sandbox_cli_invocation(data_root: &Path) -> Result<SandboxCliInvocation> {
     let bin = sandbox_cli_binary_path(data_root)
         .ok_or_else(|| anyhow::anyhow!("sandbox container CLI unavailable"))?;
-    let env = sandbox_cli_env_for_data_root(data_root)?;
+    let env = sandbox_cli_env_for_mode(data_root, &SandboxCommandMode::NativeContainer)?;
     Ok(SandboxCliInvocation { bin, env })
 }
 
-pub fn sandbox_cli_env_for_data_root(data_root: &Path) -> Result<HashMap<String, String>> {
+fn native_sandbox_cli_env_for_data_root(data_root: &Path) -> Result<HashMap<String, String>> {
     let xdg_root = data_root.join("sandbox").join("xdg");
     let xdg_config = xdg_root.join("config");
     let xdg_data = xdg_root.join("data");
@@ -122,9 +128,53 @@ pub fn sandbox_cli_env_for_data_root(data_root: &Path) -> Result<HashMap<String,
     Ok(env)
 }
 
+fn shared_vm_guest_sandbox_cli_env() -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        SHARED_VM_GUEST_ROOT_XDG_CONFIG_ROOT.to_string(),
+    );
+    env.insert(
+        "XDG_DATA_HOME".to_string(),
+        SHARED_VM_GUEST_ROOT_XDG_DATA_ROOT.to_string(),
+    );
+    env.insert(
+        "XDG_CACHE_HOME".to_string(),
+        SHARED_VM_GUEST_ROOT_XDG_CACHE_ROOT.to_string(),
+    );
+    env.insert(
+        "XDG_RUNTIME_DIR".to_string(),
+        SHARED_VM_GUEST_ROOT_XDG_RUNTIME_ROOT.to_string(),
+    );
+    env.insert("HOME".to_string(), SHARED_VM_GUEST_ROOT_HOME.to_string());
+    env.insert(
+        "CONTAINERD_ADDRESS".to_string(),
+        "/run/containerd/containerd.sock".to_string(),
+    );
+    env.insert("CONTAINERD_NAMESPACE".to_string(), "default".to_string());
+    env.insert("TMPDIR".to_string(), SHARED_VM_GUEST_TMP_ROOT.to_string());
+    env.insert("TMP".to_string(), SHARED_VM_GUEST_TMP_ROOT.to_string());
+    env.insert("TEMP".to_string(), SHARED_VM_GUEST_TMP_ROOT.to_string());
+    env
+}
+
+pub fn sandbox_cli_env_for_data_root(data_root: &Path) -> Result<HashMap<String, String>> {
+    native_sandbox_cli_env_for_data_root(data_root)
+}
+
+pub fn sandbox_cli_env_for_mode(
+    data_root: &Path,
+    mode: &SandboxCommandMode,
+) -> Result<HashMap<String, String>> {
+    match mode {
+        SandboxCommandMode::NativeContainer => native_sandbox_cli_env_for_data_root(data_root),
+        SandboxCommandMode::SharedVm { .. } => Ok(shared_vm_guest_sandbox_cli_env()),
+    }
+}
+
 pub fn sandbox_container_command(data_root: &Path, mode: &SandboxCommandMode) -> Result<Command> {
     if let Some(bin) = explicit_sandbox_cli_binary_path() {
-        let env = sandbox_cli_env_for_data_root(data_root)?;
+        let env = sandbox_cli_env_for_mode(data_root, mode)?;
         let mut cmd = Command::new(bin);
         for (key, value) in env {
             cmd.env(key, value);
@@ -142,7 +192,7 @@ pub fn sandbox_container_command(data_root: &Path, mode: &SandboxCommandMode) ->
             Ok(cmd)
         }
         SandboxCommandMode::SharedVm { helper_path } => {
-            let env = sandbox_cli_env_for_data_root(data_root)?;
+            let env = sandbox_cli_env_for_mode(data_root, mode)?;
             let mut cmd = Command::new(helper_path);
             cmd.arg("shared-vm-exec")
                 .arg("--data-root")
@@ -384,6 +434,79 @@ mod tests {
         assert!(
             !log.contains("container exists"),
             "inspect-based probe should not call unsupported container exists:\n{log}"
+        );
+    }
+
+    #[test]
+    fn sandbox_cli_env_for_shared_vm_uses_guest_paths() {
+        let env = sandbox_cli_env_for_mode(
+            Path::new("/unused-host-root"),
+            &SandboxCommandMode::SharedVm {
+                helper_path: PathBuf::from("/tmp/helper"),
+            },
+        )
+        .expect("shared vm env");
+
+        assert_eq!(
+            env.get("XDG_RUNTIME_DIR").map(String::as_str),
+            Some(SHARED_VM_GUEST_ROOT_XDG_RUNTIME_ROOT)
+        );
+        assert_eq!(env.get("HOME").map(String::as_str), Some(SHARED_VM_GUEST_ROOT_HOME));
+        assert_eq!(env.get("TMPDIR").map(String::as_str), Some(SHARED_VM_GUEST_TMP_ROOT));
+        assert_eq!(
+            env.get("XDG_CONFIG_HOME").map(String::as_str),
+            Some(SHARED_VM_GUEST_ROOT_XDG_CONFIG_ROOT)
+        );
+        assert_eq!(
+            env.get("XDG_DATA_HOME").map(String::as_str),
+            Some(SHARED_VM_GUEST_ROOT_XDG_DATA_ROOT)
+        );
+        assert_eq!(
+            env.get("XDG_CACHE_HOME").map(String::as_str),
+            Some(SHARED_VM_GUEST_ROOT_XDG_CACHE_ROOT)
+        );
+    }
+
+    #[test]
+    fn sandbox_container_command_shared_vm_does_not_leak_host_runtime_paths() {
+        let data_root = Path::new("/Users/example-user/.ctx");
+        let helper_path = PathBuf::from("/tmp/ctx-avf-linux-helper");
+        let cmd = sandbox_container_command(
+            data_root,
+            &SandboxCommandMode::SharedVm {
+                helper_path: helper_path.clone(),
+            },
+        )
+        .expect("shared vm command");
+        let std_cmd = cmd.as_std();
+
+        assert_eq!(std_cmd.get_program(), helper_path.as_os_str());
+
+        let args = std_cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        let rendered = args.join("\n");
+
+        assert!(
+            rendered.contains("--env\nXDG_RUNTIME_DIR=/ctx/tmp/xdg-runtime-root"),
+            "shared VM command must inject guest runtime dir env:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("--env\nHOME=/ctx/home/root"),
+            "shared VM command must inject guest home env:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("--env\nTMPDIR=/ctx/tmp"),
+            "shared VM command must inject guest tmp env:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("/Users/example-user/.ctx/sandbox/run"),
+            "shared VM command must not leak host sandbox runtime paths:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("/Users/example-user/.ctx/sandbox/home"),
+            "shared VM command must not leak host sandbox home paths:\n{rendered}"
         );
     }
 }

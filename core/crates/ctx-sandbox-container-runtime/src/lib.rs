@@ -23,7 +23,7 @@ pub use image::{
 pub use sandbox_cli::{
     command_output_message, command_output_with_timeout, container_exists, container_running,
     ensure_workspace_volume, native_container_runtime_available, sandbox_cli_binary_path,
-    sandbox_cli_env_for_data_root, sandbox_cli_invocation, sandbox_container_command,
+    sandbox_cli_env_for_data_root, sandbox_cli_env_for_mode, sandbox_cli_invocation, sandbox_container_command,
     sandbox_engine_ready, SandboxCliInvocation, SHARED_VM_SANDBOX_CLI_GUEST_BIN,
 };
 
