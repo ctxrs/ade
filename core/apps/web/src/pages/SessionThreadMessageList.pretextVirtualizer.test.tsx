@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { createRef, useEffect } from "react";
+import { createRef, useEffect, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PretextVirtualizerListMethods } from "@pretext-virtualizer/interface";
 import { SessionThreadPretextVirtualizerList } from "./SessionThreadMessageList.pretextVirtualizer";
@@ -9,6 +9,7 @@ import type { WorkbenchListItem } from "./SessionPage.types";
 import type { WorkbenchMessageListContext } from "./SessionPage.thread";
 import type { WorkbenchThreadProjectionOp } from "./sessionThreadProjection";
 import { classifyWorkbenchThreadProjectionOp } from "./sessionThreadProjection";
+import { WorkbenchTurnHeaderView } from "./sessionThread/SessionThreadItemViews";
 import {
   createDefaultSessionTranscriptUiState,
   getOrCreateSessionPretextRuntime,
@@ -74,6 +75,18 @@ const makeMessageRange = (prefix: string, count: number, startAt = 1): Workbench
     created_at: `2026-03-18T01:${String(index).padStart(2, "0")}:00Z`,
   }));
 
+const EXPANDABLE_TURN_HEADER_TEXT = [
+  "here is another neutral layout idea for a deterministic fixture",
+  "",
+  "we could ask the model to summarize a sample article and then write ten synthetic review notes.",
+  "",
+  "then we can compare whether the notes use the same broad style as the reference examples",
+  "",
+  "for example, a short positive note or a careful critical note can exercise different wrapping without carrying real conversation text.",
+  "",
+  "what other neutral variations should this layout test include",
+].join("\n");
+
 const makePendingAssistantItem = (content: string): WorkbenchListItem => ({
   kind: "assistant",
   id: "assistant-turn-1-pending",
@@ -94,6 +107,54 @@ const makeTurnStatusItem = (): WorkbenchListItem => ({
   status: "running",
   assistant_messages_content: "",
 });
+
+function InteractiveTurnHeaderHarness({
+  sessionId,
+  listItems,
+}: {
+  sessionId: string;
+  listItems: WorkbenchListItem[];
+}) {
+  const [expandedTurnHeaders, setExpandedTurnHeaders] = useState<Record<string, boolean>>({});
+  const projectionOp: WorkbenchThreadProjectionOp = {
+    kind: "toggle_expansion",
+    projectionRevision: Object.keys(expandedTurnHeaders).length,
+    changedItemIds: ["turn-header-live-regression"],
+    remeasureItemIds: [
+      "turn-header-live-regression",
+      "assistant-live-regression",
+      "turn-status-live-regression",
+    ],
+  };
+  return (
+    <SessionThreadPretextVirtualizerList
+      style={{ height: 400 }}
+      sessionId={sessionId}
+      isActive
+      listItems={listItems}
+      threadProjectionOp={projectionOp}
+      itemContent={(_, item) => {
+        if (item.kind === "turn_header") {
+          const plainText = item.header.plain_text ?? item.header.content;
+          const expanded = expandedTurnHeaders[item.header.id] ?? false;
+          return (
+            <WorkbenchTurnHeaderView
+              header={item.header}
+              plainText={plainText}
+              expanded={expanded}
+              onToggle={() =>
+                setExpandedTurnHeaders((prev) => ({ ...prev, [item.header.id]: !expanded }))
+              }
+            />
+          );
+        }
+        return <div>{item.id}</div>;
+      }}
+      itemKey={(item) => item.id}
+      context={{ ...context, expandedTurnHeaders }}
+    />
+  );
+}
 
 const noopProjectionOp: WorkbenchThreadProjectionOp = {
   kind: "noop",
@@ -278,6 +339,156 @@ describe("SessionThreadPretextVirtualizerList", () => {
       />,
     );
 
+    expect(Math.abs(scroller.scrollTop - detachedScrollTop)).toBeLessThan(80);
+  });
+
+  it("stays detached when expanding a turn header away from the bottom", () => {
+    const listItems: WorkbenchListItem[] = [
+      ...makeMessageRange("before", 12),
+      {
+        kind: "turn_header",
+        id: "turn-header-live-regression",
+        header: {
+          id: "header-live-regression",
+          content: EXPANDABLE_TURN_HEADER_TEXT,
+          attachments: [],
+          created_at: "2026-04-09T22:00:56.315133Z",
+        },
+      },
+      {
+        kind: "assistant",
+        id: "assistant-live-regression",
+        turn_id: "turn-live-regression",
+        created_at: "2026-04-09T22:01:00.000Z",
+        content: "Yes. That is one of the best ideas so far.",
+        thought: "",
+        is_complete: true,
+      },
+      {
+        kind: "turn_status",
+        id: "turn-status-live-regression",
+        turn_id: "turn-live-regression",
+        created_at: "2026-04-09T22:01:01.000Z",
+        started_at: "2026-04-09T22:00:56.315133Z",
+        updated_at: "2026-04-09T22:01:17.596920Z",
+        status: "completed",
+        assistant_messages_content: "Yes. That is one of the best ideas so far.",
+      },
+      ...makeMessageRange("after", 12),
+    ];
+
+    const { container, rerender } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId="session-1"
+        isActive
+        listItems={listItems}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 2400 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+      scroller.scrollTop = 920;
+      fireEvent.scroll(scroller);
+      scroller.scrollTop = 500;
+      fireEvent.scroll(scroller);
+    });
+
+    const detachedScrollTop = scroller.scrollTop;
+
+    rerender(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId="session-1"
+        isActive
+        listItems={listItems}
+        threadProjectionOp={{
+          kind: "toggle_expansion",
+          projectionRevision: 1,
+          changedItemIds: ["turn-header-live-regression"],
+          remeasureItemIds: [
+            "turn-header-live-regression",
+            "assistant-live-regression",
+            "turn-status-live-regression",
+          ],
+        }}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={{ ...context, expandedTurnHeaders: { "header-live-regression": true } }}
+      />,
+    );
+
+    expect(Math.abs(scroller.scrollTop - detachedScrollTop)).toBeLessThan(80);
+  });
+
+  it("does not jump to the bottom when a visible turn header is expanded while detached", () => {
+    const listItems: WorkbenchListItem[] = [
+      {
+        kind: "turn_header",
+        id: "turn-header-live-regression",
+        header: {
+          id: "header-live-regression",
+          content: EXPANDABLE_TURN_HEADER_TEXT,
+          attachments: [],
+          created_at: "2026-04-09T22:00:56.315133Z",
+        },
+      },
+      {
+        kind: "assistant",
+        id: "assistant-live-regression",
+        turn_id: "turn-live-regression",
+        created_at: "2026-04-09T22:01:00.000Z",
+        content: "Yes. That is one of the best ideas so far.",
+        thought: "",
+        is_complete: true,
+      },
+      {
+        kind: "turn_status",
+        id: "turn-status-live-regression",
+        turn_id: "turn-live-regression",
+        created_at: "2026-04-09T22:01:01.000Z",
+        started_at: "2026-04-09T22:00:56.315133Z",
+        updated_at: "2026-04-09T22:01:17.596920Z",
+        status: "completed",
+        assistant_messages_content: "Yes. That is one of the best ideas so far.",
+      },
+      ...makeMessageRange("after", 24),
+    ];
+
+    const { container } = render(
+      <InteractiveTurnHeaderHarness sessionId="session-turn-header-click" listItems={listItems} />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 2400 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+      scroller.scrollTop = 920;
+      fireEvent.scroll(scroller);
+      scroller.scrollTop = 80;
+      fireEvent.scroll(scroller);
+    });
+
+    const detachedScrollTop = scroller.scrollTop;
+    const header = container.querySelector<HTMLElement>(".wb-turn-header");
+    if (!header) throw new Error("Expected visible turn header");
+
+    act(() => {
+      fireEvent.mouseDown(header);
+      fireEvent.click(header);
+    });
+
+    expect(header).toHaveAttribute("aria-expanded", "true");
     expect(Math.abs(scroller.scrollTop - detachedScrollTop)).toBeLessThan(80);
   });
 
@@ -625,17 +836,17 @@ describe("SessionThreadPretextVirtualizerList", () => {
       if (originalClientWidth) {
         Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
       } else {
-        delete (HTMLElement.prototype as Partial<HTMLElement>).clientWidth;
+        Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
       }
       if (originalClientHeight) {
         Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
       } else {
-        delete (HTMLElement.prototype as Partial<HTMLElement>).clientHeight;
+        Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
       }
       if (originalScrollHeight) {
         Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
       } else {
-        delete (HTMLElement.prototype as Partial<HTMLElement>).scrollHeight;
+        Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
       }
     }
 

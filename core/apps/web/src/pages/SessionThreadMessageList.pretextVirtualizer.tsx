@@ -239,6 +239,47 @@ function isLocalizedProjectionOp(kind: WorkbenchThreadProjectionOp["kind"]): boo
   return kind === "hydrate_tools" || kind === "terminalize_turn" || kind === "toggle_expansion";
 }
 
+function createVisibleItemAnchor(
+  visibleItem: PretextVirtualizerSnapshot<WorkbenchListItem>["visibleItems"][number],
+  scrollTop: number,
+): PretextVirtualizerLogicalAnchor {
+  const maxOffsetPx = Math.max(0, visibleItem.height - 1);
+  const offsetPx = Math.max(0, Math.min(scrollTop - visibleItem.top, maxOffsetPx));
+  return {
+    kind: "item",
+    id: visibleItem.id,
+    index: visibleItem.index,
+    offsetPx,
+    offsetRatio: visibleItem.height > 0 ? offsetPx / visibleItem.height : 0,
+  };
+}
+
+function resolveLocalizedAnchorOverride(
+  currentSnapshot: PretextVirtualizerSnapshot<WorkbenchListItem>,
+  projectionOp: WorkbenchThreadProjectionOp,
+  activeChangedItemId: string | null,
+  fallback: PretextVirtualizerLogicalAnchor,
+): PretextVirtualizerLogicalAnchor {
+  if (
+    projectionOp.kind !== "toggle_expansion" ||
+    projectionOp.changedItemIds.length === 0 ||
+    activeChangedItemId == null
+  ) {
+    return fallback;
+  }
+  const viewportTop = currentSnapshot.scrollTop;
+  const viewportBottom = viewportTop + currentSnapshot.viewportHeight;
+  const visibleChangedItem = currentSnapshot.visibleItems.find((visibleItem) => {
+    if (visibleItem.id !== activeChangedItemId) return false;
+    const itemBottom = visibleItem.top + visibleItem.height;
+    return itemBottom > viewportTop && visibleItem.top < viewportBottom;
+  });
+  if (!visibleChangedItem) {
+    return fallback;
+  }
+  return createVisibleItemAnchor(visibleChangedItem, currentSnapshot.scrollTop);
+}
+
 export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPretextVirtualizerList({
   style,
   sessionId,
@@ -269,6 +310,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
   const snapshotRef = useRef<PretextVirtualizerSnapshot<WorkbenchListItem> | null>(null);
   const lastAppliedUiStateLayoutRevisionRef = useRef<string | null>(null);
   const lastAppliedProjectionOpRef = useRef<string | null>(null);
+  const lastInteractedItemIdRef = useRef<string | null>(null);
   const pendingProgrammaticTopRef = useRef<number | null>(null);
   const pendingProgrammaticBehaviorRef = useRef<ScrollBehavior>("auto");
   const pendingRestoreRef = useRef(false);
@@ -674,15 +716,37 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
       BOTTOM_THRESHOLD_PX,
     );
     followBottomRef.current = shouldFollowBottom;
-    const anchorOverride: PretextVirtualizerLogicalAnchor = shouldFollowBottom
+    const activeChangedItemId = (() => {
+      const interactedItemId = lastInteractedItemIdRef.current;
+      if (interactedItemId && threadProjectionOp.changedItemIds.includes(interactedItemId)) {
+        return interactedItemId;
+      }
+      if (typeof document === "undefined") return null;
+      const activeElement = document.activeElement;
+      if (!(activeElement instanceof HTMLElement)) return null;
+      const owner = activeElement.closest<HTMLElement>("[data-thread-item-id]");
+      const ownerId = owner?.dataset.threadItemId ?? null;
+      if (!ownerId) return null;
+      return threadProjectionOp.changedItemIds.includes(ownerId) ? ownerId : null;
+    })();
+    const defaultAnchorOverride: PretextVirtualizerLogicalAnchor = shouldFollowBottom
       ? { kind: "bottom" }
       : core.getAnchor("detached");
+    const anchorOverride = shouldFollowBottom
+      ? defaultAnchorOverride
+      : resolveLocalizedAnchorOverride(
+          currentSnapshot,
+          threadProjectionOp,
+          activeChangedItemId,
+          defaultAnchorOverride,
+        );
     const nextSnapshot = syncItemsFromProjectionOp(listItems, threadProjectionOp, anchorOverride);
     applySnapshotToDom(nextSnapshot, {
       behavior: "auto",
       followBottom: shouldFollowBottom,
       nextItems: listItems,
     });
+    lastInteractedItemIdRef.current = null;
     pendingRestoreRef.current = false;
     lastAppliedUiStateLayoutRevisionRef.current = runtimeUiStateLayoutRevision;
     lastAppliedProjectionOpRef.current = projectionOpKey;
@@ -822,6 +886,20 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     }
   }, []);
 
+  const noteInteractionItem = useCallback((target: EventTarget | null) => {
+    if (!(target instanceof Element)) return;
+    const owner = target.closest<HTMLElement>("[data-thread-item-id]");
+    lastInteractedItemIdRef.current = owner?.dataset.threadItemId ?? null;
+  }, []);
+
+  const handleClickCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    noteInteractionItem(event.target);
+  }, [noteInteractionItem]);
+
+  const handleKeyDownCapture = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    noteInteractionItem(event.target);
+  }, [noteInteractionItem]);
+
   const pretextVirtualizerMethods = useMemo<PretextVirtualizerListMethods<WorkbenchListItem, WorkbenchMessageListContext>>(
     () => ({
       cancelSmoothScroll: () => {
@@ -888,6 +966,8 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
         }}
         className="wb-thread-scroller"
         role="list"
+        onClickCapture={handleClickCapture}
+        onKeyDownCapture={handleKeyDownCapture}
         onScroll={handleScroll}
         onWheel={handleWheel}
         data-pretext-virtualizer-list="1"
