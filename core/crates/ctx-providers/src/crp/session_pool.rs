@@ -290,251 +290,260 @@ impl CrpSessionPool {
             return Ok(());
         }
 
-        if !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst) {
-            let config = build_crp_session_config(&req.env, &req.workdir)?;
-            let provider_session_id = req
-                .env
-                .get("CTX_PROVIDER_SESSION_REF")
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty());
-            self.send_session_open(&session, &req.session_key, provider_session_id, config)
-                .await?;
-        }
+        let result: Result<()> = async {
+            if !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst) {
+                let config = build_crp_session_config(&req.env, &req.workdir)?;
+                let provider_session_id = req
+                    .env
+                    .get("CTX_PROVIDER_SESSION_REF")
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty());
+                self.send_session_open(&session, &req.session_key, provider_session_id, config)
+                    .await?;
+            }
 
-        validate_provider_slash_command_support(&self.agent.provider_id, &req.input.content)?;
-        match parse_native_crp_slash_command_for_provider(
-            &self.agent.provider_id,
-            &req.input.content,
-        ) {
-            Some(CrpSlashCommand::Compact) => {
-                session
-                    .process
-                    .send(CrpCommand::SessionCompact {
-                        session_id: Some(req.session_key.clone()),
-                        turn_id: Some(turn_id.clone()),
-                    })
-                    .await?;
-            }
-            Some(CrpSlashCommand::Undo) => {
-                session
-                    .process
-                    .send(CrpCommand::SessionUndo {
-                        session_id: Some(req.session_key.clone()),
-                        turn_id: Some(turn_id.clone()),
-                    })
-                    .await?;
-            }
-            Some(CrpSlashCommand::Review { instructions }) => {
-                session
-                    .process
-                    .send(CrpCommand::SessionReview {
-                        session_id: Some(req.session_key.clone()),
-                        turn_id: Some(turn_id.clone()),
-                        instructions,
-                    })
-                    .await?;
-            }
-            None => {
-                let items = build_prompt_items(&req.input, &req.workdir, &req.env).await?;
-                let (prompt_items, prompt) =
-                    if provider_requires_flattened_text_prompt(&self.agent.provider_id) {
-                        (None, Some(flatten_prompt_items_as_text(&items)?))
-                    } else {
-                        (Some(items), Some(req.input.content.clone()))
-                    };
-                let (model, reasoning_effort) = if model_override_disabled(&req.env) {
-                    (None, None)
-                } else {
-                    req.input
-                        .model_id
-                        .as_deref()
-                        .map(split_model_id_and_effort)
-                        .unwrap_or((None, None))
-                };
-                let prompt_cwd = translate_thread_cwd_for_container(&req.env, &req.workdir)?;
-                session
-                    .process
-                    .send(CrpCommand::SessionPrompt {
-                        session_id: Some(req.session_key.clone()),
-                        turn_id: Some(turn_id.clone()),
-                        items: prompt_items,
-                        prompt,
-                        model,
-                        reasoning_effort,
-                        cwd: Some(prompt_cwd),
-                    })
-                    .await?;
-            }
-        }
-
-        let mut last_seq = 0u64;
-        let mut tool_output_cache: HashMap<String, String> = HashMap::new();
-        let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
-        let dump_norm_path = std::env::var("CTX_CRP_DUMP_NORMALIZED_EVENTS_PATH")
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
-        let mut dump_norm_file = dump_norm_path.as_deref().and_then(|path| {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-                .ok()
-        });
-        let mut cancel_rx = req.cancel_rx;
-        let mut cancel_requested = false;
-        let mut cancel_deadline: Option<tokio::time::Instant> = None;
-        loop {
-            tokio::select! {
-                _ = &mut cancel_rx, if !cancel_requested => {
-                    let _ = session.process.send(CrpCommand::SessionCancel {
-                        session_id: Some(req.session_key.clone()),
-                        turn_id: Some(turn_id.clone()),
-                    }).await;
-                    cancel_requested = true;
-                    cancel_deadline = Some(tokio::time::Instant::now() + CRP_CANCEL_DRAIN_TIMEOUT);
-                }
-                _ = async {
-                    if let Some(deadline) = cancel_deadline {
-                        tokio::time::sleep_until(deadline).await;
-                    }
-                }, if cancel_requested && cancel_deadline.is_some() => {
-                    break;
-                }
-                shutdown = shutdown_rx.changed() => {
-                    let reason = match shutdown {
-                        Ok(()) => shutdown_rx
-                            .borrow()
-                            .clone()
-                            .unwrap_or_else(|| "crp_shutdown".to_string()),
-                        Err(_) => "crp_shutdown".to_string(),
-                    };
-                    let _ = req
-                        .event_sink
-                        .send(NormalizedEvent {
-                            event_type: SessionEventType::TurnInterrupted,
-                            payload_json: json!({
-                                "reason": reason,
-                                "provider_cancelled": true,
-                            }),
+            eprintln!(
+                "prompt debug: validating {} provider={} content={}",
+                req.session_key, self.agent.provider_id, req.input.content
+            );
+            validate_provider_slash_command_support(&self.agent.provider_id, &req.input.content)?;
+            eprintln!("prompt debug: validated {}", req.session_key);
+            match parse_native_crp_slash_command_for_provider(
+                &self.agent.provider_id,
+                &req.input.content,
+            ) {
+                Some(CrpSlashCommand::Compact) => {
+                    session
+                        .process
+                        .send(CrpCommand::SessionCompact {
+                            session_id: Some(req.session_key.clone()),
+                            turn_id: Some(turn_id.clone()),
                         })
-                        .await;
-                    break;
+                        .await?;
                 }
-                stderr = stderr_rx.recv() => {
-                    match stderr {
-                        Ok(line) => {
-                            if last_seq == 0 {
-                                if let Some(message) = extract_runtime_fatal_error_from_stderr_line(&line) {
-                                    session.process.shutdown("crp_runtime_fatal_stderr").await;
-                                    anyhow::bail!("{message}");
+                Some(CrpSlashCommand::Undo) => {
+                    session
+                        .process
+                        .send(CrpCommand::SessionUndo {
+                            session_id: Some(req.session_key.clone()),
+                            turn_id: Some(turn_id.clone()),
+                        })
+                        .await?;
+                }
+                Some(CrpSlashCommand::Review { instructions }) => {
+                    session
+                        .process
+                        .send(CrpCommand::SessionReview {
+                            session_id: Some(req.session_key.clone()),
+                            turn_id: Some(turn_id.clone()),
+                            instructions,
+                        })
+                        .await?;
+                }
+                None => {
+                    let items = build_prompt_items(&req.input, &req.workdir, &req.env).await?;
+                    let (prompt_items, prompt) =
+                        if provider_requires_flattened_text_prompt(&self.agent.provider_id) {
+                            (None, Some(flatten_prompt_items_as_text(&items)?))
+                        } else {
+                            (Some(items), Some(req.input.content.clone()))
+                        };
+                    let (model, reasoning_effort) = if model_override_disabled(&req.env) {
+                        (None, None)
+                    } else {
+                        req.input
+                            .model_id
+                            .as_deref()
+                            .map(split_model_id_and_effort)
+                            .unwrap_or((None, None))
+                    };
+                    let prompt_cwd = translate_thread_cwd_for_container(&req.env, &req.workdir)?;
+                    session
+                        .process
+                        .send(CrpCommand::SessionPrompt {
+                            session_id: Some(req.session_key.clone()),
+                            turn_id: Some(turn_id.clone()),
+                            items: prompt_items,
+                            prompt,
+                            model,
+                            reasoning_effort,
+                            cwd: Some(prompt_cwd),
+                        })
+                        .await?;
+                }
+            }
+
+            let mut last_seq = 0u64;
+            let mut tool_output_cache: HashMap<String, String> = HashMap::new();
+            let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
+            let dump_norm_path = std::env::var("CTX_CRP_DUMP_NORMALIZED_EVENTS_PATH")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            let mut dump_norm_file = dump_norm_path.as_deref().and_then(|path| {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .ok()
+            });
+            let mut cancel_rx = req.cancel_rx;
+            let mut cancel_requested = false;
+            let mut cancel_deadline: Option<tokio::time::Instant> = None;
+            loop {
+                tokio::select! {
+                    _ = &mut cancel_rx, if !cancel_requested => {
+                        let _ = session.process.send(CrpCommand::SessionCancel {
+                            session_id: Some(req.session_key.clone()),
+                            turn_id: Some(turn_id.clone()),
+                        }).await;
+                        cancel_requested = true;
+                        cancel_deadline = Some(tokio::time::Instant::now() + CRP_CANCEL_DRAIN_TIMEOUT);
+                    }
+                    _ = async {
+                        if let Some(deadline) = cancel_deadline {
+                            tokio::time::sleep_until(deadline).await;
+                        }
+                    }, if cancel_requested && cancel_deadline.is_some() => {
+                        break;
+                    }
+                    shutdown = shutdown_rx.changed() => {
+                        let reason = match shutdown {
+                            Ok(()) => shutdown_rx
+                                .borrow()
+                                .clone()
+                                .unwrap_or_else(|| "crp_shutdown".to_string()),
+                            Err(_) => "crp_shutdown".to_string(),
+                        };
+                        let _ = req
+                            .event_sink
+                            .send(NormalizedEvent {
+                                event_type: SessionEventType::TurnInterrupted,
+                                payload_json: json!({
+                                    "reason": reason,
+                                    "provider_cancelled": true,
+                                }),
+                            })
+                            .await;
+                        break;
+                    }
+                    stderr = stderr_rx.recv() => {
+                        match stderr {
+                            Ok(line) => {
+                                if last_seq == 0 {
+                                    if let Some(message) = extract_runtime_fatal_error_from_stderr_line(&line) {
+                                        session.process.shutdown("crp_runtime_fatal_stderr").await;
+                                        anyhow::bail!("{message}");
+                                    }
                                 }
                             }
+                            Err(broadcast::error::RecvError::Lagged(_)) => {}
+                            Err(broadcast::error::RecvError::Closed) => {}
                         }
-                        Err(broadcast::error::RecvError::Lagged(_)) => {}
-                        Err(broadcast::error::RecvError::Closed) => {}
                     }
-                }
-                recv = rx.recv() => {
-                    match recv {
-                        Ok(env) => {
-                            if !event_matches_session(&env.event, &req.session_key) {
-                                continue;
-                            }
-                            if let Some(event_turn_id) = event_turn_id(&env.event) {
-                                if event_turn_id != turn_id {
+                    recv = rx.recv() => {
+                        match recv {
+                            Ok(env) => {
+                                if !event_matches_session(&env.event, &req.session_key) {
                                     continue;
                                 }
-                            }
-                            if env.seq <= last_seq {
-                                continue;
-                            }
-                            last_seq = env.seq;
-                            if matches!(
-                                &env.event,
-                                CrpEvent::SessionNotice { code, .. }
-                                    if code == "session_status" || code == "session_status_failed"
-                            ) {
-                                continue;
-                            }
-                            if let CrpEvent::SessionOpened {
-                                supports_session_status,
-                                ..
-                            } = &env.event
-                            {
-                                session.opened.store(true, Ordering::SeqCst);
-                                session.opening.store(false, Ordering::SeqCst);
-                                let default_support =
-                                    session.status_supported.load(Ordering::SeqCst);
-                                session.status_supported.store(
-                                    supports_session_status.unwrap_or(default_support),
-                                    Ordering::SeqCst,
-                                );
-                            }
-                            let auth_required = matches!(
-                                &env.event,
-                                CrpEvent::SessionNotice { code, .. } if code == "auth_required"
-                            );
-                            if auth_required {
-                                session.opening.store(false, Ordering::SeqCst);
-                            }
-                            let mapped = map_crp_event(
-                                env.event,
-                                env.channel,
-                                env.seq,
-                                &mut tool_output_cache,
-                                &mut tool_input_cache,
-                            );
-                            for event in mapped.events {
-                                if let Some(f) = dump_norm_file.as_mut() {
-                                    let _ = writeln!(
-                                        f,
-                                        "{}",
-                                        json!({
-                                            "session_key": req.session_key,
-                                            "turn_id": turn_id,
-                                            "crp_seq": env.seq,
-                                            "event_type": format!("{:?}", event.event_type),
-                                            "payload_json": event.payload_json,
-                                        })
+                                if let Some(event_turn_id) = event_turn_id(&env.event) {
+                                    if event_turn_id != turn_id {
+                                        continue;
+                                    }
+                                }
+                                if env.seq <= last_seq {
+                                    continue;
+                                }
+                                last_seq = env.seq;
+                                if matches!(
+                                    &env.event,
+                                    CrpEvent::SessionNotice { code, .. }
+                                        if code == "session_status" || code == "session_status_failed"
+                                ) {
+                                    continue;
+                                }
+                                if let CrpEvent::SessionOpened {
+                                    supports_session_status,
+                                    ..
+                                } = &env.event
+                                {
+                                    session.opened.store(true, Ordering::SeqCst);
+                                    session.opening.store(false, Ordering::SeqCst);
+                                    let default_support =
+                                        session.status_supported.load(Ordering::SeqCst);
+                                    session.status_supported.store(
+                                        supports_session_status.unwrap_or(default_support),
+                                        Ordering::SeqCst,
                                     );
                                 }
-                                let _ = req.event_sink.send(event).await;
+                                let auth_required = matches!(
+                                    &env.event,
+                                    CrpEvent::SessionNotice { code, .. } if code == "auth_required"
+                                );
+                                if auth_required {
+                                    session.opening.store(false, Ordering::SeqCst);
+                                }
+                                let mapped = map_crp_event(
+                                    env.event,
+                                    env.channel,
+                                    env.seq,
+                                    &mut tool_output_cache,
+                                    &mut tool_input_cache,
+                                );
+                                for event in mapped.events {
+                                    if let Some(f) = dump_norm_file.as_mut() {
+                                        let _ = writeln!(
+                                            f,
+                                            "{}",
+                                            json!({
+                                                "session_key": req.session_key,
+                                                "turn_id": turn_id,
+                                                "crp_seq": env.seq,
+                                                "event_type": format!("{:?}", event.event_type),
+                                                "payload_json": event.payload_json,
+                                            })
+                                        );
+                                    }
+                                    let _ = req.event_sink.send(event).await;
+                                }
+                                if auth_required {
+                                    let _ = req
+                                        .event_sink
+                                        .send(NormalizedEvent {
+                                            event_type: SessionEventType::TurnInterrupted,
+                                            payload_json: json!({
+                                                "reason": "auth_required",
+                                            }),
+                                        })
+                                        .await;
+                                    break;
+                                }
+                                if mapped.done {
+                                    break;
+                                }
                             }
-                            if auth_required {
+                            Err(broadcast::error::RecvError::Lagged(_)) => {
+                                let payload = json!({
+                                    "kind": "session_gap",
+                                    "reason": "crp_receiver_lagged",
+                                });
                                 let _ = req
                                     .event_sink
                                     .send(NormalizedEvent {
-                                        event_type: SessionEventType::TurnInterrupted,
-                                        payload_json: json!({
-                                            "reason": "auth_required",
-                                        }),
+                                        event_type: SessionEventType::Notice,
+                                        payload_json: payload,
                                     })
                                     .await;
-                                break;
                             }
-                            if mapped.done {
-                                break;
-                            }
+                            Err(broadcast::error::RecvError::Closed) => break,
                         }
-                        Err(broadcast::error::RecvError::Lagged(_)) => {
-                            let payload = json!({
-                                "kind": "session_gap",
-                                "reason": "crp_receiver_lagged",
-                            });
-                            let _ = req
-                                .event_sink
-                                .send(NormalizedEvent {
-                                    event_type: SessionEventType::Notice,
-                                    payload_json: payload,
-                                })
-                                .await;
-                        }
-                        Err(broadcast::error::RecvError::Closed) => break,
                     }
                 }
             }
+            Ok(())
         }
+        .await;
 
         if !session.opened.load(Ordering::SeqCst) {
             session.opening.store(false, Ordering::SeqCst);
@@ -542,7 +551,7 @@ impl CrpSessionPool {
         session.touch();
         self.drain_session_if_needed(&req.session_key, &session)
             .await;
-        Ok(())
+        result
     }
 
     pub(super) async fn get_or_create_session(

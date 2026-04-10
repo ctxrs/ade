@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use base64::Engine as _;
 use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Duration;
@@ -344,7 +345,7 @@ async fn prompt_fails_fast_on_fatal_startup_stderr_and_shuts_down_runtime() -> R
     fs::set_permissions(&script_path, permissions)?;
 
     let adapter = Tier1CrpAdapter::from_raw(
-        "codex",
+        "opencode",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -565,7 +566,7 @@ async fn reap_idle_sessions_reaps_quiescent_live_session() -> Result<()> {
     let workdir = tempdir.path().to_path_buf();
     let script_path = write_session_status_runtime(&workdir, "quiescent-status.sh", true)?;
     let adapter = Tier1CrpAdapter::from_raw(
-        "fake-crp",
+        "codex",
         "/bin/sh".to_string(),
         vec![script_path.to_string_lossy().to_string()],
     );
@@ -1206,6 +1207,99 @@ done
     let _ = tokio::time::timeout(Duration::from_secs(5), prompt_task)
         .await
         .context("timed out waiting for canceled prompt")??;
+
+    let stats = adapter
+        .pool
+        .reap_idle_sessions(immediate_sweep_config())
+        .await;
+
+    assert_eq!(
+        stats,
+        ProviderSessionSweepStats {
+            reaped: 1,
+            ..ProviderSessionSweepStats::default()
+        }
+    );
+    assert!(!adapter.has_live_session(session_key).await);
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_setup_error_clears_opening_and_reaps_unopened_session() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("opening-setup-error.sh");
+    let log_path = workdir.join("opening-setup-error.log");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "codex",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "opening-setup-error";
+    let mut env = HashMap::new();
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+
+    let (event_tx, _event_rx) = mpsc::channel(8);
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let request = CrpPromptRequest {
+        session_key: session_key.to_string(),
+        input: TurnInput {
+            content: "please inspect this image".to_string(),
+            attachments: vec![ctx_core::models::MessageAttachment::Image {
+                mime_type: "image/png".to_string(),
+                data_base64: base64::engine::general_purpose::STANDARD.encode(b"png"),
+                name: Some("fixture.png".to_string()),
+            }],
+            context_blocks: Vec::new(),
+            model_id: None,
+        },
+        workdir: workdir.clone(),
+        env,
+        event_sink: event_tx,
+        cancel_rx,
+    };
+
+    let err = adapter
+        .pool
+        .prompt(request)
+        .await
+        .expect_err("non-text prompt items should fail prompt setup");
+    assert!(err
+        .to_string()
+        .contains("provider requires text-only ACP prompt items"));
+
+    let started = Instant::now();
+    loop {
+        if let Ok(contents) = fs::read_to_string(&log_path) {
+            if contents.contains(r#""type":"session.open""#) {
+                assert!(
+                    !contents.contains(r#""type":"session.prompt""#),
+                    "prompt send should not happen after setup validation fails"
+                );
+                break;
+            }
+        }
+        if started.elapsed() > Duration::from_secs(5) {
+            anyhow::bail!("timed out waiting for session.open capture");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 
     let stats = adapter
         .pool
