@@ -120,18 +120,6 @@ pub(crate) use ctx_harness_runtime::{
 
 #[cfg(test)]
 const SANDBOX_MACHINE_CACHE_DIR_ENV: &str = "CTX_SANDBOX_MACHINE_CACHE_DIR";
-const EGRESS_PROXY_BINARY: &str = "ctx-egress-proxy";
-const EGRESS_PROXY_RUNTIME_ID: &str = "ctx-egress-proxy";
-const EGRESS_PROXY_CONFIG_NAME: &str = "egress-proxy.json";
-const TRANSPARENT_PROXY_PORT: u16 = 15001;
-const EGRESS_PROXY_CONTAINER_PATH: &str = "/usr/local/bin/ctx-egress-proxy";
-// Dedicated Sandbox machine name prefix for ctx-managed container execution on macOS/Windows.
-//
-// Final machine name is deterministic per daemon data_root to avoid cross-daemon collisions in
-// the sandbox CLI helper's host-global machine temp/socket state.
-const CTX_SANDBOX_MACHINE_PREFIX: &str = "ctx";
-// In-container root for disk-isolated workspaces (sandbox workspace volume mounted here).
-pub(crate) use ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT;
 pub(crate) const CTX_AVF_REAL_GUEST_EXEC_ENV: &str = "CTX_AVF_REAL_GUEST_EXEC";
 #[cfg(test)]
 const SANDBOX_INFO_TIMEOUT: Duration = Duration::from_secs(5);

@@ -15,6 +15,7 @@ test("agent gate crate list keeps the expected ctx-http-centered fast gate", () 
     "ctx-core",
     "ctx-fs",
     "ctx-harness-setup",
+    "ctx-harness-runtime",
     "ctx-harness-sources",
     "ctx-http",
     "ctx-lsp",
@@ -30,6 +31,7 @@ test("agent gate crate list keeps the expected ctx-http-centered fast gate", () 
     "ctx-store",
     "ctx-storage-admission",
     "ctx-worktree-data-plane",
+    "ctx-workspace-container",
     "ctx-workspace-active-snapshot",
   ]);
 });
@@ -84,6 +86,7 @@ test("mixed test strategy keeps the Bazel-covered slice explicit", () => {
     "ctx-bundled-assets",
     "ctx-core",
     "ctx-fs",
+    "ctx-harness-runtime",
     "ctx-harness-setup",
     "ctx-harness-sources",
     "ctx-linux-sandbox-runtime",
@@ -97,6 +100,7 @@ test("mixed test strategy keeps the Bazel-covered slice explicit", () => {
     "ctx-sandbox-materialization",
     "ctx-storage-admission",
     "ctx-workspace-active-snapshot",
+    "ctx-workspace-container",
     "ctx-worktree-data-plane",
   ]);
 });

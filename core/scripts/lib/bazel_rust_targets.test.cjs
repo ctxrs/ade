@@ -13,6 +13,7 @@ test("Bazel-covered crates stay on the intended explicit Rust slice", () => {
     "ctx-bundled-assets",
     "ctx-core",
     "ctx-fs",
+    "ctx-harness-runtime",
     "ctx-harness-setup",
     "ctx-harness-sources",
     "ctx-linux-sandbox-runtime",
@@ -26,6 +27,7 @@ test("Bazel-covered crates stay on the intended explicit Rust slice", () => {
     "ctx-sandbox-materialization",
     "ctx-storage-admission",
     "ctx-workspace-active-snapshot",
+    "ctx-workspace-container",
     "ctx-worktree-data-plane",
   ]);
 });
