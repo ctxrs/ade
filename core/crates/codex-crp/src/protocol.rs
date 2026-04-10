@@ -57,6 +57,8 @@ pub enum CrpCommand {
         session_id: Option<String>,
         model_id: Option<String>,
     },
+    #[serde(rename = "session.status")]
+    SessionStatus { session_id: Option<String> },
     #[serde(rename = "session.cancel")]
     SessionCancel {
         session_id: Option<String>,

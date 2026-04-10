@@ -42,6 +42,45 @@ pub struct ThreadRef {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ThreadLoadedListResponse {
+    pub data: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadReadResponse {
+    pub thread: ThreadStatusRef,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadStatusRef {
+    pub id: String,
+    pub status: ThreadStatus,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ThreadStatus {
+    NotLoaded,
+    Idle,
+    SystemError,
+    Active {
+        #[allow(dead_code)]
+        #[serde(default)]
+        active_flags: Vec<ThreadActiveFlag>,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ThreadActiveFlag {
+    WaitingOnApproval,
+    WaitingOnUserInput,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ThreadStartLikeResponse {
     pub thread: ThreadRef,
     pub model: String,

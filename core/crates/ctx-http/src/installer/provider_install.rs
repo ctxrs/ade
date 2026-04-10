@@ -474,7 +474,7 @@ pub(super) async fn install_provider_impl(
             bridge_cmd.as_ref(),
         )?;
         let adapter: std::sync::Arc<Tier1CrpAdapter> = std::sync::Arc::new(
-            Tier1CrpAdapter::from_raw(&provider_id, runtime_cmd.command, runtime_cmd.args),
+            Tier1CrpAdapter::from_provider_runtime(&provider_id, runtime_cmd.command, runtime_cmd.args),
         );
 
         // Refresh the in-memory adapter so new Sessions use the managed install.

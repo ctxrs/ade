@@ -1,13 +1,12 @@
-use std::collections::{HashMap, HashSet};
-use std::io::Write;
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::json;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::Duration;
 use uuid::Uuid;
 
@@ -15,9 +14,9 @@ use ctx_core::models::SessionEventType;
 
 use crate::adapters::{
     ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderProcessInfo,
-    ProviderRestartMode, ProviderStatus, RunHandle, TurnInput,
+    ProviderRestartMode, ProviderSessionSweepConfig, ProviderSessionSweepStats, ProviderStatus,
+    RunHandle, TurnInput,
 };
-use crate::container_exec::translate_thread_cwd_for_container;
 use crate::events::NormalizedEvent;
 
 mod config;
@@ -27,22 +26,19 @@ mod policy;
 mod probe;
 mod protocol;
 mod runtime;
+mod session_pool;
 #[cfg(test)]
 mod tests;
 mod unknown_event;
 
-use self::config::{
-    build_crp_session_config, build_prompt_items, flatten_prompt_items_as_text,
-    model_override_disabled, provider_requires_flattened_text_prompt, split_model_id_and_effort,
-};
-use self::normalize::{event_matches_session, event_turn_id, map_crp_event, CachedToolInput};
-use self::policy::{
-    extract_auth_error_from_stderr_line, extract_auth_url_from_stderr_line,
-    extract_runtime_fatal_error_from_stderr_line, parse_native_crp_slash_command_for_provider,
-    validate_provider_slash_command_support, CrpSlashCommand,
-};
+use self::config::build_crp_session_config;
+use self::normalize::{event_matches_session, map_crp_event, CachedToolInput};
+use self::policy::{extract_auth_error_from_stderr_line, extract_auth_url_from_stderr_line};
 use self::protocol::{CrpCommand, CrpEvent};
-use self::runtime::{resolve_explicit_command_path, CrpAgentConfig, CrpProcess};
+use self::runtime::{resolve_explicit_command_path, CrpAgentConfig};
+#[cfg(test)]
+use self::session_pool::session_shutdown_reason;
+use self::session_pool::{CrpPromptRequest, CrpSessionPool};
 
 pub use self::protocol::{CrpModelInfo, CrpModelsProbe};
 pub(crate) use self::runtime::rewrite_bundled_path_for_linux;
@@ -54,7 +50,7 @@ const CRP_RUNTIME_LAUNCH_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const CRP_RUNTIME_LAUNCH_PROBE_TIMEOUT_CONTAINER: Duration = Duration::from_secs(5);
 const CRP_AUTH_EVENT_FORWARD_TIMEOUT: Duration = Duration::from_secs(60 * 10);
 const CRP_SESSION_MODEL_UPDATE_TIMEOUT: Duration = Duration::from_secs(5);
-const CRP_CANCEL_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+pub(super) const CRP_CANCEL_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const CODEX_CRP_DUMP_CODEX_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CODEX_EVENTS_PATH";
 const CODEX_CRP_DUMP_CRP_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CRP_EVENTS_PATH";
 
@@ -74,8 +70,12 @@ pub struct Tier1CrpAdapter {
     pool: Arc<CrpSessionPool>,
 }
 
+fn provider_supports_session_status(id: &str) -> bool {
+    matches!(id, "codex" | "codex-crp" | "claude" | "claude-crp")
+}
+
 impl Tier1CrpAdapter {
-    fn new(id: &str, command: &str, args: Vec<String>) -> Self {
+    fn new(id: &str, command: &str, args: Vec<String>, supports_session_status: bool) -> Self {
         let agent = CrpAgentConfig {
             provider_id: id.to_string(),
             command: command.to_string(),
@@ -84,20 +84,33 @@ impl Tier1CrpAdapter {
         Self {
             id: id.to_string(),
             command: command.to_string(),
-            pool: Arc::new(CrpSessionPool::new(agent)),
+            pool: Arc::new(CrpSessionPool::new(agent, supports_session_status)),
         }
     }
 
     pub fn from_raw(id: &str, command: String, args: Vec<String>) -> Self {
-        Self::new(id, &command, args)
+        Self::new(id, &command, args, true)
+    }
+
+    pub fn from_provider_runtime(id: &str, command: String, args: Vec<String>) -> Self {
+        Self::new(id, &command, args, provider_supports_session_status(id))
+    }
+
+    pub fn from_raw_with_session_status(
+        id: &str,
+        command: String,
+        args: Vec<String>,
+        supports_session_status: bool,
+    ) -> Self {
+        Self::new(id, &command, args, supports_session_status)
     }
 
     pub fn codex() -> Self {
-        Self::new("codex", "codex", vec![])
+        Self::from_provider_runtime("codex", "codex".to_string(), vec![])
     }
 
     pub fn claude() -> Self {
-        Self::new("claude-crp", "claude-crp", vec![])
+        Self::from_provider_runtime("claude-crp", "claude-crp".to_string(), vec![])
     }
 }
 
@@ -201,15 +214,27 @@ impl ProviderAdapter for Tier1CrpAdapter {
     }
 
     async fn restart(&self, reason: &str, mode: ProviderRestartMode) -> Result<()> {
-        self.pool.restart(reason, mode).await
+        match mode {
+            ProviderRestartMode::Immediate => self.pool.restart_immediate(reason).await,
+            ProviderRestartMode::Drain => self.pool.restart_drain(reason).await,
+        }
+        Ok(())
     }
 
     async fn has_live_session(&self, session_key: &str) -> bool {
         self.pool.has_session(session_key).await
     }
 
+    fn supports_resume(&self) -> bool {
+        matches!(
+            self.id.as_str(),
+            "codex" | "codex-crp" | "claude" | "claude-crp"
+        )
+    }
+
     async fn set_session_model(&self, session_key: String, model_id: String) -> Result<()> {
         let session = self.pool.require_open_session(&session_key).await?;
+        session.touch();
         let mut rx = session.process.events.subscribe();
         let mut shutdown_rx = session.process.shutdown.subscribe();
         session
@@ -424,6 +449,13 @@ impl ProviderAdapter for Tier1CrpAdapter {
         });
         Ok(())
     }
+
+    async fn reap_idle_sessions(
+        &self,
+        config: ProviderSessionSweepConfig,
+    ) -> Result<ProviderSessionSweepStats> {
+        Ok(self.pool.reap_idle_sessions(config).await)
+    }
 }
 
 fn default_caps(id: &str) -> ProviderCapabilities {
@@ -434,7 +466,7 @@ fn default_caps(id: &str) -> ProviderCapabilities {
         has_tool_call_ids: true,
         has_file_change_events: false,
         has_command_events: false,
-        supports_resume: matches!(id, "codex"),
+        supports_resume: matches!(id, "codex" | "codex-crp" | "claude" | "claude-crp"),
         supports_stable_session_id: true,
         supports_fork_or_rewind: false,
         supports_headless: true,
@@ -445,510 +477,6 @@ fn default_caps(id: &str) -> ProviderCapabilities {
         supports_approval_flags: false,
         notes: vec![],
     }
-}
-
-struct CrpSessionPool {
-    agent: CrpAgentConfig,
-    sessions: Mutex<HashMap<String, Arc<CrpSession>>>,
-    active_prompts: Arc<StdMutex<HashSet<String>>>,
-}
-
-fn session_shutdown_reason(session: &CrpSession) -> Option<String> {
-    session.process.shutdown.borrow().clone()
-}
-
-fn session_is_live(session: &CrpSession) -> bool {
-    !session.draining.load(Ordering::SeqCst) && session_shutdown_reason(session).is_none()
-}
-
-impl CrpSessionPool {
-    fn new(agent: CrpAgentConfig) -> Self {
-        Self {
-            agent,
-            sessions: Mutex::new(HashMap::new()),
-            active_prompts: Arc::new(StdMutex::new(HashSet::new())),
-        }
-    }
-
-    async fn list_processes(&self) -> Vec<ProviderProcessInfo> {
-        let sessions = self.sessions.lock().await;
-        let mut out = Vec::new();
-        for (session_id, session) in sessions.iter() {
-            if let Some(pid) = session.process.pid().await {
-                out.push(ProviderProcessInfo {
-                    provider_id: self.agent.provider_id.clone(),
-                    pid,
-                    label: Some(session_id.clone()),
-                });
-            }
-        }
-        out
-    }
-
-    async fn has_session(&self, session_key: &str) -> bool {
-        let sessions = self.sessions.lock().await;
-        match sessions.get(session_key) {
-            Some(session) => session_is_live(session),
-            None => false,
-        }
-    }
-
-    async fn require_open_session(&self, session_key: &str) -> Result<Arc<CrpSession>> {
-        let sessions = self.sessions.lock().await;
-        let session = sessions
-            .get(session_key)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("provider session {session_key} is not live"))?;
-        drop(sessions);
-        if !session_is_live(&session) {
-            anyhow::bail!("provider session {session_key} is not live");
-        }
-        if !session.opened.load(Ordering::SeqCst) {
-            anyhow::bail!("provider session {session_key} is not open");
-        }
-        Ok(session)
-    }
-
-    async fn restart(&self, reason: &str, mode: ProviderRestartMode) -> Result<()> {
-        match mode {
-            ProviderRestartMode::Immediate => {
-                self.restart_immediate(reason).await;
-                Ok(())
-            }
-            ProviderRestartMode::Drain => {
-                self.restart_drain(reason).await;
-                Ok(())
-            }
-        }
-    }
-
-    async fn restart_immediate(&self, reason: &str) {
-        let sessions = {
-            let mut guard = self.sessions.lock().await;
-            guard.drain().collect::<Vec<_>>()
-        };
-        for (session_key, session) in sessions {
-            session
-                .process
-                .shutdown(&format!("{reason}: immediate restart ({session_key})"))
-                .await;
-        }
-    }
-
-    async fn restart_drain(&self, reason: &str) {
-        let active = self.active_prompt_snapshot();
-        let sessions_to_kill = {
-            let mut guard = self.sessions.lock().await;
-            let mut to_kill = Vec::new();
-            for (session_key, session) in guard.iter() {
-                session.draining.store(true, Ordering::SeqCst);
-                if !active.contains(session_key) {
-                    to_kill.push((session_key.clone(), Arc::clone(session)));
-                }
-            }
-            for (session_key, _) in &to_kill {
-                guard.remove(session_key);
-            }
-            to_kill
-        };
-
-        for (session_key, session) in sessions_to_kill {
-            session
-                .process
-                .shutdown(&format!("{reason}: drain idle ({session_key})"))
-                .await;
-        }
-    }
-
-    fn active_prompt_snapshot(&self) -> HashSet<String> {
-        let Ok(guard) = self.active_prompts.lock() else {
-            return HashSet::new();
-        };
-        guard.iter().cloned().collect()
-    }
-
-    async fn drain_session_if_needed(&self, session_key: &str, session: &Arc<CrpSession>) {
-        if !session.draining.load(Ordering::SeqCst) {
-            return;
-        }
-        let should_remove = {
-            let mut guard = self.sessions.lock().await;
-            let Some(current) = guard.get(session_key) else {
-                return;
-            };
-            if !Arc::ptr_eq(current, session) {
-                return;
-            }
-            guard.remove(session_key);
-            true
-        };
-        if should_remove {
-            session
-                .process
-                .shutdown(&format!("drain completed ({session_key})"))
-                .await;
-        }
-    }
-
-    async fn prompt(&self, req: CrpPromptRequest) -> Result<()> {
-        let _guard =
-            ActivePromptGuard::new(Arc::clone(&self.active_prompts), req.session_key.clone())?;
-        let session = self
-            .get_or_create_session(&req.session_key, &req.workdir, &req.env)
-            .await?;
-
-        let turn_id = format!("crp-{}", Uuid::new_v4());
-        let mut rx = session.process.events.subscribe();
-        let mut stderr_rx = session.process.stderr_lines.subscribe();
-        let mut shutdown_rx = session.process.shutdown.subscribe();
-        let shutdown_reason = {
-            let reason = shutdown_rx.borrow().clone();
-            reason
-        };
-        if let Some(reason) = shutdown_reason {
-            let _ = req
-                .event_sink
-                .send(NormalizedEvent {
-                    event_type: SessionEventType::TurnInterrupted,
-                    payload_json: json!({
-                        "reason": reason,
-                        "provider_cancelled": true,
-                    }),
-                })
-                .await;
-            self.drain_session_if_needed(&req.session_key, &session)
-                .await;
-            return Ok(());
-        }
-
-        if !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst) {
-            let config = build_crp_session_config(&req.env, &req.workdir)?;
-            let provider_session_id = req
-                .env
-                .get("CTX_PROVIDER_SESSION_REF")
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty());
-            session.opening.store(true, Ordering::SeqCst);
-            session
-                .process
-                .send(CrpCommand::SessionOpen {
-                    session_id: Some(req.session_key.clone()),
-                    provider_session_id,
-                    config: Some(config),
-                })
-                .await?;
-        }
-        validate_provider_slash_command_support(&self.agent.provider_id, &req.input.content)?;
-        match parse_native_crp_slash_command_for_provider(
-            &self.agent.provider_id,
-            &req.input.content,
-        ) {
-            Some(CrpSlashCommand::Compact) => {
-                session
-                    .process
-                    .send(CrpCommand::SessionCompact {
-                        session_id: Some(req.session_key.clone()),
-                        turn_id: Some(turn_id.clone()),
-                    })
-                    .await?;
-            }
-            Some(CrpSlashCommand::Undo) => {
-                session
-                    .process
-                    .send(CrpCommand::SessionUndo {
-                        session_id: Some(req.session_key.clone()),
-                        turn_id: Some(turn_id.clone()),
-                    })
-                    .await?;
-            }
-            Some(CrpSlashCommand::Review { instructions }) => {
-                session
-                    .process
-                    .send(CrpCommand::SessionReview {
-                        session_id: Some(req.session_key.clone()),
-                        turn_id: Some(turn_id.clone()),
-                        instructions,
-                    })
-                    .await?;
-            }
-            None => {
-                let items = build_prompt_items(&req.input, &req.workdir, &req.env).await?;
-                let (prompt_items, prompt) =
-                    if provider_requires_flattened_text_prompt(&self.agent.provider_id) {
-                        (None, Some(flatten_prompt_items_as_text(&items)?))
-                    } else {
-                        (Some(items), Some(req.input.content.clone()))
-                    };
-                let (model, reasoning_effort) = if model_override_disabled(&req.env) {
-                    (None, None)
-                } else {
-                    req.input
-                        .model_id
-                        .as_deref()
-                        .map(split_model_id_and_effort)
-                        .unwrap_or((None, None))
-                };
-                let prompt_cwd = translate_thread_cwd_for_container(&req.env, &req.workdir)?;
-                session
-                    .process
-                    .send(CrpCommand::SessionPrompt {
-                        session_id: Some(req.session_key.clone()),
-                        turn_id: Some(turn_id.clone()),
-                        items: prompt_items,
-                        prompt,
-                        model,
-                        reasoning_effort,
-                        cwd: Some(prompt_cwd),
-                    })
-                    .await?;
-            }
-        }
-        let mut last_seq = 0u64;
-        let mut tool_output_cache: HashMap<String, String> = HashMap::new();
-        let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
-        // Debugging aid: when set, dump normalized session events (post-CRP mapping) to this file.
-        // This lets us diff: raw Codex dump -> CRP stdout -> ctx-normalized events -> web UI.
-        let dump_norm_path = std::env::var("CTX_CRP_DUMP_NORMALIZED_EVENTS_PATH")
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
-        let mut dump_norm_file = dump_norm_path.as_deref().and_then(|path| {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-                .ok()
-        });
-        let mut cancel_rx = req.cancel_rx;
-        let mut cancel_requested = false;
-        let mut cancel_deadline: Option<tokio::time::Instant> = None;
-        loop {
-            tokio::select! {
-                _ = &mut cancel_rx, if !cancel_requested => {
-                    let _ = session.process.send(CrpCommand::SessionCancel {
-                        session_id: Some(req.session_key.clone()),
-                        turn_id: Some(turn_id.clone()),
-                    }).await;
-                    cancel_requested = true;
-                    cancel_deadline = Some(tokio::time::Instant::now() + CRP_CANCEL_DRAIN_TIMEOUT);
-                }
-                _ = async {
-                    if let Some(deadline) = cancel_deadline {
-                        tokio::time::sleep_until(deadline).await;
-                    }
-                }, if cancel_requested && cancel_deadline.is_some() => {
-                    break;
-                }
-                shutdown = shutdown_rx.changed() => {
-                    let reason = match shutdown {
-                        Ok(()) => {
-                            let current = shutdown_rx.borrow().clone();
-                            current.unwrap_or_else(|| "crp_shutdown".to_string())
-                        }
-                        Err(_) => "crp_shutdown".to_string(),
-                    };
-                    let _ = req
-                        .event_sink
-                        .send(NormalizedEvent {
-                            event_type: SessionEventType::TurnInterrupted,
-                            payload_json: json!({
-                                "reason": reason,
-                                "provider_cancelled": true,
-                            }),
-                        })
-                        .await;
-                    break;
-                }
-                stderr = stderr_rx.recv() => {
-                    match stderr {
-                        Ok(line) => {
-                            if last_seq == 0 {
-                                if let Some(message) = extract_runtime_fatal_error_from_stderr_line(&line) {
-                                    session.process.shutdown("crp_runtime_fatal_stderr").await;
-                                    anyhow::bail!("{message}");
-                                }
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Lagged(_)) => {}
-                        Err(broadcast::error::RecvError::Closed) => {}
-                    }
-                }
-                recv = rx.recv() => {
-                    match recv {
-                        Ok(env) => {
-                            if !event_matches_session(&env.event, &req.session_key) {
-                                continue;
-                            }
-                            if let Some(event_turn_id) = event_turn_id(&env.event) {
-                                if event_turn_id != turn_id {
-                                    continue;
-                                }
-                            }
-                            if env.seq <= last_seq {
-                                continue;
-                            }
-                            last_seq = env.seq;
-                            if matches!(&env.event, CrpEvent::SessionOpened { .. }) {
-                                session.opened.store(true, Ordering::SeqCst);
-                                session.opening.store(false, Ordering::SeqCst);
-                            }
-                            let auth_required = matches!(
-                                &env.event,
-                                CrpEvent::SessionNotice { code, .. } if code == "auth_required"
-                            );
-                            if auth_required {
-                                session.opening.store(false, Ordering::SeqCst);
-                            }
-                            let mapped = map_crp_event(
-                                env.event,
-                                env.channel,
-                                env.seq,
-                                &mut tool_output_cache,
-                                &mut tool_input_cache,
-                            );
-                            for event in mapped.events {
-                                if let Some(f) = dump_norm_file.as_mut() {
-                                    // Best-effort only; never fail the turn because debug dumping failed.
-                                    let _ = writeln!(
-                                        f,
-                                        "{}",
-                                        json!({
-                                            "session_key": req.session_key,
-                                            "turn_id": turn_id,
-                                            "crp_seq": env.seq,
-                                            "event_type": format!("{:?}", event.event_type),
-                                            "payload_json": event.payload_json,
-                                        })
-                                    );
-                                }
-                                let _ = req.event_sink.send(event).await;
-                            }
-                            if auth_required {
-                                let _ = req
-                                    .event_sink
-                                    .send(NormalizedEvent {
-                                        event_type: SessionEventType::TurnInterrupted,
-                                        payload_json: json!({
-                                            "reason": "auth_required",
-                                        }),
-                                    })
-                                    .await;
-                                break;
-                            }
-                            if mapped.done {
-                                break;
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Lagged(_)) => {
-                            let payload = json!({
-                                "kind": "session_gap",
-                                "reason": "crp_receiver_lagged",
-                            });
-                            let _ = req
-                                .event_sink
-                                .send(NormalizedEvent {
-                                    event_type: SessionEventType::Notice,
-                                    payload_json: payload,
-                                })
-                                .await;
-                        }
-                        Err(broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-            }
-        }
-
-        self.drain_session_if_needed(&req.session_key, &session)
-            .await;
-        Ok(())
-    }
-
-    async fn get_or_create_session(
-        &self,
-        session_key: &str,
-        workdir: &PathBuf,
-        env: &HashMap<String, String>,
-    ) -> Result<Arc<CrpSession>> {
-        let replaced = {
-            let mut sessions = self.sessions.lock().await;
-            if let Some(existing) = sessions.get(session_key) {
-                let shutdown_reason = session_shutdown_reason(existing);
-                if !existing.draining.load(Ordering::SeqCst) && shutdown_reason.is_none() {
-                    return Ok(Arc::clone(existing));
-                }
-                sessions
-                    .remove(session_key)
-                    .map(|session| (session, shutdown_reason))
-            } else {
-                None
-            }
-        };
-        if let Some((existing, shutdown_reason)) = replaced {
-            if shutdown_reason.is_none() {
-                existing
-                    .process
-                    .shutdown(&format!("drain replace ({session_key})"))
-                    .await;
-            }
-        }
-
-        let process = CrpProcess::spawn(&self.agent, workdir, env)
-            .await
-            .with_context(|| format!("spawning CRP runtime {}", self.agent.command))?;
-        let session = Arc::new(CrpSession {
-            process,
-            opened: AtomicBool::new(false),
-            opening: AtomicBool::new(false),
-            draining: AtomicBool::new(false),
-        });
-        let mut sessions = self.sessions.lock().await;
-        sessions.insert(session_key.to_string(), Arc::clone(&session));
-        Ok(session)
-    }
-}
-
-struct ActivePromptGuard {
-    session_key: String,
-    active_prompts: Arc<StdMutex<HashSet<String>>>,
-}
-
-impl ActivePromptGuard {
-    fn new(active_prompts: Arc<StdMutex<HashSet<String>>>, session_key: String) -> Result<Self> {
-        if let Ok(mut active) = active_prompts.lock() {
-            if active.contains(&session_key) {
-                anyhow::bail!("session {session_key} already has an active prompt");
-            }
-            active.insert(session_key.clone());
-        }
-        Ok(Self {
-            session_key,
-            active_prompts,
-        })
-    }
-}
-
-impl Drop for ActivePromptGuard {
-    fn drop(&mut self) {
-        if let Ok(mut active) = self.active_prompts.lock() {
-            active.remove(&self.session_key);
-        }
-    }
-}
-
-struct CrpSession {
-    process: Arc<CrpProcess>,
-    opened: AtomicBool,
-    opening: AtomicBool,
-    draining: AtomicBool,
-}
-
-struct CrpPromptRequest {
-    session_key: String,
-    input: TurnInput,
-    workdir: PathBuf,
-    env: HashMap<String, String>,
-    event_sink: mpsc::Sender<NormalizedEvent>,
-    cancel_rx: oneshot::Receiver<()>,
 }
 
 pub async fn probe_crp_models(

@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use chrono::Utc;
 
-use ctx_providers::adapters::{ProviderAdapter, ProviderRestartMode};
+use ctx_providers::adapters::{
+    ProviderAdapter, ProviderRestartMode, ProviderSessionSweepConfig, ProviderSessionSweepStats,
+};
 
 use super::{AppState, CacheSweepConfig};
 
@@ -33,6 +35,59 @@ pub(super) fn spawn_cache_sweeper(state: Arc<AppState>) {
                             worktree_bootstrap_evicted = stats.worktree_bootstrap_evicted,
                             workspace_stores_evicted = stats.workspace_stores_evicted,
                             "cache sweep completed"
+                        );
+                    }
+                }
+                _ = shutdown_rx.recv() => {
+                    break;
+                }
+            }
+        }
+    });
+}
+
+pub(crate) async fn sweep_provider_workers_once(
+    state: &Arc<AppState>,
+    config: ProviderSessionSweepConfig,
+) -> ProviderSessionSweepStats {
+    let mut stats = ProviderSessionSweepStats::default();
+    let mut seen = HashSet::<usize>::new();
+    for (_, adapter) in collect_provider_adapters_for_shutdown(state).await {
+        let identity = (Arc::as_ptr(&adapter) as *const ()) as usize;
+        if !seen.insert(identity) {
+            continue;
+        }
+        match adapter.reap_idle_sessions(config).await {
+            Ok(adapter_stats) => {
+                stats.reaped += adapter_stats.reaped;
+                stats.skipped_busy += adapter_stats.skipped_busy;
+                stats.dead_removed += adapter_stats.dead_removed;
+                stats.status_errors += adapter_stats.status_errors;
+            }
+            Err(err) => {
+                stats.status_errors += 1;
+                tracing::debug!(err = %err, "provider worker sweep failed");
+            }
+        }
+    }
+    stats
+}
+
+pub(super) fn spawn_provider_worker_sweeper(state: Arc<AppState>) {
+    let config = ProviderSessionSweepConfig::from_env();
+    tokio::spawn(async move {
+        let mut shutdown_rx = state.core.shutdown_tx.subscribe();
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(config.interval) => {
+                    let stats = sweep_provider_workers_once(&state, config).await;
+                    if stats.total_actions() > 0 || stats.skipped_busy > 0 || stats.status_errors > 0 {
+                        tracing::info!(
+                            reaped = stats.reaped,
+                            dead_removed = stats.dead_removed,
+                            skipped_busy = stats.skipped_busy,
+                            status_errors = stats.status_errors,
+                            "provider worker sweep completed"
                         );
                     }
                 }

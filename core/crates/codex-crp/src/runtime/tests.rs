@@ -149,3 +149,53 @@ fn canonical_context_window_matches_expected_shape() {
     assert_eq!(metrics["context_tokens_estimate"], json!(4200));
     assert_eq!(metrics["context_window_tokens"], json!(128000));
 }
+
+#[test]
+fn session_status_details_report_quiescent_when_loaded_threads_are_idle() {
+    let details = build_session_status_details(
+        "thr_root",
+        None,
+        vec![
+            (
+                "thr_root".to_string(),
+                crate::app_server::ThreadStatus::Idle,
+            ),
+            (
+                "thr_child".to_string(),
+                crate::app_server::ThreadStatus::Idle,
+            ),
+        ],
+    );
+
+    assert_eq!(details["quiescent"], json!(true));
+    assert_eq!(details["active_thread_ids"], json!([]));
+    assert_eq!(details["busy_reasons"], json!([]));
+}
+
+#[test]
+fn session_status_details_report_busy_for_active_loaded_thread_or_turn() {
+    let details = build_session_status_details(
+        "thr_root",
+        Some("turn-1".to_string()),
+        vec![
+            (
+                "thr_root".to_string(),
+                crate::app_server::ThreadStatus::Active {
+                    active_flags: Vec::new(),
+                },
+            ),
+            (
+                "thr_child".to_string(),
+                crate::app_server::ThreadStatus::Idle,
+            ),
+        ],
+    );
+
+    assert_eq!(details["quiescent"], json!(false));
+    assert_eq!(details["active_turn_id"], json!("turn-1"));
+    assert_eq!(details["active_thread_ids"], json!(["thr_root"]));
+    assert_eq!(
+        details["busy_reasons"],
+        json!(["active_turn", "loaded_thread_active"])
+    );
+}

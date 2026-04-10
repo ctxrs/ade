@@ -5,8 +5,8 @@ use std::{fs, path::Path as StdPath};
 
 use anyhow::{Context, Result};
 use ctx_providers::adapters::{
-    ProviderAdapter, ProviderHealth, ProviderProcessInfo, ProviderRestartMode, ProviderStatus,
-    RunHandle, TurnInput,
+    ProviderAdapter, ProviderHealth, ProviderProcessInfo, ProviderRestartMode,
+    ProviderSessionSweepConfig, ProviderSessionSweepStats, ProviderStatus, RunHandle, TurnInput,
 };
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
@@ -252,6 +252,13 @@ impl ProviderAdapter for OpenHandsRuntimeContractAdapter {
         self.inner.restart(reason, mode).await
     }
 
+    async fn reap_idle_sessions(
+        &self,
+        config: ProviderSessionSweepConfig,
+    ) -> Result<ProviderSessionSweepStats> {
+        self.inner.reap_idle_sessions(config).await
+    }
+
     async fn has_live_session(&self, session_key: &str) -> bool {
         self.inner.has_live_session(session_key).await
     }
@@ -403,8 +410,11 @@ pub(crate) fn acp_bridge_adapter(
         None
     };
     let bridged = acp_bridge_command(bridge_cmd, acp_cmd);
-    let inner: Arc<dyn ProviderAdapter> =
-        Arc::new(Tier1CrpAdapter::from_raw(id, bridged.command, bridged.args));
+    let inner: Arc<dyn ProviderAdapter> = Arc::new(Tier1CrpAdapter::from_provider_runtime(
+        id,
+        bridged.command,
+        bridged.args,
+    ));
     if let Some(contract) = contract {
         return Arc::new(OpenHandsRuntimeContractAdapter::new(inner, contract));
     }
@@ -701,7 +711,7 @@ fn build_provider_adapter_for_target(
 ) -> Arc<dyn ProviderAdapter> {
     if matches!(provider_id, "codex" | "claude-crp") {
         return match runtime_command_as_agent_command_for_target(cfg, provider_id, Some(target)) {
-            Ok(Some(cmd)) => Arc::new(Tier1CrpAdapter::from_raw(
+            Ok(Some(cmd)) => Arc::new(Tier1CrpAdapter::from_provider_runtime(
                 provider_id,
                 cmd.command.clone(),
                 cmd.args.clone(),

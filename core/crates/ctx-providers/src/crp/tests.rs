@@ -4,12 +4,64 @@ use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Duration;
 
 use super::*;
+
+static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+struct ScopedEnvVar {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl ScopedEnvVar {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for ScopedEnvVar {
+    fn drop(&mut self) {
+        if let Some(value) = &self.previous {
+            std::env::set_var(self.key, value);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
+
+fn immediate_sweep_config() -> ProviderSessionSweepConfig {
+    ProviderSessionSweepConfig {
+        idle_ttl: Duration::ZERO,
+        max_idle_sessions: 0,
+        interval: Duration::from_secs(60),
+    }
+}
+
+fn write_session_status_runtime(
+    workdir: &std::path::Path,
+    script_name: &str,
+    quiescent: bool,
+) -> Result<std::path::PathBuf> {
+    let script_path = workdir.join(script_name);
+    fs::write(
+        &script_path,
+        format!(
+            "#!/bin/sh\nwhile IFS= read -r line; do\n  if printf '%s' \"$line\" | grep -q '\"type\":\"session.status\"'; then\n    session_id=$(printf '%s' \"$line\" | sed -n 's/.*\"session_id\":\"\\([^\"]*\\)\".*/\\1/p')\n    printf '{{\"v\":1,\"seq\":1,\"channel\":\"control\",\"type\":\"session.notice\",\"session_id\":\"%s\",\"code\":\"session_status\",\"severity\":\"info\",\"message\":\"status\",\"details\":{{\"quiescent\":{quiescent}}}}}\\n' \"$session_id\"\n  fi\ndone\n",
+            quiescent = if quiescent { "true" } else { "false" },
+        ),
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+    Ok(script_path)
+}
 
 #[tokio::test]
 async fn set_session_model_writes_crp_command_for_live_session() -> Result<()> {
@@ -504,6 +556,614 @@ async fn shutdown_cached_session_is_not_live_and_gets_replaced() -> Result<()> {
     assert_eq!(session_shutdown_reason(&second), None);
 
     second.process.shutdown("test complete").await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn reap_idle_sessions_reaps_quiescent_live_session() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = write_session_status_runtime(&workdir, "quiescent-status.sh", true)?;
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "quiescent-reap";
+    let env = HashMap::new();
+
+    let _session = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &env)
+        .await?;
+
+    let stats = adapter
+        .pool
+        .reap_idle_sessions(immediate_sweep_config())
+        .await;
+
+    assert_eq!(
+        stats,
+        ProviderSessionSweepStats {
+            reaped: 1,
+            ..ProviderSessionSweepStats::default()
+        }
+    );
+    assert!(!adapter.has_live_session(session_key).await);
+    assert!(adapter.pool.list_processes().await.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn reap_idle_sessions_keeps_busy_session() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = write_session_status_runtime(&workdir, "busy-status.sh", false)?;
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "busy-reap";
+    let env = HashMap::new();
+
+    let session = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &env)
+        .await?;
+
+    let stats = adapter
+        .pool
+        .reap_idle_sessions(immediate_sweep_config())
+        .await;
+
+    assert_eq!(
+        stats,
+        ProviderSessionSweepStats {
+            skipped_busy: 1,
+            ..ProviderSessionSweepStats::default()
+        }
+    );
+    assert!(adapter.has_live_session(session_key).await);
+
+    session.process.shutdown("test complete").await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn reap_idle_sessions_removes_dead_sessions_without_status_probe() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec!["-c".into(), "cat >/dev/null".into()],
+    );
+    let session_key = "dead-reap";
+    let env = HashMap::new();
+
+    let session = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &env)
+        .await?;
+    session.process.shutdown("simulated runtime exit").await;
+
+    let stats = adapter
+        .pool
+        .reap_idle_sessions(immediate_sweep_config())
+        .await;
+
+    assert_eq!(
+        stats,
+        ProviderSessionSweepStats {
+            dead_removed: 1,
+            ..ProviderSessionSweepStats::default()
+        }
+    );
+    assert!(!adapter.has_live_session(session_key).await);
+    Ok(())
+}
+
+#[tokio::test]
+async fn reap_idle_sessions_skips_probe_for_runtimes_without_session_status() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("capture-idle.sh");
+    let log_path = workdir.join("capture-idle.log");
+
+    fs::write(
+        &script_path,
+        "#!/bin/sh\nwhile IFS= read -r line; do\n  printf '%s\\n' \"$line\" >> \"$LOG_FILE\"\ndone\n",
+    )?;
+    fs::write(&log_path, "")?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw_with_session_status(
+        "unsupported-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+        false,
+    );
+    let session_key = "unsupported-probe";
+    let mut env = HashMap::new();
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+
+    let session = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &env)
+        .await?;
+    session.opened.store(true, Ordering::SeqCst);
+
+    let stats = adapter
+        .pool
+        .reap_idle_sessions(immediate_sweep_config())
+        .await;
+
+    assert_eq!(stats, ProviderSessionSweepStats::default());
+    assert!(adapter.has_live_session(session_key).await);
+    let log_contents = fs::read_to_string(&log_path)?;
+    assert!(
+        !log_contents.contains(r#""type":"session.status""#),
+        "unsupported runtimes must not be probed for session.status"
+    );
+
+    session.process.shutdown("test complete").await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_or_create_session_over_cap_does_not_probe_status_inline() -> Result<()> {
+    let _env_lock = ENV_LOCK.lock().await;
+    let _max_idle_guard = ScopedEnvVar::set("CTX_PROVIDER_WORKER_MAX_IDLE_SESSIONS", "1");
+
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("capture-over-cap.sh");
+    let log_path = workdir.join("capture-over-cap.log");
+
+    fs::write(
+        &script_path,
+        "#!/bin/sh\nwhile IFS= read -r line; do\n  printf '%s\\n' \"$line\" >> \"$LOG_FILE\"\ndone\n",
+    )?;
+    fs::write(&log_path, "")?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_provider_runtime(
+        "codex",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let mut env = HashMap::new();
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+
+    let first = adapter
+        .pool
+        .get_or_create_session("first-session", &workdir, &env)
+        .await?;
+    first.opened.store(true, Ordering::SeqCst);
+
+    let second = tokio::time::timeout(
+        Duration::from_secs(1),
+        adapter
+            .pool
+            .get_or_create_session("second-session", &workdir, &env),
+    )
+    .await
+    .context("timed out creating second session over idle cap")??;
+    second.opened.store(true, Ordering::SeqCst);
+
+    let log_contents = fs::read_to_string(&log_path)?;
+    assert!(
+        !log_contents.contains(r#""type":"session.status""#),
+        "over-cap session creation must not synchronously probe session.status"
+    );
+
+    first.process.shutdown("test complete").await;
+    second.process.shutdown("test complete").await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn reap_idle_sessions_never_kills_active_prompt() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("active-prompt.sh");
+    let log_path = workdir.join("active-prompt.log");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+turn_id=""
+session_id=""
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
+  case "$line" in
+    *'"type":"session.prompt"'*)
+      turn_id=$(printf '%s' "$line" | sed -n 's/.*"turn_id":"\([^"]*\)".*/\1/p')
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      ;;
+    *'"type":"session.cancel"'*)
+      printf '{"v":1,"seq":1,"channel":"control","type":"turn.completed","session_id":"%s","turn_id":"%s","status":"interrupted"}\n' "$session_id" "$turn_id"
+      ;;
+  esac
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "active-reap";
+    let mut env = HashMap::new();
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+
+    let session = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &env)
+        .await?;
+    session.opened.store(true, Ordering::SeqCst);
+
+    let (event_tx, _event_rx) = mpsc::channel(8);
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let request = CrpPromptRequest {
+        session_key: session_key.to_string(),
+        input: TurnInput {
+            content: "work".to_string(),
+            attachments: Vec::new(),
+            context_blocks: Vec::new(),
+            model_id: None,
+        },
+        workdir: workdir.clone(),
+        env: env.clone(),
+        event_sink: event_tx,
+        cancel_rx,
+    };
+
+    let pool = Arc::clone(&adapter.pool);
+    let prompt_task = tokio::spawn(async move { pool.prompt(request).await });
+
+    let started = Instant::now();
+    loop {
+        if let Ok(contents) = fs::read_to_string(&log_path) {
+            if contents.contains(r#""type":"session.prompt""#) {
+                break;
+            }
+        }
+        if started.elapsed() > Duration::from_secs(5) {
+            anyhow::bail!("timed out waiting for active session.prompt");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let stats = adapter
+        .pool
+        .reap_idle_sessions(immediate_sweep_config())
+        .await;
+    assert_eq!(stats, ProviderSessionSweepStats::default());
+    assert!(adapter.has_live_session(session_key).await);
+
+    let log_contents = fs::read_to_string(&log_path)?;
+    assert!(
+        !log_contents.contains(r#""type":"session.status""#),
+        "active prompt session should not be status-probed"
+    );
+
+    cancel_tx.send(()).expect("cancel signal should send");
+    prompt_task.await??;
+    session.process.shutdown("test complete").await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn reap_idle_sessions_skips_session_that_becomes_active_during_status_probe() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("status-race.sh");
+    let log_path = workdir.join("status-race.log");
+    let status_seen_path = workdir.join("status-seen");
+    let allow_status_path = workdir.join("allow-status");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+turn_id=""
+session_id=""
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
+  case "$line" in
+    *'"type":"session.status"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      : > "$STATUS_SEEN_FILE"
+      while [ ! -f "$ALLOW_STATUS_FILE" ]; do
+        sleep 0.02
+      done
+      printf '{"v":1,"seq":1,"channel":"control","type":"session.notice","session_id":"%s","code":"session_status","severity":"info","message":"status","details":{"quiescent":true}}\n' "$session_id"
+      ;;
+    *'"type":"session.prompt"'*)
+      turn_id=$(printf '%s' "$line" | sed -n 's/.*"turn_id":"\([^"]*\)".*/\1/p')
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      ;;
+    *'"type":"session.cancel"'*)
+      printf '{"v":1,"seq":2,"channel":"control","type":"turn.completed","session_id":"%s","turn_id":"%s","status":"interrupted"}\n' "$session_id" "$turn_id"
+      ;;
+  esac
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "status-race-reap";
+    let mut env = HashMap::new();
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "STATUS_SEEN_FILE".to_string(),
+        status_seen_path.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "ALLOW_STATUS_FILE".to_string(),
+        allow_status_path.to_string_lossy().to_string(),
+    );
+
+    let session = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &env)
+        .await?;
+    session.opened.store(true, Ordering::SeqCst);
+    let initial_last_used = session.last_used();
+
+    let pool = Arc::clone(&adapter.pool);
+    let reap_task =
+        tokio::spawn(async move { pool.reap_idle_sessions(immediate_sweep_config()).await });
+
+    let started = Instant::now();
+    while !status_seen_path.exists() {
+        if started.elapsed() > Duration::from_secs(5) {
+            anyhow::bail!("timed out waiting for session.status probe");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let (event_tx, _event_rx) = mpsc::channel(8);
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let request = CrpPromptRequest {
+        session_key: session_key.to_string(),
+        input: TurnInput {
+            content: "work".to_string(),
+            attachments: Vec::new(),
+            context_blocks: Vec::new(),
+            model_id: None,
+        },
+        workdir: workdir.clone(),
+        env: env.clone(),
+        event_sink: event_tx,
+        cancel_rx,
+    };
+
+    let pool = Arc::clone(&adapter.pool);
+    let prompt_task = tokio::spawn(async move { pool.prompt(request).await });
+
+    let started = Instant::now();
+    loop {
+        if session.last_used() != initial_last_used {
+            break;
+        }
+        if started.elapsed() > Duration::from_secs(5) {
+            anyhow::bail!("timed out waiting for overlapping prompt reuse");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    fs::write(&allow_status_path, "")?;
+
+    let stats = reap_task.await?;
+    assert_eq!(stats, ProviderSessionSweepStats::default());
+    assert!(adapter.has_live_session(session_key).await);
+
+    cancel_tx.send(()).expect("cancel signal should send");
+    prompt_task.await??;
+
+    let session = adapter.pool.require_open_session(session_key).await?;
+    session.process.shutdown("test complete").await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn reap_idle_sessions_preserves_draining_sessions_until_prompt_completion() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("draining-prompt.sh");
+    let log_path = workdir.join("draining-prompt.log");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+turn_id=""
+session_id=""
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
+  case "$line" in
+    *'"type":"session.prompt"'*)
+      turn_id=$(printf '%s' "$line" | sed -n 's/.*"turn_id":"\([^"]*\)".*/\1/p')
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      ;;
+    *'"type":"session.cancel"'*)
+      printf '{"v":1,"seq":1,"channel":"control","type":"turn.completed","session_id":"%s","turn_id":"%s","status":"interrupted"}\n' "$session_id" "$turn_id"
+      ;;
+  esac
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "draining-reap";
+    let mut env = HashMap::new();
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+
+    let session = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &env)
+        .await?;
+    session.opened.store(true, Ordering::SeqCst);
+
+    let (event_tx, _event_rx) = mpsc::channel(8);
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let request = CrpPromptRequest {
+        session_key: session_key.to_string(),
+        input: TurnInput {
+            content: "work".to_string(),
+            attachments: Vec::new(),
+            context_blocks: Vec::new(),
+            model_id: None,
+        },
+        workdir: workdir.clone(),
+        env: env.clone(),
+        event_sink: event_tx,
+        cancel_rx,
+    };
+
+    let pool = Arc::clone(&adapter.pool);
+    let prompt_task = tokio::spawn(async move { pool.prompt(request).await });
+
+    let started = Instant::now();
+    loop {
+        if let Ok(contents) = fs::read_to_string(&log_path) {
+            if contents.contains(r#""type":"session.prompt""#) {
+                break;
+            }
+        }
+        if started.elapsed() > Duration::from_secs(5) {
+            anyhow::bail!("timed out waiting for draining session.prompt");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    adapter.pool.restart_drain("test drain").await;
+
+    let stats = adapter
+        .pool
+        .reap_idle_sessions(immediate_sweep_config())
+        .await;
+    assert_eq!(stats, ProviderSessionSweepStats::default());
+    assert_eq!(adapter.pool.list_processes().await.len(), 1);
+
+    cancel_tx.send(()).expect("cancel signal should send");
+    prompt_task.await??;
+
+    assert!(adapter.pool.list_processes().await.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn completed_prompt_refreshes_idle_timestamp_before_reap() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("touch-after-prompt.sh");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+turn_id=""
+session_id=""
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"session.open"'*)
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      printf '{"v":1,"seq":1,"channel":"control","type":"session.opened","session_id":"%s","provider_session_id":"provider-touch-after-prompt"}\n' "$session_id"
+      ;;
+    *'"type":"session.prompt"'*)
+      turn_id=$(printf '%s' "$line" | sed -n 's/.*"turn_id":"\([^"]*\)".*/\1/p')
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      sleep 0.2
+      printf '{"v":1,"seq":2,"channel":"control","type":"turn.completed","session_id":"%s","turn_id":"%s","status":"success"}\n' "$session_id" "$turn_id"
+      ;;
+    *'"type":"session.status"'*)
+      printf '{"v":1,"seq":3,"channel":"control","type":"session.notice","session_id":"%s","code":"session_status","severity":"info","message":"status","details":{"quiescent":true}}\n' "$session_id"
+      ;;
+  esac
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "touch-after-prompt";
+    let env = HashMap::new();
+
+    let (event_tx, _event_rx) = mpsc::channel(8);
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let request = CrpPromptRequest {
+        session_key: session_key.to_string(),
+        input: TurnInput {
+            content: "work".to_string(),
+            attachments: Vec::new(),
+            context_blocks: Vec::new(),
+            model_id: None,
+        },
+        workdir: workdir.clone(),
+        env: env.clone(),
+        event_sink: event_tx,
+        cancel_rx,
+    };
+
+    adapter.pool.prompt(request).await?;
+
+    let stats = adapter
+        .pool
+        .reap_idle_sessions(ProviderSessionSweepConfig {
+            idle_ttl: Duration::from_secs(1),
+            max_idle_sessions: usize::MAX,
+            interval: Duration::from_secs(60),
+        })
+        .await;
+    assert_eq!(stats, ProviderSessionSweepStats::default());
+    assert!(adapter.has_live_session(session_key).await);
+
+    let session = adapter.pool.require_open_session(session_key).await?;
+    session.process.shutdown("test complete").await;
     Ok(())
 }
 

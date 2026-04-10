@@ -2,8 +2,9 @@ use super::*;
 use async_trait::async_trait;
 use ctx_core::models::VcsKind;
 use ctx_providers::adapters::{
-    ProviderCapabilities, ProviderHealth, ProviderProcessInfo, ProviderRestartMode, ProviderStatus,
-    ProviderUsability, RunHandle, TurnInput,
+    ProviderCapabilities, ProviderHealth, ProviderProcessInfo, ProviderRestartMode,
+    ProviderSessionSweepConfig, ProviderSessionSweepStats, ProviderStatus, ProviderUsability,
+    RunHandle, TurnInput,
 };
 use ctx_store::manager::WorkspaceStoreAccessKind;
 use std::collections::HashMap;
@@ -15,6 +16,8 @@ use tempfile::tempdir;
 #[derive(Default)]
 struct RecordingProviderAdapter {
     restart_calls: StdMutex<Vec<(String, ProviderRestartMode)>>,
+    reap_calls: StdMutex<Vec<ProviderSessionSweepConfig>>,
+    reap_result: StdMutex<ProviderSessionSweepStats>,
 }
 
 impl RecordingProviderAdapter {
@@ -23,6 +26,20 @@ impl RecordingProviderAdapter {
             .lock()
             .expect("recording adapter restart lock")
             .clone()
+    }
+
+    fn reap_calls(&self) -> Vec<ProviderSessionSweepConfig> {
+        self.reap_calls
+            .lock()
+            .expect("recording adapter reap lock")
+            .clone()
+    }
+
+    fn set_reap_result(&self, stats: ProviderSessionSweepStats) {
+        *self
+            .reap_result
+            .lock()
+            .expect("recording adapter reap result lock") = stats;
     }
 }
 
@@ -83,6 +100,20 @@ impl ProviderAdapter for RecordingProviderAdapter {
             .expect("recording adapter restart lock")
             .push((reason.to_string(), mode));
         Ok(())
+    }
+
+    async fn reap_idle_sessions(
+        &self,
+        config: ProviderSessionSweepConfig,
+    ) -> Result<ProviderSessionSweepStats> {
+        self.reap_calls
+            .lock()
+            .expect("recording adapter reap lock")
+            .push(config);
+        Ok(*self
+            .reap_result
+            .lock()
+            .expect("recording adapter reap result lock"))
     }
 }
 
@@ -753,6 +784,68 @@ async fn shutdown_provider_adapters_requests_immediate_restart_for_all_adapters(
         target_adapter.restart_calls(),
         vec![("test shutdown".to_string(), ProviderRestartMode::Immediate)]
     );
+}
+
+#[tokio::test]
+async fn sweep_provider_workers_once_dedupes_shared_adapters_and_aggregates_stats() {
+    let temp = tempdir().unwrap();
+    let stores = StoreManager::open(temp.path()).await.unwrap();
+    let shared_adapter = Arc::new(RecordingProviderAdapter::default());
+    shared_adapter.set_reap_result(ProviderSessionSweepStats {
+        reaped: 1,
+        skipped_busy: 2,
+        dead_removed: 0,
+        status_errors: 0,
+    });
+    let other_adapter = Arc::new(RecordingProviderAdapter::default());
+    other_adapter.set_reap_result(ProviderSessionSweepStats {
+        reaped: 0,
+        skipped_busy: 0,
+        dead_removed: 1,
+        status_errors: 1,
+    });
+
+    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+    providers.insert("root".into(), shared_adapter.clone());
+    providers.insert("other".into(), other_adapter.clone());
+    let state = Arc::new(AppState::new(
+        temp.path().to_path_buf(),
+        stores,
+        providers,
+        "http://localhost".to_string(),
+        None,
+    ));
+    state
+        .providers
+        .target_adapters
+        .lock()
+        .await
+        .insert("root@host".into(), shared_adapter.clone());
+
+    let config = ProviderSessionSweepConfig {
+        idle_ttl: Duration::from_secs(7),
+        max_idle_sessions: 3,
+        interval: Duration::from_secs(11),
+    };
+    let stats = crate::daemon::lifecycle::sweep_provider_workers_once(&state, config).await;
+
+    assert_eq!(
+        stats,
+        ProviderSessionSweepStats {
+            reaped: 1,
+            skipped_busy: 2,
+            dead_removed: 1,
+            status_errors: 1,
+        }
+    );
+    assert_eq!(shared_adapter.reap_calls().len(), 1);
+    assert_eq!(other_adapter.reap_calls().len(), 1);
+    assert_eq!(shared_adapter.reap_calls()[0].idle_ttl, config.idle_ttl);
+    assert_eq!(
+        shared_adapter.reap_calls()[0].max_idle_sessions,
+        config.max_idle_sessions
+    );
+    assert_eq!(shared_adapter.reap_calls()[0].interval, config.interval);
 }
 
 #[cfg(target_os = "macos")]

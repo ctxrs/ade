@@ -35,6 +35,7 @@ TOOL_OUTPUT_COMPLETION_MAX_BYTES = 8 * 1024
 PROVIDER_ID = os.environ.get("CTX_PROVIDER_ID")
 FIXTURE_ROOT = os.environ.get("CTX_TEST_FIXTURES_DIR")
 SCENARIO = os.environ.get("CTX_TEST_SCENARIO") or "basic"
+COMMAND_LOG = os.environ.get("CTX_TEST_CRP_COMMAND_LOG")
 
 scenario = {"turns": []}
 try:
@@ -72,6 +73,14 @@ current_model_id = (
     or (models[0].get("id") if models and isinstance(models[0], dict) else None)
     or "fake-model"
 )
+session_status = scenario.get("session_status")
+if not isinstance(session_status, dict):
+    session_status = {
+        "quiescent": True,
+        "busy_reasons": [],
+        "loaded_thread_ids": [],
+        "active_thread_ids": [],
+    }
 
 def send(msg, channel="control"):
     global SEQ
@@ -286,6 +295,12 @@ for line in sys.stdin:
     line = line.strip()
     if not line:
         continue
+    if COMMAND_LOG:
+        try:
+            with open(COMMAND_LOG, "a") as f:
+                f.write(line + "\n")
+        except Exception:
+            pass
     try:
         cmd = json.loads(line)
     except Exception:
@@ -346,6 +361,19 @@ for line in sys.stdin:
             "severity": "info",
             "message": "session model updated to " + requested_model_id,
             "details": {"model_id": requested_model_id},
+            "transient": False,
+        })
+        continue
+
+    if t == "session.status":
+        session_id = cmd.get("session_id") or "sess_1"
+        send({
+            "type": "session.notice",
+            "session_id": session_id,
+            "code": "session_status",
+            "severity": "info",
+            "message": "fixture session status",
+            "details": session_status,
             "transient": False,
         })
         continue

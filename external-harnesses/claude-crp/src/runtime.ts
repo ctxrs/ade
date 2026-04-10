@@ -766,6 +766,42 @@ async function setSessionModel(command: CrpCommand, state: { session: SessionSta
   });
 }
 
+export function buildSessionStatusNotice(params: {
+  sessionId: string;
+  activeTurnId?: string | null;
+}): Record<string, unknown> {
+  const activeTurnId = params.activeTurnId ?? null;
+  const busyReasons = activeTurnId ? ["active_turn"] : [];
+  return {
+    channel: "control",
+    type: "session.notice",
+    session_id: params.sessionId,
+    code: "session_status",
+    severity: "info",
+    message: activeTurnId ? "session is busy" : "session is quiescent",
+    details: {
+      quiescent: activeTurnId == null,
+      active_turn_id: activeTurnId,
+      busy_reasons: busyReasons
+    },
+    transient: false
+  };
+}
+
+async function emitSessionStatus(state: { session: SessionState | null }) {
+  const session = state.session;
+  if (!session) {
+    warn("session.status ignored: no active session");
+    return;
+  }
+  await writeEnvelope(
+    buildSessionStatusNotice({
+      sessionId: session.sessionId,
+      activeTurnId: session.activeTurn?.turnId ?? null
+    })
+  );
+}
+
 async function emitTranslated(turn: TurnState): Promise<void> {
   const events = translateClaudeEventsToCrp(turn.records, {
     sessionId: turn.sessionId,
@@ -1063,6 +1099,9 @@ async function handleLine(line: string, state: { session: SessionState | null })
       return;
     case "session.set_model":
       await setSessionModel(command, state);
+      return;
+    case "session.status":
+      await emitSessionStatus(state);
       return;
     case "turn.cancel":
     case "session.cancel":

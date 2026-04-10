@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -146,6 +147,55 @@ pub struct RunHandle {
     pub abort: Option<AbortHandle>,
 }
 
+const DEFAULT_PROVIDER_WORKER_IDLE_SECS: u64 = 15 * 60;
+const DEFAULT_PROVIDER_WORKER_MAX_IDLE_SESSIONS: usize = 8;
+const DEFAULT_PROVIDER_WORKER_SWEEP_INTERVAL_SECS: u64 = 60;
+
+#[derive(Debug, Clone, Copy)]
+pub struct ProviderSessionSweepConfig {
+    pub idle_ttl: Duration,
+    pub max_idle_sessions: usize,
+    pub interval: Duration,
+}
+
+impl ProviderSessionSweepConfig {
+    pub fn from_env() -> Self {
+        let idle_secs = std::env::var("CTX_PROVIDER_WORKER_IDLE_SECS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_PROVIDER_WORKER_IDLE_SECS);
+        let max_idle_sessions = std::env::var("CTX_PROVIDER_WORKER_MAX_IDLE_SESSIONS")
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(DEFAULT_PROVIDER_WORKER_MAX_IDLE_SESSIONS);
+        let interval_secs = std::env::var("CTX_PROVIDER_WORKER_SWEEP_INTERVAL_SECS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_PROVIDER_WORKER_SWEEP_INTERVAL_SECS);
+        Self {
+            idle_ttl: Duration::from_secs(idle_secs),
+            max_idle_sessions,
+            interval: Duration::from_secs(interval_secs.max(15)),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderSessionSweepStats {
+    pub reaped: usize,
+    pub skipped_busy: usize,
+    pub dead_removed: usize,
+    pub status_errors: usize,
+}
+
+impl ProviderSessionSweepStats {
+    pub fn total_actions(self) -> usize {
+        self.reaped + self.dead_removed
+    }
+}
+
 #[async_trait]
 pub trait ProviderAdapter: Send + Sync {
     async fn inspect(&self) -> Result<ProviderStatus>;
@@ -200,5 +250,13 @@ pub trait ProviderAdapter: Send + Sync {
         _event_sink: tokio::sync::mpsc::Sender<NormalizedEvent>,
     ) -> Result<()> {
         anyhow::bail!("provider does not support authenticate");
+    }
+
+    /// Best-effort idle provider-session reaping for adapters that keep live provider workers.
+    async fn reap_idle_sessions(
+        &self,
+        _config: ProviderSessionSweepConfig,
+    ) -> Result<ProviderSessionSweepStats> {
+        Ok(ProviderSessionSweepStats::default())
     }
 }

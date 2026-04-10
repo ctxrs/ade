@@ -4,8 +4,8 @@ mod tests;
 mod translate;
 
 use crate::app_server::{
-    AppServerClient, AppServerInbound, ModelListResponse, ThreadStartLikeResponse,
-    TurnStartResponse,
+    AppServerClient, AppServerInbound, ModelListResponse, ThreadLoadedListResponse,
+    ThreadReadResponse, ThreadStartLikeResponse, ThreadStatus, TurnStartResponse,
 };
 use crate::builtins::{
     build_app_server_config_overrides, build_current_model_id, build_model_infos,
@@ -590,6 +590,51 @@ async fn handle_parsed_command(
                 ),
             }
         }
+        CrpCommand::SessionStatus { session_id } => {
+            let Some(state) = session.as_mut() else {
+                warn!("session.status ignored: no active session");
+                return Ok(());
+            };
+            if let Some(expected) = session_id.as_deref() {
+                if expected != state.tracker.session_id {
+                    warn!(%expected, "session.status ignored: session_id mismatch");
+                    return Ok(());
+                }
+            }
+
+            match query_session_status(state).await {
+                Ok(details) => dispatch_event(
+                    router,
+                    CrpChannel::Control,
+                    CrpEvent::SessionNotice {
+                        session_id: state.tracker.session_id.clone(),
+                        turn_id: None,
+                        code: "session_status".to_string(),
+                        severity: Some("info".to_string()),
+                        message: Some(if details["quiescent"] == json!(true) {
+                            "session is quiescent".to_string()
+                        } else {
+                            "session is busy".to_string()
+                        }),
+                        details: Some(details),
+                        transient: Some(false),
+                    },
+                ),
+                Err(err) => dispatch_event(
+                    router,
+                    CrpChannel::Control,
+                    CrpEvent::SessionNotice {
+                        session_id: state.tracker.session_id.clone(),
+                        turn_id: None,
+                        code: "session_status_failed".to_string(),
+                        severity: Some("error".to_string()),
+                        message: Some(err.to_string()),
+                        details: None,
+                        transient: Some(false),
+                    },
+                ),
+            }
+        }
         CrpCommand::ModelsList { config } => {
             let models = probe_models(config.unwrap_or_default(), options).await?;
             let _ = router.send_control(CrpEvent::ModelsList {
@@ -766,6 +811,88 @@ async fn start_thread(
             }),
         )
         .await
+}
+
+fn build_session_status_details(
+    root_thread_id: &str,
+    active_turn_id: Option<String>,
+    thread_statuses: Vec<(String, ThreadStatus)>,
+) -> Value {
+    let mut loaded_thread_ids = Vec::new();
+    let mut active_thread_ids = Vec::new();
+    let mut system_error_thread_ids = Vec::new();
+    let mut busy_reasons = Vec::new();
+
+    for (thread_id, status) in thread_statuses {
+        loaded_thread_ids.push(thread_id.clone());
+        match status {
+            ThreadStatus::Active { .. } => active_thread_ids.push(thread_id),
+            ThreadStatus::SystemError => system_error_thread_ids.push(thread_id),
+            ThreadStatus::NotLoaded | ThreadStatus::Idle => {}
+        }
+    }
+
+    loaded_thread_ids.sort();
+    loaded_thread_ids.dedup();
+    active_thread_ids.sort();
+    active_thread_ids.dedup();
+    system_error_thread_ids.sort();
+    system_error_thread_ids.dedup();
+
+    if active_turn_id.is_some() {
+        busy_reasons.push("active_turn".to_string());
+    }
+    if !active_thread_ids.is_empty() {
+        busy_reasons.push("loaded_thread_active".to_string());
+    }
+
+    json!({
+        "quiescent": active_turn_id.is_none() && active_thread_ids.is_empty(),
+        "root_thread_id": root_thread_id,
+        "active_turn_id": active_turn_id,
+        "loaded_thread_ids": loaded_thread_ids,
+        "active_thread_ids": active_thread_ids,
+        "system_error_thread_ids": system_error_thread_ids,
+        "busy_reasons": busy_reasons,
+    })
+}
+
+async fn query_session_status(session: &mut AppServerSessionState) -> Result<Value> {
+    let loaded = session
+        .client
+        .request::<ThreadLoadedListResponse>("thread/loaded/list", json!({}))
+        .await?;
+    let mut loaded_thread_ids = loaded.data;
+    if !loaded_thread_ids
+        .iter()
+        .any(|thread_id| thread_id == &session.thread_id)
+    {
+        loaded_thread_ids.push(session.thread_id.clone());
+    }
+    loaded_thread_ids.sort();
+    loaded_thread_ids.dedup();
+
+    let mut thread_statuses = Vec::new();
+    let active_turn_id = session.turn_aliases.active_crp_turn_id.clone();
+
+    for thread_id in &loaded_thread_ids {
+        let response = session
+            .client
+            .request::<ThreadReadResponse>(
+                "thread/read",
+                json!({
+                    "threadId": thread_id,
+                    "includeTurns": false,
+                }),
+            )
+            .await?;
+        thread_statuses.push((response.thread.id, response.thread.status));
+    }
+    Ok(build_session_status_details(
+        &session.thread_id,
+        active_turn_id,
+        thread_statuses,
+    ))
 }
 
 async fn probe_models(config: CrpSessionConfig, _options: &RuntimeOptions) -> Result<ModelsProbe> {
