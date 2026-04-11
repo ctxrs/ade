@@ -42,14 +42,11 @@ function buildBazelPilotInvocation({ argv, env = process.env } = {}) {
   const coreRoot = path.resolve(__dirname, "..");
   const repoRoot = path.resolve(coreRoot, "..");
   const layout = resolveCtxCacheLayout({ cwd: coreRoot, env });
-  const outputUserRoot = path.join(layout.targetsDir, "bazel", layout.scopeKey);
-  const diskCacheDir = path.join(layout.cacheDir, "bazel-disk", layout.repoCacheSlug);
-  const repositoryCacheDir = path.join(layout.cacheDir, "bazel-repository", layout.repoCacheSlug);
-  const startupArgs = [`--output_user_root=${outputUserRoot}`];
+  const startupArgs = [`--output_user_root=${layout.bazelOutputUserRoot}`];
   const commandArgs = [
     command,
-    `--disk_cache=${diskCacheDir}`,
-    `--repository_cache=${repositoryCacheDir}`,
+    `--disk_cache=${layout.bazelDiskCacheDir}`,
+    `--repository_cache=${layout.bazelRepositoryCacheDir}`,
   ];
   if (command === "test") {
     commandArgs.push("--test_output=errors");
@@ -72,9 +69,9 @@ function buildBazelPilotInvocation({ argv, env = process.env } = {}) {
 function main() {
   const invocation = buildBazelPilotInvocation({ argv: process.argv.slice(2) });
   ensureDir(invocation.layout.tmpDir);
-  ensureDir(path.join(invocation.layout.targetsDir, "bazel", invocation.layout.scopeKey));
-  ensureDir(path.join(invocation.layout.cacheDir, "bazel-disk", invocation.layout.repoCacheSlug));
-  ensureDir(path.join(invocation.layout.cacheDir, "bazel-repository", invocation.layout.repoCacheSlug));
+  ensureDir(invocation.layout.bazelOutputUserRoot);
+  ensureDir(invocation.layout.bazelDiskCacheDir);
+  ensureDir(invocation.layout.bazelRepositoryCacheDir);
   const result = childProcess.spawnSync(
     "bazelisk",
     [...invocation.startupArgs, ...invocation.commandArgs, ...invocation.targets],

@@ -269,6 +269,18 @@ function resolveCtxCacheLayout({ cwd = process.cwd(), env = process.env } = {}) 
     env.TURBO_CACHE_DIR,
     path.join(cacheDir, "turbo", DEFAULT_REPO_CACHE_SLUG),
   );
+  const bazelDiskCacheDir = sanitizeExplicitPath(
+    env.CTX_BAZEL_DISK_CACHE_DIR,
+    path.join(cacheDir, "bazel-disk", DEFAULT_REPO_CACHE_SLUG),
+  );
+  const bazelRepositoryCacheDir = sanitizeExplicitPath(
+    env.CTX_BAZEL_REPOSITORY_CACHE_DIR,
+    path.join(cacheDir, "bazel-repository", DEFAULT_REPO_CACHE_SLUG),
+  );
+  const bazelOutputUserRoot = sanitizeExplicitPath(
+    env.CTX_BAZEL_OUTPUT_USER_ROOT,
+    path.join(targetsDir, "bazel", scopeKey),
+  );
   const bundleCacheDir = sanitizeExplicitPath(
     env.CTX_BUNDLE_CACHE_DIR,
     path.join(cacheDir, "bundles"),
@@ -300,6 +312,9 @@ function resolveCtxCacheLayout({ cwd = process.cwd(), env = process.env } = {}) 
     cargoHome,
     sccacheDir,
     turboCacheDir,
+    bazelDiskCacheDir,
+    bazelRepositoryCacheDir,
+    bazelOutputUserRoot,
     bundleCacheDir,
     playwrightBrowsersPath,
     workspaceCargoTargetDir,
@@ -329,6 +344,9 @@ function ensureCacheLayout(layout, { includeTargets = true } = {}) {
     layout.cargoHome,
     layout.sccacheDir,
     layout.turboCacheDir,
+    layout.bazelDiskCacheDir,
+    layout.bazelRepositoryCacheDir,
+    layout.bazelOutputUserRoot,
     layout.bundleCacheDir,
     layout.playwrightBrowsersPath,
   ];
@@ -425,6 +443,33 @@ function buildCtxCacheEnv({
       cwd,
       explicitVolatileRoot,
     });
+    setDerivedPathEnvValue(
+      resolvedEnv,
+      "CTX_BAZEL_DISK_CACHE_DIR",
+      layout.bazelDiskCacheDir,
+      {
+        cwd,
+        explicitVolatileRoot,
+      },
+    );
+    setDerivedPathEnvValue(
+      resolvedEnv,
+      "CTX_BAZEL_REPOSITORY_CACHE_DIR",
+      layout.bazelRepositoryCacheDir,
+      {
+        cwd,
+        explicitVolatileRoot,
+      },
+    );
+    setDerivedPathEnvValue(
+      resolvedEnv,
+      "CTX_BAZEL_OUTPUT_USER_ROOT",
+      layout.bazelOutputUserRoot,
+      {
+        cwd,
+        explicitVolatileRoot,
+      },
+    );
     setDerivedPathEnvValue(resolvedEnv, "CTX_BUNDLE_CACHE_DIR", layout.bundleCacheDir, {
       cwd,
       explicitVolatileRoot,

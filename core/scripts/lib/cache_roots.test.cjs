@@ -94,8 +94,23 @@ test("buildCtxCacheEnv sets shared cache defaults and keeps verify quick on the 
   assert.equal(env.CTX_VERIFY_CARGO_TARGET_DIR, env.CARGO_TARGET_DIR);
   assert.equal(env.CARGO_HOME, undefined);
   assert.equal(env.TURBO_CACHE_DIR, path.join(volatileRoot, "cache", "turbo", "ctx-monorepo"));
+  assert.equal(env.CTX_BAZEL_DISK_CACHE_DIR, path.join(volatileRoot, "cache", "bazel-disk", "ctx-monorepo"));
+  assert.equal(
+    env.CTX_BAZEL_REPOSITORY_CACHE_DIR,
+    path.join(volatileRoot, "cache", "bazel-repository", "ctx-monorepo"),
+  );
+  assert.equal(
+    env.CTX_BAZEL_OUTPUT_USER_ROOT,
+    path.join(volatileRoot, "targets", "bazel", scopeKey),
+  );
   assert.equal(env.CTX_BUNDLE_CACHE_DIR, path.join(volatileRoot, "cache", "bundles"));
   assert.equal(env.PLAYWRIGHT_BROWSERS_PATH, path.join(volatileRoot, "cache", "playwright"));
+  assert.equal(layout.bazelDiskCacheDir, path.join(volatileRoot, "cache", "bazel-disk", "ctx-monorepo"));
+  assert.equal(
+    layout.bazelRepositoryCacheDir,
+    path.join(volatileRoot, "cache", "bazel-repository", "ctx-monorepo"),
+  );
+  assert.equal(layout.bazelOutputUserRoot, path.join(volatileRoot, "targets", "bazel", scopeKey));
   assert.equal(layout.bundleCacheDir, path.join(volatileRoot, "cache", "bundles"));
   assert.equal(layout.volatileRootMode, "explicit");
 });
@@ -300,6 +315,30 @@ test("buildCtxCacheEnv can opt into a volatile cargo home", () => {
 
   assert.equal(env.CARGO_HOME, path.join(volatileRoot, "cache", "cargo-home"));
   assert.equal(env.CTX_BUNDLE_CACHE_DIR, path.join(volatileRoot, "cache", "bundles"));
+});
+
+test("buildCtxCacheEnv honors explicit Bazel cache path overrides inside an explicit volatile root", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-bazel-explicit");
+  const explicitDiskCacheDir = path.join(volatileRoot, "custom", "bazel-disk");
+  const explicitRepositoryCacheDir = path.join(volatileRoot, "custom", "bazel-repository");
+  const explicitOutputUserRoot = path.join(volatileRoot, "custom", "bazel-output");
+  const { env, layout } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+      CTX_BAZEL_DISK_CACHE_DIR: explicitDiskCacheDir,
+      CTX_BAZEL_REPOSITORY_CACHE_DIR: explicitRepositoryCacheDir,
+      CTX_BAZEL_OUTPUT_USER_ROOT: explicitOutputUserRoot,
+    },
+  });
+
+  assert.equal(env.CTX_BAZEL_DISK_CACHE_DIR, explicitDiskCacheDir);
+  assert.equal(env.CTX_BAZEL_REPOSITORY_CACHE_DIR, explicitRepositoryCacheDir);
+  assert.equal(env.CTX_BAZEL_OUTPUT_USER_ROOT, explicitOutputUserRoot);
+  assert.equal(layout.bazelDiskCacheDir, explicitDiskCacheDir);
+  assert.equal(layout.bazelRepositoryCacheDir, explicitRepositoryCacheDir);
+  assert.equal(layout.bazelOutputUserRoot, explicitOutputUserRoot);
 });
 
 test("buildCtxCacheEnv falls back to the internal volatile root when preferred external layout creation fails", () => {
