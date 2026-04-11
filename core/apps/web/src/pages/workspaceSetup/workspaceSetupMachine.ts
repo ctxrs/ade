@@ -1,4 +1,4 @@
-import type { SessionTitlingMode } from "../WorkspaceSetupPage.logic";
+import type { SessionTitlingMode } from "./WorkspaceSetupPage.logic";
 import {
   nextAfterAuthImport,
   nextAfterHarnessDownloads,

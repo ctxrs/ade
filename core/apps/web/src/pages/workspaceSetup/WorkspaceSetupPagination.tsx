@@ -1,4 +1,4 @@
-import type { SessionTitlingMode } from "../WorkspaceSetupPage.logic";
+import type { SessionTitlingMode } from "./WorkspaceSetupPage.logic";
 import type { RemoteStatus, WizardStep } from "./wizardTypes";
 import type { WizardStepKey } from "./wizardFlow";
 

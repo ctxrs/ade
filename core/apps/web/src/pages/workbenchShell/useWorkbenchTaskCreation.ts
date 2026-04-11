@@ -28,9 +28,9 @@ import { randomUuid } from "../../utils/randomUuid";
 import { trackTaskCreated } from "../../utils/analytics";
 import { refreshProvidersBootstrap } from "../../state/providersBootstrapStore";
 import type { WorkbenchStore } from "../../workbench/store";
-import type { OptimisticFocus, OptimisticTaskSummary } from "../WorkbenchPage.types";
-import { deriveTaskTitle, modelIdsFromOptions } from "../WorkbenchPage.utils";
-import { buildOptimisticUserMessage } from "../SessionPage.optimisticMessage";
+import type { OptimisticFocus, OptimisticTaskSummary } from "./WorkbenchPage.types";
+import { deriveTaskTitle, modelIdsFromOptions } from "./WorkbenchPage.utils";
+import { buildOptimisticUserMessage } from "../sessionView";
 
 type UseWorkbenchTaskCreationArgs = {
   workspaceId: string;

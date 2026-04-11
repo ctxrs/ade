@@ -132,8 +132,10 @@ impl AppState {
     }
 
     fn push_install_event_locked(st: &mut InstallState, event: InstallProgressEvent) {
-        st.progress_pct =
-            crate::installs::heuristic_progress_pct_from_event(&event, st.progress_pct);
+        st.progress_pct = ctx_provider_install::install_state::heuristic_progress_pct_from_event(
+            &event,
+            st.progress_pct,
+        );
         if st.events.len() >= 256 {
             st.events.pop_front();
         }
@@ -244,7 +246,7 @@ impl AppState {
     pub async fn get_install_info(
         &self,
         install_id: InstallId,
-    ) -> Option<crate::installs::InstallInfo> {
+    ) -> Option<ctx_provider_install::install_state::InstallInfo> {
         let mut map = self.providers.installs.lock().await;
         let st = map.get_mut(&install_id)?;
         let _ = self.reconcile_stale_running_install_locked(install_id, st);
@@ -254,7 +256,7 @@ impl AppState {
     pub async fn get_install_polling_info(
         &self,
         install_id: InstallId,
-    ) -> Option<crate::installs::InstallInfo> {
+    ) -> Option<ctx_provider_install::install_state::InstallInfo> {
         let mut map = self.providers.installs.lock().await;
         let st = map.get_mut(&install_id)?;
         let _ = self.reconcile_stale_running_install_locked(install_id, st);
@@ -433,7 +435,7 @@ impl AppState {
     pub async fn cancel_install(
         &self,
         install_id: InstallId,
-    ) -> Option<crate::installs::InstallInfo> {
+    ) -> Option<ctx_provider_install::install_state::InstallInfo> {
         let mut map = self.providers.installs.lock().await;
         let st = map.get_mut(&install_id)?;
         if !matches!(st.state, InstallStateKind::Running) {

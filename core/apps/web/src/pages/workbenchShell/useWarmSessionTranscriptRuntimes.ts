@@ -9,7 +9,7 @@ import {
   readPretextPerfQueryFlag,
   recordPretextPerfEvent,
 } from "../../utils/pretextPerfDiagnostics";
-import { collectAskUserQuestionAnswers } from "../SessionPage.workbenchViewModel";
+import { collectAskUserQuestionAnswers } from "../workbenchViewModel";
 import {
   primeWarmWorkbenchThreadViewModel,
   pruneWarmWorkbenchThreadViewModelCache,

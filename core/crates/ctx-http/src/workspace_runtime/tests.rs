@@ -37,6 +37,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -1080,13 +1081,7 @@ async fn prepare_in_host_mode_does_not_refresh_local_sandbox_activity() {
         &sandbox_cli_path.to_string_lossy(),
     );
     let before_prepare = Instant::now() - Duration::from_secs(600);
-    {
-        let mut last_activity = manager
-            .last_activity
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *last_activity = before_prepare;
-    }
+    manager.set_last_activity_for_test(before_prepare);
     let settings = ExecutionSettings {
         mode: ExecutionMode::Host,
         container: ContainerExecutionSettings::default(),
@@ -1218,8 +1213,7 @@ async fn prepare_starts_cached_workspace_container_when_sandbox_cli_reports_it_s
     );
 
     manager
-        .workspace_containers
-        .put_cached_container_for_test(
+        .put_cached_workspace_container_for_test(
             workspace.id,
             WorkspaceContainer {
                 name: container_name.clone(),
@@ -2192,13 +2186,7 @@ async fn maybe_reclaim_sandbox_machine_stops_idle_machine() {
         "CTX_HARNESS_SANDBOX_CLI_PATH",
         &sandbox_cli_path.to_string_lossy(),
     );
-    {
-        let mut last_activity = manager
-            .last_activity
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *last_activity = Instant::now() - Duration::from_secs(600);
-    }
+    manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(600));
     let settings = ContainerExecutionSettings {
         machine: crate::settings::ContainerMachineSettings {
             idle_shutdown_seconds: 60,
@@ -2261,13 +2249,7 @@ async fn maybe_reclaim_sandbox_machine_clamps_short_idle_timeout() {
         "CTX_HARNESS_SANDBOX_CLI_PATH",
         &sandbox_cli_path.to_string_lossy(),
     );
-    {
-        let mut last_activity = manager
-            .last_activity
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *last_activity = Instant::now() - Duration::from_secs(30);
-    }
+    manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(30));
     let settings = ContainerExecutionSettings {
         machine: crate::settings::ContainerMachineSettings {
             idle_shutdown_seconds: 5,
@@ -2330,13 +2312,7 @@ async fn maybe_reclaim_sandbox_machine_stops_idle_runtime_with_running_workspace
         "CTX_HARNESS_SANDBOX_CLI_PATH",
         &sandbox_cli_path.to_string_lossy(),
     );
-    {
-        let mut last_activity = manager
-            .last_activity
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *last_activity = Instant::now() - Duration::from_secs(600);
-    }
+    manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(600));
     let settings = ContainerExecutionSettings {
         machine: crate::settings::ContainerMachineSettings {
             idle_shutdown_seconds: 60,
@@ -2398,13 +2374,7 @@ async fn maybe_reclaim_sandbox_machine_skips_active_container_sessions() {
         "CTX_HARNESS_SANDBOX_CLI_PATH",
         &sandbox_cli_path.to_string_lossy(),
     );
-    {
-        let mut last_activity = manager
-            .last_activity
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *last_activity = Instant::now() - Duration::from_secs(600);
-    }
+    manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(600));
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
     let running_sessions = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
     let session_id =
@@ -2445,13 +2415,7 @@ async fn maybe_reclaim_sandbox_machine_skips_active_container_sessions() {
     assert!(!log.contains(&format!("machine stop {machine_name}")));
 
     running_sessions.lock().await.clear();
-    {
-        let mut last_activity = manager
-            .last_activity
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *last_activity = Instant::now() - Duration::from_secs(600);
-    }
+    manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(600));
 
     let stopped = manager
         .maybe_reclaim_sandbox_machine(
@@ -2492,13 +2456,7 @@ async fn maybe_reclaim_sandbox_machine_skips_running_container_terminals() {
         "CTX_HARNESS_SANDBOX_CLI_PATH",
         &sandbox_cli_path.to_string_lossy(),
     );
-    {
-        let mut last_activity = manager
-            .last_activity
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *last_activity = Instant::now() - Duration::from_secs(600);
-    }
+    manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(600));
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
     let running_sessions = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
     let terminals = Arc::new(crate::terminals::TerminalManager::default());
@@ -2559,13 +2517,7 @@ async fn maybe_reclaim_sandbox_machine_skips_running_container_terminals() {
 
     terminal.kill().expect("kill terminal");
     tokio::time::sleep(Duration::from_millis(300)).await;
-    {
-        let mut last_activity = manager
-            .last_activity
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *last_activity = Instant::now() - Duration::from_secs(600);
-    }
+    manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(600));
 
     let stopped = manager
         .maybe_reclaim_sandbox_machine(

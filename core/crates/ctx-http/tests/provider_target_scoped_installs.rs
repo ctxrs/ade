@@ -14,9 +14,6 @@ use ctx_http::installer::{
     load_agent_server_config, refresh_provider_statuses, save_agent_server_config,
     AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
 };
-use ctx_http::installs::{
-    InstallId, InstallInfo, InstallProgressEvent, InstallStateKind, InstallTarget,
-};
 use ctx_http::provider_matrix::{
     matrix_cache_path, ProviderArchiveKind, ProviderArchiveTarget, ProviderInstall,
     ProviderInstallDependency as MatrixProviderInstallDependency, ProviderInstallDependencyRole,
@@ -26,6 +23,9 @@ use ctx_http::provider_matrix::{
 use ctx_http::settings::{
     save_settings, ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode,
     ExecutionMode, ExecutionSettings, Settings,
+};
+use ctx_provider_install::install_state::{
+    InstallId, InstallInfo, InstallProgressEvent, InstallStateKind, InstallTarget,
 };
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_providers::crp::Tier1CrpAdapter;
@@ -146,7 +146,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                         package: Some("@openai/codex".to_string()),
                         version: Some("1.0.0-host".to_string()),
                         archive_sha256: None,
-                        target: Some(ctx_http::installs::InstallTarget::Host),
+                        target: Some(ctx_provider_install::install_state::InstallTarget::Host),
                         install_dir_rel: Some(
                             "providers/agent-servers/codex/host-fixture".to_string(),
                         ),
@@ -168,7 +168,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                         package: Some("@openai/codex".to_string()),
                         version: Some("1.0.0-container".to_string()),
                         archive_sha256: None,
-                        target: Some(ctx_http::installs::InstallTarget::Container),
+                        target: Some(ctx_provider_install::install_state::InstallTarget::Container),
                         install_dir_rel: Some(
                             "providers/agent-servers/codex/container-fixture".to_string(),
                         ),
@@ -191,7 +191,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                     package: Some("@openai/codex".to_string()),
                     version: Some("1.0.0-host".to_string()),
                     archive_sha256: None,
-                    target: Some(ctx_http::installs::InstallTarget::Host),
+                    target: Some(ctx_provider_install::install_state::InstallTarget::Host),
                     install_dir_rel: Some("providers/agent-servers/codex/host-fixture".to_string()),
                     bin_dir_rel: Some("providers/agent-servers/codex/host-fixture/bin".to_string()),
                     last_success_at: None,
@@ -204,7 +204,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                     package: Some("@openai/codex".to_string()),
                     version: Some("1.0.0-container".to_string()),
                     archive_sha256: None,
-                    target: Some(ctx_http::installs::InstallTarget::Container),
+                    target: Some(ctx_provider_install::install_state::InstallTarget::Container),
                     install_dir_rel: Some(
                         "providers/agent-servers/codex/container-fixture".to_string(),
                     ),
@@ -223,7 +223,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
             package: Some("node-runtime".to_string()),
             version: Some("24.14.0".to_string()),
             archive_sha256: None,
-            target: Some(ctx_http::installs::InstallTarget::Host),
+            target: Some(ctx_provider_install::install_state::InstallTarget::Host),
             install_dir_rel: Some("providers/runtimes/runtime-node-host".to_string()),
             bin_dir_rel: Some(host_bin_rel.to_string()),
             last_success_at: None,
@@ -236,7 +236,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
             package: Some("node-runtime".to_string()),
             version: Some("24.14.0".to_string()),
             archive_sha256: None,
-            target: Some(ctx_http::installs::InstallTarget::Container),
+            target: Some(ctx_provider_install::install_state::InstallTarget::Container),
             install_dir_rel: Some("providers/runtimes/runtime-node-container".to_string()),
             bin_dir_rel: Some(container_bin_rel.to_string()),
             last_success_at: None,
@@ -517,7 +517,7 @@ fn provider_fixture_matrix(bridge_url: String, provider_url: String) -> Provider
 async fn wait_for_install_completion(
     state: &Arc<AppState>,
     install_id: InstallId,
-) -> ctx_http::installs::InstallInfo {
+) -> ctx_provider_install::install_state::InstallInfo {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
         let info = state
@@ -600,7 +600,7 @@ async fn get_install_info_api(app: &axum::Router, install_id: InstallId) -> Inst
 async fn wait_for_running_install_progress(
     state: &Arc<AppState>,
     install_id: InstallId,
-) -> ctx_http::installs::InstallInfo {
+) -> ctx_provider_install::install_state::InstallInfo {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
         let info = state
@@ -698,7 +698,7 @@ async fn save_invalid_container_bridge_runtime(data_root: &Path) {
                     package: Some("acp-crp-bridge".to_string()),
                     version: Some("1.0.0".to_string()),
                     archive_sha256: None,
-                    target: Some(ctx_http::installs::InstallTarget::Container),
+                    target: Some(ctx_provider_install::install_state::InstallTarget::Container),
                     install_dir_rel: Some(
                         "providers/agent-servers/acp-crp-bridge/invalid".to_string(),
                     ),

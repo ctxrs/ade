@@ -19,21 +19,21 @@ import { useEnsureArchivedLoaded } from "../../state/useEnsureArchivedLoaded";
 import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
 import { errorMessage } from "../../utils/errorMessage";
 import type { WorkbenchStore } from "../../workbench/store";
-import { TaskRow } from "../WorkbenchPage.taskRow";
+import { TaskRow } from "./WorkbenchPage.taskRow";
 import type {
   AnchorRect,
   ArchiveConfirmState,
   OptimisticTaskSummary,
   TaskListContext,
   TaskListItem,
-} from "../WorkbenchPage.types";
+} from "./WorkbenchPage.types";
 import {
   ARCHIVE_CONFIRM_STORAGE_KEY,
   clampNum,
   isOptimisticTask,
   normalizeAnchorRect,
   parseMs,
-} from "../WorkbenchPage.utils";
+} from "./WorkbenchPage.utils";
 import { useWorkbenchTaskScrollbar } from "./useWorkbenchTaskScrollbar";
 import { deriveWorkbenchTaskStatusKind } from "./workbenchTaskActivity";
 

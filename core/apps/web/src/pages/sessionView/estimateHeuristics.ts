@@ -1,5 +1,5 @@
 import type { ContextWindowInfo } from "../../components/WorkbenchComposer";
-import type { WorkbenchListItem } from "../SessionPage.types";
+import type { WorkbenchListItem } from "./SessionPage.types";
 import { getWorkbenchTurnHeaderDisplayPlainText } from "../sessionThread/transcriptRowLayoutModel";
 
 const getEstimateBucket = (length: number): string => {

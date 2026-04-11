@@ -1,5 +1,5 @@
 import type { DevRestartProvidersResult } from "../../../api/client";
-import { Row } from "../../SettingsPage.components";
+import { Row } from "../SettingsPage.components";
 import { GeneralSection } from "./GeneralSection";
 
 type DevToolsSectionProps = {

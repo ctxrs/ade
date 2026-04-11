@@ -16,7 +16,7 @@ const DEFAULT_BUILD_TARGETS = getBazelBuildTargetsForCrates(getBazelCoveredCrate
 
 function parseArgs(argv) {
   const [command = "test", ...targets] = argv;
-  if (!["build", "test"].includes(command)) {
+  if (!["build", "run", "test"].includes(command)) {
     throw new Error(`unsupported Bazel pilot command: ${command}`);
   }
   return {
@@ -26,6 +26,8 @@ function parseArgs(argv) {
         ? targets
         : command === "build"
           ? DEFAULT_BUILD_TARGETS
+          : command === "run"
+            ? []
           : DEFAULT_TEST_TARGETS,
   };
 }

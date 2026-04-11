@@ -1585,6 +1585,7 @@ dependencies = [
  "ctx-lsp",
  "ctx-provider-accounts",
  "ctx-provider-auth-import",
+ "ctx-provider-install",
  "ctx-provider-matrix",
  "ctx-providers",
  "ctx-runtime-assets",
@@ -1598,6 +1599,7 @@ dependencies = [
  "ctx-workspace-active-snapshot",
  "ctx-workspace-config",
  "ctx-workspace-container",
+ "ctx-workspace-runtime",
  "ctx-worktree-data-plane",
  "directories",
  "flate2",
@@ -1754,6 +1756,16 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "ctx-provider-install"
+version = "0.42.0"
+dependencies = [
+ "chrono",
+ "serde",
  "tokio",
  "uuid",
 ]
@@ -2060,6 +2072,30 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "ctx-workspace-runtime"
+version = "0.42.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "ctx-avf-linux-runtime",
+ "ctx-core",
+ "ctx-execution-runtime",
+ "ctx-harness-runtime",
+ "ctx-harness-setup",
+ "ctx-linux-sandbox-runtime",
+ "ctx-sandbox-container-runtime",
+ "ctx-sandbox-contract",
+ "ctx-sandbox-materialization",
+ "ctx-store",
+ "ctx-workspace-container",
+ "ctx-worktree-data-plane",
  "tempfile",
  "tokio",
  "tracing",

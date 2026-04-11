@@ -8,8 +8,8 @@ import {
 } from "../../../components/ui/select";
 import type { DesktopEditorSettings } from "../../../utils/desktop";
 import type { ThemeMode } from "../../../utils/theme";
-import { EDITOR_OPTIONS } from "../../SettingsPage.constants";
-import { Row } from "../../SettingsPage.components";
+import { EDITOR_OPTIONS } from "../SettingsPage.constants";
+import { Row } from "../SettingsPage.components";
 import { GeneralSection } from "./GeneralSection";
 
 type GeneralSettingsSectionProps = {

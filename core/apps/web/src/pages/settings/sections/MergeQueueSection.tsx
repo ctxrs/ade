@@ -1,4 +1,4 @@
-import { Row, Toggle } from "../../SettingsPage.components";
+import { Row, Toggle } from "../SettingsPage.components";
 import { useMergeQueueController } from "../hooks/useMergeQueueController";
 import { GeneralSection } from "./GeneralSection";
 

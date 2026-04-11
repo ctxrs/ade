@@ -13,7 +13,7 @@ use ctx_providers::fake::FakeProviderAdapter;
 
 use crate::daemon::AppState;
 use crate::installer;
-use crate::installs::InstallTarget;
+use ctx_provider_install::install_state::InstallTarget;
 
 struct StaticStatusAdapter {
     status: ProviderStatus,

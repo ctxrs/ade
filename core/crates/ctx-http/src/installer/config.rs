@@ -12,7 +12,7 @@ use self::targeting::{
     migrate_managed_provider_command_args, requested_target_or_host, target_bucket_lookup,
 };
 use super::expected_managed_dependency_version;
-use crate::installs::{truncate_for_storage, InstallErrorCode, InstallTarget};
+use ctx_provider_install::install_state::{truncate_for_storage, InstallErrorCode, InstallTarget};
 
 mod lsp_config;
 mod targeting;

@@ -526,6 +526,7 @@ function buildCtxCacheEnv({
       setDefaultEnvValue(resolvedEnv, "SCCACHE_PATH", sccachePath);
     }
     if (trimValue(resolvedEnv.RUSTC_WRAPPER) === trimValue(sccachePath) && sccachePath) {
+      setDefaultEnvValue(resolvedEnv, "SCCACHE_NO_DAEMON", "1");
       if (process.platform !== "win32" && !trimValue(resolvedEnv.SCCACHE_SERVER_UDS)) {
         resolvedEnv.SCCACHE_SERVER_UDS = resolveSccacheServerUds(cargoTargetDir);
       }

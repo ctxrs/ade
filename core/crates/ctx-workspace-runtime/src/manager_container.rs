@@ -27,7 +27,7 @@ impl HarnessRuntimeManager {
             self.emit_substrate_lifecycle_ops_event(
                 &record,
                 "container_prepare",
-                Some(workspace.id.0.to_string()),
+                Some(workspace.id),
             );
         }
         self.ensure_container_after_machine_ready(EnsureWorkspaceContainerRequest {

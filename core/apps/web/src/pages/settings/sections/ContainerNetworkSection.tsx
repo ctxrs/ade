@@ -7,8 +7,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../../components/ui/select";
-import { isContainerizedEnvironment, promptAutosaveStatusLabel } from "../../SettingsPage.utils";
-import { Row } from "../../SettingsPage.components";
+import { isContainerizedEnvironment, promptAutosaveStatusLabel } from "../SettingsPage.utils";
+import { Row } from "../SettingsPage.components";
 import type { WorkspaceExecutionConfig } from "../../../api/client";
 import { useContainerNetworkController } from "../hooks/useContainerNetworkController";
 import { GeneralSection } from "./GeneralSection";

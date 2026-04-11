@@ -197,7 +197,7 @@ pub(super) fn managed_dependency_update_available(
 
 pub(super) fn install_target_from_status(
     status: &ctx_providers::adapters::ProviderStatus,
-) -> Option<crate::installs::InstallTarget> {
+) -> Option<ctx_provider_install::install_state::InstallTarget> {
     status
         .details
         .get("install_target")
@@ -243,7 +243,7 @@ pub(super) async fn detect_managed_archive_checksum_mismatch(
 pub(super) fn managed_archive_target_for_release<'a>(
     entry: &'a ProviderMatrixEntry,
     release: &ProviderRelease,
-    requested_target: crate::installs::InstallTarget,
+    requested_target: ctx_provider_install::install_state::InstallTarget,
 ) -> Option<&'a ProviderArchiveTarget> {
     let ProviderInstall::Archive {
         version, targets, ..

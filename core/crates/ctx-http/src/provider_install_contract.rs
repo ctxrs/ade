@@ -3,11 +3,11 @@ use std::path::Path;
 
 use crate::daemon;
 use crate::installer::{self, AgentServerConfigFile};
-use crate::installs::InstallTarget;
 use crate::provider_matrix::{
     self, ProviderInstallDependencyRole, ProviderInstallDependencyTarget, ProviderMatrix,
     ProviderMatrixEntry,
 };
+use ctx_provider_install::install_state::InstallTarget;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProviderInstallViabilityIssue {

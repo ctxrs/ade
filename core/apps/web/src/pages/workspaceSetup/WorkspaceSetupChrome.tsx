@@ -3,7 +3,7 @@ import { X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ExecutionLaunchSnapshot } from "../../api/client";
-import type { SessionTitlingMode } from "../WorkspaceSetupPage.logic";
+import type { SessionTitlingMode } from "./WorkspaceSetupPage.logic";
 import type { WorkspaceSetupLaunchLogLine } from "./launchProgress";
 import type { WizardStepKey } from "./wizardFlow";
 import type { ImportInitDialogState, WizardStep } from "./wizardTypes";

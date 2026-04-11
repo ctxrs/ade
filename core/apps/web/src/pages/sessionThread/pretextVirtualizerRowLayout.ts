@@ -5,7 +5,8 @@ import {
   addPretextPerfBucket,
   incrementPretextPerfCounter,
 } from "../../utils/pretextPerfDiagnostics";
-import type { WorkbenchListItem, WorkbenchTurnHeader } from "../SessionPage.types";
+import type { WorkbenchListItem, WorkbenchTurnHeader } from "../sessionView";
+import { isExpandableMessageContent, resolveWorkbenchMessageExpanded } from "../sessionMessageListItemIdentity";
 import {
   clearSessionMarkdownMeasurementCaches,
   measureSessionMarkdownDocument,

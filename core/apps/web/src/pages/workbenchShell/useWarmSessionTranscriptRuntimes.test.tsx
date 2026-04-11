@@ -1,7 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Session } from "../../api/client";
-import type { WorkbenchListItem } from "../SessionPage.types";
+import type { WorkbenchListItem } from "../sessionView";
 import type { SessionCacheEntry, SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
 import type { SessionThreadProjection } from "../../state/sessionThreadProjection/types";

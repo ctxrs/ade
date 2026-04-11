@@ -116,6 +116,7 @@ test("buildCtxCacheEnv normalizes sccache inputs when sccache is active", () => 
   assert.match(String(env.SCCACHE_BASEDIRS), new RegExp(cwd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(String(env.RUSTFLAGS), /--remap-path-prefix=.*=\/ctx-workspace/);
   assert.match(String(env.RUSTFLAGS), /--remap-path-prefix=.*=\/ctx-volatile/);
+  assert.equal(env.SCCACHE_NO_DAEMON, "1");
   if (process.platform !== "win32") {
     assert.equal(env.SCCACHE_SERVER_UDS, resolveSccacheServerUds(env.CARGO_TARGET_DIR));
   }

@@ -17,7 +17,7 @@ import {
 import { desktopConnectLocal, desktopConnectSsh, desktopPickFolder } from "../../utils/desktop";
 import { trackWorkspaceLaunchCompleted } from "../../utils/analytics";
 import { upsertLauncherRecent } from "../../state/launcherRecentsStore";
-import { deriveRepoNameFromUrl, parseCloneDestPath, resolveWorkspaceName } from "../WorkspaceSetupPage.logic";
+import { deriveRepoNameFromUrl, parseCloneDestPath, resolveWorkspaceName } from "./WorkspaceSetupPage.logic";
 import {
   currentLaunchStepLabel as deriveCurrentLaunchStepLabel,
   formatLaunchElapsed,

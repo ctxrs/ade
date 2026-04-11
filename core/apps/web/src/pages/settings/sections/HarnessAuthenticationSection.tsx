@@ -13,8 +13,8 @@ import {
   isReadyVisibleHarnessProviderStatus,
   isVisibleHarnessProviderStatus,
 } from "../../../utils/providerInventory";
-import { Card, Row } from "../../SettingsPage.components";
-import { clampPct } from "../../SettingsPage.utils";
+import { Card, Row } from "../SettingsPage.components";
+import { clampPct } from "../SettingsPage.utils";
 import {
   installErrorSummary,
 } from "../../../utils/providerInstallUi";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ProviderOptions } from "../api/client";
+import type { ProviderOptions } from "../../api/client";
 import { modelIdsFromOptions } from "./WorkbenchPage.utils";
 
 const baseOptions = (providerId: string): ProviderOptions => ({

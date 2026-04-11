@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOMClient from "react-dom/client";
-import { MemoMarkdown } from "../SessionPage.markdown";
+import { MemoMarkdown } from "../sessionView";
 import { measureSessionMarkdownDocument } from "../sessionThread/sessionMarkdownMeasurement";
 import { SESSION_THREAD_LAYOUT_STYLE } from "../sessionThread/sessionThreadLayoutTokens";
 

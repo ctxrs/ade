@@ -6,7 +6,7 @@ import {
   defaultContainerMountMode,
   defaultExecutionSettings,
   normalizeExecutionSettings,
-} from "./settings/sandboxExecutionSettings";
+} from "./sandboxExecutionSettings";
 import {
   desktopEditorSettingsEqual,
   executionSettingsStableKey,

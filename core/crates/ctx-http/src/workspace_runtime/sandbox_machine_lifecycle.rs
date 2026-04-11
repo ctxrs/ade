@@ -1,36 +1,111 @@
 use super::*;
 use crate::settings::ContainerMountMode;
+use ctx_harness_setup::{HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase};
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 const SANDBOX_OP_TIMEOUT: Duration = Duration::from_secs(60);
 
-impl HarnessRuntimeManager {
-    pub(crate) async fn ensure_sandbox_machine_download(&self) -> Result<()> {
+#[async_trait::async_trait]
+pub(crate) trait SandboxMachineLifecycleExt {
+    async fn ensure_sandbox_machine_download(&self) -> Result<()>;
+    async fn inspect_sandbox_machine_memory_mb(&self, machine_name: &str) -> Result<Option<u32>>;
+    async fn inspect_sandbox_machine_state(&self, machine_name: &str) -> Result<Option<String>>;
+    async fn init_sandbox_machine_locked(
+        &self,
+        machine_name: &str,
+        desired_memory_mb: u32,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()>;
+    async fn stop_sandbox_machine_locked(
+        &self,
+        machine_name: &str,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<bool>;
+    async fn remove_sandbox_machine_locked(
+        &self,
+        machine_name: &str,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()>;
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    async fn ensure_sandbox_machine_materialized(
+        &self,
+        settings: &ContainerExecutionSettings,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()>;
+    #[allow(dead_code)]
+    async fn reconcile_running_sandbox_machine_memory(
+        &self,
+        settings: &ContainerExecutionSettings,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()>;
+    async fn has_running_workspace_containers(&self) -> Result<bool>;
+    async fn should_defer_disk_isolated_machine_reconfiguration(
+        &self,
+        settings: &ContainerExecutionSettings,
+        machine_name: &str,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<bool>;
+    async fn disk_isolated_workspace_volumes_exist(
+        &self,
+        machine_name: &str,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<bool>;
+    async fn ensure_engine_ready_for_disk_state_inspection(
+        &self,
+        machine_name: &str,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<bool>;
+    async fn has_running_workspace_containers_for_stopped_machine_reconfiguration(
+        &self,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<bool>;
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    async fn maybe_reclaim_sandbox_machine(
+        &self,
+        settings: &ContainerExecutionSettings,
+        system: &SystemSnapshot,
+        observer: Option<&dyn HarnessSetupObserver>,
+        stores: &StoreManager,
+        running_sessions: &Arc<Mutex<HashSet<SessionId>>>,
+        terminals: &TerminalManager,
+    ) -> Result<bool>;
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    async fn should_defer_reclaim_for_active_container_runtime(
+        &self,
+        stores: &StoreManager,
+        running_sessions: &Arc<Mutex<HashSet<SessionId>>>,
+        terminals: &TerminalManager,
+    ) -> bool;
+}
+
+#[async_trait::async_trait]
+impl SandboxMachineLifecycleExt for HarnessRuntimeManager {
+    async fn ensure_sandbox_machine_download(&self) -> Result<()> {
         if !sandbox_machine_required() {
             return Ok(());
         }
-        ensure_managed_sandbox_cli_runtime(&self.data_root, None, None).await?;
+        ensure_managed_sandbox_cli_runtime(self.data_root(), None, None).await?;
         let machine_image = if cfg!(target_os = "macos") {
-            Some(ensure_managed_sandbox_machine_cache(&self.data_root, None, None).await?)
+            Some(ensure_managed_sandbox_machine_cache(self.data_root(), None, None).await?)
         } else {
             None
         };
-        let machine_name = sandbox_machine_name(&self.data_root);
+        let machine_name = sandbox_machine_name(self.data_root());
         let machine_lock = sandbox_machine_singleflight_lock(&machine_name);
         let _machine_guard = match machine_lock.try_lock() {
             Ok(guard) => guard,
             Err(_) => return Ok(()),
         };
-        seed_shared_sandbox_machine_cache_best_effort(&self.data_root, None).await;
-        if sandbox_machine_present(&self.data_root, &machine_name).await? {
-            persist_sandbox_machine_cache_to_shared_best_effort(&self.data_root, None).await;
+        seed_shared_sandbox_machine_cache_best_effort(self.data_root(), None).await;
+        if sandbox_machine_present(self.data_root(), &machine_name).await? {
+            persist_sandbox_machine_cache_to_shared_best_effort(self.data_root(), None).await;
             return Ok(());
         }
         let init_outcome = run_sandbox_machine_init(
-            &self.data_root,
+            self.data_root(),
             &machine_name,
             machine_image.as_deref(),
             Some(container_machine_memory_mb(
@@ -47,14 +122,14 @@ impl HarnessRuntimeManager {
             || output.status.success()
             || combined.to_ascii_lowercase().contains("already exists")
         {
-            persist_sandbox_machine_cache_to_shared_best_effort(&self.data_root, None).await;
+            persist_sandbox_machine_cache_to_shared_best_effort(self.data_root(), None).await;
             return Ok(());
         }
         anyhow::bail!("sandbox machine init failed: {}", combined);
     }
 
     async fn inspect_sandbox_machine_memory_mb(&self, machine_name: &str) -> Result<Option<u32>> {
-        let mut cmd = sandbox_container_command(&self.data_root)?;
+        let mut cmd = sandbox_container_command(self.data_root())?;
         cmd.arg("machine").arg("inspect").arg(machine_name);
         let output = command_output_with_timeout(cmd, SANDBOX_INFO_TIMEOUT).await?;
         if !output.status.success() {
@@ -79,7 +154,7 @@ impl HarnessRuntimeManager {
     }
 
     async fn inspect_sandbox_machine_state(&self, machine_name: &str) -> Result<Option<String>> {
-        let mut cmd = sandbox_container_command(&self.data_root)?;
+        let mut cmd = sandbox_container_command(self.data_root())?;
         cmd.arg("machine").arg("inspect").arg(machine_name);
         let output = match command_output_with_timeout(cmd, SANDBOX_INFO_TIMEOUT).await {
             Ok(output) => output,
@@ -120,12 +195,12 @@ impl HarnessRuntimeManager {
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<()> {
         let machine_image = if cfg!(target_os = "macos") {
-            Some(ensure_managed_sandbox_machine_cache(&self.data_root, observer, None).await?)
+            Some(ensure_managed_sandbox_machine_cache(self.data_root(), observer, None).await?)
         } else {
             None
         };
         let init_outcome = run_sandbox_machine_init(
-            &self.data_root,
+            self.data_root(),
             machine_name,
             machine_image.as_deref(),
             Some(desired_memory_mb),
@@ -140,7 +215,7 @@ impl HarnessRuntimeManager {
             || output.status.success()
             || combined.to_ascii_lowercase().contains("already exists")
         {
-            persist_sandbox_machine_cache_to_shared_best_effort(&self.data_root, observer).await;
+            persist_sandbox_machine_cache_to_shared_best_effort(self.data_root(), observer).await;
             return Ok(());
         }
         anyhow::bail!("sandbox machine init failed: {combined}");
@@ -151,7 +226,7 @@ impl HarnessRuntimeManager {
         machine_name: &str,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<bool> {
-        let mut cmd = sandbox_container_command(&self.data_root)?;
+        let mut cmd = sandbox_container_command(self.data_root())?;
         cmd.arg("machine").arg("stop").arg(machine_name);
         let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
         if output.status.success() {
@@ -183,7 +258,7 @@ impl HarnessRuntimeManager {
         let _ = self
             .stop_sandbox_machine_locked(machine_name, observer)
             .await;
-        let mut cmd = sandbox_container_command(&self.data_root)?;
+        let mut cmd = sandbox_container_command(self.data_root())?;
         cmd.arg("machine").arg("rm").arg("-f").arg(machine_name);
         let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
         if output.status.success() {
@@ -204,7 +279,7 @@ impl HarnessRuntimeManager {
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
-    pub(crate) async fn ensure_sandbox_machine_materialized(
+    async fn ensure_sandbox_machine_materialized(
         &self,
         settings: &ContainerExecutionSettings,
         observer: Option<&dyn HarnessSetupObserver>,
@@ -213,12 +288,12 @@ impl HarnessRuntimeManager {
             return Ok(());
         }
         let desired_memory_mb = container_machine_memory_mb(settings);
-        let machine_name = sandbox_machine_name(&self.data_root);
+        let machine_name = sandbox_machine_name(self.data_root());
         let machine_lock = sandbox_machine_singleflight_lock(&machine_name);
         let _machine_guard = machine_lock.lock().await;
-        seed_shared_sandbox_machine_cache_best_effort(&self.data_root, observer).await;
+        seed_shared_sandbox_machine_cache_best_effort(self.data_root(), observer).await;
 
-        let present = sandbox_machine_present(&self.data_root, &machine_name).await?;
+        let present = sandbox_machine_present(self.data_root(), &machine_name).await?;
         if present {
             let actual_memory_mb = self
                 .inspect_sandbox_machine_memory_mb(&machine_name)
@@ -275,7 +350,7 @@ impl HarnessRuntimeManager {
     }
 
     #[allow(dead_code)]
-    pub(crate) async fn reconcile_running_sandbox_machine_memory(
+    async fn reconcile_running_sandbox_machine_memory(
         &self,
         settings: &ContainerExecutionSettings,
         observer: Option<&dyn HarnessSetupObserver>,
@@ -284,11 +359,11 @@ impl HarnessRuntimeManager {
             return Ok(());
         }
         let desired_memory_mb = container_machine_memory_mb(settings);
-        let machine_name = sandbox_machine_name(&self.data_root);
+        let machine_name = sandbox_machine_name(self.data_root());
         let machine_lock = sandbox_machine_singleflight_lock(&machine_name);
         let _machine_guard = machine_lock.lock().await;
 
-        if !sandbox_machine_present(&self.data_root, &machine_name).await? {
+        if !sandbox_machine_present(self.data_root(), &machine_name).await? {
             observe_log(
                 observer,
                 HarnessSetupPhase::MachineCheck,
@@ -347,7 +422,7 @@ impl HarnessRuntimeManager {
     }
 
     async fn has_running_workspace_containers(&self) -> Result<bool> {
-        let mut cmd = sandbox_container_command(&self.data_root)?;
+        let mut cmd = sandbox_container_command(self.data_root())?;
         cmd.arg("ps").arg("--format").arg("{{.Names}}");
         let output = command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await?;
         if !output.status.success() {
@@ -391,7 +466,7 @@ impl HarnessRuntimeManager {
             return Ok(true);
         }
 
-        let mut cmd = sandbox_container_command(&self.data_root)?;
+        let mut cmd = sandbox_container_command(self.data_root())?;
         cmd.arg("volume").arg("ls").arg("--format").arg("{{.Name}}");
         let output = match command_output_with_timeout(cmd, SANDBOX_OP_TIMEOUT).await {
             Ok(output) => output,
@@ -436,7 +511,7 @@ impl HarnessRuntimeManager {
         machine_name: &str,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<bool> {
-        if sandbox_engine_ready(&self.data_root).await? {
+        if sandbox_engine_ready(self.data_root()).await? {
             return Ok(true);
         }
 
@@ -446,7 +521,7 @@ impl HarnessRuntimeManager {
             HarnessSetupLogLevel::Info,
             "starting local sandbox runtime to inspect disk-isolated workspace volumes before memory reconfiguration",
         );
-        let mut start = sandbox_container_command(&self.data_root)?;
+        let mut start = sandbox_container_command(self.data_root())?;
         start.arg("machine").arg("start").arg(machine_name);
         let output = command_output_with_timeout(start, SANDBOX_MACHINE_START_TIMEOUT).await?;
         if !output.status.success() {
@@ -455,7 +530,7 @@ impl HarnessRuntimeManager {
 
         let deadline = Instant::now() + sandbox_machine_ready_timeout();
         loop {
-            if sandbox_engine_ready(&self.data_root).await? {
+            if sandbox_engine_ready(self.data_root()).await? {
                 return Ok(true);
             }
             if Instant::now() >= deadline {
@@ -472,10 +547,13 @@ impl HarnessRuntimeManager {
         match self.has_running_workspace_containers().await {
             Ok(has_running) => Ok(has_running),
             Err(err) => {
-                if sandbox_engine_ready(&self.data_root).await.unwrap_or(false) {
+                if sandbox_engine_ready(self.data_root())
+                    .await
+                    .unwrap_or(false)
+                {
                     return Err(err);
                 }
-                let machine_name = sandbox_machine_name(&self.data_root);
+                let machine_name = sandbox_machine_name(self.data_root());
                 match self.inspect_sandbox_machine_state(&machine_name).await? {
                     Some(state) if state.contains("running") || state.contains("starting") => {
                         observe_log(
@@ -518,7 +596,7 @@ impl HarnessRuntimeManager {
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
-    pub(crate) async fn maybe_reclaim_sandbox_machine(
+    async fn maybe_reclaim_sandbox_machine(
         &self,
         settings: &ContainerExecutionSettings,
         system: &SystemSnapshot,
@@ -530,12 +608,7 @@ impl HarnessRuntimeManager {
         if !sandbox_machine_required() {
             return Ok(false);
         }
-        if self.active_runtime_operations.load(Ordering::SeqCst) > 0
-            || self
-                .active_prewarm_artifact_operations
-                .load(Ordering::SeqCst)
-                > 0
-        {
+        if self.runtime_operation_count() > 0 || self.prewarm_artifact_operation_count() > 0 {
             return Ok(false);
         }
         if self
@@ -564,15 +637,10 @@ impl HarnessRuntimeManager {
             return Ok(false);
         }
 
-        let machine_name = sandbox_machine_name(&self.data_root);
+        let machine_name = sandbox_machine_name(self.data_root());
         let machine_lock = sandbox_machine_singleflight_lock(&machine_name);
         let _machine_guard = machine_lock.lock().await;
-        if self.active_runtime_operations.load(Ordering::SeqCst) > 0
-            || self
-                .active_prewarm_artifact_operations
-                .load(Ordering::SeqCst)
-                > 0
-        {
+        if self.runtime_operation_count() > 0 || self.prewarm_artifact_operation_count() > 0 {
             return Ok(false);
         }
         if self
@@ -582,7 +650,7 @@ impl HarnessRuntimeManager {
             self.note_runtime_activity();
             return Ok(false);
         }
-        if !sandbox_machine_present(&self.data_root, &machine_name).await? {
+        if !sandbox_machine_present(self.data_root(), &machine_name).await? {
             return Ok(false);
         }
         let stopped = self

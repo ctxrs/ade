@@ -1,5 +1,6 @@
 use super::*;
 use crate::api::shared::store_for_existing_workspace_status;
+use ctx_linux_sandbox_runtime::linux_sandbox_runtime_status;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct MergeQueueSubmitReq {
@@ -152,13 +153,12 @@ pub(in crate::api) async fn diagnostics(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<DiagnosticsResp>, StatusCode> {
     let startup_prewarm = state.execution.setup.startup_status().await;
-    let linux_sandbox_runtime =
-        crate::workspace_runtime::linux_sandbox_runtime_status(&state.core.data_root)
-            .await
-            .map(|status| serde_json::to_value(status).unwrap_or_else(|_| serde_json::json!({})))
-            .unwrap_or_else(
-                |err| serde_json::json!({"error": logs::redact_sensitive(&err.to_string())}),
-            );
+    let linux_sandbox_runtime = linux_sandbox_runtime_status(&state.core.data_root)
+        .await
+        .map(|status| serde_json::to_value(status).unwrap_or_else(|_| serde_json::json!({})))
+        .unwrap_or_else(
+            |err| serde_json::json!({"error": logs::redact_sensitive(&err.to_string())}),
+        );
     let providers = {
         let map = state.providers.statuses.lock().await;
         map.values()

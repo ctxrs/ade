@@ -1,5 +1,5 @@
 import { idToString, type Message } from "../../api/client";
-import type { ThreadItem, WorkbenchThreadView } from "../SessionPage.types";
+import type { ThreadItem, WorkbenchThreadView } from "../sessionView";
 
 type SortableThreadGroup = {
   sort_seq: number;

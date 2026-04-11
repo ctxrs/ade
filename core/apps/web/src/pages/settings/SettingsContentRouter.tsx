@@ -31,7 +31,7 @@ import { HarnessAuthenticationSection } from "./sections/HarnessAuthenticationSe
 import { CodexAccountsSection } from "./sections/CodexAccountsSection";
 import { DevToolsSection } from "./sections/DevToolsSection";
 import { SandboxingSection } from "./sections/SandboxingSection";
-import type { SectionId } from "../SettingsPage.types";
+import type { SectionId } from "./SettingsPage.types";
 
 export function SettingsContentRouter(props: {
   active: SectionId;

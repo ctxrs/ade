@@ -4,7 +4,7 @@ import {
   updateWorkspaceExecutionConfig,
   type WorkspaceExecutionConfig,
 } from "../../../api/client";
-import { isContainerizedEnvironment, type PromptAutosaveStatus } from "../../SettingsPage.utils";
+import { isContainerizedEnvironment, type PromptAutosaveStatus } from "../SettingsPage.utils";
 
 type WorkspaceNetworkMode = NonNullable<WorkspaceExecutionConfig["network_mode"]>;
 

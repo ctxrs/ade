@@ -3,7 +3,7 @@ import { useEffect, useState, type ComponentProps, type MouseEvent } from "react
 import { ArtifactsPane } from "../../components/ArtifactsPane";
 import { DiffReviewPane } from "../../components/DiffReviewPane";
 import { SessionsPane } from "../../components/SessionsPane";
-import { WorkbenchSessionSlot } from "../WorkbenchPage.sessionSlot";
+import { WorkbenchSessionSlot } from "./WorkbenchPage.sessionSlot";
 import { WorkbenchSessionHeader } from "./WorkbenchSessionHeader";
 import { WorkbenchSessionLoadIssues, type WorkbenchSessionLoadIssue } from "./WorkbenchSessionLoadIssues";
 import type { GitPaneModel } from "./worktreeGitPaneModel";

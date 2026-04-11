@@ -59,13 +59,7 @@ async fn idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_contai
         &sandbox_cli_path.to_string_lossy(),
     );
     let _available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
-    {
-        let mut last_activity = manager
-            .last_activity
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *last_activity = Instant::now() - Duration::from_secs(600);
-    }
+    manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(600));
     let settings = ContainerExecutionSettings {
         machine: crate::settings::ContainerMachineSettings {
             idle_shutdown_seconds: 60,
@@ -127,13 +121,7 @@ async fn active_prewarm_artifact_activity_suppresses_reclaim() {
         &sandbox_cli_path.to_string_lossy(),
     );
     let _available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
-    {
-        let mut last_activity = manager
-            .last_activity
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *last_activity = Instant::now() - Duration::from_secs(600);
-    }
+    manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(600));
     let settings = ContainerExecutionSettings {
         machine: crate::settings::ContainerMachineSettings {
             idle_shutdown_seconds: 60,

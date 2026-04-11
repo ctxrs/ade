@@ -1,6 +1,7 @@
 use super::*;
 use ctx_avf_linux_runtime::{SharedSubstrateLifecycleManager, SubstrateLifecycleRecord};
 use ctx_harness_setup::{observe_log, observe_phase};
+use ctx_linux_sandbox_runtime::linux_sandbox_runtime_status;
 use ctx_workspace_container::{
     container_data_root, container_user, daemon_port_from_url, rewrite_daemon_url_for_container,
     EnsureWorkspaceContainerRequest, WorkspaceContainerReadiness,
@@ -9,23 +10,17 @@ use std::sync::Arc;
 
 impl HarnessRuntimeManager {
     pub fn new(data_root: PathBuf) -> Self {
-        Self::new_with_ops_events(
-            data_root.clone(),
-            crate::ops_events::OpsEvents::new(data_root),
-        )
+        Self::new_with_event_sink(data_root, Arc::new(NoopRuntimeEventSink))
     }
 
-    pub fn new_with_ops_events(
-        data_root: PathBuf,
-        ops_events: crate::ops_events::OpsEvents,
-    ) -> Self {
+    pub fn new_with_event_sink(data_root: PathBuf, event_sink: Arc<dyn RuntimeEventSink>) -> Self {
         Self {
             data_root: data_root.clone(),
             workspace_containers: WorkspaceContainerOwner::new(data_root.clone()),
             last_activity: StdMutex::new(Instant::now()),
             active_runtime_operations: AtomicUsize::new(0),
             active_prewarm_artifact_operations: AtomicUsize::new(0),
-            ops_events,
+            event_sink,
         }
     }
 
@@ -33,19 +28,13 @@ impl HarnessRuntimeManager {
         &self,
         record: &SubstrateLifecycleRecord,
         source: &'static str,
-        workspace_id: Option<String>,
+        workspace_id: Option<WorkspaceId>,
     ) {
-        let event = crate::ops_events::substrate_lifecycle_observed_event(
-            record,
-            crate::ops_events::SubstrateLifecycleOpsEventContext {
-                source,
-                workspace_id,
-            },
-        );
-        self.ops_events.emit(event);
+        self.event_sink
+            .emit_substrate_lifecycle(record, source, workspace_id);
     }
 
-    pub(crate) fn note_runtime_activity(&self) {
+    pub fn note_runtime_activity(&self) {
         let mut last_activity = match self.last_activity.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -53,8 +42,7 @@ impl HarnessRuntimeManager {
         *last_activity = Instant::now();
     }
 
-    #[cfg(test)]
-    pub(crate) fn runtime_idle_for(&self) -> Duration {
+    pub fn runtime_idle_for(&self) -> Duration {
         let last_activity = match self.last_activity.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -62,22 +50,21 @@ impl HarnessRuntimeManager {
         last_activity.elapsed()
     }
 
-    pub(crate) fn begin_runtime_operation(&self) -> RuntimeOperationGuard<'_> {
+    pub fn begin_runtime_operation(&self) -> RuntimeOperationGuard<'_> {
         self.note_runtime_activity();
         self.active_runtime_operations
             .fetch_add(1, Ordering::SeqCst);
         RuntimeOperationGuard { manager: self }
     }
 
-    #[cfg(test)]
-    pub(crate) fn begin_prewarm_artifact_activity(&self) -> PrewarmArtifactActivityGuard<'_> {
+    pub fn begin_prewarm_artifact_activity(&self) -> PrewarmArtifactActivityGuard<'_> {
         self.note_runtime_activity();
         self.active_prewarm_artifact_operations
             .fetch_add(1, Ordering::SeqCst);
         PrewarmArtifactActivityGuard { manager: self }
     }
 
-    pub(crate) fn begin_runtime_operation_scope(
+    pub fn begin_runtime_operation_scope(
         self: &Arc<Self>,
     ) -> ctx_execution_runtime::RuntimeActivityScope {
         self.note_runtime_activity();
@@ -92,7 +79,7 @@ impl HarnessRuntimeManager {
         })
     }
 
-    pub(crate) fn begin_prewarm_artifact_activity_scope(
+    pub fn begin_prewarm_artifact_activity_scope(
         self: &Arc<Self>,
     ) -> ctx_execution_runtime::RuntimeActivityScope {
         self.note_runtime_activity();
@@ -117,7 +104,7 @@ impl HarnessRuntimeManager {
         }
     }
 
-    pub(crate) async fn save_or_stop_selected_shared_substrate(
+    pub async fn save_or_stop_selected_shared_substrate(
         &self,
     ) -> Result<Option<SubstrateLifecycleRecord>> {
         if !matches!(
@@ -368,7 +355,7 @@ impl HarnessRuntimeManager {
         .await
     }
 
-    pub(crate) async fn ensure_workspace_container_after_machine_ready_with_observer(
+    pub async fn ensure_workspace_container_after_machine_ready_with_observer(
         &self,
         workspace: &Workspace,
         settings: &ExecutionSettings,
@@ -409,7 +396,7 @@ impl HarnessRuntimeManager {
             self.emit_substrate_lifecycle_ops_event(
                 &record,
                 "workspace_container_after_readiness",
-                Some(workspace.id.0.to_string()),
+                Some(workspace.id),
             );
             AVF_GUEST_HOST_GATEWAY
         } else {
@@ -451,7 +438,7 @@ impl HarnessRuntimeManager {
         .await
     }
 
-    pub(crate) async fn ensure_container_machine_ready(
+    pub async fn ensure_container_machine_ready(
         &self,
         settings: &ContainerExecutionSettings,
         observer: Option<&dyn HarnessSetupObserver>,
@@ -486,10 +473,7 @@ impl HarnessRuntimeManager {
         anyhow::bail!("{}", bootstrap.message)
     }
 
-    pub(crate) async fn workspace_container_exists(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<bool> {
+    pub async fn workspace_container_exists(&self, workspace_id: WorkspaceId) -> Result<bool> {
         let mode = selected_sandbox_command_mode(&self.data_root)?;
         match self
             .workspace_containers
@@ -556,7 +540,7 @@ impl HarnessRuntimeManager {
     }
 }
 
-pub(crate) struct RuntimeOperationGuard<'a> {
+pub struct RuntimeOperationGuard<'a> {
     manager: &'a HarnessRuntimeManager,
 }
 
@@ -569,12 +553,10 @@ impl Drop for RuntimeOperationGuard<'_> {
     }
 }
 
-#[cfg(test)]
-pub(crate) struct PrewarmArtifactActivityGuard<'a> {
+pub struct PrewarmArtifactActivityGuard<'a> {
     manager: &'a HarnessRuntimeManager,
 }
 
-#[cfg(test)]
 impl Drop for PrewarmArtifactActivityGuard<'_> {
     fn drop(&mut self) {
         self.manager.note_runtime_activity();

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { SectionId } from "../SettingsPage.types";
+import type { SectionId } from "./SettingsPage.types";
 
 type UseSettingsStateArgs = {
   initialActive: SectionId;

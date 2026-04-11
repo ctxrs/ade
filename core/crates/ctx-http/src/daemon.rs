@@ -18,7 +18,6 @@ use ctx_store::{Store, StoreManager, StoreManagerConfig};
 
 use crate::api;
 use crate::installer;
-use crate::installs::InstallTarget;
 use crate::memleak_debug;
 use crate::provider_child_reclassifier;
 use crate::provider_guard;
@@ -31,6 +30,7 @@ use crate::settings;
 use crate::storage_guard;
 use crate::telemetry::TelemetryConfig;
 use crate::tool_cgroup;
+use ctx_provider_install::install_state::InstallTarget;
 
 mod auth;
 mod edit_plans;

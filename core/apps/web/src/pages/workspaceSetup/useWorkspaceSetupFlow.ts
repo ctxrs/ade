@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
-import { getSourceStepValidation } from "../WorkspaceSetupPage.logic";
+import { getSourceStepValidation } from "./WorkspaceSetupPage.logic";
 import {
   buildWizardStepPath,
   resolveWizardCurrentStepKey,

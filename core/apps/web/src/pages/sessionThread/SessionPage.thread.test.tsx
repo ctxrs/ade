@@ -7,8 +7,8 @@ import {
 import { beforeEach, describe, expect, it } from "vitest";
 import type { MutableRefObject } from "react";
 import { WorkbenchMessageListStack, type WorkbenchMessageListContext } from "./SessionPage.thread";
-import type { WorkbenchListItem } from "./SessionPage.types";
-import { getWorkbenchListItemRenderKey } from "./sessionMessageListStableUpdate";
+import type { WorkbenchListItem } from "../sessionView/SessionPage.types";
+import { getWorkbenchListItemRenderKey } from "../sessionMessageListStableUpdate";
 
 const baseContext: WorkbenchMessageListContext = {
   loaded: true,

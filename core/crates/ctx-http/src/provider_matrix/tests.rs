@@ -1,6 +1,6 @@
 use super::*;
 use crate::installer::{AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata};
-use crate::installs::InstallTarget;
+use ctx_provider_install::install_state::InstallTarget;
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import type { MessageAttachment } from "../../api/client";
 import { idToString } from "../../api/client";
-import { buildWorkbenchThreadViewModel } from "../SessionPage";
+import { buildWorkbenchThreadViewModel } from "../workbenchViewModel";
 import type { SessionCacheEntry, SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
 import type { TerminalPanelHandle } from "../../components/TerminalPanel";
 import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
@@ -13,7 +13,7 @@ import {
   sanitizeFileName,
   saveMarkdownExport,
   spinnerDelayForNow,
-} from "../WorkbenchPage.utils";
+} from "./WorkbenchPage.utils";
 
 type Params = {
   activeEntry: SessionCacheEntry | null;

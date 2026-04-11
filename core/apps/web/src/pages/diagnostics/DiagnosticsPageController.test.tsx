@@ -1,15 +1,15 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import DiagnosticsPage from "./DiagnosticsPage";
+import DiagnosticsPage from "./DiagnosticsPageController";
 import {
   applyDaemonDesktopConnection,
   appendDesktopLog,
   checkUpdates,
   getDiagnostics,
   getLspStatus,
-} from "../api/client";
-import type { Diagnostics, LspStatus } from "../api/client";
+} from "../../api/client";
+import type { Diagnostics, LspStatus } from "../../api/client";
 import {
   desktopApplyAppUpdate,
   desktopCheckAppUpdate,
@@ -21,15 +21,15 @@ import {
   getDesktopPlatform,
   isDesktopApp,
   openExternalLink,
-} from "../utils/desktop";
+} from "../../utils/desktop";
 import {
   appendDownloadAttributionIdToUrl,
   clearPendingDownloadAttributionId,
   createDownloadAttributionId,
   setPendingDownloadAttributionId,
-} from "../utils/analytics";
+} from "../../utils/analytics";
 
-vi.mock("../api/client", () => ({
+vi.mock("../../api/client", () => ({
   applyDaemonDesktopConnection: vi.fn(),
   appendDesktopLog: vi.fn(),
   applyAppImageUpdate: vi.fn(),
@@ -40,7 +40,7 @@ vi.mock("../api/client", () => ({
   openLogsFolder: vi.fn(),
 }));
 
-vi.mock("../utils/desktop", () => ({
+vi.mock("../../utils/desktop", () => ({
   desktopApplyAppUpdate: vi.fn(),
   desktopCheckAppUpdate: vi.fn(),
   desktopGetConnection: vi.fn(),
@@ -52,7 +52,7 @@ vi.mock("../utils/desktop", () => ({
   openExternalLink: vi.fn(),
 }));
 
-vi.mock("../utils/analytics", () => ({
+vi.mock("../../utils/analytics", () => ({
   appendDownloadAttributionIdToUrl: vi.fn((href: string, downloadId: string) =>
     `${href}${href.includes("?") ? "&" : "?"}ctx_download_id=${downloadId}`),
   clearPendingDownloadAttributionId: vi.fn(async () => {}),

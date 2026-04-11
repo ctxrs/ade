@@ -16,7 +16,7 @@ vi.mock("../../components/SessionsPane", () => ({
   SessionsPane: () => <div data-testid="sessions-pane" />,
 }));
 
-vi.mock("../WorkbenchPage.sessionSlot", () => ({
+vi.mock("./WorkbenchPage.sessionSlot", () => ({
   WorkbenchSessionSlot: ({ sessionId }: { sessionId: string }) => <div data-testid="session-slot">{sessionId}</div>,
 }));
 

@@ -6,7 +6,7 @@ import { useWorkbenchSessionActions } from "./useWorkbenchSessionActions";
 
 const clipboardSpy = vi.hoisted(() => vi.fn());
 
-vi.mock("../SessionPage", () => ({
+vi.mock("../workbenchViewModel", () => ({
   buildWorkbenchThreadViewModel: () => ({ groups: [] }),
 }));
 

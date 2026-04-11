@@ -1,6 +1,6 @@
 import Editor from "@monaco-editor/react";
 import { Check, Loader2 } from "lucide-react";
-import { promptAutosaveStatusLabel } from "../../SettingsPage.utils";
+import { promptAutosaveStatusLabel } from "../SettingsPage.utils";
 import { useAgentSystemPromptController } from "../hooks/useAgentSystemPromptController";
 import { GeneralSection } from "./GeneralSection";
 

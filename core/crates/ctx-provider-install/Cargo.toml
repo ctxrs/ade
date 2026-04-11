@@ -1,0 +1,10 @@
+[package]
+name = "ctx-provider-install"
+version = "0.42.0"
+edition.workspace = true
+
+[dependencies]
+chrono.workspace = true
+serde.workspace = true
+tokio.workspace = true
+uuid.workspace = true

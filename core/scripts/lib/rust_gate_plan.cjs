@@ -14,6 +14,7 @@ const AGENT_GATE_CRATES = [
   "ctx-linux-sandbox-runtime",
   "ctx-mcp",
   "ctx-provider-accounts",
+  "ctx-provider-install",
   "ctx-provider-matrix",
   "ctx-provider-auth-import",
   "ctx-providers",
@@ -28,6 +29,7 @@ const AGENT_GATE_CRATES = [
   "ctx-workspace-container",
   "ctx-workspace-active-snapshot",
   "ctx-workspace-config",
+  "ctx-workspace-runtime",
 ];
 
 const BAZEL_TEST_CRATES = new Set(getBazelCoveredCrates());

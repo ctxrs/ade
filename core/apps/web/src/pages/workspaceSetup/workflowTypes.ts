@@ -9,7 +9,7 @@ import {
   type DaemonTargetScope,
   type ProvisioningScope,
 } from "../../state/scopeIdentity";
-import type { SessionTitlingMode } from "../WorkspaceSetupPage.logic";
+import type { SessionTitlingMode } from "./WorkspaceSetupPage.logic";
 import type { WizardRoutePlan, WizardStepKey } from "./wizardFlow";
 import { parseUserHost } from "./remoteProfiles";
 

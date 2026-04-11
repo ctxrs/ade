@@ -3,8 +3,8 @@ import { Virtuoso, type ListRange } from "react-virtuoso";
 import { Link } from "react-router-dom";
 import { ChevronsLeft, ChevronsRight, Settings, SquarePen } from "lucide-react";
 
-import { TASK_LIST_COMPONENTS } from "../WorkbenchPage.taskList";
-import type { AnchorRect, TaskListContext, TaskListItem } from "../WorkbenchPage.types";
+import { TASK_LIST_COMPONENTS } from "./WorkbenchPage.taskList";
+import type { AnchorRect, TaskListContext, TaskListItem } from "./WorkbenchPage.types";
 
 type WorkbenchTopbarProps = {
   workspaceId: string;

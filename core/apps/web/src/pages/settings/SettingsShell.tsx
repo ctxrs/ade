@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import type { SectionId, SettingsSectionMeta } from "../SettingsPage.types";
+import type { SectionId, SettingsSectionMeta } from "./SettingsPage.types";
 
 export function SettingsShell({
   backLink,

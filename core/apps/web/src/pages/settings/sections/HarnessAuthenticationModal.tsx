@@ -7,7 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../../components/ui/select";
-import type { HarnessAuthModalState } from "../../SettingsPage.types";
+import type { HarnessAuthModalState } from "../SettingsPage.types";
 import {
   getHarnessEndpointProviderPreset,
   HARNESS_ENDPOINT_PROVIDER_PRESETS,

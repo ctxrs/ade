@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { estimatePretextVirtualizerItemHeight } from "./estimateHeuristics";
-import type { WorkbenchListItem } from "../SessionPage.types";
+import type { WorkbenchListItem } from "./SessionPage.types";
 
 describe("estimatePretextVirtualizerItemHeight", () => {
   it("matches the compact rendered height contract for turn status rows", () => {

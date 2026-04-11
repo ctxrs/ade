@@ -3,8 +3,8 @@ import type { SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem } from "../../state/workspaceActiveSnapshotStore";
 import { hasSessionActiveTurn, isSessionWorkingActivity } from "../../utils/sessionActivity";
 import { pickPreferredSessionId } from "../../utils/workbenchSelection";
-import { lastAssistantMessageMs, parseMs } from "../WorkbenchPage.utils";
-import type { OptimisticTaskSummary } from "../WorkbenchPage.types";
+import { lastAssistantMessageMs, parseMs } from "./WorkbenchPage.utils";
+import type { OptimisticTaskSummary } from "./WorkbenchPage.types";
 
 export type WorkbenchTaskLiveInfo = {
   workingByTask: Set<string>;

@@ -6,8 +6,8 @@ import {
   SelectValue,
 } from "../../../components/ui/select";
 import type { TitleGenerationSettings } from "../../../api/client";
-import { clampPct } from "../../SettingsPage.utils";
-import { Row, Toggle } from "../../SettingsPage.components";
+import { clampPct } from "../SettingsPage.utils";
+import { Row, Toggle } from "../SettingsPage.components";
 import { useTitleGenerationController } from "../hooks/useTitleGenerationController";
 import { GeneralSection } from "./GeneralSection";
 

@@ -38,7 +38,8 @@ function main() {
 
   run("pnpm", ["source:file-size:enforce"], env);
   run("pnpm", ["desktop:ipc:check"], env);
-  run("pnpm", ["-C", "apps/web", "lint"], env);
+  run("pnpm", ["bazel:web:any:enforce"], env);
+  run("pnpm", ["bazel:web:lint"], env);
   run("pnpm", ["rust:fmt"], env);
   run("pnpm", ["rust:panic-traps"], env);
   run("pnpm", ["rust:turbo:check"], env);
@@ -61,11 +62,10 @@ function main() {
     taskNames: [
       "supabase:migrations:check",
       "supabase:functions:check",
-      "typecheck",
-      "any:enforce",
     ],
     extraArgs: ["--filter=ctx-monorepo", "--filter=ctx-web"],
   });
+  run("pnpm", ["bazel:web:typecheck"], env);
 }
 
 main();

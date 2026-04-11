@@ -6,9 +6,9 @@ use crate::api::provider_launch::{
     selected_endpoint_from_harness_config, selected_endpoint_record_from_harness_config,
     GetInstallStatusesReq,
 };
-use crate::installs::{InstallEventLevel, InstallProgressEvent};
 use crate::provider_launch::install::should_skip_install_for_healthy_provider;
 use chrono::Utc;
+use ctx_provider_install::install_state::{InstallEventLevel, InstallProgressEvent};
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderHealth, ProviderProcessInfo, ProviderRestartMode, ProviderStatus,
     RunHandle, TurnInput,
@@ -1012,7 +1012,7 @@ async fn get_install_statuses_returns_known_and_missing_installs_in_request_orde
     assert_eq!(info.target, Some(InstallTarget::Container));
     assert!(matches!(
         info.state,
-        crate::installs::InstallStateKind::Running
+        ctx_provider_install::install_state::InstallStateKind::Running
     ));
     assert_eq!(
         info.last_event.as_ref().map(|event| event.stage.as_str()),

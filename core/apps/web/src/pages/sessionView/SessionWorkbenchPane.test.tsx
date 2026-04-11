@@ -3,11 +3,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtuosoMessageListTestingContext } from "@virtuoso.dev/message-list";
 import type { MessageAttachment } from "../../api/client";
-import type { WorkbenchMessageListContext } from "../SessionPage.thread";
+import type { WorkbenchMessageListContext } from "../sessionThread";
 import type {
   AskUserQuestionAnswerState,
   WorkbenchListItem,
-} from "../SessionPage.types";
+} from "./SessionPage.types";
 import { SessionWorkbenchPane } from "./SessionWorkbenchPane";
 
 const { copyTextToClipboardMock } = vi.hoisted(() => ({

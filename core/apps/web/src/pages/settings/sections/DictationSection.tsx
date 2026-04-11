@@ -6,9 +6,9 @@ import {
   SelectValue,
 } from "../../../components/ui/select";
 import type { DictationSettings } from "../../../api/client";
-import { MODEL_OPTIONS } from "../../SettingsPage.constants";
-import { Row, Toggle } from "../../SettingsPage.components";
-import { clampPct } from "../../SettingsPage.utils";
+import { MODEL_OPTIONS } from "../SettingsPage.constants";
+import { Row, Toggle } from "../SettingsPage.components";
+import { clampPct } from "../SettingsPage.utils";
 import { useDictationController } from "../hooks/useDictationController";
 import { GeneralSection } from "./GeneralSection";
 

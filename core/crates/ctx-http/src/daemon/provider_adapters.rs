@@ -10,7 +10,7 @@ use ctx_providers::adapters::{
 };
 
 use crate::installer;
-use crate::installs::InstallTarget;
+use ctx_provider_install::install_state::InstallTarget;
 
 struct StaticStatusAdapter {
     status: ProviderStatus,

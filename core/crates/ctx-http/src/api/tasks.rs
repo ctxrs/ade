@@ -63,8 +63,10 @@ pub(in crate::api) async fn materialize_sandbox_binding_for_worktree(
     effective: &ExecutionSettings,
     created_at: DateTime<Utc>,
 ) -> anyhow::Result<Option<SandboxBinding>> {
-    let Some(materialization) = crate::workspace_runtime::materialize_sandbox_worktree(
-        state,
+    let Some(materialization) = ctx_workspace_runtime::materialize_sandbox_worktree(
+        &state.core.data_root,
+        &state.core.daemon_url,
+        state.execution.harness.as_ref(),
         workspace,
         worktree,
         canonical_root,

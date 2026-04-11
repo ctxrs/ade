@@ -13,76 +13,17 @@ pub(in crate::api) async fn lsp_code_actions_by_diagnostic_plan(
         ));
     }
 
-    let sid = SessionId(uuid::Uuid::parse_str(&req.session_id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid session_id".to_string(),
-            }),
-        )
-    })?);
-
-    let store = state.store_for_session(sid).await.map_err(|_| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        )
-    })?;
-    let session = store
-        .get_session(sid)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load session".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        ))?;
-    let worktree_id = session.worktree_id;
-    let wt = store
-        .get_worktree(session.worktree_id)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load worktree".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "worktree not found".to_string(),
-            }),
-        ))?;
-    let root = PathBuf::from(wt.root_path).canonicalize().map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid worktree root".to_string(),
-            }),
-        )
-    })?;
-    let file = crate::buffers::BufferStore::resolve_path(&root, &req.path)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "invalid path".to_string(),
-                }),
-            )
-        })?;
+    let (sid, _, worktree_id, root, file, _) =
+        resolve_session_root_and_file(&state, &req.session_id, &req.path)
+            .await
+            .map_err(|status| {
+                (
+                    status,
+                    Json(ApiErrorResp {
+                        error: "invalid LSP target".to_string(),
+                    }),
+                )
+            })?;
 
     let diag: lsp_types::Diagnostic =
         serde_json::from_value(req.diagnostic.clone()).map_err(|e| {
@@ -293,67 +234,17 @@ pub(in crate::api) async fn lsp_rename_plan(
         ));
     }
 
-    let sid = SessionId(uuid::Uuid::parse_str(&req.session_id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid session_id".to_string(),
-            }),
-        )
-    })?);
-
-    let store = state.store_for_session(sid).await.map_err(|_| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        )
-    })?;
-    let session = store
-        .get_session(sid)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load session".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        ))?;
-    let worktree_id = session.worktree_id;
-    let wt = store
-        .get_worktree(session.worktree_id)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load worktree".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "worktree not found".to_string(),
-            }),
-        ))?;
-    let root = PathBuf::from(wt.root_path).canonicalize().map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid worktree root".to_string(),
-            }),
-        )
-    })?;
-    let file = root.join(&req.path);
+    let (sid, _, worktree_id, root, file, _) =
+        resolve_session_root_and_file(&state, &req.session_id, &req.path)
+            .await
+            .map_err(|status| {
+                (
+                    status,
+                    Json(ApiErrorResp {
+                        error: "invalid LSP target".to_string(),
+                    }),
+                )
+            })?;
     let edit = state
         .core
         .lsp
@@ -417,67 +308,17 @@ pub(in crate::api) async fn lsp_format_plan(
         ));
     }
 
-    let sid = SessionId(uuid::Uuid::parse_str(&req.session_id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid session_id".to_string(),
-            }),
-        )
-    })?);
-
-    let store = state.store_for_session(sid).await.map_err(|_| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        )
-    })?;
-    let session = store
-        .get_session(sid)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load session".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        ))?;
-    let worktree_id = session.worktree_id;
-    let wt = store
-        .get_worktree(session.worktree_id)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load worktree".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "worktree not found".to_string(),
-            }),
-        ))?;
-    let root = PathBuf::from(wt.root_path).canonicalize().map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid worktree root".to_string(),
-            }),
-        )
-    })?;
-    let file = root.join(&req.path);
+    let (sid, _, worktree_id, root, file, _) =
+        resolve_session_root_and_file(&state, &req.session_id, &req.path)
+            .await
+            .map_err(|status| {
+                (
+                    status,
+                    Json(ApiErrorResp {
+                        error: "invalid LSP target".to_string(),
+                    }),
+                )
+            })?;
     let edits = state
         .core
         .lsp
@@ -537,66 +378,16 @@ pub(in crate::api) async fn lsp_code_actions_plan(
         ));
     }
 
-    let sid = SessionId(uuid::Uuid::parse_str(&req.session_id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid session_id".to_string(),
-            }),
-        )
-    })?);
-
-    let store = state.store_for_session(sid).await.map_err(|_| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        )
-    })?;
-    let session = store
-        .get_session(sid)
+    let (sid, _, worktree_id, root, _) = resolve_session_root(&state, &req.session_id)
         .await
-        .map_err(|_| {
+        .map_err(|status| {
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                status,
                 Json(ApiErrorResp {
-                    error: "failed to load session".to_string(),
+                    error: "invalid LSP target".to_string(),
                 }),
             )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        ))?;
-    let worktree_id = session.worktree_id;
-    let wt = store
-        .get_worktree(session.worktree_id)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load worktree".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "worktree not found".to_string(),
-            }),
-        ))?;
-    let root = PathBuf::from(wt.root_path).canonicalize().map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid worktree root".to_string(),
-            }),
-        )
-    })?;
+        })?;
 
     let action: lsp_types::CodeActionOrCommand = serde_json::from_value(req.action.clone())
         .map_err(|e| {
@@ -664,67 +455,17 @@ pub(in crate::api) async fn lsp_organize_imports_plan(
         ));
     }
 
-    let sid = SessionId(uuid::Uuid::parse_str(&req.session_id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid session_id".to_string(),
-            }),
-        )
-    })?);
-
-    let store = state.store_for_session(sid).await.map_err(|_| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        )
-    })?;
-    let session = store
-        .get_session(sid)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load session".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        ))?;
-    let worktree_id = session.worktree_id;
-    let wt = store
-        .get_worktree(session.worktree_id)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load worktree".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "worktree not found".to_string(),
-            }),
-        ))?;
-    let root = PathBuf::from(wt.root_path).canonicalize().map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid worktree root".to_string(),
-            }),
-        )
-    })?;
-    let file = root.join(&req.path);
+    let (sid, _, worktree_id, root, file, _) =
+        resolve_session_root_and_file(&state, &req.session_id, &req.path)
+            .await
+            .map_err(|status| {
+                (
+                    status,
+                    Json(ApiErrorResp {
+                        error: "invalid LSP target".to_string(),
+                    }),
+                )
+            })?;
 
     let text = tokio::fs::read_to_string(&file).await.map_err(|e| {
         (

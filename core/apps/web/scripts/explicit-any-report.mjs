@@ -58,8 +58,13 @@ function parseArgs(argv) {
 function findRepoRoot(startDir) {
   let current = path.resolve(startDir);
   while (true) {
-    const candidate = path.join(current, ".ctx");
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+    const ctxDir = path.join(current, ".ctx");
+    const corePackageJson = path.join(current, "core", "package.json");
+    const moduleBazel = path.join(current, "MODULE.bazel");
+    if (
+      (fs.existsSync(ctxDir) && fs.statSync(ctxDir).isDirectory()) ||
+      (fs.existsSync(corePackageJson) && fs.statSync(corePackageJson).isFile() && fs.existsSync(moduleBazel))
+    ) {
       return current;
     }
     const parent = path.dirname(current);

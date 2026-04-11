@@ -1,7 +1,7 @@
 import { Fragment } from "react";
 import { type ResourceUtilization, type Workspace, idToString } from "../../../api/client";
-import { Card, Metric } from "../../SettingsPage.components";
-import { formatAge, formatBytes, formatPct, truncateText } from "../../SettingsPage.utils";
+import { Card, Metric } from "../SettingsPage.components";
+import { formatAge, formatBytes, formatPct, truncateText } from "../SettingsPage.utils";
 
 export function ResourceUtilizationSection({
   workspaceId,

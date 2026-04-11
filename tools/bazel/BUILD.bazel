@@ -1,0 +1,3 @@
+exports_files([
+    "run_workspace_task.sh",
+])

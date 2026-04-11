@@ -27,11 +27,11 @@ import type {
 } from "../../utils/useDictationController";
 import type { SlashCommandDescriptor } from "../../state/useComposerAutocomplete";
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
-import type { WorkbenchMessageListContext } from "../SessionPage.thread";
+import type { WorkbenchMessageListContext } from "../sessionThread";
 import type {
   AskUserQuestionAnswerState,
   WorkbenchListItem,
-} from "../SessionPage.types";
+} from "./SessionPage.types";
 import { SESSION_THREAD_LAYOUT_STYLE } from "../sessionThread/sessionThreadLayoutTokens";
 import type { WorkbenchThreadProjectionOp } from "../sessionThreadProjection";
 import { ProviderGuardBanner } from "./ProviderGuardBanner";

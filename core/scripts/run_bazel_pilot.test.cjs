@@ -23,6 +23,13 @@ test("bazel pilot build defaults to the expanded Rust slice library targets", ()
   });
 });
 
+test("bazel pilot run requires explicit targets", () => {
+  assert.deepEqual(parseArgs(["run"]), {
+    command: "run",
+    targets: [],
+  });
+});
+
 test("bazel pilot invocation stays on the volatile cache layout", () => {
   const invocation = buildBazelPilotInvocation({
     argv: ["test"],

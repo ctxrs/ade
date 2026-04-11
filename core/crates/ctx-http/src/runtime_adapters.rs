@@ -12,12 +12,12 @@ use ctx_execution_runtime::{
     SharedWarmupOperations,
 };
 use ctx_store::Store;
+use ctx_workspace_runtime::HarnessRuntimeManager;
 
 use crate::ops_events::{
     substrate_lifecycle_observed_event, OpsEvent, OpsEvents, SubstrateLifecycleOpsEventContext,
 };
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
-use crate::workspace_runtime::HarnessRuntimeManager;
 
 pub(crate) struct CtxRuntimeEventSink {
     inner: OpsEvents,

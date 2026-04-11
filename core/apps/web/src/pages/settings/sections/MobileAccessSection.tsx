@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import type { User } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import type { EnableMobileAccessResponse, MobileAccessStatus } from "../../../api/client";
-import { Card, Row } from "../../SettingsPage.components";
+import { Card, Row } from "../SettingsPage.components";
 
 export function MobileAccessSection({
   supabaseConfigured,

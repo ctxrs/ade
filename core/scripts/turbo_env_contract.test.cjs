@@ -31,6 +31,7 @@ test("turbo forwards external Rust cache env vars to child tasks", () => {
   assert.equal(passThroughEnv.has("SCCACHE_S3_KEY_PREFIX"), true);
   assert.equal(passThroughEnv.has("SCCACHE_S3_USE_SSL"), true);
   assert.equal(passThroughEnv.has("SCCACHE_BASEDIRS"), true);
+  assert.equal(passThroughEnv.has("SCCACHE_NO_DAEMON"), true);
   assert.equal(passThroughEnv.has("SCCACHE_PATH"), true);
   assert.equal(passThroughEnv.has("SCCACHE_SERVER_UDS"), true);
   assert.equal(passThroughEnv.has("CTX_SCCACHE_R2_BUCKET"), true);

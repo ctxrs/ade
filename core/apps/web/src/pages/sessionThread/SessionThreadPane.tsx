@@ -5,8 +5,8 @@ import type {
   PretextVirtualizerScrollLocation,
   PretextVirtualizerShortSizeAlign,
 } from "@pretext-virtualizer/interface";
-import type { WorkbenchMessageListContext } from "../SessionPage.thread";
-import type { WorkbenchListItem } from "../SessionPage.types";
+import type { WorkbenchMessageListContext } from "../sessionThread";
+import type { WorkbenchListItem } from "../sessionView";
 import type { WorkbenchThreadProjectionOp } from "../sessionThreadProjection";
 import { SessionThreadMessageList } from "../SessionThreadMessageList";
 

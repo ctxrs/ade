@@ -3,7 +3,7 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Message, Session, SessionHeadSnapshot, SessionSnapshotSummary, Task } from "../../api/client";
 import type { WorkspaceActiveSnapshotItem } from "../../state/workspaceActiveSnapshotStore";
-import type { OptimisticTaskSummary } from "../WorkbenchPage.types";
+import type { OptimisticTaskSummary } from "./WorkbenchPage.types";
 import { useWorkbenchOptimisticTasks } from "./useWorkbenchOptimisticTasks";
 
 const now = "2026-03-10T00:00:00.000Z";

@@ -1,5 +1,5 @@
 import { useRelativeNowMs } from "../../utils/useRelativeNowMs";
-import { formatElapsedMs } from "../SessionPage.helpers";
+import { formatElapsedMs } from "./SessionPage.helpers";
 
 type ProviderGuardBannerProps = {
   heading: string;

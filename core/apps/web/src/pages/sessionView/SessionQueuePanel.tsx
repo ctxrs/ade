@@ -1,6 +1,6 @@
 import { CornerUpRight, Pencil, Trash2, ChevronDown } from "lucide-react";
 import { type Message, type MessageAttachment, idToString } from "../../api/client";
-import { attachmentDisplayName, markdownToPlainText } from "../SessionPage.helpers";
+import { attachmentDisplayName, markdownToPlainText } from "./SessionPage.helpers";
 
 export const getQueuedAttachments = (message: Message): MessageAttachment[] => {
   return Array.isArray(message.attachments) ? message.attachments : [];

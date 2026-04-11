@@ -50,7 +50,7 @@ import {
   getProviderOwnerScopeKeyOrNull,
   getProviderOwnerScopeOrNull,
 } from "../../../state/providerScopeAdapters";
-import type { HarnessAuthModalState, InstallSession } from "../../SettingsPage.types";
+import type { HarnessAuthModalState, InstallSession } from "../SettingsPage.types";
 import type { HarnessAuthRow } from "../harnessAuthRows";
 import {
   defaultShapeForHarnessProvider,

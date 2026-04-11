@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WorkbenchListItem } from "../SessionPage.types";
+import type { WorkbenchListItem } from "../sessionView";
 
 const { prepareMock, prepareWithSegmentsMock, layoutMock, layoutNextLineMock } = vi.hoisted(() => ({
   prepareMock: vi.fn((text: string, font: string, options?: { whiteSpace?: "normal" | "pre-wrap" }) => ({

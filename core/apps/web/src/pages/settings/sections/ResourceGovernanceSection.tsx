@@ -4,8 +4,8 @@ import type {
   ResourceGovernanceStatus,
 } from "../../../api/client";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
-import { Card, Row, Toggle } from "../../SettingsPage.components";
-import { formatGiB } from "../../SettingsPage.utils";
+import { Card, Row, Toggle } from "../SettingsPage.components";
+import { formatGiB } from "../SettingsPage.utils";
 
 export function ResourceGovernanceSection({
   loaded,

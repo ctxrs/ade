@@ -7,7 +7,7 @@ import {
   worktreeBootstrapFormFromConfig,
   type PromptAutosaveStatus,
   type WorktreeBootstrapFormState,
-} from "../../SettingsPage.utils";
+} from "../SettingsPage.utils";
 
 type UseWorktreeBootstrapControllerArgs = {
   workspaceId: string | null;

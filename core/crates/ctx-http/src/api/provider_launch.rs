@@ -26,7 +26,6 @@ use super::provider_catalog::{
 use super::provider_probe_auth::provider_auth_mode;
 use super::redact_json_value;
 use crate::daemon::AppState;
-use crate::installs::{InstallId, InstallInfo, InstallProgressEvent, InstallTarget};
 use crate::logs;
 use crate::provider_launch::install as provider_launch_install;
 use crate::provider_launch::probe;
@@ -45,6 +44,9 @@ use ctx_harness_sources::{
     HarnessApiShape, HarnessEndpointRecord, HarnessEndpointVerificationStatus, HarnessSourceKind,
 };
 use ctx_provider_accounts as provider_accounts;
+use ctx_provider_install::install_state::{
+    InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
+};
 use ctx_providers::crp::{probe_crp_models, probe_crp_runtime_launch};
 
 #[derive(Debug, Deserialize)]

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { idToString } from "../../api/client";
 import type { WorkspaceActiveSnapshotItem } from "../../state/workspaceActiveSnapshotStore";
-import type { OptimisticTaskSummary } from "../WorkbenchPage.types";
+import type { OptimisticTaskSummary } from "./WorkbenchPage.types";
 
 type UseWorkbenchOptimisticTasksArgs = {
   activeTaskId: string | null;

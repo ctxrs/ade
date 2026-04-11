@@ -1,9 +1,9 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import * as desktop from "../utils/desktop";
+import * as desktop from "../../utils/desktop";
 import { MemoMarkdown } from "./SessionPage.markdown";
 
-vi.mock("../utils/desktop", () => ({
+vi.mock("../../utils/desktop", () => ({
   isDesktopApp: vi.fn(() => false),
   openExternalLink: vi.fn(async () => true),
   desktopOpenFile: vi.fn(async () => true),

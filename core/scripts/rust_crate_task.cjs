@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const childProcess = require("node:child_process");
+const fs = require("node:fs");
 const path = require("node:path");
 
 const { buildCtxCacheEnv } = require("./lib/cache_roots.cjs");
@@ -45,6 +46,23 @@ function run(command, args, options) {
   }
 }
 
+function ensureCargoTargetScaffolding(env) {
+  const targetDir = String(env.CARGO_TARGET_DIR || "").trim();
+  if (!targetDir) {
+    return;
+  }
+  for (const relPath of [
+    ".",
+    "debug",
+    "debug/deps",
+    "debug/build",
+    "debug/examples",
+    "debug/incremental",
+  ]) {
+    fs.mkdirSync(path.join(targetDir, relPath), { recursive: true });
+  }
+}
+
 function main() {
   const { crate, task } = parseArgs(process.argv.slice(2));
   const coreRoot = path.resolve(__dirname, "..");
@@ -54,6 +72,7 @@ function main() {
     mode: "workspace",
     mkdir: true,
   });
+  ensureCargoTargetScaffolding(env);
 
   if (task === "clippy") {
     run(

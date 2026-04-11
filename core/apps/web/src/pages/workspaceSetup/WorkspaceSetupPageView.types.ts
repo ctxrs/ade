@@ -5,7 +5,7 @@ import type {
   ProviderAuthImportCandidate,
 } from "../../api/client";
 import type { DesktopSshPathEntry } from "../../utils/desktop";
-import type { SessionTitlingMode } from "../WorkspaceSetupPage.logic";
+import type { SessionTitlingMode } from "./WorkspaceSetupPage.logic";
 import type { WorkspaceSetupLaunchLogLine } from "./launchProgress";
 import type { RemotePasswordPromptMode } from "./useWorkspaceSetupRemote";
 import type {

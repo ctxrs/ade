@@ -15,7 +15,8 @@ import { blobUrl, type MessageAttachment } from "../../api/client";
 import { type SessionViewVerbosity } from "../../state/uiStateStore";
 import { copyTextToClipboard } from "../../utils/clipboard";
 import { useRelativeNowMs } from "../../utils/useRelativeNowMs";
-import { MemoMarkdown } from "../SessionPage.markdown";
+import { MemoMarkdown } from "../sessionView";
+import { isExpandableMessageContent } from "../sessionMessageListItemIdentity";
 import {
   attachmentDisplayName,
   formatElapsedMs,
@@ -31,9 +32,8 @@ import {
   toolKindIcon,
   toolSummaryLine,
   truncateMiddle,
-} from "../SessionPage.helpers";
-import type { ThreadItem, WorkbenchTurnHeader } from "../SessionPage.types";
-import { isExpandableMessageContent } from "./transcriptRowLayoutModel";
+} from "../sessionView";
+import type { ThreadItem, WorkbenchTurnHeader } from "../sessionView";
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};

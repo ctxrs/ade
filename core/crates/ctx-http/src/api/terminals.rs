@@ -5,6 +5,7 @@ use std::sync::Arc;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
+use ctx_sandbox_container_runtime::sandbox_cli_invocation;
 use serde::Deserialize;
 
 use super::errors::ApiErrorResp;
@@ -15,7 +16,6 @@ use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::terminals::{
     NativeContainerTerminalSpec, SharedVmContainerTerminalSpec, TerminalCreateRequest,
 };
-use crate::workspace_runtime;
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::TerminalSession;
 use ctx_worktree_data_plane::{
@@ -555,15 +555,14 @@ pub(super) async fn create_workspace_terminal(
                         )
                     })?;
                 }
-                let inv = workspace_runtime::sandbox_cli_invocation(&state.core.data_root)
-                    .map_err(|e| {
-                        (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(ApiErrorResp {
-                                error: format!("sandbox container CLI unavailable: {e}"),
-                            }),
-                        )
-                    })?;
+                let inv = sandbox_cli_invocation(&state.core.data_root).map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: format!("sandbox container CLI unavailable: {e}"),
+                        }),
+                    )
+                })?;
                 (
                     Some(NativeContainerTerminalSpec {
                         cli_bin: inv.bin,

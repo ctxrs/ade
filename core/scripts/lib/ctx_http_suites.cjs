@@ -78,7 +78,6 @@ const CTX_HTTP_SUITES = [
       "crates/ctx-http/src/api/providers/login.rs",
       "crates/ctx-http/src/api/providers/login/**",
       "crates/ctx-http/src/installer/provider_install.rs",
-      "crates/ctx-http/src/installs.rs",
       "crates/ctx-http/src/provider_install_contract.rs",
     ],
     testFiles: [

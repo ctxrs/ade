@@ -6,7 +6,7 @@ import {
   syncWorkspaceAttachments,
   type WorkspaceAttachment,
 } from "../../../api/client";
-import { guessAttachmentName } from "../../SettingsPage.utils";
+import { guessAttachmentName } from "../SettingsPage.utils";
 
 type UseWorkspaceAttachmentsControllerArgs = {
   workspaceId: string | null;

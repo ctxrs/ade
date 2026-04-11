@@ -14,15 +14,15 @@ use tokio::time::timeout;
 
 use crate::container_builder;
 use crate::daemon::{self, AppState};
-use crate::installs::{
-    truncate_for_storage, InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent,
-    InstallStateKind, InstallTarget,
-};
 use crate::lsp_catalog::{LspCatalogArchive, LspCatalogInstall};
 use crate::provider_install_contract;
 use crate::provider_matrix;
 use crate::title_generation_local;
 use crate::updates;
+use ctx_provider_install::install_state::{
+    truncate_for_storage, InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent,
+    InstallStateKind, InstallTarget,
+};
 use ctx_providers::crp::Tier1CrpAdapter;
 
 mod artifacts;

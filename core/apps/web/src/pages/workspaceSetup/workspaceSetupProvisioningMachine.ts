@@ -10,7 +10,7 @@ import type {
 } from "./workflowTypes";
 import { sameProvisioningScope } from "../../state/scopeIdentity";
 import { sameWorkspaceSetupRouteScope } from "./workflowTypes";
-import type { SessionTitlingMode } from "../WorkspaceSetupPage.logic";
+import type { SessionTitlingMode } from "./WorkspaceSetupPage.logic";
 
 export type WorkspaceSetupProvisioningRefreshReason =
   | "ensure_route_plan"

@@ -4,6 +4,7 @@ module(
 )
 
 bazel_dep(name = "rules_rust", version = "0.69.0")
+bazel_dep(name = "rules_shell", version = "0.7.1")
 
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
@@ -44,6 +45,12 @@ crate.spec(package = "serde", version = "1", features = ["derive"])
 crate.spec(package = "serde_json", version = "1")
 crate.spec(package = "sha2", version = "0.10")
 crate.spec(package = "shlex", version = "1.3")
+crate.spec(
+    package = "sqlx",
+    version = "0.8",
+    default_features = False,
+    features = ["runtime-tokio", "sqlite", "chrono", "uuid", "migrate", "macros"],
+)
 crate.spec(package = "tempfile", version = "3")
 crate.spec(package = "tar", version = "0.4")
 crate.spec(package = "tokio", version = "1", features = ["full"])

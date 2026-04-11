@@ -1,4 +1,4 @@
-import type { SectionId, SettingsSectionComponentId } from "../SettingsPage.types";
+import type { SectionId, SettingsSectionComponentId } from "./SettingsPage.types";
 
 export const SETTINGS_SECTION_COMPONENTS: Record<SectionId, SettingsSectionComponentId> = {
   general: "general",

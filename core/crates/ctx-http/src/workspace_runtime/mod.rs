@@ -1,15 +1,21 @@
+#[cfg(test)]
 use std::collections::HashMap;
+#[cfg(test)]
 use std::io::ErrorKind;
+#[cfg(test)]
 use std::path::Path;
+#[cfg(test)]
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(test)]
 use std::sync::Arc;
+#[cfg(test)]
 use std::sync::{Mutex as StdMutex, OnceLock};
-use std::time::{Duration, Instant};
+#[cfg(test)]
+use std::time::Duration;
 
+#[cfg(test)]
 use anyhow::{anyhow, Context, Result};
-use ctx_core::ids::WorkspaceId;
+#[cfg(test)]
 use ctx_core::models::{Workspace, Worktree};
 #[cfg(test)]
 use sysinfo::System;
@@ -20,6 +26,7 @@ use crate::resource_utilization::SystemSnapshot;
 use crate::settings::normalize_container_machine_idle_shutdown_seconds;
 #[cfg(test)]
 use crate::settings::ContainerMachineMemoryProfile;
+#[cfg(test)]
 use crate::settings::{
     ContainerExecutionSettings, ContainerRuntimeKind, ExecutionMode, ExecutionSettings,
 };
@@ -31,25 +38,31 @@ use ctx_core::ids::SessionId;
 use ctx_core::models::ExecutionEnvironment;
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use ctx_store::StoreManager;
+#[cfg(test)]
 use url::Url;
 
+#[cfg(test)]
 mod machine;
-mod manager;
-mod manager_container;
-mod materialization;
 #[cfg(test)]
 mod reclaim_unit_tests;
 #[cfg(test)]
 mod sandbox_machine_lifecycle;
 #[cfg(test)]
 mod sandbox_machine_recovery;
+#[cfg(test)]
+// EXCEPTION: these tests intentionally serialize env-var mutations with a sync lock
+// that spans async calls so process-global state cannot interleave across test cases.
+#[allow(clippy::await_holding_lock)]
+mod tests;
 
+#[cfg(test)]
 struct AvfDaemonGatewayProxy {
     gateway_addr: String,
     backend_addr: String,
     handle: tokio::task::JoinHandle<()>,
 }
 
+#[cfg(test)]
 static AVF_DAEMON_GATEWAY_PROXIES: OnceLock<StdMutex<HashMap<u16, AvfDaemonGatewayProxy>>> =
     OnceLock::new();
 
@@ -61,17 +74,15 @@ use self::machine::{
     sandbox_machine_temp_root, seed_shared_sandbox_machine_cache,
     seed_shared_sandbox_machine_cache_best_effort,
 };
-pub(crate) use self::materialization::materialize_sandbox_worktree;
+#[cfg(test)]
+pub(crate) use self::sandbox_machine_lifecycle::SandboxMachineLifecycleExt;
 #[cfg(test)]
 use self::sandbox_machine_recovery::{
     run_sandbox_machine_init, sandbox_machine_present, sandbox_machine_singleflight_lock,
 };
-pub(crate) use ctx_avf_linux_runtime::SharedVmLifecycleOrchestrator;
-use ctx_avf_linux_runtime::AVF_LINUX_HELPER_PATH_ENV;
-use ctx_avf_linux_runtime::{
-    helper_path as avf_linux_helper_path,
-    workspace_vm_data_root as avf_linux_workspace_vm_data_root,
-};
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use ctx_avf_linux_runtime::AVF_LINUX_HELPER_PATH_ENV;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use ctx_harness_runtime::{
@@ -83,17 +94,16 @@ pub(crate) use ctx_harness_runtime::{
     selected_runtime_launch_readiness_state, selected_runtime_launch_ready, selected_runtime_state,
     selected_shared_substrate_lifecycle, workspace_launch_ready_message,
 };
+#[cfg(test)]
+#[allow(unused_imports)]
 pub(crate) use ctx_harness_runtime::{
     sandbox_engine_ready, selected_sandbox_command_backend, selected_sandbox_command_mode,
     HarnessExecutionPlan, HarnessRuntimeKind, HarnessRuntimeStats, SandboxCommandBackend,
     CTX_AVF_HOST_DATA_ROOT_ENV, CTX_AVF_HOST_WORKTREE_ROOT_ENV, CTX_AVF_WORKSPACE_ID_ENV,
     CTX_AVF_WORKTREE_ID_ENV, CTX_HARNESS_LINUX_SANDBOX_ENV, CTX_HARNESS_RUNTIME_KIND_ENV,
 };
-pub(crate) use ctx_linux_sandbox_runtime::{
-    linux_sandbox_runtime_status, prepare_linux_sandbox_runtime,
-    stage_linux_sandbox_runtime_downloads, LinuxSandboxActivationMode,
-    LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeStatus,
-};
+#[cfg(test)]
+#[allow(unused_imports)]
 pub(crate) use ctx_sandbox_container_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV;
 pub use ctx_sandbox_container_runtime::{
     bundled_default_container_image_tar, command_output_message, command_output_with_timeout,
@@ -105,26 +115,21 @@ use ctx_sandbox_container_runtime::{
     ensure_managed_default_container_image_tar_with_source, managed_default_image_install_lock,
     sandbox_cli_binary_path,
 };
-pub(crate) use ctx_sandbox_contract::UbuntuSandboxSubstrate;
+pub use ctx_workspace_container::rewrite_daemon_url_for_avf_guest;
 #[cfg(test)]
 use ctx_workspace_container::sandbox_machine_required;
-use ctx_workspace_container::{rewrite_daemon_url_for_avf_guest, WorkspaceContainerOwner};
-use ctx_workspace_container::{
-    WorkspaceContainerStatus as HarnessContainerStatus, AVF_GUEST_HOST_GATEWAY,
+pub use ctx_workspace_runtime::{
+    materialize_sandbox_worktree, HarnessRuntimeManager, SandboxWorktreeMaterialization,
 };
 
 #[cfg(test)]
 const SANDBOX_MACHINE_CACHE_DIR_ENV: &str = "CTX_SANDBOX_MACHINE_CACHE_DIR";
-pub(crate) const CTX_AVF_REAL_GUEST_EXEC_ENV: &str = "CTX_AVF_REAL_GUEST_EXEC";
 #[cfg(test)]
 const SANDBOX_INFO_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(test)]
 const SANDBOX_MACHINE_START_TIMEOUT: Duration = Duration::from_secs(180);
-// Bound machine init so wedged sandbox CLI subprocesses cannot stall launch indefinitely.
 #[cfg(test)]
 const SANDBOX_MACHINE_INIT_TIMEOUT: Duration = Duration::from_secs(8 * 60);
-// First boot can be slow on fresh installs (image download + provisioning), but readiness loops
-// must remain bounded tightly enough to surface actionable errors quickly.
 #[cfg(test)]
 const DEFAULT_PRESET_HOST_MEMORY_MB: u32 = 32 * 1024;
 #[cfg(test)]
@@ -138,10 +143,12 @@ const SANDBOX_VM_MEMORY_PERFORMANCE_CAP_MB: u32 = 32 * 1024;
 #[cfg(test)]
 const MI_B: u64 = 1024 * 1024;
 
+#[cfg(test)]
 fn avf_daemon_gateway_proxies() -> &'static StdMutex<HashMap<u16, AvfDaemonGatewayProxy>> {
     AVF_DAEMON_GATEWAY_PROXIES.get_or_init(|| StdMutex::new(HashMap::new()))
 }
 
+#[cfg(test)]
 async fn ensure_avf_guest_gateway_proxy(
     gateway_addr: &str,
     backend_addr: &str,
@@ -274,39 +281,6 @@ async fn ensure_avf_guest_gateway_proxy(
     Ok(())
 }
 
-async fn resolve_daemon_url_for_avf_guest(daemon_url: &str) -> Result<String> {
-    let Ok(url) = Url::parse(daemon_url) else {
-        return Ok(daemon_url.to_string());
-    };
-    let Some(host) = url.host_str() else {
-        return Ok(daemon_url.to_string());
-    };
-    if !matches!(host, "127.0.0.1" | "localhost" | "::1") {
-        return Ok(daemon_url.to_string());
-    }
-    let Some(port) = url.port_or_known_default() else {
-        return Ok(daemon_url.to_string());
-    };
-    let gateway_addr = format!("{AVF_GUEST_HOST_GATEWAY}:{port}");
-    match tokio::time::timeout(
-        Duration::from_millis(500),
-        tokio::net::TcpStream::connect(&gateway_addr),
-    )
-    .await
-    {
-        Ok(Ok(_)) => Ok(rewrite_daemon_url_for_avf_guest(daemon_url)),
-        Ok(Err(_)) | Err(_) => {
-            let backend_host = match host {
-                "localhost" | "::1" => "127.0.0.1",
-                other => other,
-            };
-            let backend_addr = format!("{backend_host}:{port}");
-            ensure_avf_guest_gateway_proxy(&gateway_addr, &backend_addr, port).await?;
-            Ok(rewrite_daemon_url_for_avf_guest(daemon_url))
-        }
-    }
-}
-
 #[cfg(test)]
 pub(crate) async fn ensure_avf_guest_gateway_proxy_for_test(
     gateway_addr: &str,
@@ -318,7 +292,6 @@ pub(crate) async fn ensure_avf_guest_gateway_proxy_for_test(
 
 #[cfg(test)]
 fn detected_host_memory_mb() -> Option<u32> {
-    #[cfg(test)]
     if let Ok(raw) = std::env::var("CTX_TEST_HOST_MEMORY_MB") {
         if let Ok(value) = raw.parse::<u32>() {
             if value > 0 {
@@ -410,28 +383,3 @@ fn sandbox_machine_ready_poll_interval() -> Duration {
 
 #[cfg(test)]
 use ctx_harness_setup::{observe_log, observe_phase};
-pub use ctx_harness_setup::{
-    HarnessSetupDownloadStatus, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,
-    HarnessSetupProgressUpdate,
-};
-
-pub struct HarnessRuntimeManager {
-    data_root: PathBuf,
-    workspace_containers: WorkspaceContainerOwner,
-    last_activity: StdMutex<Instant>,
-    active_runtime_operations: AtomicUsize,
-    active_prewarm_artifact_operations: AtomicUsize,
-    ops_events: crate::ops_events::OpsEvents,
-}
-
-impl HarnessRuntimeManager {
-    pub(crate) fn data_root(&self) -> &Path {
-        &self.data_root
-    }
-}
-
-#[cfg(test)]
-// EXCEPTION: these tests intentionally serialize env-var mutations with a sync lock
-// that spans async calls so process-global state cannot interleave across test cases.
-#[allow(clippy::await_holding_lock)]
-mod tests;

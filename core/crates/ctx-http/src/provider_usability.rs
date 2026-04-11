@@ -6,8 +6,8 @@ use ctx_providers::adapters::{
 };
 
 use crate::installer;
-use crate::installs::InstallTarget;
 use crate::provider_install_contract;
+use ctx_provider_install::install_state::InstallTarget;
 
 fn first_diagnostic(status: &ProviderStatus) -> Option<String> {
     status

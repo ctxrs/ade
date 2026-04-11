@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Message, SessionEvent, SessionTurn, SessionTurnTool } from "../api/client";
-import type { ThreadItem } from "./SessionPage.types";
+import type { Message, SessionEvent, SessionTurn, SessionTurnTool } from "../../api/client";
+import type { ThreadItem } from "../sessionView/SessionPage.types";
 
 vi.mock("react-syntax-highlighter", () => ({ Prism: () => null }));
 vi.mock("react-syntax-highlighter/dist/esm/styles/prism", () => ({ oneDark: {} }));
@@ -16,7 +16,7 @@ const isMessageItem = (item: ThreadItem): item is Extract<ThreadItem, { kind: "m
 
 describe("buildWorkbenchThreadViewModel", () => {
   it("does not synthesize a thread from raw events when turns are missing", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const events = [
       {
@@ -45,7 +45,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("does not infer user headers when turn.user_message_id is missing", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -94,7 +94,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("skips turns without any stable order_seq anchor", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -152,7 +152,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("interleaves tool + thought activity and appends a status row", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -223,7 +223,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("suppresses a stale pending assistant row when the same assistant reply is already persisted", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -306,7 +306,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("uses CRP reasoning summaries for status and keeps trace chunks in thought rows", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -381,7 +381,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("renders timeline notices for unknown runtime events marked for display", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -445,7 +445,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("prefers tool names when rendering unknown runtime tool notices", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -512,7 +512,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("splits CRP thought chunks into blocks between control events", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -598,7 +598,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("orders tool activity by order_seq", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -656,7 +656,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("orders assistant messages by message order_seq instead of turn_sequence fallback", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -727,7 +727,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("keeps summary-backed tools ahead of a later final assistant using tool order_seq", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -826,7 +826,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("keeps thought ordering stable when final chunks arrive", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -896,7 +896,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("keeps tool interleaving stable across tool updates", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -976,7 +976,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("does not synthesize empty object input when tool update omits input fields", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -1051,7 +1051,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("ignores notice status text for turn status rows", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -1112,7 +1112,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("ignores notice status text even when tool events are present", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -1179,7 +1179,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("uses provider tool names for tool rows without changing turn status text", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {
@@ -1250,7 +1250,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("renders tool summaries as tool rows when per-turn events are absent", async () => {
-    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage.workbenchViewModel");
 
     const turns = [
       {

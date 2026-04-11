@@ -2,7 +2,7 @@ import type {
   TitleGenerationLocalStatus,
   TitleGenerationSettings,
 } from "../../api/client";
-import type { SessionTitlingMode } from "../WorkspaceSetupPage.logic";
+import type { SessionTitlingMode } from "./WorkspaceSetupPage.logic";
 
 type BuildTitlingSummaryValueArgs = {
   titlingMode: SessionTitlingMode;

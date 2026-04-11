@@ -9,7 +9,7 @@ import {
   type UpdateTitleGenerationSettingsRequest,
 } from "../../../api/client";
 import { readBoolish } from "../../../utils/boolish";
-import type { InstallSession } from "../../SettingsPage.types";
+import type { InstallSession } from "../SettingsPage.types";
 import { observeInstall, subscribeInstallProgress } from "../../../state/installProgressMonitor";
 
 type TitleGenerationController = {

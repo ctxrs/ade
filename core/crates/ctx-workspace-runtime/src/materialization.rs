@@ -1,25 +1,25 @@
-use std::path::{Path, PathBuf};
-
 use anyhow::Result;
 use ctx_core::ids::SandboxInstanceId;
 use ctx_core::models::{sandbox_instance_id_for_workspace, Workspace, Worktree};
+use ctx_execution_runtime::{ExecutionMode, ExecutionSettings};
+use ctx_sandbox_contract::ContainerMountMode;
 use ctx_sandbox_materialization::ensure_worktree_from_host_copy;
+use std::path::{Path, PathBuf};
 
-use crate::daemon::AppState;
-use crate::settings::{ContainerMountMode, ExecutionMode, ExecutionSettings};
-
-use super::{SharedVmLifecycleOrchestrator, UbuntuSandboxSubstrate};
+use super::{HarnessRuntimeManager, SharedVmLifecycleOrchestrator, UbuntuSandboxSubstrate};
 
 #[derive(Debug, Clone)]
-pub(crate) struct SandboxWorktreeMaterialization {
-    pub(crate) sandbox_instance_id: SandboxInstanceId,
-    pub(crate) substrate: UbuntuSandboxSubstrate,
-    pub(crate) live_worktree_root: PathBuf,
-    pub(crate) host_materialization_root: Option<PathBuf>,
+pub struct SandboxWorktreeMaterialization {
+    pub sandbox_instance_id: SandboxInstanceId,
+    pub substrate: UbuntuSandboxSubstrate,
+    pub live_worktree_root: PathBuf,
+    pub host_materialization_root: Option<PathBuf>,
 }
 
-pub(crate) async fn materialize_sandbox_worktree(
-    state: &AppState,
+pub async fn materialize_sandbox_worktree(
+    data_root: &Path,
+    daemon_url: &str,
+    harness: &HarnessRuntimeManager,
     workspace: &Workspace,
     worktree: &Worktree,
     canonical_root: &Path,
@@ -34,10 +34,10 @@ pub(crate) async fn materialize_sandbox_worktree(
         return Ok(None);
     }
 
-    state
-        .execution
-        .harness
-        .ensure_workspace_container(workspace, effective, &state.core.daemon_url)
+    harness
+        .ensure_workspace_container_after_machine_ready_with_observer(
+            workspace, effective, daemon_url, None,
+        )
         .await?;
 
     let substrate = UbuntuSandboxSubstrate::from_runtime_kind(effective.container.runtime.clone());
@@ -51,7 +51,7 @@ pub(crate) async fn materialize_sandbox_worktree(
 
     let host_materialization_root = if substrate.is_shared_vm_backed() {
         Some(
-            SharedVmLifecycleOrchestrator::new(&state.core.data_root)
+            SharedVmLifecycleOrchestrator::new(data_root)
                 .ensure_host_materialization_root(
                     sandbox_instance_id_for_workspace(workspace.id),
                     worktree.id,
@@ -68,9 +68,9 @@ pub(crate) async fn materialize_sandbox_worktree(
     let host_source_root = host_materialization_root
         .as_deref()
         .unwrap_or(canonical_root);
-    let sandbox_mode = super::selected_sandbox_command_mode(&state.core.data_root)?;
+    let sandbox_mode = super::selected_sandbox_command_mode(data_root)?;
     let live_worktree_root = ensure_worktree_from_host_copy(
-        &state.core.data_root,
+        data_root,
         &sandbox_mode,
         workspace.id,
         worktree.id,

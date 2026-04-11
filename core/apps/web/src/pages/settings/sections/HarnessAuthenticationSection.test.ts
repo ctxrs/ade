@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { HarnessAuthModalState } from "../../SettingsPage.types";
+import type { HarnessAuthModalState } from "../SettingsPage.types";
 import {
   canSubmitSubscriptionModal,
   shouldAutoStartSubscriptionFlow,

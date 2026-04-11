@@ -1,4 +1,4 @@
-import type { SessionTitlingMode } from "../WorkspaceSetupPage.logic";
+import type { SessionTitlingMode } from "./WorkspaceSetupPage.logic";
 import type { WizardRoutePlan, WizardStepKey } from "./wizardFlow";
 import type {
   WorkspaceSetupMachineCommand,

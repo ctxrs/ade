@@ -24,6 +24,7 @@ test("agent gate crate list keeps the expected ctx-http-centered fast gate", () 
     "ctx-linux-sandbox-runtime",
     "ctx-mcp",
     "ctx-provider-accounts",
+    "ctx-provider-install",
     "ctx-provider-matrix",
     "ctx-provider-auth-import",
     "ctx-providers",
@@ -38,6 +39,7 @@ test("agent gate crate list keeps the expected ctx-http-centered fast gate", () 
     "ctx-workspace-container",
     "ctx-workspace-active-snapshot",
     "ctx-workspace-config",
+    "ctx-workspace-runtime",
   ]);
 });
 
@@ -53,6 +55,7 @@ test("mixed test strategy keeps the known nextest-incompatible crates on cargo t
       "ctx-execution-runtime",
       "ctx-fs",
       "ctx-provider-accounts",
+      "ctx-provider-install",
       "ctx-provider-matrix",
       "ctx-harness-setup",
       "ctx-runtime-assets",
@@ -63,6 +66,7 @@ test("mixed test strategy keeps the known nextest-incompatible crates on cargo t
       "ctx-worktree-data-plane",
       "ctx-workspace-active-snapshot",
       "ctx-workspace-config",
+      "ctx-workspace-runtime",
       "ctx-http",
     ],
     "mixed",
@@ -75,6 +79,7 @@ test("mixed test strategy keeps the known nextest-incompatible crates on cargo t
       "ctx-execution-runtime",
       "ctx-harness-setup",
       "ctx-provider-accounts",
+      "ctx-provider-install",
       "ctx-provider-matrix",
       "ctx-runtime-assets",
       "ctx-sandbox-contract",
@@ -82,6 +87,7 @@ test("mixed test strategy keeps the known nextest-incompatible crates on cargo t
       "ctx-session-tools",
       "ctx-storage-admission",
       "ctx-workspace-active-snapshot",
+      "ctx-workspace-runtime",
       "ctx-worktree-data-plane",
     ],
     cargoTestCrates: ["ctx-http", "ctx-mcp", "ctx-providers", "ctx-store"],
@@ -114,6 +120,7 @@ test("mixed test strategy keeps the Bazel-covered slice explicit", () => {
     "ctx-lsp",
     "ctx-provider-accounts",
     "ctx-provider-auth-import",
+    "ctx-provider-install",
     "ctx-provider-matrix",
     "ctx-runtime-assets",
     "ctx-sandbox-container-runtime",
@@ -123,6 +130,7 @@ test("mixed test strategy keeps the Bazel-covered slice explicit", () => {
     "ctx-storage-admission",
     "ctx-workspace-active-snapshot",
     "ctx-workspace-container",
+    "ctx-workspace-runtime",
     "ctx-worktree-data-plane",
   ]);
 });

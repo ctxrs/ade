@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderStatus } from "../../../api/client";
 import { isDesktopApp, openExternalLink } from "../../../utils/desktop";
-import type { HarnessAuthModalState } from "../../SettingsPage.types";
+import type { HarnessAuthModalState } from "../SettingsPage.types";
 import type { useHarnessAuthenticationController } from "../hooks/useHarnessAuthenticationController";
 import { HarnessAuthenticationSection } from "./HarnessAuthenticationSection";
 

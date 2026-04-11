@@ -1,25 +1,25 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import LauncherPage from "./LauncherPage";
-import { loadLauncherRecents, upsertLauncherRecent } from "../state/launcherRecentsStore";
+import LauncherPage from "./LauncherPageController";
+import { loadLauncherRecents, upsertLauncherRecent } from "../../state/launcherRecentsStore";
 import {
   getHealth,
   getWorkspaceExecutionConfig,
   idToString,
   listWorkspaces,
   repoStatus,
-} from "../api/client";
+} from "../../api/client";
 import {
   desktopConnectLocal,
   desktopConnectSsh,
   desktopGetConnection,
   desktopSetDockRecentLocalWorkspaces,
   isDesktopApp,
-} from "../utils/desktop";
+} from "../../utils/desktop";
 import {
   startWorkspaceSetupLaunchHandoff,
   waitForLaunchHandoffTerminal,
-} from "./workspaceSetup/launchHandoff";
+} from "../workspaceSetup/launchHandoff";
 
 const navigateMock = vi.hoisted(() => vi.fn());
 
@@ -31,8 +31,8 @@ vi.mock("react-router-dom", async () => {
   };
 });
 
-vi.mock("../api/client", async () => {
-  const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
+vi.mock("../../api/client", async () => {
+  const actual = await vi.importActual<typeof import("../../api/client")>("../../api/client");
   return {
     ...actual,
     applyDaemonDesktopConnection: vi.fn(),
@@ -44,8 +44,8 @@ vi.mock("../api/client", async () => {
   };
 });
 
-vi.mock("../utils/desktop", async () => {
-  const actual = await vi.importActual<typeof import("../utils/desktop")>("../utils/desktop");
+vi.mock("../../utils/desktop", async () => {
+  const actual = await vi.importActual<typeof import("../../utils/desktop")>("../../utils/desktop");
   return {
     ...actual,
     desktopConnectLocal: vi.fn(),
@@ -56,12 +56,12 @@ vi.mock("../utils/desktop", async () => {
   };
 });
 
-vi.mock("../state/launcherRecentsStore", () => ({
+vi.mock("../../state/launcherRecentsStore", () => ({
   loadLauncherRecents: vi.fn(),
   upsertLauncherRecent: vi.fn(),
 }));
 
-vi.mock("./workspaceSetup/launchHandoff", () => ({
+vi.mock("../workspaceSetup/launchHandoff", () => ({
   startWorkspaceSetupLaunchHandoff: vi.fn(),
   waitForLaunchHandoffTerminal: vi.fn(),
 }));

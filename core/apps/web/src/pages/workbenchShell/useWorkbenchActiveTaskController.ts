@@ -26,13 +26,13 @@ import {
   saveWorkbenchSessionsPaneOpenV1,
   saveWorkbenchTerminalPanelOpenV1,
 } from "../../workbench/persistence";
-import type { OptimisticTaskSummary } from "../WorkbenchPage.types";
+import type { OptimisticTaskSummary } from "./WorkbenchPage.types";
 import {
   deriveManagedWorktreeRoot,
   formatWorktreeLabel,
   isOptimisticTask,
   parseMs,
-} from "../WorkbenchPage.utils";
+} from "./WorkbenchPage.utils";
 import { canRenderWorkbenchActiveSession } from "./workbenchTaskActivity";
 import { getDiffSummaryStats, isDiffSummaryTooLarge } from "./useWorkbenchDiffPane";
 import { useWorkbenchSessionActions } from "./useWorkbenchSessionActions";

@@ -6,8 +6,8 @@ use axum::Json;
 
 use crate::daemon::AppState;
 use crate::installer;
-use crate::installs::{InstallId, InstallStateKind, InstallTarget};
 use crate::provider_install_contract;
+use ctx_provider_install::install_state::{InstallId, InstallStateKind, InstallTarget};
 
 use super::status::provider_status_for_target;
 

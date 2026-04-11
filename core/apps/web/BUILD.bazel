@@ -1,0 +1,106 @@
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+WEB_SOURCES = glob(
+    [
+        "src/**/*",
+        "scripts/**/*",
+        "eslint/**/*",
+        "e2e/**/*",
+        "public/**/*",
+        "*.json",
+        "*.html",
+        "*.ts",
+        "*.tsx",
+        "*.mjs",
+        "*.cjs",
+    ],
+    allow_empty = True,
+)
+
+COMMON_DATA = WEB_SOURCES + [
+    "//core:package.json",
+    "//core:pnpm-lock.yaml",
+    "//core:pnpm-workspace.yaml",
+    "//core:desktop_bundle_files",
+    "//core:scripts_sources",
+    "//core/packages:sources",
+]
+
+sh_binary(
+    name = "build",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = ["core/apps/web", "pnpm", "build"],
+    data = COMMON_DATA,
+)
+
+sh_binary(
+    name = "lint",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = ["core/apps/web", "pnpm", "lint"],
+    data = COMMON_DATA,
+)
+
+sh_binary(
+    name = "typecheck",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = ["core/apps/web", "pnpm", "typecheck"],
+    data = COMMON_DATA,
+)
+
+sh_binary(
+    name = "any_enforce",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = ["core/apps/web", "pnpm", "any:enforce"],
+    data = COMMON_DATA,
+)
+
+sh_binary(
+    name = "unit_tests",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = ["core/apps/web", "pnpm", "test:quiet"],
+    data = COMMON_DATA,
+)
+
+sh_binary(
+    name = "e2e_premerge",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = ["core/apps/web", "pnpm", "test:e2e:premerge"],
+    data = COMMON_DATA,
+)
+
+sh_binary(
+    name = "e2e_release",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = ["core/apps/web", "pnpm", "test:e2e:release"],
+    data = COMMON_DATA,
+)
+
+sh_binary(
+    name = "e2e_cross_platform",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = ["core/apps/web", "pnpm", "test:e2e:cross-platform"],
+    data = COMMON_DATA,
+)
+
+sh_binary(
+    name = "e2e_visual",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = ["core/apps/web", "pnpm", "test:e2e:visual"],
+    data = COMMON_DATA,
+)
+
+sh_binary(
+    name = "e2e_soak",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = ["core/apps/web", "pnpm", "test:e2e:soak"],
+    data = COMMON_DATA,
+)
+
+sh_binary(
+    name = "e2e_load",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = ["core/apps/web", "pnpm", "test:e2e:load"],
+    data = COMMON_DATA,
+)

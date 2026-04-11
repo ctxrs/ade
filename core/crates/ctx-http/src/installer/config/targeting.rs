@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::{AgentServerCommand, ManagedInstallMetadata};
 use crate::installer::expected_managed_dependency_version;
-use crate::installs::InstallTarget;
+use ctx_provider_install::install_state::InstallTarget;
 
 pub(super) fn install_target_bucket_key(target: InstallTarget) -> &'static str {
     target.as_str()

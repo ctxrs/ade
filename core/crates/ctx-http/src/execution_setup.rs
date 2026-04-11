@@ -18,7 +18,7 @@ use ctx_harness_setup::{
 use crate::ops_events::{OpsEvent, OpsEvents};
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use crate::settings::{ExecutionMode, ExecutionSettings};
-use crate::workspace_runtime::HarnessRuntimeManager;
+use ctx_workspace_runtime::HarnessRuntimeManager;
 
 mod launch_state;
 mod progress;

@@ -1,6 +1,6 @@
 mod common;
 
-use ctx_http::installs::InstallTarget;
+use ctx_provider_install::install_state::InstallTarget;
 
 async fn test_state() -> (
     std::sync::Arc<ctx_http::daemon::AppState>,

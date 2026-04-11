@@ -1,7 +1,7 @@
 import type { SandboxingSettings } from "../../../api/client";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
-import { Card, Row } from "../../SettingsPage.components";
-import { formatGiB } from "../../SettingsPage.utils";
+import { Card, Row } from "../SettingsPage.components";
+import { formatGiB } from "../SettingsPage.utils";
 
 export const MACHINE_MEMORY_DESCRIPTION =
   "ctx sizes the local sandbox runtime automatically for this machine. Changes apply when the sandbox runtime is recreated.";

@@ -41,7 +41,7 @@ pub(super) async fn create_web_session(
         None,
         "web_session_worker",
         &state.core.data_root,
-        crate::installs::InstallTarget::Host,
+        ctx_provider_install::install_state::InstallTarget::Host,
     )
     .await
     .map_err(|e| {

@@ -266,7 +266,7 @@ fn stage_progress_pct(stage: &str) -> Option<u8> {
     }
 }
 
-pub(crate) fn heuristic_progress_pct_from_event(
+pub fn heuristic_progress_pct_from_event(
     event: &InstallProgressEvent,
     previous_pct: Option<u8>,
 ) -> Option<u8> {

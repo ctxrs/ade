@@ -14,7 +14,7 @@ import type {
 } from "../../state/workspaceActiveSnapshotStore";
 import { WORKBENCH_TASK_IDLE_EVENT, type WorkbenchTaskIdleDetail } from "../../utils/updaterEvents";
 import type { WorkbenchStore } from "../../workbench/store";
-import type { OptimisticTaskSummary } from "../WorkbenchPage.types";
+import type { OptimisticTaskSummary } from "./WorkbenchPage.types";
 import {
   collectSessionHeadsForSupervisor,
   maybeCacheSessionHeadSeed,

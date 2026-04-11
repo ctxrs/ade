@@ -2,8 +2,8 @@ import { useMemo, useRef } from "react";
 import { type SessionEvent } from "../../api/client";
 import {
   collectAskUserQuestionAnswers,
-} from "../SessionPage.workbenchViewModel";
-import type { AskUserQuestionAnswerState } from "../SessionPage.types";
+} from "../workbenchViewModel";
+import type { AskUserQuestionAnswerState } from "./SessionPage.types";
 
 function areAnswerRecordsEqual(
   a: Record<string, string>,

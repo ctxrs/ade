@@ -3,9 +3,9 @@ use ctx_core::models::ExecutionEnvironment as SessionExecutionEnvironment;
 use ctx_workspace_config as workspace_config;
 
 use crate::daemon::AppState;
-use crate::installs::InstallTarget;
 use crate::settings;
 use crate::settings::ExecutionSettings;
+use ctx_provider_install::install_state::InstallTarget;
 
 #[derive(Debug)]
 pub enum EffectiveExecutionSettingsError {
@@ -115,8 +115,8 @@ mod tests {
     use ctx_store::StoreManager;
 
     use crate::daemon::AppState;
-    use crate::installs::InstallTarget;
     use crate::settings::{ExecutionMode, ExecutionSettings};
+    use ctx_provider_install::install_state::InstallTarget;
 
     #[test]
     fn install_target_for_settings_matches_execution_mode() {

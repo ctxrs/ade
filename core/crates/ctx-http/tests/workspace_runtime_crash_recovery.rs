@@ -12,7 +12,7 @@ use ctx_http::settings::{
     ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind,
     ExecutionMode, ExecutionSettings,
 };
-use ctx_http::workspace_runtime::HarnessRuntimeManager;
+use ctx_workspace_runtime::HarnessRuntimeManager;
 
 struct EnvGuard {
     key: &'static str,

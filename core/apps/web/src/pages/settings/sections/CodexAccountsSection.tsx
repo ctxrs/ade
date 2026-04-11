@@ -6,8 +6,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../../components/ui/select";
-import { Card, Row } from "../../SettingsPage.components";
-import { formatPct, formatResetLabel, summarizeCodexUsage } from "../../SettingsPage.utils";
+import { Card, Row } from "../SettingsPage.components";
+import { formatPct, formatResetLabel, summarizeCodexUsage } from "../SettingsPage.utils";
 import { useCodexAccountsController } from "../hooks/useCodexAccountsController";
 
 type CodexAccountsSectionProps = {

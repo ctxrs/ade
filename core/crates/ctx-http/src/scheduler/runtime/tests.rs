@@ -6,13 +6,13 @@ use crate::installer::{
     prepend_runtime_bin_dirs_to_provider_path, AgentServerCommand, AgentServerConfigFile,
     ManagedInstallMetadata,
 };
-use crate::installs::InstallTarget;
 use crate::settings::ProviderControlMode;
 use chrono::Utc;
 use ctx_harness_sources::{
     EndpointModelCatalogStatus, HarnessApiShape, HarnessEndpointRecord,
     HarnessEndpointVerificationStatus, HarnessSourceKind, ResolvedHarnessSource,
 };
+use ctx_provider_install::install_state::InstallTarget;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tempfile::tempdir;

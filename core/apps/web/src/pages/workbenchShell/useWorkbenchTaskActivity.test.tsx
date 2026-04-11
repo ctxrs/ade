@@ -5,7 +5,7 @@ import type { Session, SessionHeadSnapshot, SessionSnapshotSummary, SessionTurn 
 import { SessionSupervisorProvider, type SessionCacheEntry, type SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem, WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
 import { WORKBENCH_TASK_IDLE_EVENT, type WorkbenchTaskIdleDetail } from "../../utils/updaterEvents";
-import type { OptimisticTaskSummary } from "../WorkbenchPage.types";
+import type { OptimisticTaskSummary } from "./WorkbenchPage.types";
 import {
   canRenderWorkbenchActiveSession,
   deriveProviderIdsByTaskFromSessions,

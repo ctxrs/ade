@@ -1,4 +1,4 @@
-import { Row, Toggle } from "../../SettingsPage.components";
+import { Row, Toggle } from "../SettingsPage.components";
 import { GeneralSection } from "./GeneralSection";
 
 type AnalyticsSettingsSectionProps = {

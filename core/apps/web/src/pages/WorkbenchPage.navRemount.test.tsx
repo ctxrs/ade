@@ -378,7 +378,7 @@ vi.mock("../components/DiffReviewPane", () => ({
   DiffReviewPane: () => null,
 }));
 
-vi.mock("./SessionPage", () => ({
+vi.mock("./sessionView", () => ({
   SessionView: ({
     sessionId: mockedSessionId,
     hideSessionLoadIssuesBanner,

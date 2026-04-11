@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TaskRow } from "./WorkbenchPage";
-import { HARNESS_CATALOG } from "../utils/harnessCatalog";
+import { TaskRow } from "./WorkbenchPage.taskRow";
+import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
 
 function mockRaf() {
   vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb: FrameRequestCallback) => {

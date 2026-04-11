@@ -12,7 +12,7 @@ import type { DraftHarness, ProviderAuthSummaryTrigger } from "../../components/
 import type { SessionSupervisor } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem } from "../../state/workspaceActiveSnapshotStore";
 import type { WorkbenchStore } from "../../workbench/store";
-import type { OptimisticFocus } from "../WorkbenchPage.types";
+import type { OptimisticFocus } from "./WorkbenchPage.types";
 import { useWorkbenchOptimisticTasks } from "./useWorkbenchOptimisticTasks";
 import { useWorkbenchTaskCreation } from "./useWorkbenchTaskCreation";
 
@@ -32,9 +32,13 @@ vi.mock("../../api/client", async (importOriginal) => {
   };
 });
 
-vi.mock("../../state/providersBootstrapStore", () => ({
-  refreshProvidersBootstrap: refreshProvidersBootstrapMock,
-}));
+vi.mock("../../state/providersBootstrapStore", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../state/providersBootstrapStore")>();
+  return {
+    ...actual,
+    refreshProvidersBootstrap: refreshProvidersBootstrapMock,
+  };
+});
 
 vi.mock("../../utils/randomUuid", () => ({
   randomUuid: vi.fn(),

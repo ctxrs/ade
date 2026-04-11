@@ -10,10 +10,6 @@ use tokio::task::JoinHandle;
 
 use crate::buffers::BufferStore;
 use crate::edit_plans::{EditPlan, EditPlanId};
-use crate::installs::{
-    InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent, InstallState,
-    InstallStateKind, InstallTarget,
-};
 use crate::mobile_tunnel::MobileTunnelManager;
 use crate::ops_events::{OpsEvent, OpsEvents};
 use crate::order_seq::OrderSeqState;
@@ -30,7 +26,6 @@ use crate::scheduler::SchedulerCommand;
 use crate::telemetry::Telemetry;
 use crate::terminals::TerminalManager;
 use crate::web_sessions::WebSessionManager;
-use crate::workspace_runtime::HarnessRuntimeManager;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceAttachmentId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Session, SessionEvent, SessionHeadSnapshot, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
@@ -39,10 +34,15 @@ use ctx_core::models::{
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_lsp::{LspManager, LspManagerConfig};
 use ctx_provider_accounts as provider_accounts;
+use ctx_provider_install::install_state::{
+    InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent, InstallState,
+    InstallStateKind, InstallTarget,
+};
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use ctx_providers::ask_user_question::AskUserQuestionBroker;
 use ctx_store::{Store, StoreManager};
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
+use ctx_workspace_runtime::HarnessRuntimeManager;
 
 mod installs;
 mod metrics;
@@ -144,11 +144,11 @@ impl AppState {
         let telemetry = Telemetry::new(data_root.clone());
         let ops_events = OpsEvents::new(data_root.clone());
         let perf_telemetry = PerfTelemetry::new(data_root.clone());
-        let harness_runtime = Arc::new(HarnessRuntimeManager::new_with_ops_events(
-            data_root.clone(),
-            ops_events.clone(),
-        ));
         let runtime_events = Arc::new(CtxRuntimeEventSink::new(ops_events.clone()));
+        let harness_runtime = Arc::new(HarnessRuntimeManager::new_with_event_sink(
+            data_root.clone(),
+            runtime_events.clone(),
+        ));
         let runtime_metrics = Arc::new(CtxRuntimeMetricsSink::new(perf_telemetry.clone()));
         let execution_harness = Arc::new(CtxExecutionHarness::new(harness_runtime.clone()));
         let warmup_operations = Arc::new(DefaultWarmupOperations::new(

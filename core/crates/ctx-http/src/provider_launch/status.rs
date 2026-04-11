@@ -10,10 +10,10 @@ use ctx_providers::adapters::ProviderStatus;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::installer;
-use crate::installs::InstallTarget;
 use crate::provider_usability::{
     apply_install_viability_details, apply_provider_usability_details,
 };
+use ctx_provider_install::install_state::InstallTarget;
 
 use super::resolver::ensure_provider_adapter_for_target_with_cfg;
 

@@ -19,7 +19,7 @@ import {
   resolveSessionTitlingReadiness,
   sessionTitlingPayloadHash,
   type SessionTitlingMode,
-} from "../WorkspaceSetupPage.logic";
+} from "./WorkspaceSetupPage.logic";
 import {
   beginWorkspaceSetupProvisioningRefresh,
   completeWorkspaceSetupAuthImportRefresh,

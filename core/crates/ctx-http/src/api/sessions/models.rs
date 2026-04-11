@@ -219,7 +219,7 @@ fn build_model_catalog(models: &serde_json::Value) -> Option<ModelCatalog> {
 async fn load_pinned_subscription_model_catalog(
     state: &Arc<AppState>,
     provider_id: &str,
-    install_target: crate::installs::InstallTarget,
+    install_target: ctx_provider_install::install_state::InstallTarget,
 ) -> Option<ModelCatalog> {
     let managed = crate::installer::load_agent_server_config(&state.core.data_root)
         .await
@@ -398,7 +398,7 @@ async fn load_provider_model_catalog_for_install_target(
     state: &Arc<AppState>,
     workspace: &Workspace,
     provider_id: &str,
-    install_target: crate::installs::InstallTarget,
+    install_target: ctx_provider_install::install_state::InstallTarget,
 ) -> Result<Option<ModelCatalog>, String> {
     let cache_key = format!(
         "{}/{}/{}",

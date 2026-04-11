@@ -1,5 +1,9 @@
 import { type SubagentInvocation, idToString } from "../../api/client";
-import { formatSubagentChildMeta, humanToolStatus, subagentChildLabel } from "../SessionPage.helpers";
+import {
+  formatSubagentChildMeta,
+  humanToolStatus,
+  subagentChildLabel,
+} from "./SessionPage.helpers";
 
 export function SessionSubagentInvocationsCard({
   subagentInvocations,

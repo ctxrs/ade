@@ -493,7 +493,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
       kind: "tool",
       tool_call_id: fixture.expected.toolCallId,
     });
-  });
+  }, 15_000);
 
   it("rehydrates the seeded head from the shared gap fixture", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");

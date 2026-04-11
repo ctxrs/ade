@@ -8,7 +8,7 @@ import { errorMessage } from "../../../utils/errorMessage";
 import {
   desktopEditorSettingsEqual,
   normalizeDesktopEditorSettings,
-} from "../../SettingsPage.utils";
+} from "../SettingsPage.utils";
 
 type DesktopEditorSettingsController = {
   editorSettings: DesktopEditorSettings;

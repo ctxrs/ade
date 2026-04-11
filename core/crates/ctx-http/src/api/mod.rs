@@ -86,7 +86,6 @@ use crate::buffers::{
 };
 use crate::daemon::AppState;
 use crate::installer;
-use crate::installs::InstallId;
 use crate::logs;
 use crate::merge_queue;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
@@ -96,6 +95,7 @@ use crate::web_sessions::{
     render_web_session_view, WebSessionCreateRequest, WebSessionInfo, WebSessionRunRequest,
     WebSessionRunResponse, WebSessionViewport,
 };
+use ctx_provider_install::install_state::InstallId;
 use ctx_providers::adapters::ProviderStatus;
 
 pub(super) fn is_sensitive_key(key: &str) -> bool {

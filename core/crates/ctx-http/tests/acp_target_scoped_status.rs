@@ -12,7 +12,7 @@ use axum::http::StatusCode;
 use ctx_http::installer::{
     save_agent_server_config, AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
 };
-use ctx_http::installs::InstallTarget;
+use ctx_provider_install::install_state::InstallTarget;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderStatus, RunHandle, TurnInput,
 };

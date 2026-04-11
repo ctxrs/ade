@@ -25,12 +25,14 @@ ctx-runtime-assets = { path = "../ctx-runtime-assets" }
 ctx-provider-accounts = { path = "../ctx-provider-accounts" }
 ctx-provider-matrix = { path = "../ctx-provider-matrix" }
 ctx-provider-auth-import = { path = "../ctx-provider-auth-import" }
+ctx-provider-install = { path = "../ctx-provider-install" }
 ctx-providers = { path = "../ctx-providers" }
 ctx-sandbox-contract = { path = "../ctx-sandbox-contract" }
 ctx-sandbox-materialization = { path = "../ctx-sandbox-materialization" }
 ctx-session-tools = { path = "../ctx-session-tools" }
 ctx-storage-admission = { path = "../ctx-storage-admission" }
 ctx-worktree-data-plane = { path = "../ctx-worktree-data-plane" }
+ctx-workspace-runtime = { path = "../ctx-workspace-runtime" }
 ctx-workspace-config = { path = "../ctx-workspace-config" }
 ctx-workspace-container = { path = "../ctx-workspace-container" }
 ctx-workspace-active-snapshot = { path = "../ctx-workspace-active-snapshot" }
@@ -99,6 +101,7 @@ http-body-util = "0.1"
 [dev-dependencies]
 ctx-avf-linux-runtime = { path = "../ctx-avf-linux-runtime", features = ["test-support"] }
 ctx-bundled-assets = { path = "../ctx-bundled-assets", features = ["test-support"] }
+ctx-workspace-runtime = { path = "../ctx-workspace-runtime", features = ["test-support"] }
 azure_identity = { version = "0.21", default-features = false, features = ["development", "old_azure_cli", "enable_reqwest_rustls"] }
 azure_core = { version = "0.21", default-features = false, features = ["enable_reqwest_rustls"] }
 gcp_auth = "0.12"

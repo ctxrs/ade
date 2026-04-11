@@ -1,5 +1,5 @@
 import type { User } from "@supabase/supabase-js";
-import { Card, Row } from "../../SettingsPage.components";
+import { Card, Row } from "../SettingsPage.components";
 
 export function BillingSection({
   supabaseConfigured,

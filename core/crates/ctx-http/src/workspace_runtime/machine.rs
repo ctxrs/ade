@@ -5,7 +5,10 @@ use crate::updates;
 #[cfg(test)]
 use ctx_bundled_assets as bundled_assets;
 #[cfg(test)]
-use ctx_harness_setup::{observe_log, ManagedArtifactDownloadReporter, ManagedDownloadAggregate};
+use ctx_harness_setup::{
+    observe_log, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,
+    ManagedArtifactDownloadReporter, ManagedDownloadAggregate,
+};
 #[cfg(test)]
 use ctx_runtime_assets::{
     acquire_managed_artifact_file_lock, download_managed_artifact, extract_archive_to_dir,

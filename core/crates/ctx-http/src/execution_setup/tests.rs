@@ -27,8 +27,8 @@ use crate::test_support::{
     write_avf_linux_lifecycle_helper, write_running_container_sandbox_cli_shim,
     TrackedExecutionLaunch,
 };
-use crate::workspace_runtime::HarnessRuntimeManager;
 use ctx_store::Store;
+use ctx_workspace_runtime::HarnessRuntimeManager;
 
 struct EnvVarGuard {
     key: &'static str,

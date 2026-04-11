@@ -1,6 +1,6 @@
 import { Check, Info, Loader2, X } from "lucide-react";
-import { promptAutosaveStatusLabel } from "../../SettingsPage.utils";
-import { Row, Toggle } from "../../SettingsPage.components";
+import { promptAutosaveStatusLabel } from "../SettingsPage.utils";
+import { Row, Toggle } from "../SettingsPage.components";
 import { useWorktreeBootstrapController } from "../hooks/useWorktreeBootstrapController";
 import { GeneralSection } from "./GeneralSection";
 

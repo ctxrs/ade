@@ -1,9 +1,9 @@
 import React from "react";
 import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { MessageAttachment } from "../api/client";
+import type { MessageAttachment } from "../../api/client";
 import { WorkbenchSessionSlot } from "./WorkbenchPage.sessionSlot";
-import { copyTextToClipboard } from "../utils/clipboard";
+import { copyTextToClipboard } from "../../utils/clipboard";
 
 const sessionViewSpy = vi.hoisted(() => vi.fn());
 const sessionViewMountSpy = vi.hoisted(() => vi.fn());
@@ -18,7 +18,7 @@ const initialAttachment: MessageAttachment = {
   name: "blob-1.png",
 };
 
-vi.mock("./SessionPage", () => ({
+vi.mock("../sessionView", () => ({
   SessionView: (props: unknown) => {
     const sessionId = String((props as { sessionId?: string }).sessionId ?? "");
     sessionViewSpy(props);
@@ -32,7 +32,7 @@ vi.mock("./SessionPage", () => ({
   },
 }));
 
-vi.mock("../workbench/store", () => ({
+vi.mock("../../workbench/store", () => ({
   sessionDraftKey: (sessionId: string) => `session:${sessionId}`,
   useWorkbenchDraft: () => ({
     value: { text: "draft text", modeId: "default", attachments: [initialAttachment] },
@@ -44,7 +44,7 @@ vi.mock("../workbench/store", () => ({
   }),
 }));
 
-vi.mock("../utils/clipboard", () => ({
+vi.mock("../../utils/clipboard", () => ({
   copyTextToClipboard: vi.fn(async () => true),
 }));
 

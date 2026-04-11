@@ -377,6 +377,24 @@ pub(super) async fn resolve_session_root_and_file(
     session_id: &str,
     path: &str,
 ) -> Result<(SessionId, WorkspaceId, WorktreeId, PathBuf, PathBuf, bool), StatusCode> {
+    let (sid, workspace_id, worktree_id, root, is_container_file) =
+        resolve_session_root(state, session_id).await?;
+    if is_container_file {
+        let file = crate::buffers::BufferStore::resolve_path_lexical(&root, path)
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+        Ok((sid, workspace_id, worktree_id, root, file, true))
+    } else {
+        let file = crate::buffers::BufferStore::resolve_path(&root, path)
+            .await
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+        Ok((sid, workspace_id, worktree_id, root, file, false))
+    }
+}
+
+pub(super) async fn resolve_session_root(
+    state: &Arc<AppState>,
+    session_id: &str,
+) -> Result<(SessionId, WorkspaceId, WorktreeId, PathBuf, bool), StatusCode> {
     let sid = SessionId(uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
 
     let store = state
@@ -398,34 +416,23 @@ pub(super) async fn resolve_session_root_and_file(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let root = data_plane.live_worktree_root;
-    if matches!(
+    let is_container_file = matches!(
         data_plane.execution_mode,
         crate::settings::ExecutionMode::Sandbox
-    ) {
-        let file = crate::buffers::BufferStore::resolve_path_lexical(&root, path)
-            .map_err(|_| StatusCode::BAD_REQUEST)?;
-        Ok((
-            sid,
-            session.workspace_id,
-            session.worktree_id,
-            root,
-            file,
-            true,
-        ))
+    );
+    let root = if is_container_file {
+        root
     } else {
-        let root = root.canonicalize().map_err(|_| StatusCode::BAD_REQUEST)?;
-        let file = crate::buffers::BufferStore::resolve_path(&root, path)
-            .await
-            .map_err(|_| StatusCode::BAD_REQUEST)?;
-        Ok((
-            sid,
-            session.workspace_id,
-            session.worktree_id,
-            root,
-            file,
-            false,
-        ))
-    }
+        root.canonicalize().map_err(|_| StatusCode::BAD_REQUEST)?
+    };
+
+    Ok((
+        sid,
+        session.workspace_id,
+        session.worktree_id,
+        root,
+        is_container_file,
+    ))
 }
 
 pub(super) async fn open_buffer(

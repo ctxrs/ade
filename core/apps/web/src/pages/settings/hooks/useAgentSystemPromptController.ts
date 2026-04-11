@@ -7,8 +7,8 @@ import {
   type AgentSystemPromptConfig,
   type SubagentSystemPromptConfig,
 } from "../../../api/client";
-import { AGENT_PROMPT_DEFAULT, SUBAGENT_PROMPT_DEFAULT } from "../../SettingsPage.constants";
-import type { PromptAutosaveStatus } from "../../SettingsPage.utils";
+import { AGENT_PROMPT_DEFAULT, SUBAGENT_PROMPT_DEFAULT } from "../SettingsPage.constants";
+import type { PromptAutosaveStatus } from "../SettingsPage.utils";
 
 type UseAgentSystemPromptControllerArgs = {
   workspaceId: string | null;

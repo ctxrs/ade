@@ -1,7 +1,7 @@
 import { Ellipsis, Plus, RefreshCw, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import { guessAttachmentName } from "../../SettingsPage.utils";
-import { formatAttachmentStatus } from "../../SettingsPage.helpers";
+import { guessAttachmentName } from "../SettingsPage.utils";
+import { formatAttachmentStatus } from "../SettingsPage.helpers";
 import { idToString, type WorkspaceAttachment } from "../../../api/client";
 import { ExternalLink } from "../../../components/ExternalLink";
 import {

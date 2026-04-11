@@ -1,7 +1,7 @@
 import type { MergeQueueEntry } from "@ctx/types";
 import { idToString } from "../../../api/client";
-import { Card, Row } from "../../SettingsPage.components";
-import { formatAge, truncateText } from "../../SettingsPage.utils";
+import { Card, Row } from "../SettingsPage.components";
+import { formatAge, truncateText } from "../SettingsPage.utils";
 
 type MergeQueueLivePanelOrphanedProps = {
   workspaceId: string | null;

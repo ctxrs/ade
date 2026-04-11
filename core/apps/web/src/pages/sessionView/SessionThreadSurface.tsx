@@ -31,12 +31,12 @@ import type {
 } from "../../utils/useDictationController";
 import type { SlashCommandDescriptor } from "../../state/useComposerAutocomplete";
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
-import type { WorkbenchMessageListContext } from "../SessionPage.thread";
+import type { WorkbenchMessageListContext } from "../sessionThread";
 import type {
   AskUserQuestionAnswerState,
   ThreadItem,
   WorkbenchListItem,
-} from "../SessionPage.types";
+} from "./SessionPage.types";
 import type { WorkbenchThreadProjectionOp } from "../sessionThreadProjection";
 import { resolveWorkbenchMessageExpanded } from "../sessionMessageListItemIdentity";
 import {

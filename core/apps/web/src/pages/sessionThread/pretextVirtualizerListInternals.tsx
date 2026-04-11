@@ -8,7 +8,7 @@ import type {
   PretextVirtualizerItemAlign,
   PretextVirtualizerItemLocation,
 } from "@pretext-virtualizer/interface";
-import type { WorkbenchListItem } from "../SessionPage.types";
+import type { WorkbenchListItem } from "../sessionView";
 import { recordSessionMessageListRowSizeMismatch } from "../sessionMessageListDebug";
 import type { WorkbenchThreadProjectionOp } from "../sessionThreadProjection";
 

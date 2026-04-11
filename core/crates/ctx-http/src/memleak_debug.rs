@@ -13,7 +13,7 @@ use crate::logs;
 use crate::perf_telemetry::PerfTelemetryStats;
 use crate::terminals::TerminalManagerStats;
 use crate::web_sessions::WebSessionManagerStats;
-use crate::workspace_runtime::HarnessRuntimeStats;
+use ctx_harness_runtime::HarnessRuntimeStats;
 use ctx_lsp::LspManagerStats;
 use ctx_store::StoreManagerStats;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotStats;

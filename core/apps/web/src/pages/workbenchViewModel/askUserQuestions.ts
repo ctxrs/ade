@@ -1,5 +1,5 @@
 import type { SessionEvent } from "../../api/client";
-import type { AskUserQuestionAnswerState } from "../SessionPage.types";
+import type { AskUserQuestionAnswerState } from "../sessionView";
 
 function normalizeAskUserQuestionAnswers(raw: unknown): Record<string, string> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { WorkbenchListItem } from "../SessionPage.types";
+import type { WorkbenchListItem } from "../sessionView";
 import {
   persistWarmWorkbenchThreadViewModel,
   readWarmWorkbenchThreadViewModel,
