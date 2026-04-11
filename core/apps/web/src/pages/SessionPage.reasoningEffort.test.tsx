@@ -362,7 +362,7 @@ describe("SessionPage reasoning effort", () => {
     ]);
   });
 
-  it("lets send reach the daemon when local active-turn state is only bootstrap", async () => {
+  it("blocks sends when local active-turn state is only bootstrap and queueing is disabled", async () => {
     const existingEntry = (sessionEntries.map[sessionId] ?? {}) as Record<string, unknown>;
     sessionEntries.map[sessionId] = {
       ...existingEntry,
@@ -386,13 +386,15 @@ describe("SessionPage reasoning effort", () => {
       await props.sendNow();
     });
 
-    expect(postMessageMock).toHaveBeenCalledTimes(1);
-    expect(postMessageMock.mock.calls[0]?.[0]).toBe(sessionId);
-    expect(postMessageMock.mock.calls[0]?.[1]).toBe("hello from bootstrap");
-    expect(postMessageMock.mock.calls[0]?.[2]).toBeUndefined();
+    await waitFor(() => {
+      const props = paneSpy.mock.calls.at(-1)?.[0] as { sendError?: string | null };
+      expect(props.sendError).toBe("A turn is already running. Stop it or wait for it to finish.");
+    });
+
+    expect(postMessageMock).not.toHaveBeenCalled();
   });
 
-  it("does not force queued delivery when active-turn state is only bootstrap", async () => {
+  it("queues delivery when the running turn is only bootstrap and queued messages are enabled", async () => {
     featureGateMock.mockReturnValue(true);
 
     const existingEntry = (sessionEntries.map[sessionId] ?? {}) as Record<string, unknown>;
@@ -420,7 +422,7 @@ describe("SessionPage reasoning effort", () => {
 
     expect(postMessageMock).toHaveBeenCalledTimes(1);
     expect(postMessageMock.mock.calls[0]?.[1]).toBe("hello from bootstrap queue gate");
-    expect(postMessageMock.mock.calls[0]?.[2]).toBeUndefined();
+    expect(postMessageMock.mock.calls[0]?.[2]).toBe("queued");
   });
 
   it("queues delivery locally when the running turn is authoritative", async () => {
@@ -452,6 +454,37 @@ describe("SessionPage reasoning effort", () => {
     expect(postMessageMock).toHaveBeenCalledTimes(1);
     expect(postMessageMock.mock.calls[0]?.[1]).toBe("hello from authoritative queue gate");
     expect(postMessageMock.mock.calls[0]?.[2]).toBe("queued");
+  });
+
+  it("hides queued panel data when the queued-messages experiment is disabled", async () => {
+    featureGateMock.mockReturnValue(false);
+
+    const existingEntry = (sessionEntries.map[sessionId] ?? {}) as Record<string, unknown>;
+    sessionEntries.map[sessionId] = {
+      ...existingEntry,
+      queue: [
+        {
+          id: "queued-1",
+          session_id: sessionId,
+          turn_id: "turn-queued-1",
+          task_id: "task-1",
+          role: "user",
+          content: "hidden queued message",
+          created_at: "2026-04-10T00:00:00.000Z",
+          delivery: "queued",
+          attachments: [],
+        },
+      ],
+    };
+
+    render(<SessionView sessionId={sessionId} />);
+
+    await waitFor(() => {
+      expect(paneSpy).toHaveBeenCalled();
+    });
+
+    const props = paneSpy.mock.calls.at(-1)?.[0] as { queueForPanel: unknown[] };
+    expect(props.queueForPanel).toEqual([]);
   });
 
   it("unblocks retry when the latest turn has already failed even if activity is still marked running", async () => {

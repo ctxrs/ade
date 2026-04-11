@@ -302,9 +302,10 @@ export function SessionView({
     const msg = errorMessage(error);
     return msg.startsWith("400") || msg.startsWith("404");
   };
+  const queuedMessagesEnabled = useFeatureGate("queued_messages_enabled", false);
   const queueForPanel = useMemo(
-    () => selectSessionQueuePanelMessages(entry, baseTurns),
-    [baseTurns, baseTurnsKey, entry],
+    () => (queuedMessagesEnabled ? selectSessionQueuePanelMessages(entry, baseTurns) : []),
+    [baseTurns, baseTurnsKey, entry, queuedMessagesEnabled],
   );
   const pendingQueueMessageIdSet = useMemo(() => {
     return new Set(
@@ -314,6 +315,7 @@ export function SessionView({
     );
   }, [optimisticQueuedMessages]);
   const queuedMessageIdsForThread = useMemo(() => {
+    if (!queuedMessagesEnabled) return new Set<string>();
     const ids = new Set<string>();
     for (const message of queueForPanel) {
       const mid = idToString(message.id);
@@ -325,7 +327,7 @@ export function SessionView({
       }
     }
     return ids;
-  }, [queueForPanel, optimisticQueueRemovalIds]);
+  }, [optimisticQueueRemovalIds, queueForPanel, queuedMessagesEnabled]);
   const threadProjection = supervisorThreadProjection;
   const computedContextWindow = useMemo<ContextWindowInfo | null>(() => {
     for (let i = baseTurns.length - 1; i >= 0; i -= 1) {
@@ -351,13 +353,11 @@ export function SessionView({
     () => hasSessionActiveTurn(entry?.activity, latestTurnStatus),
     [entry?.activity, latestTurnStatus],
   );
-  const sessionIsAuthoritative = entry?.freshness === "authoritative";
   const sessionProjectionReady =
     entry?.loadState === "live" &&
     supervisorThreadProjection.toolSummariesReady &&
     ["authoritative", "replica"].includes(String(entry?.freshness ?? ""));
   const threadProjectionSource = "supervisor" as const;
-  const queuedMessagesEnabled = useFeatureGate("queued_messages_enabled", false);
   const sessionError = useMemo(
     () => deriveSessionError(baseTurns, baseEvents),
     [baseEvents, baseEventsStamp, baseTurns, baseTurnsKey],
@@ -583,7 +583,7 @@ export function SessionView({
   const sendNow = async () => {
     if (!id) return;
     if (sendBusyRef.current) return;
-    if (hasActiveTurn && !queuedMessagesEnabled && sessionIsAuthoritative) {
+    if (hasActiveTurn && !queuedMessagesEnabled) {
       setSendError("A turn is already running. Stop it or wait for it to finish.");
       return;
     }
@@ -601,7 +601,7 @@ export function SessionView({
       return;
     }
     const attachmentsToSend = draftAttachments.slice();
-    const shouldQueue = hasActiveTurn && queuedMessagesEnabled && sessionIsAuthoritative;
+    const shouldQueue = hasActiveTurn && queuedMessagesEnabled;
     const requestedDelivery = shouldQueue ? "queued" : undefined;
     const messageId = randomUuid();
     const turnId = randomUuid();

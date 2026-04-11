@@ -44,7 +44,6 @@ type Params = {
   turnsKey: string;
   hasActiveTurn: boolean;
   queuedMessagesEnabled: boolean;
-  sessionIsAuthoritative: boolean;
   resolveSendText: () => Promise<string>;
   setAtBottom: Dispatch<SetStateAction<boolean>>;
   onDraftPersistNow?: (() => void | Promise<void>) | null;
@@ -138,7 +137,6 @@ export function useSessionComposerQueueController(params: Params): Result {
     turnsKey,
     hasActiveTurn,
     queuedMessagesEnabled,
-    sessionIsAuthoritative,
     resolveSendText,
     setAtBottom,
     onDraftPersistNow,
@@ -322,7 +320,7 @@ export function useSessionComposerQueueController(params: Params): Result {
   const sendNow = async () => {
     if (!sessionId) return;
     if (sendBusyRef.current) return;
-    if (hasActiveTurn && !queuedMessagesEnabled && sessionIsAuthoritative) {
+    if (hasActiveTurn && !queuedMessagesEnabled) {
       setSendError("A turn is already running. Stop it or wait for it to finish.");
       return;
     }
@@ -340,7 +338,7 @@ export function useSessionComposerQueueController(params: Params): Result {
       return;
     }
     const attachmentsToSend = draftAttachments.slice();
-    const shouldQueue = hasActiveTurn && queuedMessagesEnabled && sessionIsAuthoritative;
+    const shouldQueue = hasActiveTurn && queuedMessagesEnabled;
     const requestedDelivery = shouldQueue ? "queued" : undefined;
     const messageId = randomUuid();
     const turnId = randomUuid();
