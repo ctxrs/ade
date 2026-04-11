@@ -10,6 +10,7 @@ ctx-core = { path = "../ctx-core" }
 ctx-harness-setup = { path = "../ctx-harness-setup" }
 ctx-linux-sandbox-runtime = { path = "../ctx-linux-sandbox-runtime" }
 ctx-runtime-assets = { path = "../ctx-runtime-assets" }
+ctx-sandbox-contract = { path = "../ctx-sandbox-contract" }
 hex = "0.4"
 sha2 = "0.10"
 tokio.workspace = true

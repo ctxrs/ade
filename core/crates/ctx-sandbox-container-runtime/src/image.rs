@@ -8,7 +8,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use ctx_bundled_assets as bundled_assets;
 use ctx_runtime_assets::download_managed_artifact;
-use tokio::io::AsyncReadExt;
+use ctx_sandbox_contract::shared_vm_guest_host_share_path;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::{fs, sync::Mutex};
 
 use crate::{
@@ -423,13 +424,49 @@ async fn load_container_image_tar(
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<()> {
     let mut cmd = sandbox_container_command(data_root, mode)?;
-    cmd.arg("load").arg("-i").arg(tar);
+    let guest_tar_path = matches!(mode, SandboxCommandMode::SharedVm { .. })
+        .then(|| shared_vm_guest_host_share_path(data_root, tar))
+        .flatten();
+    let stream_tar_over_stdin =
+        matches!(mode, SandboxCommandMode::SharedVm { .. }) && guest_tar_path.is_none();
+    cmd.arg("load");
+    if let Some(guest_tar_path) = guest_tar_path.as_ref() {
+        cmd.arg("-i").arg(guest_tar_path);
+    } else if !stream_tar_over_stdin {
+        cmd.arg("-i").arg(tar);
+    }
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    if stream_tar_over_stdin {
+        observe_log(
+            observer,
+            HarnessSetupPhase::ImageLoad,
+            HarnessSetupLogLevel::Info,
+            &format!(
+                "streaming harness image tar into shared VM because {} is outside the shared data root",
+                tar.display()
+            ),
+        );
+        cmd.stdin(Stdio::piped());
+    }
     cmd.kill_on_drop(true);
     let mut child = cmd
         .spawn()
         .with_context(|| format!("spawning container image load for {}", tar.display()))?;
+    let stdin_task = if stream_tar_over_stdin {
+        let mut stdin = child
+            .stdin
+            .take()
+            .context("container image load stdin was not captured")?;
+        let tar_path = tar.to_path_buf();
+        Some(tokio::spawn(async move {
+            let mut file = fs::File::open(&tar_path).await?;
+            tokio::io::copy(&mut file, &mut stdin).await?;
+            stdin.shutdown().await
+        }))
+    } else {
+        None
+    };
     let stdout = child
         .stdout
         .take()
@@ -455,6 +492,19 @@ async fn load_container_image_tar(
             let stderr = stderr_task
                 .await
                 .context("joining container image load stderr capture")??;
+            if let Some(stdin_task) = stdin_task {
+                match stdin_task
+                    .await
+                    .context("joining container image load stdin stream")?
+                {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => {}
+                    Err(err) => {
+                        return Err(err)
+                            .context("streaming container image tar to sandbox CLI stdin");
+                    }
+                }
+            }
             break std::process::Output {
                 status,
                 stdout,
@@ -474,6 +524,19 @@ async fn load_container_image_tar(
             let stderr = stderr_task
                 .await
                 .context("joining timed out container image load stderr capture")??;
+            if let Some(stdin_task) = stdin_task {
+                match stdin_task
+                    .await
+                    .context("joining timed out container image load stdin stream")?
+                {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => {}
+                    Err(err) => {
+                        return Err(err)
+                            .context("streaming container image tar to timed out sandbox CLI stdin");
+                    }
+                }
+            }
             let output = std::process::Output {
                 status,
                 stdout,
@@ -752,5 +815,103 @@ mod tests {
         )
         .await
         .expect("image visibility should settle after load success");
+    }
+
+    #[tokio::test]
+    async fn load_container_image_shared_vm_uses_guest_shared_path_for_data_root_tar() {
+        let _serial = env_var_test_lock().lock().await;
+        let temp = tempdir().expect("tempdir");
+        let helper_path = temp.path().join("ctx-avf-linux-helper.sh");
+        let marker_path = temp.path().join("image-present");
+        let invocation_log_path = temp.path().join("helper-invocations.log");
+        let tar_path = temp.path().join("ctx-harness.tar");
+        std::fs::write(&tar_path, b"fake-image-tar-from-host").expect("write image tar");
+        std::fs::write(
+            &helper_path,
+            format!(
+                "#!/bin/sh\nset -eu\nmarker='{}'\nlog='{}'\nif [ \"$1\" != \"shared-vm-exec\" ]; then\n  printf 'unexpected helper invocation: %s\\n' \"$*\" >&2\n  exit 1\nfi\nshift\nwhile [ \"$#\" -gt 0 ]; do\n  case \"$1\" in\n    --data-root|--cwd|--command|--user)\n      shift 2\n      ;;\n    --env)\n      shift 2\n      ;;\n    --)\n      shift\n      break\n      ;;\n    *)\n      printf 'unexpected shared-vm-exec arg: %s\\n' \"$1\" >&2\n      exit 1\n      ;;\n  esac\ndone\nprintf '%s\\n' \"$*\" >> \"$log\"\nif [ \"$1\" = \"load\" ]; then\n  if [ \"${{2:-}}\" != \"-i\" ]; then\n    printf 'shared VM image load should use a guest-visible tar path when available\\n' >&2\n    exit 1\n  fi\n  case \"${{3:-}}\" in\n    /mnt/ctx-host/*) ;;\n    *)\n      printf 'expected guest shared tar path, got %s\\n' \"${{3:-}}\" >&2\n      exit 1\n      ;;\n  esac\n  : > \"$marker\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"${{2:-}}\" = \"inspect\" ]; then\n  if [ -f \"$marker\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nprintf 'unexpected shared-vm sandbox CLI invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+                marker_path.display(),
+                invocation_log_path.display()
+            ),
+        )
+        .expect("write helper shim");
+        std::fs::set_permissions(&helper_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod helper shim");
+
+        load_container_image_tar(
+            temp.path(),
+            &SandboxCommandMode::SharedVm {
+                helper_path: helper_path.clone(),
+            },
+            &tar_path,
+            "ghcr.io/ctxrs/ctx-harness:test",
+            None,
+        )
+        .await
+        .expect("shared VM image load should succeed");
+
+        let invocation_log =
+            std::fs::read_to_string(&invocation_log_path).expect("read helper invocation log");
+        assert!(
+            invocation_log.contains("load"),
+            "expected shared VM helper to invoke image load:\n{invocation_log}"
+        );
+        assert!(
+            invocation_log.contains("/mnt/ctx-host/ctx-harness.tar"),
+            "shared VM image load must use the guest-visible host share path:\n{invocation_log}"
+        );
+    }
+
+    #[tokio::test]
+    async fn load_container_image_shared_vm_streams_tar_outside_data_root_over_stdin() {
+        let _serial = env_var_test_lock().lock().await;
+        let data_root = tempdir().expect("data root tempdir");
+        let tar_root = tempdir().expect("tar root tempdir");
+        let helper_path = data_root.path().join("ctx-avf-linux-helper.sh");
+        let marker_path = data_root.path().join("image-present");
+        let stdin_capture_path = data_root.path().join("load-stdin.tar");
+        let invocation_log_path = data_root.path().join("helper-invocations.log");
+        let tar_path = tar_root.path().join("ctx-harness.tar");
+        let tar_bytes = b"fake-image-tar-from-host";
+        std::fs::write(&tar_path, tar_bytes).expect("write image tar");
+        std::fs::write(
+            &helper_path,
+            format!(
+                "#!/bin/sh\nset -eu\nmarker='{}'\nstdin_capture='{}'\nlog='{}'\nif [ \"$1\" != \"shared-vm-exec\" ]; then\n  printf 'unexpected helper invocation: %s\\n' \"$*\" >&2\n  exit 1\nfi\nshift\nwhile [ \"$#\" -gt 0 ]; do\n  case \"$1\" in\n    --data-root|--cwd|--command|--user)\n      shift 2\n      ;;\n    --env)\n      shift 2\n      ;;\n    --)\n      shift\n      break\n      ;;\n    *)\n      printf 'unexpected shared-vm-exec arg: %s\\n' \"$1\" >&2\n      exit 1\n      ;;\n  esac\ndone\nprintf '%s\\n' \"$*\" >> \"$log\"\nif [ \"$1\" = \"load\" ]; then\n  if [ \"${{2:-}}\" = \"-i\" ]; then\n    printf 'shared VM image load must not receive host path arguments when the tar is outside the shared root\\n' >&2\n    exit 1\n  fi\n  cat > \"$stdin_capture\"\n  : > \"$marker\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"${{2:-}}\" = \"inspect\" ]; then\n  if [ -f \"$marker\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nprintf 'unexpected shared-vm sandbox CLI invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+                marker_path.display(),
+                stdin_capture_path.display(),
+                invocation_log_path.display()
+            ),
+        )
+        .expect("write helper shim");
+        std::fs::set_permissions(&helper_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod helper shim");
+
+        load_container_image_tar(
+            data_root.path(),
+            &SandboxCommandMode::SharedVm {
+                helper_path: helper_path.clone(),
+            },
+            &tar_path,
+            "ghcr.io/ctxrs/ctx-harness:test",
+            None,
+        )
+        .await
+        .expect("shared VM image load should succeed");
+
+        let invocation_log =
+            std::fs::read_to_string(&invocation_log_path).expect("read helper invocation log");
+        assert!(
+            invocation_log.contains("load"),
+            "expected shared VM helper to invoke image load:\n{invocation_log}"
+        );
+        assert!(
+            !invocation_log.contains("-i"),
+            "shared VM image load must stream tar bytes when the tar is outside the shared root:\n{invocation_log}"
+        );
+
+        let streamed =
+            std::fs::read(&stdin_capture_path).expect("read streamed shared VM image tar bytes");
+        assert_eq!(streamed, tar_bytes);
     }
 }

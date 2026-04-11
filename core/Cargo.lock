@@ -1835,6 +1835,7 @@ dependencies = [
  "ctx-harness-setup",
  "ctx-linux-sandbox-runtime",
  "ctx-runtime-assets",
+ "ctx-sandbox-contract",
  "hex",
  "sha2",
  "tempfile",
