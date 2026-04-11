@@ -875,8 +875,8 @@ button.linklike:hover {
   margin: 0;
   background: transparent;
   padding: 28px 12px 12px;
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: var(--wb-markdown-code-block-font-size, 12px);
+  line-height: var(--wb-markdown-code-block-line-height, 17px);
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
@@ -907,8 +907,8 @@ button.linklike:hover {
   margin: 0;
   background: transparent;
   padding: 28px 12px 12px;
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: var(--wb-markdown-code-block-font-size, 12px);
+  line-height: var(--wb-markdown-code-block-line-height, 17px);
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;

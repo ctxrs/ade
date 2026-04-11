@@ -3557,7 +3557,6 @@
 .wb-tool-markdown :where(h1, h2, h3, h4),
 .wb-assistant-body :where(h1, h2, h3, h4),
 .msg :where(h1, h2, h3, h4) {
-  line-height: 1.25;
   font-weight: 600;
   color: var(--text);
 }
@@ -3567,6 +3566,7 @@
 .wb-assistant-body :where(h1),
 .msg :where(h1) {
   font-size: 18px;
+  line-height: var(--wb-markdown-heading-1-line-height);
 }
 
 .wb-turn-header-content :where(h2),
@@ -3574,6 +3574,7 @@
 .wb-assistant-body :where(h2),
 .msg :where(h2) {
   font-size: 16px;
+  line-height: var(--wb-markdown-heading-2-line-height);
 }
 
 .wb-turn-header-content :where(h3),
@@ -3581,6 +3582,7 @@
 .wb-assistant-body :where(h3),
 .msg :where(h3) {
   font-size: 14px;
+  line-height: var(--wb-markdown-heading-3-line-height);
 }
 
 .wb-turn-header-content :where(h4),
@@ -3588,6 +3590,7 @@
 .wb-assistant-body :where(h4),
 .msg :where(h4) {
   font-size: 13px;
+  line-height: var(--wb-markdown-heading-4-line-height);
 }
 
 .wb-turn-header-content :where(ul, ol),

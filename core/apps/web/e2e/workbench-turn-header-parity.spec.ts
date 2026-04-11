@@ -27,7 +27,10 @@ async function measureTurnHeaderParity(
     const ReactDOMClient = ReactDomClientModule.default ?? ReactDomClientModule;
     const { WorkbenchTurnHeaderView } = await import("/src/pages/sessionThread/SessionThreadItemViews.tsx");
     const { getPretextVirtualizerRowLayout } = await import("/src/pages/sessionThread/pretextVirtualizerRowLayout.ts");
-    const { resolveSessionThreadContentWidth } = await import("/src/pages/sessionThread/sessionThreadLayoutTokens.ts");
+    const {
+      SESSION_THREAD_LAYOUT_STYLE,
+      resolveSessionThreadContentWidth,
+    } = await import("/src/pages/sessionThread/sessionThreadLayoutTokens.ts");
 
     const contentWidth = resolveSessionThreadContentWidth(viewportWidth);
     const host = document.createElement("div");
@@ -35,6 +38,13 @@ async function measureTurnHeaderParity(
     host.style.left = "-10000px";
     host.style.top = "0";
     host.style.width = `${contentWidth}px`;
+    host.style.margin = "0";
+    host.style.padding = "0";
+    host.style.border = "0";
+    host.style.boxSizing = "border-box";
+    for (const [key, value] of Object.entries(SESSION_THREAD_LAYOUT_STYLE)) {
+      host.style.setProperty(key, String(value));
+    }
     document.body.appendChild(host);
 
     const root = ReactDOMClient.createRoot(host);

@@ -29,6 +29,8 @@ const restoreEnv = () => {
   delete process.env.CTX_BUNDLE_DIR;
   delete process.env.CTX_WEB_DIST;
   delete process.env.CTX_E2E_ALLOW_CONFIGURED_BUNDLE_DIR;
+  delete process.env.CTX_E2E_REUSE_SERVER;
+  delete process.env.CTX_E2E_FORCE_REUSE_SERVER;
   delete process.env.PLAYWRIGHT_BROWSERS_PATH;
   delete process.env.CARGO_INCREMENTAL;
 };
@@ -189,5 +191,23 @@ describe("createCtxPlaywrightConfig", () => {
     const webServer = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
 
     expect(webServer?.env?.CTX_BUNDLE_DIR).toBe("/tmp/ctx-e2e-bundles");
+  });
+
+  it("allows an explicit force-reuse override for required profiles", async () => {
+    restoreEnv();
+    process.env.CTX_E2E_REUSE_SERVER = "1";
+
+    const withoutForce = await createCtxPlaywrightConfig("premerge_required");
+    const withoutForceWebServer = Array.isArray(withoutForce.webServer)
+      ? withoutForce.webServer[0]
+      : withoutForce.webServer;
+    expect(withoutForceWebServer?.reuseExistingServer).toBe(false);
+
+    restoreEnv();
+    process.env.CTX_E2E_FORCE_REUSE_SERVER = "1";
+
+    const withForce = await createCtxPlaywrightConfig("premerge_required");
+    const withForceWebServer = Array.isArray(withForce.webServer) ? withForce.webServer[0] : withForce.webServer;
+    expect(withForceWebServer?.reuseExistingServer).toBe(true);
   });
 });
