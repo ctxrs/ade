@@ -1,2 +1,10 @@
 common --enable_bzlmod
+common:buildbuddy-cache --bes_results_url=https://app.buildbuddy.io/invocation/
+common:buildbuddy-cache --bes_backend=grpcs://remote.buildbuddy.io
+common:buildbuddy-cache --remote_cache=grpcs://remote.buildbuddy.io
+common:buildbuddy-cache --remote_timeout=3600
+common:buildbuddy-cache --remote_upload_local_results=true
+common:buildbuddy-rbe --remote_executor=grpcs://remote.buildbuddy.io
+common:buildbuddy-rbe --remote_timeout=3600
 test --test_output=errors
+try-import %workspace%/user.bazelrc

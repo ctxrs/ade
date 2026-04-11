@@ -14,6 +14,10 @@ const {
 const DEFAULT_TEST_TARGETS = getBazelTestTargetsForCrates(getBazelCoveredCrates());
 const DEFAULT_BUILD_TARGETS = getBazelBuildTargetsForCrates(getBazelCoveredCrates());
 
+function parseEnabledFlag(value) {
+  return ["1", "true", "yes", "on"].includes(String(value ?? "").trim().toLowerCase());
+}
+
 function parseArgs(argv) {
   const [command = "test", ...targets] = argv;
   if (!["build", "run", "test"].includes(command)) {
@@ -43,10 +47,15 @@ function buildBazelPilotInvocation({ argv, env = process.env } = {}) {
   const repoRoot = path.resolve(coreRoot, "..");
   const layout = resolveCtxCacheLayout({ cwd: coreRoot, env });
   const startupArgs = [`--output_user_root=${layout.bazelOutputUserRoot}`];
+  const extraConfigArgs = [];
+  if (parseEnabledFlag(env.CTX_BAZEL_REMOTE_EXECUTION)) {
+    extraConfigArgs.push("--config=buildbuddy-rbe");
+  }
   const commandArgs = [
     command,
     `--disk_cache=${layout.bazelDiskCacheDir}`,
     `--repository_cache=${layout.bazelRepositoryCacheDir}`,
+    ...extraConfigArgs,
   ];
   if (command === "test") {
     commandArgs.push("--test_output=errors");

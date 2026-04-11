@@ -49,6 +49,7 @@ test-results/
 .env
 .env.*
 !.env.example
+/user.bazelrc
 
 # Supabase local state
 supabase/.branches/

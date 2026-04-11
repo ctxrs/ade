@@ -61,3 +61,20 @@ test("bazel pilot invocation stays on the volatile cache layout", () => {
   );
   assert.equal(invocation.env.TMPDIR, "/tmp/ctx-bazel-pilot/tmp");
 });
+
+test("bazel pilot invocation enables BuildBuddy remote execution when requested", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: ["build"],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-rbe",
+      CTX_SESSION_ID: "bazel-rbe-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "1",
+    },
+  });
+
+  assert.equal(
+    invocation.commandArgs.includes("--config=buildbuddy-rbe"),
+    true,
+  );
+});
