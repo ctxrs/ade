@@ -500,6 +500,99 @@ describe("providerOnboardingCoordinator", () => {
     }
   });
 
+  it("keeps a ready workspace stable while a background refresh is in flight", async () => {
+    const workspaceId = "ws-refresh-stable";
+    let hookValue: HookValue | null = null;
+    const refreshDeferred = deferred<ProvidersBootstrapResponse>();
+
+    vi.mocked(getProvidersBootstrap)
+      .mockResolvedValueOnce(makeBootstrap(workspaceId))
+      .mockImplementationOnce(() => refreshDeferred.promise);
+
+    render(createElement(CoordinatorHarness, {
+      workspaceId,
+      onChange: (value) => {
+        hookValue = value;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(requireHookValue(hookValue).bootstrapState).toBe("ready");
+      expect(requireHookValue(hookValue).bootstrapError).toBeNull();
+    });
+
+    let refreshPromise: Promise<ProvidersBootstrapResponse> | undefined;
+    await act(async () => {
+      refreshPromise = requireHookValue(hookValue).refreshBootstrap();
+      await Promise.resolve();
+    });
+
+    expect(requireHookValue(hookValue).bootstrapState).toBe("ready");
+    expect(requireHookValue(hookValue).bootstrapError).toBeNull();
+
+    refreshDeferred.resolve(makeBootstrap(workspaceId, {
+      provider_options: {
+        codex: {
+          ...baseOptions(workspaceId, "codex"),
+          probed_at: "2026-03-10T00:00:01.000Z",
+        },
+      },
+    }));
+
+    await act(async () => {
+      await refreshPromise;
+    });
+
+    await waitFor(() => {
+      expect(requireHookValue(hookValue).bootstrapState).toBe("ready");
+      expect(requireHookValue(hookValue).bootstrap.provider_options.codex?.probed_at).toBe(
+        "2026-03-10T00:00:01.000Z",
+      );
+    });
+  });
+
+  it("preserves a ready workspace snapshot when a background refresh fails", async () => {
+    const workspaceId = "ws-refresh-failure-stable";
+    let hookValue: HookValue | null = null;
+    const refreshDeferred = deferred<ProvidersBootstrapResponse>();
+
+    vi.mocked(getProvidersBootstrap)
+      .mockResolvedValueOnce(makeBootstrap(workspaceId))
+      .mockImplementationOnce(() => refreshDeferred.promise);
+
+    render(createElement(CoordinatorHarness, {
+      workspaceId,
+      onChange: (value) => {
+        hookValue = value;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(requireHookValue(hookValue).bootstrapState).toBe("ready");
+    });
+
+    let refreshPromise: Promise<ProvidersBootstrapResponse> | undefined;
+    await act(async () => {
+      refreshPromise = requireHookValue(hookValue).refreshBootstrap();
+      await Promise.resolve();
+    });
+
+    expect(requireHookValue(hookValue).bootstrapState).toBe("ready");
+    expect(requireHookValue(hookValue).bootstrapError).toBeNull();
+
+    refreshDeferred.reject(new Error("background refresh failed"));
+
+    await act(async () => {
+      await refreshPromise?.catch(() => {});
+    });
+
+    expect(requireHookValue(hookValue).bootstrapState).toBe("ready");
+    expect(requireHookValue(hookValue).bootstrapError).toBeNull();
+    expect(requireHookValue(hookValue).bootstrap.provider_options.codex?.probed_at).toBe(
+      "2026-03-10T00:00:00.000Z",
+    );
+  });
+
   it("does not share running installs or auth-summary dedupe across same-origin browser token changes", async () => {
     const workspaceId = "ws-daemon-target-scope";
     const pendingA = deferred<ProviderOptions>();

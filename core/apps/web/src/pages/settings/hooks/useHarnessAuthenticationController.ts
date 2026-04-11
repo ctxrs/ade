@@ -249,6 +249,7 @@ export function useHarnessAuthenticationController({
   );
   const providerHarnessConfigRef = useRef<Record<string, HarnessProviderSourceConfig | undefined>>({});
   const providerEndpointUnsupportedRef = useRef<Record<string, boolean>>({});
+  const previousCodexPendingRef = useRef(false);
 
   const supportsHarnessEndpointConfig = useCallback(
     (providerId: string): boolean =>
@@ -377,7 +378,6 @@ export function useHarnessAuthenticationController({
     setScopedCopilotAccounts,
   } = useHarnessAuthAccountCollections({
     workspaceId,
-    refreshProvidersBootstrapState,
     setProviderError,
     setCodexAccountsBusy,
     setClaudeAccountsBusy,
@@ -392,6 +392,22 @@ export function useHarnessAuthenticationController({
     kimiAccounts,
     copilotAccounts,
   });
+
+  useEffect(() => {
+    if (!enabled || !workspaceId) return;
+    const pending = codexAccounts?.logins?.some((login) => login.status === "pending") ?? false;
+    if (pending) {
+      previousCodexPendingRef.current = true;
+      return;
+    }
+    const previousPending = previousCodexPendingRef.current;
+    previousCodexPendingRef.current = pending;
+    if (!previousPending) return;
+    void onboarding.ensureProviderAuthSummary("codex", {
+      force: true,
+      trigger: "explicit",
+    }).catch(() => {});
+  }, [codexAccounts, enabled, onboarding, workspaceId]);
 
   const runDeleteProviderAccount = useCallback(
     async <TKey extends ProviderAccountMutationProviderId>(

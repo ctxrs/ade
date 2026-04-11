@@ -70,6 +70,15 @@ impl StorageGuardStatus {
     pub fn is_emergency(&self) -> bool {
         self.level == StorageGuardLevel::Emergency
     }
+
+    fn same_meaningful_state(&self, other: &Self) -> bool {
+        self.level == other.level
+            && self.warning_threshold_bytes == other.warning_threshold_bytes
+            && self.emergency_threshold_bytes == other.emergency_threshold_bytes
+            && self.reserve_bytes == other.reserve_bytes
+            && self.reserve_file_active == other.reserve_file_active
+            && self.active == other.active
+    }
 }
 
 #[derive(Default)]
@@ -241,10 +250,10 @@ pub async fn evaluate_storage_guard(
         let snapshot = assessment.status;
         let should_interrupt = previous.level != StorageGuardLevel::Emergency
             && snapshot.level == StorageGuardLevel::Emergency;
-        if snapshot != previous {
+        if !snapshot.same_meaningful_state(&previous) {
             emit_storage_guard_transition(state, &snapshot);
-            state.core.storage_guard.publish(snapshot.clone());
         }
+        state.core.storage_guard.publish(snapshot.clone());
 
         (snapshot, should_interrupt)
     };
@@ -634,6 +643,31 @@ mod tests {
         .expect_err("inactive reserve bytes must not satisfy admission");
         assert!(err.to_string().contains("isolated workspace copy"));
         assert!(err.to_string().contains("CTX data root"));
+    }
+
+    #[test]
+    fn storage_guard_transitions_ignore_updated_at_only_changes() {
+        let base = StorageGuardStatus {
+            level: StorageGuardLevel::Warning,
+            warning_threshold_bytes: WARNING_FREE_BYTES,
+            emergency_threshold_bytes: EMERGENCY_FREE_BYTES,
+            reserve_bytes: RESERVE_BYTES,
+            reserve_file_active: true,
+            active: Some(StorageGuardPathStatus {
+                label: "CTX data root".to_string(),
+                path: "/ctx-data".to_string(),
+                mount_point: "/".to_string(),
+                free_bytes: WARNING_FREE_BYTES,
+                total_bytes: 10 * GIB,
+            }),
+            updated_at: "2026-04-11T20:10:00Z".to_string(),
+        };
+        let later = StorageGuardStatus {
+            updated_at: "2026-04-11T20:10:02Z".to_string(),
+            ..base.clone()
+        };
+
+        assert!(base.same_meaningful_state(&later));
     }
 
     #[tokio::test]

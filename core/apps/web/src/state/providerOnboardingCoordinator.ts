@@ -213,19 +213,6 @@ const toProvidersById = (
   providers.map((provider) => [provider.provider_id, provider]),
 );
 
-const withScopedProviderAccountIdentity = (
-  scoped: ProviderOptions | undefined,
-  next: ProviderOptions | undefined,
-): ProviderOptions | undefined => {
-  if (!next || !scoped) return next;
-  const accountIdentity = scoped.account_identity ?? null;
-  if (next.account_identity === accountIdentity) return next;
-  return {
-    ...next,
-    account_identity: accountIdentity,
-  };
-};
-
 const providerInstallTargetForProvider = (
   provider: ProviderStatus | undefined,
 ): InstallTarget | undefined => parseInstallTarget(provider?.details?.install_target);
@@ -485,6 +472,54 @@ export const shouldHydrateProviderModels = (
   return true;
 };
 
+const writeProviderOptionsForEntry = (
+  entry: ProviderOnboardingEntry,
+  providerId: string,
+  next: ProviderOptions,
+): ProviderOptions | undefined => {
+  const updated = updateProvidersBootstrapForScope(entry.ownerScope, (current) => {
+    const accountIdentityById = getProviderAccountIdentityById(current);
+    const normalizedProviderOptions = Object.fromEntries(
+      Object.entries(current.provider_options).map(([nextProviderId, options]) => [
+        nextProviderId,
+        withProviderAccountIdentity(nextProviderId, options, accountIdentityById),
+      ]),
+    ) as Record<string, ProviderOptions>;
+    const normalizedNext =
+      withProviderAccountIdentity(providerId, next, accountIdentityById) ?? next;
+    const resolved = resolveProviderOptionsUpdateForScope(
+      entry.workspaceOwnerScope,
+      normalizedProviderOptions[providerId],
+      normalizedNext,
+    ) ?? normalizedNext;
+    const nextProviderOptions = mergeProviderOptionsMap(
+      normalizedProviderOptions,
+      {
+        ...normalizedProviderOptions,
+        [providerId]: resolved,
+      },
+      entry.workspaceOwnerScope,
+    );
+    if (nextProviderOptions === current.provider_options) {
+      return current;
+    }
+    return {
+      ...current,
+      provider_options: nextProviderOptions,
+    };
+  });
+  return updated.provider_options[providerId];
+};
+
+const loadDetailedProviderOptionsForEntry = async (
+  entry: ProviderOnboardingEntry,
+  providerId: string,
+): Promise<ProviderOptions | undefined> => {
+  if (!entry.workspaceId) return undefined;
+  const detailed = await getProviderOptions(entry.workspaceId, providerId);
+  return writeProviderOptionsForEntry(entry, providerId, detailed);
+};
+
 const ensureProviderAuthSummaryForEntry = async (
   entry: ProviderOnboardingEntry,
   providerId: string,
@@ -514,56 +549,26 @@ const ensureProviderAuthSummaryForEntry = async (
 
   const request = (
     force
-      ? refreshProvidersBootstrapForScope(entry.ownerScope)
+      ? loadDetailedProviderOptionsForEntry(entry, providerId)
       : loadProvidersBootstrapForScope(entry.ownerScope)
-  )
-    .then(async (latestBootstrap) => {
-      let next = resolveProviderOptionsUpdateForScope(
-        entry.workspaceOwnerScope,
-        cached,
-        latestBootstrap.provider_options[providerId],
-      );
+        .then(async (latestBootstrap) => {
+          let next = resolveProviderOptionsUpdateForScope(
+            entry.workspaceOwnerScope,
+            cached,
+            latestBootstrap.provider_options[providerId],
+          );
 
-      if (shouldHydrateProviderModels(providerId, next, trigger)) {
-        try {
-          const detailedResponse = await getProviderOptions(entry.workspaceId!, providerId);
-          const detailed = withScopedProviderAccountIdentity(
-            getProvidersBootstrapSnapshotForScope(entry.ownerScope).provider_options[providerId],
-            detailedResponse,
-          ) ?? detailedResponse;
-          const updated = updateProvidersBootstrapForScope(entry.ownerScope, (current) => {
-            const accountIdentityById = getProviderAccountIdentityById(current);
-            const normalizedProviderOptions = Object.fromEntries(
-              Object.entries(current.provider_options).map(([nextProviderId, options]) => [
-                nextProviderId,
-                withProviderAccountIdentity(nextProviderId, options, accountIdentityById),
-              ]),
-            ) as Record<string, ProviderOptions>;
-            const resolved = resolveProviderOptionsUpdateForScope(
-              entry.workspaceOwnerScope,
-              normalizedProviderOptions[providerId],
-              detailed,
-            ) ?? detailed;
-            if (normalizedProviderOptions[providerId] === resolved) {
-              return current;
+          if (shouldHydrateProviderModels(providerId, next, trigger)) {
+            try {
+              next = await loadDetailedProviderOptionsForEntry(entry, providerId);
+            } catch {
+              // Keep bootstrap options when probe hydration is unavailable.
             }
-            const nextProviderOptions = mergeProviderOptionsMap(normalizedProviderOptions, {
-              ...normalizedProviderOptions,
-              [providerId]: resolved,
-            }, entry.workspaceOwnerScope);
-            return {
-              ...current,
-              provider_options: nextProviderOptions,
-            };
-          });
-          next = updated.provider_options[providerId];
-        } catch {
-          // Keep bootstrap options when probe hydration is unavailable.
-        }
-      }
+          }
 
-      return next;
-    })
+          return next;
+        })
+  )
     .finally(() => {
       if (entry.providerAuthSummaryInFlightByKey[requestKey] === request) {
         delete entry.providerAuthSummaryInFlightByKey[requestKey];
@@ -828,7 +833,8 @@ export const useProviderOnboardingCoordinator = ({
         throw createMissingProviderOwnerScopeError();
       }
       const entry = getOrCreateEntry(ownerScope);
-      if (entry.snapshot.bootstrapState !== "ready" || mode === "refresh") {
+      const wasReady = entry.snapshot.bootstrapState === "ready";
+      if (!wasReady) {
         setEntryBootstrapState(entry, "loading", null);
       }
       try {
@@ -845,7 +851,11 @@ export const useProviderOnboardingCoordinator = ({
       } catch (error) {
         const current = providerOnboardingByScope.get(entry.scopeKey);
         if (current) {
-          setEntryBootstrapState(current, "error", toErrorMessage(error));
+          if (mode === "refresh" && wasReady) {
+            setEntryBootstrapState(current, "ready", null);
+          } else {
+            setEntryBootstrapState(current, "error", toErrorMessage(error));
+          }
         }
         onLoadError?.(error);
         throw error;

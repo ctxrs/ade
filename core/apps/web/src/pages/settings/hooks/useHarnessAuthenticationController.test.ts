@@ -1,6 +1,6 @@
 import { act, render, waitFor } from "@testing-library/react";
 import { Fragment, createElement, useEffect } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AmpAccountsResponse,
   HarnessProviderSourceConfig,
@@ -16,6 +16,15 @@ import {
   getCursorLogin,
   getGeminiLogin,
   getKimiLogin,
+  listAmpAccounts,
+  listClaudeAccounts,
+  listCodexAccounts,
+  listCopilotAccounts,
+  listCursorAccounts,
+  listGeminiAccounts,
+  listKimiAccounts,
+  listMistralAccounts,
+  listQwenAccounts,
   getProviderOptions,
   selectProviderHarnessSource,
   setAmpActiveAccount,
@@ -164,6 +173,15 @@ vi.mock("../../../api/client", async (importOriginal) => {
     getCursorLogin: vi.fn(),
     getGeminiLogin: vi.fn(),
     getKimiLogin: vi.fn(),
+    listAmpAccounts: vi.fn(),
+    listClaudeAccounts: vi.fn(),
+    listCodexAccounts: vi.fn(),
+    listCopilotAccounts: vi.fn(),
+    listCursorAccounts: vi.fn(),
+    listGeminiAccounts: vi.fn(),
+    listKimiAccounts: vi.fn(),
+    listMistralAccounts: vi.fn(),
+    listQwenAccounts: vi.fn(),
     getProviderOptions: vi.fn(),
     selectProviderHarnessSource: vi.fn(),
     setAmpActiveAccount: vi.fn(),
@@ -432,6 +450,15 @@ beforeEach(() => {
   vi.mocked(getCursorLogin).mockReset();
   vi.mocked(getGeminiLogin).mockReset();
   vi.mocked(getKimiLogin).mockReset();
+  vi.mocked(listAmpAccounts).mockReset();
+  vi.mocked(listClaudeAccounts).mockReset();
+  vi.mocked(listCodexAccounts).mockReset();
+  vi.mocked(listCopilotAccounts).mockReset();
+  vi.mocked(listCursorAccounts).mockReset();
+  vi.mocked(listGeminiAccounts).mockReset();
+  vi.mocked(listKimiAccounts).mockReset();
+  vi.mocked(listMistralAccounts).mockReset();
+  vi.mocked(listQwenAccounts).mockReset();
   vi.mocked(getProviderOptions).mockReset();
   vi.mocked(selectProviderHarnessSource).mockReset();
   vi.mocked(setAmpActiveAccount).mockReset();
@@ -473,10 +500,63 @@ beforeEach(() => {
       makeBootstrap(),
     )
     : consumeHostBootstrapQueue("hostBootstrapRefreshQueue", makeBootstrap()));
+  vi.mocked(listAmpAccounts).mockResolvedValue(baseAmpAccounts);
+  vi.mocked(listClaudeAccounts).mockResolvedValue({
+    active_account_id: null,
+    accounts: [],
+  });
+  vi.mocked(listCodexAccounts).mockResolvedValue({
+    active_account_id: null,
+    accounts: [],
+    logins: [],
+  });
+  vi.mocked(listCopilotAccounts).mockResolvedValue({
+    active_account_id: null,
+    accounts: [],
+  });
+  vi.mocked(listCursorAccounts).mockResolvedValue({
+    active_account_id: null,
+    accounts: [],
+  });
+  vi.mocked(listGeminiAccounts).mockResolvedValue({
+    active_account_id: null,
+    accounts: [],
+  });
+  vi.mocked(listKimiAccounts).mockResolvedValue({
+    active_account_id: null,
+    accounts: [],
+  });
+  vi.mocked(listMistralAccounts).mockResolvedValue({
+    active_account_id: null,
+    accounts: [],
+  });
+  vi.mocked(listQwenAccounts).mockResolvedValue({
+    active_account_id: null,
+    accounts: [],
+  });
+  vi.mocked(getProviderOptions).mockImplementation(async (workspaceId: string, providerId: string) => ({
+    provider_id: providerId,
+    workspace_id: workspaceId,
+    supports_load: false,
+    auth_required: false,
+    has_active_auth: true,
+    auth_mode: "subscription",
+    source: {
+      provider_id: providerId,
+      selected_source_kind: "subscription",
+      selected_endpoint_id: null,
+      endpoints: [],
+    },
+    probed_at: "2026-03-10T00:00:00.000Z",
+  }));
   setDaemonConnection({
     baseUrl: "https://daemon-a.example",
     source: "test",
   });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("shouldSkipDuplicateAmpLoginStart", () => {
@@ -1201,6 +1281,104 @@ describe("useHarnessAuthenticationController", () => {
     expect(vi.mocked(invalidateHostProvidersBootstrap)).not.toHaveBeenCalled();
     expect(vi.mocked(invalidateProvidersBootstrap)).toHaveBeenCalledWith("ws-test");
   });
+
+  it("polls pending workspace Codex logins via account endpoints without forcing bootstrap refresh", async () => {
+    let controller: Controller | null = null;
+    setBootstrapSnapshot("ws-test", makeBootstrap({
+      providers: [
+        {
+          provider_id: "codex",
+          display_name: "Codex",
+          installed: true,
+          health: "ok",
+          diagnostics: [],
+          details: {},
+          usability: {
+            usable: true,
+            status: "ready",
+            blocking_provider_ids: [],
+            recommended_action: "none",
+          },
+        } as never,
+      ],
+      provider_options: {
+        codex: {
+          provider_id: "codex",
+          workspace_id: "ws-test",
+          supports_load: false,
+          auth_required: true,
+          has_active_auth: false,
+          auth_mode: "subscription",
+          source: {
+            provider_id: "codex",
+            selected_source_kind: "subscription",
+            selected_endpoint_id: null,
+            endpoints: [],
+          },
+          probed_at: "2026-03-10T00:00:00.000Z",
+        },
+      },
+      codex_accounts: {
+        active_account_id: null,
+        accounts: [],
+        logins: [
+          {
+            account_id: "codex-login-1",
+            auth_url: "https://example.com/codex-login",
+            status: "pending",
+            updated_at: "2026-03-11T00:00:00.000Z",
+          },
+        ],
+      },
+    }));
+    vi.mocked(listCodexAccounts).mockResolvedValue({
+      active_account_id: "acct-codex",
+      accounts: [
+        {
+          id: "acct-codex",
+          label: "Codex",
+          created_at: "2026-03-11T00:00:00.000Z",
+        },
+      ],
+      logins: [],
+    });
+    vi.mocked(getProviderOptions).mockResolvedValue({
+      provider_id: "codex",
+      workspace_id: "ws-test",
+      supports_load: false,
+      auth_required: false,
+      has_active_auth: true,
+      auth_mode: "subscription",
+      source: {
+        provider_id: "codex",
+        selected_source_kind: "subscription",
+        selected_endpoint_id: null,
+        endpoints: [],
+      },
+      probed_at: "2026-03-11T00:00:01.000Z",
+    });
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(listCodexAccounts)).toHaveBeenCalledTimes(1);
+    }, { timeout: 4000 });
+    await waitFor(() => {
+      expect(vi.mocked(getProviderOptions)).toHaveBeenCalledWith("ws-test", "codex");
+    }, { timeout: 4000 });
+
+    expect(vi.mocked(refreshProvidersBootstrap)).not.toHaveBeenCalled();
+    expect(requireController(controller).codexAccounts?.active_account_id).toBe("acct-codex");
+    expect(requireController(controller).providerError).toBeNull();
+  }, 10000);
 
   it("shares host-scoped mutations through the host bootstrap store without touching workspace scope", async () => {
     let firstController: Controller | null = null;

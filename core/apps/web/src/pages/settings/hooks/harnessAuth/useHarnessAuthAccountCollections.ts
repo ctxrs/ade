@@ -32,24 +32,8 @@ type RefreshOptions = {
 
 type StateSetter<T> = Dispatch<SetStateAction<T>>;
 
-type AccountsBootstrapSnapshot = Partial<{
-  codex_accounts: CodexAccountsResponse | null;
-  claude_accounts: ClaudeAccountsResponse | null;
-  gemini_accounts: GeminiAccountsResponse | null;
-  qwen_accounts: QwenAccountsResponse | null;
-  kimi_accounts: KimiAccountsResponse | null;
-  mistral_accounts: MistralAccountsResponse | null;
-  copilot_accounts: CopilotAccountsResponse | null;
-  cursor_accounts: CursorAccountsResponse | null;
-  amp_accounts: AmpAccountsResponse | null;
-}>;
-
 type UseHarnessAuthAccountCollectionsArgs = {
   workspaceId: string | null;
-  refreshProvidersBootstrapState: (opts?: {
-    force?: boolean;
-    silent?: boolean;
-  }) => Promise<AccountsBootstrapSnapshot | null>;
   setProviderError: StateSetter<string | null>;
   setCodexAccountsBusy: StateSetter<boolean>;
   setClaudeAccountsBusy: StateSetter<boolean>;
@@ -99,7 +83,6 @@ const refreshAccountCollection = async <TResponse>(params: {
 
 export function useHarnessAuthAccountCollections({
   workspaceId,
-  refreshProvidersBootstrapState,
   setProviderError,
   setCodexAccountsBusy,
   setClaudeAccountsBusy,
@@ -229,156 +212,111 @@ export function useHarnessAuthAccountCollections({
   }, [applyCopilotAccounts, copilotAccounts, workspaceId]);
 
   const refreshCodexAccounts = useCallback(
-    async (opts?: RefreshOptions) => {
-      if (workspaceId) {
-        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
-        return bootstrap?.codex_accounts ?? null;
-      }
-      return refreshAccountCollection({
+    async (opts?: RefreshOptions) =>
+      refreshAccountCollection({
         silent: opts?.silent,
         list: listCodexAccounts,
         applyData: applyCodexAccounts,
         setBusy: setCodexAccountsBusy,
         setProviderError,
-      });
-    },
-    [applyCodexAccounts, refreshProvidersBootstrapState, setCodexAccountsBusy, setProviderError, workspaceId],
+      }),
+    [applyCodexAccounts, setCodexAccountsBusy, setProviderError],
   );
 
   const refreshClaudeAccounts = useCallback(
-    async (opts?: RefreshOptions) => {
-      if (workspaceId) {
-        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
-        return bootstrap?.claude_accounts ?? null;
-      }
-      return refreshAccountCollection({
+    async (opts?: RefreshOptions) =>
+      refreshAccountCollection({
         silent: opts?.silent,
         list: listClaudeAccounts,
         applyData: applyClaudeAccounts,
         setBusy: setClaudeAccountsBusy,
         setProviderError,
-      });
-    },
-    [applyClaudeAccounts, refreshProvidersBootstrapState, setClaudeAccountsBusy, setProviderError, workspaceId],
+      }),
+    [applyClaudeAccounts, setClaudeAccountsBusy, setProviderError],
   );
 
   const refreshGeminiAccounts = useCallback(
-    async (opts?: RefreshOptions) => {
-      if (workspaceId) {
-        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
-        return bootstrap?.gemini_accounts ?? null;
-      }
-      return refreshAccountCollection({
+    async (opts?: RefreshOptions) =>
+      refreshAccountCollection({
         silent: opts?.silent,
         list: listGeminiAccounts,
         applyData: applyGeminiAccounts,
         setBusy: setGeminiAccountsBusy,
         setProviderError,
-      });
-    },
-    [applyGeminiAccounts, refreshProvidersBootstrapState, setGeminiAccountsBusy, setProviderError, workspaceId],
+      }),
+    [applyGeminiAccounts, setGeminiAccountsBusy, setProviderError],
   );
 
   const refreshQwenAccounts = useCallback(
-    async (opts?: RefreshOptions) => {
-      if (workspaceId) {
-        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
-        return bootstrap?.qwen_accounts ?? null;
-      }
-      return refreshAccountCollection({
+    async (opts?: RefreshOptions) =>
+      refreshAccountCollection({
         silent: opts?.silent,
         list: listQwenAccounts,
         applyData: applyQwenAccounts,
         setBusy: setQwenAccountsBusy,
         setProviderError,
-      });
-    },
-    [applyQwenAccounts, refreshProvidersBootstrapState, setProviderError, setQwenAccountsBusy, workspaceId],
+      }),
+    [applyQwenAccounts, setProviderError, setQwenAccountsBusy],
   );
 
   const refreshKimiAccounts = useCallback(
-    async (opts?: RefreshOptions) => {
-      if (workspaceId) {
-        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
-        return bootstrap?.kimi_accounts ?? null;
-      }
-      return refreshAccountCollection({
+    async (opts?: RefreshOptions) =>
+      refreshAccountCollection({
         silent: opts?.silent,
         list: listKimiAccounts,
         applyData: applyKimiAccounts,
         setBusy: setKimiAccountsBusy,
         setProviderError,
-      });
-    },
-    [applyKimiAccounts, refreshProvidersBootstrapState, setKimiAccountsBusy, setProviderError, workspaceId],
+      }),
+    [applyKimiAccounts, setKimiAccountsBusy, setProviderError],
   );
 
   const refreshMistralAccounts = useCallback(
-    async (opts?: RefreshOptions) => {
-      if (workspaceId) {
-        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
-        return bootstrap?.mistral_accounts ?? null;
-      }
-      return refreshAccountCollection({
+    async (opts?: RefreshOptions) =>
+      refreshAccountCollection({
         silent: opts?.silent,
         list: listMistralAccounts,
         applyData: applyMistralAccounts,
         setBusy: setMistralAccountsBusy,
         setProviderError,
-      });
-    },
-    [applyMistralAccounts, refreshProvidersBootstrapState, setMistralAccountsBusy, setProviderError, workspaceId],
+      }),
+    [applyMistralAccounts, setMistralAccountsBusy, setProviderError],
   );
 
   const refreshCopilotAccounts = useCallback(
-    async (opts?: RefreshOptions) => {
-      if (workspaceId) {
-        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
-        return bootstrap?.copilot_accounts ?? null;
-      }
-      return refreshAccountCollection({
+    async (opts?: RefreshOptions) =>
+      refreshAccountCollection({
         silent: opts?.silent,
         list: listCopilotAccounts,
         applyData: applyCopilotAccounts,
         setBusy: setCopilotAccountsBusy,
         setProviderError,
-      });
-    },
-    [applyCopilotAccounts, refreshProvidersBootstrapState, setCopilotAccountsBusy, setProviderError, workspaceId],
+      }),
+    [applyCopilotAccounts, setCopilotAccountsBusy, setProviderError],
   );
 
   const refreshCursorAccounts = useCallback(
-    async (opts?: RefreshOptions) => {
-      if (workspaceId) {
-        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
-        return bootstrap?.cursor_accounts ?? null;
-      }
-      return refreshAccountCollection({
+    async (opts?: RefreshOptions) =>
+      refreshAccountCollection({
         silent: opts?.silent,
         list: listCursorAccounts,
         applyData: applyCursorAccounts,
         setBusy: setCursorAccountsBusy,
         setProviderError,
-      });
-    },
-    [applyCursorAccounts, refreshProvidersBootstrapState, setCursorAccountsBusy, setProviderError, workspaceId],
+      }),
+    [applyCursorAccounts, setCursorAccountsBusy, setProviderError],
   );
 
   const refreshAmpAccounts = useCallback(
-    async (opts?: RefreshOptions) => {
-      if (workspaceId) {
-        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
-        return bootstrap?.amp_accounts ?? null;
-      }
-      return refreshAccountCollection({
+    async (opts?: RefreshOptions) =>
+      refreshAccountCollection({
         silent: opts?.silent,
         list: listAmpAccounts,
         applyData: applyAmpAccounts,
         setBusy: setAmpAccountsBusy,
         setProviderError,
-      });
-    },
-    [applyAmpAccounts, refreshProvidersBootstrapState, setAmpAccountsBusy, setProviderError, workspaceId],
+      }),
+    [applyAmpAccounts, setAmpAccountsBusy, setProviderError],
   );
 
   return {
