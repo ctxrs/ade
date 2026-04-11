@@ -595,6 +595,7 @@ pub(in crate::api) async fn cleanup_task_worktrees(
     let mut errors = Vec::new();
     let mut needs_prune = false;
     let mut branches_to_delete = Vec::new();
+    let workspace_root_exists = tokio::fs::metadata(&workspace.root_path).await.is_ok();
     for target in targets {
         let worktree = &target.worktree;
         if let Err(err) = vcs_hooks::cleanup_worktree_hooks(state, workspace, worktree).await {
@@ -670,6 +671,22 @@ pub(in crate::api) async fn cleanup_task_worktrees(
             .git_branch
             .as_deref()
             .filter(|name| name.starts_with("ctx/"));
+        if !workspace_root_exists {
+            if tokio::fs::metadata(root).await.is_ok() {
+                if let Err(err) = tokio::fs::remove_dir_all(root).await.with_context(|| {
+                    format!("removing orphaned worktree dir at {}", root.display())
+                }) {
+                    tracing::warn!(
+                        task_id = %task_id.0,
+                        worktree_id = %worktree.id.0,
+                        workspace_root = %workspace.root_path,
+                        "failed to remove orphaned worktree dir after workspace root disappeared: {err:#}"
+                    );
+                    errors.push(err);
+                }
+            }
+            continue;
+        }
         if tokio::fs::metadata(root).await.is_err() {
             if branch.is_some() {
                 needs_prune = true;

@@ -364,17 +364,8 @@ function resolveAvailableSccachePath(env = process.env) {
   if (configuredPath) {
     return configuredPath;
   }
-  try {
-    const probeCommand = process.platform === "win32" ? "where" : "which";
-    const result = childProcess.spawnSync(probeCommand, ["sccache"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    if (result.status === 0) {
-      return trimValue(String(result.stdout).split(/\r?\n/)[0]);
-    }
-  } catch {}
-  // Fall back: if RUSTC_WRAPPER basename looks like sccache, use it as the sccache path
+  // Only honor explicitly configured sccache paths; do not auto-enable a compiler
+  // wrapper just because an unrelated `sccache` binary happens to be on PATH.
   const configuredWrapper = trimValue(env.RUSTC_WRAPPER);
   if (configuredWrapper && path.basename(configuredWrapper).toLowerCase().includes("sccache")) {
     return configuredWrapper;

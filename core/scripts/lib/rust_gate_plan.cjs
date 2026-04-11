@@ -35,7 +35,12 @@ const AGENT_GATE_CRATES = [
 const BAZEL_TEST_CRATES = new Set(getBazelCoveredCrates());
 const FORCE_REVERSE_DEP_CRATES = new Set(["ctx-execution-runtime"]);
 const SERIAL_CARGO_TEST_CRATES = new Set(["ctx-http", "ctx-mcp", "ctx-providers", "ctx-store"]);
-const ISOLATED_CARGO_TEST_CRATES = new Set(["ctx-mcp", "ctx-providers", "ctx-store"]);
+const ISOLATED_CARGO_TEST_CRATES = new Set([
+  "ctx-http",
+  "ctx-mcp",
+  "ctx-providers",
+  "ctx-store",
+]);
 
 function sortUnique(values) {
   return [...new Set(values)].filter(Boolean).sort();

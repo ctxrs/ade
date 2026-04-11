@@ -27,3 +27,16 @@ test("buildTurboRunArgs keeps task ordering and includes cache settings", () => 
     "--cache=local:rw,remote:rw",
   ]);
 });
+
+test("buildTurboRunArgs lets an explicit concurrency override serialize a task batch", () => {
+  const args = buildTurboRunArgs({
+    env: {
+      TURBO_CACHE_DIR: "/tmp/ctx-turbo-cache",
+      CTX_VERIFY_TURBO_CONCURRENCY: "7",
+    },
+    taskNames: ["rust:ctx-http:test:all"],
+    concurrencyOverride: 1,
+  });
+
+  assert.ok(args.includes("--concurrency=1"));
+});

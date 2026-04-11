@@ -113,6 +113,8 @@ test("buildCtxCacheEnv sets shared cache defaults and keeps verify quick on the 
   assert.equal(layout.bazelOutputUserRoot, path.join(volatileRoot, "targets", "bazel", scopeKey));
   assert.equal(layout.bundleCacheDir, path.join(volatileRoot, "cache", "bundles"));
   assert.equal(layout.volatileRootMode, "explicit");
+  assert.equal(env.RUSTC_WRAPPER, undefined);
+  assert.equal(env.SCCACHE_PATH, undefined);
 });
 
 test("buildCtxCacheEnv normalizes sccache inputs when sccache is active", () => {

@@ -102,7 +102,7 @@ function resolveCrates(graph, args) {
   return expandReverseDependencies(graph, resolved);
 }
 
-function runTaskPhase({ coreRoot, env, crateNames, taskKind }) {
+function runTaskPhase({ coreRoot, env, crateNames, taskKind, turboConcurrency = null }) {
   if (crateNames.length === 0) {
     return;
   }
@@ -110,6 +110,7 @@ function runTaskPhase({ coreRoot, env, crateNames, taskKind }) {
     coreRoot,
     env,
     taskNames: getTurboTaskNamesForCrates(crateNames, [taskKind]),
+    concurrencyOverride: turboConcurrency,
   });
 }
 
@@ -201,6 +202,7 @@ function main() {
       env,
       crateNames: [crateName],
       taskKind: "test",
+      turboConcurrency: 1,
     });
   }
 }

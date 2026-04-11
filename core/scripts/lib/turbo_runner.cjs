@@ -19,7 +19,9 @@ function resolveTurboBinary(coreRoot) {
   return turboBinary;
 }
 
-function buildTurboRunArgs({ env, taskNames, extraArgs = [] }) {
+function buildTurboRunArgs({ env, taskNames, extraArgs = [], concurrencyOverride = null }) {
+  const concurrency =
+    concurrencyOverride ?? env.CTX_VERIFY_TURBO_CONCURRENCY ?? "4";
   return [
     "run",
     ...taskNames,
@@ -27,13 +29,13 @@ function buildTurboRunArgs({ env, taskNames, extraArgs = [] }) {
     `--cache-dir=${env.TURBO_CACHE_DIR}`,
     "--output-logs=errors-only",
     "--log-order=grouped",
-    `--concurrency=${env.CTX_VERIFY_TURBO_CONCURRENCY || "4"}`,
+    `--concurrency=${concurrency}`,
     "--ui=stream",
     `--cache=${env.TURBO_CACHE_MODE || "local:rw"}`,
   ];
 }
 
-function runTurbo({ coreRoot, env, taskNames, extraArgs = [] }) {
+function runTurbo({ coreRoot, env, taskNames, extraArgs = [], concurrencyOverride = null }) {
   const turboBinary = resolveTurboBinary(coreRoot);
   const result = childProcess.spawnSync(
     turboBinary,
@@ -41,6 +43,7 @@ function runTurbo({ coreRoot, env, taskNames, extraArgs = [] }) {
       env,
       taskNames,
       extraArgs,
+      concurrencyOverride,
     }),
     {
       cwd: coreRoot,

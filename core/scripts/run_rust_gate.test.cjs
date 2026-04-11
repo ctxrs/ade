@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { AGENT_GATE_CRATES } = require("./lib/rust_gate_plan.cjs");
+const { AGENT_GATE_CRATES, ISOLATED_CARGO_TEST_CRATES } = require("./lib/rust_gate_plan.cjs");
 const { parseArgs, resolveCrates } = require("./run_rust_gate.cjs");
 
 test("parseArgs accepts --agent-gate without additional selection flags", () => {
@@ -101,4 +101,8 @@ test("resolveCrates runs the full workspace graph for root-level Rust inputs", (
     }),
     ["ctx-core", "ctx-http"],
   );
+});
+
+test("ctx-http stays isolated for cargo-based test phases", () => {
+  assert.equal(ISOLATED_CARGO_TEST_CRATES.has("ctx-http"), true);
 });
