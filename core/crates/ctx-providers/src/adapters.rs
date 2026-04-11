@@ -230,6 +230,11 @@ pub trait ProviderAdapter: Send + Sync {
         false
     }
 
+    /// Best-effort pinning for sessions that ctx considers actively owned.
+    async fn set_session_pinned(&self, _session_key: String, _pinned: bool) -> Result<()> {
+        Ok(())
+    }
+
     /// Best-effort per-session model selection (only for providers that support it via ACP).
     async fn set_session_model(&self, _session_key: String, _model_id: String) -> Result<()> {
         anyhow::bail!("provider does not support session model selection");

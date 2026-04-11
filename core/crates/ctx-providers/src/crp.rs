@@ -229,6 +229,11 @@ impl ProviderAdapter for Tier1CrpAdapter {
         )
     }
 
+    async fn set_session_pinned(&self, session_key: String, pinned: bool) -> Result<()> {
+        self.pool.set_session_pinned(session_key, pinned);
+        Ok(())
+    }
+
     async fn set_session_model(&self, session_key: String, model_id: String) -> Result<()> {
         let busy_guard = self.pool.session_busy_guard(session_key.clone());
         let session = self.pool.require_open_session(&session_key).await?;

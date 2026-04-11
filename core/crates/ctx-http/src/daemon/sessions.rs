@@ -771,15 +771,6 @@ impl SessionRuntime {
         self.running_sessions.lock().await.iter().copied().collect()
     }
 
-    pub async fn set_running(&self, session_id: SessionId, running: bool) {
-        let mut set = self.running_sessions.lock().await;
-        if running {
-            set.insert(session_id);
-        } else {
-            set.remove(&session_id);
-        }
-    }
-
     pub async fn cleanup_session(&self, state: &AppState, session_id: SessionId) {
         state
             .workspaces
@@ -805,6 +796,10 @@ impl SessionRuntime {
         {
             let mut set = self.running_sessions.lock().await;
             set.remove(&session_id);
+        }
+        {
+            let mut pins = self.session_pins.lock().await;
+            pins.remove(&session_id);
         }
         {
             let mut cache = self.session_meta_cache.lock().await;
@@ -883,17 +878,10 @@ impl AppState {
     pub async fn list_running_sessions(&self) -> Vec<SessionId> {
         self.sessions.list_running_sessions().await
     }
-
-    pub async fn set_running(&self, session_id: SessionId, running: bool) {
-        self.sessions.set_running(session_id, running).await;
-    }
-
-    pub async fn cleanup_session(&self, session_id: SessionId) {
-        self.sessions.cleanup_session(self, session_id).await;
-    }
 }
 
 #[cfg(test)]
 mod cache_sweep_tests;
 #[cfg(test)]
 mod event_filter_tests;
+mod pinning;

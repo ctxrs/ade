@@ -56,9 +56,9 @@ pub(crate) use types::{
 pub use types::{
     AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions, CachedProviderOptions,
     CachedProviderVerify, CoreState, ExecutionRuntime, GitStatusSnapshotCacheEntry,
-    ProviderRuntime, SessionHeadCacheKey, SessionRuntime, StoreLookup, TelemetryRuntime,
-    TimedEntry, TransportRuntime, WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
-    WorkspaceRuntime, WorktreeVcsSnapshotCacheEntry,
+    ProviderRuntime, SessionHeadCacheKey, SessionPinState, SessionRuntime, StoreLookup,
+    TelemetryRuntime, TimedEntry, TransportRuntime, WorkspaceActiveHeadCacheEntry,
+    WorkspaceActiveSnapshotCacheEntry, WorkspaceRuntime, WorktreeVcsSnapshotCacheEntry,
 };
 
 impl AppState {
@@ -228,6 +228,7 @@ impl AppState {
                 order_seq_states: Mutex::new(HashMap::new()),
                 active_task_refreshes: Mutex::new(HashMap::new()),
                 running_sessions,
+                session_pins: Mutex::new(HashMap::new()),
                 session_meta_cache: Mutex::new(HashMap::new()),
             },
             workspaces: WorkspaceRuntime {

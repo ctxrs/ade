@@ -26,7 +26,20 @@ pub struct SessionRuntime {
     pub order_seq_states: Mutex<HashMap<SessionId, TimedEntry<Arc<Mutex<OrderSeqState>>>>>,
     pub(crate) active_task_refreshes: Mutex<HashMap<TaskId, ActiveTaskRefreshEntry>>,
     pub running_sessions: Arc<Mutex<HashSet<SessionId>>>,
+    pub session_pins: Mutex<HashMap<SessionId, SessionPinState>>,
     pub session_meta_cache: Mutex<HashMap<SessionId, TimedEntry<Session>>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SessionPinState {
+    pub running: bool,
+    pub attached_clients: usize,
+}
+
+impl SessionPinState {
+    pub fn is_pinned(self) -> bool {
+        self.running || self.attached_clients > 0
+    }
 }
 
 pub struct WorkspaceRuntime {

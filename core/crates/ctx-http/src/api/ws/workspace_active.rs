@@ -543,6 +543,7 @@ async fn handle_workspace_active_snapshot_ws(
         let _ = send_task.await;
     }
 
+    release_workspace_stream_session_pins(&state, subscriptions.keys().copied()).await;
     state
         .update_worktree_vcs_activity(&active_worktrees, &HashSet::new())
         .await;
@@ -785,6 +786,12 @@ async fn handle_subscribe_message(
         ctx.send_control.set_disconnect_after_flush();
         return Ok(());
     }
+    sync_workspace_stream_session_pins(
+        state,
+        ctx.subscriptions.keys().copied(),
+        next_map.keys().copied(),
+    )
+    .await;
     *ctx.subscriptions = next_map;
     *ctx.subscription_state = next_state;
     if seed_worktree_vcs_for_subscribe(

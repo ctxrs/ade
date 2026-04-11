@@ -49,6 +49,7 @@ pub(super) struct CrpSessionPool {
     sessions: Mutex<HashMap<String, Arc<CrpSession>>>,
     active_prompts: Arc<StdMutex<HashSet<String>>>,
     busy_sessions: Arc<StdMutex<HashMap<String, usize>>>,
+    pinned_sessions: Arc<StdMutex<HashSet<String>>>,
     default_sweep_config: ProviderSessionSweepConfig,
     supports_session_status: bool,
     reap_in_flight: AtomicBool,
@@ -70,6 +71,7 @@ impl CrpSessionPool {
             sessions: Mutex::new(HashMap::new()),
             active_prompts: Arc::new(StdMutex::new(HashSet::new())),
             busy_sessions: Arc::new(StdMutex::new(HashMap::new())),
+            pinned_sessions: Arc::new(StdMutex::new(HashSet::new())),
             default_sweep_config: ProviderSessionSweepConfig::from_env(),
             supports_session_status,
             reap_in_flight: AtomicBool::new(false),
@@ -176,6 +178,24 @@ impl CrpSessionPool {
             return HashSet::new();
         };
         guard.keys().cloned().collect()
+    }
+
+    fn pinned_session_snapshot(&self) -> HashSet<String> {
+        let Ok(guard) = self.pinned_sessions.lock() else {
+            return HashSet::new();
+        };
+        guard.iter().cloned().collect()
+    }
+
+    pub(super) fn set_session_pinned(&self, session_key: String, pinned: bool) {
+        let Ok(mut guard) = self.pinned_sessions.lock() else {
+            return;
+        };
+        if pinned {
+            guard.insert(session_key);
+        } else {
+            guard.remove(&session_key);
+        }
     }
 
     pub(super) fn session_busy_guard(&self, session_key: String) -> BusySessionGuard {
@@ -607,6 +627,7 @@ impl CrpSessionPool {
         config: ProviderSessionSweepConfig,
     ) -> ProviderSessionSweepStats {
         let active = self.busy_session_snapshot();
+        let pinned = self.pinned_session_snapshot();
         let now = Instant::now();
         let sessions = {
             let guard = self.sessions.lock().await;
@@ -634,6 +655,9 @@ impl CrpSessionPool {
                 continue;
             }
             if active.contains(&snapshot.session_key) {
+                continue;
+            }
+            if pinned.contains(&snapshot.session_key) {
                 continue;
             }
             idle_candidates.push(snapshot);

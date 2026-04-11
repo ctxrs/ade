@@ -286,6 +286,12 @@ fn spawn_daemon_heap_profiler(_logs_dir: &Path) {}
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let open_file_limit_adjustment = match &cli.command {
+        Commands::Serve { .. } => Some(ctx_http::process_limits::ensure_min_open_file_limit(
+            ctx_http::process_limits::RECOMMENDED_DAEMON_OPEN_FILE_SOFT_LIMIT,
+        )),
+        Commands::Init { .. } | Commands::SelfUpdate { .. } => None,
+    };
 
     let mut _file_guard: Option<tracing_appender::non_blocking::WorkerGuard> = None;
 
@@ -348,6 +354,25 @@ async fn main() -> Result<()> {
 
     if let Err(err) = rustls::crypto::aws_lc_rs::default_provider().install_default() {
         warn!("failed to install rustls crypto provider: {err:?}");
+    }
+    if let Some(result) = open_file_limit_adjustment {
+        match result {
+            Ok(Some(limit)) => {
+                tracing::info!(
+                    nofile_soft_before = limit.before.soft,
+                    nofile_soft_after = limit.after.soft,
+                    nofile_hard = limit.after.hard,
+                    nofile_target_soft = limit.target_soft,
+                    nofile_changed = limit.changed,
+                    "daemon RLIMIT_NOFILE initialized"
+                );
+            }
+            Ok(None) => {}
+            Err(err) => {
+                eprintln!("warning: failed to raise daemon RLIMIT_NOFILE: {err:#}");
+                tracing::warn!("failed to raise daemon RLIMIT_NOFILE: {err:#}");
+            }
+        }
     }
 
     match cli.command {

@@ -775,6 +775,43 @@ async fn reap_idle_sessions_keeps_busy_session() -> Result<()> {
 }
 
 #[tokio::test]
+async fn reap_idle_sessions_keeps_pinned_session() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = write_session_status_runtime(&workdir, "pinned-status.sh", true)?;
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "pinned-reap";
+    let env = HashMap::new();
+
+    let session = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &env)
+        .await?;
+    session.opened.store(true, Ordering::SeqCst);
+    adapter
+        .pool
+        .set_session_pinned(session_key.to_string(), true);
+
+    let stats = adapter
+        .pool
+        .reap_idle_sessions(immediate_sweep_config())
+        .await;
+
+    assert_eq!(stats, ProviderSessionSweepStats::default());
+    assert!(adapter.has_live_session(session_key).await);
+
+    adapter
+        .pool
+        .set_session_pinned(session_key.to_string(), false);
+    session.process.shutdown("test complete").await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn reap_idle_sessions_removes_dead_sessions_without_status_probe() -> Result<()> {
     let tempdir = tempfile::tempdir()?;
     let workdir = tempdir.path().to_path_buf();

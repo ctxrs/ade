@@ -55,6 +55,30 @@ use terminal::{queue_terminal_ws_message, TerminalWsQueueOutcome};
 pub(super) use web_session::web_session_signal;
 pub(super) use workspace_active::workspace_active_snapshot_stream_ws;
 
+async fn sync_workspace_stream_session_pins<I, J>(state: &Arc<AppState>, current: I, next: J)
+where
+    I: IntoIterator<Item = SessionId>,
+    J: IntoIterator<Item = SessionId>,
+{
+    let current = current.into_iter().collect::<HashSet<_>>();
+    let next = next.into_iter().collect::<HashSet<_>>();
+    for session_id in next.difference(&current) {
+        state.attach_session(*session_id).await;
+    }
+    for session_id in current.difference(&next) {
+        state.detach_session(*session_id).await;
+    }
+}
+
+async fn release_workspace_stream_session_pins<I>(state: &Arc<AppState>, current: I)
+where
+    I: IntoIterator<Item = SessionId>,
+{
+    for session_id in current {
+        state.detach_session(session_id).await;
+    }
+}
+
 pub(super) async fn mobile_secure_workspace_stream_ws(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
@@ -519,6 +543,12 @@ async fn handle_mobile_secure_ws(
                                 send_control.set_disconnect_after_flush();
                                 continue;
                             }
+                            sync_workspace_stream_session_pins(
+                                &state,
+                                subscriptions.keys().copied(),
+                                next_map.keys().copied(),
+                            )
+                            .await;
                             subscriptions = next_map;
                             subscription_state = next_state;
                             if seed_worktree_vcs_for_subscribe(
@@ -867,6 +897,7 @@ async fn handle_mobile_secure_ws(
         let _ = send_task.await;
     }
 
+    release_workspace_stream_session_pins(&state, subscriptions.keys().copied()).await;
     state
         .update_worktree_vcs_activity(&active_worktrees, &HashSet::new())
         .await;

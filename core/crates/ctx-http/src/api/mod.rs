@@ -923,6 +923,7 @@ struct HealthResp {
     data_root: String,
     daemon_url: String,
     auth_required: bool,
+    open_file_limit: Option<crate::process_limits::OpenFileLimitSnapshot>,
     storage: crate::storage_guard::StorageGuardStatus,
     compatibility: HealthCompatibility,
 }

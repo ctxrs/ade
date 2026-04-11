@@ -72,6 +72,7 @@ pub(in crate::api) async fn health(
         data_root: state.core.data_root.to_string_lossy().to_string(),
         daemon_url: state.core.daemon_url.clone(),
         auth_required: state.core.auth_token.is_some(),
+        open_file_limit: crate::process_limits::current_open_file_limit(),
         storage: state.storage_guard_snapshot(),
         compatibility: HealthCompatibility {
             desktop_exact_version: version,
@@ -202,6 +203,7 @@ pub(in crate::api) async fn diagnostics(
             data_root: state.core.data_root.to_string_lossy().to_string(),
             daemon_url: state.core.daemon_url.clone(),
             auth_required: state.core.auth_token.is_some(),
+            open_file_limit: crate::process_limits::current_open_file_limit(),
             storage: state.storage_guard_snapshot(),
             compatibility: HealthCompatibility {
                 desktop_exact_version: version,

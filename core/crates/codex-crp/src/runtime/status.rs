@@ -38,18 +38,9 @@ pub(super) fn build_session_status_details(
     if !active_thread_ids.is_empty() {
         busy_reasons.push("loaded_thread_active".to_string());
     }
-    if resumed_from_provider_session {
-        busy_reasons.push("resumed_session_state_unknown".to_string());
-    }
-    if command_execution_seen {
-        busy_reasons.push("command_execution_observed".to_string());
-    }
-
     json!({
         "quiescent": active_turn_id.is_none()
-            && active_thread_ids.is_empty()
-            && !resumed_from_provider_session
-            && !command_execution_seen,
+            && active_thread_ids.is_empty(),
         "root_thread_id": root_thread_id,
         "active_turn_id": active_turn_id,
         "loaded_thread_ids": loaded_thread_ids,

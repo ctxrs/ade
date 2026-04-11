@@ -23,6 +23,7 @@ pub mod ops_events;
 pub mod oracle;
 pub mod order_seq;
 pub mod perf_telemetry;
+pub mod process_limits;
 pub mod provider_child_reclassifier;
 pub mod provider_guard;
 pub(crate) mod provider_install_contract;

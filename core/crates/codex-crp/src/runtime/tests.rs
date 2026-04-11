@@ -209,7 +209,7 @@ fn session_status_details_report_busy_for_active_loaded_thread_or_turn() {
 }
 
 #[test]
-fn session_status_details_report_busy_for_observed_command_execution() {
+fn session_status_details_report_historical_command_execution_without_blocking_quiescence() {
     let details = build_session_status_details(
         "thr_root",
         None,
@@ -221,16 +221,13 @@ fn session_status_details_report_busy_for_observed_command_execution() {
         }],
     );
 
-    assert_eq!(details["quiescent"], json!(false));
+    assert_eq!(details["quiescent"], json!(true));
     assert_eq!(details["command_execution_observed"], json!(true));
-    assert_eq!(
-        details["busy_reasons"],
-        json!(["command_execution_observed"])
-    );
+    assert_eq!(details["busy_reasons"], json!([]));
 }
 
 #[test]
-fn session_status_details_report_busy_for_resumed_provider_session() {
+fn session_status_details_report_resumed_provider_session_without_blocking_quiescence() {
     let details = build_session_status_details(
         "thr_root",
         None,
@@ -242,12 +239,9 @@ fn session_status_details_report_busy_for_resumed_provider_session() {
         }],
     );
 
-    assert_eq!(details["quiescent"], json!(false));
+    assert_eq!(details["quiescent"], json!(true));
     assert_eq!(details["resumed_from_provider_session"], json!(true));
-    assert_eq!(
-        details["busy_reasons"],
-        json!(["resumed_session_state_unknown"])
-    );
+    assert_eq!(details["busy_reasons"], json!([]));
 }
 
 #[tokio::test]
