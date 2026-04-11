@@ -20,4 +20,10 @@ for workflow in "${workflow_files[@]}"; do
   fi
 done
 
+release_disable_count="$( (rg -F 'echo "CTX_DISABLE_SCCACHE=1"' ".github/workflows/release-supabase.yml" || true) | wc -l | tr -d ' ')"
+if [[ "$release_disable_count" -eq 0 ]]; then
+  echo "release-supabase must explicitly disable script-level sccache auto-detection"
+  exit 1
+fi
+
 echo "ci_sccache_no_daemon_contract: OK"

@@ -22,6 +22,7 @@ test("turbo forwards external Rust cache env vars to child tasks", () => {
   assert.equal(passThroughEnv.has("CTX_VOLATILE_ARTIFACTS_DIR"), true);
   assert.equal(passThroughEnv.has("CTX_VOLATILE_TMPDIR"), true);
   assert.equal(passThroughEnv.has("CTX_BUNDLE_CACHE_DIR"), true);
+  assert.equal(passThroughEnv.has("CTX_DISABLE_SCCACHE"), true);
   assert.equal(passThroughEnv.has("PLAYWRIGHT_BROWSERS_PATH"), true);
   assert.equal(passThroughEnv.has("RUSTC_WRAPPER"), true);
   assert.equal(passThroughEnv.has("SCCACHE_DIR"), true);

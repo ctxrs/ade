@@ -122,6 +122,27 @@ test("buildCtxCacheEnv normalizes sccache inputs when sccache is active", () => 
   }
 });
 
+test("buildCtxCacheEnv disables sccache entirely when CTX_DISABLE_SCCACHE is enabled", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-sccache-disabled");
+  const { env } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+      CTX_DISABLE_SCCACHE: "1",
+      RUSTC_WRAPPER: "/opt/homebrew/bin/sccache",
+      SCCACHE_PATH: "/opt/homebrew/bin/sccache",
+      SCCACHE_NO_DAEMON: "1",
+      SCCACHE_SERVER_UDS: "/tmp/ctx-sccache.sock",
+    },
+  });
+
+  assert.equal(env.RUSTC_WRAPPER, undefined);
+  assert.equal(env.SCCACHE_PATH, undefined);
+  assert.equal(env.SCCACHE_NO_DAEMON, undefined);
+  assert.equal(env.SCCACHE_SERVER_UDS, undefined);
+});
+
 test("buildCtxCacheEnv preserves explicit incremental and existing path normalization inputs", () => {
   const cwd = path.resolve(__dirname, "..", "..");
   const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-sccache-existing");

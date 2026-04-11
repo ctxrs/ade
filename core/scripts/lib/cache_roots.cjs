@@ -393,6 +393,7 @@ function buildCtxCacheEnv({
     const explicitVolatileRoot = trimValue(env.CTX_VOLATILE_ROOT)
       ? layout.volatileRoot
       : "";
+    const disableSccache = parseEnabledFlag(env.CTX_DISABLE_SCCACHE);
 
     setDefaultEnvValue(resolvedEnv, "CTX_EXTERNAL_CACHE_ROOT", layout.externalCacheRoot);
     setDefaultEnvValue(resolvedEnv, "CTX_INTERNAL_VOLATILE_ROOT", layout.internalVolatileRoot);
@@ -520,12 +521,17 @@ function buildCtxCacheEnv({
       }
     }
 
-    const sccachePath = resolveAvailableSccachePath(resolvedEnv);
-    if (sccachePath && !trimValue(resolvedEnv.RUSTC_WRAPPER)) {
+    const sccachePath = disableSccache ? "" : resolveAvailableSccachePath(resolvedEnv);
+    if (disableSccache) {
+      delete resolvedEnv.RUSTC_WRAPPER;
+      delete resolvedEnv.SCCACHE_PATH;
+      delete resolvedEnv.SCCACHE_NO_DAEMON;
+      delete resolvedEnv.SCCACHE_SERVER_UDS;
+    } else if (sccachePath && !trimValue(resolvedEnv.RUSTC_WRAPPER)) {
       resolvedEnv.RUSTC_WRAPPER = sccachePath;
       setDefaultEnvValue(resolvedEnv, "SCCACHE_PATH", sccachePath);
     }
-    if (trimValue(resolvedEnv.RUSTC_WRAPPER) === trimValue(sccachePath) && sccachePath) {
+    if (!disableSccache && trimValue(resolvedEnv.RUSTC_WRAPPER) === trimValue(sccachePath) && sccachePath) {
       setDefaultEnvValue(resolvedEnv, "SCCACHE_NO_DAEMON", "1");
       if (process.platform !== "win32" && !trimValue(resolvedEnv.SCCACHE_SERVER_UDS)) {
         resolvedEnv.SCCACHE_SERVER_UDS = resolveSccacheServerUds(cargoTargetDir);
