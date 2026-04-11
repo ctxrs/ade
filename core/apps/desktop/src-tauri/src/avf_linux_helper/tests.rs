@@ -2251,6 +2251,8 @@ fn writable_surface_readiness_failures_trigger_writable_rootfs_reset() {
         "[ctx-avf-linux] readiness phase containerd-root-on-writable-root failed with exit 1 after 2ms",
         "[ctx-avf-linux] readiness phase buildkit-root-on-writable-root failed with exit 1 after 2ms",
         "[ctx-avf-linux] readiness phase nerdctl-root-on-writable-root failed with exit 1 after 2ms",
+        "[ctx-avf-linux] readiness phase cni-config-on-writable-root failed with exit 1 after 2ms",
+        "[ctx-avf-linux] readiness phase cni-state-on-writable-root failed with exit 1 after 2ms",
     ] {
         let err = anyhow::anyhow!(rendered.to_string());
         assert!(

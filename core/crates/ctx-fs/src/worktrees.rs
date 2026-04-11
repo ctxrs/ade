@@ -135,6 +135,14 @@ pub async fn ensure_worktree_attached(
             .context("removing stale worktree dir")?;
     }
 
+    // Prune stale registrations before recreating. The worktree path may still be
+    // registered in git's worktree metadata from a previous incomplete teardown (e.g.,
+    // the directory was removed without running `git worktree remove`). Without pruning
+    // first, `git worktree add` would fail with "branch already checked out".
+    prune_worktrees(workspace_root.as_ref())
+        .await
+        .context("pruning stale worktree registrations before create")?;
+
     driver
         .create_worktree(
             workspace_root.as_ref(),
@@ -302,4 +310,92 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn git(args: &[&str], cwd: &Path) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {:?} failed", args);
+    }
+
+    fn git_output(args: &[&str], cwd: &Path) -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .expect("run git output");
+        assert!(out.status.success(), "git {:?} failed", args);
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn init_repo(root: &Path) -> String {
+        git(&["init", "-b", "main"], root);
+        git(&["config", "user.email", "test@example.com"], root);
+        git(&["config", "user.name", "Test"], root);
+        std::fs::write(root.join("README.md"), "hello\n").expect("write readme");
+        git(&["add", "README.md"], root);
+        git(&["commit", "-m", "initial"], root);
+        git_output(&["rev-parse", "HEAD"], root)
+    }
+
+    /// Regression: ensure_worktree_attached must succeed even when the worktree path
+    /// was removed without calling `git worktree remove` (leaving a stale registration).
+    /// Without pruning first, `git worktree add` would fail with "branch already
+    /// checked out at <path>".
+    #[tokio::test]
+    async fn ensure_worktree_attached_prunes_stale_registration_before_recreate() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repo_root = temp.path().join("repo");
+        std::fs::create_dir_all(&repo_root).expect("create repo root");
+        let base_commit = init_repo(&repo_root);
+
+        let worktree_path = temp.path().join("worktree");
+        git(
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "ctx/test-stale",
+                worktree_path.to_str().expect("worktree path"),
+                &base_commit,
+            ],
+            &repo_root,
+        );
+
+        // Remove the worktree directory without running `git worktree remove`.
+        // This leaves a stale registration in the git repo metadata.
+        tokio::fs::remove_dir_all(&worktree_path)
+            .await
+            .expect("remove worktree dir");
+
+        // Verify the stale registration is present before the fix.
+        let list = git_output(&["worktree", "list", "--porcelain"], &repo_root);
+        assert!(
+            list.contains(worktree_path.to_string_lossy().as_ref()),
+            "stale worktree registration should exist before ensure_worktree_attached"
+        );
+
+        // Calling ensure_worktree_attached should prune the stale entry and recreate
+        // the worktree without a "branch already checked out" error.
+        ensure_worktree_attached(&repo_root, &worktree_path, &base_commit, "ctx/test-stale")
+            .await
+            .expect("ensure_worktree_attached should succeed despite stale registration");
+
+        assert!(
+            worktree_path.exists(),
+            "worktree directory should be recreated"
+        );
+        let list_after = git_output(&["worktree", "list", "--porcelain"], &repo_root);
+        assert!(
+            list_after.contains(worktree_path.to_string_lossy().as_ref()),
+            "recreated worktree should appear in git worktree list"
+        );
+    }
 }

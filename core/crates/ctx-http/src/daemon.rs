@@ -199,10 +199,7 @@ async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
     for workspace in workspaces {
         let store = state.core.stores.workspace_transient(workspace.id).await?;
         let mut turns = store
-            .list_session_turns_by_statuses(&[
-                SessionTurnStatus::Queued,
-                SessionTurnStatus::Running,
-            ])
+            .list_session_turns_by_statuses(&[SessionTurnStatus::Running])
             .await?;
         store.close().await;
         running_turns.append(&mut turns);

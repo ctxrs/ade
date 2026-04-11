@@ -369,6 +369,10 @@ mod tests {
             .await
             .expect("prepare self-contained root");
         assert_ne!(copy_root, worktree_root);
+        assert!(
+            !worktree_root.join(".git").is_dir(),
+            "source worktree must remain linked and unmodified"
+        );
         assert!(copy_root.join(".git").is_dir());
         assert!(!copy_root.join(".git").join("commondir").exists());
         assert!(!copy_root.join(".git").join("gitdir").exists());

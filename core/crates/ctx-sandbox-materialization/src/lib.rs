@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::Workspace;
-use ctx_fs::worktrees::standaloneize_worktree_git_dir;
 use ctx_sandbox_container_runtime::SandboxCommandMode;
 use ctx_sandbox_contract::container_worktree_root;
 use ctx_sandbox_contract::sandbox_workspace_root;
@@ -44,15 +43,6 @@ pub async fn ensure_worktree_from_host_copy(
         dest_root = %dest_root.display(),
         "provisioning disk-isolated worktree from host copy"
     );
-
-    standaloneize_worktree_git_dir(host_source_root)
-        .await
-        .with_context(|| {
-            format!(
-                "stabilizing sandbox worktree git metadata at {}",
-                host_source_root.display()
-            )
-        })?;
 
     let estimated_copy_bytes = copy::estimate_self_contained_copy_size_bytes(host_source_root)
         .await
@@ -154,15 +144,6 @@ pub async fn ensure_workspace_root_from_host_copy(
         );
     }
 
-    standaloneize_worktree_git_dir(host_workspace_root)
-        .await
-        .with_context(|| {
-            format!(
-                "stabilizing sandbox workspace git metadata at {}",
-                host_workspace_root.display()
-            )
-        })?;
-
     let estimated_copy_bytes = copy::estimate_self_contained_copy_size_bytes(host_workspace_root)
         .await
         .with_context(|| {
@@ -211,6 +192,15 @@ mod tests {
     use ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT;
     use std::fs;
     use uuid::Uuid;
+
+    fn git(args: &[&str], cwd: &Path) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {:?} failed", args);
+    }
 
     struct EnvGuard {
         key: &'static str,
@@ -383,6 +373,136 @@ mod tests {
                 "exec --interactive {container_id} df -Pk -- /ctx/ws/worktrees"
             )),
             "preflight should not probe the not-yet-created worktree parent: {log}"
+        );
+    }
+
+    /// Regression test: ensure_worktree_from_host_copy must NOT mutate the host linked
+    /// worktree's .git file into a standalone directory before (or during) the copy.
+    /// The copy staging is handled entirely via a temporary directory; the host stays
+    /// unchanged.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ensure_worktree_from_host_copy_does_not_mutate_linked_host_worktree_git_dir() {
+        let _env_lock = sandbox_cli_env_test_lock().lock().await;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let log_path = temp.path().join("sandbox-cli.log");
+        let cli_path = temp.path().join("fake-sandbox-cli.sh");
+        let workspace_id = WorkspaceId(Uuid::new_v4());
+        let worktree_id = WorktreeId(Uuid::new_v4());
+        let container_id = workspace_container_name(workspace_id);
+
+        // Set up a real git repo so we get a genuine linked worktree structure.
+        let repo_root = temp.path().join("repo");
+        fs::create_dir_all(&repo_root).expect("create repo root");
+        git(&["init", "-b", "main"], &repo_root);
+        git(&["config", "user.email", "test@example.com"], &repo_root);
+        git(&["config", "user.name", "Test"], &repo_root);
+        fs::write(repo_root.join("README.md"), "hello\n").expect("write readme");
+        git(&["add", "README.md"], &repo_root);
+        git(&["commit", "-m", "initial"], &repo_root);
+
+        // Create a linked worktree — its .git entry is a *file* pointer, not a directory.
+        let worktree_root = temp.path().join("worktree");
+        git(
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "ctx/test-no-mutate",
+                worktree_root.to_str().expect("worktree path"),
+            ],
+            &repo_root,
+        );
+
+        let dotgit = worktree_root.join(".git");
+        assert!(
+            dotgit.is_file(),
+            "linked git worktree .git must be a file pointer before materialization"
+        );
+
+        // Minimal fake sandbox CLI: handles mkdir, tar (drain stdin), git, and sh.
+        fs::write(
+            &cli_path,
+            format!(
+                concat!(
+                    "#!/bin/sh\nset -eu\n",
+                    "printf '%s\\n' \"$*\" >> '{log_path}'\n",
+                    "cmd=\"$1\"; shift\n",
+                    "[ \"$cmd\" = \"exec\" ] || {{ echo \"unexpected cmd: $cmd\" >&2; exit 1; }}\n",
+                    "while [ \"$#\" -gt 0 ]; do\n",
+                    "  case \"$1\" in\n",
+                    "    --interactive) shift ;;\n",
+                    "    --workdir) shift 2 ;;\n",
+                    "    *) break ;;\n",
+                    "  esac\n",
+                    "done\n",
+                    "[ \"$1\" = \"{container_id}\" ] || {{ echo \"unexpected container: $1\" >&2; exit 1; }}\n",
+                    "shift; command=\"$1\"; shift\n",
+                    "case \"$command\" in\n",
+                    "  mkdir) exit 0 ;;\n",
+                    "  tar) cat >/dev/null; exit 0 ;;\n",
+                    "  git) exit 0 ;;\n",
+                    "  sh)\n",
+                    "    if [ \"$1\" = \"-lc\" ] && printf '%s' \"$2\" | grep -q 'git rev-parse'; then\n",
+                    "      printf 'true\\n'; exit 0\n",
+                    "    fi\n",
+                    "    exit 0 ;;\n",
+                    "  *) echo \"unexpected exec: $command\" >&2; exit 1 ;;\n",
+                    "esac\n"
+                ),
+                log_path = log_path.display(),
+                container_id = container_id,
+            ),
+        )
+        .expect("write fake sandbox cli");
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mut perms = fs::metadata(&cli_path).expect("metadata").permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&cli_path, perms).expect("chmod fake sandbox cli");
+        }
+
+        let _cli = EnvGuard::set("CTX_HARNESS_SANDBOX_CLI_PATH", &cli_path);
+        let _storage_override = set_test_preflight_storage_samples_override(std::sync::Arc::new(
+            move |data_root, _mode, _cid, required_bytes, dest_probe, _op, _req| {
+                let total = required_bytes.saturating_add(2 * 1024 * 1024 * 1024);
+                Ok((
+                    ctx_storage_admission::StorageAdmissionSample {
+                        label: "CTX data root".to_string(),
+                        path: data_root.to_string_lossy().to_string(),
+                        mount_point: "/".to_string(),
+                        free_bytes: total,
+                        total_bytes: total,
+                    },
+                    ctx_storage_admission::StorageAdmissionSample {
+                        label: "sandbox workspace volume".to_string(),
+                        path: dest_probe.to_string_lossy().to_string(),
+                        mount_point: CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+                        free_bytes: total,
+                        total_bytes: total,
+                    },
+                ))
+            },
+        ));
+
+        ensure_worktree_from_host_copy(
+            temp.path(),
+            &ctx_sandbox_container_runtime::SandboxCommandMode::NativeContainer,
+            workspace_id,
+            worktree_id,
+            &worktree_root,
+            "deadbeef",
+            "ctx/test-no-mutate",
+        )
+        .await
+        .expect("ensure_worktree_from_host_copy");
+
+        // KEY invariant: the host linked worktree .git must still be a *file* pointer —
+        // it must NOT have been converted to a directory during the copy path.
+        assert!(
+            dotgit.is_file(),
+            "ensure_worktree_from_host_copy must not convert the host linked worktree \
+             .git file to a standalone directory"
         );
     }
 }

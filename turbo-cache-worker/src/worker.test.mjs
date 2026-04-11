@@ -203,3 +203,90 @@ test("scope mismatch is rejected", async () => {
   );
   assert.equal(response.status, 403);
 });
+
+test("teamId is rejected when only TURBO_TEAM is configured", async () => {
+  // TURBO_TEAM_ID is not set; a caller-supplied teamId is unverifiable and must be blocked
+  // to prevent scope bypass via the teamId path.
+  const env = buildEnv({ TURBO_TEAM_ID: undefined });
+  const response = await worker.fetch(
+    new Request("https://cache.example/artifacts/status?teamId=evil-team", {
+      headers: { authorization: "Bearer test-token" },
+    }),
+    env,
+  );
+  assert.equal(response.status, 403);
+  const body = await response.json();
+  assert.equal(body.code, "cache_scope_mismatch");
+});
+
+test("teamId is accepted when TURBO_TEAM_ID is also configured and matches", async () => {
+  const env = buildEnv({ TURBO_TEAM_ID: "team_abc123", TURBO_TEAM: undefined });
+  const response = await worker.fetch(
+    new Request("https://cache.example/artifacts/status?teamId=team_abc123", {
+      headers: { authorization: "Bearer test-token" },
+    }),
+    env,
+  );
+  assert.equal(response.status, 200);
+});
+
+test("content-length in GET/HEAD response comes from stored object size, not metadata", async () => {
+  const env = buildEnv();
+  const body = new TextEncoder().encode("hello-world");
+
+  // PUT with a deliberately wrong content-length in the header to confirm
+  // the stored metadata value is not what gets served back.
+  await worker.fetch(
+    buildRequest("https://cache.example/artifacts/aabbcc", {
+      method: "PUT",
+      body,
+      headers: {
+        // Lie about the size — the worker stores this in customMetadata.contentLength
+        "content-length": "9999",
+      },
+    }),
+    env,
+  );
+
+  // The HEAD response must reflect the actual bytes stored, not the lying header.
+  const headResponse = await worker.fetch(
+    buildRequest("https://cache.example/artifacts/aabbcc", { method: "HEAD" }),
+    env,
+  );
+  assert.equal(headResponse.status, 200);
+  assert.equal(headResponse.headers.get("content-length"), String(body.length));
+
+  // Same for GET.
+  const getResponse = await worker.fetch(
+    buildRequest("https://cache.example/artifacts/aabbcc"),
+    env,
+  );
+  assert.equal(getResponse.status, 200);
+  assert.equal(getResponse.headers.get("content-length"), String(body.length));
+});
+
+test("batch query size comes from stored object size, not metadata", async () => {
+  const env = buildEnv();
+  const body = new TextEncoder().encode("batch-test");
+
+  await worker.fetch(
+    buildRequest("https://cache.example/artifacts/ddeeff", {
+      method: "PUT",
+      body,
+      headers: { "content-length": "9999" }, // lying header
+    }),
+    env,
+  );
+
+  const response = await worker.fetch(
+    buildRequest("https://cache.example/artifacts", {
+      method: "POST",
+      body: JSON.stringify({ hashes: ["ddeeff"] }),
+      headers: { "content-type": "application/json" },
+    }),
+    env,
+  );
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.ddeeff.size, body.length);
+});

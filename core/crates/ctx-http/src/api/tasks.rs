@@ -594,6 +594,7 @@ pub(in crate::api) async fn cleanup_task_worktrees(
 ) -> Vec<anyhow::Error> {
     let mut errors = Vec::new();
     let mut needs_prune = false;
+    let mut branches_to_delete = Vec::new();
     for target in targets {
         let worktree = &target.worktree;
         if let Err(err) = vcs_hooks::cleanup_worktree_hooks(state, workspace, worktree).await {
@@ -673,17 +674,8 @@ pub(in crate::api) async fn cleanup_task_worktrees(
             if branch.is_some() {
                 needs_prune = true;
             }
-            if target.destroy_worktree_on_cleanup {
-                if let Some(branch) = branch {
-                    if let Err(err) = delete_branch(&workspace.root_path, branch).await {
-                        tracing::warn!(
-                            task_id = %task_id.0,
-                            worktree_id = %worktree.id.0,
-                            branch,
-                            "failed to delete worktree branch: {err:#}"
-                        );
-                    }
-                }
+            if let Some(branch) = branch {
+                branches_to_delete.push(branch.to_string());
             }
             continue;
         }
@@ -693,6 +685,7 @@ pub(in crate::api) async fn cleanup_task_worktrees(
             .unwrap_or(false);
         let is_git = embedded_git_dir || is_git_worktree(root).await.unwrap_or(false);
         if embedded_git_dir {
+            needs_prune = true;
             if let Err(err) = tokio::fs::remove_dir_all(root).await.with_context(|| {
                 format!("removing standalone managed worktree at {}", root.display())
             }) {
@@ -738,23 +731,25 @@ pub(in crate::api) async fn cleanup_task_worktrees(
             );
             errors.push(err);
         }
-        if target.destroy_worktree_on_cleanup {
-            if let Some(branch) = branch {
-                if let Err(err) = delete_branch(&workspace.root_path, branch).await {
-                    tracing::warn!(
-                        task_id = %task_id.0,
-                        worktree_id = %worktree.id.0,
-                        branch,
-                        "failed to delete worktree branch: {err:#}"
-                    );
-                }
-            }
+        if let Some(branch) = branch {
+            branches_to_delete.push(branch.to_string());
         }
     }
     if needs_prune {
         if let Err(err) = prune_worktrees(&workspace.root_path).await {
             tracing::warn!(task_id = %task_id.0, "failed to prune worktrees: {err:#}");
             errors.push(err);
+        }
+    }
+    branches_to_delete.sort();
+    branches_to_delete.dedup();
+    for branch in branches_to_delete {
+        if let Err(err) = delete_branch(&workspace.root_path, &branch).await {
+            tracing::warn!(
+                task_id = %task_id.0,
+                branch,
+                "failed to delete worktree branch: {err:#}"
+            );
         }
     }
     errors
@@ -929,6 +924,9 @@ pub(super) async fn is_git_worktree(worktree_path: impl AsRef<StdPath>) -> anyho
 
 mod snapshot_state;
 pub(super) use snapshot_state::load_workspace_active_snapshot_state;
+
+#[cfg(test)]
+mod cleanup_lifecycle_tests;
 
 #[cfg(test)]
 mod lifecycle_tests;

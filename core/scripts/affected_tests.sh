@@ -79,7 +79,7 @@ while IFS= read -r path; do
       ;;
   esac
   case "${path}" in
-    core/crates/*|core/tools/*)
+    core/Cargo.toml|core/Cargo.lock|core/rust-toolchain.toml|core/rustfmt.toml|core/clippy.toml|core/.cargo/config.toml|core/scripts/lib/cache_roots.cjs|core/scripts/lib/ctx_http_suites.cjs|core/scripts/lib/turbo_runner.cjs|core/scripts/lib/rust_workspace_graph.cjs|core/scripts/lib/rust_gate_plan.cjs|core/scripts/ctx_http_suite_task.cjs|core/scripts/rust_crate_task.cjs|core/scripts/run_rust_gate.cjs|core/scripts/run_rust_turbo.cjs|core/scripts/sync_rust_turbo_tasks.cjs|core/crates/*|core/tools/*)
       needs_rust=1
       rust_changed_paths+=("${path}")
       ;;

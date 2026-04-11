@@ -1,13 +1,13 @@
 {
   "version": 1,
   "name": "linux-arm-provider-install-reliability",
-  "updated_at": "2026-04-10",
+  "updated_at": "2026-04-11",
   "expected_environment": "sandbox",
   "expected_network_mode": "llm_only",
   "critical_providers": [
     {
       "provider_id": "codex",
-      "openrouter_model_override": "google/gemma-4-26b-a4b-it:free"
+      "openrouter_model_override": "openrouter/free"
     }
   ],
   "full_nightly_providers": [

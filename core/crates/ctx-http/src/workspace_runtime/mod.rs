@@ -7,8 +7,6 @@ use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
 #[cfg(test)]
-use std::sync::Arc;
-#[cfg(test)]
 use std::sync::{Mutex as StdMutex, OnceLock};
 #[cfg(test)]
 use std::time::Duration;
