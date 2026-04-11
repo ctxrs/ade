@@ -156,11 +156,12 @@ test("ensurePlaywrightBrowserInstall skips install when Chromium is already pres
 
   expect(
     ensurePlaywrightBrowserInstall(packageRoot, {
+      browsers: ["chromium"],
       spawnSyncImpl,
       existsSyncImpl: (candidate) => candidate === executablePath,
       nodeExecPath: "/fake/node",
     }),
-  ).toBe(executablePath);
+  ).toEqual({ chromium: executablePath });
   expect(calls).toEqual([
     ["/fake/node", ["-e", "const { chromium } = require('playwright'); process.stdout.write(chromium.executablePath())"]],
   ]);
@@ -186,11 +187,12 @@ test("ensurePlaywrightBrowserInstall installs Chromium when missing", () => {
 
   expect(
     ensurePlaywrightBrowserInstall(packageRoot, {
+      browsers: ["chromium"],
       spawnSyncImpl,
       existsSyncImpl: (candidate) => candidate === executablePath && installed,
       nodeExecPath: "/fake/node",
     }),
-  ).toBe(executablePath);
+  ).toEqual({ chromium: executablePath });
   expect(calls).toEqual([
     ["/fake/node", ["-e", "const { chromium } = require('playwright'); process.stdout.write(chromium.executablePath())"]],
     [playwrightBin, ["install", "chromium"]],
@@ -214,6 +216,7 @@ test("ensurePlaywrightBrowserInstall throws when install fails", () => {
 
   expect(() =>
     ensurePlaywrightBrowserInstall(packageRoot, {
+      browsers: ["chromium"],
       spawnSyncImpl,
       existsSyncImpl: () => false,
       nodeExecPath: "/fake/node",

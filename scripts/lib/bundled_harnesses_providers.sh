@@ -628,7 +628,7 @@ local_codex_crp_binary_path() {
 	    platform="linux/amd64"
 	  fi
 
-	  local image="${CTX_BUNDLE_RUST_IMAGE:-rust:1}"
+	  local image="${CTX_BUNDLE_RUST_IMAGE:-rust:1.88-bookworm}"
 
 	  local -a run_args
 	  run_args=(run --rm --platform "$platform" -v "$CODEX_CRP_WORKSPACE:/work:rw" -v "$target_dir:/target:rw" -w /work -e CARGO_TARGET_DIR=/target)
@@ -638,7 +638,7 @@ local_codex_crp_binary_path() {
 	  # Also: `codex-crp` upstream ships with a very heavy release profile (fat LTO, 1 codegen unit),
 	  # which can OOM on typical Docker Desktop configs. Override to a lighter release build: still
 	  # optimized, but much less memory hungry.
-	  docker "${run_args[@]}" "$image" bash -c "set -euo pipefail; export PATH=\"/usr/local/cargo/bin:\$PATH\"; rustup target add '$rust_target' >/dev/null 2>&1 || true; ${cargo_profile_env[*]} cargo build --manifest-path /work/Cargo.toml -p codex-crp --target '$rust_target' ${profile_args[*]}"
+	  docker "${run_args[@]}" "$image" bash -c "set -euo pipefail; export PATH=\"/usr/local/cargo/bin:\$PATH\"; rustup toolchain install stable --profile minimal --no-self-update >/dev/null 2>&1 || true; rustup target add --toolchain stable '$rust_target' >/dev/null 2>&1 || true; ${cargo_profile_env[*]} cargo +stable build --manifest-path /work/Cargo.toml -p codex-crp --target '$rust_target' ${profile_args[*]}"
 	}
 
 	if [[ "$os" == "linux" && "$host_os" != "linux" ]]; then

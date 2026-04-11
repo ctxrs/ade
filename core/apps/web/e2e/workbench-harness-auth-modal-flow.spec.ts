@@ -40,8 +40,36 @@ test("workbench: unauthed harness opens auth modal and API key flow readies harn
       contentType: "application/json",
       body: JSON.stringify({
         providers: [
-          { provider_id: "codex", installed: true, health: "ok", diagnostics: [], details: {} },
-          { provider_id: "cursor", installed: true, health: "ok", diagnostics: [], details: {} },
+          {
+            provider_id: "codex",
+            installed: true,
+            health: "ok",
+            diagnostics: [],
+            details: {},
+            usability: {
+              usable: true,
+              status: "ready",
+              reason_code: null,
+              reason: null,
+              blocking_provider_ids: [],
+              recommended_action: "none",
+            },
+          },
+          {
+            provider_id: "cursor",
+            installed: true,
+            health: "ok",
+            diagnostics: [],
+            details: {},
+            usability: {
+              usable: true,
+              status: "ready",
+              reason_code: null,
+              reason: null,
+              blocking_provider_ids: [],
+              recommended_action: "none",
+            },
+          },
         ],
         provider_options: {
           codex: {
@@ -70,11 +98,19 @@ test("workbench: unauthed harness opens auth modal and API key flow readies harn
             selected_endpoint_id: null,
             endpoints: [],
           },
+          cursor: {
+            provider_id: "cursor",
+            selected_source_kind: "subscription",
+            selected_endpoint_id: null,
+            endpoints: [],
+          },
         },
         codex_accounts: { active_account_id: "codex-1", accounts: [], logins: [] },
         claude_accounts: { active_account_id: null, accounts: [] },
         gemini_accounts: { active_account_id: null, accounts: [] },
+        qwen_accounts: { active_account_id: null, accounts: [] },
         kimi_accounts: { active_account_id: null, accounts: [] },
+        mistral_accounts: { active_account_id: null, accounts: [] },
         copilot_accounts: { active_account_id: null, accounts: [], logins: [] },
         cursor_accounts: cursorAccounts,
         amp_accounts: { active_account_id: null, accounts: [] },

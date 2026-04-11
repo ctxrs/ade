@@ -3,6 +3,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import {
   ensureLockedNodeInstall,
@@ -12,23 +13,14 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
+const { buildCtxCacheEnv } = require("../../../scripts/lib/cache_roots.cjs");
+const coreRoot = path.resolve(__dirname, "../../..");
 const webRoot = path.resolve(__dirname, "..");
 const e2eRoot = path.join(webRoot, "e2e");
 const suiteDir = path.join(e2eRoot, "suites");
-
-const suite = process.argv[2];
-const forwardedArgs = process.argv.slice(3);
-if (forwardedArgs[0] === "--") {
-  forwardedArgs.shift();
-}
-
-const suites = ["premerge_required", "release_required", "cross_platform", "visual", "soak", "load"];
+export const suites = ["premerge_required", "release_required", "cross_platform", "visual", "soak", "load"];
 const allSuites = new Set([...suites, "all"]);
-
-if (!suite || !allSuites.has(suite)) {
-  console.error(`usage: node scripts/run-e2e-suite.mjs <${[...allSuites].join("|")}> [playwright args...]`);
-  process.exit(2);
-}
 
 const configBySuite = {
   all: "playwright.config.ts",
@@ -38,6 +30,16 @@ const configBySuite = {
   visual: "playwright.visual.config.ts",
   soak: "playwright.soak.config.ts",
   load: "playwright.load.config.ts",
+};
+
+export const browsersBySuite = {
+  all: ["webkit", "chromium"],
+  premerge_required: ["webkit"],
+  release_required: ["webkit"],
+  cross_platform: ["webkit", "chromium"],
+  visual: ["webkit"],
+  soak: ["webkit", "chromium"],
+  load: ["webkit", "chromium"],
 };
 
 const toPosix = (value) => value.split(path.sep).join("/");
@@ -108,24 +110,72 @@ if (unassigned.length > 0) {
   throw new Error(`spec(s) missing suite assignment:\n${detail}`);
 }
 
-const files = suite === "all" ? allSpecs : specsBySuite.get(suite);
-console.error(`running suite '${suite}' with ${files.length} spec(s)`);
+export const usage = () =>
+  `usage: node scripts/run-e2e-suite.mjs <${[...allSuites].join("|")}> [playwright args...]`;
 
-const configPath = configBySuite[suite];
-ensureLockedNodeInstall(webRoot, { requiredBins: ["playwright"] });
-ensurePlaywrightBrowserInstall(webRoot);
-const cmd = requireLocalNodeBin(webRoot, "playwright");
-const args = ["test", "-c", configPath, ...files, ...forwardedArgs];
+export const normalizeForwardedArgs = (args) => {
+  const forwardedArgs = [...args];
+  if (forwardedArgs[0] === "--") {
+    forwardedArgs.shift();
+  }
+  return forwardedArgs;
+};
 
-const result = spawnSync(cmd, args, {
-  cwd: webRoot,
-  env: process.env,
-  stdio: "inherit",
-});
+export const buildSuiteRunnerEnv = (env = process.env) =>
+  buildCtxCacheEnv({
+    cwd: coreRoot,
+    env,
+    mode: "workspace",
+    mkdir: true,
+  }).env;
 
-if (result.error) {
-  console.error(result.error);
-  process.exit(1);
+export const runSuite = (
+  suite,
+  forwardedArgs = [],
+  {
+    env = process.env,
+    ensureLockedNodeInstallImpl = ensureLockedNodeInstall,
+    ensurePlaywrightBrowserInstallImpl = ensurePlaywrightBrowserInstall,
+    requireLocalNodeBinImpl = requireLocalNodeBin,
+    spawnSyncImpl = spawnSync,
+    stderr = console.error,
+  } = {},
+) => {
+  if (!suite || !allSuites.has(suite)) {
+    stderr(usage());
+    return 2;
+  }
+
+  const files = suite === "all" ? allSpecs : specsBySuite.get(suite);
+  stderr(`running suite '${suite}' with ${files.length} spec(s)`);
+
+  const suiteEnv = buildSuiteRunnerEnv(env);
+  const configPath = configBySuite[suite];
+  ensureLockedNodeInstallImpl(webRoot, { env: suiteEnv, requiredBins: ["playwright"] });
+  ensurePlaywrightBrowserInstallImpl(webRoot, { browsers: browsersBySuite[suite], env: suiteEnv });
+  const cmd = requireLocalNodeBinImpl(webRoot, "playwright");
+  const args = ["test", "-c", configPath, ...files, ...normalizeForwardedArgs(forwardedArgs)];
+
+  const result = spawnSyncImpl(cmd, args, {
+    cwd: webRoot,
+    env: suiteEnv,
+    stdio: "inherit",
+  });
+
+  if (result.error) {
+    stderr(result.error);
+    return 1;
+  }
+
+  return result.status ?? 1;
+};
+
+const main = () => {
+  const suite = process.argv[2];
+  const forwardedArgs = process.argv.slice(3);
+  process.exit(runSuite(suite, forwardedArgs));
+};
+
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  main();
 }
-
-process.exit(result.status ?? 1);

@@ -1,5 +1,7 @@
 import { expect, test } from "./fixtures";
 
+test.use({ browserName: "chromium" });
+
 test("diff editor expands to full height (no inner vertical scroll)", async ({ page }) => {
   await page.goto("/__cursor_diff_demo?state=big&lines=220");
 

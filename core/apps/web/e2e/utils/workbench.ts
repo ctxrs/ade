@@ -11,6 +11,7 @@ type CreateWorkspaceArgs = {
   repo: string;
   workspaceName: string;
   token?: string;
+  debug?: boolean;
 };
 
 const readId = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -29,7 +30,7 @@ const normalizePath = (value: string): string => {
 };
 
 export async function createWorkspaceAndOpenWorkbench(opts: CreateWorkspaceArgs): Promise<string> {
-  const { page, request, repo, workspaceName, token } = opts;
+  const { page, request, repo, workspaceName, token, debug = false } = opts;
   const repoPath = normalizePath(repo);
   const authToken = token ?? AUTH_TOKEN;
   const headers = authToken ? { authorization: `Bearer ${authToken}` } : undefined;
@@ -47,10 +48,68 @@ export async function createWorkspaceAndOpenWorkbench(opts: CreateWorkspaceArgs)
 
   const query = new URLSearchParams();
   if (authToken) query.set("token", authToken);
+  if (debug) query.set("debug", "1");
   const workspaceUrl = query.size > 0 ? `/workspaces/${workspaceId}?${query.toString()}` : `/workspaces/${workspaceId}`;
   await page.goto(workspaceUrl, { waitUntil: "domcontentloaded" });
   await expect(page).toHaveURL(new RegExp(`/workspaces/${workspaceId}(\\?.*)?$`), { timeout: 20_000 });
   await expect(page.locator(".wb-main")).toBeVisible({ timeout: 20_000 });
 
   return workspaceId;
+}
+
+type WorkbenchProjectionDebugEntry = {
+  source?: string;
+  sessionProjectionReady?: boolean;
+  freshness?: string | null;
+  lastTurnStatus?: string | null;
+};
+
+type WorkbenchDebugWindow = Window & {
+  __wbSessionThreadProjectionDebug?: {
+    entries?: WorkbenchProjectionDebugEntry[];
+  };
+};
+
+export async function waitForWorkbenchProjectionReady(
+  page: Page,
+  {
+    requireActiveTurn = false,
+    requireAuthoritative = false,
+    timeout = 20_000,
+  }: {
+    requireActiveTurn?: boolean;
+    requireAuthoritative?: boolean;
+    timeout?: number;
+  } = {},
+): Promise<void> {
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(({ requireActiveTurn: requireActiveTurnValue, requireAuthoritative: requireAuthoritativeValue }) => {
+          const store = (window as WorkbenchDebugWindow).__wbSessionThreadProjectionDebug;
+          const entries = Array.isArray(store?.entries) ? store.entries : [];
+          for (let index = entries.length - 1; index >= 0; index -= 1) {
+            const entry = entries[index];
+            if (entry?.source !== "supervisor") continue;
+            if (!entry?.sessionProjectionReady) continue;
+            const freshness = String(entry?.freshness ?? "");
+            if (requireAuthoritativeValue) {
+              if (freshness !== "authoritative") continue;
+            } else if (freshness !== "authoritative" && freshness !== "replica") {
+              continue;
+            }
+            if (requireActiveTurnValue) {
+              const status = String(entry?.lastTurnStatus ?? "").toLowerCase();
+              if (!/(running|queued)/.test(status)) continue;
+            }
+            return true;
+          }
+          return false;
+        }, { requireActiveTurn, requireAuthoritative }),
+      {
+        timeout,
+        intervals: [200, 400, 800, 1200],
+      },
+    )
+    .toBe(true);
 }

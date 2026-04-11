@@ -594,7 +594,7 @@ require_bridge_binary() {
       platform="linux/amd64"
     fi
 
-    local image="${CTX_BUNDLE_RUST_IMAGE:-rust:1}"
+    local image="${CTX_BUNDLE_RUST_IMAGE:-rust:1.88-bookworm}"
     docker run --rm --platform "$platform" \
       -v "$BRIDGE_DIR:/work:rw" \
       -v "$CARGO_HOME:/cargo-home:rw" \
@@ -605,7 +605,7 @@ require_bridge_binary() {
       -e RUSTUP_HOME=/rustup-home \
       -e CARGO_TARGET_DIR=/target \
       "$image" \
-      bash -c "set -euo pipefail; export PATH=\"/usr/local/cargo/bin:\$PATH\"; rustup target add '$rust_target' >/dev/null 2>&1 || true; cargo build --release --target '$rust_target'"
+      bash -c "set -euo pipefail; export PATH=\"/usr/local/cargo/bin:\$PATH\"; rustup toolchain install stable --profile minimal --no-self-update >/dev/null 2>&1 || true; rustup target add --toolchain stable '$rust_target' >/dev/null 2>&1 || true; cargo +stable build --release --target '$rust_target'"
   }
 
   local bridge_out

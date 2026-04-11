@@ -6,6 +6,7 @@ import path from "node:path";
 const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const lockedInstallArgs = ["install", "--frozen-lockfile"];
 const installStampFile = ".ctx-locked-install.json";
+const supportedPlaywrightBrowsers = ["chromium", "firefox", "webkit"];
 
 const binNameForTool = (tool) => (process.platform === "win32" ? `${tool}.cmd` : tool);
 
@@ -116,15 +117,47 @@ export const requireLocalNodeBin = (packageRoot, tool) => {
   return binPath;
 };
 
-const resolvePlaywrightChromiumExecutable = (
+const resolvePlaywrightBrowserNames = (
+  browsers,
+  env,
+) => {
+  const rawEntries = Array.isArray(browsers)
+    ? browsers
+    : String(
+      browsers
+      ?? env.CTX_E2E_PLAYWRIGHT_BROWSERS
+      ?? env.CTX_E2E_BROWSER
+      ?? "webkit",
+    ).split(",");
+  const normalized = [];
+  for (const entry of rawEntries) {
+    const browser = String(entry).trim().toLowerCase();
+    if (!browser) continue;
+    if (!supportedPlaywrightBrowsers.includes(browser)) {
+      throw new Error(
+        `Unsupported Playwright browser '${browser}'. Expected one of: ${supportedPlaywrightBrowsers.join(", ")}`,
+      );
+    }
+    if (!normalized.includes(browser)) {
+      normalized.push(browser);
+    }
+  }
+  return normalized.length > 0 ? normalized : ["webkit"];
+};
+
+const resolvePlaywrightBrowserExecutable = (
   packageRoot,
+  browser,
   env,
   spawnSyncImpl,
   nodeExecPath,
 ) => {
   const result = spawnSyncImpl(
     nodeExecPath,
-    ["-e", "const { chromium } = require('playwright'); process.stdout.write(chromium.executablePath())"],
+    [
+      "-e",
+      `const { ${browser} } = require('playwright'); process.stdout.write(${browser}.executablePath())`,
+    ],
     {
       cwd: path.resolve(packageRoot),
       env,
@@ -141,7 +174,7 @@ const resolvePlaywrightChromiumExecutable = (
   }
   const executablePath = String(result.stdout ?? "").trim();
   if (!executablePath) {
-    throw new Error(`Playwright did not report a Chromium executable for ${packageRoot}`);
+    throw new Error(`Playwright did not report a ${browser} executable for ${packageRoot}`);
   }
   return executablePath;
 };
@@ -149,6 +182,7 @@ const resolvePlaywrightChromiumExecutable = (
 export const ensurePlaywrightBrowserInstall = (
   packageRoot,
   {
+    browsers,
     env = process.env,
     spawnSyncImpl = spawnSync,
     existsSyncImpl = fs.existsSync,
@@ -156,18 +190,28 @@ export const ensurePlaywrightBrowserInstall = (
   } = {},
 ) => {
   const resolvedPackageRoot = path.resolve(packageRoot);
-  const executablePath = resolvePlaywrightChromiumExecutable(
-    resolvedPackageRoot,
-    env,
-    spawnSyncImpl,
-    nodeExecPath,
+  const requestedBrowsers = resolvePlaywrightBrowserNames(browsers, env);
+  const executablePaths = Object.fromEntries(
+    requestedBrowsers.map((browser) => [
+      browser,
+      resolvePlaywrightBrowserExecutable(
+        resolvedPackageRoot,
+        browser,
+        env,
+        spawnSyncImpl,
+        nodeExecPath,
+      ),
+    ]),
   );
-  if (existsSyncImpl(executablePath)) {
-    return executablePath;
+  const missingBrowsers = requestedBrowsers.filter(
+    (browser) => !existsSyncImpl(executablePaths[browser]),
+  );
+  if (missingBrowsers.length === 0) {
+    return executablePaths;
   }
 
   const playwrightBin = requireLocalNodeBin(resolvedPackageRoot, "playwright");
-  const installResult = spawnSyncImpl(playwrightBin, ["install", "chromium"], {
+  const installResult = spawnSyncImpl(playwrightBin, ["install", ...missingBrowsers], {
     cwd: resolvedPackageRoot,
     env,
     stdio: "inherit",
@@ -177,20 +221,29 @@ export const ensurePlaywrightBrowserInstall = (
   }
   if (installResult.status !== 0) {
     throw new Error(
-      `Playwright browser install failed for ${resolvedPackageRoot}; run '${resolvedPackageRoot}/node_modules/.bin/playwright install chromium'`,
+      `Playwright browser install failed for ${resolvedPackageRoot}; run '${resolvedPackageRoot}/node_modules/.bin/playwright install ${missingBrowsers.join(" ")}'`,
     );
   }
 
-  const installedExecutablePath = resolvePlaywrightChromiumExecutable(
-    resolvedPackageRoot,
-    env,
-    spawnSyncImpl,
-    nodeExecPath,
+  const installedExecutablePaths = Object.fromEntries(
+    requestedBrowsers.map((browser) => [
+      browser,
+      resolvePlaywrightBrowserExecutable(
+        resolvedPackageRoot,
+        browser,
+        env,
+        spawnSyncImpl,
+        nodeExecPath,
+      ),
+    ]),
   );
-  if (!existsSyncImpl(installedExecutablePath)) {
+  const stillMissing = requestedBrowsers.filter(
+    (browser) => !existsSyncImpl(installedExecutablePaths[browser]),
+  );
+  if (stillMissing.length > 0) {
     throw new Error(
-      `Playwright Chromium executable is still missing after install: ${installedExecutablePath}`,
+      `Playwright browser executable is still missing after install: ${stillMissing.join(", ")}`,
     );
   }
-  return installedExecutablePath;
+  return installedExecutablePaths;
 };

@@ -5,6 +5,8 @@ const ASSISTANT_ENTRY_BOTTOM_PADDING_PX = 10;
 const ASSISTANT_ENTRY_PADDING_TOLERANCE_PX = 2;
 const MAX_ASSISTANT_TO_NEXT_ROW_CHROME_GAP_PX = 20;
 
+test.use({ browserName: "chromium" });
+
 test("workbench: inline code wraps without horizontal scroll", async ({ page, request }) => {
   const seed = await seedDummyWorkspace(request, {
     tasks: 1,

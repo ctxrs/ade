@@ -121,6 +121,19 @@ export type E2ESuiteProfile =
   | "soak"
   | "load";
 
+type PlaywrightBrowserName = "chromium" | "firefox" | "webkit";
+
+const resolvePlaywrightBrowserName = (): PlaywrightBrowserName => {
+  const raw = String(process.env.CTX_E2E_BROWSER ?? "").trim().toLowerCase();
+  if (!raw) return "webkit";
+  if (raw === "chromium" || raw === "firefox" || raw === "webkit") {
+    return raw;
+  }
+  throw new Error(
+    `Unsupported CTX_E2E_BROWSER '${raw}'. Expected one of: chromium, firefox, webkit.`,
+  );
+};
+
 export async function createCtxPlaywrightConfig(
   profile: E2ESuiteProfile,
 ): Promise<PlaywrightTestConfig> {
@@ -192,6 +205,7 @@ export async function createCtxPlaywrightConfig(
   const outputDir = path.resolve(__dirname, `e2e/test-results/${profileSlug}`);
   const reportDir = path.resolve(__dirname, `e2e/playwright-report/${profileSlug}`);
   const primaryReporter = process.env.CTX_E2E_REPORTER ?? "dot";
+  const browserName = resolvePlaywrightBrowserName();
   const argosEnabled =
     parseBool(process.env.CTX_E2E_ARGOS) || hasValue(process.env.ARGOS_TOKEN);
   const reporter: PlaywrightTestConfig["reporter"] = [
@@ -242,6 +256,7 @@ export async function createCtxPlaywrightConfig(
     outputDir,
     reporter,
     use: {
+      browserName,
       baseURL,
       extraHTTPHeaders: {
         authorization: `Bearer ${AUTH_TOKEN}`,

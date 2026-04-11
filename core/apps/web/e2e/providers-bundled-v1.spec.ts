@@ -10,7 +10,7 @@ type ProviderSummary = {
   };
 };
 
-test("providers: bundled v1 shows ready providers without install controls", async ({ page, request }) => {
+test("providers: bundled v1 shows ready providers with reinstall controls", async ({ page, request }) => {
   await page.goto("/providers", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Providers" })).toBeVisible();
 
@@ -41,11 +41,10 @@ test("providers: bundled v1 shows ready providers without install controls", asy
     await expect(card).toBeVisible();
     await expect(card.getByText("Installed")).toBeVisible();
     await expect(card.getByText(provider.health)).toBeVisible();
+    await expect(card.getByRole("button", { name: "Reinstall" })).toBeVisible();
+    await expect(card.getByRole("button", { name: /^Install$/ })).toHaveCount(0);
+    await expect(card.getByRole("button", { name: /^Update$/ })).toHaveCount(0);
   }
 
-  await expect(page.getByRole("button", { name: "Install all" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Install" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Update" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Reinstall" })).toHaveCount(0);
-  await expect(page.locator('button[title="Install this provider"]')).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Install all" })).toBeVisible();
 });

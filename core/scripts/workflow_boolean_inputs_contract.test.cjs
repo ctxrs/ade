@@ -53,11 +53,11 @@ test("release supabase uses typed updater drill booleans", () => {
   assert.match(text, /CTX_UPDATER_E2E_EXPECT_VERSION_CHANGE:\s*\$\{\{\s*github\.event_name == 'workflow_dispatch'/);
 });
 
-test("release supabase installs chromium headless shell before updater UI semantics contract", () => {
+test("release supabase installs webkit before updater UI semantics contract", () => {
   const text = workflowText("release-supabase.yml");
   assert.match(
     text,
-    /name:\s+Install Playwright Chromium \(updater semantics contract\)[\s\S]*print_ctx_cache_env\.cjs --mode workspace --format shell --mkdir[\s\S]*playwright install chromium chromium-headless-shell[\s\S]*name:\s+Updater UI semantics contract \(desktop-mode harnessed\)/s,
+    /name:\s+Install Playwright WebKit \(updater semantics contract\)[\s\S]*print_ctx_cache_env\.cjs --mode workspace --format shell --mkdir[\s\S]*playwright install webkit[\s\S]*name:\s+Updater UI semantics contract \(desktop-mode harnessed\)/s,
   );
 });
 

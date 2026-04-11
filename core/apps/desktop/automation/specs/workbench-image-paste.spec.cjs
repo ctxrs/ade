@@ -5,10 +5,6 @@ const { spawnSync } = require("child_process");
 const { waitForTauri, getConnectionInfo } = require("./helpers/tauri.cjs");
 const { daemonJson } = require("./helpers/daemon.cjs");
 
-const E2E_IMAGE_BASE64 =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+lmZYAAAAASUVORK5CYII=";
-const WEBDRIVER_KEY_CONTROL = "\uE009";
-
 const runChecked = (cmd, args) => {
   const res = spawnSync(cmd, args, { encoding: "utf8" });
   if (res.status === 0) return;
@@ -53,46 +49,6 @@ const createWorkspace = async (rootPath) => {
   const workspaceId = String(resp.payload?.id || "").trim();
   if (!workspaceId) throw new Error("workspace creation returned no id");
   return workspaceId;
-};
-
-const writeClipboardImage = () => {
-  const filePath = path.join(os.tmpdir(), `ctx-desktop-paste-image-${process.pid}-${Date.now()}.png`);
-  fs.writeFileSync(filePath, Buffer.from(E2E_IMAGE_BASE64, "base64"));
-  return filePath;
-};
-
-const setSystemClipboardImage = (filePath) => {
-  if (process.platform !== "darwin") {
-    throw new Error("desktop image paste automation currently requires macOS clipboard support");
-  }
-  runChecked("osascript", [
-    "-e",
-    `set the clipboard to (read (POSIX file ${JSON.stringify(String(filePath))}) as «class PNGf»)`,
-  ]);
-};
-
-const sendPasteShortcut = async () => {
-  if (process.platform === "darwin") {
-    runChecked("osascript", [
-      "-e",
-      'tell application "ctx" to activate',
-      "-e",
-      'tell application "System Events" to keystroke "v" using command down',
-    ]);
-    return;
-  }
-  const modifier = WEBDRIVER_KEY_CONTROL;
-  await browser.performActions([{
-    type: "key",
-    id: "ctx-paste-keyboard",
-    actions: [
-      { type: "keyDown", value: modifier },
-      { type: "keyDown", value: "v" },
-      { type: "keyUp", value: "v" },
-      { type: "keyUp", value: modifier },
-    ],
-  }]);
-  await browser.releaseActions();
 };
 
 const resolveSessionProvider = async (workspaceId) => {
@@ -177,6 +133,13 @@ const waitForCtxE2EFocusTask = async (timeoutMs = 30000) => {
   await browser.waitUntil(
     async () => await browser.execute(() => typeof window.__ctxE2E?.focusTask === "function"),
     { timeout: timeoutMs, timeoutMsg: "ctxE2E focusTask bridge not available" },
+  );
+};
+
+const waitForCtxE2EPasteBridge = async (timeoutMs = 30000) => {
+  await browser.waitUntil(
+    async () => await browser.execute(() => typeof window.__ctxE2E?.pasteImageIntoComposer === "function"),
+    { timeout: timeoutMs, timeoutMsg: "ctxE2E paste bridge not available" },
   );
 };
 
@@ -321,8 +284,9 @@ const installDesktopInvokeLog = async () => {
   });
 };
 
-const pasteImageFromClipboard = async (selector, clipboardImagePath) => {
+const pasteImageFromClipboard = async (selector) => {
   await installDesktopInvokeLog();
+  await waitForCtxE2EPasteBridge(30000);
   await waitForSelector(selector, 30000);
   await browser.execute((targetSelector) => {
     const target = document.querySelector(targetSelector);
@@ -380,7 +344,6 @@ const pasteImageFromClipboard = async (selector, clipboardImagePath) => {
     target.addEventListener("input", recordInput, { once: false });
     return true;
   }, selector);
-  setSystemClipboardImage(clipboardImagePath);
   const focusApplied = await browser.execute((targetSelector) => {
     const target = document.querySelector(targetSelector);
     if (!(target instanceof HTMLElement)) return false;
@@ -396,7 +359,13 @@ const pasteImageFromClipboard = async (selector, clipboardImagePath) => {
     throw new Error(`failed to focus paste target: ${selector}`);
   }
   await browser.pause(250);
-  await sendPasteShortcut();
+  const dispatched = await browser.execute(async (targetSelector) => {
+    const result = await window.__ctxE2E?.pasteImageIntoComposer?.(targetSelector);
+    return result ?? { ok: false, error: "ctxE2E paste bridge unavailable" };
+  }, selector);
+  if (!dispatched?.ok) {
+    throw new Error(dispatched?.error || `failed to dispatch paste for ${selector}`);
+  }
   await browser.execute((targetSelector) => {
     window.__ctxPasteLastDebug = {
       selector: targetSelector,
@@ -456,16 +425,13 @@ const waitForBlobBackedAttachments = async (selector, expectedCount, timeoutMs =
 
 describe("desktop workbench image paste", () => {
   let repoRoot = "";
-  let clipboardImagePath = "";
 
   before(() => {
     repoRoot = initTempRepo();
-    clipboardImagePath = writeClipboardImage();
   });
 
   after(() => {
     if (repoRoot) fs.rmSync(repoRoot, { recursive: true, force: true });
-    if (clipboardImagePath) fs.rmSync(clipboardImagePath, { force: true });
   });
 
   it("attaches pasted images in new-task and active-session desktop composers", async () => {
@@ -484,7 +450,7 @@ describe("desktop workbench image paste", () => {
       throw new Error(`expected local desktop connection: ${JSON.stringify(connection)}`);
     }
 
-    await pasteImageFromClipboard("textarea.wb-new-composer-textarea", clipboardImagePath);
+    await pasteImageFromClipboard("textarea.wb-new-composer-textarea");
     await waitForBlobBackedAttachments(".wb-new-composer-stack .wb-composer-attachments .wb-attach-thumb-img", 1, 30000);
 
     const taskTitle = `desktop-paste-fake-${Date.now()}`;
@@ -499,7 +465,7 @@ describe("desktop workbench image paste", () => {
     }
     await waitForActiveSessionTextarea(taskId, sessionId, taskTitle, 60000);
 
-    await pasteImageFromClipboard(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea", clipboardImagePath);
+    await pasteImageFromClipboard(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
     await waitForBlobBackedAttachments(
       ".wb-session-slot[aria-hidden=\"false\"] .wb-composer-attachments .wb-attach-thumb-img",
       1,

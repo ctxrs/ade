@@ -29,6 +29,7 @@ const restoreEnv = () => {
   delete process.env.CTX_BUNDLE_DIR;
   delete process.env.CTX_WEB_DIST;
   delete process.env.CTX_E2E_ALLOW_CONFIGURED_BUNDLE_DIR;
+  delete process.env.CTX_E2E_BROWSER;
   delete process.env.PLAYWRIGHT_BROWSERS_PATH;
   delete process.env.CARGO_INCREMENTAL;
 };
@@ -86,6 +87,19 @@ describe("createCtxPlaywrightConfig", () => {
       uploadToArgos: true,
       buildName: "ctx-web-premerge_required",
     });
+  });
+
+  it("defaults the shared browser lane to webkit", async () => {
+    restoreEnv();
+    const config = await createCtxPlaywrightConfig("premerge_required");
+    expect(config.use?.browserName).toBe("webkit");
+  });
+
+  it("allows the shared browser lane to be overridden explicitly", async () => {
+    restoreEnv();
+    process.env.CTX_E2E_BROWSER = "chromium";
+    const config = await createCtxPlaywrightConfig("premerge_required");
+    expect(config.use?.browserName).toBe("chromium");
   });
 
   it("defaults e2e cargo builds to a stable cache dir instead of per-run temp dirs", async () => {

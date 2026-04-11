@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execFileSync, execSync } from "child_process";
-import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import { createWorkspaceAndOpenWorkbench, waitForWorkbenchProjectionReady } from "./utils/workbench";
 import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 
 const asRecord = (value: unknown): Record<string, unknown> => {
@@ -31,6 +31,7 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
     request: page.request,
     repo,
     workspaceName,
+    debug: true,
   });
 
   // Choose Fake harness so the test doesn't depend on external agents.
@@ -128,6 +129,7 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
     await page.screenshot({ path: path.join(tmpdir(), "ctx-e2e-after-reload-session-missing.png"), fullPage: true });
     throw err;
   }
+  await waitForWorkbenchProjectionReady(page, { timeout: 30_000 });
   await expect(page.locator(".wb-session .wb-assistant-entry").filter({ hasText: "done: hello refresh" })).toBeVisible({
     timeout: 20000,
   });
@@ -139,11 +141,11 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   const sendButton = page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]");
   await expect(sendButton).toBeEnabled({ timeout: 20000 });
   await sendButton.click();
-  await page.locator(".thread-stack").evaluate((root) => {
+  const threadScroller = page.locator('.wb-session-slot[aria-hidden="false"] .wb-thread-scroller').first();
+  await expect(threadScroller).toBeVisible({ timeout: 20_000 });
+  await threadScroller.evaluate((root) => {
     const el = root as HTMLElement;
-    const candidates = [el, ...Array.from(el.querySelectorAll<HTMLElement>("*"))];
-    const scroller = candidates.find((n) => n.scrollHeight > n.clientHeight && getComputedStyle(n).overflowY !== "visible");
-    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+    el.scrollTop = el.scrollHeight;
   });
   await expect(page.locator(".wb-session")).toContainText("done: hello again", { timeout: 15000 });
 });

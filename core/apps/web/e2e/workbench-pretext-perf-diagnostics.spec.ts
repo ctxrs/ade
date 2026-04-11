@@ -31,6 +31,8 @@ type PretextPerfSnapshot = {
   buckets?: Record<string, PerfBucketMap>;
 };
 
+test.use({ browserName: "chromium" });
+
 function percentile(values: number[], p: number): number | null {
   if (values.length === 0) return null;
   const sorted = values.slice().sort((left, right) => left - right);
@@ -97,12 +99,11 @@ async function resetPageDiagnostics(page: Parameters<typeof test>[0]["page"]): P
 }
 
 for (const mode of PERF_MODES) {
-  test(`workbench: pretext perf diagnostics (${mode.name})`, async ({ page, request, browserName }, testInfo) => {
+  test(`workbench: pretext perf diagnostics (${mode.name})`, async ({ page, request }, testInfo) => {
     test.skip(
       !PERF_PROBE_ENABLED && !PERF_GUARDRAIL_ENABLED,
       "Set CTX_PRETEXT_PERF_PROBE=1 or CTX_PRETEXT_PERF_GUARDRAIL=1 to run the pretext perf diagnostics.",
     );
-    test.skip(browserName !== "chromium", "CDP metrics require chromium.");
     test.skip(PERF_GUARDRAIL_ENABLED && mode.name !== "warm-off", "Guardrail mode only runs the warm-off baseline.");
     test.setTimeout(240_000);
 

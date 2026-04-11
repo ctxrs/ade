@@ -244,6 +244,27 @@ test("bundle harnesses pin cargo artifacts under the bundle build dir by default
   assert.match(script, /-e RUSTUP_HOME=\/rustup-home/);
 });
 
+test("containerized Rust bundle builds pin an explicit stable toolchain", () => {
+  const harnessScript = fs.readFileSync(bundleHarnessScriptPath, "utf8");
+  const providersScript = fs.readFileSync(bundleHarnessProvidersScriptPath, "utf8");
+
+  assert.match(harnessScript, /CTX_BUNDLE_RUST_IMAGE:-rust:1\.88-bookworm/);
+  assert.match(
+    harnessScript,
+    /rustup toolchain install stable --profile minimal --no-self-update/,
+  );
+  assert.match(harnessScript, /rustup target add --toolchain stable '\$rust_target'/);
+  assert.match(harnessScript, /cargo \+stable build --release --target '\$rust_target'/);
+
+  assert.match(providersScript, /CTX_BUNDLE_RUST_IMAGE:-rust:1\.88-bookworm/);
+  assert.match(
+    providersScript,
+    /rustup toolchain install stable --profile minimal --no-self-update/,
+  );
+  assert.match(providersScript, /rustup target add --toolchain stable '\$rust_target'/);
+  assert.match(providersScript, /cargo \+stable build --manifest-path \/work\/Cargo\.toml/);
+});
+
 test("bundle runtime downloads use mktemp templates that work on macOS", () => {
   const script = fs.readFileSync(bundleHarnessScriptPath, "utf8");
 
