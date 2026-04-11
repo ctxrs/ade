@@ -105,3 +105,33 @@ test("web high-risk changes still trigger the safety fallback", () => {
 
   assert.deepEqual(commands, ["pnpm test:agent", "pnpm verify:e2e"]);
 });
+
+test("root-level Rust config changes still trigger the Rust gate", () => {
+  const commands = runScenario(["core/Cargo.lock"]);
+
+  assert.deepEqual(commands, [
+    "pnpm rust:turbo:check",
+    "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/Cargo.lock",
+  ]);
+});
+
+test("root-level Rust toolchain change still triggers the Rust gate", () => {
+  const commands = runScenario(["core/rust-toolchain.toml"]);
+
+  assert.deepEqual(commands, [
+    "pnpm rust:turbo:check",
+    "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/rust-toolchain.toml",
+  ]);
+});
+
+test("combined root-level Rust and crate changes still pass both changed files through", () => {
+  const commands = runScenario([
+    "core/Cargo.toml",
+    "core/crates/ctx-provider-accounts/src/lib.rs",
+  ]);
+
+  assert.deepEqual(commands, [
+    "pnpm rust:turbo:check",
+    "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/Cargo.toml --changed-file core/crates/ctx-provider-accounts/src/lib.rs",
+  ]);
+});

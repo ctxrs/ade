@@ -300,12 +300,7 @@ impl CrpSessionPool {
                     .await?;
             }
 
-            eprintln!(
-                "prompt debug: validating {} provider={} content={}",
-                req.session_key, self.agent.provider_id, req.input.content
-            );
             validate_provider_slash_command_support(&self.agent.provider_id, &req.input.content)?;
-            eprintln!("prompt debug: validated {}", req.session_key);
             match parse_native_crp_slash_command_for_provider(
                 &self.agent.provider_id,
                 &req.input.content,

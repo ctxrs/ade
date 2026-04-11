@@ -323,6 +323,42 @@ test("buildCtxCacheEnv derives remote turbo cache mode when the endpoint and cre
   assert.equal(env.TURBO_CACHE_MODE, "local:rw,remote:rw");
 });
 
+test("buildCtxCacheEnv does not apply sccache env when RUSTC_WRAPPER is a non-sccache binary", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-non-sccache");
+  const { env } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+      RUSTC_WRAPPER: "/usr/bin/custom-wrapper",
+      SCCACHE_PATH: "",
+    },
+  });
+
+  assert.equal(env.RUSTC_WRAPPER, "/usr/bin/custom-wrapper");
+  assert.equal(env.CARGO_INCREMENTAL, undefined);
+  assert.equal(env.SCCACHE_NO_DAEMON, undefined);
+  assert.equal(env.SCCACHE_BASEDIRS, undefined);
+  assert.equal(env.SCCACHE_SERVER_UDS, undefined);
+});
+
+test("buildCtxCacheEnv applies sccache env when RUSTC_WRAPPER basename contains sccache", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-sccache-basename");
+  const { env } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+      RUSTC_WRAPPER: "/custom/path/sccache",
+      SCCACHE_PATH: "/custom/path/sccache",
+    },
+  });
+
+  assert.equal(env.CARGO_INCREMENTAL, "0");
+  assert.equal(env.SCCACHE_NO_DAEMON, "1");
+  assert.match(String(env.RUSTFLAGS), /--remap-path-prefix=.*=\/ctx-workspace/);
+});
+
 test("formatShellExports produces stable export lines", () => {
   const rendered = formatShellExports({
     BETA: "two words",

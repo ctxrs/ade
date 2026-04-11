@@ -77,6 +77,8 @@ pub(in super::super) fn shared_vm_readiness_failure_requires_writable_rootfs_res
         || rendered.contains("containerd-root-on-writable-root")
         || rendered.contains("buildkit-root-on-writable-root")
         || rendered.contains("nerdctl-root-on-writable-root")
+        || rendered.contains("cni-config-on-writable-root")
+        || rendered.contains("cni-state-on-writable-root")
 }
 
 #[cfg_attr(not(test), allow(dead_code))]

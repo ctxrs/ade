@@ -25,7 +25,10 @@ pub async fn reconcile_turn_terminal_state(
     };
     if matches!(
         turn.status,
-        SessionTurnStatus::Completed | SessionTurnStatus::Failed | SessionTurnStatus::Interrupted
+        SessionTurnStatus::Queued
+            | SessionTurnStatus::Completed
+            | SessionTurnStatus::Failed
+            | SessionTurnStatus::Interrupted
     ) {
         return Ok(());
     }
@@ -90,7 +93,10 @@ pub async fn reconcile_turn_failed_on_provider_exit(
     };
     if matches!(
         turn.status,
-        SessionTurnStatus::Completed | SessionTurnStatus::Failed | SessionTurnStatus::Interrupted
+        SessionTurnStatus::Queued
+            | SessionTurnStatus::Completed
+            | SessionTurnStatus::Failed
+            | SessionTurnStatus::Interrupted
     ) {
         return Ok(());
     }

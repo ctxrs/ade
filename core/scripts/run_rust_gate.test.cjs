@@ -70,3 +70,35 @@ test("resolveCrates expands reverse deps automatically for ctx-execution-runtime
     ["ctx-execution-runtime", "ctx-http", "ctx-mcp"],
   );
 });
+
+test("resolveCrates runs the full workspace graph for root-level Rust inputs", () => {
+  const crates = [
+    {
+      crateName: "ctx-core",
+      relDir: "crates/ctx-core",
+      deps: [],
+      reverseDeps: ["ctx-http"],
+    },
+    {
+      crateName: "ctx-http",
+      relDir: "crates/ctx-http",
+      deps: ["ctx-core"],
+      reverseDeps: [],
+    },
+  ];
+  const graph = {
+    crates,
+    cratesByName: new Map(crates.map((crate) => [crate.crateName, crate])),
+  };
+
+  assert.deepEqual(
+    resolveCrates(graph, {
+      agentGate: false,
+      all: false,
+      changedFiles: ["core/Cargo.toml"],
+      crates: [],
+      includeReverseDeps: true,
+    }),
+    ["ctx-core", "ctx-http"],
+  );
+});

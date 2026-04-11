@@ -342,10 +342,6 @@ function ensureCacheLayout(layout, { includeTargets = true } = {}) {
 }
 
 function resolveAvailableSccachePath(env = process.env) {
-  const configuredWrapper = trimValue(env.RUSTC_WRAPPER);
-  if (configuredWrapper) {
-    return configuredWrapper;
-  }
   const configuredPath = trimValue(env.SCCACHE_PATH);
   if (configuredPath) {
     return configuredPath;
@@ -360,6 +356,11 @@ function resolveAvailableSccachePath(env = process.env) {
       return trimValue(String(result.stdout).split(/\r?\n/)[0]);
     }
   } catch {}
+  // Fall back: if RUSTC_WRAPPER basename looks like sccache, use it as the sccache path
+  const configuredWrapper = trimValue(env.RUSTC_WRAPPER);
+  if (configuredWrapper && path.basename(configuredWrapper).toLowerCase().includes("sccache")) {
+    return configuredWrapper;
+  }
   return "";
 }
 
@@ -525,7 +526,13 @@ function buildCtxCacheEnv({
       resolvedEnv.RUSTC_WRAPPER = sccachePath;
       setDefaultEnvValue(resolvedEnv, "SCCACHE_PATH", sccachePath);
     }
-    if (trimValue(resolvedEnv.RUSTC_WRAPPER) === trimValue(sccachePath) && sccachePath) {
+    const effectiveWrapper = trimValue(resolvedEnv.RUSTC_WRAPPER);
+    const wrapperIsSccache =
+      sccachePath &&
+      effectiveWrapper &&
+      (effectiveWrapper === sccachePath ||
+        path.basename(effectiveWrapper).toLowerCase().includes("sccache"));
+    if (wrapperIsSccache) {
       setDefaultEnvValue(resolvedEnv, "SCCACHE_NO_DAEMON", "1");
       if (process.platform !== "win32" && !trimValue(resolvedEnv.SCCACHE_SERVER_UDS)) {
         resolvedEnv.SCCACHE_SERVER_UDS = resolveSccacheServerUds(cargoTargetDir);

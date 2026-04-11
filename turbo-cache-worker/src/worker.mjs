@@ -80,6 +80,18 @@ function resolveScope(url, env) {
       response: errorResponse(403, "cache_scope_mismatch", `Team id ${teamId} is not allowed for this cache`),
     };
   }
+  // When only TURBO_TEAM is configured (no TURBO_TEAM_ID), any caller-supplied teamId is
+  // unverifiable and must be rejected to prevent scope bypass via the teamId path.
+  if (configuredTeam && !configuredTeamId && teamId) {
+    return {
+      ok: false,
+      response: errorResponse(
+        403,
+        "cache_scope_mismatch",
+        "teamId selection is not permitted when only TURBO_TEAM is configured",
+      ),
+    };
+  }
 
   const scope = slug || teamId || configuredTeam || configuredTeamId || "default";
   return { ok: true, scope };
@@ -168,8 +180,9 @@ function collectArtifactMetadata(request) {
 
 function applyArtifactHeaders(headers, object) {
   const custom = object.customMetadata || {};
-  const size = Number(custom.contentLength || object.size || 0);
-  headers.set("content-length", String(size));
+  // Use the actual stored object size — not the client-supplied metadata — to prevent
+  // a caller from advertising a content-length that differs from what was stored.
+  headers.set("content-length", String(object.size));
   if (custom.artifactDuration) {
     headers.set("x-artifact-duration", custom.artifactDuration);
   }
@@ -257,7 +270,8 @@ async function handleBatchQuery(request, env, scope) {
     }
     const custom = object.customMetadata || {};
     responsePayload[normalizedHash] = {
-      size: Number(custom.contentLength || object.size || 0),
+      // Use actual stored object size, not client-supplied metadata.
+      size: object.size,
       taskDurationMs: Number(custom.artifactDuration || 0),
       ...(custom.artifactTag ? { tag: custom.artifactTag } : {}),
     };

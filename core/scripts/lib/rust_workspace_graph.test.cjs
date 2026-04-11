@@ -106,6 +106,37 @@ test("generated turbo tasks include dependency-closure inputs", () => {
   );
 });
 
+test("generated turbo tasks include extracted dependency crates for affected ctx-http suites", () => {
+  const graph = buildWorkspaceGraph(coreRoot);
+  const tasks = buildGeneratedTurboTasks(graph);
+
+  const providerRuntimeTask = tasks["rust:ctx-http:test:provider-runtime"];
+  assert.equal(
+    providerRuntimeTask.inputs.includes("crates/ctx-execution-runtime/**"),
+    true,
+  );
+  assert.equal(
+    providerRuntimeTask.inputs.includes("crates/ctx-workspace-runtime/**"),
+    true,
+  );
+
+  const sandboxCloudTask = tasks["rust:ctx-http:test:sandbox-cloud"];
+  assert.equal(
+    sandboxCloudTask.inputs.includes("crates/ctx-execution-runtime/**"),
+    true,
+  );
+  assert.equal(
+    sandboxCloudTask.inputs.includes("crates/ctx-workspace-runtime/**"),
+    true,
+  );
+
+  const providerAuthTask = tasks["rust:ctx-http:test:provider-auth"];
+  assert.equal(
+    providerAuthTask.inputs.includes("crates/ctx-provider-install/**"),
+    true,
+  );
+});
+
 test("ctx-http test expansion returns explicit suite task names", () => {
   const taskNames = getTurboTaskNamesForCrates(
     ["ctx-http"],

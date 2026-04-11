@@ -61,6 +61,7 @@ const CTX_HTTP_SUITES = [
       "ctx-harness-sources",
       "ctx-provider-accounts",
       "ctx-provider-auth-import",
+      "ctx-provider-install",
       "ctx-providers",
       "ctx-store",
     ],
@@ -93,10 +94,12 @@ const CTX_HTTP_SUITES = [
   {
     dependencyCrates: [
       "ctx-core",
+      "ctx-execution-runtime",
       "ctx-harness-sources",
       "ctx-provider-accounts",
       "ctx-providers",
       "ctx-store",
+      "ctx-workspace-runtime",
     ],
     name: "provider-runtime",
     description: "provider runtime, model selection, and offline scenarios",
@@ -260,11 +263,13 @@ const CTX_HTTP_SUITES = [
   {
     dependencyCrates: [
       "ctx-core",
+      "ctx-execution-runtime",
       "ctx-events",
       "ctx-fs",
       "ctx-providers",
       "ctx-store",
       "ctx-worker-protocol",
+      "ctx-workspace-runtime",
     ],
     name: "sandbox-cloud",
     description: "sandbox, cloud, system, and external-runtime ctx-http coverage",
