@@ -2,6 +2,7 @@ use super::helpers::{
     read_codex_context_window_metrics, should_track_thought_chunk, strip_emitted_prefix,
 };
 use super::*;
+use crate::scheduler::persistence::flush_session_events;
 use crate::scheduler::{latency_bucket, metric_labels};
 use crate::storage_guard;
 
@@ -56,7 +57,6 @@ async fn fail_turn(
     perf_run_id: Option<&String>,
     telemetry_emitted: &mut bool,
     terminal_status: &mut Option<SessionTurnStatus>,
-    created_at: chrono::DateTime<chrono::Utc>,
     error_message: String,
     details: Option<Value>,
     kind: Option<Value>,
@@ -158,16 +158,6 @@ async fn fail_turn(
 
     *terminal_status = Some(SessionTurnStatus::Failed);
     let _ = store
-        .update_session_turn_status(
-            session_id,
-            turn_id,
-            SessionTurnStatus::Failed,
-            None,
-            None,
-            created_at,
-        )
-        .await;
-    let _ = store
         .delete_session_events_for_turn_types(
             session_id,
             turn_id,
@@ -190,6 +180,7 @@ async fn fail_turn(
         }),
     )
     .await;
+    flush_session_events(store, session_id, "fail_turn").await;
 }
 
 async fn run_turn_event_loop(ctx: TurnEventLoop) {
@@ -662,7 +653,6 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                                     perf_run_id.as_ref(),
                                     &mut telemetry_emitted,
                                     &mut terminal_status,
-                                    event.created_at,
                                     if is_storage_exhausted {
                                         storage_guard::storage_exhaustion_message(
                                             storage_status.active.as_ref(),
@@ -752,19 +742,6 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                         ))
                         .await;
                 }
-                let metrics = event.payload_json.get("context_window");
-                if terminal_status.is_none() {
-                    let _ = store
-                        .update_session_turn_status(
-                            session_id,
-                            turn_id,
-                            SessionTurnStatus::Completed,
-                            Some(event.seq),
-                            metrics,
-                            event.created_at,
-                        )
-                        .await;
-                }
                 let _ = store
                     .delete_session_events_for_turn_types(
                         session_id,
@@ -787,6 +764,7 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                     }),
                 )
                 .await;
+                flush_session_events(&store, session_id, "done").await;
             }
             SessionEventType::TurnInterrupted => {
                 if !telemetry_emitted {
@@ -889,16 +867,6 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                 }
                 terminal_status = Some(SessionTurnStatus::Interrupted);
                 let _ = store
-                    .update_session_turn_status(
-                        session_id,
-                        turn_id,
-                        SessionTurnStatus::Interrupted,
-                        Some(event.seq),
-                        None,
-                        event.created_at,
-                    )
-                    .await;
-                let _ = store
                     .delete_session_events_for_turn_types(
                         session_id,
                         turn_id,
@@ -923,6 +891,7 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                     }),
                 )
                 .await;
+                flush_session_events(&store, session_id, "turn_interrupted").await;
             }
             SessionEventType::Error => {
                 if matches!(terminal_status, Some(SessionTurnStatus::Interrupted)) {
@@ -951,7 +920,6 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                     perf_run_id.as_ref(),
                     &mut telemetry_emitted,
                     &mut terminal_status,
-                    event.created_at,
                     error_message,
                     event.payload_json.get("details").cloned(),
                     event.payload_json.get("kind").cloned(),

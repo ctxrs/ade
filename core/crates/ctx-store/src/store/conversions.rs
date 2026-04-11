@@ -160,10 +160,7 @@ pub(super) fn derive_activity_from_status(
     last_status: Option<SessionTurnStatus>,
     has_running_turn: bool,
 ) -> SessionActivityState {
-    SessionActivityState {
-        is_working: has_running_turn,
-        last_turn_status: last_status,
-    }
+    ctx_core::session_projection::derive_activity_from_status(last_status, has_running_turn)
 }
 
 pub(super) fn sandbox_substrate_to_str(value: &SandboxSubstrate) -> &'static str {

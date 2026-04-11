@@ -1,5 +1,15 @@
 use super::*;
 
+fn is_terminal_session_event(event_type: &SessionEventType) -> bool {
+    matches!(
+        event_type,
+        SessionEventType::Done
+            | SessionEventType::Error
+            | SessionEventType::TurnInterrupted
+            | SessionEventType::TurnFinished
+    )
+}
+
 impl Store {
     // Session event APIs
     pub(super) async fn upsert_event_log_checkpoint(
@@ -83,6 +93,10 @@ impl Store {
         }
     }
 
+    pub async fn flush_session_event_log(&self) -> Result<()> {
+        self.event_log.flush().await
+    }
+
     pub(super) async fn persist_session_events_batch(&self, events: &[SessionEvent]) -> Result<()> {
         if events.is_empty() {
             return Ok(());
@@ -104,6 +118,8 @@ impl Store {
         let mut rows = Vec::with_capacity(events.len());
         let mut max_seq_by_session: HashMap<SessionId, i64> = HashMap::new();
         let mut refresh_sessions: HashSet<SessionId> = HashSet::new();
+        let mut terminal_turns: HashSet<(SessionId, TurnId)> = HashSet::new();
+        let mut summary_refresh_sessions: HashSet<SessionId> = HashSet::new();
 
         for event in events {
             let id = event.id.0.to_string();
@@ -142,6 +158,11 @@ impl Store {
                 .or_insert(event.seq);
 
             if let Some(turn_id) = event.turn_id {
+                if is_terminal_session_event(&event.event_type) {
+                    terminal_turns.insert((event.session_id, turn_id));
+                    summary_refresh_sessions.insert(event.session_id);
+                    refresh_sessions.insert(event.session_id);
+                }
                 if let Some(tool) = build_turn_tool_from_event(event, turn_id) {
                     let _ = self.upsert_session_turn_tool(tool).await;
                     refresh_sessions.insert(event.session_id);
@@ -165,6 +186,22 @@ impl Store {
                 .push_bind(&row.created_at);
         });
         builder.build().execute(&mut *tx).await?;
+        for (session_id, seq) in &max_seq_by_session {
+            self.update_session_snapshot_last_event_seq_tx(&mut tx, *session_id, *seq)
+                .await?;
+        }
+        for (session_id, turn_id) in &terminal_turns {
+            if self
+                .repair_session_turn_projection_from_events_tx(&mut tx, *session_id, *turn_id)
+                .await?
+            {
+                summary_refresh_sessions.insert(*session_id);
+            }
+        }
+        for session_id in &summary_refresh_sessions {
+            self.refresh_session_turn_summary_tx(&mut tx, *session_id)
+                .await?;
+        }
         tx.commit().await?;
 
         for row in rows {
@@ -172,15 +209,6 @@ impl Store {
         }
 
         for (session_id, seq) in &max_seq_by_session {
-            if let Err(err) = self
-                .update_session_snapshot_last_event_seq(*session_id, *seq)
-                .await
-            {
-                tracing::warn!(
-                    "failed to update session snapshot last_event_seq for {}: {err:#}",
-                    session_id.0
-                );
-            }
             if let Err(err) = self
                 .update_active_snapshot_head_last_event_seq(*session_id, *seq)
                 .await

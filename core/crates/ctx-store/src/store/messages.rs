@@ -182,65 +182,61 @@ impl Store {
         Ok(())
     }
 
-    pub(super) async fn update_session_snapshot_last_event_seq(
+    pub(super) async fn ensure_session_snapshot_summary_tx(
         &self,
+        tx: &mut sqlx::Transaction<'_, Sqlite>,
+        session_id: SessionId,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"INSERT INTO session_snapshot_summaries (
+                    session_id, running_turn_count, created_at, updated_at
+               )
+               VALUES (?, 0, ?, ?)
+               ON CONFLICT(session_id) DO NOTHING"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
+    }
+
+    pub(super) async fn update_session_snapshot_last_event_seq_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, Sqlite>,
         session_id: SessionId,
         seq: i64,
     ) -> Result<()> {
-        self.ensure_session_snapshot_summary(session_id).await?;
+        self.ensure_session_snapshot_summary_tx(tx, session_id)
+            .await?;
         let now = Utc::now().to_rfc3339();
-        let session_id = session_id.0.to_string();
-        let write_bytes = I64_BYTES + bytes_str(&now);
-        let result = self
-            .query(
-                r#"UPDATE session_snapshot_summaries
+        sqlx::query(
+            r#"UPDATE session_snapshot_summaries
                SET last_event_seq = ?,
                    projection_rev = projection_rev + 1,
                    updated_at = ?
                WHERE session_id = ?"#,
-            )
-            .bind(seq)
-            .bind(&now)
-            .bind(&session_id)
-            .execute(&self.pool)
-            .await?;
-        record_write(
-            WriteMetricTable::SessionSnapshotSummaries,
-            result.rows_affected(),
-            write_bytes,
-        );
+        )
+        .bind(seq)
+        .bind(&now)
+        .bind(session_id.0.to_string())
+        .execute(&mut **tx)
+        .await?;
         Ok(())
     }
 
     pub(super) async fn refresh_session_turn_summary(&self, session_id: SessionId) -> Result<()> {
         self.ensure_session_snapshot_summary(session_id).await?;
-        let last_row = self
-            .query(
-                r#"SELECT status, start_seq
-               FROM session_turns
-               WHERE session_id = ?
-               ORDER BY COALESCE(start_seq, -1) DESC, started_at DESC, turn_id DESC
-               LIMIT 1"#,
-            )
-            .bind(session_id.0.to_string())
-            .fetch_optional(&self.pool)
-            .await?;
-        let (last_status, last_seq) = if let Some(row) = last_row {
-            let status: String = row.try_get("status")?;
-            let start_seq: Option<i64> = row.try_get("start_seq")?;
-            (Some(status), start_seq)
-        } else {
-            (None, None)
-        };
-        let running_count: i64 = self
-            .query_scalar(
-                r#"SELECT COUNT(*)
-               FROM session_turns
-               WHERE session_id = ? AND status = 'running'"#,
-            )
-            .bind(session_id.0.to_string())
-            .fetch_one(&self.pool)
-            .await?;
+        let projection = self.summarize_session_turn_projection(session_id).await?;
+        let last_status = projection
+            .last_status
+            .as_ref()
+            .map(session_turn_status_to_str)
+            .map(str::to_string);
+        let last_seq = projection.last_seq;
+        let running_count = projection.running_turn_count;
         let now = Utc::now().to_rfc3339();
         let session_id = session_id.0.to_string();
         let write_bytes = bytes_opt_str(last_status.as_deref())
@@ -269,6 +265,43 @@ impl Store {
             result.rows_affected(),
             write_bytes,
         );
+        Ok(())
+    }
+
+    pub(super) async fn refresh_session_turn_summary_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, Sqlite>,
+        session_id: SessionId,
+    ) -> Result<()> {
+        self.ensure_session_snapshot_summary_tx(tx, session_id)
+            .await?;
+        let projection = self
+            .summarize_session_turn_projection_tx(tx, session_id)
+            .await?;
+        let last_status = projection
+            .last_status
+            .as_ref()
+            .map(session_turn_status_to_str)
+            .map(str::to_string);
+        let last_seq = projection.last_seq;
+        let running_count = projection.running_turn_count;
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"UPDATE session_snapshot_summaries
+               SET last_turn_status = ?,
+                   last_turn_seq = ?,
+                   running_turn_count = ?,
+                   projection_rev = projection_rev + 1,
+                   updated_at = ?
+               WHERE session_id = ?"#,
+        )
+        .bind(last_status)
+        .bind(last_seq)
+        .bind(running_count)
+        .bind(&now)
+        .bind(session_id.0.to_string())
+        .execute(&mut **tx)
+        .await?;
         Ok(())
     }
 

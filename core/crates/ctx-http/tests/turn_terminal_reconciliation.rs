@@ -154,6 +154,18 @@ async fn reconcile_terminal_state_respects_turn_finished_status() {
         .unwrap();
     assert_eq!(turn.status, SessionTurnStatus::Interrupted);
     assert_eq!(turn.end_seq, Some(finished.seq));
+    let summary = harness
+        .store
+        .get_session_snapshot(harness.session.id, 50, false)
+        .await
+        .unwrap()
+        .expect("session snapshot")
+        .summary;
+    assert_eq!(
+        summary.activity.last_turn_status,
+        Some(SessionTurnStatus::Interrupted)
+    );
+    assert!(!summary.activity.is_working);
 }
 
 #[tokio::test]
@@ -226,6 +238,18 @@ async fn reconcile_provider_exit_emits_failed_terminal_events_when_missing() {
         .unwrap()
         .unwrap();
     assert_eq!(turn.status, SessionTurnStatus::Failed);
+    let summary = harness
+        .store
+        .get_session_snapshot(harness.session.id, 50, false)
+        .await
+        .unwrap()
+        .expect("session snapshot")
+        .summary;
+    assert_eq!(
+        summary.activity.last_turn_status,
+        Some(SessionTurnStatus::Failed)
+    );
+    assert!(!summary.activity.is_working);
 
     let events = harness
         .store

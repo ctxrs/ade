@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::Utc;
 use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
 
@@ -14,7 +13,7 @@ use crate::daemon::AppState;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 
 use super::interrupt_telemetry::{metric_labels, payload_fields};
-use super::persistence::emit_event;
+use super::persistence::{emit_event, flush_session_events};
 use super::reconcile::{reconcile_turn_failed_on_provider_exit, reconcile_turn_terminal_state};
 use super::InterruptTelemetryContext;
 
@@ -345,17 +344,6 @@ pub(crate) async fn finalize_start_failure_if_needed(
         }
     }
 
-    let failed_at = Utc::now();
-    let _ = store
-        .update_session_turn_status(
-            session_id,
-            turn_id,
-            SessionTurnStatus::Failed,
-            None,
-            None,
-            failed_at,
-        )
-        .await;
     let _ = emit_event(
         state,
         session_id,
@@ -381,4 +369,5 @@ pub(crate) async fn finalize_start_failure_if_needed(
         }),
     )
     .await;
+    flush_session_events(&store, session_id, "handle_turn_start_failed").await;
 }

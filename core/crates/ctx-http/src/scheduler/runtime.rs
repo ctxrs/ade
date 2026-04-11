@@ -52,7 +52,9 @@ use self::helpers::{
 };
 use self::tool_runtime::{cwd_outside_worktree, maybe_spool_tool_output};
 use super::lifecycle::RunningTurn;
-use super::persistence::{append_session_event_with_retry, emit_event, persist_assistant_message};
+use super::persistence::{
+    append_session_event_with_retry, emit_event, flush_session_events, persist_assistant_message,
+};
 use super::QueuedMessage;
 
 fn provider_mode_id_for(
@@ -172,17 +174,6 @@ pub(crate) async fn start_turn(
         message_id: MessageId,
         err: &anyhow::Error,
     ) {
-        let failed_at = Utc::now();
-        let _ = store
-            .update_session_turn_status(
-                session.id,
-                turn_id,
-                SessionTurnStatus::Failed,
-                None,
-                None,
-                failed_at,
-            )
-            .await;
         let _ = emit_event(
             state,
             session.id,
@@ -208,6 +199,7 @@ pub(crate) async fn start_turn(
             }),
         )
         .await;
+        flush_session_events(store, session.id, "emit_turn_start_failed").await;
     }
 
     let prompt = message.content.clone();
@@ -661,17 +653,6 @@ pub(crate) async fn start_turn(
                 "error": err.to_string(),
             }));
             state.telemetry.ops_events.emit(fail_event);
-            let failed_at = Utc::now();
-            let _ = store
-                .update_session_turn_status(
-                    session.id,
-                    turn_id,
-                    SessionTurnStatus::Failed,
-                    None,
-                    None,
-                    failed_at,
-                )
-                .await;
             let _ = emit_event(
                 state,
                 session.id,
@@ -697,6 +678,7 @@ pub(crate) async fn start_turn(
                 }),
             )
             .await;
+            flush_session_events(&store, session.id, "runtime_provider_start_failed").await;
             return Err(err);
         }
     };

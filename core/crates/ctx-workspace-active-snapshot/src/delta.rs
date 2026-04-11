@@ -9,7 +9,15 @@ pub(super) fn apply_session_summary_delta(
     delta: &SessionSummaryDelta,
 ) -> bool {
     let mut changed = false;
+    let current_last_event_seq = summary.last_event_seq.unwrap_or(i64::MIN);
     let incoming_projection_rev = delta.projection_rev.unwrap_or(summary.projection_rev);
+    if let Some(activity) = delta.activity.as_ref() {
+        let incoming_last_event_seq = delta.last_event_seq.unwrap_or(current_last_event_seq);
+        if incoming_last_event_seq >= current_last_event_seq && summary.activity != *activity {
+            summary.activity = activity.clone();
+            changed = true;
+        }
+    }
     if let Some(last_message_at) = delta.last_message_at {
         let should_update = match summary.last_message_at {
             Some(current) => last_message_at > current,

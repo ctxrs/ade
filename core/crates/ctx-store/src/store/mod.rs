@@ -27,6 +27,7 @@ mod head_projection;
 mod lease;
 #[cfg(test)]
 mod tests_runtime_shutdown;
+mod turn_projection;
 #[derive(Clone)]
 pub struct Store {
     pool: Pool<Sqlite>,
@@ -824,6 +825,60 @@ mod tests {
         let turns: Vec<SessionTurn> = serde_json::from_str(&turns_json).unwrap();
         assert_eq!(turns.len(), 1);
         assert!(turns[0].assistant_partial.is_none());
+    }
+
+    #[tokio::test]
+    async fn terminal_event_flush_updates_turn_and_summary_in_one_persist_path() {
+        let (_dir, store) = setup_store().await;
+        let (session, turn_id) = create_session_with_turn(&store, None).await;
+
+        let _done = store
+            .append_session_event(
+                session.id,
+                None,
+                Some(turn_id),
+                SessionEventType::Done,
+                json!({"context_window": {"total_tokens": 42}}),
+            )
+            .await
+            .unwrap();
+        let finished = store
+            .append_session_event(
+                session.id,
+                None,
+                Some(turn_id),
+                SessionEventType::TurnFinished,
+                json!({"status": "completed"}),
+            )
+            .await
+            .unwrap();
+
+        let events = store
+            .list_session_events_for_turn(session.id, turn_id, false)
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 2);
+
+        let turn = store
+            .get_session_turn(session.id, turn_id)
+            .await
+            .unwrap()
+            .expect("turn exists");
+        assert_eq!(turn.status, SessionTurnStatus::Completed);
+        assert_eq!(turn.end_seq, Some(finished.seq));
+        assert_eq!(turn.metrics_json, Some(json!({"total_tokens": 42})));
+
+        let snapshot = store
+            .get_session_snapshot(session.id, 10, false)
+            .await
+            .unwrap()
+            .expect("snapshot");
+        assert_eq!(snapshot.summary.last_event_seq, Some(finished.seq));
+        assert_eq!(
+            snapshot.summary.activity.last_turn_status,
+            Some(SessionTurnStatus::Completed)
+        );
+        assert!(!snapshot.summary.activity.is_working);
     }
 
     #[tokio::test]

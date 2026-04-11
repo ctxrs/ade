@@ -2,6 +2,7 @@ pub mod boolish;
 pub mod ids;
 pub mod models;
 pub mod provider_policy;
+pub mod session_projection;
 
 #[cfg(test)]
 mod tests {

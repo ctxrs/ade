@@ -117,7 +117,7 @@ mod compact_head_tests {
 }
 
 mod delta_tests {
-    use super::super::delta::apply_head_delta;
+    use super::super::delta::{apply_head_delta, apply_session_summary_delta};
     use super::super::trim::{new_head_snapshot, session_metadata_from_session};
     use super::super::*;
     use chrono::{TimeZone, Utc};
@@ -205,6 +205,48 @@ mod delta_tests {
         assert_eq!(head.turns[0].tool_pending, 1);
         assert_eq!(head.turns[0].tool_running, 1);
         assert_eq!(head.turns[0].tool_completed, 1);
+    }
+
+    #[test]
+    fn apply_session_summary_delta_updates_activity_from_activity_only_event() {
+        let session = test_session(None);
+        let mut summary = SessionSnapshotSummary {
+            session: session_metadata_from_session(&session),
+            last_message_at: None,
+            last_message_preview: None,
+            last_event_seq: Some(4),
+            projection_rev: 4,
+            state_rev: 4,
+            activity: SessionActivityState {
+                is_working: true,
+                last_turn_status: Some(SessionTurnStatus::Running),
+            },
+            unread: None,
+        };
+        let changed = apply_session_summary_delta(
+            &mut summary,
+            &SessionSummaryDelta {
+                session_id: session.id,
+                task_id: session.task_id,
+                activity: Some(SessionActivityState {
+                    is_working: false,
+                    last_turn_status: Some(SessionTurnStatus::Completed),
+                }),
+                last_message_at: None,
+                last_message_preview: None,
+                last_event_seq: Some(5),
+                projection_rev: Some(4),
+                state_rev: Some(5),
+            },
+        );
+
+        assert!(changed);
+        assert!(!summary.activity.is_working);
+        assert_eq!(
+            summary.activity.last_turn_status,
+            Some(SessionTurnStatus::Completed)
+        );
+        assert_eq!(summary.last_event_seq, Some(5));
     }
 
     #[tokio::test]

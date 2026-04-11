@@ -4,7 +4,8 @@ use super::{
 use chrono::Utc;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    ExecutionEnvironment, Session, SessionEventType, SessionStatus, SessionTurnStatus,
+    ExecutionEnvironment, Session, SessionActivityState, SessionEventType, SessionStatus,
+    SessionTurnStatus,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -48,9 +49,16 @@ fn emitted_session_summary_deltas_always_include_monotonic_versions() {
     let session = test_session();
     let now = Utc::now();
 
-    let message_delta =
-        build_session_summary_delta(&session, Some(now), Some("preview".to_string()), 22, 22, 22)
-            .expect("message preview should emit a summary delta");
+    let message_delta = build_session_summary_delta(
+        &session,
+        None,
+        Some(now),
+        Some("preview".to_string()),
+        22,
+        22,
+        22,
+    )
+    .expect("message preview should emit a summary delta");
     assert_eq!(message_delta.last_event_seq, Some(22));
     assert_eq!(message_delta.projection_rev, Some(22));
     assert_eq!(message_delta.state_rev, Some(22));
@@ -60,9 +68,29 @@ fn emitted_session_summary_deltas_always_include_monotonic_versions() {
 fn empty_session_summary_delta_is_not_emitted() {
     let session = test_session();
     assert!(
-        build_session_summary_delta(&session, None, None, 5, 5, 5).is_none(),
+        build_session_summary_delta(&session, None, None, None, 5, 5, 5).is_none(),
         "empty updates should not publish summary deltas"
     );
+}
+
+#[test]
+fn activity_only_session_summary_delta_is_emitted() {
+    let session = test_session();
+    let delta = build_session_summary_delta(
+        &session,
+        Some(SessionActivityState {
+            is_working: true,
+            last_turn_status: Some(SessionTurnStatus::Running),
+        }),
+        None,
+        None,
+        5,
+        5,
+        5,
+    )
+    .expect("activity updates should emit a summary delta");
+    assert!(delta.activity.expect("activity delta").is_working);
+    assert_eq!(delta.last_event_seq, Some(5));
 }
 
 #[tokio::test]

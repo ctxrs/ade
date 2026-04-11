@@ -1,109 +1,15 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
-use serde_json::{json, Value};
+use serde_json::json;
 
 use ctx_core::ids::{RunId, TurnId};
-use ctx_core::models::{SessionEvent, SessionEventType, SessionTurnStatus};
+use ctx_core::models::{SessionEventType, SessionTurnStatus};
+use ctx_core::session_projection::resolve_turn_terminal_state;
 
 use crate::daemon::AppState;
 
-use super::persistence::emit_event;
-
-#[derive(Debug)]
-struct ReconciledTerminalState<'a> {
-    status: SessionTurnStatus,
-    end_seq: Option<i64>,
-    metrics: Option<&'a Value>,
-    updated_at: DateTime<Utc>,
-}
-
-fn is_terminal_event(event_type: &SessionEventType) -> bool {
-    matches!(
-        event_type,
-        SessionEventType::Done
-            | SessionEventType::Error
-            | SessionEventType::TurnInterrupted
-            | SessionEventType::TurnFinished
-    )
-}
-
-fn status_from_event(event: &SessionEvent) -> Option<SessionTurnStatus> {
-    match event.event_type {
-        SessionEventType::Done => Some(SessionTurnStatus::Completed),
-        SessionEventType::Error => Some(SessionTurnStatus::Failed),
-        SessionEventType::TurnInterrupted => Some(SessionTurnStatus::Interrupted),
-        SessionEventType::TurnFinished => status_from_payload(&event.payload_json),
-        _ => None,
-    }
-}
-
-fn status_from_payload(payload: &Value) -> Option<SessionTurnStatus> {
-    match payload.get("status").and_then(Value::as_str) {
-        Some("completed") => Some(SessionTurnStatus::Completed),
-        Some("failed" | "error") => Some(SessionTurnStatus::Failed),
-        Some("interrupted") => Some(SessionTurnStatus::Interrupted),
-        _ => None,
-    }
-}
-
-fn latest_done_metrics(events: &[SessionEvent]) -> Option<&Value> {
-    events
-        .iter()
-        .rev()
-        .find(|event| matches!(event.event_type, SessionEventType::Done))
-        .and_then(|event| event.payload_json.get("context_window"))
-}
-
-fn resolve_terminal_state(events: &[SessionEvent]) -> Option<ReconciledTerminalState<'_>> {
-    let terminal_index = events
-        .iter()
-        .rposition(|event| is_terminal_event(&event.event_type))?;
-    let event = &events[terminal_index];
-
-    match event.event_type {
-        SessionEventType::Done => Some(ReconciledTerminalState {
-            status: SessionTurnStatus::Completed,
-            end_seq: Some(event.seq),
-            metrics: event.payload_json.get("context_window"),
-            updated_at: event.created_at,
-        }),
-        SessionEventType::Error => Some(ReconciledTerminalState {
-            status: SessionTurnStatus::Failed,
-            end_seq: None,
-            metrics: None,
-            updated_at: event.created_at,
-        }),
-        SessionEventType::TurnInterrupted => Some(ReconciledTerminalState {
-            status: SessionTurnStatus::Interrupted,
-            end_seq: Some(event.seq),
-            metrics: None,
-            updated_at: event.created_at,
-        }),
-        SessionEventType::TurnFinished => {
-            let status = status_from_payload(&event.payload_json).unwrap_or_else(|| {
-                events[..terminal_index]
-                    .iter()
-                    .rev()
-                    .find_map(status_from_event)
-                    .unwrap_or(SessionTurnStatus::Completed)
-            });
-            let metrics = if status == SessionTurnStatus::Completed {
-                latest_done_metrics(&events[..=terminal_index])
-            } else {
-                None
-            };
-            Some(ReconciledTerminalState {
-                status,
-                end_seq: Some(event.seq),
-                metrics,
-                updated_at: event.created_at,
-            })
-        }
-        _ => None,
-    }
-}
+use super::persistence::{emit_event, flush_session_events};
 
 pub async fn reconcile_turn_terminal_state(
     state: &Arc<AppState>,
@@ -127,21 +33,14 @@ pub async fn reconcile_turn_terminal_state(
     let events = store
         .list_session_events_for_turn(session_id, turn_id, false)
         .await?;
-    if let Some(reconciled) = resolve_terminal_state(&events) {
+    if resolve_turn_terminal_state(&events).is_some() {
         let _ = store
-            .update_session_turn_status(
-                session_id,
-                turn_id,
-                reconciled.status,
-                reconciled.end_seq,
-                reconciled.metrics,
-                reconciled.updated_at,
-            )
+            .repair_session_turn_projection_from_events(session_id, turn_id)
             .await;
         return Ok(());
     }
 
-    let event = emit_event(
+    let _event = emit_event(
         state,
         session_id,
         run_id,
@@ -155,14 +54,7 @@ pub async fn reconcile_turn_terminal_state(
     )
     .await?;
     let _ = store
-        .update_session_turn_status(
-            session_id,
-            turn_id,
-            SessionTurnStatus::Interrupted,
-            Some(event.seq),
-            None,
-            event.created_at,
-        )
+        .repair_session_turn_projection_from_events(session_id, turn_id)
         .await;
     let _ = emit_event(
         state,
@@ -177,6 +69,10 @@ pub async fn reconcile_turn_terminal_state(
         }),
     )
     .await;
+    flush_session_events(&store, session_id, "reconcile_turn_terminal_state").await;
+    let _ = store
+        .repair_session_turn_projection_from_events(session_id, turn_id)
+        .await;
     Ok(())
 }
 
@@ -202,7 +98,7 @@ pub async fn reconcile_turn_failed_on_provider_exit(
     let mut events = store
         .list_session_events_for_turn(session_id, turn_id, false)
         .await?;
-    if resolve_terminal_state(&events).is_some() {
+    if resolve_turn_terminal_state(&events).is_some() {
         return reconcile_turn_terminal_state(state, session_id, run_id, turn_id, fallback_reason)
             .await;
     }
@@ -212,7 +108,7 @@ pub async fn reconcile_turn_failed_on_provider_exit(
         events = store
             .list_session_events_for_turn(session_id, turn_id, false)
             .await?;
-        if resolve_terminal_state(&events).is_some() {
+        if resolve_turn_terminal_state(&events).is_some() {
             return reconcile_turn_terminal_state(
                 state,
                 session_id,
@@ -224,7 +120,6 @@ pub async fn reconcile_turn_failed_on_provider_exit(
         }
     }
 
-    let failed_at = Utc::now();
     let message_id = turn.user_message_id.map(|id| id.0);
     let _ = emit_event(
         state,
@@ -240,15 +135,9 @@ pub async fn reconcile_turn_failed_on_provider_exit(
         }),
     )
     .await;
+    flush_session_events(&store, session_id, "reconcile_turn_failed_on_provider_exit").await;
     let _ = store
-        .update_session_turn_status(
-            session_id,
-            turn_id,
-            SessionTurnStatus::Failed,
-            None,
-            None,
-            failed_at,
-        )
+        .repair_session_turn_projection_from_events(session_id, turn_id)
         .await;
     let _ = emit_event(
         state,
@@ -263,6 +152,9 @@ pub async fn reconcile_turn_failed_on_provider_exit(
         }),
     )
     .await;
+    let _ = store
+        .repair_session_turn_projection_from_events(session_id, turn_id)
+        .await;
     Ok(())
 }
 
@@ -274,7 +166,7 @@ mod tests {
     use ctx_core::ids::{RunId, SessionEventId, SessionId, TurnId};
     use ctx_core::models::{SessionEvent, SessionEventType, SessionTurnStatus};
 
-    use super::resolve_terminal_state;
+    use ctx_core::session_projection::resolve_turn_terminal_state;
 
     fn event(
         seq: i64,
@@ -302,7 +194,7 @@ mod tests {
             json!({"status": "interrupted"}),
         )];
 
-        let resolved = resolve_terminal_state(&events).expect("resolved state");
+        let resolved = resolve_turn_terminal_state(&events).expect("resolved state");
         assert_eq!(resolved.status, SessionTurnStatus::Interrupted);
         assert_eq!(resolved.end_seq, Some(4));
     }
@@ -314,7 +206,7 @@ mod tests {
             event(4, SessionEventType::TurnFinished, json!({})),
         ];
 
-        let resolved = resolve_terminal_state(&events).expect("resolved state");
+        let resolved = resolve_turn_terminal_state(&events).expect("resolved state");
         assert_eq!(resolved.status, SessionTurnStatus::Failed);
         assert_eq!(resolved.end_seq, Some(4));
     }
@@ -334,11 +226,11 @@ mod tests {
             ),
         ];
 
-        let resolved = resolve_terminal_state(&events).expect("resolved state");
+        let resolved = resolve_turn_terminal_state(&events).expect("resolved state");
         assert_eq!(resolved.status, SessionTurnStatus::Completed);
         assert_eq!(
             resolved.metrics,
-            Some(&json!({"context_tokens_estimate": 42}))
+            Some(json!({"context_tokens_estimate": 42}))
         );
     }
 }

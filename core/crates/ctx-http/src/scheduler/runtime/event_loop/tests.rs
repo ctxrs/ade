@@ -127,6 +127,16 @@ async fn build_loop_fixture(data_dir: &Path, provider_id: &str, model_id: &str) 
         .workspace_active_snapshot
         .update_session_head(seeded)
         .await;
+    let active_task_summary = store
+        .get_workspace_active_task_summary(task.id)
+        .await
+        .expect("load active task summary")
+        .expect("active task summary exists");
+    state
+        .workspaces
+        .workspace_active_snapshot
+        .publish_active_task_upsert(workspace.id, active_task_summary)
+        .await;
 
     LoopFixture {
         state,
@@ -148,7 +158,7 @@ async fn run_done_event_loop(
     model_id: &str,
     provider_session_ref: &str,
     codex_home: Option<&Path>,
-) -> SessionTurn {
+) -> (LoopFixture, SessionTurn) {
     let (ev_tx, ev_rx) = mpsc::channel(8);
     let (events_done_tx, events_done_rx) = oneshot::channel();
     let loop_task = tokio::spawn(run_turn_event_loop(TurnEventLoop {
@@ -190,12 +200,13 @@ async fn run_done_event_loop(
     events_done_rx.await.expect("event loop completion");
     loop_task.await.expect("event loop join");
 
-    fixture
+    let turn = fixture
         .store
         .get_session_turn(fixture.session_id, fixture.turn_id)
         .await
         .expect("load turn")
-        .expect("turn exists")
+        .expect("turn exists");
+    (fixture, turn)
 }
 
 async fn write_codex_rollout_log(codex_home: &Path, session_ref: &str) {
@@ -804,7 +815,7 @@ async fn codex_done_metrics_use_runtime_codex_home_instead_of_home_dir_guess() {
 
     write_codex_rollout_log(codex_home.path(), session_ref).await;
     let fixture = build_loop_fixture(data_dir.path(), "codex", "gpt-5.4/medium").await;
-    let turn = run_done_event_loop(
+    let (_fixture, turn) = run_done_event_loop(
         fixture,
         "codex",
         "gpt-5.4/medium",
@@ -845,4 +856,40 @@ async fn codex_done_metrics_use_runtime_codex_home_instead_of_home_dir_guess() {
             .and_then(serde_json::Value::as_u64),
         Some(5)
     );
+}
+
+#[tokio::test]
+async fn done_events_update_active_task_summary_activity_to_match_head() {
+    let data_dir = tempdir().expect("temp data dir");
+    let fixture = build_loop_fixture(data_dir.path(), "fake", "fake-model").await;
+    let (fixture, turn) =
+        run_done_event_loop(fixture, "fake", "fake-model", "session-ref", None).await;
+
+    assert_eq!(turn.status, SessionTurnStatus::Completed);
+
+    let active_task = fixture
+        .state
+        .workspaces
+        .workspace_active_snapshot
+        .active_task_summary(fixture.workspace_id, fixture.task_id)
+        .await
+        .expect("active task summary");
+    assert_eq!(
+        active_task.primary_session.activity.last_turn_status,
+        Some(SessionTurnStatus::Completed)
+    );
+    assert!(!active_task.primary_session.activity.is_working);
+
+    let active_heads = fixture
+        .state
+        .workspaces
+        .workspace_active_snapshot
+        .active_heads(fixture.workspace_id)
+        .await;
+    let head = active_heads
+        .heads
+        .into_iter()
+        .find(|head| head.session.id == fixture.session_id)
+        .expect("active head");
+    assert_eq!(head.activity, active_task.primary_session.activity);
 }
