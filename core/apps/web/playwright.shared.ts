@@ -139,8 +139,13 @@ export async function createCtxPlaywrightConfig(
 ): Promise<PlaywrightTestConfig> {
   const profileSlug = profile.replace(/[^a-z0-9_-]/gi, "-").toLowerCase();
   const reuseRequested = parseBool(process.env.CTX_E2E_REUSE_SERVER);
+  const forceReuseExistingServer = parseBool(process.env.CTX_E2E_FORCE_REUSE_SERVER);
   const reuseExistingServer =
-    profile === "premerge_required" || profile === "release_required" ? false : reuseRequested;
+    forceReuseExistingServer
+      ? true
+      : profile === "premerge_required" || profile === "release_required"
+        ? false
+        : reuseRequested;
   const skipWebBuild = parseBool(process.env.CTX_E2E_SKIP_WEB_BUILD);
 
   const PORT = await resolvePort(reuseExistingServer);
