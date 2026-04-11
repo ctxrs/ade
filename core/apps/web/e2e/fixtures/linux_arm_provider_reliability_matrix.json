@@ -7,7 +7,7 @@
   "critical_providers": [
     {
       "provider_id": "codex",
-      "openrouter_model_override": "openai/gpt-oss-20b:free"
+      "openrouter_model_override": "google/gemma-4-26b-a4b-it:free"
     }
   ],
   "full_nightly_providers": [

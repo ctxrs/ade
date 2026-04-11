@@ -4,7 +4,14 @@ import { tmpdir } from "os";
 import path from "path";
 import type { APIRequestContext, TestInfo } from "playwright/test";
 import { test, expect } from "./fixtures";
-import { envTruthy, parseCsv, shouldSkipBundledOnlyInstall } from "./runtimeInstallSmoke";
+import {
+  classifyInstallSmokeFailureCategory,
+  envTruthy,
+  parseCsv,
+  shouldRetryInstallSmokeFirstTurnFailure,
+  shouldSkipBundledOnlyInstall,
+  type RuntimeInstallSmokeFailureCategory,
+} from "./runtimeInstallSmoke";
 
 type ProviderStatus = {
   installed: boolean;
@@ -25,8 +32,6 @@ type ExecutionEnvironment = "host" | "sandbox";
 type InstallTarget = "host" | "container";
 type NetworkMode = "llm_only" | "allowlist" | "all";
 type ResultOutcome = "pass" | "fail";
-type FailureCategory = "external_outage" | "environment" | "product_regression";
-
 type ProviderResult = {
   provider_id: string;
   install_target: InstallTarget;
@@ -40,7 +45,7 @@ type ProviderResult = {
   assistant_messages: number;
   stage: string;
   error_code: string | null;
-  category: FailureCategory | null;
+  category: RuntimeInstallSmokeFailureCategory | null;
   reason: string;
   result: ResultOutcome;
   elapsed_ms: number;
@@ -57,6 +62,8 @@ const DEFAULT_OPENAI_MODEL_OVERRIDE = "openai/gpt-4.1-mini";
 const DEFAULT_QWEN_MODEL_OVERRIDE = "qwen/qwen3-coder";
 const DEFAULT_GEMINI_MODEL_OVERRIDE = "google/gemini-3-flash-preview";
 const DEFAULT_TERMINAL_TIMEOUT_MS = 180_000;
+const FIRST_TURN_MAX_ATTEMPTS = 3;
+const FIRST_TURN_RETRY_BASE_DELAY_MS = 10_000;
 const TERMINAL_TURN_STATUSES = new Set(["completed", "failed", "interrupted"]);
 
 const asRecord = (value: unknown): Record<string, unknown> => {
@@ -130,43 +137,6 @@ const toStageError = (stage: string, error: unknown): StageError => {
     return typed;
   }
   return createStageError(stage, normalizeErrorMessage(String(error)));
-};
-
-const classifyFailureCategory = (stage: string, reason: string, errorCode: string | null): FailureCategory => {
-  const normalizedReason = reason.toLowerCase();
-  const normalizedCode = String(errorCode || "").toLowerCase();
-
-  if (
-    normalizedCode === "download_failed"
-    || normalizedCode === "timeout"
-    || normalizedReason.includes("rate limit")
-    || normalizedReason.includes("429")
-    || normalizedReason.includes("503")
-    || normalizedReason.includes("502")
-    || normalizedReason.includes("service unavailable")
-    || normalizedReason.includes("upstream")
-    || normalizedReason.includes("gateway")
-  ) {
-    return "external_outage";
-  }
-
-  if (
-    normalizedReason.includes("container runtime")
-    || normalizedReason.includes("no space left")
-    || normalizedReason.includes("permission denied")
-    || normalizedReason.includes("cannot connect")
-    || normalizedReason.includes("operation not permitted")
-    || normalizedCode === "unsupported_target"
-    || normalizedCode === "invalid_target"
-  ) {
-    return "environment";
-  }
-
-  if (stage === "execution_config") {
-    return "environment";
-  }
-
-  return "product_regression";
 };
 
 const initRepo = (): string => {
@@ -521,6 +491,70 @@ async function waitForTerminalState(
   return resolved;
 }
 
+async function runFirstTurnAttempt(
+  request: APIRequestContext,
+  workspaceId: string,
+  providerId: string,
+  environment: ExecutionEnvironment,
+  modelId: string,
+  timeoutMs: number,
+): Promise<{ sessionId: string; terminal: TerminalState }> {
+  let stage = "task_create";
+  const taskResp = await request.post(`/api/workspaces/${workspaceId}/tasks`, {
+    data: {
+      title: `runtime-install-smoke-${providerId}-${Date.now()}`,
+      create_default_session: false,
+    },
+  });
+  if (!taskResp.ok()) {
+    throw createStageError(stage, `task create failed (${taskResp.status()}): ${normalizeErrorMessage(await taskResp.text().catch(() => ""))}`);
+  }
+  const taskId = firstText(asRecord(await taskResp.json()).id);
+  if (!taskId) {
+    throw createStageError(stage, "task create returned empty task id");
+  }
+
+  stage = "session_create";
+  const sessionResp = await request.post(`/api/tasks/${taskId}/sessions`, {
+    data: {
+      provider_id: providerId,
+      model_id: modelId,
+      execution_environment: environment,
+    },
+  });
+  if (!sessionResp.ok()) {
+    const body = normalizeErrorMessage(await sessionResp.text().catch(() => ""));
+    throw createStageError(stage, `session create failed (${sessionResp.status()}): ${body}`);
+  }
+  const sessionId = firstText(asRecord(await sessionResp.json()).id);
+  if (!sessionId) {
+    throw createStageError(stage, "session create returned empty session id");
+  }
+
+  stage = "first_turn_request";
+  const prompt = `runtime-install-smoke-${providerId}-${Date.now()}: reply with exactly the word pong`;
+  const messageResp = await request.post(`/api/sessions/${sessionId}/messages`, {
+    data: {
+      content: prompt,
+      delivery: "immediate",
+    },
+  });
+  if (!messageResp.ok()) {
+    throw createStageError(stage, `session message failed (${messageResp.status()}): ${normalizeErrorMessage(await messageResp.text().catch(() => ""))}`);
+  }
+
+  stage = "first_turn";
+  const terminal = await waitForTerminalState(request, sessionId, timeoutMs);
+  if (terminal.terminalStatus !== "completed" || terminal.assistantMessages <= 0) {
+    const detail = normalizeErrorMessage(
+      firstText(terminal.errorMessage, `terminal_status=${terminal.terminalStatus}`, "assistant completion missing"),
+    );
+    throw createStageError(stage, `runtime install smoke session failed: ${detail}`);
+  }
+
+  return { sessionId, terminal };
+}
+
 function summarizeDistribution(results: ProviderResult[]): Record<string, number> {
   const out: Record<string, number> = {};
   for (const row of results) {
@@ -592,57 +626,45 @@ async function runProvider(
     modelId = await resolveWorkspaceProviderModelId(request, workspaceId, providerId);
     expect(modelId).not.toBe("");
 
-    stage = "task_create";
-    const taskResp = await request.post(`/api/workspaces/${workspaceId}/tasks`, {
-      data: {
-        title: `runtime-install-smoke-${providerId}-${Date.now()}`,
-        create_default_session: false,
-      },
-    });
-    if (!taskResp.ok()) {
-      throw createStageError(stage, `task create failed (${taskResp.status()}): ${normalizeErrorMessage(await taskResp.text().catch(() => ""))}`);
+    let terminal: TerminalState | null = null;
+    let lastError: StageError | null = null;
+    for (let attempt = 1; attempt <= FIRST_TURN_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const attemptResult = await runFirstTurnAttempt(
+          request,
+          workspaceId,
+          providerId,
+          environment,
+          modelId,
+          terminalTimeoutMs,
+        );
+        sessionId = attemptResult.sessionId;
+        terminal = attemptResult.terminal;
+        break;
+      } catch (rawError) {
+        const error = toStageError("first_turn", rawError);
+        const failureStage = error.stage || "first_turn";
+        const reason = normalizeErrorMessage(error.message || String(error));
+        const category = classifyInstallSmokeFailureCategory(failureStage, reason, error.errorCode || null);
+        if (sessionId) {
+          console.log(
+            `runtime install smoke: provider=${providerId} attempt=${attempt} session_id=${sessionId} failed stage=${failureStage} category=${category} reason=${reason}`,
+          );
+        }
+        if (shouldRetryInstallSmokeFirstTurnFailure(failureStage, category, attempt, FIRST_TURN_MAX_ATTEMPTS)) {
+          const delayMs = FIRST_TURN_RETRY_BASE_DELAY_MS * attempt;
+          console.log(
+            `runtime install smoke: provider=${providerId} retrying first turn after external outage attempt=${attempt}/${FIRST_TURN_MAX_ATTEMPTS} wait_ms=${delayMs}`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+        lastError = error;
+        break;
+      }
     }
-    const taskId = firstText(asRecord(await taskResp.json()).id);
-    if (!taskId) {
-      throw createStageError(stage, "task create returned empty task id");
-    }
-
-    stage = "session_create";
-    const sessionResp = await request.post(`/api/tasks/${taskId}/sessions`, {
-      data: {
-        provider_id: providerId,
-        model_id: modelId,
-        execution_environment: environment,
-      },
-    });
-    if (!sessionResp.ok()) {
-      const body = normalizeErrorMessage(await sessionResp.text().catch(() => ""));
-      throw createStageError(stage, `session create failed (${sessionResp.status()}): ${body}`);
-    }
-    sessionId = firstText(asRecord(await sessionResp.json()).id);
-    if (!sessionId) {
-      throw createStageError(stage, "session create returned empty session id");
-    }
-
-    stage = "first_turn_request";
-    const prompt = `runtime-install-smoke-${providerId}-${Date.now()}: reply with exactly the word pong`;
-    const messageResp = await request.post(`/api/sessions/${sessionId}/messages`, {
-      data: {
-        content: prompt,
-        delivery: "immediate",
-      },
-    });
-    if (!messageResp.ok()) {
-      throw createStageError(stage, `session message failed (${messageResp.status()}): ${normalizeErrorMessage(await messageResp.text().catch(() => ""))}`);
-    }
-
-    stage = "first_turn";
-    const terminal = await waitForTerminalState(request, sessionId, terminalTimeoutMs);
-    if (terminal.terminalStatus !== "completed" || terminal.assistantMessages <= 0) {
-      const detail = normalizeErrorMessage(
-        firstText(terminal.errorMessage, `terminal_status=${terminal.terminalStatus}`, "assistant completion missing"),
-      );
-      throw createStageError(stage, `runtime install smoke session failed: ${detail}`);
+    if (!terminal) {
+      throw lastError || createStageError("first_turn", `runtime install smoke session failed for provider ${providerId}`);
     }
 
     return {
@@ -666,7 +688,7 @@ async function runProvider(
   } catch (rawError) {
     const error = toStageError(stage, rawError);
     const reason = normalizeErrorMessage(error.message || String(rawError));
-    const category = classifyFailureCategory(error.stage || stage, reason, error.errorCode || null);
+    const category = classifyInstallSmokeFailureCategory(error.stage || stage, reason, error.errorCode || null);
 
     return {
       provider_id: providerId,
