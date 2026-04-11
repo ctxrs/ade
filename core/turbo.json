@@ -3648,6 +3648,7 @@
         "crates/ctx-harness-sources/**",
         "crates/ctx-provider-accounts/**",
         "crates/ctx-provider-auth-import/**",
+        "crates/ctx-provider-install/**",
         "crates/ctx-providers/**",
         "crates/ctx-store/**"
       ],
@@ -3708,10 +3709,12 @@
         "crates/ctx-http/tests/session_model_api.rs",
         "crates/ctx-http/tests/workspace_provider_model_preferences_http.rs",
         "crates/ctx-core/**",
+        "crates/ctx-execution-runtime/**",
         "crates/ctx-harness-sources/**",
         "crates/ctx-provider-accounts/**",
         "crates/ctx-providers/**",
-        "crates/ctx-store/**"
+        "crates/ctx-store/**",
+        "crates/ctx-workspace-runtime/**"
       ],
       "outputs": []
     },
@@ -4018,10 +4021,12 @@
         "crates/ctx-http/tests/workspace_runtime_crash_recovery.rs",
         "crates/ctx-core/**",
         "crates/ctx-events/**",
+        "crates/ctx-execution-runtime/**",
         "crates/ctx-fs/**",
         "crates/ctx-providers/**",
         "crates/ctx-store/**",
-        "crates/ctx-worker-protocol/**"
+        "crates/ctx-worker-protocol/**",
+        "crates/ctx-workspace-runtime/**"
       ],
       "outputs": []
     },

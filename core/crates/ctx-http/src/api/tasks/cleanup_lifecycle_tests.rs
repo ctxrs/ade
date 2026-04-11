@@ -163,9 +163,8 @@ async fn delete_task_prunes_and_deletes_branch_for_standalone_managed_worktree()
         "standalone managed worktree branch should be pruned and deleted"
     );
     assert!(
-        !git_output(&["worktree", "list", "--porcelain"], &repo_root).contains(
-            managed_root.to_string_lossy().as_ref()
-        ),
+        !git_output(&["worktree", "list", "--porcelain"], &repo_root)
+            .contains(managed_root.to_string_lossy().as_ref()),
         "standalone managed worktree should be pruned from git worktree metadata"
     );
 }

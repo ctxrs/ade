@@ -1,9 +1,12 @@
 use super::*;
 use crate::settings::ContainerMountMode;
 use ctx_harness_setup::{HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::collections::HashSet;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use tokio::sync::Mutex;
 
 const SANDBOX_OP_TIMEOUT: Duration = Duration::from_secs(60);

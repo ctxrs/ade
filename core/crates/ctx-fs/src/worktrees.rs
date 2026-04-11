@@ -286,6 +286,32 @@ fn symlink_path(target: &Path, dest: &Path, is_dir: bool) -> Result<()> {
     Ok(())
 }
 
+fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
+    std::fs::create_dir_all(target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let entry_path = entry.path();
+        let dest = target.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_recursive(&entry_path, &dest)?;
+        } else if file_type.is_symlink() {
+            if dest.exists() {
+                let _ = std::fs::remove_file(&dest);
+                let _ = std::fs::remove_dir_all(&dest);
+            }
+            let link_target = std::fs::read_link(&entry_path)?;
+            let is_dir = std::fs::metadata(&entry_path)
+                .map(|meta| meta.is_dir())
+                .unwrap_or(false);
+            symlink_path(&link_target, &dest, is_dir)?;
+        } else if file_type.is_file() {
+            std::fs::copy(&entry_path, &dest)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,30 +398,4 @@ mod tests {
             "recreated worktree should appear in git worktree list"
         );
     }
-}
-
-fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
-    std::fs::create_dir_all(target)?;
-    for entry in std::fs::read_dir(source)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let entry_path = entry.path();
-        let dest = target.join(entry.file_name());
-        if file_type.is_dir() {
-            copy_dir_recursive(&entry_path, &dest)?;
-        } else if file_type.is_symlink() {
-            if dest.exists() {
-                let _ = std::fs::remove_file(&dest);
-                let _ = std::fs::remove_dir_all(&dest);
-            }
-            let link_target = std::fs::read_link(&entry_path)?;
-            let is_dir = std::fs::metadata(&entry_path)
-                .map(|meta| meta.is_dir())
-                .unwrap_or(false);
-            symlink_path(&link_target, &dest, is_dir)?;
-        } else if file_type.is_file() {
-            std::fs::copy(&entry_path, &dest)?;
-        }
-    }
-    Ok(())
 }

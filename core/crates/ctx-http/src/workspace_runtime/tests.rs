@@ -34,6 +34,7 @@ use ctx_workspace_container::{
     should_use_keep_id_userns, WorkspaceContainer,
 };
 use sha2::{Digest, Sha256};
+#[cfg(target_os = "macos")]
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

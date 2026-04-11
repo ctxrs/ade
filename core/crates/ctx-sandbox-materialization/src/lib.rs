@@ -463,8 +463,8 @@ mod tests {
         }
 
         let _cli = EnvGuard::set("CTX_HARNESS_SANDBOX_CLI_PATH", &cli_path);
-        let _storage_override = set_test_preflight_storage_samples_override(
-            std::sync::Arc::new(move |data_root, _mode, _cid, required_bytes, dest_probe, _op, _req| {
+        let _storage_override = set_test_preflight_storage_samples_override(std::sync::Arc::new(
+            move |data_root, _mode, _cid, required_bytes, dest_probe, _op, _req| {
                 let total = required_bytes.saturating_add(2 * 1024 * 1024 * 1024);
                 Ok((
                     ctx_storage_admission::StorageAdmissionSample {
@@ -482,8 +482,8 @@ mod tests {
                         total_bytes: total,
                     },
                 ))
-            }),
-        );
+            },
+        ));
 
         ensure_worktree_from_host_copy(
             temp.path(),
