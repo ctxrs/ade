@@ -16,7 +16,6 @@ import { type SessionViewVerbosity } from "../../state/uiStateStore";
 import { copyTextToClipboard } from "../../utils/clipboard";
 import { useRelativeNowMs } from "../../utils/useRelativeNowMs";
 import { MemoMarkdown } from "../sessionView";
-import { isExpandableMessageContent } from "../sessionMessageListItemIdentity";
 import {
   attachmentDisplayName,
   formatElapsedMs,
@@ -34,6 +33,7 @@ import {
   truncateMiddle,
 } from "../sessionView";
 import type { ThreadItem, WorkbenchTurnHeader } from "../sessionView";
+import { isExpandableMessageContent } from "./transcriptRowLayoutModel";
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};

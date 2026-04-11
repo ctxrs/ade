@@ -6,7 +6,7 @@ import {
   incrementPretextPerfCounter,
 } from "../../utils/pretextPerfDiagnostics";
 import type { WorkbenchListItem, WorkbenchTurnHeader } from "../sessionView";
-import { isExpandableMessageContent, resolveWorkbenchMessageExpanded } from "../sessionMessageListItemIdentity";
+import { resolveWorkbenchMessageExpanded } from "../sessionMessageListItemIdentity";
 import {
   clearSessionMarkdownMeasurementCaches,
   measureSessionMarkdownDocument,
@@ -48,6 +48,7 @@ import {
   getWorkbenchMessageLayoutState,
   getWorkbenchTurnHeaderDisplayPlainText,
   getWorkbenchTurnHeaderLayoutState,
+  isExpandableMessageContent,
 } from "./transcriptRowLayoutModel";
 
 export type PretextVirtualizerRowLayoutContext = {

@@ -517,13 +517,13 @@ impl SessionRuntime {
             }
         }
         let mut turn = turn_from_event(event, message.as_ref());
-        if turn.is_none() && tool_event {
+        let prefers_cached_turn = tool_event
+            || event_context_window(event).is_some()
+            || should_refresh_turn_from_store(&event.event_type);
+        if turn.is_none() && prefers_cached_turn {
             if let Some(turn_id) = event.turn_id {
-                turn = turn_from_cached_head_for_read(state, event.session_id, turn_id).await;
-            }
-        }
-        if turn.is_none() && event_context_window(event).is_some() {
-            if let Some(turn_id) = event.turn_id {
+                // Prefer the cached in-memory head before the store for terminal deltas so
+                // stream-time metrics_json survives store/projection lag.
                 turn = turn_from_cached_head_for_read(state, event.session_id, turn_id).await;
             }
         }
