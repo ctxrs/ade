@@ -230,6 +230,23 @@ pub(crate) async fn authenticate_session(
             }
         }
     }
+    let adapter_cfg = crate::installer::load_agent_server_config(&state.core.data_root)
+        .await
+        .unwrap_or_default();
+    crate::installer::ensure_codex_cli_command_env_for_target(
+        &mut provider_env,
+        &adapter_cfg,
+        &session.provider_id,
+        Some(install_target),
+    )
+    .map_err(|err| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: format!("failed to resolve codex-cli runtime path: {err:#}"),
+            }),
+        )
+    })?;
     crate::mcp_command::configure_runtime_mcp_command(&mut provider_env, &state.core.data_root)
         .map_err(|err| {
             (

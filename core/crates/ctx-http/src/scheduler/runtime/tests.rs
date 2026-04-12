@@ -3,8 +3,8 @@ use super::provider_mode_id_for;
 use super::runtime_provider_id_for_session_provider;
 use crate::installer;
 use crate::installer::{
-    prepend_runtime_bin_dirs_to_provider_path, AgentServerCommand, AgentServerConfigFile,
-    ManagedInstallMetadata,
+    ensure_codex_cli_command_env_for_target, prepend_runtime_bin_dirs_to_provider_path,
+    AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
 };
 use crate::settings::ProviderControlMode;
 use chrono::Utc;
@@ -279,4 +279,118 @@ fn runtime_path_includes_target_specific_managed_provider_dependency_bin_dirs() 
         std::fs::canonicalize(&dependency_bin_dir).expect("canonical dependency_bin_dir");
     assert_eq!(split.first().expect("first path"), &expected_first);
     assert_eq!(split.get(1).expect("second path"), &expected_second);
+}
+
+#[test]
+fn codex_env_injects_target_specific_codex_cli_command_path() {
+    let tmp = tempdir().expect("tempdir");
+    let host_codex = tmp.path().join("codex-host");
+    let container_codex = tmp.path().join("codex-container");
+    std::fs::write(&host_codex, b"#!/bin/sh\n").expect("write host codex");
+    std::fs::write(&container_codex, b"#!/bin/sh\n").expect("write container codex");
+
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.managed_provider_targets.insert(
+        "codex-cli".to_string(),
+        HashMap::from([
+            (
+                InstallTarget::Host.as_str().to_string(),
+                AgentServerCommand {
+                    command: host_codex.to_string_lossy().to_string(),
+                    args: Vec::new(),
+                    dependencies: Vec::new(),
+                    managed: Some(ManagedInstallMetadata {
+                        package: None,
+                        version: None,
+                        archive_sha256: None,
+                        target: Some(InstallTarget::Host),
+                        install_dir_rel: None,
+                        bin_dir_rel: None,
+                        last_success_at: None,
+                        last_error: None,
+                    }),
+                },
+            ),
+            (
+                InstallTarget::Container.as_str().to_string(),
+                AgentServerCommand {
+                    command: container_codex.to_string_lossy().to_string(),
+                    args: Vec::new(),
+                    dependencies: Vec::new(),
+                    managed: Some(ManagedInstallMetadata {
+                        package: None,
+                        version: None,
+                        archive_sha256: None,
+                        target: Some(InstallTarget::Container),
+                        install_dir_rel: None,
+                        bin_dir_rel: None,
+                        last_success_at: None,
+                        last_error: None,
+                    }),
+                },
+            ),
+        ]),
+    );
+
+    let mut provider_env = HashMap::new();
+    ensure_codex_cli_command_env_for_target(
+        &mut provider_env,
+        &cfg,
+        "codex",
+        Some(InstallTarget::Container),
+    )
+    .expect("inject codex env");
+
+    assert_eq!(
+        provider_env.get("CTX_CODEX_BIN_PATH"),
+        Some(
+            &std::fs::canonicalize(&container_codex)
+                .expect("canonicalize container codex")
+                .to_string_lossy()
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn codex_env_preserves_existing_explicit_codex_bin_path() {
+    let tmp = tempdir().expect("tempdir");
+    let codex_bin = tmp.path().join("codex");
+    std::fs::write(&codex_bin, b"#!/bin/sh\n").expect("write codex");
+    let expected = std::fs::canonicalize(&codex_bin)
+        .expect("canonicalize codex")
+        .to_string_lossy()
+        .to_string();
+    let mut provider_env = HashMap::from([(
+        "CTX_CODEX_BIN_PATH".to_string(),
+        codex_bin.to_string_lossy().to_string(),
+    )]);
+    ensure_codex_cli_command_env_for_target(
+        &mut provider_env,
+        &AgentServerConfigFile::default(),
+        "codex",
+        Some(InstallTarget::Host),
+    )
+    .expect("preserve existing codex path");
+    assert_eq!(
+        provider_env.get("CTX_CODEX_BIN_PATH").map(String::as_str),
+        Some(expected.as_str())
+    );
+}
+
+#[test]
+fn codex_env_rejects_relative_explicit_codex_bin_path() {
+    let mut provider_env = HashMap::from([("CTX_CODEX_BIN_PATH".to_string(), "codex".to_string())]);
+    let err = ensure_codex_cli_command_env_for_target(
+        &mut provider_env,
+        &AgentServerConfigFile::default(),
+        "codex",
+        Some(InstallTarget::Host),
+    )
+    .expect_err("relative codex path should fail");
+    assert!(
+        err.to_string()
+            .contains("CTX_CODEX_BIN_PATH must be an absolute path"),
+        "unexpected error: {err:#}"
+    );
 }

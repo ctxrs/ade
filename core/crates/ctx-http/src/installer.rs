@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use ctx_bundled_assets as bundled_assets;
 use sha2::Digest;
@@ -334,6 +334,67 @@ pub(crate) fn prepend_runtime_bin_dirs_to_provider_path_for_target(
     if let Ok(joined) = std::env::join_paths(path_parts) {
         provider_env.insert("PATH".to_string(), joined.to_string_lossy().to_string());
     }
+}
+
+pub(crate) fn resolve_codex_cli_command_path_for_target(
+    cfg: &AgentServerConfigFile,
+    requested_target: Option<InstallTarget>,
+) -> Result<Option<String>> {
+    Ok(
+        resolve_runtime_provider_command_for_target(cfg, "codex-cli", requested_target)?
+            .map(|command| command.command_abs_path),
+    )
+}
+
+fn normalize_explicit_command_path(env_name: &str, raw: &str) -> Result<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("{env_name} is set but empty"));
+    }
+    let path = Path::new(trimmed);
+    if !path.is_absolute() {
+        return Err(anyhow!(
+            "{env_name} must be an absolute path, got `{trimmed}`"
+        ));
+    }
+    if !path.exists() {
+        return Err(anyhow!("{env_name} points to a missing path `{trimmed}`"));
+    }
+    Ok(std::fs::canonicalize(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .to_string())
+}
+
+pub(crate) fn require_codex_cli_command_path_for_target(
+    cfg: &AgentServerConfigFile,
+    requested_target: Option<InstallTarget>,
+) -> Result<String> {
+    let target_label = requested_target
+        .map(|target| target.as_str().to_string())
+        .unwrap_or_else(|| "default".to_string());
+    resolve_codex_cli_command_path_for_target(cfg, requested_target)?.ok_or_else(|| {
+        anyhow!("explicit codex-cli runtime path is not configured for target `{target_label}`")
+    })
+}
+
+pub(crate) fn ensure_codex_cli_command_env_for_target(
+    provider_env: &mut HashMap<String, String>,
+    cfg: &AgentServerConfigFile,
+    runtime_provider_id: &str,
+    requested_target: Option<InstallTarget>,
+) -> Result<()> {
+    if runtime_provider_id != "codex" {
+        return Ok(());
+    }
+    if let Some(configured) = provider_env.get("CTX_CODEX_BIN_PATH") {
+        let normalized = normalize_explicit_command_path("CTX_CODEX_BIN_PATH", configured)?;
+        provider_env.insert("CTX_CODEX_BIN_PATH".to_string(), normalized);
+        return Ok(());
+    }
+    let codex_bin = require_codex_cli_command_path_for_target(cfg, requested_target)?;
+    provider_env.insert("CTX_CODEX_BIN_PATH".to_string(), codex_bin);
+    Ok(())
 }
 
 #[cfg(test)]

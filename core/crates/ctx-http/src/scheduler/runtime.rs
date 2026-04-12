@@ -513,6 +513,12 @@ pub(crate) async fn start_turn(
         &state.core.data_root,
         Some(install_target),
     );
+    installer::ensure_codex_cli_command_env_for_target(
+        &mut provider_env,
+        &adapter_cfg,
+        runtime_provider_id,
+        Some(install_target),
+    )?;
 
     let mut run_env_event = OpsEvent::new("info", "provider_run_env_ready");
     run_env_event.session_id = Some(session.id.0.to_string());

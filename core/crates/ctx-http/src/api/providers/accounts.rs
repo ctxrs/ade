@@ -136,6 +136,9 @@ pub(crate) async fn get_codex_accounts_usage(
     };
 
     let mut entries = Vec::new();
+    let cfg = crate::installer::load_agent_server_config(&state.core.data_root)
+        .await
+        .unwrap_or_default();
 
     for account in registry.accounts {
         let _ = provider_accounts::hydrate_codex_account_home_from_secret(
@@ -143,7 +146,14 @@ pub(crate) async fn get_codex_accounts_usage(
             &account.id,
         )
         .await;
-        let env = provider_accounts::codex_env_for_account(&state.core.data_root, &account.id);
+        let mut env = provider_accounts::codex_env_for_account(&state.core.data_root, &account.id);
+        crate::installer::ensure_codex_cli_command_env_for_target(
+            &mut env,
+            &cfg,
+            "codex",
+            Some(ctx_provider_install::install_state::InstallTarget::Host),
+        )
+        .map_err(to_err)?;
         let usage = if active_id.as_deref() == Some(&account.id) {
             if let Some(snapshot) = cached_active.clone() {
                 snapshot

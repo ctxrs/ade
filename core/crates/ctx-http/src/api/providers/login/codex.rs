@@ -167,7 +167,22 @@ pub(crate) async fn start_codex_login(
                     }),
                 )
             })?;
-    let login = match start_codex_login_process(&account_dir).await {
+    let cfg = crate::installer::load_agent_server_config(&state.core.data_root)
+        .await
+        .unwrap_or_default();
+    let codex_bin = crate::installer::require_codex_cli_command_path_for_target(
+        &cfg,
+        Some(ctx_provider_install::install_state::InstallTarget::Host),
+    )
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    let login = match start_codex_login_process(&account_dir, &codex_bin).await {
         Ok(login) => login,
         Err(e) => {
             let _ = tokio::fs::remove_dir_all(&account_dir).await;
@@ -224,8 +239,11 @@ pub(crate) async fn get_codex_login(
     Ok(Json(status))
 }
 
-async fn start_codex_login_process(account_dir: &PathBuf) -> anyhow::Result<CodexLoginProcess> {
-    let mut child = spawn_codex_app_server(account_dir)?;
+async fn start_codex_login_process(
+    account_dir: &PathBuf,
+    codex_bin: &str,
+) -> anyhow::Result<CodexLoginProcess> {
+    let mut child = spawn_codex_app_server(account_dir, codex_bin)?;
     let stdout = child
         .stdout
         .take()
@@ -357,14 +375,25 @@ async fn monitor_codex_login(
     let _ = login.child.kill().await;
 }
 
-fn spawn_codex_app_server(account_dir: &PathBuf) -> anyhow::Result<tokio::process::Child> {
-    let mut cmd = Command::new("codex");
+fn spawn_codex_app_server(
+    account_dir: &PathBuf,
+    codex_bin: &str,
+) -> anyhow::Result<tokio::process::Child> {
+    let codex_bin = codex_bin.trim();
+    if codex_bin.is_empty() {
+        anyhow::bail!("codex-cli runtime path is empty");
+    }
+    if !std::path::Path::new(codex_bin).is_absolute() {
+        anyhow::bail!("codex-cli runtime path must be absolute, got `{codex_bin}`");
+    }
+    let mut cmd = Command::new(codex_bin);
     cmd.args(CODEX_APP_SERVER_ARGS)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     cmd.env("CODEX_HOME", account_dir);
-    cmd.spawn().context("spawning codex app-server")
+    cmd.spawn()
+        .with_context(|| format!("spawning codex app-server via `{codex_bin}`"))
 }
 
 async fn send_codex_jsonrpc(

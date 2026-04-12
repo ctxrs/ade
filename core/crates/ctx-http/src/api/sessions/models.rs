@@ -550,6 +550,19 @@ async fn load_provider_model_catalog_for_install_target(
         &state.core.data_root,
         Some(install_target),
     );
+    if let Err(err) = installer::ensure_codex_cli_command_env_for_target(
+        &mut env,
+        &cfg,
+        provider_id,
+        Some(install_target),
+    ) {
+        tracing::warn!(
+            provider_id = provider_id,
+            "provider codex-cli runtime path resolution failed: {}",
+            logs::redact_sensitive(&err.to_string())
+        );
+        return Ok(pinned_catalog);
+    }
 
     let probe = match probe_crp_models(provider_id, command, args, probe_context.cwd, env).await {
         Ok(probe) => probe,

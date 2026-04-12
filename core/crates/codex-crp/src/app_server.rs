@@ -409,9 +409,14 @@ impl AppServerClient {
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "codex".to_string());
+            .ok_or_else(|| {
+                anyhow!("CTX_CODEX_BIN_PATH must be set to the absolute codex-cli runtime path")
+            })?;
+        if !Path::new(&codex_bin).is_absolute() {
+            anyhow::bail!("CTX_CODEX_BIN_PATH must be absolute, got `{codex_bin}`");
+        }
 
-        let mut command = Command::new(codex_bin);
+        let mut command = Command::new(&codex_bin);
         command
             .args(CODEX_APP_SERVER_ARGS)
             .current_dir(workdir)
@@ -419,7 +424,9 @@ impl AppServerClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut child = command.spawn().context("spawning codex app-server")?;
+        let mut child = command
+            .spawn()
+            .with_context(|| format!("spawning codex app-server via `{codex_bin}`"))?;
         let stdin = child
             .stdin
             .take()

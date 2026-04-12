@@ -410,6 +410,97 @@ fn dependency_target_compatibility_allows_linux_bins_for_container_exec() {
 }
 
 #[test]
+fn resolve_codex_cli_command_path_uses_requested_target() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let host_bin = tmp.path().join("codex-host");
+    let container_bin = tmp.path().join("codex-container");
+    std::fs::write(&host_bin, b"#!/bin/sh\n").expect("write host bin");
+    std::fs::write(&container_bin, b"#!/bin/sh\n").expect("write container bin");
+
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.managed_provider_targets.insert(
+        "codex-cli".to_string(),
+        HashMap::from([
+            (
+                InstallTarget::Host.as_str().to_string(),
+                AgentServerCommand {
+                    command: host_bin.to_string_lossy().to_string(),
+                    args: Vec::new(),
+                    dependencies: Vec::new(),
+                    managed: None,
+                },
+            ),
+            (
+                InstallTarget::Container.as_str().to_string(),
+                AgentServerCommand {
+                    command: container_bin.to_string_lossy().to_string(),
+                    args: Vec::new(),
+                    dependencies: Vec::new(),
+                    managed: None,
+                },
+            ),
+        ]),
+    );
+
+    let host = resolve_codex_cli_command_path_for_target(&cfg, Some(InstallTarget::Host))
+        .expect("resolve host codex-cli")
+        .expect("host codex-cli");
+    let container = resolve_codex_cli_command_path_for_target(&cfg, Some(InstallTarget::Container))
+        .expect("resolve container codex-cli")
+        .expect("container codex-cli");
+
+    assert_eq!(host, host_bin.to_string_lossy());
+    assert_eq!(container, container_bin.to_string_lossy());
+}
+
+#[test]
+fn inject_codex_cli_command_env_sets_explicit_runtime_path() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let codex_bin = tmp.path().join("codex-aarch64-apple-darwin");
+    std::fs::write(&codex_bin, b"#!/bin/sh\n").expect("write codex bin");
+
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.managed_provider_targets.insert(
+        "codex-cli".to_string(),
+        HashMap::from([(
+            InstallTarget::Host.as_str().to_string(),
+            AgentServerCommand {
+                command: codex_bin.to_string_lossy().to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: None,
+            },
+        )]),
+    );
+
+    let mut env = HashMap::new();
+    ensure_codex_cli_command_env_for_target(&mut env, &cfg, "codex", Some(InstallTarget::Host))
+        .expect("inject codex env");
+
+    assert_eq!(
+        env.get("CTX_CODEX_BIN_PATH"),
+        Some(&codex_bin.to_string_lossy().to_string())
+    );
+}
+
+#[test]
+fn ensure_codex_cli_command_env_rejects_missing_runtime_path() {
+    let err = ensure_codex_cli_command_env_for_target(
+        &mut HashMap::new(),
+        &AgentServerConfigFile::default(),
+        "codex",
+        Some(InstallTarget::Host),
+    )
+    .expect_err("missing codex-cli path should fail");
+
+    assert!(
+        err.to_string()
+            .contains("explicit codex-cli runtime path is not configured"),
+        "unexpected error: {err:#}"
+    );
+}
+
+#[test]
 fn provider_env_linux_sandbox_marker_enables_container_targeting() {
     let mut env = HashMap::new();
     assert!(!provider_env_targets_linux_sandbox(&env));

@@ -246,6 +246,17 @@ async fn prepare_provider_runtime_probe(
             Some(install_target),
         );
     }
+    crate::installer::ensure_codex_cli_command_env_for_target(
+        &mut env,
+        &cfg,
+        provider_id,
+        Some(install_target),
+    )
+    .map_err(|e| {
+        PreparedProviderRuntimeProbeError::Verify(format!(
+            "codex_cli_command_invalid: provider={provider_id} error={e}"
+        ))
+    })?;
 
     let selected_endpoint_id = if source.source_kind == HarnessSourceKind::Endpoint {
         source

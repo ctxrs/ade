@@ -8,6 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
 use ctx_core::provider_policy::CODEX_APP_SERVER_ARGS;
 use ctx_provider_accounts as provider_accounts;
+use ctx_provider_install::install_state::InstallTarget;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -74,7 +75,16 @@ pub fn spawn_provider_usage_poller(state: Arc<AppState>) {
 }
 
 pub async fn refresh_provider_usage(state: &Arc<AppState>) -> Result<()> {
-    let env = provider_accounts::codex_env_for_active_account(&state.core.data_root).await?;
+    let mut env = provider_accounts::codex_env_for_active_account(&state.core.data_root).await?;
+    let cfg = crate::installer::load_agent_server_config(&state.core.data_root)
+        .await
+        .unwrap_or_default();
+    crate::installer::ensure_codex_cli_command_env_for_target(
+        &mut env,
+        &cfg,
+        "codex",
+        Some(InstallTarget::Host),
+    )?;
     refresh_provider_usage_for(state, "codex", env).await?;
     Ok(())
 }
@@ -417,7 +427,15 @@ async fn fetch_codex_usage_rpc(env: &HashMap<String, String>) -> Result<serde_js
 }
 
 fn spawn_codex_app_server(env: &HashMap<String, String>) -> Result<Child> {
-    let mut cmd = Command::new("codex");
+    let codex_bin = env
+        .get("CTX_CODEX_BIN_PATH")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("CTX_CODEX_BIN_PATH must be set to an absolute codex-cli path"))?;
+    if !Path::new(codex_bin).is_absolute() {
+        anyhow::bail!("CTX_CODEX_BIN_PATH must be absolute, got `{codex_bin}`");
+    }
+    let mut cmd = Command::new(codex_bin);
     cmd.args(CODEX_APP_SERVER_ARGS)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -425,7 +443,8 @@ fn spawn_codex_app_server(env: &HashMap<String, String>) -> Result<Child> {
     for (key, value) in env {
         cmd.env(key, value);
     }
-    cmd.spawn().context("spawning codex app-server")
+    cmd.spawn()
+        .with_context(|| format!("spawning codex app-server via `{codex_bin}`"))
 }
 
 async fn send_jsonrpc(
