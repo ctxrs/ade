@@ -6,6 +6,7 @@ const {
   DEFAULT_BUILD_TARGETS,
   DEFAULT_TEST_TARGETS,
   bazeliskBinaryPath,
+  buildBuildBuddyAuthArgs,
   buildBazelPilotSpawn,
   buildBazelPilotInvocation,
   formatSpawnFailureMessage,
@@ -76,6 +77,16 @@ test("bazel pilot remote execution mode parsing supports off, all, and linux", (
   assert.equal(parseRemoteExecutionMode("linux"), "linux");
 });
 
+test("bazel pilot auth args stay empty without a BuildBuddy API key", () => {
+  assert.deepEqual(buildBuildBuddyAuthArgs({}), []);
+});
+
+test("bazel pilot auth args forward the BuildBuddy API key as a remote header", () => {
+  assert.deepEqual(buildBuildBuddyAuthArgs({ BUILDBUDDY_API_KEY: "api-key-123" }), [
+    "--remote_header=x-buildbuddy-api-key=api-key-123",
+  ]);
+});
+
 test("bazel pilot invocation enables full BuildBuddy remote execution when requested", () => {
   const invocation = buildBazelPilotInvocation({
     argv: ["build"],
@@ -84,6 +95,7 @@ test("bazel pilot invocation enables full BuildBuddy remote execution when reque
       CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-rbe",
       CTX_SESSION_ID: "bazel-rbe-session",
       CTX_BAZEL_REMOTE_EXECUTION: "1",
+      BUILDBUDDY_API_KEY: "buildbuddy-ci-key",
     },
   });
 
@@ -91,6 +103,10 @@ test("bazel pilot invocation enables full BuildBuddy remote execution when reque
   assert.equal(invocation.phases.length, 1);
   assert.equal(invocation.phases[0].name, "remote");
   assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-rbe"), true);
+  assert.equal(
+    invocation.phases[0].commandArgs.includes("--remote_header=x-buildbuddy-api-key=buildbuddy-ci-key"),
+    true,
+  );
 });
 
 test("bazel pilot linux remote execution keeps lib builds remote and host executables local", () => {
@@ -105,6 +121,7 @@ test("bazel pilot linux remote execution keeps lib builds remote and host execut
       CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-linux-rbe",
       CTX_SESSION_ID: "bazel-linux-rbe-session",
       CTX_BAZEL_REMOTE_EXECUTION: "linux",
+      BUILDBUDDY_API_KEY: "buildbuddy-linux-key",
     },
   });
 
@@ -114,17 +131,22 @@ test("bazel pilot linux remote execution keeps lib builds remote and host execut
       name: phase.name,
       targets: phase.targets,
       hasLinuxConfig: phase.commandArgs.includes("--config=buildbuddy-linux-rbe"),
+      hasBuildBuddyHeader: phase.commandArgs.includes(
+        "--remote_header=x-buildbuddy-api-key=buildbuddy-linux-key",
+      ),
     })),
     [
       {
         name: "linux-rbe",
         targets: ["//core/crates/ctx-provider-accounts:lib"],
         hasLinuxConfig: true,
+        hasBuildBuddyHeader: true,
       },
       {
         name: "local",
         targets: ["//core/crates/ctx-lsp:ctx-lsp-test-server"],
         hasLinuxConfig: false,
+        hasBuildBuddyHeader: true,
       },
     ],
   );

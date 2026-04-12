@@ -63,6 +63,14 @@ function buildPhaseCommandArgs({ command, layout, extraConfigArgs = [] }) {
   return commandArgs;
 }
 
+function buildBuildBuddyAuthArgs(env) {
+  const apiKey = String(env?.BUILDBUDDY_API_KEY || "").trim();
+  if (!apiKey) {
+    return [];
+  }
+  return [`--remote_header=x-buildbuddy-api-key=${apiKey}`];
+}
+
 function buildInvocationPhases({ command, layout, remoteExecutionMode, targets }) {
   if (targets.length === 0) {
     return [];
@@ -119,12 +127,16 @@ function buildBazelPilotInvocation({ argv, env = process.env } = {}) {
   const layout = resolveCtxCacheLayout({ cwd: coreRoot, env });
   const startupArgs = [`--output_user_root=${layout.bazelOutputUserRoot}`];
   const remoteExecutionMode = parseRemoteExecutionMode(env.CTX_BAZEL_REMOTE_EXECUTION);
+  const buildBuddyAuthArgs = buildBuildBuddyAuthArgs(env);
   const phases = buildInvocationPhases({
     command,
     layout,
     remoteExecutionMode,
     targets,
-  });
+  }).map((phase) => ({
+    ...phase,
+    commandArgs: [...phase.commandArgs, ...buildBuddyAuthArgs],
+  }));
   const commandArgs = phases[0]?.commandArgs || [];
   const phaseTargets = phases[0]?.targets || [];
 
@@ -216,6 +228,7 @@ module.exports = {
   buildBazelPilotSpawn,
   buildBazelPilotSpawns,
   buildBazelPilotInvocation,
+  buildBuildBuddyAuthArgs,
   formatSpawnFailureMessage,
   parseArgs,
   parseRemoteExecutionMode,
