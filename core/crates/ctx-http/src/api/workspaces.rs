@@ -680,6 +680,11 @@ mod tests {
             })
             .await
             .expect("upsert sandbox binding");
+        state
+            .global_store()
+            .upsert_workspace_worktree_index(worktree.id, workspace.id)
+            .await
+            .expect("upsert worktree index");
 
         let Json(response) = get_worktree(State(state), Path(worktree.id.0.to_string()))
             .await

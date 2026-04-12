@@ -1326,7 +1326,6 @@ describe("useHarnessAuthenticationController", () => {
             account_id: "codex-login-1",
             auth_url: "https://example.com/codex-login",
             status: "pending",
-            updated_at: "2026-03-11T00:00:00.000Z",
           },
         ],
       },

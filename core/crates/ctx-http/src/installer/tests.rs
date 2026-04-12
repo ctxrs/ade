@@ -449,8 +449,18 @@ fn resolve_codex_cli_command_path_uses_requested_target() {
         .expect("resolve container codex-cli")
         .expect("container codex-cli");
 
-    assert_eq!(host, host_bin.to_string_lossy());
-    assert_eq!(container, container_bin.to_string_lossy());
+    assert_eq!(
+        host,
+        std::fs::canonicalize(&host_bin)
+            .expect("canonicalize host codex-cli")
+            .to_string_lossy()
+    );
+    assert_eq!(
+        container,
+        std::fs::canonicalize(&container_bin)
+            .expect("canonicalize container codex-cli")
+            .to_string_lossy()
+    );
 }
 
 #[test]
@@ -479,7 +489,12 @@ fn inject_codex_cli_command_env_sets_explicit_runtime_path() {
 
     assert_eq!(
         env.get("CTX_CODEX_BIN_PATH"),
-        Some(&codex_bin.to_string_lossy().to_string())
+        Some(
+            &std::fs::canonicalize(&codex_bin)
+                .expect("canonicalize codex bin")
+                .to_string_lossy()
+                .to_string()
+        )
     );
 }
 

@@ -2236,7 +2236,8 @@
         "crates/ctx-harness-setup/**",
         "crates/ctx-linux-sandbox-runtime/**",
         "crates/ctx-runtime-assets/**",
-        "crates/ctx-sandbox-container-runtime/**"
+        "crates/ctx-sandbox-container-runtime/**",
+        "crates/ctx-sandbox-contract/**"
       ],
       "outputs": []
     },
@@ -2263,7 +2264,8 @@
         "crates/ctx-harness-setup/**",
         "crates/ctx-linux-sandbox-runtime/**",
         "crates/ctx-runtime-assets/**",
-        "crates/ctx-sandbox-container-runtime/**"
+        "crates/ctx-sandbox-container-runtime/**",
+        "crates/ctx-sandbox-contract/**"
       ],
       "outputs": []
     },
@@ -2290,7 +2292,8 @@
         "crates/ctx-harness-setup/**",
         "crates/ctx-linux-sandbox-runtime/**",
         "crates/ctx-runtime-assets/**",
-        "crates/ctx-sandbox-container-runtime/**"
+        "crates/ctx-sandbox-container-runtime/**",
+        "crates/ctx-sandbox-contract/**"
       ],
       "outputs": []
     },

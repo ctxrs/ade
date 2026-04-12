@@ -167,6 +167,9 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
 
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
+    if provider_id == "codex" {
+        common::seed_managed_codex_cli_host_runtime(data_dir.path(), &python).await;
+    }
     let adapter: Arc<dyn ProviderAdapter> = Arc::new(Tier1CrpAdapter::from_raw(
         provider_id,
         python.to_string_lossy().to_string(),

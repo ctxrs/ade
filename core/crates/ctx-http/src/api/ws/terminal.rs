@@ -7,6 +7,7 @@ use std::sync::{
 // Terminal bytes are lossy; a slow browser should not force unbounded per-connection buffering.
 const TERMINAL_WS_EVENT_QUEUE_LIMIT: usize = 128;
 const TERMINAL_PING_INTERVAL: Duration = Duration::from_secs(25);
+const TERMINAL_TAIL_RESYNC_INTERVAL: Duration = Duration::from_millis(25);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TerminalWsQueueOutcome {
@@ -73,6 +74,26 @@ fn queue_terminal_ws_tail_snapshot(
     queue_terminal_ws_message(event_tx, WsMessage::Binary(snapshot))
 }
 
+fn request_terminal_ws_tail_resync(needs_tail_resync: &AtomicBool) {
+    needs_tail_resync.store(true, Ordering::Release);
+}
+
+pub(super) fn queue_terminal_ws_tail_resync_if_requested(
+    event_tx: &tokio::sync::mpsc::Sender<WsMessage>,
+    session: &crate::terminals::TerminalSessionHandle,
+    snapshot_tail: usize,
+    needs_tail_resync: &AtomicBool,
+) -> Option<TerminalWsQueueOutcome> {
+    if !needs_tail_resync.swap(false, Ordering::AcqRel) {
+        return None;
+    }
+    let outcome = queue_terminal_ws_tail_snapshot(event_tx, session, snapshot_tail);
+    if matches!(outcome, TerminalWsQueueOutcome::Dropped) {
+        request_terminal_ws_tail_resync(needs_tail_resync);
+    }
+    Some(outcome)
+}
+
 async fn handle_terminal_socket(
     mut socket: WebSocket,
     session: Arc<crate::terminals::TerminalSessionHandle>,
@@ -105,11 +126,12 @@ async fn handle_terminal_socket(
     let event_tx_status = event_tx.clone();
     let event_tx_input = event_tx.clone();
     let event_tx_ping = event_tx.clone();
+    let event_tx_resync = event_tx.clone();
     let needs_tail_resync = Arc::new(AtomicBool::new(false));
     let needs_tail_resync_output = needs_tail_resync.clone();
-    let needs_tail_resync_status = needs_tail_resync.clone();
+    let needs_tail_resync_resync = needs_tail_resync.clone();
     let session_output = session.clone();
-    let session_status = session.clone();
+    let session_resync = session.clone();
 
     let mut tasks = JoinSet::new();
     tasks.spawn(async move {
@@ -124,15 +146,15 @@ async fn handle_terminal_socket(
         loop {
             match output_rx.recv().await {
                 Ok(bytes) => {
-                    if needs_tail_resync_output.swap(false, Ordering::AcqRel) {
-                        match queue_terminal_ws_tail_snapshot(
-                            &event_tx_output,
-                            &session_output,
-                            snapshot_tail,
-                        ) {
+                    if let Some(outcome) = queue_terminal_ws_tail_resync_if_requested(
+                        &event_tx_output,
+                        &session_output,
+                        snapshot_tail,
+                        needs_tail_resync_output.as_ref(),
+                    ) {
+                        match outcome {
                             TerminalWsQueueOutcome::Enqueued => continue,
                             TerminalWsQueueOutcome::Dropped => {
-                                needs_tail_resync_output.store(true, Ordering::Release);
                                 tracing::debug!(
                                     "dropping terminal tail resync for slow websocket consumer"
                                 );
@@ -144,7 +166,7 @@ async fn handle_terminal_socket(
                     match queue_terminal_ws_message(&event_tx_output, WsMessage::Binary(bytes)) {
                         TerminalWsQueueOutcome::Enqueued => {}
                         TerminalWsQueueOutcome::Dropped => {
-                            needs_tail_resync_output.store(true, Ordering::Release);
+                            request_terminal_ws_tail_resync(needs_tail_resync_output.as_ref());
                             tracing::debug!("dropping terminal output for slow websocket consumer");
                         }
                         TerminalWsQueueOutcome::Closed => break,
@@ -158,7 +180,7 @@ async fn handle_terminal_socket(
                     ) {
                         TerminalWsQueueOutcome::Enqueued => {}
                         TerminalWsQueueOutcome::Dropped => {
-                            needs_tail_resync_output.store(true, Ordering::Release);
+                            request_terminal_ws_tail_resync(needs_tail_resync_output.as_ref());
                             tracing::debug!(
                                 "dropping terminal tail resync for slow websocket consumer"
                             );
@@ -176,22 +198,6 @@ async fn handle_terminal_socket(
         loop {
             match status_rx.recv().await {
                 Ok(ev) => {
-                    if needs_tail_resync_status.swap(false, Ordering::AcqRel) {
-                        match queue_terminal_ws_tail_snapshot(
-                            &event_tx_status,
-                            &session_status,
-                            snapshot_tail,
-                        ) {
-                            TerminalWsQueueOutcome::Enqueued => {}
-                            TerminalWsQueueOutcome::Dropped => {
-                                needs_tail_resync_status.store(true, Ordering::Release);
-                                tracing::debug!(
-                                    "dropping terminal tail resync for slow websocket consumer"
-                                );
-                            }
-                            TerminalWsQueueOutcome::Closed => break,
-                        }
-                    }
                     let payload = serde_json::to_string(&TerminalServerMessage::Status {
                         status: ev.status,
                         exit_code: ev.exit_code,
@@ -206,20 +212,7 @@ async fn handle_terminal_socket(
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    match queue_terminal_ws_tail_snapshot(
-                        &event_tx_status,
-                        &session_status,
-                        snapshot_tail,
-                    ) {
-                        TerminalWsQueueOutcome::Enqueued => {}
-                        TerminalWsQueueOutcome::Dropped => {
-                            needs_tail_resync_status.store(true, Ordering::Release);
-                            tracing::debug!(
-                                "dropping terminal tail resync for slow websocket consumer"
-                            );
-                        }
-                        TerminalWsQueueOutcome::Closed => break,
-                    }
+                    request_terminal_ws_tail_resync(needs_tail_resync.as_ref());
                     continue;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -285,6 +278,26 @@ async fn handle_terminal_socket(
                 TerminalWsQueueOutcome::Closed
             ) {
                 break;
+            }
+        }
+    });
+
+    tasks.spawn(async move {
+        let mut interval = tokio::time::interval(TERMINAL_TAIL_RESYNC_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            match queue_terminal_ws_tail_resync_if_requested(
+                &event_tx_resync,
+                &session_resync,
+                snapshot_tail,
+                needs_tail_resync_resync.as_ref(),
+            ) {
+                Some(TerminalWsQueueOutcome::Dropped) => {
+                    tracing::debug!("dropping terminal tail resync for slow websocket consumer");
+                }
+                Some(TerminalWsQueueOutcome::Closed) => break,
+                Some(TerminalWsQueueOutcome::Enqueued) | None => {}
             }
         }
     });
