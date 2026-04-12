@@ -1,7 +1,6 @@
+use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
-
-use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
 
 use ctx_core::ids::{MessageId, RunId, SessionId, TurnId};
@@ -110,10 +109,14 @@ async fn record_interrupt_metric(
         .await;
 }
 
+async fn wait_for_turn_event_loop(events_done: oneshot::Receiver<()>) {
+    let _ = events_done.await;
+}
+
 pub(crate) async fn stop_running_turn(
     state: &Arc<AppState>,
     session_id: SessionId,
-    turn: RunningTurn,
+    mut turn: RunningTurn,
     reason: StopReason,
     interrupt: Option<InterruptTelemetryContext>,
 ) -> bool {
@@ -221,7 +224,18 @@ pub(crate) async fn stop_running_turn(
             "session interrupt provider cancel finished"
         );
     }
-    if !sent {
+    drop(turn.event_tx);
+    if let Some(events_done) = turn.events_done.take() {
+        wait_for_turn_event_loop(events_done).await;
+        let _ = reconcile_turn_terminal_state(
+            state,
+            session_id,
+            Some(run_id),
+            turn_id,
+            reason.fallback_reason(),
+        )
+        .await;
+    } else if !sent {
         let _ = reconcile_turn_terminal_state(
             state,
             session_id,

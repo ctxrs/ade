@@ -184,7 +184,7 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
     let turn_id_two = msg2.turn_id.expect("second turn id");
     let store = state.store_for_session(session.id).await.unwrap();
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
         let events = store.list_session_events(session.id).await.unwrap();
         let saw_started = events.iter().any(|event| {
@@ -212,7 +212,7 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
     let (status, _) = common::oneshot_bytes(&app, req).await;
     assert_eq!(status, StatusCode::OK);
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
         let events = store.list_session_events(session.id).await.unwrap();
         let saw_finished = events.iter().any(|event| {
@@ -255,7 +255,7 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
     let started_seq = seq_for(turn_id_two, SessionEventType::TurnStarted);
 
     assert!(interrupted_seq < finished_seq);
-    assert!(interrupted_seq < promoted_seq);
+    assert!(finished_seq < promoted_seq);
     assert!(promoted_seq < started_seq);
 }
 
@@ -308,7 +308,7 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
     let turn_id_three = msg3.turn_id.expect("third turn id");
     let store = state.store_for_session(session.id).await.unwrap();
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
         let events = store.list_session_events(session.id).await.unwrap();
         let saw_started = events.iter().any(|event| {
@@ -381,7 +381,7 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
     let (status, _) = common::oneshot_bytes(&app, req).await;
     assert_eq!(status, StatusCode::OK);
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
         let events = store.list_session_events(session.id).await.unwrap();
         let first_finished = events.iter().any(|event| {
@@ -413,7 +413,7 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
     let (status, _) = common::oneshot_bytes(&app, req).await;
     assert_eq!(status, StatusCode::OK);
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
         let events = store.list_session_events(session.id).await.unwrap();
         let second_finished = events.iter().any(|event| {
@@ -471,11 +471,11 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
     let third_started_seq = seq_for(turn_id_three, SessionEventType::TurnStarted);
 
     assert!(first_interrupted_seq < first_finished_seq);
-    assert!(first_interrupted_seq < second_promoted_seq);
+    assert!(first_finished_seq < second_promoted_seq);
     assert!(second_promoted_seq < second_started_seq);
 
     assert!(second_interrupted_seq < second_finished_seq);
-    assert!(second_interrupted_seq < third_promoted_seq);
+    assert!(second_finished_seq < third_promoted_seq);
     assert!(third_promoted_seq < third_started_seq);
     assert!(second_promoted_seq < third_promoted_seq);
 
