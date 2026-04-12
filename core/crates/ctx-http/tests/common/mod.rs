@@ -9,6 +9,11 @@ use axum::http::{Method, Request, StatusCode};
 use ctx_core::models::{Session, Task, Workspace};
 use ctx_http::api;
 use ctx_http::daemon::AppState;
+use ctx_http::installer::{
+    load_agent_server_config, save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
+    ManagedInstallMetadata,
+};
+use ctx_provider_install::install_state::InstallTarget;
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
@@ -153,6 +158,53 @@ async fn init_jj_repo_root(root: &Path) {
 
 pub async fn setup_store(data_root: &Path) -> StoreManager {
     StoreManager::open(data_root).await.unwrap()
+}
+
+pub async fn seed_managed_codex_cli_host_runtime(data_root: &Path, command_abs_path: &Path) {
+    assert!(
+        command_abs_path.is_absolute(),
+        "codex-cli runtime path must be absolute"
+    );
+    assert!(
+        command_abs_path.exists(),
+        "codex-cli runtime path must exist"
+    );
+
+    let command = std::fs::canonicalize(command_abs_path)
+        .unwrap_or_else(|_| command_abs_path.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+    let meta = ManagedInstallMetadata {
+        package: Some("codex-cli".to_string()),
+        version: Some("fixture".to_string()),
+        archive_sha256: None,
+        target: Some(InstallTarget::Host),
+        install_dir_rel: None,
+        bin_dir_rel: None,
+        last_success_at: None,
+        last_error: None,
+    };
+
+    let mut cfg = load_agent_server_config(data_root)
+        .await
+        .unwrap_or_else(|_| AgentServerConfigFile::default());
+    cfg.managed_installs
+        .insert("codex-cli".to_string(), meta.clone());
+    cfg.managed_provider_targets.insert(
+        "codex-cli".to_string(),
+        HashMap::from([(
+            InstallTarget::Host.as_str().to_string(),
+            AgentServerCommand {
+                command,
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: Some(meta),
+            },
+        )]),
+    );
+    save_agent_server_config(data_root, &cfg)
+        .await
+        .expect("save codex-cli managed runtime");
 }
 
 pub fn fake_providers() -> HashMap<String, Arc<dyn ProviderAdapter>> {

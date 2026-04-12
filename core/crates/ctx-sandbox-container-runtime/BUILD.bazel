@@ -14,9 +14,13 @@ rust_library(
         "//core/crates/ctx-harness-setup:lib",
         "//core/crates/ctx-linux-sandbox-runtime:lib",
         "//core/crates/ctx-runtime-assets:lib",
+        "//core/crates/ctx-sandbox-contract:lib",
         "@crates//:anyhow",
+        "@crates//:flate2",
         "@crates//:hex",
+        "@crates//:serde_json",
         "@crates//:sha2",
+        "@crates//:tar",
         "@crates//:tokio",
     ],
 )

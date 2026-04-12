@@ -318,6 +318,7 @@ async fn provider_scenarios_offline_crp_fixtures() {
     let (_codex_home, _guard_codex_home) = configure_hermetic_codex_home().await;
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
+    common::seed_managed_codex_cli_host_runtime(data_dir.path(), &python).await;
     let providers = common::crp_fixture_runtime::build_crp_fixture_providers(
         provider_ids,
         &python,
@@ -514,6 +515,7 @@ async fn provider_scenarios_offline_crp_fixtures_persist_context_window_metrics(
     let (_codex_home, _guard_codex_home) = configure_hermetic_codex_home().await;
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
+    common::seed_managed_codex_cli_host_runtime(data_dir.path(), &python).await;
     let provider_ids: &[&str] = &["codex", "claude-crp"];
     let providers = common::crp_fixture_runtime::build_crp_fixture_providers(
         provider_ids,

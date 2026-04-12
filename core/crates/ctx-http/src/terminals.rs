@@ -229,6 +229,49 @@ impl TerminalSessionHandle {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn test_handle_with_output(output: &[u8]) -> Arc<Self> {
+        let now = Utc::now();
+        let (output_tx, _) = broadcast::channel(16);
+        let (status_tx, _) = broadcast::channel(16);
+        let (_outbound_tx, outbound_rx) = mpsc::unbounded_channel();
+        let mut output_buffer = VecDeque::with_capacity(output.len());
+        output_buffer.extend(output.iter().copied());
+        Arc::new(Self {
+            info: TerminalSession {
+                id: TerminalId::new(),
+                workspace_id: WorkspaceId::new(),
+                task_id: None,
+                session_id: None,
+                worktree_id: None,
+                cwd: "/tmp".to_string(),
+                shell: "/bin/sh".to_string(),
+                title: "test-terminal".to_string(),
+                status: TerminalStatus::Running,
+                exit_code: None,
+                created_at: now,
+                updated_at: now,
+            },
+            container_backed: false,
+            runtime: Arc::new(Mutex::new(TerminalRuntime {
+                status: TerminalStatus::Running,
+                exit_code: None,
+                updated_at: now,
+                last_activity: now,
+                connected_clients: 0,
+            })),
+            output_tx,
+            status_tx,
+            output_buffer: Arc::new(Mutex::new(output_buffer)),
+            backend: TerminalBackend::Remote {
+                outbound_tx: {
+                    drop(outbound_rx);
+                    _outbound_tx
+                },
+            },
+        })
+    }
+
     pub fn resize(&self, cols: u16, rows: u16) -> Result<()> {
         self.touch_activity();
         match &self.backend {

@@ -60,6 +60,18 @@ fn process_env_test_lock() -> &'static tokio::sync::Mutex<()> {
     crate::test_support::process_env_test_lock()
 }
 
+fn build_test_plain_archive(file_name: &str, payload: &[u8]) -> Vec<u8> {
+    let mut builder = tar::Builder::new(Vec::new());
+    let mut header = tar::Header::new_gnu();
+    header.set_mode(0o644);
+    header.set_size(payload.len() as u64);
+    header.set_cksum();
+    builder
+        .append_data(&mut header, file_name, payload)
+        .expect("append plain archive payload");
+    builder.into_inner().expect("finalize plain archive")
+}
+
 fn write_probe_helper(dir: &Path) -> PathBuf {
     let helper = dir.join("ctx-avf-linux-helper");
     std::fs::write(
@@ -238,10 +250,10 @@ async fn install_bundled_runtime_fixture(
         b"container-stack",
     )
     .expect("write bundled container stack");
-    std::fs::write(images_root.join("ctx-harness.tar"), b"ctx-harness-image")
+    let image_bytes = build_test_plain_archive("ctx-harness-image", b"ctx-harness-image");
+    std::fs::write(images_root.join("ctx-harness.tar"), &image_bytes)
         .expect("write bundled image tar");
     let default_image = default_container_image();
-    let image_bytes = b"ctx-harness-image".to_vec();
     let (image_url, image_server) = spawn_static_http_server(image_bytes.clone(), 1)
         .await
         .expect("spawn bundled harness image server");

@@ -51,7 +51,9 @@ use common::{
 };
 pub(super) use terminal::terminal_stream_ws;
 #[cfg(test)]
-use terminal::{queue_terminal_ws_message, TerminalWsQueueOutcome};
+use terminal::{
+    queue_terminal_ws_message, queue_terminal_ws_tail_resync_if_requested, TerminalWsQueueOutcome,
+};
 pub(super) use web_session::web_session_signal;
 pub(super) use workspace_active::workspace_active_snapshot_stream_ws;
 

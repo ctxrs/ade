@@ -12,7 +12,7 @@ use crate::builtins::split_model_and_effort;
 use crate::protocol::{CrpChannel, CrpCommand, CrpCommandInfo, CrpEvent, CrpTurnStatus};
 use crate::RuntimeOptions;
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use tokio::sync::mpsc;
@@ -745,19 +745,15 @@ async fn translate_prompt_item_for_app_server(item: Value) -> Result<Value> {
                 .get("text")
                 .and_then(Value::as_str)
                 .ok_or_else(|| anyhow::anyhow!("text prompt item missing `text`"))?;
-            let mut translated = json!({
-                "type": "text",
-                "text": text,
-            });
+            let mut translated = Map::new();
+            translated.insert("type".to_string(), Value::String("text".to_string()));
+            translated.insert("text".to_string(), Value::String(text.to_string()));
             if let Some(text_elements) =
                 obj.get("textElements").or_else(|| obj.get("text_elements"))
             {
-                translated
-                    .as_object_mut()
-                    .expect("text item should be an object")
-                    .insert("textElements".to_string(), text_elements.clone());
+                translated.insert("textElements".to_string(), text_elements.clone());
             }
-            Ok(translated)
+            Ok(Value::Object(translated))
         }
         "image" => Ok(json!({
             "type": "image",

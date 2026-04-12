@@ -80,7 +80,7 @@ pub(super) struct ProviderAuthCheckResp {
     message: Option<String>,
 }
 
-fn classify_probe_error(
+pub(in crate::api) fn classify_probe_error(
     message: &str,
 ) -> (
     &'static str,
