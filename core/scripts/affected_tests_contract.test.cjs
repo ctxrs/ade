@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { execFileSync } = require("node:child_process");
+const { spawnSync } = require("node:child_process");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
 const coreRoot = path.join(repoRoot, "core");
@@ -58,21 +58,36 @@ printf 'pnpm %s\n' "$*" >> "\${COMMAND_LOG_PATH}"
 `,
   );
 
-  try {
-    execFileSync("bash", [scriptPath], {
-      cwd: coreRoot,
-      env: {
-        ...process.env,
-        COMMAND_LOG_PATH: commandLogPath,
-        PATH: `${binDir}:${process.env.PATH}`,
-        STUB_CHANGED_FILES: changedFiles.join("\n"),
-      },
-      stdio: "pipe",
-    });
-  } catch (error) {
-    const stdout = error.stdout ? error.stdout.toString("utf8") : "";
-    const stderr = error.stderr ? error.stderr.toString("utf8") : "";
-    throw new Error(`affected_tests.sh failed\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+  writeExecutable(
+    path.join(binDir, "node"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == "scripts/print_ctx_cache_env.cjs" ]]; then
+  exit 0
+fi
+printf 'unexpected node invocation: %s\n' "$*" >&2
+exit 1
+`,
+  );
+
+  const result = spawnSync("bash", [scriptPath], {
+    cwd: coreRoot,
+    env: {
+      ...process.env,
+      COMMAND_LOG_PATH: commandLogPath,
+      NODE_OPTIONS: "",
+      PATH: `${binDir}:${process.env.PATH}`,
+      STUB_CHANGED_FILES: changedFiles.join("\n"),
+    },
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: 10_000,
+  });
+  if (result.error || result.status !== 0) {
+    const stdout = result.stdout || "";
+    const stderr = result.stderr || "";
+    const detail = result.error ? `error: ${result.error.message}\n` : "";
+    throw new Error(`affected_tests.sh failed\n${detail}stdout:\n${stdout}\nstderr:\n${stderr}`);
   }
 
   const commandLog = fs.existsSync(commandLogPath)
@@ -91,13 +106,16 @@ test("leaf Rust crate changes stay on the targeted fast path", () => {
   ]);
 });
 
-test("ctx-http changes stay on the targeted Rust graph path", () => {
+test("ctx-http changes trigger the full safety fallback", () => {
   const commands = runScenario(["core/crates/ctx-http/src/api/mod.rs"]);
 
-  assert.deepEqual(commands, [
-    "pnpm rust:turbo:check",
-    "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/crates/ctx-http/src/api/mod.rs",
-  ]);
+  assert.deepEqual(commands, ["pnpm test:agent", "pnpm verify:e2e"]);
+});
+
+test("ctx-providers changes trigger the full safety fallback", () => {
+  const commands = runScenario(["core/crates/ctx-providers/src/lib.rs"]);
+
+  assert.deepEqual(commands, ["pnpm test:agent", "pnpm verify:e2e"]);
 });
 
 test("web high-risk changes still trigger the safety fallback", () => {

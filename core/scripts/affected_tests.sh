@@ -86,7 +86,7 @@ while IFS= read -r path; do
   esac
 
   case "${path}" in
-    core/apps/web/src/state/*|core/apps/web/src/api/*|core/apps/web/e2e/*)
+    core/crates/ctx-http/*|core/crates/ctx-store/*|core/crates/ctx-mcp/*|core/crates/ctx-providers/*|core/apps/web/src/state/*|core/apps/web/src/api/*|core/apps/web/e2e/*)
       high_risk=1
       ;;
   esac

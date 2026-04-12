@@ -14,6 +14,8 @@ const {
 
 const DEFAULT_TEST_TARGETS = getBazelTestTargetsForCrates(getBazelCoveredCrates());
 const DEFAULT_BUILD_TARGETS = getBazelBuildTargetsForCrates(getBazelCoveredCrates());
+const BAZELISK_SHIM = process.platform === "win32" ? "bazelisk.cmd" : "bazelisk";
+const BAZELISK_SHIM = process.platform === "win32" ? "bazelisk.cmd" : "bazelisk";
 
 function parseRemoteExecutionMode(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
@@ -143,6 +145,44 @@ function buildBazelPilotInvocation({ argv, env = process.env } = {}) {
   };
 }
 
+function bazeliskBinaryPath() {
+  const coreRoot = path.resolve(__dirname, "..");
+  return path.join(coreRoot, "node_modules", ".bin", BAZELISK_SHIM);
+}
+
+function buildSpawnForPhase(invocation, phase) {
+  return {
+    command: bazeliskBinaryPath(),
+    args: [...invocation.startupArgs, ...phase.commandArgs, ...phase.targets],
+    options: {
+      cwd: invocation.repoRoot,
+      env: invocation.env,
+      stdio: "inherit",
+    },
+  };
+}
+
+function buildBazelPilotSpawns({ argv, env = process.env } = {}) {
+  const invocation = buildBazelPilotInvocation({ argv, env });
+  return invocation.phases.map((phase) => buildSpawnForPhase(invocation, phase));
+}
+
+function buildBazelPilotSpawn({ argv, env = process.env } = {}) {
+  return buildBazelPilotSpawns({ argv, env })[0];
+}
+
+function formatSpawnFailureMessage(command, error) {
+  if (error && error.code === "ENOENT") {
+    return [
+      `error: Bazelisk is not installed at ${command}.`,
+      "Install core JS dependencies first with `pnpm -C core install --frozen-lockfile`",
+      "(or `pnpm -C core install` for a local dev refresh), then rerun the Bazel-backed command.",
+    ].join(" ");
+  }
+  const details = error && error.message ? error.message : String(error || "unknown spawn failure");
+  return `error: failed to start Bazelisk at ${command}: ${details}`;
+}
+
 function main() {
   const invocation = buildBazelPilotInvocation({ argv: process.argv.slice(2) });
   ensureDir(invocation.layout.tmpDir);
@@ -150,20 +190,18 @@ function main() {
   ensureDir(invocation.layout.bazelDiskCacheDir);
   ensureDir(invocation.layout.bazelRepositoryCacheDir);
   for (const phase of invocation.phases) {
-    const result = childProcess.spawnSync(
-      "bazelisk",
-      [...invocation.startupArgs, ...phase.commandArgs, ...phase.targets],
-      {
-        cwd: invocation.repoRoot,
-        env: invocation.env,
-        stdio: "inherit",
-      },
-    );
+    const spawn = buildSpawnForPhase(invocation, phase);
+    const result = childProcess.spawnSync(spawn.command, spawn.args, spawn.options);
+    if (result.error) {
+      console.error(formatSpawnFailureMessage(spawn.command, result.error));
+      process.exit(1);
+    }
     if (typeof result.status === "number" && result.status !== 0) {
       process.exit(result.status);
     }
-    if (result.error) {
-      throw result.error;
+    if (result.signal) {
+      console.error(`error: Bazelisk terminated with signal ${result.signal}`);
+      process.exit(1);
     }
   }
 }
@@ -175,7 +213,11 @@ if (require.main === module) {
 module.exports = {
   DEFAULT_BUILD_TARGETS,
   DEFAULT_TEST_TARGETS,
+  bazeliskBinaryPath,
+  buildBazelPilotSpawn,
+  buildBazelPilotSpawns,
   buildBazelPilotInvocation,
+  formatSpawnFailureMessage,
   parseArgs,
   parseRemoteExecutionMode,
 };

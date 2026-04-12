@@ -230,6 +230,21 @@ test("teamId is accepted when TURBO_TEAM_ID is also configured and matches", asy
   assert.equal(response.status, 200);
 });
 
+test("slug is rejected when only TURBO_TEAM_ID is configured", async () => {
+  // TURBO_TEAM is not set; a caller-supplied slug is unverifiable and must be blocked
+  // to prevent scope bypass via the slug path.
+  const env = buildEnv({ TURBO_TEAM_ID: "team_abc123", TURBO_TEAM: undefined });
+  const response = await worker.fetch(
+    new Request("https://cache.example/artifacts/status?slug=evil-team", {
+      headers: { authorization: "Bearer test-token" },
+    }),
+    env,
+  );
+  assert.equal(response.status, 403);
+  const body = await response.json();
+  assert.equal(body.code, "cache_scope_mismatch");
+});
+
 test("content-length in GET/HEAD response comes from stored object size, not metadata", async () => {
   const env = buildEnv();
   const body = new TextEncoder().encode("hello-world");

@@ -92,6 +92,18 @@ function resolveScope(url, env) {
       ),
     };
   }
+  // When only TURBO_TEAM_ID is configured (no TURBO_TEAM), any caller-supplied slug is
+  // unverifiable and must be rejected to prevent scope bypass via the slug path.
+  if (configuredTeamId && !configuredTeam && slug) {
+    return {
+      ok: false,
+      response: errorResponse(
+        403,
+        "cache_scope_mismatch",
+        "slug selection is not permitted when only TURBO_TEAM_ID is configured",
+      ),
+    };
+  }
 
   const scope = slug || teamId || configuredTeam || configuredTeamId || "default";
   return { ok: true, scope };

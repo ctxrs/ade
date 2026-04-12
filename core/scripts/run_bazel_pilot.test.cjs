@@ -5,7 +5,10 @@ const test = require("node:test");
 const {
   DEFAULT_BUILD_TARGETS,
   DEFAULT_TEST_TARGETS,
+  bazeliskBinaryPath,
+  buildBazelPilotSpawn,
   buildBazelPilotInvocation,
+  formatSpawnFailureMessage,
   parseArgs,
   parseRemoteExecutionMode,
 } = require("./run_bazel_pilot.cjs");
@@ -145,4 +148,37 @@ test("bazel pilot keeps run targets local even in linux remote execution mode", 
     invocation.phases[0].commandArgs.includes("--config=buildbuddy-linux-rbe"),
     false,
   );
+});
+
+test("bazel pilot uses the repo-managed bazelisk shim", () => {
+  const spawn = buildBazelPilotSpawn({
+    argv: ["run", "//core/apps/web:lint"],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-binary",
+      CTX_SESSION_ID: "bazel-binary-session",
+    },
+  });
+
+  assert.equal(
+    spawn.command,
+    path.join(path.resolve(__dirname, ".."), "node_modules", ".bin", process.platform === "win32" ? "bazelisk.cmd" : "bazelisk"),
+  );
+  assert.deepEqual(spawn.args, [
+    "--output_user_root=/tmp/ctx-bazel-pilot-binary/targets/bazel/bazel-binary-session",
+    "run",
+    "--disk_cache=/tmp/ctx-bazel-pilot-binary/cache/bazel-disk/ctx-monorepo",
+    "--repository_cache=/tmp/ctx-bazel-pilot-binary/cache/bazel-repository/ctx-monorepo",
+    "//core/apps/web:lint",
+  ]);
+});
+
+test("bazel pilot missing shim failure tells the operator how to install it", () => {
+  const error = new Error("spawnSync bazelisk ENOENT");
+  error.code = "ENOENT";
+
+  const message = formatSpawnFailureMessage(bazeliskBinaryPath(), error);
+
+  assert.match(message, /Bazelisk is not installed/);
+  assert.match(message, /pnpm -C core install --frozen-lockfile/);
 });
