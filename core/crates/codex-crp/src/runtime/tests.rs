@@ -31,6 +31,29 @@ struct SnapshotOutput {
     latest_token_usage: Option<crate::app_server::ThreadTokenUsage>,
 }
 
+struct EnvGuard {
+    key: &'static str,
+    prev: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let prev = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, prev }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        if let Some(prev) = self.prev.take() {
+            std::env::set_var(self.key, prev);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
+
 fn testdata_path(file: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("testdata")
@@ -278,4 +301,66 @@ async fn session_status_without_active_session_emits_failure_notice() {
         }
         other => panic!("expected session notice, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn translate_prompt_items_for_app_server_converts_blob_refs_to_local_images() {
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let _guard = EnvGuard::set("CTX_DATA_ROOT", &data_root.path().to_string_lossy());
+    let expected_path = data_root.path().join("blobs").join("blob-123");
+
+    let translated = translate_prompt_items_for_app_server(vec![json!({
+        "type": "image_ref",
+        "blob_id": "blob-123",
+        "mime_type": "image/png",
+        "name": "cat.png",
+    })])
+    .await
+    .expect("image_ref should translate");
+
+    assert_eq!(
+        translated,
+        vec![json!({
+            "type": "localImage",
+            "path": expected_path.to_string_lossy().to_string(),
+        })]
+    );
+}
+
+#[tokio::test]
+async fn translate_prompt_items_for_app_server_converts_inline_images_to_data_urls() {
+    let translated = translate_prompt_items_for_app_server(vec![json!({
+        "type": "image",
+        "mime_type": "image/png",
+        "data": "AQID",
+        "name": "cat.png",
+    })])
+    .await
+    .expect("inline image should translate");
+
+    assert_eq!(
+        translated,
+        vec![json!({
+            "type": "image",
+            "url": "data:image/png;base64,AQID",
+        })]
+    );
+}
+
+#[tokio::test]
+async fn translate_prompt_items_for_app_server_renames_local_image_items() {
+    let translated = translate_prompt_items_for_app_server(vec![json!({
+        "type": "local_image",
+        "path": "/tmp/cat.png",
+    })])
+    .await
+    .expect("local_image should translate");
+
+    assert_eq!(
+        translated,
+        vec![json!({
+            "type": "localImage",
+            "path": "/tmp/cat.png",
+        })]
+    );
 }

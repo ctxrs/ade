@@ -350,6 +350,19 @@ async fn handle_parsed_command(
             let (model, effort_override) = split_model_and_effort(&requested_model);
             let effort = effort_override.or(reasoning_effort);
             let requested_turn_id = turn_id.clone();
+            let app_server_input = match translate_prompt_items_for_app_server(items).await {
+                Ok(items) => items,
+                Err(err) => {
+                    emit_turn_request_error(
+                        router,
+                        &state.tracker.session_id,
+                        turn_id,
+                        "turn_start_input_translation_failed",
+                        err.to_string(),
+                    );
+                    return Ok(());
+                }
+            };
 
             match state
                 .client
@@ -357,7 +370,7 @@ async fn handle_parsed_command(
                     "turn/start",
                     json!({
                         "threadId": state.thread_id,
-                        "input": items,
+                        "input": app_server_input,
                         "cwd": cwd.to_string_lossy().to_string(),
                         "model": model,
                         "effort": effort,
@@ -870,6 +883,110 @@ fn session_effort(config: &CrpSessionConfig) -> Option<String> {
                 .filter(|value| !value.is_empty())
                 .map(str::to_string)
         })
+}
+
+async fn translate_prompt_items_for_app_server(items: Vec<Value>) -> Result<Vec<Value>> {
+    let mut translated = Vec::with_capacity(items.len());
+    for item in items {
+        translated.push(translate_prompt_item_for_app_server(item).await?);
+    }
+    Ok(translated)
+}
+
+async fn translate_prompt_item_for_app_server(item: Value) -> Result<Value> {
+    let Some(obj) = item.as_object() else {
+        anyhow::bail!("Codex prompt items must be JSON objects");
+    };
+    let Some(item_type) = obj.get("type").and_then(Value::as_str) else {
+        anyhow::bail!("Codex prompt items must include a string `type` field");
+    };
+
+    match item_type {
+        "text" => {
+            let text = obj
+                .get("text")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("text prompt item missing `text`"))?;
+            let mut translated = json!({
+                "type": "text",
+                "text": text,
+            });
+            if let Some(text_elements) =
+                obj.get("textElements").or_else(|| obj.get("text_elements"))
+            {
+                translated
+                    .as_object_mut()
+                    .expect("text item should be an object")
+                    .insert("textElements".to_string(), text_elements.clone());
+            }
+            Ok(translated)
+        }
+        "image" => Ok(json!({
+            "type": "image",
+            "url": translate_image_item_to_url(obj)?,
+        })),
+        "image_ref" => {
+            let blob_id = obj
+                .get("blob_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("image_ref prompt item missing `blob_id`"))?;
+            let data_root = codex_runtime_data_root().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "image_ref prompt item requires CTX_DATA_ROOT or CTX_DATA_ROOT_HOST"
+                )
+            })?;
+            let blob_path = data_root.join("blobs").join(blob_id);
+            Ok(json!({
+                "type": "localImage",
+                "path": blob_path.to_string_lossy().to_string(),
+            }))
+        }
+        "local_image" => {
+            let path = obj
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("local_image prompt item missing `path`"))?;
+            Ok(json!({
+                "type": "localImage",
+                "path": path,
+            }))
+        }
+        "localImage" | "skill" | "mention" => Ok(item),
+        other => anyhow::bail!("unsupported Codex prompt item type `{other}`"),
+    }
+}
+
+fn translate_image_item_to_url(obj: &serde_json::Map<String, Value>) -> Result<String> {
+    if let Some(url) = obj.get("url").and_then(Value::as_str) {
+        return Ok(url.to_string());
+    }
+
+    let data = obj
+        .get("data")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("image prompt item missing `data` or `url`"))?;
+    if data
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
+    {
+        return Ok(data.to_string());
+    }
+
+    let mime_type = obj
+        .get("mime_type")
+        .or_else(|| obj.get("mimeType"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("image prompt item missing `mime_type`/`mimeType`"))?;
+    Ok(format!("data:{mime_type};base64,{data}"))
+}
+
+fn codex_runtime_data_root() -> Option<PathBuf> {
+    std::env::var("CTX_DATA_ROOT")
+        .ok()
+        .or_else(|| std::env::var("CTX_DATA_ROOT_HOST").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 async fn handle_app_server_event(
