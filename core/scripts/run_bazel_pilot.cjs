@@ -15,7 +15,6 @@ const {
 const DEFAULT_TEST_TARGETS = getBazelTestTargetsForCrates(getBazelCoveredCrates());
 const DEFAULT_BUILD_TARGETS = getBazelBuildTargetsForCrates(getBazelCoveredCrates());
 const BAZELISK_SHIM = process.platform === "win32" ? "bazelisk.cmd" : "bazelisk";
-const BAZELISK_SHIM = process.platform === "win32" ? "bazelisk.cmd" : "bazelisk";
 
 function parseRemoteExecutionMode(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
