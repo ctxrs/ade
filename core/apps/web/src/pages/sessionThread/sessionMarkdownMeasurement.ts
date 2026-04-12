@@ -36,8 +36,8 @@ import {
   SESSION_THREAD_MARKDOWN_IMAGE_HEIGHT_PX,
   SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY,
   SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX,
+  SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_HEIGHT_PX,
   SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_SIZE_PX,
-  SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_BLOCK_PX,
   SESSION_THREAD_MARKDOWN_LIST_GAP_PX,
   SESSION_THREAD_MARKDOWN_LIST_MARKER_GAP_PX,
   SESSION_THREAD_MARKDOWN_TABLE_BORDER_WIDTH_PX,
@@ -452,7 +452,8 @@ function prepareInlineLayoutItems(params: {
   const items: PreparedInlineLayoutItem[] = [];
   const inlineCodeFont = resolveInlineCodeFont(params.typography.body);
   const inlineCodeLineHeight =
-    Math.max(params.typography.lineHeight, MONO_LINE_HEIGHT_PX) + SESSION_THREAD_MARKDOWN_INLINE_CODE_PADDING_BLOCK_PX;
+    Math.max(params.typography.lineHeight, MONO_LINE_HEIGHT_PX) +
+    SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_HEIGHT_PX;
   const preserveBodyTextRuns =
     params.runs.some((run) => run.kind === "inlineCode") &&
     params.runs.every((run) => run.kind !== "text" || run.style === "body");

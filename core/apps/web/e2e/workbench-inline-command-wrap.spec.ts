@@ -167,6 +167,68 @@ test("workbench: dense inline links and inline-code chips stay deterministic", a
   ).toBeLessThanOrEqual(ASSISTANT_ENTRY_PADDING_TOLERANCE_PX);
 });
 
+test("workbench: a long wrapped inline-code chip does not overlap the trailing turn status row", async ({ page, request }) => {
+  const seed = await seedDummyWorkspace(request, {
+    tasks: 1,
+    sessionsPerTask: 1,
+    turnsPerSession: 0,
+  });
+
+  await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
+  const rows = page.locator(".wb-task-row");
+  await expect(rows).toHaveCount(1);
+  await rows.first().click();
+  await page.waitForTimeout(400);
+  await expect(page.locator('.wb-session-slot[aria-hidden="false"] textarea.wb-active-textarea')).toBeVisible({
+    timeout: 20_000,
+  });
+
+  const sessionId = seed.sessionIdsByTask[seed.taskIds[0]][0];
+  const marker = `inline-code-overlap-${Date.now()}`;
+  const content =
+    `${marker} begin agent message here with plain text, and now some inline code block: ` +
+    "`inline-thing-that-actually-gets-really-long-so-much-so-that-it-actually-wraps-to-2-lines-and-keeps-going-with-extra-path-segments/core/apps/web/src/pages/sessionThread/sessionMarkdownMeasurement.ts`";
+
+  const resp = await request.post(`/api/sessions/${sessionId}/messages`, {
+    data: { content, delivery: "immediate" },
+  });
+  expect(resp.ok()).toBeTruthy();
+
+  const assistantEntry = page.locator(".wb-assistant-entry").filter({ hasText: `done: ${marker}` });
+  await expect(assistantEntry).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator(".wb-turn-status")).toBeVisible({ timeout: 20_000 });
+
+  const overlapAndGap = await page.evaluate((markerValue) => {
+    const entries = Array.from(document.querySelectorAll<HTMLElement>(".wb-assistant-entry"));
+    const entry = entries.find((element) => element.textContent?.includes(`done: ${markerValue}`));
+    if (!entry) return null;
+    const slot = entry.closest(".wb-pretext-virtualizer-row")?.parentElement ?? null;
+    const nextSlot = slot?.nextElementSibling ?? null;
+    const nextRow = nextSlot?.querySelector<HTMLElement>(".wb-pretext-virtualizer-row") ?? null;
+    const code = entry.querySelector<HTMLElement>("code");
+    if (!slot || !nextRow || !code) return null;
+    const slotRect = slot.getBoundingClientRect();
+    const nextRect = nextRow.getBoundingClientRect();
+    const codeRect = code.getBoundingClientRect();
+    return {
+      slotToNextGapPx: nextRect.top - slotRect.bottom,
+      codeToNextGapPx: nextRect.top - codeRect.bottom,
+      slotContentSlackPx: slotRect.bottom - codeRect.bottom,
+      overlapPx: slotRect.bottom - nextRect.top,
+      codeClientRectCount: code.getClientRects().length,
+    };
+  }, marker);
+
+  expect(overlapAndGap).not.toBeNull();
+  expect(overlapAndGap?.codeClientRectCount ?? 0).toBeGreaterThan(1);
+  expect(overlapAndGap?.overlapPx ?? 0).toBeLessThanOrEqual(1);
+  expect(overlapAndGap?.slotToNextGapPx ?? Number.NEGATIVE_INFINITY).toBeGreaterThanOrEqual(-1);
+  expect(overlapAndGap?.codeToNextGapPx ?? Number.NEGATIVE_INFINITY).toBeGreaterThanOrEqual(-1);
+  expect(
+    Math.abs((overlapAndGap?.slotContentSlackPx ?? Number.NEGATIVE_INFINITY) - ASSISTANT_ENTRY_BOTTOM_PADDING_PX),
+  ).toBeLessThanOrEqual(ASSISTANT_ENTRY_PADDING_TOLERANCE_PX);
+});
+
 test("workbench: rich markdown assistant rows do not overlap a trailing turn status row", async ({ page, request }) => {
   const seed = await seedDummyWorkspace(request, {
     tasks: 1,

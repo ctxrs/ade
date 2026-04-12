@@ -27,6 +27,8 @@ const ASSISTANT_MARKDOWN = [
   "const x = 1;",
   "```",
 ].join("\n");
+const ASSISTANT_INLINE_CODE_WRAP_MARKDOWN =
+  "begin agent message here with plain text, and now some inline code block: `inline-thing-that-actually-gets-really-long-so-much-so-that-it-actually-wraps-to-2-lines-and-keeps-going-with-extra-path-segments/core/apps/web/src/pages/sessionThread/sessionMarkdownMeasurement.ts`";
 const TURN_HEADER_TEXT = "and what about the CI smoke failure?";
 
 const IMAGE_DATA_BASE64 =
@@ -326,6 +328,18 @@ test("workbench: assistant markdown planner matches rendered height", async ({ p
   expect(
     Math.abs(measurement.delta),
     `assistant drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual})`,
+  ).toBeLessThanOrEqual(1);
+});
+
+test("workbench: assistant prose with wrapped inline code matches rendered height", async ({ page }) => {
+  test.setTimeout(120000);
+  await openWorkbenchShell(page);
+
+  const measurement = await measureAssistantParity(page, ASSISTANT_INLINE_CODE_WRAP_MARKDOWN);
+
+  expect(
+    Math.abs(measurement.delta),
+    `assistant inline-code drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual})`,
   ).toBeLessThanOrEqual(1);
 });
 
