@@ -671,7 +671,7 @@ elif cmd == "prepare-guest-worktree":
     shadow = root / "shadow-root"
     if shadow.exists():
         shutil.rmtree(shadow)
-    shutil.copytree(host_workspace_root, shadow, dirs_exist_ok=True)
+    shutil.copytree(host_workspace_root, shadow)
     metadata_path = root / "worktree.json"
     payload = {{
         "protocol_version": PROTOCOL_VERSION,
