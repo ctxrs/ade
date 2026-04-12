@@ -2,6 +2,10 @@ function sortUnique(values) {
   return [...new Set(values)].filter(Boolean).sort();
 }
 
+function flattenTargetMapping(mapping) {
+  return sortUnique(Object.values(mapping).flat());
+}
+
 const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
   "ctx-avf-linux-runtime": ["//core/crates/ctx-avf-linux-runtime:unit_tests"],
   "ctx-core": [
@@ -60,6 +64,15 @@ const BAZEL_BUILD_TARGETS_BY_CRATE = Object.freeze({
   "ctx-workspace-runtime": ["//core/crates/ctx-workspace-runtime:lib"],
 });
 
+const LINUX_RBE_SAFE_BAZEL_TEST_TARGETS = Object.freeze(flattenTargetMapping(BAZEL_TEST_TARGETS_BY_CRATE));
+
+// Keep Linux RBE build targets conservative on Mac hosts: libraries are safe to
+// compile remotely, but host executables should stay local unless we explicitly
+// decide the Linux output is what the caller wants.
+const LINUX_RBE_SAFE_BAZEL_BUILD_TARGETS = Object.freeze(
+  flattenTargetMapping(BAZEL_BUILD_TARGETS_BY_CRATE).filter((target) => target.endsWith(":lib")),
+);
+
 function getBazelCoveredCrates() {
   return Object.keys(BAZEL_TEST_TARGETS_BY_CRATE).sort();
 }
@@ -84,10 +97,41 @@ function getBazelBuildTargetsForCrates(crateNames) {
   return getBazelTargetsForCrates(BAZEL_BUILD_TARGETS_BY_CRATE, crateNames);
 }
 
+function getLinuxRbeSafeBazelTargets(command) {
+  if (command === "test") {
+    return LINUX_RBE_SAFE_BAZEL_TEST_TARGETS;
+  }
+  if (command === "build") {
+    return LINUX_RBE_SAFE_BAZEL_BUILD_TARGETS;
+  }
+  return [];
+}
+
+function partitionBazelTargetsForLinuxRbe(command, targets) {
+  const safeTargets = new Set(getLinuxRbeSafeBazelTargets(command));
+  const remoteTargets = [];
+  const localTargets = [];
+  for (const target of sortUnique(targets)) {
+    if (safeTargets.has(target)) {
+      remoteTargets.push(target);
+    } else {
+      localTargets.push(target);
+    }
+  }
+  return {
+    remoteTargets,
+    localTargets,
+  };
+}
+
 module.exports = {
   BAZEL_BUILD_TARGETS_BY_CRATE,
   BAZEL_TEST_TARGETS_BY_CRATE,
   getBazelBuildTargetsForCrates,
   getBazelCoveredCrates,
+  getLinuxRbeSafeBazelTargets,
   getBazelTestTargetsForCrates,
+  LINUX_RBE_SAFE_BAZEL_BUILD_TARGETS,
+  LINUX_RBE_SAFE_BAZEL_TEST_TARGETS,
+  partitionBazelTargetsForLinuxRbe,
 };

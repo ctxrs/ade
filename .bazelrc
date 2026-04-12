@@ -6,5 +6,8 @@ common:buildbuddy-cache --remote_timeout=3600
 common:buildbuddy-cache --remote_upload_local_results=true
 common:buildbuddy-rbe --remote_executor=grpcs://remote.buildbuddy.io
 common:buildbuddy-rbe --remote_timeout=3600
+common:buildbuddy-linux-rbe --remote_executor=grpcs://remote.buildbuddy.io
+common:buildbuddy-linux-rbe --remote_timeout=3600
+common:buildbuddy-linux-rbe --remote_default_exec_properties=OSFamily=Linux
 test --test_output=errors
 try-import %workspace%/user.bazelrc

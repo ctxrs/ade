@@ -7,6 +7,7 @@ const {
   DEFAULT_TEST_TARGETS,
   buildBazelPilotInvocation,
   parseArgs,
+  parseRemoteExecutionMode,
 } = require("./run_bazel_pilot.cjs");
 
 test("bazel pilot defaults to the expanded Rust slice test targets", () => {
@@ -60,9 +61,19 @@ test("bazel pilot invocation stays on the volatile cache layout", () => {
     true,
   );
   assert.equal(invocation.env.TMPDIR, "/tmp/ctx-bazel-pilot/tmp");
+  assert.equal(invocation.phases.length, 1);
+  assert.equal(invocation.phases[0].name, "local");
 });
 
-test("bazel pilot invocation enables BuildBuddy remote execution when requested", () => {
+test("bazel pilot remote execution mode parsing supports off, all, and linux", () => {
+  assert.equal(parseRemoteExecutionMode(undefined), "off");
+  assert.equal(parseRemoteExecutionMode(""), "off");
+  assert.equal(parseRemoteExecutionMode("1"), "all");
+  assert.equal(parseRemoteExecutionMode("true"), "all");
+  assert.equal(parseRemoteExecutionMode("linux"), "linux");
+});
+
+test("bazel pilot invocation enables full BuildBuddy remote execution when requested", () => {
   const invocation = buildBazelPilotInvocation({
     argv: ["build"],
     env: {
@@ -73,8 +84,65 @@ test("bazel pilot invocation enables BuildBuddy remote execution when requested"
     },
   });
 
+  assert.equal(invocation.remoteExecutionMode, "all");
+  assert.equal(invocation.phases.length, 1);
+  assert.equal(invocation.phases[0].name, "remote");
+  assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-rbe"), true);
+});
+
+test("bazel pilot linux remote execution keeps lib builds remote and host executables local", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: [
+      "build",
+      "//core/crates/ctx-provider-accounts:lib",
+      "//core/crates/ctx-lsp:ctx-lsp-test-server",
+    ],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-linux-rbe",
+      CTX_SESSION_ID: "bazel-linux-rbe-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "linux",
+    },
+  });
+
+  assert.equal(invocation.remoteExecutionMode, "linux");
+  assert.deepEqual(
+    invocation.phases.map((phase) => ({
+      name: phase.name,
+      targets: phase.targets,
+      hasLinuxConfig: phase.commandArgs.includes("--config=buildbuddy-linux-rbe"),
+    })),
+    [
+      {
+        name: "linux-rbe",
+        targets: ["//core/crates/ctx-provider-accounts:lib"],
+        hasLinuxConfig: true,
+      },
+      {
+        name: "local",
+        targets: ["//core/crates/ctx-lsp:ctx-lsp-test-server"],
+        hasLinuxConfig: false,
+      },
+    ],
+  );
+});
+
+test("bazel pilot keeps run targets local even in linux remote execution mode", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: ["run", "//core/apps/web:unit_tests"],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-linux-rbe-run",
+      CTX_SESSION_ID: "bazel-linux-rbe-run-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "linux",
+    },
+  });
+
+  assert.equal(invocation.remoteExecutionMode, "linux");
+  assert.equal(invocation.phases.length, 1);
+  assert.equal(invocation.phases[0].name, "local");
   assert.equal(
-    invocation.commandArgs.includes("--config=buildbuddy-rbe"),
-    true,
+    invocation.phases[0].commandArgs.includes("--config=buildbuddy-linux-rbe"),
+    false,
   );
 });

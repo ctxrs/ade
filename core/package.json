@@ -5,8 +5,11 @@
   "scripts": {
     "test": "node scripts/run_with_ctx_cache_env.cjs --mode workspace -- cargo test -q && pnpm -C apps/web test",
     "test:agent": "node scripts/run_rust_gate.cjs --mode workspace --agent-gate --test-strategy mixed && pnpm bazel:web:test",
+    "test:agent:linux-rbe": "CTX_BAZEL_REMOTE_EXECUTION=linux node scripts/run_rust_gate.cjs --mode workspace --agent-gate --test-strategy mixed && pnpm bazel:web:test",
     "bazel:pilot:test": "node scripts/run_bazel_pilot.cjs test",
+    "bazel:pilot:test:linux-rbe": "CTX_BAZEL_REMOTE_EXECUTION=linux node scripts/run_bazel_pilot.cjs test",
     "bazel:pilot:build": "node scripts/run_bazel_pilot.cjs build",
+    "bazel:pilot:build:linux-rbe": "CTX_BAZEL_REMOTE_EXECUTION=linux node scripts/run_bazel_pilot.cjs build",
     "bazel:web:build": "node scripts/run_bazel_pilot.cjs run //core/apps/web:build",
     "bazel:web:any:enforce": "node scripts/run_bazel_pilot.cjs run //core/apps/web:any_enforce",
     "bazel:web:lint": "node scripts/run_bazel_pilot.cjs run //core/apps/web:lint",
