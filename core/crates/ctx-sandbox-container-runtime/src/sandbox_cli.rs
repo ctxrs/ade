@@ -482,8 +482,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn sandbox_container_command_shared_vm_does_not_leak_host_runtime_paths() {
+    #[tokio::test]
+    async fn sandbox_container_command_shared_vm_does_not_leak_host_runtime_paths() {
+        let _serial = env_var_test_lock().lock().await;
         let data_root = Path::new("/Users/example-user/.ctx");
         let helper_path = PathBuf::from("/tmp/ctx-avf-linux-helper");
         let cmd = sandbox_container_command(

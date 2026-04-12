@@ -11,8 +11,11 @@ ctx-harness-setup = { path = "../ctx-harness-setup" }
 ctx-linux-sandbox-runtime = { path = "../ctx-linux-sandbox-runtime" }
 ctx-runtime-assets = { path = "../ctx-runtime-assets" }
 ctx-sandbox-contract = { path = "../ctx-sandbox-contract" }
+flate2 = "1"
 hex = "0.4"
+serde_json = { workspace = true }
 sha2 = "0.10"
+tar = "0.4"
 tokio.workspace = true
 
 [dev-dependencies]

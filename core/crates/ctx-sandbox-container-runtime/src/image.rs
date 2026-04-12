@@ -1,14 +1,20 @@
+use std::fs as stdfs;
+use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 #[cfg(test)]
 use std::sync::Mutex as StdMutex;
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use ctx_bundled_assets as bundled_assets;
 use ctx_runtime_assets::download_managed_artifact;
 use ctx_sandbox_contract::shared_vm_guest_host_share_path;
+use flate2::read::GzDecoder;
+use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
+use tar::{Archive, Builder};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::{fs, sync::Mutex};
 
@@ -293,7 +299,20 @@ fn managed_default_container_image_tar_path(data_root: &Path, sha256: &str) -> P
         .join(format!("sha256-{}.tar", sha256.trim().to_ascii_lowercase()))
 }
 
+fn normalized_shared_vm_container_image_tar_path(data_root: &Path, sha256: &str) -> PathBuf {
+    data_root
+        .join("managed")
+        .join("images")
+        .join("docker-archive")
+        .join(format!("sha256-{}.tar", sha256.trim().to_ascii_lowercase()))
+}
+
 pub fn managed_default_image_install_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn shared_vm_image_archive_normalization_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
@@ -407,6 +426,292 @@ pub async fn ensure_managed_default_container_image_tar_with_source(
     Ok(final_tar)
 }
 
+async fn prepare_container_image_tar_for_load(
+    data_root: &Path,
+    mode: &SandboxCommandMode,
+    tar: &Path,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<PathBuf> {
+    if !matches!(mode, SandboxCommandMode::SharedVm { .. }) {
+        return Ok(tar.to_path_buf());
+    }
+
+    let _guard = shared_vm_image_archive_normalization_lock().lock().await;
+    let source_sha = sha256_hex_file(tar)
+        .await
+        .with_context(|| format!("computing sha256 for {}", tar.display()))?;
+    let normalized_tar = normalized_shared_vm_container_image_tar_path(data_root, &source_sha);
+    if normalized_tar.exists() {
+        return Ok(normalized_tar);
+    }
+
+    let tar_path = tar.to_path_buf();
+    let normalized_tar_path = normalized_tar.clone();
+    let normalized = tokio::task::spawn_blocking(move || {
+        normalize_oci_archive_to_docker_archive(&tar_path, &normalized_tar_path)
+    })
+    .await
+    .context("joining shared VM image archive normalization task")??;
+
+    if normalized {
+        observe_log(
+            observer,
+            HarnessSetupPhase::ImageLoad,
+            HarnessSetupLogLevel::Info,
+            &format!(
+                "normalized shared VM image archive to docker-archive {}",
+                normalized_tar.display()
+            ),
+        );
+        return Ok(normalized_tar);
+    }
+
+    Ok(tar.to_path_buf())
+}
+
+fn normalize_oci_archive_to_docker_archive(source: &Path, dest: &Path) -> Result<bool> {
+    let Some(parent) = dest.parent() else {
+        anyhow::bail!("normalized archive path has no parent: {}", dest.display());
+    };
+    stdfs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let staging_root = parent.join(format!(
+        ".docker-archive-normalize-{}-{}",
+        std::process::id(),
+        nonce
+    ));
+    let extract_root = staging_root.join("extract");
+    let docker_root = staging_root.join("docker-archive");
+    let temp_tar = staging_root.join("normalized.tar");
+    stdfs::create_dir_all(&extract_root)
+        .with_context(|| format!("creating {}", extract_root.display()))?;
+
+    let result = (|| -> Result<bool> {
+        let source_file =
+            stdfs::File::open(source).with_context(|| format!("opening {}", source.display()))?;
+        let mut archive = Archive::new(source_file);
+        archive
+            .unpack(&extract_root)
+            .with_context(|| format!("unpacking {}", source.display()))?;
+
+        if !extract_root.join("oci-layout").is_file()
+            || !extract_root.join("blobs").join("sha256").is_dir()
+        {
+            return Ok(false);
+        }
+
+        build_docker_archive_from_oci_extract(&extract_root, &docker_root)?;
+        write_directory_to_tar(&docker_root, &temp_tar)?;
+        stdfs::rename(&temp_tar, dest).with_context(|| {
+            format!(
+                "moving normalized docker archive into place: {} -> {}",
+                temp_tar.display(),
+                dest.display()
+            )
+        })?;
+        Ok(true)
+    })();
+
+    let _ = stdfs::remove_dir_all(&staging_root);
+    result
+}
+
+fn build_docker_archive_from_oci_extract(extract_root: &Path, docker_root: &Path) -> Result<()> {
+    stdfs::create_dir_all(docker_root)
+        .with_context(|| format!("creating {}", docker_root.display()))?;
+
+    let manifest_path = extract_root.join("manifest.json");
+    let manifest: Value = serde_json::from_slice(
+        &stdfs::read(&manifest_path)
+            .with_context(|| format!("reading {}", manifest_path.display()))?,
+    )
+    .with_context(|| format!("parsing {}", manifest_path.display()))?;
+    let manifest_entries = manifest
+        .as_array()
+        .context("manifest.json did not contain an array")?;
+    let manifest_entry = manifest_entries
+        .first()
+        .context("manifest.json did not contain any image entries")?;
+
+    let config_rel = manifest_entry
+        .get("Config")
+        .and_then(Value::as_str)
+        .context("manifest.json entry missing Config")?;
+    let repo_tags = manifest_entry
+        .get("RepoTags")
+        .and_then(Value::as_array)
+        .context("manifest.json entry missing RepoTags")?
+        .iter()
+        .filter_map(Value::as_str)
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    let layer_rels = manifest_entry
+        .get("Layers")
+        .and_then(Value::as_array)
+        .context("manifest.json entry missing Layers")?
+        .iter()
+        .filter_map(Value::as_str)
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+
+    let config_source = extract_root.join(config_rel);
+    let config_stem = config_source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .context("config path in manifest.json had no file name")?;
+    let config_name = format!("{config_stem}.json");
+    stdfs::copy(&config_source, docker_root.join(&config_name)).with_context(|| {
+        format!(
+            "copying image config {} into docker archive root",
+            config_source.display()
+        )
+    })?;
+
+    let mut docker_layers = Vec::with_capacity(layer_rels.len());
+    for (index, layer_rel) in layer_rels.iter().enumerate() {
+        let layer_source = extract_root.join(layer_rel);
+        let mut hasher = Sha256::new();
+        hasher.update(index.to_string().as_bytes());
+        hasher.update(b":");
+        hasher.update(layer_rel.as_bytes());
+        let layer_id = hex::encode(hasher.finalize());
+        let layer_root = docker_root.join(&layer_id);
+        stdfs::create_dir_all(&layer_root)
+            .with_context(|| format!("creating {}", layer_root.display()))?;
+        write_layer_tar_payload(&layer_source, &layer_root.join("layer.tar"))?;
+        stdfs::write(layer_root.join("VERSION"), b"1.0")
+            .with_context(|| format!("writing {}/VERSION", layer_root.display()))?;
+        stdfs::write(layer_root.join("json"), b"{}")
+            .with_context(|| format!("writing {}/json", layer_root.display()))?;
+        docker_layers.push(format!("{layer_id}/layer.tar"));
+    }
+
+    let docker_manifest = vec![json!({
+        "Config": config_name.clone(),
+        "RepoTags": repo_tags.clone(),
+        "Layers": docker_layers,
+    })];
+    stdfs::write(
+        docker_root.join("manifest.json"),
+        serde_json::to_vec(&docker_manifest).context("serializing docker archive manifest.json")?,
+    )
+    .with_context(|| format!("writing {}/manifest.json", docker_root.display()))?;
+
+    let config_id = config_name.trim_end_matches(".json");
+    let mut repositories = Map::new();
+    for repo_tag in repo_tags {
+        if let Some((repo, tag)) = split_repo_tag(&repo_tag) {
+            let entry = repositories
+                .entry(repo.to_string())
+                .or_insert_with(|| Value::Object(Map::new()));
+            let Some(tags) = entry.as_object_mut() else {
+                anyhow::bail!("docker repositories entry for {repo} was not an object");
+            };
+            tags.insert(tag.to_string(), Value::String(config_id.to_string()));
+        }
+    }
+    stdfs::write(
+        docker_root.join("repositories"),
+        serde_json::to_vec(&Value::Object(repositories))
+            .context("serializing docker archive repositories")?,
+    )
+    .with_context(|| format!("writing {}/repositories", docker_root.display()))?;
+
+    Ok(())
+}
+
+fn split_repo_tag(reference: &str) -> Option<(&str, &str)> {
+    let (repo, tag) = reference.rsplit_once(':')?;
+    if repo.is_empty() || tag.is_empty() || tag.contains('/') {
+        return None;
+    }
+    Some((repo, tag))
+}
+
+fn write_layer_tar_payload(source: &Path, dest: &Path) -> Result<()> {
+    let mut prefix = [0u8; 2];
+    let mut source_probe =
+        stdfs::File::open(source).with_context(|| format!("opening {}", source.display()))?;
+    let prefix_len = source_probe
+        .read(&mut prefix)
+        .with_context(|| format!("reading {}", source.display()))?;
+    drop(source_probe);
+
+    let source_file =
+        stdfs::File::open(source).with_context(|| format!("opening {}", source.display()))?;
+    let mut reader: Box<dyn Read> = if prefix_len == 2 && prefix == [0x1f, 0x8b] {
+        Box::new(GzDecoder::new(BufReader::new(source_file)))
+    } else {
+        Box::new(BufReader::new(source_file))
+    };
+    let mut output =
+        stdfs::File::create(dest).with_context(|| format!("creating {}", dest.display()))?;
+    std::io::copy(&mut reader, &mut output).with_context(|| {
+        format!(
+            "writing docker archive layer payload {} from {}",
+            dest.display(),
+            source.display()
+        )
+    })?;
+    output
+        .flush()
+        .with_context(|| format!("flushing {}", dest.display()))?;
+    Ok(())
+}
+
+fn write_directory_to_tar(source_root: &Path, tar_path: &Path) -> Result<()> {
+    let tar_file = stdfs::File::create(tar_path)
+        .with_context(|| format!("creating {}", tar_path.display()))?;
+    let mut builder = Builder::new(tar_file);
+    append_directory_tree(&mut builder, source_root, source_root)?;
+    builder
+        .finish()
+        .with_context(|| format!("finalizing {}", tar_path.display()))?;
+    Ok(())
+}
+
+fn append_directory_tree(
+    builder: &mut Builder<stdfs::File>,
+    source_root: &Path,
+    current: &Path,
+) -> Result<()> {
+    let mut entries = stdfs::read_dir(current)
+        .with_context(|| format!("reading {}", current.display()))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .with_context(|| format!("collecting entries for {}", current.display()))?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
+        let path = entry.path();
+        let rel = path.strip_prefix(source_root).with_context(|| {
+            format!(
+                "stripping {} from {}",
+                source_root.display(),
+                path.display()
+            )
+        })?;
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("reading type for {}", path.display()))?;
+        if file_type.is_dir() {
+            builder
+                .append_dir(rel, &path)
+                .with_context(|| format!("adding directory {} to archive", rel.display()))?;
+            append_directory_tree(builder, source_root, &path)?;
+        } else {
+            builder
+                .append_path_with_name(&path, rel)
+                .with_context(|| format!("adding file {} to archive", rel.display()))?;
+        }
+    }
+
+    Ok(())
+}
+
 async fn read_child_pipe<R>(mut reader: R) -> std::io::Result<Vec<u8>>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -423,9 +728,10 @@ async fn load_container_image_tar(
     image: &str,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<()> {
+    let prepared_tar = prepare_container_image_tar_for_load(data_root, mode, tar, observer).await?;
     let mut cmd = sandbox_container_command(data_root, mode)?;
     let guest_tar_path = matches!(mode, SandboxCommandMode::SharedVm { .. })
-        .then(|| shared_vm_guest_host_share_path(data_root, tar))
+        .then(|| shared_vm_guest_host_share_path(data_root, &prepared_tar))
         .flatten();
     let stream_tar_over_stdin =
         matches!(mode, SandboxCommandMode::SharedVm { .. }) && guest_tar_path.is_none();
@@ -433,7 +739,7 @@ async fn load_container_image_tar(
     if let Some(guest_tar_path) = guest_tar_path.as_ref() {
         cmd.arg("-i").arg(guest_tar_path);
     } else if !stream_tar_over_stdin {
-        cmd.arg("-i").arg(tar);
+        cmd.arg("-i").arg(&prepared_tar);
     }
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -444,21 +750,24 @@ async fn load_container_image_tar(
             HarnessSetupLogLevel::Info,
             &format!(
                 "streaming harness image tar into shared VM because {} is outside the shared data root",
-                tar.display()
+                prepared_tar.display()
             ),
         );
         cmd.stdin(Stdio::piped());
     }
     cmd.kill_on_drop(true);
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("spawning container image load for {}", tar.display()))?;
+    let mut child = cmd.spawn().with_context(|| {
+        format!(
+            "spawning container image load for {}",
+            prepared_tar.display()
+        )
+    })?;
     let stdin_task = if stream_tar_over_stdin {
         let mut stdin = child
             .stdin
             .take()
             .context("container image load stdin was not captured")?;
-        let tar_path = tar.to_path_buf();
+        let tar_path = prepared_tar.to_path_buf();
         Some(tokio::spawn(async move {
             let mut file = fs::File::open(&tar_path).await?;
             tokio::io::copy(&mut file, &mut stdin).await?;
@@ -532,8 +841,9 @@ async fn load_container_image_tar(
                     Ok(()) => {}
                     Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => {}
                     Err(err) => {
-                        return Err(err)
-                            .context("streaming container image tar to timed out sandbox CLI stdin");
+                        return Err(err).context(
+                            "streaming container image tar to timed out sandbox CLI stdin",
+                        );
                     }
                 }
             }
@@ -670,7 +980,11 @@ pub async fn container_image_status(
 
 #[cfg(test)]
 mod tests {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
 
     use tempfile::tempdir;
 
@@ -704,6 +1018,122 @@ mod tests {
         crate::sandbox_cli_env_test_lock()
     }
 
+    fn write_test_oci_image_archive(tar_path: &Path, repo_tag: &str) {
+        let build_root = tempdir().expect("build root tempdir");
+        let blobs_root = build_root.path().join("blobs/sha256");
+        std::fs::create_dir_all(&blobs_root).expect("create oci blobs root");
+
+        let mut layer_tar_builder = Builder::new(Vec::new());
+        let layer_bytes = b"env-from-test\n";
+        let mut header = tar::Header::new_gnu();
+        header.set_mode(0o755);
+        header.set_size(layer_bytes.len() as u64);
+        header.set_cksum();
+        layer_tar_builder
+            .append_data(&mut header, "usr/bin/env", &layer_bytes[..])
+            .expect("append test layer payload");
+        let layer_tar = layer_tar_builder
+            .into_inner()
+            .expect("finalize test layer tar");
+        let diff_id = hex::encode(Sha256::digest(&layer_tar));
+
+        let mut layer_encoder = GzEncoder::new(Vec::new(), Compression::default());
+        layer_encoder
+            .write_all(&layer_tar)
+            .expect("write gzipped test layer tar");
+        let layer_blob = layer_encoder
+            .finish()
+            .expect("finish gzipped test layer tar");
+        let layer_digest = hex::encode(Sha256::digest(&layer_blob));
+        std::fs::write(blobs_root.join(&layer_digest), &layer_blob).expect("write layer blob");
+
+        let config = json!({
+            "architecture": "arm64",
+            "os": "linux",
+            "rootfs": {
+                "type": "layers",
+                "diff_ids": [format!("sha256:{diff_id}")],
+            },
+            "config": {
+                "Cmd": ["/usr/bin/env"],
+            },
+        });
+        let config_bytes = serde_json::to_vec(&config).expect("serialize test image config");
+        let config_digest = hex::encode(Sha256::digest(&config_bytes));
+        std::fs::write(blobs_root.join(&config_digest), &config_bytes).expect("write config blob");
+
+        let manifest_blob = json!({
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+            "config": {
+                "mediaType": "application/vnd.docker.container.image.v1+json",
+                "digest": format!("sha256:{config_digest}"),
+                "size": config_bytes.len(),
+            },
+            "layers": [{
+                "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+                "digest": format!("sha256:{layer_digest}"),
+                "size": layer_blob.len(),
+            }],
+        });
+        let manifest_blob_bytes =
+            serde_json::to_vec(&manifest_blob).expect("serialize test manifest blob");
+        let manifest_digest = hex::encode(Sha256::digest(&manifest_blob_bytes));
+        std::fs::write(blobs_root.join(&manifest_digest), &manifest_blob_bytes)
+            .expect("write manifest blob");
+
+        std::fs::write(
+            build_root.path().join("manifest.json"),
+            serde_json::to_vec(&vec![json!({
+                "Config": format!("blobs/sha256/{config_digest}"),
+                "RepoTags": [repo_tag],
+                "Layers": [format!("blobs/sha256/{layer_digest}")],
+            })])
+            .expect("serialize legacy manifest"),
+        )
+        .expect("write legacy manifest");
+        std::fs::write(
+            build_root.path().join("index.json"),
+            serde_json::to_vec(&json!({
+                "schemaVersion": 2,
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "manifests": [{
+                    "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                    "digest": format!("sha256:{manifest_digest}"),
+                    "size": manifest_blob_bytes.len(),
+                    "platform": {
+                        "architecture": "arm64",
+                        "os": "linux",
+                    },
+                }],
+            }))
+            .expect("serialize test index"),
+        )
+        .expect("write index.json");
+        std::fs::write(
+            build_root.path().join("oci-layout"),
+            serde_json::to_vec(&json!({ "imageLayoutVersion": "1.0.0" }))
+                .expect("serialize oci-layout"),
+        )
+        .expect("write oci-layout");
+
+        write_directory_to_tar(build_root.path(), tar_path).expect("write test oci archive");
+    }
+
+    fn write_test_plain_archive(tar_path: &Path, file_name: &str, payload: &[u8]) -> Vec<u8> {
+        let mut builder = Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_mode(0o644);
+        header.set_size(payload.len() as u64);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, file_name, payload)
+            .expect("append plain archive payload");
+        let archive_bytes = builder.into_inner().expect("finalize plain archive");
+        std::fs::write(tar_path, &archive_bytes).expect("write plain archive");
+        archive_bytes
+    }
+
     #[derive(Default)]
     struct RecordingObserver {
         logs: StdMutex<Vec<(HarnessSetupPhase, HarnessSetupLogLevel, String)>>,
@@ -726,6 +1156,83 @@ mod tests {
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .push(progress);
         }
+    }
+
+    #[test]
+    fn normalize_oci_archive_to_docker_archive_rewrites_archive_layout() {
+        let temp = tempdir().expect("tempdir");
+        let source_tar = temp.path().join("source-oci.tar");
+        let normalized_tar = temp.path().join("normalized-docker.tar");
+        write_test_oci_image_archive(&source_tar, "ghcr.io/ctxrs/ctx-harness:test-oci");
+
+        let normalized = normalize_oci_archive_to_docker_archive(&source_tar, &normalized_tar)
+            .expect("normalize oci archive");
+        assert!(normalized, "test archive should normalize as OCI");
+        assert!(
+            normalized_tar.exists(),
+            "normalized docker archive should exist"
+        );
+
+        let inspect_root = temp.path().join("inspect");
+        std::fs::create_dir_all(&inspect_root).expect("create inspect root");
+        let file = std::fs::File::open(&normalized_tar).expect("open normalized archive");
+        let mut archive = Archive::new(file);
+        archive
+            .unpack(&inspect_root)
+            .expect("unpack normalized archive");
+
+        assert!(
+            inspect_root.join("manifest.json").is_file(),
+            "normalized archive should contain manifest.json"
+        );
+        assert!(
+            inspect_root.join("repositories").is_file(),
+            "normalized archive should contain repositories"
+        );
+        assert!(
+            !inspect_root.join("index.json").exists(),
+            "normalized archive must not preserve OCI index.json"
+        );
+        assert!(
+            !inspect_root.join("oci-layout").exists(),
+            "normalized archive must not preserve OCI layout markers"
+        );
+        assert!(
+            !inspect_root.join("blobs").exists(),
+            "normalized archive must not preserve OCI blob layout"
+        );
+
+        let manifest: Value = serde_json::from_slice(
+            &std::fs::read(inspect_root.join("manifest.json")).expect("read normalized manifest"),
+        )
+        .expect("parse normalized manifest");
+        let entry = manifest
+            .as_array()
+            .and_then(|entries| entries.first())
+            .expect("normalized manifest entry");
+        let layers = entry
+            .get("Layers")
+            .and_then(Value::as_array)
+            .expect("normalized manifest layers");
+        let layer_path = inspect_root.join(
+            layers
+                .first()
+                .and_then(Value::as_str)
+                .expect("first normalized layer path"),
+        );
+        let layer_file = std::fs::File::open(&layer_path).expect("open normalized layer tar");
+        let mut layer_archive = Archive::new(layer_file);
+        let mut found = false;
+        for entry in layer_archive.entries().expect("layer tar entries") {
+            let mut entry = entry.expect("layer tar entry");
+            if entry.path().expect("entry path") == Path::new("usr/bin/env") {
+                let mut bytes = Vec::new();
+                std::io::Read::read_to_end(&mut entry, &mut bytes).expect("read test layer file");
+                assert_eq!(bytes, b"env-from-test\n");
+                found = true;
+            }
+        }
+        assert!(found, "normalized layer tar should contain usr/bin/env");
     }
 
     #[tokio::test]
@@ -818,6 +1325,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn load_container_image_shared_vm_normalizes_oci_archive_before_guest_load() {
+        let _serial = env_var_test_lock().lock().await;
+        let temp = tempdir().expect("tempdir");
+        let helper_path = temp.path().join("ctx-avf-linux-helper.sh");
+        let marker_path = temp.path().join("image-present");
+        let invocation_log_path = temp.path().join("helper-invocations.log");
+        let tar_path = temp.path().join("ctx-harness-oci.tar");
+        write_test_oci_image_archive(&tar_path, "ghcr.io/ctxrs/ctx-harness:test");
+
+        std::fs::write(
+            &helper_path,
+            format!(
+                "#!/bin/sh\nset -eu\nmarker='{}'\nlog='{}'\ndata_root=''\nif [ \"$1\" != \"shared-vm-exec\" ]; then\n  printf 'unexpected helper invocation: %s\\n' \"$*\" >&2\n  exit 1\nfi\nshift\nwhile [ \"$#\" -gt 0 ]; do\n  case \"$1\" in\n    --data-root)\n      data_root=\"$2\"\n      shift 2\n      ;;\n    --cwd|--command|--user)\n      shift 2\n      ;;\n    --env)\n      shift 2\n      ;;\n    --)\n      shift\n      break\n      ;;\n    *)\n      printf 'unexpected shared-vm-exec arg: %s\\n' \"$1\" >&2\n      exit 1\n      ;;\n  esac\ndone\nprintf '%s\\n' \"$*\" >> \"$log\"\nif [ \"$1\" = \"load\" ]; then\n  if [ \"${{2:-}}\" != \"-i\" ]; then\n    printf 'shared VM image load should use a guest-visible tar path when normalization succeeds\\n' >&2\n    exit 1\n  fi\n  case \"${{3:-}}\" in\n    /mnt/ctx-host/managed/images/docker-archive/*) ;;\n    *)\n      printf 'expected normalized docker archive path, got %s\\n' \"${{3:-}}\" >&2\n      exit 1\n      ;;\n  esac\n  host_tar=\"$data_root/${{3#/mnt/ctx-host/}}\"\n  tar -tf \"$host_tar\" | grep -q '^repositories$'\n  if tar -tf \"$host_tar\" | grep -q '^index.json$'; then\n    printf 'normalized archive unexpectedly retained OCI index.json\\n' >&2\n    exit 1\n  fi\n  : > \"$marker\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"${{2:-}}\" = \"inspect\" ]; then\n  if [ -f \"$marker\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nprintf 'unexpected shared-vm sandbox CLI invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+                marker_path.display(),
+                invocation_log_path.display(),
+            ),
+        )
+        .expect("write helper shim");
+        std::fs::set_permissions(&helper_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod helper shim");
+
+        load_container_image_tar(
+            temp.path(),
+            &SandboxCommandMode::SharedVm {
+                helper_path: helper_path.clone(),
+            },
+            &tar_path,
+            "ghcr.io/ctxrs/ctx-harness:test",
+            None,
+        )
+        .await
+        .expect("shared VM image load should normalize OCI archives");
+
+        let invocation_log =
+            std::fs::read_to_string(&invocation_log_path).expect("read helper invocation log");
+        assert!(
+            invocation_log.contains("/mnt/ctx-host/managed/images/docker-archive/"),
+            "expected normalized docker archive guest path:\n{invocation_log}"
+        );
+    }
+
+    #[tokio::test]
     async fn load_container_image_shared_vm_uses_guest_shared_path_for_data_root_tar() {
         let _serial = env_var_test_lock().lock().await;
         let temp = tempdir().expect("tempdir");
@@ -825,7 +1374,7 @@ mod tests {
         let marker_path = temp.path().join("image-present");
         let invocation_log_path = temp.path().join("helper-invocations.log");
         let tar_path = temp.path().join("ctx-harness.tar");
-        std::fs::write(&tar_path, b"fake-image-tar-from-host").expect("write image tar");
+        write_test_plain_archive(&tar_path, "payload.txt", b"fake-image-tar-from-host");
         std::fs::write(
             &helper_path,
             format!(
@@ -872,8 +1421,8 @@ mod tests {
         let stdin_capture_path = data_root.path().join("load-stdin.tar");
         let invocation_log_path = data_root.path().join("helper-invocations.log");
         let tar_path = tar_root.path().join("ctx-harness.tar");
-        let tar_bytes = b"fake-image-tar-from-host";
-        std::fs::write(&tar_path, tar_bytes).expect("write image tar");
+        let tar_bytes =
+            write_test_plain_archive(&tar_path, "payload.txt", b"fake-image-tar-from-host");
         std::fs::write(
             &helper_path,
             format!(

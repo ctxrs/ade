@@ -14,5 +14,7 @@ test("AVF Linux Intel smoke workflow stays manual and pinned to macos-15-intel",
     text,
     /runs-on:\s*\$\{\{\s*vars\.RELEASE_RUNNER_MACOS_X64\s*\|\|\s*'macos-15-intel'\s*\}\}/,
   );
+  assert.match(text, /Run AVF Linux Intel smoke \(daemon harness_container ensure\)/);
   assert.match(text, /core\/scripts\/avf_linux_ci_smoke\.sh/);
+  assert.match(text, /core\/scripts\/avf_linux_ci_smoke_contract\.test\.cjs/);
 });

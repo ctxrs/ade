@@ -72,13 +72,16 @@ pub(in super::super) fn shared_vm_readiness_failure_requires_writable_rootfs_res
     let rendered = format!("{err:#}");
     rendered.contains("[ctx-avf-linux] bridge_probe_failed")
         || rendered.contains("writable-root-separate")
+        || rendered.contains("root-on-writable-root")
         || rendered.contains("tmp-on-writable-root")
         || rendered.contains("var-tmp-on-writable-root")
+        || rendered.contains("var-log-on-writable-root")
         || rendered.contains("containerd-root-on-writable-root")
         || rendered.contains("buildkit-root-on-writable-root")
         || rendered.contains("nerdctl-root-on-writable-root")
         || rendered.contains("cni-config-on-writable-root")
         || rendered.contains("cni-state-on-writable-root")
+        || rendered.contains("guest-policy-masked-units")
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -179,16 +182,22 @@ fn render_shared_vm_guest_agent_log_tail(log_path: &Path) -> String {
 
 #[cfg(unix)]
 pub(in super::super) fn shared_vm_guest_readiness_args() -> Vec<String> {
+    let masked_units = SHARED_VM_GUEST_POLICY_MASKED_UNITS
+        .iter()
+        .map(|unit| format!("'{unit}'"))
+        .collect::<Vec<_>>()
+        .join(" ");
     vec![
         String::from("-lc"),
         format!(
-            "set -e; ctx_uptime_ms() {{ awk '{{print int($1 * 1000)}}' /proc/uptime; }}; ctx_run_phase() {{ phase=\"$1\"; shift; start_ms=$(ctx_uptime_ms); if timeout --kill-after=1s --preserve-status {phase_timeout_seconds}s \"$@\"; then end_ms=$(ctx_uptime_ms); echo \"{phase_prefix}${{phase}} ok in $((end_ms-start_ms))ms\" >&2; else status=$?; end_ms=$(ctx_uptime_ms); echo \"{phase_prefix}${{phase}} failed with exit $status after $((end_ms-start_ms))ms\" >&2; return $status; fi; }}; ctx_assert_same_fs() {{ phase=\"$1\"; path=\"$2\"; ctx_run_phase \"$phase\" sh -lc '[ \"$(stat -fc %d \"$1\")\" = \"$(stat -fc %d \"$2\")\" ]' sh {writable_root} \"$path\"; }}; ctx_run_phase containerd systemctl is-active --quiet {containerd_service}; ctx_run_phase buildkit systemctl is-active --quiet {buildkit_service}; ctx_run_phase writable-root-separate sh -lc '[ \"$(stat -fc %d \"$1\")\" != \"$(stat -fc %d \"$2\")\" ]' sh / {writable_root}; ctx_assert_same_fs tmp-on-writable-root /tmp; ctx_assert_same_fs var-tmp-on-writable-root /var/tmp; ctx_assert_same_fs containerd-root-on-writable-root /var/lib/containerd; ctx_assert_same_fs buildkit-root-on-writable-root /var/lib/buildkit; ctx_assert_same_fs nerdctl-root-on-writable-root /var/lib/nerdctl; ctx_assert_same_fs cni-config-on-writable-root /etc/cni/net.d; ctx_assert_same_fs cni-state-on-writable-root /var/lib/cni; ctx_run_phase nerdctl sh -lc '{nerdctl_bin} version >/dev/null 2>&1'; ctx_run_phase buildctl sh -lc '{buildctl_bin} --addr {buildkit_socket} debug workers >/dev/null 2>&1'; ctx_run_phase bridge-probe sh -lc 'probe_bridge=ctxavfbr0; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true; if ! ip link add name \"$probe_bridge\" type bridge >/tmp/ctx-avf-bridge-probe.out 2>/tmp/ctx-avf-bridge-probe.err; then cat /tmp/ctx-avf-bridge-probe.out >&2 || true; cat /tmp/ctx-avf-bridge-probe.err >&2 || true; echo \"[ctx-avf-linux] bridge_probe_failed\" >&2; exit 41; fi; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true'",
+            "set -e; ctx_uptime_ms() {{ awk '{{print int($1 * 1000)}}' /proc/uptime; }}; ctx_run_phase() {{ phase=\"$1\"; shift; start_ms=$(ctx_uptime_ms); if timeout --kill-after=1s --preserve-status {phase_timeout_seconds}s \"$@\"; then end_ms=$(ctx_uptime_ms); echo \"{phase_prefix}${{phase}} ok in $((end_ms-start_ms))ms\" >&2; else status=$?; end_ms=$(ctx_uptime_ms); echo \"{phase_prefix}${{phase}} failed with exit $status after $((end_ms-start_ms))ms\" >&2; return $status; fi; }}; ctx_assert_same_fs() {{ phase=\"$1\"; path=\"$2\"; ctx_run_phase \"$phase\" sh -lc '[ \"$(stat -fc %d \"$1\")\" = \"$(stat -fc %d \"$2\")\" ]' sh {writable_root} \"$path\"; }}; ctx_run_phase containerd systemctl is-active --quiet {containerd_service}; ctx_run_phase buildkit systemctl is-active --quiet {buildkit_service}; ctx_run_phase writable-root-separate sh -lc '[ \"$(stat -fc %d \"$1\")\" != \"$(stat -fc %d \"$2\")\" ]' sh / {writable_root}; ctx_assert_same_fs root-on-writable-root /root; ctx_assert_same_fs tmp-on-writable-root /tmp; ctx_assert_same_fs var-tmp-on-writable-root /var/tmp; ctx_assert_same_fs var-log-on-writable-root /var/log; ctx_assert_same_fs containerd-root-on-writable-root /var/lib/containerd; ctx_assert_same_fs buildkit-root-on-writable-root /var/lib/buildkit; ctx_assert_same_fs nerdctl-root-on-writable-root /var/lib/nerdctl; ctx_assert_same_fs cni-config-on-writable-root /etc/cni/net.d; ctx_assert_same_fs cni-state-on-writable-root /var/lib/cni; ctx_run_phase guest-policy-masked-units sh -lc 'set -e; for unit in {masked_units}; do mask_path=\"/etc/systemd/system/$unit\"; [ \"$(readlink \"$mask_path\")\" = \"/dev/null\" ]; enabled_state=\"$(systemctl is-enabled \"$unit\" 2>/dev/null || true)\"; case \"$enabled_state\" in masked|masked-runtime) ;; *) echo \"$unit expected masked state, got $enabled_state\" >&2; exit 1 ;; esac; if systemctl is-active --quiet \"$unit\"; then echo \"$unit unexpectedly active\" >&2; exit 1; fi; done'; ctx_run_phase nerdctl sh -lc '{nerdctl_bin} version >/dev/null 2>&1'; ctx_run_phase buildctl sh -lc '{buildctl_bin} --addr {buildkit_socket} debug workers >/dev/null 2>&1'; ctx_run_phase bridge-probe sh -lc 'probe_bridge=ctxavfbr0; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true; if ! ip link add name \"$probe_bridge\" type bridge >/tmp/ctx-avf-bridge-probe.out 2>/tmp/ctx-avf-bridge-probe.err; then cat /tmp/ctx-avf-bridge-probe.out >&2 || true; cat /tmp/ctx-avf-bridge-probe.err >&2 || true; echo \"[ctx-avf-linux] bridge_probe_failed\" >&2; exit 41; fi; ip link delete \"$probe_bridge\" >/dev/null 2>&1 || true'",
             containerd_service = SHARED_VM_CONTAINERD_SERVICE_NAME,
             buildkit_service = SHARED_VM_BUILDKIT_SERVICE_NAME,
             nerdctl_bin = SHARED_VM_GUEST_NERDCTL_BIN,
             buildctl_bin = SHARED_VM_GUEST_BUILDKITCTL_BIN,
             buildkit_socket = SHARED_VM_GUEST_BUILDKIT_SOCKET,
             writable_root = SHARED_VM_GUEST_WRITABLE_ROOT,
+            masked_units = masked_units,
             phase_prefix = SHARED_VM_READINESS_PHASE_PREFIX,
             phase_timeout_seconds = SHARED_VM_READINESS_PHASE_TIMEOUT_SECONDS,
         ),

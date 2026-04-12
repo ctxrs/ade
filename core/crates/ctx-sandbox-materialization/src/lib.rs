@@ -74,6 +74,9 @@ pub async fn ensure_worktree_from_host_copy(
                 )
             })?;
 
+    sandbox::ensure_directory(data_root, mode, &container_id, &workspace_root)
+        .await
+        .context("ensuring disk-isolated workspace volume root")?;
     sandbox::ensure_directory(data_root, mode, &container_id, &dest_root)
         .await
         .context("creating disk-isolated worktree root")?;
@@ -292,7 +295,7 @@ mod tests {
         fs::write(
             &cli_path,
             format!(
-                "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$*\" >> '{log_path}'\ncmd=\"$1\"\nshift\nif [ \"$cmd\" != \"exec\" ]; then\n  echo \"unexpected sandbox cli command: $cmd\" >&2\n  exit 1\nfi\nwhile [ \"$#\" -gt 0 ]; do\n  case \"$1\" in\n    --interactive)\n      shift\n      ;;\n    --workdir)\n      shift 2\n      ;;\n    *)\n      break\n      ;;\n  esac\ndone\nif [ \"$1\" != \"{container_id}\" ]; then\n  echo \"unexpected container: $1\" >&2\n  exit 1\nfi\nshift\ncommand=\"$1\"\nshift\ncase \"$command\" in\n  df)\n    printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n'\n    printf 'overlay 10485760 1024 7340032 1%% /ctx/ws\\n'\n    exit 0\n    ;;\n  mkdir)\n    exit 0\n    ;;\n  tar)\n    cat >/dev/null\n    exit 0\n    ;;\n  git)\n    exit 0\n    ;;\n  sh)\n    if [ \"$1\" = \"-lc\" ] && printf '%s' \"$2\" | grep -q 'git rev-parse'; then\n      printf 'true\\n'\n      exit 0\n    fi\n    exit 0\n    ;;\n  *)\n    echo \"unexpected exec command: $command\" >&2\n    exit 1\n    ;;\nesac\n",
+                "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$*\" >> '{log_path}'\ncmd=\"$1\"\nshift\nif [ \"$cmd\" != \"exec\" ]; then\n  echo \"unexpected sandbox cli command: $cmd\" >&2\n  exit 1\nfi\nwhile [ \"$#\" -gt 0 ]; do\n  case \"$1\" in\n    --interactive)\n      shift\n      ;;\n    --user)\n      shift 2\n      ;;\n    --workdir)\n      shift 2\n      ;;\n    *)\n      break\n      ;;\n  esac\ndone\nif [ \"$1\" != \"{container_id}\" ]; then\n  echo \"unexpected container: $1\" >&2\n  exit 1\nfi\nshift\ncommand=\"$1\"\nshift\ncase \"$command\" in\n  df)\n    printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n'\n    printf 'overlay 10485760 1024 7340032 1%% /ctx/ws\\n'\n    exit 0\n    ;;\n  id)\n    if [ \"$1\" = \"-u\" ]; then printf '502\\n'; exit 0; fi\n    if [ \"$1\" = \"-g\" ]; then printf '20\\n'; exit 0; fi\n    echo \"unexpected id flag: $1\" >&2\n    exit 1\n    ;;\n  mkdir)\n    exit 0\n    ;;\n  chown)\n    exit 0\n    ;;\n  tar)\n    cat >/dev/null\n    exit 0\n    ;;\n  git)\n    exit 0\n    ;;\n  sh)\n    if [ \"$1\" = \"-lc\" ] && printf '%s' \"$2\" | grep -q 'git rev-parse'; then\n      printf 'true\\n'\n      exit 0\n    fi\n    exit 0\n    ;;\n  *)\n    echo \"unexpected exec command: $command\" >&2\n    exit 1\n    ;;\nesac\n",
                 log_path = log_path.display(),
                 container_id = container_id,
             ),
@@ -374,6 +377,42 @@ mod tests {
             )),
             "preflight should not probe the not-yet-created worktree parent: {log}"
         );
+        assert!(
+            log.contains(&format!(
+                "exec --interactive --user root {container_id} mkdir -p -- {}",
+                Path::new(CTX_CONTAINER_WORKSPACE_ROOT).display()
+            )),
+            "worktree materialization should prime the shared workspace root before creating a live worktree: {log}"
+        );
+        assert!(
+            log.contains(&format!(
+                "exec --interactive --user root {container_id} chown 502:20 {}",
+                Path::new(CTX_CONTAINER_WORKSPACE_ROOT).display()
+            )),
+            "worktree materialization should hand the shared workspace root back to the sandbox exec user: {log}"
+        );
+        assert!(
+            log.contains(&format!(
+                "exec --interactive --user root {container_id} mkdir -p -- {}",
+                container_worktree_root(worktree_id).display()
+            )),
+            "worktree creation should run mkdir as root so /ctx/ws itself need not be user-writable: {log}"
+        );
+        assert!(
+            log.contains(&format!("exec --interactive {container_id} id -u")),
+            "worktree creation should resolve the sandbox exec uid before chowning the new root: {log}"
+        );
+        assert!(
+            log.contains(&format!("exec --interactive {container_id} id -g")),
+            "worktree creation should resolve the sandbox exec gid before chowning the new root: {log}"
+        );
+        assert!(
+            log.contains(&format!(
+                "exec --interactive --user root {container_id} chown 502:20 {}",
+                container_worktree_root(worktree_id).display()
+            )),
+            "worktree creation should hand the new root back to the sandbox exec user: {log}"
+        );
     }
 
     /// Regression test: ensure_worktree_from_host_copy must NOT mutate the host linked
@@ -432,6 +471,7 @@ mod tests {
                     "while [ \"$#\" -gt 0 ]; do\n",
                     "  case \"$1\" in\n",
                     "    --interactive) shift ;;\n",
+                    "    --user) shift 2 ;;\n",
                     "    --workdir) shift 2 ;;\n",
                     "    *) break ;;\n",
                     "  esac\n",
@@ -439,7 +479,12 @@ mod tests {
                     "[ \"$1\" = \"{container_id}\" ] || {{ echo \"unexpected container: $1\" >&2; exit 1; }}\n",
                     "shift; command=\"$1\"; shift\n",
                     "case \"$command\" in\n",
+                    "  id)\n",
+                    "    if [ \"$1\" = \"-u\" ]; then printf '502\\n'; exit 0; fi\n",
+                    "    if [ \"$1\" = \"-g\" ]; then printf '20\\n'; exit 0; fi\n",
+                    "    echo \"unexpected id flag: $1\" >&2; exit 1 ;;\n",
                     "  mkdir) exit 0 ;;\n",
+                    "  chown) exit 0 ;;\n",
                     "  tar) cat >/dev/null; exit 0 ;;\n",
                     "  git) exit 0 ;;\n",
                     "  sh)\n",

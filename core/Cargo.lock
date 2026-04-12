@@ -1558,7 +1558,7 @@ dependencies = [
 
 [[package]]
 name = "ctx-http"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1836,8 +1836,11 @@ dependencies = [
  "ctx-linux-sandbox-runtime",
  "ctx-runtime-assets",
  "ctx-sandbox-contract",
+ "flate2",
  "hex",
+ "serde_json",
  "sha2",
+ "tar",
  "tempfile",
  "tokio",
 ]

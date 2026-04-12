@@ -82,6 +82,8 @@ pub(super) async fn ensure_directory(
     let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")
         .arg("--interactive")
+        .arg("--user")
+        .arg("root")
         .arg(container_id)
         .arg("mkdir")
         .arg("-p")
@@ -93,6 +95,36 @@ pub(super) async fn ensure_directory(
     if !out.status.success() {
         anyhow::bail!(
             "failed to create disk-isolated worktree dir (status {}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+
+    let uid = resolve_container_exec_id(data_root, mode, container_id, "-u")
+        .await
+        .context("resolving sandbox exec uid for disk-isolated worktree root")?;
+    let gid = resolve_container_exec_id(data_root, mode, container_id, "-g")
+        .await
+        .context("resolving sandbox exec gid for disk-isolated worktree root")?;
+    let mut chown = sandbox_container_command(data_root, mode)?;
+    chown
+        .arg("exec")
+        .arg("--interactive")
+        .arg("--user")
+        .arg("root")
+        .arg(container_id)
+        .arg("chown")
+        .arg(format!("{uid}:{gid}"))
+        .arg(dest_root);
+    let out = command_output_with_timeout(chown, SANDBOX_EXEC_TIMEOUT)
+        .await
+        .context("sandbox exec chown disk-isolated worktree root")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "failed to set disk-isolated worktree root owner {} to {}:{} (status {}): {}",
+            dest_root.display(),
+            uid,
+            gid,
             out.status,
             String::from_utf8_lossy(&out.stderr).trim()
         );

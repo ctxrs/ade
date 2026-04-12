@@ -79,7 +79,7 @@ pub(super) fn render_shared_vm_host_data_mount_service() -> String {
 
 pub(super) fn render_shared_vm_data_disk_script() -> String {
     format!(
-        "#!/bin/sh\nset -eu\nmount_root='{writable_root}'\nworktrees_root='{worktrees_root}'\nhome_root='{home_root}'\ncache_root='{cache_root}'\ntmp_root='{tmp_root}'\nroot_home='{root_home}'\nroot_xdg_config='{root_xdg_config}'\nroot_xdg_data='{root_xdg_data}'\nroot_xdg_cache='{root_xdg_cache}'\nroot_xdg_runtime='{root_xdg_runtime}'\ncontainerd_root='{containerd_root}'\nbuildkit_root='{buildkit_root}'\nnerdctl_root='{nerdctl_root}'\ncni_config_root='{cni_config_root}'\ncni_state_root='{cni_state_root}'\ndata_label='{data_label}'\nmarker_name='.ctx-avf-data-disk-ready'\nroot_device=\"$(findmnt -n -o SOURCE /)\"\nif [ -z \"$root_device\" ]; then\n  echo \"[ctx-avf-linux] could not determine root device\" >/dev/hvc0\n  exit 1\nfi\nroot_device=\"$(readlink -f \"$root_device\" 2>/dev/null || printf '%s' \"$root_device\")\"\nroot_disk=\"$(lsblk -nro PKNAME \"$root_device\" | head -n1)\"\nif [ -z \"$root_disk\" ]; then\n  echo \"[ctx-avf-linux] could not resolve parent disk for $root_device\" >/dev/hvc0\n  exit 1\nfi\ndata_device=\"$(lsblk -dnbo NAME,SIZE,RO,TYPE | awk -v root_disk=\"$root_disk\" '$4 == \"disk\" && $1 != root_disk && $3 == 0 && $2 >= 1073741824 {{ print \"/dev/\" $1; exit }}')\"\nif [ -z \"$data_device\" ]; then\n  echo \"[ctx-avf-linux] could not locate writable data disk\" >/dev/hvc0\n  exit 1\nfi\nmkdir -p \"$mount_root\"\nif ! blkid -s TYPE -o value \"$data_device\" >/dev/null 2>&1; then\n  mkfs.ext4 -F -L \"$data_label\" \"$data_device\" >/dev/hvc0 2>&1\nfi\ncurrent_mount_source=\"$(findmnt -n -o SOURCE \"$mount_root\" 2>/dev/null || true)\"\nif [ -n \"$current_mount_source\" ] && [ \"$current_mount_source\" != \"$data_device\" ]; then\n  umount \"$mount_root\" >/dev/null 2>&1 || true\n  current_mount_source=\"\"\nfi\nif [ \"$current_mount_source\" != \"$data_device\" ]; then\n  mount \"$data_device\" \"$mount_root\" >/dev/hvc0 2>&1\nfi\nmkdir -p \"$worktrees_root\" \"$home_root\" \"$cache_root\" \"$tmp_root\" \"$root_home\" \"$root_xdg_config\" \"$root_xdg_data\" \"$root_xdg_cache\" \"$root_xdg_runtime\" \"$containerd_root\" \"$buildkit_root\" \"$nerdctl_root\" \"$cni_config_root\" \"$cni_state_root\" /var/lib/containerd /var/lib/buildkit /var/lib/nerdctl /var/lib/cni /etc/cni/net.d /tmp /var/tmp\nchmod 1777 \"$tmp_root\"\nchmod 0700 \"$root_home\" \"$root_xdg_config\" \"$root_xdg_data\" \"$root_xdg_cache\" \"$root_xdg_runtime\"\ncurrent_tmp_source=\"$(findmnt -n -o SOURCE /tmp 2>/dev/null || true)\"\nif [ \"$current_tmp_source\" != \"$tmp_root\" ]; then\n  mountpoint -q /tmp && umount /tmp >/dev/null 2>&1 || true\n  mount --bind \"$tmp_root\" /tmp >/dev/hvc0 2>&1\nfi\nchmod 1777 /tmp\ncurrent_var_tmp_source=\"$(findmnt -n -o SOURCE /var/tmp 2>/dev/null || true)\"\nif [ \"$current_var_tmp_source\" != \"$tmp_root\" ]; then\n  mountpoint -q /var/tmp && umount /var/tmp >/dev/null 2>&1 || true\n  mount --bind \"$tmp_root\" /var/tmp >/dev/hvc0 2>&1\nfi\nchmod 1777 /var/tmp\nif [ ! -f \"$mount_root/$marker_name\" ]; then\n  printf 'ready\\n' > \"$mount_root/$marker_name\"\nfi\necho \"[ctx-avf-linux] mounted data disk $data_device at $mount_root\" >/dev/hvc0\ncurrent_containerd_source=\"$(findmnt -n -o SOURCE /var/lib/containerd 2>/dev/null || true)\"\nif [ \"$current_containerd_source\" != \"$containerd_root\" ]; then\n  mountpoint -q /var/lib/containerd && umount /var/lib/containerd >/dev/null 2>&1 || true\n  mount --bind \"$containerd_root\" /var/lib/containerd >/dev/hvc0 2>&1\nfi\ncurrent_buildkit_source=\"$(findmnt -n -o SOURCE /var/lib/buildkit 2>/dev/null || true)\"\nif [ \"$current_buildkit_source\" != \"$buildkit_root\" ]; then\n  mountpoint -q /var/lib/buildkit && umount /var/lib/buildkit >/dev/null 2>&1 || true\n  mount --bind \"$buildkit_root\" /var/lib/buildkit >/dev/hvc0 2>&1\nfi\ncurrent_nerdctl_source=\"$(findmnt -n -o SOURCE /var/lib/nerdctl 2>/dev/null || true)\"\nif [ \"$current_nerdctl_source\" != \"$nerdctl_root\" ]; then\n  mountpoint -q /var/lib/nerdctl && umount /var/lib/nerdctl >/dev/null 2>&1 || true\n  mount --bind \"$nerdctl_root\" /var/lib/nerdctl >/dev/hvc0 2>&1\nfi\ncurrent_cni_config_source=\"$(findmnt -n -o SOURCE /etc/cni/net.d 2>/dev/null || true)\"\nif [ \"$current_cni_config_source\" != \"$cni_config_root\" ]; then\n  mountpoint -q /etc/cni/net.d && umount /etc/cni/net.d >/dev/null 2>&1 || true\n  mount --bind \"$cni_config_root\" /etc/cni/net.d >/dev/hvc0 2>&1\nfi\ncurrent_cni_state_source=\"$(findmnt -n -o SOURCE /var/lib/cni 2>/dev/null || true)\"\nif [ \"$current_cni_state_source\" != \"$cni_state_root\" ]; then\n  mountpoint -q /var/lib/cni && umount /var/lib/cni >/dev/null 2>&1 || true\n  mount --bind \"$cni_state_root\" /var/lib/cni >/dev/hvc0 2>&1\nfi\n",
+        "#!/bin/sh\nset -eu\nmount_root='{writable_root}'\nworktrees_root='{worktrees_root}'\nhome_root='{home_root}'\ncache_root='{cache_root}'\ntmp_root='{tmp_root}'\nroot_home='{root_home}'\nroot_xdg_config='{root_xdg_config}'\nroot_xdg_data='{root_xdg_data}'\nroot_xdg_cache='{root_xdg_cache}'\nroot_xdg_runtime='{root_xdg_runtime}'\nlog_root='{log_root}'\ncontainerd_root='{containerd_root}'\nbuildkit_root='{buildkit_root}'\nnerdctl_root='{nerdctl_root}'\ncni_config_root='{cni_config_root}'\ncni_state_root='{cni_state_root}'\ndata_label='{data_label}'\nmarker_name='.ctx-avf-data-disk-ready'\nroot_device=\"$(findmnt -n -o SOURCE /)\"\nif [ -z \"$root_device\" ]; then\n  echo \"[ctx-avf-linux] could not determine root device\" >/dev/hvc0\n  exit 1\nfi\nroot_device=\"$(readlink -f \"$root_device\" 2>/dev/null || printf '%s' \"$root_device\")\"\nroot_disk=\"$(lsblk -nro PKNAME \"$root_device\" | head -n1)\"\nif [ -z \"$root_disk\" ]; then\n  echo \"[ctx-avf-linux] could not resolve parent disk for $root_device\" >/dev/hvc0\n  exit 1\nfi\ndata_device=\"$(lsblk -dnbo NAME,SIZE,RO,TYPE | awk -v root_disk=\"$root_disk\" '$4 == \"disk\" && $1 != root_disk && $3 == 0 && $2 >= 1073741824 {{ print \"/dev/\" $1; exit }}')\"\nif [ -z \"$data_device\" ]; then\n  echo \"[ctx-avf-linux] could not locate writable data disk\" >/dev/hvc0\n  exit 1\nfi\nmkdir -p \"$mount_root\"\nif ! blkid -s TYPE -o value \"$data_device\" >/dev/null 2>&1; then\n  mkfs.ext4 -F -L \"$data_label\" \"$data_device\" >/dev/hvc0 2>&1\nfi\ncurrent_mount_source=\"$(findmnt -n -o SOURCE \"$mount_root\" 2>/dev/null || true)\"\nif [ -n \"$current_mount_source\" ] && [ \"$current_mount_source\" != \"$data_device\" ]; then\n  umount \"$mount_root\" >/dev/null 2>&1 || true\n  current_mount_source=\"\"\nfi\nif [ \"$current_mount_source\" != \"$data_device\" ]; then\n  mount \"$data_device\" \"$mount_root\" >/dev/hvc0 2>&1\nfi\nmkdir -p \"$worktrees_root\" \"$home_root\" \"$cache_root\" \"$tmp_root\" \"$root_home\" \"$root_xdg_config\" \"$root_xdg_data\" \"$root_xdg_cache\" \"$root_xdg_runtime\" \"$log_root\" \"$containerd_root\" \"$buildkit_root\" \"$nerdctl_root\" \"$cni_config_root\" \"$cni_state_root\" /root /var/log /var/lib/containerd /var/lib/buildkit /var/lib/nerdctl /var/lib/cni /etc/cni/net.d /tmp /var/tmp\nchmod 1777 \"$tmp_root\"\nchmod 0700 \"$root_home\" \"$root_xdg_config\" \"$root_xdg_data\" \"$root_xdg_cache\" \"$root_xdg_runtime\"\ncurrent_root_source=\"$(findmnt -n -o SOURCE /root 2>/dev/null || true)\"\nif [ \"$current_root_source\" != \"$root_home\" ]; then\n  mountpoint -q /root && umount /root >/dev/null 2>&1 || true\n  mount --bind \"$root_home\" /root >/dev/hvc0 2>&1\nfi\nchmod 0700 /root\ncurrent_tmp_source=\"$(findmnt -n -o SOURCE /tmp 2>/dev/null || true)\"\nif [ \"$current_tmp_source\" != \"$tmp_root\" ]; then\n  mountpoint -q /tmp && umount /tmp >/dev/null 2>&1 || true\n  mount --bind \"$tmp_root\" /tmp >/dev/hvc0 2>&1\nfi\nchmod 1777 /tmp\ncurrent_var_tmp_source=\"$(findmnt -n -o SOURCE /var/tmp 2>/dev/null || true)\"\nif [ \"$current_var_tmp_source\" != \"$tmp_root\" ]; then\n  mountpoint -q /var/tmp && umount /var/tmp >/dev/null 2>&1 || true\n  mount --bind \"$tmp_root\" /var/tmp >/dev/hvc0 2>&1\nfi\nchmod 1777 /var/tmp\ncurrent_var_log_source=\"$(findmnt -n -o SOURCE /var/log 2>/dev/null || true)\"\nif [ \"$current_var_log_source\" != \"$log_root\" ]; then\n  mountpoint -q /var/log && umount /var/log >/dev/null 2>&1 || true\n  mount --bind \"$log_root\" /var/log >/dev/hvc0 2>&1\nfi\nif [ ! -f \"$mount_root/$marker_name\" ]; then\n  printf 'ready\\n' > \"$mount_root/$marker_name\"\nfi\necho \"[ctx-avf-linux] mounted data disk $data_device at $mount_root\" >/dev/hvc0\ncurrent_containerd_source=\"$(findmnt -n -o SOURCE /var/lib/containerd 2>/dev/null || true)\"\nif [ \"$current_containerd_source\" != \"$containerd_root\" ]; then\n  mountpoint -q /var/lib/containerd && umount /var/lib/containerd >/dev/null 2>&1 || true\n  mount --bind \"$containerd_root\" /var/lib/containerd >/dev/hvc0 2>&1\nfi\ncurrent_buildkit_source=\"$(findmnt -n -o SOURCE /var/lib/buildkit 2>/dev/null || true)\"\nif [ \"$current_buildkit_source\" != \"$buildkit_root\" ]; then\n  mountpoint -q /var/lib/buildkit && umount /var/lib/buildkit >/dev/null 2>&1 || true\n  mount --bind \"$buildkit_root\" /var/lib/buildkit >/dev/hvc0 2>&1\nfi\ncurrent_nerdctl_source=\"$(findmnt -n -o SOURCE /var/lib/nerdctl 2>/dev/null || true)\"\nif [ \"$current_nerdctl_source\" != \"$nerdctl_root\" ]; then\n  mountpoint -q /var/lib/nerdctl && umount /var/lib/nerdctl >/dev/null 2>&1 || true\n  mount --bind \"$nerdctl_root\" /var/lib/nerdctl >/dev/hvc0 2>&1\nfi\ncurrent_cni_config_source=\"$(findmnt -n -o SOURCE /etc/cni/net.d 2>/dev/null || true)\"\nif [ \"$current_cni_config_source\" != \"$cni_config_root\" ]; then\n  mountpoint -q /etc/cni/net.d && umount /etc/cni/net.d >/dev/null 2>&1 || true\n  mount --bind \"$cni_config_root\" /etc/cni/net.d >/dev/hvc0 2>&1\nfi\ncurrent_cni_state_source=\"$(findmnt -n -o SOURCE /var/lib/cni 2>/dev/null || true)\"\nif [ \"$current_cni_state_source\" != \"$cni_state_root\" ]; then\n  mountpoint -q /var/lib/cni && umount /var/lib/cni >/dev/null 2>&1 || true\n  mount --bind \"$cni_state_root\" /var/lib/cni >/dev/hvc0 2>&1\nfi\n",
         writable_root = SHARED_VM_GUEST_WRITABLE_ROOT,
         worktrees_root = SHARED_VM_GUEST_WORKTREES_ROOT,
         home_root = SHARED_VM_GUEST_HOME_ROOT,
@@ -90,12 +90,34 @@ pub(super) fn render_shared_vm_data_disk_script() -> String {
         root_xdg_data = SHARED_VM_GUEST_ROOT_XDG_DATA_ROOT,
         root_xdg_cache = SHARED_VM_GUEST_ROOT_XDG_CACHE_ROOT,
         root_xdg_runtime = SHARED_VM_GUEST_ROOT_XDG_RUNTIME_ROOT,
+        log_root = SHARED_VM_GUEST_LOG_ROOT,
         containerd_root = SHARED_VM_GUEST_CONTAINERD_ROOT,
         buildkit_root = SHARED_VM_GUEST_BUILDKIT_ROOT,
         nerdctl_root = SHARED_VM_GUEST_NERDCTL_ROOT,
         cni_config_root = SHARED_VM_GUEST_CNI_CONFIG_ROOT,
         cni_state_root = SHARED_VM_GUEST_CNI_STATE_ROOT,
         data_label = SHARED_VM_DATA_DISK_LABEL,
+    )
+}
+
+pub(super) fn render_shared_vm_guest_policy_script() -> String {
+    let masked_units = SHARED_VM_GUEST_POLICY_MASKED_UNITS
+        .iter()
+        .map(|unit| format!("  '{unit}'"))
+        .collect::<Vec<_>>()
+        .join(" \\\n");
+    format!(
+        "#!/bin/sh\nset -eu\nmkdir -p /etc/systemd/system\nfor unit in \\\n{masked_units}\ndo\n  mask_path=\"/etc/systemd/system/$unit\"\n  current_target=\"$(readlink \"$mask_path\" 2>/dev/null || true)\"\n  if [ \"$current_target\" != \"/dev/null\" ]; then\n    echo \"[ctx-avf-linux] guest policy masking $unit\" >/dev/hvc0\n    rm -f \"$mask_path\"\n    ln -s /dev/null \"$mask_path\"\n  else\n    echo \"[ctx-avf-linux] guest policy already masked $unit\" >/dev/hvc0\n  fi\n  systemctl stop \"$unit\" >/dev/hvc0 2>&1 || true\n  systemctl reset-failed \"$unit\" >/dev/hvc0 2>&1 || true\ndone\nsystemctl daemon-reload >/dev/hvc0 2>&1\n"
+    )
+}
+
+pub(super) fn render_shared_vm_early_bootcmd() -> String {
+    format!(
+        "mkdir -p /usr/local/lib/ctx\nprintf '%s' '{data_disk_script}' > {data_disk_install_path}\nchmod 0755 {data_disk_install_path}\n{data_disk_install_path} >/dev/hvc0 2>&1\nprintf '%s' '{guest_policy_script}' > {policy_path}\nchmod 0755 {policy_path}\n{policy_path} >/dev/hvc0 2>&1",
+        data_disk_script = shell_escape_single_quotes(&render_shared_vm_data_disk_script()),
+        data_disk_install_path = SHARED_VM_DATA_DISK_INSTALL_PATH,
+        guest_policy_script = shell_escape_single_quotes(&render_shared_vm_guest_policy_script()),
+        policy_path = SHARED_VM_GUEST_POLICY_INSTALL_PATH,
     )
 }
 
@@ -113,6 +135,8 @@ pub(super) fn shared_vm_writable_surface_contract_digest(data_root: &Path) -> Re
     for rendered in [
         render_shared_vm_host_data_mount_service(),
         render_shared_vm_data_disk_script(),
+        render_shared_vm_guest_policy_script(),
+        render_shared_vm_early_bootcmd(),
         render_shared_vm_data_disk_service(),
         render_shared_vm_containerd_service(),
         render_shared_vm_buildkit_service(),
@@ -225,6 +249,8 @@ pub(super) fn render_shared_vm_cloud_init_meta_data(
     }
     seed_material.extend_from_slice(container_stack_sha256.as_bytes());
     seed_material.extend_from_slice(render_shared_vm_data_disk_script().as_bytes());
+    seed_material.extend_from_slice(render_shared_vm_guest_policy_script().as_bytes());
+    seed_material.extend_from_slice(render_shared_vm_early_bootcmd().as_bytes());
     seed_material.extend_from_slice(render_shared_vm_data_disk_service().as_bytes());
     seed_material.extend_from_slice(
         render_shared_vm_guest_agent_service(
@@ -281,6 +307,7 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
     let host_data_service = indent_cloud_init_block(&render_shared_vm_host_data_mount_service(), 6);
     let data_disk_script = indent_cloud_init_block(&render_shared_vm_data_disk_script(), 6);
     let data_disk_service = indent_cloud_init_block(&render_shared_vm_data_disk_service(), 6);
+    let guest_policy_script = indent_cloud_init_block(&render_shared_vm_guest_policy_script(), 6);
     let containerd_service = indent_cloud_init_block(&render_shared_vm_containerd_service(), 6);
     let buildkit_service = indent_cloud_init_block(&render_shared_vm_buildkit_service(), 6);
     let install_script = indent_cloud_init_block(
@@ -311,6 +338,11 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
         "  - path: {data_disk_install_path}\n    permissions: '0755'\n    content: |\n{data_disk_script}\n",
         data_disk_install_path = SHARED_VM_DATA_DISK_INSTALL_PATH,
         data_disk_script = data_disk_script,
+    ));
+    write_files.push_str(&format!(
+        "  - path: {policy_install_path}\n    permissions: '0755'\n    content: |\n{guest_policy_script}\n",
+        policy_install_path = SHARED_VM_GUEST_POLICY_INSTALL_PATH,
+        guest_policy_script = guest_policy_script,
     ));
     write_files.push_str(&format!(
         "  - path: {install_path}\n    permissions: '0755'\n    content: |\n{install_script}\n",
@@ -360,6 +392,7 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
         ),
         4,
     );
+    let early_bootcmd = indent_cloud_init_block(&render_shared_vm_early_bootcmd(), 4);
     let install_container_stack_cmd = indent_cloud_init_block(
         &format!(
             "{install_path} >/dev/hvc0 2>&1",
@@ -389,10 +422,11 @@ pub(super) fn render_shared_vm_cloud_init_user_data(
         4,
     );
     Ok(format!(
-        "#cloud-config\nwrite_files:\n{write_files}runcmd:\n  - [ systemctl, daemon-reload ]\n  - |\n{enable_host_data_cmd}\n  - |\n{enable_data_disk_cmd}\n  - |\n{prepare_guest_agent_cmd}\n  - |\n{install_container_stack_cmd}\n  - |\n{enable_containerd_cmd}\n  - |\n{enable_buildkit_cmd}\n  - |\n{enable_guest_agent_cmd}\n",
+        "#cloud-config\nbootcmd:\n  - |\n{early_bootcmd}\nwrite_files:\n{write_files}runcmd:\n  - [ systemctl, daemon-reload ]\n  - |\n{enable_host_data_cmd}\n  - |\n{enable_data_disk_cmd}\n  - |\n{prepare_guest_agent_cmd}\n  - |\n{install_container_stack_cmd}\n  - |\n{enable_containerd_cmd}\n  - |\n{enable_buildkit_cmd}\n  - |\n{enable_guest_agent_cmd}\n",
         prepare_guest_agent_cmd = prepare_guest_agent_cmd,
         enable_host_data_cmd = enable_host_data_cmd,
         enable_data_disk_cmd = enable_data_disk_cmd,
+        early_bootcmd = early_bootcmd,
         install_container_stack_cmd = install_container_stack_cmd,
         enable_containerd_cmd = enable_containerd_cmd,
         enable_buildkit_cmd = enable_buildkit_cmd,

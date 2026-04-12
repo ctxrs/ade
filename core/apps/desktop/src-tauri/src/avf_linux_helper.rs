@@ -157,6 +157,7 @@ const SHARED_VM_GUEST_ROOT_XDG_CONFIG_ROOT: &str = "/ctx/cache/xdg/config";
 const SHARED_VM_GUEST_ROOT_XDG_DATA_ROOT: &str = "/ctx/cache/xdg/data";
 const SHARED_VM_GUEST_ROOT_XDG_CACHE_ROOT: &str = "/ctx/cache/xdg/cache";
 const SHARED_VM_GUEST_ROOT_XDG_RUNTIME_ROOT: &str = "/ctx/tmp/xdg-runtime-root";
+const SHARED_VM_GUEST_LOG_ROOT: &str = "/ctx/system/log";
 const SHARED_VM_GUEST_CONTAINERD_ROOT: &str = "/ctx/system/containerd";
 const SHARED_VM_GUEST_BUILDKIT_ROOT: &str = "/ctx/system/buildkit";
 const SHARED_VM_GUEST_NERDCTL_ROOT: &str = "/ctx/system/nerdctl";
@@ -167,6 +168,18 @@ const SHARED_VM_GUEST_CONTAINER_STACK_INSTALL_PATH: &str =
     "/usr/local/lib/ctx/ctx-avf-install-container-stack.sh";
 const SHARED_VM_GUEST_CONTAINER_STACK_MARKER_PATH: &str =
     "/usr/local/lib/ctx/container-stack.sha256";
+const SHARED_VM_GUEST_POLICY_INSTALL_PATH: &str = "/usr/local/lib/ctx/ctx-avf-guest-policy.sh";
+const SHARED_VM_GUEST_POLICY_MASKED_UNITS: &[&str] = &[
+    "apt-daily.service",
+    "apt-daily.timer",
+    "apt-daily-upgrade.service",
+    "apt-daily-upgrade.timer",
+    "unattended-upgrades.service",
+    "snapd.service",
+    "snapd.socket",
+    "snapd.seeded.service",
+    "fwupd-refresh.timer",
+];
 const SHARED_VM_GUEST_NERDCTL_BIN: &str = "/usr/local/bin/nerdctl";
 const SHARED_VM_GUEST_BUILDKITCTL_BIN: &str = "/usr/local/bin/buildctl";
 const SHARED_VM_GUEST_BUILDKIT_SOCKET: &str = "unix:///run/buildkit/buildkitd.sock";
@@ -216,7 +229,7 @@ const GUEST_EXEC_TTY_RESIZE_POLL_INTERVAL: std::time::Duration =
 const SHARED_VM_SHUTDOWN_WAIT_TIMEOUT: Duration = Duration::from_secs(135);
 const DEFAULT_PTY_COLS: u16 = 80;
 const DEFAULT_PTY_ROWS: u16 = 24;
-const REQUIRED_SHARED_VM_KERNEL_CMDLINE_TOKENS: &[&str] =
+const REQUIRED_SHARED_VM_KERNEL_CMDLINE_BASE_TOKENS: &[&str] =
     &["systemd.mask=systemd-networkd-wait-online.service"];
 
 #[derive(Debug, Clone, Serialize)]

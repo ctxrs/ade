@@ -446,6 +446,54 @@ fn stage_shadow_root_from_host_workspace_copies_standalone_repo() {
 }
 
 #[test]
+fn stage_shadow_root_from_host_workspace_expands_linked_git_worktree() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-shadow-copy-worktree-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    let repo_root = temp.join("repo");
+    fs::create_dir_all(&repo_root).expect("create repo root");
+    git(&["init", "-b", "main"], &repo_root);
+    git(&["config", "user.email", "test@example.com"], &repo_root);
+    git(&["config", "user.name", "Test User"], &repo_root);
+    fs::write(repo_root.join("README.md"), "hello\n").expect("write readme");
+    git(&["add", "README.md"], &repo_root);
+    git(&["commit", "-m", "initial"], &repo_root);
+
+    let worktree_root = temp.join("linked-worktree");
+    let worktree_root_str = worktree_root.to_string_lossy().into_owned();
+    git(
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "ctx/test-shadow-copy",
+            worktree_root_str.as_str(),
+        ],
+        &repo_root,
+    );
+    assert!(
+        !worktree_root.join(".git").is_dir(),
+        "source worktree should remain linked"
+    );
+
+    let shadow_root = temp.join("shadow-root");
+    stage_shadow_root_from_host_workspace(&worktree_root, &shadow_root)
+        .expect("stage shadow root from linked worktree");
+
+    assert!(shadow_root.join("README.md").exists());
+    assert!(shadow_root.join(".git").is_dir());
+    assert!(!shadow_root.join(".git").join("commondir").exists());
+    assert!(!shadow_root.join(".git").join("gitdir").exists());
+    git(&["rev-parse", "--is-inside-work-tree"], &shadow_root);
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
+}
+
+#[test]
 fn cloud_init_user_data_embeds_guest_agent_and_service() {
     let user_data = render_shared_vm_cloud_init_user_data(
         Path::new("/tmp"),
@@ -459,6 +507,7 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
     assert!(user_data.contains("/usr/local/bin/ctx-avf-linux-guest-agent"));
     assert!(user_data.contains("/usr/local/bin/ctx-egress-proxy"));
     assert!(user_data.contains(SHARED_VM_DATA_DISK_INSTALL_PATH));
+    assert!(user_data.contains(SHARED_VM_GUEST_POLICY_INSTALL_PATH));
     assert!(user_data.contains("/usr/local/lib/ctx/ctx-avf-install-container-stack.sh"));
     assert!(user_data.contains(SHARED_VM_DATA_DISK_SERVICE_NAME));
     assert!(user_data.contains(SHARED_VM_GUEST_AGENT_SERVICE_NAME));
@@ -473,34 +522,63 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
     assert!(user_data.contains("systemctl enable --now containerd.service"));
     assert!(user_data.contains("systemctl enable --now buildkit.service"));
     assert!(user_data.contains("mount_root='/ctx'"));
-    assert!(user_data.contains("worktrees_root='/ctx/ws/worktrees'"));
-    assert!(user_data.contains("home_root='/ctx/home'"));
-    assert!(user_data.contains("cache_root='/ctx/cache'"));
-    assert!(user_data.contains("tmp_root='/ctx/tmp'"));
+    for (name, path) in [
+        ("worktrees_root", SHARED_VM_GUEST_WORKTREES_ROOT),
+        ("home_root", SHARED_VM_GUEST_HOME_ROOT),
+        ("cache_root", SHARED_VM_GUEST_CACHE_ROOT),
+        ("tmp_root", SHARED_VM_GUEST_TMP_ROOT),
+        ("log_root", SHARED_VM_GUEST_LOG_ROOT),
+        ("containerd_root", SHARED_VM_GUEST_CONTAINERD_ROOT),
+        ("buildkit_root", SHARED_VM_GUEST_BUILDKIT_ROOT),
+        ("nerdctl_root", SHARED_VM_GUEST_NERDCTL_ROOT),
+        ("cni_config_root", SHARED_VM_GUEST_CNI_CONFIG_ROOT),
+        ("cni_state_root", SHARED_VM_GUEST_CNI_STATE_ROOT),
+        ("root_home", SHARED_VM_GUEST_ROOT_HOME),
+        ("root_xdg_config", SHARED_VM_GUEST_ROOT_XDG_CONFIG_ROOT),
+        ("root_xdg_data", SHARED_VM_GUEST_ROOT_XDG_DATA_ROOT),
+        ("root_xdg_cache", SHARED_VM_GUEST_ROOT_XDG_CACHE_ROOT),
+        ("root_xdg_runtime", SHARED_VM_GUEST_ROOT_XDG_RUNTIME_ROOT),
+    ] {
+        assert!(
+            user_data.contains(&format!("{name}='{path}'")),
+            "missing writable-surface root {name}={path}"
+        );
+    }
     assert!(user_data.contains("chmod 1777 \"$tmp_root\""));
     assert!(user_data.contains("current_tmp_source=\"$(findmnt -n -o SOURCE /tmp"));
-    assert!(user_data.contains("mount --bind \"$tmp_root\" /tmp"));
-    assert!(user_data.contains("mount --bind \"$tmp_root\" /var/tmp"));
+    for (src, dest) in [
+        ("$root_home", "/root"),
+        ("$tmp_root", "/tmp"),
+        ("$tmp_root", "/var/tmp"),
+        ("$log_root", "/var/log"),
+        ("$containerd_root", "/var/lib/containerd"),
+        ("$buildkit_root", "/var/lib/buildkit"),
+        ("$nerdctl_root", "/var/lib/nerdctl"),
+        ("$cni_config_root", "/etc/cni/net.d"),
+        ("$cni_state_root", "/var/lib/cni"),
+    ] {
+        assert!(
+            user_data.contains(&format!("mount --bind \"{src}\" {dest}")),
+            "missing bind mount {src} -> {dest}"
+        );
+    }
     assert!(user_data.contains("chmod 1777 /tmp"));
     assert!(user_data.contains("chmod 1777 /var/tmp"));
+    assert!(user_data.contains("chmod 0700 /root"));
     assert!(user_data.contains(".ctx-avf-data-disk-ready"));
-    assert!(user_data.contains("containerd_root='/ctx/system/containerd'"));
-    assert!(user_data.contains("buildkit_root='/ctx/system/buildkit'"));
-    assert!(user_data.contains("nerdctl_root='/ctx/system/nerdctl'"));
-    assert!(user_data.contains("cni_config_root='/ctx/system/cni/net.d'"));
-    assert!(user_data.contains("cni_state_root='/ctx/system/cni/lib'"));
-    assert!(user_data.contains("root_home='/ctx/home/root'"));
-    assert!(user_data.contains("root_xdg_config='/ctx/cache/xdg/config'"));
-    assert!(user_data.contains("root_xdg_data='/ctx/cache/xdg/data'"));
-    assert!(user_data.contains("root_xdg_cache='/ctx/cache/xdg/cache'"));
-    assert!(user_data.contains("root_xdg_runtime='/ctx/tmp/xdg-runtime-root'"));
-    assert!(user_data.contains("mount --bind \"$containerd_root\" /var/lib/containerd"));
-    assert!(user_data.contains("mount --bind \"$buildkit_root\" /var/lib/buildkit"));
-    assert!(user_data.contains("mount --bind \"$nerdctl_root\" /var/lib/nerdctl"));
-    assert!(user_data.contains("mount --bind \"$cni_config_root\" /etc/cni/net.d"));
-    assert!(user_data.contains("mount --bind \"$cni_state_root\" /var/lib/cni"));
     assert!(user_data.contains("/etc/cni/net.d/10-nerdctl.conflist"));
     assert!(user_data.contains("\"bridge\": \"nerdctl0\""));
+    assert!(user_data.contains("guest policy masking"));
+    assert!(user_data.contains("guest policy already masked"));
+    assert!(user_data.contains("ln -s /dev/null"));
+    assert!(user_data.contains("systemctl stop \"$unit\""));
+    assert!(user_data.contains("systemctl reset-failed \"$unit\""));
+    for unit in SHARED_VM_GUEST_POLICY_MASKED_UNITS {
+        assert!(
+            user_data.contains(unit),
+            "missing masked guest policy unit {unit}"
+        );
+    }
     assert!(user_data.contains(
         "chmod 0700 \"$root_home\" \"$root_xdg_config\" \"$root_xdg_data\" \"$root_xdg_cache\" \"$root_xdg_runtime\""
     ));
@@ -537,6 +615,15 @@ fn cloud_init_user_data_embeds_guest_agent_and_service() {
     assert!(user_data.contains("/mnt/ctx-host/runtime/helpers/container-stack.tar.gz"));
     assert!(!user_data.contains("ctx-avf-grow-rootfs.service"));
     let parsed: Value = serde_yaml::from_str(&user_data).expect("cloud-init YAML should parse");
+    let bootcmd = parsed["bootcmd"]
+        .as_sequence()
+        .expect("cloud-init bootcmd should be a sequence");
+    assert_eq!(bootcmd.len(), 1);
+    let bootcmd_rendered = bootcmd[0]
+        .as_str()
+        .expect("early bootcmd should be a string");
+    assert!(bootcmd_rendered.contains(SHARED_VM_DATA_DISK_INSTALL_PATH));
+    assert!(bootcmd_rendered.contains(SHARED_VM_GUEST_POLICY_INSTALL_PATH));
     let runcmd = parsed["runcmd"]
         .as_sequence()
         .expect("cloud-init runcmd should be a sequence");
@@ -768,6 +855,62 @@ fn default_shared_vm_kernel_cmdline_targets_runtime_rootfs_label() {
     assert!(cmdline.contains("root=LABEL=cloudimg-rootfs"));
     assert!(cmdline.contains("rootwait"));
     assert!(cmdline.contains("rw"));
+    assert!(cmdline.contains("systemd.mask=systemd-networkd-wait-online.service"));
+    for unit in SHARED_VM_GUEST_POLICY_MASKED_UNITS {
+        assert!(
+            cmdline.contains(&format!("systemd.mask={unit}")),
+            "missing early-boot mask for {unit}"
+        );
+    }
+}
+
+#[test]
+fn writable_surface_contract_digest_includes_early_bootcmd() {
+    let temp = PathBuf::from("/tmp").join(format!(
+        "ctxavf-writable-surface-digest-{}-{}",
+        std::process::id(),
+        now_timestamp_string()
+    ));
+    if temp.exists() {
+        fs::remove_dir_all(&temp).expect("clear tempdir");
+    }
+    fs::create_dir_all(&temp).expect("create tempdir");
+
+    let guest_ready_marker_path =
+        shared_vm_guest_host_share_path(&temp, &shared_vm_guest_control_ready_path(&temp))
+            .expect("guest ready-marker path");
+    let guest_failure_marker_path =
+        shared_vm_guest_host_share_path(&temp, &shared_vm_guest_control_failed_path(&temp))
+            .expect("guest failure-marker path");
+    let guest_agent_log_path =
+        shared_vm_guest_host_share_path(&temp, &shared_vm_guest_agent_log_path(&temp))
+            .expect("guest agent log path");
+
+    let mut expected = Sha256::new();
+    for rendered in [
+        render_shared_vm_host_data_mount_service(),
+        render_shared_vm_data_disk_script(),
+        render_shared_vm_guest_policy_script(),
+        render_shared_vm_early_bootcmd(),
+        render_shared_vm_data_disk_service(),
+        render_shared_vm_containerd_service(),
+        render_shared_vm_buildkit_service(),
+        render_shared_vm_guest_agent_service(
+            &guest_ready_marker_path,
+            &guest_failure_marker_path,
+            &guest_agent_log_path,
+        ),
+    ] {
+        expected.update(rendered.as_bytes());
+        expected.update(b"\0");
+    }
+
+    assert_eq!(
+        shared_vm_writable_surface_contract_digest(&temp).expect("writable-surface contract"),
+        hex::encode(expected.finalize())
+    );
+
+    fs::remove_dir_all(&temp).expect("cleanup tempdir");
 }
 
 #[test]
@@ -2171,19 +2314,32 @@ fn shared_vm_guest_readiness_args_include_bridge_probe() {
     assert!(rendered.contains("readiness phase"));
     assert!(rendered.contains("ip link add name \"$probe_bridge\" type bridge"));
     assert!(rendered.contains("writable-root-separate"));
+    assert!(rendered.contains("root-on-writable-root"));
     assert!(rendered.contains("tmp-on-writable-root"));
     assert!(rendered.contains("var-tmp-on-writable-root"));
+    assert!(rendered.contains("var-log-on-writable-root"));
     assert!(rendered.contains("containerd-root-on-writable-root"));
     assert!(rendered.contains("buildkit-root-on-writable-root"));
     assert!(rendered.contains("nerdctl-root-on-writable-root"));
     assert!(rendered.contains("cni-config-on-writable-root"));
     assert!(rendered.contains("cni-state-on-writable-root"));
+    assert!(rendered.contains("guest-policy-masked-units"));
+    assert!(rendered.contains("masked-runtime"));
+    assert!(rendered.contains("systemctl is-enabled \"$unit\" 2>/dev/null || true"));
     assert!(rendered.contains("stat -fc %d"));
+    assert!(rendered.contains("/root"));
+    assert!(rendered.contains("/var/log"));
     assert!(rendered.contains("/var/lib/nerdctl"));
     assert!(rendered.contains("/etc/cni/net.d"));
     assert!(rendered.contains("/var/lib/cni"));
     assert!(rendered.contains(SHARED_VM_GUEST_NERDCTL_BIN));
     assert!(rendered.contains(SHARED_VM_GUEST_BUILDKITCTL_BIN));
+    for unit in SHARED_VM_GUEST_POLICY_MASKED_UNITS {
+        assert!(
+            rendered.contains(unit),
+            "missing masked readiness unit {unit}"
+        );
+    }
     assert!(rendered.contains(&format!(
         "timeout --kill-after=1s --preserve-status {SHARED_VM_READINESS_PHASE_TIMEOUT_SECONDS}s"
     )));
@@ -2246,6 +2402,7 @@ fn writable_surface_readiness_failures_trigger_writable_rootfs_reset() {
     for rendered in [
         "guest exec readiness probe exited 41 (stdout='', stderr='[ctx-avf-linux] bridge_probe_failed')",
         "[ctx-avf-linux] readiness phase writable-root-separate failed with exit 1 after 2ms",
+        "[ctx-avf-linux] readiness phase root-on-writable-root failed with exit 1 after 2ms",
         "[ctx-avf-linux] readiness phase tmp-on-writable-root failed with exit 1 after 2ms",
         "[ctx-avf-linux] readiness phase var-tmp-on-writable-root failed with exit 1 after 2ms",
         "[ctx-avf-linux] readiness phase containerd-root-on-writable-root failed with exit 1 after 2ms",
@@ -2253,6 +2410,7 @@ fn writable_surface_readiness_failures_trigger_writable_rootfs_reset() {
         "[ctx-avf-linux] readiness phase nerdctl-root-on-writable-root failed with exit 1 after 2ms",
         "[ctx-avf-linux] readiness phase cni-config-on-writable-root failed with exit 1 after 2ms",
         "[ctx-avf-linux] readiness phase cni-state-on-writable-root failed with exit 1 after 2ms",
+        "[ctx-avf-linux] readiness phase guest-policy-masked-units failed with exit 1 after 2ms",
     ] {
         let err = anyhow::anyhow!(rendered.to_string());
         assert!(
@@ -2302,7 +2460,7 @@ fn stop_shared_vm_owner_after_readiness_failure_waits_for_exit() {
 }
 
 #[test]
-fn cloud_init_enables_host_data_before_touching_host_payload() {
+fn cloud_init_applies_guest_policy_before_writable_root_setup_and_service_startup() {
     let user_data = render_shared_vm_cloud_init_user_data(
         Path::new("/tmp"),
         b"guest-agent",
@@ -2311,6 +2469,7 @@ fn cloud_init_enables_host_data_before_touching_host_payload() {
         "deadbeef",
     )
     .expect("render cloud-init user-data");
+    let guest_policy_index = user_data.find("bootcmd:").expect("guest-policy bootcmd");
     let daemon_reload_index = user_data
         .find("- [ systemctl, daemon-reload ]")
         .expect("daemon reload command");
@@ -2326,10 +2485,30 @@ fn cloud_init_enables_host_data_before_touching_host_payload() {
     let prepare_guest_agent_index = user_data
         .find("preparing ctx-avf-linux-guest-agent.service")
         .expect("prepare guest-agent command");
+    let containerd_enable_index = user_data
+        .find("systemctl enable --now containerd.service")
+        .expect("containerd enable command");
+    assert!(guest_policy_index < daemon_reload_index);
     assert!(daemon_reload_index < host_data_enable_index);
     assert!(host_data_enable_index < data_disk_enable_index);
+    assert!(guest_policy_index < prepare_guest_agent_index);
     assert!(data_disk_enable_index < prepare_guest_agent_index);
     assert!(host_data_enable_index < prepare_guest_agent_index);
+    assert!(prepare_guest_agent_index < containerd_enable_index);
+}
+
+#[test]
+fn guest_policy_script_masks_background_rootfs_mutators() {
+    let script = render_shared_vm_guest_policy_script();
+    assert!(script.contains("mkdir -p /etc/systemd/system"));
+    assert!(script.contains("ln -s /dev/null"));
+    assert!(script.contains("guest policy already masked"));
+    assert!(script.contains("systemctl stop \"$unit\""));
+    assert!(script.contains("systemctl reset-failed \"$unit\""));
+    assert!(script.contains("systemctl daemon-reload"));
+    for unit in SHARED_VM_GUEST_POLICY_MASKED_UNITS {
+        assert!(script.contains(unit), "missing masked unit {unit}");
+    }
 }
 
 #[test]
@@ -3892,6 +4071,15 @@ fn guest_agent_exec_emits_exit_without_waiting_for_close_stdin() {
     use std::thread;
     use std::time::Duration;
 
+    let temp_home = std::env::temp_dir().join(format!(
+        "ctx-avf-test-home-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time after epoch")
+            .as_nanos()
+    ));
+    fs::create_dir_all(&temp_home).expect("create temp home");
     let (mut client, server) = UnixStream::pair().expect("unix stream pair");
     client
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -3908,7 +4096,7 @@ fn guest_agent_exec_emits_exit_without_waiting_for_close_stdin() {
             vec!["-lc".to_string(), "printf ready".to_string()],
             "/",
             None,
-            HashMap::new(),
+            HashMap::from([("HOME".to_string(), temp_home.to_string_lossy().to_string())]),
             false,
         )),
     )
@@ -3932,4 +4120,5 @@ fn guest_agent_exec_emits_exit_without_waiting_for_close_stdin() {
     );
 
     relay.join().expect("guest-agent relay thread");
+    fs::remove_dir_all(&temp_home).expect("cleanup temp home");
 }

@@ -388,19 +388,96 @@ pub(super) fn stage_shadow_root_from_host_workspace(
     let dotgit = host_workspace_root.join(".git");
     let dotgit_meta =
         fs::metadata(&dotgit).with_context(|| format!("reading {}", dotgit.display()))?;
-    if !dotgit_meta.is_dir() {
-        bail!(
-            "host workspace root {} must have a standalone .git directory before staging helper shadow root",
-            host_workspace_root.display()
-        );
-    }
     copy_dir_recursive(host_workspace_root, host_shadow_root).with_context(|| {
         format!(
             "copying managed worktree {} into helper shadow root {}",
             host_workspace_root.display(),
             host_shadow_root.display()
         )
-    })
+    })?;
+    if dotgit_meta.is_dir() {
+        return Ok(());
+    }
+
+    let git_dir = resolve_git_dir(host_workspace_root)?;
+    let common_git_dir = resolve_common_git_dir(&git_dir)?;
+    let staged_dotgit = host_shadow_root.join(".git");
+    remove_path_if_exists(&staged_dotgit)?;
+    copy_dir_recursive(&common_git_dir, &staged_dotgit).with_context(|| {
+        format!(
+            "copying common git dir {} into staged shadow root {}",
+            common_git_dir.display(),
+            staged_dotgit.display()
+        )
+    })?;
+    if git_dir != common_git_dir {
+        copy_dir_recursive(&git_dir, &staged_dotgit).with_context(|| {
+            format!(
+                "copying worktree git dir {} into staged shadow root {}",
+                git_dir.display(),
+                staged_dotgit.display()
+            )
+        })?;
+    }
+    remove_path_if_exists(&staged_dotgit.join("commondir"))?;
+    remove_path_if_exists(&staged_dotgit.join("gitdir"))?;
+    Ok(())
+}
+
+fn resolve_git_dir(worktree_root: &Path) -> Result<PathBuf> {
+    let dotgit = worktree_root.join(".git");
+    let meta = fs::metadata(&dotgit).with_context(|| format!("reading {}", dotgit.display()))?;
+    if meta.is_dir() {
+        return Ok(dotgit);
+    }
+    let txt =
+        fs::read_to_string(&dotgit).with_context(|| format!("reading {}", dotgit.display()))?;
+    let line = txt
+        .lines()
+        .find(|value| value.trim_start().starts_with("gitdir:"))
+        .ok_or_else(|| anyhow::anyhow!("invalid .git file: missing gitdir"))?;
+    let raw = line.trim_start().trim_start_matches("gitdir:").trim();
+    let path = PathBuf::from(raw);
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(worktree_root.join(path))
+    }
+}
+
+fn resolve_common_git_dir(git_dir: &Path) -> Result<PathBuf> {
+    let commondir = git_dir.join("commondir");
+    let meta = match fs::metadata(&commondir) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(git_dir.to_path_buf());
+        }
+        Err(err) => return Err(err).with_context(|| format!("reading {}", commondir.display())),
+    };
+    if !meta.is_file() {
+        return Ok(git_dir.to_path_buf());
+    }
+    let raw = fs::read_to_string(&commondir)
+        .with_context(|| format!("reading {}", commondir.display()))?;
+    let path = PathBuf::from(raw.trim());
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(git_dir.join(path))
+    }
+}
+
+fn remove_path_if_exists(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let meta = fs::symlink_metadata(path).with_context(|| format!("reading {}", path.display()))?;
+    if meta.is_dir() {
+        fs::remove_dir_all(path).with_context(|| format!("removing {}", path.display()))?;
+    } else {
+        fs::remove_file(path).with_context(|| format!("removing {}", path.display()))?;
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -545,7 +622,7 @@ mod tests {
     }
 
     #[test]
-    fn stage_shadow_root_requires_standalone_git_directory() {
+    fn stage_shadow_root_rejects_invalid_git_pointer_file() {
         let temp = PathBuf::from("/tmp").join(format!(
             "ctxavf-stage-shadow-git-{}-{}",
             std::process::id(),
@@ -562,9 +639,9 @@ mod tests {
 
         let err =
             stage_shadow_root_from_host_workspace(&host_workspace_root, &temp.join("shadow-root"))
-                .expect_err("host workspace without standalone .git should fail");
+                .expect_err("host workspace with invalid .git pointer should fail");
 
-        assert!(err.to_string().contains("standalone .git directory"));
+        assert!(err.to_string().contains("invalid .git file"));
         fs::remove_dir_all(&temp).expect("cleanup tempdir");
     }
 

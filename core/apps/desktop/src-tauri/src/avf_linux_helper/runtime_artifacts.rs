@@ -12,14 +12,23 @@ pub(super) fn default_shared_vm_kernel_cmdline() -> String {
 }
 
 pub(super) fn ensure_required_shared_vm_kernel_cmdline_tokens(mut cmdline: String) -> String {
-    for token in REQUIRED_SHARED_VM_KERNEL_CMDLINE_TOKENS {
-        if cmdline.split_whitespace().any(|part| part == *token) {
+    let required_tokens = REQUIRED_SHARED_VM_KERNEL_CMDLINE_BASE_TOKENS
+        .iter()
+        .copied()
+        .map(str::to_owned)
+        .chain(
+            SHARED_VM_GUEST_POLICY_MASKED_UNITS
+                .iter()
+                .map(|unit| format!("systemd.mask={unit}")),
+        );
+    for token in required_tokens {
+        if cmdline.split_whitespace().any(|part| part == token) {
             continue;
         }
         if !cmdline.is_empty() {
             cmdline.push(' ');
         }
-        cmdline.push_str(token);
+        cmdline.push_str(&token);
     }
     cmdline
 }
