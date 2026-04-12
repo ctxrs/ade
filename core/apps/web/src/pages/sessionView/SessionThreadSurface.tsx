@@ -184,7 +184,6 @@ export function SessionThreadSurface({
       return (
         <AssistantEntry
           content={item.content}
-          isComplete={item.is_complete}
           worktreeId={worktreeId}
           onFileOpenError={handleFileOpenError}
         />

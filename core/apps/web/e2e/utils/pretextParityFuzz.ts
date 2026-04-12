@@ -1,5 +1,6 @@
 import type {
   AssistantParityParams,
+  AssistantStreamingParityParams,
   MarkdownSample,
   MessageParityParams,
   TurnHeaderParityParams,
@@ -86,6 +87,12 @@ export type GeneratedAssistantSample = {
   params: AssistantParityParams;
 };
 
+export type GeneratedAssistantStreamingSample = {
+  name: string;
+  params: AssistantStreamingParityParams;
+  finalContent: string;
+};
+
 export type GeneratedTurnHeaderSample = {
   name: string;
   params: TurnHeaderParityParams;
@@ -97,6 +104,7 @@ export type GeneratedPretextParityFuzzCorpus = {
   markdownSamples: readonly MarkdownSample[];
   messageSamples: readonly GeneratedMessageSample[];
   assistantSamples: readonly GeneratedAssistantSample[];
+  assistantStreamingSamples: readonly GeneratedAssistantStreamingSample[];
   turnHeaderSamples: readonly GeneratedTurnHeaderSample[];
 };
 
@@ -320,6 +328,70 @@ function generateMarkdownSample(rng: SeededRandom, index: number): MarkdownSampl
   };
 }
 
+function uniqueSorted(values: readonly number[]): number[] {
+  return [...new Set(values)]
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((left, right) => left - right);
+}
+
+function selectStreamingCutPoints(content: string): number[] {
+  const length = content.length;
+  if (length <= 1) {
+    return [];
+  }
+  const candidateSet = new Set<number>();
+  const addCandidate = (value: number) => {
+    if (value > 0 && value < length) {
+      candidateSet.add(value);
+    }
+  };
+  for (const fraction of [0.18, 0.37, 0.61, 0.82]) {
+    addCandidate(Math.round(length * fraction));
+  }
+  for (const match of content.matchAll(/\n\n?/g)) {
+    addCandidate((match.index ?? 0) + match[0].length);
+  }
+  for (const match of content.matchAll(/`+/g)) {
+    addCandidate((match.index ?? 0) + match[0].length);
+  }
+  for (const match of content.matchAll(/\|/g)) {
+    addCandidate((match.index ?? 0) + 1);
+  }
+  const candidates = uniqueSorted([...candidateSet]);
+  if (candidates.length <= 4) {
+    return candidates;
+  }
+  const targets = [0.18, 0.37, 0.61, 0.82];
+  const selected: number[] = [];
+  for (const fraction of targets) {
+    const target = Math.round(length * fraction);
+    const next = candidates
+      .filter((candidate) => !selected.includes(candidate))
+      .sort((left, right) => Math.abs(left - target) - Math.abs(right - target))[0];
+    if (next != null) {
+      selected.push(next);
+    }
+  }
+  return uniqueSorted(selected);
+}
+
+function splitStreamingFragments(content: string): string[] {
+  const cutPoints = selectStreamingCutPoints(content);
+  if (cutPoints.length === 0) {
+    return [content];
+  }
+  const fragments: string[] = [];
+  let cursor = 0;
+  for (const cutPoint of [...cutPoints, content.length]) {
+    const fragment = content.slice(cursor, cutPoint);
+    if (fragment.length > 0) {
+      fragments.push(fragment);
+    }
+    cursor = cutPoint;
+  }
+  return fragments;
+}
+
 function generateMessageSample(rng: SeededRandom, index: number): GeneratedMessageSample {
   if (index % 5 === 0) {
     const lineCount = rng.int(18, 28);
@@ -375,6 +447,24 @@ function generateAssistantSample(rng: SeededRandom, index: number): GeneratedAss
   };
 }
 
+function generateAssistantStreamingSample(rng: SeededRandom, index: number): GeneratedAssistantStreamingSample {
+  const blocks = [
+    generateParagraphBlock(rng),
+    rng.bool(0.5) ? generateListBlock(rng) : generateNestedListBlock(rng),
+  ];
+  if (rng.bool(0.6)) {
+    blocks.push(rng.bool(0.5) ? generateParagraphBlock(rng) : generateBlockquoteBlock(rng));
+  }
+  const finalContent = blocks.map((block) => block.text).join("\n\n");
+  return {
+    name: `generated-assistant-streaming-${index}-${blocks.map((block) => block.label).join("-")}`,
+    params: {
+      fragments: splitStreamingFragments(finalContent),
+    },
+    finalContent,
+  };
+}
+
 function generateTurnHeaderSample(rng: SeededRandom, index: number): GeneratedTurnHeaderSample {
   const lines = [
     `${capitalize(generateWords(rng, 3, 5))} ${generateUrl(rng)} ${generatePathToken(rng)}.`,
@@ -411,6 +501,9 @@ export function generatePretextParityFuzzCorpus(options?: {
     markdownSamples: Array.from({ length: markdownCount }, (_, index) => generateMarkdownSample(rng, index + 1)),
     messageSamples: Array.from({ length: messageCount }, (_, index) => generateMessageSample(rng, index + 1)),
     assistantSamples: Array.from({ length: assistantCount }, (_, index) => generateAssistantSample(rng, index + 1)),
+    assistantStreamingSamples: Array.from({ length: assistantCount }, (_, index) =>
+      generateAssistantStreamingSample(rng, index + 1),
+    ),
     turnHeaderSamples: Array.from({ length: turnHeaderCount }, (_, index) => generateTurnHeaderSample(rng, index + 1)),
   };
 }

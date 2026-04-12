@@ -139,7 +139,7 @@ describe("getPretextVirtualizerRowLayout", () => {
     expect(prepareMock.mock.calls.length + prepareWithSegmentsMock.mock.calls.length).toBeGreaterThan(0);
   });
 
-  it("keeps incomplete assistant list tails in plain-text streaming mode until the block closes", () => {
+  it("measures incomplete assistant markdown exactly like the completed row for the same content", () => {
     const partialItem: WorkbenchListItem = {
       kind: "assistant",
       id: "assistant-streaming-partial",
@@ -152,14 +152,14 @@ describe("getPretextVirtualizerRowLayout", () => {
     const closedItem: WorkbenchListItem = {
       ...partialItem,
       id: "assistant-streaming-closed",
-      content: "Before\n\n- partial item\n\nAfter",
+      is_complete: true,
     };
 
     const partial = getPretextVirtualizerRowLayout(partialItem, 640, {});
     const closed = getPretextVirtualizerRowLayout(closedItem, 640, {});
 
     expect(partial.height).toBeGreaterThan(0);
-    expect(closed.height).toBeGreaterThan(partial.height);
+    expect(closed.height).toBe(partial.height);
     expect(prepareMock).toHaveBeenCalled();
   });
 

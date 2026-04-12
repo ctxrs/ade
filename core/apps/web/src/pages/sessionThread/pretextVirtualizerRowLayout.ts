@@ -19,14 +19,6 @@ import {
   measureRenderedSessionTurnHeaderHeight,
 } from "./sessionThreadDomMeasurement";
 import {
-  resolveSessionMarkdownBlockEntryGapPx,
-  resolveSessionMarkdownBlockGapPx,
-} from "./sessionMarkdownContract";
-import {
-  clearSessionStreamingMarkdownCaches,
-  resolveSessionStreamingMarkdownLayout,
-} from "./sessionStreamingMarkdown";
-import {
   SESSION_THREAD_INDENT_LEFT_PX,
   SESSION_THREAD_MESSAGE_ATTACHMENT_GAP_PX,
   SESSION_THREAD_MESSAGE_ATTACHMENT_HEIGHT_PX,
@@ -244,35 +236,7 @@ function measureAssistantHeight(
     return SPACER_HEIGHT_PX;
   }
   const textWidth = resolveSessionThreadAssistantTextWidth(viewportWidth);
-  const textHeight = item.is_complete
-    ? measureSessionMarkdownDocument(item.content, textWidth)
-    : (() => {
-        const layout = resolveSessionStreamingMarkdownLayout(item.content);
-        const stableHeight =
-          layout.stableMarkdown.length > 0
-            ? measureSessionMarkdownDocument(layout.stableMarkdown, textWidth)
-            : 0;
-        if (layout.trailingTail.length === 0) {
-          return stableHeight;
-        }
-        const tailHeight = measureTextHeight({
-          cacheKey: `assistant-tail:${item.id}:${layout.trailingTail}`,
-          text: layout.trailingTail,
-          font: BODY_FONT,
-          width: textWidth,
-          lineHeight: BODY_LINE_HEIGHT_PX,
-          whiteSpace: "pre-wrap",
-        });
-        const tailGap =
-          layout.stableBlocks.length === 0
-            ? resolveSessionMarkdownBlockEntryGapPx("paragraph", "root")
-            : resolveSessionMarkdownBlockGapPx(
-                layout.stableBlocks[layout.stableBlocks.length - 1]!.kind,
-                "paragraph",
-                "root",
-              );
-        return stableHeight + tailGap + tailHeight;
-      })();
+  const textHeight = measureSessionMarkdownDocument(item.content, textWidth);
   return normalizeHeight(ASSISTANT_VERTICAL_PADDING_PX + textHeight);
 }
 
@@ -322,7 +286,6 @@ function measureAskUserQuestionHeight(item: Extract<WorkbenchListItem, { kind: "
 
 export const clearPretextVirtualizerRowLayoutCache = (): void => {
   clearSessionMarkdownMeasurementCaches();
-  clearSessionStreamingMarkdownCaches();
 };
 
 export const getPretextVirtualizerRowLayout = (

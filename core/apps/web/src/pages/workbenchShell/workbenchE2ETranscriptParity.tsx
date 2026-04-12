@@ -33,6 +33,24 @@ export type WorkbenchAssistantParityParams = {
   viewportWidth?: number;
 };
 
+export type WorkbenchAssistantStreamingParityParams = {
+  fragments: readonly string[];
+  viewportWidth?: number;
+};
+
+export type WorkbenchAssistantStreamingParityStep = {
+  content: string;
+  partial: WorkbenchRowParityMeasurement;
+  complete: WorkbenchRowParityMeasurement;
+  actualDelta: number;
+  plannedDelta: number;
+  structureEquivalent: boolean;
+};
+
+export type WorkbenchAssistantStreamingParityMeasurement = {
+  steps: WorkbenchAssistantStreamingParityStep[];
+};
+
 export type WorkbenchTurnHeaderParityParams = {
   plainText: string;
   viewportWidth?: number;
@@ -57,6 +75,47 @@ function makeParityMeasurement(planned: number, actual: number): WorkbenchRowPar
     planned,
     actual,
     delta: planned - actual,
+  };
+}
+
+type AssistantRenderSnapshot = {
+  measurement: WorkbenchRowParityMeasurement;
+  structureSignature: string;
+};
+
+function measureAssistantRenderSnapshot(params: {
+  host: HTMLElement;
+  root: ReactDOMClient.Root;
+  item: Extract<WorkbenchListItem, { kind: "assistant" }>;
+  viewportWidth: number;
+}): AssistantRenderSnapshot {
+  const { host, root, item, viewportWidth } = params;
+  flushSync(() => {
+    root.render(
+      React.createElement(
+        "div",
+        { "data-thread-item-id": item.id },
+        React.createElement(
+          "div",
+          { className: "wb-thread-indent" },
+          React.createElement(AssistantEntry, {
+            content: item.content,
+            worktreeId: null,
+            onFileOpenError: () => {},
+          }),
+        ),
+      ),
+    );
+  });
+
+  const row = host.querySelector<HTMLElement>(`[data-thread-item-id="${item.id}"]`);
+  const actual = row?.getBoundingClientRect().height ?? 0;
+  const planned = getPretextVirtualizerRowLayout(item, viewportWidth, {}).height;
+  const structureSignature = row?.querySelector<HTMLElement>(".wb-markdown-root")?.innerHTML ?? "";
+
+  return {
+    measurement: makeParityMeasurement(planned, actual),
+    structureSignature,
   };
 }
 
@@ -128,28 +187,66 @@ export async function measureWorkbenchAssistantParity(
   };
 
   try {
-    flushSync(() => {
-      root.render(
-        React.createElement(
-          "div",
-          { "data-thread-item-id": item.id },
-          React.createElement(
-            "div",
-            { className: "wb-thread-indent" },
-            React.createElement(AssistantEntry, {
-              content: item.content,
-              isComplete: item.is_complete,
-              worktreeId: null,
-              onFileOpenError: () => {},
-            }),
-          ),
-        ),
-      );
-    });
+    return measureAssistantRenderSnapshot({ host, root, item, viewportWidth }).measurement;
+  } finally {
+    root.unmount();
+    host.remove();
+  }
+}
 
-    const actual = host.querySelector<HTMLElement>(`[data-thread-item-id="${item.id}"]`)?.getBoundingClientRect().height ?? 0;
-    const planned = getPretextVirtualizerRowLayout(item, viewportWidth, {}).height;
-    return makeParityMeasurement(planned, actual);
+export async function measureWorkbenchAssistantStreamingParity(
+  params: WorkbenchAssistantStreamingParityParams,
+): Promise<WorkbenchAssistantStreamingParityMeasurement> {
+  const viewportWidth = params.viewportWidth ?? 820;
+  const host = document.createElement("div");
+  applyTranscriptLayoutStyle(host, viewportWidth);
+  document.body.appendChild(host);
+  const root = ReactDOMClient.createRoot(host);
+  const steps: WorkbenchAssistantStreamingParityStep[] = [];
+  let content = "";
+
+  try {
+    for (let index = 0; index < params.fragments.length; index += 1) {
+      content += params.fragments[index] ?? "";
+      if (content.length === 0) {
+        continue;
+      }
+      const partialItem: Extract<WorkbenchListItem, { kind: "assistant" }> = {
+        kind: "assistant",
+        id: "assistant-streaming-partial",
+        turn_id: "turn-1",
+        created_at: "2026-04-09T00:00:00Z",
+        content,
+        thought: "",
+        is_complete: false,
+      };
+      const completeItem: Extract<WorkbenchListItem, { kind: "assistant" }> = {
+        ...partialItem,
+        id: "assistant-streaming-complete",
+        is_complete: true,
+      };
+      const partial = measureAssistantRenderSnapshot({
+        host,
+        root,
+        item: partialItem,
+        viewportWidth,
+      });
+      const complete = measureAssistantRenderSnapshot({
+        host,
+        root,
+        item: completeItem,
+        viewportWidth,
+      });
+      steps.push({
+        content,
+        partial: partial.measurement,
+        complete: complete.measurement,
+        actualDelta: partial.measurement.actual - complete.measurement.actual,
+        plannedDelta: partial.measurement.planned - complete.measurement.planned,
+        structureEquivalent: partial.structureSignature === complete.structureSignature,
+      });
+    }
+    return { steps };
   } finally {
     root.unmount();
     host.remove();

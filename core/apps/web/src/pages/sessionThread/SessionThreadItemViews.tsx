@@ -299,12 +299,10 @@ function CollapsibleMessage({
 
 export const AssistantEntry = memo(function AssistantEntry({
   content,
-  isComplete = true,
   worktreeId,
   onFileOpenError,
 }: {
   content: string;
-  isComplete?: boolean;
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
 }) {
@@ -316,7 +314,6 @@ export const AssistantEntry = memo(function AssistantEntry({
           linkifyFiles
           worktreeId={worktreeId}
           onFileOpenError={onFileOpenError}
-          streamingIncomplete={!isComplete}
         />
       </div>
     </div>

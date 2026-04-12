@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import { expect, test } from "./fixtures";
 import {
   measureAssistantParity,
+  measureAssistantStreamingParity,
   measureMarkdownParity,
   measureMessageParity,
   measureTurnHeaderParity,
@@ -41,6 +42,22 @@ type RowSummaryEntry = {
   attachmentCount?: number;
 };
 
+type StreamingSummaryEntry = {
+  width: number;
+  name: string;
+  stepIndex: number;
+  content: string;
+  partialPlanned: number;
+  partialActual: number;
+  partialDelta: number;
+  completePlanned: number;
+  completeActual: number;
+  completeDelta: number;
+  actualDelta: number;
+  plannedDelta: number;
+  structureEquivalent: boolean;
+};
+
 function readEnvInt(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -56,6 +73,15 @@ function formatFailures(
     .map(
       (failure) =>
         `- width ${failure.width} ${failure.name}: delta=${failure.delta}px planned=${failure.planned} actual=${failure.actual}`,
+    )
+    .join("\n")}`;
+}
+
+function formatStreamingFailures(failures: StreamingSummaryEntry[]): string {
+  return `assistant streaming parity failures:\n${failures
+    .map(
+      (failure) =>
+        `- width ${failure.width} ${failure.name} step ${failure.stepIndex}: partialDelta=${failure.partialDelta}px completeDelta=${failure.completeDelta}px actualDelta=${failure.actualDelta}px plannedDelta=${failure.plannedDelta}px structureEquivalent=${failure.structureEquivalent}`,
     )
     .join("\n")}`;
 }
@@ -217,4 +243,73 @@ test("workbench: pretext generated transcript row fuzz parity", async ({ page },
       })),
     ),
   ).toEqual([]);
+});
+
+test("workbench: pretext generated assistant streaming fuzz parity", async ({ page }, testInfo) => {
+  test.setTimeout(240000);
+  test.slow();
+  await openWorkbenchShell(page);
+
+  const corpus = generatePretextParityFuzzCorpus({
+    seed: readEnvInt("CTX_PRETEXT_FUZZ_SEED", DEFAULT_SEED),
+    markdownCount: readEnvInt("CTX_PRETEXT_FUZZ_MARKDOWN_CASES", DEFAULT_MARKDOWN_CASES),
+    messageCount: readEnvInt("CTX_PRETEXT_FUZZ_MESSAGE_CASES", DEFAULT_MESSAGE_CASES),
+    assistantCount: readEnvInt("CTX_PRETEXT_FUZZ_ASSISTANT_CASES", DEFAULT_ASSISTANT_CASES),
+    turnHeaderCount: readEnvInt("CTX_PRETEXT_FUZZ_TURN_HEADER_CASES", DEFAULT_TURN_HEADER_CASES),
+  });
+
+  const summary: StreamingSummaryEntry[] = [];
+  for (const width of corpus.widths) {
+    for (const sample of corpus.assistantStreamingSamples) {
+      const measurement = await measureAssistantStreamingParity(page, {
+        ...sample.params,
+        viewportWidth: width,
+      });
+      summary.push(
+        ...measurement.steps.map((step, index) => ({
+          width,
+          name: sample.name,
+          stepIndex: index,
+          content: step.content,
+          partialPlanned: step.partial.planned,
+          partialActual: step.partial.actual,
+          partialDelta: step.partial.delta,
+          completePlanned: step.complete.planned,
+          completeActual: step.complete.actual,
+          completeDelta: step.complete.delta,
+          actualDelta: step.actualDelta,
+          plannedDelta: step.plannedDelta,
+          structureEquivalent: step.structureEquivalent,
+        })),
+      );
+    }
+  }
+
+  const report = {
+    enforce: ENFORCE,
+    thresholdPx: ROW_THRESHOLD_PX,
+    widths: corpus.widths,
+    counts: {
+      assistantStreaming: corpus.assistantStreamingSamples.length,
+    },
+    samples: summary,
+  };
+  const reportPath = testInfo.outputPath("pretext-assistant-streaming-fuzz-parity.json");
+  await fs.writeFile(reportPath, JSON.stringify(report, null, 2), "utf8");
+  await testInfo.attach("pretext-assistant-streaming-fuzz-parity.json", {
+    path: reportPath,
+    contentType: "application/json",
+  });
+
+  if (!ENFORCE) return;
+
+  const failures = summary.filter(
+    (entry) =>
+      Math.abs(entry.partialDelta) > ROW_THRESHOLD_PX ||
+      Math.abs(entry.completeDelta) > ROW_THRESHOLD_PX ||
+      Math.abs(entry.actualDelta) > ROW_THRESHOLD_PX ||
+      Math.abs(entry.plannedDelta) > ROW_THRESHOLD_PX ||
+      !entry.structureEquivalent,
+  );
+  expect(failures, formatStreamingFailures(failures)).toEqual([]);
 });

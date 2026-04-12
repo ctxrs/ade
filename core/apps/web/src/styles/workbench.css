@@ -3749,15 +3749,6 @@
   color: var(--text);
 }
 
-.wb-turn-header-content :where(.wb-md-streaming-tail),
-.wb-tool-markdown :where(.wb-md-streaming-tail),
-.wb-assistant-body :where(.wb-md-streaming-tail),
-.msg :where(.wb-md-streaming-tail) {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
 .wb-tool-markdown img,
 .wb-assistant-body img,
 .msg img {

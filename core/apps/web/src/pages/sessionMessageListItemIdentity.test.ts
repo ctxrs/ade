@@ -203,10 +203,10 @@ describe("sessionMessageListItemIdentity", () => {
       is_complete: true,
     };
 
-    expect(getWorkbenchListItemKey(item, baseUiState)).toContain("assistant-1:assistant:complete:fixed:");
+    expect(getWorkbenchListItemKey(item, baseUiState)).toContain("assistant-1:assistant:fixed:");
   });
 
-  it("keeps pending assistant rows on pending-height identity even when their content is long", () => {
+  it("keys pending assistant rows on the same content identity as completed rows", () => {
     const content = Array.from({ length: 24 }, (_, index) => `assistant line ${index + 1}`).join("\n");
     const item: Extract<WorkbenchListItem, { kind: "assistant" }> = {
       kind: "assistant",
@@ -218,7 +218,7 @@ describe("sessionMessageListItemIdentity", () => {
       is_complete: false,
     };
 
-    expect(getWorkbenchListItemKey(item, baseUiState)).toContain("assistant-1:assistant:pending:");
+    expect(getWorkbenchListItemKey(item, baseUiState)).toContain("assistant-1:assistant:fixed:");
   });
 
   it("changes tool keys when visible collapsed or expanded content changes", () => {
@@ -289,7 +289,7 @@ describe("sessionMessageListItemIdentity", () => {
     };
 
     expect(getWorkbenchListItemSizeCacheKey(pendingAssistant, baseUiState)).toBeNull();
-    expect(getWorkbenchListItemSizeCacheKey(completedAssistant, baseUiState)).toContain("assistant:complete:");
+    expect(getWorkbenchListItemSizeCacheKey(completedAssistant, baseUiState)).toContain("assistant:fixed:");
     expect(getWorkbenchListItemSizeCacheKey(runningStatus, baseUiState)).toBeNull();
     expect(getWorkbenchListItemSizeCacheKey(completedStatus, baseUiState)).toContain("turn-status:");
     expect(getWorkbenchListItemSizeCacheKey(completedStatus, baseUiState)).toContain(":copy");

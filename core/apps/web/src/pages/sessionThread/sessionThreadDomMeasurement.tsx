@@ -223,12 +223,7 @@ export function measureRenderedSessionAssistantHeight(
   viewportWidth: number,
 ): number | null {
   const normalizedViewportWidth = Math.max(1, Math.round(viewportWidth));
-  const cacheKey = [
-    "assistant",
-    normalizedViewportWidth,
-    item.is_complete ? "complete" : "streaming",
-    fingerprintString(item.content),
-  ].join(":");
+  const cacheKey = ["assistant", normalizedViewportWidth, fingerprintString(item.content)].join(":");
   return readCachedMeasurement(rowHeightCache, cacheKey, () =>
     renderIntoMeasurementSurface({
       width: resolveSessionThreadContentWidth(normalizedViewportWidth),
@@ -240,7 +235,6 @@ export function measureRenderedSessionAssistantHeight(
           { className: "wb-thread-indent" },
           React.createElement(AssistantEntry, {
             content: item.content,
-            isComplete: item.is_complete,
             worktreeId: null,
             onFileOpenError: () => {},
           }),

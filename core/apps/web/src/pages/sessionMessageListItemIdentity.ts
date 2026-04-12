@@ -8,7 +8,6 @@ import {
   isExpandableTurnHeaderPlainText,
   resolveWorkbenchMessageExpandedFromContent,
 } from "./sessionThread/transcriptRowLayoutModel";
-import { resolveSessionStreamingMarkdownLayout } from "./sessionThread/sessionStreamingMarkdown";
 
 export type WorkbenchMessageListUiState = {
   expandedTurnHeaders: Record<string, boolean>;
@@ -172,11 +171,7 @@ export function getWorkbenchListItemHeightRevision(
       return `tool-group:expanded:${loading}:${fingerprintString(item.thought)}:${toolGroupChildExpansionKey(item, uiState.expandedToolById)}`;
     }
     case "assistant":
-      if (!item.is_complete) {
-        const layout = resolveSessionStreamingMarkdownLayout(item.content);
-        return `assistant:pending:${fingerprintString(layout.stableMarkdown)}:${fingerprintString(layout.trailingTail)}`;
-      }
-      return `assistant:complete:fixed:${fingerprintString(item.content)}`;
+      return `assistant:fixed:${fingerprintString(item.content)}`;
     case "thought":
       return `thought:${fingerprintString(item.content)}`;
     case "turn_status":

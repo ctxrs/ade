@@ -125,11 +125,12 @@ describe("MemoMarkdown", () => {
     expect(container.querySelector("ol.wb-md-ordered-list")).not.toBeNull();
   });
 
-  it("renders incomplete streaming tails as plain text instead of unstable list structure", () => {
-    const { container } = render(<MemoMarkdown content={"Before\n\n- partial item"} streamingIncomplete />);
+  it("renders list structure for partial-looking assistant markdown content", () => {
+    const { container } = render(<MemoMarkdown content={"Before\n\n- partial item"} />);
 
-    expect(container.querySelector(".wb-md-streaming-tail")?.textContent).toContain("- partial item");
-    expect(container.querySelector("ul.wb-md-unordered-list")).toBeNull();
+    expect(container.querySelector("ul.wb-md-unordered-list")).not.toBeNull();
+    expect(container.querySelector(".wb-md-list-item-marker")?.textContent).toBe("•");
     expect(container.textContent).toContain("Before");
+    expect(container.textContent).toContain("partial item");
   });
 });

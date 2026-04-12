@@ -169,18 +169,18 @@ describe("ThreadItemView", () => {
 });
 
 describe("AssistantEntry", () => {
-  it("renders incomplete assistant tails as plain text instead of unstable list structure", () => {
+  it("renders structured markdown for partial-looking assistant list content", () => {
     const { container } = render(
       <AssistantEntry
         content={"Before\n\n- partial item"}
-        isComplete={false}
         worktreeId={null}
         onFileOpenError={() => {}}
       />,
     );
 
-    expect(container.querySelector(".wb-md-streaming-tail")?.textContent).toContain("- partial item");
-    expect(container.querySelector("ul.wb-md-unordered-list")).toBeNull();
+    expect(container.querySelector("ul.wb-md-unordered-list")).not.toBeNull();
+    expect(container.querySelector(".wb-md-list-item-marker")?.textContent).toBe("•");
+    expect(container.textContent).toContain("partial item");
   });
 });
 

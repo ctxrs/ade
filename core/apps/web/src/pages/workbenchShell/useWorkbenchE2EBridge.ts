@@ -16,9 +16,12 @@ import {
 } from "./workbenchE2EMarkdown";
 import {
   measureWorkbenchAssistantParity,
+  measureWorkbenchAssistantStreamingParity,
   measureWorkbenchMessageParity,
   measureWorkbenchTurnHeaderParity,
   type WorkbenchAssistantParityParams,
+  type WorkbenchAssistantStreamingParityMeasurement,
+  type WorkbenchAssistantStreamingParityParams,
   type WorkbenchMessageParityParams,
   type WorkbenchRowParityMeasurement,
   type WorkbenchTurnHeaderParityParams,
@@ -162,6 +165,9 @@ type WorkbenchE2EWindow = Window & {
     ) => Promise<WorkbenchMarkdownParityMeasurement[]>;
     measureMessageParity?: (params: WorkbenchMessageParityParams) => Promise<WorkbenchRowParityMeasurement>;
     measureAssistantParity?: (params: WorkbenchAssistantParityParams) => Promise<WorkbenchRowParityMeasurement>;
+    measureAssistantStreamingParity?: (
+      params: WorkbenchAssistantStreamingParityParams,
+    ) => Promise<WorkbenchAssistantStreamingParityMeasurement>;
     measureTurnHeaderParity?: (params: WorkbenchTurnHeaderParityParams) => Promise<WorkbenchRowParityMeasurement>;
     measureMarkdownSelectionText?: (markdown: string, width: number) => Promise<string>;
     installMarkdownScrollProbe?: (markdown: string, width?: number) => Promise<boolean>;
@@ -265,6 +271,8 @@ export function useWorkbenchE2EBridge({
     win.__ctxE2E.measureMessageParity = (params: WorkbenchMessageParityParams) => measureWorkbenchMessageParity(params);
     win.__ctxE2E.measureAssistantParity = (params: WorkbenchAssistantParityParams) =>
       measureWorkbenchAssistantParity(params);
+    win.__ctxE2E.measureAssistantStreamingParity = (params: WorkbenchAssistantStreamingParityParams) =>
+      measureWorkbenchAssistantStreamingParity(params);
     win.__ctxE2E.measureTurnHeaderParity = (params: WorkbenchTurnHeaderParityParams) =>
       measureWorkbenchTurnHeaderParity(params);
     win.__ctxE2E.measureMarkdownSelectionText = (markdown: string, width: number) =>
@@ -291,6 +299,7 @@ export function useWorkbenchE2EBridge({
       delete win.__ctxE2E.measureMarkdownParity;
       delete win.__ctxE2E.measureMessageParity;
       delete win.__ctxE2E.measureAssistantParity;
+      delete win.__ctxE2E.measureAssistantStreamingParity;
       delete win.__ctxE2E.measureTurnHeaderParity;
       delete win.__ctxE2E.measureMarkdownSelectionText;
       delete win.__ctxE2E.installMarkdownScrollProbe;

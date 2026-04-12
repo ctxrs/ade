@@ -1,6 +1,7 @@
 import { expect, test } from "./fixtures";
 import {
   measureAssistantParity,
+  measureAssistantStreamingParity,
   measureMessageParity,
   measureTurnHeaderParity,
   openWorkbenchShell,
@@ -113,19 +114,40 @@ test("workbench: assistant prose with wrapped inline code matches rendered heigh
   ).toBeLessThanOrEqual(1);
 });
 
-test("workbench: incomplete assistant streaming tails stay in parity with the planner", async ({ page }) => {
+test("workbench: partial assistant streaming stays identical to completed rendering for the same cumulative content", async ({
+  page,
+}) => {
   test.setTimeout(120000);
   await openWorkbenchShell(page);
 
-  const measurement = await measureAssistantParity(page, {
-    content: "Before\n\n- partial item",
-    isComplete: false,
+  const measurement = await measureAssistantStreamingParity(page, {
+    fragments: [
+      "Before",
+      "\n\n- partial item with `inline-tail-token/with/path`",
+      "\n- second bullet with more prose to wrap near the edge",
+    ],
   });
 
-  expect(
-    Math.abs(measurement.delta),
-    `incomplete assistant drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual})`,
-  ).toBeLessThanOrEqual(1);
+  expect(measurement.steps.length).toBe(3);
+  for (const [index, step] of measurement.steps.entries()) {
+    expect(
+      Math.abs(step.partial.delta),
+      `streaming partial step ${index} drifted by ${step.partial.delta}px (planned ${step.partial.planned}, actual ${step.partial.actual})`,
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(step.complete.delta),
+      `streaming complete step ${index} drifted by ${step.complete.delta}px (planned ${step.complete.planned}, actual ${step.complete.actual})`,
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(step.actualDelta),
+      `streaming actual mismatch at step ${index}: partial=${step.partial.actual} complete=${step.complete.actual}`,
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(step.plannedDelta),
+      `streaming planned mismatch at step ${index}: partial=${step.partial.planned} complete=${step.complete.planned}`,
+    ).toBeLessThanOrEqual(1);
+    expect(step.structureEquivalent, `streaming structure diverged at step ${index} for content:\n${step.content}`).toBe(true);
+  }
 });
 
 test("workbench: turn header planner matches rendered height", async ({ page }) => {

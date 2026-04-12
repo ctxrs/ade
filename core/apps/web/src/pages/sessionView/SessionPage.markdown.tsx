@@ -27,7 +27,6 @@ import {
   type SessionMarkdownTableCell,
 } from "../sessionThread/sessionMarkdownContract";
 import { copyTextToClipboard } from "../../utils/clipboard";
-import { resolveSessionStreamingMarkdownLayout } from "../sessionThread/sessionStreamingMarkdown";
 import {
   type FileRef,
   isAbsolutePath,
@@ -758,22 +757,13 @@ export function Markdown({
   linkifyFiles = false,
   worktreeId = null,
   onFileOpenError,
-  streamingIncomplete = false,
 }: {
   content: string;
   linkifyFiles?: boolean;
   worktreeId?: string | null;
   onFileOpenError?: (message: string | null) => void;
-  streamingIncomplete?: boolean;
 }) {
-  const streamingLayout = useMemo(
-    () => (streamingIncomplete ? resolveSessionStreamingMarkdownLayout(content) : null),
-    [content, streamingIncomplete],
-  );
-  const blocks = useMemo(
-    () => streamingLayout?.stableBlocks ?? createSessionMarkdownDocument(content).blocks,
-    [content, streamingLayout],
-  );
+  const blocks = useMemo(() => createSessionMarkdownDocument(content).blocks, [content]);
   const renderOptions = useMemo<MarkdownRenderOptions>(
     () => ({
       enableLinks: Boolean(linkifyFiles),
@@ -782,25 +772,10 @@ export function Markdown({
     }),
     [linkifyFiles, onFileOpenError, worktreeId],
   );
-  const trailingTail = streamingLayout?.trailingTail ?? "";
-  const tailMarginTopPx =
-    trailingTail.length === 0
-      ? 0
-      : blocks.length === 0
-        ? resolveSessionMarkdownBlockEntryGapPx("paragraph", "root")
-        : resolveSessionMarkdownBlockGapPx(blocks[blocks.length - 1]!.kind, "paragraph", "root");
 
   return (
     <div className="wb-markdown-root wb-md-stack">
       {renderBlockStack(blocks, renderOptions, "root", "markdown")}
-      {trailingTail.length > 0 ? (
-        <div
-          className="wb-md-streaming-tail"
-          style={tailMarginTopPx > 0 ? { marginTop: `${tailMarginTopPx}px` } : undefined}
-        >
-          {trailingTail}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -811,6 +786,5 @@ export const MemoMarkdown = memo(
   (prev, next) =>
     prev.content === next.content &&
     prev.linkifyFiles === next.linkifyFiles &&
-    prev.worktreeId === next.worktreeId &&
-    prev.streamingIncomplete === next.streamingIncomplete,
+    prev.worktreeId === next.worktreeId,
 );

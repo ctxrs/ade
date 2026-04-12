@@ -25,6 +25,24 @@ export type AssistantParityParams = {
   viewportWidth?: number;
 };
 
+export type AssistantStreamingParityParams = {
+  fragments: readonly string[];
+  viewportWidth?: number;
+};
+
+export type AssistantStreamingParityStep = {
+  content: string;
+  partial: RowParityMeasurement;
+  complete: RowParityMeasurement;
+  actualDelta: number;
+  plannedDelta: number;
+  structureEquivalent: boolean;
+};
+
+export type AssistantStreamingParityMeasurement = {
+  steps: AssistantStreamingParityStep[];
+};
+
 export type TurnHeaderParityParams = {
   plainText: string;
   viewportWidth?: number;
@@ -40,6 +58,7 @@ type E2EWindow = Window & {
     }>>;
     measureMessageParity?: (params: MessageParityParams) => Promise<RowParityMeasurement>;
     measureAssistantParity?: (params: AssistantParityParams) => Promise<RowParityMeasurement>;
+    measureAssistantStreamingParity?: (params: AssistantStreamingParityParams) => Promise<AssistantStreamingParityMeasurement>;
     measureTurnHeaderParity?: (params: TurnHeaderParityParams) => Promise<RowParityMeasurement>;
   };
 };
@@ -57,6 +76,7 @@ export async function openWorkbenchShell(page: Page): Promise<void> {
       typeof api?.measureMarkdownParity === "function" &&
       typeof api?.measureMessageParity === "function" &&
       typeof api?.measureAssistantParity === "function" &&
+      typeof api?.measureAssistantStreamingParity === "function" &&
       typeof api?.measureTurnHeaderParity === "function"
     );
   });
@@ -97,6 +117,19 @@ export async function measureAssistantParity(
     const api = (window as E2EWindow).__ctxE2E?.measureAssistantParity;
     if (typeof api !== "function") {
       throw new Error("ctxE2E.measureAssistantParity is unavailable");
+    }
+    return api(nextParams);
+  }, params);
+}
+
+export async function measureAssistantStreamingParity(
+  page: Page,
+  params: AssistantStreamingParityParams,
+): Promise<AssistantStreamingParityMeasurement> {
+  return page.evaluate(async (nextParams) => {
+    const api = (window as E2EWindow).__ctxE2E?.measureAssistantStreamingParity;
+    if (typeof api !== "function") {
+      throw new Error("ctxE2E.measureAssistantStreamingParity is unavailable");
     }
     return api(nextParams);
   }, params);
