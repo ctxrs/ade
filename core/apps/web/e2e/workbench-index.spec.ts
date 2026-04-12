@@ -70,6 +70,13 @@ test("workbench active snapshot stream keeps network lean", async ({ page }) => 
   });
   expect(startupHarnessConfig.length).toBe(0);
 
+  const startupRuntimeProviderOptions = apiRequests().filter((r) => {
+    if (r.method !== "GET") return false;
+    const pathname = new URL(r.url).pathname;
+    return new RegExp(`^/api/workspaces/${workspaceId}/providers/[^/]+/options$`).test(pathname);
+  });
+  expect(startupRuntimeProviderOptions.length).toBe(0);
+
   const updatesRequests = () =>
     startedRequests.filter((r) => {
       if (r.method !== "GET") return false;

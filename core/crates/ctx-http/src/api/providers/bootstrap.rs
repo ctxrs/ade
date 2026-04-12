@@ -30,7 +30,7 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                 })),
             )
         })?;
-    let Some(workspace) = workspace else {
+    let Some(_workspace) = workspace else {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
@@ -82,7 +82,6 @@ pub(crate) async fn get_workspace_providers_bootstrap(
     let per_provider =
         futures::stream::iter(visible_providers.into_iter().map(|provider_status| {
             let state = Arc::clone(&state);
-            let workspace = workspace.clone();
             let ws_id = ws_id_str.clone();
             let preferred_model_by_provider = std::sync::Arc::clone(&preferred_model_by_provider);
             async move {
@@ -93,24 +92,19 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                 )
                 .await
                 .ok();
+                // Bootstrap is auth/config hydration only. It must stay substrate-agnostic and
+                // never cross into workspace runtime preparation.
                 let has_active_auth =
-                    crate::provider_launch::probe::provider_has_active_auth_for_workspace_runtime(
-                        &state,
-                        &workspace,
+                    crate::api::provider_probe_auth::provider_has_active_auth_config_with_runtime_root(
+                        &state.core.data_root,
+                        None,
                         &provider_id,
                         source_config.as_ref(),
                     )
                     .await;
                 let auth_mode = probe::provider_auth_mode(has_active_auth, source_config.as_ref());
                 let (probe_ok, auth_required, probe_error) =
-                    probe::bootstrap_provider_probe_summary(
-                        &state,
-                        &workspace,
-                        install_target,
-                        &provider_status,
-                        &provider_id,
-                    )
-                    .await;
+                    probe::bootstrap_provider_probe_summary(&provider_status, has_active_auth);
 
                 let mut options = serde_json::json!({
                     "provider_id": provider_id,

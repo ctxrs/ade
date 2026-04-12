@@ -634,6 +634,13 @@ async fn kimi_provider_options_expose_live_runtime_catalog_and_bootstrap_stays_h
         Some("subscription"),
         "expected bootstrap to keep kimi on the subscription discovery path: {bootstrap:#?}"
     );
+    assert_ne!(
+        bootstrap
+            .pointer("/provider_options/kimi/models/meta/catalog_source")
+            .and_then(serde_json::Value::as_str),
+        Some("runtime_probe_live"),
+        "bootstrap must not expose kimi's live runtime model catalog: {bootstrap:#?}"
+    );
 }
 
 #[cfg(unix)]
@@ -720,6 +727,13 @@ async fn amp_provider_options_include_live_runtime_model_catalog() {
             .and_then(serde_json::Value::as_str),
         Some("subscription"),
         "expected bootstrap to keep amp on the subscription discovery path: {bootstrap:#?}"
+    );
+    assert_ne!(
+        bootstrap
+            .pointer("/provider_options/amp/models/meta/catalog_source")
+            .and_then(serde_json::Value::as_str),
+        Some("runtime_probe_live"),
+        "bootstrap must not expose amp's live runtime model catalog: {bootstrap:#?}"
     );
 }
 
@@ -1221,6 +1235,134 @@ async fn provider_verify_probe_uses_managed_dependency_path() {
         body.get("status").and_then(serde_json::Value::as_str),
         Some("ok"),
         "expected verify status ok with managed runtime path injection: {body:#?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn provider_bootstrap_avoids_runtime_preparation_when_sandbox_runtime_preparation_is_unavailable(
+) {
+    let _env_lock = lock_env().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    #[cfg(target_os = "macos")]
+    let _helper_env = {
+        let helper = data_dir.path().join("ctx-avf-linux-helper");
+        write_avf_probe_helper(&helper);
+        EnvVarGuard::set(
+            "CTX_AVF_LINUX_HELPER_PATH",
+            helper.to_str().expect("helper path should be utf-8"),
+        )
+    };
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let state = app_state(data_dir.path()).await;
+    let app = api::router(state.clone());
+
+    upsert_amp_account(
+        data_dir.path(),
+        Some("Amp Test".to_string()),
+        Some("amp@example.com".to_string()),
+    )
+    .await
+    .expect("upsert amp account");
+    let (bridge_cmd, bridge_dep_bin_rel) =
+        setup_runtime_command_with_managed_interpreter(data_dir.path(), "acp-crp-bridge");
+    seed_runtime_and_status(&state, "acp-crp-bridge", bridge_cmd, bridge_dep_bin_rel).await;
+    let (runtime_cmd, dep_bin_rel) =
+        setup_runtime_command_with_managed_interpreter(data_dir.path(), "amp");
+    seed_runtime_and_status(&state, "amp", runtime_cmd, dep_bin_rel).await;
+
+    let fake_sandbox_cli = data_dir.path().join("sandbox-cli");
+    write_fake_sandbox_cli(&fake_sandbox_cli);
+    let _sandbox_cli_guard = EnvVarGuard::set(
+        "CTX_HARNESS_SANDBOX_CLI_PATH",
+        fake_sandbox_cli
+            .to_str()
+            .expect("fake sandbox CLI path should be utf-8"),
+    );
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (cfg_status, cfg_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        format!("/api/workspaces/{}/execution_config", ws.id.0),
+        Some(serde_json::json!({
+            "environment": "sandbox",
+            "network_mode": "all",
+        })),
+    )
+    .await;
+    assert_eq!(
+        cfg_status,
+        StatusCode::OK,
+        "execution config request failed: {cfg_body:#?}"
+    );
+
+    let (status, bootstrap): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/bootstrap", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "bootstrap request failed: {bootstrap:#?}"
+    );
+    assert_eq!(
+        bootstrap
+            .pointer("/provider_options/amp/has_active_auth")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "bootstrap must hydrate auth from provider config/account state without runtime preparation: {bootstrap:#?}"
+    );
+    assert_eq!(
+        bootstrap
+            .pointer("/provider_options/amp/probe_ok")
+            .and_then(serde_json::Value::as_bool),
+        Some(false),
+        "bootstrap should still reflect target-aware provider usability without touching sandbox runtime preparation: {bootstrap:#?}"
+    );
+    assert!(
+        bootstrap
+            .pointer("/provider_options/amp/probe_error")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|message| message.contains("does not verify target 'container'")),
+        "bootstrap should surface provider-status target mismatch rather than a sandbox preparation failure: {bootstrap:#?}"
+    );
+    assert_ne!(
+        bootstrap
+            .pointer("/provider_options/amp/models/meta/catalog_source")
+            .and_then(serde_json::Value::as_str),
+        Some("runtime_probe_live"),
+        "bootstrap must not promote sandbox runtime probe output into the bootstrap payload: {bootstrap:#?}"
+    );
+
+    let (status, options): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/amp/options", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "options request failed: {options:#?}"
+    );
+    assert_eq!(
+        options.get("probe_ok").and_then(serde_json::Value::as_bool),
+        Some(false),
+        "explicit runtime options probing must still fail when sandbox runtime preparation is unavailable: {options:#?}"
+    );
+    assert!(
+        options
+            .get("probe_error")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|message| message.contains("does not verify target 'container'")),
+        "runtime options should still be the target-aware surface that reports runtime/container readiness problems: {options:#?}"
     );
 }
 

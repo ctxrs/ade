@@ -22,9 +22,7 @@ use crate::logs;
 use crate::provider_usage;
 use ctx_core::ids::WorkspaceId;
 use ctx_harness_sources as harness_sources;
-use ctx_harness_sources::{
-    HarnessApiShape, HarnessEndpointUpsert, HarnessEndpointVerificationStatus, HarnessSourceKind,
-};
+use ctx_harness_sources::{HarnessApiShape, HarnessEndpointUpsert, HarnessSourceKind};
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_auth_import as provider_auth_import;
 use ctx_provider_install::install_state::{InstallId, InstallTarget};
