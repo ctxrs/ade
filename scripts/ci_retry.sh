@@ -61,9 +61,9 @@ while true; do
       record_event "flake" "$last_exit" "$attempt"
     fi
     exit 0
+  else
+    last_exit=$?
   fi
-
-  last_exit=$?
   if [ "$attempt" -ge "$attempts" ]; then
     record_event "failed" "$last_exit" "$attempt"
     exit "$last_exit"
