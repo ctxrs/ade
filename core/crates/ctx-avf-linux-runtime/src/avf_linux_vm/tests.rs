@@ -9,6 +9,7 @@ use crate::{
 };
 use ctx_bundled_assets as bundled_assets;
 use sha2::{Digest, Sha256};
+use std::io::Write;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -238,10 +239,10 @@ async fn install_bundled_runtime_fixture(
         b"container-stack",
     )
     .expect("write bundled container stack");
-    std::fs::write(images_root.join("ctx-harness.tar"), b"ctx-harness-image")
-        .expect("write bundled image tar");
     let default_image = default_container_image();
-    let image_bytes = b"ctx-harness-image".to_vec();
+    let image_bytes = ctx_harness_image_archive_bytes(default_image);
+    std::fs::write(images_root.join("ctx-harness.tar"), &image_bytes)
+        .expect("write bundled image tar");
     let (image_url, image_server) = spawn_static_http_server(image_bytes.clone(), 1)
         .await
         .expect("spawn bundled harness image server");
@@ -818,6 +819,132 @@ fn runtime_archive_bytes() -> Vec<u8> {
         .expect("append runtime dir to tar archive");
     let encoder = archive.into_inner().expect("finalize tar archive");
     encoder.finish().expect("finish tar.gz archive")
+}
+
+fn append_tar_entry(
+    builder: &mut tar::Builder<Vec<u8>>,
+    path: &str,
+    mode: u32,
+    payload: &[u8],
+) {
+    let mut header = tar::Header::new_gnu();
+    header.set_mode(mode);
+    header.set_size(payload.len() as u64);
+    header.set_cksum();
+    builder
+        .append_data(&mut header, path, payload)
+        .expect("append tar entry");
+}
+
+fn ctx_harness_image_archive_bytes(repo_tag: &str) -> Vec<u8> {
+    let mut layer_tar_builder = tar::Builder::new(Vec::new());
+    let layer_bytes = b"env-from-avf-test\n";
+    let mut layer_header = tar::Header::new_gnu();
+    layer_header.set_mode(0o755);
+    layer_header.set_size(layer_bytes.len() as u64);
+    layer_header.set_cksum();
+    layer_tar_builder
+        .append_data(&mut layer_header, "usr/bin/env", &layer_bytes[..])
+        .expect("append test image layer payload");
+    let layer_tar = layer_tar_builder
+        .into_inner()
+        .expect("finalize test image layer tar");
+    let diff_id = hex::encode(Sha256::digest(&layer_tar));
+
+    let mut layer_encoder =
+        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    layer_encoder
+        .write_all(&layer_tar)
+        .expect("write gzipped test image layer tar");
+    let layer_blob = layer_encoder
+        .finish()
+        .expect("finish gzipped test image layer tar");
+    let layer_digest = hex::encode(Sha256::digest(&layer_blob));
+
+    let config = serde_json::json!({
+        "architecture": std::env::consts::ARCH,
+        "os": "linux",
+        "rootfs": {
+            "type": "layers",
+            "diff_ids": [format!("sha256:{diff_id}")],
+        },
+        "config": {
+            "Cmd": ["/usr/bin/env"],
+        },
+    });
+    let config_bytes = serde_json::to_vec(&config).expect("serialize test image config");
+    let config_digest = hex::encode(Sha256::digest(&config_bytes));
+
+    let manifest_blob = serde_json::json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+        "config": {
+            "mediaType": "application/vnd.docker.container.image.v1+json",
+            "digest": format!("sha256:{config_digest}"),
+            "size": config_bytes.len(),
+        },
+        "layers": [{
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": format!("sha256:{layer_digest}"),
+            "size": layer_blob.len(),
+        }],
+    });
+    let manifest_blob_bytes =
+        serde_json::to_vec(&manifest_blob).expect("serialize test image manifest blob");
+    let manifest_digest = hex::encode(Sha256::digest(&manifest_blob_bytes));
+
+    let legacy_manifest = serde_json::to_vec(&vec![serde_json::json!({
+        "Config": format!("blobs/sha256/{config_digest}"),
+        "RepoTags": [repo_tag],
+        "Layers": [format!("blobs/sha256/{layer_digest}")],
+    })])
+    .expect("serialize legacy test image manifest");
+
+    let index_bytes = serde_json::to_vec(&serde_json::json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "manifests": [{
+            "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+            "digest": format!("sha256:{manifest_digest}"),
+            "size": manifest_blob_bytes.len(),
+            "platform": {
+                "architecture": std::env::consts::ARCH,
+                "os": "linux",
+            },
+        }],
+    }))
+    .expect("serialize test image index");
+
+    let oci_layout_bytes = serde_json::to_vec(&serde_json::json!({
+        "imageLayoutVersion": "1.0.0"
+    }))
+    .expect("serialize test oci layout");
+
+    let mut archive = tar::Builder::new(Vec::new());
+    append_tar_entry(
+        &mut archive,
+        &format!("blobs/sha256/{layer_digest}"),
+        0o644,
+        &layer_blob,
+    );
+    append_tar_entry(
+        &mut archive,
+        &format!("blobs/sha256/{config_digest}"),
+        0o644,
+        &config_bytes,
+    );
+    append_tar_entry(
+        &mut archive,
+        &format!("blobs/sha256/{manifest_digest}"),
+        0o644,
+        &manifest_blob_bytes,
+    );
+    append_tar_entry(&mut archive, "manifest.json", 0o644, &legacy_manifest);
+    append_tar_entry(&mut archive, "index.json", 0o644, &index_bytes);
+    append_tar_entry(&mut archive, "oci-layout", 0o644, &oci_layout_bytes);
+    archive
+        .into_inner()
+        .expect("finalize test image archive")
 }
 
 async fn spawn_static_http_server(
