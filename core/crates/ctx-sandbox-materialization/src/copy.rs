@@ -303,6 +303,72 @@ pub(super) async fn prepare_self_contained_copy_root(
 }
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+
+    fn write_file(path: &Path, contents: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create fixture parent dir");
+        }
+        std::fs::write(path, contents).expect("write fixture file");
+    }
+
+    pub(crate) fn seed_linked_git_worktree_fixture(
+        root: &Path,
+        worktree_name: &str,
+        branch_name: &str,
+    ) -> (PathBuf, PathBuf) {
+        let repo_root = root.join("repo");
+        let worktree_root = root.join(worktree_name);
+        let common_git_dir = repo_root.join(".git");
+        let linked_git_dir = common_git_dir.join("worktrees").join(worktree_name);
+        let worktree_dotgit = worktree_root.join(".git");
+        let main_commit = "0123456789abcdef0123456789abcdef01234567\n";
+        let branch_commit = "89abcdef0123456789abcdef0123456789abcdef\n";
+
+        std::fs::create_dir_all(&worktree_root).expect("create worktree root");
+        std::fs::write(worktree_root.join("README.md"), "hello\n").expect("write readme");
+
+        write_file(&common_git_dir.join("HEAD"), "ref: refs/heads/main\n");
+        write_file(
+            &common_git_dir.join("refs").join("heads").join("main"),
+            main_commit,
+        );
+        write_file(
+            &common_git_dir.join("config"),
+            "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        );
+        write_file(&common_git_dir.join("info").join("exclude"), "");
+        write_file(
+            &common_git_dir.join("objects").join("info").join("keep"),
+            "",
+        );
+
+        write_file(
+            &linked_git_dir.join("HEAD"),
+            &format!("ref: refs/heads/{branch_name}\n"),
+        );
+        write_file(
+            &linked_git_dir.join("refs").join("heads").join(branch_name),
+            branch_commit,
+        );
+        write_file(&linked_git_dir.join("index"), "fixture-index");
+        write_file(&linked_git_dir.join("commondir"), "../..\n");
+        write_file(
+            &linked_git_dir.join("gitdir"),
+            &format!("{}\n", worktree_dotgit.display()),
+        );
+
+        write_file(
+            &worktree_dotgit,
+            &format!("gitdir: {}\n", linked_git_dir.display()),
+        );
+
+        (repo_root, worktree_root)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use ctx_sandbox_container_runtime::sandbox_cli_env_test_lock;
@@ -330,39 +396,14 @@ mod tests {
             }
         }
     }
-    use std::process::Command as StdCommand;
-
-    fn git(args: &[&str], cwd: &Path) {
-        let status = StdCommand::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .status()
-            .expect("run git command");
-        assert!(status.success(), "git command failed: {args:?}");
-    }
 
     #[tokio::test]
     async fn prepare_self_contained_copy_root_makes_git_worktree_clone_standalone() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let repo_root = temp.path().join("repo");
-        std::fs::create_dir_all(&repo_root).expect("create repo root");
-        git(&["init", "-b", "main"], &repo_root);
-        git(&["config", "user.name", "Test User"], &repo_root);
-        git(&["config", "user.email", "test@example.com"], &repo_root);
-        std::fs::write(repo_root.join("README.md"), "hello\n").expect("write readme");
-        git(&["add", "README.md"], &repo_root);
-        git(&["commit", "-m", "initial"], &repo_root);
-
-        let worktree_root = temp.path().join("worktree");
-        git(
-            &[
-                "worktree",
-                "add",
-                "-b",
-                "ctx/test-worktree",
-                worktree_root.to_str().expect("worktree path"),
-            ],
-            &repo_root,
+        let (_repo_root, worktree_root) = test_support::seed_linked_git_worktree_fixture(
+            temp.path(),
+            "worktree",
+            "ctx/test-worktree",
         );
 
         let (copy_root, _guard) = prepare_self_contained_copy_root(temp.path(), &worktree_root)
@@ -376,43 +417,46 @@ mod tests {
         assert!(copy_root.join(".git").is_dir());
         assert!(!copy_root.join(".git").join("commondir").exists());
         assert!(!copy_root.join(".git").join("gitdir").exists());
-
-        let output = StdCommand::new("git")
-            .arg("rev-parse")
-            .arg("--is-inside-work-tree")
-            .current_dir(&copy_root)
-            .output()
-            .expect("run git rev-parse");
-        assert!(
-            output.status.success(),
-            "git rev-parse failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+        assert_eq!(
+            std::fs::read_to_string(copy_root.join(".git").join("HEAD")).expect("read staged HEAD"),
+            "ref: refs/heads/ctx/test-worktree\n"
         );
-        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "true");
+        assert_eq!(
+            std::fs::read_to_string(
+                copy_root
+                    .join(".git")
+                    .join("refs")
+                    .join("heads")
+                    .join("main")
+            )
+            .expect("read staged main ref"),
+            "0123456789abcdef0123456789abcdef01234567\n"
+        );
+        assert!(
+            copy_root.join(".git").join("index").exists(),
+            "worktree-specific git metadata should be copied into the staged standalone .git dir"
+        );
+        assert_eq!(
+            resolve_git_dir(&copy_root)
+                .await
+                .expect("resolve staged git dir"),
+            copy_root.join(".git")
+        );
+        assert_eq!(
+            resolve_common_git_dir(&copy_root.join(".git"))
+                .await
+                .expect("resolve staged common git dir"),
+            copy_root.join(".git")
+        );
     }
 
     #[tokio::test]
     async fn estimate_self_contained_copy_size_accounts_for_expanded_git_metadata() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let repo_root = temp.path().join("repo");
-        std::fs::create_dir_all(&repo_root).expect("create repo root");
-        git(&["init", "-b", "main"], &repo_root);
-        git(&["config", "user.name", "Test User"], &repo_root);
-        git(&["config", "user.email", "test@example.com"], &repo_root);
-        std::fs::write(repo_root.join("README.md"), "hello\n").expect("write readme");
-        git(&["add", "README.md"], &repo_root);
-        git(&["commit", "-m", "initial"], &repo_root);
-
-        let worktree_root = temp.path().join("worktree");
-        git(
-            &[
-                "worktree",
-                "add",
-                "-b",
-                "ctx/test-size-estimate",
-                worktree_root.to_str().expect("worktree path"),
-            ],
-            &repo_root,
+        let (_repo_root, worktree_root) = test_support::seed_linked_git_worktree_fixture(
+            temp.path(),
+            "worktree",
+            "ctx/test-size-estimate",
         );
 
         let source_bytes = collect_tree_size_bytes(&worktree_root).expect("measure worktree");

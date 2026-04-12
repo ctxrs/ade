@@ -196,15 +196,6 @@ mod tests {
     use std::fs;
     use uuid::Uuid;
 
-    fn git(args: &[&str], cwd: &Path) {
-        let status = std::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .status()
-            .expect("run git");
-        assert!(status.success(), "git {:?} failed", args);
-    }
-
     struct EnvGuard {
         key: &'static str,
         prev: Option<String>,
@@ -430,27 +421,10 @@ mod tests {
         let worktree_id = WorktreeId(Uuid::new_v4());
         let container_id = workspace_container_name(workspace_id);
 
-        // Set up a real git repo so we get a genuine linked worktree structure.
-        let repo_root = temp.path().join("repo");
-        fs::create_dir_all(&repo_root).expect("create repo root");
-        git(&["init", "-b", "main"], &repo_root);
-        git(&["config", "user.email", "test@example.com"], &repo_root);
-        git(&["config", "user.name", "Test"], &repo_root);
-        fs::write(repo_root.join("README.md"), "hello\n").expect("write readme");
-        git(&["add", "README.md"], &repo_root);
-        git(&["commit", "-m", "initial"], &repo_root);
-
-        // Create a linked worktree — its .git entry is a *file* pointer, not a directory.
-        let worktree_root = temp.path().join("worktree");
-        git(
-            &[
-                "worktree",
-                "add",
-                "-b",
-                "ctx/test-no-mutate",
-                worktree_root.to_str().expect("worktree path"),
-            ],
-            &repo_root,
+        let (_repo_root, worktree_root) = copy::test_support::seed_linked_git_worktree_fixture(
+            temp.path(),
+            "worktree",
+            "ctx/test-no-mutate",
         );
 
         let dotgit = worktree_root.join(".git");

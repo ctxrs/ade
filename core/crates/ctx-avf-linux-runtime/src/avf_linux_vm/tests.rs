@@ -61,9 +61,23 @@ fn process_env_test_lock() -> &'static tokio::sync::Mutex<()> {
     crate::test_support::process_env_test_lock()
 }
 
+fn write_executable_script(path: &Path, script: &str) -> PathBuf {
+    std::fs::write(path, script).expect("write helper script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)
+            .expect("helper metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).expect("chmod helper script");
+    }
+    path.to_path_buf()
+}
+
 fn write_probe_helper(dir: &Path) -> PathBuf {
     let helper = dir.join("ctx-avf-linux-helper");
-    std::fs::write(
+    write_executable_script(
         &helper,
         r#"#!/bin/sh
 set -eu
@@ -80,135 +94,93 @@ JSON
 esac
 "#,
     )
-    .expect("write probe helper");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&helper)
-            .expect("probe helper metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&helper, perms).expect("chmod probe helper");
-    }
-    helper
 }
 
 fn write_lifecycle_helper(dir: &Path) -> PathBuf {
     let helper = dir.join("ctx-avf-linux-helper");
-    std::fs::write(
+    write_executable_script(
         &helper,
-        r#"#!/usr/bin/env python3
-import json
-import os
-import pathlib
-import sys
-from typing import Optional
+        r#"#!/bin/sh
+set -eu
 
-PROTOCOL_VERSION = 1
-PROTOCOL_SCHEMA = "ctx.avf_linux_helper.v1"
-STATE_FILE = "shared-vm-state.json"
-STATE_LOG = "shared-vm.log"
+STATE_FILE="shared-vm-state.json"
+STATE_LOG="shared-vm.log"
 
-def vm_root(data_root: str) -> pathlib.Path:
-    return pathlib.Path(data_root) / "avf-linux-vm" / "shared-vm"
+vm_root() {
+  printf '%s/avf-linux-vm/shared-vm' "$1"
+}
 
-def state_path(data_root: str) -> pathlib.Path:
-    return vm_root(data_root) / STATE_FILE
+state_path() {
+  printf '%s/%s' "$(vm_root "$1")" "$STATE_FILE"
+}
 
-def write_state(data_root: str, state: str, transition: Optional[str] = None):
-    root = vm_root(data_root)
-    root.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "protocol_version": PROTOCOL_VERSION,
-        "protocol_schema": PROTOCOL_SCHEMA,
-        "state": state,
-        "vm_root": str(root),
-        "logs_root": str(root / "logs"),
-        "state_path": str(root / STATE_FILE),
-        "saved_state_path": str(root / "saved-machine-state.vzvmsave"),
-        "saved_state_exists": state != "missing",
-        "runtime_root": str(root / "runtime"),
-        "rootfs_image": str(root / "runtime" / "rootfs.raw"),
-        "kernel_path": str(root / "runtime" / "helpers" / "kernel"),
-        "initrd_path": str(root / "runtime" / "helpers" / "initrd"),
-        "runtime_version": "test-runtime",
-        "log_path": str(root / STATE_LOG),
-        "simulated": True,
-        "notes": ["test helper"],
-    }
-    if transition is not None:
-        payload["transition_status"] = transition
-    state_path(data_root).write_text(json.dumps(payload), encoding="utf-8")
+emit_missing_state() {
+  data_root=$1
+  root=$(vm_root "$data_root")
+  printf '{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","state":"missing","vm_root":"%s","logs_root":"%s","state_path":"%s","saved_state_exists":false,"simulated":true,"notes":[]}\n' \
+    "$root" "$root/logs" "$root/$STATE_FILE"
+}
 
-cmd = sys.argv[1]
-if cmd == "probe":
-    print(json.dumps({
-        "protocol_version": PROTOCOL_VERSION,
-        "protocol_schema": PROTOCOL_SCHEMA,
-        "helper_version": "test-helper",
-        "host_os": "macos",
-        "host_arch": "aarch64",
-        "supported": True,
-        "save_restore_supported": True,
-        "rosetta_supported": True,
-        "notes": ["ready"],
-    }))
-elif cmd == "prepare-runtime-layout":
-    data_root = sys.argv[2]
-    root = vm_root(data_root)
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "logs").mkdir(exist_ok=True)
-    print(json.dumps({
-        "protocol_version": PROTOCOL_VERSION,
-        "protocol_schema": PROTOCOL_SCHEMA,
-        "vm_root": str(root),
-        "logs_root": str(root / "logs"),
-        "state_path": str(root / STATE_FILE),
-        "layout_status": "prepared",
-        "notes": [],
-    }))
-elif cmd == "shared-vm-state" or cmd == "workspace-vm-state":
-    data_root = sys.argv[2]
-    path = state_path(data_root)
-    if path.exists():
-        print(path.read_text(encoding="utf-8"))
-    else:
-        root = vm_root(data_root)
-        print(json.dumps({
-            "protocol_version": PROTOCOL_VERSION,
-            "protocol_schema": PROTOCOL_SCHEMA,
-            "state": "missing",
-            "vm_root": str(root),
-            "logs_root": str(root / "logs"),
-            "state_path": str(root / STATE_FILE),
-            "saved_state_exists": False,
-            "simulated": True,
-            "notes": [],
-        }))
-elif cmd == "start-shared-vm" or cmd == "start-workspace-vm":
-    data_root = sys.argv[2]
-    write_state(data_root, "running")
-    print(state_path(data_root).read_text(encoding="utf-8"))
-elif cmd == "stop-shared-vm" or cmd == "stop-workspace-vm":
-    data_root = sys.argv[2]
-    write_state(data_root, "stopped", "stopped")
-    print(state_path(data_root).read_text(encoding="utf-8"))
-else:
-    print(f"unsupported command: {cmd}", file=sys.stderr)
-    sys.exit(1)
+write_state() {
+  data_root=$1
+  state=$2
+  transition=${3:-}
+  root=$(vm_root "$data_root")
+  mkdir -p "$root/logs"
+  json=$(printf '{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","state":"%s","vm_root":"%s","logs_root":"%s","state_path":"%s","saved_state_path":"%s","saved_state_exists":true,"runtime_root":"%s","rootfs_image":"%s","kernel_path":"%s","initrd_path":"%s","runtime_version":"test-runtime","log_path":"%s","simulated":true,"notes":["test helper"]' \
+    "$state" \
+    "$root" \
+    "$root/logs" \
+    "$root/$STATE_FILE" \
+    "$root/saved-machine-state.vzvmsave" \
+    "$root/runtime" \
+    "$root/runtime/rootfs.raw" \
+    "$root/runtime/helpers/kernel" \
+    "$root/runtime/helpers/initrd" \
+    "$root/$STATE_LOG")
+  if [ -n "$transition" ]; then
+    json="$json,\"transition_status\":\"$transition\""
+  fi
+  json="$json}"
+  printf '%s\n' "$json" > "$(state_path "$data_root")"
+}
+
+case "${1:-}" in
+  probe)
+    printf '{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","helper_version":"test-helper","host_os":"macos","host_arch":"aarch64","supported":true,"save_restore_supported":true,"rosetta_supported":true,"notes":["ready"]}\n'
+    ;;
+  prepare-runtime-layout)
+    data_root=$2
+    root=$(vm_root "$data_root")
+    mkdir -p "$root/logs"
+    printf '{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","vm_root":"%s","logs_root":"%s","state_path":"%s","layout_status":"prepared","notes":[]}\n' \
+      "$root" "$root/logs" "$root/$STATE_FILE"
+    ;;
+  shared-vm-state|workspace-vm-state)
+    data_root=$2
+    if [ -f "$(state_path "$data_root")" ]; then
+      cat "$(state_path "$data_root")"
+    else
+      emit_missing_state "$data_root"
+    fi
+    ;;
+  start-shared-vm|start-workspace-vm)
+    data_root=$2
+    write_state "$data_root" "running"
+    cat "$(state_path "$data_root")"
+    ;;
+  stop-shared-vm|stop-workspace-vm)
+    data_root=$2
+    write_state "$data_root" "stopped" "stopped"
+    cat "$(state_path "$data_root")"
+    ;;
+  *)
+    printf 'unsupported command: %s\n' "${1:-}" >&2
+    exit 1
+    ;;
+esac
 "#,
     )
-    .expect("write lifecycle helper");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&helper)
-            .expect("lifecycle helper metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&helper, perms).expect("chmod lifecycle helper");
-    }
-    helper
 }
 
 async fn install_bundled_runtime_fixture(
@@ -318,225 +290,225 @@ fn write_stateful_lifecycle_helper(dir: &Path) -> (PathBuf, PathBuf) {
     let helper = dir.join("ctx-avf-linux-helper");
     let log_path = dir.join("shared-vm-lifecycle.log");
     let log_path_literal = log_path.display().to_string().replace('\\', "\\\\");
-    let script = r#"#!/usr/bin/env python3
-import json
-import os
-import pathlib
-import sys
+    let script = r#"#!/bin/sh
+set -eu
 
-PROTOCOL_VERSION = 1
-PROTOCOL_SCHEMA = "ctx.avf_linux_helper.v1"
-STATE_FILE = "helper-shared-vm-state.json"
-STATE_JSON = "shared-vm-state.json"
-STATE_LOG = "shared-vm.log"
-LOG_PATH = pathlib.Path("__LOG_PATH__")
+STATE_JSON="shared-vm-state.json"
+STATE_LOG="shared-vm.log"
+LOG_PATH="__LOG_PATH__"
 
-def start_scenario():
-    return os.environ.get("CTX_TEST_AVF_START_SCENARIO", "cold_boot")
+start_scenario() {
+  printf '%s' "${CTX_TEST_AVF_START_SCENARIO:-cold_boot}"
+}
 
-def stop_mode():
-    return os.environ.get("CTX_TEST_AVF_STOP_MODE", "saved")
+stop_mode() {
+  printf '%s' "${CTX_TEST_AVF_STOP_MODE:-saved}"
+}
 
-def restore_supported():
-    raw = os.environ.get("CTX_TEST_AVF_RESTORE_SUPPORTED", "1").strip().lower()
-    return raw not in ("0", "false", "no")
+restore_supported() {
+  case "$(printf '%s' "${CTX_TEST_AVF_RESTORE_SUPPORTED:-1}" | tr '[:upper:]' '[:lower:]')" in
+    0|false|no) printf 'false' ;;
+    *) printf 'true' ;;
+  esac
+}
 
-def vm_root(data_root: str) -> pathlib.Path:
-    return pathlib.Path(data_root) / "avf-linux-vm" / "shared-vm"
+vm_root() {
+  printf '%s/avf-linux-vm/shared-vm' "$1"
+}
 
-def helper_state_path(data_root: str) -> pathlib.Path:
-    return pathlib.Path(data_root) / STATE_FILE
+state_dir() {
+  printf '%s/helper-shared-vm-state' "$1"
+}
 
-def seed_state():
-    scenario = start_scenario()
-    if scenario == "reuse":
-        return {
-            "state": "running",
-            "transition_status": "ready",
-            "saved_state_exists": False,
-            "last_start_outcome": "already_running",
-        }
-    if scenario == "running_not_ready":
-        return {
-            "state": "running",
-            "transition_status": "scaffolded",
-            "saved_state_exists": False,
-            "last_start_outcome": "cold_boot",
-            "state_poll_count": 0,
-        }
-    if scenario in ("restore", "restore_failure"):
-        return {
-            "state": "stopped",
-            "saved_state_exists": True,
-            "last_stop_outcome": "saved_state_written",
-        }
-    return {
-        "state": "stopped",
-        "saved_state_exists": False,
-    }
+write_field() {
+  data_root=$1
+  field=$2
+  value=$3
+  dir=$(state_dir "$data_root")
+  mkdir -p "$dir"
+  printf '%s' "$value" > "$dir/$field"
+}
 
-def load_state(data_root: str):
-    path = helper_state_path(data_root)
-    if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
-    state = seed_state()
-    save_state(data_root, state)
-    return state
+read_field() {
+  data_root=$1
+  field=$2
+  default_value=$3
+  path="$(state_dir "$data_root")/$field"
+  if [ -f "$path" ]; then
+    cat "$path"
+  else
+    printf '%s' "$default_value"
+  fi
+}
 
-def save_state(data_root: str, state):
-    path = helper_state_path(data_root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state), encoding="utf-8")
+seed_state() {
+  data_root=$1
+  scenario=$(start_scenario)
+  case "$scenario" in
+    reuse)
+      write_field "$data_root" state "running"
+      write_field "$data_root" transition_status "ready"
+      write_field "$data_root" saved_state_exists "false"
+      write_field "$data_root" last_start_outcome "already_running"
+      ;;
+    running_not_ready)
+      write_field "$data_root" state "running"
+      write_field "$data_root" transition_status "scaffolded"
+      write_field "$data_root" saved_state_exists "false"
+      write_field "$data_root" last_start_outcome "cold_boot"
+      write_field "$data_root" state_poll_count "0"
+      ;;
+    restore|restore_failure)
+      write_field "$data_root" state "stopped"
+      write_field "$data_root" saved_state_exists "true"
+      write_field "$data_root" last_stop_outcome "saved_state_written"
+      ;;
+    *)
+      write_field "$data_root" state "stopped"
+      write_field "$data_root" saved_state_exists "false"
+      ;;
+  esac
+}
 
-def payload(data_root: str, state):
-    root = vm_root(data_root)
-    logs_root = root / "logs"
-    result = {
-        "protocol_version": PROTOCOL_VERSION,
-        "protocol_schema": PROTOCOL_SCHEMA,
-        "state": state["state"],
-        "vm_root": str(root),
-        "logs_root": str(logs_root),
-        "state_path": str(root / STATE_JSON),
-        "log_path": str(root / STATE_LOG),
-        "saved_state_exists": bool(state.get("saved_state_exists", False)),
-        "simulated": True,
-        "notes": [f"scenario:{start_scenario()}"],
-    }
-    if state.get("saved_state_exists"):
-        result["saved_state_path"] = str(root / "saved-machine-state.vzvmsave")
-    for key in (
-        "runtime_root",
-        "rootfs_image",
-        "kernel_path",
-        "initrd_path",
-        "runtime_version",
-        "transition_status",
-        "last_start_outcome",
-        "last_stop_outcome",
-        "last_restore_error",
-        "last_save_error",
-    ):
-        value = state.get(key)
-        if value is not None:
-            result[key] = value
-    return result
+ensure_seeded() {
+  data_root=$1
+  if [ ! -f "$(state_dir "$data_root")/state" ]; then
+    seed_state "$data_root"
+  fi
+}
 
-def log_invocation():
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with LOG_PATH.open("a", encoding="utf-8") as handle:
-        handle.write(" ".join(sys.argv[1:]) + "\n")
+emit_payload() {
+  data_root=$1
+  ensure_seeded "$data_root"
+  root=$(vm_root "$data_root")
+  logs_root="$root/logs"
+  state=$(read_field "$data_root" state "missing")
+  saved_state_exists=$(read_field "$data_root" saved_state_exists "false")
+  json=$(printf '{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","state":"%s","vm_root":"%s","logs_root":"%s","state_path":"%s","log_path":"%s","saved_state_exists":%s,"simulated":true,"notes":["scenario:%s"]' \
+    "$state" \
+    "$root" \
+    "$logs_root" \
+    "$root/$STATE_JSON" \
+    "$root/$STATE_LOG" \
+    "$saved_state_exists" \
+    "$(start_scenario)")
+  if [ "$saved_state_exists" = "true" ]; then
+    json="$json,\"saved_state_path\":\"$root/saved-machine-state.vzvmsave\""
+  fi
+  for field in runtime_root rootfs_image kernel_path initrd_path runtime_version transition_status last_start_outcome last_stop_outcome last_restore_error last_save_error; do
+    value=$(read_field "$data_root" "$field" "")
+    if [ -n "$value" ]; then
+      json="$json,\"$field\":\"$value\""
+    fi
+  done
+  json="$json}"
+  printf '%s\n' "$json"
+}
 
-log_invocation()
-cmd = sys.argv[1]
-if cmd == "probe":
-    print(json.dumps({
-        "protocol_version": PROTOCOL_VERSION,
-        "protocol_schema": PROTOCOL_SCHEMA,
-        "helper_version": "stateful-test-helper",
-        "host_os": "macos",
-        "host_arch": "aarch64",
-        "supported": True,
-        "save_restore_supported": restore_supported(),
-        "rosetta_supported": True,
-        "notes": ["ready"],
-    }))
-elif cmd == "prepare-runtime-layout":
-    data_root = sys.argv[2]
-    root = vm_root(data_root)
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "logs").mkdir(exist_ok=True)
-    load_state(data_root)
-    print(json.dumps({
-        "protocol_version": PROTOCOL_VERSION,
-        "protocol_schema": PROTOCOL_SCHEMA,
-        "vm_root": str(root),
-        "logs_root": str(root / "logs"),
-        "state_path": str(root / STATE_JSON),
-        "layout_status": "prepared",
-        "notes": [],
-    }))
-elif cmd == "shared-vm-state" or cmd == "workspace-vm-state":
-    data_root = sys.argv[2]
-    state = load_state(data_root)
-    if start_scenario() == "running_not_ready" and state.get("transition_status") == "scaffolded":
-        poll_count = int(state.get("state_poll_count", 0)) + 1
-        state["state_poll_count"] = poll_count
-        if poll_count >= 2:
-            state["transition_status"] = "ready"
-        save_state(data_root, state)
-    print(json.dumps(payload(data_root, state)))
-elif cmd == "start-shared-vm" or cmd == "start-workspace-vm":
-    data_root = sys.argv[2]
-    runtime_root, rootfs_image, kernel_path, initrd_path, runtime_version = sys.argv[3:8]
-    state = load_state(data_root)
-    scenario = start_scenario()
-    if scenario == "restore":
-        outcome = "restored"
-        restore_error = None
-    elif scenario == "restore_failure":
-        outcome = "cold_boot_after_restore_failure"
-        restore_error = "restore failed"
-    elif scenario == "reuse":
-        outcome = "already_running"
-        restore_error = None
-    else:
-        outcome = "cold_boot"
-        restore_error = None
-    state.update({
-        "state": "running",
-        "saved_state_exists": False,
-        "runtime_root": runtime_root,
-        "rootfs_image": rootfs_image,
-        "kernel_path": kernel_path,
-        "initrd_path": initrd_path,
-        "runtime_version": runtime_version,
-        "transition_status": "ready",
-        "last_start_outcome": outcome,
-        "last_restore_error": restore_error,
-    })
-    save_state(data_root, state)
-    print(json.dumps(payload(data_root, state)))
-elif cmd == "stop-shared-vm" or cmd == "stop-workspace-vm":
-    data_root = sys.argv[2]
-    state = load_state(data_root)
-    mode = stop_mode()
-    if mode == "unsupported":
-        stop_outcome = "cold_stop_save_unsupported"
-        save_error = None
-        saved_state_exists = False
-    elif mode == "failure":
-        stop_outcome = "cold_stop_after_save_failure"
-        save_error = "save failed"
-        saved_state_exists = False
-    else:
-        stop_outcome = "saved_state_written"
-        save_error = None
-        saved_state_exists = True
-    state.update({
-        "state": "stopped",
-        "saved_state_exists": saved_state_exists,
-        "transition_status": "stopped",
-        "last_stop_outcome": stop_outcome,
-        "last_save_error": save_error,
-    })
-    save_state(data_root, state)
-    print(json.dumps(payload(data_root, state)))
-else:
-    print(f"unsupported command: {cmd}", file=sys.stderr)
-    sys.exit(1)
+log_invocation() {
+  mkdir -p "$(dirname "$LOG_PATH")"
+  printf '%s\n' "$*" >> "$LOG_PATH"
+}
+
+log_invocation "$@"
+cmd=${1:-}
+case "$cmd" in
+  probe)
+    printf '{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","helper_version":"stateful-test-helper","host_os":"macos","host_arch":"aarch64","supported":true,"save_restore_supported":%s,"rosetta_supported":true,"notes":["ready"]}\n' "$(restore_supported)"
+    ;;
+  prepare-runtime-layout)
+    data_root=$2
+    root=$(vm_root "$data_root")
+    mkdir -p "$root/logs"
+    ensure_seeded "$data_root"
+    printf '{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","vm_root":"%s","logs_root":"%s","state_path":"%s","layout_status":"prepared","notes":[]}\n' \
+      "$root" "$root/logs" "$root/$STATE_JSON"
+    ;;
+  shared-vm-state|workspace-vm-state)
+    data_root=$2
+    ensure_seeded "$data_root"
+    if [ "$(start_scenario)" = "running_not_ready" ] && [ "$(read_field "$data_root" transition_status "")" = "scaffolded" ]; then
+      poll_count=$(read_field "$data_root" state_poll_count "0")
+      poll_count=$((poll_count + 1))
+      write_field "$data_root" state_poll_count "$poll_count"
+      if [ "$poll_count" -ge 2 ]; then
+        write_field "$data_root" transition_status "ready"
+      fi
+    fi
+    emit_payload "$data_root"
+    ;;
+  start-shared-vm|start-workspace-vm)
+    data_root=$2
+    runtime_root=$3
+    rootfs_image=$4
+    kernel_path=$5
+    initrd_path=$6
+    runtime_version=$7
+    scenario=$(start_scenario)
+    case "$scenario" in
+      restore)
+        outcome="restored"
+        restore_error=""
+        ;;
+      restore_failure)
+        outcome="cold_boot_after_restore_failure"
+        restore_error="restore failed"
+        ;;
+      reuse)
+        outcome="already_running"
+        restore_error=""
+        ;;
+      *)
+        outcome="cold_boot"
+        restore_error=""
+        ;;
+    esac
+    write_field "$data_root" state "running"
+    write_field "$data_root" saved_state_exists "false"
+    write_field "$data_root" runtime_root "$runtime_root"
+    write_field "$data_root" rootfs_image "$rootfs_image"
+    write_field "$data_root" kernel_path "$kernel_path"
+    write_field "$data_root" initrd_path "$initrd_path"
+    write_field "$data_root" runtime_version "$runtime_version"
+    write_field "$data_root" transition_status "ready"
+    write_field "$data_root" last_start_outcome "$outcome"
+    write_field "$data_root" last_restore_error "$restore_error"
+    emit_payload "$data_root"
+    ;;
+  stop-shared-vm|stop-workspace-vm)
+    data_root=$2
+    case "$(stop_mode)" in
+      unsupported)
+        stop_outcome="cold_stop_save_unsupported"
+        save_error=""
+        saved_state_exists="false"
+        ;;
+      failure)
+        stop_outcome="cold_stop_after_save_failure"
+        save_error="save failed"
+        saved_state_exists="false"
+        ;;
+      *)
+        stop_outcome="saved_state_written"
+        save_error=""
+        saved_state_exists="true"
+        ;;
+    esac
+    write_field "$data_root" state "stopped"
+    write_field "$data_root" saved_state_exists "$saved_state_exists"
+    write_field "$data_root" transition_status "stopped"
+    write_field "$data_root" last_stop_outcome "$stop_outcome"
+    write_field "$data_root" last_save_error "$save_error"
+    emit_payload "$data_root"
+    ;;
+  *)
+    printf 'unsupported command: %s\n' "$cmd" >&2
+    exit 1
+    ;;
+esac
 "#
     .replace("__LOG_PATH__", &log_path_literal);
-    std::fs::write(&helper, script).expect("write stateful lifecycle helper");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&helper)
-            .expect("stateful lifecycle helper metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&helper, perms).expect("chmod stateful lifecycle helper");
-    }
+    write_executable_script(&helper, &script);
     (helper, log_path)
 }
 
@@ -563,230 +535,234 @@ fn write_ready_runtime_sandbox_cli_shim(dir: &Path) -> PathBuf {
     sandbox_cli_path
 }
 
+#[derive(Debug, Default)]
+struct RecordedHelperExec {
+    args: Vec<String>,
+    env: HashMap<String, String>,
+    fields: HashMap<String, String>,
+}
+
+fn read_recorded_helper_exec(path: &Path) -> RecordedHelperExec {
+    let raw = std::fs::read_to_string(path).expect("read recorded helper exec");
+    let mut recorded = RecordedHelperExec::default();
+    for line in raw.lines() {
+        if let Some(value) = line.strip_prefix("arg=") {
+            recorded.args.push(value.to_string());
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("env.") {
+            let (key, value) = rest
+                .split_once('=')
+                .expect("env capture line should contain '='");
+            recorded.env.insert(key.to_string(), value.to_string());
+            continue;
+        }
+        let (key, value) = line
+            .split_once('=')
+            .expect("capture line should contain '='");
+        recorded.fields.insert(key.to_string(), value.to_string());
+    }
+    recorded
+}
+
 fn write_guest_exec_helper(dir: &Path) -> (PathBuf, PathBuf) {
     let helper = dir.join("ctx-avf-linux-helper");
-    let capture_file = dir.join("guest-exec-capture.json");
+    let capture_file = dir.join("guest-exec-capture.txt");
     let capture_path = capture_file.display().to_string().replace('\\', "\\\\");
-    std::fs::write(
-        &helper,
-        format!(
-            r#"#!/usr/bin/env python3
-import json
-import pathlib
-import shutil
-import sys
+    let script = format!(
+        r#"#!/bin/sh
+set -eu
 
-PROTOCOL_VERSION = 1
-PROTOCOL_SCHEMA = "ctx.avf_linux_helper.v1"
-CAPTURE_PATH = pathlib.Path("{capture_path}")
+CAPTURE_PATH="{capture_path}"
 
-def workspace_vm_root(data_root: str, workspace_id: str) -> pathlib.Path:
-    return pathlib.Path(data_root) / "avf-linux-vm" / "workspaces" / workspace_id
+workspace_vm_root() {{
+  printf '%s/avf-linux-vm/workspaces/%s' "$1" "$2"
+}}
 
-def worktree_root(data_root: str, workspace_id: str, worktree_id: str) -> pathlib.Path:
-    return workspace_vm_root(data_root, workspace_id) / "worktrees" / worktree_id
+worktree_root() {{
+  printf '%s/worktrees/%s' "$(workspace_vm_root "$1" "$2")" "$3"
+}}
 
-cmd = sys.argv[1]
-if cmd == "probe":
-    print(json.dumps({{
-        "protocol_version": PROTOCOL_VERSION,
-        "protocol_schema": PROTOCOL_SCHEMA,
-        "helper_version": "guest-exec-helper",
-        "host_os": "macos",
-        "host_arch": "aarch64",
-        "supported": True,
-        "save_restore_supported": True,
-        "rosetta_supported": True,
-        "notes": ["ready"],
-    }}))
-elif cmd == "prepare-runtime-layout":
-    data_root = sys.argv[2]
-    root = pathlib.Path(data_root) / "avf-linux-vm" / "shared-vm"
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "logs").mkdir(exist_ok=True)
-    print(json.dumps({{
-        "protocol_version": PROTOCOL_VERSION,
-        "protocol_schema": PROTOCOL_SCHEMA,
-        "vm_root": str(root),
-        "logs_root": str(root / "logs"),
-        "state_path": str(root / "shared-vm-state.json"),
-        "layout_status": "prepared",
-        "notes": [],
-    }}))
-elif cmd == "start-shared-vm" or cmd == "start-workspace-vm":
-    data_root = sys.argv[2]
-    root = pathlib.Path(data_root) / "avf-linux-vm" / "shared-vm"
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "logs").mkdir(exist_ok=True)
-    print(json.dumps({{
-        "protocol_version": PROTOCOL_VERSION,
-        "protocol_schema": PROTOCOL_SCHEMA,
-        "state": "running",
-        "vm_root": str(root),
-        "logs_root": str(root / "logs"),
-        "state_path": str(root / "shared-vm-state.json"),
-        "saved_state_exists": True,
-        "saved_state_path": str(root / "saved-machine-state.vzvmsave"),
-        "runtime_root": str(root / "runtime"),
-        "rootfs_image": str(root / "runtime" / "rootfs.raw"),
-        "kernel_path": str(root / "runtime" / "helpers" / "kernel"),
-        "initrd_path": str(root / "runtime" / "helpers" / "initrd"),
-        "runtime_version": "test-runtime",
-        "log_path": str(root / "shared-vm.log"),
-        "simulated": True,
-        "notes": ["guest exec ready"],
-    }}))
-elif cmd == "shared-vm-state" or cmd == "workspace-vm-state":
-    data_root = sys.argv[2]
-    root = pathlib.Path(data_root) / "avf-linux-vm" / "shared-vm"
-    print(json.dumps({{
-        "protocol_version": PROTOCOL_VERSION,
-        "protocol_schema": PROTOCOL_SCHEMA,
-        "state": "missing",
-        "vm_root": str(root),
-        "logs_root": str(root / "logs"),
-        "state_path": str(root / "shared-vm-state.json"),
-        "saved_state_exists": False,
-        "simulated": True,
-        "notes": [],
-    }}))
-elif cmd == "prepare-guest-worktree":
-    data_root = sys.argv[2]
-    workspace_id = sys.argv[3]
-    worktree_id = sys.argv[4]
-    host_workspace_root = pathlib.Path(sys.argv[5])
-    branch_name = sys.argv[7]
-    root = worktree_root(data_root, workspace_id, worktree_id)
-    shadow = root / "shadow-root"
-    if shadow.exists():
-        shutil.rmtree(shadow)
-    shutil.copytree(host_workspace_root, shadow, dirs_exist_ok=True)
-    metadata_path = root / "worktree.json"
-    payload = {{
-        "protocol_version": PROTOCOL_VERSION,
-        "protocol_schema": PROTOCOL_SCHEMA,
-        "workspace_id": workspace_id,
-        "worktree_id": worktree_id,
-        "guest_root": str(pathlib.Path("/ctx/ws/worktrees") / worktree_id),
-        "host_shadow_root": str(shadow),
-        "metadata_path": str(metadata_path),
-        "status": "prepared",
-        "simulated": True,
-        "notes": [branch_name],
-    }}
-    metadata_path.parent.mkdir(parents=True, exist_ok=True)
-    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
-    print(json.dumps(payload))
-elif cmd == "exec":
-    args = sys.argv[2:]
-    container_name = ""
-    cwd = ""
-    env = {{}}
-    interactive = False
-    idx = 0
-    while idx < len(args):
-        arg = args[idx]
-        if arg == "--interactive":
-            interactive = True
-            idx += 1
-        elif arg == "--tty":
-            idx += 1
-        elif arg == "--user":
-            idx += 2
-        elif arg == "--workdir":
-            cwd = args[idx + 1]
-            idx += 2
-        else:
-            break
-    if idx >= len(args):
-        raise SystemExit("missing sandbox exec container name")
-    container_name = args[idx]
-    idx += 1
-    while idx < len(args) and args[idx] == "--env":
-        key, value = args[idx + 1].split("=", 1)
-        env[key] = value
-        idx += 2
-    if idx >= len(args):
-        raise SystemExit("missing sandbox exec command")
-    command = args[idx]
-    passthrough = args[idx + 1:]
-    payload = {{
-        "interactive": interactive,
-        "container_name": container_name,
-        "cwd": cwd,
-        "command": command,
-        "args": passthrough,
-        "env": env,
-    }}
-    CAPTURE_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    print("guest-exec-ok")
-elif cmd == "guest-exec":
-    args = sys.argv[2:]
-    data_root = ""
-    workspace_id = ""
-    worktree_id = ""
-    cwd = ""
-    command = ""
-    env = {{}}
-    passthrough = []
-    idx = 0
-    while idx < len(args):
-        arg = args[idx]
-        if arg == "--data-root":
-            data_root = args[idx + 1]
-            idx += 2
-        elif arg == "--workspace-id":
-            workspace_id = args[idx + 1]
-            idx += 2
-        elif arg == "--worktree-id":
-            worktree_id = args[idx + 1]
-            idx += 2
-        elif arg == "--cwd":
-            cwd = args[idx + 1]
-            idx += 2
-        elif arg == "--command":
-            command = args[idx + 1]
-            idx += 2
-        elif arg == "--env":
-            key, value = args[idx + 1].split("=", 1)
-            env[key] = value
-            idx += 2
-        elif arg == "--user":
-            idx += 2
-        elif arg == "--pty":
-            idx += 1
-        elif arg == "--":
-            passthrough = args[idx + 1:]
-            break
-        else:
-            raise SystemExit(f"unexpected guest-exec arg: {{arg}}")
-    payload = {{
-        "data_root": data_root,
-        "workspace_id": workspace_id,
-        "worktree_id": worktree_id,
-        "cwd": cwd,
-        "command": command,
-        "args": passthrough,
-        "env": env,
-    }}
-    CAPTURE_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    print("guest-exec-ok")
-else:
-    print(f"unsupported command: {{cmd}}", file=sys.stderr)
-    sys.exit(1)
-"#,
-        ),
-    )
-    .expect("write guest exec helper");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&helper)
-            .expect("guest exec helper metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&helper, perms).expect("chmod guest exec helper");
-    }
+record_capture() {{
+  : > "$CAPTURE_PATH"
+  while [ "$#" -gt 0 ]; do
+    printf '%s\n' "$1" >> "$CAPTURE_PATH"
+    shift
+  done
+}}
+
+cmd=${{1:-}}
+case "$cmd" in
+  probe)
+    printf '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","helper_version":"guest-exec-helper","host_os":"macos","host_arch":"aarch64","supported":true,"save_restore_supported":true,"rosetta_supported":true,"notes":["ready"]}}\n'
+    ;;
+  prepare-runtime-layout)
+    data_root=$2
+    root="$data_root/avf-linux-vm/shared-vm"
+    mkdir -p "$root/logs"
+    printf '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","vm_root":"%s","logs_root":"%s","state_path":"%s","layout_status":"prepared","notes":[]}}\n' \
+      "$root" "$root/logs" "$root/shared-vm-state.json"
+    ;;
+  start-shared-vm|start-workspace-vm)
+    data_root=$2
+    root="$data_root/avf-linux-vm/shared-vm"
+    mkdir -p "$root/logs"
+    printf '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","state":"running","vm_root":"%s","logs_root":"%s","state_path":"%s","saved_state_exists":true,"saved_state_path":"%s","runtime_root":"%s","rootfs_image":"%s","kernel_path":"%s","initrd_path":"%s","runtime_version":"test-runtime","log_path":"%s","simulated":true,"notes":["guest exec ready"]}}\n' \
+      "$root" \
+      "$root/logs" \
+      "$root/shared-vm-state.json" \
+      "$root/saved-machine-state.vzvmsave" \
+      "$root/runtime" \
+      "$root/runtime/rootfs.raw" \
+      "$root/runtime/helpers/kernel" \
+      "$root/runtime/helpers/initrd" \
+      "$root/shared-vm.log"
+    ;;
+  shared-vm-state|workspace-vm-state)
+    data_root=$2
+    root="$data_root/avf-linux-vm/shared-vm"
+    printf '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","state":"missing","vm_root":"%s","logs_root":"%s","state_path":"%s","saved_state_exists":false,"simulated":true,"notes":[]}}\n' \
+      "$root" "$root/logs" "$root/shared-vm-state.json"
+    ;;
+  prepare-guest-worktree)
+    data_root=$2
+    workspace_id=$3
+    worktree_id=$4
+    host_workspace_root=$5
+    branch_name=$7
+    root="$(worktree_root "$data_root" "$workspace_id" "$worktree_id")"
+    shadow="$root/shadow-root"
+    metadata_path="$root/worktree.json"
+    rm -rf "$shadow"
+    mkdir -p "$shadow"
+    cp -R "$host_workspace_root"/. "$shadow"/
+    mkdir -p "$(dirname "$metadata_path")"
+    json=$(printf '{{"protocol_version":1,"protocol_schema":"ctx.avf_linux_helper.v1","workspace_id":"%s","worktree_id":"%s","guest_root":"%s","host_shadow_root":"%s","metadata_path":"%s","status":"prepared","simulated":true,"notes":["%s"]}}' \
+      "$workspace_id" "$worktree_id" "/ctx/ws/worktrees/$worktree_id" "$shadow" "$metadata_path" "$branch_name")
+    printf '%s\n' "$json" > "$metadata_path"
+    printf '%s\n' "$json"
+    ;;
+  exec)
+    shift
+    interactive=false
+    cwd=
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --interactive)
+          interactive=true
+          shift
+          ;;
+        --tty)
+          shift
+          ;;
+        --user)
+          shift 2
+          ;;
+        --workdir)
+          cwd=$2
+          shift 2
+          ;;
+        *)
+          break
+          ;;
+      esac
+    done
+    [ "$#" -gt 0 ] || {{ printf 'missing sandbox exec container name\n' >&2; exit 1; }}
+    container_name=$1
+    shift
+    env_lines=
+    while [ "$#" -gt 1 ] && [ "$1" = "--env" ]; do
+      env_lines="$env_lines env.$2"
+      shift 2
+    done
+    [ "$#" -gt 0 ] || {{ printf 'missing sandbox exec command\n' >&2; exit 1; }}
+    command=$1
+    shift
+    record_capture \
+      "interactive=$interactive" \
+      "container_name=$container_name" \
+      "cwd=$cwd" \
+      "command=$command"
+    for env_line in $env_lines; do
+      printf '%s\n' "$env_line" >> "$CAPTURE_PATH"
+    done
+    for arg in "$@"; do
+      printf 'arg=%s\n' "$arg" >> "$CAPTURE_PATH"
+    done
+    printf 'guest-exec-ok\n'
+    ;;
+  guest-exec)
+    shift
+    data_root=
+    workspace_id=
+    worktree_id=
+    cwd=
+    command=
+    env_lines=
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --data-root)
+          data_root=$2
+          shift 2
+          ;;
+        --workspace-id)
+          workspace_id=$2
+          shift 2
+          ;;
+        --worktree-id)
+          worktree_id=$2
+          shift 2
+          ;;
+        --cwd)
+          cwd=$2
+          shift 2
+          ;;
+        --command)
+          command=$2
+          shift 2
+          ;;
+        --env)
+          env_lines="$env_lines env.$2"
+          shift 2
+          ;;
+        --user)
+          shift 2
+          ;;
+        --pty)
+          shift
+          ;;
+        --)
+          shift
+          break
+          ;;
+        *)
+          printf 'unexpected guest-exec arg: %s\n' "$1" >&2
+          exit 1
+          ;;
+      esac
+    done
+    record_capture \
+      "data_root=$data_root" \
+      "workspace_id=$workspace_id" \
+      "worktree_id=$worktree_id" \
+      "cwd=$cwd" \
+      "command=$command"
+    for env_line in $env_lines; do
+      printf '%s\n' "$env_line" >> "$CAPTURE_PATH"
+    done
+    for arg in "$@"; do
+      printf 'arg=%s\n' "$arg" >> "$CAPTURE_PATH"
+    done
+    printf 'guest-exec-ok\n'
+    ;;
+  *)
+    printf 'unsupported command: %s\n' "$cmd" >&2
+    exit 1
+    ;;
+esac
+"#
+    );
+    write_executable_script(&helper, &script);
     (helper, capture_file)
 }
 
@@ -821,12 +797,7 @@ fn runtime_archive_bytes() -> Vec<u8> {
     encoder.finish().expect("finish tar.gz archive")
 }
 
-fn append_tar_entry(
-    builder: &mut tar::Builder<Vec<u8>>,
-    path: &str,
-    mode: u32,
-    payload: &[u8],
-) {
+fn append_tar_entry(builder: &mut tar::Builder<Vec<u8>>, path: &str, mode: u32, payload: &[u8]) {
     let mut header = tar::Header::new_gnu();
     header.set_mode(mode);
     header.set_size(payload.len() as u64);
@@ -942,9 +913,7 @@ fn ctx_harness_image_archive_bytes(repo_tag: &str) -> Vec<u8> {
     append_tar_entry(&mut archive, "manifest.json", 0o644, &legacy_manifest);
     append_tar_entry(&mut archive, "index.json", 0o644, &index_bytes);
     append_tar_entry(&mut archive, "oci-layout", 0o644, &oci_layout_bytes);
-    archive
-        .into_inner()
-        .expect("finalize test image archive")
+    archive.into_inner().expect("finalize test image archive")
 }
 
 async fn spawn_static_http_server(
@@ -1686,18 +1655,37 @@ async fn helper_prepare_guest_worktree_round_trips_structured_state() {
         "guest-exec-ok"
     );
 
-    let captured: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(capture_path).unwrap()).unwrap();
-    assert_eq!(captured["interactive"], true);
+    let captured = read_recorded_helper_exec(&capture_path);
+    let expected_cwd = host_root.display().to_string();
+    let expected_container_name = format!("ctx-harness-{}", workspace_id.0);
     assert_eq!(
-        captured["container_name"],
-        format!("ctx-harness-{}", workspace_id.0)
+        captured.fields.get("interactive").map(String::as_str),
+        Some("true")
     );
-    assert_eq!(captured["cwd"], host_root.display().to_string());
-    assert_eq!(captured["command"], "python3");
-    assert_eq!(captured["args"], serde_json::json!(["-c", "print('ok')"]));
-    assert_eq!(captured["env"]["CTX_CUSTOM"], "value");
-    assert_eq!(captured["env"]["PATH"], "/custom/bin");
+    assert_eq!(
+        captured.fields.get("container_name").map(String::as_str),
+        Some(expected_container_name.as_str())
+    );
+    assert_eq!(
+        captured.fields.get("cwd").map(String::as_str),
+        Some(expected_cwd.as_str())
+    );
+    assert_eq!(
+        captured.fields.get("command").map(String::as_str),
+        Some("python3")
+    );
+    assert_eq!(
+        captured.args,
+        vec!["-c".to_string(), "print('ok')".to_string()]
+    );
+    assert_eq!(
+        captured.env.get("CTX_CUSTOM").map(String::as_str),
+        Some("value")
+    );
+    assert_eq!(
+        captured.env.get("PATH").map(String::as_str),
+        Some("/custom/bin")
+    );
 }
 
 #[tokio::test]
@@ -1738,15 +1726,31 @@ async fn run_guest_exec_capture_invokes_helper_with_expected_args() {
         "guest-exec-ok"
     );
 
-    let captured: serde_json::Value =
-        serde_json::from_slice(&tokio::fs::read(capture_path).await.unwrap()).unwrap();
-    assert_eq!(captured["interactive"], true);
+    let captured = read_recorded_helper_exec(&capture_path);
+    let expected_cwd = host_root.display().to_string();
+    let expected_container_name = format!("ctx-harness-{}", workspace_id.0);
     assert_eq!(
-        captured["container_name"],
-        format!("ctx-harness-{}", workspace_id.0)
+        captured.fields.get("interactive").map(String::as_str),
+        Some("true")
     );
-    assert_eq!(captured["cwd"], host_root.display().to_string());
-    assert_eq!(captured["command"], "python3");
-    assert_eq!(captured["args"], serde_json::json!(["-c", "print('ok')"]));
-    assert_eq!(captured["env"]["CTX_SAMPLE"], "value");
+    assert_eq!(
+        captured.fields.get("container_name").map(String::as_str),
+        Some(expected_container_name.as_str())
+    );
+    assert_eq!(
+        captured.fields.get("cwd").map(String::as_str),
+        Some(expected_cwd.as_str())
+    );
+    assert_eq!(
+        captured.fields.get("command").map(String::as_str),
+        Some("python3")
+    );
+    assert_eq!(
+        captured.args,
+        vec!["-c".to_string(), "print('ok')".to_string()]
+    );
+    assert_eq!(
+        captured.env.get("CTX_SAMPLE").map(String::as_str),
+        Some("value")
+    );
 }
