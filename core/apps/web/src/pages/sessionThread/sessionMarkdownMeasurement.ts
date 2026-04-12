@@ -44,6 +44,10 @@ import {
   SESSION_THREAD_MARKDOWN_TABLE_CELL_PADDING_BLOCK_PX,
   SESSION_THREAD_MARKDOWN_TABLE_CELL_PADDING_INLINE_PX,
 } from "./sessionThreadLayoutTokens";
+import {
+  clearSessionThreadDomMeasurementCaches,
+  measureRenderedSessionMarkdownHeight,
+} from "./sessionThreadDomMeasurement";
 
 const PREPARED_CACHE_LIMIT = 4000;
 const AST_CACHE_LIMIT = 1000;
@@ -876,10 +880,15 @@ export function clearSessionMarkdownMeasurementCaches(): void {
   markdownDocumentCache.clear();
   collapsedSpaceWidthCache.clear();
   plainTextBlockHeightCache.clear();
+  clearSessionThreadDomMeasurementCaches();
 }
 
 export function measureSessionMarkdownDocument(markdown: string, width: number): number {
   const normalizedWidth = Math.max(1, Math.round(width));
+  const renderedHeight = measureRenderedSessionMarkdownHeight(markdown, normalizedWidth);
+  if (renderedHeight != null) {
+    return renderedHeight;
+  }
   incrementPretextPerfCounter("pretext_markdown_document_calls");
   addPretextPerfBucket(
     "pretext_markdown_document_key",

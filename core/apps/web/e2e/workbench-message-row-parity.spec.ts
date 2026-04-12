@@ -1,4 +1,10 @@
-import { expect, test, type Page } from "./fixtures";
+import { expect, test } from "./fixtures";
+import {
+  measureAssistantParity,
+  measureMessageParity,
+  measureTurnHeaderParity,
+  openWorkbenchShell,
+} from "./utils/pretextParity";
 
 const EXACT_USER_MESSAGE = [
   "here is another neutral layout idea for a deterministic fixture",
@@ -33,242 +39,6 @@ const TURN_HEADER_TEXT = "and what about the CI smoke failure?";
 
 const IMAGE_DATA_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2VzJ8AAAAASUVORK5CYII=";
-
-type RowParityMeasurement = {
-  planned: number;
-  actual: number;
-  delta: number;
-};
-
-async function openWorkbenchShell(page: Page) {
-  await page.goto("/?ctxE2E=1", { waitUntil: "domcontentloaded" });
-}
-
-async function measureMessageParity(
-  page: Page,
-  params: {
-    content: string;
-    expanded: boolean;
-    attachments?: Array<{ kind: "image"; mime_type: string; data_base64: string; name?: string }>;
-  },
-): Promise<RowParityMeasurement> {
-  return page.evaluate(async ({ content, expanded, attachments }) => {
-    const ReactModule = await import("/node_modules/.vite/deps/react.js");
-    const React = ReactModule.default ?? ReactModule;
-    const ReactDomClientModule = await import("/node_modules/.vite/deps/react-dom_client.js");
-    const ReactDOMClient = ReactDomClientModule.default ?? ReactDomClientModule;
-    const { ThreadItemView } = await import("/src/pages/sessionThread/SessionThreadItemViews.tsx");
-    const { getPretextVirtualizerRowLayout } = await import("/src/pages/sessionThread/pretextVirtualizerRowLayout.ts");
-    const {
-      SESSION_THREAD_LAYOUT_STYLE,
-      resolveSessionThreadContentWidth,
-    } = await import("/src/pages/sessionThread/sessionThreadLayoutTokens.ts");
-
-    const viewportWidth = 820;
-    const contentWidth = resolveSessionThreadContentWidth(viewportWidth);
-    const host = document.createElement("div");
-    host.style.position = "fixed";
-    host.style.left = "-10000px";
-    host.style.top = "0";
-    host.style.width = `${contentWidth}px`;
-    host.style.margin = "0";
-    host.style.padding = "0";
-    host.style.border = "0";
-    host.style.boxSizing = "border-box";
-    for (const [key, value] of Object.entries(SESSION_THREAD_LAYOUT_STYLE)) {
-      host.style.setProperty(key, String(value));
-    }
-    document.body.appendChild(host);
-
-    const item = {
-      kind: "message" as const,
-      id: "message-parity",
-      role: "user" as const,
-      content,
-      attachments: attachments ?? [],
-      created_at: "2026-04-09T00:00:00Z",
-    };
-
-    const root = ReactDOMClient.createRoot(host);
-    root.render(
-      React.createElement(
-        "div",
-        { "data-thread-item-id": item.id },
-        React.createElement(
-          "div",
-          { className: "wb-thread-indent" },
-          React.createElement(ThreadItemView, {
-            item,
-            worktreeId: null,
-            onFileOpenError: () => {},
-            messageExpanded: expanded,
-            onToggleMessageExpanded: () => {},
-          }),
-        ),
-      ),
-    );
-    await new Promise((resolve) => window.setTimeout(resolve, 75));
-
-    const actual = host.querySelector<HTMLElement>(`[data-thread-item-id="${item.id}"]`)?.getBoundingClientRect().height ?? 0;
-    const planned = getPretextVirtualizerRowLayout(item, viewportWidth, {
-      expandedMessageById: { [item.id]: expanded },
-    }).height;
-
-    root.unmount();
-    host.remove();
-
-    return {
-      planned,
-      actual,
-      delta: planned - actual,
-    };
-  }, params);
-}
-
-async function measureAssistantParity(page: Page, content: string, isComplete = true): Promise<RowParityMeasurement> {
-  return page.evaluate(async ({ content, isComplete }) => {
-    const ReactModule = await import("/node_modules/.vite/deps/react.js");
-    const React = ReactModule.default ?? ReactModule;
-    const ReactDomClientModule = await import("/node_modules/.vite/deps/react-dom_client.js");
-    const ReactDOMClient = ReactDomClientModule.default ?? ReactDomClientModule;
-    const { AssistantEntry } = await import("/src/pages/sessionThread/SessionThreadItemViews.tsx");
-    const { getPretextVirtualizerRowLayout } = await import("/src/pages/sessionThread/pretextVirtualizerRowLayout.ts");
-    const {
-      SESSION_THREAD_LAYOUT_STYLE,
-      resolveSessionThreadContentWidth,
-    } = await import("/src/pages/sessionThread/sessionThreadLayoutTokens.ts");
-
-    const viewportWidth = 820;
-    const contentWidth = resolveSessionThreadContentWidth(viewportWidth);
-    const host = document.createElement("div");
-    host.style.position = "fixed";
-    host.style.left = "-10000px";
-    host.style.top = "0";
-    host.style.width = `${contentWidth}px`;
-    host.style.margin = "0";
-    host.style.padding = "0";
-    host.style.border = "0";
-    host.style.boxSizing = "border-box";
-    for (const [key, value] of Object.entries(SESSION_THREAD_LAYOUT_STYLE)) {
-      host.style.setProperty(key, String(value));
-    }
-    document.body.appendChild(host);
-
-    const item = {
-      kind: "assistant" as const,
-      id: "assistant-parity",
-      turn_id: "turn-1",
-      created_at: "2026-04-09T00:00:00Z",
-      content,
-      thought: "",
-      is_complete: isComplete,
-    };
-
-    const root = ReactDOMClient.createRoot(host);
-    root.render(
-      React.createElement(
-        "div",
-        { "data-thread-item-id": item.id },
-        React.createElement(
-          "div",
-          { className: "wb-thread-indent" },
-          React.createElement(AssistantEntry, {
-            content,
-            isComplete,
-            worktreeId: null,
-            onFileOpenError: () => {},
-          }),
-        ),
-      ),
-    );
-    await new Promise((resolve) => window.setTimeout(resolve, 75));
-
-    const actual = host.querySelector<HTMLElement>(`[data-thread-item-id="${item.id}"]`)?.getBoundingClientRect().height ?? 0;
-    const planned = getPretextVirtualizerRowLayout(item, viewportWidth, {}).height;
-
-    root.unmount();
-    host.remove();
-
-    return {
-      planned,
-      actual,
-      delta: planned - actual,
-    };
-  }, { content, isComplete });
-}
-
-async function measureTurnHeaderParity(page: Page, plainText: string): Promise<RowParityMeasurement> {
-  return page.evaluate(async ({ plainText }) => {
-    const ReactModule = await import("/node_modules/.vite/deps/react.js");
-    const React = ReactModule.default ?? ReactModule;
-    const ReactDomClientModule = await import("/node_modules/.vite/deps/react-dom_client.js");
-    const ReactDOMClient = ReactDomClientModule.default ?? ReactDomClientModule;
-    const { WorkbenchTurnHeaderView } = await import("/src/pages/sessionThread/SessionThreadItemViews.tsx");
-    const { getPretextVirtualizerRowLayout } = await import("/src/pages/sessionThread/pretextVirtualizerRowLayout.ts");
-    const {
-      SESSION_THREAD_LAYOUT_STYLE,
-      resolveSessionThreadContentWidth,
-    } = await import("/src/pages/sessionThread/sessionThreadLayoutTokens.ts");
-
-    const viewportWidth = 820;
-    const contentWidth = resolveSessionThreadContentWidth(viewportWidth);
-    const host = document.createElement("div");
-    host.style.position = "fixed";
-    host.style.left = "-10000px";
-    host.style.top = "0";
-    host.style.width = `${contentWidth}px`;
-    host.style.margin = "0";
-    host.style.padding = "0";
-    host.style.border = "0";
-    host.style.boxSizing = "border-box";
-    for (const [key, value] of Object.entries(SESSION_THREAD_LAYOUT_STYLE)) {
-      host.style.setProperty(key, String(value));
-    }
-    document.body.appendChild(host);
-
-    const header = {
-      id: "turn-header-parity",
-      content: plainText,
-      plain_text: plainText,
-      attachments: [],
-      created_at: "2026-04-10T00:00:00Z",
-    };
-    const item = {
-      kind: "turn_header" as const,
-      id: "turn-header-parity-row",
-      header,
-    };
-
-    const root = ReactDOMClient.createRoot(host);
-    root.render(
-      React.createElement(
-        "div",
-        { style: { display: "contents" } },
-        React.createElement(WorkbenchTurnHeaderView, {
-          header,
-          plainText,
-          expanded: true,
-          onToggle: () => {},
-        }),
-      ),
-    );
-    await new Promise((resolve) => window.setTimeout(resolve, 75));
-
-    const actual = host.querySelector<HTMLElement>(".wb-turn-header")?.getBoundingClientRect().height ?? 0;
-    const planned = getPretextVirtualizerRowLayout(item, viewportWidth, {
-      expandedTurnHeaders: { [header.id]: true },
-    }).height;
-
-    root.unmount();
-    host.remove();
-
-    return {
-      planned,
-      actual,
-      delta: planned - actual,
-    };
-  }, { plainText });
-}
 
 test("workbench: exact multi-paragraph user message planner matches rendered height", async ({ page }) => {
   test.setTimeout(120000);
@@ -323,7 +93,7 @@ test("workbench: assistant markdown planner matches rendered height", async ({ p
   test.setTimeout(120000);
   await openWorkbenchShell(page);
 
-  const measurement = await measureAssistantParity(page, ASSISTANT_MARKDOWN);
+  const measurement = await measureAssistantParity(page, { content: ASSISTANT_MARKDOWN });
 
   expect(
     Math.abs(measurement.delta),
@@ -335,7 +105,7 @@ test("workbench: assistant prose with wrapped inline code matches rendered heigh
   test.setTimeout(120000);
   await openWorkbenchShell(page);
 
-  const measurement = await measureAssistantParity(page, ASSISTANT_INLINE_CODE_WRAP_MARKDOWN);
+  const measurement = await measureAssistantParity(page, { content: ASSISTANT_INLINE_CODE_WRAP_MARKDOWN });
 
   expect(
     Math.abs(measurement.delta),
@@ -347,7 +117,10 @@ test("workbench: incomplete assistant streaming tails stay in parity with the pl
   test.setTimeout(120000);
   await openWorkbenchShell(page);
 
-  const measurement = await measureAssistantParity(page, "Before\n\n- partial item", false);
+  const measurement = await measureAssistantParity(page, {
+    content: "Before\n\n- partial item",
+    isComplete: false,
+  });
 
   expect(
     Math.abs(measurement.delta),
@@ -359,7 +132,7 @@ test("workbench: turn header planner matches rendered height", async ({ page }) 
   test.setTimeout(120000);
   await openWorkbenchShell(page);
 
-  const measurement = await measureTurnHeaderParity(page, TURN_HEADER_TEXT);
+  const measurement = await measureTurnHeaderParity(page, { plainText: TURN_HEADER_TEXT });
 
   expect(
     Math.abs(measurement.delta),

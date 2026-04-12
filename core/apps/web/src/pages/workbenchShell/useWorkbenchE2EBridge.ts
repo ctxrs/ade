@@ -14,6 +14,15 @@ import {
   type WorkbenchMarkdownParityMeasurement,
   type WorkbenchMarkdownParitySample,
 } from "./workbenchE2EMarkdown";
+import {
+  measureWorkbenchAssistantParity,
+  measureWorkbenchMessageParity,
+  measureWorkbenchTurnHeaderParity,
+  type WorkbenchAssistantParityParams,
+  type WorkbenchMessageParityParams,
+  type WorkbenchRowParityMeasurement,
+  type WorkbenchTurnHeaderParityParams,
+} from "./workbenchE2ETranscriptParity";
 
 const E2E_IMAGE_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+lmZYAAAAASUVORK5CYII=";
@@ -151,6 +160,9 @@ type WorkbenchE2EWindow = Window & {
       samples: readonly WorkbenchMarkdownParitySample[],
       width: number,
     ) => Promise<WorkbenchMarkdownParityMeasurement[]>;
+    measureMessageParity?: (params: WorkbenchMessageParityParams) => Promise<WorkbenchRowParityMeasurement>;
+    measureAssistantParity?: (params: WorkbenchAssistantParityParams) => Promise<WorkbenchRowParityMeasurement>;
+    measureTurnHeaderParity?: (params: WorkbenchTurnHeaderParityParams) => Promise<WorkbenchRowParityMeasurement>;
     measureMarkdownSelectionText?: (markdown: string, width: number) => Promise<string>;
     installMarkdownScrollProbe?: (markdown: string, width?: number) => Promise<boolean>;
     removeMarkdownScrollProbe?: () => boolean;
@@ -250,6 +262,11 @@ export function useWorkbenchE2EBridge({
       samples: readonly WorkbenchMarkdownParitySample[],
       width: number,
     ) => measureWorkbenchMarkdownParity(samples, width);
+    win.__ctxE2E.measureMessageParity = (params: WorkbenchMessageParityParams) => measureWorkbenchMessageParity(params);
+    win.__ctxE2E.measureAssistantParity = (params: WorkbenchAssistantParityParams) =>
+      measureWorkbenchAssistantParity(params);
+    win.__ctxE2E.measureTurnHeaderParity = (params: WorkbenchTurnHeaderParityParams) =>
+      measureWorkbenchTurnHeaderParity(params);
     win.__ctxE2E.measureMarkdownSelectionText = (markdown: string, width: number) =>
       measureWorkbenchMarkdownSelectionText(markdown, width);
     win.__ctxE2E.installMarkdownScrollProbe = (markdown: string, width?: number) =>
@@ -272,6 +289,9 @@ export function useWorkbenchE2EBridge({
       delete win.__ctxE2E.measureHarnessOption;
       delete win.__ctxE2E.measureDiffFile;
       delete win.__ctxE2E.measureMarkdownParity;
+      delete win.__ctxE2E.measureMessageParity;
+      delete win.__ctxE2E.measureAssistantParity;
+      delete win.__ctxE2E.measureTurnHeaderParity;
       delete win.__ctxE2E.measureMarkdownSelectionText;
       delete win.__ctxE2E.installMarkdownScrollProbe;
       delete win.__ctxE2E.removeMarkdownScrollProbe;

@@ -38,6 +38,14 @@ type E2EWindow = Window & {
     measureHarnessOption?: (label: string) => Promise<unknown>;
     measureDiffFile?: (targetPath: string) => Promise<unknown>;
     measureMarkdownParity?: (samples: readonly { name: string; markdown: string }[], width: number) => Promise<unknown>;
+    measureMessageParity?: (params: {
+      content: string;
+      expanded: boolean;
+      attachments?: readonly unknown[];
+      viewportWidth?: number;
+    }) => Promise<unknown>;
+    measureAssistantParity?: (params: { content: string; isComplete?: boolean; viewportWidth?: number }) => Promise<unknown>;
+    measureTurnHeaderParity?: (params: { plainText: string; viewportWidth?: number }) => Promise<unknown>;
     installMarkdownScrollProbe?: (markdown: string, width?: number) => Promise<boolean>;
     removeMarkdownScrollProbe?: () => boolean;
   };
@@ -94,6 +102,9 @@ describe("useWorkbenchE2EBridge", () => {
     expect(typeof e2eWindow.__ctxE2E?.measureHarnessOption).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.measureDiffFile).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.measureMarkdownParity).toBe("function");
+    expect(typeof e2eWindow.__ctxE2E?.measureMessageParity).toBe("function");
+    expect(typeof e2eWindow.__ctxE2E?.measureAssistantParity).toBe("function");
+    expect(typeof e2eWindow.__ctxE2E?.measureTurnHeaderParity).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.installMarkdownScrollProbe).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.removeMarkdownScrollProbe).toBe("function");
     expect(e2eWindow.__ctxE2E?.focusNewTask?.()).toBe(true);
@@ -119,6 +130,9 @@ describe("useWorkbenchE2EBridge", () => {
     expect(e2eWindow.__ctxE2E?.measureHarnessOption).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.measureDiffFile).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.measureMarkdownParity).toBeUndefined();
+    expect(e2eWindow.__ctxE2E?.measureMessageParity).toBeUndefined();
+    expect(e2eWindow.__ctxE2E?.measureAssistantParity).toBeUndefined();
+    expect(e2eWindow.__ctxE2E?.measureTurnHeaderParity).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.installMarkdownScrollProbe).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.removeMarkdownScrollProbe).toBeUndefined();
   });

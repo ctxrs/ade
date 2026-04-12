@@ -14,6 +14,11 @@ import {
   measureSessionTextHeight,
 } from "./sessionMarkdownMeasurement";
 import {
+  measureRenderedSessionAssistantHeight,
+  measureRenderedSessionMessageHeight,
+  measureRenderedSessionTurnHeaderHeight,
+} from "./sessionThreadDomMeasurement";
+import {
   resolveSessionMarkdownBlockEntryGapPx,
   resolveSessionMarkdownBlockGapPx,
 } from "./sessionMarkdownContract";
@@ -140,6 +145,15 @@ function measureTurnHeaderHeight(
     { kind: "turn_header", id: `turn-header-${header.id}`, header },
     context.expandedTurnHeaders ?? {},
   ).expanded;
+  const renderedHeight = measureRenderedSessionTurnHeaderHeight(
+    header,
+    displayPlainText,
+    expanded,
+    viewportWidth,
+  );
+  if (renderedHeight != null) {
+    return renderedHeight;
+  }
   const textHeight = measureSessionPlainTextBlockHeight({
     cacheKey: `turn-header:${header.id}:${displayPlainText}`,
     text: displayPlainText,
@@ -201,6 +215,10 @@ function measureMessageHeight(
   context: PretextVirtualizerRowLayoutContext,
 ): number {
   const layout = getWorkbenchMessageLayoutState(item, context.expandedMessageById ?? {});
+  const renderedHeight = measureRenderedSessionMessageHeight(item, viewportWidth, layout.expanded);
+  if (renderedHeight != null) {
+    return renderedHeight;
+  }
   const textHeight = measureSessionMarkdownDocument(layout.shownContent, resolveSessionThreadMessageTextWidth(viewportWidth));
   const attachmentsHeight = measureMessageAttachmentsHeight(item, viewportWidth);
   const toggleHeight = layout.expandable ? MESSAGE_TOGGLE_HEIGHT_PX : 0;
@@ -218,6 +236,10 @@ function measureAssistantHeight(
   item: Extract<WorkbenchListItem, { kind: "assistant" }>,
   viewportWidth: number,
 ): number {
+  const renderedHeight = measureRenderedSessionAssistantHeight(item, viewportWidth);
+  if (renderedHeight != null) {
+    return renderedHeight;
+  }
   if (!item.is_complete && item.content.trim().length === 0) {
     return SPACER_HEIGHT_PX;
   }

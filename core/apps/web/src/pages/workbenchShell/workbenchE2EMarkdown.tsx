@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOMClient from "react-dom/client";
+import { flushSync } from "react-dom";
 import { MemoMarkdown } from "../sessionView";
 import { measureSessionMarkdownDocument } from "../sessionThread/sessionMarkdownMeasurement";
 import { SESSION_THREAD_LAYOUT_STYLE } from "../sessionThread/sessionThreadLayoutTokens";
@@ -42,8 +43,9 @@ export async function measureWorkbenchMarkdownParity(
     applyMarkdownLayoutStyle(host, width);
     document.body.appendChild(host);
     const root = ReactDOMClient.createRoot(host);
-    root.render(React.createElement(MemoMarkdown, { content: sample.markdown }));
-    await new Promise((resolve) => window.setTimeout(resolve, 20));
+    flushSync(() => {
+      root.render(React.createElement(MemoMarkdown, { content: sample.markdown }));
+    });
     const actual = host.querySelector(".wb-markdown-root")?.getBoundingClientRect().height ?? 0;
     out.push({
       name: sample.name,
@@ -76,8 +78,9 @@ export async function measureWorkbenchMarkdownSelectionText(markdown: string, wi
   applyMarkdownLayoutStyle(host, width);
   probe.appendChild(host);
   const root = ReactDOMClient.createRoot(host);
-  root.render(React.createElement(MemoMarkdown, { content: markdown }));
-  await new Promise((resolve) => window.setTimeout(resolve, 20));
+  flushSync(() => {
+    root.render(React.createElement(MemoMarkdown, { content: markdown }));
+  });
 
   const markdownRoot = host.querySelector(".wb-markdown-root");
   if (!markdownRoot) {
@@ -136,8 +139,9 @@ export async function installWorkbenchMarkdownScrollProbe(markdown: string, widt
   scroller.appendChild(bottomFiller);
 
   const root = ReactDOMClient.createRoot(host);
-  root.render(React.createElement(MemoMarkdown, { content: markdown }));
-  await new Promise((resolve) => window.setTimeout(resolve, 20));
+  flushSync(() => {
+    root.render(React.createElement(MemoMarkdown, { content: markdown }));
+  });
   scroller.scrollTop = 420;
   scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
 
