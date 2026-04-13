@@ -28,6 +28,7 @@ function parseArgs(argv) {
   const out = {
     matrixPath: defaultMatrixPath,
     providers: [],
+    targets: [],
     timeoutMs: DEFAULT_TIMEOUT_MS,
   };
   for (let i = 2; i < argv.length; i += 1) {
@@ -40,6 +41,10 @@ function parseArgs(argv) {
       out.providers.push((argv[++i] || "").trim());
       continue;
     }
+    if (arg === "--target") {
+      out.targets.push((argv[++i] || "").trim());
+      continue;
+    }
     if (arg === "--timeout-ms") {
       const raw = Number(argv[++i] || "");
       if (!Number.isFinite(raw) || raw <= 0) {
@@ -50,13 +55,14 @@ function parseArgs(argv) {
     }
     if (arg === "--help" || arg === "-h") {
       console.log(
-        "Usage: node core/scripts/provider_matrix_archive_artifact_gate.cjs [--matrix <provider_matrix.json>] [--provider <id>]... [--timeout-ms <ms>]",
+        "Usage: node core/scripts/provider_matrix_archive_artifact_gate.cjs [--matrix <provider_matrix.json>] [--provider <id>]... [--target <os-arch>]... [--timeout-ms <ms>]",
       );
       process.exit(0);
     }
     fail(`unknown argument: ${arg}`);
   }
   out.providers = out.providers.filter(Boolean);
+  out.targets = out.targets.filter(Boolean);
   return out;
 }
 
@@ -68,8 +74,9 @@ function readMatrix(matrixPath) {
   return JSON.parse(fs.readFileSync(resolved, "utf8"));
 }
 
-function collectManagedArchiveTargets(matrix, providerFilter = []) {
+function collectManagedArchiveTargets(matrix, providerFilter = [], targetFilter = []) {
   const requested = new Set(providerFilter);
+  const requestedTargets = new Set(targetFilter);
   const matchedProviders = new Set();
   const targets = [];
 
@@ -84,6 +91,9 @@ function collectManagedArchiveTargets(matrix, providerFilter = []) {
     }
     const targetMap = install.targets || {};
     for (const [targetKey, target] of Object.entries(targetMap)) {
+      if (requestedTargets.size > 0 && !requestedTargets.has(targetKey)) {
+        continue;
+      }
       targets.push({
         providerId: entry.id,
         targetKey,
@@ -225,7 +235,7 @@ async function verifyManagedArchiveTargets(
 async function main(argv = process.argv) {
   const args = parseArgs(argv);
   const matrix = readMatrix(args.matrixPath);
-  const { missing, targets } = collectManagedArchiveTargets(matrix, args.providers);
+  const { missing, targets } = collectManagedArchiveTargets(matrix, args.providers, args.targets);
   if (missing.length > 0) {
     fail(`requested provider ids not present in matrix: ${missing.join(", ")}`);
   }
