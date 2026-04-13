@@ -177,6 +177,7 @@ pub async fn seed_managed_codex_cli_host_runtime(data_root: &Path, command_abs_p
     let meta = ManagedInstallMetadata {
         package: Some("codex-cli".to_string()),
         version: Some("fixture".to_string()),
+        artifact_fingerprint: None,
         archive_sha256: None,
         target: Some(InstallTarget::Host),
         install_dir_rel: None,
