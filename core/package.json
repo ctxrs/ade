@@ -7,6 +7,7 @@
     "test:agent": "node scripts/run_rust_gate.cjs --mode workspace --agent-gate --test-strategy mixed && pnpm bazel:web:test",
     "test:agent:linux-rbe": "CTX_BAZEL_REMOTE_EXECUTION=linux node scripts/run_rust_gate.cjs --mode workspace --agent-gate --test-strategy mixed && pnpm bazel:web:test",
     "test:agent:buildbuddy-remote": "node scripts/run_buildbuddy_remote.cjs agent-gate",
+    "release:buildbuddy:canary": "node scripts/run_buildbuddy_canary_release.cjs",
     "bazel:pilot:test": "node scripts/run_bazel_pilot.cjs test",
     "bazel:pilot:test:linux-rbe": "CTX_BAZEL_REMOTE_EXECUTION=linux node scripts/run_bazel_pilot.cjs test",
     "bazel:pilot:build": "node scripts/run_bazel_pilot.cjs build",
