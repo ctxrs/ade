@@ -154,7 +154,9 @@ fn trim_session_head_window(
     retain_messages_for_turns(messages, turns);
     retain_tool_summaries_for_turns(tool_summaries, turns);
 
-    while messages.len() > message_limit && !turns.is_empty() {
+    // Session heads are turn-atomic under the current history contract. Once only
+    // one turn remains, preserve it even if its message count exceeds the soft cap.
+    while messages.len() > message_limit && turns.len() > 1 {
         turns.remove(0);
         truncated = true;
         *has_more_turns = true;
@@ -173,7 +175,7 @@ fn trim_session_head_window(
         if bytes <= byte_limit || (turns.is_empty() && events.is_empty()) {
             break;
         }
-        if !turns.is_empty() {
+        if turns.len() > 1 {
             turns.remove(0);
             truncated = true;
             *has_more_turns = true;
@@ -186,6 +188,7 @@ fn trim_session_head_window(
             truncated = true;
             continue;
         }
+        // Preserve the newest remaining turn even if it exceeds soft byte limits.
         break;
     }
 

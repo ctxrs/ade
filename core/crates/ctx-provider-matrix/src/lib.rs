@@ -22,7 +22,7 @@ pub use query::{
 
 pub(crate) const MATRIX_CACHE_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 pub(crate) const MATRIX_CACHE_FILENAME: &str = "provider_matrix.json";
-pub(crate) const MATRIX_SCHEMA_VERSION: u32 = 2;
+pub(crate) const MATRIX_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderMatrix {

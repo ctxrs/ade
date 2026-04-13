@@ -525,7 +525,10 @@ mod tests {
     #[test]
     fn glibc_mallinfo_reads_symbol_when_present() {
         let symbol = fake_mallinfo2 as usize as *mut libc::c_void;
-        let mapped = mallinfo_from_symbol(symbol).expect("mallinfo2 symbol should resolve");
+        let mapped = match mallinfo_from_symbol(symbol) {
+            Some(mapped) => mapped,
+            None => panic!("mallinfo2 symbol should resolve"),
+        };
 
         assert_eq!(mapped.arena, 11);
         assert_eq!(mapped.ordblks, 12);

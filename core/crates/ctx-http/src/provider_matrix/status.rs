@@ -7,6 +7,7 @@ use tokio::time::timeout;
 
 use crate::installer::AgentServerConfigFile;
 use crate::updates;
+use ctx_provider_install::install_state::InstallTarget;
 
 const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
 
@@ -52,31 +53,61 @@ pub async fn apply_matrix_to_status(
     }
 
     let mut diagnostics = Vec::new();
-    if let Some((expected_archive_sha256, detected_archive_sha256)) =
-        detect_managed_archive_checksum_mismatch(cfg, entry, status, detected_version.as_deref())
-            .await
+    let is_archive_install = matches!(
+        entry.managed_install.as_ref(),
+        Some(ProviderInstall::Archive { .. })
+    );
+    if let Some((expected_fingerprint, detected_fingerprint)) =
+        detect_managed_artifact_fingerprint_mismatch(
+            cfg,
+            entry,
+            status,
+            detected_version.as_deref(),
+        )
+        .await
     {
-        status
-            .details
-            .insert("managed_checksum_mismatch".to_string(), "true".to_string());
         status.details.insert(
-            "managed_expected_archive_sha256".to_string(),
-            expected_archive_sha256.clone(),
+            "managed_fingerprint_mismatch".to_string(),
+            "true".to_string(),
         );
         status.details.insert(
-            "managed_detected_archive_sha256".to_string(),
-            detected_archive_sha256.clone(),
+            "managed_expected_fingerprint".to_string(),
+            expected_fingerprint.clone(),
         );
+        status.details.insert(
+            "managed_detected_fingerprint".to_string(),
+            detected_fingerprint.clone(),
+        );
+        if is_archive_install {
+            status
+                .details
+                .insert("managed_checksum_mismatch".to_string(), "true".to_string());
+            status.details.insert(
+                "managed_expected_archive_sha256".to_string(),
+                expected_fingerprint.clone(),
+            );
+            status.details.insert(
+                "managed_detected_archive_sha256".to_string(),
+                detected_fingerprint.clone(),
+            );
+        }
         status
             .details
             .insert("matrix_update_available".to_string(), "true".to_string());
         status.installed = false;
         status.capabilities = None;
         status.health = ctx_providers::adapters::ProviderHealth::Error;
-        diagnostics.push(format!(
-            "Managed provider archive checksum mismatch; expected {expected_archive_sha256}, found {detected_archive_sha256}. Reinstall {} to restore the pinned release.",
-            status.provider_id
-        ));
+        if is_archive_install {
+            diagnostics.push(format!(
+                "Managed provider archive checksum mismatch; expected {expected_fingerprint}, found {detected_fingerprint}. Reinstall {} to restore the pinned release.",
+                status.provider_id
+            ));
+        } else {
+            diagnostics.push(format!(
+                "Managed provider artifact mismatch; expected {expected_fingerprint}, found {detected_fingerprint}. Reinstall {} to restore the pinned release.",
+                status.provider_id
+            ));
+        }
     }
 
     if status.installed {
@@ -128,7 +159,7 @@ pub async fn apply_matrix_to_status(
         _ => false,
     };
     let dependency_update_available =
-        status.installed && managed_dependency_update_available(cfg, status);
+        status.installed && managed_dependency_update_available(cfg, entry, status);
     if dependency_update_available {
         status.details.insert(
             "managed_dependency_update_available".to_string(),
@@ -161,6 +192,7 @@ pub async fn apply_matrix_to_status(
 
 pub(super) fn managed_dependency_update_available(
     cfg: &AgentServerConfigFile,
+    entry: &ProviderMatrixEntry,
     status: &ctx_providers::adapters::ProviderStatus,
 ) -> bool {
     let requested_target = install_target_from_status(status);
@@ -179,17 +211,51 @@ pub(super) fn managed_dependency_update_available(
         return false;
     };
     command.dependencies.iter().any(|dependency_id| {
-        let Some(expected_version) =
-            crate::installer::expected_managed_dependency_version(dependency_id)
+        let dependency = entry
+            .dependencies
+            .iter()
+            .find(|candidate| candidate.id == *dependency_id);
+        let expected_version = crate::installer::expected_managed_dependency_version(dependency_id)
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                dependency.map(|dependency| match &dependency.install {
+                    DependencyInstall::Npm { version, .. }
+                    | DependencyInstall::Archive { version, .. } => version.clone(),
+                })
+            });
+        let Some(expected_version) = expected_version else {
+            return false;
+        };
+        let meta = match cfg.managed_installs.get(dependency_id) {
+            Some(meta) => meta,
+            None => return true,
+        };
+        match meta.version.as_deref() {
+            Some(installed)
+                if normalize_version(installed) == normalize_version(&expected_version) => {}
+            Some(_) | None => return true,
+        }
+
+        let Some(dependency) = dependency else {
+            return false;
+        };
+        let dependency_target = meta.target.unwrap_or(InstallTarget::Host);
+        let Some(expected_fingerprint) =
+            crate::installer::expected_managed_dependency_artifact_fingerprint(
+                dependency,
+                dependency_target,
+            )
         else {
             return false;
         };
-        let installed_version = cfg
-            .managed_installs
-            .get(dependency_id)
-            .and_then(|meta| meta.version.as_deref());
-        match installed_version {
-            Some(installed) => normalize_version(installed) != normalize_version(expected_version),
+        match meta
+            .artifact_fingerprint
+            .as_deref()
+            .or(meta.archive_sha256.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(installed) => installed != expected_fingerprint,
             None => true,
         }
     })
@@ -205,7 +271,7 @@ pub(super) fn install_target_from_status(
         .and_then(|value| crate::installer::parse_install_target(Some(value.as_str())).ok())
 }
 
-pub(super) async fn detect_managed_archive_checksum_mismatch(
+pub(super) async fn detect_managed_artifact_fingerprint_mismatch(
     cfg: &AgentServerConfigFile,
     entry: &ProviderMatrixEntry,
     status: &ctx_providers::adapters::ProviderStatus,
@@ -221,41 +287,31 @@ pub(super) async fn detect_managed_archive_checksum_mismatch(
         Some(requested_target),
     )?;
     let version = detected_version.or(meta.version.as_deref())?;
-    let release = release_for_version(entry, version)?;
-    let expected_target = managed_archive_target_for_release(entry, release, requested_target)?;
-    let expected_archive_sha256 = expected_target.sha256.as_deref()?.trim();
-    if expected_archive_sha256.is_empty() {
-        return None;
+    let expected_fingerprint = crate::installer::expected_managed_provider_artifact_fingerprint(
+        entry,
+        version,
+        requested_target,
+    )?;
+    let detected_fingerprint = meta
+        .artifact_fingerprint
+        .as_deref()
+        .or(meta.archive_sha256.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    match detected_fingerprint {
+        Some(detected)
+            if expected_fingerprint.eq_ignore_ascii_case(detected)
+                && matches!(
+                    entry.managed_install.as_ref(),
+                    Some(ProviderInstall::Archive { .. })
+                ) =>
+        {
+            None
+        }
+        Some(detected) if expected_fingerprint == detected => None,
+        Some(detected) => Some((expected_fingerprint, detected.to_string())),
+        None => Some((expected_fingerprint, "<missing>".to_string())),
     }
-    let detected_archive_sha256 = meta.archive_sha256.as_deref()?.trim();
-    if detected_archive_sha256.is_empty() {
-        return None;
-    }
-    if detected_archive_sha256.eq_ignore_ascii_case(expected_archive_sha256) {
-        return None;
-    }
-    Some((
-        expected_archive_sha256.to_string(),
-        detected_archive_sha256.to_string(),
-    ))
-}
-
-pub(super) fn managed_archive_target_for_release<'a>(
-    entry: &'a ProviderMatrixEntry,
-    release: &ProviderRelease,
-    requested_target: ctx_provider_install::install_state::InstallTarget,
-) -> Option<&'a ProviderArchiveTarget> {
-    let ProviderInstall::Archive {
-        version, targets, ..
-    } = entry.managed_install.as_ref()?
-    else {
-        return None;
-    };
-    if normalize_version(version) != normalize_version(&release.version) {
-        return None;
-    }
-    let target_key = crate::installer::resolve_matrix_target_key(requested_target).ok()?;
-    targets.get(target_key)
 }
 
 pub(super) async fn detect_provider_version(

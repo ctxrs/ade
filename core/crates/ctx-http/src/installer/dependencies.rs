@@ -28,6 +28,7 @@ pub(super) async fn install_managed_npm_dependency(
             let meta = ManagedInstallMetadata {
                 package: Some(package.to_string()),
                 version: Some(version.to_string()),
+                artifact_fingerprint: npm_artifact_fingerprint(package, version),
                 archive_sha256: None,
                 target: Some(InstallTarget::Host),
                 install_dir_rel: Some(install_dir_rel_value.clone()),
@@ -92,6 +93,7 @@ pub(super) async fn install_managed_npm_dependency(
     let meta = ManagedInstallMetadata {
         package: Some(package.to_string()),
         version: Some(version.to_string()),
+        artifact_fingerprint: npm_artifact_fingerprint(package, version),
         archive_sha256: None,
         target: Some(InstallTarget::Host),
         install_dir_rel: Some(install_dir_rel_value),
@@ -156,6 +158,7 @@ pub(super) async fn install_managed_archive_dependency(
     let meta = ManagedInstallMetadata {
         package: Some(url.to_string()),
         version: Some(version.to_string()),
+        artifact_fingerprint: expected_sha256.map(str::to_string),
         archive_sha256: expected_sha256.map(str::to_string),
         target: Some(target),
         install_dir_rel: Some(install_dir_rel(&data_root, &install_dir)),

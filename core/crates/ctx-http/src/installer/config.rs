@@ -44,6 +44,8 @@ pub struct ManagedInstallMetadata {
     pub package: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_fingerprint: Option<String>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -196,6 +198,12 @@ pub fn apply_managed_install_details_for_target(
         status
             .details
             .insert("managed_version".to_string(), v.clone());
+    }
+    if let Some(fingerprint) = &meta.artifact_fingerprint {
+        status.details.insert(
+            "managed_artifact_fingerprint".to_string(),
+            fingerprint.clone(),
+        );
     }
     if let Some(archive_sha256) = &meta.archive_sha256 {
         status

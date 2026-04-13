@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "providers": [
     {
       "id": "acp-crp-bridge",
@@ -204,44 +204,44 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.2.7-ctx.3",
+        "version": "0.2.7-ctx.4",
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.3/macos/aarch64/claude-crp-0.2.7-ctx.3-darwin-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/stable/claude-crp/0.2.7-ctx.4/darwin/aarch64/claude-crp-0.2.7-ctx.4-darwin-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "b6262de0797399eef9668c2db6babf8a7faa165594f477229a18d1c736f2ff82"
+            "sha256": "f419cc3fbff5c45d09ee0e5fc3a510ece37d283479a637ed489070680335cea0"
           },
           "darwin-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.3/macos/x86_64/claude-crp-0.2.7-ctx.3-darwin-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/stable/claude-crp/0.2.7-ctx.4/darwin/x86_64/claude-crp-0.2.7-ctx.4-darwin-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "f151178cbcbc4151d5fe8ff351529f16fcbd512b81f3cd7430d0b332f6801753"
+            "sha256": "b03d6a0431e03e540673007f9f10e0b200d52abcab4daf3af7e21ec53e14a27c"
           },
           "linux-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.3/linux/aarch64/claude-crp-0.2.7-ctx.3-linux-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/stable/claude-crp/0.2.7-ctx.4/linux/aarch64/claude-crp-0.2.7-ctx.4-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "0799e8f37dce4d728188c4815a09c12da2a8292cdf75439598e5027875f7f2a7"
+            "sha256": "42d8ba61a556de19752ab86b59ab1165894927b6f69fd73e254aec27d550affd"
           },
           "linux-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.3/linux/x86_64/claude-crp-0.2.7-ctx.3-linux-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/stable/claude-crp/0.2.7-ctx.4/linux/x86_64/claude-crp-0.2.7-ctx.4-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "1e17ea9424e52a49cb4944f4a8843e39499357077b684e623521607d5fa53dfb"
+            "sha256": "e5a69de99b571e74842a9d282cc7091b2c3736c556804278a5868920ceb2af3f"
           },
           "macos-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.3/macos/aarch64/claude-crp-0.2.7-ctx.3-darwin-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/stable/claude-crp/0.2.7-ctx.4/darwin/aarch64/claude-crp-0.2.7-ctx.4-darwin-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "b6262de0797399eef9668c2db6babf8a7faa165594f477229a18d1c736f2ff82"
+            "sha256": "f419cc3fbff5c45d09ee0e5fc3a510ece37d283479a637ed489070680335cea0"
           },
           "macos-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.3/macos/x86_64/claude-crp-0.2.7-ctx.3-darwin-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/stable/claude-crp/0.2.7-ctx.4/darwin/x86_64/claude-crp-0.2.7-ctx.4-darwin-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "f151178cbcbc4151d5fe8ff351529f16fcbd512b81f3cd7430d0b332f6801753"
+            "sha256": "b03d6a0431e03e540673007f9f10e0b200d52abcab4daf3af7e21ec53e14a27c"
           }
         }
       },
@@ -260,7 +260,7 @@
       },
       "releases": [
         {
-          "version": "0.2.7-ctx.3",
+          "version": "0.2.7-ctx.4",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (external-harnesses/claude-crp/package.json)",
@@ -365,30 +365,30 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.114.0-ctx.1",
+        "version": "0.114.0-ctx.2",
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.1/codex-crp-0.114.0-ctx.1-aarch64-apple-darwin.tar.gz",
-            "sha256": "9d8b4c5e19b17326d94bac5dab0ae427c46446b91a4a3866eb9c28a525d5955e",
+            "url": "https://github.com/ctxorgrs/codex-crp/releases/download/v0.114.0-ctx.2/codex-crp-0.114.0-ctx.2-aarch64-apple-darwin.tar.gz",
+            "sha256": "e28a2db59f8bd57a904080f3e77a9ca63f92d4f4969f5c0df9a6441117960289",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           },
           "darwin-x86_64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.1/codex-crp-0.114.0-ctx.1-x86_64-apple-darwin.tar.gz",
-            "sha256": "591fb47ec2ea00221d467bbab30e5b41d312ed9efdf3be23eadd744613ae70a2",
+            "url": "https://github.com/ctxorgrs/codex-crp/releases/download/v0.114.0-ctx.2/codex-crp-0.114.0-ctx.2-x86_64-apple-darwin.tar.gz",
+            "sha256": "cf50db3414245b195c5f84bccc6757f2c57daec70c189b23762b252026195976",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           },
           "linux-aarch64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.1/codex-crp-0.114.0-ctx.1-aarch64-unknown-linux-gnu.tar.gz",
-            "sha256": "1c42b75efb47dd9611798a8539f74dcd86f0aa1a7dcf911b1e1010249d63a422",
+            "url": "https://github.com/ctxorgrs/codex-crp/releases/download/v0.114.0-ctx.2/codex-crp-0.114.0-ctx.2-aarch64-unknown-linux-gnu.tar.gz",
+            "sha256": "137c80df5a3912b1e0cbb763a064c7bdbe1ac77fa3c542985c1802019fd962ea",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           },
           "linux-x86_64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.114.0-ctx.1/codex-crp-0.114.0-ctx.1-x86_64-unknown-linux-gnu.tar.gz",
-            "sha256": "8cc55e936990c212a095d28d3c26c42a22164b2fb4566b27f90a7c825d9fa2ab",
+            "url": "https://github.com/ctxorgrs/codex-crp/releases/download/v0.114.0-ctx.2/codex-crp-0.114.0-ctx.2-x86_64-unknown-linux-gnu.tar.gz",
+            "sha256": "2bcf948840dc2c038b50fa4b50727436828263245cc9485b37cd1d5bcc56cd35",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           }
@@ -409,14 +409,14 @@
       },
       "releases": [
         {
-          "version": "0.114.0-ctx.1",
+          "version": "0.114.0-ctx.2",
           "upstream_version": "0.114.0",
           "provenance": {
             "upstream_repo": "openai/codex",
             "upstream_release_tag": "rust-v0.114.0",
             "upstream_commit_sha": "b9904c0ae4ecb773549efd6ea3fb05229402fdb9",
-            "ctx_repo": "ctxrs/codex-crp",
-            "ctx_release_tag": "v0.114.0-ctx.1"
+            "ctx_repo": "ctxorgrs/codex-crp",
+            "ctx_release_tag": "v0.114.0-ctx.2"
           },
           "status": "supported",
           "context_min": "0.1.0",

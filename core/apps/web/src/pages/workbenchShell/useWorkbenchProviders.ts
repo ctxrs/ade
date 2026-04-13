@@ -7,6 +7,7 @@ import {
   type SetStateAction,
 } from "react";
 import {
+  getHealth,
   type ProviderOptions,
 } from "../../api/client";
 import type { DraftHarness } from "../../components/WorkbenchComposer";
@@ -28,6 +29,20 @@ type UseWorkbenchProvidersArgs = {
 };
 
 export { resolveProviderOptionsUpdate, shouldHydrateProviderModels } from "../../state/providerOnboardingCoordinator";
+
+const PROVIDER_RUNTIME_BUILD_REFRESH_KEY_PREFIX = "ctx.provider_runtime.checked_build";
+
+const buildRefreshStorageKey = (workspaceId: string): string =>
+  `${PROVIDER_RUNTIME_BUILD_REFRESH_KEY_PREFIX}.${workspaceId}`;
+
+const providerRuntimeBuildKey = (
+  health: Awaited<ReturnType<typeof getHealth>>,
+): string => {
+  const buildId = String(health.compatibility?.desktop_build_id ?? "").trim();
+  const exactVersion = String(health.compatibility?.desktop_exact_version ?? "").trim();
+  const fallback = String(health.version ?? "").trim();
+  return buildId || exactVersion || fallback;
+};
 
 const toErrorMessage = (error: unknown): string => {
   if (error instanceof Error) return error.message;
@@ -61,6 +76,35 @@ export function useWorkbenchProviders({
       }));
   }, [defaultProviderId, providers.length, providersById, setDraftHarness]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void getHealth()
+      .then((health) => {
+        if (cancelled) return;
+        const currentBuild = providerRuntimeBuildKey(health);
+        if (!currentBuild) return;
+        const storageKey = buildRefreshStorageKey(workspaceId);
+        let previousBuild = "";
+        try {
+          previousBuild = String(window.localStorage.getItem(storageKey) ?? "").trim();
+        } catch {
+          previousBuild = "";
+        }
+        try {
+          window.localStorage.setItem(storageKey, currentBuild);
+        } catch {
+          // Ignore storage failures and continue without the upgrade refresh hint.
+        }
+        if (previousBuild && previousBuild !== currentBuild) {
+          void onboarding.refreshBootstrap().catch(() => {});
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [onboarding, workspaceId]);
+
   const installProviderFromMenu = useCallback(
     async (providerId: string) => {
       onStartError(null);
@@ -84,6 +128,28 @@ export function useWorkbenchProviders({
       setInstallAllBusy(false);
     }
   }, [onStartError, onboarding]);
+
+  const updateProvidersFromMenu = useCallback(
+    async (providerIds: string[]) => {
+      const uniqueProviderIds = Array.from(
+        new Set(providerIds.map((providerId) => providerId.trim()).filter(Boolean)),
+      );
+      if (uniqueProviderIds.length === 0) return;
+      onStartError(null);
+      setInstallAllBusy(true);
+      try {
+        for (const providerId of uniqueProviderIds) {
+          await onboarding.startProviderInstall(providerId);
+        }
+      } catch (error: unknown) {
+        onStartError(toErrorMessage(error));
+        throw error;
+      } finally {
+        setInstallAllBusy(false);
+      }
+    },
+    [onStartError, onboarding],
+  );
 
   const cancelProviderInstallFromMenu = useCallback(
     async (providerId: string) => {
@@ -118,6 +184,7 @@ export function useWorkbenchProviders({
     installProviderFromMenu,
     cancelProviderInstallFromMenu,
     installAllProvidersFromMenu,
+    updateProvidersFromMenu,
     ensureProviderAuthSummary,
     refreshBootstrap: onboarding.refreshBootstrap,
   };

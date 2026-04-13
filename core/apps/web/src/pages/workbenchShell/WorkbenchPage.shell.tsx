@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { X } from "lucide-react";
 import {
@@ -37,7 +37,9 @@ import { WorkbenchActiveTaskView } from "./WorkbenchActiveTaskView";
 import { WorkbenchEmptyState } from "./WorkbenchEmptyState";
 import { WorkbenchSidebar, WorkbenchTopbar } from "./WorkbenchShellChrome";
 import { WorkbenchPageMenus } from "./WorkbenchPageMenus";
+import { WorkbenchProviderWarningBanner } from "./WorkbenchProviderWarningBanner";
 import { useWorkbenchChromeIntegration } from "./useWorkbenchChromeIntegration";
+import { useWorkbenchShellLayout } from "./useWorkbenchShellLayout";
 import { useWorkbenchSessionBridge } from "./useWorkbenchSessionBridge";
 import { useWorkbenchTaskCreation } from "./useWorkbenchTaskCreation";
 import { useWorkbenchTaskListController } from "./useWorkbenchTaskListController";
@@ -97,9 +99,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   );
 
   const [newComposerElement, setNewComposerElement] = useState<HTMLDivElement | null>(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(260);
-  const [sidebarResizing, setSidebarResizing] = useState(false);
   const [draftHarness, setDraftHarness] = useState<DraftHarness | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
@@ -113,6 +112,18 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const focusNewTask = useCallback(() => {
     workbenchStore.focusNewTask();
   }, [workbenchStore]);
+
+  const {
+    sidebarCollapsed,
+    setSidebarCollapsed,
+    sidebarWidth,
+    setSidebarWidth,
+    sidebarResizing,
+    onSidebarResizerMouseDown,
+  } = useWorkbenchShellLayout({
+    workspaceId,
+    focusNewTask,
+  });
 
   const clearDraftHarness = useCallback(() => {
     setDraftHarness(null);
@@ -171,6 +182,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     installProviderFromMenu,
     cancelProviderInstallFromMenu,
     installAllProvidersFromMenu,
+    updateProvidersFromMenu,
     ensureProviderAuthSummary,
     refreshBootstrap,
   } = useWorkbenchProviders({
@@ -226,67 +238,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     newTaskDraftKey: NEW_TASK_DRAFT_KEY,
     onStartError: setStartError,
   });
-
-  useEffect(() => {
-    document.documentElement.classList.add("wb-no-scroll");
-    document.body.classList.add("wb-no-scroll");
-    return () => {
-      document.body.classList.remove("wb-no-scroll");
-      document.documentElement.classList.remove("wb-no-scroll");
-    };
-  }, []);
-
-  useEffect(() => {
-    const onResize = () => {
-      const max = Math.max(170, window.innerWidth - 240);
-      setSidebarWidth((width) => Math.min(max, Math.max(170, Math.round(width))));
-    };
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!workspaceId) return;
-    const key = `wb.sidebarWidth.${workspaceId}`;
-    try {
-      const raw = localStorage.getItem(key);
-      const parsed = raw ? Number(raw) : Number.NaN;
-      if (!Number.isFinite(parsed)) return;
-      const max = Math.max(170, window.innerWidth - 240);
-      setSidebarWidth(Math.min(max, Math.max(170, Math.round(parsed))));
-    } catch {
-      // ignore
-    }
-  }, [workspaceId]);
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    try {
-      const max = Math.max(170, window.innerWidth - 240);
-      const clamped = Math.min(max, Math.max(170, Math.round(sidebarWidth)));
-      localStorage.setItem(`wb.sidebarWidth.${workspaceId}`, String(clamped));
-    } catch {
-      // ignore
-    }
-  }, [sidebarWidth, workspaceId]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.altKey || event.shiftKey) return;
-      const hasModifier = event.metaKey || event.ctrlKey;
-      if (!hasModifier) return;
-      const key = event.key.toLowerCase();
-      if (key === "b") {
-        event.preventDefault();
-        setSidebarCollapsed((prev) => !prev);
-      } else if (key === "n") {
-        event.preventDefault();
-        focusNewTask();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [focusNewTask]);
 
   useEffect(() => {
     if (activeTaskId) return;
@@ -616,6 +567,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setDesktopStorageNotice(null);
   }, [setDesktopStorageNotice]);
 
+  const openProviderSettings = useCallback(() => {
+    navigate(`/settings?ws=${encodeURIComponent(workspaceId)}#agent_harnesses`);
+  }, [navigate, workspaceId]);
+
   const desktopStorageNoticeSubtitle =
     desktopStorageNotice?.reason === "schema_mismatch"
       ? "Desktop detected an outdated local UI state format and reset local UI state."
@@ -731,31 +686,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     />
   );
 
-  const onSidebarResizerMouseDown = useCallback(
-    (event: React.MouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (sidebarCollapsed) return;
-      setSidebarResizing(true);
-      const startX = event.clientX;
-      const startWidth = sidebarWidth;
-      const onMove = (moveEvent: MouseEvent) => {
-        const dx = moveEvent.clientX - startX;
-        const max = Math.max(170, window.innerWidth - 240);
-        const next = Math.min(max, Math.max(170, Math.round(startWidth + dx)));
-        setSidebarWidth(next);
-      };
-      const onUp = () => {
-        setSidebarResizing(false);
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-      };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
-    },
-    [sidebarCollapsed, sidebarWidth],
-  );
-
   const workspaceBootstrapGateState = resolveWorkspaceBootstrapGateState({
     workbenchHydrated: workbenchSnap.hydrated,
     providerBootstrapState,
@@ -840,6 +770,13 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           {workbenchSnap.warnings[0]}
         </div>
       )}
+      <WorkbenchProviderWarningBanner
+        workspaceId={workspaceId}
+        providersById={providersById}
+        updateAllBusy={installAllBusy}
+        onUpdateProviders={updateProvidersFromMenu}
+        onOpenSettings={openProviderSettings}
+      />
 
       <WorkbenchSidebar
         collapsed={sidebarCollapsed}

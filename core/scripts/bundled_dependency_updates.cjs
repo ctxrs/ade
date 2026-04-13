@@ -455,7 +455,7 @@ const codexPolicyIssues = (entry) => {
   if (!provenance.ctxRepo || !isGithubRepoSlug(provenance.ctxRepo)) {
     issues.push("codex provenance.ctx_repo is missing or invalid");
   }
-  if (provenance.ctxRepo && provenance.ctxRepo !== "ctxrs/codex-crp") {
+  if (provenance.ctxRepo && provenance.ctxRepo !== "ctxorgrs/codex-crp") {
     issues.push(`codex provenance.ctx_repo unexpected (${provenance.ctxRepo})`);
   }
   if (!provenance.ctxReleaseTag || !isCtxReleaseTag(provenance.ctxReleaseTag)) {
@@ -481,7 +481,7 @@ const codexPolicyIssues = (entry) => {
     issues.push("codex archive targets are missing");
   }
 
-  const expectedRepo = provenance.ctxRepo || "ctxrs/codex-crp";
+  const expectedRepo = provenance.ctxRepo || "ctxorgrs/codex-crp";
   const expectedTag = provenance.ctxReleaseTag || (managedVersion ? `v${managedVersion}` : "");
   const expectedPrefix = expectedTag
     ? `https://github.com/${expectedRepo}/releases/download/${expectedTag}/`

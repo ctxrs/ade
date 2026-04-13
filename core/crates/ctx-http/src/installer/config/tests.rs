@@ -59,6 +59,7 @@ fn bundled_only_mode_errors_when_bundled_command_missing() {
             managed: Some(ManagedInstallMetadata {
                 package: Some("qwen-managed".to_string()),
                 version: Some("1.0.0".to_string()),
+                artifact_fingerprint: None,
                 archive_sha256: None,
                 target: None,
                 install_dir_rel: None,
@@ -133,6 +134,7 @@ fn resolve_runtime_provider_command_preserves_raw_bundle_symlink_paths() {
             managed: Some(ManagedInstallMetadata {
                 package: Some("@openai/codex".to_string()),
                 version: Some("1.0.0".to_string()),
+                artifact_fingerprint: None,
                 archive_sha256: None,
                 target: Some(InstallTarget::Container),
                 install_dir_rel: None,
@@ -168,6 +170,7 @@ fn migration_moves_legacy_managed_provider_entries_into_target_buckets() {
             managed: Some(ManagedInstallMetadata {
                 package: Some("@openai/codex".to_string()),
                 version: Some("0.2.54".to_string()),
+                artifact_fingerprint: None,
                 archive_sha256: None,
                 target: None,
                 install_dir_rel: Some("providers/agent-servers/codex/0.2.54".to_string()),
@@ -211,6 +214,7 @@ fn resolve_runtime_provider_command_keeps_invalid_managed_commands_invalid_by_de
                 managed: Some(ManagedInstallMetadata {
                     package: Some("@openai/codex".to_string()),
                     version: Some("1.0.0".to_string()),
+                    artifact_fingerprint: None,
                     archive_sha256: None,
                     target: Some(InstallTarget::Container),
                     install_dir_rel: None,
@@ -247,6 +251,7 @@ fn resolve_runtime_provider_command_repairable_managed_treats_invalid_managed_co
                 managed: Some(ManagedInstallMetadata {
                     package: Some("@openai/codex".to_string()),
                     version: Some("1.0.0".to_string()),
+                    artifact_fingerprint: None,
                     archive_sha256: None,
                     target: Some(InstallTarget::Container),
                     install_dir_rel: None,
@@ -278,6 +283,7 @@ fn migration_preserves_runtime_dependency_entries_and_infers_target_from_id() {
         ManagedInstallMetadata {
             package: Some("node-runtime".to_string()),
             version: Some("24.14.0".to_string()),
+            artifact_fingerprint: None,
             archive_sha256: None,
             target: None,
             install_dir_rel: Some("providers/runtimes/node/container".to_string()),
@@ -313,6 +319,7 @@ fn migration_rewrites_stale_kimi_managed_args_in_target_buckets() {
                 managed: Some(ManagedInstallMetadata {
                     package: Some("kimi".to_string()),
                     version: Some("1.17.0".to_string()),
+                    artifact_fingerprint: None,
                     archive_sha256: None,
                     target: Some(InstallTarget::Host),
                     install_dir_rel: Some("providers/agent-servers/kimi/1.17.0".to_string()),
@@ -359,6 +366,7 @@ fn resolve_runtime_provider_command_for_target_prefers_target_bucket() {
                     managed: Some(ManagedInstallMetadata {
                         package: Some("@openai/codex".to_string()),
                         version: Some("1.0.0".to_string()),
+                        artifact_fingerprint: None,
                         archive_sha256: None,
                         target: Some(InstallTarget::Host),
                         install_dir_rel: None,
@@ -377,6 +385,7 @@ fn resolve_runtime_provider_command_for_target_prefers_target_bucket() {
                     managed: Some(ManagedInstallMetadata {
                         package: Some("@openai/codex".to_string()),
                         version: Some("1.0.0".to_string()),
+                        artifact_fingerprint: None,
                         archive_sha256: None,
                         target: Some(InstallTarget::Container),
                         install_dir_rel: None,
@@ -570,6 +579,7 @@ fn migration_drops_legacy_bundled_provider_commands() {
                 managed: Some(ManagedInstallMetadata {
                     package: Some("@openai/codex".to_string()),
                     version: Some("0.2.54".to_string()),
+                    artifact_fingerprint: None,
                     archive_sha256: None,
                     target: None,
                     install_dir_rel: Some("bundles/providers/codex/macos/aarch64".to_string()),
@@ -584,6 +594,7 @@ fn migration_drops_legacy_bundled_provider_commands() {
         ManagedInstallMetadata {
             package: Some("@openai/codex".to_string()),
             version: Some("0.2.54".to_string()),
+            artifact_fingerprint: None,
             archive_sha256: None,
             target: None,
             install_dir_rel: Some("bundles/providers/codex/macos/aarch64".to_string()),
@@ -608,6 +619,7 @@ fn apply_managed_install_details_includes_archive_sha256() {
             ManagedInstallMetadata {
                 package: Some("@openai/codex".to_string()),
                 version: Some("0.114.0-ctx.2".to_string()),
+                artifact_fingerprint: Some("deadbeef".to_string()),
                 archive_sha256: Some("deadbeef".to_string()),
                 target: Some(InstallTarget::LinuxX8664),
                 install_dir_rel: Some("providers/agent-servers/codex/0.114.0-ctx.2".to_string()),
@@ -632,6 +644,13 @@ fn apply_managed_install_details_includes_archive_sha256() {
 
     apply_managed_install_details_for_target(&mut status, &cfg, Some(InstallTarget::LinuxX8664));
 
+    assert_eq!(
+        status
+            .details
+            .get("managed_artifact_fingerprint")
+            .map(String::as_str),
+        Some("deadbeef")
+    );
     assert_eq!(
         status
             .details

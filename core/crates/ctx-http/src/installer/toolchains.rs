@@ -1,5 +1,9 @@
 use super::*;
 
+mod node_entrypoints;
+
+pub(crate) use node_entrypoints::archive_bin_requires_node_runtime;
+
 pub(crate) fn target_uses_windows_layout(target: InstallTarget) -> bool {
     match target {
         InstallTarget::Host => cfg!(windows),
@@ -351,75 +355,6 @@ fn node_runtime_target_for_os_arch(os: &str, arch: &str) -> Result<NodeRuntimeTa
     }
 }
 
-pub(crate) fn archive_bin_requires_node_runtime(bin_path: &str, installed_bin_path: &Path) -> bool {
-    let ext = Path::new(bin_path)
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_ascii_lowercase());
-    if matches!(ext.as_deref(), Some("js") | Some("mjs") | Some("cjs")) {
-        return true;
-    }
-    archive_bin_has_node_shebang(installed_bin_path)
-}
-
-fn archive_bin_has_node_shebang(path: &Path) -> bool {
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(_) => return false,
-    };
-    let mut reader = std::io::BufReader::new(file);
-    let mut first_line = String::new();
-    let bytes = match std::io::BufRead::read_line(&mut reader, &mut first_line) {
-        Ok(bytes) => bytes,
-        Err(_) => return false,
-    };
-    if bytes == 0 {
-        return false;
-    }
-    shebang_invokes_node(first_line.trim())
-}
-
-fn shebang_invokes_node(line: &str) -> bool {
-    let Some(shebang) = line.strip_prefix("#!") else {
-        return false;
-    };
-    let mut tokens = shebang.split_whitespace();
-    let Some(program) = tokens.next() else {
-        return false;
-    };
-    if shebang_token_is_node(program) {
-        return true;
-    }
-    if !shebang_token_is_env(program) {
-        return false;
-    }
-    for token in tokens {
-        if token.starts_with('-') || token.contains('=') {
-            continue;
-        }
-        return shebang_token_is_node(token);
-    }
-    false
-}
-
-fn shebang_token_is_env(token: &str) -> bool {
-    let base = shebang_token_basename(token);
-    base.eq_ignore_ascii_case("env")
-}
-
-fn shebang_token_is_node(token: &str) -> bool {
-    let base = shebang_token_basename(token);
-    base.eq_ignore_ascii_case("node") || base.eq_ignore_ascii_case("node.exe")
-}
-
-fn shebang_token_basename(token: &str) -> &str {
-    token
-        .trim_matches('"')
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(token)
-}
-
 pub(crate) fn node_runtime_dependency_id(target: InstallTarget) -> String {
     format!("runtime-node-{}", target.as_str())
 }
@@ -437,6 +372,7 @@ pub(crate) fn node_runtime_dependency_metadata(
     ManagedInstallMetadata {
         package: Some("node-runtime".to_string()),
         version: Some(NODE_VERSION.to_string()),
+        artifact_fingerprint: Some(format!("runtime:node:{NODE_VERSION}")),
         archive_sha256: None,
         target: Some(target),
         install_dir_rel: Some(install_dir_rel(data_root, &node.node_root)),

@@ -28,7 +28,7 @@ use status::{managed_dependency_update_available, probe_node_package_version};
 mod tests;
 
 #[cfg(test)]
-const MATRIX_SCHEMA_VERSION: u32 = 2;
+const MATRIX_SCHEMA_VERSION: u32 = 3;
 
 pub fn is_managed_supported(matrix: &ProviderMatrix, provider_id: &str) -> bool {
     let context_version = crate::updates::normalize_version_str(env!("CARGO_PKG_VERSION"));

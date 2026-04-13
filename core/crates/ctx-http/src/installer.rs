@@ -131,6 +131,106 @@ pub(crate) fn expected_managed_dependency_version(dependency_id: &str) -> Option
     None
 }
 
+fn trimmed_non_empty(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn npm_artifact_fingerprint(package: &str, version: &str) -> Option<String> {
+    let package = package.trim();
+    let version = version.trim();
+    if package.is_empty() || version.is_empty() {
+        return None;
+    }
+    Some(format!("npm:{package}@{version}"))
+}
+
+fn python_artifact_fingerprint(
+    package: &str,
+    version: &str,
+    python_version: Option<&str>,
+    python_build_tag: Option<&str>,
+) -> Option<String> {
+    let package = package.trim();
+    let version = version.trim();
+    if package.is_empty() || version.is_empty() {
+        return None;
+    }
+    let mut fingerprint = format!("python:{package}=={version}");
+    if let Some(python_version) = trimmed_non_empty(python_version) {
+        fingerprint.push_str(&format!("|python={python_version}"));
+    }
+    if let Some(python_build_tag) = trimmed_non_empty(python_build_tag) {
+        fingerprint.push_str(&format!("|build={python_build_tag}"));
+    }
+    Some(fingerprint)
+}
+
+pub(crate) fn expected_managed_provider_artifact_fingerprint(
+    entry: &provider_matrix::ProviderMatrixEntry,
+    version: &str,
+    target: InstallTarget,
+) -> Option<String> {
+    let install = entry.managed_install.as_ref()?;
+    match install {
+        provider_matrix::ProviderInstall::Npm { package, .. } => {
+            npm_artifact_fingerprint(package, version)
+        }
+        provider_matrix::ProviderInstall::Archive {
+            version: install_version,
+            targets,
+            ..
+        } => {
+            if provider_matrix::normalize_version(install_version)
+                != provider_matrix::normalize_version(version)
+            {
+                return None;
+            }
+            let target_key = resolve_matrix_target_key(target).ok()?;
+            trimmed_non_empty(targets.get(target_key)?.sha256.as_deref())
+        }
+        provider_matrix::ProviderInstall::Python {
+            package,
+            version: install_version,
+            python_version,
+            python_build_tag,
+            ..
+        } => {
+            if provider_matrix::normalize_version(install_version)
+                != provider_matrix::normalize_version(version)
+            {
+                return None;
+            }
+            python_artifact_fingerprint(
+                package,
+                install_version,
+                python_version.as_deref(),
+                python_build_tag.as_deref(),
+            )
+        }
+    }
+}
+
+pub(crate) fn expected_managed_dependency_artifact_fingerprint(
+    dependency: &provider_matrix::ProviderDependency,
+    target: InstallTarget,
+) -> Option<String> {
+    match &dependency.install {
+        provider_matrix::DependencyInstall::Npm { package, version } => {
+            npm_artifact_fingerprint(package, version)
+        }
+        provider_matrix::DependencyInstall::Archive {
+            version: _,
+            targets,
+        } => {
+            let target_key = resolve_matrix_target_key(target).ok()?;
+            trimmed_non_empty(targets.get(target_key)?.sha256.as_deref())
+        }
+    }
+}
+
 fn node_runtime_install_lock() -> &'static Mutex<()> {
     NODE_RUNTIME_INSTALL_LOCK.get_or_init(|| Mutex::new(()))
 }
@@ -355,6 +455,7 @@ async fn install_managed_npm_provider(
     let meta = ManagedInstallMetadata {
         package: Some(package.to_string()),
         version: Some(version.to_string()),
+        artifact_fingerprint: npm_artifact_fingerprint(package, version),
         archive_sha256: None,
         target: Some(target),
         install_dir_rel: Some(install_dir_rel),
@@ -404,6 +505,7 @@ async fn install_managed_archive_provider(
     let meta = ManagedInstallMetadata {
         package: Some(url.to_string()),
         version: Some(version.to_string()),
+        artifact_fingerprint: expected_sha256.map(str::to_string),
         archive_sha256: expected_sha256.map(str::to_string),
         target: Some(target),
         install_dir_rel: Some(install_dir_rel(&state.core.data_root, &install_dir)),
@@ -636,6 +738,12 @@ async fn install_managed_python_provider(
     let meta = ManagedInstallMetadata {
         package: Some(package.to_string()),
         version: Some(version.to_string()),
+        artifact_fingerprint: python_artifact_fingerprint(
+            package,
+            version,
+            python_version,
+            python_build_tag,
+        ),
         archive_sha256: None,
         target: Some(target),
         install_dir_rel: Some(install_dir_rel),

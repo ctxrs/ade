@@ -1084,6 +1084,85 @@ async fn archived_session_head_reconstructs_without_partial_buffers_after_reopen
 }
 
 #[tokio::test]
+async fn session_heads_preserve_latest_turn_when_it_exceeds_message_limit() {
+    let fixture = setup_session_fixture().await;
+
+    let older_run_id = RunId::new();
+    let older_turn_id = TurnId::new();
+    let mut older_turn = make_turn(fixture.session_id, older_run_id, older_turn_id);
+    older_turn.start_seq = Some(1);
+    fixture
+        .store
+        .insert_session_turn(older_turn)
+        .await
+        .unwrap();
+    fixture
+        .store
+        .insert_message(make_assistant_message(
+            fixture.session_id,
+            fixture.task_id,
+            older_run_id,
+            older_turn_id,
+            "older turn message",
+        ))
+        .await
+        .unwrap();
+
+    let latest_run_id = RunId::new();
+    let latest_turn_id = TurnId::new();
+    let mut latest_turn = make_turn(fixture.session_id, latest_run_id, latest_turn_id);
+    latest_turn.start_seq = Some(2);
+    fixture
+        .store
+        .insert_session_turn(latest_turn)
+        .await
+        .unwrap();
+    for index in 0..221 {
+        fixture
+            .store
+            .insert_message(make_assistant_message(
+                fixture.session_id,
+                fixture.task_id,
+                latest_run_id,
+                latest_turn_id,
+                &format!("latest message {index}"),
+            ))
+            .await
+            .unwrap();
+    }
+
+    let head = fixture
+        .store
+        .get_session_head_snapshot(fixture.session_id, 10, true)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(head.turns.len(), 1);
+    assert_eq!(head.turns[0].turn_id, latest_turn_id);
+    assert_eq!(head.messages.len(), 221);
+    assert!(head
+        .messages
+        .iter()
+        .all(|message| message.turn_id == Some(latest_turn_id)));
+    assert!(head.has_more_turns);
+
+    let active_head = fixture
+        .store
+        .get_active_snapshot_head(fixture.session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(active_head.turns.len(), 1);
+    assert_eq!(active_head.turns[0].turn_id, latest_turn_id);
+    assert_eq!(active_head.messages.len(), 221);
+    assert!(active_head
+        .messages
+        .iter()
+        .all(|message| message.turn_id == Some(latest_turn_id)));
+    assert!(active_head.has_more_turns);
+}
+
+#[tokio::test]
 async fn workspace_active_page_includes_primary_and_subagent_sessions() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("db.sqlite");

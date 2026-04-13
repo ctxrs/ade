@@ -3,13 +3,13 @@ import { createElement, useEffect, useState, type Dispatch, type SetStateAction 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DraftHarness } from "../../components/WorkbenchComposer";
 import type { ProviderOptions, ProviderStatus, ProvidersBootstrapResponse } from "../../api/client";
-import { getProviderOptions, getProvidersBootstrap } from "../../api/client";
+import { getHealth, getProviderOptions, getProvidersBootstrap, installAllProviders, installProvider } from "../../api/client";
 import { setDaemonConnection } from "../../api/daemonConnection";
 import {
   getProviderInstallProgressSnapshotForScope,
 } from "../../state/providerInstallProgressStore";
 import { resetProviderOnboardingCoordinatorForTests } from "../../state/providerOnboardingCoordinator";
-import { refreshProvidersBootstrap } from "../../state/providersBootstrapStore";
+import { invalidateProvidersBootstrap, refreshProvidersBootstrap } from "../../state/providersBootstrapStore";
 import { resolveProviderOptionsUpdate, shouldHydrateProviderModels } from "./useWorkbenchProviders";
 import { useWorkbenchProviders } from "./useWorkbenchProviders";
 
@@ -17,8 +17,11 @@ vi.mock("../../api/client", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../api/client")>();
   return {
     ...original,
+    getHealth: vi.fn(),
     getProviderOptions: vi.fn(),
     getProvidersBootstrap: vi.fn(),
+    installProvider: vi.fn(),
+    installAllProviders: vi.fn(),
   };
 });
 
@@ -188,9 +191,25 @@ function WorkbenchProvidersDraftHarness({
 beforeEach(() => {
   vi.clearAllMocks();
   resetProviderOnboardingCoordinatorForTests();
+  window.localStorage.clear();
   setDaemonConnection({
     baseUrl: "https://daemon-a.example",
     source: "test",
+  });
+  vi.mocked(getHealth).mockResolvedValue({
+    version: "0.45.0",
+    daemon_version: "0.45.0",
+    pid: 1,
+    data_root: "/tmp/ctx",
+    daemon_url: "https://daemon-a.example",
+    auth_required: false,
+    compatibility: {
+      desktop_exact_version: "0.45.0",
+      desktop_build_id: "build-a",
+      desktop_dev_instance_id: "dev-a",
+      mobile_api_min: 1,
+      mobile_api_max: 1,
+    },
   });
 });
 
@@ -212,6 +231,36 @@ describe("useWorkbenchProviders bootstrap state", () => {
       expect(hookValue?.bootstrapState).toBe("ready");
       expect(hookValue?.bootstrapError).toBeNull();
     });
+  });
+
+  it("refreshes provider bootstrap once after an app build change", async () => {
+    vi.mocked(getProvidersBootstrap).mockResolvedValue(makeBootstrap({ codex: baseOptions("codex") }) as never);
+    invalidateProvidersBootstrap("ws-test");
+    const firstRender = render(
+      createElement(WorkbenchProvidersHarness, {
+        workspaceId: "ws-test",
+        onChange: () => {},
+      }),
+    );
+
+    await waitFor(() => {
+      expect(vi.mocked(getProvidersBootstrap)).toHaveBeenCalledTimes(1);
+    });
+
+    firstRender.unmount();
+    window.localStorage.setItem("ctx.provider_runtime.checked_build.ws-test", "build-old");
+
+    render(
+      createElement(WorkbenchProvidersHarness, {
+        workspaceId: "ws-test",
+        onChange: () => {},
+      }),
+    );
+
+    await waitFor(() => {
+      expect(vi.mocked(getProvidersBootstrap)).toHaveBeenCalledTimes(2);
+    });
+    expect(window.localStorage.getItem("ctx.provider_runtime.checked_build.ws-test")).toBe("build-a");
   });
 });
 
@@ -803,5 +852,63 @@ describe("useWorkbenchProviders", () => {
       expect(hookValue?.defaultProviderId).toBe("claude-crp");
       expect(draftHarness).toEqual({ providerId: "claude-crp", modelId: "" });
     });
+  });
+
+  it("starts only the requested provider updates from the warning-modal path", async () => {
+    const workspaceId = "ws-provider-updates";
+    let hookValue: HookValue | null = null;
+
+    vi.mocked(getProvidersBootstrap).mockResolvedValue(makeBootstrap(
+      {
+        codex: {
+          ...baseOptions("codex"),
+          workspace_id: workspaceId,
+        },
+        "claude-crp": {
+          ...baseOptions("claude-crp"),
+          workspace_id: workspaceId,
+        },
+      },
+      [
+        providerStatus("codex", {
+          details: { install_supported: "true" },
+        }),
+        providerStatus("claude-crp", {
+          details: { install_supported: "true" },
+        }),
+      ],
+    ));
+    vi.mocked(installProvider)
+      .mockResolvedValueOnce({
+        provider_id: "codex",
+        install_id: "install-codex",
+        target: "host",
+      })
+      .mockResolvedValueOnce({
+        provider_id: "claude-crp",
+        install_id: "install-claude",
+        target: "host",
+      });
+
+    render(createElement(WorkbenchProvidersHarness, {
+      workspaceId,
+      onChange: (next) => {
+        hookValue = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(hookValue?.bootstrapState).toBe("ready");
+    });
+
+    await act(async () => {
+      await hookValue?.updateProvidersFromMenu(["codex", "claude-crp", "codex"]);
+    });
+
+    expect(vi.mocked(installProvider).mock.calls).toEqual([
+      ["codex", "host"],
+      ["claude-crp", "host"],
+    ]);
+    expect(vi.mocked(installAllProviders)).not.toHaveBeenCalled();
   });
 });

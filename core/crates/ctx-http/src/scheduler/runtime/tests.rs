@@ -178,6 +178,7 @@ fn runtime_path_includes_dependency_bin_dirs() {
         ManagedInstallMetadata {
             package: None,
             version: None,
+            artifact_fingerprint: None,
             archive_sha256: None,
             target: None,
             install_dir_rel: None,
@@ -225,6 +226,7 @@ fn runtime_path_includes_target_specific_managed_provider_dependency_bin_dirs() 
                 managed: Some(ManagedInstallMetadata {
                     package: None,
                     version: None,
+                    artifact_fingerprint: None,
                     archive_sha256: None,
                     target: Some(InstallTarget::Container),
                     install_dir_rel: None,
@@ -246,6 +248,7 @@ fn runtime_path_includes_target_specific_managed_provider_dependency_bin_dirs() 
                 managed: Some(ManagedInstallMetadata {
                     package: None,
                     version: None,
+                    artifact_fingerprint: None,
                     archive_sha256: None,
                     target: Some(InstallTarget::Container),
                     install_dir_rel: None,
@@ -302,6 +305,7 @@ fn codex_env_injects_target_specific_codex_cli_command_path() {
                     managed: Some(ManagedInstallMetadata {
                         package: None,
                         version: None,
+                        artifact_fingerprint: None,
                         archive_sha256: None,
                         target: Some(InstallTarget::Host),
                         install_dir_rel: None,
@@ -320,6 +324,7 @@ fn codex_env_injects_target_specific_codex_cli_command_path() {
                     managed: Some(ManagedInstallMetadata {
                         package: None,
                         version: None,
+                        artifact_fingerprint: None,
                         archive_sha256: None,
                         target: Some(InstallTarget::Container),
                         install_dir_rel: None,

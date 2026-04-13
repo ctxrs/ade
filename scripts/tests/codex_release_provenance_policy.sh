@@ -85,7 +85,7 @@ else:
 
     if not ctx_repo or not repo_pattern.match(ctx_repo):
         errors.append("codex provenance.ctx_repo missing/invalid")
-    elif ctx_repo != "ctxrs/codex-crp":
+    elif ctx_repo != "ctxorgrs/codex-crp":
         errors.append(f"codex provenance.ctx_repo unexpected: {ctx_repo}")
 
     if not ctx_release_tag or not ctx_tag_pattern.match(ctx_release_tag):

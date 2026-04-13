@@ -25,6 +25,8 @@ export type Health = {
   } | null;
   compatibility: {
     desktop_exact_version: string;
+    desktop_build_id: string;
+    desktop_dev_instance_id: string;
     mobile_api_min: number;
     mobile_api_max: number;
   };

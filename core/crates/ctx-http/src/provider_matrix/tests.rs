@@ -460,7 +460,11 @@ fn managed_dependency_update_available_when_runtime_dependency_missing() {
         details: HashMap::new(),
         usability: ctx_providers::adapters::ProviderUsability::default(),
     };
-    assert!(managed_dependency_update_available(&cfg, &status));
+    assert!(managed_dependency_update_available(
+        &cfg,
+        &codex_archive_test_entry("0.114.0-ctx.2", &sha256_hex(b"unused")),
+        &status,
+    ));
 }
 
 #[test]
@@ -480,6 +484,7 @@ fn managed_dependency_update_available_when_runtime_dependency_version_mismatche
         ManagedInstallMetadata {
             package: Some("node-runtime".to_string()),
             version: Some("0.0.1".to_string()),
+            artifact_fingerprint: None,
             archive_sha256: None,
             target: None,
             install_dir_rel: None,
@@ -499,7 +504,11 @@ fn managed_dependency_update_available_when_runtime_dependency_version_mismatche
         details: HashMap::new(),
         usability: ctx_providers::adapters::ProviderUsability::default(),
     };
-    assert!(managed_dependency_update_available(&cfg, &status));
+    assert!(managed_dependency_update_available(
+        &cfg,
+        &codex_archive_test_entry("0.114.0-ctx.2", &sha256_hex(b"unused")),
+        &status,
+    ));
 }
 
 #[test]
@@ -521,6 +530,7 @@ fn managed_dependency_update_unavailable_when_runtime_dependency_matches_expecte
         ManagedInstallMetadata {
             package: Some("node-runtime".to_string()),
             version: Some(expected.to_string()),
+            artifact_fingerprint: None,
             archive_sha256: None,
             target: None,
             install_dir_rel: None,
@@ -540,7 +550,11 @@ fn managed_dependency_update_unavailable_when_runtime_dependency_matches_expecte
         details: HashMap::new(),
         usability: ctx_providers::adapters::ProviderUsability::default(),
     };
-    assert!(!managed_dependency_update_available(&cfg, &status));
+    assert!(!managed_dependency_update_available(
+        &cfg,
+        &codex_archive_test_entry("0.114.0-ctx.2", &sha256_hex(b"unused")),
+        &status,
+    ));
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -583,6 +597,33 @@ fn codex_archive_test_entry(version: &str, sha256: &str) -> ProviderMatrixEntry 
     }
 }
 
+fn codex_npm_test_entry(version: &str) -> ProviderMatrixEntry {
+    ProviderMatrixEntry {
+        id: "codex".to_string(),
+        kind: ProviderMatrixEntryKind::Harness,
+        display_name: Some("Codex".to_string()),
+        tier: Some("tier1".to_string()),
+        command: None,
+        managed_install: Some(ProviderInstall::Npm {
+            package: "@openai/codex".to_string(),
+            entrypoint: "node_modules/@openai/codex/bin.js".to_string(),
+            args: Vec::new(),
+        }),
+        provider_dependencies: Vec::new(),
+        dependencies: Vec::new(),
+        version_probe: None,
+        releases: vec![ProviderRelease {
+            version: version.to_string(),
+            status: ProviderReleaseStatus::Supported,
+            upstream_version: Some(version.to_string()),
+            context_min: None,
+            context_max: None,
+            notes: None,
+            provenance: None,
+        }],
+    }
+}
+
 fn managed_archive_cfg(
     command_path: &Path,
     version: &str,
@@ -591,6 +632,7 @@ fn managed_archive_cfg(
     let meta = ManagedInstallMetadata {
         package: Some("https://example.com/codex.tar.gz".to_string()),
         version: Some(version.to_string()),
+        artifact_fingerprint: Some(installed_sha256.to_string()),
         archive_sha256: Some(installed_sha256.to_string()),
         target: Some(InstallTarget::LinuxX8664),
         install_dir_rel: Some(format!("providers/agent-servers/codex/{version}")),
@@ -626,8 +668,8 @@ async fn apply_matrix_to_status_flags_managed_archive_checksum_mismatch() {
 
     let expected_sha256 = sha256_hex(b"new-codex-runtime");
     let actual_sha256 = sha256_hex(b"previous-archive");
-    let entry = codex_archive_test_entry("0.114.0-ctx.1", &expected_sha256);
-    let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.1", &actual_sha256);
+    let entry = codex_archive_test_entry("0.114.0-ctx.2", &expected_sha256);
+    let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.2", &actual_sha256);
     let mut status = ctx_providers::adapters::ProviderStatus {
         provider_id: "codex".to_string(),
         installed: true,
@@ -702,8 +744,8 @@ async fn apply_matrix_to_status_accepts_matching_managed_archive_checksum() {
     std::fs::write(&runtime, b"bridge-or-runtime-bytes-can-differ").expect("write runtime");
 
     let sha256 = sha256_hex(b"matching-downloaded-archive");
-    let entry = codex_archive_test_entry("0.114.0-ctx.1", &sha256);
-    let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.1", &sha256);
+    let entry = codex_archive_test_entry("0.114.0-ctx.2", &sha256);
+    let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.2", &sha256);
     let mut status = ctx_providers::adapters::ProviderStatus {
         provider_id: "codex".to_string(),
         installed: true,
@@ -727,4 +769,70 @@ async fn apply_matrix_to_status_accepts_matching_managed_archive_checksum() {
         .diagnostics
         .iter()
         .all(|msg| !msg.contains("checksum mismatch")));
+}
+
+#[tokio::test]
+async fn apply_matrix_to_status_flags_missing_npm_artifact_fingerprint() {
+    let entry = codex_npm_test_entry("1.2.3");
+    let mut cfg = AgentServerConfigFile::default();
+    let meta = ManagedInstallMetadata {
+        package: Some("@openai/codex".to_string()),
+        version: Some("1.2.3".to_string()),
+        artifact_fingerprint: None,
+        archive_sha256: None,
+        target: Some(InstallTarget::Host),
+        install_dir_rel: Some("providers/agent-servers/codex/1.2.3".to_string()),
+        bin_dir_rel: None,
+        last_success_at: None,
+        last_error: None,
+    };
+    cfg.managed_install_targets.insert(
+        "codex".to_string(),
+        HashMap::from([("host".to_string(), meta.clone())]),
+    );
+    cfg.managed_provider_targets.insert(
+        "codex".to_string(),
+        HashMap::from([(
+            "host".to_string(),
+            AgentServerCommand {
+                command: "/tmp/codex".to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: Some(meta),
+            },
+        )]),
+    );
+
+    let mut status = ctx_providers::adapters::ProviderStatus {
+        provider_id: "codex".to_string(),
+        installed: true,
+        detected_path: None,
+        version: None,
+        capabilities: None,
+        health: ctx_providers::adapters::ProviderHealth::Ok,
+        diagnostics: Vec::new(),
+        details: HashMap::from([(
+            "install_target".to_string(),
+            InstallTarget::Host.as_str().to_string(),
+        )]),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
+    };
+
+    apply_matrix_to_status(Path::new("/tmp"), &cfg, &entry, &mut status).await;
+
+    assert!(!status.installed);
+    assert_eq!(
+        status
+            .details
+            .get("managed_fingerprint_mismatch")
+            .map(String::as_str),
+        Some("true")
+    );
+    assert_eq!(
+        status
+            .details
+            .get("managed_detected_fingerprint")
+            .map(String::as_str),
+        Some("<missing>")
+    );
 }
