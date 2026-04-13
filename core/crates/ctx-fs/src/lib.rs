@@ -30,12 +30,17 @@ mod tests {
         );
     }
 
+    async fn init_repo(root: &Path) {
+        run_git(root, &["init"]).await;
+        run_git(root, &["symbolic-ref", "HEAD", "refs/heads/main"]).await;
+    }
+
     #[tokio::test]
     async fn worktree_diff_shows_changes() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
 
-        run_git(root, &["init"]).await;
+        init_repo(root).await;
         run_git(root, &["config", "user.email", "test@example.com"]).await;
         run_git(root, &["config", "user.name", "Test"]).await;
 
@@ -63,7 +68,7 @@ mod tests {
         let repo_root = dir.path().join("repo");
         tokio::fs::create_dir_all(&repo_root).await.unwrap();
 
-        run_git(&repo_root, &["init", "-b", "main"]).await;
+        init_repo(&repo_root).await;
         run_git(&repo_root, &["config", "user.email", "test@example.com"]).await;
         run_git(&repo_root, &["config", "user.name", "Test"]).await;
 

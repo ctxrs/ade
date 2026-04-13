@@ -22,3 +22,14 @@ rust_test(
     deps = ["@crates//:tempfile"],
 )
 
+rust_test(
+    name = "jj_worktrees",
+    crate_root = "tests/jj_worktrees.rs",
+    edition = "2021",
+    srcs = ["tests/jj_worktrees.rs"],
+    deps = [
+        ":lib",
+        "@crates//:tempfile",
+        "@crates//:tokio",
+    ],
+)

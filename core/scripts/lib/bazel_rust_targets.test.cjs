@@ -44,6 +44,7 @@ test("Bazel test target mapping expands per-crate tests deterministically", () =
     getBazelTestTargetsForCrates([
       "ctx-execution-runtime",
       "ctx-core",
+      "ctx-fs",
       "ctx-lsp",
       "ctx-store",
       "ctx-workspace-config",
@@ -53,6 +54,7 @@ test("Bazel test target mapping expands per-crate tests deterministically", () =
       "//core/crates/ctx-core:unit_tests",
       "//core/crates/ctx-core:workspace_payload_corpus",
       "//core/crates/ctx-execution-runtime:unit_tests",
+      "//core/crates/ctx-fs:unit_tests",
       "//core/crates/ctx-lsp:lsp_manager_smoke",
       "//core/crates/ctx-store:sqlite_hardening",
       "//core/crates/ctx-store:unit_tests",

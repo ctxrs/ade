@@ -336,7 +336,8 @@ mod tests {
     }
 
     fn init_repo(root: &Path) -> String {
-        git(&["init", "-b", "main"], root);
+        git(&["init"], root);
+        git(&["symbolic-ref", "HEAD", "refs/heads/main"], root);
         git(&["config", "user.email", "test@example.com"], root);
         git(&["config", "user.name", "Test"], root);
         std::fs::write(root.join("README.md"), "hello\n").expect("write readme");
