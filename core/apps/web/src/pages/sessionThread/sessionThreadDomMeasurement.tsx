@@ -9,9 +9,9 @@ import {
   ThreadItemView,
   WorkbenchTurnHeaderView,
 } from "./SessionThreadItemViews";
+import { SessionThreadMeasurementFrame } from "./SessionThreadMeasurementFrame";
 import {
   SESSION_THREAD_LAYOUT_STYLE,
-  resolveSessionThreadContentWidth,
 } from "./sessionThreadLayoutTokens";
 
 const MEASUREMENT_CACHE_LIMIT = 4000;
@@ -25,6 +25,7 @@ let measurementSurface: MeasurementSurfaceRecord | null = null;
 
 const markdownHeightCache = new Map<string, number>();
 const rowHeightCache = new Map<string, number>();
+const pendingDomMeasurementFallbackItemIds = new Set<string>();
 
 const normalizeHeight = (value: number): number =>
   Number.isFinite(value) && value > 0 ? Math.max(1, Math.round(value * 16) / 16) : 0;
@@ -138,6 +139,69 @@ function renderIntoMeasurementSurface(params: {
   return measuredHeight > 0 ? measuredHeight : null;
 }
 
+function renderTranscriptRowIntoMeasurementSurface(params: {
+  viewportWidth: number;
+  itemId: string;
+  content: ReactNode;
+}): number | null {
+  const normalizedViewportWidth = Math.max(1, Math.round(params.viewportWidth));
+  return renderIntoMeasurementSurface({
+    width: normalizedViewportWidth,
+    content: React.createElement(
+      SessionThreadMeasurementFrame,
+      null,
+      React.createElement(
+        "div",
+        {
+          className: "wb-pretext-transcript-shell wb-thread-stack wb-thread-scroller--message-list",
+          style: { position: "relative", minWidth: 0 },
+        },
+        React.createElement(
+          "div",
+          {
+            className: "wb-thread-scroller",
+            role: "list",
+            "data-pretext-virtualizer-list": "1",
+            style: {
+              position: "relative",
+              width: "auto",
+              minWidth: 0,
+              overflowX: "hidden",
+              overflowY: "auto",
+            },
+          },
+          React.createElement(
+            "div",
+            {
+              className: "wb-thread-list",
+              "data-pretext-virtualizer-content": "1",
+              style: { position: "relative", height: "auto" },
+            },
+            React.createElement(
+              "div",
+              { "data-pretext-virtualizer-row-shell": "1", style: { position: "relative", width: "100%" } },
+              React.createElement(
+                "div",
+                {
+                  className: "wb-pretext-virtualizer-row",
+                  "data-pretext-virtualizer-row": "1",
+                  "data-pretext-virtualizer-item-id": params.itemId,
+                },
+                React.createElement(
+                  "div",
+                  { role: "listitem", "data-thread-item-id": params.itemId },
+                  params.content,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+    measureSelector: `[role="listitem"][data-thread-item-id="${params.itemId}"]`,
+  });
+}
+
 function readCachedMeasurement(
   cache: Map<string, number>,
   cacheKey: string,
@@ -168,6 +232,26 @@ export function clearSessionThreadDomMeasurementCaches(): void {
   }
 }
 
+export function clearSessionThreadDomMeasurementFallbacks(): void {
+  pendingDomMeasurementFallbackItemIds.clear();
+}
+
+export function consumeSessionThreadDomMeasurementFallbackItemIds(
+  candidateItemIds?: readonly string[],
+): string[] {
+  if (!candidateItemIds) {
+    const pending = [...pendingDomMeasurementFallbackItemIds];
+    pendingDomMeasurementFallbackItemIds.clear();
+    return pending;
+  }
+  const pending: string[] = [];
+  for (const itemId of candidateItemIds) {
+    if (!pendingDomMeasurementFallbackItemIds.delete(itemId)) continue;
+    pending.push(itemId);
+  }
+  return pending;
+}
+
 export function measureRenderedSessionMarkdownHeight(markdown: string, width: number): number | null {
   const normalizedWidth = Math.max(1, Math.round(width));
   const cacheKey = `markdown:${normalizedWidth}:${fingerprintString(markdown)}`;
@@ -195,27 +279,27 @@ export function measureRenderedSessionMessageHeight(
     fingerprintString(item.content),
     fingerprintAttachments(item.attachments),
   ].join(":");
-  return readCachedMeasurement(rowHeightCache, cacheKey, () =>
-    renderIntoMeasurementSurface({
-      width: resolveSessionThreadContentWidth(normalizedViewportWidth),
+  return readCachedMeasurement(rowHeightCache, cacheKey, () => {
+    const measured = renderTranscriptRowIntoMeasurementSurface({
+      viewportWidth: normalizedViewportWidth,
+      itemId: item.id,
       content: React.createElement(
         "div",
-        { "data-thread-item-id": item.id },
-        React.createElement(
-          "div",
-          { className: "wb-thread-indent" },
-          React.createElement(ThreadItemView, {
-            item,
-            worktreeId: null,
-            onFileOpenError: () => {},
-            messageExpanded: expanded,
-            onToggleMessageExpanded: () => {},
-          }),
-        ),
+        { className: "wb-thread-indent" },
+        React.createElement(ThreadItemView, {
+          item,
+          worktreeId: null,
+          onFileOpenError: () => {},
+          messageExpanded: expanded,
+          onToggleMessageExpanded: () => {},
+        }),
       ),
-      measureSelector: `[data-thread-item-id="${item.id}"]`,
-    }),
-  );
+    });
+    if (measured == null) {
+      pendingDomMeasurementFallbackItemIds.add(item.id);
+    }
+    return measured;
+  });
 }
 
 export function measureRenderedSessionAssistantHeight(
@@ -223,26 +307,31 @@ export function measureRenderedSessionAssistantHeight(
   viewportWidth: number,
 ): number | null {
   const normalizedViewportWidth = Math.max(1, Math.round(viewportWidth));
-  const cacheKey = ["assistant", normalizedViewportWidth, fingerprintString(item.content)].join(":");
-  return readCachedMeasurement(rowHeightCache, cacheKey, () =>
-    renderIntoMeasurementSurface({
-      width: resolveSessionThreadContentWidth(normalizedViewportWidth),
+  const cacheKey = [
+    "assistant",
+    normalizedViewportWidth,
+    item.is_complete ? "complete" : "partial",
+    fingerprintString(item.content),
+  ].join(":");
+  return readCachedMeasurement(rowHeightCache, cacheKey, () => {
+    const measured = renderTranscriptRowIntoMeasurementSurface({
+      viewportWidth: normalizedViewportWidth,
+      itemId: item.id,
       content: React.createElement(
         "div",
-        { "data-thread-item-id": item.id },
-        React.createElement(
-          "div",
-          { className: "wb-thread-indent" },
-          React.createElement(AssistantEntry, {
-            content: item.content,
-            worktreeId: null,
-            onFileOpenError: () => {},
-          }),
-        ),
+        { className: "wb-thread-indent" },
+        React.createElement(AssistantEntry, {
+          content: item.content,
+          worktreeId: null,
+          onFileOpenError: () => {},
+        }),
       ),
-      measureSelector: `[data-thread-item-id="${item.id}"]`,
-    }),
-  );
+    });
+    if (measured == null) {
+      pendingDomMeasurementFallbackItemIds.add(item.id);
+    }
+    return measured;
+  });
 }
 
 export function measureRenderedSessionTurnHeaderHeight(
@@ -259,16 +348,25 @@ export function measureRenderedSessionTurnHeaderHeight(
     fingerprintString(plainText),
     fingerprintAttachments(header.attachments),
   ].join(":");
-  return readCachedMeasurement(rowHeightCache, cacheKey, () =>
-    renderIntoMeasurementSurface({
-      width: resolveSessionThreadContentWidth(normalizedViewportWidth),
-      content: React.createElement(WorkbenchTurnHeaderView, {
-        header,
-        plainText,
-        expanded,
-        onToggle: () => {},
-      }),
-      measureSelector: ".wb-turn-header",
-    }),
-  );
+  return readCachedMeasurement(rowHeightCache, cacheKey, () => {
+    const itemId = `turn-header-${header.id}`;
+    const measured = renderTranscriptRowIntoMeasurementSurface({
+      viewportWidth: normalizedViewportWidth,
+      itemId,
+      content: React.createElement(
+        "div",
+        { style: { display: "contents" } },
+        React.createElement(WorkbenchTurnHeaderView, {
+          header,
+          plainText,
+          expanded,
+          onToggle: () => {},
+        }),
+      ),
+    });
+    if (measured == null) {
+      pendingDomMeasurementFallbackItemIds.add(itemId);
+    }
+    return measured;
+  });
 }

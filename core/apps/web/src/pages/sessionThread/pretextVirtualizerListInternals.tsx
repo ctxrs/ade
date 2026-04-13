@@ -19,12 +19,14 @@ export function AuditedPretextRow({
   itemKind,
   itemKey,
   plannedHeight,
+  onHeightMismatch,
   children,
 }: {
   id: string;
   itemKind: WorkbenchListItem["kind"];
   itemKey: string;
   plannedHeight: number;
+  onHeightMismatch?: (itemId: string) => void;
   children: ReactNode;
 }) {
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -36,8 +38,6 @@ export function AuditedPretextRow({
     } catch {
       debugEnabled = false;
     }
-    if (!debugEnabled) return;
-
     const rowEl = rowRef.current;
     if (!rowEl) return;
     const shellEl = rowEl.closest("[data-pretext-virtualizer-row-shell='1']") as HTMLElement | null;
@@ -54,6 +54,8 @@ export function AuditedPretextRow({
       const signature = `${reason}:${plannedHeight}:${Math.round(actualHeight)}:${Math.round(shellHeight)}`;
       if (signature === lastSignature) return;
       lastSignature = signature;
+      onHeightMismatch?.(id);
+      if (!debugEnabled) return;
       recordSessionMessageListRowSizeMismatch({
         id,
         itemKind,
@@ -91,7 +93,7 @@ export function AuditedPretextRow({
       cancelAnimationFrame(rafId);
       observer.disconnect();
     };
-  }, [id, itemKey, itemKind, plannedHeight]);
+  }, [id, itemKey, itemKind, onHeightMismatch, plannedHeight]);
 
   return (
     <div ref={rowRef} role="listitem" data-thread-item-id={id}>

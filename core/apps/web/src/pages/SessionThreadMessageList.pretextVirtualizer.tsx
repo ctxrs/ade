@@ -51,6 +51,7 @@ import {
 import {
   approximateIndexForLocation,
   AuditedPretextRow,
+  createVisibleItemAnchor,
   haveSameItemIds,
   haveSameItemRefs,
   haveSameLayoutInputs,
@@ -58,6 +59,10 @@ import {
   resolveLocalizedAnchorOverride,
   resolveScrollTopForLocation,
 } from "./sessionThread/pretextVirtualizerListInternals";
+import {
+  clearSessionThreadDomMeasurementCaches,
+  consumeSessionThreadDomMeasurementFallbackItemIds,
+} from "./sessionThread/sessionThreadDomMeasurement";
 import { noteSessionTranscriptWarmViewport } from "./sessionThread/sessionTranscriptWarmState";
 
 type SessionThreadPretextVirtualizerListProps = {
@@ -116,6 +121,8 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
   const pendingProgrammaticTopRef = useRef<number | null>(null);
   const pendingProgrammaticBehaviorRef = useRef<ScrollBehavior>("auto");
   const pendingRestoreRef = useRef(false);
+  const pendingMismatchRemeasureIdsRef = useRef<Set<string>>(new Set());
+  const mismatchRemeasureFrameRef = useRef<number | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
   listItemsRef.current = listItems;
@@ -251,6 +258,52 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     },
     [commitRuntimeSnapshot, emitScrollState, runtime],
   );
+
+  const flushPendingMismatchRemeasure = useCallback(() => {
+    mismatchRemeasureFrameRef.current = null;
+    const scroller = containerRef.current;
+    if (!scroller || scroller.clientWidth <= 0 || scroller.clientHeight <= 0) {
+      return;
+    }
+    const pendingIds = [...pendingMismatchRemeasureIdsRef.current];
+    pendingMismatchRemeasureIdsRef.current.clear();
+    if (pendingIds.length === 0) {
+      return;
+    }
+    clearSessionThreadDomMeasurementCaches();
+    const currentSnapshot = core.syncViewport({
+      height: scroller.clientHeight,
+      width: scroller.clientWidth,
+      scrollTop: scroller.scrollTop,
+    });
+    const anchorOverride: PretextVirtualizerLogicalAnchor = followBottomRef.current
+      ? { kind: "bottom" }
+      : currentSnapshot.visibleItems.length > 0
+        ? createVisibleItemAnchor(currentSnapshot.visibleItems[0], currentSnapshot.scrollTop)
+        : core.getAnchor("detached");
+    const nextSnapshot = core.patchItems(
+      listItemsRef.current,
+      pendingIds,
+      pendingIds,
+      anchorOverride,
+    );
+    applySnapshotToDom(nextSnapshot, {
+      behavior: "auto",
+      followBottom: followBottomRef.current,
+      nextItems: listItemsRef.current,
+    });
+  }, [applySnapshotToDom, core]);
+
+  const noteHeightMismatch = useCallback((itemId: string) => {
+    if (!itemId) return;
+    pendingMismatchRemeasureIdsRef.current.add(itemId);
+    if (mismatchRemeasureFrameRef.current != null) {
+      return;
+    }
+    mismatchRemeasureFrameRef.current = requestAnimationFrame(() => {
+      flushPendingMismatchRemeasure();
+    });
+  }, [flushPendingMismatchRemeasure]);
 
   const syncFromDom = useCallback(
     (scrollTopOverride?: number): PretextVirtualizerSnapshot<WorkbenchListItem> => {
@@ -657,6 +710,49 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     };
   }, [applySnapshotToDom, core, syncFromDom]);
 
+  useLayoutEffect(() => {
+    const scroller = containerRef.current;
+    if (!scroller || scroller.clientWidth <= 0 || scroller.clientHeight <= 0) {
+      return;
+    }
+    const pendingFallbackItemIds = consumeSessionThreadDomMeasurementFallbackItemIds(
+      listItems.map((item) => item.id),
+    );
+    if (pendingFallbackItemIds.length === 0) {
+      return;
+    }
+    const currentSnapshot = core.syncViewport({
+      height: scroller.clientHeight,
+      width: scroller.clientWidth,
+      scrollTop: scroller.scrollTop,
+    });
+    const anchorOverride: PretextVirtualizerLogicalAnchor = followBottomRef.current
+      ? { kind: "bottom" }
+      : currentSnapshot.visibleItems.length > 0
+        ? createVisibleItemAnchor(currentSnapshot.visibleItems[0], currentSnapshot.scrollTop)
+        : core.getAnchor("detached");
+    const nextSnapshot = core.patchItems(
+      listItems,
+      pendingFallbackItemIds,
+      pendingFallbackItemIds,
+      anchorOverride,
+    );
+    applySnapshotToDom(nextSnapshot, {
+      behavior: "auto",
+      followBottom: followBottomRef.current,
+      nextItems: listItems,
+    });
+  }, [applySnapshotToDom, core, listItems]);
+
+  useEffect(() => {
+    return () => {
+      if (mismatchRemeasureFrameRef.current != null) {
+        cancelAnimationFrame(mismatchRemeasureFrameRef.current);
+      }
+      pendingMismatchRemeasureIdsRef.current.clear();
+    };
+  }, []);
+
   const handleScroll = useCallback(() => {
     const scroller = containerRef.current;
     if (!scroller) return;
@@ -832,6 +928,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
                   itemKind={currentItem.kind}
                   itemKey={itemKey(currentItem)}
                   plannedHeight={visibleItem.height}
+                  onHeightMismatch={noteHeightMismatch}
                 >
                   {itemContent(visibleItem.index, currentItem)}
                 </AuditedPretextRow>

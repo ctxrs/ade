@@ -2,15 +2,25 @@ import React from "react";
 import ReactDOMClient from "react-dom/client";
 import { flushSync } from "react-dom";
 import type { MessageAttachment } from "../../api/client";
+import { SessionThreadPretextVirtualizerList } from "../SessionThreadMessageList.pretextVirtualizer";
+import type { WorkbenchMessageListContext } from "../SessionPage.thread";
 import {
   AssistantEntry,
   ThreadItemView,
   WorkbenchTurnHeaderView,
 } from "../sessionThread/SessionThreadItemViews";
-import { getPretextVirtualizerRowLayout } from "../sessionThread/pretextVirtualizerRowLayout";
+import { SessionThreadMeasurementFrame } from "../sessionThread/SessionThreadMeasurementFrame";
+import {
+  clearSessionThreadDomMeasurementFallbacks,
+  clearSessionThreadDomMeasurementCaches,
+  measureRenderedSessionAssistantHeight,
+} from "../sessionThread/sessionThreadDomMeasurement";
+import {
+  resetSessionPretextRuntimeCache,
+} from "../sessionThread/pretextSessionRuntimeCache";
+import { clearPretextVirtualizerRowLayoutCache } from "../sessionThread/pretextVirtualizerRowLayout";
 import {
   SESSION_THREAD_LAYOUT_STYLE,
-  resolveSessionThreadContentWidth,
 } from "../sessionThread/sessionThreadLayoutTokens";
 import type { WorkbenchListItem, WorkbenchTurnHeader } from "../sessionView";
 
@@ -18,6 +28,10 @@ export type WorkbenchRowParityMeasurement = {
   planned: number;
   actual: number;
   delta: number;
+  viewportWidth?: number;
+  rowWidth?: number;
+  hiddenMeasured?: number;
+  hiddenDelta?: number;
 };
 
 export type WorkbenchMessageParityParams = {
@@ -56,15 +70,21 @@ export type WorkbenchTurnHeaderParityParams = {
   viewportWidth?: number;
 };
 
+const LIVE_ROW_VIEWPORT_HEIGHT_PX = 1400;
+let transcriptProbeCounter = 0;
+
 function applyTranscriptLayoutStyle(host: HTMLElement, viewportWidth: number): void {
   host.style.position = "fixed";
   host.style.left = "-10000px";
   host.style.top = "0";
-  host.style.width = `${resolveSessionThreadContentWidth(viewportWidth)}px`;
+  host.style.width = `${Math.max(1, Math.round(viewportWidth))}px`;
+  host.style.height = `${LIVE_ROW_VIEWPORT_HEIGHT_PX}px`;
   host.style.margin = "0";
   host.style.padding = "0";
   host.style.border = "0";
   host.style.boxSizing = "border-box";
+  host.style.visibility = "hidden";
+  host.style.pointerEvents = "none";
   for (const [key, value] of Object.entries(SESSION_THREAD_LAYOUT_STYLE)) {
     host.style.setProperty(key, String(value));
   }
@@ -83,50 +103,141 @@ type AssistantRenderSnapshot = {
   structureSignature: string;
 };
 
-function measureAssistantRenderSnapshot(params: {
-  host: HTMLElement;
-  root: ReactDOMClient.Root;
-  item: Extract<WorkbenchListItem, { kind: "assistant" }>;
+function createBaseContext(): WorkbenchMessageListContext {
+  return {
+    loaded: true,
+    loadingOlder: false,
+    renderRevision: "e2e-live-row",
+    renderRevisionByItemId: {},
+    expandedTurnHeaders: {},
+    expandedTurnDetailsById: {},
+    expandedToolById: {},
+    expandedMessageById: {},
+    turnToolsLoading: [],
+  };
+}
+
+function waitForAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+async function waitForTranscriptProbeCommit(): Promise<void> {
+  await waitForAnimationFrame();
+  await waitForAnimationFrame();
+}
+
+async function waitForMountedRow(host: HTMLElement, itemId: string): Promise<{
+  row: HTMLElement | null;
+  shell: HTMLElement | null;
+}> {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const row = host.querySelector<HTMLElement>(`[role="listitem"][data-thread-item-id="${itemId}"]`);
+    const shell = host.querySelector<HTMLElement>(`[data-pretext-virtualizer-item-id="${itemId}"]`);
+    if (row && shell) {
+      return { row, shell };
+    }
+    await waitForAnimationFrame();
+  }
+  return {
+    row: host.querySelector<HTMLElement>(`[role="listitem"][data-thread-item-id="${itemId}"]`),
+    shell: host.querySelector<HTMLElement>(`[data-pretext-virtualizer-item-id="${itemId}"]`),
+  };
+}
+
+async function waitForMountedRowToSettle(host: HTMLElement, itemId: string): Promise<void> {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const row = host.querySelector<HTMLElement>(`[role="listitem"][data-thread-item-id="${itemId}"]`);
+    const shell = host.querySelector<HTMLElement>(`[data-pretext-virtualizer-item-id="${itemId}"]`);
+    const planned = Number(shell?.getAttribute("data-pretext-virtualizer-planned-height") ?? Number.NaN);
+    const actual = row?.getBoundingClientRect().height ?? 0;
+    if (row && shell && Number.isFinite(planned) && Math.abs(planned - actual) <= 1) {
+      return;
+    }
+    await waitForAnimationFrame();
+  }
+}
+
+async function measureMountedTranscriptRowSnapshot<Item extends WorkbenchListItem>(params: {
+  item: Item;
   viewportWidth: number;
-}): AssistantRenderSnapshot {
-  const { host, root, item, viewportWidth } = params;
-  flushSync(() => {
-    root.render(
-      React.createElement(
-        "div",
-        { "data-thread-item-id": item.id },
+  context: WorkbenchMessageListContext;
+  itemContent: (item: Item) => React.ReactNode;
+}): Promise<AssistantRenderSnapshot> {
+  const host = document.createElement("div");
+  applyTranscriptLayoutStyle(host, params.viewportWidth);
+  document.body.appendChild(host);
+  const root = ReactDOMClient.createRoot(host);
+  const sessionId = `e2e-row-probe-${transcriptProbeCounter += 1}`;
+  clearPretextVirtualizerRowLayoutCache();
+  clearSessionThreadDomMeasurementFallbacks();
+  clearSessionThreadDomMeasurementCaches();
+  resetSessionPretextRuntimeCache();
+
+  try {
+    flushSync(() => {
+      root.render(
         React.createElement(
-          "div",
-          { className: "wb-thread-indent" },
-          React.createElement(AssistantEntry, {
-            content: item.content,
-            worktreeId: null,
-            onFileOpenError: () => {},
+          SessionThreadMeasurementFrame,
+          { fillHeight: true },
+          React.createElement(SessionThreadPretextVirtualizerList, {
+            style: { height: `${LIVE_ROW_VIEWPORT_HEIGHT_PX}px`, width: "100%" },
+            sessionId,
+            isActive: true,
+            listItems: [params.item],
+            threadProjectionOp: {
+              kind: "replace_session",
+              projectionRevision: 1,
+              changedItemIds: [params.item.id],
+              remeasureItemIds: [params.item.id],
+            },
+            initialLocation: { index: 0, align: "start" },
+            itemContent: (_index: number, item: WorkbenchListItem) => params.itemContent(item as Item),
+            itemKey: (item: WorkbenchListItem) => item.id,
+            context: params.context,
+            shortSizeAlign: "top",
           }),
         ),
-      ),
-    );
-  });
+      );
+    });
 
-  const row = host.querySelector<HTMLElement>(`[data-thread-item-id="${item.id}"]`);
-  const actual = row?.getBoundingClientRect().height ?? 0;
-  const planned = getPretextVirtualizerRowLayout(item, viewportWidth, {}).height;
-  const structureSignature = row?.querySelector<HTMLElement>(".wb-markdown-root")?.innerHTML ?? "";
+    await waitForTranscriptProbeCommit();
+    await waitForMountedRowToSettle(host, params.item.id);
 
-  return {
-    measurement: makeParityMeasurement(planned, actual),
-    structureSignature,
-  };
+    const { row, shell } = await waitForMountedRow(host, params.item.id);
+    const scroller = host.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    const planned = Number(shell?.getAttribute("data-pretext-virtualizer-planned-height") ?? Number.NaN);
+    const actual = row?.getBoundingClientRect().height ?? 0;
+    const viewportWidth = scroller?.getBoundingClientRect().width ?? 0;
+    const rowWidth = row?.getBoundingClientRect().width ?? 0;
+    const structureSignature = row?.querySelector<HTMLElement>(".wb-markdown-root")?.innerHTML ?? "";
+
+    return {
+      measurement: {
+        ...makeParityMeasurement(
+          Number.isFinite(planned) && planned > 0 ? planned : 0,
+          actual,
+        ),
+        viewportWidth,
+        rowWidth,
+      },
+      structureSignature,
+    };
+  } finally {
+    root.unmount();
+    host.remove();
+    clearSessionThreadDomMeasurementFallbacks();
+    clearSessionThreadDomMeasurementCaches();
+    resetSessionPretextRuntimeCache();
+    clearPretextVirtualizerRowLayoutCache();
+  }
 }
 
 export async function measureWorkbenchMessageParity(
   params: WorkbenchMessageParityParams,
 ): Promise<WorkbenchRowParityMeasurement> {
   const viewportWidth = params.viewportWidth ?? 820;
-  const host = document.createElement("div");
-  applyTranscriptLayoutStyle(host, viewportWidth);
-  document.body.appendChild(host);
-  const root = ReactDOMClient.createRoot(host);
   const item: Extract<WorkbenchListItem, { kind: "message" }> = {
     kind: "message",
     id: "message-parity",
@@ -136,46 +247,33 @@ export async function measureWorkbenchMessageParity(
     created_at: "2026-04-09T00:00:00Z",
   };
 
-  try {
-    flushSync(() => {
-      root.render(
+  const context = createBaseContext();
+  context.expandedMessageById = { [item.id]: params.expanded };
+  return (
+    await measureMountedTranscriptRowSnapshot({
+      item,
+      viewportWidth,
+      context,
+      itemContent: (currentItem) =>
         React.createElement(
           "div",
-          { "data-thread-item-id": item.id },
-          React.createElement(
-            "div",
-            { className: "wb-thread-indent" },
-            React.createElement(ThreadItemView, {
-              item,
-              worktreeId: null,
-              onFileOpenError: () => {},
-              messageExpanded: params.expanded,
-              onToggleMessageExpanded: () => {},
-            }),
-          ),
+          { className: "wb-thread-indent", "data-thread-item-id": currentItem.id },
+          React.createElement(ThreadItemView, {
+            item: currentItem,
+            worktreeId: null,
+            onFileOpenError: () => {},
+            messageExpanded: params.expanded,
+            onToggleMessageExpanded: () => {},
+          }),
         ),
-      );
-    });
-
-    const actual = host.querySelector<HTMLElement>(`[data-thread-item-id="${item.id}"]`)?.getBoundingClientRect().height ?? 0;
-    const planned = getPretextVirtualizerRowLayout(item, viewportWidth, {
-      expandedMessageById: { [item.id]: params.expanded },
-    }).height;
-    return makeParityMeasurement(planned, actual);
-  } finally {
-    root.unmount();
-    host.remove();
-  }
+    })
+  ).measurement;
 }
 
 export async function measureWorkbenchAssistantParity(
   params: WorkbenchAssistantParityParams,
 ): Promise<WorkbenchRowParityMeasurement> {
   const viewportWidth = params.viewportWidth ?? 820;
-  const host = document.createElement("div");
-  applyTranscriptLayoutStyle(host, viewportWidth);
-  document.body.appendChild(host);
-  const root = ReactDOMClient.createRoot(host);
   const item: Extract<WorkbenchListItem, { kind: "assistant" }> = {
     kind: "assistant",
     id: "assistant-parity",
@@ -186,81 +284,104 @@ export async function measureWorkbenchAssistantParity(
     is_complete: params.isComplete ?? true,
   };
 
-  try {
-    return measureAssistantRenderSnapshot({ host, root, item, viewportWidth }).measurement;
-  } finally {
-    root.unmount();
-    host.remove();
-  }
+  const snapshot = await measureMountedTranscriptRowSnapshot({
+    item,
+    viewportWidth,
+    context: createBaseContext(),
+    itemContent: (currentItem) =>
+      React.createElement(
+        "div",
+        { className: "wb-thread-indent", "data-thread-item-id": currentItem.id },
+        React.createElement(AssistantEntry, {
+          content: currentItem.content,
+          worktreeId: null,
+          onFileOpenError: () => {},
+        }),
+      ),
+  });
+  const hiddenMeasured = measureRenderedSessionAssistantHeight(
+    item,
+    snapshot.measurement.viewportWidth ?? viewportWidth,
+  );
+  return {
+    ...snapshot.measurement,
+    hiddenMeasured: hiddenMeasured ?? undefined,
+    hiddenDelta: hiddenMeasured != null ? hiddenMeasured - snapshot.measurement.actual : undefined,
+  };
 }
 
 export async function measureWorkbenchAssistantStreamingParity(
   params: WorkbenchAssistantStreamingParityParams,
 ): Promise<WorkbenchAssistantStreamingParityMeasurement> {
   const viewportWidth = params.viewportWidth ?? 820;
-  const host = document.createElement("div");
-  applyTranscriptLayoutStyle(host, viewportWidth);
-  document.body.appendChild(host);
-  const root = ReactDOMClient.createRoot(host);
   const steps: WorkbenchAssistantStreamingParityStep[] = [];
   let content = "";
 
-  try {
-    for (let index = 0; index < params.fragments.length; index += 1) {
-      content += params.fragments[index] ?? "";
-      if (content.length === 0) {
-        continue;
-      }
-      const partialItem: Extract<WorkbenchListItem, { kind: "assistant" }> = {
-        kind: "assistant",
-        id: "assistant-streaming-partial",
-        turn_id: "turn-1",
-        created_at: "2026-04-09T00:00:00Z",
-        content,
-        thought: "",
-        is_complete: false,
-      };
-      const completeItem: Extract<WorkbenchListItem, { kind: "assistant" }> = {
-        ...partialItem,
-        id: "assistant-streaming-complete",
-        is_complete: true,
-      };
-      const partial = measureAssistantRenderSnapshot({
-        host,
-        root,
-        item: partialItem,
-        viewportWidth,
-      });
-      const complete = measureAssistantRenderSnapshot({
-        host,
-        root,
-        item: completeItem,
-        viewportWidth,
-      });
-      steps.push({
-        content,
-        partial: partial.measurement,
-        complete: complete.measurement,
-        actualDelta: partial.measurement.actual - complete.measurement.actual,
-        plannedDelta: partial.measurement.planned - complete.measurement.planned,
-        structureEquivalent: partial.structureSignature === complete.structureSignature,
-      });
+  for (let index = 0; index < params.fragments.length; index += 1) {
+    content += params.fragments[index] ?? "";
+    if (content.length === 0) {
+      continue;
     }
-    return { steps };
-  } finally {
-    root.unmount();
-    host.remove();
+    const partialItem: Extract<WorkbenchListItem, { kind: "assistant" }> = {
+      kind: "assistant",
+      id: "assistant-streaming-partial",
+      turn_id: "turn-1",
+      created_at: "2026-04-09T00:00:00Z",
+      content,
+      thought: "",
+      is_complete: false,
+    };
+    const completeItem: Extract<WorkbenchListItem, { kind: "assistant" }> = {
+      ...partialItem,
+      id: "assistant-streaming-complete",
+      is_complete: true,
+    };
+    const partial = await measureMountedTranscriptRowSnapshot({
+      item: partialItem,
+      viewportWidth,
+      context: createBaseContext(),
+      itemContent: (currentItem) =>
+        React.createElement(
+          "div",
+          { className: "wb-thread-indent", "data-thread-item-id": currentItem.id },
+          React.createElement(AssistantEntry, {
+            content: currentItem.content,
+            worktreeId: null,
+            onFileOpenError: () => {},
+          }),
+        ),
+    });
+    const complete = await measureMountedTranscriptRowSnapshot({
+      item: completeItem,
+      viewportWidth,
+      context: createBaseContext(),
+      itemContent: (currentItem) =>
+        React.createElement(
+          "div",
+          { className: "wb-thread-indent", "data-thread-item-id": currentItem.id },
+          React.createElement(AssistantEntry, {
+            content: currentItem.content,
+            worktreeId: null,
+            onFileOpenError: () => {},
+          }),
+        ),
+    });
+    steps.push({
+      content,
+      partial: partial.measurement,
+      complete: complete.measurement,
+      actualDelta: partial.measurement.actual - complete.measurement.actual,
+      plannedDelta: partial.measurement.planned - complete.measurement.planned,
+      structureEquivalent: partial.structureSignature === complete.structureSignature,
+    });
   }
+  return { steps };
 }
 
 export async function measureWorkbenchTurnHeaderParity(
   params: WorkbenchTurnHeaderParityParams,
 ): Promise<WorkbenchRowParityMeasurement> {
   const viewportWidth = params.viewportWidth ?? 820;
-  const host = document.createElement("div");
-  applyTranscriptLayoutStyle(host, viewportWidth);
-  document.body.appendChild(host);
-  const root = ReactDOMClient.createRoot(host);
   const header: WorkbenchTurnHeader = {
     id: "turn-header-parity",
     content: params.plainText,
@@ -274,12 +395,17 @@ export async function measureWorkbenchTurnHeaderParity(
     header,
   };
 
-  try {
-    flushSync(() => {
-      root.render(
+  const context = createBaseContext();
+  context.expandedTurnHeaders = { [header.id]: true };
+  return (
+    await measureMountedTranscriptRowSnapshot({
+      item,
+      viewportWidth,
+      context,
+      itemContent: () =>
         React.createElement(
           "div",
-          { style: { display: "contents" } },
+          { style: { display: "contents" }, "data-thread-item-id": item.id },
           React.createElement(WorkbenchTurnHeaderView, {
             header,
             plainText: params.plainText,
@@ -287,16 +413,6 @@ export async function measureWorkbenchTurnHeaderParity(
             onToggle: () => {},
           }),
         ),
-      );
-    });
-
-    const actual = host.querySelector<HTMLElement>(".wb-turn-header")?.getBoundingClientRect().height ?? 0;
-    const planned = getPretextVirtualizerRowLayout(item, viewportWidth, {
-      expandedTurnHeaders: { [header.id]: true },
-    }).height;
-    return makeParityMeasurement(planned, actual);
-  } finally {
-    root.unmount();
-    host.remove();
-  }
+    })
+  ).measurement;
 }

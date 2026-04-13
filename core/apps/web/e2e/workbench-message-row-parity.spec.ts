@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import {
   measureAssistantParity,
@@ -6,6 +7,7 @@ import {
   measureTurnHeaderParity,
   openWorkbenchShell,
 } from "./utils/pretextParity";
+import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 const EXACT_USER_MESSAGE = [
   "here is another neutral layout idea for a deterministic fixture",
@@ -36,6 +38,11 @@ const ASSISTANT_MARKDOWN = [
 ].join("\n");
 const ASSISTANT_INLINE_CODE_WRAP_MARKDOWN =
   "begin agent message here with plain text, and now some inline code block: `inline-thing-that-actually-gets-really-long-so-much-so-that-it-actually-wraps-to-2-lines-and-keeps-going-with-extra-path-segments/core/apps/web/src/pages/sessionThread/sessionMarkdownMeasurement.ts`";
+const ASSISTANT_LONG_STATUS_MESSAGE = Array.from(
+  { length: 48 },
+  (_, index) =>
+    `Status update ${index + 1}: validating a deterministic workspace message fixture with enough text to exercise wrapping and streaming layout.`,
+).join("\n\n");
 const TURN_HEADER_TEXT = "and what about the CI smoke failure?";
 
 const IMAGE_DATA_BASE64 =
@@ -114,6 +121,18 @@ test("workbench: assistant prose with wrapped inline code matches rendered heigh
   ).toBeLessThanOrEqual(1);
 });
 
+test("workbench: long multi-paragraph assistant status message matches mounted row height", async ({ page }) => {
+  test.setTimeout(120000);
+  await openWorkbenchShell(page);
+
+  const measurement = await measureAssistantParity(page, { content: ASSISTANT_LONG_STATUS_MESSAGE });
+
+  expect(
+    Math.abs(measurement.delta),
+    `assistant long-message drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual}, hidden ${measurement.hiddenMeasured ?? "n/a"}, viewportWidth ${measurement.viewportWidth ?? "n/a"}, rowWidth ${measurement.rowWidth ?? "n/a"})`,
+  ).toBeLessThanOrEqual(1);
+});
+
 test("workbench: partial assistant streaming stays identical to completed rendering for the same cumulative content", async ({
   page,
 }) => {
@@ -160,4 +179,107 @@ test("workbench: turn header planner matches rendered height", async ({ page }) 
     Math.abs(measurement.delta),
     `turn header drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual})`,
   ).toBeLessThanOrEqual(1);
+});
+
+type VisibleAssistantParity = {
+  id: string;
+  actual: number;
+  planned: number;
+  delta: number;
+  text: string;
+};
+
+async function readVisibleLatestAssistantParity(page: Page): Promise<VisibleAssistantParity | null> {
+  return page.locator('.wb-session-slot [data-testid="session-view"]').first().evaluate((root) => {
+    const rows = Array.from(
+      root.querySelectorAll<HTMLElement>('[role="listitem"][data-thread-item-id^="assistant-"]'),
+    );
+    const row = rows.at(-1) ?? null;
+    if (!row) return null;
+    const shell = row.closest<HTMLElement>(".wb-pretext-virtualizer-row");
+    const planned = Number(shell?.getAttribute("data-pretext-virtualizer-planned-height") ?? Number.NaN);
+    const actual = row.getBoundingClientRect().height;
+    return {
+      id: row.getAttribute("data-thread-item-id") ?? "",
+      actual,
+      planned,
+      delta: planned - actual,
+      text: (row.innerText || "").slice(0, 240),
+    };
+  });
+}
+
+async function expectVisibleLatestAssistantParity(page: Page, label: string) {
+  await expect
+    .poll(async () => {
+      const measurement = await readVisibleLatestAssistantParity(page);
+      if (!measurement) {
+        return { ok: false, reason: "missing-row" };
+      }
+      return {
+        ok: Math.abs(measurement.delta) <= 1,
+        id: measurement.id,
+        planned: measurement.planned,
+        actual: measurement.actual,
+        delta: measurement.delta,
+        text: measurement.text,
+      };
+    }, {
+      timeout: 30_000,
+      message: `visible assistant row should stay in parity during ${label}`,
+    })
+    .toMatchObject({ ok: true });
+}
+
+test("workbench: streaming assistant long message stays in parity through completion and reload", async ({ page, request }) => {
+  test.setTimeout(180000);
+
+  const seed = await seedDummyWorkspace(request, {
+    tasks: 1,
+    sessionsPerTask: 1,
+    turnsPerSession: 6,
+    throttleMs: 5,
+    messageBytes: 1000,
+    messagePrefix: "live-row parity seed",
+  });
+
+  const taskId = seed.taskIds[0];
+  const sessionId = seed.sessionIdsByTask[taskId!]?.[0];
+  expect(sessionId).toBeTruthy();
+
+  await page.goto(`/workspaces/${seed.workspaceId}?debug=1`, { waitUntil: "domcontentloaded" });
+  const task = page.locator(".wb-task-row").filter({ hasText: "fixture task 1" }).first();
+  await expect(task).toBeVisible({ timeout: 30_000 });
+  await task.click();
+  await expect(page.locator('.wb-session-slot [data-testid="session-view"]').first()).toHaveAttribute("data-session-id", sessionId!, {
+    timeout: 20_000,
+  });
+
+  await request.post(`/api/sessions/${sessionId}/messages`, {
+    data: {
+      content: `slow-diff-test stream-assistant-partials\n${ASSISTANT_LONG_STATUS_MESSAGE}`,
+      delivery: "immediate",
+    },
+  });
+
+  await expect(
+    page.locator('.wb-session-slot [role="listitem"][data-thread-item-id$="-pending"]').first(),
+  ).toBeVisible({ timeout: 30_000 });
+
+  for (let sample = 0; sample < 5; sample += 1) {
+    await expectVisibleLatestAssistantParity(page, `streaming sample ${sample + 1}`);
+    await page.waitForTimeout(250);
+  }
+
+  await expect(page.locator(".wb-turn-status-label").last()).toHaveText(/Completed/i, { timeout: 60_000 });
+  await expectVisibleLatestAssistantParity(page, "post-complete");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  const reloadedTask = page.locator(".wb-task-row").filter({ hasText: "fixture task 1" }).first();
+  await expect(reloadedTask).toBeVisible({ timeout: 30_000 });
+  await reloadedTask.click();
+  await expect(page.locator('.wb-session-slot [data-testid="session-view"]').first()).toHaveAttribute("data-session-id", sessionId!, {
+    timeout: 20_000,
+  });
+  await expectVisibleLatestAssistantParity(page, "post-reload");
 });
