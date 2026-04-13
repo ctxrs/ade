@@ -7,6 +7,9 @@ const { Readable } = require("node:stream");
 const { pathToFileURL, fileURLToPath } = require("node:url");
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_FETCH_MAX_ATTEMPTS = 3;
+const DEFAULT_FETCH_RETRY_DELAY_MS = 1000;
+const RETRYABLE_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const coreRoot = path.resolve(__dirname, "..");
 const defaultMatrixPath = path.join(
   coreRoot,
@@ -95,6 +98,14 @@ function collectManagedArchiveTargets(matrix, providerFilter = []) {
   return { missing, targets };
 }
 
+class HttpRequestError extends Error {
+  constructor(status, statusText) {
+    super(`request failed with ${status} ${statusText}`);
+    this.name = "HttpRequestError";
+    this.status = status;
+  }
+}
+
 async function sha256Readable(readable) {
   const hash = crypto.createHash("sha256");
   let sizeBytes = 0;
@@ -121,7 +132,7 @@ async function fetchDigest(url, timeoutMs) {
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
-    throw new Error(`request failed with ${response.status} ${response.statusText}`);
+    throw new HttpRequestError(response.status, response.statusText);
   }
   if (!response.body) {
     throw new Error("response body missing");
@@ -129,7 +140,30 @@ async function fetchDigest(url, timeoutMs) {
   return sha256Readable(Readable.fromWeb(response.body));
 }
 
-async function verifyManagedArchiveTargets(targets, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+function isRetryableFetchError(error) {
+  return (
+    error &&
+    typeof error === "object" &&
+    Number.isInteger(error.status) &&
+    RETRYABLE_HTTP_STATUSES.has(error.status)
+  );
+}
+
+async function sleep(ms) {
+  if (ms <= 0) {
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function verifyManagedArchiveTargets(
+  targets,
+  {
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    maxAttempts = DEFAULT_FETCH_MAX_ATTEMPTS,
+    retryDelayMs = DEFAULT_FETCH_RETRY_DELAY_MS,
+  } = {},
+) {
   const errors = [];
   let verifiedCount = 0;
   for (const target of targets) {
@@ -144,7 +178,28 @@ async function verifyManagedArchiveTargets(targets, { timeoutMs = DEFAULT_TIMEOU
       continue;
     }
     try {
-      const result = await fetchDigest(target.url, timeoutMs);
+      let result = null;
+      let attempt = 0;
+      let nextDelayMs = retryDelayMs;
+      while (attempt < maxAttempts) {
+        attempt += 1;
+        try {
+          result = await fetchDigest(target.url, timeoutMs);
+          break;
+        } catch (error) {
+          if (!isRetryableFetchError(error) || attempt >= maxAttempts) {
+            throw error;
+          }
+          console.error(
+            `warn: provider=${target.providerId} target=${target.targetKey}: transient fetch failure (${error.message}); retrying (${attempt}/${maxAttempts}) in ${nextDelayMs}ms`,
+          );
+          await sleep(nextDelayMs);
+          nextDelayMs *= 2;
+        }
+      }
+      if (!result) {
+        throw new Error("internal: archive fetch produced no result");
+      }
       if (result.sha256 !== target.expectedSha256) {
         errors.push(
           `provider=${target.providerId} target=${target.targetKey}: checksum mismatch expected=${target.expectedSha256} actual=${result.sha256}`,
@@ -204,6 +259,8 @@ module.exports = {
   collectManagedArchiveTargets,
   defaultMatrixPath,
   fetchDigest,
+  HttpRequestError,
+  isRetryableFetchError,
   parseArgs,
   pathToFileURL,
   readMatrix,
