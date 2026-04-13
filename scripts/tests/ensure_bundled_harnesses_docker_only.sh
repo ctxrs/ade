@@ -28,7 +28,16 @@ docker buildx version >/dev/null
 docker info >/dev/null
 
 tmp_root="$(mktemp -d /tmp/ctx-bundle-docker-only.XXXXXX)"
-trap 'rm -rf "$tmp_root"' EXIT
+temp_builder="ctx-bundle-docker-only-$$"
+original_builder="$(docker buildx ls 2>/dev/null | awk '$1 ~ /\*/ {gsub(/\*/, "", $1); print $1; exit}')"
+cleanup() {
+  if [[ -n "${original_builder:-}" ]]; then
+    docker buildx use "$original_builder" >/dev/null 2>&1 || true
+  fi
+  docker buildx rm -f "$temp_builder" >/dev/null 2>&1 || true
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
 
 shim_dir="$tmp_root/shims"
 mkdir -p "$shim_dir"
@@ -51,8 +60,16 @@ esac
 
 echo "smoke: harness image bundling ignores sandbox runtime CLIs even when nerdctl is first on PATH"
 bundle_dir_image="$tmp_root/bundle-image"
+if docker buildx inspect default >/dev/null 2>&1; then
+  if docker buildx use default >/dev/null 2>&1; then
+    echo "info: forced buildx default builder to exercise docker-driver fallback handling" >&2
+  else
+    echo "warn: unable to force default buildx builder; continuing with current builder" >&2
+  fi
+fi
 PATH="$shim_dir:$PATH" \
 CTX_BUNDLE_DIR="$bundle_dir_image" \
+CTX_BUNDLE_BUILDX_BUILDER="$temp_builder" \
 CTX_BUNDLE_ONLY_PROVIDERS="does-not-exist" \
 CTX_BUNDLE_SKIP_RUNTIMES=1 \
 CTX_BUNDLE_INCLUDE_BRIDGE=0 \

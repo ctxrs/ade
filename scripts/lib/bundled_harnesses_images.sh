@@ -18,8 +18,17 @@ bundle_harness_image() {
     exit 2
   fi
 
+  local builder_name="${CTX_BUNDLE_BUILDX_BUILDER:-ctx-bundle-export}"
+  if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
+    docker buildx create --name "$builder_name" --driver docker-container --use >/dev/null
+  else
+    docker buildx use "$builder_name" >/dev/null
+  fi
+  docker buildx inspect --bootstrap "$builder_name" >/dev/null
+
   # Build the requested Linux arch and write a docker-archive compatible tar.
   docker buildx build \
+    --builder "$builder_name" \
     --progress plain \
     --platform "$platform" \
     -t "$image_ref" \
