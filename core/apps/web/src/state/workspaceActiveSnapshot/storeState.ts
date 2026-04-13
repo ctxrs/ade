@@ -53,6 +53,32 @@ import {
   taskSortAt,
 } from "./summaryHelpers";
 
+type SessionSummaryVersion = {
+  lastEventSeq: number | null;
+  projectionRev: number | null;
+  stateRev: number | null;
+};
+
+const readVersionNumber = (value: number | null | undefined): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const hasSessionSummaryVersion = (value: SessionSummaryVersion): boolean =>
+  value.lastEventSeq !== null || value.projectionRev !== null || value.stateRev !== null;
+
+const compareSessionSummaryVersion = (
+  left: SessionSummaryVersion,
+  right: SessionSummaryVersion,
+): number => {
+  const fields: Array<keyof SessionSummaryVersion> = ["lastEventSeq", "projectionRev", "stateRev"];
+  for (const field of fields) {
+    const leftValue = left[field];
+    const rightValue = right[field];
+    if (leftValue === null || rightValue === null || leftValue === rightValue) continue;
+    return leftValue - rightValue;
+  }
+  return 0;
+};
+
 export class WorkspaceActiveSnapshotStoreState {
   private snapshot: WorkspaceActiveSnapshotState;
   private tasks = new Map<string, WorkspaceActiveSnapshotItem>();
@@ -512,6 +538,8 @@ export class WorkspaceActiveSnapshotStoreState {
         typeof current.projection_rev === "number" ? current.projection_rev : null;
       const incomingLastEventSeq =
         typeof delta.last_event_seq === "number" ? delta.last_event_seq : null;
+      const incomingProjectionRev = readVersionNumber(delta.projection_rev);
+      const incomingStateRev = readVersionNumber(delta.state_rev);
 
       if (hasOwnProperty(delta, "last_message_at")) {
         const incoming = delta.last_message_at;
@@ -563,6 +591,33 @@ export class WorkspaceActiveSnapshotStoreState {
         if (delta.state_rev > nextCurrentStateRev) {
           nextSummary.state_rev = delta.state_rev;
           changed = true;
+        }
+      }
+      if (hasOwnProperty(delta, "activity")) {
+        const currentVersion: SessionSummaryVersion = {
+          lastEventSeq: readVersionNumber(current.last_event_seq ?? null),
+          projectionRev: readVersionNumber(current.projection_rev),
+          stateRev: readVersionNumber(current.state_rev),
+        };
+        const incomingVersion: SessionSummaryVersion = {
+          lastEventSeq: incomingLastEventSeq,
+          projectionRev: incomingProjectionRev,
+          stateRev: incomingStateRev,
+        };
+        const canUpdateActivity =
+          !hasSessionSummaryVersion(currentVersion) ||
+          (hasSessionSummaryVersion(incomingVersion) &&
+            compareSessionSummaryVersion(incomingVersion, currentVersion) >= 0);
+        const nextActivity = delta.activity ?? { is_working: false, last_turn_status: null };
+        if (canUpdateActivity) {
+          const currentActivity = nextSummary.activity ?? { is_working: false, last_turn_status: null };
+          if (
+            currentActivity.is_working !== nextActivity.is_working ||
+            (currentActivity.last_turn_status ?? null) !== (nextActivity.last_turn_status ?? null)
+          ) {
+            nextSummary.activity = nextActivity;
+            changed = true;
+          }
         }
       }
 
@@ -898,6 +953,7 @@ export class WorkspaceActiveSnapshotStoreState {
     const existingPrimarySessionId = resolvePrimarySessionId(existing);
     const primarySessionId =
       readPrimarySessionId(summary) ||
+      idToString(summary.task.primary_session_id ?? "") ||
       existingPrimarySessionId ||
       idToString((summary as PersistedWorkspaceActiveTaskSummaryV1).primary_session?.session?.id ?? "");
 

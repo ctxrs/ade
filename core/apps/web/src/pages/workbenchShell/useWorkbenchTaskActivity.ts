@@ -3,6 +3,7 @@ export {
 } from "./useWorkbenchSessionBridge";
 
 export type { WorkbenchTaskLiveInfo } from "./workbenchTaskActivity";
+export type { WorkbenchTaskLiveState } from "./workbenchTaskActivity";
 export type { WorkbenchTaskStatusKind } from "./workbenchTaskActivity";
 
 export {
@@ -17,4 +18,5 @@ export {
   isWorkbenchTaskUnread,
   resolveRenderableWorkbenchActiveSessionId,
   resolveWorkbenchActiveSessionId,
+  selectWorkbenchTaskLiveState,
 } from "./workbenchTaskActivity";

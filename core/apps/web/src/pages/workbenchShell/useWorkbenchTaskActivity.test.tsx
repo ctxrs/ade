@@ -17,6 +17,7 @@ import {
   isWorkbenchTaskUnread,
   resolveRenderableWorkbenchActiveSessionId,
   resolveWorkbenchActiveSessionId,
+  selectWorkbenchTaskLiveState,
   useWorkbenchTaskActivity,
 } from "./useWorkbenchTaskActivity";
 
@@ -98,6 +99,10 @@ const makeSessionEntry = ({
   hasMoreTurns = false,
   updatedAtMs = Date.parse(now),
   freshness = "authoritative",
+  activity,
+  lastEventSeq,
+  projectionRev,
+  stateRev,
 }: {
   session: Session;
   turns?: SessionTurn[];
@@ -105,11 +110,16 @@ const makeSessionEntry = ({
   hasMoreTurns?: boolean;
   updatedAtMs?: number;
   freshness?: SessionCacheEntry["freshness"];
+  activity?: SessionCacheEntry["activity"];
+  lastEventSeq?: number;
+  projectionRev?: number;
+  stateRev?: number;
 }): SessionCacheEntry => ({
   sessionId: session.id,
   loadState: "live",
   freshness,
   session,
+  activity,
   turns,
   turnToolsByTurnId: {},
   turnToolsLoading: [],
@@ -137,6 +147,9 @@ const makeSessionEntry = ({
   queue: [],
   loading: false,
   subscribed: true,
+  lastEventSeq,
+  projectionRev,
+  stateRev,
   updatedAtMs,
 });
 
@@ -504,6 +517,81 @@ describe("useWorkbenchTaskActivity helpers", () => {
     expect(isWorkbenchTaskUnread({ taskId: "task-1", tasksById: { "task-1": taskSummary }, taskLiveInfo })).toBe(true);
   });
 
+  it("selects task working state from the freshest canonical source", () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const selectedState = selectWorkbenchTaskLiveState({
+      task: makeTaskSummary({
+        taskId: "task-1",
+        primarySessionId: primarySession.id,
+        sessions: [
+          makeSessionSummary(primarySession, {
+            last_event_seq: 12,
+            projection_rev: 12,
+            state_rev: 12,
+            activity: { is_working: true, last_turn_status: "running" },
+          }),
+        ],
+        primarySessionHead: {
+          session: primarySession,
+          turns: [],
+          tool_summaries: [],
+          messages: [],
+          events: [],
+          last_event_seq: 8,
+          projection_rev: 8,
+          state_rev: 8,
+          activity: { is_working: false, last_turn_status: "completed" },
+          has_more_turns: false,
+          has_more_history: false,
+        },
+      }),
+      entryBySessionId: new Map(),
+    });
+
+    expect(selectedState).toEqual({
+      working: true,
+      hasError: false,
+      lastAssistantMs: Date.parse(now),
+    });
+  });
+
+  it("does not let bootstrap cache activity outrank canonical task state in the selector", () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const selectedState = selectWorkbenchTaskLiveState({
+      task: makeTaskSummary({
+        taskId: "task-1",
+        primarySessionId: primarySession.id,
+        sessions: [
+          makeSessionSummary(primarySession, {
+            activity: { is_working: false, last_turn_status: "completed" },
+            last_event_seq: 10,
+            projection_rev: 10,
+            state_rev: 10,
+          }),
+        ],
+      }),
+      entryBySessionId: new Map([
+        [
+          primarySession.id,
+          makeSessionEntry({
+            session: primarySession,
+            freshness: "bootstrap",
+            activity: { is_working: true, last_turn_status: "running" },
+            lastEventSeq: 8,
+            projectionRev: 8,
+            stateRev: 8,
+          }),
+        ],
+      ]),
+    });
+
+    expect(selectedState).toEqual({
+      working: false,
+      hasError: false,
+      lastAssistantMs: Date.parse(now),
+    });
+  });
+
   it("treats canonical is_working summaries as working, including queued follow-ups", () => {
     const primarySession = makeSession("session-1", "task-1", "active");
 
@@ -567,6 +655,76 @@ describe("useWorkbenchTaskActivity helpers", () => {
       },
       optimisticTasks: [],
       sessions: {},
+    });
+
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
+  });
+
+  it("prefers fresher summary activity over stale canonical head activity", () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById: {
+        "task-1": makeTaskSummary({
+          taskId: "task-1",
+          primarySessionId: primarySession.id,
+          sessions: [
+            makeSessionSummary(primarySession, {
+              last_event_seq: 10,
+              projection_rev: 10,
+              state_rev: 10,
+              activity: { is_working: true, last_turn_status: "running" },
+            }),
+          ],
+          primarySessionHead: {
+            session: primarySession,
+            turns: [],
+            tool_summaries: [],
+            messages: [],
+            events: [],
+            last_event_seq: 8,
+            projection_rev: 8,
+            state_rev: 8,
+            activity: { is_working: false, last_turn_status: "completed" },
+            has_more_turns: false,
+            has_more_history: false,
+          },
+        }),
+      },
+      optimisticTasks: [],
+      sessions: {},
+    });
+
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
+  });
+
+  it("prefers fresher summary activity over stale canonical session cache activity", () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById: {
+        "task-1": makeTaskSummary({
+          taskId: "task-1",
+          primarySessionId: primarySession.id,
+          sessions: [
+            makeSessionSummary(primarySession, {
+              last_event_seq: 10,
+              projection_rev: 10,
+              state_rev: 10,
+              activity: { is_working: true, last_turn_status: "running" },
+            }),
+          ],
+        }),
+      },
+      optimisticTasks: [],
+      sessions: {
+        [primarySession.id]: makeSessionEntry({
+          session: primarySession,
+          freshness: "authoritative",
+          activity: { is_working: false, last_turn_status: "completed" },
+          lastEventSeq: 8,
+          projectionRev: 8,
+          stateRev: 8,
+        }),
+      },
     });
 
     expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);

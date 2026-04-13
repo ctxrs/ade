@@ -1,3 +1,4 @@
+import type { SessionActivityState } from "@ctx/types";
 import { idToString } from "../../api/client";
 import type { SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem } from "../../state/workspaceActiveSnapshotStore";
@@ -15,6 +16,57 @@ export type WorkbenchTaskLiveInfo = {
 export type WorkbenchTaskStatusKind = "error" | "working" | "unread" | "idle";
 
 type SessionTaskProviderSample = { providerId: string; updatedAt: number };
+
+export type WorkbenchTaskLiveState = {
+  working: boolean;
+  hasError: boolean;
+  lastAssistantMs: number | null;
+};
+
+type TaskLiveSource = {
+  activity: SessionActivityState | null | undefined;
+  status: string | null | undefined;
+  lastAssistantMs: number | null;
+  lastEventSeq: number | null;
+  projectionRev: number | null;
+  stateRev: number | null;
+  priority: number;
+};
+
+const readCursorNumber = (value: number | null | undefined): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const compareTaskLiveSourceFreshness = (
+  left: TaskLiveSource,
+  right: TaskLiveSource,
+): number => {
+  const fields: Array<keyof Pick<TaskLiveSource, "lastEventSeq" | "projectionRev" | "stateRev">> = [
+    "lastEventSeq",
+    "projectionRev",
+    "stateRev",
+  ];
+  for (const field of fields) {
+    const leftValue = left[field];
+    const rightValue = right[field];
+    if (leftValue === rightValue) continue;
+    if (leftValue === null) return -1;
+    if (rightValue === null) return 1;
+    return leftValue - rightValue;
+  }
+  return left.priority - right.priority;
+};
+
+const pickFreshestTaskLiveSource = (
+  sources: TaskLiveSource[],
+): TaskLiveSource | null => {
+  let freshest: TaskLiveSource | null = null;
+  for (const source of sources) {
+    if (!freshest || compareTaskLiveSourceFreshness(source, freshest) > 0) {
+      freshest = source;
+    }
+  }
+  return freshest;
+};
 
 const readPrimarySessionFallbackId = (
   summary: WorkspaceActiveSnapshotItem | OptimisticTaskSummary | null | undefined,
@@ -129,6 +181,94 @@ const buildTasksForLiveInfo = (
   return merged;
 };
 
+const buildSessionEntryIndex = (
+  sessions: SessionSupervisorSnapshot["sessions"],
+): Map<string, SessionSupervisorSnapshot["sessions"][string]> => {
+  const entryBySessionId = new Map<string, SessionSupervisorSnapshot["sessions"][string]>();
+  for (const entry of Object.values(sessions)) {
+    const sessionId = entry.session ? idToString(entry.session.id) : "";
+    if (sessionId) entryBySessionId.set(sessionId, entry);
+  }
+  return entryBySessionId;
+};
+
+export const selectWorkbenchTaskLiveState = ({
+  task,
+  entryBySessionId,
+}: {
+  task: WorkspaceActiveSnapshotItem | OptimisticTaskSummary;
+  entryBySessionId: Map<string, SessionSupervisorSnapshot["sessions"][string]>;
+}): WorkbenchTaskLiveState | null => {
+  const primarySessionId = resolvePrimarySessionId(task);
+  const primarySessionSummary = primarySessionId
+    ? task.sessions.find((sessionSummary) => idToString(sessionSummary.session.id) === primarySessionId)
+    : undefined;
+  const primaryEntry = primarySessionId ? entryBySessionId.get(primarySessionId) : undefined;
+  const primaryHead = task.primarySessionHead ?? null;
+  const primaryEntryIsCanonical =
+    primaryEntry?.freshness === "authoritative" || primaryEntry?.freshness === "replica";
+  const sources: TaskLiveSource[] = [];
+  const liveMs = primaryEntry ? lastAssistantMessageMs(primaryEntry.messages) : null;
+  const headMs = primaryHead ? lastAssistantMessageMs(primaryHead.messages) : null;
+  const summaryMs = parseMs(primarySessionSummary?.last_message_at ?? null);
+
+  if (primaryEntry) {
+    const canonicalEntry =
+      primaryEntry.freshness === "authoritative" || primaryEntry.freshness === "replica";
+    sources.push({
+      activity: primaryEntry.activity ?? null,
+      status: primaryEntry.session?.status,
+      lastAssistantMs: liveMs,
+      lastEventSeq: readCursorNumber(primaryEntry.lastEventSeq),
+      projectionRev: readCursorNumber(primaryEntry.projectionRev),
+      stateRev: readCursorNumber(primaryEntry.stateRev),
+      priority: canonicalEntry ? 1 : 0,
+    });
+  }
+
+  if (primarySessionSummary) {
+    sources.push({
+      activity: primarySessionSummary.activity ?? null,
+      status: primarySessionSummary.session.status,
+      lastAssistantMs: summaryMs,
+      lastEventSeq: readCursorNumber(primarySessionSummary.last_event_seq ?? null),
+      projectionRev: readCursorNumber(primarySessionSummary.projection_rev),
+      stateRev: readCursorNumber(primarySessionSummary.state_rev),
+      priority: 2,
+    });
+  }
+
+  if (primaryHead) {
+    sources.push({
+      activity: primaryHead.activity ?? null,
+      status: primaryHead.session.status,
+      lastAssistantMs: headMs,
+      lastEventSeq: readCursorNumber(primaryHead.last_event_seq),
+      projectionRev: readCursorNumber(primaryHead.projection_rev),
+      stateRev: readCursorNumber(primaryHead.state_rev),
+      priority: 3,
+    });
+  }
+
+  const freshestActivitySource = pickFreshestTaskLiveSource(
+    sources.filter((source) => source.activity !== null && source.activity !== undefined),
+  );
+  const primaryStatus = primaryEntryIsCanonical
+    ? primaryEntry?.session?.status ?? primaryHead?.session.status ?? primarySessionSummary?.session.status
+    : primaryHead?.session.status ?? primarySessionSummary?.session.status ?? primaryEntry?.session?.status;
+  if (!freshestActivitySource && !primaryStatus) return null;
+
+  const assistantMs = primaryEntryIsCanonical
+    ? liveMs ?? headMs ?? summaryMs
+    : headMs ?? summaryMs ?? liveMs;
+
+  return {
+    working: isSessionWorkingActivity(freshestActivitySource?.activity ?? null),
+    hasError: primaryStatus === "failed" || primaryStatus === "cancelled",
+    lastAssistantMs: assistantMs,
+  };
+};
+
 const deriveTaskLiveInfoFromSources = (
   tasksForLiveInfo: Record<string, WorkspaceActiveSnapshotItem | OptimisticTaskSummary>,
   sessions: SessionSupervisorSnapshot["sessions"],
@@ -136,47 +276,28 @@ const deriveTaskLiveInfoFromSources = (
   const workingByTask = new Set<string>();
   const errorByTask = new Set<string>();
   const lastAssistantMsByTask: Record<string, number> = {};
-  const entryBySessionId = new Map<string, SessionSupervisorSnapshot["sessions"][string]>();
+  const entryBySessionId = buildSessionEntryIndex(sessions);
 
-  for (const entry of Object.values(sessions)) {
-    const sessionId = entry.session ? idToString(entry.session.id) : "";
-    if (sessionId) entryBySessionId.set(sessionId, entry);
-  }
+  for (const task of Object.values(tasksForLiveInfo)) {
+    const selectedState = selectWorkbenchTaskLiveState({
+      task,
+      entryBySessionId,
+    });
+    if (!selectedState) continue;
 
-  for (const summary of Object.values(tasksForLiveInfo)) {
-    const taskId = summary.id;
-    const primarySessionId = resolvePrimarySessionId(summary);
-    const primarySessionSummary = primarySessionId
-      ? summary.sessions.find((sessionSummary) => idToString(sessionSummary.session.id) === primarySessionId)
-      : undefined;
-    const primaryEntry = primarySessionId ? entryBySessionId.get(primarySessionId) : undefined;
-    const primaryHead = summary.primarySessionHead ?? null;
-    const primaryEntryIsCanonical =
-      primaryEntry?.freshness === "authoritative" || primaryEntry?.freshness === "replica";
-    const primaryActivity = primaryEntryIsCanonical
-      ? primaryEntry?.activity ?? primaryHead?.activity ?? primarySessionSummary?.activity ?? null
-      : primaryHead?.activity ?? primarySessionSummary?.activity ?? primaryEntry?.activity ?? null;
-    const primaryStatus = primaryEntryIsCanonical
-      ? primaryEntry?.session?.status ?? primaryHead?.session.status ?? primarySessionSummary?.session.status
-      : primaryHead?.session.status ?? primarySessionSummary?.session.status ?? primaryEntry?.session?.status;
-    if (!primarySessionSummary && !primaryEntry && !primaryHead) continue;
-
-    if (isSessionWorkingActivity(primaryActivity)) {
-      workingByTask.add(taskId);
+    if (selectedState.working) {
+      workingByTask.add(task.id);
     }
 
-    if (primaryStatus === "failed" || primaryStatus === "cancelled") {
-      errorByTask.add(taskId);
+    if (selectedState.hasError) {
+      errorByTask.add(task.id);
     }
 
-    const liveMs = primaryEntry ? lastAssistantMessageMs(primaryEntry.messages) : null;
-    const headMs = primaryHead ? lastAssistantMessageMs(primaryHead.messages) : null;
-    const summaryMs = parseMs(primarySessionSummary?.last_message_at ?? null);
-    const assistantMs = primaryEntryIsCanonical
-      ? liveMs ?? headMs ?? summaryMs
-      : headMs ?? summaryMs ?? liveMs;
-    if (assistantMs !== null) {
-      lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, assistantMs);
+    if (selectedState.lastAssistantMs !== null) {
+      lastAssistantMsByTask[task.id] = Math.max(
+        lastAssistantMsByTask[task.id] ?? 0,
+        selectedState.lastAssistantMs,
+      );
     }
   }
 

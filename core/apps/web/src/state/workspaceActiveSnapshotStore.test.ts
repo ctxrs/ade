@@ -96,6 +96,7 @@ type StoreInternals = {
   openWebSocket: (url: string) => Promise<void>;
   scheduleReconnect: () => void;
   applySessionSummaryDelta: (delta: unknown) => boolean;
+  flushSubscriptions: (reason?: string) => void;
 };
 
 type MockDaemonClientConfig = {
@@ -412,7 +413,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(payload.include_active_heads).toBe(true);
   });
 
-  it("flushes subscribe messages when only replay intent changes", async () => {
+  it("flushes subscribe messages when replay mode changes to reset", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
@@ -431,6 +432,40 @@ describe("WorkspaceActiveSnapshotStore", () => {
       { session_id: "session-1", replay: { mode: "reset" } },
     ]);
     expect(payload.include_active_heads).toBe(false);
+  });
+
+  it("does not flush subscribe messages when only the resume cursor advances", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    asStoreInternals(store).ws = ws;
+
+    store.setSubscribedSessions([
+      { sessionId: "session-1", replay: { kind: "resume", afterSeq: 5, afterProjectionRev: 1 } },
+    ]);
+    expect(ws.send).toHaveBeenCalledTimes(1);
+
+    ws.send.mockClear();
+    store.setSubscribedSessions([
+      { sessionId: "session-1", replay: { kind: "resume", afterSeq: 6, afterProjectionRev: 1 } },
+    ]);
+    store.setSubscribedSessions([
+      { sessionId: "session-1", replay: { kind: "resume", afterSeq: 8, afterProjectionRev: 2 } },
+    ]);
+
+    expect(ws.send).not.toHaveBeenCalled();
+
+    asStoreInternals(store).flushSubscriptions("ws_open");
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    const reconnectPayload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
+    expect(reconnectPayload.include_active_heads).toBe(true);
+    expect(reconnectPayload.sessions).toEqual([
+      {
+        session_id: "session-1",
+        replay: { mode: "resume", after_seq: 8, after_projection_rev: 2 },
+      },
+    ]);
   });
 
   it("keeps cache and render projections aligned with the shared active fixture", async () => {
@@ -913,7 +948,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(seededHead?.messages?.[0]?.content).toBe("from delta");
   });
 
-  it("applies session_summary_delta preview metadata without changing canonical activity", async () => {
+  it("applies session_summary_delta preview metadata and canonical activity when revision advances", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 
     const now = "2024-01-01T00:00:00.000Z";
@@ -967,12 +1002,73 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     const snapshot = store.getSnapshot();
     const updated = snapshot.tasksById["task-1"].sessions[0];
-    expect(updated.activity?.is_working).toBe(false);
-    expect(updated.activity?.last_turn_status ?? null).toBe(null);
+    expect(updated.activity?.is_working).toBe(true);
+    expect(updated.activity?.last_turn_status ?? null).toBe("running");
     expect(updated.last_message_at).toBe(later);
     expect(updated.last_message_preview).toBe("updated preview");
     expect(updated.last_event_seq).toBe(5);
     expect(updated.state_rev).toBe(2);
+  });
+
+  it("does not regress canonical activity when session_summary_delta activity is older", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-1", "task-1", "ws-1", now);
+    const summary = {
+      ...mkSummary(session, now),
+      last_event_seq: 10,
+      projection_rev: 10,
+      state_rev: 10,
+      activity: { is_working: true, last_turn_status: "running" as const },
+    };
+    const head = mkHead(session);
+
+    const activeSnapshot: WorkspaceActiveSnapshot = {
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      archived_rev: 0,
+      active: {
+        total_count: 1,
+        tasks: [mkActiveSummary(task, summary, head, now)],
+      },
+    };
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: activeSnapshot,
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 2,
+        event: {
+          type: "session_summary_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 2,
+          delta: {
+            session_id: "session-1",
+            task_id: "task-1",
+            activity: { is_working: false, last_turn_status: "completed" },
+            last_event_seq: 8,
+            projection_rev: 8,
+            state_rev: 8,
+          },
+        },
+      }),
+    );
+
+    const updated = store.getSnapshot().tasksById["task-1"].sessions[0];
+    expect(updated.activity?.is_working).toBe(true);
+    expect(updated.activity?.last_turn_status ?? null).toBe("running");
   });
 
   it("does not regress monotonic session summary fields when applying session_summary_delta", async () => {

@@ -9,6 +9,7 @@ import {
   normalizeSessionSubscriptionCursors,
   sameSessionSubscriptionCursorIds,
   sameSessionSubscriptionCursors,
+  type SessionSubscriptionReplay,
 } from "../sessionSubscription";
 import { buildWorkspaceActiveSubscribeMessage } from "./subscriptions";
 import type { WorkspaceActiveSnapshotStoreState } from "./storeState";
@@ -35,6 +36,47 @@ export type WorkspaceActiveSnapshotControlHost = {
   enqueueStreamMessage(data: unknown): void;
   scheduleSnapshotWarning(reason: string): void;
   scheduleWorkerPatchFlush(): void;
+};
+
+const compareResumeReplay = (
+  left: Extract<SessionSubscriptionReplay, { kind: "resume" }>,
+  right: Extract<SessionSubscriptionReplay, { kind: "resume" }>,
+): number => {
+  if (left.afterSeq !== right.afterSeq) {
+    return left.afterSeq - right.afterSeq;
+  }
+  return (left.afterProjectionRev ?? 0) - (right.afterProjectionRev ?? 0);
+};
+
+const replayControlChanged = (
+  previous: SessionSubscriptionReplay,
+  next: SessionSubscriptionReplay,
+): boolean => {
+  if (previous.kind !== next.kind) {
+    return previous.kind === "reset" || next.kind === "reset";
+  }
+  if (previous.kind !== "resume" || next.kind !== "resume") {
+    return false;
+  }
+  return compareResumeReplay(next, previous) < 0;
+};
+
+const shouldFlushLiveSubscriptionUpdate = (
+  previous: SessionSubscriptionCursor[],
+  next: SessionSubscriptionCursor[],
+): boolean => {
+  if (!sameSessionSubscriptionCursorIds(previous, next)) {
+    return true;
+  }
+  for (let index = 0; index < previous.length; index += 1) {
+    const prior = previous[index];
+    const current = next[index];
+    if (!prior || !current) return true;
+    if (replayControlChanged(prior.replay, current.replay)) {
+      return true;
+    }
+  }
+  return false;
 };
 
 export function unwrapEvent(value: unknown): unknown {
@@ -121,10 +163,14 @@ export function setSubscribedSessions(
 ) {
   const deduped = normalizeSessionSubscriptionCursors(sessions);
   if (sameSessionSubscriptionCursors(deduped, host.subscribedSessions)) return;
-  const idsChanged = !sameSessionSubscriptionCursorIds(deduped, host.subscribedSessions);
+  const previous = host.subscribedSessions;
+  const idsChanged = !sameSessionSubscriptionCursorIds(deduped, previous);
   host.subscribedSessions = deduped;
   if (host.worker) {
     host.postWorkerCommand({ type: "set_subscribed_sessions", sessions: deduped });
+    return;
+  }
+  if (!shouldFlushLiveSubscriptionUpdate(previous, deduped)) {
     return;
   }
   flushSubscriptions(host, idsChanged ? "session_ids" : "session_cursors");
