@@ -57,6 +57,23 @@ if [[ "$out" != "$sig_c" ]]; then
   exit 1
 fi
 
+ansi_esc=$'\033'
+cat >"$tmp/public-signature-ansi.txt" <<EOF
+${ansi_esc}[32mYour file was signed successfully, You can find the signature here:${ansi_esc}[0m
+/tmp/ctx.app.tar.gz.sig
+
+${ansi_esc}[33mPublic signature:${ansi_esc}[0m
+${ansi_esc}[36m${sig_c}${ansi_esc}[0m
+EOF
+
+out="$(awk -f "$PARSER" "$tmp/public-signature-ansi.txt" | tr -d '\r\n')"
+if [[ "$out" != "$sig_c" ]]; then
+  echo "error: parser failed ansi-wrapped public-signature format" >&2
+  echo "expected: $sig_c" >&2
+  echo "actual:   $out" >&2
+  exit 1
+fi
+
 cat >"$tmp/no-signature.txt" <<'EOF'
 info: signing failed
 Make sure to include this into the signature field of your update server.

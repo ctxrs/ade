@@ -4,6 +4,7 @@ BEGIN {
 
 {
   line = $0
+  gsub(/\033\[[0-9;]*[[:alpha:]]/, "", line)
   gsub(/\r/, "", line)
   sub(/^[[:space:]]+/, "", line)
   sub(/[[:space:]]+$/, "", line)
