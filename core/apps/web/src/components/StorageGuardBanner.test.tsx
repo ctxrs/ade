@@ -21,6 +21,8 @@ const baseHealth = {
   auth_required: false,
   compatibility: {
     desktop_exact_version: "1.0.0",
+    desktop_build_id: "build-1",
+    desktop_dev_instance_id: "dev-instance-1",
     mobile_api_min: 1,
     mobile_api_max: 1,
   },
