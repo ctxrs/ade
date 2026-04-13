@@ -121,6 +121,7 @@ appimage_bundle_dir="core/apps/desktop/src-tauri/target/release/bundle/appimage"
 fallback_appimage_bundle_dir="core/target/release/bundle/appimage"
 
 if ! \
+  CI=true \
   CTX_DESKTOP_SYNC_BUNDLES=0 \
   CTX_BUNDLE_REMOTE_DAEMONS=0 \
   RUST_LOG=tauri_bundler=debug \
