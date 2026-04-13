@@ -57,7 +57,8 @@ RSYNC_EXCLUDES=(
   "--exclude=core/apps/web/dist"
 )
 
-rsync -a "${RSYNC_EXCLUDES[@]}" "${RUNFILES_REPO_ROOT}/" "${TMP_WORKSPACE}/"
+mkdir -p "${TMP_WORKSPACE}"
+tar -C "${RUNFILES_REPO_ROOT}" "${RSYNC_EXCLUDES[@]}" -cf - . | tar -C "${TMP_WORKSPACE}" -xf -
 link_real_workspace_dir "${REAL_WORKSPACE_ROOT}" "${TMP_WORKSPACE}" "core/node_modules"
 link_real_workspace_dir "${REAL_WORKSPACE_ROOT}" "${TMP_WORKSPACE}" "core/apps/web/node_modules"
 

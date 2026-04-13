@@ -43,6 +43,7 @@ function main() {
       "--test",
       "scripts/buildbuddy_workflow_contract.test.cjs",
       "scripts/buildbuddy_run_job_contract.test.cjs",
+      "scripts/run_workspace_task_contract.test.cjs",
       "scripts/lib/bazel_rust_targets.test.cjs",
       "scripts/lib/ctx_http_suites.test.cjs",
     ],
