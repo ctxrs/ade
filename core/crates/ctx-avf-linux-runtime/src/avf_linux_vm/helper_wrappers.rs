@@ -2,7 +2,7 @@ use super::*;
 use ctx_sandbox_container_runtime::{sandbox_container_command, SandboxCommandMode};
 
 pub fn helper_path() -> Result<PathBuf> {
-    if !cfg!(target_os = "macos") && !cfg!(test) {
+    if !cfg!(target_os = "macos") && !cfg!(any(test, feature = "test-support")) {
         bail!("AVF Linux VM runtime is only supported on macOS");
     }
     let value = std::env::var(AVF_LINUX_HELPER_PATH_ENV)

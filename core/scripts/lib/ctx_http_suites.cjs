@@ -125,6 +125,7 @@ const CTX_HTTP_SUITES = [
       "gemini_live_model_catalog",
       "live_provider_canary",
       "provider_probe_runtime_env",
+      "provider_worker_reaping_offline",
       "provider_scenarios_offline",
       "session_model_api",
       "workspace_provider_model_preferences_http",

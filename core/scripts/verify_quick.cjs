@@ -37,7 +37,17 @@ function main() {
   }
 
   run("pnpm", ["source:file-size:enforce"], env);
-  run("node", ["--test", "scripts/buildbuddy_workflow_contract.test.cjs"], env);
+  run(
+    "node",
+    [
+      "--test",
+      "scripts/buildbuddy_workflow_contract.test.cjs",
+      "scripts/buildbuddy_run_job_contract.test.cjs",
+      "scripts/lib/bazel_rust_targets.test.cjs",
+      "scripts/lib/ctx_http_suites.test.cjs",
+    ],
+    env,
+  );
   run("pnpm", ["desktop:ipc:check"], env);
   run("pnpm", ["bazel:web:any:enforce"], env);
   run("pnpm", ["bazel:web:lint"], env);

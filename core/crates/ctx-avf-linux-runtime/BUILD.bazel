@@ -64,3 +64,15 @@ rust_test(
         "@crates//:tempfile",
     ],
 )
+
+rust_test(
+    name = "helper_path_test_support",
+    crate_name = "helper_path_test_support",
+    crate_root = "tests/helper_path_test_support.rs",
+    edition = "2021",
+    srcs = ["tests/helper_path_test_support.rs"],
+    deps = [
+        ":lib_test_support",
+        "@crates//:tempfile",
+    ],
+)

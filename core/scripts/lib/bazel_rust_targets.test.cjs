@@ -42,6 +42,7 @@ test("Bazel-covered crates stay on the intended explicit Rust slice", () => {
 test("Bazel test target mapping expands per-crate tests deterministically", () => {
   assert.deepEqual(
     getBazelTestTargetsForCrates([
+      "ctx-avf-linux-runtime",
       "ctx-execution-runtime",
       "ctx-core",
       "ctx-fs",
@@ -51,6 +52,8 @@ test("Bazel test target mapping expands per-crate tests deterministically", () =
       "ctx-core",
     ]),
     [
+      "//core/crates/ctx-avf-linux-runtime:helper_path_test_support",
+      "//core/crates/ctx-avf-linux-runtime:unit_tests",
       "//core/crates/ctx-core:unit_tests",
       "//core/crates/ctx-core:workspace_payload_corpus",
       "//core/crates/ctx-execution-runtime:unit_tests",
