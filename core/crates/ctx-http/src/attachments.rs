@@ -956,12 +956,17 @@ mod tests {
         assert!(status.success(), "git command failed: {args:?}");
     }
 
+    fn init_git_repo(root: &Path) {
+        git(&["init"], root);
+        git(&["symbolic-ref", "HEAD", "refs/heads/main"], root);
+    }
+
     #[tokio::test]
     async fn resolve_common_git_dir_follows_linked_worktree_commondir() {
         let temp = tempfile::tempdir().expect("tempdir");
         let repo_root = temp.path().join("repo");
         std::fs::create_dir_all(&repo_root).expect("create repo root");
-        git(&["init", "-b", "main"], &repo_root);
+        init_git_repo(&repo_root);
         git(&["config", "user.name", "Test User"], &repo_root);
         git(&["config", "user.email", "test@example.com"], &repo_root);
         std::fs::write(repo_root.join("README.md"), "hello\n").expect("write readme");

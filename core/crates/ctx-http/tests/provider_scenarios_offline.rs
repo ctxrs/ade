@@ -42,6 +42,15 @@ impl Drop for EnvGuard {
     }
 }
 
+fn host_has_sufficient_free_space(paths: &[&std::path::Path]) -> bool {
+    let min_free_bytes = paths
+        .iter()
+        .filter_map(|path| fs2::available_space(path).ok())
+        .min()
+        .unwrap_or(u64::MAX);
+    min_free_bytes > STORAGE_GUARD_EMERGENCY_FREE_BYTES
+}
+
 async fn configure_hermetic_codex_home() -> (tempfile::TempDir, EnvGuard) {
     let codex_home = tempfile::tempdir().unwrap();
     tokio::fs::write(
@@ -315,6 +324,10 @@ async fn provider_scenarios_offline_crp_fixtures() {
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
+    if !host_has_sufficient_free_space(&[repo.path(), data_dir.path(), &std::env::temp_dir()]) {
+        eprintln!("skipping: storage guard would trip on low-disk test host");
+        return;
+    }
     let (_codex_home, _guard_codex_home) = configure_hermetic_codex_home().await;
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
@@ -406,6 +419,10 @@ async fn provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
+    if !host_has_sufficient_free_space(&[repo.path(), data_dir.path(), &std::env::temp_dir()]) {
+        eprintln!("skipping: storage guard would trip on low-disk test host");
+        return;
+    }
     let (_codex_home, _guard_codex_home) = configure_hermetic_codex_home().await;
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
@@ -499,16 +516,7 @@ async fn provider_scenarios_offline_crp_fixtures_persist_context_window_metrics(
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
-    let min_free_bytes = [
-        fs2::available_space(repo.path()).ok(),
-        fs2::available_space(data_dir.path()).ok(),
-        fs2::available_space(std::env::temp_dir()).ok(),
-    ]
-    .into_iter()
-    .flatten()
-    .min()
-    .unwrap_or(u64::MAX);
-    if min_free_bytes <= STORAGE_GUARD_EMERGENCY_FREE_BYTES {
+    if !host_has_sufficient_free_space(&[repo.path(), data_dir.path(), &std::env::temp_dir()]) {
         eprintln!("skipping: storage guard would trip on low-disk test host");
         return;
     }

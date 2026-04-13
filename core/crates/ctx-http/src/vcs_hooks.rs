@@ -580,7 +580,8 @@ mod tests {
     }
 
     fn init_git_workspace(root: &Path) -> String {
-        git(&["init", "-b", "main"], root);
+        git(&["init"], root);
+        git(&["symbolic-ref", "HEAD", "refs/heads/main"], root);
         git(&["config", "extensions.worktreeConfig", "true"], root);
         git(&["config", "user.email", "ctx@example.com"], root);
         git(&["config", "user.name", "Ctx Test"], root);

@@ -29,7 +29,8 @@ fn git(args: &[&str], cwd: &Path) {
 }
 
 fn init_git_workspace(root: &Path) {
-    git(&["init", "-b", "main"], root);
+    git(&["init"], root);
+    git(&["symbolic-ref", "HEAD", "refs/heads/main"], root);
     git(&["config", "user.email", "ctx@example.com"], root);
     git(&["config", "user.name", "Ctx Test"], root);
     std::fs::write(root.join("README.md"), "hello\n").expect("write readme");
