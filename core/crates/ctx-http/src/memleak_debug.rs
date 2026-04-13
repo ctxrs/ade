@@ -447,23 +447,92 @@ fn read_thread_count() -> u32 {
     0
 }
 
-#[cfg(target_env = "gnu")]
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn read_glibc_mallinfo() -> Option<GlibcMallinfo> {
-    unsafe {
-        let info = libc::mallinfo2();
-        Some(GlibcMallinfo {
-            arena: info.arena as u64,
-            ordblks: info.ordblks as u64,
-            hblks: info.hblks as u64,
-            hblkhd: info.hblkhd as u64,
-            uordblks: info.uordblks as u64,
-            fordblks: info.fordblks as u64,
-            keepcost: info.keepcost as u64,
-        })
+    let symbol_name = b"mallinfo2\0";
+    let symbol = unsafe { libc::dlsym(libc::RTLD_DEFAULT, symbol_name.as_ptr().cast()) };
+    mallinfo_from_symbol(symbol)
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn read_glibc_mallinfo() -> Option<GlibcMallinfo> {
+    None
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+type Mallinfo2Fn = unsafe extern "C" fn() -> libc::mallinfo2;
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn mallinfo_from_symbol(symbol: *mut libc::c_void) -> Option<GlibcMallinfo> {
+    if symbol.is_null() {
+        return None;
+    }
+    let mallinfo2 = unsafe { std::mem::transmute::<*mut libc::c_void, Mallinfo2Fn>(symbol) };
+    let info = unsafe { mallinfo2() };
+    Some(glibc_mallinfo_from_mallinfo2(info))
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn glibc_mallinfo_from_mallinfo2(info: libc::mallinfo2) -> GlibcMallinfo {
+    GlibcMallinfo {
+        arena: info.arena as u64,
+        ordblks: info.ordblks as u64,
+        hblks: info.hblks as u64,
+        hblkhd: info.hblkhd as u64,
+        uordblks: info.uordblks as u64,
+        fordblks: info.fordblks as u64,
+        keepcost: info.keepcost as u64,
     }
 }
 
-#[cfg(not(target_env = "gnu"))]
-fn read_glibc_mallinfo() -> Option<GlibcMallinfo> {
-    None
+#[cfg(all(test, target_os = "linux", target_env = "gnu"))]
+mod tests {
+    use super::{glibc_mallinfo_from_mallinfo2, mallinfo_from_symbol};
+
+    unsafe extern "C" fn fake_mallinfo2() -> libc::mallinfo2 {
+        libc::mallinfo2 {
+            arena: 11,
+            ordblks: 12,
+            smblks: 0,
+            hblks: 13,
+            hblkhd: 14,
+            usmblks: 0,
+            fsmblks: 0,
+            uordblks: 15,
+            fordblks: 16,
+            keepcost: 17,
+        }
+    }
+
+    #[test]
+    fn glibc_mallinfo_maps_all_fields() {
+        let mapped = glibc_mallinfo_from_mallinfo2(unsafe { fake_mallinfo2() });
+
+        assert_eq!(mapped.arena, 11);
+        assert_eq!(mapped.ordblks, 12);
+        assert_eq!(mapped.hblks, 13);
+        assert_eq!(mapped.hblkhd, 14);
+        assert_eq!(mapped.uordblks, 15);
+        assert_eq!(mapped.fordblks, 16);
+        assert_eq!(mapped.keepcost, 17);
+    }
+
+    #[test]
+    fn glibc_mallinfo_returns_none_when_symbol_is_missing() {
+        assert!(mallinfo_from_symbol(std::ptr::null_mut()).is_none());
+    }
+
+    #[test]
+    fn glibc_mallinfo_reads_symbol_when_present() {
+        let symbol = fake_mallinfo2 as usize as *mut libc::c_void;
+        let mapped = mallinfo_from_symbol(symbol).expect("mallinfo2 symbol should resolve");
+
+        assert_eq!(mapped.arena, 11);
+        assert_eq!(mapped.ordblks, 12);
+        assert_eq!(mapped.hblks, 13);
+        assert_eq!(mapped.hblkhd, 14);
+        assert_eq!(mapped.uordblks, 15);
+        assert_eq!(mapped.fordblks, 16);
+        assert_eq!(mapped.keepcost, 17);
+    }
 }
