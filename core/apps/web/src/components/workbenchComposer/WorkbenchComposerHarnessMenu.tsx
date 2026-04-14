@@ -171,6 +171,9 @@ export function WorkbenchComposerHarnessMenu({
           const providerStatus = newSession.providersById[id];
           const binaryInstalled = hasInstalledHarnessBinary(providerStatus);
           const installed = isReadyVisibleHarnessProviderStatus(providerStatus);
+          const updateAvailable =
+            providerDetailFlag(providerStatus?.details, "matrix_update_available")
+            || providerDetailFlag(providerStatus?.details, "managed_dependency_update_available");
           const installSupported = providerDetailFlag(providerStatus?.details, "install_supported");
           const installUi = newSession.providerInstallsById[id];
           const installRunning =
@@ -188,7 +191,9 @@ export function WorkbenchComposerHarnessMenu({
               ? `${Math.max(0, Math.min(100, installPct ?? 0))}%`
               : installFinishing
                 ? "Finalizing…"
-                : "Install";
+                : updateAvailable
+                  ? "Update"
+                  : "Install";
           const installButtonTitle =
             !installSupported
               ? "Install not supported yet"
@@ -196,7 +201,9 @@ export function WorkbenchComposerHarnessMenu({
                 ? "Install in progress"
                 : installFinishing
                   ? "Install finishing"
-                  : "Install this harness";
+                  : updateAvailable
+                    ? "Update this harness"
+                    : "Install this harness";
           const installButtonStyle =
             installRunning
               ? ({ "--wb-install-pct": `${Math.max(0, Math.min(100, installPct ?? 0))}%` } as React.CSSProperties)
@@ -205,6 +212,9 @@ export function WorkbenchComposerHarnessMenu({
             installUi?.state === "failed" || installUi?.state === "cancelled"
               ? installErrorSummary(installUi.errorCode, installUi.error)
               : null;
+          const showInstallActions =
+            PROVIDER_INSTALLS_ENABLED
+            && (!binaryInstalled || updateAvailable || installBusy || installFailureMessage !== null);
           const checked = newSession.draftHarness?.providerId === id;
           const hasActiveAuth = hasConfiguredHarnessAuth(id, newSession.providerOptions[id]);
           const canOpenHarnessRow = installed || (binaryInstalled && !hasActiveAuth && !installBusy);
@@ -228,7 +238,7 @@ export function WorkbenchComposerHarnessMenu({
                   />
                 ) : null}
                 <span className="wb-harness-name">{label}</span>
-                {binaryInstalled ? (
+                {binaryInstalled && !showInstallActions ? (
                   <span className="wb-harness-status-lights">
                     <span
                       className={`wb-harness-auth-dot ${hasActiveAuth ? "wb-harness-auth-dot-active" : "wb-harness-auth-dot-inactive"}`}
@@ -239,7 +249,7 @@ export function WorkbenchComposerHarnessMenu({
                 ) : null}
               </button>
 
-              {!binaryInstalled && PROVIDER_INSTALLS_ENABLED ? (
+              {showInstallActions ? (
                 <div className="wb-harness-actions">
                   <button
                     type="button"

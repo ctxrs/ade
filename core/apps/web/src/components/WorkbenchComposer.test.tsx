@@ -1191,6 +1191,145 @@ describe("WorkbenchComposer textarea sizing", () => {
     expect(progressButton.className).toContain("wb-harness-install-busy");
   });
 
+  it("shows update actions for installed providers with available runtime updates", async () => {
+    const onInstallProvider = vi.fn();
+
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
+      const harnessCatalog: HarnessCatalogEntry[] = [
+        { id: "codex", label: "Codex", logoSrc: "" },
+        { id: "cursor", label: "Cursor", logoSrc: "" },
+      ];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: makeProviderStatus("codex"),
+        cursor: makeProviderStatus("cursor", {
+          details: {
+            install_supported: "true",
+            install_target: "host",
+            matrix_update_available: "true",
+          },
+        }),
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{}}
+          onInstallProvider={onInstallProvider}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={{}}
+          ensureProviderAuthSummary={async () => undefined}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
+          defaultProviderId="codex"
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const cursorRow = screen.getByText("Cursor").closest(".wb-harness-row");
+    expect(cursorRow).not.toBeNull();
+    expect(within(cursorRow as HTMLElement).queryByTitle("Authentication configured")).not.toBeInTheDocument();
+    fireEvent.click(within(cursorRow as HTMLElement).getByRole("button", { name: "Update" }));
+    expect(onInstallProvider).toHaveBeenCalledWith("cursor");
+  });
+
+  it("shows update progress for installed providers while a runtime update is running", async () => {
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
+      const harnessCatalog: HarnessCatalogEntry[] = [
+        { id: "codex", label: "Codex", logoSrc: "" },
+        { id: "cursor", label: "Cursor", logoSrc: "" },
+      ];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: makeProviderStatus("codex"),
+        cursor: makeProviderStatus("cursor", {
+          details: {
+            install_supported: "true",
+            install_target: "host",
+            matrix_update_available: "true",
+          },
+        }),
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{
+            cursor: {
+              installId: "install-cursor",
+              state: "running",
+              pct: 42,
+              target: "host",
+            },
+          }}
+          onInstallProvider={vi.fn()}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={{}}
+          ensureProviderAuthSummary={async () => undefined}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
+          defaultProviderId="codex"
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const cursorRow = screen.getByText("Cursor").closest(".wb-harness-row");
+    expect(cursorRow).not.toBeNull();
+    expect(within(cursorRow as HTMLElement).queryByTitle("Authentication configured")).not.toBeInTheDocument();
+    const progressButton = within(cursorRow as HTMLElement).getByRole("button", { name: "42%" });
+    expect(progressButton.className).toContain("wb-harness-install-busy");
+  });
+
   it("shows finalizing state instead of 100% after install success until the provider is ready", async () => {
     const NewTaskHarness = () => {
       const [value, setValue] = useState("");
