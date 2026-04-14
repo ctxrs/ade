@@ -346,6 +346,18 @@ impl WorkspaceStoreLeaseRegistry {
         };
         clear_closing_marker(&mut state, workspace_id, notify);
     }
+
+    pub(super) fn start_close(
+        self: &Arc<Self>,
+        close: PendingWorkspaceStoreClose,
+    ) {
+        spawn_store_close(
+            close.store,
+            Arc::clone(self),
+            close.workspace_id,
+            close.notify,
+        );
+    }
 }
 
 fn closing_notify(
@@ -393,16 +405,6 @@ fn spawn_store_close(
     workspace_id: WorkspaceId,
     notify: Arc<WorkspaceCloseSignal>,
 ) {
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        handle.spawn(close_store_and_finish(
-            store,
-            Arc::clone(&registry),
-            workspace_id,
-            Arc::clone(&notify),
-        ));
-        return;
-    }
-
     if let Err(err) = registry.close_executor.submit(StoreCloseJob {
         store: store.clone(),
         registry: Arc::clone(&registry),
@@ -432,7 +434,7 @@ async fn close_store_and_finish(
 mod tests {
     use super::*;
 
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     async fn open_test_store(temp: &tempfile::TempDir, name: &str) -> Store {
         let path = temp.path().join(name);
@@ -460,8 +462,7 @@ mod tests {
             "waiters must observe an in-progress immediate close"
         );
 
-        close.store.close().await;
-        registry.finish_close(workspace_id, &close.notify);
+        registry.start_close(close);
 
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -492,18 +493,14 @@ mod tests {
             });
 
             tokio::task::yield_now().await;
-            let close_started_at = Instant::now();
-            close.store.close().await;
-            let close_elapsed = close_started_at.elapsed();
-            registry.finish_close(workspace_id, &close.notify);
+            registry.start_close(close);
 
             let waiter_result = waiter.await.unwrap();
             assert!(
                 waiter_result.is_ok(),
-                "waiter should not miss the close notification (idx={idx}, closing={}, pending_close={}, close_elapsed_ms={})",
+                "waiter should not miss the close notification (idx={idx}, closing={}, pending_close={})",
                 registry.is_workspace_closing(workspace_id),
                 registry.has_pending_close_store(workspace_id),
-                close_elapsed.as_millis(),
             );
         }
     }

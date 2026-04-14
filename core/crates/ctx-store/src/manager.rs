@@ -439,8 +439,7 @@ impl StoreManager {
             stores.remove(&workspace_id);
             close
         };
-        self.close_pending_entries(store.into_iter().collect())
-            .await;
+        self.close_pending_entries(store.into_iter().collect());
     }
 
     pub async fn evict_workspace_and_wait_closed(&self, workspace_id: WorkspaceId) {
@@ -490,7 +489,7 @@ impl StoreManager {
                 .collect::<Vec<_>>();
             (evicted, closes)
         };
-        self.close_pending_entries(expired_entries).await;
+        self.close_pending_entries(expired_entries);
         evicted
     }
 
@@ -530,15 +529,13 @@ impl StoreManager {
                 (evicted, closes)
             }
         };
-        self.close_pending_entries(expired_entries).await;
+        self.close_pending_entries(expired_entries);
         evicted
     }
 
-    async fn close_pending_entries(&self, entries: Vec<leases::PendingWorkspaceStoreClose>) {
+    fn close_pending_entries(&self, entries: Vec<leases::PendingWorkspaceStoreClose>) {
         for close in entries {
-            close.store.close().await;
-            self.store_leases
-                .finish_close(close.workspace_id, &close.notify);
+            self.store_leases.start_close(close);
         }
     }
 
