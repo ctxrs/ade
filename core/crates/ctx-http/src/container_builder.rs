@@ -2,6 +2,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use ctx_harness_runtime::SandboxCommandBackend;
 use tokio::process::Command;
 
 const BUILDER_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
@@ -14,11 +15,30 @@ fn builder_platform_for_arch(arch: &str) -> Result<&'static str> {
     }
 }
 
-fn data_root_bind_mount(data_root: &Path) -> String {
+fn builder_mount_source(
+    data_root: &Path,
+    mount_path: &Path,
+    backend: SandboxCommandBackend,
+) -> String {
+    if matches!(backend, SandboxCommandBackend::SharedVmContainer) {
+        if let Some(guest_path) =
+            ctx_sandbox_contract::shared_vm_guest_host_share_path(data_root, mount_path)
+        {
+            return guest_path.to_string_lossy().to_string();
+        }
+    }
+    mount_path.to_string_lossy().to_string()
+}
+
+fn data_root_bind_mount(
+    data_root: &Path,
+    mount_path: &Path,
+    backend: SandboxCommandBackend,
+) -> String {
     format!(
         "type=bind,src={},dst={},rw",
-        data_root.to_string_lossy(),
-        data_root.to_string_lossy()
+        builder_mount_source(data_root, mount_path, backend),
+        mount_path.to_string_lossy()
     )
 }
 
@@ -39,6 +59,17 @@ fn builder_run_args(
     env: &[(String, String)],
     argv: &[String],
 ) -> Result<Vec<String>> {
+    let backend = ctx_harness_runtime::selected_sandbox_command_backend(data_root)?;
+    builder_run_args_for_backend(data_root, cwd, env, argv, backend)
+}
+
+fn builder_run_args_for_backend(
+    data_root: &Path,
+    cwd: &Path,
+    env: &[(String, String)],
+    argv: &[String],
+    backend: SandboxCommandBackend,
+) -> Result<Vec<String>> {
     let platform = builder_platform_for_arch(std::env::consts::ARCH)?;
     let mut args = vec![
         "run".to_string(),
@@ -47,7 +78,7 @@ fn builder_run_args(
         "--platform".to_string(),
         platform.to_string(),
         "--mount".to_string(),
-        data_root_bind_mount(data_root),
+        data_root_bind_mount(data_root, data_root, backend),
         "--workdir".to_string(),
         cwd.to_string_lossy().to_string(),
     ];
@@ -154,7 +185,7 @@ mod tests {
     #[test]
     fn data_root_bind_mount_uses_rw_mount() {
         let path = Path::new("/tmp/ctx-data");
-        let mount = data_root_bind_mount(path);
+        let mount = data_root_bind_mount(path, path, SandboxCommandBackend::NativeContainer);
         assert!(mount.contains("type=bind"));
         assert!(mount.contains("src=/tmp/ctx-data"));
         assert!(mount.contains("dst=/tmp/ctx-data"));
@@ -162,8 +193,22 @@ mod tests {
     }
 
     #[test]
+    fn data_root_bind_mount_uses_guest_visible_source_for_shared_vm() {
+        let data_root = Path::new("/Users/example-user/.ctx");
+        let mount = data_root_bind_mount(
+            data_root,
+            data_root,
+            SandboxCommandBackend::SharedVmContainer,
+        );
+        assert!(mount.contains("type=bind"));
+        assert!(mount.contains("src=/mnt/ctx-host"));
+        assert!(mount.contains("dst=/Users/example-user/.ctx"));
+        assert!(mount.ends_with(",rw"));
+    }
+
+    #[test]
     fn builder_run_args_puts_env_flags_before_image() {
-        let args = builder_run_args(
+        let args = builder_run_args_for_backend(
             Path::new("/tmp/ctx-data"),
             Path::new("/tmp/ctx-data/work"),
             &[("NPM_CONFIG_CACHE".to_string(), "/tmp/cache".to_string())],
@@ -172,6 +217,7 @@ mod tests {
                 "-lc".to_string(),
                 "echo ok".to_string(),
             ],
+            SandboxCommandBackend::NativeContainer,
         )
         .expect("builder args");
         let image = ctx_sandbox_container_runtime::default_container_image();
@@ -183,6 +229,28 @@ mod tests {
         assert!(
             env_flag_index < image_index,
             "--env flags must be container run options before image"
+        );
+    }
+
+    #[test]
+    fn builder_run_args_shared_vm_uses_guest_visible_mount_source() {
+        let args = builder_run_args_for_backend(
+            Path::new("/Users/example-user/.ctx"),
+            Path::new("/Users/example-user/.ctx/providers/install"),
+            &[],
+            &["/bin/sh".to_string(), "-lc".to_string(), "true".to_string()],
+            SandboxCommandBackend::SharedVmContainer,
+        )
+        .expect("builder args");
+        let rendered = args.join("\n");
+        assert!(
+            rendered.contains("--mount\ntype=bind,src=/mnt/ctx-host/")
+                && rendered.contains("dst=/Users/example-user/.ctx,rw"),
+            "shared VM builder run should mount the guest-visible host share:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("--workdir\n/Users/example-user/.ctx/providers/install"),
+            "shared VM builder run should preserve the container workdir path:\n{rendered}"
         );
     }
 

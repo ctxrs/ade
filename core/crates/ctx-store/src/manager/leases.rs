@@ -432,7 +432,7 @@ async fn close_store_and_finish(
 mod tests {
     use super::*;
 
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     async fn open_test_store(temp: &tempfile::TempDir, name: &str) -> Store {
         let path = temp.path().join(name);
@@ -492,12 +492,18 @@ mod tests {
             });
 
             tokio::task::yield_now().await;
+            let close_started_at = Instant::now();
             close.store.close().await;
+            let close_elapsed = close_started_at.elapsed();
             registry.finish_close(workspace_id, &close.notify);
 
+            let waiter_result = waiter.await.unwrap();
             assert!(
-                waiter.await.unwrap().is_ok(),
-                "waiter should not miss the close notification"
+                waiter_result.is_ok(),
+                "waiter should not miss the close notification (idx={idx}, closing={}, pending_close={}, close_elapsed_ms={})",
+                registry.is_workspace_closing(workspace_id),
+                registry.has_pending_close_store(workspace_id),
+                close_elapsed.as_millis(),
             );
         }
     }

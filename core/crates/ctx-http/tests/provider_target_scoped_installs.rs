@@ -111,16 +111,76 @@ fn write_js_entrypoint(path: &Path) {
     write_executable(path, "#!/usr/bin/env node\n// fixture runtime\n");
 }
 
-async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
-    let host_bin_rel = "providers/runtimes/runtime-node-host/bin";
-    let container_bin_rel = "providers/runtimes/runtime-node-container/bin";
-    let host_bin_dir = data_root.join(host_bin_rel);
-    let container_bin_dir = data_root.join(container_bin_rel);
-    std::fs::create_dir_all(&host_bin_dir).expect("create host bin dir");
-    std::fs::create_dir_all(&container_bin_dir).expect("create container bin dir");
-    write_fake_node_runtime(&host_bin_dir.join("node"), "host");
-    write_fake_node_runtime(&container_bin_dir.join("node"), "container");
+const SEEDED_NODE_VERSION: &str = "24.14.0";
 
+fn seeded_node_dist_target(target: InstallTarget) -> &'static str {
+    match target {
+        InstallTarget::Host => match (std::env::consts::OS, std::env::consts::ARCH) {
+            ("macos", "aarch64") => "darwin-arm64",
+            ("macos", "x86_64") => "darwin-x64",
+            ("linux", "aarch64") => "linux-arm64",
+            ("linux", "x86_64") => "linux-x64",
+            ("windows", "aarch64") => "win-arm64",
+            ("windows", "x86_64") => "win-x64",
+            other => panic!("unsupported host platform for seeded node runtime: {other:?}"),
+        },
+        InstallTarget::Container => match std::env::consts::ARCH {
+            "aarch64" => "linux-arm64",
+            "x86_64" => "linux-x64",
+            arch => panic!("unsupported container arch for seeded node runtime: {arch}"),
+        },
+        InstallTarget::LinuxAarch64 => "linux-arm64",
+        InstallTarget::LinuxX8664 => "linux-x64",
+    }
+}
+
+fn seed_managed_node_runtime_metadata(cfg: &mut AgentServerConfigFile, data_root: &Path) {
+    for (dependency_id, target, tag) in [
+        ("runtime-node-host", InstallTarget::Host, "host"),
+        ("runtime-node-container", InstallTarget::Container, "container"),
+    ] {
+        let folder = format!(
+            "node-v{SEEDED_NODE_VERSION}-{}",
+            seeded_node_dist_target(target)
+        );
+        let node_root_rel = format!("runtimes/node/{folder}");
+        let node_bin_rel = format!("{node_root_rel}/bin");
+        let node_root = data_root.join(&node_root_rel);
+        let node_bin_dir = data_root.join(&node_bin_rel);
+        let npm_cli = node_root
+            .join("lib")
+            .join("node_modules")
+            .join("npm")
+            .join("bin")
+            .join("npm-cli.js");
+        std::fs::create_dir_all(&node_bin_dir).expect("create node bin dir");
+        std::fs::create_dir_all(
+            npm_cli
+                .parent()
+                .expect("seeded npm cli should have a parent directory"),
+        )
+        .expect("create npm cli dir");
+        write_fake_node_runtime(&node_bin_dir.join("node"), tag);
+        write_js_entrypoint(&npm_cli);
+
+        cfg.managed_installs.insert(
+            dependency_id.to_string(),
+            ManagedInstallMetadata {
+                package: Some("node-runtime".to_string()),
+                version: Some(SEEDED_NODE_VERSION.to_string()),
+                artifact_fingerprint: Some(format!("runtime:node:{SEEDED_NODE_VERSION}")),
+                archive_sha256: None,
+                target: Some(target),
+                install_dir_rel: Some(node_root_rel),
+                bin_dir_rel: Some(node_bin_rel),
+                last_success_at: None,
+                last_error: None,
+            },
+        );
+    }
+}
+
+async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
     let host_install_rel = "providers/agent-servers/codex/host-fixture/bin/codex.js";
     let container_install_rel = "providers/agent-servers/codex/container-fixture/bin/codex.js";
     let host_command_path = data_root.join(host_install_rel);
@@ -133,6 +193,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
     write_js_entrypoint(&container_command_path);
 
     let mut cfg = AgentServerConfigFile::default();
+    seed_managed_node_runtime_metadata(&mut cfg, data_root);
     cfg.managed_provider_targets.insert(
         "codex".to_string(),
         HashMap::from([
@@ -145,8 +206,8 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                     managed: Some(ManagedInstallMetadata {
                         package: Some("@openai/codex".to_string()),
                         version: Some("1.0.0-host".to_string()),
-                        archive_sha256: None,
                         artifact_fingerprint: None,
+                        archive_sha256: None,
                         target: Some(ctx_provider_install::install_state::InstallTarget::Host),
                         install_dir_rel: Some(
                             "providers/agent-servers/codex/host-fixture".to_string(),
@@ -168,8 +229,8 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                     managed: Some(ManagedInstallMetadata {
                         package: Some("@openai/codex".to_string()),
                         version: Some("1.0.0-container".to_string()),
-                        archive_sha256: None,
                         artifact_fingerprint: None,
+                        archive_sha256: None,
                         target: Some(ctx_provider_install::install_state::InstallTarget::Container),
                         install_dir_rel: Some(
                             "providers/agent-servers/codex/container-fixture".to_string(),
@@ -192,8 +253,8 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                 ManagedInstallMetadata {
                     package: Some("@openai/codex".to_string()),
                     version: Some("1.0.0-host".to_string()),
-                    archive_sha256: None,
                     artifact_fingerprint: None,
+                    archive_sha256: None,
                     target: Some(ctx_provider_install::install_state::InstallTarget::Host),
                     install_dir_rel: Some("providers/agent-servers/codex/host-fixture".to_string()),
                     bin_dir_rel: Some("providers/agent-servers/codex/host-fixture/bin".to_string()),
@@ -206,8 +267,8 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                 ManagedInstallMetadata {
                     package: Some("@openai/codex".to_string()),
                     version: Some("1.0.0-container".to_string()),
-                    archive_sha256: None,
                     artifact_fingerprint: None,
+                    archive_sha256: None,
                     target: Some(ctx_provider_install::install_state::InstallTarget::Container),
                     install_dir_rel: Some(
                         "providers/agent-servers/codex/container-fixture".to_string(),
@@ -220,34 +281,6 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
                 },
             ),
         ]),
-    );
-    cfg.managed_installs.insert(
-        "runtime-node-host".to_string(),
-        ManagedInstallMetadata {
-            package: Some("node-runtime".to_string()),
-            version: Some("24.14.0".to_string()),
-            archive_sha256: None,
-            artifact_fingerprint: None,
-            target: Some(ctx_provider_install::install_state::InstallTarget::Host),
-            install_dir_rel: Some("providers/runtimes/runtime-node-host".to_string()),
-            bin_dir_rel: Some(host_bin_rel.to_string()),
-            last_success_at: None,
-            last_error: None,
-        },
-    );
-    cfg.managed_installs.insert(
-        "runtime-node-container".to_string(),
-        ManagedInstallMetadata {
-            package: Some("node-runtime".to_string()),
-            version: Some("24.14.0".to_string()),
-            archive_sha256: None,
-            artifact_fingerprint: None,
-            target: Some(ctx_provider_install::install_state::InstallTarget::Container),
-            install_dir_rel: Some("providers/runtimes/runtime-node-container".to_string()),
-            bin_dir_rel: Some(container_bin_rel.to_string()),
-            last_success_at: None,
-            last_error: None,
-        },
     );
     save_agent_server_config(data_root, &cfg)
         .await
@@ -374,13 +407,13 @@ fn fixture_download_url(server: &common::TestServer, name: &str) -> String {
     format!("{}/{}", server.base_url, name)
 }
 
-fn local_archive_entry(url: String) -> ProviderArchiveTarget {
+fn local_archive_entry_with_bin_path(url: String, bin_path: &str) -> ProviderArchiveTarget {
     ProviderArchiveTarget {
         url,
         sha256: None,
         size_bytes: None,
         archive: ProviderArchiveKind::None,
-        bin_path: "bin/runtime".to_string(),
+        bin_path: bin_path.to_string(),
     }
 }
 
@@ -399,16 +432,29 @@ async fn save_matrix_fixture(data_root: &Path, matrix: &ProviderMatrix) {
 }
 
 fn archive_targets(url: String) -> HashMap<String, ProviderArchiveTarget> {
+    archive_targets_with_bin_path(url, "bin/runtime")
+}
+
+fn archive_targets_with_bin_path(
+    url: String,
+    bin_path: &str,
+) -> HashMap<String, ProviderArchiveTarget> {
     let mut targets = HashMap::from([
         (
             "linux-aarch64".to_string(),
-            local_archive_entry(url.clone()),
+            local_archive_entry_with_bin_path(url.clone(), bin_path),
         ),
-        ("linux-x86_64".to_string(), local_archive_entry(url.clone())),
+        (
+            "linux-x86_64".to_string(),
+            local_archive_entry_with_bin_path(url.clone(), bin_path),
+        ),
     ]);
     if let Ok(host_target_key) = ctx_http::installer::resolve_matrix_target_key(InstallTarget::Host)
     {
-        targets.insert(host_target_key.to_string(), local_archive_entry(url));
+        targets.insert(
+            host_target_key.to_string(),
+            local_archive_entry_with_bin_path(url, bin_path),
+        );
     }
     targets
 }
@@ -520,11 +566,52 @@ fn provider_fixture_matrix(bridge_url: String, provider_url: String) -> Provider
     provider_fixture_matrix_with_providers(bridge_url, vec![("kimi", provider_url)])
 }
 
+fn archive_js_harness_fixture_entry(
+    provider_id: &str,
+    version: &str,
+    provider_url: String,
+    bin_path: &str,
+    upstream_version: Option<&str>,
+) -> ProviderMatrixEntry {
+    ProviderMatrixEntry {
+        id: provider_id.to_string(),
+        kind: ProviderMatrixEntryKind::Harness,
+        display_name: Some(provider_id.to_string()),
+        tier: Some("tier2".to_string()),
+        command: None,
+        managed_install: Some(ProviderInstall::Archive {
+            version: version.to_string(),
+            args: Vec::new(),
+            targets: archive_targets_with_bin_path(provider_url, bin_path),
+        }),
+        provider_dependencies: Vec::new(),
+        dependencies: Vec::new(),
+        version_probe: None,
+        releases: vec![ProviderRelease {
+            version: version.to_string(),
+            status: ProviderReleaseStatus::Supported,
+            upstream_version: upstream_version.map(str::to_string),
+            provenance: None,
+            context_min: None,
+            context_max: None,
+            notes: None,
+        }],
+    }
+}
+
 async fn wait_for_install_completion(
     state: &Arc<AppState>,
     install_id: InstallId,
 ) -> ctx_provider_install::install_state::InstallInfo {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    wait_for_install_completion_with_timeout(state, install_id, Duration::from_secs(15)).await
+}
+
+async fn wait_for_install_completion_with_timeout(
+    state: &Arc<AppState>,
+    install_id: InstallId,
+    timeout: Duration,
+) -> ctx_provider_install::install_state::InstallInfo {
+    let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let info = state
             .get_install_info(install_id)
@@ -703,8 +790,8 @@ async fn save_invalid_container_bridge_runtime(data_root: &Path) {
                 managed: Some(ManagedInstallMetadata {
                     package: Some("acp-crp-bridge".to_string()),
                     version: Some("1.0.0".to_string()),
-                    archive_sha256: None,
                     artifact_fingerprint: None,
+                    archive_sha256: None,
                     target: Some(ctx_provider_install::install_state::InstallTarget::Container),
                     install_dir_rel: Some(
                         "providers/agent-servers/acp-crp-bridge/invalid".to_string(),
@@ -1247,6 +1334,149 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_and_
                 .and_then(serde_json::Value::as_bool),
             Some(true),
             "{provider_id} should be installed by the same bulk repair batch: {provider_body:#?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn provider_target_scoped_installs_install_all_container_js_archive_harnesses_stay_current_after_success(
+) {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let fixture_dir = data_dir.path().join("fixtures");
+    std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
+    let amp_fixture = fixture_dir.join("amp-acp.js");
+    let pi_fixture = fixture_dir.join("pi-acp.js");
+    write_js_entrypoint(&amp_fixture);
+    write_js_entrypoint(&pi_fixture);
+    save_matrix_fixture(
+        data_dir.path(),
+        &ProviderMatrix {
+            version: 2,
+            generated_at: None,
+            providers: vec![
+                archive_js_harness_fixture_entry(
+                    "amp",
+                    "0.1.2",
+                    file_url(&amp_fixture),
+                    "dist/bin/amp-acp.js",
+                    Some("0.1.0-fixture"),
+                ),
+                archive_js_harness_fixture_entry(
+                    "pi",
+                    "0.1.1",
+                    file_url(&pi_fixture),
+                    "dist/bin/pi-acp.js",
+                    Some("0.56.3"),
+                ),
+            ],
+        },
+    )
+    .await;
+    let mut cfg = load_agent_server_config(data_dir.path())
+        .await
+        .unwrap_or_default();
+    seed_managed_node_runtime_metadata(&mut cfg, data_dir.path());
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save seeded node runtimes");
+
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        "/api/providers/install_all?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(
+        install_status,
+        StatusCode::OK,
+        "bulk install should start successfully for JS archive harnesses: {install_body:#?}"
+    );
+    let install_ids = parse_install_ids(&install_body);
+    for provider_id in ["amp", "pi"] {
+        let install_id = *install_ids
+            .get(provider_id)
+            .expect("missing install id from bulk response");
+        let install_info =
+            wait_for_install_completion_with_timeout(&state, install_id, Duration::from_secs(45))
+                .await;
+        assert!(
+            matches!(install_info.state, InstallStateKind::Succeeded),
+            "{provider_id} install should succeed: {install_info:#?}"
+        );
+    }
+
+    let reloaded_stores = common::setup_store(data_dir.path()).await;
+    let reloaded_state = common::build_state(
+        data_dir.path().to_path_buf(),
+        reloaded_stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let reloaded_app = common::router(reloaded_state);
+
+    for (provider_id, expected_version) in [("amp", "0.1.2"), ("pi", "0.1.1")] {
+        let (provider_status, provider_body): (StatusCode, serde_json::Value) =
+            common::json_request(
+                &reloaded_app,
+                axum::http::Method::GET,
+                format!("/api/providers/{provider_id}?target=container"),
+                None,
+            )
+            .await;
+        assert_eq!(
+            provider_status,
+            StatusCode::OK,
+            "provider status failed after successful install_all for {provider_id}: {provider_body:#?}"
+        );
+        assert_eq!(
+            provider_body
+                .get("installed")
+                .and_then(serde_json::Value::as_bool),
+            Some(true),
+            "{provider_id} should stay installed after install_all: {provider_body:#?}"
+        );
+        assert_eq!(
+            provider_body
+                .get("version")
+                .and_then(serde_json::Value::as_str),
+            Some(expected_version),
+            "{provider_id} should report the installed managed version after install_all: {provider_body:#?}"
+        );
+        assert_eq!(
+            provider_body
+                .pointer("/details/managed_target")
+                .and_then(serde_json::Value::as_str),
+            Some("container"),
+            "{provider_id} should remain target-scoped to container: {provider_body:#?}"
+        );
+        assert_eq!(
+            provider_body
+                .pointer("/details/ready_for_use")
+                .and_then(serde_json::Value::as_str),
+            Some("true"),
+            "{provider_id} should remain ready after install_all: {provider_body:#?}"
+        );
+        assert!(
+            provider_body
+                .pointer("/details/managed_dependency_update_available")
+                .is_none(),
+            "{provider_id} should not claim a dependency update is still needed after a successful install: {provider_body:#?}"
+        );
+        assert!(
+            provider_body
+                .pointer("/details/matrix_update_available")
+                .is_none(),
+            "{provider_id} should not revert to Update after a successful install: {provider_body:#?}"
         );
     }
 }

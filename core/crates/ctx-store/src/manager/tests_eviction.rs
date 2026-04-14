@@ -304,7 +304,7 @@ async fn delete_barrier_blocks_pending_close_reactivation() -> Result<()> {
     manager.finish_workspace_delete(workspace.id).await;
     drop(store);
     tokio::time::timeout(
-        Duration::from_secs(5),
+        Duration::from_secs(1),
         manager.store_leases.wait_for_workspace_close(workspace.id),
     )
     .await

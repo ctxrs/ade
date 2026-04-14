@@ -86,8 +86,8 @@ import {
 import {
   clearSessionMarkdownMeasurementCaches,
   measureSessionMarkdownDocument,
-  measureSessionPlainTextBlockHeight,
 } from "./sessionMarkdownMeasurement";
+import { measureSessionPlainTextBlockHeight } from "./sessionPlainTextMeasurement";
 import {
   SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY,
   SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX,
