@@ -64,6 +64,7 @@ import {
   consumeSessionThreadDomMeasurementFallbackItemIds,
 } from "./sessionThread/sessionThreadDomMeasurement";
 import { noteSessionTranscriptWarmViewport } from "./sessionThread/sessionTranscriptWarmState";
+import { usePretextTranscriptScrollbar } from "./sessionThread/usePretextTranscriptScrollbar";
 
 type SessionThreadPretextVirtualizerListProps = {
   style: CSSProperties;
@@ -179,6 +180,23 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     return preparedState.snapshot;
   });
   snapshotRef.current = snapshot;
+  const {
+    scrollbarActive,
+    scrollbarDragging,
+    scrollbarNeeded,
+    scrollbarThumbRef,
+    scrollbarTrackRef,
+    handleScrollbarMouseLeave,
+    handleScrollbarThumbPointerDown,
+    handleScrollbarThumbPointerMove,
+    handleScrollbarThumbPointerUp,
+    handleScrollbarTrackPointerDown,
+    scheduleScrollbarUpdate,
+    showScrollbarTemporarily,
+  } = usePretextTranscriptScrollbar({
+    containerRef,
+    followBottomRef,
+  });
 
   const emitRenderedData = useCallback((nextSnapshot: PretextVirtualizerSnapshot<WorkbenchListItem>) => {
     onRenderedDataChangeRef.current?.(
@@ -218,7 +236,8 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
       bottomOffset: bottomOffsetPx,
     });
     emitRenderedData(nextSnapshot);
-  }, [emitRenderedData]);
+    scheduleScrollbarUpdate();
+  }, [emitRenderedData, scheduleScrollbarUpdate]);
 
   const applySnapshotToDom = useCallback(
     (
@@ -650,6 +669,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
       if (!sizeChanged) return;
       lastWidth = nextWidth;
       lastHeight = nextHeight;
+      scheduleScrollbarUpdate();
       const previousSnapshot = snapshotRef.current;
       if (!previousSnapshot) return;
       const shouldRestoreBottom = shouldRestoreBottomOnViewportResize(
@@ -709,7 +729,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
         cancelAnimationFrame(resizeFrameId);
       }
     };
-  }, [applySnapshotToDom, core, syncFromDom]);
+  }, [applySnapshotToDom, core, scheduleScrollbarUpdate, syncFromDom]);
 
   useLayoutEffect(() => {
     const scroller = containerRef.current;
@@ -775,6 +795,9 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
         pendingProgrammaticBehaviorRef.current = "auto";
       }
     }
+    if (Math.abs(currentScrollTop - previousScrollTop) > 0.5 && !programmaticScroll) {
+      showScrollbarTemporarily();
+    }
     lastScrollTopRef.current = currentScrollTop;
     const nextSnapshot = core.syncViewport({
       height: scroller.clientHeight,
@@ -797,13 +820,14 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     commitRuntimeSnapshot(nextSnapshot);
     setSnapshot(nextSnapshot);
     emitScrollState(nextSnapshot);
-  }, [commitRuntimeSnapshot, core, emitScrollState]);
+  }, [commitRuntimeSnapshot, core, emitScrollState, showScrollbarTemporarily]);
 
   const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if (event.deltaY < 0) {
       followBottomRef.current = false;
     }
-  }, []);
+    showScrollbarTemporarily();
+  }, [showScrollbarTemporarily]);
 
   const noteInteractionItem = useCallback((target: EventTarget | null) => {
     if (!(target instanceof Element)) return;
@@ -861,6 +885,10 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     };
   }, [methodsRef, pretextVirtualizerMethods]);
 
+  useLayoutEffect(() => {
+    scheduleScrollbarUpdate();
+  }, [scheduleScrollbarUpdate, snapshot.scrollTop, snapshot.totalHeight, snapshot.viewportHeight]);
+
   const bottomOffsetPx = Math.max(0, snapshot.totalHeight - (snapshot.scrollTop + snapshot.viewportHeight));
   const shortThreadOffsetPx =
     shortSizeAlign === "bottom" && snapshot.totalHeight < snapshot.viewportHeight
@@ -873,6 +901,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     <div
       className="wb-pretext-transcript-shell wb-thread-stack wb-thread-scroller--message-list"
       style={{ position: "relative", minWidth: 0 }}
+      onMouseLeave={handleScrollbarMouseLeave}
     >
       <div
         ref={containerRef}
@@ -936,6 +965,35 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
               </div>
             </div>
           );})}
+        </div>
+      </div>
+      <div
+        className={`wb-scrollbar${scrollbarActive ? " is-active" : ""}${scrollbarDragging ? " is-dragging" : ""}${scrollbarNeeded ? "" : " is-hidden"}`}
+        aria-hidden="true"
+      >
+        <div
+          className="wb-scrollbar-track"
+          ref={(node) => {
+            scrollbarTrackRef.current = node;
+            if (node) {
+              scheduleScrollbarUpdate();
+            }
+          }}
+          onPointerDown={handleScrollbarTrackPointerDown}
+        >
+          <div
+            className="wb-scrollbar-thumb"
+            ref={(node) => {
+              scrollbarThumbRef.current = node;
+              if (node) {
+                scheduleScrollbarUpdate();
+              }
+            }}
+            onPointerDown={handleScrollbarThumbPointerDown}
+            onPointerMove={handleScrollbarThumbPointerMove}
+            onPointerUp={handleScrollbarThumbPointerUp}
+            onPointerCancel={handleScrollbarThumbPointerUp}
+          />
         </div>
       </div>
       {showJumpToLatest && bottomOffsetPx > JUMP_TO_LATEST_THRESHOLD_PX ? (

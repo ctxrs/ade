@@ -171,6 +171,25 @@ function defineScrollerMetrics(scroller: HTMLElement, metrics: { clientHeight: n
   Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: metrics.scrollHeight, writable: true });
 }
 
+function defineTrackMetrics(track: HTMLElement, metrics: { clientHeight: number; top?: number }) {
+  Object.defineProperty(track, "clientHeight", { configurable: true, value: metrics.clientHeight });
+  Object.defineProperty(track, "getBoundingClientRect", {
+    configurable: true,
+    value: () =>
+      ({
+        top: metrics.top ?? 0,
+        left: 0,
+        right: 0,
+        bottom: (metrics.top ?? 0) + metrics.clientHeight,
+        width: 6,
+        height: metrics.clientHeight,
+        x: 0,
+        y: metrics.top ?? 0,
+        toJSON: () => undefined,
+      }) satisfies DOMRect,
+  });
+}
+
 function getRenderedItemIds(container: HTMLElement): string[] {
   return Array.from(
     container.querySelectorAll<HTMLElement>("[data-pretext-virtualizer-row='1'][data-pretext-virtualizer-item-id]"),
@@ -252,6 +271,78 @@ describe("SessionThreadPretextVirtualizerList", () => {
     });
 
     expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
+  });
+
+  it("restores the custom scrollbar when the transcript overflows", () => {
+    const { container } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId="session-1"
+        isActive
+        listItems={makeItems(20)}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    const track = container.querySelector<HTMLElement>(".wb-scrollbar-track");
+    const scrollbar = container.querySelector<HTMLElement>(".wb-scrollbar");
+    const thumb = container.querySelector<HTMLElement>(".wb-scrollbar-thumb");
+    if (!scroller || !track || !scrollbar || !thumb) {
+      throw new Error("Expected transcript scrollbar elements");
+    }
+
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 1400 });
+    defineTrackMetrics(track, { clientHeight: 300, top: 0 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+      fireEvent.wheel(scroller, { deltaY: 120 });
+      scroller.scrollTop = 420;
+      fireEvent.scroll(scroller);
+    });
+
+    expect(scrollbar.classList.contains("is-hidden")).toBe(false);
+    expect(scrollbar.classList.contains("is-active")).toBe(true);
+    expect(thumb.style.height).not.toBe("");
+    expect(thumb.style.transform).toContain("translateY");
+  });
+
+  it("scrolls when clicking the restored scrollbar track", () => {
+    const { container } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId="session-1"
+        isActive
+        listItems={makeItems(20)}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    const track = container.querySelector<HTMLElement>(".wb-scrollbar-track");
+    if (!scroller || !track) {
+      throw new Error("Expected transcript scrollbar elements");
+    }
+
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 1400 });
+    defineTrackMetrics(track, { clientHeight: 300, top: 0 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+    });
+
+    act(() => {
+      fireEvent.pointerDown(track, { button: 0, clientY: 150 });
+    });
+
+    expect(scroller.scrollTop).toBeGreaterThan(0);
   });
 
   it("does not snap back to bottom after appending while detached", () => {

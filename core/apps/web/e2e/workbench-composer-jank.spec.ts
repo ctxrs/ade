@@ -95,6 +95,26 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
   await expect
     .poll(async () => scroller.evaluate((el) => el.scrollHeight - el.clientHeight), { timeout: 20000 })
     .toBeGreaterThan(80);
+  const scrollbarMetrics = await page.evaluate(() => {
+    const scroller = document.querySelector(
+      ".wb-session-slot[aria-hidden=\"false\"] .wb-thread-scroller",
+    ) as HTMLElement | null;
+    const scrollbar = document.querySelector(
+      ".wb-session-slot[aria-hidden=\"false\"] .wb-scrollbar",
+    ) as HTMLElement | null;
+    if (!scroller || !scrollbar) return null;
+    const scrollerRect = scroller.getBoundingClientRect();
+    const scrollbarRect = scrollbar.getBoundingClientRect();
+    return {
+      hidden: scrollbar.classList.contains("is-hidden"),
+      rightGapPx: Math.abs(scrollerRect.right - scrollbarRect.right),
+    };
+  });
+  expect(scrollbarMetrics).not.toBeNull();
+  if (scrollbarMetrics) {
+    expect(scrollbarMetrics.hidden).toBe(false);
+    expect(scrollbarMetrics.rightGapPx).toBeLessThanOrEqual(4);
+  }
 
   await scroller.evaluate((el) => {
     el.scrollTop = el.scrollHeight;
