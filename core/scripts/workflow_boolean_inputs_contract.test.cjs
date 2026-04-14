@@ -289,6 +289,10 @@ test("release supabase runs a shipped-app first-run workspace gate on the Mac mi
   );
   assert.match(
     block,
+    /name:\s+Install AVF runtime prep toolchain \(first run\)[\s\S]*command -v zig[\s\S]*brew install zig[\s\S]*command -v qemu-img[\s\S]*brew install qemu[\s\S]*command -v cargo-zigbuild[\s\S]*cargo install cargo-zigbuild --locked/s,
+  );
+  assert.match(
+    block,
     /name:\s+Validate CN_API_KEY secret \(mac first run\)[\s\S]*missing required GitHub secret CN_API_KEY for shipped-app macOS first-run smoke/s,
   );
   assert.match(
