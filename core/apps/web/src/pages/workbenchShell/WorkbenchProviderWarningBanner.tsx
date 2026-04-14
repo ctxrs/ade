@@ -26,7 +26,6 @@ type WarningProvider = {
 export type WorkbenchProviderWarning = {
   signature: string;
   title: string;
-  subtitle: string;
   providers: WarningProvider[];
   installableProviderIds: string[];
 };
@@ -103,12 +102,7 @@ export const buildWorkbenchProviderWarning = (
 
   return {
     signature,
-    title: requiresAppUpdate
-      ? "Provider runtimes are not supported by this ctx build."
-      : "Provider runtimes need an update.",
-    subtitle: requiresAppUpdate
-      ? "At least one installed runtime is pinned to a newer ctx build. Review the affected runtimes below."
-      : "Update the pinned runtimes below or open settings for more detail.",
+    title: `${flagged.length} provider runtime${flagged.length === 1 ? "" : "s"} need${flagged.length === 1 ? "s" : ""} an update.`,
     providers: flagged,
     installableProviderIds,
   };
@@ -145,74 +139,53 @@ export function WorkbenchProviderWarningBanner({
   };
 
   const handleUpdateAll = async () => {
+    dismiss();
     try {
       await onUpdateProviders(warning.installableProviderIds);
-      dismiss();
     } catch {
-      // The workbench already surfaces install errors. Keep the modal open on failure.
+      // The workbench already surfaces install errors independently.
     }
   };
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="wb-provider-warning-title">
-      <div className="modal wb-provider-warning-modal" onClick={(event) => event.stopPropagation()} data-testid="workbench-provider-warning">
-        <div className="wb-provider-warning-header">
-          <div className="wb-provider-warning-heading">
-            <div className="wb-provider-warning-title" id="wb-provider-warning-title">{warning.title}</div>
-            <div className="wb-provider-warning-copy">{warning.subtitle}</div>
-          </div>
+    <div
+      className="wb-snackbar wb-provider-warning-snackbar"
+      role="status"
+      aria-live="polite"
+      aria-labelledby="wb-provider-warning-title"
+      data-testid="workbench-provider-warning"
+    >
+      <div className="wb-provider-warning-header">
+        <div className="wb-snackbar-title" id="wb-provider-warning-title">{warning.title}</div>
+        <button
+          type="button"
+          className="wb-snackbar-close"
+          onClick={dismiss}
+          aria-label="Dismiss"
+        >
+          <X size={16} aria-hidden="true" />
+        </button>
+      </div>
+      <div className="wb-snackbar-actions wb-provider-warning-actions">
+        {warning.installableProviderIds.length > 0 ? (
           <button
             type="button"
-            className="settings-harness-modal-close"
-            onClick={dismiss}
-            aria-label="Dismiss"
+            className="wb-snackbar-btn"
+            onClick={() => {
+              void handleUpdateAll();
+            }}
+            disabled={updateAllBusy}
           >
-            <X size={16} aria-hidden="true" />
+            {updateAllBusy ? "Updating…" : "Update All"}
           </button>
-        </div>
-        <div className="wb-provider-warning-list">
-          {warning.providers.map((provider) => {
-            const installed = provider.installedVersion ?? "unknown";
-            const recommended = provider.recommendedVersion ?? "pinned runtime";
-            return (
-              <div key={provider.providerId} className="wb-provider-warning-item">
-                <div className="wb-provider-warning-item-row">
-                  <div className="wb-provider-warning-item-title">{provider.label}</div>
-                  {provider.installSupported ? (
-                    <div className="wb-provider-warning-item-pill">Managed update</div>
-                  ) : null}
-                </div>
-                <div className="wb-provider-warning-item-meta">
-                  Installed {installed} · Expected {recommended}
-                </div>
-                {provider.reason ? (
-                  <div className="wb-provider-warning-item-reason">{provider.reason}</div>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-        <div className="modal-actions wb-provider-warning-actions">
-          {warning.installableProviderIds.length > 0 ? (
-            <button
-              type="button"
-              className="wb-snackbar-btn"
-              onClick={() => {
-                void handleUpdateAll();
-              }}
-              disabled={updateAllBusy}
-            >
-              {updateAllBusy ? "Updating…" : "Update All"}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="wb-snackbar-btn wb-snackbar-btn-secondary"
-            onClick={handleOpenSettings}
-          >
-            Open Settings
-          </button>
-        </div>
+        ) : null}
+        <button
+          type="button"
+          className="wb-snackbar-btn wb-snackbar-btn-secondary"
+          onClick={handleOpenSettings}
+        >
+          Open Settings
+        </button>
       </div>
     </div>
   );

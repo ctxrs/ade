@@ -39,7 +39,7 @@ describe("WorkbenchProviderWarningBanner", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("updates the flagged runtimes and dismisses the modal on success", async () => {
+  it("updates the flagged runtimes and dismisses the notice on success", async () => {
     const onUpdateProviders = vi.fn().mockResolvedValue(undefined);
     const onOpenSettings = vi.fn();
 
@@ -62,7 +62,8 @@ describe("WorkbenchProviderWarningBanner", () => {
     );
 
     expect(screen.getByTestId("workbench-provider-warning")).toBeInTheDocument();
-    expect(screen.getByText("Codex")).toBeInTheDocument();
+    expect(screen.getByText("1 provider runtime needs an update.")).toBeInTheDocument();
+    expect(screen.queryByText("Codex")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Update All" }));
     expect(onUpdateProviders).toHaveBeenCalledWith(["codex"]);
@@ -71,6 +72,33 @@ describe("WorkbenchProviderWarningBanner", () => {
       expect(screen.queryByTestId("workbench-provider-warning")).not.toBeInTheDocument();
     });
     expect(onOpenSettings).not.toHaveBeenCalled();
+  });
+
+  it("dismisses immediately when update all is pressed even if the update fails", async () => {
+    const onUpdateProviders = vi.fn().mockRejectedValue(new Error("update failed"));
+
+    render(
+      <WorkbenchProviderWarningBanner
+        workspaceId="ws-1"
+        providersById={{
+          codex: providerStatus("codex", {
+            details: {
+              install_supported: "true",
+              matrix_update_available: "true",
+            },
+          }),
+        }}
+        onUpdateProviders={onUpdateProviders}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Update All" }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("workbench-provider-warning")).not.toBeInTheDocument();
+    });
+    expect(onUpdateProviders).toHaveBeenCalledWith(["codex"]);
   });
 
   it("dismisses before opening settings and keeps the dismissal for the same warning signature", async () => {
@@ -98,6 +126,7 @@ describe("WorkbenchProviderWarningBanner", () => {
     );
 
     expect(screen.getByRole("button", { name: "Update All" })).toBeInTheDocument();
+    expect(screen.getByText("2 provider runtimes need an update.")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Open Settings" }));
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
@@ -188,5 +217,6 @@ describe("WorkbenchProviderWarningBanner", () => {
 
     expect(screen.queryByRole("button", { name: "Update All" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open Settings" })).toBeInTheDocument();
+    expect(screen.getByText("1 provider runtime needs an update.")).toBeInTheDocument();
   });
 });
