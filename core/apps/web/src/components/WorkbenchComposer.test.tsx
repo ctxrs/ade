@@ -3,8 +3,10 @@ import { useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkbenchComposer } from "./WorkbenchComposer";
 import type { MessageAttachment, ProviderOptions, ProviderStatus } from "../api/client";
-import type { DraftHarness, WorkbenchModeId } from "./WorkbenchComposer";
+import type { DraftHarness, WorkbenchComposerProps, WorkbenchModeId } from "./WorkbenchComposer";
 import type { HarnessCatalogEntry } from "../utils/harnessCatalog";
+
+type NewSessionProps = Extract<WorkbenchComposerProps, { variant: "newSession" }>;
 
 const { trackFeatureUsedMock, trackProviderSelectedMock } = vi.hoisted(() => ({
   trackFeatureUsedMock: vi.fn(),

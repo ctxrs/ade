@@ -4,6 +4,7 @@ import {
   prepare,
   prepareWithSegments,
   type LayoutCursor,
+  type LayoutLine,
   type PreparedText,
   type PreparedTextWithSegments,
 } from "@chenglou/pretext";
@@ -510,7 +511,7 @@ function measureCollapsedPlainTextLineHeight(params: {
   let remainderFragments: string[] | null = null;
 
   while (wordIndex < words.length || remainder != null) {
-    const word = remainder ?? words[wordIndex]!;
+    const word: string = remainder ?? words[wordIndex]!;
     const wordFragments = remainderFragments ?? splitPlainTextWrapFragments(word);
     const usesDelimitedWrapping = wordFragments.length > 1;
     const wordWidth = measureSingleLineTextWidth({
@@ -567,9 +568,10 @@ function measureCollapsedPlainTextLineHeight(params: {
           remainingWidth = Math.max(0, availableWidth - snappedPrefixWidth);
           lineHasContent = true;
           appendDebugText(snappedPrefixText, true);
-          remainder = word.slice(snappedPrefixText.length);
-          remainder = remainder.length > 0 ? remainder : null;
-          remainderFragments = remainder != null ? splitPlainTextWrapFragments(remainder) : null;
+          const nextRemainder = word.slice(snappedPrefixText.length);
+          remainder = nextRemainder.length > 0 ? nextRemainder : null;
+          remainderFragments =
+            nextRemainder.length > 0 ? splitPlainTextWrapFragments(nextRemainder) : null;
           if (remainder == null) {
             wordIndex += 1;
           }
@@ -1651,7 +1653,7 @@ function measureInlineRunsHeight(params: {
           ? INLINE_CODE_WHOLE_GROUP_FIT_SLACK_PX
           : 0;
       const currentLineFitSlackPx = Math.max(currentLineStartSlackPx, currentLineWhitespaceContinuationSlackPx);
-      const startCursor = cursor ?? LINE_START_CURSOR;
+      const startCursor: LayoutCursor = cursor ?? LINE_START_CURSOR;
 
       const preferredStartWidth = preferredCodeGroupStartWidths.get(itemIndex) ?? 0;
       const dottedPathClusterWidth = dottedPathCodeGroupStartClusterWidths.get(itemIndex) ?? 0;
@@ -1854,7 +1856,7 @@ function measureInlineRunsHeight(params: {
           ? INLINE_CODE_WHOLE_GROUP_FIT_SLACK_PX
           : 0;
       const availableWidth = Math.max(1, remainingWidth - reservedWidth);
-      const styledStartLine =
+      const styledStartLine: LayoutLine | null =
         codeGroupId == null &&
         lineHasContent &&
         cursor === null &&
@@ -1911,7 +1913,8 @@ function measureInlineRunsHeight(params: {
         itemIndex += 1;
         continue;
       }
-      const line = styledStartLine ?? layoutNextLine(item.prepared, startCursor, availableWidth);
+      const line: LayoutLine | null =
+        styledStartLine ?? layoutNextLine(item.prepared, startCursor, availableWidth);
       if (line == null || cursorsMatch(startCursor, line.end)) {
         if (!lineHasContent) {
           itemIndex += 1;
@@ -1979,20 +1982,27 @@ function measureInlineRunsHeight(params: {
     inlineCodeDebugWindow.__ctxInlineCodeDebug = {
       lines: debugLines,
       startDecisions: debugStartDecisions,
-      items: items.map((item) =>
-        item.kind === "segment"
-          ? {
-              kind: item.kind,
-              text: item.text,
-              chromeWidth: item.chromeWidth,
-              fullWidth: item.fullWidth,
-              minStartTextWidth: item.minStartTextWidth,
-            }
-          : {
-              kind: item.kind,
-              text: item.text,
-            },
-      ),
+      items: items.map((item) => {
+        if (item.kind === "segment") {
+          return {
+            kind: item.kind,
+            text: item.text,
+            chromeWidth: item.chromeWidth,
+            fullWidth: item.fullWidth,
+            minStartTextWidth: item.minStartTextWidth,
+          };
+        }
+        if (item.kind === "space") {
+          return {
+            kind: item.kind,
+            text: item.text,
+          };
+        }
+        return {
+          kind: item.kind,
+          text: "",
+        };
+      }),
       width: params.width,
     };
   }
