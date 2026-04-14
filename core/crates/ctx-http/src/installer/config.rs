@@ -164,23 +164,29 @@ pub fn managed_install_metadata_for_target<'a>(
         })
 }
 
+pub fn managed_provider_install_metadata_for_target<'a>(
+    cfg: &'a AgentServerConfigFile,
+    provider_id: &str,
+    requested_target: Option<InstallTarget>,
+) -> Option<&'a ManagedInstallMetadata> {
+    target_bucket_lookup(&cfg.managed_install_targets, provider_id, requested_target)
+}
+
+pub fn managed_dependency_install_metadata_for_target<'a>(
+    cfg: &'a AgentServerConfigFile,
+    dependency_id: &str,
+    requested_target: Option<InstallTarget>,
+) -> Option<&'a ManagedInstallMetadata> {
+    let dependency_target = targeting::managed_dependency_target_from_id(dependency_id);
+    managed_install_metadata_for_target(cfg, dependency_id, dependency_target.or(requested_target))
+}
+
 pub fn managed_provider_command_for_target(
     cfg: &AgentServerConfigFile,
     provider_id: &str,
     requested_target: Option<InstallTarget>,
 ) -> Option<AgentServerCommand> {
-    target_bucket_lookup(&cfg.managed_provider_targets, provider_id, requested_target)
-        .cloned()
-        .or_else(|| {
-            cfg.providers
-                .get(provider_id)
-                .filter(|entry| {
-                    entry.managed.as_ref().is_some_and(|meta| {
-                        legacy_managed_metadata_matches_target(meta, requested_target)
-                    })
-                })
-                .cloned()
-        })
+    target_bucket_lookup(&cfg.managed_provider_targets, provider_id, requested_target).cloned()
 }
 
 pub fn apply_managed_install_details_for_target(
@@ -189,7 +195,7 @@ pub fn apply_managed_install_details_for_target(
     requested_target: Option<InstallTarget>,
 ) {
     let Some(meta) =
-        managed_install_metadata_for_target(cfg, &status.provider_id, requested_target)
+        managed_provider_install_metadata_for_target(cfg, &status.provider_id, requested_target)
     else {
         return;
     };

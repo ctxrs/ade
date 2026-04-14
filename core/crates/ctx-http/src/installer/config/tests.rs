@@ -201,6 +201,54 @@ fn migration_moves_legacy_managed_provider_entries_into_target_buckets() {
 }
 
 #[test]
+fn managed_provider_helpers_ignore_legacy_shared_provider_entries() {
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.providers.insert(
+        "codex".to_string(),
+        AgentServerCommand {
+            command: "/tmp/legacy-codex".to_string(),
+            args: vec!["--legacy".to_string()],
+            dependencies: Vec::new(),
+            managed: Some(ManagedInstallMetadata {
+                package: Some("@openai/codex".to_string()),
+                version: Some("0.9.0".to_string()),
+                artifact_fingerprint: None,
+                archive_sha256: None,
+                target: Some(InstallTarget::Host),
+                install_dir_rel: Some("providers/agent-servers/codex/0.9.0".to_string()),
+                bin_dir_rel: None,
+                last_success_at: None,
+                last_error: None,
+            }),
+        },
+    );
+    cfg.managed_installs.insert(
+        "codex".to_string(),
+        ManagedInstallMetadata {
+            package: Some("@openai/codex".to_string()),
+            version: Some("0.9.0".to_string()),
+            artifact_fingerprint: None,
+            archive_sha256: None,
+            target: Some(InstallTarget::Host),
+            install_dir_rel: Some("providers/agent-servers/codex/0.9.0".to_string()),
+            bin_dir_rel: None,
+            last_success_at: None,
+            last_error: None,
+        },
+    );
+
+    assert!(
+        managed_provider_command_for_target(&cfg, "codex", Some(InstallTarget::Host)).is_none(),
+        "provider runtime command resolution must ignore legacy shared managed entries"
+    );
+    assert!(
+        managed_provider_install_metadata_for_target(&cfg, "codex", Some(InstallTarget::Host))
+            .is_none(),
+        "provider runtime metadata resolution must ignore legacy shared managed entries"
+    );
+}
+
+#[test]
 fn resolve_runtime_provider_command_keeps_invalid_managed_commands_invalid_by_default() {
     let mut cfg = AgentServerConfigFile::default();
     cfg.managed_provider_targets.insert(

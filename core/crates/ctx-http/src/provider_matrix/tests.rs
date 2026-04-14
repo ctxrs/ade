@@ -557,6 +557,242 @@ fn managed_dependency_update_unavailable_when_runtime_dependency_matches_expecte
     ));
 }
 
+#[test]
+fn managed_dependency_update_unavailable_for_container_provider_with_matching_dual_node_runtimes() {
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.managed_provider_targets.insert(
+        "amp".to_string(),
+        HashMap::from([(
+            "container".to_string(),
+            AgentServerCommand {
+                command: "/tmp/amp-acp.js".to_string(),
+                args: Vec::new(),
+                dependencies: vec![
+                    "runtime-node-container".to_string(),
+                    "runtime-node-host".to_string(),
+                ],
+                managed: Some(ManagedInstallMetadata {
+                    package: Some("https://example.com/amp.tar.gz".to_string()),
+                    version: Some("0.1.2".to_string()),
+                    artifact_fingerprint: None,
+                    archive_sha256: None,
+                    target: Some(InstallTarget::Container),
+                    install_dir_rel: None,
+                    bin_dir_rel: None,
+                    last_success_at: None,
+                    last_error: None,
+                }),
+            },
+        )]),
+    );
+    let expected = crate::installer::expected_managed_dependency_version("runtime-node-host")
+        .expect("runtime node version");
+    cfg.managed_installs.insert(
+        "runtime-node-host".to_string(),
+        ManagedInstallMetadata {
+            package: Some("node-runtime".to_string()),
+            version: Some(expected.to_string()),
+            artifact_fingerprint: Some(format!("runtime:node:{expected}")),
+            archive_sha256: None,
+            target: Some(InstallTarget::Host),
+            install_dir_rel: None,
+            bin_dir_rel: None,
+            last_success_at: None,
+            last_error: None,
+        },
+    );
+    cfg.managed_installs.insert(
+        "runtime-node-container".to_string(),
+        ManagedInstallMetadata {
+            package: Some("node-runtime".to_string()),
+            version: Some(expected.to_string()),
+            artifact_fingerprint: Some(format!("runtime:node:{expected}")),
+            archive_sha256: None,
+            target: Some(InstallTarget::Container),
+            install_dir_rel: None,
+            bin_dir_rel: None,
+            last_success_at: None,
+            last_error: None,
+        },
+    );
+    let status = ctx_providers::adapters::ProviderStatus {
+        provider_id: "amp".to_string(),
+        installed: true,
+        detected_path: None,
+        version: None,
+        capabilities: None,
+        health: ctx_providers::adapters::ProviderHealth::Ok,
+        diagnostics: Vec::new(),
+        details: HashMap::from([(
+            "install_target".to_string(),
+            InstallTarget::Container.as_str().to_string(),
+        )]),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
+    };
+    assert!(!managed_dependency_update_available(
+        &cfg,
+        &ProviderMatrixEntry {
+            id: "amp".to_string(),
+            kind: ProviderMatrixEntryKind::Harness,
+            display_name: Some("Amp".to_string()),
+            tier: Some("tier2".to_string()),
+            command: None,
+            managed_install: Some(ProviderInstall::Archive {
+                version: "0.1.2".to_string(),
+                args: Vec::new(),
+                targets: HashMap::from([(
+                    "linux-aarch64".to_string(),
+                    ProviderArchiveTarget {
+                        url: "https://example.com/amp.tar.gz".to_string(),
+                        sha256: None,
+                        size_bytes: None,
+                        archive: ProviderArchiveKind::None,
+                        bin_path: "dist/bin/amp-acp.js".to_string(),
+                    },
+                )]),
+            }),
+            provider_dependencies: Vec::new(),
+            dependencies: Vec::new(),
+            version_probe: None,
+            releases: vec![ProviderRelease {
+                version: "0.1.2".to_string(),
+                status: ProviderReleaseStatus::Supported,
+                upstream_version: Some("0.1.0-fixture".to_string()),
+                context_min: None,
+                context_max: None,
+                notes: None,
+                provenance: None,
+            }],
+        },
+        &status,
+    ));
+}
+
+#[tokio::test]
+async fn apply_matrix_to_status_uses_target_scoped_dependency_metadata() {
+    let temp = tempdir().expect("tempdir");
+    let target = InstallTarget::LinuxX8664;
+    let target_key = target.as_str().to_string();
+    let provider_sha = sha256_hex(b"provider-archive");
+    let dependency_sha = sha256_hex(b"dependency-archive");
+
+    let entry = ProviderMatrixEntry {
+        id: "targeted-provider".to_string(),
+        kind: ProviderMatrixEntryKind::Harness,
+        display_name: Some("Targeted Provider".to_string()),
+        tier: Some("tier2".to_string()),
+        command: None,
+        managed_install: Some(ProviderInstall::Archive {
+            version: "1.0.0".to_string(),
+            args: Vec::new(),
+            targets: HashMap::from([(
+                target_key.clone(),
+                ProviderArchiveTarget {
+                    url: "https://example.com/targeted-provider.tar.gz".to_string(),
+                    sha256: Some(provider_sha.clone()),
+                    size_bytes: None,
+                    archive: ProviderArchiveKind::TarGz,
+                    bin_path: "targeted-provider".to_string(),
+                },
+            )]),
+        }),
+        provider_dependencies: Vec::new(),
+        dependencies: vec![ProviderDependency {
+            id: "targeted-dependency".to_string(),
+            install: DependencyInstall::Archive {
+                version: "2.0.0".to_string(),
+                targets: HashMap::from([(
+                    target_key.clone(),
+                    ProviderArchiveTarget {
+                        url: "https://example.com/targeted-dependency.tar.gz".to_string(),
+                        sha256: Some(dependency_sha.clone()),
+                        size_bytes: None,
+                        archive: ProviderArchiveKind::TarGz,
+                        bin_path: "targeted-dependency".to_string(),
+                    },
+                )]),
+            },
+        }],
+        version_probe: None,
+        releases: vec![ProviderRelease {
+            version: "1.0.0".to_string(),
+            status: ProviderReleaseStatus::Supported,
+            upstream_version: Some("1.0.0".to_string()),
+            context_min: None,
+            context_max: None,
+            notes: None,
+            provenance: None,
+        }],
+    };
+
+    let mut cfg = AgentServerConfigFile::default();
+    let provider_meta = ManagedInstallMetadata {
+        package: Some("https://example.com/targeted-provider.tar.gz".to_string()),
+        version: Some("1.0.0".to_string()),
+        artifact_fingerprint: Some(provider_sha.clone()),
+        archive_sha256: Some(provider_sha),
+        target: Some(target),
+        install_dir_rel: Some("providers/agent-servers/targeted-provider/1.0.0".to_string()),
+        bin_dir_rel: None,
+        last_success_at: None,
+        last_error: None,
+    };
+    cfg.managed_provider_targets.insert(
+        "targeted-provider".to_string(),
+        HashMap::from([(
+            target_key.clone(),
+            AgentServerCommand {
+                command: "/tmp/targeted-provider".to_string(),
+                args: Vec::new(),
+                dependencies: vec!["targeted-dependency".to_string()],
+                managed: Some(provider_meta.clone()),
+            },
+        )]),
+    );
+    cfg.managed_install_targets.insert(
+        "targeted-provider".to_string(),
+        HashMap::from([(target_key.clone(), provider_meta)]),
+    );
+    cfg.managed_install_targets.insert(
+        "targeted-dependency".to_string(),
+        HashMap::from([(
+            target_key.clone(),
+            ManagedInstallMetadata {
+                package: Some("https://example.com/targeted-dependency.tar.gz".to_string()),
+                version: Some("2.0.0".to_string()),
+                artifact_fingerprint: Some(dependency_sha.clone()),
+                archive_sha256: Some(dependency_sha),
+                target: Some(target),
+                install_dir_rel: Some(
+                    "providers/agent-servers/targeted-dependency/2.0.0".to_string(),
+                ),
+                bin_dir_rel: None,
+                last_success_at: None,
+                last_error: None,
+            },
+        )]),
+    );
+
+    let mut status = ctx_providers::adapters::ProviderStatus {
+        provider_id: "targeted-provider".to_string(),
+        installed: true,
+        detected_path: Some("/tmp/targeted-provider".to_string()),
+        version: Some("1.0.0".to_string()),
+        capabilities: None,
+        health: ctx_providers::adapters::ProviderHealth::Ok,
+        diagnostics: Vec::new(),
+        details: HashMap::from([("install_target".to_string(), target_key)]),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
+    };
+
+    apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status).await;
+
+    assert!(!status
+        .details
+        .contains_key("managed_dependency_update_available"));
+    assert!(!status.details.contains_key("matrix_update_available"));
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }

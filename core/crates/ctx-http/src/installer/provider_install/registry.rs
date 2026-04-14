@@ -14,16 +14,22 @@ pub(super) async fn update_registry_last_error(
 ) {
     let install_dir_rel_clone = install_dir_rel.clone();
     let _ = mutate_agent_server_config(data_root, move |cfg| {
+        let target = target.unwrap_or(InstallTarget::Host);
+        let target_key = target.as_str().to_string();
+        let install_targets = cfg
+            .managed_install_targets
+            .entry(provider_id.to_string())
+            .or_default();
         let mut meta =
-            cfg.managed_installs
-                .get(provider_id)
+            install_targets
+                .get(&target_key)
                 .cloned()
                 .unwrap_or(ManagedInstallMetadata {
                     package: package.map(|s| s.to_string()),
                     version: version.map(|s| s.to_string()),
                     artifact_fingerprint: None,
                     archive_sha256: None,
-                    target,
+                    target: Some(target),
                     install_dir_rel: install_dir_rel_clone,
                     bin_dir_rel: None,
                     last_success_at: None,
@@ -38,9 +44,7 @@ pub(super) async fn update_registry_last_error(
         if meta.install_dir_rel.is_none() {
             meta.install_dir_rel = install_dir_rel;
         }
-        if meta.target.is_none() {
-            meta.target = target;
-        }
+        meta.target = Some(target);
 
         meta.last_error = Some(ManagedInstallError {
             at: Utc::now().to_rfc3339(),
@@ -48,10 +52,13 @@ pub(super) async fn update_registry_last_error(
             message: truncate_for_storage(&format!("{err:#}"), LAST_ERROR_MAX_LEN),
             code: Some(code),
         });
-        cfg.managed_installs
-            .insert(provider_id.to_string(), meta.clone());
+        install_targets.insert(target_key.clone(), meta.clone());
 
-        if let Some(entry) = cfg.providers.get_mut(provider_id) {
+        if let Some(entry) = cfg
+            .managed_provider_targets
+            .get_mut(provider_id)
+            .and_then(|targets| targets.get_mut(&target_key))
+        {
             entry.managed = Some(meta);
         }
     })
@@ -90,4 +97,45 @@ pub(in crate::installer) async fn repair_install_dir(
         .await
         .with_context(|| format!("creating install dir: {}", install_dir.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn update_registry_last_error_persists_provider_runtime_metadata_to_target_bucket_only() {
+        let data_root = tempdir().expect("tempdir");
+        update_registry_last_error(
+            data_root.path(),
+            "droid",
+            "prepare",
+            &anyhow::anyhow!("boom"),
+            InstallErrorCode::CommandFailed,
+            Some("droid"),
+            Some("0.1.1"),
+            Some("providers/agent-servers/droid/0.1.1".to_string()),
+            Some(InstallTarget::Host),
+        )
+        .await;
+
+        let cfg = load_agent_server_config(data_root.path())
+            .await
+            .expect("load config");
+        let meta = cfg
+            .managed_install_targets
+            .get("droid")
+            .and_then(|targets| targets.get("host"))
+            .expect("droid host metadata");
+        assert_eq!(meta.target, Some(InstallTarget::Host));
+        assert_eq!(meta.package.as_deref(), Some("droid"));
+        assert_eq!(meta.version.as_deref(), Some("0.1.1"));
+        assert!(meta.last_error.is_some());
+        assert!(!cfg.managed_installs.contains_key("droid"));
+        assert!(
+            cfg.providers.get("droid").is_none(),
+            "provider install errors must not recreate legacy shared provider entries"
+        );
+    }
 }

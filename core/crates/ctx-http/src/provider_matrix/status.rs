@@ -245,7 +245,11 @@ pub(super) fn managed_dependency_update_available(
         let Some(expected_version) = expected_version else {
             return false;
         };
-        let meta = match cfg.managed_installs.get(dependency_id) {
+        let meta = match crate::installer::managed_dependency_install_metadata_for_target(
+            cfg,
+            dependency_id,
+            requested_target,
+        ) {
             Some(meta) => meta,
             None => return true,
         };
@@ -300,7 +304,7 @@ pub(super) async fn detect_managed_artifact_fingerprint_mismatch(
         return None;
     }
     let requested_target = install_target_from_status(status)?;
-    let meta = crate::installer::managed_install_metadata_for_target(
+    let meta = crate::installer::managed_provider_install_metadata_for_target(
         cfg,
         &status.provider_id,
         Some(requested_target),
@@ -343,7 +347,7 @@ pub(super) async fn detect_provider_version(
         return None;
     }
     let requested_target = install_target_from_status(status);
-    if let Some(meta) = crate::installer::managed_install_metadata_for_target(
+    if let Some(meta) = crate::installer::managed_provider_install_metadata_for_target(
         cfg,
         &status.provider_id,
         requested_target,

@@ -51,21 +51,6 @@ fn managed_targets_for_provider(
             }
         }
     }
-    if let Some(target) = managed
-        .providers
-        .get(provider_id)
-        .and_then(|entry| entry.managed.as_ref())
-        .and_then(|meta| meta.target)
-    {
-        out.insert(target.as_str().to_string());
-    }
-    if let Some(target) = managed
-        .managed_installs
-        .get(provider_id)
-        .and_then(|meta| meta.target)
-    {
-        out.insert(target.as_str().to_string());
-    }
 
     out
 }
