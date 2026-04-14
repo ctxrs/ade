@@ -1,5 +1,5 @@
 import type { WorkbenchListItem, WorkbenchTurnHeader } from "../SessionPage.types";
-import { markdownToPlainText } from "../SessionPage.helpers";
+import { markdownToPlainText, normalizeTurnHeaderPlainText } from "../SessionPage.helpers";
 import type { WorkbenchMessageListUiState } from "../sessionMessageListItemIdentity";
 
 const MESSAGE_COLLAPSE_LINE_THRESHOLD = 20;
@@ -22,7 +22,7 @@ export function isExpandableTurnHeaderPlainText(plainText: string): boolean {
 export function getWorkbenchTurnHeaderDisplayPlainText(header: WorkbenchTurnHeader): string {
   const explicitPlainText = typeof header.plain_text === "string" ? header.plain_text : "";
   if (explicitPlainText.length > 0) {
-    return explicitPlainText;
+    return normalizeTurnHeaderPlainText(explicitPlainText);
   }
   return markdownToPlainText(header.content ?? "");
 }

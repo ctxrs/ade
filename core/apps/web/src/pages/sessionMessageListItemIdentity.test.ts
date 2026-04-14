@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorkbenchListItem } from "./SessionPage.types";
+import { getWorkbenchTurnHeaderDisplayPlainText } from "./sessionThread/transcriptRowLayoutModel";
 import {
   getWorkbenchMessageListLayoutRevision,
   getWorkbenchListItemKey,
@@ -91,6 +92,21 @@ describe("sessionMessageListItemIdentity", () => {
     };
 
     expect(getWorkbenchListItemKey(item, baseUiState)).toContain("turn-header-markdown:turn-header:collapsed:");
+  });
+
+  it("normalizes markdown-like explicit turn-header plain text into visible label text", () => {
+    const header = {
+      id: "header-explicit-markdown",
+      content: "",
+      plain_text:
+        "- [Predicting the Popularity of Social News Posts](https://cs229.stanford.edu/proj2012/MaguireMichelson-PredictingThePopularityOfSocialNewsPosts.pdf) reports `85% accuracy`",
+      attachments: [],
+      created_at: "2025-01-01T00:00:00.000Z",
+    };
+
+    expect(getWorkbenchTurnHeaderDisplayPlainText(header)).toBe(
+      "- Predicting the Popularity of Social News Posts reports 85% accuracy",
+    );
   });
 
   it("captures nested tool expansion inside a tool-group height key", () => {

@@ -6,18 +6,12 @@ import {
   incrementPretextPerfCounter,
 } from "../../utils/pretextPerfDiagnostics";
 import type { WorkbenchListItem, WorkbenchTurnHeader } from "../sessionView";
-import { resolveWorkbenchMessageExpanded } from "../sessionMessageListItemIdentity";
 import {
   clearSessionMarkdownMeasurementCaches,
   measureSessionMarkdownDocument,
   measureSessionPlainTextBlockHeight,
   measureSessionTextHeight,
 } from "./sessionMarkdownMeasurement";
-import {
-  measureRenderedSessionAssistantHeight,
-  measureRenderedSessionMessageHeight,
-  measureRenderedSessionTurnHeaderHeight,
-} from "./sessionThreadDomMeasurement";
 import {
   SESSION_THREAD_INDENT_LEFT_PX,
   SESSION_THREAD_MESSAGE_ATTACHMENT_GAP_PX,
@@ -37,6 +31,8 @@ import {
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_FONT_SIZE_PX,
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_LINE_HEIGHT_PX,
   SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY,
+  SESSION_THREAD_TURN_HEADER_BUBBLE_BORDER_WIDTH_PX,
+  SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_BLOCK_PX,
   SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_INLINE_PX,
   resolveSessionThreadAssistantTextWidth,
   resolveSessionThreadContentWidth,
@@ -46,7 +42,6 @@ import {
 } from "./sessionThreadLayoutTokens";
 import {
   getWorkbenchMessageLayoutState,
-  getWorkbenchTurnHeaderDisplayPlainText,
   getWorkbenchTurnHeaderLayoutState,
   isExpandableMessageContent,
 } from "./transcriptRowLayoutModel";
@@ -75,7 +70,9 @@ const THOUGHT_HORIZONTAL_PADDING_PX = 8;
 const THOUGHT_VERTICAL_PADDING_PX = 16;
 
 const TURN_HEADER_OUTER_VERTICAL_PX = 14;
-const TURN_HEADER_BUBBLE_VERTICAL_PX = 18;
+const TURN_HEADER_BUBBLE_VERTICAL_PX =
+  SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_BLOCK_PX * 2 +
+  SESSION_THREAD_TURN_HEADER_BUBBLE_BORDER_WIDTH_PX * 2;
 const TURN_HEADER_COLLAPSED_MAX_HEIGHT_PX = 66;
 const TURN_HEADER_ATTACHMENT_SIZE_PX = 44;
 const TURN_HEADER_ATTACHMENT_GAP_PX = 6;
@@ -132,20 +129,10 @@ function measureTurnHeaderHeight(
   viewportWidth: number,
   context: PretextVirtualizerRowLayoutContext,
 ): number {
-  const displayPlainText = getWorkbenchTurnHeaderDisplayPlainText(header);
-  const expanded = getWorkbenchTurnHeaderLayoutState(
+  const { displayPlainText, expanded } = getWorkbenchTurnHeaderLayoutState(
     { kind: "turn_header", id: `turn-header-${header.id}`, header },
     context.expandedTurnHeaders ?? {},
-  ).expanded;
-  const renderedHeight = measureRenderedSessionTurnHeaderHeight(
-    header,
-    displayPlainText,
-    expanded,
-    viewportWidth,
   );
-  if (renderedHeight != null) {
-    return renderedHeight;
-  }
   const textHeight = measureSessionPlainTextBlockHeight({
     cacheKey: `turn-header:${header.id}:${displayPlainText}`,
     text: displayPlainText,
@@ -159,6 +146,7 @@ function measureTurnHeaderHeight(
     1,
     Math.floor(
       (resolveSessionThreadContentWidth(viewportWidth) -
+        SESSION_THREAD_TURN_HEADER_BUBBLE_BORDER_WIDTH_PX * 2 -
         SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_INLINE_PX * 2 +
         TURN_HEADER_ATTACHMENT_GAP_PX) /
         (TURN_HEADER_ATTACHMENT_SIZE_PX + TURN_HEADER_ATTACHMENT_GAP_PX),
@@ -207,10 +195,6 @@ function measureMessageHeight(
   context: PretextVirtualizerRowLayoutContext,
 ): number {
   const layout = getWorkbenchMessageLayoutState(item, context.expandedMessageById ?? {});
-  const renderedHeight = measureRenderedSessionMessageHeight(item, viewportWidth, layout.expanded);
-  if (renderedHeight != null) {
-    return renderedHeight;
-  }
   const textHeight = measureSessionMarkdownDocument(layout.shownContent, resolveSessionThreadMessageTextWidth(viewportWidth));
   const attachmentsHeight = measureMessageAttachmentsHeight(item, viewportWidth);
   const toggleHeight = layout.expandable ? MESSAGE_TOGGLE_HEIGHT_PX : 0;
@@ -228,10 +212,6 @@ function measureAssistantHeight(
   item: Extract<WorkbenchListItem, { kind: "assistant" }>,
   viewportWidth: number,
 ): number {
-  const renderedHeight = measureRenderedSessionAssistantHeight(item, viewportWidth);
-  if (renderedHeight != null) {
-    return renderedHeight;
-  }
   if (!item.is_complete && item.content.trim().length === 0) {
     return SPACER_HEIGHT_PX;
   }

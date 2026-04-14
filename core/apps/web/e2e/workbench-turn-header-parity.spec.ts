@@ -9,6 +9,11 @@ const TURN_HEADER_FIXTURE = [
   "- The strongest paper I found is [Popularity and Quality in Social News Aggregators](https://archives.iw3c2.org/www2015/documents/proceedings/companion/p815.pdf). On HN it gets out-of-sample `R² ≈ 0.65` for vote dynamics and finds estimated quality correlates strongly with observed score (`Spearman ≈ 0.80`). But that model uses time-series vote/position data after submission. It is not “read the title and content before posting, then predict front-page probability.”",
 ].join("\n");
 
+const TURN_HEADER_COMMAND_FIXTURE = [
+  "Marker render marker inline pretext https://example.com/transcript/inline-code/transcript/inline-code?ref=293 pretextVirtualizerRowLayout.ts/fixtures/fixtures/core/workbenchShell/core/pages.",
+  "Session entry entry layout pnpm -C core/apps/web test:e2e:pretext:guardrail inline-code/inline-code/sessionThread/src/sessionThreadDomMeasurement.tsx.",
+].join("\n");
+
 test("workbench: expanded turn-header planner matches rendered height for URL-heavy transcript text", async ({
   page,
 }) => {
@@ -16,6 +21,20 @@ test("workbench: expanded turn-header planner matches rendered height for URL-he
   await openWorkbenchShell(page);
 
   const measurement = await measureTurnHeaderParity(page, { plainText: TURN_HEADER_FIXTURE });
+
+  expect(
+    Math.abs(measurement.delta),
+    `turn_header drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual})`,
+  ).toBeLessThanOrEqual(1);
+});
+
+test("workbench: expanded turn-header planner matches rendered height for path and command plain text", async ({
+  page,
+}) => {
+  test.setTimeout(120000);
+  await openWorkbenchShell(page);
+
+  const measurement = await measureTurnHeaderParity(page, { plainText: TURN_HEADER_COMMAND_FIXTURE });
 
   expect(
     Math.abs(measurement.delta),

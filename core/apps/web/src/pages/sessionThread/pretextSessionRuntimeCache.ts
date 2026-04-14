@@ -188,10 +188,11 @@ export function buildSessionPretextRuntimeLayoutKey(
 function bindRuntime(record: SessionPretextRuntimeRecord, bindings: RuntimeBindings): void {
   record.uiState = bindings.uiState;
   record.uiStateRevision = bindings.uiStateRevision ?? getSessionTranscriptUiStateRevision(bindings.uiState);
-  record.callbacks.getLayoutRevision = (item) =>
+  const getLayoutRevision = (item: WorkbenchListItem) =>
     getWorkbenchListItemHeightRevision(item, bindings.uiState, {
       verbosity: bindings.uiState.verbosity,
     });
+  record.callbacks.getLayoutRevision = getLayoutRevision;
   record.callbacks.getPlannedLayout = (item, viewport) =>
     getPretextVirtualizerRowLayout(item, viewport.width, {
       expandedTurnHeaders: bindings.uiState.expandedTurnHeaders,

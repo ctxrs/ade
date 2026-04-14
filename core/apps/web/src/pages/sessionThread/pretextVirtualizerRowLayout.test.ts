@@ -83,8 +83,14 @@ import {
   clearPretextVirtualizerRowLayoutCache,
   getPretextVirtualizerRowLayout,
 } from "./pretextVirtualizerRowLayout";
-import { measureSessionMarkdownDocument } from "./sessionMarkdownMeasurement";
 import {
+  clearSessionMarkdownMeasurementCaches,
+  measureSessionMarkdownDocument,
+  measureSessionPlainTextBlockHeight,
+} from "./sessionMarkdownMeasurement";
+import {
+  SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY,
+  SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX,
   SESSION_THREAD_ASK_USER_MARGIN_VERTICAL_PX,
   SESSION_THREAD_ASK_USER_SHELL_HEIGHT_PX,
   SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
@@ -92,12 +98,18 @@ import {
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_BORDER_WIDTH_PX,
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_BOTTOM_PX,
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_TOP_PX,
-  SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_HEIGHT_PX,
+  SESSION_THREAD_MARKDOWN_INLINE_CODE_LINE_HEIGHT_PREMIUM_PX,
+  SESSION_THREAD_TURN_HEADER_BUBBLE_BORDER_WIDTH_PX,
+  SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_INLINE_PX,
+  SESSION_THREAD_TURN_HEADER_COPY_GUTTER_PX,
+  resolveSessionThreadContentWidth,
+  resolveSessionThreadTurnHeaderTextWidth,
 } from "./sessionThreadLayoutTokens";
 
 describe("getPretextVirtualizerRowLayout", () => {
   beforeEach(() => {
     clearPretextVirtualizerRowLayoutCache();
+    clearSessionMarkdownMeasurementCaches();
     prepareMock.mockClear();
     prepareWithSegmentsMock.mockClear();
     layoutNextLineMock.mockClear();
@@ -209,7 +221,71 @@ describe("getPretextVirtualizerRowLayout", () => {
     ).toBe(true);
   });
 
-  it("budgets the full inline-code chip chrome for wrapped markdown lines", () => {
+  it("splits long hyphenated inline-code tokens into deterministic wrap fragments", () => {
+    const item: WorkbenchListItem = {
+      kind: "assistant",
+      id: "assistant-inline-code-wrap-fragments",
+      turn_id: "turn-1",
+      created_at: "2026-04-05T00:00:00Z",
+      content:
+        "begin agent message with plain text and now `inline-thing-that-actually-gets-really-long-so-much-so-that-it-wraps-to-multiple-lines/core/apps/web/src/pages/sessionThread/sessionMarkdownMeasurement.ts` after the prose",
+      thought: "",
+      is_complete: true,
+    };
+
+    const result = getPretextVirtualizerRowLayout(item, 620, {});
+
+    expect(result.height).toBeGreaterThan(0);
+    expect(
+      prepareWithSegmentsMock.mock.calls.some(
+        ([text, font]) =>
+          text === "really-" && typeof font === "string" && font.toLowerCase().includes("mono"),
+      ),
+    ).toBe(true);
+    expect(
+      prepareWithSegmentsMock.mock.calls.some(
+        ([text, font]) =>
+          text === "multiple-lines/core/" &&
+          typeof font === "string" &&
+          font.toLowerCase().includes("mono"),
+      ),
+    ).toBe(true);
+  });
+
+  it("splits pure path-like inline-code tokens at filename boundaries", () => {
+    const item: WorkbenchListItem = {
+      kind: "assistant",
+      id: "assistant-inline-code-path-wrap-fragments",
+      turn_id: "turn-1",
+      created_at: "2026-04-05T00:00:00Z",
+      content:
+        "prefix prose `sessionThreadDomMeasurement.tsx/sessionThreadDomMeasurement.tsx/apps/sessionThreadDomMeasurement.tsx/workbenchShell` suffix prose",
+      thought: "",
+      is_complete: true,
+    };
+
+    const result = getPretextVirtualizerRowLayout(item, 472, {});
+
+    expect(result.height).toBeGreaterThan(0);
+    expect(
+      prepareWithSegmentsMock.mock.calls.some(
+        ([text, font]) =>
+          text === "sessionThreadDomMeasurement." &&
+          typeof font === "string" &&
+          font.toLowerCase().includes("mono"),
+      ),
+    ).toBe(true);
+    expect(
+      prepareWithSegmentsMock.mock.calls.some(
+        ([text, font]) =>
+          text === "tsx/sessionThreadDomMeasurement." &&
+          typeof font === "string" &&
+          font.toLowerCase().includes("mono"),
+      ),
+    ).toBe(true);
+  });
+
+  it("budgets the deterministic inline-code line-height premium for wrapped markdown lines", () => {
     const markdown = "`abcd` `efgh` `ijkl`";
 
     const height = measureSessionMarkdownDocument(markdown, 50);
@@ -221,7 +297,7 @@ describe("getPretextVirtualizerRowLayout", () => {
             SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
             SESSION_THREAD_MARKDOWN_CODE_BLOCK_LINE_HEIGHT_PX,
           ) +
-            SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_HEIGHT_PX) *
+            SESSION_THREAD_MARKDOWN_INLINE_CODE_LINE_HEIGHT_PREMIUM_PX) *
           16,
       ) / 16,
     );
@@ -249,6 +325,20 @@ describe("getPretextVirtualizerRowLayout", () => {
     expect(height).toBeGreaterThan(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 2);
   });
 
+  it("measures strong inline markdown with the browser-matching heavier font weight", () => {
+    measureSessionMarkdownDocument("prefix **strong fragment** suffix", 260);
+
+    expect(
+      prepareWithSegmentsMock.mock.calls.some(
+        ([text, font]) =>
+          typeof text === "string" &&
+          text.includes("strong") &&
+          typeof font === "string" &&
+          font.includes("700"),
+      ),
+    ).toBe(true);
+  });
+
   it("does not reuse prepared mixed-inline segments across different markdown documents", () => {
     const first = measureSessionMarkdownDocument("`supercalifragilisticexpialidocious` tail", 120);
     const second = measureSessionMarkdownDocument("`x` tail", 120);
@@ -267,6 +357,118 @@ describe("getPretextVirtualizerRowLayout", () => {
         ([text, font]) => text === "x" && typeof font === "string" && font.toLowerCase().includes("mono"),
       ),
     ).toBe(true);
+  });
+
+  it("keeps trailing prose on the continued inline-code line when the path leaves room", () => {
+    const wrappedCode =
+      "inline-thing-that-actually-gets-really-long-so-much-so-that-it-wraps-to-multiple-lines/core/apps/web/src/pages/sessionThread/sessionMarkdownMeasurement.ts";
+    const withTrailingProse = measureSessionMarkdownDocument(
+      `begin agent message with plain text and now \`${wrappedCode}\` after the prose`,
+      620,
+    );
+    const withoutTrailingProse = measureSessionMarkdownDocument(
+      `begin agent message with plain text and now \`${wrappedCode}\``,
+      620,
+    );
+
+    expect(withTrailingProse).toBe(withoutTrailingProse);
+  });
+
+  it("keeps sealed inline-code fragments atomic when they exceed the available line width", () => {
+    const height = measureSessionMarkdownDocument("`web/pretextVirtualizerRowLayout.ts`", 80);
+
+    expect(height).toBe(
+      Math.round(
+        2 *
+          (Math.max(
+            SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
+            SESSION_THREAD_MARKDOWN_CODE_BLOCK_LINE_HEIGHT_PX,
+          ) +
+            SESSION_THREAD_MARKDOWN_INLINE_CODE_LINE_HEIGHT_PREMIUM_PX) *
+          16,
+      ) / 16,
+    );
+  });
+
+  it("treats soft newlines inside mixed inline paragraphs like collapsed spaces", () => {
+    const withSoftNewline = measureSessionMarkdownDocument(
+      "before mixed prose\nand `inline-code-token/with/path` after the wrap",
+      260,
+    );
+    const withSpace = measureSessionMarkdownDocument(
+      "before mixed prose and `inline-code-token/with/path` after the wrap",
+      260,
+    );
+
+    expect(withSoftNewline).toBe(withSpace);
+  });
+
+  it("packs URL-heavy plain text lines as whitespace-separated turn-header tokens", () => {
+    const line =
+      "https://example.com/transcript/inline-code/transcript/inline-code?ref=293 pretextVirtualizerRowLayout.ts/fixtures/fixtures/core/workbenchShell/core/pages.";
+    measureSessionPlainTextBlockHeight({
+      cacheKey: "turn-header-plain-url",
+      text: line,
+      font: `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`,
+      width: 220,
+      lineHeight: SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
+    });
+
+    expect(
+      prepareMock.mock.calls.some(([text]) => text === line),
+    ).toBe(false);
+    expect(
+      prepareWithSegmentsMock.mock.calls.some(
+        ([text, font]) =>
+          text === "https://example.com/transcript/inline-code/transcript/inline-code?ref=293" &&
+          typeof font === "string" &&
+          !font.toLowerCase().includes("mono"),
+      ),
+    ).toBe(true);
+    expect(
+      prepareWithSegmentsMock.mock.calls.some(
+        ([text]) => typeof text === "string" && text.startsWith("https://"),
+      ),
+    ).toBe(true);
+  });
+
+  it("wraps whitespace-separated turn-header tokens before breaking inside a long token", () => {
+    const height = measureSessionPlainTextBlockHeight({
+      cacheKey: "turn-header-word-wrap-before-break",
+      text: "alpha betagamma",
+      font: `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`,
+      width: 70,
+      lineHeight: SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
+    });
+
+    expect(height).toBe(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 2);
+  });
+
+  it("breaks overlong turn-header tokens at grapheme boundaries on a fresh line", () => {
+    const height = measureSessionPlainTextBlockHeight({
+      cacheKey: "turn-header-plain-command",
+      text: "supercalifragilistic",
+      font: `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`,
+      width: 60,
+      lineHeight: SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
+    });
+
+    expect(height).toBe(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 2);
+    expect(
+      prepareWithSegmentsMock.mock.calls.some(([text]) => text === "supercalif"),
+    ).toBe(true);
+  });
+
+  it("continues overlong turn-header tokens on the current line when break-word is required", () => {
+    const height = measureSessionPlainTextBlockHeight({
+      cacheKey: "turn-header-break-word-continuation",
+      text: "alpha supercalifragilistic",
+      font: `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`,
+      width: 100,
+      lineHeight: SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
+    });
+
+    expect(height).toBe(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 2);
   });
 
   it("includes fenced code block border chrome in deterministic markdown height", () => {
@@ -307,6 +509,46 @@ describe("getPretextVirtualizerRowLayout", () => {
     });
 
     expect(expanded.height).toBeGreaterThan(collapsed.height);
+  });
+
+  it("measures URL-heavy turn headers with the whitespace-token packer", () => {
+    const item: WorkbenchListItem = {
+      kind: "turn_header",
+      id: "header-item-url",
+      header: {
+        id: "header-url",
+        created_at: "2026-04-05T00:00:00Z",
+        content:
+          "- https://example.com/a/really/long/path/that/keeps/wrapping?token=12345 should not drift when wrapped inside the turn header bubble.",
+        plain_text:
+          "- https://example.com/a/really/long/path/that/keeps/wrapping?token=12345 should not drift when wrapped inside the turn header bubble.",
+        attachments: [],
+      },
+    };
+
+    const result = getPretextVirtualizerRowLayout(item, 620, {
+      expandedTurnHeaders: { "header-url": true },
+    });
+
+    expect(result.height).toBeGreaterThan(0);
+    expect(
+      prepareMock.mock.calls.some(([text]) => text === item.header.plain_text),
+    ).toBe(false);
+    expect(
+      prepareWithSegmentsMock.mock.calls.some(([text]) => text === "https://example.com/a/really/long/path/that/keeps/wrapping?token=12345"),
+    ).toBe(true);
+    expect(prepareWithSegmentsMock.mock.calls.some(([text]) => text === "https://")).toBe(false);
+  });
+
+  it("budgets turn-header text width using bubble border, padding, and copy gutter", () => {
+    const viewportWidth = 620;
+
+    expect(resolveSessionThreadTurnHeaderTextWidth(viewportWidth)).toBe(
+      resolveSessionThreadContentWidth(viewportWidth) -
+        SESSION_THREAD_TURN_HEADER_BUBBLE_BORDER_WIDTH_PX * 2 -
+        SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_INLINE_PX * 2 -
+        SESSION_THREAD_TURN_HEADER_COPY_GUTTER_PX,
+    );
   });
 
   it("keeps tool groups compact until expanded", () => {

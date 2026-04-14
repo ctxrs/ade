@@ -34,6 +34,7 @@ import {
   parseUrlToken,
   splitWhitespaceTokens,
 } from "../../utils/codeTokenLinks";
+import { isSealedInlineCodeFragment, splitInlineCodeFragments } from "../../utils/inlineCodeFragments";
 import { desktopOpenFile, desktopOpenPath, isDesktopApp, openExternalLink } from "../../utils/desktop";
 
 type ParsedContextOpen = {
@@ -274,8 +275,21 @@ const handleUrlTokenClick = (event: MouseEvent<HTMLElement>, href: string) => {
   void openExternalLink(href);
 };
 
+const buildInlineCodeFragments = (text: string, keyPrefix: string): ReactNode[] => {
+  const fragments = splitInlineCodeFragments(text);
+  return fragments.flatMap((fragment, fragmentIndex) => [
+    <span
+      key={`${keyPrefix}-fragment-${fragmentIndex}`}
+      className={isSealedInlineCodeFragment(fragment) ? "code-token-fragment code-token-fragment-sealed" : "code-token-fragment"}
+    >
+      {fragment}
+    </span>,
+    fragmentIndex < fragments.length - 1 ? <wbr key={`${keyPrefix}-break-${fragmentIndex}`} /> : null,
+  ]);
+};
+
 const buildCodeTokenNodes = (text: string, opts: CodeTokenOptions, parts = splitWhitespaceTokens(text)): ReactNode[] => {
-  return parts.map((part, idx) => {
+  return parts.flatMap((part, idx) => {
     if (!part) return null;
     if (part.trim() === "") return part;
     if (opts.enableLinks) {
@@ -291,7 +305,7 @@ const buildCodeTokenNodes = (text: string, opts: CodeTokenOptions, parts = split
             target="_blank"
             onClick={(event) => handleUrlTokenClick(event, urlRef.url)}
           >
-            {part}
+            {buildInlineCodeFragments(part, `token-${idx}`)}
           </ModifierAwareExternalLink>
         );
       }
@@ -304,18 +318,22 @@ const buildCodeTokenNodes = (text: string, opts: CodeTokenOptions, parts = split
             className="code-token code-token-path"
             onClick={(event) => handleCodeTokenClick(event, ref, opts.worktreeId, opts.onFileOpenError)}
           >
-            {part}
+            {buildInlineCodeFragments(part, `token-${idx}`)}
           </ModifierAwareCodePath>
         );
       }
     }
 
     if (!opts.wrapPlainTokens) return part;
-    return (
-      <span key={`token-${idx}`} className="code-token">
-        {part}
-      </span>
-    );
+    const fragments = splitInlineCodeFragments(part);
+    return fragments.flatMap((fragment, fragmentIndex) => [
+      <span key={`token-${idx}-fragment-${fragmentIndex}`} className="code-token">
+        <span className={isSealedInlineCodeFragment(fragment) ? "code-token-fragment code-token-fragment-sealed" : "code-token-fragment"}>
+          {fragment}
+        </span>
+      </span>,
+      fragmentIndex < fragments.length - 1 ? <wbr key={`token-${idx}-break-${fragmentIndex}`} /> : null,
+    ]);
   });
 };
 

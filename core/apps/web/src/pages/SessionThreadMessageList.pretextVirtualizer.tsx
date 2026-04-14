@@ -246,10 +246,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
         followBottomRef.current = options.followBottom;
       }
       lastScrollTopRef.current = targetTop;
-      commitRuntimeSnapshot(
-        nextSnapshot,
-        options?.nextItems ?? readSessionPretextRuntimePreparedState(runtime).listItems,
-      );
+      commitRuntimeSnapshot(nextSnapshot, options?.nextItems ?? readSessionPretextRuntimePreparedState(runtime).listItems);
       setSnapshot(nextSnapshot);
       emitScrollState(nextSnapshot);
       if (Math.abs(scroller.scrollTop - targetTop) <= 1) {
@@ -491,10 +488,14 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
       const initialAnchor = followBottomRef.current
         ? ({ kind: "bottom" } satisfies PretextVirtualizerLogicalAnchor)
         : null;
-      baseSnapshot =
-        preparedLayoutMismatch || preparedWidthMismatch || !haveSameItemIds(preparedState.listItems, currentItems)
-          ? core.syncItems(currentItems, initialAnchor)
-          : core.patchItems(currentItems, currentItems.map((item) => item.id), [], initialAnchor);
+      baseSnapshot = haveSameItemIds(preparedState.listItems, currentItems)
+        ? core.patchItems(
+            currentItems,
+            currentItems.map((item) => item.id),
+            currentItems.map((item) => item.id),
+            initialAnchor,
+          )
+        : core.syncItems(currentItems, initialAnchor);
       lastSyncedItemCountRef.current = currentItems.length;
     }
     commitRuntimeSnapshot(baseSnapshot, currentItems);
@@ -527,9 +528,9 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
   useLayoutEffect(() => {
     const scroller = containerRef.current;
     if (!scroller) return;
-    const preparedState = readSessionPretextRuntimePreparedState(runtime);
     const uiStateChanged =
       lastAppliedUiStateLayoutRevisionRef.current !== runtimeUiStateLayoutRevision;
+    const preparedState = readSessionPretextRuntimePreparedState(runtime);
     const itemsChanged = !haveSameLayoutInputs(
       preparedState.listItems,
       listItems,

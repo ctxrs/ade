@@ -19,6 +19,8 @@ import {
   resetSessionPretextRuntimeCache,
 } from "../sessionThread/pretextSessionRuntimeCache";
 import { clearPretextVirtualizerRowLayoutCache } from "../sessionThread/pretextVirtualizerRowLayout";
+import { getPretextVirtualizerRowLayout } from "../sessionThread/pretextVirtualizerRowLayout";
+import { getWorkbenchTurnHeaderLayoutState } from "../sessionThread/transcriptRowLayoutModel";
 import {
   SESSION_THREAD_LAYOUT_STYLE,
 } from "../sessionThread/sessionThreadLayoutTokens";
@@ -394,6 +396,7 @@ export async function measureWorkbenchTurnHeaderParity(
     id: "turn-header-parity-row",
     header,
   };
+  const layout = getWorkbenchTurnHeaderLayoutState(item, { [header.id]: true });
 
   const context = createBaseContext();
   context.expandedTurnHeaders = { [header.id]: true };
@@ -408,8 +411,8 @@ export async function measureWorkbenchTurnHeaderParity(
           { style: { display: "contents" }, "data-thread-item-id": item.id },
           React.createElement(WorkbenchTurnHeaderView, {
             header,
-            plainText: params.plainText,
-            expanded: true,
+            plainText: layout.displayPlainText,
+            expanded: layout.expanded,
             onToggle: () => {},
           }),
         ),

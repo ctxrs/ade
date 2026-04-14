@@ -500,6 +500,14 @@ button.linklike:hover {
   user-select: all;
 }
 
+.code-token-fragment {
+  display: inline;
+}
+
+.code-token-fragment-sealed {
+  white-space: nowrap;
+}
+
 .code-token-path,
 .code-token-url {
   color: var(--text-strong);

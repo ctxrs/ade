@@ -964,8 +964,8 @@ describe("SessionThreadPretextVirtualizerList", () => {
     });
 
     const runtime = getOrCreateSessionPretextRuntime(sessionId);
-    const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
-    syncItemsSpy.mockClear();
+    const patchItemsSpy = vi.spyOn(runtime.core, "patchItems");
+    patchItemsSpy.mockClear();
 
     const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
     const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
@@ -1021,7 +1021,7 @@ describe("SessionThreadPretextVirtualizerList", () => {
       }
     }
 
-    expect(syncItemsSpy).toHaveBeenCalled();
+    expect(patchItemsSpy).toHaveBeenCalled();
   });
 
   it("preserves the detached anchor item when the viewport width changes", () => {
@@ -1278,8 +1278,8 @@ describe("SessionThreadPretextVirtualizerList", () => {
       expandedRender.unmount();
 
       const runtime = getOrCreateSessionPretextRuntime(sessionId);
-      const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
-      syncItemsSpy.mockClear();
+      const patchItemsSpy = vi.spyOn(runtime.core, "patchItems");
+      patchItemsSpy.mockClear();
 
       const reopenedRender = render(
         <SessionThreadPretextVirtualizerList
@@ -1313,7 +1313,7 @@ describe("SessionThreadPretextVirtualizerList", () => {
       const freshCollapsedShells = freshCollapsedRender.container.querySelectorAll<HTMLElement>("[data-pretext-virtualizer-row-shell='1']");
       const freshCollapsedStatusTop = Number.parseFloat(freshCollapsedShells[1]?.style.top ?? "0");
 
-      expect(syncItemsSpy).toHaveBeenCalled();
+      expect(patchItemsSpy).toHaveBeenCalled();
       expect(expandedStatusTop).toBeGreaterThan(freshCollapsedStatusTop);
       expect(reopenedStatusTop).toBe(freshCollapsedStatusTop);
     } finally {
@@ -1403,8 +1403,8 @@ describe("SessionThreadPretextVirtualizerList", () => {
         preparedLayoutKey: string | null;
       };
       runtime.preparedLayoutKey = null;
-      const syncItemsSpy = vi.spyOn(runtime.core, "syncItems");
-      syncItemsSpy.mockClear();
+      const patchItemsSpy = vi.spyOn(runtime.core, "patchItems");
+      patchItemsSpy.mockClear();
 
       render(
         <SessionThreadPretextVirtualizerList
@@ -1419,7 +1419,7 @@ describe("SessionThreadPretextVirtualizerList", () => {
         />,
       );
 
-      expect(syncItemsSpy).toHaveBeenCalled();
+      expect(patchItemsSpy).toHaveBeenCalled();
     } finally {
       if (originalClientWidth) {
         Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);

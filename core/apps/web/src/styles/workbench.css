@@ -3267,9 +3267,9 @@
 .wb-turn-header-bubble {
   position: relative;
   border-radius: 10px;
-  border: 1px solid var(--surface-active);
+  border: var(--wb-turn-header-bubble-border-width) solid var(--surface-active);
   background: var(--surface-ghost);
-  padding: 8px 10px;
+  padding: var(--wb-turn-header-bubble-padding-block) var(--wb-turn-header-bubble-padding-inline);
 }
 
 .wb-turn-header-copy {
@@ -3302,10 +3302,13 @@
 }
 
 .wb-turn-header-content {
-  line-height: 1.55;
+  font-family: var(--wb-markdown-body-font-family);
+  font-size: var(--wb-markdown-body-font-size);
+  line-height: var(--wb-markdown-body-line-height);
   color: var(--text);
-  overflow-wrap: anywhere;
-  padding-right: 24px;
+  overflow-wrap: break-word;
+  word-break: normal;
+  padding-right: var(--wb-turn-header-copy-gutter);
 }
 
 .wb-turn-header-attachments {
@@ -3760,10 +3763,10 @@
   margin: 2px 0 0 0;
 }
 
-.wb-turn-header-content :where(p, li, td, th, h1, h2, h3, h4, h5, h6)>code,
-.wb-tool-markdown :where(p, li, td, th, h1, h2, h3, h4, h5, h6)>code,
-.wb-assistant-body :where(p, li, td, th, h1, h2, h3, h4, h5, h6)>code,
-.msg :where(p, li, td, th, h1, h2, h3, h4, h5, h6)>code {
+.wb-turn-header-content :where(p, li, td, th, h1, h2, h3, h4, h5, h6) code,
+.wb-tool-markdown :where(p, li, td, th, h1, h2, h3, h4, h5, h6) code,
+.wb-assistant-body :where(p, li, td, th, h1, h2, h3, h4, h5, h6) code,
+.msg :where(p, li, td, th, h1, h2, h3, h4, h5, h6) code {
   display: inline;
   font-family: var(--wb-markdown-inline-code-font-family);
   font-size: var(--wb-markdown-inline-code-font-size);
@@ -3808,7 +3811,6 @@
 .msg :where(.wb-md-table-scroll) {
   max-width: 100%;
   overflow-x: auto;
-  scrollbar-gutter: stable;
 }
 
 .wb-turn-header-content :where(.codeblock),

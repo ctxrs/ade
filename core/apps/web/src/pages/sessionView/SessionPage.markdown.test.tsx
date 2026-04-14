@@ -41,12 +41,42 @@ describe("MemoMarkdown", () => {
   });
 
   it("tokenizes assistant file paths as neutral code tokens before modifier hover", () => {
-    render(<MemoMarkdown content="`.ctx/ctx-pack/agent-basics`" linkifyFiles worktreeId="wt_123" />);
+    const { container } = render(<MemoMarkdown content="`.ctx/ctx-pack/agent-basics`" linkifyFiles worktreeId="wt_123" />);
 
-    const token = screen.getByText(".ctx/ctx-pack/agent-basics");
+    const token = container.querySelector(".code-token-path");
+    if (!(token instanceof HTMLElement)) {
+      throw new Error("Expected linkified code token");
+    }
     expect(token.tagName).toBe("SPAN");
     expect(token.className).toContain("code-token-path");
     expect(token.className).not.toContain("ctx-modifier-hover");
+    expect(token.textContent).toBe(".ctx/ctx-pack/agent-basics");
+  });
+
+  it("renders long inline-code tokens as deterministic semantic fragments", () => {
+    const { container } = render(
+      <MemoMarkdown content="`inline-thing-that-actually-gets-really-long-so-much-so-that-it-wraps-to-multiple-lines/core/apps/web/src/pages/sessionThread/sessionMarkdownMeasurement.ts`" />,
+    );
+
+    expect(screen.getByText("really-")).toHaveClass("code-token-fragment-sealed");
+    expect(screen.getByText("multiple-lines/core/")).toHaveClass("code-token-fragment-sealed");
+    expect(screen.getByText("sessionMarkdownMeasurement.")).toHaveClass("code-token-fragment-sealed");
+    expect(container.querySelectorAll(".code-token").length).toBeGreaterThan(3);
+  });
+
+  it("renders linkified inline-code paths with the same deterministic fragment structure", () => {
+    render(
+      <MemoMarkdown
+        content="`sessionThreadDomMeasurement.tsx/sessionThreadDomMeasurement.tsx/apps/sessionThreadDomMeasurement.tsx/workbenchShell`"
+        linkifyFiles
+        worktreeId="wt_123"
+      />,
+    );
+
+    const pathToken = document.querySelector(".code-token-path");
+    expect(pathToken).not.toBeNull();
+    expect(screen.getAllByText("sessionThreadDomMeasurement.").length).toBeGreaterThan(0);
+    expect(screen.getByText("tsx/sessionThreadDomMeasurement.")).toHaveClass("code-token-fragment-sealed");
   });
 
   it("requires a modifier click before opening desktop external links", () => {
