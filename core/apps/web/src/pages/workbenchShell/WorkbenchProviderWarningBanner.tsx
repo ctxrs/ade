@@ -121,12 +121,13 @@ export function WorkbenchProviderWarningBanner({
   );
   const [dismissedSignature, setDismissedSignature] = useState<string | null>(() =>
     readDismissedWarningSignature(workspaceId));
+  const [updateAllSuppressed, setUpdateAllSuppressed] = useState(false);
 
   useEffect(() => {
     setDismissedSignature(readDismissedWarningSignature(workspaceId));
   }, [workspaceId, warning?.signature]);
 
-  if (!warning || dismissedSignature === warning.signature) return null;
+  if (!warning || dismissedSignature === warning.signature || updateAllSuppressed) return null;
 
   const dismiss = () => {
     persistDismissedWarningSignature(workspaceId, warning.signature);
@@ -139,11 +140,13 @@ export function WorkbenchProviderWarningBanner({
   };
 
   const handleUpdateAll = async () => {
-    dismiss();
+    setUpdateAllSuppressed(true);
     try {
       await onUpdateProviders(warning.installableProviderIds);
     } catch {
       // The workbench already surfaces install errors independently.
+    } finally {
+      setUpdateAllSuppressed(false);
     }
   };
 
