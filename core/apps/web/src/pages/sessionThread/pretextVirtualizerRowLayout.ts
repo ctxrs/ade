@@ -9,9 +9,8 @@ import type { WorkbenchListItem, WorkbenchTurnHeader } from "../sessionView";
 import {
   clearSessionMarkdownMeasurementCaches,
   measureSessionMarkdownDocument,
-  measureSessionPlainTextBlockHeight,
-  measureSessionTextHeight,
 } from "./sessionMarkdownMeasurement";
+import { measureSessionPlainTextBlockHeight } from "./sessionPlainTextMeasurement";
 import {
   SESSION_THREAD_INDENT_LEFT_PX,
   SESSION_THREAD_MESSAGE_ATTACHMENT_GAP_PX,
@@ -40,6 +39,7 @@ import {
   resolveSessionThreadMessageTextWidth,
   resolveSessionThreadTurnHeaderTextWidth,
 } from "./sessionThreadLayoutTokens";
+import { measureSessionTextHeight } from "./sessionTextMeasurement";
 import {
   getWorkbenchMessageLayoutState,
   getWorkbenchTurnHeaderLayoutState,
