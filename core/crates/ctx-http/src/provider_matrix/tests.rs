@@ -772,6 +772,74 @@ async fn apply_matrix_to_status_accepts_matching_managed_archive_checksum() {
 }
 
 #[tokio::test]
+async fn apply_matrix_to_status_clears_stale_matrix_update_flags_when_runtime_is_current() {
+    let temp = tempdir().expect("tempdir");
+    let runtime = temp.path().join("codex-crp");
+    std::fs::write(&runtime, b"matching-runtime").expect("write runtime");
+
+    let sha256 = sha256_hex(b"matching-archive");
+    let entry = codex_archive_test_entry("0.114.0-ctx.2", &sha256);
+    let cfg = managed_archive_cfg(&runtime, "0.114.0-ctx.2", &sha256);
+    let mut status = ctx_providers::adapters::ProviderStatus {
+        provider_id: "codex".to_string(),
+        installed: true,
+        detected_path: Some(runtime.to_string_lossy().to_string()),
+        version: Some("0.114.0-ctx.1".to_string()),
+        capabilities: None,
+        health: ctx_providers::adapters::ProviderHealth::Ok,
+        diagnostics: Vec::new(),
+        details: HashMap::from([
+            (
+                "install_target".to_string(),
+                InstallTarget::LinuxX8664.as_str().to_string(),
+            ),
+            (
+                "managed_dependency_update_available".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "managed_fingerprint_mismatch".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "matrix_detected_upstream_version".to_string(),
+                "0.114.0".to_string(),
+            ),
+            ("matrix_latest_version".to_string(), "9.9.9".to_string()),
+            (
+                "matrix_recommended_version".to_string(),
+                "9.9.9".to_string(),
+            ),
+            ("matrix_update_available".to_string(), "true".to_string()),
+            (
+                "matrix_update_requires_context".to_string(),
+                "true".to_string(),
+            ),
+        ]),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
+    };
+
+    apply_matrix_to_status(temp.path(), &cfg, &entry, &mut status).await;
+
+    assert_eq!(status.version.as_deref(), Some("0.114.0-ctx.2"));
+    assert_eq!(
+        status
+            .details
+            .get("matrix_recommended_version")
+            .map(String::as_str),
+        Some("0.114.0-ctx.2")
+    );
+    assert!(!status
+        .details
+        .contains_key("managed_dependency_update_available"));
+    assert!(!status.details.contains_key("managed_fingerprint_mismatch"));
+    assert!(!status.details.contains_key("matrix_update_available"));
+    assert!(!status
+        .details
+        .contains_key("matrix_update_requires_context"));
+}
+
+#[tokio::test]
 async fn apply_matrix_to_status_flags_missing_npm_artifact_fingerprint() {
     let entry = codex_npm_test_entry("1.2.3");
     let mut cfg = AgentServerConfigFile::default();

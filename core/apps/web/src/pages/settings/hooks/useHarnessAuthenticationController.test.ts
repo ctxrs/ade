@@ -16,6 +16,7 @@ import {
   getCursorLogin,
   getGeminiLogin,
   getKimiLogin,
+  installAllProviders,
   listAmpAccounts,
   listClaudeAccounts,
   listCodexAccounts,
@@ -63,8 +64,10 @@ import {
 import { supportsHarnessEndpointConfigStatic, takeNextAuthUrlToOpen } from "./harnessAuth/capabilities";
 import { resetProviderOnboardingCoordinatorForTests } from "../../../state/providerOnboardingCoordinator";
 import { createDesktopLocalDaemonTargetScope } from "../../../state/scopeIdentity";
+import { getProviderOwnerScopeKeyOrNull } from "../../../state/providerScopeAdapters";
 import type { HarnessAuthRow } from "../harnessAuthRows";
 import { openExternalLink } from "../../../utils/desktop";
+import { readAcknowledgedProviderRuntimeWarningIds } from "../../../utils/providerRuntimeWarnings";
 
 const trackFeatureUsed = vi.hoisted(() => vi.fn());
 
@@ -173,6 +176,7 @@ vi.mock("../../../api/client", async (importOriginal) => {
     getCursorLogin: vi.fn(),
     getGeminiLogin: vi.fn(),
     getKimiLogin: vi.fn(),
+    installAllProviders: vi.fn(),
     listAmpAccounts: vi.fn(),
     listClaudeAccounts: vi.fn(),
     listCodexAccounts: vi.fn(),
@@ -450,6 +454,7 @@ beforeEach(() => {
   vi.mocked(getCursorLogin).mockReset();
   vi.mocked(getGeminiLogin).mockReset();
   vi.mocked(getKimiLogin).mockReset();
+  vi.mocked(installAllProviders).mockReset();
   vi.mocked(listAmpAccounts).mockReset();
   vi.mocked(listClaudeAccounts).mockReset();
   vi.mocked(listCodexAccounts).mockReset();
@@ -553,6 +558,7 @@ beforeEach(() => {
     baseUrl: "https://daemon-a.example",
     source: "test",
   });
+  window.sessionStorage.clear();
 });
 
 afterEach(() => {
@@ -832,6 +838,87 @@ describe("useHarnessAuthenticationController", () => {
       expect(vi.mocked(loadProvidersBootstrap)).toHaveBeenCalledWith("ws-test");
       expect(controller?.providers[0]?.provider_id).toBe("codex");
     });
+  });
+
+  it("acknowledges the current actionable warning set when installing all from settings", async () => {
+    const workspaceId = "ws-install-all";
+    let controller: Controller | null = null;
+    const providers: ProviderStatus[] = [
+      {
+        provider_id: "codex",
+        installed: true,
+        health: "ok",
+        diagnostics: [],
+        details: {
+          install_supported: "true",
+          matrix_update_available: "true",
+        },
+        usability: {
+          usable: true,
+          status: "ready",
+          blocking_provider_ids: [],
+          recommended_action: "none",
+        },
+      },
+      {
+        provider_id: "gemini",
+        installed: false,
+        health: "missing",
+        diagnostics: [],
+        details: {
+          install_supported: "true",
+          matrix_update_available: "true",
+        },
+        usability: {
+          usable: false,
+          status: "blocked",
+          reason: "runtime not installed",
+          blocking_provider_ids: [],
+          recommended_action: "install",
+        },
+      },
+    ];
+    const bootstrap = makeBootstrap({ providers });
+    queueBootstrapLoad(workspaceId, bootstrap);
+    setBootstrapSnapshot(workspaceId, bootstrap);
+    vi.mocked(installAllProviders).mockResolvedValue([
+      {
+        provider_id: "codex",
+        install_id: "install-codex",
+        target: "host",
+      },
+      {
+        provider_id: "gemini",
+        install_id: "install-gemini",
+        target: "host",
+      },
+    ]);
+    setDaemonConnection({
+      baseUrl: "https://desktop-daemon.example",
+      source: "desktop",
+      targetScope: createDesktopLocalDaemonTargetScope(),
+    });
+
+    render(createElement(ControllerHarness, {
+      workspaceId,
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller?.providers).toHaveLength(2);
+    });
+
+    const ownerScopeKey = getProviderOwnerScopeKeyOrNull(workspaceId);
+    expect(ownerScopeKey).not.toBeNull();
+
+    await act(async () => {
+      await controller?.onInstallAll();
+    });
+
+    expect(vi.mocked(installAllProviders)).toHaveBeenCalledWith("host");
+    expect(readAcknowledgedProviderRuntimeWarningIds(ownerScopeKey)).toEqual(["codex"]);
   });
 
   it("submits Gemini Vertex service-account endpoint auth without a base URL", async () => {

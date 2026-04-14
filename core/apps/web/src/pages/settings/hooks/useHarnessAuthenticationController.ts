@@ -71,6 +71,10 @@ import {
 import { runHarnessSubscriptionFlow } from "./harnessAuth/subscriptionFlow";
 import { useHarnessAuthAccountCollections } from "./harnessAuth/useHarnessAuthAccountCollections";
 import { useHarnessAuthModalController } from "./harnessAuth/useHarnessAuthModalController";
+import {
+  acknowledgeProviderRuntimeWarnings,
+  getProviderRuntimeWarningIds,
+} from "../../../utils/providerRuntimeWarnings";
 
 export {
   extractGithubDeviceCodeFromAuthUrl,
@@ -876,13 +880,14 @@ export function useHarnessAuthenticationController({
     setInstallBusy("all");
     setProviderError(null);
     try {
+      acknowledgeProviderRuntimeWarnings(ownerScopeKey ?? workspaceId, getProviderRuntimeWarningIds(onboarding.providersById));
       await onboarding.startAllProviderInstalls();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setInstallBusy(null);
     }
-  }, [onboarding]);
+  }, [onboarding, ownerScopeKey, workspaceId]);
 
   const onCancelInstall = useCallback(async (providerId: string) => {
     setProviderError(null);

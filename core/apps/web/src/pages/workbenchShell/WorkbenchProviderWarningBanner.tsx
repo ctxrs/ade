@@ -1,149 +1,55 @@
 import { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import type { ProviderStatus } from "../../api/client";
-import { providerDetailFlag } from "../../utils/boolish";
-import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
-import { isVisibleHarnessProviderStatus, providerUsabilityReason } from "../../utils/providerInventory";
-import { formatProviderVersionDisplay, getMatrixVersionDisplay } from "../../utils/providerVersionLabel";
+import {
+  acknowledgeProviderRuntimeWarnings,
+  buildProviderRuntimeWarning,
+  clearAcknowledgedProviderRuntimeWarningIds,
+  readAcknowledgedProviderRuntimeWarningIds,
+  type ProviderRuntimeWarning,
+} from "../../utils/providerRuntimeWarnings";
 
 type WorkbenchProviderWarningBannerProps = {
-  workspaceId: string;
+  acknowledgementScopeId: string;
   providersById: Record<string, ProviderStatus>;
   updateAllBusy?: boolean;
   onUpdateProviders: (providerIds: string[]) => Promise<void> | void;
   onOpenSettings: () => void;
 };
-
-type WarningProvider = {
-  providerId: string;
-  label: string;
-  installSupported: boolean;
-  installedVersion: string | null;
-  recommendedVersion: string | null;
-  reason: string | null;
-};
-
-export type WorkbenchProviderWarning = {
-  title: string;
-  providers: WarningProvider[];
-  installableProviderIds: string[];
-};
-
-const HARNESS_LABELS = new Map(HARNESS_CATALOG.map((entry) => [entry.id, entry.label]));
-const ACKNOWLEDGED_WARNING_PROVIDER_IDS_STORAGE_KEY_PREFIX = "wb.provider_runtime_warning.acknowledged_provider_ids";
-
-const labelForProvider = (providerId: string): string =>
-  HARNESS_LABELS.get(providerId) ?? providerId;
-
-const summarizeProvider = (
-  provider: ProviderStatus,
-): WarningProvider | null => {
-  if (!isVisibleHarnessProviderStatus(provider)) return null;
-  const requiresRuntimeUpdate =
-    provider.health === "unsupported_version"
-    || providerDetailFlag(provider.details, "matrix_update_available")
-    || providerDetailFlag(provider.details, "managed_dependency_update_available")
-    || providerDetailFlag(provider.details, "managed_fingerprint_mismatch");
-  if (!requiresRuntimeUpdate) return null;
-  return {
-    providerId: provider.provider_id,
-    label: labelForProvider(provider.provider_id),
-    installSupported: providerDetailFlag(provider.details, "install_supported"),
-    installedVersion: formatProviderVersionDisplay(provider),
-    recommendedVersion: getMatrixVersionDisplay(provider.details, "recommended"),
-    reason: providerUsabilityReason(provider),
-  };
-};
-
-const warningAcknowledgementStorageKey = (workspaceId: string): string =>
-  `${ACKNOWLEDGED_WARNING_PROVIDER_IDS_STORAGE_KEY_PREFIX}.${workspaceId}`;
-
-const normalizeProviderIds = (providerIds: string[]): string[] =>
-  Array.from(new Set(providerIds.map((providerId) => providerId.trim()).filter(Boolean))).sort();
-
-const readAcknowledgedWarningProviderIds = (workspaceId: string): string[] => {
-  try {
-    const stored = window.sessionStorage.getItem(warningAcknowledgementStorageKey(workspaceId));
-    if (!stored) return [];
-    const parsed = JSON.parse(stored);
-    if (!Array.isArray(parsed)) return [];
-    return normalizeProviderIds(parsed.filter((value): value is string => typeof value === "string"));
-  } catch {
-    return [];
-  }
-};
-
-const persistAcknowledgedWarningProviderIds = (workspaceId: string, providerIds: string[]): void => {
-  try {
-    window.sessionStorage.setItem(
-      warningAcknowledgementStorageKey(workspaceId),
-      JSON.stringify(normalizeProviderIds(providerIds)),
-    );
-  } catch {
-    // Ignore storage failures and keep the acknowledgement in memory for the current render.
-  }
-};
-
-const clearAcknowledgedWarningProviderIds = (workspaceId: string): void => {
-  try {
-    window.sessionStorage.removeItem(warningAcknowledgementStorageKey(workspaceId));
-  } catch {
-    // Ignore storage failures and let the next navigation clear the acknowledgement.
-  }
-};
-
-export const buildWorkbenchProviderWarning = (
-  providersById: Record<string, ProviderStatus>,
-): WorkbenchProviderWarning | null => {
-  const flagged = Object.values(providersById)
-    .map(summarizeProvider)
-    .filter((provider): provider is WarningProvider => provider !== null)
-    .sort((lhs, rhs) => lhs.label.localeCompare(rhs.label));
-
-  if (flagged.length === 0) return null;
-
-  const installableProviderIds = flagged
-    .filter((provider) => provider.installSupported)
-    .map((provider) => provider.providerId);
-
-  return {
-    title: `${flagged.length} provider runtime${flagged.length === 1 ? "" : "s"} need${flagged.length === 1 ? "s" : ""} an update.`,
-    providers: flagged,
-    installableProviderIds,
-  };
-};
+export { buildProviderRuntimeWarning as buildWorkbenchProviderWarning };
+export type WorkbenchProviderWarning = ProviderRuntimeWarning;
 
 export function WorkbenchProviderWarningBanner({
-  workspaceId,
+  acknowledgementScopeId,
   providersById,
   updateAllBusy = false,
   onUpdateProviders,
   onOpenSettings,
 }: WorkbenchProviderWarningBannerProps) {
   const warning = useMemo(
-    () => buildWorkbenchProviderWarning(providersById),
+    () => buildProviderRuntimeWarning(providersById),
     [providersById],
   );
   const flaggedProviderIds = useMemo(
-    () => warning?.providers.map((provider) => provider.providerId) ?? [],
+    () => warning?.providerIds ?? [],
     [warning],
   );
   const [acknowledgedProviderIds, setAcknowledgedProviderIds] = useState<string[]>(() =>
-    readAcknowledgedWarningProviderIds(workspaceId));
+    readAcknowledgedProviderRuntimeWarningIds(acknowledgementScopeId));
   const acknowledgedProviderIdSet = useMemo(
     () => new Set(acknowledgedProviderIds),
     [acknowledgedProviderIds],
   );
 
   useEffect(() => {
-    setAcknowledgedProviderIds(readAcknowledgedWarningProviderIds(workspaceId));
-  }, [workspaceId]);
+    setAcknowledgedProviderIds(readAcknowledgedProviderRuntimeWarningIds(acknowledgementScopeId));
+  }, [acknowledgementScopeId]);
 
   useEffect(() => {
     if (warning) return;
-    clearAcknowledgedWarningProviderIds(workspaceId);
+    clearAcknowledgedProviderRuntimeWarningIds(acknowledgementScopeId);
     setAcknowledgedProviderIds((current) => (current.length > 0 ? [] : current));
-  }, [workspaceId, warning]);
+  }, [acknowledgementScopeId, warning]);
 
   const warningAcknowledged =
     flaggedProviderIds.length > 0
@@ -152,11 +58,10 @@ export function WorkbenchProviderWarningBanner({
   if (!warning || warningAcknowledged) return null;
 
   const acknowledgeWarning = () => {
-    const nextAcknowledgedProviderIds = normalizeProviderIds([
-      ...acknowledgedProviderIds,
-      ...flaggedProviderIds,
-    ]);
-    persistAcknowledgedWarningProviderIds(workspaceId, nextAcknowledgedProviderIds);
+    const nextAcknowledgedProviderIds = acknowledgeProviderRuntimeWarnings(
+      acknowledgementScopeId,
+      flaggedProviderIds,
+    );
     setAcknowledgedProviderIds(nextAcknowledgedProviderIds);
   };
 

@@ -10,6 +10,8 @@ import {
 } from "../../state/providerInstallProgressStore";
 import { resetProviderOnboardingCoordinatorForTests } from "../../state/providerOnboardingCoordinator";
 import { invalidateProvidersBootstrap, refreshProvidersBootstrap } from "../../state/providersBootstrapStore";
+import { getProviderOwnerScopeKeyOrNull } from "../../state/providerScopeAdapters";
+import { readAcknowledgedProviderRuntimeWarningIds } from "../../utils/providerRuntimeWarnings";
 import { resolveProviderOptionsUpdate, shouldHydrateProviderModels } from "./useWorkbenchProviders";
 import { useWorkbenchProviders } from "./useWorkbenchProviders";
 
@@ -192,6 +194,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetProviderOnboardingCoordinatorForTests();
   window.localStorage.clear();
+  window.sessionStorage.clear();
   setDaemonConnection({
     baseUrl: "https://daemon-a.example",
     source: "test",
@@ -871,10 +874,16 @@ describe("useWorkbenchProviders", () => {
       },
       [
         providerStatus("codex", {
-          details: { install_supported: "true" },
+          details: {
+            install_supported: "true",
+            matrix_update_available: "true",
+          },
         }),
         providerStatus("claude-crp", {
-          details: { install_supported: "true" },
+          details: {
+            install_supported: "true",
+            matrix_update_available: "true",
+          },
         }),
       ],
     ));
@@ -910,5 +919,81 @@ describe("useWorkbenchProviders", () => {
       ["claude-crp", "host"],
     ]);
     expect(vi.mocked(installAllProviders)).not.toHaveBeenCalled();
+    expect(readAcknowledgedProviderRuntimeWarningIds(
+      getProviderOwnerScopeKeyOrNull(workspaceId) ?? workspaceId,
+    )).toEqual(["claude-crp", "codex"]);
+  });
+
+  it("acknowledges the current actionable warning set when installing all from the composer menu", async () => {
+    const workspaceId = "ws-install-all";
+    let hookValue: HookValue | null = null;
+
+    vi.mocked(getProvidersBootstrap).mockResolvedValue(makeBootstrap(
+      {
+        codex: {
+          ...baseOptions("codex"),
+          workspace_id: workspaceId,
+        },
+        gemini: {
+          ...baseOptions("gemini"),
+          workspace_id: workspaceId,
+        },
+      },
+      [
+        providerStatus("codex", {
+          details: {
+            install_supported: "true",
+            matrix_update_available: "true",
+          },
+        }),
+        providerStatus("gemini", {
+          installed: false,
+          health: "missing",
+          details: {
+            install_supported: "true",
+            matrix_update_available: "true",
+          },
+          usability: {
+            usable: false,
+            status: "blocked",
+            blocking_provider_ids: [],
+            recommended_action: "install",
+            reason: "runtime not installed",
+          },
+        }),
+      ],
+    ));
+    vi.mocked(installAllProviders).mockResolvedValue([
+      {
+        provider_id: "codex",
+        install_id: "install-codex",
+        target: "host",
+      },
+      {
+        provider_id: "gemini",
+        install_id: "install-gemini",
+        target: "host",
+      },
+    ]);
+
+    render(createElement(WorkbenchProvidersHarness, {
+      workspaceId,
+      onChange: (next) => {
+        hookValue = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(hookValue?.bootstrapState).toBe("ready");
+    });
+
+    await act(async () => {
+      await hookValue?.installAllProvidersFromMenu();
+    });
+
+    expect(vi.mocked(installAllProviders)).toHaveBeenCalledWith("host");
+    expect(readAcknowledgedProviderRuntimeWarningIds(
+      getProviderOwnerScopeKeyOrNull(workspaceId) ?? workspaceId,
+    )).toEqual(["codex"]);
   });
 });

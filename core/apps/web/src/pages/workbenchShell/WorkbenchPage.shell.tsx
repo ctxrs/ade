@@ -49,6 +49,7 @@ import { useWorkbenchShellIntegrations } from "./useWorkbenchShellIntegrations";
 import type { OptimisticFocus } from "./WorkbenchPage.types";
 import { appendSegment } from "./WorkbenchPage.utils";
 import { resolveWorkspaceBootstrapGateState } from "../workspaceBootstrapGate";
+import { getProviderOwnerScopeKeyOrNull } from "../../state/providerScopeAdapters";
 
 export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate();
@@ -771,7 +772,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         </div>
       )}
       <WorkbenchProviderWarningBanner
-        workspaceId={workspaceId}
+        acknowledgementScopeId={getProviderOwnerScopeKeyOrNull(workspaceId) ?? workspaceId}
         providersById={providersById}
         updateAllBusy={installAllBusy}
         onUpdateProviders={updateProvidersFromMenu}

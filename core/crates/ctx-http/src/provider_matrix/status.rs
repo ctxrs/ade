@@ -10,6 +10,22 @@ use crate::updates;
 use ctx_provider_install::install_state::InstallTarget;
 
 const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
+const MATRIX_STATUS_DETAIL_KEYS: &[&str] = &[
+    "managed_checksum_mismatch",
+    "managed_dependency_update_available",
+    "managed_detected_archive_sha256",
+    "managed_detected_fingerprint",
+    "managed_expected_archive_sha256",
+    "managed_expected_fingerprint",
+    "managed_fingerprint_mismatch",
+    "matrix_detected_upstream_version",
+    "matrix_latest_upstream_version",
+    "matrix_latest_version",
+    "matrix_recommended_upstream_version",
+    "matrix_recommended_version",
+    "matrix_update_available",
+    "matrix_update_requires_context",
+];
 
 pub async fn apply_matrix_to_status(
     data_root: &Path,
@@ -17,6 +33,9 @@ pub async fn apply_matrix_to_status(
     entry: &ProviderMatrixEntry,
     status: &mut ctx_providers::adapters::ProviderStatus,
 ) {
+    for key in MATRIX_STATUS_DETAIL_KEYS {
+        status.details.remove(*key);
+    }
     status
         .details
         .insert("provider_kind".to_string(), entry.kind.as_str().to_string());

@@ -1330,6 +1330,106 @@ describe("WorkbenchComposer textarea sizing", () => {
     expect(progressButton.className).toContain("wb-harness-install-busy");
   });
 
+  it("does not revert to Update after a runtime update finishes successfully", async () => {
+    const onInstallProvider = vi.fn();
+    const harnessCatalog: HarnessCatalogEntry[] = [
+      { id: "codex", label: "Codex", logoSrc: "" },
+      { id: "cursor", label: "Cursor", logoSrc: "" },
+    ];
+    const renderHarness = (
+      providersById: Record<string, ProviderStatus>,
+      providerInstallsById: NewSessionProps["providerInstallsById"],
+    ) => (
+      <WorkbenchComposer
+        variant="newSession"
+        value=""
+        setValue={vi.fn()}
+        placeholder="@ for context, / for commands"
+        inputDisabled={false}
+        sessionIdForAutocomplete={null}
+        workspaceIdForAutocomplete={null}
+        slashCommands={[]}
+        attachments={[]}
+        setAttachments={vi.fn()}
+        onSend={vi.fn()}
+        sendDisabled={false}
+        sendDisabledReason={null}
+        onInterrupt={null}
+        modeId="default"
+        setModeId={vi.fn()}
+        harnessCatalog={harnessCatalog}
+        providersById={providersById}
+        providerInstallsById={providerInstallsById}
+        onInstallProvider={onInstallProvider}
+        onInstallAllProviders={vi.fn()}
+        providerOptions={{}}
+        ensureProviderAuthSummary={async () => undefined}
+        draftHarness={{ providerId: "codex", modelId: "o3" }}
+        setDraftHarness={vi.fn()}
+        defaultProviderId="codex"
+      />
+    );
+
+    const updatingProviders: Record<string, ProviderStatus> = {
+      codex: makeProviderStatus("codex"),
+      cursor: makeProviderStatus("cursor", {
+        details: {
+          install_supported: "true",
+          install_target: "host",
+          matrix_update_available: "true",
+        },
+      }),
+    };
+
+    const { rerender } = render(
+      renderHarness(updatingProviders, {}),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const initialCursorRow = screen.getByText("Cursor").closest(".wb-harness-row");
+    expect(initialCursorRow).not.toBeNull();
+    fireEvent.click(within(initialCursorRow as HTMLElement).getByRole("button", { name: "Update" }));
+    expect(onInstallProvider).toHaveBeenCalledWith("cursor");
+
+    rerender(renderHarness(
+      updatingProviders,
+      {
+        cursor: {
+          installId: "install-cursor",
+          state: "running",
+          pct: 42,
+          target: "host",
+        },
+      },
+    ));
+
+    const progressCursorRow = screen.getByText("Cursor").closest(".wb-harness-row");
+    expect(progressCursorRow).not.toBeNull();
+    expect(within(progressCursorRow as HTMLElement).getByRole("button", { name: "42%" })).toBeInTheDocument();
+
+    rerender(renderHarness(
+      {
+        codex: makeProviderStatus("codex"),
+        cursor: makeProviderStatus("cursor", {
+          details: {
+            install_supported: "true",
+            install_target: "host",
+          },
+        }),
+      },
+      {},
+    ));
+
+    const finishedCursorRow = screen.getByText("Cursor").closest(".wb-harness-row");
+    expect(finishedCursorRow).not.toBeNull();
+    expect(within(finishedCursorRow as HTMLElement).queryByRole("button", { name: "Update" })).not.toBeInTheDocument();
+    expect(within(finishedCursorRow as HTMLElement).queryByRole("button", { name: "42%" })).not.toBeInTheDocument();
+  });
+
   it("shows finalizing state instead of 100% after install success until the provider is ready", async () => {
     const NewTaskHarness = () => {
       const [value, setValue] = useState("");

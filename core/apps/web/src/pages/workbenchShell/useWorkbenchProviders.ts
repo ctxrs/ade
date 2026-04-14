@@ -21,6 +21,11 @@ import {
   resolveDefaultHarnessProviderId,
   resolveDraftHarnessReplacement,
 } from "./harnessSelection";
+import { getProviderOwnerScopeKeyOrNull } from "../../state/providerScopeAdapters";
+import {
+  acknowledgeProviderRuntimeWarnings,
+  getProviderRuntimeWarningIds,
+} from "../../utils/providerRuntimeWarnings";
 
 type UseWorkbenchProvidersArgs = {
   workspaceId: string;
@@ -63,6 +68,11 @@ export function useWorkbenchProviders({
   const providerOptions = onboarding.bootstrap.provider_options;
   const providersById = onboarding.providersById;
   const providerInstallsById = onboarding.installsById;
+
+  const acknowledgeCurrentProviderRuntimeWarnings = useCallback(() => {
+    const ownerScopeKey = getProviderOwnerScopeKeyOrNull(workspaceId) ?? workspaceId;
+    acknowledgeProviderRuntimeWarnings(ownerScopeKey, getProviderRuntimeWarningIds(providersById));
+  }, [providersById, workspaceId]);
 
   const defaultProviderId = useMemo(() => resolveDefaultHarnessProviderId(providers), [providers]);
 
@@ -121,13 +131,14 @@ export function useWorkbenchProviders({
     onStartError(null);
     setInstallAllBusy(true);
     try {
+      acknowledgeCurrentProviderRuntimeWarnings();
       await onboarding.startAllProviderInstalls();
     } catch (error: unknown) {
       onStartError(toErrorMessage(error));
     } finally {
       setInstallAllBusy(false);
     }
-  }, [onStartError, onboarding]);
+  }, [acknowledgeCurrentProviderRuntimeWarnings, onStartError, onboarding]);
 
   const updateProvidersFromMenu = useCallback(
     async (providerIds: string[]) => {
@@ -138,6 +149,7 @@ export function useWorkbenchProviders({
       onStartError(null);
       setInstallAllBusy(true);
       try {
+        acknowledgeCurrentProviderRuntimeWarnings();
         for (const providerId of uniqueProviderIds) {
           await onboarding.startProviderInstall(providerId);
         }
@@ -148,7 +160,7 @@ export function useWorkbenchProviders({
         setInstallAllBusy(false);
       }
     },
-    [onStartError, onboarding],
+    [acknowledgeCurrentProviderRuntimeWarnings, onStartError, onboarding],
   );
 
   const cancelProviderInstallFromMenu = useCallback(

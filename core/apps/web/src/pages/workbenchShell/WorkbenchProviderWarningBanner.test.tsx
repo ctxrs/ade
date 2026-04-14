@@ -43,7 +43,7 @@ describe("WorkbenchProviderWarningBanner", () => {
   it("renders nothing when no visible provider needs attention", () => {
     const { container } = render(
       <WorkbenchProviderWarningBanner
-        workspaceId="ws-1"
+        acknowledgementScopeId="scope-ws-1"
         providersById={{ codex: providerStatus("codex") }}
         onUpdateProviders={() => Promise.resolve()}
         onOpenSettings={() => {}}
@@ -60,7 +60,7 @@ describe("WorkbenchProviderWarningBanner", () => {
 
     const { rerender } = render(
       <WorkbenchProviderWarningBanner
-        workspaceId="ws-1"
+        acknowledgementScopeId="scope-ws-1"
         providersById={{
           codex: providerStatus("codex", {
             details: {
@@ -98,7 +98,7 @@ describe("WorkbenchProviderWarningBanner", () => {
 
     rerender(
       <WorkbenchProviderWarningBanner
-        workspaceId="ws-1"
+        acknowledgementScopeId="scope-ws-1"
         providersById={{
           "claude-crp": providerStatus("claude-crp", {
             details: {
@@ -120,7 +120,7 @@ describe("WorkbenchProviderWarningBanner", () => {
     update.resolve();
     rerender(
       <WorkbenchProviderWarningBanner
-        workspaceId="ws-1"
+        acknowledgementScopeId="scope-ws-1"
         providersById={{
           "claude-crp": providerStatus("claude-crp", {
             details: {
@@ -143,7 +143,7 @@ describe("WorkbenchProviderWarningBanner", () => {
 
     rerender(
       <WorkbenchProviderWarningBanner
-        workspaceId="ws-1"
+        acknowledgementScopeId="scope-ws-1"
         providersById={{}}
         updateAllBusy={false}
         onUpdateProviders={onUpdateProviders}
@@ -157,7 +157,7 @@ describe("WorkbenchProviderWarningBanner", () => {
 
     rerender(
       <WorkbenchProviderWarningBanner
-        workspaceId="ws-1"
+        acknowledgementScopeId="scope-ws-1"
         providersById={{
           "claude-crp": providerStatus("claude-crp", {
             details: {
@@ -185,7 +185,7 @@ describe("WorkbenchProviderWarningBanner", () => {
 
     const { rerender } = render(
       <WorkbenchProviderWarningBanner
-        workspaceId="ws-1"
+        acknowledgementScopeId="scope-ws-1"
         providersById={{
           codex: providerStatus("codex", {
             details: {
@@ -216,7 +216,7 @@ describe("WorkbenchProviderWarningBanner", () => {
 
     rerender(
       <WorkbenchProviderWarningBanner
-        workspaceId="ws-1"
+        acknowledgementScopeId="scope-ws-1"
         providersById={{
           "claude-crp": providerStatus("claude-crp", {
             health: "unsupported_version",
@@ -233,7 +233,7 @@ describe("WorkbenchProviderWarningBanner", () => {
 
     rerender(
       <WorkbenchProviderWarningBanner
-        workspaceId="ws-1"
+        acknowledgementScopeId="scope-ws-1"
         providersById={{
           "claude-crp": providerStatus("claude-crp", {
             health: "unsupported_version",
@@ -258,7 +258,7 @@ describe("WorkbenchProviderWarningBanner", () => {
   it("renders again after the acknowledged provider set fully clears", async () => {
     const { rerender } = render(
       <WorkbenchProviderWarningBanner
-        workspaceId="ws-1"
+        acknowledgementScopeId="scope-ws-1"
         providersById={{
           codex: providerStatus("codex", {
             details: { matrix_update_available: "true" },
@@ -276,7 +276,7 @@ describe("WorkbenchProviderWarningBanner", () => {
 
     rerender(
       <WorkbenchProviderWarningBanner
-        workspaceId="ws-1"
+        acknowledgementScopeId="scope-ws-1"
         providersById={{}}
         onUpdateProviders={() => Promise.resolve()}
         onOpenSettings={() => {}}
@@ -289,7 +289,7 @@ describe("WorkbenchProviderWarningBanner", () => {
 
     rerender(
       <WorkbenchProviderWarningBanner
-        workspaceId="ws-1"
+        acknowledgementScopeId="scope-ws-1"
         providersById={{
           codex: providerStatus("codex", {
             details: {
@@ -310,7 +310,7 @@ describe("WorkbenchProviderWarningBanner", () => {
   it("falls back to settings-only when no flagged provider supports managed updates", () => {
     render(
       <WorkbenchProviderWarningBanner
-        workspaceId="ws-1"
+        acknowledgementScopeId="scope-ws-1"
         providersById={{
           "claude-crp": providerStatus("claude-crp", {
             health: "unsupported_version",
@@ -326,5 +326,50 @@ describe("WorkbenchProviderWarningBanner", () => {
     expect(screen.queryByRole("button", { name: "Update All" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open Settings" })).toBeInTheDocument();
     expect(screen.getByText("1 provider runtime needs an update.")).toBeInTheDocument();
+  });
+
+  it("does not render on a clean workspace launch when only never-installed providers are flagged", () => {
+    const { container } = render(
+      <WorkbenchProviderWarningBanner
+        acknowledgementScopeId="scope-clean-workspace"
+        providersById={{
+          droid: providerStatus("droid", {
+            installed: false,
+            health: "error",
+            details: {
+              install_supported: "true",
+              managed_fingerprint_mismatch: "true",
+              matrix_update_available: "true",
+            },
+            usability: {
+              usable: false,
+              status: "blocked",
+              blocking_provider_ids: [],
+              recommended_action: "install",
+              reason: "runtime not installed",
+            },
+          }),
+          gemini: providerStatus("gemini", {
+            installed: false,
+            health: "missing",
+            details: {
+              install_supported: "true",
+              matrix_update_available: "true",
+            },
+            usability: {
+              usable: false,
+              status: "blocked",
+              blocking_provider_ids: [],
+              recommended_action: "install",
+              reason: "runtime not installed",
+            },
+          }),
+        }}
+        onUpdateProviders={() => Promise.resolve()}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    expect(container.firstChild).toBeNull();
   });
 });
