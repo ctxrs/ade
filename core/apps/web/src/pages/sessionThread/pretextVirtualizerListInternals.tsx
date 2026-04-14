@@ -178,6 +178,46 @@ export function haveSameItemIds(
   return true;
 }
 
+export function syncSnapshotForProjectionOp({
+  core,
+  items,
+  projectionOp,
+  previousCount,
+  anchorOverride,
+}: {
+  core: ReturnType<typeof createPretextVirtualizerCore<WorkbenchListItem>>;
+  items: readonly WorkbenchListItem[];
+  projectionOp: WorkbenchThreadProjectionOp;
+  previousCount: number;
+  anchorOverride?: PretextVirtualizerLogicalAnchor | null;
+}): PretextVirtualizerSnapshot<WorkbenchListItem> {
+  const changedCount = projectionOp.changedItemIds.length;
+  switch (projectionOp.kind) {
+    case "replace_session":
+      return core.replaceItems(items, anchorOverride);
+    case "append_stream":
+      if (changedCount > 0 && items.length === previousCount + changedCount) {
+        return core.appendItems(items.slice(items.length - changedCount), anchorOverride);
+      }
+      return core.syncItems(items, anchorOverride);
+    case "prepend_history":
+      // History extension can arrive alongside overlapping mixed-row changes, so the
+      // prefix-only fast path is not reliable enough to expose the full fetched prefix.
+      return core.syncItems(items, anchorOverride);
+    case "hydrate_tools":
+    case "terminalize_turn":
+    case "toggle_expansion":
+      return core.patchItems(
+        items,
+        projectionOp.changedItemIds,
+        projectionOp.remeasureItemIds,
+        anchorOverride,
+      );
+    default:
+      return core.syncItems(items, anchorOverride);
+  }
+}
+
 export function isLocalizedProjectionOp(kind: WorkbenchThreadProjectionOp["kind"]): boolean {
   return kind === "hydrate_tools" || kind === "terminalize_turn" || kind === "toggle_expansion";
 }

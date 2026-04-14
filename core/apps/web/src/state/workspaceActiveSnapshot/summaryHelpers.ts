@@ -4,10 +4,37 @@ import type {
   SessionSnapshotSummary,
   SessionSummary,
   Task,
+  WorkspaceActiveSnapshotSessionSummaryDelta,
 } from "@ctx/types";
 import { idToString } from "../../api/client";
 import { sanitizeSessionHeadSnapshot } from "../sessionHeadState";
-import { asRecord, readString } from "./projection";
+import { asRecord, hasOwnProperty, readString } from "./projection";
+
+type SessionSummaryVersion = {
+  lastEventSeq: number | null;
+  projectionRev: number | null;
+  stateRev: number | null;
+};
+
+const readVersionNumber = (value: number | null | undefined): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const hasSessionSummaryVersion = (value: SessionSummaryVersion): boolean =>
+  value.lastEventSeq !== null || value.projectionRev !== null || value.stateRev !== null;
+
+const compareSessionSummaryVersion = (
+  left: SessionSummaryVersion,
+  right: SessionSummaryVersion,
+): number => {
+  const fields: Array<keyof SessionSummaryVersion> = ["lastEventSeq", "projectionRev", "stateRev"];
+  for (const field of fields) {
+    const leftValue = left[field];
+    const rightValue = right[field];
+    if (leftValue === null || rightValue === null || leftValue === rightValue) continue;
+    return leftValue - rightValue;
+  }
+  return 0;
+};
 
 export function taskSortAt(task: Task, fallback?: string | null): string {
   if (task.archived_at) return task.archived_at;
@@ -52,6 +79,100 @@ export function normalizeSessionSummary(summary: SessionSnapshotSummary): Sessio
     activity: summary.activity ?? { is_working: false, last_turn_status: null },
     unread: summary.unread,
   };
+}
+
+export function mergeSessionSummaryDelta(
+  current: SessionSnapshotSummary,
+  delta: WorkspaceActiveSnapshotSessionSummaryDelta,
+): SessionSnapshotSummary | null {
+  const nextSummary: SessionSnapshotSummary = { ...current };
+  let changed = false;
+  const incomingLastEventSeq =
+    typeof delta.last_event_seq === "number" ? delta.last_event_seq : null;
+  const incomingProjectionRev = readVersionNumber(delta.projection_rev);
+  const incomingStateRev = readVersionNumber(delta.state_rev);
+
+  if (hasOwnProperty(delta, "last_message_at")) {
+    const incoming = delta.last_message_at;
+    if (typeof incoming === "string" && incoming) {
+      const currentValue = nextSummary.last_message_at;
+      const incMs = Date.parse(incoming);
+      const curMs = currentValue ? Date.parse(currentValue) : Number.NaN;
+      const shouldUpdate =
+        !currentValue ||
+        (Number.isFinite(incMs) && Number.isFinite(curMs) ? incMs > curMs : incoming > currentValue);
+      if (shouldUpdate && nextSummary.last_message_at !== incoming) {
+        nextSummary.last_message_at = incoming;
+        changed = true;
+      }
+    }
+  }
+  if (hasOwnProperty(delta, "last_message_preview")) {
+    const incoming = delta.last_message_preview;
+    if (typeof incoming === "string") {
+      const nextValue = incoming.length ? incoming : null;
+      if (nextSummary.last_message_preview !== nextValue) {
+        nextSummary.last_message_preview = nextValue;
+        changed = true;
+      }
+    } else if (incoming === null && nextSummary.last_message_preview !== null) {
+      nextSummary.last_message_preview = null;
+      changed = true;
+    }
+  }
+  if (hasOwnProperty(delta, "last_event_seq")) {
+    const incoming = delta.last_event_seq;
+    if (typeof incoming === "number") {
+      const nextValue = Math.max(nextSummary.last_event_seq ?? incoming, incoming);
+      if (nextSummary.last_event_seq !== nextValue) {
+        nextSummary.last_event_seq = nextValue;
+        changed = true;
+      }
+    }
+  }
+  if (typeof delta.projection_rev === "number") {
+    const nextCurrentProjectionRev = nextSummary.projection_rev ?? 0;
+    if (delta.projection_rev > nextCurrentProjectionRev) {
+      nextSummary.projection_rev = delta.projection_rev;
+      changed = true;
+    }
+  }
+  if (typeof delta.state_rev === "number") {
+    const nextCurrentStateRev = nextSummary.state_rev ?? 0;
+    if (delta.state_rev > nextCurrentStateRev) {
+      nextSummary.state_rev = delta.state_rev;
+      changed = true;
+    }
+  }
+  if (hasOwnProperty(delta, "activity")) {
+    const currentVersion: SessionSummaryVersion = {
+      lastEventSeq: readVersionNumber(current.last_event_seq ?? null),
+      projectionRev: readVersionNumber(current.projection_rev),
+      stateRev: readVersionNumber(current.state_rev),
+    };
+    const incomingVersion: SessionSummaryVersion = {
+      lastEventSeq: incomingLastEventSeq,
+      projectionRev: incomingProjectionRev,
+      stateRev: incomingStateRev,
+    };
+    const canUpdateActivity =
+      !hasSessionSummaryVersion(currentVersion) ||
+      (hasSessionSummaryVersion(incomingVersion) &&
+        compareSessionSummaryVersion(incomingVersion, currentVersion) >= 0);
+    const nextActivity = delta.activity ?? { is_working: false, last_turn_status: null };
+    if (canUpdateActivity) {
+      const currentActivity = nextSummary.activity ?? { is_working: false, last_turn_status: null };
+      if (
+        currentActivity.is_working !== nextActivity.is_working ||
+        (currentActivity.last_turn_status ?? null) !== (nextActivity.last_turn_status ?? null)
+      ) {
+        nextSummary.activity = nextActivity;
+        changed = true;
+      }
+    }
+  }
+
+  return changed ? nextSummary : null;
 }
 
 export function sessionToSummary(session: Session): SessionSnapshotSummary {

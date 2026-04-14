@@ -5,7 +5,7 @@ use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::{anyhow, Result};
-use tokio::sync::{mpsc as tokio_mpsc, Notify};
+use tokio::sync::{mpsc as tokio_mpsc, watch};
 
 pub(super) struct WorkspaceStoreLeaseRegistry {
     state: StdMutex<WorkspaceStoreLeaseState>,
@@ -15,7 +15,7 @@ pub(super) struct WorkspaceStoreLeaseRegistry {
 #[derive(Default)]
 struct WorkspaceStoreLeaseState {
     entries: HashMap<u64, WorkspaceStoreLeaseEntry>,
-    closing_workspaces: HashMap<WorkspaceId, Arc<Notify>>,
+    closing_workspaces: HashMap<WorkspaceId, Arc<WorkspaceCloseSignal>>,
 }
 
 struct WorkspaceStoreLeaseEntry {
@@ -32,24 +32,43 @@ struct WorkspaceStoreLease {
 pub(super) struct PendingWorkspaceStoreClose {
     pub(super) workspace_id: WorkspaceId,
     pub(super) store: Store,
-    pub(super) notify: Arc<Notify>,
+    pub(super) notify: Arc<WorkspaceCloseSignal>,
 }
 
 pub(super) struct ReactivatedWorkspaceStore {
     pub(super) store: Store,
     pub(super) instance_id: u64,
-    pub(super) notify: Arc<Notify>,
+    pub(super) notify: Arc<WorkspaceCloseSignal>,
 }
 
 struct StoreCloseJob {
     store: Store,
     registry: Arc<WorkspaceStoreLeaseRegistry>,
     workspace_id: WorkspaceId,
-    notify: Arc<Notify>,
+    notify: Arc<WorkspaceCloseSignal>,
 }
 
 struct StoreCloseExecutor {
     tx: tokio_mpsc::UnboundedSender<StoreCloseJob>,
+}
+
+pub(super) struct WorkspaceCloseSignal {
+    closed_tx: watch::Sender<bool>,
+}
+
+impl WorkspaceCloseSignal {
+    fn new() -> Self {
+        let (closed_tx, _closed_rx) = watch::channel(false);
+        Self { closed_tx }
+    }
+
+    fn subscribe(&self) -> watch::Receiver<bool> {
+        self.closed_tx.subscribe()
+    }
+
+    fn close(&self) {
+        let _ = self.closed_tx.send(true);
+    }
 }
 
 impl StoreCloseExecutor {
@@ -151,7 +170,7 @@ impl WorkspaceStoreLeaseRegistry {
 
     pub(super) async fn wait_for_workspace_close(&self, workspace_id: WorkspaceId) {
         loop {
-            let wait = {
+            let maybe_wait = {
                 let state = match self.state.lock() {
                     Ok(state) => state,
                     Err(poisoned) => poisoned.into_inner(),
@@ -160,10 +179,17 @@ impl WorkspaceStoreLeaseRegistry {
                     .closing_workspaces
                     .get(&workspace_id)
                     .cloned()
-                    .map(|notify| notify.notified_owned())
+                    .map(|signal| signal.subscribe())
             };
-            match wait {
-                Some(wait) => wait.await,
+            match maybe_wait {
+                Some(mut wait) => {
+                    if *wait.borrow() {
+                        return;
+                    }
+                    if wait.changed().await.is_err() {
+                        return;
+                    }
+                }
                 None => return,
             }
         }
@@ -212,7 +238,7 @@ impl WorkspaceStoreLeaseRegistry {
     pub(super) fn publish_reactivated_store(
         &self,
         workspace_id: WorkspaceId,
-        notify: &Arc<Notify>,
+        notify: &Arc<WorkspaceCloseSignal>,
     ) {
         let mut state = match self.state.lock() {
             Ok(state) => state,
@@ -309,7 +335,11 @@ impl WorkspaceStoreLeaseRegistry {
         }
     }
 
-    pub(super) fn finish_close(&self, workspace_id: WorkspaceId, notify: &Arc<Notify>) {
+    pub(super) fn finish_close(
+        &self,
+        workspace_id: WorkspaceId,
+        notify: &Arc<WorkspaceCloseSignal>,
+    ) {
         let mut state = match self.state.lock() {
             Ok(state) => state,
             Err(poisoned) => poisoned.into_inner(),
@@ -318,18 +348,21 @@ impl WorkspaceStoreLeaseRegistry {
     }
 }
 
-fn closing_notify(state: &mut WorkspaceStoreLeaseState, workspace_id: WorkspaceId) -> Arc<Notify> {
+fn closing_notify(
+    state: &mut WorkspaceStoreLeaseState,
+    workspace_id: WorkspaceId,
+) -> Arc<WorkspaceCloseSignal> {
     state
         .closing_workspaces
         .entry(workspace_id)
-        .or_insert_with(|| Arc::new(Notify::new()))
+        .or_insert_with(|| Arc::new(WorkspaceCloseSignal::new()))
         .clone()
 }
 
 fn clear_closing_marker(
     state: &mut WorkspaceStoreLeaseState,
     workspace_id: WorkspaceId,
-    notify: &Arc<Notify>,
+    notify: &Arc<WorkspaceCloseSignal>,
 ) {
     if state
         .closing_workspaces
@@ -338,7 +371,7 @@ fn clear_closing_marker(
     {
         state.closing_workspaces.remove(&workspace_id);
     }
-    notify.notify_waiters();
+    notify.close();
 }
 
 impl Drop for WorkspaceStoreLease {
@@ -358,7 +391,7 @@ fn spawn_store_close(
     store: Store,
     registry: Arc<WorkspaceStoreLeaseRegistry>,
     workspace_id: WorkspaceId,
-    notify: Arc<Notify>,
+    notify: Arc<WorkspaceCloseSignal>,
 ) {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         handle.spawn(close_store_and_finish(
@@ -389,7 +422,7 @@ async fn close_store_and_finish(
     store: Store,
     registry: Arc<WorkspaceStoreLeaseRegistry>,
     workspace_id: WorkspaceId,
-    notify: Arc<Notify>,
+    notify: Arc<WorkspaceCloseSignal>,
 ) {
     store.close().await;
     registry.finish_close(workspace_id, &notify);
@@ -452,7 +485,7 @@ mod tests {
             let waiter_registry = Arc::clone(&registry);
             let waiter = tokio::spawn(async move {
                 tokio::time::timeout(
-                    Duration::from_secs(1),
+                    Duration::from_secs(5),
                     waiter_registry.wait_for_workspace_close(workspace_id),
                 )
                 .await

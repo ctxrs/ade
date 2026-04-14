@@ -11,7 +11,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  createPretextVirtualizerCore,
   type PretextVirtualizerDiagnosticEvent,
   type PretextVirtualizerLogicalAnchor,
   type PretextVirtualizerSnapshot,
@@ -53,11 +52,11 @@ import {
   AuditedPretextRow,
   createVisibleItemAnchor,
   haveSameItemIds,
-  haveSameItemRefs,
   haveSameLayoutInputs,
   isLocalizedProjectionOp,
   resolveLocalizedAnchorOverride,
   resolveScrollTopForLocation,
+  syncSnapshotForProjectionOp,
 } from "./sessionThread/pretextVirtualizerListInternals";
 import {
   clearSessionThreadDomMeasurementCaches,
@@ -395,53 +394,6 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     [core, scrollToOffset],
   );
 
-  const syncItemsFromProjectionOp = useCallback(
-    (
-      items: readonly WorkbenchListItem[],
-      projectionOp: WorkbenchThreadProjectionOp,
-      anchorOverride?: PretextVirtualizerLogicalAnchor | null,
-    ) => {
-      incrementPretextPerfCounter("pretext_visible_sync_items_calls");
-      addPretextPerfBucket("pretext_visible_sync_items_kind", projectionOp.kind);
-      const changedCount = projectionOp.changedItemIds.length;
-      const previousCount = lastSyncedItemCountRef.current;
-      let nextSnapshot: PretextVirtualizerSnapshot<WorkbenchListItem>;
-      switch (projectionOp.kind) {
-        case "replace_session":
-          nextSnapshot = core.replaceItems(items, anchorOverride);
-          break;
-        case "append_stream":
-          if (changedCount > 0 && items.length === previousCount + changedCount) {
-            nextSnapshot = core.appendItems(items.slice(items.length - changedCount), anchorOverride);
-            break;
-          }
-          nextSnapshot = core.syncItems(items, anchorOverride);
-          break;
-        case "prepend_history":
-          // History extension can arrive alongside overlapping mixed-row changes, so the
-          // prefix-only fast path is not reliable enough to expose the full fetched prefix.
-          nextSnapshot = core.syncItems(items, anchorOverride);
-          break;
-        case "hydrate_tools":
-        case "terminalize_turn":
-        case "toggle_expansion":
-          nextSnapshot = core.patchItems(
-            items,
-            projectionOp.changedItemIds,
-            projectionOp.remeasureItemIds,
-            anchorOverride,
-          );
-          break;
-        default:
-          nextSnapshot = core.syncItems(items, anchorOverride);
-          break;
-      }
-      lastSyncedItemCountRef.current = items.length;
-      return nextSnapshot;
-    },
-    [core],
-  );
-
   useLayoutEffect(() => {
     const scroller = containerRef.current;
     const pendingProgrammaticTop = pendingProgrammaticTopRef.current;
@@ -635,7 +587,16 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
           activeChangedItemId,
           defaultAnchorOverride,
         );
-    const nextSnapshot = syncItemsFromProjectionOp(listItems, threadProjectionOp, anchorOverride);
+    incrementPretextPerfCounter("pretext_visible_sync_items_calls");
+    addPretextPerfBucket("pretext_visible_sync_items_kind", threadProjectionOp.kind);
+    const nextSnapshot = syncSnapshotForProjectionOp({
+      core,
+      items: listItems,
+      projectionOp: threadProjectionOp,
+      previousCount: lastSyncedItemCountRef.current,
+      anchorOverride,
+    });
+    lastSyncedItemCountRef.current = listItems.length;
     applySnapshotToDom(nextSnapshot, {
       behavior: "auto",
       followBottom: shouldFollowBottom,
@@ -651,7 +612,6 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     listItems,
     runtime,
     runtimeUiStateLayoutRevision,
-    syncItemsFromProjectionOp,
     threadProjectionOp,
   ]);
 

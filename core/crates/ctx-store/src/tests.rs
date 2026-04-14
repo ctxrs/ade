@@ -1091,11 +1091,7 @@ async fn session_heads_preserve_latest_turn_when_it_exceeds_message_limit() {
     let older_turn_id = TurnId::new();
     let mut older_turn = make_turn(fixture.session_id, older_run_id, older_turn_id);
     older_turn.start_seq = Some(1);
-    fixture
-        .store
-        .insert_session_turn(older_turn)
-        .await
-        .unwrap();
+    fixture.store.insert_session_turn(older_turn).await.unwrap();
     fixture
         .store
         .insert_message(make_assistant_message(

@@ -3709,6 +3709,7 @@
         "crates/ctx-http/tests/gemini_live_model_catalog.rs",
         "crates/ctx-http/tests/live_provider_canary.rs",
         "crates/ctx-http/tests/provider_probe_runtime_env.rs",
+        "crates/ctx-http/tests/provider_worker_reaping_offline.rs",
         "crates/ctx-http/tests/provider_scenarios_offline.rs",
         "crates/ctx-http/tests/session_model_api.rs",
         "crates/ctx-http/tests/workspace_provider_model_preferences_http.rs",

@@ -171,6 +171,7 @@ async fn seed_container_only_install(data_root: &Path, provider_id: &str) -> std
         package: Some(format!("{provider_id}-pkg")),
         version: Some("1.0.0".to_string()),
         archive_sha256: None,
+        artifact_fingerprint: None,
         target: Some(InstallTarget::Container),
         install_dir_rel: Some(format!(
             "providers/agent-servers/{provider_id}/fixture/container"
