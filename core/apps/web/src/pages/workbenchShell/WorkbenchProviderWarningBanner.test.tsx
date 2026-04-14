@@ -53,7 +53,7 @@ describe("WorkbenchProviderWarningBanner", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("keeps the notice hidden while update all is in progress, then resurfaces remaining updates once the batch finishes", async () => {
+  it("acknowledges the current provider set on update all and keeps the notice hidden until that set fully clears", async () => {
     const update = deferred();
     const onUpdateProviders = vi.fn(() => update.promise);
     const onOpenSettings = vi.fn();
@@ -138,32 +138,18 @@ describe("WorkbenchProviderWarningBanner", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("1 provider runtime needs an update.")).toBeInTheDocument();
+      expect(screen.queryByTestId("workbench-provider-warning")).not.toBeInTheDocument();
     });
-    expect(onOpenSettings).not.toHaveBeenCalled();
-  });
 
-  it("keeps the notice hidden until a failed update batch settles, then shows the warning again", async () => {
-    const update = deferred();
-    const onUpdateProviders = vi.fn(() => update.promise);
-    const { rerender } = render(
+    rerender(
       <WorkbenchProviderWarningBanner
         workspaceId="ws-1"
-        providersById={{
-          codex: providerStatus("codex", {
-            details: {
-              install_supported: "true",
-              matrix_update_available: "true",
-            },
-          }),
-        }}
+        providersById={{}}
         updateAllBusy={false}
         onUpdateProviders={onUpdateProviders}
-        onOpenSettings={() => {}}
+        onOpenSettings={onOpenSettings}
       />,
     );
-
-    fireEvent.click(screen.getByRole("button", { name: "Update All" }));
 
     await waitFor(() => {
       expect(screen.queryByTestId("workbench-provider-warning")).not.toBeInTheDocument();
@@ -173,47 +159,31 @@ describe("WorkbenchProviderWarningBanner", () => {
       <WorkbenchProviderWarningBanner
         workspaceId="ws-1"
         providersById={{
-          codex: providerStatus("codex", {
+          "claude-crp": providerStatus("claude-crp", {
             details: {
               install_supported: "true",
               matrix_update_available: "true",
+              matrix_recommended_version: "1.2.4",
             },
-          }),
-        }}
-        updateAllBusy={true}
-        onUpdateProviders={onUpdateProviders}
-        onOpenSettings={() => {}}
-      />,
-    );
-
-    update.reject(new Error("update failed"));
-    rerender(
-      <WorkbenchProviderWarningBanner
-        workspaceId="ws-1"
-        providersById={{
-          codex: providerStatus("codex", {
-            details: {
-              install_supported: "true",
-              matrix_update_available: "true",
-            },
+            version: "1.2.3",
           }),
         }}
         updateAllBusy={false}
         onUpdateProviders={onUpdateProviders}
-        onOpenSettings={() => {}}
+        onOpenSettings={onOpenSettings}
       />,
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("workbench-provider-warning")).toBeInTheDocument();
+      expect(screen.getByText("1 provider runtime needs an update.")).toBeInTheDocument();
     });
-    expect(onUpdateProviders).toHaveBeenCalledWith(["codex"]);
+    expect(onOpenSettings).not.toHaveBeenCalled();
   });
 
-  it("dismisses before opening settings and keeps the dismissal for the same warning signature", async () => {
+  it("dismisses before opening settings and keeps the warning hidden while only the acknowledged provider set is flagged", async () => {
     const onOpenSettings = vi.fn();
 
-    render(
+    const { rerender } = render(
       <WorkbenchProviderWarningBanner
         workspaceId="ws-1"
         providersById={{
@@ -244,16 +214,10 @@ describe("WorkbenchProviderWarningBanner", () => {
       expect(screen.queryByTestId("workbench-provider-warning")).not.toBeInTheDocument();
     });
 
-    const { container } = render(
+    rerender(
       <WorkbenchProviderWarningBanner
         workspaceId="ws-1"
         providersById={{
-          codex: providerStatus("codex", {
-            details: {
-              install_supported: "true",
-              matrix_update_available: "true",
-            },
-          }),
           "claude-crp": providerStatus("claude-crp", {
             health: "unsupported_version",
             details: { matrix_update_available: "true" },
@@ -265,11 +229,34 @@ describe("WorkbenchProviderWarningBanner", () => {
       />,
     );
 
-    expect(container.firstChild).toBeNull();
+    expect(screen.queryByTestId("workbench-provider-warning")).not.toBeInTheDocument();
+
+    rerender(
+      <WorkbenchProviderWarningBanner
+        workspaceId="ws-1"
+        providersById={{
+          "claude-crp": providerStatus("claude-crp", {
+            health: "unsupported_version",
+            details: { matrix_update_available: "true" },
+            diagnostics: ["Provider version requires a newer ctx build"],
+          }),
+          gemini: providerStatus("gemini", {
+            details: {
+              install_supported: "true",
+              matrix_update_available: "true",
+            },
+          }),
+        }}
+        onUpdateProviders={() => Promise.resolve()}
+        onOpenSettings={onOpenSettings}
+      />,
+    );
+
+    expect(screen.getByTestId("workbench-provider-warning")).toBeInTheDocument();
   });
 
-  it("renders again when the warning signature changes", () => {
-    render(
+  it("renders again after the acknowledged provider set fully clears", async () => {
+    const { rerender } = render(
       <WorkbenchProviderWarningBanner
         workspaceId="ws-1"
         providersById={{
@@ -283,8 +270,24 @@ describe("WorkbenchProviderWarningBanner", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => {
+      expect(screen.queryByTestId("workbench-provider-warning")).not.toBeInTheDocument();
+    });
 
-    render(
+    rerender(
+      <WorkbenchProviderWarningBanner
+        workspaceId="ws-1"
+        providersById={{}}
+        onUpdateProviders={() => Promise.resolve()}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("workbench-provider-warning")).not.toBeInTheDocument();
+    });
+
+    rerender(
       <WorkbenchProviderWarningBanner
         workspaceId="ws-1"
         providersById={{
@@ -292,12 +295,8 @@ describe("WorkbenchProviderWarningBanner", () => {
             details: {
               install_supported: "true",
               matrix_update_available: "true",
-              matrix_recommended_version: "0.114.0-ctx.3",
             },
             version: "0.114.0-ctx.1",
-          }),
-          "claude-crp": providerStatus("claude-crp", {
-            details: { install_supported: "true", managed_fingerprint_mismatch: "true" },
           }),
         }}
         onUpdateProviders={() => Promise.resolve()}

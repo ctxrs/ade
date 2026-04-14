@@ -24,14 +24,13 @@ type WarningProvider = {
 };
 
 export type WorkbenchProviderWarning = {
-  signature: string;
   title: string;
   providers: WarningProvider[];
   installableProviderIds: string[];
 };
 
 const HARNESS_LABELS = new Map(HARNESS_CATALOG.map((entry) => [entry.id, entry.label]));
-const DISMISSED_WARNING_SIGNATURE_STORAGE_KEY_PREFIX = "wb.provider_runtime_warning.dismissed";
+const ACKNOWLEDGED_WARNING_PROVIDER_IDS_STORAGE_KEY_PREFIX = "wb.provider_runtime_warning.acknowledged_provider_ids";
 
 const labelForProvider = (providerId: string): string =>
   HARNESS_LABELS.get(providerId) ?? providerId;
@@ -56,23 +55,40 @@ const summarizeProvider = (
   };
 };
 
-const warningDismissalStorageKey = (workspaceId: string): string =>
-  `${DISMISSED_WARNING_SIGNATURE_STORAGE_KEY_PREFIX}.${workspaceId}`;
+const warningAcknowledgementStorageKey = (workspaceId: string): string =>
+  `${ACKNOWLEDGED_WARNING_PROVIDER_IDS_STORAGE_KEY_PREFIX}.${workspaceId}`;
 
-const readDismissedWarningSignature = (workspaceId: string): string | null => {
+const normalizeProviderIds = (providerIds: string[]): string[] =>
+  Array.from(new Set(providerIds.map((providerId) => providerId.trim()).filter(Boolean))).sort();
+
+const readAcknowledgedWarningProviderIds = (workspaceId: string): string[] => {
   try {
-    const stored = window.sessionStorage.getItem(warningDismissalStorageKey(workspaceId));
-    return stored ? stored.trim() || null : null;
+    const stored = window.sessionStorage.getItem(warningAcknowledgementStorageKey(workspaceId));
+    if (!stored) return [];
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return [];
+    return normalizeProviderIds(parsed.filter((value): value is string => typeof value === "string"));
   } catch {
-    return null;
+    return [];
   }
 };
 
-const persistDismissedWarningSignature = (workspaceId: string, signature: string): void => {
+const persistAcknowledgedWarningProviderIds = (workspaceId: string, providerIds: string[]): void => {
   try {
-    window.sessionStorage.setItem(warningDismissalStorageKey(workspaceId), signature);
+    window.sessionStorage.setItem(
+      warningAcknowledgementStorageKey(workspaceId),
+      JSON.stringify(normalizeProviderIds(providerIds)),
+    );
   } catch {
-    // Ignore storage failures and keep the dismissal in memory for the current render.
+    // Ignore storage failures and keep the acknowledgement in memory for the current render.
+  }
+};
+
+const clearAcknowledgedWarningProviderIds = (workspaceId: string): void => {
+  try {
+    window.sessionStorage.removeItem(warningAcknowledgementStorageKey(workspaceId));
+  } catch {
+    // Ignore storage failures and let the next navigation clear the acknowledgement.
   }
 };
 
@@ -86,22 +102,11 @@ export const buildWorkbenchProviderWarning = (
 
   if (flagged.length === 0) return null;
 
-  const requiresAppUpdate = flagged.some((provider) => provider.reason?.includes("newer ctx build"));
   const installableProviderIds = flagged
     .filter((provider) => provider.installSupported)
     .map((provider) => provider.providerId);
-  const signature = JSON.stringify(
-    flagged.map((provider) => ({
-      providerId: provider.providerId,
-      installedVersion: provider.installedVersion,
-      recommendedVersion: provider.recommendedVersion,
-      installSupported: provider.installSupported,
-      reason: provider.reason,
-    })),
-  );
 
   return {
-    signature,
     title: `${flagged.length} provider runtime${flagged.length === 1 ? "" : "s"} need${flagged.length === 1 ? "s" : ""} an update.`,
     providers: flagged,
     installableProviderIds,
@@ -119,19 +124,44 @@ export function WorkbenchProviderWarningBanner({
     () => buildWorkbenchProviderWarning(providersById),
     [providersById],
   );
-  const [dismissedSignature, setDismissedSignature] = useState<string | null>(() =>
-    readDismissedWarningSignature(workspaceId));
-  const [updateAllSuppressed, setUpdateAllSuppressed] = useState(false);
+  const flaggedProviderIds = useMemo(
+    () => warning?.providers.map((provider) => provider.providerId) ?? [],
+    [warning],
+  );
+  const [acknowledgedProviderIds, setAcknowledgedProviderIds] = useState<string[]>(() =>
+    readAcknowledgedWarningProviderIds(workspaceId));
+  const acknowledgedProviderIdSet = useMemo(
+    () => new Set(acknowledgedProviderIds),
+    [acknowledgedProviderIds],
+  );
 
   useEffect(() => {
-    setDismissedSignature(readDismissedWarningSignature(workspaceId));
-  }, [workspaceId, warning?.signature]);
+    setAcknowledgedProviderIds(readAcknowledgedWarningProviderIds(workspaceId));
+  }, [workspaceId]);
 
-  if (!warning || dismissedSignature === warning.signature || updateAllSuppressed) return null;
+  useEffect(() => {
+    if (warning) return;
+    clearAcknowledgedWarningProviderIds(workspaceId);
+    setAcknowledgedProviderIds((current) => (current.length > 0 ? [] : current));
+  }, [workspaceId, warning]);
+
+  const warningAcknowledged =
+    flaggedProviderIds.length > 0
+    && flaggedProviderIds.every((providerId) => acknowledgedProviderIdSet.has(providerId));
+
+  if (!warning || warningAcknowledged) return null;
+
+  const acknowledgeWarning = () => {
+    const nextAcknowledgedProviderIds = normalizeProviderIds([
+      ...acknowledgedProviderIds,
+      ...flaggedProviderIds,
+    ]);
+    persistAcknowledgedWarningProviderIds(workspaceId, nextAcknowledgedProviderIds);
+    setAcknowledgedProviderIds(nextAcknowledgedProviderIds);
+  };
 
   const dismiss = () => {
-    persistDismissedWarningSignature(workspaceId, warning.signature);
-    setDismissedSignature(warning.signature);
+    acknowledgeWarning();
   };
 
   const handleOpenSettings = () => {
@@ -140,13 +170,11 @@ export function WorkbenchProviderWarningBanner({
   };
 
   const handleUpdateAll = async () => {
-    setUpdateAllSuppressed(true);
+    acknowledgeWarning();
     try {
       await onUpdateProviders(warning.installableProviderIds);
     } catch {
       // The workbench already surfaces install errors independently.
-    } finally {
-      setUpdateAllSuppressed(false);
     }
   };
 
