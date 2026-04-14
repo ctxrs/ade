@@ -53,21 +53,21 @@ struct StoreCloseExecutor {
 }
 
 pub(super) struct WorkspaceCloseSignal {
-    closed_tx: watch::Sender<bool>,
+    closing_tx: watch::Sender<bool>,
 }
 
 impl WorkspaceCloseSignal {
     fn new() -> Self {
-        let (closed_tx, _closed_rx) = watch::channel(false);
-        Self { closed_tx }
+        let (closing_tx, _closing_rx) = watch::channel(true);
+        Self { closing_tx }
     }
 
     fn subscribe(&self) -> watch::Receiver<bool> {
-        self.closed_tx.subscribe()
+        self.closing_tx.subscribe()
     }
 
-    fn close(&self) {
-        let _ = self.closed_tx.send(true);
+    fn finish(&self) {
+        self.closing_tx.send_replace(false);
     }
 }
 
@@ -183,7 +183,7 @@ impl WorkspaceStoreLeaseRegistry {
             };
             match maybe_wait {
                 Some(mut wait) => {
-                    if *wait.borrow() {
+                    if !*wait.borrow_and_update() {
                         return;
                     }
                     if wait.changed().await.is_err() {
@@ -371,7 +371,7 @@ fn clear_closing_marker(
     {
         state.closing_workspaces.remove(&workspace_id);
     }
-    notify.close();
+    notify.finish();
 }
 
 impl Drop for WorkspaceStoreLease {
@@ -485,7 +485,7 @@ mod tests {
             let waiter_registry = Arc::clone(&registry);
             let waiter = tokio::spawn(async move {
                 tokio::time::timeout(
-                    Duration::from_secs(5),
+                    Duration::from_secs(1),
                     waiter_registry.wait_for_workspace_close(workspace_id),
                 )
                 .await
