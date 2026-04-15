@@ -159,8 +159,7 @@ fn resolve_dependency_viability(
                 dependency_role,
                 codes.missing,
                 format!(
-                    "runtime command is not configured for provider '{}' and ctx cannot managed-install it for that target",
-                    dependency_id
+                    "runtime command is not configured for provider '{dependency_id}' and ctx cannot managed-install it for that target"
                 ),
             ))
         }

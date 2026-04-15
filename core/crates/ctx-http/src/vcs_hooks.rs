@@ -566,7 +566,7 @@ mod tests {
             .current_dir(cwd)
             .status()
             .expect("run git");
-        assert!(status.success(), "git {:?} failed", args);
+        assert!(status.success(), "git {args:?} failed");
     }
 
     fn git_output(args: &[&str], cwd: &Path) -> String {
@@ -575,7 +575,7 @@ mod tests {
             .current_dir(cwd)
             .output()
             .expect("run git");
-        assert!(output.status.success(), "git {:?} failed", args);
+        assert!(output.status.success(), "git {args:?} failed");
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
@@ -619,8 +619,7 @@ mod tests {
         std::fs::write(
             &path,
             format!(
-                "#!/bin/sh\ncmd=\"$1\"\nshift\ncase \"$cmd\" in\n  exec)\n    workdir=\"\"\n    while [ \"$#\" -gt 0 ]; do\n      case \"$1\" in\n        --interactive|--tty)\n          shift\n          ;;\n        --workdir)\n          workdir=\"$2\"\n          shift 2\n          ;;\n        --env)\n          export \"$2\"\n          shift 2\n          ;;\n        *)\n          break\n          ;;\n      esac\n    done\n    actual_container=\"$1\"\n    shift\n    if [ \"$actual_container\" != \"{container}\" ]; then\n      echo \"unexpected container: $actual_container\" >&2\n      exit 1\n    fi\n    cd \"$workdir\"\n    exec \"$@\"\n    ;;\n  *)\n    echo \"unexpected sandbox cli invocation: $cmd $*\" >&2\n    exit 1\n    ;;\nesac\n",
-                container = container_name,
+                "#!/bin/sh\ncmd=\"$1\"\nshift\ncase \"$cmd\" in\n  exec)\n    workdir=\"\"\n    while [ \"$#\" -gt 0 ]; do\n      case \"$1\" in\n        --interactive|--tty)\n          shift\n          ;;\n        --workdir)\n          workdir=\"$2\"\n          shift 2\n          ;;\n        --env)\n          export \"$2\"\n          shift 2\n          ;;\n        *)\n          break\n          ;;\n      esac\n    done\n    actual_container=\"$1\"\n    shift\n    if [ \"$actual_container\" != \"{container_name}\" ]; then\n      echo \"unexpected container: $actual_container\" >&2\n      exit 1\n    fi\n    cd \"$workdir\"\n    exec \"$@\"\n    ;;\n  *)\n    echo \"unexpected sandbox cli invocation: $cmd $*\" >&2\n    exit 1\n    ;;\nesac\n",
             ),
         )
         .expect("write sandbox exec shim");

@@ -10,7 +10,7 @@ fn git(args: &[&str], cwd: &StdPath) {
         .current_dir(cwd)
         .status()
         .expect("run git");
-    assert!(status.success(), "git {:?} failed", args);
+    assert!(status.success(), "git {args:?} failed");
 }
 
 fn git_output(args: &[&str], cwd: &StdPath) -> String {
@@ -19,7 +19,7 @@ fn git_output(args: &[&str], cwd: &StdPath) -> String {
         .current_dir(cwd)
         .output()
         .expect("run git output");
-    assert!(output.status.success(), "git {:?} failed", args);
+    assert!(output.status.success(), "git {args:?} failed");
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 

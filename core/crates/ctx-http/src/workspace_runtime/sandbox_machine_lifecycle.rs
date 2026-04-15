@@ -340,8 +340,7 @@ impl SandboxMachineLifecycleExt for HarnessRuntimeManager {
                 HarnessSetupPhase::MachineStartOrInit,
                 HarnessSetupLogLevel::Info,
                 &format!(
-                    "reconfiguring local sandbox runtime memory from {detail} to {} MiB",
-                    desired_memory_mb
+                    "reconfiguring local sandbox runtime memory from {detail} to {desired_memory_mb} MiB"
                 ),
             );
             self.remove_sandbox_machine_locked(&machine_name, observer)
@@ -414,8 +413,7 @@ impl SandboxMachineLifecycleExt for HarnessRuntimeManager {
             HarnessSetupPhase::MachineStartOrInit,
             HarnessSetupLogLevel::Info,
             &format!(
-                "reconfiguring local sandbox runtime memory from {detail} to {} MiB",
-                desired_memory_mb
+                "reconfiguring local sandbox runtime memory from {detail} to {desired_memory_mb} MiB"
             ),
         );
         self.remove_sandbox_machine_locked(&machine_name, observer)

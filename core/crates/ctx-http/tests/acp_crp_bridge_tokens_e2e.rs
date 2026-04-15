@@ -239,11 +239,10 @@ fn expect_file_written(workdir: &Path, provider_id: &str) -> Result<(), String> 
     let file_name = write_file_name(provider_id);
     let file_path = workdir.join(&file_name);
     let contents = fs::read_to_string(&file_path)
-        .map_err(|err| format!("{provider_id} did not create {}: {err}", file_name))?;
+        .map_err(|err| format!("{provider_id} did not create {file_name}: {err}"))?;
     if contents.trim_end_matches(['\r', '\n', ' ', '\t']) != WRITE_FILE_CONTENTS {
         return Err(format!(
-            "{provider_id} wrote unexpected contents to {}",
-            file_name
+            "{provider_id} wrote unexpected contents to {file_name}"
         ));
     }
     Ok(())
@@ -385,8 +384,8 @@ async fn probe_command(
         cmd.output().await
     })
     .await
-    .map_err(|_| format!("{} probe timed out", command))?
-    .map_err(|err| format!("{} probe failed: {err}", command))?;
+    .map_err(|_| format!("{command} probe timed out"))?
+    .map_err(|err| format!("{command} probe failed: {err}"))?;
 
     if output.status.success() {
         return Ok(());
@@ -1067,7 +1066,7 @@ async fn acp_crp_bridge_token_providers() {
             },
             Err(err) => {
                 let message = format!("{}: {}", provider.id, err);
-                eprintln!("failed {}", message);
+                    eprintln!("failed {message}");
                 failures.push(message);
             }
         }

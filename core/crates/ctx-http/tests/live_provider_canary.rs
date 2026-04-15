@@ -82,8 +82,7 @@ fn resolve_live_claude_crp_command() -> Option<String> {
         let path = std::path::PathBuf::from(trimmed);
         if !path.is_absolute() || !path.exists() {
             eprintln!(
-                "skipping: CTX_LIVE_CLAUDE_CRP_COMMAND must be an existing absolute path: {}",
-                trimmed
+                "skipping: CTX_LIVE_CLAUDE_CRP_COMMAND must be an existing absolute path: {trimmed}"
             );
             return None;
         }

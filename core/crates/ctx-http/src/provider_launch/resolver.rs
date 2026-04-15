@@ -438,10 +438,10 @@ fn resolve_existing_absolute_path(raw: &str, label: &str) -> Result<PathBuf> {
     let path = StdPath::new(raw);
     anyhow::ensure!(
         path.is_absolute(),
-        "{label} must be an explicit absolute path; got '{}'",
-        raw
+        "{label} must be an explicit absolute path; got '{raw}'"
     );
-    anyhow::ensure!(path.exists(), "{label} not found: {}", path.display());
+    let path_display = path.display();
+    anyhow::ensure!(path.exists(), "{label} not found: {path_display}");
     Ok(fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
 }
 
@@ -480,8 +480,7 @@ pub(crate) fn resolve_explicit_gemini_cli_paths(
     let node_path = resolve_existing_absolute_path(command, "Gemini ACP runtime command")?;
     anyhow::ensure!(
         file_stem_matches(&node_path, "node"),
-        "Gemini ACP runtime must use an explicit absolute node executable plus @google/gemini-cli/dist/index.js; got command '{}'",
-        command
+        "Gemini ACP runtime must use an explicit absolute node executable plus @google/gemini-cli/dist/index.js; got command '{command}'"
     );
 
     let arg0 = args.first().ok_or_else(|| {

@@ -215,11 +215,7 @@ async fn install_title_generation_local_impl(
         let digest = sha256_file(&tmp).await?;
         if let Some(expected) = expected_sha.as_ref() {
             if !digest.eq_ignore_ascii_case(expected) {
-                anyhow::bail!(
-                    "model checksum mismatch: expected {}, got {}",
-                    expected,
-                    digest
-                );
+                anyhow::bail!("model checksum mismatch: expected {expected}, got {digest}");
             }
         }
 

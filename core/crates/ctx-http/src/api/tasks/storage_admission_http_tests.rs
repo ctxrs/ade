@@ -25,7 +25,7 @@ fn git(args: &[&str], cwd: &Path) {
         .current_dir(cwd)
         .status()
         .expect("run git");
-    assert!(status.success(), "git {:?} failed", args);
+    assert!(status.success(), "git {args:?} failed");
 }
 
 fn init_git_workspace(root: &Path) {

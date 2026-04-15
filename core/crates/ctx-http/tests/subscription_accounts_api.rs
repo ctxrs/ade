@@ -1750,9 +1750,8 @@ echo "Long-lived authentication token created successfully!"
 echo ""
 echo "Your OAuth token (valid for 1 year):"
 echo ""
-echo "{}"
+echo "{shared_token}"
 "#,
-        shared_token
     );
     let script_path = write_mock_claude_runtime(data_dir.path(), &script_with_token).await;
     let mut cfg = empty_agent_server_config();

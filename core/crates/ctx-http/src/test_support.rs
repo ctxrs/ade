@@ -139,8 +139,7 @@ impl TrackedExecutionLaunch {
         assert_eq!(
             terminal.state,
             ExecutionLaunchState::Ready,
-            "expected launch to reach Ready, got {:?}",
-            terminal
+            "expected launch to reach Ready, got {terminal:?}"
         );
         terminal
     }

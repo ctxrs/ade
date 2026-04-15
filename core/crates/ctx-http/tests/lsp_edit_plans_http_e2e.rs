@@ -248,7 +248,7 @@ async fn edit_plan_persists_across_restart_and_discards() {
     // Discard.
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/edit_plans/{}/discard", plan_id))
+        .uri(format!("/api/edit_plans/{plan_id}/discard"))
         .body(Body::from("{}"))
         .unwrap();
     let res = app2.oneshot(req).await.unwrap();
@@ -295,7 +295,7 @@ async fn stale_plan_is_rejected_on_apply() {
 
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/edit_plans/{}/apply", plan_id))
+        .uri(format!("/api/edit_plans/{plan_id}/apply"))
         .header("content-type", "application/json")
         .body(Body::from(
             json!({"action":"accept","patch": diff}).to_string(),
@@ -341,7 +341,7 @@ async fn lsp_rename_plan_create_and_apply() {
     // Apply all.
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/edit_plans/{}/apply", plan_id))
+        .uri(format!("/api/edit_plans/{plan_id}/apply"))
         .header("content-type", "application/json")
         .body(Body::from(
             json!({"action":"accept","patch": diff}).to_string(),
@@ -444,7 +444,7 @@ async fn lsp_code_action_plan_create_and_apply() {
     // Apply.
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/edit_plans/{}/apply", plan_id))
+        .uri(format!("/api/edit_plans/{plan_id}/apply"))
         .header("content-type", "application/json")
         .body(Body::from(
             json!({"action":"accept","patch": diff}).to_string(),
@@ -524,7 +524,7 @@ async fn lsp_code_action_plan_supports_command_only_embedded_edit() {
 
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/edit_plans/{}/apply", plan_id))
+        .uri(format!("/api/edit_plans/{plan_id}/apply"))
         .header("content-type", "application/json")
         .body(Body::from(
             json!({"action":"accept","patch": diff}).to_string(),
@@ -630,7 +630,7 @@ async fn lsp_code_action_plan_supports_workspace_edit_file_ops() {
 
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/edit_plans/{}/apply", plan_id))
+        .uri(format!("/api/edit_plans/{plan_id}/apply"))
         .header("content-type", "application/json")
         .body(Body::from(
             json!({"action":"accept","patch": diff}).to_string(),
@@ -720,7 +720,7 @@ async fn lsp_organize_imports_plan_create_and_apply() {
 
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/edit_plans/{}/apply", plan_id))
+        .uri(format!("/api/edit_plans/{plan_id}/apply"))
         .header("content-type", "application/json")
         .body(Body::from(
             json!({"action":"accept","patch": diff}).to_string(),
@@ -771,7 +771,7 @@ async fn lsp_execute_command_plan_create_and_apply() {
 
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/edit_plans/{}/apply", plan_id))
+        .uri(format!("/api/edit_plans/{plan_id}/apply"))
         .header("content-type", "application/json")
         .body(Body::from(
             json!({"action":"accept","patch": diff}).to_string(),

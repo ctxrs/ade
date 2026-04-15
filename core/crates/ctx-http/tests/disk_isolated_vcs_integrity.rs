@@ -172,7 +172,7 @@ async fn disk_isolated_task_creation_produces_valid_git_worktree() {
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    let base = format!("http://{}", addr);
+    let base = format!("http://{addr}");
     let client = reqwest::Client::new();
 
     let ws: ctx_core::models::Workspace = client

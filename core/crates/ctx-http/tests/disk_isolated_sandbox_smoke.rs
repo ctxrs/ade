@@ -227,7 +227,7 @@ async fn disk_isolated_smoke_sandbox_volume_buffers_terminal() {
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    let base = format!("http://{}", addr);
+    let base = format!("http://{addr}");
     let client = reqwest::Client::new();
 
     // Create workspace.

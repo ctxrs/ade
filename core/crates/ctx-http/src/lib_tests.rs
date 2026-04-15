@@ -269,7 +269,7 @@ async fn daemon_http_and_ws_streaming() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    let base = format!("http://{}", addr);
+    let base = format!("http://{addr}");
     let client = reqwest::Client::new();
 
     // providers endpoint

@@ -86,7 +86,7 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
     let server = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    let base = format!("http://{}", addr);
+    let base = format!("http://{addr}");
     let client = reqwest::Client::new();
 
     let ws: Workspace = client

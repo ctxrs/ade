@@ -98,19 +98,16 @@ fn synthesize_target_mismatch_status(
 
     let diagnostic = if available_targets.contains(requested_target) {
         format!(
-            "provider is not installed for target '{}'; configure a valid runtime command or reinstall it for that target",
-            requested_target
+            "provider is not installed for target '{requested_target}'; configure a valid runtime command or reinstall it for that target"
         )
     } else if available_targets.len() == 1 {
         let available_target = available_targets.iter().next().cloned().unwrap_or_default();
         format!(
-            "provider is installed for target '{}' but not for target '{}'",
-            available_target, requested_target
+            "provider is installed for target '{available_target}' but not for target '{requested_target}'"
         )
     } else {
         format!(
-            "provider is not installed for target '{}'; available managed targets: {}",
-            requested_target,
+            "provider is not installed for target '{requested_target}'; available managed targets: {}",
             available_targets.into_iter().collect::<Vec<_>>().join(", ")
         )
     };

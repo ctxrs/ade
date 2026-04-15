@@ -11,8 +11,7 @@ pub fn parse_install_target(raw: Option<&str>) -> Result<InstallTarget> {
         "linux-aarch64" => Ok(InstallTarget::LinuxAarch64),
         "linux-x86_64" => Ok(InstallTarget::LinuxX8664),
         other => anyhow::bail!(
-            "invalid install target '{}'; expected host, container, linux-aarch64, or linux-x86_64",
-            other
+            "invalid install target '{other}'; expected host, container, linux-aarch64, or linux-x86_64"
         ),
     }
 }

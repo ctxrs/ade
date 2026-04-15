@@ -579,11 +579,7 @@ pub(crate) fn validate_sha256_digest(expected_sha256: &str, digest: &str) -> Res
     if digest.eq_ignore_ascii_case(expected_sha256) {
         return Ok(());
     }
-    anyhow::bail!(
-        "archive checksum mismatch: expected {}, got {}",
-        expected_sha256,
-        digest
-    );
+    anyhow::bail!("archive checksum mismatch: expected {expected_sha256}, got {digest}");
 }
 
 pub(crate) async fn sha256_file(path: &Path) -> Result<String> {

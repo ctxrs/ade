@@ -269,7 +269,7 @@ pub(super) async fn get_session_artifact(
             StatusCode::PARTIAL_CONTENT,
             Body::from_stream(stream),
             len,
-            Some(format!("bytes {}-{}/{}", start, end, size)),
+            Some(format!("bytes {start}-{end}/{size}")),
         )
     } else {
         let stream = ReaderStream::new(file);

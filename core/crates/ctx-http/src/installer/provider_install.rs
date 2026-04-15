@@ -284,18 +284,14 @@ pub(super) async fn install_provider_impl(
             } => {
                 if !matches!(target, InstallTarget::Host | InstallTarget::Container) {
                     anyhow::bail!(
-                        "target '{}' is not supported for npm provider '{}' installs; use target host or container",
-                        requested_target_label,
-                        provider_id
+                        "target '{requested_target_label}' is not supported for npm provider '{provider_id}' installs; use target host or container"
                     );
                 }
                 let version = release.version.clone();
                 error_package = Some(package.clone());
                 error_version = Some(version.clone());
-                error_install_dir_rel = Some(format!(
-                    "providers/agent-servers/{}/{}",
-                    provider_id, version
-                ));
+                error_install_dir_rel =
+                    Some(format!("providers/agent-servers/{provider_id}/{version}"));
                 install_managed_npm_provider(
                     state,
                     install_id,

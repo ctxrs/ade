@@ -102,8 +102,7 @@ fn build_prompt_messages(prompt: &str) -> Vec<ChatMessage> {
         ChatMessage {
             role: "system".to_string(),
             content: format!(
-                "You generate short, information-dense session titles. Requirements: usually <= 3 words, <= {} characters, no quotes, no trailing punctuation.",
-                TITLE_MAX_CHARS
+                "You generate short, information-dense session titles. Requirements: usually <= 3 words, <= {TITLE_MAX_CHARS} characters, no quotes, no trailing punctuation."
             ),
         },
         ChatMessage {

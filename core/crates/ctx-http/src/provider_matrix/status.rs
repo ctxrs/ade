@@ -154,8 +154,7 @@ pub async fn apply_matrix_to_status(
                 }
                 None => {
                     diagnostics.push(format!(
-                        "Provider version {} is not in the support matrix",
-                        version
+                        "Provider version {version} is not in the support matrix"
                     ));
                 }
             }

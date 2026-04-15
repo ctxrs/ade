@@ -286,11 +286,7 @@ pub async fn download_and_verify(url: &str, expected_sha256: &str, dest: &Path) 
     download_to_path(url, dest).await?;
     let got = sha256_hex_file(dest).await?;
     if !got.eq_ignore_ascii_case(expected_sha256) {
-        anyhow::bail!(
-            "checksum mismatch: expected {}, got {}",
-            expected_sha256,
-            got
-        );
+        anyhow::bail!("checksum mismatch: expected {expected_sha256}, got {got}");
     }
     Ok(())
 }

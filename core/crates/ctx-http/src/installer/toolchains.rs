@@ -924,10 +924,7 @@ pub(crate) async fn resolve_node_package_bin(
                     .context("bin map invalid")?
                     .to_string()
             } else {
-                anyhow::bail!(
-                    "multiple bins in {} but no preferred bin specified",
-                    package
-                );
+                anyhow::bail!("multiple bins in {package} but no preferred bin specified");
             }
         }
         _ => anyhow::bail!("package.json bin has unsupported type"),

@@ -242,8 +242,7 @@ async fn decode_json_response<T: DeserializeOwned>(response: reqwest::Response) 
     let body = response.text().await.unwrap();
     serde_json::from_str(&body).unwrap_or_else(|err| {
         panic!(
-            "failed to decode JSON response (status {}): {}\nbody: {}",
-            status, err, body
+            "failed to decode JSON response (status {status}): {err}\nbody: {body}"
         )
     })
 }

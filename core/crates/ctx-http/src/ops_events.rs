@@ -180,7 +180,7 @@ async fn append_local_log(data_root: &Path, event: &OpsEvent, cfg: &OpsEventsCon
     let dir = logs::logs_dir(data_root);
     tokio::fs::create_dir_all(&dir).await.ok();
     let date = event.ts.format("%Y-%m-%d").to_string();
-    let path = dir.join(format!("{}{}{}", OPS_LOG_PREFIX, date, OPS_LOG_SUFFIX));
+    let path = dir.join(format!("{OPS_LOG_PREFIX}{date}{OPS_LOG_SUFFIX}"));
 
     if cfg.local_max_bytes > 0 {
         if let Ok(metadata) = tokio::fs::metadata(&path).await {

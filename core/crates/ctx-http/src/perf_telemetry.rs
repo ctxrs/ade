@@ -44,7 +44,7 @@ fn lock_or_recover<'a, T>(mutex: &'a Mutex<T>, name: &str) -> std::sync::MutexGu
 }
 
 pub fn perf_log_path_for_date(data_root: &std::path::Path, date: &str) -> std::path::PathBuf {
-    logs::logs_dir(data_root).join(format!("{}{}{}", PERF_LOG_PREFIX, date, PERF_LOG_SUFFIX))
+    logs::logs_dir(data_root).join(format!("{PERF_LOG_PREFIX}{date}{PERF_LOG_SUFFIX}"))
 }
 const REMOTE_LABEL_ALLOWLIST: &[&str] = &[
     "endpoint",
@@ -846,7 +846,7 @@ async fn append_local_log(data_root: &std::path::Path, event: &PerfEvent) -> Res
     let dir = logs::logs_dir(data_root);
     tokio::fs::create_dir_all(&dir).await.ok();
     let date = event.occurred_at.format("%Y-%m-%d").to_string();
-    let path = dir.join(format!("{}{}{}", PERF_LOG_PREFIX, date, PERF_LOG_SUFFIX));
+    let path = dir.join(format!("{PERF_LOG_PREFIX}{date}{PERF_LOG_SUFFIX}"));
     let line = serde_json::to_string(event)?;
     let mut file = tokio::fs::OpenOptions::new()
         .create(true)

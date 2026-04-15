@@ -186,10 +186,7 @@ pub(in crate::api) async fn lsp_execute_command_plan(
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
-                error: format!(
-                    "execute_command returned no WorkspaceEdit (result={})",
-                    result
-                ),
+                error: format!("execute_command returned no WorkspaceEdit (result={result})"),
             }),
         ));
     };

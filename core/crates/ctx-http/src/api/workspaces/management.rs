@@ -135,8 +135,7 @@ pub(in crate::api) async fn update_workspace_primary_branch(
                 StatusCode::BAD_REQUEST,
                 Json(ApiErrorResp {
                     error: logs::redact_sensitive(&format!(
-                        "primary_branch `{}` does not resolve: {}",
-                        primary_branch, e
+                        "primary_branch `{primary_branch}` does not resolve: {e}"
                     )),
                 }),
             )
