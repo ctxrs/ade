@@ -215,7 +215,7 @@ pub(super) fn probe_timeout_for_env(
 
 pub(super) async fn build_prompt_items(
     input: &TurnInput,
-    _workdir: &PathBuf,
+    _workdir: &Path,
     _env: &HashMap<String, String>,
 ) -> Result<Vec<Value>> {
     let mut items = Vec::new();

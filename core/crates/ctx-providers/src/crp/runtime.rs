@@ -159,9 +159,7 @@ pub(crate) fn rewrite_bundled_path_for_linux(path: &str) -> Result<String> {
                 Ok(runtime_candidate)
             } else {
                 anyhow::bail!(
-                    "missing linux bundled path for container execution: source='{}' expected='{}'",
-                    path,
-                    candidate
+                    "missing linux bundled path for container execution: source='{path}' expected='{candidate}'"
                 );
             }
         }
@@ -489,7 +487,7 @@ fn crp_log_paths(env: &HashMap<String, String>, provider_id: &str) -> Option<Crp
     let data_root = crate::env::data_root_for_host(env)?;
     let timestamp = Utc::now().format("%Y-%m-%dT%H-%M-%SZ");
     let suffix = Uuid::new_v4().simple().to_string();
-    let base = format!("crp-{}-{}-{}", provider_id, timestamp, suffix);
+    let base = format!("crp-{provider_id}-{timestamp}-{suffix}");
     let dir = Path::new(&data_root).join("logs").join("providers");
     Some(CrpLogPaths {
         codex_events: dir.join(format!("{base}.codex-events.jsonl")),

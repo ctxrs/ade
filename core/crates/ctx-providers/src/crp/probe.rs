@@ -68,7 +68,7 @@ pub async fn probe_crp_models(request: CrpModelsProbeRequest) -> Result<CrpModel
 
     let mut child = cmd
         .spawn()
-        .with_context(|| format!("spawning CRP runtime {} ({command_label})", provider_id))?;
+        .with_context(|| format!("spawning CRP runtime {provider_id} ({command_label})"))?;
     let stdin = child.stdin.take().context("capturing CRP stdin")?;
     let stdout = child.stdout.take().context("capturing CRP stdout")?;
     let stderr = child.stderr.take().context("capturing CRP stderr")?;
