@@ -285,15 +285,11 @@ test("release supabase runs a shipped-app first-run workspace gate on the Mac mi
   );
   assert.match(
     block,
-    /name:\s+Rust toolchain \(first run\)[\s\S]*dtolnay\/rust-toolchain@stable/s,
-  );
-  assert.match(
-    block,
     /name:\s+Prepare current-source AVF runtime \(first run\)[\s\S]*prepare_avf_linux_guest_runtime\.sh[\s\S]*--output-dir "\$RUNNER_TEMP\/ctx-avf-linux-guest-runtime"/s,
   );
   assert.match(
     block,
-    /name:\s+Install AVF runtime prep toolchain \(first run\)[\s\S]*command -v zig[\s\S]*brew install zig[\s\S]*command -v qemu-img[\s\S]*brew install qemu[\s\S]*command -v cargo-zigbuild[\s\S]*cargo install cargo-zigbuild --locked/s,
+    /name:\s+Install AVF runtime prep toolchain \(first run\)[\s\S]*command -v cargo[\s\S]*rustup\.rs[\s\S]*source "\$HOME\/\.cargo\/env"[\s\S]*command -v zig[\s\S]*brew install zig[\s\S]*command -v qemu-img[\s\S]*brew install qemu[\s\S]*command -v cargo-zigbuild[\s\S]*cargo install cargo-zigbuild --locked/s,
   );
   assert.match(
     block,
