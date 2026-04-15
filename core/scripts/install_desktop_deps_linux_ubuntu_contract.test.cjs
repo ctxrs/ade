@@ -19,12 +19,12 @@ test("ubuntu desktop deps installer includes libcap for codex sandbox builds", (
   );
   assert.match(
     script,
-    /\n\s*docker-buildx\n/,
-    "install_desktop_deps_linux_ubuntu.sh must install docker-buildx for BuildBuddy release bundle contracts",
+    /DOCKER_BUILDX_VERSION/,
+    "install_desktop_deps_linux_ubuntu.sh must pin a Docker buildx version for BuildBuddy release bundle contracts",
   );
   assert.match(
     script,
-    /for cmd in [^\n]*\bdocker-buildx\b/,
-    "install_desktop_deps_linux_ubuntu.sh must sanity-check docker-buildx availability",
+    /docker buildx version/,
+    "install_desktop_deps_linux_ubuntu.sh must sanity-check docker buildx availability",
   );
 });

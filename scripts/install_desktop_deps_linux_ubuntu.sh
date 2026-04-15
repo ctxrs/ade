@@ -69,13 +69,14 @@ else
   RESET=""
 fi
 
+readonly DOCKER_BUILDX_VERSION="${DOCKER_BUILDX_VERSION:-v0.30.1}"
+
 packages=(
   build-essential
   pkg-config
   curl
   sshpass
   file
-  docker-buildx
   xdg-utils
   desktop-file-utils
   squashfs-tools
@@ -93,8 +94,8 @@ packages=(
   tk
 )
 
+SUDO=()
 if [[ "$print_selected_packages" != "1" ]]; then
-  SUDO=()
   if [[ "$(id -u)" -ne 0 ]]; then
     if ! command -v sudo >/dev/null 2>&1; then
       echo "error: sudo not found and not running as root." >&2
@@ -164,6 +165,38 @@ fi
 "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   "${selected_packages[@]}"
 
+install_docker_buildx_plugin() {
+  local arch=""
+  case "$(uname -m)" in
+    x86_64|amd64)
+      arch="amd64"
+      ;;
+    aarch64|arm64)
+      arch="arm64"
+      ;;
+    *)
+      echo "error: unsupported docker buildx architecture: $(uname -m)" >&2
+      exit 4
+      ;;
+  esac
+
+  if command -v docker >/dev/null 2>&1; then
+    if docker buildx version 2>/dev/null | grep -Fq "${DOCKER_BUILDX_VERSION#v}"; then
+      return 0
+    fi
+  fi
+
+  local plugin_dir="/usr/local/lib/docker/cli-plugins"
+  local plugin_path="${plugin_dir}/docker-buildx"
+  local download_url="https://github.com/docker/buildx/releases/download/${DOCKER_BUILDX_VERSION}/buildx-${DOCKER_BUILDX_VERSION}.linux-${arch}"
+
+  "${SUDO[@]}" mkdir -p "$plugin_dir"
+  "${SUDO[@]}" curl -fsSL "$download_url" -o "$plugin_path"
+  "${SUDO[@]}" chmod 0755 "$plugin_path"
+}
+
+install_docker_buildx_plugin
+
 echo
 echo "${BOLD}Sanity check (pkg-config)${RESET}"
 for pc in glib-2.0 gtk+-3.0 libsoup-3.0 javascriptcoregtk-4.1 webkit2gtk-4.1 libcap; do
@@ -182,7 +215,7 @@ else
   exit 2
 fi
 
-for cmd in desktop-file-validate mksquashfs zsyncmake patchelf appstreamcli gtk-update-icon-cache docker-buildx; do
+for cmd in desktop-file-validate mksquashfs zsyncmake patchelf appstreamcli gtk-update-icon-cache; do
   if command -v "$cmd" >/dev/null 2>&1; then
     echo "- $cmd: OK ($(command -v "$cmd"))"
   else
@@ -190,6 +223,13 @@ for cmd in desktop-file-validate mksquashfs zsyncmake patchelf appstreamcli gtk-
     exit 2
   fi
 done
+
+if docker buildx version >/dev/null 2>&1; then
+  echo "- docker buildx: OK"
+else
+  echo "- docker buildx: MISSING (install pinned Docker buildx CLI plugin)" >&2
+  exit 2
+fi
 
 if command -v WebKitWebDriver >/dev/null 2>&1; then
   echo "- WebKitWebDriver: OK ($(command -v WebKitWebDriver))"
