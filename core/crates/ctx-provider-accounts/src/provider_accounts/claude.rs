@@ -518,7 +518,7 @@ mod tests {
 
     #[test]
     fn normalize_claude_setup_token_accepts_wrapped_and_quoted_values() {
-        let wrapped = format!("  \"{}\"  ", CLAUDE_TEST_SETUP_TOKEN);
+        let wrapped = format!("  \"{CLAUDE_TEST_SETUP_TOKEN}\"  ");
         let normalized = normalize_claude_setup_token(&wrapped).expect("normalize token");
         assert_eq!(normalized, CLAUDE_TEST_SETUP_TOKEN);
 
