@@ -199,7 +199,7 @@ async fn assert_hot_endpoints_with_failpoints(failpoints: &[&'static str]) {
         .unwrap()
         .unwrap();
     let WsMessage::Text(txt) = msg else {
-        panic!("expected text frame, got {:?}", msg);
+        panic!("expected text frame, got {msg:?}");
     };
     let ready: WorkspaceActiveSnapshotStreamMessage = serde_json::from_str(&txt).unwrap();
     assert!(matches!(
@@ -229,7 +229,7 @@ async fn assert_hot_endpoints_with_failpoints(failpoints: &[&'static str]) {
         .unwrap()
         .unwrap();
     let WsMessage::Text(txt) = msg else {
-        panic!("expected text frame, got {:?}", msg);
+        panic!("expected text frame, got {msg:?}");
     };
     let message: WorkspaceActiveSnapshotStreamMessage = serde_json::from_str(&txt).unwrap();
     match message {
