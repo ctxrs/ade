@@ -83,6 +83,16 @@ async function executeWorkflow({ apiBaseUrl, apiKey, payload }) {
   });
   if (response && !response.invocation_id && Array.isArray(response.actionStatuses) && response.actionStatuses.length > 0) {
     const firstStatus = response.actionStatuses[0] || {};
+    const statusCode = Number(firstStatus.status?.code || 0);
+    if (statusCode !== 0) {
+      const actionName = String(firstStatus.actionName || "").trim();
+      const message = String(firstStatus.status?.message || "").trim() || "workflow dispatch failed";
+      throw new Error(
+        actionName
+          ? `BuildBuddy ExecuteWorkflow failed for '${actionName}': ${message}`
+          : `BuildBuddy ExecuteWorkflow failed: ${message}`,
+      );
+    }
     const invocationId = String(firstStatus.invocationId || "").trim();
     if (invocationId) {
       return {
