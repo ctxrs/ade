@@ -79,7 +79,7 @@ async fn setup_daemon_backed_parent_session() -> (
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let base_url = format!("http://{}", addr);
+    let base_url = format!("http://{addr}");
 
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
@@ -182,7 +182,7 @@ async fn mcp_subagent_tools_call_daemon_http() {
 
     let app = Router::new()
         .route(
-            &format!("/api/mcp/sessions/{}/subagent_init", parent_id),
+            &format!("/api/mcp/sessions/{parent_id}/subagent_init"),
             post(move |Json(body): Json<serde_json::Value>| async move {
                 assert_eq!(body["agents"][0]["prompt"], "check foo");
                 assert_eq!(body["worktree"], "inherit");
@@ -197,7 +197,7 @@ async fn mcp_subagent_tools_call_daemon_http() {
             }),
         )
         .route(
-            &format!("/api/mcp/sessions/{}/subagent_reply", parent_id),
+            &format!("/api/mcp/sessions/{parent_id}/subagent_reply"),
             post(move |Json(body): Json<serde_json::Value>| async move {
                 assert_eq!(body["label"], "Audit FooAPI");
                 assert_eq!(body["prompt"], "summarize output");
@@ -208,7 +208,7 @@ async fn mcp_subagent_tools_call_daemon_http() {
             }),
         )
         .route(
-            &format!("/api/mcp/sessions/{}/subagent_list", parent_id),
+            &format!("/api/mcp/sessions/{parent_id}/subagent_list"),
             get(move || async move {
                 Json(json!([
                     {
@@ -219,7 +219,7 @@ async fn mcp_subagent_tools_call_daemon_http() {
             }),
         )
         .route(
-            &format!("/api/mcp/sessions/{}/subagent_wait", parent_id),
+            &format!("/api/mcp/sessions/{parent_id}/subagent_wait"),
             post(move |Json(body): Json<serde_json::Value>| async move {
                 assert_eq!(body["label"], "Audit FooAPI");
                 Json(json!({
@@ -243,7 +243,7 @@ async fn mcp_subagent_tools_call_daemon_http() {
     let bin = mcp_bin();
     let mut child = Command::new(bin)
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", format!("http://{}", addr))
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_SESSION_ID", parent_id)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -495,7 +495,7 @@ async fn live_provider_parent_can_invoke_real_subagent_via_ctx_mcp() {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let base_url = format!("http://{}", addr);
+    let base_url = format!("http://{addr}");
 
     let adapter: Arc<dyn ProviderAdapter> = match provider_id.as_str() {
         "codex" | "codex-crp" => Arc::new(ctx_providers::crp::Tier1CrpAdapter::codex()),

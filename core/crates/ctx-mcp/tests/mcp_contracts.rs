@@ -159,7 +159,7 @@ async fn mcp_list_workspaces_scrubs_internal_ids() {
     let bin = mcp_bin();
     let mut child = Command::new(bin)
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", format!("http://{}", addr))
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -254,7 +254,7 @@ async fn mcp_merge_queue_submit_scrubs_internal_ids() {
     let bin = mcp_bin();
     let mut child = Command::new(bin)
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", format!("http://{}", addr))
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -386,7 +386,7 @@ async fn mcp_oracle_forwards_prompt_and_overrides() {
     let bin = mcp_bin();
     let mut child = Command::new(bin)
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", format!("http://{}", addr))
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

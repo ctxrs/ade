@@ -33,7 +33,7 @@ async fn mcp_lsp_diagnostics_calls_daemon_http() {
     let bin = mcp_bin();
     let mut child = Command::new(bin)
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", format!("http://{}", addr))
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .env("CTX_MCP_ENABLE_LSP_TOOLS", "1")
         .stdin(std::process::Stdio::piped())
@@ -152,7 +152,7 @@ async fn mcp_web_session_tools_call_daemon_http() {
     let bin = mcp_bin();
     let mut child = Command::new(bin)
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", format!("http://{}", addr))
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_MCP_ENABLE_LSP_TOOLS", "1")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -293,7 +293,7 @@ async fn mcp_lsp_status_calls_daemon_http() {
     let bin = mcp_bin();
     let mut child = Command::new(bin)
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", format!("http://{}", addr))
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_MCP_ENABLE_LSP_TOOLS", "1")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -367,7 +367,7 @@ async fn mcp_lsp_hover_calls_daemon_http() {
     let bin = mcp_bin();
     let mut child = Command::new(bin)
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", format!("http://{}", addr))
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .env("CTX_MCP_ENABLE_LSP_TOOLS", "1")
         .stdin(std::process::Stdio::piped())
@@ -445,7 +445,7 @@ async fn mcp_lsp_execute_command_calls_daemon_http() {
     let bin = mcp_bin();
     let mut child = Command::new(bin)
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", format!("http://{}", addr))
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .env("CTX_MCP_ENABLE_LSP_TOOLS", "1")
         .stdin(std::process::Stdio::piped())
@@ -522,7 +522,7 @@ async fn mcp_lsp_semantic_tokens_full_calls_daemon_http() {
     let bin = mcp_bin();
     let mut child = Command::new(bin)
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", format!("http://{}", addr))
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .env("CTX_MCP_ENABLE_LSP_TOOLS", "1")
         .stdin(std::process::Stdio::piped())
@@ -603,7 +603,7 @@ async fn mcp_lsp_code_actions_by_diagnostic_plan_calls_daemon_http() {
     let bin = mcp_bin();
     let mut child = Command::new(bin)
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", format!("http://{}", addr))
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .env("CTX_MCP_ENABLE_LSP_TOOLS", "1")
         .stdin(std::process::Stdio::piped())
@@ -723,7 +723,7 @@ async fn mcp_lsp_rename_plan_and_apply_call_daemon_http() {
     let bin = mcp_bin();
     let mut child = Command::new(bin)
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", format!("http://{}", addr))
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .env("CTX_MCP_ENABLE_LSP_TOOLS", "1")
         .stdin(std::process::Stdio::piped())
