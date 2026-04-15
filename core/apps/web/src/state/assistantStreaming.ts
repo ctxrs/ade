@@ -8,6 +8,7 @@ export type AssistantStreamingState = {
 export type AssistantStreamingStore = {
   assistantStreamingByTurnId: Record<string, AssistantStreamingState>;
   assistantStreamingRev: number;
+  sealedAssistantTurnIds?: Set<string>;
 };
 
 function appendStreamingFragment(previous: string, fragment: string): string {
@@ -50,9 +51,23 @@ function updateState(
   return true;
 }
 
+function ensureSealedTurnSet(store: AssistantStreamingStore): Set<string> {
+  if (store.sealedAssistantTurnIds) {
+    return store.sealedAssistantTurnIds;
+  }
+  const next = new Set<string>();
+  store.sealedAssistantTurnIds = next;
+  return next;
+}
+
 export function clearAllAssistantStreaming(store: AssistantStreamingStore): boolean {
-  if (Object.keys(store.assistantStreamingByTurnId).length === 0) return false;
+  const hadStreaming = Object.keys(store.assistantStreamingByTurnId).length > 0;
+  const hadSealedTurns = (store.sealedAssistantTurnIds?.size ?? 0) > 0;
+  if (!hadStreaming && !hadSealedTurns) return false;
   store.assistantStreamingByTurnId = {};
+  if (store.sealedAssistantTurnIds) {
+    store.sealedAssistantTurnIds = new Set<string>();
+  }
   store.assistantStreamingRev += 1;
   return true;
 }
@@ -74,6 +89,9 @@ export function applyAssistantChunkToStreaming(
 ): boolean {
   const normalizedTurnId = normalizeTurnId(turnId);
   if (!normalizedTurnId || !fragment) return false;
+  if (store.sealedAssistantTurnIds?.has(normalizedTurnId)) {
+    return false;
+  }
   const current = store.assistantStreamingByTurnId[normalizedTurnId] ?? null;
   const providerId = providerMessageId?.trim() || null;
   const nextContent =
@@ -97,10 +115,18 @@ export function applyAssistantCompleteToStreaming(
   const current = store.assistantStreamingByTurnId[normalizedTurnId] ?? null;
   const nextContent = String(fullContent || current?.content || "");
   if (!nextContent) return false;
-  return updateState(store, normalizedTurnId, {
+  const sealedTurnIds = ensureSealedTurnSet(store);
+  const addedSeal = !sealedTurnIds.has(normalizedTurnId);
+  sealedTurnIds.add(normalizedTurnId);
+  const changed = updateState(store, normalizedTurnId, {
     content: nextContent,
     providerMessageId: providerMessageId?.trim() || current?.providerMessageId || null,
   });
+  if (addedSeal && !changed) {
+    store.assistantStreamingRev += 1;
+    return true;
+  }
+  return changed;
 }
 
 export function reconcileAssistantStreamingWithMessages(
