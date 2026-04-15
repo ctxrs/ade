@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 fn main() -> Result<()> {
     let mut check = false;
