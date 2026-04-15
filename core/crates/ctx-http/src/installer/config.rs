@@ -360,9 +360,7 @@ fn preserve_raw_bundle_command_path(path: &Path) -> Option<PathBuf> {
 fn resolve_absolute_command_path(provider_id: &str, source: &str, raw: &str) -> Result<PathBuf> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        anyhow::bail!(
-            "runtime_command_missing: provider={provider_id} source={source}",
-        );
+        anyhow::bail!("runtime_command_missing: provider={provider_id} source={source}",);
     }
     let path = Path::new(trimmed);
     if !path.is_absolute() {
