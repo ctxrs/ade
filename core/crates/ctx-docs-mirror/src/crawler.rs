@@ -383,7 +383,7 @@ const url = process.argv[2];
         if msg.is_empty() {
             return Err(anyhow!("playwright crawl failed"));
         }
-        return Err(anyhow!("playwright crawl failed: {}", msg));
+        return Err(anyhow!("playwright crawl failed: {msg}"));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut links: Vec<String> = serde_json::from_str(&stdout).unwrap_or_default();

@@ -28,7 +28,7 @@ pub(crate) async fn send_with_retries(
             return Ok(resp);
         }
         if !should_retry(status) || attempt >= RETRY_MAX_ATTEMPTS {
-            return Err(anyhow!("HTTP status {} for url ({})", status, url));
+            return Err(anyhow!("HTTP status {status} for url ({url})"));
         }
         let delay = retry_delay(&resp, attempt);
         sleep(delay).await;
