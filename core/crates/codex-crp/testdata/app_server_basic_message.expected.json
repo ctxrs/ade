@@ -75,11 +75,11 @@
     },
     "modelContextWindow": 200000,
     "total": {
-      "cachedInputTokens": 0,
-      "inputTokens": 70,
-      "outputTokens": 40,
-      "reasoningOutputTokens": 10,
-      "totalTokens": 120
+      "cachedInputTokens": 10000,
+      "inputTokens": 300000,
+      "outputTokens": 80000,
+      "reasoningOutputTokens": 40000,
+      "totalTokens": 420000
     }
   }
 }

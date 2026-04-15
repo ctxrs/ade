@@ -584,10 +584,12 @@ pub(super) fn canonical_context_window_from_thread_usage(
     if context_window_tokens == 0 {
         return None;
     }
-    let total_tokens = token_usage.total.total_tokens;
-    let input_tokens = token_usage.total.input_tokens;
-    let output_tokens = token_usage.total.output_tokens;
-    let reasoning_output_tokens = token_usage.total.reasoning_output_tokens;
+    // Codex thread totals can be cumulative across the thread lifetime. The live
+    // context meter should reflect the current sampled context footprint instead.
+    let total_tokens = token_usage.last.total_tokens;
+    let input_tokens = token_usage.last.input_tokens;
+    let output_tokens = token_usage.last.output_tokens;
+    let reasoning_output_tokens = token_usage.last.reasoning_output_tokens;
     let remaining_tokens_estimate = context_window_tokens.saturating_sub(total_tokens);
     let remaining_fraction = remaining_tokens_estimate as f64 / context_window_tokens as f64;
     Some(json!({

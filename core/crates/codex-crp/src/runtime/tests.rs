@@ -154,7 +154,15 @@ fn error_and_usage_snapshot_matches() {
 }
 
 #[test]
-fn canonical_context_window_matches_expected_shape() {
+fn file_change_object_kind_snapshot_matches() {
+    assert_snapshot(
+        "app_server_file_change_object_kind.input.jsonl",
+        "app_server_file_change_object_kind.expected.json",
+    );
+}
+
+#[test]
+fn canonical_context_window_uses_last_usage_for_live_meter() {
     let usage = crate::app_server::ThreadTokenUsage {
         total: crate::app_server::TokenUsageBreakdown {
             total_tokens: 4200,
@@ -164,17 +172,20 @@ fn canonical_context_window_matches_expected_shape() {
             reasoning_output_tokens: 300,
         },
         last: crate::app_server::TokenUsageBreakdown {
-            total_tokens: 4200,
-            input_tokens: 3000,
+            total_tokens: 300,
+            input_tokens: 200,
             cached_input_tokens: 0,
-            output_tokens: 900,
-            reasoning_output_tokens: 300,
+            output_tokens: 70,
+            reasoning_output_tokens: 30,
         },
         model_context_window: Some(128000),
     };
     let metrics = canonical_context_window_from_thread_usage(&usage).expect("metrics");
-    assert_eq!(metrics["context_tokens_estimate"], json!(4200));
+    assert_eq!(metrics["context_tokens_estimate"], json!(300));
     assert_eq!(metrics["context_window_tokens"], json!(128000));
+    assert_eq!(metrics["remaining_tokens_estimate"], json!(127700));
+    assert_eq!(metrics["total_input_tokens"], json!(200));
+    assert_eq!(metrics["total_output_tokens"], json!(100));
 }
 
 #[test]

@@ -307,8 +307,20 @@ pub enum ThreadItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileUpdateChange {
     pub path: String,
-    pub kind: String,
+    pub kind: FileUpdateKind,
     pub diff: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum FileUpdateKind {
+    Legacy(String),
+    Structured {
+        #[serde(default)]
+        move_path: Option<String>,
+        #[serde(rename = "type")]
+        r#type: String,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]

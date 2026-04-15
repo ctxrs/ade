@@ -365,32 +365,32 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.114.0-ctx.2",
+        "version": "0.114.0-ctx.3",
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.2/darwin/aarch64/codex-crp-0.114.0-ctx.2-aarch64-apple-darwin.tar.gz",
-            "sha256": "e28a2db59f8bd57a904080f3e77a9ca63f92d4f4969f5c0df9a6441117960289",
             "archive": "tar_gz",
-            "bin_path": "codex-crp"
+            "bin_path": "codex-crp",
+            "sha256": "4efcabe2e0db25061efd117bbdade40beadd7137602b94acf624ca0e81b4fdc5",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.3/darwin/aarch64/codex-crp-0.114.0-ctx.3-aarch64-apple-darwin.tar.gz"
           },
           "darwin-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.2/darwin/x86_64/codex-crp-0.114.0-ctx.2-x86_64-apple-darwin.tar.gz",
-            "sha256": "cf50db3414245b195c5f84bccc6757f2c57daec70c189b23762b252026195976",
             "archive": "tar_gz",
-            "bin_path": "codex-crp"
+            "bin_path": "codex-crp",
+            "sha256": "720b947367cd39dab6fdcad570e2b3547faeb76d4ae2bd141d2826670560e4af",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.3/darwin/x86_64/codex-crp-0.114.0-ctx.3-x86_64-apple-darwin.tar.gz"
           },
           "linux-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.2/linux/aarch64/codex-crp-0.114.0-ctx.2-aarch64-unknown-linux-gnu.tar.gz",
-            "sha256": "137c80df5a3912b1e0cbb763a064c7bdbe1ac77fa3c542985c1802019fd962ea",
             "archive": "tar_gz",
-            "bin_path": "codex-crp"
+            "bin_path": "codex-crp",
+            "sha256": "cacf613ad59b272c1ca2a14dcabfd0ad966f165b30cd3758e9a1233c927300b2",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.3/linux/aarch64/codex-crp-0.114.0-ctx.3-aarch64-unknown-linux-gnu.tar.gz"
           },
           "linux-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.2/linux/x86_64/codex-crp-0.114.0-ctx.2-x86_64-unknown-linux-gnu.tar.gz",
-            "sha256": "2bcf948840dc2c038b50fa4b50727436828263245cc9485b37cd1d5bcc56cd35",
             "archive": "tar_gz",
-            "bin_path": "codex-crp"
+            "bin_path": "codex-crp",
+            "sha256": "d609deb34e411f0e3da3b2f0efbff89a5f2eb3523c0696655f6b134453d2a143",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.3/linux/x86_64/codex-crp-0.114.0-ctx.3-x86_64-unknown-linux-gnu.tar.gz"
           }
         }
       },
@@ -409,14 +409,14 @@
       },
       "releases": [
         {
-          "version": "0.114.0-ctx.2",
+          "version": "0.114.0-ctx.3",
           "upstream_version": "0.114.0",
           "provenance": {
             "upstream_repo": "openai/codex",
             "upstream_release_tag": "rust-v0.114.0",
             "upstream_commit_sha": "b9904c0ae4ecb773549efd6ea3fb05229402fdb9",
             "ctx_repo": "ctxorgrs/codex-crp",
-            "ctx_release_tag": "v0.114.0-ctx.2"
+            "ctx_release_tag": "v0.114.0-ctx.3"
           },
           "status": "supported",
           "context_min": "0.1.0",
