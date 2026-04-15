@@ -53,8 +53,5 @@ pub(crate) fn resolve_out_dir(name: &str, override_dir: Option<&PathBuf>) -> Res
         return Ok(dir.clone());
     }
     let stamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-    Ok(PathBuf::from(format!(
-        "/tmp/ctx-load-test/{}_{}",
-        name, stamp
-    )))
+    Ok(PathBuf::from(format!("/tmp/ctx-load-test/{name}_{stamp}")))
 }

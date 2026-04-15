@@ -104,13 +104,10 @@ pub(crate) async fn run_end_to_end_mode(cli: &Cli, scenario: &ScenarioSpec) -> R
         if let Some(golden) = combined.daemon.golden.as_ref() {
             if let Some(hot_read) = golden.hot_read_p95_ms {
                 let target = golden.hot_read_p95_target_ms.unwrap_or(HOT_READ_P95_TARGET_MS);
-                println!(
-                    "Hot read p95: {:.1}ms (target {:.1}ms)",
-                    hot_read, target
-                );
+                println!("Hot read p95: {hot_read:.1}ms (target {target:.1}ms)");
             }
             if let Some(reconnect) = golden.reconnect_catchup_p95_ms {
-                println!("Reconnect catch-up p95: {:.1}ms", reconnect);
+                println!("Reconnect catch-up p95: {reconnect:.1}ms");
             }
         }
         if let Some(ui) = combined.ui.as_ref() {
