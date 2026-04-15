@@ -314,7 +314,7 @@ pub async fn set_provider_source_selection(
                 .ok_or_else(|| anyhow::anyhow!("endpoint_id is required for endpoint source"))?;
             let exists = provider.endpoints.iter().any(|ep| ep.id == endpoint_id);
             if !exists {
-                anyhow::bail!("unknown endpoint_id: {}", endpoint_id);
+                anyhow::bail!("unknown endpoint_id: {endpoint_id}");
             }
             provider.selected_source_kind = HarnessSourceKind::Endpoint;
             provider.selected_endpoint_id = Some(endpoint_id);
@@ -369,12 +369,12 @@ pub async fn set_provider_endpoint_manual_models(
     let provider = registry
         .providers
         .get_mut(canonical)
-        .ok_or_else(|| anyhow::anyhow!("unknown provider endpoint config for {}", canonical))?;
+        .ok_or_else(|| anyhow::anyhow!("unknown provider endpoint config for {canonical}"))?;
     let endpoint = provider
         .endpoints
         .iter_mut()
         .find(|ep| ep.id == endpoint_id)
-        .ok_or_else(|| anyhow::anyhow!("unknown endpoint_id: {}", endpoint_id))?;
+        .ok_or_else(|| anyhow::anyhow!("unknown endpoint_id: {endpoint_id}"))?;
 
     endpoint.manual_model_ids = normalized_manual.clone();
     endpoint.model_catalog_source = if endpoint.manual_model_ids.is_empty() {
@@ -421,13 +421,13 @@ pub async fn refresh_provider_endpoint_model_catalog(
         let provider = registry
             .providers
             .get(canonical)
-            .ok_or_else(|| anyhow::anyhow!("unknown provider endpoint config for {}", canonical))?;
+            .ok_or_else(|| anyhow::anyhow!("unknown provider endpoint config for {canonical}"))?;
         provider
             .endpoints
             .iter()
             .find(|ep| ep.id == endpoint_id)
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("unknown endpoint_id: {}", endpoint_id))?
+            .ok_or_else(|| anyhow::anyhow!("unknown endpoint_id: {endpoint_id}"))?
     };
     let secret = secrets::read_endpoint_secret(data_root, &endpoint_snapshot.secret_ref).await?;
     let discovery_result = match (

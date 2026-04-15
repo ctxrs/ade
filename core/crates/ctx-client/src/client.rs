@@ -72,9 +72,9 @@ impl Client {
             return Err(anyhow!(msg));
         }
         if text.trim().is_empty() {
-            return Err(anyhow!("empty response body from {}", path));
+            return Err(anyhow!("empty response body from {path}"));
         }
-        serde_json::from_str(&text).with_context(|| format!("parsing JSON response from {}", path))
+        serde_json::from_str(&text).with_context(|| format!("parsing JSON response from {path}"))
     }
 
     pub(crate) async fn request_empty(

@@ -190,7 +190,7 @@ impl GcpDriver {
             let status = resp.get("status").and_then(|v| v.as_str());
             if status == Some("DONE") {
                 if let Some(error) = resp.get("error") {
-                    anyhow::bail!("gcp operation error: {}", error);
+                    anyhow::bail!("gcp operation error: {error}");
                 }
                 return Ok(());
             }
@@ -319,7 +319,7 @@ impl GcpDriver {
         base_commit_sha: &str,
         gateway_url: &str,
     ) -> Result<()> {
-        let device_by_id = format!("/dev/disk/by-id/google-{}", disk_name);
+        let device_by_id = format!("/dev/disk/by-id/google-{disk_name}");
         let bootstrap = BootstrapSpec {
             worker_id,
             gateway_url,

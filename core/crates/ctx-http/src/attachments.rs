@@ -891,11 +891,11 @@ fn sanitize_mount_relpath(value: &str) -> Result<PathBuf> {
     }
     let path = PathBuf::from(value);
     if path.is_absolute() {
-        anyhow::bail!("mount_relpath must be relative: {}", value);
+        anyhow::bail!("mount_relpath must be relative: {value}");
     }
     for part in path.components() {
         if matches!(part, std::path::Component::ParentDir) {
-            anyhow::bail!("mount_relpath must not contain '..': {}", value);
+            anyhow::bail!("mount_relpath must not contain '..': {value}");
         }
     }
     Ok(path)

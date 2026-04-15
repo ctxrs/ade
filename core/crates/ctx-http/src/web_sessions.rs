@@ -422,7 +422,7 @@ impl WebSessionManager {
         let display = self.next_display().await?;
         let worker_port = allocate_port()?;
 
-        let stream_path = format!("/sessions/web/{}/view", id);
+        let stream_path = format!("/sessions/web/{id}/view");
         let created_at = Utc::now();
 
         let info = WebSessionInfo {
@@ -474,7 +474,7 @@ impl WebSessionManager {
 
         let payload = build_run_payload(&handle, req).await?;
         let port = handle.worker_port().await;
-        let url = format!("http://127.0.0.1:{}/run", port);
+        let url = format!("http://127.0.0.1:{port}/run");
 
         let resp = self
             .client
@@ -489,7 +489,7 @@ impl WebSessionManager {
             return Ok(WebSessionRunResponse {
                 ok: false,
                 result: None,
-                error: Some(format!("worker error: {}", body)),
+                error: Some(format!("worker error: {body}")),
             });
         }
 
@@ -511,7 +511,7 @@ impl WebSessionManager {
 
         let payload = build_run_payload(&handle, req).await?;
         let port = handle.worker_port().await;
-        let url = format!("http://127.0.0.1:{}/eval", port);
+        let url = format!("http://127.0.0.1:{port}/eval");
 
         let resp = self
             .client
@@ -526,7 +526,7 @@ impl WebSessionManager {
             return Ok(WebSessionRunResponse {
                 ok: false,
                 result: None,
-                error: Some(format!("worker error: {}", body)),
+                error: Some(format!("worker error: {body}")),
             });
         }
 
@@ -643,9 +643,9 @@ impl WebSessionManager {
         for _ in 0..1000 {
             let candidate = *guard;
             *guard += 1;
-            let lock_path = format!("/tmp/.X{}-lock", candidate);
+            let lock_path = format!("/tmp/.X{candidate}-lock");
             if !Path::new(&lock_path).exists() {
-                return Ok(format!(":{}", candidate));
+                return Ok(format!(":{candidate}"));
             }
         }
         anyhow::bail!("failed to allocate X display");
@@ -712,7 +712,7 @@ impl WebSessionManager {
     }
 
     async fn await_worker_ready(&self, port: u16) -> Result<()> {
-        let url = format!("http://127.0.0.1:{}/health", port);
+        let url = format!("http://127.0.0.1:{port}/health");
         for _ in 0..40 {
             let resp = self.client.get(&url).send().await;
             if let Ok(resp) = resp {

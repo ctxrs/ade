@@ -36,7 +36,7 @@ impl OpenAiClient {
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         let api_key = self.api_key.trim();
         if !api_key.is_empty() {
-            let auth = format!("Bearer {}", api_key);
+            let auth = format!("Bearer {api_key}");
             headers.insert(
                 AUTHORIZATION,
                 HeaderValue::from_str(&auth).context("invalid authorization header")?,
@@ -44,7 +44,7 @@ impl OpenAiClient {
         }
 
         let base = self.base_url.trim_end_matches('/');
-        let url = format!("{}/chat/completions", base);
+        let url = format!("{base}/chat/completions");
 
         let resp = self
             .client
@@ -96,7 +96,7 @@ impl OpenAiResponsesClient {
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         let api_key = self.api_key.trim();
         if !api_key.is_empty() {
-            let auth = format!("Bearer {}", api_key);
+            let auth = format!("Bearer {api_key}");
             headers.insert(
                 AUTHORIZATION,
                 HeaderValue::from_str(&auth).context("invalid authorization header")?,
@@ -104,7 +104,7 @@ impl OpenAiResponsesClient {
         }
 
         let base = self.base_url.trim_end_matches('/');
-        let url = format!("{}/responses", base);
+        let url = format!("{base}/responses");
 
         let resp = self
             .client

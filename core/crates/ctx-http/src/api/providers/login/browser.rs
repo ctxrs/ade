@@ -90,7 +90,7 @@ async fn monitor_gemini_login(state: Arc<AppState>, login_id: String, label: Opt
     let (event_tx, mut event_rx) = mpsc::channel(64);
     let auth_result = adapter
         .authenticate_session(
-            format!("gemini-login-{}", login_id),
+            format!("gemini-login-{login_id}"),
             workdir,
             provider_env,
             Some(provider_accounts::GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL.to_string()),

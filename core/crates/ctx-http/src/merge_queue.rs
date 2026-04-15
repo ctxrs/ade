@@ -131,7 +131,7 @@ pub async fn submit_merge_queue_entry(
             dirty
                 .iter()
                 .take(24)
-                .map(|entry| format!("- {}", entry))
+                .map(|entry| format!("- {entry}"))
                 .collect::<Vec<_>>()
                 .join("\n")
         );

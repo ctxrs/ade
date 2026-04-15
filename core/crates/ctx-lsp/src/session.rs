@@ -581,7 +581,7 @@ impl LspSession {
             .context("timeout waiting for LSP response")?
             .context("waiting for LSP response")?;
         if let Some(err) = msg.get("error") {
-            anyhow::bail!("LSP error: {}", err);
+            anyhow::bail!("LSP error: {err}");
         }
         Ok(msg.get("result").cloned().unwrap_or(Value::Null))
     }

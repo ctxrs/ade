@@ -56,7 +56,7 @@ pub(super) async fn write_patch_file(
 pub(super) async fn read_patch_file(path: &str) -> Result<String> {
     let data = fs::read_to_string(path)
         .await
-        .with_context(|| format!("reading {}", path))?;
+        .with_context(|| format!("reading {path}"))?;
     Ok(data)
 }
 

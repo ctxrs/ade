@@ -228,7 +228,7 @@ async fn run_worktree_bootstrap_plan(
     let finished_at = Utc::now();
     log.push_str(&format!("\n# Finished: {}\n", finished_at.to_rfc3339()));
     if let Some(status) = &failure_status {
-        log.push_str(&format!("# Status: {:?}\n", status));
+        log.push_str(&format!("# Status: {status:?}\n"));
     } else {
         log.push_str("# Status: success\n");
     }

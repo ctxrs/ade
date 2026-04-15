@@ -167,7 +167,7 @@ async fn git_output_allow(root: &Path, args: &[&str], ok_codes: &[i32]) -> Resul
         .stderr(Stdio::piped())
         .output()
         .await
-        .with_context(|| format!("running git {:?}", args))?;
+        .with_context(|| format!("running git {args:?}"))?;
     if !output.status.success() {
         let code = output.status.code().unwrap_or(-1);
         if !ok_codes.contains(&code) {

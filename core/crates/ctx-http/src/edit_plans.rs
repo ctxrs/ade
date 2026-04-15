@@ -227,7 +227,7 @@ pub fn workspace_edit_to_plan(
                 let old = String::new();
                 let base_sha256 = sha256_hex(&old);
                 let new = apply_text_edits_utf16(&old, &edits)
-                    .with_context(|| format!("applying edits for {}", path))?;
+                    .with_context(|| format!("applying edits for {path}"))?;
                 let patch = git_unified_diff_create(&path, &new);
                 for mut pf in parse_unified_diff(&patch) {
                     pf.base_sha256 = base_sha256.clone();
@@ -254,11 +254,11 @@ pub fn workspace_edit_to_plan(
                 let mut new_text = old.clone();
                 if let Some(edits) = file_edits.remove(&old_path) {
                     new_text = apply_text_edits_utf16(&new_text, &edits)
-                        .with_context(|| format!("applying edits for {}", old_path))?;
+                        .with_context(|| format!("applying edits for {old_path}"))?;
                 }
                 if let Some(edits) = file_edits.remove(&new_path) {
                     new_text = apply_text_edits_utf16(&new_text, &edits)
-                        .with_context(|| format!("applying edits for {}", new_path))?;
+                        .with_context(|| format!("applying edits for {new_path}"))?;
                 }
 
                 let patch_del = git_unified_diff_delete(&old_path, &old);
@@ -284,7 +284,7 @@ pub fn workspace_edit_to_plan(
         let old = std::fs::read_to_string(&abs).unwrap_or_default();
         let base_sha256 = sha256_hex(&old);
         let new = apply_text_edits_utf16(&old, &edits)
-            .with_context(|| format!("applying edits for {}", rel))?;
+            .with_context(|| format!("applying edits for {rel}"))?;
         if old == new {
             continue;
         }
@@ -318,7 +318,7 @@ pub fn text_edits_to_plan(
     let old = std::fs::read_to_string(&abs).unwrap_or_default();
     let base_sha256 = sha256_hex(&old);
     let new = apply_text_edits_utf16(&old, &edits)
-        .with_context(|| format!("applying edits for {}", rel_path))?;
+        .with_context(|| format!("applying edits for {rel_path}"))?;
     if old == new {
         return Ok(EditPlan {
             id: EditPlanId::new(),

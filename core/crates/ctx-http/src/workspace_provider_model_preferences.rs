@@ -12,7 +12,7 @@ async fn invalidate_provider_options_cache(
     provider_id: &str,
 ) {
     let key_prefix = format!("{}/", workspace_id.0);
-    let key_suffix = format!("/{}", provider_id);
+    let key_suffix = format!("/{provider_id}");
     state
         .providers
         .options_cache

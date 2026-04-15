@@ -100,7 +100,7 @@ impl Client {
         let mut path = format!("/api/workspaces/{}/active_snapshot", workspace_id.0);
         let mut search = Vec::new();
         if let Some(limit) = params.limit {
-            search.push(format!("limit={}", limit));
+            search.push(format!("limit={limit}"));
         }
         if !search.is_empty() {
             path.push('?');
@@ -125,12 +125,12 @@ impl Client {
         let mut path = format!("/api/workspaces/{}/archived_task_summaries", workspace_id.0);
         let mut search = Vec::new();
         if let Some(limit) = params.limit {
-            search.push(format!("limit={}", limit));
+            search.push(format!("limit={limit}"));
         }
         if let Some(cursor) = &params.cursor {
             let sort_at = cursor.sort_at.to_rfc3339();
             let sort_at = form_urlencoded::byte_serialize(sort_at.as_bytes()).collect::<String>();
-            search.push(format!("cursor_sort_at={}", sort_at));
+            search.push(format!("cursor_sort_at={sort_at}"));
             search.push(format!("cursor_task_id={}", cursor.task_id.0));
         }
         if !search.is_empty() {
@@ -146,7 +146,7 @@ impl Client {
         let scheme = match url.scheme() {
             "http" => "ws",
             "https" => "wss",
-            other => return Err(anyhow!("unsupported base url scheme: {}", other)),
+            other => return Err(anyhow!("unsupported base url scheme: {other}")),
         };
         url.set_scheme(scheme)
             .map_err(|_| anyhow!("failed to set websocket scheme"))?;
@@ -332,10 +332,10 @@ impl Client {
         let mut path = format!("/api/sessions/{}/history", session_id.0);
         let mut params = Vec::new();
         if let Some(before_seq) = before_seq {
-            params.push(format!("before_seq={}", before_seq));
+            params.push(format!("before_seq={before_seq}"));
         }
         if let Some(limit) = limit {
-            params.push(format!("limit={}", limit));
+            params.push(format!("limit={limit}"));
         }
         if !params.is_empty() {
             path.push('?');
@@ -354,13 +354,13 @@ impl Client {
         let mut path = format!("/api/sessions/{}/events", session_id.0);
         let mut params = Vec::new();
         if let Some(after_seq) = after_seq {
-            params.push(format!("after_seq={}", after_seq));
+            params.push(format!("after_seq={after_seq}"));
         }
         if let Some(limit) = limit {
-            params.push(format!("limit={}", limit));
+            params.push(format!("limit={limit}"));
         }
         if let Some(tail) = tail {
-            params.push(format!("tail={}", tail));
+            params.push(format!("tail={tail}"));
         }
         if !params.is_empty() {
             path.push('?');
@@ -653,7 +653,7 @@ impl Client {
     }
 
     pub async fn install_provider(&self, provider_id: &str) -> Result<InstallStartResponse> {
-        let path = format!("/api/providers/{}/install", provider_id);
+        let path = format!("/api/providers/{provider_id}/install");
         self.request_json(Method::POST, &path, None::<&()>).await
     }
 
@@ -663,12 +663,12 @@ impl Client {
     }
 
     pub async fn get_install(&self, install_id: &str) -> Result<InstallInfo> {
-        let path = format!("/api/providers/install/{}", install_id);
+        let path = format!("/api/providers/install/{install_id}");
         self.request_json(Method::GET, &path, None::<&()>).await
     }
 
     pub async fn list_install_events(&self, install_id: &str) -> Result<Vec<InstallProgressEvent>> {
-        let path = format!("/api/providers/install/{}/events", install_id);
+        let path = format!("/api/providers/install/{install_id}/events");
         self.request_json(Method::GET, &path, None::<&()>).await
     }
 

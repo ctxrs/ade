@@ -899,7 +899,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .with_state(state);
 
     let dist_dir = std::env::var("CTX_WEB_DIST").unwrap_or_else(|_| "apps/web/dist".into());
-    let index_path = format!("{}/index.html", dist_dir);
+    let index_path = format!("{dist_dir}/index.html");
     api.fallback_service(ServeDir::new(dist_dir).not_found_service(ServeFile::new(index_path)))
 }
 

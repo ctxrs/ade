@@ -528,7 +528,7 @@ pub async fn jj_command_output(root: &Path, args: &[&str]) -> Result<std::proces
         .stderr(Stdio::piped())
         .output()
         .await
-        .with_context(|| format!("running jj {:?}", args))?;
+        .with_context(|| format!("running jj {args:?}"))?;
     Ok(output)
 }
 
@@ -536,8 +536,7 @@ async fn run_jj(root: &Path, args: &[&str]) -> Result<std::process::Output> {
     let output = jj_command_output(root, args).await?;
     if !output.status.success() {
         bail!(
-            "jj {:?} failed: {}",
-            args,
+            "jj {args:?} failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
@@ -699,7 +698,7 @@ async fn git_output_allow(root: &Path, args: &[&str], ok_codes: &[i32]) -> Resul
             if err.kind() == ErrorKind::NotFound {
                 anyhow::anyhow!("git is required to generate diffs for untracked files in jj repos")
             } else {
-                anyhow::anyhow!("running git {:?} failed: {err}", args)
+                anyhow::anyhow!("running git {args:?} failed: {err}")
             }
         })?;
     if !output.status.success() {

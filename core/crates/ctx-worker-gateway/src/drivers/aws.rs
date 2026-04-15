@@ -432,7 +432,7 @@ impl WorkerDriver for AwsDriver {
             .client
             .create_snapshot()
             .volume_id(&volume_id)
-            .description(format!("ctx snapshot for worker {}", worker_id))
+            .description(format!("ctx snapshot for worker {worker_id}"))
             .send()
             .await
             .context("create_snapshot")?;

@@ -111,7 +111,7 @@ pub fn parse_version_loose(raw: &str) -> Option<Version> {
         return Some(v);
     }
     if trimmed.matches('.').count() == 1 {
-        let candidate = format!("{}.0", trimmed);
+        let candidate = format!("{trimmed}.0");
         if let Ok(v) = Version::parse(&candidate) {
             return Some(v);
         }

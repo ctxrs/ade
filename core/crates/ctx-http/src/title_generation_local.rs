@@ -180,7 +180,7 @@ pub fn resolve_model_path(data_root: &Path, model_id: &str) -> Result<PathBuf> {
         return Err(anyhow!("local model id is empty"));
     }
     if model_id.trim() != LOCAL_MODEL_ID {
-        return Err(anyhow!("unknown local model id: {}", model_id));
+        return Err(anyhow!("unknown local model id: {model_id}"));
     }
     let path = model_path(data_root);
     if !path.exists() {

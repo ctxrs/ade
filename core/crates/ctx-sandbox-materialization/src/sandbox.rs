@@ -297,5 +297,5 @@ async fn resolve_container_exec_id(
     String::from_utf8_lossy(&out.stdout)
         .trim()
         .parse::<u32>()
-        .with_context(|| format!("parsing sandbox exec id {} output", id_flag))
+        .with_context(|| format!("parsing sandbox exec id {id_flag} output"))
 }

@@ -459,7 +459,7 @@ pub(crate) async fn start_turn(
         let codex_home = provider_env
             .get("CODEX_HOME")
             .cloned()
-            .ok_or_else(|| anyhow!("missing CODEX_HOME for {}", runtime_provider_id))?;
+            .ok_or_else(|| anyhow!("missing CODEX_HOME for {runtime_provider_id}"))?;
         provider_accounts::ensure_codex_auth_ready(Path::new(&codex_home))
             .await
             .map_err(|err| {

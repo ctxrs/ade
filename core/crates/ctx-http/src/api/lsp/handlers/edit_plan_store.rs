@@ -104,7 +104,7 @@ pub(in crate::api) async fn apply_edit_plan_patch(
                     return Err((
                         StatusCode::CONFLICT,
                         Json(ApiErrorResp {
-                            error: format!("edit plan is stale for {}; regenerate the plan", rel),
+                            error: format!("edit plan is stale for {rel}; regenerate the plan"),
                         }),
                     ));
                 }

@@ -128,7 +128,7 @@ impl SandboxMachineLifecycleExt for HarnessRuntimeManager {
             persist_sandbox_machine_cache_to_shared_best_effort(self.data_root(), None).await;
             return Ok(());
         }
-        anyhow::bail!("sandbox machine init failed: {}", combined);
+        anyhow::bail!("sandbox machine init failed: {combined}");
     }
 
     async fn inspect_sandbox_machine_memory_mb(&self, machine_name: &str) -> Result<Option<u32>> {

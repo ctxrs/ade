@@ -322,7 +322,7 @@ async fn oracle_call(client: &reqwest::Client, daemon_url: &str, args: &Value) -
         }
     }
 
-    let path = format!("/api/mcp/sessions/{}/oracle", session_id);
+    let path = format!("/api/mcp/sessions/{session_id}/oracle");
     let response = daemon_post_json(client, daemon_url, &path, &body).await?;
     let response_text = response
         .get("text")
@@ -366,7 +366,7 @@ async fn agent_init_call(
         .map(|v| v.trim())
         .filter(|v| !v.is_empty())
         .map(|v| v.to_string());
-    let path = format!("/api/mcp/sessions/{}/subagent_init", session_id);
+    let path = format!("/api/mcp/sessions/{session_id}/subagent_init");
     let mut body = json!({ "agents": agents, "worktree": worktree });
     if let Some(tool_call_id) = tool_call_id {
         if let Some(obj) = body.as_object_mut() {
@@ -396,7 +396,7 @@ async fn agent_reply_call(
         .get("prompt")
         .and_then(|v| v.as_str())
         .context("missing prompt")?;
-    let path = format!("/api/mcp/sessions/{}/subagent_reply", parent_session_id);
+    let path = format!("/api/mcp/sessions/{parent_session_id}/subagent_reply");
     let response = daemon_post_json(
         client,
         daemon_url,
@@ -409,7 +409,7 @@ async fn agent_reply_call(
 
 async fn subagent_list_call(client: &reqwest::Client, daemon_url: &str) -> Result<Value> {
     let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
-    let path = format!("/api/mcp/sessions/{}/subagent_list", session_id);
+    let path = format!("/api/mcp/sessions/{session_id}/subagent_list");
     daemon_get_json(client, daemon_url, &path).await
 }
 
@@ -419,7 +419,7 @@ async fn subagent_wait_call(
     args: &Value,
 ) -> Result<Value> {
     let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
-    let path = format!("/api/mcp/sessions/{}/subagent_wait", session_id);
+    let path = format!("/api/mcp/sessions/{session_id}/subagent_wait");
     let mut response = daemon_post_json(client, daemon_url, &path, args).await?;
     if let Some(obj) = response.as_object_mut() {
         if let Some(results) = obj.get_mut("results") {
@@ -435,7 +435,7 @@ async fn subagent_interrupt_call(
     args: &Value,
 ) -> Result<Value> {
     let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
-    let path = format!("/api/mcp/sessions/{}/subagent_interrupt", session_id);
+    let path = format!("/api/mcp/sessions/{session_id}/subagent_interrupt");
     daemon_post_json(client, daemon_url, &path, args).await
 }
 
@@ -445,7 +445,7 @@ async fn set_artifacts(
     session_id: &str,
     artifacts: Vec<Value>,
 ) -> Result<Value> {
-    let path = format!("/api/sessions/{}/artifacts", session_id);
+    let path = format!("/api/sessions/{session_id}/artifacts");
     daemon_post_json(
         client,
         daemon_url,
@@ -486,7 +486,7 @@ async fn list_edit_plans_call(
     let mut response = daemon_get_json(
         client,
         daemon_url,
-        &format!("/api/worktrees/{}/edit_plans", worktree_id),
+        &format!("/api/worktrees/{worktree_id}/edit_plans"),
     )
     .await?;
     map_edit_plan_summaries(&mut response);
@@ -504,7 +504,7 @@ async fn get_edit_plan_call(
         .context("missing edit_plan_id")?;
     let plan_id = internal_plan_id_for_edit_plan(edit_plan_id).context("unknown edit_plan_id")?;
     let mut response =
-        daemon_get_json(client, daemon_url, &format!("/api/edit_plans/{}", plan_id)).await?;
+        daemon_get_json(client, daemon_url, &format!("/api/edit_plans/{plan_id}")).await?;
     map_edit_plan_summary(&mut response);
     Ok(response)
 }
@@ -527,7 +527,7 @@ async fn apply_edit_plan_call(
         p.to_string()
     } else {
         let plan =
-            daemon_get_json(client, daemon_url, &format!("/api/edit_plans/{}", plan_id)).await?;
+            daemon_get_json(client, daemon_url, &format!("/api/edit_plans/{plan_id}")).await?;
         plan.get("diff")
             .and_then(|v| v.as_str())
             .unwrap_or("")
@@ -540,7 +540,7 @@ async fn apply_edit_plan_call(
     let mut response = daemon_post_json(
         client,
         daemon_url,
-        &format!("/api/edit_plans/{}/apply", plan_id),
+        &format!("/api/edit_plans/{plan_id}/apply"),
         &body,
     )
     .await?;
@@ -559,9 +559,8 @@ async fn discard_edit_plan_call(
         .context("missing edit_plan_id")?;
     let plan_id = internal_plan_id_for_edit_plan(edit_plan_id).context("unknown edit_plan_id")?;
     let url = format!(
-        "{}/api/edit_plans/{}/discard",
-        daemon_url.trim_end_matches('/'),
-        plan_id
+        "{}/api/edit_plans/{plan_id}/discard",
+        daemon_url.trim_end_matches('/')
     );
     let mut req = client.post(url);
     if let Some(token) = bearer_token() {
@@ -584,7 +583,7 @@ async fn session_create_call(
 ) -> Result<Value> {
     let kind = arguments.get("kind").and_then(|v| v.as_str()).unwrap_or("");
     if kind != "web" {
-        anyhow::bail!("unsupported session kind: {}", kind);
+        anyhow::bail!("unsupported session kind: {kind}");
     }
     let target = arguments.get("target").context("missing target")?;
     let url = target
@@ -646,7 +645,7 @@ async fn session_info_call(
     daemon_get_json(
         client,
         daemon_url,
-        &format!("/api/sessions/web/{}", session_id),
+        &format!("/api/sessions/web/{session_id}"),
     )
     .await
     .map(|mut response| {
@@ -681,7 +680,7 @@ async fn session_run_call(
     daemon_post_json(
         client,
         daemon_url,
-        &format!("/api/sessions/web/{}/{}", session_id, endpoint),
+        &format!("/api/sessions/web/{session_id}/{endpoint}"),
         &Value::Object(body),
     )
     .await

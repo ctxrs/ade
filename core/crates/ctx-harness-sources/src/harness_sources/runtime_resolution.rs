@@ -595,13 +595,13 @@ async fn resolve_internal(
     let endpoint_id = provider
         .selected_endpoint_id
         .clone()
-        .ok_or_else(|| anyhow::anyhow!("no endpoint selected for provider {}", canonical))?;
+        .ok_or_else(|| anyhow::anyhow!("no endpoint selected for provider {canonical}"))?;
     let endpoint = provider
         .endpoints
         .iter()
         .find(|ep| ep.id == endpoint_id)
         .cloned()
-        .ok_or_else(|| anyhow::anyhow!("selected endpoint not found for provider {}", canonical))?;
+        .ok_or_else(|| anyhow::anyhow!("selected endpoint not found for provider {canonical}"))?;
 
     if require_verified_endpoint
         && endpoint.last_verification_status != HarnessEndpointVerificationStatus::Valid
