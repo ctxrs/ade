@@ -9,14 +9,23 @@ type UseWorkbenchOptimisticTasksArgs = {
   tasksById: Record<string, WorkspaceActiveSnapshotItem>;
 };
 
-const hasRenderablePrimaryHeadMessages = (taskSummary: WorkspaceActiveSnapshotItem | null): boolean => {
+const hasRenderablePrimaryHeadForOptimisticTask = (
+  taskSummary: WorkspaceActiveSnapshotItem | null,
+  optimisticTask: OptimisticTaskSummary,
+): boolean => {
   if (!taskSummary) return false;
   const primarySessionId =
     idToString(taskSummary.primarySessionId) || idToString(taskSummary.task.primary_session_id);
   if (!primarySessionId) return false;
   const primaryHead = taskSummary.primarySessionHead;
   if (idToString(primaryHead?.session?.id) !== primarySessionId) return false;
-  return (primaryHead?.messages?.length ?? 0) > 0;
+  const localMessageId = String(optimisticTask.localMessageId ?? "").trim();
+  const headMessages = Array.isArray(primaryHead?.messages) ? primaryHead.messages : [];
+  if (!localMessageId) return headMessages.length > 0;
+  const userMessage = headMessages.find((message) => idToString(message.id) === localMessageId);
+  if (!userMessage || userMessage.role !== "user") return false;
+  const headTurns = Array.isArray(primaryHead?.turns) ? primaryHead.turns : [];
+  return headTurns.some((turn) => idToString(turn.user_message_id ?? "") === localMessageId);
 };
 
 export function useWorkbenchOptimisticTasks({
@@ -37,7 +46,7 @@ export function useWorkbenchOptimisticTasks({
     const ids = new Set<string>();
     for (const item of optimisticTasks) {
       const server = tasksById[item.id] ?? null;
-      if (item.localStatus === "synced" && hasRenderablePrimaryHeadMessages(server)) continue;
+      if (item.localStatus === "synced" && hasRenderablePrimaryHeadForOptimisticTask(server, item)) continue;
       const sessionId = String(item.primarySessionId ?? "");
       if (sessionId) ids.add(sessionId);
     }
@@ -61,7 +70,7 @@ export function useWorkbenchOptimisticTasks({
     const server = tasksById[activeTaskId] ?? null;
     if (optimistic) {
       if (optimistic.localStatus !== "synced") return optimistic;
-      if (!hasRenderablePrimaryHeadMessages(server)) return optimistic;
+      if (!hasRenderablePrimaryHeadForOptimisticTask(server, optimistic)) return optimistic;
     }
     if (server) return server;
     const fallback = optimisticStartingTaskRef.current;

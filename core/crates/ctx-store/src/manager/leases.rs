@@ -1,11 +1,12 @@
 use super::*;
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::{anyhow, Result};
-use tokio::sync::{mpsc as tokio_mpsc, watch};
+use tokio::sync::{mpsc as tokio_mpsc, Notify};
 
 pub(super) struct WorkspaceStoreLeaseRegistry {
     state: StdMutex<WorkspaceStoreLeaseState>,
@@ -53,21 +54,32 @@ struct StoreCloseExecutor {
 }
 
 pub(super) struct WorkspaceCloseSignal {
-    closing_tx: watch::Sender<bool>,
+    finished: AtomicBool,
+    notify: Notify,
 }
 
 impl WorkspaceCloseSignal {
     fn new() -> Self {
-        let (closing_tx, _closing_rx) = watch::channel(true);
-        Self { closing_tx }
+        Self {
+            finished: AtomicBool::new(false),
+            notify: Notify::new(),
+        }
     }
 
-    fn subscribe(&self) -> watch::Receiver<bool> {
-        self.closing_tx.subscribe()
+    async fn wait(&self) {
+        if self.finished.load(Ordering::Acquire) {
+            return;
+        }
+        let notified = self.notify.notified();
+        if self.finished.load(Ordering::Acquire) {
+            return;
+        }
+        notified.await;
     }
 
     fn finish(&self) {
-        self.closing_tx.send_replace(false);
+        self.finished.store(true, Ordering::Release);
+        self.notify.notify_waiters();
     }
 }
 
@@ -170,25 +182,16 @@ impl WorkspaceStoreLeaseRegistry {
 
     pub(super) async fn wait_for_workspace_close(&self, workspace_id: WorkspaceId) {
         loop {
-            let maybe_wait = {
+            let maybe_signal = {
                 let state = match self.state.lock() {
                     Ok(state) => state,
                     Err(poisoned) => poisoned.into_inner(),
                 };
-                state
-                    .closing_workspaces
-                    .get(&workspace_id)
-                    .cloned()
-                    .map(|signal| signal.subscribe())
+                state.closing_workspaces.get(&workspace_id).cloned()
             };
-            match maybe_wait {
-                Some(mut wait) => {
-                    if !*wait.borrow_and_update() {
-                        return;
-                    }
-                    if wait.changed().await.is_err() {
-                        return;
-                    }
+            match maybe_signal {
+                Some(signal) => {
+                    signal.wait().await;
                 }
                 None => return,
             }
@@ -347,10 +350,7 @@ impl WorkspaceStoreLeaseRegistry {
         clear_closing_marker(&mut state, workspace_id, notify);
     }
 
-    pub(super) fn start_close(
-        self: &Arc<Self>,
-        close: PendingWorkspaceStoreClose,
-    ) {
+    pub(super) fn start_close(self: &Arc<Self>, close: PendingWorkspaceStoreClose) {
         spawn_store_close(
             close.store,
             Arc::clone(self),
@@ -405,6 +405,16 @@ fn spawn_store_close(
     workspace_id: WorkspaceId,
     notify: Arc<WorkspaceCloseSignal>,
 ) {
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.spawn(close_store_and_finish(
+            store,
+            Arc::clone(&registry),
+            workspace_id,
+            Arc::clone(&notify),
+        ));
+        return;
+    }
+
     if let Err(err) = registry.close_executor.submit(StoreCloseJob {
         store: store.clone(),
         registry: Arc::clone(&registry),
@@ -483,19 +493,30 @@ mod tests {
             let close = registry
                 .queue_close(workspace_id, idx + 1, store)
                 .expect("close without leases should start immediately");
-            let waiter_registry = Arc::clone(&registry);
-            let waiter = tokio::spawn(async move {
-                tokio::time::timeout(
-                    Duration::from_secs(1),
-                    waiter_registry.wait_for_workspace_close(workspace_id),
-                )
-                .await
-            });
+            let signal = {
+                let state = match registry.state.lock() {
+                    Ok(state) => state,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                state
+                    .closing_workspaces
+                    .get(&workspace_id)
+                    .cloned()
+                    .expect("queue_close should register a closing signal")
+            };
+            let waiter = signal.wait();
+            tokio::pin!(waiter);
 
-            tokio::task::yield_now().await;
-            registry.start_close(close);
+            let blocked = tokio::time::timeout(Duration::from_millis(20), &mut waiter).await;
+            assert!(
+                blocked.is_err(),
+                "waiter should remain pending until close completion"
+            );
 
-            let waiter_result = waiter.await.unwrap();
+            close.store.close().await;
+            registry.finish_close(workspace_id, &close.notify);
+
+            let waiter_result = tokio::time::timeout(Duration::from_secs(1), waiter).await;
             assert!(
                 waiter_result.is_ok(),
                 "waiter should not miss the close notification (idx={idx}, closing={}, pending_close={})",

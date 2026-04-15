@@ -269,7 +269,7 @@ function measureCollapsedPlainTextLineHeight(params: {
   let remainderFragments: string[] | null = null;
 
   while (wordIndex < words.length || remainder != null) {
-    const word = remainder ?? words[wordIndex]!;
+    const word: string = remainder ?? words[wordIndex]!;
     const wordFragments = remainderFragments ?? splitPlainTextWrapFragments(word);
     const usesDelimitedWrapping = wordFragments.length > 1;
     const wordWidth = measureSingleLineTextWidth({
@@ -326,9 +326,10 @@ function measureCollapsedPlainTextLineHeight(params: {
           remainingWidth = Math.max(0, availableWidth - snappedPrefixWidth);
           lineHasContent = true;
           appendDebugText(snappedPrefixText, true);
-          remainder = word.slice(snappedPrefixText.length);
-          remainder = remainder.length > 0 ? remainder : null;
-          remainderFragments = remainder != null ? splitPlainTextWrapFragments(remainder) : null;
+          const nextRemainder = word.slice(snappedPrefixText.length);
+          remainder = nextRemainder.length > 0 ? nextRemainder : null;
+          remainderFragments =
+            remainder != null ? splitPlainTextWrapFragments(remainder) : null;
           if (remainder == null) {
             wordIndex += 1;
           }

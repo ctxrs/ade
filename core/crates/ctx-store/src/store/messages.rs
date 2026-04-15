@@ -37,105 +37,109 @@ impl Store {
             + bytes_str(delivery)
             + bytes_opt_str(delivered_at.as_deref())
             + bytes_str(&created_at);
-        let mut tx = self.pool.begin().await?;
-        let message_rows_affected = sqlx::query(
-            r#"INSERT INTO messages (id, session_id, task_id, run_id, turn_id, turn_sequence, order_seq, role, content, attachments_json, delivery, delivered_at, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
-        )
-        .bind(&id)
-        .bind(&session_id)
-        .bind(&task_id)
-        .bind(run_id)
-        .bind(turn_id)
-        .bind(message.turn_sequence)
-        .bind(message.order_seq)
-        .bind(role)
-        .bind(&message.content)
-        .bind(attachments_json)
-        .bind(delivery)
-        .bind(delivered_at)
-        .bind(&created_at)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-        let is_assistant = matches!(message.role, MessageRole::Assistant);
-        sqlx::query(
-            r#"UPDATE tasks
-               SET last_activity_at = CASE
-                     WHEN last_activity_at IS NULL OR last_activity_at < ? THEN ?
-                     ELSE last_activity_at
-                   END,
-                   last_assistant_message_at = CASE
-                     WHEN ? = 1 AND (last_assistant_message_at IS NULL OR last_assistant_message_at < ?)
-                       THEN ?
-                     ELSE last_assistant_message_at
-                   END
-               WHERE id = ?"#,
-        )
-        .bind(&created_at)
-        .bind(&created_at)
-        .bind(if is_assistant { 1 } else { 0 })
-        .bind(&created_at)
-        .bind(&created_at)
-        .bind(message.task_id.0.to_string())
-        .execute(&mut *tx)
-        .await?;
-        let session_snapshot_write_bytes =
-            if matches!(message.role, MessageRole::Assistant | MessageRole::User) {
-                let session_snapshot_id = message.session_id.0.to_string();
-                let session_snapshot_created_at = message.created_at.to_rfc3339();
-                let session_snapshot_content = message.content.clone();
-                let now = Utc::now().to_rfc3339();
-                let ensure_write_bytes =
-                    bytes_str(&session_snapshot_id) + I64_BYTES + (bytes_str(&now) * 2);
-                sqlx::query(
-                    r#"INSERT INTO session_snapshot_summaries (
-                            session_id, running_turn_count, created_at, updated_at
-                       )
-                       VALUES (?, 0, ?, ?)
-                       ON CONFLICT(session_id) DO NOTHING"#,
-                )
-                .bind(&session_snapshot_id)
-                .bind(&now)
-                .bind(&now)
-                .execute(&mut *tx)
-                .await?;
-                let update_write_bytes = bytes_str(&session_snapshot_created_at) * 2
-                    + bytes_str(&session_snapshot_content);
-                sqlx::query(
-                    r#"UPDATE session_snapshot_summaries
-                       SET last_message_at = CASE
-                             WHEN last_message_at IS NULL OR last_message_at < ? THEN ?
-                             ELSE last_message_at
-                           END,
-                           last_message_preview = CASE
-                             WHEN last_message_at IS NULL OR last_message_at < ? THEN ?
-                             ELSE last_message_preview
-                           END,
-                           projection_rev = projection_rev + 1,
-                           updated_at = ?
-                       WHERE session_id = ?"#,
-                )
-                .bind(&session_snapshot_created_at)
-                .bind(&session_snapshot_created_at)
-                .bind(&session_snapshot_created_at)
-                .bind(&session_snapshot_content)
-                .bind(&session_snapshot_created_at)
-                .bind(&session_snapshot_id)
-                .execute(&mut *tx)
-                .await?;
-                ensure_write_bytes + update_write_bytes
-            } else {
-                0
-            };
-        if let Err(err) =
-            crate::fault_injection::maybe_fail("ctx_store.insert_message.after_insert")
-        {
-            return Err(anyhow::anyhow!(
-                "database is locked (fault injection): {err}"
-            ));
-        }
-        tx.commit().await?;
+        let (message_rows_affected, session_snapshot_write_bytes) = {
+            let _write_guard = self.write_gate.lock().await;
+            let mut tx = self.pool.begin().await?;
+            let message_rows_affected = sqlx::query(
+                r#"INSERT INTO messages (id, session_id, task_id, run_id, turn_id, turn_sequence, order_seq, role, content, attachments_json, delivery, delivered_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            )
+            .bind(&id)
+            .bind(&session_id)
+            .bind(&task_id)
+            .bind(run_id)
+            .bind(turn_id)
+            .bind(message.turn_sequence)
+            .bind(message.order_seq)
+            .bind(role)
+            .bind(&message.content)
+            .bind(attachments_json)
+            .bind(delivery)
+            .bind(delivered_at)
+            .bind(&created_at)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            let is_assistant = matches!(message.role, MessageRole::Assistant);
+            sqlx::query(
+                r#"UPDATE tasks
+                   SET last_activity_at = CASE
+                         WHEN last_activity_at IS NULL OR last_activity_at < ? THEN ?
+                         ELSE last_activity_at
+                       END,
+                       last_assistant_message_at = CASE
+                         WHEN ? = 1 AND (last_assistant_message_at IS NULL OR last_assistant_message_at < ?)
+                           THEN ?
+                         ELSE last_assistant_message_at
+                       END
+                   WHERE id = ?"#,
+            )
+            .bind(&created_at)
+            .bind(&created_at)
+            .bind(if is_assistant { 1 } else { 0 })
+            .bind(&created_at)
+            .bind(&created_at)
+            .bind(message.task_id.0.to_string())
+            .execute(&mut *tx)
+            .await?;
+            let session_snapshot_write_bytes =
+                if matches!(message.role, MessageRole::Assistant | MessageRole::User) {
+                    let session_snapshot_id = message.session_id.0.to_string();
+                    let session_snapshot_created_at = message.created_at.to_rfc3339();
+                    let session_snapshot_content = message.content.clone();
+                    let now = Utc::now().to_rfc3339();
+                    let ensure_write_bytes =
+                        bytes_str(&session_snapshot_id) + I64_BYTES + (bytes_str(&now) * 2);
+                    sqlx::query(
+                        r#"INSERT INTO session_snapshot_summaries (
+                                session_id, running_turn_count, created_at, updated_at
+                           )
+                           VALUES (?, 0, ?, ?)
+                           ON CONFLICT(session_id) DO NOTHING"#,
+                    )
+                    .bind(&session_snapshot_id)
+                    .bind(&now)
+                    .bind(&now)
+                    .execute(&mut *tx)
+                    .await?;
+                    let update_write_bytes = bytes_str(&session_snapshot_created_at) * 2
+                        + bytes_str(&session_snapshot_content);
+                    sqlx::query(
+                        r#"UPDATE session_snapshot_summaries
+                           SET last_message_at = CASE
+                                 WHEN last_message_at IS NULL OR last_message_at < ? THEN ?
+                                 ELSE last_message_at
+                               END,
+                               last_message_preview = CASE
+                                 WHEN last_message_at IS NULL OR last_message_at < ? THEN ?
+                                 ELSE last_message_preview
+                               END,
+                               projection_rev = projection_rev + 1,
+                               updated_at = ?
+                           WHERE session_id = ?"#,
+                    )
+                    .bind(&session_snapshot_created_at)
+                    .bind(&session_snapshot_created_at)
+                    .bind(&session_snapshot_created_at)
+                    .bind(&session_snapshot_content)
+                    .bind(&session_snapshot_created_at)
+                    .bind(&session_snapshot_id)
+                    .execute(&mut *tx)
+                    .await?;
+                    ensure_write_bytes + update_write_bytes
+                } else {
+                    0
+                };
+            if let Err(err) =
+                crate::fault_injection::maybe_fail("ctx_store.insert_message.after_insert")
+            {
+                return Err(anyhow::anyhow!(
+                    "database is locked (fault injection): {err}"
+                ));
+            }
+            tx.commit().await?;
+            (message_rows_affected, session_snapshot_write_bytes)
+        };
 
         record_write(
             WriteMetricTable::Messages,

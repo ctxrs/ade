@@ -182,6 +182,78 @@ const preserveLocalQueuedMessages = (
   });
 };
 
+const preserveLocalUserMessageAnchors = (
+  previousTurns: SessionTurn[],
+  previousMessages: Message[],
+  nextTurns: SessionTurn[],
+  nextMessages: Message[],
+): { turns: SessionTurn[]; messages: Message[] } => {
+  if (previousTurns.length === 0 || previousMessages.length === 0 || nextTurns.length === 0) {
+    return { turns: nextTurns, messages: nextMessages };
+  }
+
+  const previousTurnById = new Map(
+    previousTurns
+      .map((turn) => {
+        const turnId = idToString(turn.turn_id);
+        return turnId ? ([turnId, turn] as const) : null;
+      })
+      .filter((item): item is readonly [string, SessionTurn] => item !== null),
+  );
+  const previousMessageById = new Map(
+    previousMessages
+      .map((message) => {
+        const messageId = idToString(message.id);
+        return messageId ? ([messageId, message] as const) : null;
+      })
+      .filter((item): item is readonly [string, Message] => item !== null),
+  );
+  const nextMessageIds = new Set(
+    nextMessages.map((message) => idToString(message.id)).filter((messageId): messageId is string => Boolean(messageId)),
+  );
+
+  let repairedTurns = nextTurns;
+  let repairedMessages = nextMessages;
+  const preservedMessages: Message[] = [];
+
+  nextTurns.forEach((turn, index) => {
+    const turnId = idToString(turn.turn_id);
+    if (!turnId) return;
+    const nextUserMessageId = idToString(turn.user_message_id ?? "");
+    if (nextUserMessageId && nextMessageIds.has(nextUserMessageId)) return;
+
+    const previousTurn = previousTurnById.get(turnId);
+    const previousUserMessageId = idToString(previousTurn?.user_message_id ?? "");
+    if (!previousTurn || !previousUserMessageId) return;
+
+    const previousUserMessage = previousMessageById.get(previousUserMessageId);
+    if (!previousUserMessage || previousUserMessage.role !== "user") return;
+    if (idToString(previousUserMessage.turn_id ?? "") !== turnId) return;
+
+    if (repairedTurns === nextTurns) {
+      repairedTurns = nextTurns.slice();
+    }
+    repairedTurns[index] =
+      repairedTurns[index]?.user_message_id === previousTurn.user_message_id
+        ? repairedTurns[index]!
+        : { ...turn, user_message_id: previousTurn.user_message_id };
+
+    if (!nextMessageIds.has(previousUserMessageId)) {
+      nextMessageIds.add(previousUserMessageId);
+      preservedMessages.push(previousUserMessage);
+    }
+  });
+
+  if (preservedMessages.length > 0) {
+    repairedMessages = mergeSessionMessages(repairedMessages, preservedMessages);
+  }
+
+  return {
+    turns: repairedTurns,
+    messages: repairedMessages,
+  };
+};
+
 const preserveMonotonicTurns = (
   previousTurns: SessionTurn[],
   nextTurns: SessionTurn[],
@@ -251,6 +323,7 @@ const applyCanonicalTranscriptPatch = (
   const localQueuedMessages =
     Array.isArray(data.messages) ? preserveLocalQueuedMessages(entry.messages, data.messages) : [];
   const previousTurns = entry.turns;
+  const previousMessages = entry.messages;
   let nextTurnsForAnalytics: SessionTurn[] | null = null;
   let changed = false;
 
@@ -262,23 +335,30 @@ const applyCanonicalTranscriptPatch = (
   const shouldCopyCanonicalTranscript = patch.op !== "replace" || shouldApplyReplace;
 
   if (shouldCopyCanonicalTranscript && !preserveCoveredHistoryOnReplace) {
+    let nextTurns = entry.turns;
     if (Array.isArray(data.turns)) {
-      const nextTurns = preserveMonotonicTurns(previousTurns, data.turns);
-      if (!haveSameArrayRefs(entry.turns, nextTurns)) {
-        entry.turns = nextTurns;
-        entry.turnsRev = data.turnsRev ?? (entry.turnsRev + 1);
-        nextTurnsForAnalytics = entry.turns;
-        changed = true;
-      }
+      nextTurns = preserveMonotonicTurns(previousTurns, data.turns);
     }
+    let nextMessages = entry.messages;
     if (Array.isArray(data.messages)) {
-      const nextMessages = mergeSessionMessages(data.messages, localQueuedMessages);
-      if (!haveSameArrayRefs(entry.messages, nextMessages)) {
-        entry.messages = nextMessages;
-        entry.messagesRev = data.messagesRev ?? (entry.messagesRev + 1);
-        entry.queue = entry.messages.filter((message) => message.delivery === "queued");
-        changed = true;
-      }
+      nextMessages = mergeSessionMessages(data.messages, localQueuedMessages);
+    }
+    if (Array.isArray(data.turns) || Array.isArray(data.messages)) {
+      const repaired = preserveLocalUserMessageAnchors(previousTurns, previousMessages, nextTurns, nextMessages);
+      nextTurns = repaired.turns;
+      nextMessages = repaired.messages;
+    }
+    if (!haveSameArrayRefs(entry.turns, nextTurns)) {
+      entry.turns = nextTurns;
+      entry.turnsRev = data.turnsRev ?? (entry.turnsRev + 1);
+      nextTurnsForAnalytics = entry.turns;
+      changed = true;
+    }
+    if (!haveSameArrayRefs(entry.messages, nextMessages)) {
+      entry.messages = nextMessages;
+      entry.messagesRev = data.messagesRev ?? (entry.messagesRev + 1);
+      entry.queue = entry.messages.filter((message) => message.delivery === "queued");
+      changed = true;
     }
     if (Array.isArray(data.events)) {
       if (!haveSameArrayRefs(entry.events, data.events)) {
@@ -306,23 +386,30 @@ const applyCanonicalTranscriptPatch = (
         }) || changed;
     }
   } else if (shouldCopyCanonicalTranscript && preserveCoveredHistoryOnReplace) {
+    let nextTurns = entry.turns;
     if (Array.isArray(data.turns)) {
-      const nextTurns = preserveMonotonicTurns(entry.turns, mergeSessionTurns(entry.turns, data.turns));
-      if (!haveSameArrayRefs(entry.turns, nextTurns)) {
-        entry.turns = nextTurns;
-        entry.turnsRev = data.turnsRev ?? (entry.turnsRev + 1);
-        nextTurnsForAnalytics = entry.turns;
-        changed = true;
-      }
+      nextTurns = preserveMonotonicTurns(entry.turns, mergeSessionTurns(entry.turns, data.turns));
     }
+    let nextMessages = entry.messages;
     if (Array.isArray(data.messages)) {
-      const nextMessages = mergeSessionMessages(entry.messages, data.messages);
-      if (!haveSameArrayRefs(entry.messages, nextMessages)) {
-        entry.messages = nextMessages;
-        entry.messagesRev = data.messagesRev ?? (entry.messagesRev + 1);
-        entry.queue = entry.messages.filter((message) => message.delivery === "queued");
-        changed = true;
-      }
+      nextMessages = mergeSessionMessages(entry.messages, data.messages);
+    }
+    if (Array.isArray(data.turns) || Array.isArray(data.messages)) {
+      const repaired = preserveLocalUserMessageAnchors(previousTurns, previousMessages, nextTurns, nextMessages);
+      nextTurns = repaired.turns;
+      nextMessages = repaired.messages;
+    }
+    if (!haveSameArrayRefs(entry.turns, nextTurns)) {
+      entry.turns = nextTurns;
+      entry.turnsRev = data.turnsRev ?? (entry.turnsRev + 1);
+      nextTurnsForAnalytics = entry.turns;
+      changed = true;
+    }
+    if (!haveSameArrayRefs(entry.messages, nextMessages)) {
+      entry.messages = nextMessages;
+      entry.messagesRev = data.messagesRev ?? (entry.messagesRev + 1);
+      entry.queue = entry.messages.filter((message) => message.delivery === "queued");
+      changed = true;
     }
     if (Array.isArray(data.events)) {
       const nextEvents = mergeSessionEvents(entry.events, data.events);

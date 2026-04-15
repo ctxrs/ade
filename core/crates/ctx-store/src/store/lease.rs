@@ -10,6 +10,7 @@ impl Store {
             pool: self.pool.clone(),
             event_log: self.event_log.clone(),
             active_head_projection: self.active_head_projection.clone(),
+            write_gate: self.write_gate.clone(),
             _lease_guard: Some(lease_guard),
         }
     }

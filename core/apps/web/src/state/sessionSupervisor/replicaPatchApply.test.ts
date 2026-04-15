@@ -132,4 +132,76 @@ describe("replicaPatchApply", () => {
 
     expect(host.publish).not.toHaveBeenCalled();
   });
+
+  it("preserves a prior local user-message anchor when a replace patch points the turn at a missing user message", () => {
+    const entry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
+    entry.turnsHydrated = true;
+    entry.turns = [{
+      turn_id: "turn-1",
+      session_id: "session-1",
+      run_id: null,
+      user_message_id: "message-local-user",
+      status: "running",
+      start_seq: 1,
+      end_seq: null,
+      started_at: "2026-04-14T00:00:00.000Z",
+      updated_at: "2026-04-14T00:00:00.000Z",
+      assistant_partial: null,
+      thought_partial: null,
+      metrics_json: null,
+      tool_total: 0,
+      tool_pending: 0,
+      tool_running: 0,
+      tool_completed: 0,
+      tool_failed: 0,
+    }];
+    entry.messages = [{
+      id: "message-local-user",
+      session_id: "session-1",
+      task_id: "task-1",
+      turn_id: "turn-1",
+      role: "user",
+      content: "optimistic first message",
+      delivery: "immediate",
+      created_at: "2026-04-14T00:00:00.000Z",
+    }];
+    entry.messagesRev = 1;
+    entry.turnsRev = 1;
+
+    const host = createReplicaHost(entry);
+    const result = applyReplicaPatches(host, [{
+      sessionId: "session-1",
+      op: "replace",
+      data: {
+        freshness: "authoritative",
+        turns: [{
+          ...entry.turns[0]!,
+          user_message_id: "message-server-missing",
+          status: "completed",
+          end_seq: 2,
+          updated_at: "2026-04-14T00:00:05.000Z",
+        }],
+        messages: [{
+          id: "message-assistant",
+          session_id: "session-1",
+          task_id: "task-1",
+          turn_id: "turn-1",
+          role: "assistant",
+          content: "done: optimistic first message",
+          delivery: "immediate",
+          created_at: "2026-04-14T00:00:05.000Z",
+        }],
+        events: [],
+        turnsHydrated: true,
+        loading: false,
+      },
+    }]);
+
+    expect(result.changed).toBe(true);
+    expect(entry.turns[0]?.user_message_id).toBe("message-local-user");
+    expect(entry.messages.map((message) => message.id)).toEqual([
+      "message-local-user",
+      "message-assistant",
+    ]);
+  });
 });

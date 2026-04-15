@@ -134,7 +134,7 @@ mod tests {
         assert!(meta.last_error.is_some());
         assert!(!cfg.managed_installs.contains_key("droid"));
         assert!(
-            cfg.providers.get("droid").is_none(),
+            !cfg.providers.contains_key("droid"),
             "provider install errors must not recreate legacy shared provider entries"
         );
     }

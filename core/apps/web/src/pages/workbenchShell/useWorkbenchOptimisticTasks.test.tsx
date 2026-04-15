@@ -1,7 +1,7 @@
 import React, { act, useEffect } from "react";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Message, Session, SessionHeadSnapshot, SessionSnapshotSummary, Task } from "../../api/client";
+import type { Message, Session, SessionHeadSnapshot, SessionSnapshotSummary, SessionTurn, Task } from "../../api/client";
 import type { WorkspaceActiveSnapshotItem } from "../../state/workspaceActiveSnapshotStore";
 import type { OptimisticTaskSummary } from "./WorkbenchPage.types";
 import { useWorkbenchOptimisticTasks } from "./useWorkbenchOptimisticTasks";
@@ -91,13 +91,36 @@ function makeMessage(sessionId: string, taskId: string, content: string): Messag
   };
 }
 
+function makeTurn(sessionId: string, turnId: string, userMessageId: string | null): SessionTurn {
+  return {
+    turn_id: turnId,
+    session_id: sessionId,
+    run_id: null,
+    user_message_id: userMessageId,
+    status: "running",
+    start_seq: 1,
+    end_seq: null,
+    started_at: now,
+    updated_at: now,
+    assistant_partial: null,
+    thought_partial: null,
+    metrics_json: null,
+    tool_total: 0,
+    tool_pending: 0,
+    tool_running: 0,
+    tool_completed: 0,
+    tool_failed: 0,
+  };
+}
+
 function makeSessionHead(
   session: Session,
   messages: Message[] = [],
+  turns: SessionTurn[] = [],
 ): SessionHeadSnapshot {
   return {
     session,
-    turns: [],
+    turns,
     tool_summaries: [],
     events: [],
     messages,
@@ -304,7 +327,7 @@ describe("useWorkbenchOptimisticTasks", () => {
     });
   });
 
-  it("keeps a synced optimistic session id marked optimistic until the server publishes a primary head with messages", async () => {
+  it("keeps a synced optimistic session id marked optimistic until the server publishes the first user header anchor", async () => {
     let current: HookValue | null = null;
     const optimisticSession = makeSession("session-1", "task-1");
     const optimistic = {
@@ -336,12 +359,45 @@ describe("useWorkbenchOptimisticTasks", () => {
       expect(current?.optimisticSessionIdSet.has("session-1")).toBe(true);
     });
 
+    const assistantOnlyServerTask = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: optimisticSession.id,
+      sessions: [makeSessionSummary(optimisticSession)],
+      primarySessionHead: makeSessionHead(optimisticSession, [
+        {
+          ...makeMessage(optimisticSession.id, "task-1", "done"),
+          id: "assistant-1",
+          role: "assistant",
+        },
+      ]),
+    });
+
+    rerender(
+      <Harness
+        activeTaskId="task-1"
+        activeTaskIdFromTab="task-1"
+        tasksById={{ "task-1": assistantOnlyServerTask }}
+        onChange={(value) => {
+          current = value;
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(current?.optimisticSessionIdSet.has("session-1")).toBe(true);
+    });
+
     const publishedServerTask = makeTaskSummary({
       taskId: "task-1",
       primarySessionId: optimisticSession.id,
       sessions: [makeSessionSummary(optimisticSession)],
       primarySessionHead: makeSessionHead(optimisticSession, [
-        makeMessage(optimisticSession.id, "task-1", "hello"),
+        {
+          ...makeMessage(optimisticSession.id, "task-1", "hello"),
+          id: "message-1",
+        },
+      ], [
+        makeTurn(optimisticSession.id, `turn-${optimisticSession.id}`, "message-1"),
       ]),
     });
 
@@ -392,7 +448,7 @@ describe("useWorkbenchOptimisticTasks", () => {
     });
   });
 
-  it("keeps a synced optimistic task active until the server publishes a primary head with messages", async () => {
+  it("keeps a synced optimistic task active until the server publishes a renderable first user header", async () => {
     let current: HookValue | null = null;
     const session = makeSession("session-1", "task-1");
     const optimistic = {
@@ -426,11 +482,47 @@ describe("useWorkbenchOptimisticTasks", () => {
       expect(current?.optimisticSessionIdSet.has(session.id)).toBe(true);
     });
 
+    const serverTaskWithAssistantOnlyHead = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: session.id,
+      sessions: [makeSessionSummary(session)],
+      primarySessionHead: makeSessionHead(session, [
+        {
+          ...makeMessage(session.id, "task-1", "assistant"),
+          id: "assistant-1",
+          role: "assistant",
+        },
+      ]),
+    });
+
+    rerender(
+      <Harness
+        activeTaskId="task-1"
+        activeTaskIdFromTab="task-1"
+        tasksById={{ "task-1": serverTaskWithAssistantOnlyHead }}
+        onChange={(value) => {
+          current = value;
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(current?.activeTaskSummary).toEqual(optimistic);
+      expect(current?.optimisticSessionIdSet.has(session.id)).toBe(true);
+    });
+
     const serverTaskWithMessageHead = makeTaskSummary({
       taskId: "task-1",
       primarySessionId: session.id,
       sessions: [makeSessionSummary(session)],
-      primarySessionHead: makeSessionHead(session, [makeMessage(session.id, "task-1", "hello")]),
+      primarySessionHead: makeSessionHead(session, [
+        {
+          ...makeMessage(session.id, "task-1", "hello"),
+          id: "message-1",
+        },
+      ], [
+        makeTurn(session.id, `turn-${session.id}`, "message-1"),
+      ]),
     });
 
     rerender(

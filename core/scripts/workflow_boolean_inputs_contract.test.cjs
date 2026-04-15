@@ -285,6 +285,10 @@ test("release supabase runs a shipped-app first-run workspace gate on the Mac mi
   );
   assert.match(
     block,
+    /name:\s+Rust toolchain \(first run\)[\s\S]*dtolnay\/rust-toolchain@stable/s,
+  );
+  assert.match(
+    block,
     /name:\s+Prepare current-source AVF runtime \(first run\)[\s\S]*prepare_avf_linux_guest_runtime\.sh[\s\S]*--output-dir "\$RUNNER_TEMP\/ctx-avf-linux-guest-runtime"/s,
   );
   assert.match(

@@ -10,8 +10,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use axum::http::StatusCode;
 use ctx_http::installer::{
-    save_agent_server_config, AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
+    resolve_matrix_target_key, save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
+    ManagedInstallMetadata,
 };
+use ctx_http::provider_matrix::{builtin_matrix, get_entry, recommended_release, ProviderInstall};
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderStatus, RunHandle, TurnInput,
@@ -167,9 +169,15 @@ async fn seed_container_only_install(data_root: &Path, provider_id: &str) -> std
     let command_path = install_dir.join(format!("{provider_id}-runtime"));
     write_runtime_fixture(&command_path);
 
-    let meta = ManagedInstallMetadata {
-        package: Some(format!("{provider_id}-pkg")),
-        version: Some("1.0.0".to_string()),
+    let matrix = builtin_matrix();
+    let entry = get_entry(&matrix, provider_id).expect("provider matrix entry");
+    let managed_install = entry
+        .managed_install
+        .as_ref()
+        .expect("provider should be managed");
+    let mut meta = ManagedInstallMetadata {
+        package: None,
+        version: None,
         archive_sha256: None,
         artifact_fingerprint: None,
         target: Some(InstallTarget::Container),
@@ -182,6 +190,52 @@ async fn seed_container_only_install(data_root: &Path, provider_id: &str) -> std
         last_success_at: None,
         last_error: None,
     };
+    match managed_install {
+        ProviderInstall::Npm { package, .. } => {
+            let version = recommended_release(entry, None)
+                .expect("recommended release")
+                .version
+                .clone();
+            meta.package = Some(package.clone());
+            meta.version = Some(version.clone());
+            meta.artifact_fingerprint = Some(format!("npm:{package}@{version}"));
+        }
+        ProviderInstall::Archive {
+            version, targets, ..
+        } => {
+            let target_key =
+                resolve_matrix_target_key(InstallTarget::Container).expect("target key");
+            let target_entry = targets.get(target_key).expect("container archive target");
+            meta.version = Some(version.clone());
+            meta.archive_sha256 = target_entry.sha256.clone();
+        }
+        ProviderInstall::Python {
+            package,
+            version,
+            python_version,
+            python_build_tag,
+            ..
+        } => {
+            meta.package = Some(package.clone());
+            meta.version = Some(version.clone());
+            let mut fingerprint = format!("python:{package}=={version}");
+            if let Some(value) = python_version
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                fingerprint.push_str(&format!("|python={value}"));
+            }
+            if let Some(value) = python_build_tag
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                fingerprint.push_str(&format!("|build={value}"));
+            }
+            meta.artifact_fingerprint = Some(fingerprint);
+        }
+    }
 
     let mut cfg = AgentServerConfigFile::default();
     cfg.managed_install_targets.insert(

@@ -170,39 +170,42 @@ impl Store {
             }
         }
 
-        let mut tx = self.pool.begin().await?;
-        let mut builder = sqlx::QueryBuilder::<Sqlite>::new(
-            "INSERT INTO session_events (seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at) ",
-        );
-        builder.push_values(rows.iter(), |mut b, row| {
-            b.push_bind(row.seq)
-                .push_bind(&row.id)
-                .push_bind(&row.session_id)
-                .push_bind(row.run_id.as_deref())
-                .push_bind(row.turn_id.as_deref())
-                .push_bind(row.event_type)
-                .push_bind(&row.payload_text)
-                .push_bind(row.transient)
-                .push_bind(&row.created_at);
-        });
-        builder.build().execute(&mut *tx).await?;
-        for (session_id, seq) in &max_seq_by_session {
-            self.update_session_snapshot_last_event_seq_tx(&mut tx, *session_id, *seq)
-                .await?;
-        }
-        for (session_id, turn_id) in &terminal_turns {
-            if self
-                .repair_session_turn_projection_from_events_tx(&mut tx, *session_id, *turn_id)
-                .await?
-            {
-                summary_refresh_sessions.insert(*session_id);
+        {
+            let _write_guard = self.write_gate.lock().await;
+            let mut tx = self.pool.begin().await?;
+            let mut builder = sqlx::QueryBuilder::<Sqlite>::new(
+                "INSERT INTO session_events (seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at) ",
+            );
+            builder.push_values(rows.iter(), |mut b, row| {
+                b.push_bind(row.seq)
+                    .push_bind(&row.id)
+                    .push_bind(&row.session_id)
+                    .push_bind(row.run_id.as_deref())
+                    .push_bind(row.turn_id.as_deref())
+                    .push_bind(row.event_type)
+                    .push_bind(&row.payload_text)
+                    .push_bind(row.transient)
+                    .push_bind(&row.created_at);
+            });
+            builder.build().execute(&mut *tx).await?;
+            for (session_id, seq) in &max_seq_by_session {
+                self.update_session_snapshot_last_event_seq_tx(&mut tx, *session_id, *seq)
+                    .await?;
             }
+            for (session_id, turn_id) in &terminal_turns {
+                if self
+                    .repair_session_turn_projection_from_events_tx(&mut tx, *session_id, *turn_id)
+                    .await?
+                {
+                    summary_refresh_sessions.insert(*session_id);
+                }
+            }
+            for session_id in &summary_refresh_sessions {
+                self.refresh_session_turn_summary_tx(&mut tx, *session_id)
+                    .await?;
+            }
+            tx.commit().await?;
         }
-        for session_id in &summary_refresh_sessions {
-            self.refresh_session_turn_summary_tx(&mut tx, *session_id)
-                .await?;
-        }
-        tx.commit().await?;
 
         for row in rows {
             record_write(WriteMetricTable::SessionEvents, 1, row.write_bytes);

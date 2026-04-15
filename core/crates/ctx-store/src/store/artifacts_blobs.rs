@@ -228,36 +228,39 @@ impl Store {
         session_id: SessionId,
         artifacts: &[Artifact],
     ) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-        self.query(r#"DELETE FROM artifacts WHERE session_id = ?"#)
-            .bind(session_id.0.to_string())
-            .execute(&mut *tx)
-            .await?;
+        {
+            let _write_guard = self.write_gate.lock().await;
+            let mut tx = self.pool.begin().await?;
+            self.query(r#"DELETE FROM artifacts WHERE session_id = ?"#)
+                .bind(session_id.0.to_string())
+                .execute(&mut *tx)
+                .await?;
 
-        for (idx, artifact) in artifacts.iter().enumerate() {
-            self.query(
-                r#"INSERT INTO artifacts (
-                        id, session_id, task_id, workspace_id, worktree_id,
-                        position, name, absolute_path, mime_type, bytes, created_at
-                   )
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
-            )
-            .bind(artifact.id.0.to_string())
-            .bind(artifact.session_id.0.to_string())
-            .bind(artifact.task_id.0.to_string())
-            .bind(artifact.workspace_id.0.to_string())
-            .bind(artifact.worktree_id.0.to_string())
-            .bind(idx as i64)
-            .bind(artifact.name.as_deref())
-            .bind(&artifact.absolute_path)
-            .bind(&artifact.mime_type)
-            .bind(artifact.bytes)
-            .bind(artifact.created_at.to_rfc3339())
-            .execute(&mut *tx)
-            .await?;
+            for (idx, artifact) in artifacts.iter().enumerate() {
+                self.query(
+                    r#"INSERT INTO artifacts (
+                            id, session_id, task_id, workspace_id, worktree_id,
+                            position, name, absolute_path, mime_type, bytes, created_at
+                       )
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                )
+                .bind(artifact.id.0.to_string())
+                .bind(artifact.session_id.0.to_string())
+                .bind(artifact.task_id.0.to_string())
+                .bind(artifact.workspace_id.0.to_string())
+                .bind(artifact.worktree_id.0.to_string())
+                .bind(idx as i64)
+                .bind(artifact.name.as_deref())
+                .bind(&artifact.absolute_path)
+                .bind(&artifact.mime_type)
+                .bind(artifact.bytes)
+                .bind(artifact.created_at.to_rfc3339())
+                .execute(&mut *tx)
+                .await?;
+            }
+
+            tx.commit().await?;
         }
-
-        tx.commit().await?;
         Ok(())
     }
 }

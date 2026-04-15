@@ -8,6 +8,8 @@ e2e/workbench-claude-subscription-setup-token-real.spec.ts
 e2e/workbench-composer-scroll-ownership.spec.ts
 e2e/workbench-open-at-bottom.spec.ts
 e2e/workbench-pretext-detached-wheel.spec.ts
+e2e/workbench-pretext-parity-corpus.spec.ts
+e2e/workbench-pretext-parity-fuzz.spec.ts
 e2e/workbench-pretext-virtualizer-acceptance.spec.ts
 e2e/workbench-pretext-virtualizer-bottom-rehit.spec.ts
 e2e/workbench-pretext-virtualizer-short-thread.spec.ts

@@ -15,7 +15,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::info;
 
 use head_kind::*;
@@ -33,6 +33,7 @@ pub struct Store {
     pool: Pool<Sqlite>,
     event_log: Arc<EventLogRuntime>,
     active_head_projection: Arc<ActiveHeadProjectionRuntime>,
+    write_gate: Arc<Mutex<()>>,
     _lease_guard: Option<Arc<dyn StoreLeaseGuard>>,
 }
 
@@ -397,6 +398,7 @@ impl Store {
             pool,
             event_log,
             active_head_projection,
+            write_gate: Arc::new(Mutex::new(())),
             _lease_guard: None,
         };
         store.event_log.start_persister(store.clone());

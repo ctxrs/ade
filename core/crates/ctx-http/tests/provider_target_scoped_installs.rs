@@ -137,7 +137,11 @@ fn seeded_node_dist_target(target: InstallTarget) -> &'static str {
 fn seed_managed_node_runtime_metadata(cfg: &mut AgentServerConfigFile, data_root: &Path) {
     for (dependency_id, target, tag) in [
         ("runtime-node-host", InstallTarget::Host, "host"),
-        ("runtime-node-container", InstallTarget::Container, "container"),
+        (
+            "runtime-node-container",
+            InstallTarget::Container,
+            "container",
+        ),
     ] {
         let folder = format!(
             "node-v{SEEDED_NODE_VERSION}-{}",
@@ -407,6 +411,10 @@ fn fixture_download_url(server: &common::TestServer, name: &str) -> String {
     format!("{}/{}", server.base_url, name)
 }
 
+fn fixture_matrix_version() -> u32 {
+    ctx_http::provider_matrix::builtin_matrix().version
+}
+
 fn local_archive_entry_with_bin_path(url: String, bin_path: &str) -> ProviderArchiveTarget {
     ProviderArchiveTarget {
         url,
@@ -556,7 +564,7 @@ fn provider_fixture_matrix_with_providers(
         }),
     );
     ProviderMatrix {
-        version: 2,
+        version: fixture_matrix_version(),
         generated_at: None,
         providers: entries,
     }
@@ -1344,16 +1352,19 @@ async fn provider_target_scoped_installs_install_all_container_js_archive_harnes
     let data_dir = tempfile::tempdir().expect("tempdir");
     let fixture_dir = data_dir.path().join("fixtures");
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
+    let bridge_fixture = fixture_dir.join("acp-crp-bridge");
     let amp_fixture = fixture_dir.join("amp-acp.js");
     let pi_fixture = fixture_dir.join("pi-acp.js");
+    write_executable(&bridge_fixture, "#!/bin/sh\nexit 0\n");
     write_js_entrypoint(&amp_fixture);
     write_js_entrypoint(&pi_fixture);
     save_matrix_fixture(
         data_dir.path(),
         &ProviderMatrix {
-            version: 2,
+            version: fixture_matrix_version(),
             generated_at: None,
             providers: vec![
+                bridge_fixture_entry(file_url(&bridge_fixture)),
                 archive_js_harness_fixture_entry(
                     "amp",
                     "0.1.2",
@@ -1402,10 +1413,29 @@ async fn provider_target_scoped_installs_install_all_container_js_archive_harnes
         "bulk install should start successfully for JS archive harnesses: {install_body:#?}"
     );
     let install_ids = parse_install_ids(&install_body);
+    if !install_ids.contains_key("amp") || !install_ids.contains_key("pi") {
+        let (amp_status, amp_body): (StatusCode, serde_json::Value) = common::json_request(
+            &app,
+            axum::http::Method::GET,
+            "/api/providers/amp?target=container",
+            None,
+        )
+        .await;
+        let (pi_status, pi_body): (StatusCode, serde_json::Value) = common::json_request(
+            &app,
+            axum::http::Method::GET,
+            "/api/providers/pi?target=container",
+            None,
+        )
+        .await;
+        panic!(
+            "missing JS archive harness install ids from bulk response: {install_body:#?}\namp: ({amp_status}) {amp_body:#?}\npi: ({pi_status}) {pi_body:#?}"
+        );
+    }
     for provider_id in ["amp", "pi"] {
         let install_id = *install_ids
             .get(provider_id)
-            .expect("missing install id from bulk response");
+            .expect("validated install ids above");
         let install_info =
             wait_for_install_completion_with_timeout(&state, install_id, Duration::from_secs(45))
                 .await;
@@ -1514,7 +1544,7 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when
     save_matrix_fixture(
         data_dir.path(),
         &ProviderMatrix {
-            version: 2,
+            version: fixture_matrix_version(),
             generated_at: None,
             providers: vec![
                 acp_provider_fixture_entry("kimi", fixture_download_url(&download_server, "kimi")),
@@ -2170,7 +2200,7 @@ async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready
     save_matrix_fixture(
         data_dir.path(),
         &ProviderMatrix {
-            version: 2,
+            version: fixture_matrix_version(),
             generated_at: None,
             providers: vec![
                 claude_crp,

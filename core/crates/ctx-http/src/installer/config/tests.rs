@@ -125,24 +125,27 @@ fn resolve_runtime_provider_command_preserves_raw_bundle_symlink_paths() {
     let _providers = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY_PROVIDERS");
 
     let mut cfg = AgentServerConfigFile::default();
-    cfg.providers.insert(
+    cfg.managed_provider_targets.insert(
         "codex".to_string(),
-        AgentServerCommand {
-            command: raw_command.to_string_lossy().to_string(),
-            args: Vec::new(),
-            dependencies: Vec::new(),
-            managed: Some(ManagedInstallMetadata {
-                package: Some("@openai/codex".to_string()),
-                version: Some("1.0.0".to_string()),
-                artifact_fingerprint: None,
-                archive_sha256: None,
-                target: Some(InstallTarget::Container),
-                install_dir_rel: None,
-                bin_dir_rel: None,
-                last_success_at: None,
-                last_error: None,
-            }),
-        },
+        HashMap::from([(
+            "container".to_string(),
+            AgentServerCommand {
+                command: raw_command.to_string_lossy().to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: Some(ManagedInstallMetadata {
+                    package: Some("@openai/codex".to_string()),
+                    version: Some("1.0.0".to_string()),
+                    artifact_fingerprint: None,
+                    archive_sha256: None,
+                    target: Some(InstallTarget::Container),
+                    install_dir_rel: None,
+                    bin_dir_rel: None,
+                    last_success_at: None,
+                    last_error: None,
+                }),
+            },
+        )]),
     );
 
     let resolved =
