@@ -465,10 +465,7 @@ async fn list_edit_plans_call(
     let snapshot = daemon_get_json(
         client,
         daemon_url,
-        &format!(
-            "/api/sessions/{}/snapshot?limit=1&include_events=0",
-            session_id
-        ),
+        &format!("/api/sessions/{session_id}/snapshot?limit=1&include_events=0"),
     )
     .await?;
     let worktree_id = snapshot
