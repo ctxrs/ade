@@ -4,6 +4,7 @@ e2e/workbench-markdown-parity.spec.ts
 e2e/workbench-message-list-acceptance.spec.ts
 e2e/workbench-message-list-bottom-hit.spec.ts
 e2e/workbench-message-row-parity.spec.ts
+e2e/workbench-reported-assistant-parity.spec.ts
 e2e/workbench-claude-subscription-setup-token-real.spec.ts
 e2e/workbench-composer-scroll-ownership.spec.ts
 e2e/workbench-open-at-bottom.spec.ts
