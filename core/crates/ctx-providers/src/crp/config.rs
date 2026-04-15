@@ -295,6 +295,7 @@ mod tests {
     use super::*;
     use base64::Engine as _;
     use std::fs;
+    use std::path::PathBuf;
 
     #[test]
     fn probe_timeout_for_env_defaults_to_host_timeout() {
