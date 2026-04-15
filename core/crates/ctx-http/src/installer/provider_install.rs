@@ -120,8 +120,7 @@ pub(super) async fn install_provider_impl(
 ) -> Result<()> {
     if !MANAGED_PROVIDER_INSTALLS_ENABLED {
         anyhow::bail!(
-            "managed provider installs are disabled; provider '{}' must be shipped in bundled harness assets",
-            provider_id
+            "managed provider installs are disabled; provider '{provider_id}' must be shipped in bundled harness assets",
         );
     }
 
@@ -320,25 +319,21 @@ pub(super) async fn install_provider_impl(
             } => {
                 if !matches!(target, InstallTarget::Host | InstallTarget::Container) {
                     anyhow::bail!(
-                        "target '{}' is not supported for python provider '{}' installs; use target host or container",
-                        requested_target_label,
-                        provider_id
+                        "target '{requested_target_label}' is not supported for python provider '{provider_id}' installs; use target host or container",
                     );
                 }
                 if provider_matrix::normalize_version(version)
                     != provider_matrix::normalize_version(&release.version)
                 {
                     anyhow::bail!(
-                        "provider matrix version mismatch for {provider_id}: release={} install={}",
-                        release.version,
-                        version
+                        "provider matrix version mismatch for {provider_id}: release={release_version} install={version}",
+                        release_version = release.version,
                     );
                 }
                 error_package = Some(package.clone());
                 error_version = Some(version.clone());
                 error_install_dir_rel = Some(format!(
-                    "providers/agent-servers/{}/{}",
-                    provider_id, version
+                    "providers/agent-servers/{provider_id}/{version}",
                 ));
                 install_managed_python_provider(
                     state,
@@ -377,8 +372,7 @@ pub(super) async fn install_provider_impl(
                 error_package = Some(target_entry.url.clone());
                 error_version = Some(version.clone());
                 error_install_dir_rel = Some(format!(
-                    "providers/agent-servers/{}/{}",
-                    provider_id, version
+                    "providers/agent-servers/{provider_id}/{version}",
                 ));
                 let managed = install_managed_archive_provider(
                     state,

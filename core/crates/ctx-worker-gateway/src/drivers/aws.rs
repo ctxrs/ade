@@ -148,10 +148,8 @@ impl AwsDriver {
         volume_id: &str,
     ) -> Result<String> {
         let volume_id_normalized = volume_id.replace('-', "");
-        let device_by_id = format!(
-            "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_{}",
-            volume_id_normalized
-        );
+        let device_by_id =
+            format!("/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_{volume_id_normalized}");
         let mut candidates = vec![
             device_by_id,
             "/dev/xvdf".to_string(),

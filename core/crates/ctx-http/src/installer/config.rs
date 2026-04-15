@@ -307,14 +307,12 @@ fn runtime_command_candidate(
             }
         } else {
             anyhow::bail!(
-                "runtime_command_missing_bundled_target: provider={} target={}",
-                provider_id,
-                requested_target_or_host(requested_target).as_str()
+                "runtime_command_missing_bundled_target: provider={provider_id} target={target}",
+                target = requested_target_or_host(requested_target).as_str()
             );
         }
         anyhow::bail!(
-            "runtime_command_missing_bundled: provider={} (set CTX_BUNDLE_DIR and ensure bundled manifest includes provider)",
-            provider_id
+            "runtime_command_missing_bundled: provider={provider_id} (set CTX_BUNDLE_DIR and ensure bundled manifest includes provider)",
         );
     }
 
@@ -363,26 +361,18 @@ fn resolve_absolute_command_path(provider_id: &str, source: &str, raw: &str) -> 
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         anyhow::bail!(
-            "runtime_command_missing: provider={} source={}",
-            provider_id,
-            source
+            "runtime_command_missing: provider={provider_id} source={source}",
         );
     }
     let path = Path::new(trimmed);
     if !path.is_absolute() {
         anyhow::bail!(
-            "runtime_command_not_absolute: provider={} source={} command={}",
-            provider_id,
-            source,
-            trimmed
+            "runtime_command_not_absolute: provider={provider_id} source={source} command={trimmed}",
         );
     }
     if !path.exists() {
         anyhow::bail!(
-            "runtime_command_not_found: provider={} source={} command={}",
-            provider_id,
-            source,
-            trimmed
+            "runtime_command_not_found: provider={provider_id} source={source} command={trimmed}",
         );
     }
     Ok(preserve_raw_bundle_command_path(path)

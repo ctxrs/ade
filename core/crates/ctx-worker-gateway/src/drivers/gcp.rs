@@ -200,7 +200,7 @@ impl GcpDriver {
     }
 
     fn sanitize_name(prefix: &str, worker_id: &str) -> String {
-        let raw = format!("{}-{}", prefix, worker_id);
+        let raw = format!("{prefix}-{worker_id}");
         let mut out = String::new();
         for ch in raw.chars() {
             let ch = ch.to_ascii_lowercase();

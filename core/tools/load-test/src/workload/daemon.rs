@@ -48,10 +48,10 @@ pub(crate) async fn run_daemon_mode(cli: &Cli, scenario: &ScenarioSpec) -> Resul
             let target = golden
                 .hot_read_p95_target_ms
                 .unwrap_or(HOT_READ_P95_TARGET_MS);
-            println!("Hot read p95: {:.1}ms (target {:.1}ms)", hot_read, target);
+            println!("Hot read p95: {hot_read:.1}ms (target {target:.1}ms)");
         }
         if let Some(reconnect) = golden.reconnect_catchup_p95_ms {
-            println!("Reconnect catch-up p95: {:.1}ms", reconnect);
+            println!("Reconnect catch-up p95: {reconnect:.1}ms");
         }
     }
     println!("Summary: {}", output.summary_path.display());
@@ -346,7 +346,7 @@ fn build_message_content(
     message_size: usize,
     tool_calls: u32,
 ) -> String {
-    let base = format!("loadtest:{}:{}:", session_index, counter);
+    let base = format!("loadtest:{session_index}:{counter}:");
     let mut content = base.clone();
     while content.len() < message_size {
         content.push('x');
@@ -355,7 +355,7 @@ fn build_message_content(
         return content;
     }
     let tools = build_tool_calls(tool_calls);
-    format!("{}\n[[tool_calls]]{}[[/tool_calls]]", content, tools)
+    format!("{content}\n[[tool_calls]]{tools}[[/tool_calls]]")
 }
 
 fn build_tool_calls(count: u32) -> String {

@@ -455,16 +455,16 @@ fn uri_to_relpath(root: &Path, uri: &Uri) -> Result<String> {
 }
 
 fn git_unified_diff_modify(path: &str, old: &str, new: &str) -> String {
-    let a = format!("a/{}", path);
-    let b = format!("b/{}", path);
+    let a = format!("a/{path}");
+    let b = format!("b/{path}");
     let diff = similar::TextDiff::from_lines(old, new);
     let body = diff.unified_diff().header(&a, &b).to_string();
     format!("diff --git {a} {b}\n{body}")
 }
 
 fn git_unified_diff_create(path: &str, new: &str) -> String {
-    let a = format!("a/{}", path);
-    let b = format!("b/{}", path);
+    let a = format!("a/{path}");
+    let b = format!("b/{path}");
     if new.is_empty() {
         return format!(
             "diff --git {a} {b}\nnew file mode 100644\n--- /dev/null\n+++ {b}\n@@ -0,0 +0,0 @@\n"
@@ -476,8 +476,8 @@ fn git_unified_diff_create(path: &str, new: &str) -> String {
 }
 
 fn git_unified_diff_delete(path: &str, old: &str) -> String {
-    let a = format!("a/{}", path);
-    let b = format!("b/{}", path);
+    let a = format!("a/{path}");
+    let b = format!("b/{path}");
     if old.is_empty() {
         return format!(
             "diff --git {a} {b}\ndeleted file mode 100644\n--- {a}\n+++ /dev/null\n@@ -0,0 +0,0 @@\n"

@@ -778,12 +778,12 @@ fn build_otel(cfg: &PerfTelemetryConfig) -> Option<Arc<OtelRuntime>> {
 fn otlp_endpoint_for_signal(base: &str, signal: &str) -> String {
     let trimmed = base.trim_end_matches('/');
     if let Some(prefix) = trimmed.strip_suffix("/v1") {
-        return format!("{}/v1/{}", prefix, signal);
+        return format!("{prefix}/v1/{signal}");
     }
     if let Some((prefix, _)) = trimmed.rsplit_once("/v1/") {
-        return format!("{}/v1/{}", prefix, signal);
+        return format!("{prefix}/v1/{signal}");
     }
-    format!("{}/v1/{}", trimmed, signal)
+    format!("{trimmed}/v1/{signal}")
 }
 
 fn filter_labels(
@@ -885,11 +885,11 @@ async fn cleanup_old_logs(data_root: &std::path::Path, retention_days: u64) -> R
 }
 
 fn trace_id_to_string(id: TraceId) -> String {
-    format!("{:032x}", id)
+    format!("{id:032x}")
 }
 
 fn span_id_to_string(id: opentelemetry::trace::SpanId) -> String {
-    format!("{:016x}", id)
+    format!("{id:016x}")
 }
 
 struct HeaderExtractor<'a> {

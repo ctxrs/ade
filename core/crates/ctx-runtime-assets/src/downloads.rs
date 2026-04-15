@@ -818,8 +818,7 @@ mod tests {
             let (mut socket, _) = listener.accept().await.expect("accept connection");
             let _request = read_http_request(&mut socket).await;
             let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                available
+                "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {available}\r\nConnection: close\r\n\r\n",
             );
             socket
                 .write_all(response.as_bytes())

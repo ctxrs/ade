@@ -103,8 +103,7 @@ mod tests {
         assert!(saw_assistant_complete);
         assert!(
             assistant_chunk_fragments.len() >= 2,
-            "expected multiple assistant chunks, got {:?}",
-            assistant_chunk_fragments
+            "expected multiple assistant chunks, got {assistant_chunk_fragments:?}",
         );
         assert!(assistant_chunk_fragments
             .iter()
@@ -122,8 +121,7 @@ mod tests {
             assistant_chunk_order_seqs
                 .windows(2)
                 .all(|pair| pair[0] <= pair[1]),
-            "expected monotonic chunk order_seq values, got {:?}",
-            assistant_chunk_order_seqs
+            "expected monotonic chunk order_seq values, got {assistant_chunk_order_seqs:?}",
         );
     }
 }

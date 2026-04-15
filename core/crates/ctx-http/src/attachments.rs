@@ -797,7 +797,7 @@ async fn ensure_mount(target: &Path, source: &Path) -> Result<()> {
     }
 
     if let Err(err) = try_symlink_dir(source, target).await {
-        tracing::debug!("symlink failed ({}); falling back to copy", err);
+        tracing::debug!("symlink failed ({err}); falling back to copy");
         let source = source.to_path_buf();
         let target = target.to_path_buf();
         tokio::task::spawn_blocking(move || copy_dir_recursive(&source, &target)).await??;

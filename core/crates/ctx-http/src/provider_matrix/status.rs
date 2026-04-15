@@ -401,7 +401,7 @@ pub(super) async fn probe_command_version(command: &str, args: &[String]) -> Opt
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    extract_version(&format!("{}\n{}", stdout, stderr))
+    extract_version(&format!("{stdout}\n{stderr}"))
 }
 
 pub(super) fn probe_node_package_version(
