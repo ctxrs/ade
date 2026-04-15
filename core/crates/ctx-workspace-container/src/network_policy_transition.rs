@@ -381,10 +381,7 @@ iptables -t nat -A OUTPUT -m owner --uid-owner 0 -j RETURN
 iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-ports {proxy_port}
 iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-ports {proxy_port}
 exit 0
-"#,
-        daemon_ip_resolution = daemon_ip_resolution,
-        daemon_port = daemon_port,
-        proxy_port = proxy_port,
+"#
     );
     let mut cmd = sandbox_container_command(data_root, mode)?;
     cmd.arg("exec")

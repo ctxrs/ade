@@ -300,8 +300,7 @@ pub async fn verify_disk_isolated_container_mounts(
     });
     if !has_ws_volume {
         anyhow::bail!(
-            "disk-isolated container {container_name} is missing expected volume mount: volume {expected_vol} -> {}",
-            CTX_CONTAINER_WORKSPACE_ROOT
+            "disk-isolated container {container_name} is missing expected volume mount: volume {expected_vol} -> {CTX_CONTAINER_WORKSPACE_ROOT}"
         );
     }
 
