@@ -107,11 +107,7 @@ pub(super) async fn ensure_jj_usable() -> Result<JjVersion> {
     }
     let version = probe_jj_version().await?;
     if !jj_version_supported(version) {
-        bail!(
-            "jj {} is too old; ctx requires jj >= {}",
-            version,
-            JJ_MIN_VERSION
-        );
+        bail!("jj {version} is too old; ctx requires jj >= {JJ_MIN_VERSION}");
     }
     let _ = JJ_VERSION_OK.set(version);
     Ok(version)
@@ -360,7 +356,7 @@ impl VcsDriver for JjVcs {
                 if entry.is_dir {
                     path.push(std::path::MAIN_SEPARATOR);
                 }
-                entries.push(format!("?? {}", path));
+                entries.push(format!("?? {path}"));
             }
             Ok(entries)
         })
