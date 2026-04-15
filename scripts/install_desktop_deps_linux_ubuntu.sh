@@ -75,6 +75,7 @@ packages=(
   curl
   sshpass
   file
+  docker-buildx
   xdg-utils
   desktop-file-utils
   squashfs-tools
@@ -181,7 +182,7 @@ else
   exit 2
 fi
 
-for cmd in desktop-file-validate mksquashfs zsyncmake patchelf appstreamcli gtk-update-icon-cache; do
+for cmd in desktop-file-validate mksquashfs zsyncmake patchelf appstreamcli gtk-update-icon-cache docker-buildx; do
   if command -v "$cmd" >/dev/null 2>&1; then
     echo "- $cmd: OK ($(command -v "$cmd"))"
   else

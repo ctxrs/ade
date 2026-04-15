@@ -43,6 +43,7 @@ output_2404="$(
 )"
 assert_line_present "$output_2404" "libfuse2t64"
 assert_line_absent "$output_2404" "libfuse2"
+assert_line_present "$output_2404" "docker-buildx"
 
 available_ubuntu_2204=("${common_available_packages[@]}" libfuse2)
 output_2204="$(
@@ -50,5 +51,6 @@ output_2204="$(
     "$SCRIPT" --print-selected-packages
 )"
 assert_line_present "$output_2204" "libfuse2"
+assert_line_present "$output_2204" "docker-buildx"
 
 echo "ok: install_desktop_deps_linux_ubuntu resolves AppImage FUSE runtime packages"
