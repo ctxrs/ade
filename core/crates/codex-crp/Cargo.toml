@@ -1,6 +1,6 @@
 [package]
 name = "codex-crp"
-version = "0.114.0-ctx.2"
+version = "0.114.0-ctx.3"
 edition = "2021"
 
 [[bin]]

@@ -1158,7 +1158,7 @@ dependencies = [
 
 [[package]]
 name = "codex-crp"
-version = "0.114.0-ctx.2"
+version = "0.114.0-ctx.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1558,7 +1558,7 @@ dependencies = [
 
 [[package]]
 name = "ctx-http"
-version = "0.53.0"
+version = "0.54.0"
 dependencies = [
  "anyhow",
  "async-trait",
