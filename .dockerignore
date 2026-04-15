@@ -9,6 +9,7 @@
 
 !containers/
 !containers/ctx-harness/
+!containers/buildbuddy-executor/
 
 !core/
 !core/Cargo.toml
@@ -17,3 +18,4 @@
 !core/tools/
 !core/packages/
 
+!scripts/install_desktop_deps_linux_ubuntu.sh

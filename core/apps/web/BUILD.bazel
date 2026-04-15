@@ -28,10 +28,21 @@ COMMON_DATA = WEB_SOURCES + [
     "//core/packages:sources",
 ]
 
+filegroup(
+    name = "desktop_ipc_generated_typescript",
+    srcs = ["src/generated/desktop-ipc.ts"],
+)
+
 sh_binary(
     name = "build",
     srcs = ["//tools/bazel:run_workspace_task.sh"],
     args = ["core/apps/web", "pnpm", "build"],
+    data = COMMON_DATA,
+)
+
+sh_binary(
+    name = "dist_sync",
+    srcs = ["dist_sync_tool.sh"],
     data = COMMON_DATA,
 )
 

@@ -1,3 +1,4 @@
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -26,5 +27,29 @@ rust_test(
     crate = ":lib",
     deps = [
         "@crates//:tempfile",
+    ],
+)
+
+sh_binary(
+    name = "goose-provider-stage-archive",
+    srcs = ["//tools/bazel:provider_managed_install_archive.sh"],
+    args = [
+        "goose",
+    ],
+    data = [
+        "src/provider_matrix.json",
+        "//core:package.json",
+    ],
+)
+
+sh_binary(
+    name = "openhands-provider-stage-archive",
+    srcs = ["//tools/bazel:provider_managed_install_archive.sh"],
+    args = [
+        "openhands",
+    ],
+    data = [
+        "src/provider_matrix.json",
+        "//core:package.json",
     ],
 )

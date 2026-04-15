@@ -6,6 +6,7 @@ const path = require("path");
 
 const {
   __desktopSyncResourcesTestHooks,
+  copySidecarBinary,
   parseAvfLinuxGuestRuntimeVersion,
   stageAvfLinuxGuestRuntime,
 } = require("./desktop_sync_resources.cjs");
@@ -158,6 +159,32 @@ test("parseAvfLinuxGuestRuntimeVersion handles metadata-style version files", ()
     "dev-runtime",
   );
   assert.equal(parseAvfLinuxGuestRuntimeVersion("ubuntu-release=noble\n"), "");
+});
+
+test("copySidecarBinary honors an explicit source path override", () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-desktop-sidecar-"));
+  const sourcePath = path.join(tmpRoot, "ctx");
+  const destDir = path.join(tmpRoot, "dest");
+  fs.writeFileSync(sourcePath, "#!/bin/sh\nexit 0\n", "utf8");
+
+  try {
+    const copied = copySidecarBinary({
+      sourceDir: path.join(tmpRoot, "missing"),
+      sourcePath,
+      destDir,
+      sourceName: "ctx",
+      destName: "ctx-daemon",
+      targetTriple: "x86_64-unknown-linux-gnu",
+      binExtOverride: "",
+      platform: "linux",
+    });
+
+    assert.equal(copied.src, sourcePath);
+    assert.ok(fs.existsSync(copied.dest));
+    assert.ok(fs.existsSync(copied.destTarget));
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
 });
 
 test("bundle reset preserves tracked lock files and recreates a placeholder manifest", () => {

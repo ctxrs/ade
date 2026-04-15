@@ -7,6 +7,7 @@ const { buildCtxCacheEnv } = require("./lib/cache_roots.cjs");
 const { readDesktopVersion } = require("./desktop_version.cjs");
 const { resolveCargoTargetDir } = require("./lib/cargo_target_dir.cjs");
 const { ensureWebDistArtifact } = require("./lib/web_dist_cache.cjs");
+const { resolveDesktopSidecarPaths } = require("./ctx_http_bazel.cjs");
 
 const coreRoot = path.resolve(__dirname, "..");
 
@@ -59,7 +60,7 @@ function parseArgs(argv) {
 
 function createPrepSteps({
   mode,
-  prepEnv,
+  prepEnv = {},
   cargoTargetDir = resolveCargoTargetDir({ cwd: coreRoot, env: prepEnv }),
   desktopWebDist = "",
   desktopVersion,
@@ -68,19 +69,9 @@ function createPrepSteps({
   arch = process.arch,
 }) {
   const config = PREP_MODES[mode];
-  const release = config.cargoProfile === "release";
-  const cargoArgs = ["build", "-p", "ctx-http", "-p", "ctx-mcp"];
-  const avfArgs = [
-    "build",
-    "--manifest-path",
-    "apps/desktop/src-tauri/Cargo.toml",
-    "--bin",
-    "ctx-avf-linux-helper",
-  ];
-  if (release) {
-    cargoArgs.push("--release");
-    avfArgs.push("--release");
-  }
+  const explicitCtxBin = trimDesktopBinaryPath(prepEnv.CTX_DESKTOP_CTX_BIN);
+  const explicitCtxMcpBin = trimDesktopBinaryPath(prepEnv.CTX_DESKTOP_CTX_MCP_BIN);
+  const explicitAvfHelperBin = trimDesktopBinaryPath(prepEnv.CTX_DESKTOP_AVF_LINUX_HELPER_BIN);
 
   const baseEnv = { ...prepEnv, CARGO_TARGET_DIR: cargoTargetDir };
   if (
@@ -110,21 +101,19 @@ function createPrepSteps({
     });
   }
 
-  steps.push({
-    command: "cargo",
-    args: cargoArgs,
-    env: baseEnv,
-  });
-
-  if (platform === "darwin") {
+  if (platform === "darwin" && mode !== "dev") {
     steps.push({
-      command: "cargo",
-      args: avfArgs,
-      env: {
-        ...baseEnv,
-        CTX_DESKTOP_SKIP_TAURI_BUILD: "1",
-      },
+      command: "bash",
+      args: ["scripts/ensure_macos_avf_build_tools.sh"],
+      env: baseEnv,
     });
+  }
+
+  if (!explicitCtxBin || !explicitCtxMcpBin) {
+    throw new Error("desktop_prepare requires Bazel-resolved CTX_DESKTOP_CTX_BIN and CTX_DESKTOP_CTX_MCP_BIN");
+  }
+  if (platform === "darwin" && !explicitAvfHelperBin) {
+    throw new Error("desktop_prepare requires Bazel-resolved CTX_DESKTOP_AVF_LINUX_HELPER_BIN on darwin");
   }
 
   if (config.buildWeb && !desktopWebDist) {
@@ -152,6 +141,9 @@ function createPrepSteps({
     env: {
       ...baseEnv,
       CTX_DESKTOP_SYNC_BUNDLES: syncBundles,
+      ...(explicitCtxBin ? { CTX_DESKTOP_CTX_BIN: explicitCtxBin } : {}),
+      ...(explicitCtxMcpBin ? { CTX_DESKTOP_CTX_MCP_BIN: explicitCtxMcpBin } : {}),
+      ...(explicitAvfHelperBin ? { CTX_DESKTOP_AVF_LINUX_HELPER_BIN: explicitAvfHelperBin } : {}),
       ...(desktopWebDist ? { CTX_DESKTOP_WEB_DIST: desktopWebDist } : {}),
       ...(avfGuestRuntimeDir
         ? { CTX_AVF_LINUX_GUEST_RUNTIME_DIR: avfGuestRuntimeDir }
@@ -190,9 +182,28 @@ function main(argv = process.argv) {
       variant: `desktop-${mode}`,
     }).distDir
     : trimDesktopWebDist(process.env.CTX_DESKTOP_WEB_DIST);
+  const explicitSidecars = {
+    CTX_DESKTOP_CTX_BIN: trimDesktopBinaryPath(prepEnv.CTX_DESKTOP_CTX_BIN),
+    CTX_DESKTOP_CTX_MCP_BIN: trimDesktopBinaryPath(prepEnv.CTX_DESKTOP_CTX_MCP_BIN),
+    CTX_DESKTOP_AVF_LINUX_HELPER_BIN: trimDesktopBinaryPath(prepEnv.CTX_DESKTOP_AVF_LINUX_HELPER_BIN),
+  };
+  const sidecarPaths = explicitSidecars.CTX_DESKTOP_CTX_BIN && explicitSidecars.CTX_DESKTOP_CTX_MCP_BIN
+    ? {
+      ctxBinPath: explicitSidecars.CTX_DESKTOP_CTX_BIN,
+      ctxMcpBinPath: explicitSidecars.CTX_DESKTOP_CTX_MCP_BIN,
+      avfLinuxHelperBinPath: explicitSidecars.CTX_DESKTOP_AVF_LINUX_HELPER_BIN,
+    }
+    : resolveDesktopSidecarPaths({ env: prepEnv, targetKey: prepEnv.CTX_HTTP_BAZEL_TARGET_KEY });
   const steps = createPrepSteps({
     mode,
-    prepEnv,
+    prepEnv: {
+      ...prepEnv,
+      CTX_DESKTOP_CTX_BIN: sidecarPaths.ctxBinPath,
+      CTX_DESKTOP_CTX_MCP_BIN: sidecarPaths.ctxMcpBinPath,
+      ...(sidecarPaths.avfLinuxHelperBinPath
+        ? { CTX_DESKTOP_AVF_LINUX_HELPER_BIN: sidecarPaths.avfLinuxHelperBinPath }
+        : {}),
+    },
     cargoTargetDir,
     desktopWebDist,
     desktopVersion,
@@ -207,6 +218,10 @@ function trimDesktopWebDist(value) {
   return String(value ?? "").trim();
 }
 
+function trimDesktopBinaryPath(value) {
+  return String(value ?? "").trim();
+}
+
 if (require.main === module) {
   main();
 }
@@ -216,4 +231,6 @@ module.exports = {
   createPrepSteps,
   main,
   parseArgs,
+  trimDesktopWebDist,
+  trimDesktopBinaryPath,
 };

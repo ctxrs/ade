@@ -369,25 +369,25 @@
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://github.com/ctxorgrs/codex-crp/releases/download/v0.114.0-ctx.2/codex-crp-0.114.0-ctx.2-aarch64-apple-darwin.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.2/darwin/aarch64/codex-crp-0.114.0-ctx.2-aarch64-apple-darwin.tar.gz",
             "sha256": "e28a2db59f8bd57a904080f3e77a9ca63f92d4f4969f5c0df9a6441117960289",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           },
           "darwin-x86_64": {
-            "url": "https://github.com/ctxorgrs/codex-crp/releases/download/v0.114.0-ctx.2/codex-crp-0.114.0-ctx.2-x86_64-apple-darwin.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.2/darwin/x86_64/codex-crp-0.114.0-ctx.2-x86_64-apple-darwin.tar.gz",
             "sha256": "cf50db3414245b195c5f84bccc6757f2c57daec70c189b23762b252026195976",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           },
           "linux-aarch64": {
-            "url": "https://github.com/ctxorgrs/codex-crp/releases/download/v0.114.0-ctx.2/codex-crp-0.114.0-ctx.2-aarch64-unknown-linux-gnu.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.2/linux/aarch64/codex-crp-0.114.0-ctx.2-aarch64-unknown-linux-gnu.tar.gz",
             "sha256": "137c80df5a3912b1e0cbb763a064c7bdbe1ac77fa3c542985c1802019fd962ea",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           },
           "linux-x86_64": {
-            "url": "https://github.com/ctxorgrs/codex-crp/releases/download/v0.114.0-ctx.2/codex-crp-0.114.0-ctx.2-x86_64-unknown-linux-gnu.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/codex/0.114.0-ctx.2/linux/x86_64/codex-crp-0.114.0-ctx.2-x86_64-unknown-linux-gnu.tar.gz",
             "sha256": "2bcf948840dc2c038b50fa4b50727436828263245cc9485b37cd1d5bcc56cd35",
             "archive": "tar_gz",
             "bin_path": "codex-crp"

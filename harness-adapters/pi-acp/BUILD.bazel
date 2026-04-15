@@ -1,0 +1,26 @@
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+PI_ACP_SOURCES = glob(
+    [
+        "src/**",
+        "*.json",
+        "*.yaml",
+        "*.md",
+        "*.ts",
+        "*.mjs",
+    ],
+    allow_empty = True,
+)
+
+sh_binary(
+    name = "provider-stage-archive",
+    srcs = ["//tools/bazel:provider_node_archive.sh"],
+    args = [
+        "harness-adapters/pi-acp",
+        "dist/bin/pi-acp.js",
+        "pi-acp",
+    ],
+    data = PI_ACP_SOURCES + ["//core:package.json"],
+)

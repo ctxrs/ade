@@ -145,11 +145,7 @@ for provider_id in required:
         if not isinstance(targets, dict) or not targets:
             errors.append("provider codex managed_install.targets missing")
         else:
-            expected_prefix = (
-                f"https://github.com/{ctx_repo}/releases/download/{ctx_release_tag}/"
-                if ctx_repo and ctx_release_tag
-                else ""
-            )
+            expected_url_path = f"/providers/codex/{managed_version}/" if managed_version else ""
             for target_id, target in targets.items():
                 if not isinstance(target, dict):
                     errors.append(f"provider codex target invalid ({target_id})")
@@ -158,9 +154,15 @@ for provider_id in required:
                 if not url:
                     errors.append(f"provider codex target URL missing ({target_id})")
                     continue
-                if expected_prefix and not url.startswith(expected_prefix):
+                if not url.startswith("https://"):
+                    errors.append(f"provider codex target URL must be https ({target_id})")
+                if "github.com/" in url:
                     errors.append(
-                        f"provider codex target URL does not match ctx release tag ({target_id})"
+                        f"provider codex target URL must not point at GitHub Releases anymore ({target_id})"
+                    )
+                if expected_url_path and expected_url_path not in url:
+                    errors.append(
+                        f"provider codex target URL does not match immutable provider path ({target_id})"
                     )
                 if managed_version and f"codex-crp-{managed_version}" not in url:
                     errors.append(

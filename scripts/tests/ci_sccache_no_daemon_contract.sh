@@ -5,24 +5,22 @@ repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$repo_root"
 
 workflow_files=(
-  ".github/workflows/build-codex-crp-release-artifacts.yml"
-  ".github/workflows/publish-provider-deps.yml"
-  ".github/workflows/release-preflight.yml"
-  ".github/workflows/release-supabase.yml"
+  "scripts/buildbuddy/run_provider_deps_stage.sh"
+  "scripts/buildbuddy/run_codex_crp_stage.sh"
 )
 
 for workflow in "${workflow_files[@]}"; do
-  wrapper_count="$( (rg -F 'echo "RUSTC_WRAPPER=sccache"' "$workflow" || true) | wc -l | tr -d ' ')"
-  no_daemon_count="$( (rg -F 'echo "SCCACHE_NO_DAEMON=1"' "$workflow" || true) | wc -l | tr -d ' ')"
+  wrapper_count="$( (rg -F 'export RUSTC_WRAPPER=sccache' "$workflow" || true) | wc -l | tr -d ' ')"
+  no_daemon_count="$( (rg -F 'export SCCACHE_NO_DAEMON=1' "$workflow" || true) | wc -l | tr -d ' ')"
   if [[ "$wrapper_count" != "$no_daemon_count" ]]; then
     echo "sccache no-daemon contract failed for $workflow: wrapper_count=$wrapper_count no_daemon_count=$no_daemon_count"
     exit 1
   fi
 done
 
-release_disable_count="$( (rg -F 'echo "CTX_DISABLE_SCCACHE=1"' ".github/workflows/release-supabase.yml" || true) | wc -l | tr -d ' ')"
+release_disable_count="$( (rg -F 'CTX_DISABLE_SCCACHE=1' "scripts/buildbuddy/run_release.sh" || true) | wc -l | tr -d ' ')"
 if [[ "$release_disable_count" -eq 0 ]]; then
-  echo "release-supabase must explicitly disable script-level sccache auto-detection"
+  echo "BuildBuddy release must explicitly disable script-level sccache auto-detection"
   exit 1
 fi
 

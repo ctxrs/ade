@@ -1,0 +1,56 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+INSTALL_SITE_SOURCES = glob([
+    "src/**",
+    "package.json",
+    "package-lock.json",
+    "wrangler.toml",
+])
+
+sh_test(
+    name = "install_route_contract_tests",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = [
+        "install-site",
+        "node",
+        "--test",
+        "src/index.test.mjs",
+    ],
+    data = INSTALL_SITE_SOURCES + ["//core:package.json"],
+)
+
+sh_test(
+    name = "install_script_contract_tests",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = [
+        "install-site",
+        "node",
+        "--test",
+        "src/install-script.test.mjs",
+        "src/uninstall-script.test.mjs",
+    ],
+    data = INSTALL_SITE_SOURCES + ["//core:package.json"],
+)
+
+sh_test(
+    name = "install_bootstrap_contract_tests",
+    srcs = ["//tools/bazel:run_workspace_task.sh"],
+    args = [
+        "install-site",
+        "node",
+        "--test",
+        "src/install-bootstrap-ci.test.mjs",
+    ],
+    data = INSTALL_SITE_SOURCES + ["//core:package.json"],
+)
+
+test_suite(
+    name = "install_contract_tests",
+    tests = [
+        ":install_route_contract_tests",
+        ":install_script_contract_tests",
+        ":install_bootstrap_contract_tests",
+    ],
+)

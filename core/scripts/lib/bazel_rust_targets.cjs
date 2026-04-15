@@ -7,6 +7,8 @@ function flattenTargetMapping(mapping) {
 }
 
 const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
+  "ctx-avf-linux-guest-agent": ["//core/crates/ctx-avf-linux-guest-agent:unit_tests"],
+  "codex-crp": ["//core/crates/codex-crp:unit_tests"],
   "ctx-avf-linux-runtime": [
     "//core/crates/ctx-avf-linux-runtime:helper_path_test_support",
     "//core/crates/ctx-avf-linux-runtime:unit_tests",
@@ -16,12 +18,20 @@ const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
     "//core/crates/ctx-core:workspace_payload_corpus",
   ],
   "ctx-bundled-assets": ["//core/crates/ctx-bundled-assets:unit_tests"],
+  "ctx-client": ["//core/crates/ctx-client:unit_tests"],
+  "ctx-egress-proxy": ["//core/crates/ctx-egress-proxy:unit_tests"],
   "ctx-execution-runtime": ["//core/crates/ctx-execution-runtime:unit_tests"],
+  "ctx-events": ["//core/crates/ctx-events:unit_tests"],
   "ctx-fs": ["//core/crates/ctx-fs:unit_tests"],
   "ctx-harness-setup": ["//core/crates/ctx-harness-setup:unit_tests"],
   "ctx-harness-runtime": ["//core/crates/ctx-harness-runtime:unit_tests"],
   "ctx-harness-sources": ["//core/crates/ctx-harness-sources:unit_tests"],
   "ctx-lsp": ["//core/crates/ctx-lsp:lsp_manager_smoke"],
+  "ctx-mcp": [
+    "//core/crates/ctx-mcp:lsp_tool_stdio",
+    "//core/crates/ctx-mcp:mcp_contracts",
+    "//core/crates/ctx-mcp:subagent_tools",
+  ],
   "ctx-linux-sandbox-runtime": ["//core/crates/ctx-linux-sandbox-runtime:unit_tests"],
   "ctx-provider-accounts": ["//core/crates/ctx-provider-accounts:unit_tests"],
   "ctx-providers": ["//core/crates/ctx-providers:unit_tests"],
@@ -38,6 +48,7 @@ const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
     "//core/crates/ctx-store:unit_tests",
   ],
   "ctx-storage-admission": ["//core/crates/ctx-storage-admission:unit_tests"],
+  "ctx-worker-protocol": ["//core/crates/ctx-worker-protocol:unit_tests"],
   "ctx-workspace-config": ["//core/crates/ctx-workspace-config:unit_tests"],
   "ctx-worktree-data-plane": ["//core/crates/ctx-worktree-data-plane:unit_tests"],
   "ctx-workspace-container": ["//core/crates/ctx-workspace-container:unit_tests"],
@@ -49,10 +60,18 @@ const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
 });
 
 const BAZEL_BUILD_TARGETS_BY_CRATE = Object.freeze({
+  "ctx-avf-linux-helper": ["//core/apps/desktop/src-tauri/src:ctx-avf-linux-helper"],
+  "ctx-avf-linux-guest-agent": ["//core/crates/ctx-avf-linux-guest-agent:ctx-avf-linux-guest-agent"],
+  "codex-crp": ["//core/crates/codex-crp:codex-crp"],
   "ctx-avf-linux-runtime": ["//core/crates/ctx-avf-linux-runtime:lib"],
   "ctx-core": ["//core/crates/ctx-core:lib"],
+  "ctx-http": ["//core/crates/ctx-http:ctx", "//core/crates/ctx-http:lib"],
   "ctx-bundled-assets": ["//core/crates/ctx-bundled-assets:lib"],
+  "ctx-client": ["//core/crates/ctx-client:lib"],
+  "ctx-desktop-ipc": ["//core/crates/ctx-desktop-ipc:lib"],
+  "ctx-egress-proxy": ["//core/crates/ctx-egress-proxy:ctx-egress-proxy"],
   "ctx-execution-runtime": ["//core/crates/ctx-execution-runtime:lib"],
+  "ctx-events": ["//core/crates/ctx-events:lib"],
   "ctx-fs": ["//core/crates/ctx-fs:lib"],
   "ctx-harness-setup": ["//core/crates/ctx-harness-setup:lib"],
   "ctx-harness-runtime": ["//core/crates/ctx-harness-runtime:lib"],
@@ -69,8 +88,10 @@ const BAZEL_BUILD_TARGETS_BY_CRATE = Object.freeze({
   "ctx-sandbox-container-runtime": ["//core/crates/ctx-sandbox-container-runtime:lib"],
   "ctx-sandbox-materialization": ["//core/crates/ctx-sandbox-materialization:lib"],
   "ctx-session-tools": ["//core/crates/ctx-session-tools:lib"],
+  "ctx-mcp": ["//core/crates/ctx-mcp:ctx-mcp"],
   "ctx-store": ["//core/crates/ctx-store:lib"],
   "ctx-storage-admission": ["//core/crates/ctx-storage-admission:lib"],
+  "ctx-worker-protocol": ["//core/crates/ctx-worker-protocol:lib"],
   "ctx-workspace-config": ["//core/crates/ctx-workspace-config:lib"],
   "ctx-worktree-data-plane": ["//core/crates/ctx-worktree-data-plane:lib"],
   "ctx-workspace-container": ["//core/crates/ctx-workspace-container:lib"],

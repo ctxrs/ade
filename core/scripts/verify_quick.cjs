@@ -43,13 +43,20 @@ function main() {
       "--test",
       "scripts/buildbuddy_workflow_contract.test.cjs",
       "scripts/buildbuddy_run_job_contract.test.cjs",
+      "scripts/buildbuddy_release_preflight_contract.test.cjs",
+      "scripts/desktop_ipc_bazel_contract.test.cjs",
+      "scripts/install_site_bazel_contract.test.cjs",
+      "scripts/web_dist_bazel_contract.test.cjs",
+      "scripts/updates_failure_safety_bazel_contract.test.cjs",
       "scripts/run_workspace_task_contract.test.cjs",
       "scripts/lib/bazel_rust_targets.test.cjs",
       "scripts/lib/ctx_http_suites.test.cjs",
     ],
     env,
   );
+  run("bash", ["../scripts/tests/provider_deps_cross_target_contract.sh"], env);
   run("pnpm", ["desktop:ipc:check"], env);
+  run("pnpm", ["bazel:install-site:test"], env);
   run("pnpm", ["bazel:web:any:enforce"], env);
   run("pnpm", ["bazel:web:lint"], env);
   run("pnpm", ["rust:fmt"], env);

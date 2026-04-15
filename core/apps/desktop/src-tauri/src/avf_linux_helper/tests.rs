@@ -14,6 +14,11 @@ fn git(args: &[&str], cwd: &Path) {
     assert!(status.success(), "git {:?} failed", args);
 }
 
+fn init_git_repo(root: &Path) {
+    git(&["init"], root);
+    git(&["symbolic-ref", "HEAD", "refs/heads/main"], root);
+}
+
 fn wait_for_child_exit(child: &mut std::process::Child, timeout: Duration) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
@@ -428,7 +433,7 @@ fn stage_shadow_root_from_host_workspace_copies_standalone_repo() {
     }
     let repo_root = temp.join("repo");
     fs::create_dir_all(&repo_root).expect("create repo root");
-    git(&["init", "-b", "main"], &repo_root);
+    init_git_repo(&repo_root);
     git(&["config", "user.email", "test@example.com"], &repo_root);
     git(&["config", "user.name", "Test User"], &repo_root);
     fs::write(repo_root.join("README.md"), "hello\n").expect("write readme");
@@ -457,7 +462,7 @@ fn stage_shadow_root_from_host_workspace_expands_linked_git_worktree() {
     }
     let repo_root = temp.join("repo");
     fs::create_dir_all(&repo_root).expect("create repo root");
-    git(&["init", "-b", "main"], &repo_root);
+    init_git_repo(&repo_root);
     git(&["config", "user.email", "test@example.com"], &repo_root);
     git(&["config", "user.name", "Test User"], &repo_root);
     fs::write(repo_root.join("README.md"), "hello\n").expect("write readme");

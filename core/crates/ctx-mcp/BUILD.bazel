@@ -1,0 +1,79 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+CTX_MCP_RUSTC_ENV = {
+    "CARGO_MANIFEST_DIR": "core/crates/ctx-mcp",
+    "CARGO_PKG_VERSION": "0.1.0",
+}
+
+rust_binary(
+    name = "ctx-mcp",
+    crate_root = "src/main.rs",
+    edition = "2021",
+    srcs = glob(["src/**/*.rs"]),
+    rustc_env = CTX_MCP_RUSTC_ENV,
+    deps = [
+        "//core/crates/ctx-core:lib",
+        "@crates//:anyhow",
+        "@crates//:clap",
+        "@crates//:reqwest",
+        "@crates//:serde_json",
+        "@crates//:tokio",
+        "@crates//:tracing",
+        "@crates//:tracing-subscriber",
+        "@crates//:urlencoding",
+        "@crates//:uuid",
+    ],
+)
+
+CTX_MCP_TEST_RUSTC_ENV = {
+    "CARGO_BIN_EXE_ctx-mcp": "$(rootpath :ctx-mcp)",
+}
+
+CTX_MCP_TEST_DEPS = [
+    "@crates//:axum",
+    "@crates//:serde_json",
+    "@crates//:tokio",
+    "@crates//:tower",
+]
+
+rust_test(
+    name = "mcp_contracts",
+    crate_root = "tests/mcp_contracts.rs",
+    edition = "2021",
+    srcs = ["tests/mcp_contracts.rs"],
+    args = ["--test-threads=1"],
+    data = [":ctx-mcp"],
+    rustc_env = CTX_MCP_TEST_RUSTC_ENV,
+    deps = CTX_MCP_TEST_DEPS,
+)
+
+rust_test(
+    name = "subagent_tools",
+    crate_root = "tests/subagent_tools.rs",
+    edition = "2021",
+    srcs = ["tests/subagent_tools.rs"],
+    args = ["--test-threads=1"],
+    data = [":ctx-mcp"],
+    rustc_env = CTX_MCP_TEST_RUSTC_ENV,
+    deps = CTX_MCP_TEST_DEPS + [
+        "//core/crates/ctx-core:lib",
+        "//core/crates/ctx-http:lib",
+        "//core/crates/ctx-providers:lib",
+        "//core/crates/ctx-store:lib",
+        "@crates//:tempfile",
+        "@crates//:uuid",
+    ],
+)
+
+rust_test(
+    name = "lsp_tool_stdio",
+    crate_root = "tests/lsp_tool_stdio.rs",
+    edition = "2021",
+    srcs = ["tests/lsp_tool_stdio.rs"],
+    args = ["--test-threads=1"],
+    data = [":ctx-mcp"],
+    rustc_env = CTX_MCP_TEST_RUSTC_ENV,
+    deps = CTX_MCP_TEST_DEPS,
+)

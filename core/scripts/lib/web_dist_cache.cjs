@@ -3,10 +3,16 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { buildCtxCacheEnv, resolveConfiguredPath } = require("./cache_roots.cjs");
+const {
+  buildCtxCacheEnv,
+  resolveConfiguredPath,
+  resolveCtxCacheLayout,
+} = require("./cache_roots.cjs");
+const { bazeliskBinaryPath, buildBuildBuddyAuthArgs } = require("../run_bazel_pilot.cjs");
 
 const ARTIFACT_VERSION = 1;
 const ARTIFACT_MARKER = ".ctx-web-dist-artifact.json";
+const WEB_DIST_SYNC_TARGET = "//core/apps/web:dist_sync";
 const IGNORED_DIR_NAMES = new Set([
   ".git",
   ".turbo",
@@ -26,23 +32,6 @@ const DEFAULT_INPUTS = [
 
 function trimValue(value) {
   return String(value ?? "").trim();
-}
-
-function resolveLocalNodeBin(packageRoot, tool) {
-  const expectedBin = process.platform === "win32" ? `${tool}.cmd` : tool;
-  let current = path.resolve(packageRoot);
-  while (true) {
-    const candidate = path.join(current, "node_modules", ".bin", expectedBin);
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      break;
-    }
-    current = parent;
-  }
-  return path.join(path.resolve(packageRoot), "node_modules", ".bin", expectedBin);
 }
 
 function updateHashWithFile(hash, absolutePath, relativePath, stats) {
@@ -178,14 +167,92 @@ function writeArtifactMetadata({
   fs.writeFileSync(artifactMetadataPath(artifactRoot), `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
+function buildBazelCommandContext({ coreRoot, env = process.env } = {}) {
+  const resolvedCoreRoot = path.resolve(coreRoot);
+  const repoRoot = path.resolve(resolvedCoreRoot, "..");
+  const layout = resolveCtxCacheLayout({ cwd: resolvedCoreRoot, env });
+  fs.mkdirSync(layout.tmpDir, { recursive: true });
+  fs.mkdirSync(layout.bazelOutputUserRoot, { recursive: true });
+  fs.mkdirSync(layout.bazelDiskCacheDir, { recursive: true });
+  fs.mkdirSync(layout.bazelRepositoryCacheDir, { recursive: true });
+  const bazelEnv = {
+    ...env,
+    BUILD_WORKSPACE_DIRECTORY: String(env.BUILD_WORKSPACE_DIRECTORY || repoRoot),
+    TMPDIR: layout.tmpDir,
+  };
+  return {
+    bazelBinary: bazeliskBinaryPath({ repoRoot, env: bazelEnv }),
+    bazelCommandArgs: [
+      `--disk_cache=${layout.bazelDiskCacheDir}`,
+      `--repository_cache=${layout.bazelRepositoryCacheDir}`,
+    ],
+    bazelEnv,
+    repoRoot,
+    startupArgs: [`--output_user_root=${layout.bazelOutputUserRoot}`],
+  };
+}
+
+function runChecked(command, args, options, failureMessage, spawnSyncImpl = childProcess.spawnSync) {
+  const result = spawnSyncImpl(command, args, options);
+  if (result.error) {
+    throw result.error;
+  }
+  if (typeof result.status === "number" && result.status !== 0) {
+    throw new Error(failureMessage || `${command} ${args.join(" ")} failed with status ${result.status}`);
+  }
+  if (result.signal) {
+    throw new Error(failureMessage || `${command} ${args.join(" ")} terminated with signal ${result.signal}`);
+  }
+  return result;
+}
+
+function runWebDistBuild({
+  coreRoot,
+  env = process.env,
+  destinationDir,
+  targetLabel = WEB_DIST_SYNC_TARGET,
+  spawnSyncImpl = childProcess.spawnSync,
+} = {}) {
+  const resolvedCoreRoot = path.resolve(coreRoot);
+  const resolvedDestinationDir = path.resolve(destinationDir || path.join(resolvedCoreRoot, "apps", "web", "dist"));
+  const { bazelBinary, bazelCommandArgs, bazelEnv, repoRoot, startupArgs } = buildBazelCommandContext({
+    coreRoot: resolvedCoreRoot,
+    env,
+  });
+
+  runChecked(
+    bazelBinary,
+    [
+      ...startupArgs,
+      "run",
+      ...bazelCommandArgs,
+      ...buildBuildBuddyAuthArgs(bazelEnv),
+      targetLabel,
+      "--",
+      resolvedDestinationDir,
+    ],
+    {
+      cwd: repoRoot,
+      env: bazelEnv,
+      stdio: "inherit",
+    },
+    `bazel run ${targetLabel} for web dist failed`,
+    spawnSyncImpl,
+  );
+
+  if (!fs.existsSync(resolvedDestinationDir)) {
+    throw new Error(`Bazel web dist target did not materialize ${resolvedDestinationDir}`);
+  }
+  return resolvedDestinationDir;
+}
+
 function ensureWebDistArtifact({
   coreRoot,
   env = process.env,
   appVersion = "",
   extra = {},
   inputs = DEFAULT_INPUTS,
-  resolveLocalNodeBinImpl = resolveLocalNodeBin,
-  spawnSyncImpl = childProcess.spawnSync,
+  runWebDistBuildImpl = runWebDistBuild,
   variant = "default",
 } = {}) {
   const resolvedCoreRoot = path.resolve(coreRoot);
@@ -224,25 +291,16 @@ function ensureWebDistArtifact({
   const distDir = path.join(tmpArtifactRoot, "dist");
   fs.mkdirSync(tmpArtifactRoot, { recursive: true });
 
-  const webRoot = path.join(resolvedCoreRoot, "apps", "web");
-  const viteBin = resolveLocalNodeBinImpl(webRoot, "vite");
-  if (!fs.existsSync(viteBin)) {
-    throw new Error(`Missing local vite binary for ${webRoot}; run 'pnpm -C ${resolvedCoreRoot} install --frozen-lockfile'`);
-  }
-
-  const result = spawnSyncImpl(viteBin, ["build", "--outDir", distDir, "--emptyOutDir"], {
-    cwd: webRoot,
+  runWebDistBuildImpl({
+    coreRoot: resolvedCoreRoot,
+    destinationDir: distDir,
     env: {
       ...buildEnv,
       ...(trimValue(appVersion) ? { VITE_CTX_APP_VERSION: appVersion } : {}),
     },
-    stdio: "inherit",
   });
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    throw new Error(`vite build failed for cached web dist (${variant})`);
+  if (!fs.existsSync(distDir)) {
+    throw new Error(`Bazel web dist build did not materialize ${distDir}`);
   }
 
   writeArtifactMetadata({
@@ -290,10 +348,13 @@ module.exports = {
   ARTIFACT_MARKER,
   ARTIFACT_VERSION,
   DEFAULT_INPUTS,
+  WEB_DIST_SYNC_TARGET,
+  buildBazelCommandContext,
   computeWebDistCacheKey,
   ensureWebDistArtifact,
   hasReusableWebDistArtifact,
   resolveDesktopWebDistSource,
   resolveWebDistArtifactDir,
   resolveWebDistArtifactRoot,
+  runWebDistBuild,
 };

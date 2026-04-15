@@ -1,0 +1,53 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+DROID_ACP_RUSTC_ENV = {
+    "CARGO_MANIFEST_DIR": "harness-adapters/droid-acp",
+    "CARGO_PKG_VERSION": "0.1.1",
+}
+
+DROID_ACP_DEPS = [
+    "@crates//:agent-client-protocol",
+    "@crates//:anyhow",
+    "@crates//:async-trait",
+    "@crates//:serde",
+    "@crates//:serde_json",
+    "@crates//:tokio",
+    "@crates//:tokio-util",
+    "@crates//:tracing",
+    "@crates//:tracing-subscriber",
+]
+
+rust_library(
+    name = "lib",
+    crate_name = "droid_acp",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    srcs = glob(["src/**/*.rs"]),
+    rustc_env = DROID_ACP_RUSTC_ENV,
+    deps = DROID_ACP_DEPS,
+)
+
+rust_binary(
+    name = "droid-acp",
+    crate_root = "src/main.rs",
+    edition = "2021",
+    srcs = ["src/main.rs"],
+    rustc_env = DROID_ACP_RUSTC_ENV,
+    deps = [
+        ":lib",
+        "@crates//:clap",
+        "@crates//:tokio",
+        "@crates//:tokio-util",
+        "@crates//:tracing-subscriber",
+    ],
+)
+
+rust_test(
+    name = "unit_tests",
+    crate = ":lib",
+    deps = [
+        "@crates//:assert-json-diff",
+    ],
+)

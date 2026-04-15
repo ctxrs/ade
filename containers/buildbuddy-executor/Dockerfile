@@ -1,27 +1,35 @@
-# syntax=docker/dockerfile:1.6
+FROM rust:1.88-bookworm
 
-FROM debian:bookworm-slim
+ENV DEBIAN_FRONTEND=noninteractive
 
-ARG DEBIAN_FRONTEND=noninteractive
+COPY scripts/install_desktop_deps_linux_ubuntu.sh /tmp/install_desktop_deps_linux_ubuntu.sh
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-      bash \
-      build-essential \
-      ca-certificates \
-      curl \
-      file \
-      git \
-      jq \
-      openssh-client \
-      pkg-config \
-      python3 \
-      rsync \
-      sudo \
-      tar \
-      unzip \
-      xz-utils \
-      zip \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        docker.io \
+        gettext-base \
+        git \
+        jq \
+        openssh-client \
+        python3 \
+        python3-pip \
+        rsync \
+        sudo \
+        xz-utils \
+    && bash /tmp/install_desktop_deps_linux_ubuntu.sh \
     && rm -rf /var/lib/apt/lists/*
 
-CMD ["bash", "-lc", "sleep infinity"]
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN corepack enable \
+    && corepack prepare pnpm@9.15.1 --activate \
+    && cargo install sccache --locked
+
+RUN rm -f /tmp/install_desktop_deps_linux_ubuntu.sh
+
+WORKDIR /workspace

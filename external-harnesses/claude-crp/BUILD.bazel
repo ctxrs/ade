@@ -1,0 +1,26 @@
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+CLAUDE_CRP_SOURCES = glob(
+    [
+        "bin/**",
+        "dist/**",
+        "scripts/**",
+        "src/**",
+        "tests/**",
+        "*.json",
+        "*.yaml",
+        "*.md",
+        "*.mjs",
+        "*.sh",
+        "*.ts",
+    ],
+    allow_empty = True,
+)
+
+sh_binary(
+    name = "provider-stage-archive",
+    srcs = ["//tools/bazel:provider_claude_crp_archive.sh"],
+    data = CLAUDE_CRP_SOURCES + ["//core:package.json"],
+)

@@ -1156,6 +1156,7 @@ const resolveHostTarget = () => {
 
 const copySidecarBinary = ({
   sourceDir,
+  sourcePath = "",
   destDir,
   sourceName,
   destName = sourceName,
@@ -1165,10 +1166,12 @@ const copySidecarBinary = ({
   spawnSyncImpl = childProcess.spawnSync,
   helperEntitlementsPath = avfLinuxHelperEntitlementsPath,
 }) => {
-  const src = path.join(sourceDir, `${sourceName}${binExtOverride}`);
+  const src = String(sourcePath || "").trim()
+    ? path.resolve(String(sourcePath))
+    : path.join(sourceDir, `${sourceName}${binExtOverride}`);
   const dest = path.join(destDir, `${destName}${binExtOverride}`);
   const destTarget = targetTriple ? path.join(destDir, `${destName}-${targetTriple}${binExtOverride}`) : null;
-  if (!fs.existsSync(src)) {
+  if (!String(sourcePath || "").trim() && !fs.existsSync(src)) {
     if (platform === "darwin" && sourceName === "ctx-avf-linux-helper") {
       const args = [
         "build",
@@ -1197,7 +1200,7 @@ const copySidecarBinary = ({
     }
   }
   if (!fs.existsSync(src)) {
-    throw new Error(`missing sidecar: ${src} (did you run cargo build?)`);
+    throw new Error(`missing sidecar: ${src} (did you run cargo build or provide an explicit CTX_DESKTOP_*_BIN override?)`);
   }
   fs.mkdirSync(destDir, { recursive: true });
   const stageAndPublish = (finalPath) => {
@@ -1248,9 +1251,10 @@ const copySidecarBinary = ({
   return { src, dest, destTarget };
 };
 
-const copySidecar = (sourceName, destName = sourceName) => {
+const copySidecar = (sourceName, destName = sourceName, explicitSourcePath = "") => {
   const { dest } = copySidecarBinary({
     sourceDir: path.join(resolveCargoTargetDir({ cwd: coreRoot }), profile),
+    sourcePath: explicitSourcePath,
     destDir: destBinDir,
     sourceName,
     destName,
@@ -1286,9 +1290,11 @@ const main = () => {
   }
 
   const copied = {
-    ctxDaemon: copySidecar("ctx", "ctx-daemon"),
-    ctxMcp: copySidecar("ctx-mcp"),
-    avfLinuxHelper: process.platform === "darwin" ? copySidecar("ctx-avf-linux-helper") : null,
+    ctxDaemon: copySidecar("ctx", "ctx-daemon", process.env.CTX_DESKTOP_CTX_BIN || ""),
+    ctxMcp: copySidecar("ctx-mcp", "ctx-mcp", process.env.CTX_DESKTOP_CTX_MCP_BIN || ""),
+    avfLinuxHelper: process.platform === "darwin"
+      ? copySidecar("ctx-avf-linux-helper", "ctx-avf-linux-helper", process.env.CTX_DESKTOP_AVF_LINUX_HELPER_BIN || "")
+      : null,
     webDist: copyWebDist(),
     bundleInfo: syncBundlesEnabled
       ? syncBundles()

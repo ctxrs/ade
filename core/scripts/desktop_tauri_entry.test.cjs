@@ -12,15 +12,8 @@ test("desktop_tauri_entry uses release prep for normal builds", () => {
   const invocation = createInvocation(["node", "desktop_tauri_entry", "build", "--bundles", "app"]);
   assert.equal(invocation.prepMode, "release-build");
   assert.deepEqual(invocation.prepArgs, ["scripts/desktop_prepare.cjs", "--mode", "release-build"]);
-  assert.deepEqual(invocation.tauriExecArgs, [
-    "-C",
-    "apps/desktop",
-    "exec",
-    "tauri",
-    "build",
-    "--bundles",
-    "app",
-  ]);
+  assert.match(invocation.tauriCommand, /core\/apps\/desktop\/node_modules\/\.bin\/tauri$/);
+  assert.deepEqual(invocation.tauriExecArgs, ["build", "--bundles", "app"]);
 });
 
 test("desktop_tauri_entry strips only the outer pnpm separator", () => {
@@ -37,19 +30,7 @@ test("desktop_tauri_entry strips only the outer pnpm separator", () => {
     "automation",
   ]);
   assert.equal(invocation.prepMode, "debug-build");
-  assert.deepEqual(invocation.tauriExecArgs, [
-    "-C",
-    "apps/desktop",
-    "exec",
-    "tauri",
-    "build",
-    "--debug",
-    "--bundles",
-    "app",
-    "--",
-    "--features",
-    "automation",
-  ]);
+  assert.deepEqual(invocation.tauriExecArgs, ["build", "--debug", "--bundles", "app", "--", "--features", "automation"]);
 });
 
 test("desktop_tauri_entry uses debug prep for debug builds", () => {
@@ -62,12 +43,5 @@ test("desktop_tauri_entry uses debug prep for debug builds", () => {
 test("desktop_tauri_entry uses dev prep for tauri dev", () => {
   const invocation = createInvocation(["node", "desktop_tauri_entry", "dev", "--no-watch"]);
   assert.equal(invocation.prepMode, "dev");
-  assert.deepEqual(invocation.tauriExecArgs, [
-    "-C",
-    "apps/desktop",
-    "exec",
-    "tauri",
-    "dev",
-    "--no-watch",
-  ]);
+  assert.deepEqual(invocation.tauriExecArgs, ["dev", "--no-watch"]);
 });

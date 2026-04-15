@@ -95,3 +95,48 @@ test("run_workspace_task copies the workspace without requiring rsync", () => {
     stdio: "pipe",
   });
 });
+
+test("run_workspace_task falls back to the caller PWD when BUILD_WORKSPACE_DIRECTORY is unavailable", () => {
+  const tempRoot = makeVolatileTempDir("ctx-run-workspace-task-pwd-");
+  const runfilesDir = path.join(tempRoot, "runfiles");
+  const runfilesRepo = path.join(runfilesDir, "_main");
+  const realWorkspace = path.join(tempRoot, "real-workspace");
+
+  fs.mkdirSync(path.join(runfilesRepo, "core", "apps", "web"), { recursive: true });
+  fs.writeFileSync(path.join(runfilesRepo, "core", "package.json"), "{}\n");
+  fs.writeFileSync(path.join(runfilesRepo, "core", "apps", "web", "web_keep.txt"), "web\n");
+
+  fs.mkdirSync(path.join(realWorkspace, "core", "node_modules"), { recursive: true });
+  fs.mkdirSync(path.join(realWorkspace, "core", "apps", "web", "node_modules"), { recursive: true });
+  fs.writeFileSync(path.join(realWorkspace, "core", "package.json"), "{}\n");
+  fs.writeFileSync(path.join(realWorkspace, "core", "node_modules", "marker.txt"), "root-node-modules\n");
+  fs.writeFileSync(
+    path.join(realWorkspace, "core", "apps", "web", "node_modules", "marker.txt"),
+    "web-node-modules\n",
+  );
+
+  const binDir = path.join(tempRoot, "bin");
+  fs.mkdirSync(binDir, { recursive: true });
+  for (const commandName of ["bash", "cat", "dirname", "ln", "mkdir", "mktemp", "rm", "tar", "which"]) {
+    symlinkBinary(binDir, commandName);
+  }
+
+  const checkScript = [
+    "test -f ./web_keep.txt",
+    "test -L ../../node_modules",
+    "test -L ./node_modules",
+    'test "$(cat ../../node_modules/marker.txt)" = "root-node-modules"',
+    'test "$(cat ./node_modules/marker.txt)" = "web-node-modules"',
+  ].join(" && ");
+
+  childProcess.execFileSync("bash", [scriptPath, "core/apps/web", "bash", "-lc", checkScript], {
+    cwd: realWorkspace,
+    env: {
+      ...process.env,
+      RUNFILES_DIR: runfilesDir,
+      PATH: binDir,
+      TMPDIR: tempRoot,
+    },
+    stdio: "pipe",
+  });
+});

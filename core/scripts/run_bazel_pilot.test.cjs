@@ -6,12 +6,14 @@ const {
   DEFAULT_BUILD_TARGETS,
   DEFAULT_TEST_TARGETS,
   bazeliskBinaryPath,
+  commandExists,
   buildBuildBuddyAuthArgs,
   buildBazelPilotSpawn,
   buildBazelPilotInvocation,
   formatSpawnFailureMessage,
   parseArgs,
   parseRemoteExecutionMode,
+  resolveBazeliskCommand,
 } = require("./run_bazel_pilot.cjs");
 
 test("bazel pilot defaults to the expanded Rust slice test targets", () => {
@@ -69,12 +71,14 @@ test("bazel pilot invocation stays on the volatile cache layout", () => {
   assert.equal(invocation.phases[0].name, "local");
 });
 
-test("bazel pilot remote execution mode parsing supports off, all, and linux", () => {
+test("bazel pilot remote execution mode parsing supports off, all, linux, and darwin", () => {
   assert.equal(parseRemoteExecutionMode(undefined), "off");
   assert.equal(parseRemoteExecutionMode(""), "off");
   assert.equal(parseRemoteExecutionMode("1"), "all");
   assert.equal(parseRemoteExecutionMode("true"), "all");
   assert.equal(parseRemoteExecutionMode("linux"), "linux");
+  assert.equal(parseRemoteExecutionMode("darwin"), "darwin");
+  assert.equal(parseRemoteExecutionMode("macos"), "darwin");
 });
 
 test("bazel pilot auth args stay empty without a BuildBuddy API key", () => {
@@ -172,7 +176,53 @@ test("bazel pilot keeps run targets local even in linux remote execution mode", 
   );
 });
 
-test("bazel pilot uses the repo-managed bazelisk shim", () => {
+test("bazel pilot darwin remote execution uses the darwin BuildBuddy config directly", () => {
+  const invocation = buildBazelPilotInvocation({
+    argv: ["build", "//core/crates/ctx-core:lib"],
+    env: {
+      ...process.env,
+      CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-darwin-rbe",
+      CTX_SESSION_ID: "bazel-darwin-rbe-session",
+      CTX_BAZEL_REMOTE_EXECUTION: "darwin",
+      BUILDBUDDY_API_KEY: "buildbuddy-darwin-key",
+    },
+  });
+
+  assert.equal(invocation.remoteExecutionMode, "darwin");
+  assert.equal(invocation.phases.length, 1);
+  assert.equal(invocation.phases[0].name, "darwin-rbe");
+  assert.equal(invocation.phases[0].commandArgs.includes("--config=buildbuddy-darwin-rbe"), true);
+  assert.equal(
+    invocation.phases[0].commandArgs.includes("--remote_header=x-buildbuddy-api-key=buildbuddy-darwin-key"),
+    true,
+  );
+});
+
+test("bazel pilot prefers the repo-managed bazelisk shim when it exists", () => {
+  const repoRoot = "/tmp/ctx-monorepo";
+  const expected = path.join(repoRoot, "core", "node_modules", ".bin", process.platform === "win32" ? "bazelisk.cmd" : "bazelisk");
+  assert.equal(
+    resolveBazeliskCommand({
+      repoRoot,
+      fileExists: (candidate) => candidate === expected,
+      commandAvailable: () => false,
+    }),
+    expected,
+  );
+});
+
+test("bazel pilot falls back to PATH bazelisk when the repo shim is absent", () => {
+  assert.equal(
+    resolveBazeliskCommand({
+      repoRoot: "/tmp/ctx-monorepo",
+      fileExists: () => false,
+      commandAvailable: (candidate) => candidate === (process.platform === "win32" ? "bazelisk.cmd" : "bazelisk"),
+    }),
+    process.platform === "win32" ? "bazelisk.cmd" : "bazelisk",
+  );
+});
+
+test("bazel pilot uses the resolved Bazelisk command in the spawn contract", () => {
   const spawn = buildBazelPilotSpawn({
     argv: ["run", "//core/apps/web:lint"],
     env: {
@@ -184,7 +234,7 @@ test("bazel pilot uses the repo-managed bazelisk shim", () => {
 
   assert.equal(
     spawn.command,
-    path.join(path.resolve(__dirname, ".."), "node_modules", ".bin", process.platform === "win32" ? "bazelisk.cmd" : "bazelisk"),
+    bazeliskBinaryPath({ repoRoot: path.resolve(__dirname, "..", "..") }),
   );
   assert.deepEqual(spawn.args, [
     "--output_user_root=/tmp/ctx-bazel-pilot-binary/targets/bazel/bazel-binary-session",
@@ -193,6 +243,7 @@ test("bazel pilot uses the repo-managed bazelisk shim", () => {
     "--repository_cache=/tmp/ctx-bazel-pilot-binary/cache/bazel-repository/ctx-monorepo",
     "//core/apps/web:lint",
   ]);
+  assert.equal(spawn.options.env.BUILD_WORKSPACE_DIRECTORY, path.resolve(__dirname, "..", ".."));
 });
 
 test("bazel pilot missing shim failure tells the operator how to install it", () => {
@@ -203,4 +254,8 @@ test("bazel pilot missing shim failure tells the operator how to install it", ()
 
   assert.match(message, /Bazelisk is not installed/);
   assert.match(message, /pnpm -C core install --frozen-lockfile/);
+});
+
+test("bazel pilot commandExists returns false for missing commands", () => {
+  assert.equal(commandExists("definitely-not-a-real-bazel-command-ctx"), false);
 });

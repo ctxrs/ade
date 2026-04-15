@@ -9,6 +9,7 @@ trap 'rm -rf "$tmp_root"' EXIT
 
 channel="stable"
 version="9.9.9"
+source_commit="commit-9.9.9"
 download_base="https://example.test/functions/v1"
 latest_json="$tmp_root/latest.json"
 latest_tauri_json="$tmp_root/latest-tauri.json"
@@ -21,6 +22,7 @@ cat >"$latest_json" <<'JSON'
   "channel": "stable",
   "latest_version": "8.8.8",
   "published_at": "2026-02-10T00:00:00Z",
+  "source_commit": "commit-8.8.8",
   "platforms": {
     "linux-x64": {
       "desktop": {
@@ -41,6 +43,7 @@ cat >"$latest_tauri_json" <<'JSON'
   "version": "8.8.8",
   "notes": "ctx 8.8.8",
   "pub_date": "2026-02-10T00:00:00Z",
+  "source_commit": "commit-8.8.8",
   "platforms": {
     "linux-x64": {
       "url": "https://example.test/functions/v1/download/stable/8.8.8/ctx_8.8.8_linux-x64_updater.AppImage.tar.gz",
@@ -120,7 +123,7 @@ NODE
   )"
 
   acquire_lock
-  CHANNEL="$channel" VERSION="$version" PLATFORM="$platform" PUBLISHED_AT="2026-02-19T00:00:00Z" \
+  CHANNEL="$channel" VERSION="$version" PLATFORM="$platform" PUBLISHED_AT="2026-02-19T00:00:00Z" SOURCE_COMMIT="$source_commit" \
   EXISTING_MANIFEST_FILE="$version_json" PLATFORM_ENTRY_JSON="$platform_entry_json" \
   node - <<'NODE' >"$version_json.next"
 const fs = require("fs");
@@ -128,6 +131,7 @@ const channel = process.env.CHANNEL;
 const version = process.env.VERSION;
 const platform = process.env.PLATFORM;
 const publishedAt = process.env.PUBLISHED_AT;
+const sourceCommit = process.env.SOURCE_COMMIT;
 const existingRaw = fs.readFileSync(process.env.EXISTING_MANIFEST_FILE, "utf8");
 const platformEntry = JSON.parse(process.env.PLATFORM_ENTRY_JSON);
 
@@ -183,6 +187,7 @@ const merged = {
   channel,
   latest_version: version,
   published_at: publishedAt,
+  source_commit: sourceCommit,
   platforms: {
     ...filtered,
     [platform]: platformEntry,
@@ -192,7 +197,7 @@ process.stdout.write(`${JSON.stringify(merged, null, 2)}\n`);
 NODE
   mv "$version_json.next" "$version_json"
 
-  CHANNEL="$channel" VERSION="$version" PLATFORM="$platform" PUBLISHED_AT="2026-02-19T00:00:00Z" DOWNLOAD_BASE="$download_base" \
+  CHANNEL="$channel" VERSION="$version" PLATFORM="$platform" PUBLISHED_AT="2026-02-19T00:00:00Z" SOURCE_COMMIT="$source_commit" DOWNLOAD_BASE="$download_base" \
   EXISTING_TAURI_MANIFEST_FILE="$version_tauri_json" TAURI_PLATFORM_ENTRY_JSON="$tauri_entry_json" \
   node - <<'NODE' >"$version_tauri_json.next"
 const fs = require("fs");
@@ -200,6 +205,7 @@ const channel = process.env.CHANNEL;
 const version = process.env.VERSION;
 const platform = process.env.PLATFORM;
 const publishedAt = process.env.PUBLISHED_AT;
+const sourceCommit = process.env.SOURCE_COMMIT;
 const existingRaw = fs.readFileSync(process.env.EXISTING_TAURI_MANIFEST_FILE, "utf8");
 const platformEntry = JSON.parse(process.env.TAURI_PLATFORM_ENTRY_JSON);
 const downloadBase = String(process.env.DOWNLOAD_BASE || "").trim().replace(/\/+$/, "");
@@ -257,6 +263,7 @@ const merged = {
   version,
   notes: `ctx ${version}`,
   pub_date: publishedAt,
+  source_commit: sourceCommit,
   platforms: {
     ...filtered,
     [platform]: platformEntry,

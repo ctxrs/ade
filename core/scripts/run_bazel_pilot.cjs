@@ -16,6 +16,19 @@ const DEFAULT_TEST_TARGETS = getBazelTestTargetsForCrates(getBazelCoveredCrates(
 const DEFAULT_BUILD_TARGETS = getBazelBuildTargetsForCrates(getBazelCoveredCrates());
 const BAZELISK_SHIM = process.platform === "win32" ? "bazelisk.cmd" : "bazelisk";
 
+function commandExists(commandName, { env = process.env, cwd } = {}) {
+  const result = childProcess.spawnSync(commandName, ["--version"], {
+    cwd,
+    env,
+    encoding: "utf8",
+    stdio: "ignore",
+  });
+  if (result.error && result.error.code === "ENOENT") {
+    return false;
+  }
+  return true;
+}
+
 function parseRemoteExecutionMode(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (["1", "true", "yes", "on", "all"].includes(normalized)) {
@@ -23,6 +36,9 @@ function parseRemoteExecutionMode(value) {
   }
   if (normalized === "linux") {
     return "linux";
+  }
+  if (normalized === "darwin" || normalized === "macos") {
+    return "darwin";
   }
   return "off";
 }
@@ -97,6 +113,19 @@ function buildInvocationPhases({ command, layout, remoteExecutionMode, targets }
       },
     ];
   }
+  if (remoteExecutionMode === "darwin") {
+    return [
+      {
+        name: "darwin-rbe",
+        commandArgs: buildPhaseCommandArgs({
+          command,
+          layout,
+          extraConfigArgs: ["--config=buildbuddy-darwin-rbe"],
+        }),
+        targets,
+      },
+    ];
+  }
   const { remoteTargets, localTargets } = partitionBazelTargetsForLinuxRbe(command, targets);
   const phases = [];
   if (remoteTargets.length > 0) {
@@ -151,19 +180,37 @@ function buildBazelPilotInvocation({ argv, env = process.env } = {}) {
     targets: phaseTargets,
     env: {
       ...env,
+      BUILD_WORKSPACE_DIRECTORY: String(env.BUILD_WORKSPACE_DIRECTORY || repoRoot),
       TMPDIR: layout.tmpDir,
     },
   };
 }
 
-function bazeliskBinaryPath() {
-  const coreRoot = path.resolve(__dirname, "..");
-  return path.join(coreRoot, "node_modules", ".bin", BAZELISK_SHIM);
+function resolveBazeliskCommand({
+  repoRoot = path.resolve(__dirname, "..", ".."),
+  env = process.env,
+  fileExists = fs.existsSync,
+  commandAvailable = commandExists,
+} = {}) {
+  const repoLocalShim = path.join(repoRoot, "core", "node_modules", ".bin", BAZELISK_SHIM);
+  if (fileExists(repoLocalShim)) {
+    return repoLocalShim;
+  }
+  for (const candidate of [BAZELISK_SHIM, "bazel"]) {
+    if (commandAvailable(candidate, { env, cwd: repoRoot })) {
+      return candidate;
+    }
+  }
+  return repoLocalShim;
+}
+
+function bazeliskBinaryPath({ repoRoot = path.resolve(__dirname, "..", ".."), env = process.env } = {}) {
+  return resolveBazeliskCommand({ repoRoot, env });
 }
 
 function buildSpawnForPhase(invocation, phase) {
   return {
-    command: bazeliskBinaryPath(),
+    command: bazeliskBinaryPath({ repoRoot: invocation.repoRoot, env: invocation.env }),
     args: [...invocation.startupArgs, ...phase.commandArgs, ...phase.targets],
     options: {
       cwd: invocation.repoRoot,
@@ -225,6 +272,7 @@ module.exports = {
   DEFAULT_BUILD_TARGETS,
   DEFAULT_TEST_TARGETS,
   bazeliskBinaryPath,
+  commandExists,
   buildBazelPilotSpawn,
   buildBazelPilotSpawns,
   buildBazelPilotInvocation,
@@ -232,4 +280,5 @@ module.exports = {
   formatSpawnFailureMessage,
   parseArgs,
   parseRemoteExecutionMode,
+  resolveBazeliskCommand,
 };

@@ -4,6 +4,8 @@ const childProcess = require("node:child_process");
 const path = require("node:path");
 
 const coreRoot = path.resolve(__dirname, "..");
+const desktopAppRoot = path.join(coreRoot, "apps", "desktop");
+const localTauriBin = path.join(desktopAppRoot, "node_modules", ".bin", "tauri");
 
 function fail(message) {
   console.error(`desktop_tauri_entry failed: ${message}`);
@@ -37,14 +39,21 @@ function createInvocation(argv = process.argv) {
     prepMode: resolvePrepMode(parsed),
     prepCommand: "node",
     prepArgs: ["scripts/desktop_prepare.cjs", "--mode", resolvePrepMode(parsed)],
-    tauriCommand: "pnpm",
-    tauriExecArgs: ["-C", "apps/desktop", "exec", "tauri", parsed.command, ...parsed.tauriArgs],
+    tauriCommand: resolveTauriCommand(),
+    tauriExecArgs: [parsed.command, ...parsed.tauriArgs],
   };
+}
+
+function resolveTauriCommand() {
+  if (!path.isAbsolute(localTauriBin)) {
+    throw new Error(`expected absolute tauri path, got ${localTauriBin}`);
+  }
+  return localTauriBin;
 }
 
 function run(command, args) {
   const result = childProcess.spawnSync(command, args, {
-    cwd: coreRoot,
+    cwd: command === "node" ? coreRoot : desktopAppRoot,
     stdio: "inherit",
     env: process.env,
   });
