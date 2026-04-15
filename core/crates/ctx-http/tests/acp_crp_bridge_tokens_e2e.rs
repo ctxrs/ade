@@ -1066,7 +1066,7 @@ async fn acp_crp_bridge_token_providers() {
             },
             Err(err) => {
                 let message = format!("{}: {}", provider.id, err);
-                    eprintln!("failed {message}");
+                eprintln!("failed {message}");
                 failures.push(message);
             }
         }
