@@ -159,13 +159,11 @@ impl Store {
                 FROM sessions s
                 WHERE s.task_id = t.id AND s.status = 'active'
               ) AS has_active_session,
-              ({activity_expr}) AS activity_at,
-              ({sort_expr}) AS sort_at
+              ({ACTIVITY_EXPR}) AS activity_at,
+              ({SORT_EXPR}) AS sort_at
             FROM tasks t
             WHERE t.workspace_id = ?
-            "#,
-            activity_expr = ACTIVITY_EXPR,
-            sort_expr = SORT_EXPR,
+            "#
         );
 
         if let Some(archived_only) = archived_only {
@@ -178,8 +176,7 @@ impl Store {
 
         if cursor.is_some() {
             sql.push_str(&format!(
-                " AND (({expr}) < ? OR (({expr}) = ? AND t.id < ?))",
-                expr = SORT_EXPR
+                " AND (({SORT_EXPR}) < ? OR (({SORT_EXPR}) = ? AND t.id < ?))"
             ));
         }
 
@@ -293,14 +290,12 @@ impl Store {
                 FROM sessions s
                 WHERE s.task_id = t.id AND s.status = 'active'
               ) AS has_active_session,
-              ({activity_expr}) AS activity_at,
-              ({sort_expr}) AS sort_at
+              ({ACTIVITY_EXPR}) AS activity_at,
+              ({SORT_EXPR}) AS sort_at
             FROM tasks t
             WHERE t.id = ?
             LIMIT 1
-            "#,
-            activity_expr = ACTIVITY_EXPR,
-            sort_expr = SORT_EXPR,
+            "#
         );
 
         let sql = self.rewrite_sql(&sql);

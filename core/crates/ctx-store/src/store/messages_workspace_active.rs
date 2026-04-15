@@ -44,15 +44,14 @@ impl Store {
                 FROM sessions s
                 WHERE s.task_id = t.id AND s.status = 'active'
               ) AS has_active_session,
-              ({activity_expr}) AS activity_at
+              ({ACTIVITY_EXPR}) AS activity_at
             FROM tasks t
             WHERE t.workspace_id = ?
               AND t.archived_at IS NULL
               AND EXISTS (SELECT 1 FROM sessions s WHERE s.task_id = t.id)
             ORDER BY t.created_at DESC, t.id DESC
             LIMIT ?
-            "#,
-            activity_expr = ACTIVITY_EXPR,
+            "#
         );
 
         let sql = self.rewrite_sql(&sql);
@@ -161,15 +160,14 @@ impl Store {
                 FROM sessions s
                 WHERE s.task_id = t.id AND s.status = 'active'
               ) AS has_active_session,
-              ({activity_expr}) AS activity_at
+              ({ACTIVITY_EXPR}) AS activity_at
             FROM tasks t
             WHERE t.workspace_id = ?
               AND t.archived_at IS NULL
               AND EXISTS (SELECT 1 FROM sessions s WHERE s.task_id = t.id)
             ORDER BY t.created_at DESC, t.id DESC
             LIMIT ?
-            "#,
-            activity_expr = ACTIVITY_EXPR,
+            "#
         );
 
         let sql = self.rewrite_sql(&sql);

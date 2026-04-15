@@ -72,12 +72,7 @@ pub(super) async fn repair_historical_tool_order_seq_migration_version(
         }
         Some(existing_description) => {
             bail!(
-                "cannot remap migration '{}' from version {} to {}: version {} is already occupied by '{}'",
-                TOOL_ORDER_SEQ_MIGRATION_DESCRIPTION,
-                TOOL_ORDER_SEQ_LEGACY_MIGRATION_VERSION,
-                TOOL_ORDER_SEQ_MIGRATION_VERSION,
-                TOOL_ORDER_SEQ_MIGRATION_VERSION,
-                existing_description
+                "cannot remap migration '{TOOL_ORDER_SEQ_MIGRATION_DESCRIPTION}' from version {TOOL_ORDER_SEQ_LEGACY_MIGRATION_VERSION} to {TOOL_ORDER_SEQ_MIGRATION_VERSION}: version {TOOL_ORDER_SEQ_MIGRATION_VERSION} is already occupied by '{existing_description}'"
             );
         }
     }
