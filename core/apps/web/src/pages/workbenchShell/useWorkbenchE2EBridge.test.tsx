@@ -46,7 +46,7 @@ type E2EWindow = Window & {
     }) => Promise<unknown>;
     measureAssistantParity?: (params: { content: string; isComplete?: boolean; viewportWidth?: number }) => Promise<unknown>;
     measureAssistantStreamingParity?: (params: { fragments: readonly string[]; viewportWidth?: number }) => Promise<unknown>;
-    measureTurnHeaderParity?: (params: { plainText: string; viewportWidth?: number }) => Promise<unknown>;
+    measureTurnHeaderParity?: (params: { content: string; viewportWidth?: number }) => Promise<unknown>;
     installMarkdownScrollProbe?: (markdown: string, width?: number) => Promise<boolean>;
     removeMarkdownScrollProbe?: () => boolean;
   };

@@ -82,8 +82,12 @@ function findLargestCollapsedPlainTextPrefixThatFits(params: {
   };
 }
 
+function isPlainTextDelimitedWrapCandidate(text: string): boolean {
+  return text.includes("://") || /[\/\\?&=]/.test(text);
+}
+
 function splitPlainTextWrapFragments(text: string): string[] {
-  if (!/[./\\\-?&=]/.test(text)) {
+  if (!isPlainTextDelimitedWrapCandidate(text)) {
     return [text];
   }
 
@@ -344,13 +348,15 @@ function measureCollapsedPlainTextLineHeight(params: {
       }
       if (usesDelimitedWrapping) {
         if (availableWidth > 0.01) {
+          const allowPartialDelimitedContinuation = !isUrlLikeWord;
           const currentFit = measurePlainTextDelimitedTokenFit({
             cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:continued`,
             text: word,
             fragments: wordFragments,
             font: params.font,
             width: availableWidth,
-            allowPartialFragment: false,
+            allowPartialFragment: allowPartialDelimitedContinuation,
+            allowPartialAfterConsumedText: allowPartialDelimitedContinuation,
           });
           const freshFit = measurePlainTextDelimitedTokenFit({
             cacheKeyPrefix: `${params.cacheKey}:word:${wordIndex}:fresh`,

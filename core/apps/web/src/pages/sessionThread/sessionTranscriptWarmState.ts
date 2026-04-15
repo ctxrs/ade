@@ -56,3 +56,11 @@ export function subscribeSessionTranscriptWarmState(listener: () => void): () =>
     listeners.delete(listener);
   };
 }
+
+export function resetSessionTranscriptWarmStateForTests(): void {
+  state.viewportWidth = 0;
+  state.viewportHeight = 0;
+  state.verbosity = "default";
+  snapshot = { ...state };
+  listeners.clear();
+}

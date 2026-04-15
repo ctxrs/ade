@@ -33,6 +33,7 @@ import {
   SESSION_THREAD_TURN_HEADER_BUBBLE_BORDER_WIDTH_PX,
   SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_BLOCK_PX,
   SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_INLINE_PX,
+  SESSION_THREAD_TURN_HEADER_COLLAPSED_MAX_HEIGHT_PX,
   resolveSessionThreadAssistantTextWidth,
   resolveSessionThreadContentWidth,
   resolveSessionThreadIndentedContentWidth,
@@ -73,7 +74,6 @@ const TURN_HEADER_OUTER_VERTICAL_PX = 14;
 const TURN_HEADER_BUBBLE_VERTICAL_PX =
   SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_BLOCK_PX * 2 +
   SESSION_THREAD_TURN_HEADER_BUBBLE_BORDER_WIDTH_PX * 2;
-const TURN_HEADER_COLLAPSED_MAX_HEIGHT_PX = 66;
 const TURN_HEADER_ATTACHMENT_SIZE_PX = 44;
 const TURN_HEADER_ATTACHMENT_GAP_PX = 6;
 const TURN_HEADER_ATTACHMENT_MARGIN_TOP_PX = 8;
@@ -140,7 +140,9 @@ function measureTurnHeaderHeight(
     width: resolveSessionThreadTurnHeaderTextWidth(viewportWidth),
     lineHeight: BODY_LINE_HEIGHT_PX,
   });
-  const collapsedTextHeight = expanded ? textHeight : Math.min(textHeight, TURN_HEADER_COLLAPSED_MAX_HEIGHT_PX);
+  const collapsedTextHeight = expanded
+    ? textHeight
+    : Math.min(textHeight, SESSION_THREAD_TURN_HEADER_COLLAPSED_MAX_HEIGHT_PX);
   const imageCount = expanded ? countImageAttachments(header.attachments) : 0;
   const perRow = Math.max(
     1,

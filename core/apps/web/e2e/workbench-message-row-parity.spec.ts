@@ -25,6 +25,9 @@ const COLLAPSED_LONG_MESSAGE = Array.from(
   { length: 24 },
   (_, index) => `line ${index + 1} with enough words to wrap a little bit`,
 ).join("\n");
+const REPORTED_LONG_MESSAGE_WITH_ATTACHMENTS = `this invented museum display report describes several scenes in a miniature railway room
+
+first, the model station stands at the edge of a wide green field, with two short platforms and a row of small painted houses behind it. A blue train waits beside the nearest platform while a yellow train follows the curved track past a wooden bridge. The display changes slowly enough that each carriage stays visible for several moments. A visitor can follow the same carriage from the bridge to the station, past the orchard, and back through the tunnel without losing its place among the other moving pieces. Beside the station there is a notice board with a drawing of the route and a narrow legend describing the colors. The legend uses a long sentence because the little villages have several landmarks, including a red tower, a stone fountain, an old mill, and a garden full of paper flowers. Next to this scene, a second model shows a harbor with three boats arranged along a curved wooden pier. One boat carries folded cloth, another holds empty baskets, and the smallest boat has a tiny green canopy. The harbor clock is painted on a flat card, so its hands never move even when the boats change position. A broad blue strip beneath the pier represents water, and thin white lines show the paths that the boats might take across the bay. At the far end of the room there is a mountain scene with a winding footpath, a narrow road, and a little lookout near the highest tree. The path appears to disappear behind a hill before returning beside the lower station. Several picture cards show the scene from different angles, and all three cards are attached below this report so the full arrangement can be compared without moving any of the models. When the cards are folded together, only the first part of the description is visible; when they are opened, the mountain, station, and harbor can be read in the same order as the labels along the wall. The final cabinet holds a row of plain blocks in alternating colors. Each block has the same width, although some captions are much longer than others and continue across several lines beneath the glass. The caretaker has placed a small blank card after the longest caption to leave a clear space before the next display begins. Nothing in this invented scene records an actual visit or a real incident. The report is a fictional description of paper scenery, painted trains, and carefully arranged labels, written as one continuous paragraph so that the three attached pictures have a substantial passage of text above them.`;
 
 const ASSISTANT_MARKDOWN = [
   "# Title",
@@ -94,6 +97,50 @@ test("workbench: image attachments stay in parity for message rows", async ({ pa
   expect(
     Math.abs(measurement.delta),
     `attachment message drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual})`,
+  ).toBeLessThanOrEqual(1);
+});
+
+test("workbench: reported long user message with three image attachments matches collapsed row height", async ({
+  page,
+}) => {
+  test.setTimeout(120000);
+  await openWorkbenchShell(page);
+
+  const measurement = await measureMessageParity(page, {
+    content: REPORTED_LONG_MESSAGE_WITH_ATTACHMENTS,
+    expanded: false,
+    attachments: [
+      { kind: "image", mime_type: "image/png", data_base64: IMAGE_DATA_BASE64, name: "one.png" },
+      { kind: "image", mime_type: "image/png", data_base64: IMAGE_DATA_BASE64, name: "two.png" },
+      { kind: "image", mime_type: "image/png", data_base64: IMAGE_DATA_BASE64, name: "three.png" },
+    ],
+  });
+
+  expect(
+    Math.abs(measurement.delta),
+    `reported attachment message drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual})`,
+  ).toBeLessThanOrEqual(1);
+});
+
+test("workbench: reported long user message with three image attachments matches expanded row height", async ({
+  page,
+}) => {
+  test.setTimeout(120000);
+  await openWorkbenchShell(page);
+
+  const measurement = await measureMessageParity(page, {
+    content: REPORTED_LONG_MESSAGE_WITH_ATTACHMENTS,
+    expanded: true,
+    attachments: [
+      { kind: "image", mime_type: "image/png", data_base64: IMAGE_DATA_BASE64, name: "one.png" },
+      { kind: "image", mime_type: "image/png", data_base64: IMAGE_DATA_BASE64, name: "two.png" },
+      { kind: "image", mime_type: "image/png", data_base64: IMAGE_DATA_BASE64, name: "three.png" },
+    ],
+  });
+
+  expect(
+    Math.abs(measurement.delta),
+    `reported expanded attachment message drifted by ${measurement.delta}px (planned ${measurement.planned}, actual ${measurement.actual})`,
   ).toBeLessThanOrEqual(1);
 });
 
@@ -173,7 +220,7 @@ test("workbench: turn header planner matches rendered height", async ({ page }) 
   test.setTimeout(120000);
   await openWorkbenchShell(page);
 
-  const measurement = await measureTurnHeaderParity(page, { plainText: TURN_HEADER_TEXT });
+  const measurement = await measureTurnHeaderParity(page, { content: TURN_HEADER_TEXT });
 
   expect(
     Math.abs(measurement.delta),

@@ -13,11 +13,16 @@ import { WorkbenchTurnHeaderView } from "./sessionThread/SessionThreadItemViews"
 import {
   createDefaultSessionTranscriptUiState,
   getOrCreateSessionPretextRuntime,
+  noteSessionPretextRuntimeSnapshot,
   primeSessionPretextRuntime,
   readSessionPretextRuntimePreparedState,
   resetSessionPretextRuntimeCache,
 } from "./sessionThread/pretextSessionRuntimeCache";
 import * as rowLayoutModule from "./sessionThread/pretextVirtualizerRowLayout";
+import {
+  noteSessionTranscriptWarmViewport,
+  resetSessionTranscriptWarmStateForTests,
+} from "./sessionThread/sessionTranscriptWarmState";
 import { getWorkbenchTurnHeaderLayoutState } from "./sessionThread/transcriptRowLayoutModel";
 
 const resizeObserverInstances: Array<{ callback: ResizeObserverCallback }> = [];
@@ -202,6 +207,7 @@ describe("SessionThreadPretextVirtualizerList", () => {
   beforeEach(() => {
     resizeObserverInstances.length = 0;
     resetSessionPretextRuntimeCache();
+    resetSessionTranscriptWarmStateForTests();
     Object.defineProperty(globalThis, "requestAnimationFrame", {
       configurable: true,
       value: (callback: FrameRequestCallback) => {
@@ -241,6 +247,29 @@ describe("SessionThreadPretextVirtualizerList", () => {
     expect(methodsRef.current).not.toBeNull();
     expect(typeof methodsRef.current?.scrollToBottom).toBe("function");
     expect(container.querySelectorAll("[data-pretext-virtualizer-row='1']").length).toBeGreaterThan(0);
+  });
+
+  it("hydrates the initial snapshot from the warm viewport when the prepared runtime is still empty", () => {
+    const sessionId = "session-warm-open";
+    const runtime = getOrCreateSessionPretextRuntime(sessionId);
+    noteSessionTranscriptWarmViewport({ width: 900, height: 300 });
+    noteSessionPretextRuntimeSnapshot(runtime, runtime.core.getSnapshot(), []);
+
+    const { container } = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={makeWrappingItems(6)}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const shells = container.querySelectorAll("[data-pretext-virtualizer-row-shell='1']");
+    expect(shells.length).toBeGreaterThan(0);
   });
 
   it("shows the jump-to-latest control when detached from bottom", () => {

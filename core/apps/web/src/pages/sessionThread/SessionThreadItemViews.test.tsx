@@ -166,6 +166,29 @@ describe("ThreadItemView", () => {
     expect(row?.querySelector(".msg")).not.toBeNull();
     expect(screen.getByRole("button", { name: "Show more" })).toBeInTheDocument();
   });
+
+  it("does not render a collapse toggle when long wrapped content would not actually truncate", () => {
+    const wrappedParagraph = ["this invented museum display report describes several scenes in a miniature railway room", "", "wrapped paragraph ".repeat(160)].join("\n");
+
+    render(
+      <ThreadItemView
+        item={{
+          kind: "message",
+          id: "message-wrapped",
+          role: "user",
+          content: wrappedParagraph,
+          attachments: [],
+          created_at: "2025-01-01T00:00:00.000Z",
+        }}
+        worktreeId={null}
+        onFileOpenError={() => {}}
+        messageExpanded={false}
+        onToggleMessageExpanded={() => {}}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+  });
 });
 
 describe("AssistantEntry", () => {

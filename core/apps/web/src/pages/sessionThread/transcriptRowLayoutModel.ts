@@ -7,10 +7,20 @@ const MESSAGE_COLLAPSE_CHAR_THRESHOLD = 1500;
 const TURN_HEADER_COLLAPSE_LINE_THRESHOLD = 1;
 const TURN_HEADER_COLLAPSE_CHAR_THRESHOLD = 140;
 
+export function getCollapsedMessageContent(content: string): string {
+  const normalized = String(content ?? "");
+  return normalized.split("\n").slice(0, MESSAGE_COLLAPSE_LINE_THRESHOLD).join("\n");
+}
+
 export function isExpandableMessageContent(content: string): boolean {
   const normalized = String(content ?? "");
   const lines = normalized.split("\n").length;
   return lines > MESSAGE_COLLAPSE_LINE_THRESHOLD || normalized.length > MESSAGE_COLLAPSE_CHAR_THRESHOLD;
+}
+
+export function canCollapseMessageContent(content: string): boolean {
+  const normalized = String(content ?? "");
+  return isExpandableMessageContent(normalized) && getCollapsedMessageContent(normalized) !== normalized;
 }
 
 export function isExpandableTurnHeaderPlainText(plainText: string): boolean {
@@ -57,7 +67,7 @@ export function resolveWorkbenchMessageExpandedFromContent(
   item: Extract<WorkbenchListItem, { kind: "message" }>,
   expandedMessageById: Record<string, boolean>,
 ): boolean {
-  if (!isExpandableMessageContent(item.content)) return true;
+  if (!canCollapseMessageContent(item.content)) return true;
   return expandedMessageById[item.id] ?? false;
 }
 
@@ -65,11 +75,13 @@ export function getWorkbenchMessageLayoutState(
   item: Extract<WorkbenchListItem, { kind: "message" }>,
   expandedMessageById: Record<string, boolean>,
 ) {
+  const collapsedContent = getCollapsedMessageContent(item.content);
+  const expandable = canCollapseMessageContent(item.content);
   const expanded = resolveWorkbenchMessageExpandedFromContent(item, expandedMessageById);
   return {
     expanded,
-    expandable: isExpandableMessageContent(item.content),
-    shownContent: expanded ? item.content : item.content.split("\n").slice(0, 20).join("\n"),
+    expandable,
+    shownContent: expanded ? item.content : collapsedContent,
   };
 }
 

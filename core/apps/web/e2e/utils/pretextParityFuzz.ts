@@ -476,7 +476,7 @@ function generateTurnHeaderSample(rng: SeededRandom, index: number): GeneratedTu
   return {
     name: `generated-turn-header-${index}`,
     params: {
-      plainText: lines.join("\n"),
+      content: lines.join("\n"),
     },
   };
 }

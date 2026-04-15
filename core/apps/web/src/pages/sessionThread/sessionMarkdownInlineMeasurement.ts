@@ -12,7 +12,7 @@ import {
 } from "./sessionMarkdownMeasurementCore";
 
 const INLINE_CODE_FRAGMENT_FIT_SLACK_PX = 0;
-const INLINE_CODE_WHOLE_GROUP_FIT_SLACK_PX = 8;
+const INLINE_CODE_WHOLE_GROUP_FIT_SLACK_PX = 0;
 const INLINE_CODE_CURRENT_LINE_START_RATIO_THRESHOLD = 0.2;
 
 export function measureInlineRunsHeight(params: {
@@ -401,7 +401,6 @@ export function measureInlineRunsHeight(params: {
   let cursor: LayoutCursor | null = null;
 
   while (itemIndex < items.length) {
-    let lineHeight = params.typography.lineHeight;
     let lineHasContent = false;
     let lineOnlyCodeGroupId: number | null = null;
     let lineLastCodeFragmentEndedWithHyphen = false;
@@ -514,6 +513,7 @@ export function measureInlineRunsHeight(params: {
         const fullWidth = reservedWidth + item.fullWidth;
         if (
           fullWidth > remainingWidth + 0.01 &&
+          (item.prefersFreshLineStart || item.codeGroupHasDottedPath) &&
           remainingWidth < reservedWidth + item.minStartTextWidth - 0.01
         ) {
           cursor = null;
@@ -577,7 +577,6 @@ export function measureInlineRunsHeight(params: {
           lineLastCodeFragmentEndedWithPathDelimiter = /[./\\]$/.test(item.text);
           lastAcceptedCodeGroupId = codeGroupId;
           lineHasContent = true;
-          lineHeight = Math.max(lineHeight, item.lineHeight);
           chargedCodeGroups.add(codeGroupId);
           itemIndex += 1;
           pendingSpaceWidth = 0;
@@ -604,7 +603,6 @@ export function measureInlineRunsHeight(params: {
           lineLastCodeFragmentEndedWithPathDelimiter = /[./\\]$/.test(item.text);
           lastAcceptedCodeGroupId = codeGroupId;
           lineHasContent = true;
-          lineHeight = Math.max(lineHeight, item.lineHeight);
           chargedCodeGroups.add(codeGroupId);
           itemIndex += 1;
           pendingSpaceWidth = 0;
@@ -615,17 +613,11 @@ export function measureInlineRunsHeight(params: {
         }
         if (
           lineHasContent &&
-          item.startsAfterCodeWhitespace &&
-          fullWidth > remainingWidth + currentLineFitSlackPx + 0.01
-        ) {
-          cursor = null;
-          break;
-        }
-        if (
-          lineHasContent &&
-          ((item.isSealedInlineCodeFragment && (item.text.includes("/") || item.text.includes("\\"))) ||
-            item.text.endsWith("-") ||
-            item.isPathTailFragment)
+          ((!item.codePartStartsAfterWhitespace && item.text.endsWith("-")) ||
+            ((!item.codePartStartsAfterWhitespace &&
+              item.isSealedInlineCodeFragment &&
+              (item.text.includes("/") || item.text.includes("\\"))) ||
+              (!item.codePartStartsAfterWhitespace && item.isPathTailFragment)))
         ) {
           cursor = null;
           break;
@@ -637,10 +629,6 @@ export function measureInlineRunsHeight(params: {
         break;
       }
 
-      const plainAfterContinuedCodeSlackPx =
-        codeGroupId == null && lineStartedWithContinuedCode && !lineAcceptedPlainAfterContinuedCode
-          ? INLINE_CODE_WHOLE_GROUP_FIT_SLACK_PX
-          : 0;
       const availableWidth = Math.max(1, remainingWidth - reservedWidth);
       const styledStartLine: LayoutLine | null =
         codeGroupId == null &&
@@ -678,17 +666,13 @@ export function measureInlineRunsHeight(params: {
         codeGroupId == null &&
         cursor === null &&
         !item.startsAfterStyledTextSeam;
-      if (
-        allowWholeSegmentFastPath &&
-        item.fullWidth <= availableWidth + plainAfterContinuedCodeSlackPx + 0.01
-      ) {
+      if (allowWholeSegmentFastPath && item.fullWidth <= availableWidth + 0.01) {
         remainingWidth = Math.max(0, remainingWidth - reservedWidth - item.fullWidth);
         lineOnlyCodeGroupId = null;
         lastAcceptedCodeGroupId = null;
         lineLastCodeFragmentEndedWithHyphen = false;
         lineLastCodeFragmentEndedWithPathDelimiter = false;
         lineHasContent = true;
-        lineHeight = Math.max(lineHeight, item.lineHeight);
         lineAcceptedPlainAfterContinuedCode ||= codeGroupId == null && lineStartedWithContinuedCode;
         pendingSpaceWidth = 0;
         if (debugInlineCode) {
@@ -725,7 +709,6 @@ export function measureInlineRunsHeight(params: {
         codeGroupId != null && cursorsMatch(line.end, item.endCursor) && /[./\\]$/.test(item.text);
       lastAcceptedCodeGroupId = codeGroupId;
       lineHasContent = true;
-      lineHeight = Math.max(lineHeight, item.lineHeight);
       if (codeGroupId != null) {
         chargedCodeGroups.add(codeGroupId);
       } else {
@@ -756,7 +739,7 @@ export function measureInlineRunsHeight(params: {
       break;
     }
 
-    totalHeight += lineHeight;
+    totalHeight += params.typography.lineHeight;
     if (debugInlineCode) {
       debugLines.push(debugLine);
     }

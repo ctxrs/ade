@@ -47,26 +47,37 @@ export function SessionThreadPane({
   shortSizeAlign: PretextVirtualizerShortSizeAlign;
   children: ReactNode;
 }) {
+  const shouldRenderList = initialData.length > 0;
+
   return (
     <>
-      <SessionThreadMessageList
-        sessionId={sessionId}
-        isActive={isActive}
-        style={style}
-        initialData={initialData}
-        itemContent={itemContent}
-        itemIdentity={itemIdentity}
-        itemKey={itemKey}
-        increaseViewportBy={increaseViewportBy}
-        initialLocation={initialLocation}
-        threadProjectionOp={threadProjectionOp}
-        context={context}
-        onScroll={onScroll}
-        onRenderedDataChange={onRenderedDataChange}
-        methodsRef={methodsRef}
-        licenseKey={licenseKey}
-        shortSizeAlign={shortSizeAlign}
-      />
+      {shouldRenderList ? (
+        <SessionThreadMessageList
+          key={sessionId}
+          sessionId={sessionId}
+          isActive={isActive}
+          style={style}
+          initialData={initialData}
+          itemContent={itemContent}
+          itemIdentity={itemIdentity}
+          itemKey={itemKey}
+          increaseViewportBy={increaseViewportBy}
+          initialLocation={initialLocation}
+          threadProjectionOp={threadProjectionOp}
+          context={context}
+          onScroll={onScroll}
+          onRenderedDataChange={onRenderedDataChange}
+          methodsRef={methodsRef}
+          licenseKey={licenseKey}
+          shortSizeAlign={shortSizeAlign}
+        />
+      ) : (
+        <div
+          className="wb-session-thread-hydrating"
+          style={style}
+          aria-hidden="true"
+        />
+      )}
       <div className="wb-session-bottom">{children}</div>
     </>
   );

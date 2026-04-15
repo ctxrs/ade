@@ -68,7 +68,7 @@ export type WorkbenchAssistantStreamingParityMeasurement = {
 };
 
 export type WorkbenchTurnHeaderParityParams = {
-  plainText: string;
+  content: string;
   viewportWidth?: number;
 };
 
@@ -386,8 +386,7 @@ export async function measureWorkbenchTurnHeaderParity(
   const viewportWidth = params.viewportWidth ?? 820;
   const header: WorkbenchTurnHeader = {
     id: "turn-header-parity",
-    content: params.plainText,
-    plain_text: params.plainText,
+    content: params.content,
     attachments: [],
     created_at: "2026-04-10T00:00:00Z",
   };

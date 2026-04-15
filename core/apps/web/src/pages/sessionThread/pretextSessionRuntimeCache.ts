@@ -16,7 +16,7 @@ import {
 } from "../../utils/pretextPerfDiagnostics";
 import { getPretextVirtualizerRowLayout } from "./pretextVirtualizerRowLayout";
 
-export const SESSION_PRETEXT_OVERSCAN_PX = 480;
+export const SESSION_PRETEXT_OVERSCAN_PX = 2400;
 export const SESSION_PRETEXT_BOTTOM_THRESHOLD_PX = 16;
 
 type PlannedLayoutGetter = (
@@ -29,7 +29,7 @@ type PlannedLayoutGetter = (
   height: number;
 };
 
-type SessionPretextRuntimeRecord = {
+export type SessionPretextRuntimeRecord = {
   sessionId: string;
   core: ReturnType<typeof createPretextVirtualizerCore<WorkbenchListItem>>;
   callbacks: {

@@ -81,4 +81,17 @@ describe("pretext follow-bottom helpers", () => {
       ),
     ).toBe(true);
   });
+
+  it("keeps follow-bottom attached across item updates even before the pre-update snapshot settles near bottom", () => {
+    expect(
+      shouldFollowBottomOnItemsUpdate(
+        {
+          followBottom: true,
+          atBottom: false,
+        },
+        8450,
+        16,
+      ),
+    ).toBe(true);
+  });
 });

@@ -44,7 +44,7 @@ export type AssistantStreamingParityMeasurement = {
 };
 
 export type TurnHeaderParityParams = {
-  plainText: string;
+  content: string;
   viewportWidth?: number;
 };
 

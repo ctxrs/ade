@@ -6,21 +6,11 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
-  type MutableRefObject,
-  type ReactNode,
 } from "react";
 import {
-  type PretextVirtualizerDiagnosticEvent,
   type PretextVirtualizerLogicalAnchor,
   type PretextVirtualizerSnapshot,
 } from "@pretext-virtualizer/core";
-import type {
-  PretextVirtualizerItemLocation,
-  PretextVirtualizerListMethods,
-  PretextVirtualizerScrollLocation,
-  PretextVirtualizerShortSizeAlign,
-} from "@pretext-virtualizer/interface";
 import { PRETEXT_VIRTUALIZER_INITIAL_BOTTOM_LOCATION } from "../state/pretextVirtualizerViewportState";
 import {
   addPretextPerfBucket,
@@ -54,6 +44,7 @@ import {
   haveSameItemIds,
   haveSameLayoutInputs,
   isLocalizedProjectionOp,
+  resolveInteractionItemId,
   resolveLocalizedAnchorOverride,
   resolveScrollTopForLocation,
   syncSnapshotForProjectionOp,
@@ -62,26 +53,20 @@ import {
   clearSessionThreadDomMeasurementCaches,
   consumeSessionThreadDomMeasurementFallbackItemIds,
 } from "./sessionThread/sessionThreadDomMeasurement";
-import { noteSessionTranscriptWarmViewport } from "./sessionThread/sessionTranscriptWarmState";
+import {
+  noteSessionTranscriptWarmViewport,
+} from "./sessionThread/sessionTranscriptWarmState";
 import { usePretextTranscriptScrollbar } from "./sessionThread/usePretextTranscriptScrollbar";
-
-type SessionThreadPretextVirtualizerListProps = {
-  style: CSSProperties;
-  sessionId: string;
-  isActive: boolean;
-  listItems: WorkbenchListItem[];
-  threadProjectionOp: WorkbenchThreadProjectionOp;
-  initialLocation?: PretextVirtualizerItemLocation | null;
-  itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
-  itemKey: (item: WorkbenchListItem) => string;
-  context: WorkbenchMessageListContext;
-  onScroll?: (location: PretextVirtualizerScrollLocation) => void;
-  onRenderedDataChange?: (range: readonly WorkbenchListItem[]) => void;
-  onAtBottomChange?: (atBottom: boolean) => void;
-  onDiagnosticEvent?: (event: PretextVirtualizerDiagnosticEvent<WorkbenchListItem>) => void;
-  methodsRef?: MutableRefObject<PretextVirtualizerListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>;
-  shortSizeAlign?: PretextVirtualizerShortSizeAlign;
-};
+import type { SessionThreadPretextVirtualizerListProps } from "./SessionThreadMessageList.pretextVirtualizer.types";
+import {
+  createInitialSessionThreadPretextSnapshot,
+  isBottomOpenLocation,
+  isSnapshotReadyForDisplay,
+} from "./sessionThread/pretextVirtualizerDisplayState";
+import {
+  commitSessionThreadRuntimeSnapshot,
+  getRenderedItemsFromSnapshot,
+} from "./sessionThread/pretextVirtualizerRuntimeState";
 
 const BOTTOM_THRESHOLD_PX = SESSION_PRETEXT_BOTTOM_THRESHOLD_PX;
 const JUMP_TO_LATEST_THRESHOLD_PX = 200;
@@ -124,7 +109,6 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
   const pendingMismatchRemeasureIdsRef = useRef<Set<string>>(new Set());
   const mismatchRemeasureFrameRef = useRef<number | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
-
   listItemsRef.current = listItems;
   onScrollRef.current = onScroll;
   onRenderedDataChangeRef.current = onRenderedDataChange;
@@ -158,7 +142,6 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     [runtimeUiState],
   );
   runtimeUiStateLayoutKeyRef.current = runtimeUiStateLayoutKey;
-
   const runtime = useMemo(
     () =>
       getOrCreateSessionPretextRuntime(sessionId, {
@@ -174,10 +157,24 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     lastAppliedUiStateLayoutRevisionRef.current = runtimeUiStateLayoutRevision;
   }
 
-  const [snapshot, setSnapshot] = useState<PretextVirtualizerSnapshot<WorkbenchListItem>>(() => {
-    const preparedState = readSessionPretextRuntimePreparedState(runtime);
-    return preparedState.snapshot;
-  });
+  const [snapshot, setSnapshot] = useState<PretextVirtualizerSnapshot<WorkbenchListItem>>(() =>
+    createInitialSessionThreadPretextSnapshot({
+      runtime,
+      sessionId,
+      listItems,
+      uiState: runtimeUiState,
+      layoutKey: runtimeUiStateLayoutKey,
+    }),
+  );
+  const requireBottomAlignmentForDisplay = isBottomOpenLocation(initialLocation);
+  const [surfaceReady, setSurfaceReady] = useState(() =>
+    isSnapshotReadyForDisplay(
+      snapshot,
+      listItems.length,
+      requireBottomAlignmentForDisplay,
+      BOTTOM_THRESHOLD_PX,
+    ),
+  );
   snapshotRef.current = snapshot;
   const {
     scrollbarActive,
@@ -198,21 +195,12 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
   });
 
   const emitRenderedData = useCallback((nextSnapshot: PretextVirtualizerSnapshot<WorkbenchListItem>) => {
-    onRenderedDataChangeRef.current?.(
-      nextSnapshot.visibleItems.map((visibleItem) => listItemsRef.current[visibleItem.index] ?? visibleItem.item),
-    );
+    onRenderedDataChangeRef.current?.(getRenderedItemsFromSnapshot(nextSnapshot, listItemsRef.current));
   }, []);
 
   const commitRuntimeSnapshot = useCallback(
-    (
-      nextSnapshot: PretextVirtualizerSnapshot<WorkbenchListItem>,
-      nextItems: readonly WorkbenchListItem[] = readSessionPretextRuntimePreparedState(runtime).listItems,
-    ) => {
-      noteSessionPretextRuntimeSnapshot(runtime, nextSnapshot, nextItems);
-      noteSessionTranscriptWarmViewport({
-        width: nextSnapshot.viewportWidth,
-        height: nextSnapshot.viewportHeight,
-      });
+    (nextSnapshot: PretextVirtualizerSnapshot<WorkbenchListItem>, nextItems: readonly WorkbenchListItem[]) => {
+      commitSessionThreadRuntimeSnapshot(runtime, nextSnapshot, nextItems);
     },
     [runtime],
   );
@@ -247,8 +235,17 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
         nextItems?: readonly WorkbenchListItem[];
       },
     ) => {
+      const nextItems = options?.nextItems ?? readSessionPretextRuntimePreparedState(runtime).listItems;
       const scroller = containerRef.current;
       if (!scroller) {
+        setSurfaceReady(
+          isSnapshotReadyForDisplay(
+            nextSnapshot,
+            nextItems.length,
+            options?.followBottom ?? followBottomRef.current,
+            BOTTOM_THRESHOLD_PX,
+          ),
+        );
         setSnapshot(nextSnapshot);
         return;
       }
@@ -264,7 +261,15 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
         followBottomRef.current = options.followBottom;
       }
       lastScrollTopRef.current = targetTop;
-      commitRuntimeSnapshot(nextSnapshot, options?.nextItems ?? readSessionPretextRuntimePreparedState(runtime).listItems);
+      commitRuntimeSnapshot(nextSnapshot, nextItems);
+      setSurfaceReady(
+        isSnapshotReadyForDisplay(
+          nextSnapshot,
+          nextItems.length,
+          options?.followBottom ?? followBottomRef.current,
+          BOTTOM_THRESHOLD_PX,
+        ),
+      );
       setSnapshot(nextSnapshot);
       emitScrollState(nextSnapshot);
       if (Math.abs(scroller.scrollTop - targetTop) <= 1) {
@@ -325,7 +330,15 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
       const scroller = containerRef.current;
       if (!scroller) {
         const nextSnapshot = core.getSnapshot();
-        commitRuntimeSnapshot(nextSnapshot);
+        commitRuntimeSnapshot(nextSnapshot, listItemsRef.current);
+        setSurfaceReady(
+          isSnapshotReadyForDisplay(
+            nextSnapshot,
+            listItemsRef.current.length,
+            followBottomRef.current,
+            BOTTOM_THRESHOLD_PX,
+          ),
+        );
         setSnapshot(nextSnapshot);
         return nextSnapshot;
       }
@@ -335,7 +348,15 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
         scrollTop: scrollTopOverride ?? scroller.scrollTop,
       });
       lastScrollTopRef.current = scroller.scrollTop;
-      commitRuntimeSnapshot(nextSnapshot);
+      commitRuntimeSnapshot(nextSnapshot, listItemsRef.current);
+      setSurfaceReady(
+        isSnapshotReadyForDisplay(
+          nextSnapshot,
+          listItemsRef.current.length,
+          followBottomRef.current,
+          BOTTOM_THRESHOLD_PX,
+        ),
+      );
       setSnapshot(nextSnapshot);
       emitScrollState(nextSnapshot);
       return nextSnapshot;
@@ -414,6 +435,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
   useLayoutEffect(() => {
     followBottomRef.current =
       initialLocation?.index === "LAST" && (initialLocation.align ?? "start") === "end";
+    setSurfaceReady(false);
     pendingProgrammaticTopRef.current = null;
     pendingProgrammaticBehaviorRef.current = "auto";
     pendingRestoreRef.current = false;
@@ -425,7 +447,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     const scroller = containerRef.current;
     if (!scroller) {
       const nextSnapshot = core.getSnapshot();
-      commitRuntimeSnapshot(nextSnapshot);
+      commitRuntimeSnapshot(nextSnapshot, currentItems);
       setSnapshot(nextSnapshot);
       return;
     }
@@ -777,7 +799,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
       thresholdPx: BOTTOM_THRESHOLD_PX,
       programmaticScroll,
     });
-    commitRuntimeSnapshot(nextSnapshot);
+    commitRuntimeSnapshot(nextSnapshot, listItemsRef.current);
     setSnapshot(nextSnapshot);
     emitScrollState(nextSnapshot);
   }, [commitRuntimeSnapshot, core, emitScrollState, showScrollbarTemporarily]);
@@ -789,19 +811,13 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     showScrollbarTemporarily();
   }, [showScrollbarTemporarily]);
 
-  const noteInteractionItem = useCallback((target: EventTarget | null) => {
-    if (!(target instanceof Element)) return;
-    const owner = target.closest<HTMLElement>("[data-thread-item-id]");
-    lastInteractedItemIdRef.current = owner?.dataset.threadItemId ?? null;
+  const handleClickCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    lastInteractedItemIdRef.current = resolveInteractionItemId(event.target);
   }, []);
 
-  const handleClickCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    noteInteractionItem(event.target);
-  }, [noteInteractionItem]);
-
   const handleKeyDownCapture = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    noteInteractionItem(event.target);
-  }, [noteInteractionItem]);
+    lastInteractedItemIdRef.current = resolveInteractionItemId(event.target);
+  }, []);
 
   const pretextVirtualizerMethods = useMemo<PretextVirtualizerListMethods<WorkbenchListItem, WorkbenchMessageListContext>>(
     () => ({
@@ -871,6 +887,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
           inset: 0,
           width: "auto",
           minWidth: 0,
+          visibility: surfaceReady ? "visible" : "hidden",
         }}
         className="wb-thread-scroller"
         role="list"

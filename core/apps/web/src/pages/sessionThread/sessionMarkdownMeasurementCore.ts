@@ -1,18 +1,24 @@
-import {
-  layout,
-  layoutNextLine,
-  prepare,
-  prepareWithSegments,
-  type LayoutCursor,
-  type PreparedText,
-  type PreparedTextWithSegments,
-} from "@chenglou/pretext";
-import { hashPretextPerfValue, incrementPretextPerfCounter } from "../../utils/pretextPerfDiagnostics";
+import type { LayoutCursor } from "@chenglou/pretext";
+import { incrementPretextPerfCounter } from "../../utils/pretextPerfDiagnostics";
 import {
   createSessionMarkdownDocument,
   type SessionMarkdownDocument,
   type SessionMarkdownInlineRun,
 } from "./sessionMarkdownContract";
+import {
+  buildPreparedContentKey,
+  clampHeight,
+  clearSessionTextMeasurementCaches,
+  getPreparedText,
+  getPreparedTextWithSegments,
+  measureCollapsedSpaceWidth,
+  measureSingleLineLayout,
+  measureTextHeight,
+  normalizeHeight,
+  pruneCache,
+  segmentGraphemes,
+  type TextWhiteSpace,
+} from "./sessionTextMeasurement";
 import {
   SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY,
   SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX,
@@ -25,7 +31,6 @@ import {
   SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY,
 } from "./sessionThreadLayoutTokens";
 
-export const PREPARED_CACHE_LIMIT = 4000;
 const AST_CACHE_LIMIT = 1000;
 
 export const BODY_LINE_HEIGHT_PX = SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX;
@@ -41,14 +46,11 @@ export const CODE_BLOCK_VERTICAL_PADDING_PX =
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_TOP_PX +
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_BOTTOM_PX;
 export const LINE_START_CURSOR: LayoutCursor = { segmentIndex: 0, graphemeIndex: 0 };
-const UNBOUNDED_WIDTH_PX = 100_000;
 const BODY_STRONG_FONT_WEIGHT = 700;
 const HEADING_FONT_WEIGHT = 600;
 const HEADING_STRONG_FONT_WEIGHT = 700;
 const TABLE_HEADER_FONT_WEIGHT = 600;
 const TABLE_HEADER_STRONG_FONT_WEIGHT = 700;
-
-export type TextWhiteSpace = "normal" | "pre-wrap";
 
 export type TextBlockTypography = {
   body: string;
@@ -93,22 +95,7 @@ export type SessionMarkdownDebugWindow = Window & {
   };
 };
 
-const preparedCache = new Map<string, PreparedText>();
-const preparedSegmentsCache = new Map<string, PreparedTextWithSegments>();
 const markdownDocumentCache = new Map<string, SessionMarkdownDocument>();
-const collapsedSpaceWidthCache = new Map<string, number>();
-export const plainTextBlockHeightCache = new Map<string, number>();
-
-export const clampHeight = (value: number): number =>
-  Number.isFinite(value) && value > 0 ? Math.max(1, value) : 1;
-
-export const normalizeHeight = (value: number): number =>
-  Math.round(clampHeight(value) * 16) / 16;
-
-const graphemeSegmenter =
-  typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
-    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
-    : null;
 
 const buildBodyFont = (weight: number, italic = false): string =>
   `${italic ? "italic " : ""}${weight} ${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`;
@@ -151,73 +138,19 @@ export function buildHeadingTypography(depth: number): TextBlockTypography {
   };
 }
 
-export function pruneCache<T>(cache: Map<string, T>, limit: number) {
-  while (cache.size > limit) {
-    const oldestKey = cache.keys().next().value;
-    if (typeof oldestKey !== "string") break;
-    cache.delete(oldestKey);
-  }
-}
-
-export function getPreparedText(
-  cacheKey: string,
-  text: string,
-  font: string,
-  whiteSpace: TextWhiteSpace,
-): PreparedText {
-  const cached = preparedCache.get(cacheKey);
-  if (cached) {
-    incrementPretextPerfCounter("pretext_markdown_prepared_text_hit");
-    return cached;
-  }
-  incrementPretextPerfCounter("pretext_markdown_prepared_text_miss");
-  const prepared = prepare(text, font, whiteSpace === "pre-wrap" ? { whiteSpace } : undefined);
-  preparedCache.set(cacheKey, prepared);
-  pruneCache(preparedCache, PREPARED_CACHE_LIMIT);
-  return prepared;
-}
-
-export function getPreparedTextWithSegments(
-  cacheKey: string,
-  text: string,
-  font: string,
-  whiteSpace: TextWhiteSpace,
-): PreparedTextWithSegments {
-  const cached = preparedSegmentsCache.get(cacheKey);
-  if (cached) {
-    incrementPretextPerfCounter("pretext_markdown_prepared_segments_hit");
-    return cached;
-  }
-  incrementPretextPerfCounter("pretext_markdown_prepared_segments_miss");
-  const prepared = prepareWithSegments(text, font, whiteSpace === "pre-wrap" ? { whiteSpace } : undefined);
-  preparedSegmentsCache.set(cacheKey, prepared);
-  pruneCache(preparedSegmentsCache, PREPARED_CACHE_LIMIT);
-  return prepared;
-}
-
-export function measureTextHeight(params: {
-  cacheKey: string;
-  text: string;
-  font: string;
-  width: number;
-  lineHeight: number;
-  whiteSpace?: TextWhiteSpace;
-}): number {
-  const whiteSpace = params.whiteSpace ?? "normal";
-  const prepared = getPreparedText(params.cacheKey, params.text, params.font, whiteSpace);
-  return clampHeight(layout(prepared, Math.max(1, params.width), params.lineHeight).height);
-}
-
-export function measureSessionTextHeight(params: {
-  cacheKey: string;
-  text: string;
-  font: string;
-  width: number;
-  lineHeight: number;
-  whiteSpace?: TextWhiteSpace;
-}): number {
-  return normalizeHeight(measureTextHeight(params));
-}
+export {
+  buildPreparedContentKey,
+  clampHeight,
+  getPreparedText,
+  getPreparedTextWithSegments,
+  measureCollapsedSpaceWidth,
+  measureSingleLineLayout,
+  measureTextHeight,
+  normalizeHeight,
+  pruneCache,
+  segmentGraphemes,
+};
+export type { TextWhiteSpace };
 
 export function parseMarkdown(content: string): SessionMarkdownDocument {
   const cached = markdownDocumentCache.get(content);
@@ -253,36 +186,6 @@ export function cursorsMatch(a: LayoutCursor, b: LayoutCursor): boolean {
   return a.segmentIndex === b.segmentIndex && a.graphemeIndex === b.graphemeIndex;
 }
 
-export function measureSingleLineLayout(prepared: PreparedTextWithSegments) {
-  return layoutNextLine(prepared, LINE_START_CURSOR, UNBOUNDED_WIDTH_PX);
-}
-
-export function measureCollapsedSpaceWidth(font: string): number {
-  const cached = collapsedSpaceWidthCache.get(font);
-  if (cached != null) {
-    return cached;
-  }
-  const joined = measureSingleLineLayout(
-    getPreparedTextWithSegments(`collapsed-space:${font}:joined`, "A A", font, "normal"),
-  );
-  const compact = measureSingleLineLayout(
-    getPreparedTextWithSegments(`collapsed-space:${font}:compact`, "AA", font, "normal"),
-  );
-  const width = Math.max(0, (joined?.width ?? 0) - (compact?.width ?? 0));
-  collapsedSpaceWidthCache.set(font, width);
-  return width;
-}
-
-export function buildPreparedContentKey(prefix: string, text: string): string {
-  return `${prefix}:${text.length}:${hashPretextPerfValue(text)}`;
-}
-
-export function segmentGraphemes(text: string): string[] {
-  if (!text) return [];
-  if (!graphemeSegmenter) return Array.from(text);
-  return Array.from(graphemeSegmenter.segment(text), (segment) => segment.segment);
-}
-
 export function measureInlineSpaceWidth(
   cacheKey: string,
   text: string,
@@ -294,9 +197,6 @@ export function measureInlineSpaceWidth(
 }
 
 export function clearSessionMarkdownMeasurementCaches(): void {
-  preparedCache.clear();
-  preparedSegmentsCache.clear();
+  clearSessionTextMeasurementCaches();
   markdownDocumentCache.clear();
-  collapsedSpaceWidthCache.clear();
-  plainTextBlockHeightCache.clear();
 }

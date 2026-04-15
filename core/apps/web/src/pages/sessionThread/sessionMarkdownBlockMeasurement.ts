@@ -214,16 +214,12 @@ function measureTable(block: Extract<SessionMarkdownBlock, { kind: "table" }>, w
   const totalBorderWidth = borderWidthPx * (columnCount + 1);
   const totalCellPaddingInlineWidth = columnCount * cellPaddingInlinePx * 2;
   const availableContentWidth = Math.max(
-    columnCount,
-    Math.floor(Math.max(1, width) - totalBorderWidth - totalCellPaddingInlineWidth),
+    1,
+    Math.max(1, width) - totalBorderWidth - totalCellPaddingInlineWidth,
   );
-  const baseColumnWidth = Math.floor(availableContentWidth / columnCount);
-  let remainderWidth = availableContentWidth - baseColumnWidth * columnCount;
-  const columnContentWidths = Array.from({ length: columnCount }, () => {
-    const widthPx = Math.max(1, baseColumnWidth + (remainderWidth > 0 ? 1 : 0));
-    remainderWidth = Math.max(0, remainderWidth - 1);
-    return widthPx;
-  });
+  const columnContentWidths = Array.from({ length: columnCount }, () =>
+    Math.max(1, availableContentWidth / columnCount),
+  );
 
   let height = borderWidthPx;
   for (let rowIndex = 0; rowIndex < block.rows.length; rowIndex += 1) {

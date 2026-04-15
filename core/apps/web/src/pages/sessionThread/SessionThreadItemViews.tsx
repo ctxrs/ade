@@ -33,7 +33,7 @@ import {
   truncateMiddle,
 } from "../sessionView";
 import type { ThreadItem, WorkbenchTurnHeader } from "../sessionView";
-import { isExpandableMessageContent } from "./transcriptRowLayoutModel";
+import { canCollapseMessageContent, getCollapsedMessageContent } from "./transcriptRowLayoutModel";
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -113,7 +113,7 @@ export const ThreadItemView = memo(function ThreadItemView({
           attachments={item.attachments}
           worktreeId={worktreeId}
           onFileOpenError={onFileOpenError}
-          expanded={messageExpanded ?? !isExpandableMessageContent(item.content)}
+          expanded={messageExpanded ?? !canCollapseMessageContent(item.content)}
           onToggleExpanded={onToggleMessageExpanded}
         />
       );
@@ -254,10 +254,9 @@ function CollapsibleMessage({
   expanded: boolean;
   onToggleExpanded?: (expanded: boolean) => void;
 }) {
-  const lines = (content || "").split("\n");
-  const isLong = isExpandableMessageContent(content);
-  const canToggle = isLong && typeof onToggleExpanded === "function";
-  const shown = expanded ? content : lines.slice(0, 20).join("\n");
+  const canCollapse = canCollapseMessageContent(content);
+  const canToggle = canCollapse && typeof onToggleExpanded === "function";
+  const shown = expanded || !canCollapse ? content : getCollapsedMessageContent(content);
 
   return (
     <div className="wb-message-row">

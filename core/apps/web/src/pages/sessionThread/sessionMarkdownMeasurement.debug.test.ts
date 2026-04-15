@@ -89,6 +89,24 @@ describe("sessionMarkdownMeasurement debug", () => {
           "| browser | `turn-header/blockquote/blockquote/src/web/e2e/workbenchShell` | composer stream deterministic fragment token marker delta |",
         ].join("\n"),
       },
+      {
+        name: "md14-table-heading-blockquote-540",
+        width: 540,
+        markdown: [
+          "| Kind | Token | Note |",
+          "|---|---|---|",
+          "| agent | `apps/e2e/e2e/core/web/pretextVirtualizerRowLayout.ts` | entry agent virtualizer browser |",
+          "| fragment session | `pnpm -C core/apps/web test:e2e:pretext:parity:webkit` | entry header fragment virtualizer summary fragment thread composer |",
+          "",
+          "## Context browser",
+          "",
+          "Entry probe browser ~~session~~ *marker layout fragment* 🙂 你好 世界.",
+          "",
+          "> Turn padding stream ~~summary~~ 🙂 段落 換行 **thread** [inline](https://example.com/assistant/transcript?ref=259);",
+          ">",
+          "> Padding composer render **context** ~~deterministic~~ `pnpm -C core/apps/web test:e2e:pretext:parity:webkit` summary delta *render agent inline*.",
+        ].join("\n"),
+      },
     ] as const;
 
     for (const probe of probes) {

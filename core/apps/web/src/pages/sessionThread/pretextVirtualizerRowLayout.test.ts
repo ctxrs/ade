@@ -98,7 +98,6 @@ import {
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_BORDER_WIDTH_PX,
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_BOTTOM_PX,
   SESSION_THREAD_MARKDOWN_CODE_BLOCK_PADDING_TOP_PX,
-  SESSION_THREAD_MARKDOWN_INLINE_CODE_LINE_HEIGHT_PREMIUM_PX,
   SESSION_THREAD_TURN_HEADER_BUBBLE_BORDER_WIDTH_PX,
   SESSION_THREAD_TURN_HEADER_BUBBLE_PADDING_INLINE_PX,
   SESSION_THREAD_TURN_HEADER_COPY_GUTTER_PX,
@@ -285,22 +284,12 @@ describe("getPretextVirtualizerRowLayout", () => {
     ).toBe(true);
   });
 
-  it("budgets the deterministic inline-code line-height premium for wrapped markdown lines", () => {
+  it("uses the shared body line-height for wrapped markdown lines with inline code", () => {
     const markdown = "`abcd` `efgh` `ijkl`";
 
     const height = measureSessionMarkdownDocument(markdown, 50);
 
-    expect(height).toBe(
-      Math.round(
-        3 *
-          (Math.max(
-            SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
-            SESSION_THREAD_MARKDOWN_CODE_BLOCK_LINE_HEIGHT_PX,
-          ) +
-            SESSION_THREAD_MARKDOWN_INLINE_CODE_LINE_HEIGHT_PREMIUM_PX) *
-          16,
-      ) / 16,
-    );
+    expect(height).toBe(Math.round(3 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
   });
 
   it("treats markdown hard breaks as forced line breaks in wide paragraphs", () => {
@@ -377,17 +366,7 @@ describe("getPretextVirtualizerRowLayout", () => {
   it("keeps sealed inline-code fragments atomic when they exceed the available line width", () => {
     const height = measureSessionMarkdownDocument("`web/pretextVirtualizerRowLayout.ts`", 80);
 
-    expect(height).toBe(
-      Math.round(
-        2 *
-          (Math.max(
-            SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
-            SESSION_THREAD_MARKDOWN_CODE_BLOCK_LINE_HEIGHT_PX,
-          ) +
-            SESSION_THREAD_MARKDOWN_INLINE_CODE_LINE_HEIGHT_PREMIUM_PX) *
-          16,
-      ) / 16,
-    );
+    expect(height).toBe(Math.round(2 * SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 16) / 16);
   });
 
   it("treats soft newlines inside mixed inline paragraphs like collapsed spaces", () => {
@@ -465,6 +444,18 @@ describe("getPretextVirtualizerRowLayout", () => {
       text: "alpha supercalifragilistic",
       font: `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`,
       width: 100,
+      lineHeight: SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
+    });
+
+    expect(height).toBe(SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX * 2);
+  });
+
+  it("continues delimited turn-header path tokens on the current line when break-word is required", () => {
+    const height = measureSessionPlainTextBlockHeight({
+      cacheKey: "turn-header-delimited-break-word-continuation",
+      text: "alpha beta/gamma",
+      font: `${SESSION_THREAD_MARKDOWN_BODY_FONT_SIZE_PX}px ${SESSION_THREAD_MARKDOWN_BODY_FONT_FAMILY}`,
+      width: 60,
       lineHeight: SESSION_THREAD_MARKDOWN_BODY_LINE_HEIGHT_PX,
     });
 

@@ -141,7 +141,7 @@ const TURN_HEADER_CORPUS = [
   {
     name: "url-heavy",
     params: {
-      plainText: [
+      content: [
         "- https://example.com/a/really/long/path/that/keeps/wrapping?token=12345 should not drift when wrapped inside the turn header bubble.",
         "- Follow-up line with /Users/example-user/.ctx/worktrees/00000000-0000-4000-8000-000000000001 path pressure.",
       ].join("\n"),
@@ -150,7 +150,7 @@ const TURN_HEADER_CORPUS = [
   {
     name: "multiline-wrap",
     params: {
-      plainText: [
+      content: [
         "Need follow-up on the long transcript planner path and the completion row interaction.",
         "Also verify that narrow widths keep the header height in sync after wrap pressure.",
       ].join("\n"),

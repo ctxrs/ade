@@ -48,14 +48,15 @@ export function getPreparedText(
   font: string,
   whiteSpace: TextWhiteSpace,
 ): PreparedText {
-  const cached = preparedCache.get(cacheKey);
+  const preparedCacheKey = `${cacheKey}:${font}:${whiteSpace}`;
+  const cached = preparedCache.get(preparedCacheKey);
   if (cached) {
     incrementPretextPerfCounter("pretext_markdown_prepared_text_hit");
     return cached;
   }
   incrementPretextPerfCounter("pretext_markdown_prepared_text_miss");
   const prepared = prepare(text, font, whiteSpace === "pre-wrap" ? { whiteSpace } : undefined);
-  preparedCache.set(cacheKey, prepared);
+  preparedCache.set(preparedCacheKey, prepared);
   pruneCache(preparedCache, SESSION_TEXT_MEASUREMENT_CACHE_LIMIT);
   return prepared;
 }
@@ -66,19 +67,20 @@ export function getPreparedTextWithSegments(
   font: string,
   whiteSpace: TextWhiteSpace,
 ): PreparedTextWithSegments {
-  const cached = preparedSegmentsCache.get(cacheKey);
+  const preparedCacheKey = `${cacheKey}:${font}:${whiteSpace}`;
+  const cached = preparedSegmentsCache.get(preparedCacheKey);
   if (cached) {
     incrementPretextPerfCounter("pretext_markdown_prepared_segments_hit");
     return cached;
   }
   incrementPretextPerfCounter("pretext_markdown_prepared_segments_miss");
   const prepared = prepareWithSegments(text, font, whiteSpace === "pre-wrap" ? { whiteSpace } : undefined);
-  preparedSegmentsCache.set(cacheKey, prepared);
+  preparedSegmentsCache.set(preparedCacheKey, prepared);
   pruneCache(preparedSegmentsCache, SESSION_TEXT_MEASUREMENT_CACHE_LIMIT);
   return prepared;
 }
 
-function measureTextHeight(params: {
+export function measureTextHeight(params: {
   cacheKey: string;
   text: string;
   font: string;

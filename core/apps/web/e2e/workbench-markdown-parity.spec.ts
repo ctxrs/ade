@@ -156,3 +156,41 @@ test("workbench: normal markdown selection text includes explicit list markers",
   expect(selectionText).toContain("•");
   expect(selectionText).toContain("bullet item");
 });
+
+test("workbench: markdown fuzz anchor samples stay in parity", async ({ page }) => {
+  test.setTimeout(120000);
+  await openEmptyWorkspace(page);
+
+  const samples: MarkdownSample[] = [
+    {
+      name: "generated-md-9-list-fence",
+      markdown:
+        "- Context virtualizer virtualizer *probe* agent turn parity [summary](https://example.com/inline-code/virtualizer/transcript/measurement?ref=747).\n- Pretext browser **browser delta** `web/inline-code/src/apps/e2e/blockquote/inline-code` 📏 你好 世界 summary fragment browser entry [message layout parity](https://example.com/assistant/assistant/transcript?ref=833) ~~marker~~:\n- Token summary 🙂 段落 換行 [session context header](https://example.com/streaming-tail/webkit/streaming-tail/measurement?ref=907) `blockquote/fixtures/pretextVirtualizerRowLayout.ts/blockquote/core/web` [token parity inline](https://example.com/parity/inline-code/webkit?ref=309):\n- Render agent marker session ~~pretext header~~ *render session* summary entry message layout *token shell fragment* *summary buffer token* composer stream browser summary turn parity.\n\n```ts\nconst token = 'render-render-entry';\nconsole.log('turn-header/sessionThread/sessionThreadDomMeasurement.tsx/workbenchShell/pages/pretextVirtualizerRowLayout.ts/src', token);\n```",
+    },
+    {
+      name: "generated-md-14-table-heading-blockquote",
+      markdown: [
+        "| Kind | Token | Note |",
+        "|---|---|---|",
+        "| agent | `apps/e2e/e2e/core/web/pretextVirtualizerRowLayout.ts` | entry agent virtualizer browser |",
+        "| fragment session | `pnpm -C core/apps/web test:e2e:pretext:parity:webkit` | entry header fragment virtualizer summary fragment thread composer |",
+        "",
+        "## Context browser",
+        "",
+        "Entry probe browser ~~session~~ *marker layout fragment* 🙂 你好 世界.",
+        "",
+        "> Turn padding stream ~~summary~~ 🙂 段落 換行 **thread** [inline](https://example.com/assistant/transcript?ref=259);",
+        ">",
+        "> Padding composer render **context** ~~deterministic~~ `pnpm -C core/apps/web test:e2e:pretext:parity:webkit` summary delta *render agent inline*.",
+      ].join("\n"),
+    },
+  ];
+
+  const result = await measureMarkdownParity(page, samples, 540);
+  for (const sample of result) {
+    expect(
+      Math.abs(sample.delta),
+      `${sample.name} drifted by ${sample.delta}px (planned ${sample.planned}, actual ${sample.actual})`,
+    ).toBeLessThanOrEqual(0.5);
+  }
+});

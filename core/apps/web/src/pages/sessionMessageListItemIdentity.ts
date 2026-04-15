@@ -4,8 +4,6 @@ import {
   getWorkbenchMessageLayoutState,
   getWorkbenchTurnHeaderDisplayPlainText,
   getWorkbenchTurnHeaderLayoutState,
-  isExpandableMessageContent,
-  isExpandableTurnHeaderPlainText,
   resolveWorkbenchMessageExpandedFromContent,
 } from "./sessionThread/transcriptRowLayoutModel";
 
@@ -133,10 +131,14 @@ export function getWorkbenchListItemHeightRevision(
     case "message":
       {
         const layout = getWorkbenchMessageLayoutState(item, uiState.expandedMessageById);
+        const contentRevision = fingerprintString(layout.shownContent);
+        const attachmentRevision = fingerprintAttachmentLayout(item.attachments);
         if (!layout.expandable) {
-          return `message:fixed:${fingerprintString(item.content)}:${fingerprintAttachmentLayout(item.attachments)}`;
+          return `message:fixed:${contentRevision}:${attachmentRevision}`;
         }
-        return layout.expanded ? "message:expanded" : "message:collapsed";
+        return layout.expanded
+          ? `message:expanded:${contentRevision}:${attachmentRevision}`
+          : `message:collapsed:${contentRevision}:${attachmentRevision}`;
       }
     case "turn_header":
       {

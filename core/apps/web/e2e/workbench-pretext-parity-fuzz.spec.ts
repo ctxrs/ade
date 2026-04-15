@@ -202,7 +202,7 @@ test("workbench: pretext generated transcript row fuzz parity", async ({ page },
         kind: "turn_header",
         width,
         name: sample.name,
-        content: sample.params.plainText,
+        content: sample.params.content,
         ...measurement,
       });
     }

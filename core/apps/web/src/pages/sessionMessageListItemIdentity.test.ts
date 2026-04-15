@@ -31,14 +31,14 @@ describe("sessionMessageListItemIdentity", () => {
     };
 
     expect(resolveWorkbenchMessageExpanded(item, baseUiState.expandedMessageById)).toBe(false);
-    expect(getWorkbenchListItemKey(item, baseUiState)).toBe("message-1:message:collapsed");
+    expect(getWorkbenchListItemKey(item, baseUiState)).toContain("message-1:message:collapsed:");
 
     const expandedUiState: WorkbenchMessageListUiState = {
       ...baseUiState,
       expandedMessageById: { "message-1": true },
     };
     expect(resolveWorkbenchMessageExpanded(item, expandedUiState.expandedMessageById)).toBe(true);
-    expect(getWorkbenchListItemKey(item, expandedUiState)).toBe("message-1:message:expanded");
+    expect(getWorkbenchListItemKey(item, expandedUiState)).toContain("message-1:message:expanded:");
   });
 
   it("keeps short messages fixed", () => {
@@ -53,6 +53,75 @@ describe("sessionMessageListItemIdentity", () => {
 
     expect(resolveWorkbenchMessageExpanded(item, baseUiState.expandedMessageById)).toBe(true);
     expect(getWorkbenchListItemKey(item, baseUiState)).toContain("message-1:message:fixed:");
+  });
+
+  it("changes expandable message height keys when visible content or attachments change", () => {
+    const content = Array.from({ length: 24 }, (_, index) => `line ${index + 1}`).join("\n");
+    const baseItem: Extract<WorkbenchListItem, { kind: "message" }> = {
+      kind: "message",
+      id: "message-1",
+      role: "user",
+      content,
+      attachments: [],
+      created_at: "2025-01-01T00:00:00.000Z",
+    };
+    const attachmentItem: Extract<WorkbenchListItem, { kind: "message" }> = {
+      ...baseItem,
+      attachments: [{ kind: "image_ref", blob_id: "blob-1", mime_type: "image/png", name: "one.png" }],
+    };
+    const visibleContentItem: Extract<WorkbenchListItem, { kind: "message" }> = {
+      ...baseItem,
+      content: `${content}\nline 25`,
+    };
+
+    expect(getWorkbenchListItemKey(baseItem, baseUiState)).not.toBe(
+      getWorkbenchListItemKey(attachmentItem, baseUiState),
+    );
+    expect(getWorkbenchListItemSizeCacheKey(baseItem, baseUiState)).not.toBe(
+      getWorkbenchListItemSizeCacheKey(attachmentItem, baseUiState),
+    );
+    expect(getWorkbenchListItemKey(baseItem, baseUiState)).toBe(
+      getWorkbenchListItemKey(visibleContentItem, baseUiState),
+    );
+
+    const expandedUiState: WorkbenchMessageListUiState = {
+      ...baseUiState,
+      expandedMessageById: { "message-1": true },
+    };
+    expect(getWorkbenchListItemKey(baseItem, expandedUiState)).not.toBe(
+      getWorkbenchListItemKey(visibleContentItem, expandedUiState),
+    );
+    expect(getWorkbenchListItemSizeCacheKey(baseItem, expandedUiState)).not.toBe(
+      getWorkbenchListItemSizeCacheKey(visibleContentItem, expandedUiState),
+    );
+  });
+
+  it("treats long wrapped messages with unchanged collapsed content as fixed-height identity", () => {
+    const content = ["this invented museum display report describes several scenes in a miniature railway room", "", "wrapped paragraph ".repeat(160)].join("\n");
+    const item: Extract<WorkbenchListItem, { kind: "message" }> = {
+      kind: "message",
+      id: "message-wrapped",
+      role: "user",
+      content,
+      attachments: [
+        { kind: "image_ref", blob_id: "blob-1", mime_type: "image/png", name: "one.png" },
+        { kind: "image_ref", blob_id: "blob-2", mime_type: "image/png", name: "two.png" },
+        { kind: "image_ref", blob_id: "blob-3", mime_type: "image/png", name: "three.png" },
+      ],
+      created_at: "2025-01-01T00:00:00.000Z",
+    };
+    const expandedUiState: WorkbenchMessageListUiState = {
+      ...baseUiState,
+      expandedMessageById: { "message-wrapped": true },
+    };
+
+    expect(resolveWorkbenchMessageExpanded(item, baseUiState.expandedMessageById)).toBe(true);
+    expect(resolveWorkbenchMessageExpanded(item, expandedUiState.expandedMessageById)).toBe(true);
+    expect(getWorkbenchListItemKey(item, baseUiState)).toContain("message-wrapped:message:fixed:");
+    expect(getWorkbenchListItemKey(item, baseUiState)).toBe(getWorkbenchListItemKey(item, expandedUiState));
+    expect(getWorkbenchListItemSizeCacheKey(item, baseUiState)).toBe(
+      getWorkbenchListItemSizeCacheKey(item, expandedUiState),
+    );
   });
 
   it("uses header expansion state only for long turn headers", () => {

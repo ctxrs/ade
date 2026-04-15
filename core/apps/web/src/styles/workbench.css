@@ -3265,7 +3265,7 @@
 }
 
 .wb-turn-header-collapsed .wb-turn-header-content {
-  max-height: calc(1.45em * 3.5);
+  max-height: var(--wb-turn-header-collapsed-max-height);
   overflow: hidden;
   -webkit-mask-image: linear-gradient(var(--surface-contrast) 75%, transparent);
   mask-image: linear-gradient(var(--surface-contrast) 75%, transparent);

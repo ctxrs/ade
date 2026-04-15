@@ -56,5 +56,8 @@ export function shouldFollowBottomOnItemsUpdate(
   bottomOffsetPx: number,
   thresholdPx: number,
 ): boolean {
-  return isBottomAttached(params) && bottomOffsetPx <= thresholdPx;
+  if (params.followBottom) {
+    return true;
+  }
+  return params.atBottom && bottomOffsetPx <= thresholdPx;
 }

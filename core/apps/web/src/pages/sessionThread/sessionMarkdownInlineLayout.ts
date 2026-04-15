@@ -6,7 +6,6 @@ import {
 import type { SessionMarkdownInlineRun } from "./sessionMarkdownContract";
 import {
   LINE_START_CURSOR,
-  MONO_LINE_HEIGHT_PX,
   buildPreparedContentKey,
   getPreparedTextWithSegments,
   measureCollapsedSpaceWidth,
@@ -20,7 +19,6 @@ import {
   SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_FAMILY,
   SESSION_THREAD_MARKDOWN_INLINE_CODE_FONT_SIZE_PX,
   SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX,
-  SESSION_THREAD_MARKDOWN_INLINE_CODE_LINE_HEIGHT_PREMIUM_PX,
 } from "./sessionThreadLayoutTokens";
 
 const INLINE_CODE_MIN_START_GRAPHEMES = 4;
@@ -35,6 +33,7 @@ export type PreparedInlineLayoutItem =
       codeGroupHasTrailingText: boolean;
       codeGroupIsOnlyInlineCodeInSegment: boolean;
       codeGroupStartsAfterText: boolean;
+      codePartStartsAfterWhitespace: boolean;
       chromeWidth: number;
       endCursor: { segmentIndex: number; graphemeIndex: number };
       fullWidth: number;
@@ -43,7 +42,6 @@ export type PreparedInlineLayoutItem =
       isFirstPathFragmentAfterHyphenRun: boolean;
       isPathTailFragment: boolean;
       isSealedInlineCodeFragment: boolean;
-      lineHeight: number;
       minStartTextWidth: number;
       prefersFreshLineStart: boolean;
       startsStyledTextAfterInlineCodeSeam: boolean;
@@ -79,7 +77,6 @@ function pushTextRunItems(
   params: {
     text: string;
     font: string;
-    lineHeight: number;
     cacheKeyPrefix: string;
     collapsedSpaceWidth: number;
     startsStyledTextAfterInlineCodeSeam: boolean;
@@ -123,6 +120,7 @@ function pushTextRunItems(
         codeGroupHasTrailingText: false,
         codeGroupIsOnlyInlineCodeInSegment: false,
         codeGroupStartsAfterText: false,
+        codePartStartsAfterWhitespace: false,
         chromeWidth: 0,
         endCursor: wholeLine.end,
         fullWidth: wholeLine.width,
@@ -131,7 +129,6 @@ function pushTextRunItems(
         isFirstPathFragmentAfterHyphenRun: false,
         isPathTailFragment: false,
         isSealedInlineCodeFragment: false,
-        lineHeight: params.lineHeight,
         minStartTextWidth: 0,
         prefersFreshLineStart: false,
         startsStyledTextAfterInlineCodeSeam: params.startsStyledTextAfterInlineCodeSeam,
@@ -200,9 +197,6 @@ export function prepareInlineLayoutItems(params: {
 }): PreparedInlineLayoutItem[] {
   const items: PreparedInlineLayoutItem[] = [];
   const inlineCodeFont = resolveInlineCodeFont(params.typography.body);
-  const inlineCodeLineHeight =
-    Math.max(params.typography.lineHeight, MONO_LINE_HEIGHT_PX) +
-    SESSION_THREAD_MARKDOWN_INLINE_CODE_LINE_HEIGHT_PREMIUM_PX;
   const runHasRenderableText = (run: SessionMarkdownInlineRun): boolean =>
     run.kind === "text" && /\S/.test(run.text);
   const textRunStartsAfterStyledTextSeam = (
@@ -389,6 +383,7 @@ export function prepareInlineLayoutItems(params: {
             codeGroupHasTrailingText: hasTrailingText,
             codeGroupIsOnlyInlineCodeInSegment: isOnlyInlineCodeInSegment,
             codeGroupStartsAfterText: startsAfterText,
+            codePartStartsAfterWhitespace: startsAfterCodeWhitespace,
             chromeWidth: SESSION_THREAD_MARKDOWN_INLINE_CODE_FRAGMENT_CHROME_WIDTH_PX,
             endCursor: wholeLine.end,
             fullWidth: wholeLine.width,
@@ -401,7 +396,6 @@ export function prepareInlineLayoutItems(params: {
               !fragment.endsWith(".") &&
               !fragment.endsWith("-"),
             isSealedInlineCodeFragment: isSealedInlineCodeFragment(fragment),
-            lineHeight: inlineCodeLineHeight,
             minStartTextWidth:
               firstCodeGroupFragment ? measureInlineCodeMinStartTextWidth(part, inlineCodeFont) : 0,
             prefersFreshLineStart: fragment.includes("/") || fragment.includes("\\") || fragment.endsWith("."),
@@ -425,7 +419,6 @@ export function prepareInlineLayoutItems(params: {
     pushTextRunItems(items, {
       text: run.text,
       font,
-      lineHeight: params.typography.lineHeight,
       cacheKeyPrefix: `${params.cacheKeyPrefix}:${run.kind}:${index}`,
       collapsedSpaceWidth,
       startsStyledTextAfterInlineCodeSeam: textRunStartsStyledTextAfterInlineCodeSeam(index, run),

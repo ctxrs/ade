@@ -20,7 +20,7 @@ test("workbench: expanded turn-header planner matches rendered height for URL-he
   test.setTimeout(120000);
   await openWorkbenchShell(page);
 
-  const measurement = await measureTurnHeaderParity(page, { plainText: TURN_HEADER_FIXTURE });
+  const measurement = await measureTurnHeaderParity(page, { content: TURN_HEADER_FIXTURE });
 
   expect(
     Math.abs(measurement.delta),
@@ -34,7 +34,7 @@ test("workbench: expanded turn-header planner matches rendered height for path a
   test.setTimeout(120000);
   await openWorkbenchShell(page);
 
-  const measurement = await measureTurnHeaderParity(page, { plainText: TURN_HEADER_COMMAND_FIXTURE });
+  const measurement = await measureTurnHeaderParity(page, { content: TURN_HEADER_COMMAND_FIXTURE });
 
   expect(
     Math.abs(measurement.delta),

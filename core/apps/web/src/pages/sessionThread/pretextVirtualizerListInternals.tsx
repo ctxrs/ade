@@ -260,5 +260,14 @@ export function resolveLocalizedAnchorOverride(
   if (!visibleChangedItem) {
     return fallback;
   }
+  if (visibleChangedItem.top > viewportTop) {
+    return fallback;
+  }
   return createVisibleItemAnchor(visibleChangedItem, currentSnapshot.scrollTop);
+}
+
+export function resolveInteractionItemId(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  const owner = target.closest<HTMLElement>("[data-thread-item-id]");
+  return owner?.dataset.threadItemId ?? null;
 }
