@@ -888,7 +888,10 @@ async fn load_container_image_tar(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if stderr.is_empty() {
-            anyhow::bail!("container image load failed (status: {status})", status = output.status);
+            anyhow::bail!(
+                "container image load failed (status: {status})",
+                status = output.status
+            );
         }
         anyhow::bail!("container image load failed: {stderr}");
     }
