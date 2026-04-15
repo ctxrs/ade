@@ -11,11 +11,20 @@ render_linux() {
   env \
     BUILDBUDDY_APP_TARGET="grpcs://remote.buildbuddy.io" \
     BUILDBUDDY_EXECUTOR_API_KEY="linux-key" \
+    BUILDBUDDY_EXECUTOR_CONFIG_ROOT="/etc/buildbuddy-release" \
+    BUILDBUDDY_EXECUTOR_STATE_ROOT="/var/lib/buildbuddy-release" \
+    BUILDBUDDY_EXECUTOR_MAX_RUNNER_MEMORY_USAGE_BYTES="4000000000" \
+    BUILDBUDDY_EXECUTOR_MAX_TOTAL_MEMORY_USAGE_BYTES="12000000000" \
     BUILDBUDDY_EXECUTOR_ROOT_DIRECTORY="/var/lib/buildbuddy/remotebuilds" \
     BUILDBUDDY_EXECUTOR_LOCAL_CACHE_DIRECTORY="/var/lib/buildbuddy/filecache" \
     BUILDBUDDY_EXECUTOR_LOCAL_CACHE_SIZE_BYTES="200000000000" \
     MY_POOL="linux-amd64-default" \
     envsubst <"scripts/buildbuddy/templates/linux-executor.config.yaml.tmpl" >"$tmpdir/linux-config.yaml"
+
+  env \
+    BUILDBUDDY_EXECUTOR_CONFIG_ROOT="/etc/buildbuddy-release" \
+    BUILDBUDDY_EXECUTOR_STATE_ROOT="/var/lib/buildbuddy-release" \
+    envsubst <"scripts/buildbuddy/systemd/buildbuddy-executor.service.tmpl" >"$tmpdir/linux.service"
 }
 
 render_mac() {
@@ -54,8 +63,11 @@ rg -F 'local_cache_directory: "/var/lib/buildbuddy/filecache"' "$tmpdir/linux-co
 rg -F 'docker_socket: /var/run/docker.sock' "$tmpdir/linux-config.yaml" >/dev/null
 rg -F 'docker_sibling_containers: true' "$tmpdir/linux-config.yaml" >/dev/null
 rg -F 'default_isolation_type: docker' "$tmpdir/linux-config.yaml" >/dev/null
-rg -F 'max_runner_memory_usage_bytes: 8000000000' "$tmpdir/linux-config.yaml" >/dev/null
-rg -F 'max_total_memory_usage_bytes: 24000000000' "$tmpdir/linux-config.yaml" >/dev/null
+rg -F 'max_runner_memory_usage_bytes: 4000000000' "$tmpdir/linux-config.yaml" >/dev/null
+rg -F 'max_total_memory_usage_bytes: 12000000000' "$tmpdir/linux-config.yaml" >/dev/null
+rg -F 'EnvironmentFile=/etc/buildbuddy-release/executor.env' "$tmpdir/linux.service" >/dev/null
+rg -F 'ExecStart=/usr/local/bin/buildbuddy-executor --config_file=/etc/buildbuddy-release/config.yaml' "$tmpdir/linux.service" >/dev/null
+rg -F 'WorkingDirectory=/var/lib/buildbuddy-release' "$tmpdir/linux.service" >/dev/null
 
 rg -F 'root_directory: "/Users/example-user/buildbuddy/remotebuilds"' "$tmpdir/mac-config.yaml" >/dev/null
 rg -F 'local_cache_directory: "/Users/example-user/buildbuddy/filecache"' "$tmpdir/mac-config.yaml" >/dev/null
