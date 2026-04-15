@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::{extract::Path, routing::get, routing::post, Json, Router};
 use serde_json::{json, Value};
@@ -352,7 +352,15 @@ async fn mcp_merge_queue_submit_scrubs_internal_ids() {
 async fn mcp_oracle_forwards_prompt_and_overrides() {
     let body_tx = std::sync::Arc::new(tokio::sync::Mutex::new(None::<Value>));
     let body_tx2 = body_tx.clone();
-    let temp_dir = std::env::temp_dir().join(format!("ctx-mcp-oracle-{}", rand::random::<u64>()));
+    let unique_suffix = format!(
+        "{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let temp_dir = std::env::temp_dir().join(format!("ctx-mcp-oracle-{unique_suffix}"));
     tokio::fs::create_dir_all(&temp_dir).await.unwrap();
     let prompt_path = temp_dir.join("prompt.txt");
     let response_path = temp_dir.join("response.txt");
