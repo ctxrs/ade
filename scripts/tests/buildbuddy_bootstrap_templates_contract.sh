@@ -15,6 +15,12 @@ render_linux() {
     BUILDBUDDY_EXECUTOR_STATE_ROOT="/var/lib/buildbuddy-release" \
     BUILDBUDDY_EXECUTOR_MAX_RUNNER_MEMORY_USAGE_BYTES="4000000000" \
     BUILDBUDDY_EXECUTOR_MAX_TOTAL_MEMORY_USAGE_BYTES="12000000000" \
+    BUILDBUDDY_EXECUTOR_MONITORING_PORT="9091" \
+    BUILDBUDDY_EXECUTOR_HTTP_PORT="18080" \
+    BUILDBUDDY_EXECUTOR_GRPC_PORT="11985" \
+    BUILDBUDDY_EXECUTOR_GRPCS_PORT="11986" \
+    BUILDBUDDY_EXECUTOR_INTERNAL_GRPC_PORT="11987" \
+    BUILDBUDDY_EXECUTOR_INTERNAL_GRPCS_PORT="11988" \
     BUILDBUDDY_EXECUTOR_ROOT_DIRECTORY="/var/lib/buildbuddy/remotebuilds" \
     BUILDBUDDY_EXECUTOR_LOCAL_CACHE_DIRECTORY="/var/lib/buildbuddy/filecache" \
     BUILDBUDDY_EXECUTOR_LOCAL_CACHE_SIZE_BYTES="200000000000" \
@@ -24,6 +30,12 @@ render_linux() {
   env \
     BUILDBUDDY_EXECUTOR_CONFIG_ROOT="/etc/buildbuddy-release" \
     BUILDBUDDY_EXECUTOR_STATE_ROOT="/var/lib/buildbuddy-release" \
+    BUILDBUDDY_EXECUTOR_MONITORING_PORT="9091" \
+    BUILDBUDDY_EXECUTOR_HTTP_PORT="18080" \
+    BUILDBUDDY_EXECUTOR_GRPC_PORT="11985" \
+    BUILDBUDDY_EXECUTOR_GRPCS_PORT="11986" \
+    BUILDBUDDY_EXECUTOR_INTERNAL_GRPC_PORT="11987" \
+    BUILDBUDDY_EXECUTOR_INTERNAL_GRPCS_PORT="11988" \
     envsubst <"scripts/buildbuddy/systemd/buildbuddy-executor.service.tmpl" >"$tmpdir/linux.service"
 }
 
@@ -66,7 +78,7 @@ rg -F 'default_isolation_type: docker' "$tmpdir/linux-config.yaml" >/dev/null
 rg -F 'max_runner_memory_usage_bytes: 4000000000' "$tmpdir/linux-config.yaml" >/dev/null
 rg -F 'max_total_memory_usage_bytes: 12000000000' "$tmpdir/linux-config.yaml" >/dev/null
 rg -F 'EnvironmentFile=/etc/buildbuddy-release/executor.env' "$tmpdir/linux.service" >/dev/null
-rg -F 'ExecStart=/usr/local/bin/buildbuddy-executor --config_file=/etc/buildbuddy-release/config.yaml' "$tmpdir/linux.service" >/dev/null
+rg -F 'ExecStart=/usr/local/bin/buildbuddy-executor --config_file=/etc/buildbuddy-release/config.yaml -monitoring_port=9091 -port=18080 -grpc_port=11985 -grpcs_port=11986 -internal_grpc_port=11987 -internal_grpcs_port=11988' "$tmpdir/linux.service" >/dev/null
 rg -F 'WorkingDirectory=/var/lib/buildbuddy-release' "$tmpdir/linux.service" >/dev/null
 
 rg -F 'root_directory: "/Users/example-user/buildbuddy/remotebuilds"' "$tmpdir/mac-config.yaml" >/dev/null
