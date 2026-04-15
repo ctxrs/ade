@@ -75,12 +75,23 @@ function apiRequest({
 }
 
 async function executeWorkflow({ apiBaseUrl, apiKey, payload }) {
-  return apiRequest({
+  const response = await apiRequest({
     apiBaseUrl,
     apiKey,
     pathName: "/api/v1/ExecuteWorkflow",
     payload,
   });
+  if (response && !response.invocation_id && Array.isArray(response.actionStatuses) && response.actionStatuses.length > 0) {
+    const firstStatus = response.actionStatuses[0] || {};
+    const invocationId = String(firstStatus.invocationId || "").trim();
+    if (invocationId) {
+      return {
+        ...response,
+        invocation_id: invocationId,
+      };
+    }
+  }
+  return response;
 }
 
 async function getInvocation({
