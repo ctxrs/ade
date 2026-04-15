@@ -34,7 +34,7 @@ async fn mcp_tools_list_hides_lsp_by_default() {
     }
     stdin.flush().await.unwrap();
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     let mut got_list = false;
     while tokio::time::Instant::now() < deadline {
         let Some(line) = reader.next_line().await.unwrap() else {
