@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 fn main() -> Result<()> {
     let mut check = false;
@@ -13,9 +13,7 @@ fn main() -> Result<()> {
             continue;
         }
         if arg == "--output" {
-            let value = args
-                .next()
-                .context("missing value for --output")?;
+            let value = args.next().context("missing value for --output")?;
             output_path = Some(PathBuf::from(value));
             continue;
         }
@@ -31,7 +29,9 @@ fn main() -> Result<()> {
             manifest_dir
                 .join("../../apps/web/src/generated/desktop-ipc.ts")
                 .canonicalize()
-                .unwrap_or_else(|_| manifest_dir.join("../../apps/web/src/generated/desktop-ipc.ts"))
+                .unwrap_or_else(|_| {
+                    manifest_dir.join("../../apps/web/src/generated/desktop-ipc.ts")
+                })
         }
     };
     let generated = ctx_desktop_ipc::typescript_declarations();

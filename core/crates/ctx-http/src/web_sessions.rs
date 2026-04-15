@@ -20,10 +20,8 @@ const DEFAULT_FPS: u32 = 30;
 const DEFAULT_IDLE_SECS: u64 = 30 * 60;
 const REAPER_INTERVAL_SECS: u64 = 60;
 
-const WORKER_PACKAGE_JSON: &str =
-    include_str!("../../../packages/web-session-worker/package.json");
-const WORKER_SCRIPT: &str =
-    include_str!("../../../packages/web-session-worker/bin/worker.mjs");
+const WORKER_PACKAGE_JSON: &str = include_str!("../../../packages/web-session-worker/package.json");
+const WORKER_SCRIPT: &str = include_str!("../../../packages/web-session-worker/bin/worker.mjs");
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
