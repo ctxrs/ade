@@ -51,6 +51,9 @@ rg -F 'mv "${executor_tmp}" "${BUILDBUDDY_EXECUTOR_STATE_ROOT}/bin/buildbuddy-ex
 rg -F 'app_target: "grpcs://remote.buildbuddy.io"' "$tmpdir/linux-config.yaml" >/dev/null
 rg -F 'root_directory: "/var/lib/buildbuddy/remotebuilds"' "$tmpdir/linux-config.yaml" >/dev/null
 rg -F 'local_cache_directory: "/var/lib/buildbuddy/filecache"' "$tmpdir/linux-config.yaml" >/dev/null
+rg -F 'docker_socket: /var/run/docker.sock' "$tmpdir/linux-config.yaml" >/dev/null
+rg -F 'docker_sibling_containers: true' "$tmpdir/linux-config.yaml" >/dev/null
+rg -F 'default_isolation_type: docker' "$tmpdir/linux-config.yaml" >/dev/null
 
 rg -F 'root_directory: "/Users/example-user/buildbuddy/remotebuilds"' "$tmpdir/mac-config.yaml" >/dev/null
 rg -F 'local_cache_directory: "/Users/example-user/buildbuddy/filecache"' "$tmpdir/mac-config.yaml" >/dev/null
