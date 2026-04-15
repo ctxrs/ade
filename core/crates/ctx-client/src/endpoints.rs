@@ -168,11 +168,11 @@ impl Client {
     /// Append `tail=<bytes>` to cap the initial snapshot size.
     pub fn terminal_stream_url(&self, terminal_id: TerminalId) -> Result<String> {
         let mut url = Url::parse(&self.base_url)
-            .with_context(|| format!("invalid base url: {}", self.base_url))?;
+            .with_context(|| format!("invalid base url: {base_url}", base_url = self.base_url))?;
         let scheme = match url.scheme() {
             "http" => "ws",
             "https" => "wss",
-            other => return Err(anyhow!("unsupported base url scheme: {}", other)),
+            other => return Err(anyhow!("unsupported base url scheme: {other}")),
         };
         url.set_scheme(scheme)
             .map_err(|_| anyhow!("failed to set websocket scheme"))?;
@@ -244,7 +244,7 @@ impl Client {
         let mut path = format!("/api/sessions/{}/snapshot", session_id.0);
         let mut params = Vec::new();
         if let Some(limit) = limit {
-            params.push(format!("limit={}", limit));
+            params.push(format!("limit={limit}"));
         }
         if let Some(include_events) = include_events {
             params.push(format!(
@@ -268,7 +268,7 @@ impl Client {
         let mut path = format!("/api/sessions/{}/head", session_id.0);
         let mut params = Vec::new();
         if let Some(limit) = limit {
-            params.push(format!("limit={}", limit));
+            params.push(format!("limit={limit}"));
         }
         if let Some(include_events) = include_events {
             params.push(format!(
