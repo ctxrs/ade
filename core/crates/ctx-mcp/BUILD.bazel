@@ -62,6 +62,7 @@ rust_test(
         "//core/crates/ctx-http:lib",
         "//core/crates/ctx-providers:lib",
         "//core/crates/ctx-store:lib",
+        "@crates//:reqwest",
         "@crates//:tempfile",
         "@crates//:uuid",
     ],
