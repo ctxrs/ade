@@ -390,8 +390,7 @@ impl<'a> ProviderRuntimeContext<'a> {
                     != Some("openrouter")
                 {
                     anyhow::bail!(
-                        "goose harness endpoints currently require an OpenRouter base_url; found {}",
-                        base_url
+                        "goose harness endpoints currently require an OpenRouter base_url; found {base_url}"
                     );
                 }
                 let path_root = goose_endpoint_path_root(self.runtime_data_root(), &endpoint.id);

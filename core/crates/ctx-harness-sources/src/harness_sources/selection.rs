@@ -168,7 +168,7 @@ pub async fn upsert_provider_endpoint(
         .position(|ep| ep.id == endpoint_id);
     let secret_ref = existing_index
         .and_then(|idx| provider.endpoints.get(idx).map(|ep| ep.secret_ref.clone()))
-        .unwrap_or_else(|| format!("{}-{}.json", canonical, endpoint_id));
+        .unwrap_or_else(|| format!("{canonical}-{endpoint_id}.json"));
     let existing_secret = match existing_index {
         Some(index) => {
             secrets::read_endpoint_secret(data_root, &provider.endpoints[index].secret_ref)
@@ -460,12 +460,12 @@ pub async fn refresh_provider_endpoint_model_catalog(
     let provider = registry
         .providers
         .get_mut(canonical)
-        .ok_or_else(|| anyhow::anyhow!("unknown provider endpoint config for {}", canonical))?;
+        .ok_or_else(|| anyhow::anyhow!("unknown provider endpoint config for {canonical}"))?;
     let endpoint = provider
         .endpoints
         .iter_mut()
         .find(|ep| ep.id == endpoint_id)
-        .ok_or_else(|| anyhow::anyhow!("unknown endpoint_id: {}", endpoint_id))?;
+        .ok_or_else(|| anyhow::anyhow!("unknown endpoint_id: {endpoint_id}"))?;
 
     endpoint.updated_at = Utc::now();
     match discovery_result {

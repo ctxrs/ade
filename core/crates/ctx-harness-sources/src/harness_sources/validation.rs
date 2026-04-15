@@ -151,10 +151,7 @@ pub(super) fn normalize_auth_type_for_provider(
             match normalized.as_str() {
                 GEMINI_AUTH_TYPE_GEMINI_API_KEY | GEMINI_AUTH_TYPE_VERTEX_AI => Ok(normalized),
                 _ => anyhow::bail!(
-                    "auth_type '{}' is not supported for gemini (expected '{}' or '{}')",
-                    normalized,
-                    GEMINI_AUTH_TYPE_GEMINI_API_KEY,
-                    GEMINI_AUTH_TYPE_VERTEX_AI
+                    "auth_type '{normalized}' is not supported for gemini (expected '{GEMINI_AUTH_TYPE_GEMINI_API_KEY}' or '{GEMINI_AUTH_TYPE_VERTEX_AI}')"
                 ),
             }
         }
