@@ -5,7 +5,7 @@ const DOWNLOAD_ID_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 const ATTRIBUTION_VALUE_PATTERN = /[^A-Za-z0-9._:-]/g;
 const MAX_ATTRIBUTION_VALUE_LENGTH = 120;
 
-function shell(script: string, status = 200): Response {
+function shell(script, status = 200) {
   return new Response(script, {
     status,
     headers: {
@@ -15,7 +15,7 @@ function shell(script: string, status = 200): Response {
   });
 }
 
-function html(body: string, status = 200): Response {
+function html(body, status = 200) {
   return new Response(body, {
     status,
     headers: {
@@ -28,14 +28,14 @@ function html(body: string, status = 200): Response {
 const INSTALL_ROUTES = new Set(["/install", "/install.sh"]);
 const UNINSTALL_ROUTES = new Set(["/uninstall", "/uninstall.sh"]);
 
-function normalizeDownloadId(raw: string | null): string | null {
+function normalizeDownloadId(raw) {
   if (!raw) return null;
   const trimmed = raw.trim();
   if (!DOWNLOAD_ID_PATTERN.test(trimmed)) return null;
   return trimmed;
 }
 
-function normalizeAttributionValue(raw: string | null): string | null {
+function normalizeAttributionValue(raw) {
   if (!raw) return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -43,7 +43,7 @@ function normalizeAttributionValue(raw: string | null): string | null {
   return normalized || null;
 }
 
-function normalizeReferrerDomain(raw: string | null): string | null {
+function normalizeReferrerDomain(raw) {
   if (!raw) return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -59,7 +59,7 @@ function normalizeReferrerDomain(raw: string | null): string | null {
 }
 
 export default {
-  fetch(request: Request): Response {
+  fetch(request) {
     const url = new URL(request.url);
     const pathname = url.pathname.replace(/\/+$/, "") || "/";
 

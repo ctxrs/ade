@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker from "./index.ts";
+import worker from "./index.js";
 
 test("GET /uninstall returns the uninstall shell script", async () => {
   const response = await worker.fetch(new Request("https://ctx.rs/uninstall"));

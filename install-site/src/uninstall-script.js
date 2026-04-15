@@ -126,6 +126,19 @@ debian_package_installed() {
   return 1
 }
 
+resolve_tty_path() {
+  for fd in 0 1 2; do
+    if [ -t "$fd" ]; then
+      tty_path="$(tty <&"$fd" 2>/dev/null || true)"
+      if [ -n "$tty_path" ]; then
+        printf '%s\\n' "$tty_path"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
 print_targets() {
   case "$os" in
     Darwin)
@@ -157,9 +170,11 @@ confirm_uninstall() {
   if [ "$assume_yes" = "1" ]; then
     return 0
   fi
-  if ! exec 3<>/dev/tty 2>/dev/null; then
+  tty_path="$(resolve_tty_path || true)"
+  if [ -z "$tty_path" ]; then
     fail "interactive confirmation requires /dev/tty; rerun with --yes for noninteractive use"
   fi
+  exec 3<> "$tty_path" || fail "interactive confirmation requires /dev/tty; rerun with --yes for noninteractive use"
   {
     printf 'ctx uninstall will remove:\\n'
     print_targets
