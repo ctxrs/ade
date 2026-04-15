@@ -481,11 +481,7 @@ const codexPolicyIssues = (entry) => {
     issues.push("codex archive targets are missing");
   }
 
-  const expectedRepo = provenance.ctxRepo || "ctxorgrs/codex-crp";
-  const expectedTag = provenance.ctxReleaseTag || (managedVersion ? `v${managedVersion}` : "");
-  const expectedPrefix = expectedTag
-    ? `https://github.com/${expectedRepo}/releases/download/${expectedTag}/`
-    : "";
+  const expectedPath = managedVersion ? `/providers/codex/${managedVersion}/` : "";
 
   for (const target of targetValues) {
     const url = String(target?.url || "").trim();
@@ -493,8 +489,14 @@ const codexPolicyIssues = (entry) => {
       issues.push("codex target URL is missing");
       continue;
     }
-    if (expectedPrefix && !url.startsWith(expectedPrefix)) {
-      issues.push(`codex target URL does not match ctx release tag (${url})`);
+    if (!url.startsWith("https://")) {
+      issues.push(`codex target URL must be https (${url})`);
+    }
+    if (url.includes("github.com/")) {
+      issues.push(`codex target URL must not point at GitHub Releases anymore (${url})`);
+    }
+    if (expectedPath && !url.includes(expectedPath)) {
+      issues.push(`codex target URL does not match immutable provider path (${url})`);
     }
     if (managedVersion && !url.includes(`codex-crp-${managedVersion}`)) {
       issues.push(`codex target URL does not include managed version (${url})`);

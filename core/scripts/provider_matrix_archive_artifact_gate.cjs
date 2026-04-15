@@ -174,17 +174,45 @@ async function verifyManagedArchiveTargets(
     retryDelayMs = DEFAULT_FETCH_RETRY_DELAY_MS,
   } = {},
 ) {
-  const errors = [];
-  let verifiedCount = 0;
+  const results = await verifyManagedArchiveTargetsDetailed(targets, {
+    timeoutMs,
+    maxAttempts,
+    retryDelayMs,
+  });
+  return {
+    errors: results.filter((result) => result.status !== "verified").map((result) => result.message),
+    verifiedCount: results.filter((result) => result.status === "verified").length,
+  };
+}
+
+async function verifyManagedArchiveTargetsDetailed(
+  targets,
+  {
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    maxAttempts = DEFAULT_FETCH_MAX_ATTEMPTS,
+    retryDelayMs = DEFAULT_FETCH_RETRY_DELAY_MS,
+  } = {},
+) {
+  const results = [];
   for (const target of targets) {
     if (!target.url) {
-      errors.push(`provider=${target.providerId} target=${target.targetKey}: missing url`);
+      results.push({
+        providerId: target.providerId,
+        targetKey: target.targetKey,
+        status: "error",
+        errorKind: "metadata",
+        message: `provider=${target.providerId} target=${target.targetKey}: missing url`,
+      });
       continue;
     }
     if (!target.expectedSha256) {
-      errors.push(
-        `provider=${target.providerId} target=${target.targetKey}: missing expected sha256`,
-      );
+      results.push({
+        providerId: target.providerId,
+        targetKey: target.targetKey,
+        status: "error",
+        errorKind: "metadata",
+        message: `provider=${target.providerId} target=${target.targetKey}: missing expected sha256`,
+      });
       continue;
     }
     try {
@@ -211,25 +239,54 @@ async function verifyManagedArchiveTargets(
         throw new Error("internal: archive fetch produced no result");
       }
       if (result.sha256 !== target.expectedSha256) {
-        errors.push(
-          `provider=${target.providerId} target=${target.targetKey}: checksum mismatch expected=${target.expectedSha256} actual=${result.sha256}`,
-        );
+        results.push({
+          providerId: target.providerId,
+          targetKey: target.targetKey,
+          status: "error",
+          errorKind: "checksum",
+          message:
+            `provider=${target.providerId} target=${target.targetKey}: checksum mismatch expected=${target.expectedSha256} actual=${result.sha256}`,
+        });
         continue;
       }
       if (target.sizeBytes !== null && result.sizeBytes !== target.sizeBytes) {
-        errors.push(
-          `provider=${target.providerId} target=${target.targetKey}: size mismatch expected=${target.sizeBytes} actual=${result.sizeBytes}`,
-        );
+        results.push({
+          providerId: target.providerId,
+          targetKey: target.targetKey,
+          status: "error",
+          errorKind: "size",
+          message:
+            `provider=${target.providerId} target=${target.targetKey}: size mismatch expected=${target.sizeBytes} actual=${result.sizeBytes}`,
+        });
         continue;
       }
-      verifiedCount += 1;
+      results.push({
+        providerId: target.providerId,
+        targetKey: target.targetKey,
+        status: "verified",
+        errorKind: "",
+        message: "",
+        sha256: result.sha256,
+        sizeBytes: result.sizeBytes,
+      });
     } catch (error) {
-      errors.push(
-        `provider=${target.providerId} target=${target.targetKey}: ${error?.message ?? String(error)}`,
-      );
+      const errorMessage = error?.message ?? String(error);
+      results.push({
+        providerId: target.providerId,
+        targetKey: target.targetKey,
+        status:
+          error instanceof HttpRequestError && error.status === 404
+            ? "missing"
+            : "error",
+        errorKind:
+          error instanceof HttpRequestError && error.status === 404
+            ? "missing"
+            : "fetch",
+        message: `provider=${target.providerId} target=${target.targetKey}: ${errorMessage}`,
+      });
     }
   }
-  return { errors, verifiedCount };
+  return results;
 }
 
 async function main(argv = process.argv) {
@@ -274,5 +331,6 @@ module.exports = {
   parseArgs,
   pathToFileURL,
   readMatrix,
+  verifyManagedArchiveTargetsDetailed,
   verifyManagedArchiveTargets,
 };

@@ -81,15 +81,26 @@ detect_arch() {
   esac
 }
 
+cross_target_allowed() {
+  case "${HOST_OS}/${HOST_ARCH}->${TARGET_OS}/${TARGET_ARCH}" in
+    "macos/aarch64->macos/x86_64") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 HOST_OS="$(detect_os)"
 HOST_ARCH="$(detect_arch)"
 TARGET_OS="${OS_OVERRIDE:-$HOST_OS}"
 TARGET_ARCH="${ARCH_OVERRIDE:-$HOST_ARCH}"
 
 if [[ "$TARGET_OS" != "$HOST_OS" || "$TARGET_ARCH" != "$HOST_ARCH" ]]; then
-  echo "error: cross-target staging is disabled (${TARGET_OS}/${TARGET_ARCH} requested on ${HOST_OS}/${HOST_ARCH})." >&2
-  echo "error: run this script on a native runner for the requested target." >&2
-  exit 2
+  if cross_target_allowed; then
+    echo "info: allowing supported cross-target staging for ${TARGET_OS}/${TARGET_ARCH} on ${HOST_OS}/${HOST_ARCH}" >&2
+  else
+    echo "error: cross-target staging is disabled (${TARGET_OS}/${TARGET_ARCH} requested on ${HOST_OS}/${HOST_ARCH})." >&2
+    echo "error: run this script on a native runner for the requested target." >&2
+    exit 2
+  fi
 fi
 
 case "${TARGET_OS}/${TARGET_ARCH}" in
@@ -360,6 +371,30 @@ stage_matrix_archive_provider() {
   local url archive_kind bin_path expected_sha
   IFS=$'\t' read -r url archive_kind bin_path expected_sha <<< "$metadata"
 
+  local prebuilt_archive
+  prebuilt_archive="$(resolve_prebuilt_provider_archive "$provider_id" || true)"
+  if [[ -n "$prebuilt_archive" ]]; then
+    local staged_archive
+    staged_archive="$(stage_archive_from_prebuilt_archive \
+      "$provider_id" \
+      "$version" \
+      "$prebuilt_archive" \
+      "$(basename "$prebuilt_archive")")"
+    local sha
+    sha="$(sha256_file "$staged_archive")"
+    if [[ -n "$expected_sha" && "$sha" != "$expected_sha" ]]; then
+      echo "error: sha256 mismatch for $provider_id archive (expected $expected_sha, got $sha)" >&2
+      exit 4
+    fi
+    local size_bytes
+    size_bytes="$(file_size_bytes "$staged_archive")"
+    write_entry "$provider_id" "$version" "$archive_kind" "$bin_path" "$staged_archive" "$sha" "$size_bytes"
+    return 0
+  fi
+  if [[ "${CTX_PROVIDER_DEPS_REQUIRE_PREBUILT:-0}" == "1" ]]; then
+    require_prebuilt_provider_archive "$provider_id"
+  fi
+
   require_cmd curl
 
   local filename
@@ -463,6 +498,26 @@ stage_matrix_python_provider() {
   metadata="$(get_python_provider_metadata "$provider_id")"
   local package entrypoint version python_version python_build_tag
   IFS=$'\t' read -r package entrypoint version python_version python_build_tag <<< "$metadata"
+
+  local prebuilt_archive
+  prebuilt_archive="$(resolve_prebuilt_provider_archive "$provider_id" || true)"
+  if [[ -n "$prebuilt_archive" ]]; then
+    local staged_archive
+    staged_archive="$(stage_archive_from_prebuilt_archive \
+      "$provider_id" \
+      "$version" \
+      "$prebuilt_archive" \
+      "$(basename "$prebuilt_archive")")"
+    local sha
+    sha="$(sha256_file "$staged_archive")"
+    local size_bytes
+    size_bytes="$(file_size_bytes "$staged_archive")"
+    write_entry "$provider_id" "$version" "tar_gz" "bin/${entrypoint}" "$staged_archive" "$sha" "$size_bytes"
+    return 0
+  fi
+  if [[ "${CTX_PROVIDER_DEPS_REQUIRE_PREBUILT:-0}" == "1" ]]; then
+    require_prebuilt_provider_archive "$provider_id"
+  fi
 
   local runtime_root
   runtime_root="$(ensure_python_runtime "$python_version" "$python_build_tag")"
@@ -617,32 +672,105 @@ resolve_rust_target_root() {
   esac
 }
 
+provider_override_env_var_name() {
+  local provider_id="$1"
+  local suffix="$2"
+  local normalized="${provider_id^^}"
+  normalized="${normalized//-/_}"
+  printf 'CTX_PROVIDER_DEPS_%s_%s' "$normalized" "$suffix"
+}
+
+resolve_prebuilt_rust_provider_binary() {
+  local provider_id="$1"
+  local env_var
+  env_var="$(provider_override_env_var_name "$provider_id" "BIN")"
+  local path_value="${!env_var:-}"
+  if [[ -z "$path_value" ]]; then
+    return 1
+  fi
+  if [[ ! -f "$path_value" ]]; then
+    echo "error: missing prebuilt binary for $provider_id from $env_var: $path_value" >&2
+    exit 1
+  fi
+  printf '%s\n' "$path_value"
+}
+
+require_prebuilt_rust_provider_binary() {
+  local provider_id="$1"
+  local env_var
+  env_var="$(provider_override_env_var_name "$provider_id" "BIN")"
+  echo "error: provider-deps staging requires a prebuilt binary for $provider_id via $env_var" >&2
+  exit 1
+}
+
+resolve_prebuilt_provider_archive() {
+  local provider_id="$1"
+  local env_var
+  env_var="$(provider_override_env_var_name "$provider_id" "ARCHIVE")"
+  local path_value="${!env_var:-}"
+  if [[ -z "$path_value" ]]; then
+    return 1
+  fi
+  if [[ ! -f "$path_value" ]]; then
+    echo "error: missing prebuilt archive for $provider_id from $env_var: $path_value" >&2
+    exit 1
+  fi
+  printf '%s\n' "$path_value"
+}
+
+require_prebuilt_provider_archive() {
+  local provider_id="$1"
+  local env_var
+  env_var="$(provider_override_env_var_name "$provider_id" "ARCHIVE")"
+  echo "error: provider-deps staging requires a prebuilt archive for $provider_id via $env_var" >&2
+  exit 1
+}
+
+stage_archive_from_prebuilt_archive() {
+  local provider_id="$1"
+  local version="$2"
+  local prebuilt_archive="$3"
+  local archive_name="$4"
+  local stage_dir="$OUT_DIR/providers/$provider_id/$version/$TARGET_OS/$TARGET_ARCH"
+  mkdir -p "$stage_dir"
+  local archive_path="$stage_dir/${archive_name}"
+  cp "$prebuilt_archive" "$archive_path"
+  printf '%s\n' "$archive_path"
+}
+
 build_rust_provider() {
   local provider_id="$1"
   local project_dir="$2"
   local binary_name="$3"
   local version="$4"
   local package_name="${5:-$binary_name}"
-  local rustflags="${RUSTFLAGS:-}"
-  if [[ -n "$rustflags" ]]; then
-    rustflags="$rustflags -C debuginfo=0"
-  else
-    rustflags="-C debuginfo=0"
+  local bin
+  bin="$(resolve_prebuilt_rust_provider_binary "$provider_id" || true)"
+  if [[ -z "$bin" ]]; then
+    if [[ "${CTX_PROVIDER_DEPS_REQUIRE_PREBUILT:-0}" == "1" ]]; then
+      require_prebuilt_rust_provider_binary "$provider_id"
+    fi
+    local rustflags="${RUSTFLAGS:-}"
+    if [[ -n "$rustflags" ]]; then
+      rustflags="$rustflags -C debuginfo=0"
+    else
+      rustflags="-C debuginfo=0"
+    fi
+
+    require_cmd cargo
+    (
+      cd "$project_dir"
+      CARGO_INCREMENTAL=0 \
+      CARGO_PROFILE_RELEASE_DEBUG=0 \
+      CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=off \
+      RUSTFLAGS="$rustflags" \
+      cargo build --release --target "$RUST_TARGET" --package "$package_name" --bin "$binary_name"
+    ) >&2
+
+    local target_root
+    target_root="$(resolve_rust_target_root "$project_dir")"
+    bin="$target_root/$RUST_TARGET/release/$binary_name"
   fi
-
-  require_cmd cargo
-  (
-    cd "$project_dir"
-    CARGO_INCREMENTAL=0 \
-    CARGO_PROFILE_RELEASE_DEBUG=0 \
-    CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=off \
-    RUSTFLAGS="$rustflags" \
-    cargo build --release --target "$RUST_TARGET" --package "$package_name" --bin "$binary_name"
-  ) >&2
-
-  local target_root
-  target_root="$(resolve_rust_target_root "$project_dir")"
-  local bin="$target_root/$RUST_TARGET/release/$binary_name"
   if [[ ! -f "$bin" ]]; then
     echo "error: missing built binary for $provider_id at $bin" >&2
     exit 1
@@ -663,11 +791,23 @@ build_node_project_provider() {
   local entrypoint_rel="$3"
   local version="$4"
 
-  local workspace_dir
-  workspace_dir="$(prepare_node_workspace "$project_dir")"
-  chmod +x "$workspace_dir/$entrypoint_rel" || true
   local archive_path
-  archive_path="$(stage_archive_from_node_project "$provider_id" "$version" "$workspace_dir" "$entrypoint_rel")"
+  archive_path="$(resolve_prebuilt_provider_archive "$provider_id" || true)"
+  if [[ -n "$archive_path" ]]; then
+    archive_path="$(stage_archive_from_prebuilt_archive \
+      "$provider_id" \
+      "$version" \
+      "$archive_path" \
+      "${provider_id}-${version}-${TARGET_OS}-${TARGET_ARCH}.tar.gz")"
+  else
+    if [[ "${CTX_PROVIDER_DEPS_REQUIRE_PREBUILT:-0}" == "1" ]]; then
+      require_prebuilt_provider_archive "$provider_id"
+    fi
+    local workspace_dir
+    workspace_dir="$(prepare_node_workspace "$project_dir")"
+    chmod +x "$workspace_dir/$entrypoint_rel" || true
+    archive_path="$(stage_archive_from_node_project "$provider_id" "$version" "$workspace_dir" "$entrypoint_rel")"
+  fi
 
   local sha
   sha="$(sha256_file "$archive_path")"
@@ -677,7 +817,28 @@ build_node_project_provider() {
 }
 
 build_claude_crp_provider() {
+  local provider_id="claude-crp"
   local version="$1"
+  local prebuilt_archive
+  prebuilt_archive="$(resolve_prebuilt_provider_archive "$provider_id" || true)"
+  if [[ -n "$prebuilt_archive" ]]; then
+    local staged_archive
+    staged_archive="$(stage_archive_from_prebuilt_archive \
+      "$provider_id" \
+      "$version" \
+      "$prebuilt_archive" \
+      "${provider_id}-${version}-${TARGET_OS}-${TARGET_ARCH}.tar.gz")"
+    local sha
+    sha="$(sha256_file "$staged_archive")"
+    local size_bytes
+    size_bytes="$(file_size_bytes "$staged_archive")"
+    write_entry "$provider_id" "$version" "tar_gz" "bin/claude-crp" "$staged_archive" "$sha" "$size_bytes"
+    return 0
+  fi
+  if [[ "${CTX_PROVIDER_DEPS_REQUIRE_PREBUILT:-0}" == "1" ]]; then
+    require_prebuilt_provider_archive "$provider_id"
+  fi
+
   local claude_target_os="$TARGET_OS"
   if [[ "$claude_target_os" == "macos" ]]; then
     claude_target_os="darwin"
@@ -725,39 +886,44 @@ NODE
   rm -rf "$tmp_dir"
 }
 
-IFS=',' read -r -a providers <<< "$PROVIDERS_RAW"
-for provider in "${providers[@]}"; do
-  provider="$(echo "$provider" | xargs)"
-  [[ -n "$provider" ]] || continue
-  version="$(get_provider_version "$provider")"
-  case "$provider" in
-    acp-crp-bridge)
-      build_rust_provider "$provider" "$ROOT/external-harnesses/acp-crp-bridge" "acp-crp-bridge" "$version" "acp-crp-bridge"
-      ;;
-    droid)
-      build_rust_provider "$provider" "$ROOT/harness-adapters/droid-acp" "droid-acp" "$version" "droid-acp"
-      ;;
-    amp)
-      build_node_project_provider "$provider" "$ROOT/harness-adapters/example-acp" "dist/bin/amp-acp.js" "$version"
-      ;;
-    pi)
-      build_node_project_provider "$provider" "$ROOT/harness-adapters/pi-acp" "dist/bin/pi-acp.js" "$version"
-      ;;
-    openhands)
-      stage_matrix_python_provider "$provider"
-      ;;
-    goose)
-      stage_matrix_archive_provider "$provider" "$version"
-      ;;
-    claude-crp)
-      build_claude_crp_provider "$version"
-      ;;
-    *)
-      echo "error: provider not supported by build script yet: $provider" >&2
-      exit 2
-      ;;
-  esac
-done
+providers=()
+if [[ -n "$PROVIDERS_RAW" ]]; then
+  IFS=',' read -r -a providers <<< "$PROVIDERS_RAW"
+fi
+if [[ -n "${providers[*]-}" ]]; then
+  for provider in "${providers[@]}"; do
+    provider="$(echo "$provider" | xargs)"
+    [[ -n "$provider" ]] || continue
+    version="$(get_provider_version "$provider")"
+    case "$provider" in
+      acp-crp-bridge)
+        build_rust_provider "$provider" "$ROOT/external-harnesses/acp-crp-bridge" "acp-crp-bridge" "$version" "acp-crp-bridge"
+        ;;
+      droid)
+        build_rust_provider "$provider" "$ROOT/harness-adapters/droid-acp" "droid-acp" "$version" "droid-acp"
+        ;;
+      amp)
+        build_node_project_provider "$provider" "$ROOT/harness-adapters/example-acp" "dist/bin/amp-acp.js" "$version"
+        ;;
+      pi)
+        build_node_project_provider "$provider" "$ROOT/harness-adapters/pi-acp" "dist/bin/pi-acp.js" "$version"
+        ;;
+      openhands)
+        stage_matrix_python_provider "$provider"
+        ;;
+      goose)
+        stage_matrix_archive_provider "$provider" "$version"
+        ;;
+      claude-crp)
+        build_claude_crp_provider "$version"
+        ;;
+      *)
+        echo "error: provider not supported by build script yet: $provider" >&2
+        exit 2
+        ;;
+    esac
+  done
+fi
 
 node - "$entries_ndjson" "$OUT_DIR/provider_deps_index.json" <<'NODE'
 const fs = require("node:fs");
