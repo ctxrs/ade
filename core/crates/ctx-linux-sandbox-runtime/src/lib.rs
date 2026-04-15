@@ -866,8 +866,7 @@ mod tests {
         for leak in ["apt", "containerd", "nerdctl"] {
             assert!(
                 !msg.to_ascii_lowercase().contains(leak),
-                "message leaked tool detail: {}",
-                leak
+                "message leaked tool detail: {leak}",
             );
         }
     }
@@ -882,8 +881,7 @@ mod tests {
         for leak in ["apt", "containerd", "nerdctl"] {
             assert!(
                 !msg.to_ascii_lowercase().contains(leak),
-                "message leaked tool detail: {}",
-                leak
+                "message leaked tool detail: {leak}",
             );
         }
     }
