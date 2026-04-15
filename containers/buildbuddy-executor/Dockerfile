@@ -1,6 +1,7 @@
 FROM rust:1.88-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
+ARG DOCKER_CLI_VERSION=29.1.3
 
 COPY scripts/install_desktop_deps_linux_ubuntu.sh /tmp/install_desktop_deps_linux_ubuntu.sh
 
@@ -18,6 +19,15 @@ RUN apt-get update \
         rsync \
         sudo \
         xz-utils \
+    && case "$(dpkg --print-architecture)" in \
+         amd64) docker_arch=x86_64 ;; \
+         arm64) docker_arch=aarch64 ;; \
+         *) echo "unsupported docker cli arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSL "https://download.docker.com/linux/static/stable/${docker_arch}/docker-${DOCKER_CLI_VERSION}.tgz" -o /tmp/docker.tgz \
+    && tar -xzf /tmp/docker.tgz -C /tmp \
+    && install -m 0755 /tmp/docker/docker /usr/local/bin/docker \
+    && rm -rf /tmp/docker /tmp/docker.tgz \
     && bash /tmp/install_desktop_deps_linux_ubuntu.sh \
     && rm -rf /var/lib/apt/lists/*
 
