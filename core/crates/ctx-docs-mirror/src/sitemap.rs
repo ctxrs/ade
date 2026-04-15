@@ -47,14 +47,14 @@ pub(crate) async fn try_sitemap_pages(
             Ok(xml) => {
                 let parsed = parse_sitemap_locs(&xml);
                 if parsed.is_empty() {
-                    warnings.push(format!("sitemap {} returned no locs", sitemap_url));
+                    warnings.push(format!("sitemap {sitemap_url} returned no locs"));
                     continue;
                 }
                 locs = parsed;
                 break;
             }
             Err(err) => {
-                warnings.push(format!("sitemap fetch failed for {}: {err}", sitemap_url));
+                warnings.push(format!("sitemap fetch failed for {sitemap_url}: {err}"));
             }
         }
     }
@@ -81,7 +81,7 @@ pub(crate) async fn try_sitemap_pages(
                     }
                 }
                 Err(err) => {
-                    warnings.push(format!("robots.txt fetch failed for {}: {err}", robots_url));
+                    warnings.push(format!("robots.txt fetch failed for {robots_url}: {err}"));
                 }
             }
         }
@@ -131,10 +131,10 @@ async fn fetch_sitemap_text(client: &reqwest::Client, url: &str) -> Result<Strin
         let mut out = String::new();
         decoder
             .read_to_string(&mut out)
-            .with_context(|| format!("decoding gzip sitemap {}", url))?;
+            .with_context(|| format!("decoding gzip sitemap {url}"))?;
         Ok(out)
     } else {
-        String::from_utf8(bytes).with_context(|| format!("decoding sitemap {}", url))
+        String::from_utf8(bytes).with_context(|| format!("decoding sitemap {url}"))
     }
 }
 
