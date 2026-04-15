@@ -75,12 +75,37 @@ function apiRequest({
 }
 
 async function executeWorkflow({ apiBaseUrl, apiKey, payload }) {
-  return apiRequest({
+  const response = await apiRequest({
     apiBaseUrl,
     apiKey,
     pathName: "/api/v1/ExecuteWorkflow",
     payload,
   });
+  const invocationId = String(response.invocation_id || "").trim();
+  if (invocationId) {
+    return response;
+  }
+  const actionStatuses = Array.isArray(response.actionStatuses) ? response.actionStatuses : [];
+  if (actionStatuses.length === 0) {
+    return response;
+  }
+  const failedStatus = actionStatuses.find((status) => Number(status?.status?.code || 0) !== 0);
+  if (failedStatus) {
+    const code = Number(failedStatus?.status?.code || 0);
+    const message = String(failedStatus?.status?.message || "").trim() || "unknown error";
+    const actionName = String(failedStatus?.actionName || "").trim() || "workflow action";
+    throw new Error(`BuildBuddy ExecuteWorkflow ${actionName} failed (${code}): ${message}`);
+  }
+  const normalizedInvocationId = String(
+    actionStatuses[0]?.invocationId || actionStatuses[0]?.invocation_id || "",
+  ).trim();
+  if (!normalizedInvocationId) {
+    return response;
+  }
+  return {
+    ...response,
+    invocation_id: normalizedInvocationId,
+  };
 }
 
 async function getInvocation({
