@@ -32,4 +32,12 @@ RUN corepack enable \
 
 RUN rm -f /tmp/install_desktop_deps_linux_ubuntu.sh
 
+RUN useradd --create-home --shell /bin/bash buildbuddy \
+    && usermod -aG sudo buildbuddy \
+    && printf 'buildbuddy ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/buildbuddy \
+    && chmod 0440 /etc/sudoers.d/buildbuddy \
+    && mkdir -p /workspace \
+    && chown -R buildbuddy:buildbuddy /workspace /home/example-user
+
+USER buildbuddy
 WORKDIR /workspace
