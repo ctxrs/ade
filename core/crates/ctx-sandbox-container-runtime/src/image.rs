@@ -241,8 +241,7 @@ pub async fn ensure_container_image_available(
     }
 
     anyhow::bail!(
-        "container image '{}' is not present; registry pulls are disabled, so the image must already exist in the local sandbox runtime",
-        image
+        "container image '{image}' is not present; registry pulls are disabled, so the image must already exist in the local sandbox runtime"
     );
 }
 
@@ -853,13 +852,13 @@ async fn load_container_image_tar(
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             if stderr.is_empty() {
                 anyhow::bail!(
-                    "container image load timed out after {}s",
-                    SANDBOX_IMAGE_LOAD_TIMEOUT.as_secs()
+                    "container image load timed out after {timeout_secs}s",
+                    timeout_secs = SANDBOX_IMAGE_LOAD_TIMEOUT.as_secs()
                 );
             }
             anyhow::bail!(
-                "container image load timed out after {}s: {stderr}",
-                SANDBOX_IMAGE_LOAD_TIMEOUT.as_secs()
+                "container image load timed out after {timeout_secs}s: {stderr}",
+                timeout_secs = SANDBOX_IMAGE_LOAD_TIMEOUT.as_secs()
             );
         }
 
@@ -889,7 +888,7 @@ async fn load_container_image_tar(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if stderr.is_empty() {
-            anyhow::bail!("container image load failed (status: {})", output.status);
+            anyhow::bail!("container image load failed (status: {status})", status = output.status);
         }
         anyhow::bail!("container image load failed: {stderr}");
     }
@@ -903,16 +902,13 @@ async fn load_container_image_tar(
     }
     if load_message.is_empty() {
         anyhow::bail!(
-            "container image load reported success but image '{}' is still missing after {}s",
-            image,
-            image_post_load_visibility_timeout().as_secs()
+            "container image load reported success but image '{image}' is still missing after {timeout_secs}s",
+            timeout_secs = image_post_load_visibility_timeout().as_secs()
         );
     }
     anyhow::bail!(
-        "container image load reported success but image '{}' is still missing after {}s: {}",
-        image,
-        image_post_load_visibility_timeout().as_secs(),
-        load_message
+        "container image load reported success but image '{image}' is still missing after {timeout_secs}s: {load_message}",
+        timeout_secs = image_post_load_visibility_timeout().as_secs()
     );
 }
 
