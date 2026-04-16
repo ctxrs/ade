@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
+const { getBazelCoveredCrates } = require("./bazel_rust_targets.cjs");
 const {
   AGENT_GATE_CRATES,
   BAZEL_TEST_CRATES,
@@ -43,7 +44,7 @@ test("agent gate crate list keeps the expected ctx-http-centered fast gate", () 
   ]);
 });
 
-test("mixed test strategy keeps the known nextest-incompatible crates on cargo test and routes the rest to nextest", () => {
+test("mixed test strategy routes the selected Bazel-covered slice to Bazel with no cargo or nextest tail", () => {
   const plan = partitionCratesForTestStrategy(
     [
       "ctx-http",
@@ -77,21 +78,27 @@ test("mixed test strategy keeps the known nextest-incompatible crates on cargo t
       "ctx-avf-linux-runtime",
       "ctx-bundled-assets",
       "ctx-execution-runtime",
+      "ctx-fs",
       "ctx-harness-setup",
+      "ctx-http",
+      "ctx-mcp",
       "ctx-provider-accounts",
       "ctx-provider-install",
       "ctx-provider-matrix",
+      "ctx-providers",
       "ctx-runtime-assets",
       "ctx-sandbox-contract",
       "ctx-sandbox-materialization",
       "ctx-session-tools",
       "ctx-storage-admission",
+      "ctx-store",
       "ctx-workspace-active-snapshot",
+      "ctx-workspace-config",
       "ctx-workspace-runtime",
       "ctx-worktree-data-plane",
     ],
-    cargoTestCrates: ["ctx-http", "ctx-mcp", "ctx-providers", "ctx-store"],
-    nextestCrates: ["ctx-fs", "ctx-workspace-config"],
+    cargoTestCrates: [],
+    nextestCrates: [],
   });
 });
 
@@ -108,31 +115,8 @@ test("ctx-execution-runtime changes force reverse-dependency coverage", () => {
 });
 
 test("mixed test strategy keeps the Bazel-covered slice explicit", () => {
-  assert.deepEqual([...BAZEL_TEST_CRATES].sort(), [
-    "ctx-avf-linux-runtime",
-    "ctx-bundled-assets",
-    "ctx-core",
-    "ctx-execution-runtime",
-    "ctx-harness-runtime",
-    "ctx-harness-setup",
-    "ctx-harness-sources",
-    "ctx-linux-sandbox-runtime",
-    "ctx-lsp",
-    "ctx-provider-accounts",
-    "ctx-provider-auth-import",
-    "ctx-provider-install",
-    "ctx-provider-matrix",
-    "ctx-runtime-assets",
-    "ctx-sandbox-container-runtime",
-    "ctx-sandbox-contract",
-    "ctx-sandbox-materialization",
-    "ctx-session-tools",
-    "ctx-storage-admission",
-    "ctx-workspace-active-snapshot",
-    "ctx-workspace-container",
-    "ctx-workspace-runtime",
-    "ctx-worktree-data-plane",
-  ]);
+  assert.deepEqual([...BAZEL_TEST_CRATES].sort(), getBazelCoveredCrates());
+  assert.equal(BAZEL_TEST_CRATES.has("ctx-http"), true);
 });
 
 test("nextest strategy keeps every crate on nextest", () => {

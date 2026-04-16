@@ -148,6 +148,6 @@ test("resolveCrates excludes manual-only crates from default CI selection", () =
   );
 });
 
-test("ctx-http stays isolated for cargo-based test phases", () => {
-  assert.equal(ISOLATED_CARGO_TEST_CRATES.has("ctx-http"), true);
+test("ctx-http no longer stays on the cargo-isolated test tail", () => {
+  assert.equal(ISOLATED_CARGO_TEST_CRATES.has("ctx-http"), false);
 });

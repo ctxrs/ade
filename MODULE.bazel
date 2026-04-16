@@ -58,6 +58,22 @@ crate.spec(
     version = "0.7",
 )
 crate.spec(
+    default_features = False,
+    features = ["enable_reqwest_rustls"],
+    package = "azure_core",
+    version = "0.21",
+)
+crate.spec(
+    default_features = False,
+    features = [
+        "development",
+        "old_azure_cli",
+        "enable_reqwest_rustls",
+    ],
+    package = "azure_identity",
+    version = "0.21",
+)
+crate.spec(
     package = "base64",
     version = "0.22",
 )
@@ -111,6 +127,10 @@ crate.spec(
 crate.spec(
     package = "futures-util",
     version = "0.3",
+)
+crate.spec(
+    package = "gcp_auth",
+    version = "0.12",
 )
 crate.spec(
     package = "hex",

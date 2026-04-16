@@ -1,3 +1,5 @@
+const { getCtxHttpSuiteTargets } = require("./ctx_http_suites.cjs");
+
 function sortUnique(values) {
   return [...new Set(values)].filter(Boolean).sort();
 }
@@ -28,6 +30,7 @@ const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
   "ctx-harness-setup": ["//core/crates/ctx-harness-setup:unit_tests"],
   "ctx-harness-runtime": ["//core/crates/ctx-harness-runtime:unit_tests"],
   "ctx-harness-sources": ["//core/crates/ctx-harness-sources:unit_tests"],
+  "ctx-http": getCtxHttpSuiteTargets("all"),
   "ctx-lsp": ["//core/crates/ctx-lsp:lsp_manager_smoke"],
   "ctx-load-test": ["//core/tools/load-test:unit_tests"],
   "ctx-mcp": [

@@ -208,11 +208,13 @@ pub async fn selected_runtime_state(
 ) -> Result<(bool, bool)> {
     match settings.runtime {
         ContainerRuntimeKind::NativeContainer => {
+            let mode = SandboxCommandMode::NativeContainer;
             let machine_ready = normalize_container_engine_ready_for_runtime(
-                sandbox_engine_ready(data_root).await,
+                runtime_sandbox_engine_ready(data_root, &mode).await,
             )?;
             let image_present = if machine_ready {
-                container_image_present(data_root, &resolve_container_image(settings)).await?
+                runtime_container_image_present(data_root, &mode, &resolve_container_image(settings))
+                    .await?
             } else {
                 false
             };
@@ -230,14 +232,21 @@ pub async fn prewarm_selected_runtime_with_observer(
     match settings.runtime {
         ContainerRuntimeKind::NativeContainer => {
             let image = resolve_container_image(settings);
+            let mode = SandboxCommandMode::NativeContainer;
             let machine_ready = normalize_container_engine_ready_for_runtime(
-                sandbox_engine_ready(data_root).await,
+                runtime_sandbox_engine_ready(data_root, &mode).await,
             )?;
             if machine_ready {
-                prefetch_container_image_with_observer(data_root, &image, observer).await
-            } else {
-                prefetch_container_startup_artifacts_with_observer(data_root, &image, observer)
+                runtime_prefetch_container_image_with_observer(data_root, &mode, &image, observer)
                     .await
+            } else {
+                runtime_prefetch_container_startup_artifacts_with_observer(
+                    data_root,
+                    &mode,
+                    &image,
+                    observer,
+                )
+                .await
             }
         }
         ContainerRuntimeKind::SharedVmContainer => {

@@ -234,7 +234,7 @@ function getTurboNextestTaskName(crateName) {
 function getCtxHttpSuiteInputGlobs(graph, suiteName) {
   const dependencyInputs = getDependencyInputGlobsWithoutSelf(graph, "ctx-http");
   const suiteScriptInputs = [...ROOT_RUST_INPUTS, ...CTX_HTTP_SUITE_SCRIPT_INPUTS];
-  const baseInputs = [...dependencyInputs, ...CTX_HTTP_SUITE_SCRIPT_INPUTS];
+  const baseInputs = [...dependencyInputs, ...suiteScriptInputs];
   if (suiteName === "all") {
     return [...new Set([...baseInputs, "crates/ctx-http/src/**", "crates/ctx-http/tests/**"])];
   }

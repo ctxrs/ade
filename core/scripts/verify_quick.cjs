@@ -47,6 +47,7 @@ function main() {
       "scripts/buildbuddy_run_job_contract.test.cjs",
       "scripts/buildbuddy_release_preflight_contract.test.cjs",
       "scripts/affected_tests_contract.test.cjs",
+      "scripts/ctx_http_bazel_contract.test.cjs",
       "scripts/desktop_ipc_bazel_contract.test.cjs",
       "scripts/ctx_harness_dockerfile_contract.test.cjs",
       "scripts/install_site_bazel_contract.test.cjs",

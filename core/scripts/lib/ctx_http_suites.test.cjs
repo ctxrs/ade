@@ -3,11 +3,15 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  CTX_HTTP_BAZEL_PACKAGE,
+  CTX_HTTP_MANUAL_ONLY_BAZEL_TARGETS,
   CTX_HTTP_SHARED_SOURCE_GLOBS,
   CTX_HTTP_SUITES,
+  CTX_HTTP_SUITE_SCRIPT_INPUTS,
   MANUAL_ONLY_CTX_HTTP_TEST_FILES,
   buildCtxHttpSuiteCommands,
   getCtxHttpSuiteNames,
+  getCtxHttpSuiteTargets,
   getCtxHttpSuiteTaskName,
   validateCtxHttpSuites,
 } = require("./ctx_http_suites.cjs");
@@ -46,28 +50,45 @@ test("ctx-http suite names include the meta all task and stable suite task names
 test("ctx-http suite command builder expands base and meta suites predictably", () => {
   assert.deepEqual(buildCtxHttpSuiteCommands("base"), [
     {
-      args: ["test", "-q", "-p", "ctx-http", "--lib", "--bins"],
-      command: "cargo",
-    },
-    {
-      args: ["test", "-q", "-p", "ctx-http", "--doc"],
-      command: "cargo",
+      args: ["scripts/run_bazel_pilot.cjs", "test", "//core/crates/ctx-http:base"],
+      command: "node",
     },
   ]);
 
   const allCommands = buildCtxHttpSuiteCommands("all");
-  assert.equal(allCommands.length > 10, true);
-  assert.deepEqual(allCommands[0], {
-    args: ["test", "-q", "-p", "ctx-http", "--lib", "--bins"],
-    command: "cargo",
-  });
+  assert.deepEqual(allCommands, [{
+    args: [
+      "scripts/run_bazel_pilot.cjs",
+      "test",
+      ...getCtxHttpSuiteTargets("all"),
+    ],
+    command: "node",
+  }]);
+  assert.deepEqual(getCtxHttpSuiteTargets("all"), [
+    `${CTX_HTTP_BAZEL_PACKAGE}:base`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:workspace-stream`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:provider-auth`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:provider-runtime`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:repo-vcs`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:lsp`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:turns-terminal`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:artifacts-updates`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:sandbox-cloud`,
+  ]);
+  assert.deepEqual(CTX_HTTP_MANUAL_ONLY_BAZEL_TARGETS, [
+    `${CTX_HTTP_BAZEL_PACKAGE}:manual-only`,
+  ]);
   assert.equal(
-    allCommands.some((command) => command.args.includes("cloud_gateway_azure_e2e")),
+    getCtxHttpSuiteTargets("all").some((target) => CTX_HTTP_MANUAL_ONLY_BAZEL_TARGETS.includes(target)),
     false,
   );
   assert.equal(
-    allCommands.some((command) => command.args.includes("cloud_gateway_gcp_e2e")),
-    false,
+    CTX_HTTP_SUITE_SCRIPT_INPUTS.includes("crates/ctx-http/BUILD.bazel"),
+    true,
+  );
+  assert.equal(
+    CTX_HTTP_SUITE_SCRIPT_INPUTS.includes("crates/ctx-http/ctx_http_bazel_tests.bzl"),
+    true,
   );
 });
 

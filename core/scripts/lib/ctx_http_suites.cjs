@@ -2,7 +2,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const CTX_HTTP_SUITE_PREFIX = "rust:ctx-http:test:";
+const CTX_HTTP_BAZEL_PACKAGE = "//core/crates/ctx-http";
 const CTX_HTTP_SUITE_SCRIPT_INPUTS = [
+  "crates/ctx-http/BUILD.bazel",
+  "crates/ctx-http/ctx_http_bazel_tests.bzl",
   "scripts/ctx_http_suite_task.cjs",
   "scripts/lib/ctx_http_suites.cjs",
 ];
@@ -10,6 +13,7 @@ const MANUAL_ONLY_CTX_HTTP_TEST_FILES = new Set([
   "cloud_gateway_azure_e2e",
   "cloud_gateway_gcp_e2e",
 ]);
+const CTX_HTTP_MANUAL_ONLY_BAZEL_TARGETS = [`${CTX_HTTP_BAZEL_PACKAGE}:manual-only`];
 const CTX_HTTP_SHARED_SOURCE_GLOBS = [
   "crates/ctx-http/src/api/auth.rs",
   "crates/ctx-http/src/api/errors.rs",
@@ -376,41 +380,40 @@ function validateCtxHttpSuites(coreRoot) {
 }
 
 function buildCtxHttpSuiteCommands(suiteName) {
-  if (suiteName === "all") {
-    return CTX_HTTP_SUITES.flatMap((suite) => buildCtxHttpSuiteCommands(suite.name));
-  }
+  return [
+    {
+      args: ["scripts/run_bazel_pilot.cjs", "test", ...getCtxHttpSuiteTargets(suiteName)],
+      command: "node",
+    },
+  ];
+}
 
+function getCtxHttpSuiteTarget(suiteName) {
   const suite = getCtxHttpSuiteByName(suiteName);
   if (!suite) {
     throw new Error(`unknown ctx-http suite: ${suiteName}`);
   }
+  return `${CTX_HTTP_BAZEL_PACKAGE}:${suite.name}`;
+}
 
-  if (suite.type === "base") {
-    return [
-      {
-        args: ["test", "-q", "-p", "ctx-http", "--lib", "--bins"],
-        command: "cargo",
-      },
-      {
-        args: ["test", "-q", "-p", "ctx-http", "--doc"],
-        command: "cargo",
-      },
-    ];
+function getCtxHttpSuiteTargets(suiteName) {
+  if (suiteName === "all") {
+    return CTX_HTTP_SUITES.map((suite) => getCtxHttpSuiteTarget(suite.name));
   }
-
-  return suite.testFiles.map((testFile) => ({
-    args: ["test", "-q", "-p", "ctx-http", "--test", testFile],
-    command: "cargo",
-  }));
+  return [getCtxHttpSuiteTarget(suiteName)];
 }
 
 module.exports = {
+  CTX_HTTP_BAZEL_PACKAGE,
+  CTX_HTTP_MANUAL_ONLY_BAZEL_TARGETS,
   CTX_HTTP_SUITES,
   CTX_HTTP_SHARED_SOURCE_GLOBS,
   CTX_HTTP_SUITE_PREFIX,
   CTX_HTTP_SUITE_SCRIPT_INPUTS,
   MANUAL_ONLY_CTX_HTTP_TEST_FILES,
   buildCtxHttpSuiteCommands,
+  getCtxHttpSuiteTarget,
+  getCtxHttpSuiteTargets,
   getCtxHttpSuiteByName,
   getCtxHttpSuiteNames,
   getCtxHttpSuiteTaskName,
