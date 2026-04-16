@@ -50,11 +50,16 @@ export const collectSessionHeadsForSupervisor = (
 ): Record<string, SessionHeadSnapshot> => {
   const out: Record<string, SessionHeadSnapshot> = {};
   const targetSessionIds = Array.from(new Set((sessionIds ?? collectWorkspaceSessionHeadIds(snapshot)).filter(Boolean)));
+  const batchHeads = store.getSessionHeadsSnapshot?.() ?? {};
   const bootstrapHeads = bootstrapCache.snapshot();
 
   for (const sessionId of targetSessionIds) {
+    const batchHead = batchHeads[sessionId];
+    if (batchHead) {
+      out[sessionId] = batchHead;
+    }
     const head = store.getSessionHeadSnapshot(sessionId);
-    if (head) {
+    if (head && shouldReplaceSessionHead(out[sessionId], head)) {
       out[sessionId] = head;
     }
   }
