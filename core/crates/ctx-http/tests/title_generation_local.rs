@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+mod common;
 
 use ctx_http::settings::{
     TitleGenerationLocalSettings, TitleGenerationMode, TitleGenerationSettings,
@@ -19,7 +19,7 @@ async fn generate_title_local_uses_mock_llama_server() {
     let runtime_dir = title_generation_local::runtime_dir(data_dir.path());
     tokio::fs::create_dir_all(&runtime_dir).await.unwrap();
 
-    let mock_path = PathBuf::from(env!("CARGO_BIN_EXE_llama_server_mock"));
+    let mock_path = common::resolve_cargo_bin_exe(env!("CARGO_BIN_EXE_llama_server_mock"));
     let runtime_path = runtime_dir.join(title_generation_local::runtime_binary_name());
     tokio::fs::copy(&mock_path, &runtime_path).await.unwrap();
 

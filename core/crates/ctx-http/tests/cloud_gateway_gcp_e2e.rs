@@ -1,6 +1,8 @@
 #![allow(unexpected_cfgs)]
 #![cfg(feature = "cloud_gateway_e2e")]
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -482,7 +484,7 @@ async fn cloud_gateway_gcp_e2e() -> Result<()> {
         .is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true"));
 
     let test_result: Result<()> = async {
-        let ctx_bin = env!("CARGO_BIN_EXE_ctx");
+        let ctx_bin = common::resolve_cargo_bin_exe(env!("CARGO_BIN_EXE_ctx"));
         let mut daemon_cmd = Command::new(ctx_bin);
         daemon_cmd
             .arg("serve")

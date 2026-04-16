@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use axum::body::{to_bytes, Body};
@@ -35,6 +36,52 @@ fn vcs_command_gate() -> &'static Semaphore {
     // Keep helper subprocess fan-out below local ulimit pressure during
     // concurrent integration test startup.
     GATE.get_or_init(|| Semaphore::new(2))
+}
+
+fn resolve_test_path(raw_path: &Path, kind: &str) -> PathBuf {
+    let candidate = raw_path.to_path_buf();
+    let mut searched: Vec<PathBuf> = Vec::new();
+
+    if candidate.is_absolute() {
+        if candidate.exists() {
+            return std::fs::canonicalize(&candidate).unwrap_or(candidate);
+        }
+        searched.push(candidate);
+    } else {
+        searched.push(candidate.clone());
+        for env_key in ["RUNFILES_DIR", "TEST_SRCDIR"] {
+            let Some(base) = std::env::var_os(env_key) else {
+                continue;
+            };
+            let base = PathBuf::from(base);
+            searched.push(base.join(raw_path));
+            if let Some(workspace) = std::env::var_os("TEST_WORKSPACE") {
+                searched.push(base.join(workspace).join(raw_path));
+            }
+            searched.push(base.join("_main").join(raw_path));
+        }
+    }
+
+    for path in &searched {
+        if path.exists() {
+            return std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+        }
+    }
+
+    panic!(
+        "failed to resolve {kind} path {raw_path:?}; checked {searched:?}; RUNFILES_DIR={:?}; TEST_SRCDIR={:?}; TEST_WORKSPACE={:?}",
+        std::env::var_os("RUNFILES_DIR"),
+        std::env::var_os("TEST_SRCDIR"),
+        std::env::var_os("TEST_WORKSPACE"),
+    );
+}
+
+pub fn resolve_cargo_bin_exe(raw_path: &str) -> PathBuf {
+    resolve_test_path(Path::new(raw_path), "test binary")
+}
+
+pub fn resolve_manifest_dir() -> PathBuf {
+    resolve_test_path(Path::new(env!("CARGO_MANIFEST_DIR")), "manifest dir")
 }
 
 fn parse_jj_version(output: &str) -> Option<(u64, u64, u64)> {

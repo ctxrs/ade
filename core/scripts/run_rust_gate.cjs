@@ -140,6 +140,18 @@ function runBazelPhase({ coreRoot, env, crateNames }) {
   }
 }
 
+function applyDefaultRustGateEnv(env, { cargoTestCrates, nextestCrates }) {
+  if (!String(env.CARGO_INCREMENTAL ?? "").trim()) {
+    env.CARGO_INCREMENTAL = "0";
+  }
+  if (cargoTestCrates.length > 0 && !String(env.RUST_TEST_THREADS ?? "").trim()) {
+    env.RUST_TEST_THREADS = "1";
+  }
+  if (nextestCrates.length > 0 && !String(env.NEXTEST_TEST_THREADS ?? "").trim()) {
+    env.NEXTEST_TEST_THREADS = "2";
+  }
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const coreRoot = path.resolve(__dirname, "..");
@@ -159,12 +171,10 @@ function main() {
     crateNames,
     args.testStrategy,
   );
-  if (cargoTestCrates.length > 0 && !String(env.RUST_TEST_THREADS ?? "").trim()) {
-    env.RUST_TEST_THREADS = "1";
-  }
-  if (nextestCrates.length > 0 && !String(env.NEXTEST_TEST_THREADS ?? "").trim()) {
-    env.NEXTEST_TEST_THREADS = "2";
-  }
+  applyDefaultRustGateEnv(env, {
+    cargoTestCrates,
+    nextestCrates,
+  });
 
   if (args.runClippy) {
     runTaskPhase({
@@ -213,6 +223,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  applyDefaultRustGateEnv,
   parseArgs,
   resolveCrates,
 };

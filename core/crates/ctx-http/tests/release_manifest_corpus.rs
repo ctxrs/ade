@@ -1,10 +1,12 @@
 use std::fs;
 use std::path::PathBuf;
 
+mod common;
+
 use ctx_http::updates::ReleaseManifest;
 
 fn corpus_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/release_manifests")
+    common::resolve_manifest_dir().join("tests/corpus/release_manifests")
 }
 
 fn load_manifest(name: &str) -> ReleaseManifest {

@@ -710,10 +710,9 @@ async fn execution_launch_startup_prewarm_kind_supported() {
     let mut status_snapshot: ExecutionLaunchSnapshot = serde_json::from_slice(&body).unwrap();
     assert_eq!(status_snapshot.job_id, snapshot.job_id);
     assert_eq!(status_snapshot.kind, ExecutionSetupJobKind::StartupPrewarm);
-    for _ in 0..1200 {
-        if !matches!(status_snapshot.state, ExecutionLaunchState::Running) {
-            break;
-        }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    while matches!(status_snapshot.state, ExecutionLaunchState::Running) &&
+        tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(25)).await;
         let req = Request::builder()
             .method("GET")

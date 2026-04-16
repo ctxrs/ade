@@ -79,7 +79,7 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
         return;
     };
 
-    let fixtures_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let fixtures_dir = common::resolve_manifest_dir()
         .join("tests")
         .join("fixtures")
         .join("provider_scenarios");

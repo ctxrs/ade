@@ -21,8 +21,18 @@ CTX_HTTP_COMPILE_DATA = [
 ]
 
 CTX_HTTP_TEST_COMMON_SRCS = glob(["tests/common/**/*.rs"])
+CTX_HTTP_TEST_CORPUS_DATA = glob(["tests/corpus/**"])
+CTX_HTTP_TEST_FIXTURE_DATA = glob(["tests/fixtures/**"])
+CTX_HTTP_INTEGRATION_TEST_DATA = CTX_HTTP_COMPILE_DATA + CTX_HTTP_TEST_CORPUS_DATA + CTX_HTTP_TEST_FIXTURE_DATA + [
+    ":ctx",
+    ":ctx-http-lsp-test-server",
+    ":llama_server_mock",
+]
 
 CTX_HTTP_TEST_ARGS = []
+CTX_HTTP_INTEGRATION_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
+    "--test-threads=1",
+]
 CTX_HTTP_UNIT_TEST_SERIAL_ARGS = CTX_HTTP_TEST_ARGS + [
     "--test-threads=1",
 ]
@@ -30,6 +40,7 @@ CTX_HTTP_LIB_UNIT_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "lib_tests::",
     "--skip=lib_tests::daemon_golden_path_with_fake_provider",
     "--skip=lib_tests::daemon_http_and_ws_streaming",
+    "--skip=lib_tests::execution_launch_startup_prewarm_kind_supported",
 ]
 CTX_HTTP_EXECUTION_SETUP_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
     "execution_setup::",
@@ -57,6 +68,10 @@ CTX_HTTP_DAEMON_GOLDEN_PATH_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
 CTX_HTTP_DAEMON_HTTP_AND_WS_STREAMING_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
     "lib_tests::daemon_http_and_ws_streaming",
+]
+CTX_HTTP_LIB_STARTUP_PREWARM_KIND_SUPPORTED_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
+    "--exact",
+    "lib_tests::execution_launch_startup_prewarm_kind_supported",
 ]
 CTX_HTTP_WORKSPACE_LAUNCH_PREWARM_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
@@ -210,6 +225,7 @@ CTX_HTTP_DIRECT_TEST_DEPS = [
     "//core/crates/ctx-providers:lib",
     "//core/crates/ctx-store:lib",
     "//core/crates/ctx-worker-protocol:lib",
+    "//core/crates/ctx-workspace-config:lib",
     "//core/crates/ctx-workspace-runtime:lib_test_support",
     "@crates//:anyhow",
     "@crates//:axum",
@@ -219,16 +235,21 @@ CTX_HTTP_DIRECT_TEST_DEPS = [
     "@crates//:bytes",
     "@crates//:chrono",
     "@crates//:flate2",
+    "@crates//:fs2",
     "@crates//:futures",
     "@crates//:gcp_auth",
+    "@crates//:hex",
     "@crates//:reqwest",
+    "@crates//:rustls",
     "@crates//:serde",
     "@crates//:serde_json",
     "@crates//:sha2",
+    "@crates//:tar",
     "@crates//:tempfile",
     "@crates//:tokio",
     "@crates//:tokio-tungstenite",
     "@crates//:tower",
+    "@crates//:tracing-subscriber",
     "@crates//:url",
     "@crates//:uuid",
     "@crates//:which",
@@ -289,6 +310,29 @@ rust_binary(
     ],
 )
 
+rust_binary(
+    name = "ctx-http-lsp-test-server",
+    crate_root = "src/bin/ctx-http-lsp-test-server.rs",
+    edition = "2021",
+    srcs = ["src/bin/ctx-http-lsp-test-server.rs"],
+    deps = [
+        "@crates//:anyhow",
+        "@crates//:serde_json",
+    ],
+)
+
+rust_binary(
+    name = "llama_server_mock",
+    crate_root = "src/bin/llama_server_mock.rs",
+    edition = "2021",
+    srcs = ["src/bin/llama_server_mock.rs"],
+    deps = [
+        "@crates//:axum",
+        "@crates//:serde_json",
+        "@crates//:tokio",
+    ],
+)
+
 declare_ctx_http_rust_unit_test(
     name = "unit_tests_api",
     args = CTX_HTTP_TEST_ARGS + ["api::"],
@@ -333,6 +377,17 @@ declare_ctx_http_rust_unit_test(
     data = CTX_HTTP_COMPILE_DATA,
     deps = CTX_HTTP_DIRECT_TEST_DEPS,
     proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+)
+
+rust_test(
+    name = "unit_tests_lib_execution_launch_startup_prewarm_kind_supported",
+    crate = ":lib_test_support",
+    args = CTX_HTTP_LIB_STARTUP_PREWARM_KIND_SUPPORTED_TEST_ARGS,
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+    timeout = "long",
 )
 
 declare_ctx_http_rust_unit_test(
@@ -466,6 +521,7 @@ test_suite(
         ":unit_tests_execution_setup_reuses_active_runtime_prewarm",
         ":unit_tests_installer",
         ":unit_tests_lib",
+        ":unit_tests_lib_execution_launch_startup_prewarm_kind_supported",
         ":unit_tests_merge_queue",
         ":unit_tests_provider_launch",
         ":unit_tests_provider_matrix",
@@ -503,9 +559,9 @@ test_suite(
 declare_ctx_http_integration_tests(
     common_srcs = CTX_HTTP_TEST_COMMON_SRCS,
     compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_INTEGRATION_TEST_DATA,
     deps = [":lib_test_support"] + CTX_HTTP_DIRECT_TEST_DEPS,
     proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
     rustc_env = CTX_HTTP_RUSTC_ENV,
-    test_args = CTX_HTTP_TEST_ARGS,
+    test_args = CTX_HTTP_INTEGRATION_TEST_ARGS,
 )

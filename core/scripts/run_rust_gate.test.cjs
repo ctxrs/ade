@@ -3,7 +3,7 @@ const test = require("node:test");
 
 const { AGENT_GATE_CRATES, ISOLATED_CARGO_TEST_CRATES } = require("./lib/rust_gate_plan.cjs");
 const { MANUAL_ONLY_RUST_CRATES } = require("./lib/rust_workspace_graph.cjs");
-const { parseArgs, resolveCrates } = require("./run_rust_gate.cjs");
+const { applyDefaultRustGateEnv, parseArgs, resolveCrates } = require("./run_rust_gate.cjs");
 
 test("parseArgs accepts --agent-gate without additional selection flags", () => {
   assert.deepEqual(parseArgs(["--agent-gate", "--test-strategy", "mixed"]), {
@@ -150,4 +150,32 @@ test("resolveCrates excludes manual-only crates from default CI selection", () =
 
 test("ctx-http no longer stays on the cargo-isolated test tail", () => {
   assert.equal(ISOLATED_CARGO_TEST_CRATES.has("ctx-http"), false);
+});
+
+test("applyDefaultRustGateEnv mirrors verify:quick env hygiene without overwriting explicit values", () => {
+  const env = {};
+  applyDefaultRustGateEnv(env, {
+    cargoTestCrates: ["ctx-http"],
+    nextestCrates: ["ctx-core"],
+  });
+  assert.deepEqual(env, {
+    CARGO_INCREMENTAL: "0",
+    NEXTEST_TEST_THREADS: "2",
+    RUST_TEST_THREADS: "1",
+  });
+
+  const explicitEnv = {
+    CARGO_INCREMENTAL: "1",
+    NEXTEST_TEST_THREADS: "9",
+    RUST_TEST_THREADS: "7",
+  };
+  applyDefaultRustGateEnv(explicitEnv, {
+    cargoTestCrates: ["ctx-http"],
+    nextestCrates: ["ctx-core"],
+  });
+  assert.deepEqual(explicitEnv, {
+    CARGO_INCREMENTAL: "1",
+    NEXTEST_TEST_THREADS: "9",
+    RUST_TEST_THREADS: "7",
+  });
 });

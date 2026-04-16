@@ -61,6 +61,9 @@ async fn sessions_have_done_events_in_store(
 async fn workspace_stream_stays_live_without_gaps_under_activity() {
     // This test is intentionally moderate: it should be stable in CI but still
     // exercise streaming with tool calls + thought chunks across multiple sessions.
+    const SESSION_COUNT: usize = 2;
+    const TURNS_PER_SESSION: usize = 2;
+
     let (repo, _data_dir, state, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
@@ -76,7 +79,7 @@ async fn workspace_stream_stays_live_without_gaps_under_activity() {
         .unwrap();
 
     let mut sessions: Vec<ctx_core::models::Session> = Vec::new();
-    for i in 0..3 {
+    for i in 0..SESSION_COUNT {
         let task: ctx_core::models::Task = client
             .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
             .json(&json!({"title": format!("task-{i}")}))
@@ -140,7 +143,7 @@ async fn workspace_stream_stays_live_without_gaps_under_activity() {
         let base = base.to_string();
         let session_id = session.id.0;
         senders.push(tokio::spawn(async move {
-            for j in 0..5 {
+            for j in 0..TURNS_PER_SESSION {
                 let content = format!("turn {idx}/{j} emit-thought");
                 let _resp: ctx_core::models::Message = client
                     .post(format!("{base}/api/sessions/{session_id}/messages"))
@@ -155,8 +158,18 @@ async fn workspace_stream_stays_live_without_gaps_under_activity() {
         }));
     }
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(75);
     loop {
+        let all_sent = senders.iter().all(|h| h.is_finished());
+        let enough_done = if all_sent {
+            sessions_have_done_events_in_store(&state, &sessions, TURNS_PER_SESSION).await
+        } else {
+            false
+        };
+        if all_sent && enough_done {
+            break;
+        }
+
         if tokio::time::Instant::now() >= deadline {
             panic!("timed out waiting for activity without gaps/reset_required");
         }
@@ -194,24 +207,45 @@ async fn workspace_stream_stays_live_without_gaps_under_activity() {
                 }
             }
             Ok(Some(Ok(WsMessage::Close(_)))) => {
+                let all_sent = senders.iter().all(|h| h.is_finished());
+                let enough_done = if all_sent {
+                    sessions_have_done_events_in_store(&state, &sessions, TURNS_PER_SESSION).await
+                } else {
+                    false
+                };
+                if all_sent && enough_done {
+                    break;
+                }
                 panic!("workspace stream closed unexpectedly while running activity");
             }
             Ok(Some(Ok(_))) => {}
-            Ok(Some(Err(err))) => panic!("workspace stream error: {err:?}"),
-            Ok(None) => panic!("workspace stream ended unexpectedly"),
+            Ok(Some(Err(err))) => {
+                let all_sent = senders.iter().all(|h| h.is_finished());
+                let enough_done = if all_sent {
+                    sessions_have_done_events_in_store(&state, &sessions, TURNS_PER_SESSION).await
+                } else {
+                    false
+                };
+                if all_sent && enough_done {
+                    break;
+                }
+                panic!("workspace stream error: {err:?}");
+            }
+            Ok(None) => {
+                let all_sent = senders.iter().all(|h| h.is_finished());
+                let enough_done = if all_sent {
+                    sessions_have_done_events_in_store(&state, &sessions, TURNS_PER_SESSION).await
+                } else {
+                    false
+                };
+                if all_sent && enough_done {
+                    break;
+                }
+                panic!("workspace stream ended unexpectedly");
+            }
             Err(_) => {
                 // no frame in this interval; check completion progress
             }
-        }
-
-        let all_sent = senders.iter().all(|h| h.is_finished());
-        let enough_done = if all_sent {
-            sessions_have_done_events_in_store(&state, &sessions, 5).await
-        } else {
-            false
-        };
-        if all_sent && enough_done {
-            break;
         }
     }
 

@@ -292,7 +292,7 @@ async fn provider_scenarios_offline_crp_fixtures() {
         return;
     };
 
-    let fixtures_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let fixtures_dir = common::resolve_manifest_dir()
         .join("tests")
         .join("fixtures")
         .join("provider_scenarios");
@@ -410,7 +410,7 @@ async fn provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_
         return;
     };
 
-    let fixtures_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let fixtures_dir = common::resolve_manifest_dir()
         .join("tests")
         .join("fixtures")
         .join("provider_scenarios");
@@ -507,7 +507,7 @@ async fn provider_scenarios_offline_crp_fixtures_persist_context_window_metrics(
         return;
     };
 
-    let fixtures_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let fixtures_dir = common::resolve_manifest_dir()
         .join("tests")
         .join("fixtures")
         .join("provider_scenarios");

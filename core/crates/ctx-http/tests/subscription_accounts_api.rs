@@ -2176,15 +2176,15 @@ async fn cursor_login_start_and_status_success_persists_account() {
 
     let cursor_script = write_mock_cursor_runtime(
         data_dir.path(),
-        r#"#!/usr/bin/env node
-const fs = require('fs');
-const capturePath = process.env.CTX_CURSOR_CAPTURE_FILE;
-console.log('https://cursor.com/login/device?code=test');
-console.log('Signed in as cursor-dev@example.com');
-if (capturePath) {
-  fs.appendFileSync(capturePath, JSON.stringify({ event: 'captured', service: 'cursor-access-token', value: 'cursor-access-token' }) + '\n');
-  fs.appendFileSync(capturePath, JSON.stringify({ event: 'captured', service: 'cursor-refresh-token', value: 'cursor-refresh-token' }) + '\n');
-}
+        r#"#!/bin/sh
+set -eu
+capture_path="${CTX_CURSOR_CAPTURE_FILE:-}"
+printf '%s\n' 'https://cursor.com/login/device?code=test'
+printf '%s\n' 'Signed in as cursor-dev@example.com'
+if [ -n "$capture_path" ]; then
+  printf '%s\n' '{"event":"captured","service":"cursor-access-token","value":"cursor-access-token"}' >> "$capture_path"
+  printf '%s\n' '{"event":"captured","service":"cursor-refresh-token","value":"cursor-refresh-token"}' >> "$capture_path"
+fi
 "#,
     )
     .await;
@@ -2249,15 +2249,15 @@ async fn cursor_login_start_rejects_host_path_discovery_and_does_not_persist_log
 
     write_mock_cursor_runtime(
         data_dir.path(),
-        r#"#!/usr/bin/env node
-const fs = require('fs');
-const capturePath = process.env.CTX_CURSOR_CAPTURE_FILE;
-console.log('https://cursor.com/login/device?code=discovered');
-console.log('Signed in as discovered-cursor@example.com');
-if (capturePath) {
-  fs.appendFileSync(capturePath, JSON.stringify({ event: 'captured', service: 'cursor-access-token', value: 'cursor-access-token-discovered' }) + '\n');
-  fs.appendFileSync(capturePath, JSON.stringify({ event: 'captured', service: 'cursor-refresh-token', value: 'cursor-refresh-token-discovered' }) + '\n');
-}
+        r#"#!/bin/sh
+set -eu
+capture_path="${CTX_CURSOR_CAPTURE_FILE:-}"
+printf '%s\n' 'https://cursor.com/login/device?code=discovered'
+printf '%s\n' 'Signed in as discovered-cursor@example.com'
+if [ -n "$capture_path" ]; then
+  printf '%s\n' '{"event":"captured","service":"cursor-access-token","value":"cursor-access-token-discovered"}' >> "$capture_path"
+  printf '%s\n' '{"event":"captured","service":"cursor-refresh-token","value":"cursor-refresh-token-discovered"}' >> "$capture_path"
+fi
 "#,
     )
     .await;

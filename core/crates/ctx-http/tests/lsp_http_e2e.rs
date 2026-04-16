@@ -1,3 +1,5 @@
+mod common;
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -65,7 +67,10 @@ async fn lsp_diagnostics_endpoint_returns_diagnostics() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
-    let lsp_server = env!("CARGO_BIN_EXE_ctx-http-lsp-test-server").to_string();
+    let lsp_server =
+        common::resolve_cargo_bin_exe(env!("CARGO_BIN_EXE_ctx-http-lsp-test-server"))
+            .display()
+            .to_string();
     let state = Arc::new(AppState::new_with_lsp_config_and_flags(
         data_dir.path().to_path_buf(),
         stores,
@@ -204,7 +209,10 @@ async fn lsp_status_endpoint_returns_expected_shape() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
-    let lsp_server = env!("CARGO_BIN_EXE_ctx-http-lsp-test-server").to_string();
+    let lsp_server =
+        common::resolve_cargo_bin_exe(env!("CARGO_BIN_EXE_ctx-http-lsp-test-server"))
+            .display()
+            .to_string();
     let state = Arc::new(AppState::new_with_lsp_config_and_flags(
         data_dir.path().to_path_buf(),
         stores,
@@ -279,7 +287,10 @@ async fn lsp_semantic_endpoints_return_payloads() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
-    let lsp_server = env!("CARGO_BIN_EXE_ctx-http-lsp-test-server").to_string();
+    let lsp_server =
+        common::resolve_cargo_bin_exe(env!("CARGO_BIN_EXE_ctx-http-lsp-test-server"))
+            .display()
+            .to_string();
     let state = Arc::new(AppState::new_with_lsp_config_and_flags(
         data_dir.path().to_path_buf(),
         stores,
@@ -422,7 +433,10 @@ async fn lsp_text_only_agent_endpoints_return_payloads() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
-    let lsp_server = env!("CARGO_BIN_EXE_ctx-http-lsp-test-server").to_string();
+    let lsp_server =
+        common::resolve_cargo_bin_exe(env!("CARGO_BIN_EXE_ctx-http-lsp-test-server"))
+            .display()
+            .to_string();
     let state = Arc::new(AppState::new_with_lsp_config_and_flags(
         data_dir.path().to_path_buf(),
         stores,

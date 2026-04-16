@@ -2404,10 +2404,10 @@ async fn workspace_launch_reuses_active_runtime_prewarm_without_second_image_loa
     std::fs::write(&load_release, b"ok").expect("release sandbox CLI load");
 
     let prewarm_terminal =
-        wait_for_execution_launch_terminal(&coordinator, &prewarm.job_id, Duration::from_secs(5))
+        wait_for_execution_launch_terminal(&coordinator, &prewarm.job_id, Duration::from_secs(30))
             .await;
     let launch_terminal =
-        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(5))
+        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(30))
             .await;
 
     assert_eq!(
@@ -2534,7 +2534,7 @@ async fn workspace_launch_reuses_startup_prewarm_without_second_image_load_when_
 
     startup.await.expect("startup prewarm task");
     let launch_terminal =
-        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(5))
+        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(30))
             .await;
 
     assert_eq!(

@@ -9,7 +9,7 @@ use common::openai_responses_stub::{
 };
 
 fn fixture_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
+    common::resolve_manifest_dir().join("tests/fixtures")
 }
 
 #[tokio::test]

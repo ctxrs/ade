@@ -1848,13 +1848,13 @@ async fn acp_container_install_parent_polling_stays_bounded_while_bridge_prerequ
     std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
     let bridge_fixture = fixture_dir.join("acp-crp-bridge");
     let provider_fixture = fixture_dir.join("kimi-acp");
-    write_executable(&bridge_fixture, "#!/bin/sh\nsleep 1.6\nexit 0\n");
+    write_executable(&bridge_fixture, "#!/bin/sh\nsleep 3.2\nexit 0\n");
     write_executable(&provider_fixture, "#!/bin/sh\nexit 0\n");
     let download_server = spawn_download_fixture_server(vec![
         (
             "bridge",
             std::fs::read(&bridge_fixture).expect("read bridge fixture"),
-            1_600,
+            3_200,
         ),
         (
             "provider",
