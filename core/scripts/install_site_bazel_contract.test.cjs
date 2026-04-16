@@ -25,5 +25,6 @@ test("install-site contract lane routes through Bazel-owned deterministic tests"
   assert.match(installSiteBuild, /"src\/index\.test\.mjs"/);
   assert.match(installSiteBuild, /"src\/install-script\.test\.mjs"/);
   assert.match(installSiteBuild, /"src\/install-bootstrap-ci\.test\.mjs"/);
+  assert.match(installBootstrapRunner, /pnpm -C core install --frozen-lockfile/);
   assert.match(installBootstrapRunner, /node core\/scripts\/run_bazel_pilot\.cjs test \/\/install-site:install_contract_tests/);
 });

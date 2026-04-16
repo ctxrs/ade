@@ -91,6 +91,12 @@ test("bazel pilot auth args forward the BuildBuddy API key as a remote header", 
   ]);
 });
 
+test("bazel pilot auth args accept the documented BuildBuddy API key env name", () => {
+  assert.deepEqual(buildBuildBuddyAuthArgs({ BUILD_BUDDY_API_KEY: "api-key-456" }), [
+    "--remote_header=x-buildbuddy-api-key=api-key-456",
+  ]);
+});
+
 test("bazel pilot invocation enables full BuildBuddy remote execution when requested", () => {
   const invocation = buildBazelPilotInvocation({
     argv: ["build"],
@@ -99,7 +105,7 @@ test("bazel pilot invocation enables full BuildBuddy remote execution when reque
       CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-rbe",
       CTX_SESSION_ID: "bazel-rbe-session",
       CTX_BAZEL_REMOTE_EXECUTION: "1",
-      BUILDBUDDY_API_KEY: "buildbuddy-ci-key",
+      BUILD_BUDDY_API_KEY: "buildbuddy-ci-key",
     },
   });
 
@@ -125,7 +131,7 @@ test("bazel pilot linux remote execution keeps lib builds remote and host execut
       CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-linux-rbe",
       CTX_SESSION_ID: "bazel-linux-rbe-session",
       CTX_BAZEL_REMOTE_EXECUTION: "linux",
-      BUILDBUDDY_API_KEY: "buildbuddy-linux-key",
+      BUILD_BUDDY_API_KEY: "buildbuddy-linux-key",
     },
   });
 
@@ -184,7 +190,7 @@ test("bazel pilot darwin remote execution uses the darwin BuildBuddy config dire
       CTX_VOLATILE_ROOT: "/tmp/ctx-bazel-pilot-darwin-rbe",
       CTX_SESSION_ID: "bazel-darwin-rbe-session",
       CTX_BAZEL_REMOTE_EXECUTION: "darwin",
-      BUILDBUDDY_API_KEY: "buildbuddy-darwin-key",
+      BUILD_BUDDY_API_KEY: "buildbuddy-darwin-key",
     },
   });
 

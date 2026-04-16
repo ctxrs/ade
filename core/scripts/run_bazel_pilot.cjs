@@ -127,7 +127,7 @@ function buildPhaseCommandArgs({ command, layout, extraConfigArgs = [] }) {
 }
 
 function buildBuildBuddyAuthArgs(env) {
-  const apiKey = String(env?.BUILDBUDDY_API_KEY || "").trim();
+  const apiKey = String(env?.BUILD_BUDDY_API_KEY || env?.BUILDBUDDY_API_KEY || "").trim();
   if (!apiKey) {
     return [];
   }
