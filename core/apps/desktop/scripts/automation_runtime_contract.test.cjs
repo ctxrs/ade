@@ -55,9 +55,18 @@ test("first-run local sandbox script defaults to isolated macOS CN backend", () 
 
 test("updater native smoke script opts out of container scenario defaults", () => {
   const pkg = JSON.parse(fs.readFileSync(PACKAGE_JSON, "utf8"));
+  const script = String(pkg.scripts["test:automation:updater-native-smoke"] || "");
   assert.match(
-    String(pkg.scripts["test:automation:updater-native-smoke"] || ""),
+    script,
     /CTX_AUTOMATION_SCENARIOS=\$\{CTX_AUTOMATION_SCENARIOS:-updater-native-smoke\}/,
+  );
+  assert.match(
+    script,
+    /CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=\$\{CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE:-1\}/,
+  );
+  assert.match(
+    script,
+    /\.\.\/\.\.\/\.\.\/scripts\/desktop_smoke_with_infisical\.sh -- --spec automation\/specs\/updater-native-smoke\.spec\.cjs/,
   );
 });
 
