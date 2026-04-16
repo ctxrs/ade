@@ -11,6 +11,9 @@ import {
   type PretextVirtualizerLogicalAnchor,
   type PretextVirtualizerSnapshot,
 } from "@pretext-virtualizer/core";
+import type {
+  PretextVirtualizerItemLocation,
+} from "@pretext-virtualizer/interface";
 import { PRETEXT_VIRTUALIZER_INITIAL_BOTTOM_LOCATION } from "../state/pretextVirtualizerViewportState";
 import {
   addPretextPerfBucket,
@@ -37,6 +40,7 @@ import {
   shouldFollowBottomOnItemsUpdate,
   shouldRestoreBottomOnViewportResize,
 } from "./sessionThread/pretextFollowBottom";
+import { createSessionThreadPretextVirtualizerMethods } from "./sessionThread/pretextVirtualizerMethods";
 import {
   approximateIndexForLocation,
   AuditedPretextRow,
@@ -445,6 +449,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     lastAppliedProjectionOpRef.current = null;
     setShowJumpToLatest(false);
     const scroller = containerRef.current;
+    const currentItems = listItemsRef.current;
     if (!scroller) {
       const nextSnapshot = core.getSnapshot();
       commitRuntimeSnapshot(nextSnapshot, currentItems);
@@ -452,7 +457,6 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
       return;
     }
     const preparedState = readSessionPretextRuntimePreparedState(runtime);
-    const currentItems = listItemsRef.current;
     const preparedLayoutMismatch =
       preparedState.layoutKey == null || preparedState.layoutKey !== runtimeUiStateLayoutKeyRef.current;
     const preparedWidthMismatch =
@@ -819,35 +823,23 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     lastInteractedItemIdRef.current = resolveInteractionItemId(event.target);
   }, []);
 
-  const pretextVirtualizerMethods = useMemo<PretextVirtualizerListMethods<WorkbenchListItem, WorkbenchMessageListContext>>(
-    () => ({
-      cancelSmoothScroll: () => {
-        const scroller = containerRef.current;
-        if (!scroller) return;
-        scroller.scrollTo({ top: scroller.scrollTop, behavior: "auto" });
-        pendingProgrammaticTopRef.current = null;
-        pendingProgrammaticBehaviorRef.current = "auto";
-      },
-      scrollerElement: () => containerRef.current,
-      restoreAnchor: (anchor) => {
-        pendingRestoreRef.current = true;
-        const nextSnapshot = core.restoreAnchor(anchor);
-        applySnapshotToDom(nextSnapshot, {
-          behavior: "auto",
-          followBottom: anchor.kind === "bottom",
-        });
-        pendingRestoreRef.current = false;
-      },
-      scrollToBottom: (behavior = "auto") => {
-        restoreBottom(behavior);
-      },
-      scrollToOffset: (scrollTop, behavior = "auto") => {
-        scrollToOffset(scrollTop, behavior);
-      },
-      scrollToItem: (location) => {
-        scrollToItem(location);
-      },
-    }),
+  const pretextVirtualizerMethods = useMemo(
+    () =>
+      createSessionThreadPretextVirtualizerMethods({
+        applySnapshotToDom,
+        containerRef,
+        pendingProgrammaticBehaviorRef,
+        pendingProgrammaticTopRef,
+        restoreAnchorSnapshot: (anchor) => {
+          pendingRestoreRef.current = true;
+          const nextSnapshot = core.restoreAnchor(anchor);
+          pendingRestoreRef.current = false;
+          return nextSnapshot;
+        },
+        restoreBottom,
+        scrollToItemFn: scrollToItem,
+        scrollToOffsetFn: scrollToOffset,
+      }),
     [applySnapshotToDom, core, restoreBottom, scrollToItem, scrollToOffset],
   );
 

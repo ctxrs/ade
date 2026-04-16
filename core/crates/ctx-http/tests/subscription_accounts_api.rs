@@ -1994,7 +1994,7 @@ async fn amp_login_auth_required_notice_reports_real_message() {
     assert_eq!(status.auth_url.as_deref(), Some("https://ampcode.com/auth"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn kimi_login_start_and_status_success_persists_oauth_account() {
     let _env_lock = KIMI_TOKEN_ENV_LOCK.lock().await;
     let oauth_server = start_kimi_oauth_server().await;
