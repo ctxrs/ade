@@ -1,12 +1,9 @@
 import type {
   SessionHeadSnapshot,
-  SessionSnapshotSummary,
   Task,
-  WorktreeVcsSnapshot,
   WorkspaceActiveSnapshot,
+  WorktreeVcsSnapshot,
   WorkspaceActiveSnapshotEvent,
-  WorkspaceActiveSnapshotSessionSummaryDeltaEvent,
-  WorkspaceActiveSnapshotTaskDeltaEvent,
 } from "@ctx/types";
 import {
   getDaemonClientConfig,
@@ -22,7 +19,6 @@ import {
   type PersistedWorkspaceActiveTaskSummaryV1,
 } from "./uiStateStore";
 import { isDesktopApp } from "../utils/desktop";
-import { parseWsJson } from "../utils/wsJson";
 import { emitUiDiagnostic, normalizeDiagnosticErrorMessage } from "./diagnosticsChannel";
 import type {
   WorkspaceActiveSnapshotCommand,
@@ -31,6 +27,7 @@ import type {
 } from "./workspaceActiveSnapshotProtocol";
 import type { SessionSubscriptionCursor } from "./sessionSubscription";
 import { WorkspaceActiveSnapshotStoreState } from "./workspaceActiveSnapshot/storeState";
+import { noteQueueAgeSample, noteWorkspaceStreamReset } from "./foregroundFreshnessTelemetry";
 import type {
   WorkspaceActiveSnapshotEventSource,
   WorkspaceActiveSnapshotItem,
@@ -41,23 +38,28 @@ import {
   flushSubscriptions as flushActiveSnapshotSubscriptions,
   getCanonicalStreamUrl,
   notifyEventListeners,
-  scheduleForegroundTaskFlush as scheduleActiveSnapshotForegroundTaskFlush,
   setDropActiveSnapshotMessages,
   setE2EEnabled,
-  setForegroundTaskId,
+  setForegroundSessionId,
   setSubscribedSessions,
   unwrapEvent,
   type WorkspaceActiveSnapshotControlHost,
 } from "./workspaceActiveSnapshot/controls";
 import {
+  applySessionSummaryDelta as applyWorkspaceSessionSummaryDelta,
+  applyWorkspaceSnapshot as applyWorkspaceStreamSnapshot,
+  connectStream as connectWorkspaceStream,
+  enqueueStreamMessage as enqueueWorkspaceStreamMessage,
+  fetchArchivedPage as fetchArchivedWorkspacePage,
+  handleStreamMessage as handleWorkspaceStreamMessage,
+  openWebSocket as openWorkspaceStreamWebSocket,
+  scheduleReconnect as scheduleWorkspaceStreamReconnect,
+  type WorkspaceActiveSnapshotStreamHost,
+} from "./workspaceActiveSnapshot/streamRuntime";
+import {
   resolveWorkerConnectionState,
   type WorkerAuthUpdateConfig,
 } from "./workspaceActiveSnapshot/workerConnection";
-import {
-  readWorkspaceHeadsBatchPayload,
-  readWorkspaceSnapshotPayload,
-  readWorkspaceStreamRev,
-} from "./workspaceActiveSnapshot/transport";
 export type {
   WorkspaceActiveSnapshotEventSource,
   WorkspaceActiveSnapshotItem,
@@ -76,9 +78,15 @@ type WorkspaceActiveSnapshotStoreOptions = {
   listWorkspaceArchivedTaskSummaries?: typeof listWorkspaceArchivedTaskSummaries;
 };
 
-const ACTIVE_PAGE_SIZE = 50;
 const SNAPSHOT_WAIT_MS = 1200;
 const WORKSPACE_PATCH_FLUSH_MS = 50;
+
+const nowMs = (): number => {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+    return (performance.timeOrigin ?? Date.now()) + performance.now();
+  }
+  return Date.now();
+};
 
 export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSource {
   private listeners = new Set<() => void>();
@@ -100,14 +108,15 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   workerPatchPendingEvents: WorkspaceActiveSnapshotEvent[] = [];
   private workerPatchPendingPersist = false;
   private workerPatchDirty = false;
+  private workerPatchOldestEventReceivedAtMs: number | null = null;
+  private workerPatchOldestForegroundEventReceivedAtMs: number | null = null;
   private workerPatchFlushMs = WORKSPACE_PATCH_FLUSH_MS;
   authTokenOverride: string | null = null;
   wsBaseUrlOverride: string | null = null;
   private configUnsubscribe: (() => void) | null = null;
   private listWorkspaceArchivedTaskSummariesFn: typeof listWorkspaceArchivedTaskSummaries;
   subscribedSessions: SessionSubscriptionCursor[] = [];
-  foregroundTaskId: string | null = null;
-  foregroundTaskTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  foregroundSessionId: string | null = null;
   ws: WebSocket | null = null;
   private connecting = false;
   private reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
@@ -192,8 +201,8 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   setSubscribedSessions = (sessions: SessionSubscriptionCursor[]) =>
     setSubscribedSessions(this, sessions);
 
-  setForegroundTaskId = (taskId: string | null) =>
-    setForegroundTaskId(this, taskId);
+  setForegroundSessionId = (sessionId: string | null) =>
+    setForegroundSessionId(this, sessionId);
 
   init = () => {
     this.destroyed = false;
@@ -263,8 +272,11 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
           sessions: this.subscribedSessions.slice(),
         });
       }
-      if (this.foregroundTaskId) {
-        this.postWorkerCommand({ type: "set_foreground_task_id", taskId: this.foregroundTaskId });
+      if (this.foregroundSessionId) {
+        this.postWorkerCommand({
+          type: "set_foreground_session_id",
+          sessionId: this.foregroundSessionId,
+        });
       }
       if (this.pendingWorkerCache) {
         this.postWorkerCommand({ type: "seed_cache", snapshot: this.pendingWorkerCache });
@@ -376,6 +388,17 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
   private applyWorkerPatch(patch: WorkspaceActiveSnapshotPatch) {
     if (this.destroyed) return;
+    const appliedAtMs = nowMs();
+    if (typeof patch.oldestEventReceivedAtMs === "number") {
+      noteQueueAgeSample("workspace", appliedAtMs - patch.oldestEventReceivedAtMs, {
+        source: "worker_patch",
+      });
+    }
+    if (typeof patch.oldestForegroundEventReceivedAtMs === "number") {
+      noteQueueAgeSample("foreground", appliedAtMs - patch.oldestForegroundEventReceivedAtMs, {
+        source: "worker_patch",
+      });
+    }
     this.state.applyWorkerPatch(patch);
     this.publish();
     if (patch.persist) {
@@ -383,6 +406,27 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     }
     for (const event of patch.events) {
       this.notifyEventListeners(event);
+    }
+  }
+
+  private getForegroundSessionId(): string {
+    return String(this.foregroundSessionId ?? "").trim();
+  }
+
+  private isForegroundSessionEvent(evt: WorkspaceActiveSnapshotEvent): boolean {
+    const foregroundSessionId = this.getForegroundSessionId();
+    if (!foregroundSessionId) return false;
+    switch (evt.type) {
+      case "session_head_delta":
+        return idToString(evt.delta.session_id) === foregroundSessionId;
+      case "session_summary":
+        return idToString(evt.summary.session.id) === foregroundSessionId;
+      case "session_summary_delta":
+        return idToString(evt.delta.session_id) === foregroundSessionId;
+      case "session_gap":
+        return idToString(evt.session_id) === foregroundSessionId;
+      default:
+        return false;
     }
   }
 
@@ -412,10 +456,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       this.reconnectTimer = null;
     }
     this.clearSnapshotWarning();
-    if (this.foregroundTaskTimer) {
-      globalThis.clearTimeout(this.foregroundTaskTimer);
-      this.foregroundTaskTimer = null;
-    }
     if (this.cachePersistTimer) {
       globalThis.clearTimeout(this.cachePersistTimer);
       this.cachePersistTimer = null;
@@ -427,6 +467,8 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     this.workerPatchPendingEvents = [];
     this.workerPatchPendingPersist = false;
     this.workerPatchDirty = false;
+    this.workerPatchOldestEventReceivedAtMs = null;
+    this.workerPatchOldestForegroundEventReceivedAtMs = null;
     this.listeners.clear();
     this.eventListeners.clear();
   };
@@ -553,6 +595,14 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     }, this.workerPatchFlushMs);
   }
 
+  flushWorkerPatchNow() {
+    if (this.workerPatchTimer) {
+      globalThis.clearTimeout(this.workerPatchTimer);
+      this.workerPatchTimer = null;
+    }
+    this.flushWorkerPatch();
+  }
+
   private flushWorkerPatch() {
     if (!this.workerPatchEmitter) return;
     if (
@@ -573,9 +623,13 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       archivedRev: this.state.getArchivedRev(),
       activeSessionIds: this.state.getActiveSessionIds(),
       persist: this.workerPatchPendingPersist,
+      oldestEventReceivedAtMs: this.workerPatchOldestEventReceivedAtMs,
+      oldestForegroundEventReceivedAtMs: this.workerPatchOldestForegroundEventReceivedAtMs,
     };
     this.workerPatchDirty = false;
     this.workerPatchPendingPersist = false;
+    this.workerPatchOldestEventReceivedAtMs = null;
+    this.workerPatchOldestForegroundEventReceivedAtMs = null;
     this.workerPatchEmitter(patch);
   }
 
@@ -589,362 +643,46 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   }
 
   private applyWorkspaceSnapshot(snapshot: WorkspaceActiveSnapshot, heads?: SessionHeadSnapshot[] | null) {
-    if (this.destroyed || !snapshot || typeof snapshot !== "object") return;
-    const incomingRev = typeof snapshot.snapshot_rev === "number" ? snapshot.snapshot_rev : 0;
-    const currentRev = this.state.getSnapshotRev();
-    const allowLower = !this.state.hasLiveSnapshotApplied() || this.allowSnapshotReset;
-    if (incomingRev < currentRev && !allowLower) {
-      return;
-    }
-    const resetSnapshotRev = incomingRev < currentRev;
-    this.allowSnapshotReset = false;
-    this.state.applyWorkspaceSnapshot(snapshot, heads, { resetSnapshotRev });
-    this.clearSnapshotWarning();
-    this.publish();
-    this.schedulePersistCache();
+    applyWorkspaceStreamSnapshot(this as unknown as WorkspaceActiveSnapshotStreamHost, snapshot, heads);
   }
 
   private async fetchArchivedPage(firstLoad: boolean) {
-    if (this.destroyed) return;
-    if (firstLoad) {
-      this.state.resetArchivedCursor();
-    }
-    const cursor = this.state.getArchivedCursor();
-    if (!firstLoad && !cursor) {
-      if (this.state.markArchivedExhausted()) {
-        this.publish();
-      }
-      return;
-    }
-    this.setFetchState("archived", "loading");
-    try {
-      const page = await this.listWorkspaceArchivedTaskSummariesFn(this.workspaceId, {
-        limit: ACTIVE_PAGE_SIZE,
-        cursor: cursor ?? undefined,
-      });
-      const summaries = await Promise.all(page.tasks.map((task) => this.state.buildArchivedItem(task)));
-      this.state.applyArchivedPage(page, summaries);
-      this.publish();
-    } catch (err) {
-      emitUiDiagnostic({
-        source: "workspace_snapshot",
-        code: "workspace.archived_load_failed",
-        severity: "warning",
-        message: "Archived task summaries failed to load.",
-        context: {
-          workspaceId: this.workspaceId,
-          firstLoad,
-          error: normalizeDiagnosticErrorMessage(err, "Archived task load failed."),
-        },
-      });
-      this.setFetchState("archived", "error");
-      return;
-    }
-    this.setFetchState("archived", "idle");
+    await fetchArchivedWorkspacePage(this as unknown as WorkspaceActiveSnapshotStreamHost, firstLoad);
   }
 
   private async connectStream() {
-    if (this.destroyed || this.ws || this.connecting) return;
-    this.connecting = true;
-    if (this.state.setConnection("connecting")) {
-      this.publish();
-    }
-    try {
-      const daemonConfig = getDaemonClientConfig();
-      const wsBaseUrl = this.wsBaseUrlOverride ?? daemonConfig.wsBaseUrl ?? null;
-      const token = this.authTokenOverride ?? daemonConfig.authToken;
-      if (!wsBaseUrl) {
-        emitUiDiagnostic({
-          source: "workspace_stream",
-          code: "workspace.stream_connection_missing",
-          severity: "warning",
-          message: "Workspace stream connection is not configured.",
-          context: {
-            workspaceId: this.workspaceId,
-          },
-        });
-        if (this.state.setConnection("disconnected")) {
-          this.publish();
-        }
-        return;
-      }
-      const qs = token ? `?token=${encodeURIComponent(token)}` : "";
-      const url = `${wsBaseUrl.replace(/\/+$/, "")}/api/workspaces/${this.workspaceId}/active_snapshot/stream${qs}`;
-      if (this.destroyed) return;
-      try {
-        await this.openWebSocket(url);
-        return;
-      } catch (err) {
-        emitUiDiagnostic({
-          source: "workspace_stream",
-          code: "workspace.stream_connect_failed",
-          severity: "warning",
-          message: "Workspace stream connection failed; reconnect scheduled.",
-          context: {
-            workspaceId: this.workspaceId,
-            url,
-            error: err instanceof Error && err.message ? err.message : String(err),
-          },
-        });
-        if (this.state.setConnection("disconnected")) {
-          this.publish();
-        }
-        this.scheduleReconnect();
-      }
-    } finally {
-      this.connecting = false;
-    }
+    await connectWorkspaceStream(this as unknown as WorkspaceActiveSnapshotStreamHost);
   }
 
-  private openWebSocket(url: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const ws = new WebSocket(url);
-      this.ws = ws;
-      let opened = false;
-      const timeoutId = globalThis.setTimeout(() => {
-        if (opened) return;
-        try {
-          ws.close();
-        } catch {
-          // ignore
-        }
-        if (this.ws === ws) {
-          this.ws = null;
-        }
-        reject(new Error("workspace active snapshot ws timeout"));
-      }, 4000);
-
-      ws.onopen = () => {
-        opened = true;
-        globalThis.clearTimeout(timeoutId);
-        if (this.destroyed) {
-          try {
-            ws.close();
-          } catch {
-            // ignore
-          }
-          if (this.ws === ws) {
-            this.ws = null;
-          }
-          resolve();
-          return;
-        }
-        this.reconnectDelayMs = 1000;
-        this.lastStreamSeq = 0;
-        if (this.state.setConnection("connected")) {
-          this.publish();
-        }
-        this.flushSubscriptions("ws_open");
-        resolve();
-      };
-
-      ws.onmessage = (event) => {
-        this.enqueueStreamMessage(event.data);
-      };
-
-      ws.onerror = () => {
-        globalThis.clearTimeout(timeoutId);
-        if (!opened) {
-          if (this.ws === ws) {
-            this.ws = null;
-          }
-          reject(new Error("workspace active snapshot ws error"));
-        }
-      };
-
-      ws.onclose = () => {
-        if (this.ws === ws) {
-          this.ws = null;
-        }
-        if (this.state.setConnection("disconnected")) {
-          this.publish();
-        }
-        this.scheduleReconnect();
-      };
-    });
+  private openWebSocket(url: string) {
+    return openWorkspaceStreamWebSocket(
+      this as unknown as WorkspaceActiveSnapshotStreamHost,
+      url,
+    );
   }
 
   private scheduleReconnect() {
-    if (this.reconnectTimer || this.destroyed) return;
-    const delay = this.reconnectDelayMs;
-    this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, 15000);
-    this.reconnectTimer = globalThis.setTimeout(() => {
-      this.reconnectTimer = null;
-      this.connectStream().catch(() => {});
-    }, delay);
+    scheduleWorkspaceStreamReconnect(this as unknown as WorkspaceActiveSnapshotStreamHost);
   }
 
   enqueueStreamMessage(data: unknown) {
-    this.streamQueue = this.streamQueue
-      .then(() => this.handleStreamMessage(data))
-      .catch(() => {});
+    enqueueWorkspaceStreamMessage(this as unknown as WorkspaceActiveSnapshotStreamHost, data);
   }
 
-  private async handleStreamMessage(data: unknown) {
-    if (this.e2eDropStreamMessages) return;
-    const parsed = await parseWsJson(data);
-    if (!parsed || typeof parsed !== "object") return;
-    const streamRev = readWorkspaceStreamRev(parsed);
-    if (typeof streamRev === "number") {
-      if (this.lastStreamSeq > 0 && streamRev < this.lastStreamSeq) {
-        this.lastStreamSeq = streamRev;
-        this.allowSnapshotReset = true;
-        this.flushSubscriptions("stream_seq_reset");
-      } else if (this.lastStreamSeq > 0 && streamRev > this.lastStreamSeq + 1) {
-        this.allowSnapshotReset = true;
-        this.flushSubscriptions("stream_seq_gap");
-      }
-      this.lastStreamSeq = Math.max(this.lastStreamSeq, streamRev);
-    }
-    const normalized = unwrapEvent(parsed);
-    if (!normalized || typeof normalized !== "object") return;
-    const parsedType = (normalized as { type?: string }).type;
-    if (parsedType === "reset_required") {
-      const latestRev =
-        (normalized as { latest_rev?: number }).latest_rev ??
-        (normalized as { latestRev?: number }).latestRev ??
-        0;
-      if (typeof latestRev === "number") {
-        this.state.updateSnapshotRev(latestRev);
-      }
-      this.lastStreamSeq = 0;
-      this.allowSnapshotReset = true;
-      this.flushSubscriptions("reset_required");
-      return;
-    }
-    const wsSnapshot = readWorkspaceSnapshotPayload(parsed);
-    if (wsSnapshot) {
-      this.applyWorkspaceSnapshot(wsSnapshot.snapshot, wsSnapshot.heads);
-      return;
-    }
-    const headsBatch = readWorkspaceHeadsBatchPayload(parsed);
-    if (headsBatch) {
-      const batchRev = headsBatch.snapshotRev;
-      if (typeof batchRev === "number") {
-        if (batchRev < this.state.getSnapshotRev()) {
-          this.state.updateSnapshotRev(batchRev, { allowReset: true });
-          this.allowSnapshotReset = true;
-          if (this.state.hasLiveSnapshotApplied()) {
-            this.flushSubscriptions("snapshot_rev_reset");
-          }
-        } else {
-          this.state.updateSnapshotRev(batchRev);
-        }
-      }
-      let changed = false;
-      for (const delta of headsBatch.deltas) {
-        if (this.state.applySessionHeadDelta(delta)) {
-          changed = true;
-        }
-        this.notifyEventListeners({
-          type: "session_head_delta",
-          workspace_id: this.workspaceId,
-          snapshot_rev: batchRev,
-          delta,
-        });
-      }
-      if (changed) {
-        this.publish();
-        this.schedulePersistCache();
-      }
-      return;
-    }
-    const evt = normalized as WorkspaceActiveSnapshotEvent;
-    if (typeof evt.snapshot_rev === "number") {
-      if (evt.snapshot_rev < this.state.getSnapshotRev()) {
-        this.state.updateSnapshotRev(evt.snapshot_rev, { allowReset: true });
-        this.allowSnapshotReset = true;
-        if (this.state.hasLiveSnapshotApplied()) {
-          this.flushSubscriptions("snapshot_rev_reset");
-        }
-      } else {
-        this.state.updateSnapshotRev(evt.snapshot_rev);
-      }
-    }
-    if ("archived_rev" in evt && typeof evt.archived_rev === "number") {
-      this.state.updateArchivedRev(evt.archived_rev);
-    }
+  private async handleStreamMessage(
+    input: unknown | { data: unknown; receivedAtMs: number },
+  ): Promise<void> {
+    await handleWorkspaceStreamMessage(
+      this as unknown as WorkspaceActiveSnapshotStreamHost,
+      input,
+    );
+  }
 
-    let flushAfterNotifyReason: string | null = null;
-    switch (evt.type) {
-      case "ready":
-        if (this.state.setConnection("connected")) {
-          this.publish();
-        }
-        break;
-      case "task_delta":
-        if (this.applyTaskDelta(evt)) {
-          this.publish();
-        }
-        break;
-      case "active_task_upsert":
-        if (this.state.upsertActiveSummary(evt.task)) {
-          this.publish();
-          this.schedulePersistCache();
-        }
-        break;
-      case "active_task_delete":
-        if (this.state.removeTask(idToString(evt.task_id), { adjustCounts: true })) {
-          this.publish();
-          this.schedulePersistCache();
-        }
-        break;
-      case "archived_task_upsert": {
-        const item = this.state.buildArchivedItem(evt.task, null);
-        if (item && this.state.upsertArchivedItem(item)) {
-          this.publish();
-        }
-        break;
-      }
-      case "archived_task_delete":
-        if (this.state.removeTask(idToString(evt.task_id), { adjustCounts: true })) {
-          this.publish();
-        }
-        break;
-      case "session_summary":
-        if (this.state.applySessionSummary(evt.summary)) {
-          this.publish();
-          this.schedulePersistCache();
-        }
-        break;
-      case "session_summary_delta":
-        if (this.applySessionSummaryDelta(evt)) {
-          this.publish();
-        }
-        break;
-      case "session_head_delta":
-        if (this.state.applySessionHeadDelta(evt.delta)) {
-          this.publish();
-          this.schedulePersistCache();
-        }
-        break;
-      case "session_head_seed":
-        break;
-      case "session_gap": {
-        flushAfterNotifyReason = "session_gap";
-        break;
-      }
-      case "worktree_bootstrap": {
-        if (this.state.applyWorktreeRoot(idToString(evt.notice.worktree_id), String(evt.notice.worktree_root ?? ""))) {
-          this.publish();
-        }
-        break;
-      }
-      case "worktree_vcs_snapshot": {
-        if (this.state.applyWorktreeVcsSnapshot(evt.snapshot)) {
-          this.publish();
-          this.schedulePersistCache();
-        }
-        break;
-      }
-      default:
-        break;
-    }
-
-    this.notifyEventListeners(evt);
-    if (flushAfterNotifyReason) {
-      this.flushSubscriptions(flushAfterNotifyReason);
-    }
+  private applySessionSummaryDelta(evt: WorkspaceActiveSnapshotEvent & { type: "session_summary_delta" }) {
+    return applyWorkspaceSessionSummaryDelta(
+      this as unknown as WorkspaceActiveSnapshotStreamHost,
+      evt,
+    );
   }
 
   private notifyEventListeners(evt: WorkspaceActiveSnapshotEvent) {
@@ -953,30 +691,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
   flushSubscriptions = (reason = "subscribe") =>
     flushActiveSnapshotSubscriptions(this, reason);
-
-  scheduleForegroundTaskFlush = () =>
-    scheduleActiveSnapshotForegroundTaskFlush(this);
-
-  private applyTaskDelta(evt: WorkspaceActiveSnapshotTaskDeltaEvent): boolean {
-    const changed = this.state.applyTaskDelta(evt);
-    if (changed) {
-      this.schedulePersistCache();
-    }
-    return changed;
-  }
-
-  private applySessionSummaryDelta(evt: WorkspaceActiveSnapshotSessionSummaryDeltaEvent): boolean {
-    const changed = this.state.applySessionSummaryDelta(evt);
-    if (changed) {
-      this.schedulePersistCache();
-    }
-    return changed;
-  }
-
-  private setFetchState(target: "active" | "archived", state: "idle" | "loading" | "error") {
-    if (!this.state.setFetchState(target, state)) return;
-    this.publish();
-  }
 
   publish() {
     if (this.workerPatchEmitter) {

@@ -3,7 +3,7 @@ import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderOptions } from "../api/client";
 import { SessionView } from "./SessionPage";
-import { postMessage } from "../api/client";
+import { deleteMessage, interruptSession, postMessage } from "../api/client";
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -83,6 +83,9 @@ vi.mock("../state/sessionSupervisor", () => ({
     upsertOptimisticThreadMessage: vi.fn(),
     removeOptimisticThreadMessage: vi.fn(),
     upsertOptimisticQueuedMessage: vi.fn(),
+    removeOptimisticQueuedMessage: vi.fn(),
+    addOptimisticQueueRemovalId: vi.fn(),
+    removeOptimisticQueueRemovalId: vi.fn(),
   }),
   useSessionEntry: (id: string) => sessionEntries.map[id] ?? null,
   useOpenSession: () => {},
@@ -194,10 +197,16 @@ vi.mock("../workbench/store", () => ({
 }));
 
 const sessionId = "session-1";
+const deleteMessageMock = vi.mocked(deleteMessage);
+const interruptSessionMock = vi.mocked(interruptSession);
 const postMessageMock = vi.mocked(postMessage);
 
 beforeEach(() => {
   paneSpy.mockClear();
+  deleteMessageMock.mockClear();
+  deleteMessageMock.mockResolvedValue({});
+  interruptSessionMock.mockClear();
+  interruptSessionMock.mockResolvedValue({});
   postMessageMock.mockClear();
   featureGateMock.mockReset();
   featureGateMock.mockReturnValue(false);
@@ -485,6 +494,76 @@ describe("SessionPage reasoning effort", () => {
 
     const props = paneSpy.mock.calls.at(-1)?.[0] as { queueForPanel: unknown[] };
     expect(props.queueForPanel).toEqual([]);
+  });
+
+  it("clears interrupt-pending state if queued-send deletion fails after interrupt succeeds", async () => {
+    featureGateMock.mockReturnValue(true);
+    deleteMessageMock.mockRejectedValueOnce(new Error("500 delete failed"));
+
+    const existingEntry = (sessionEntries.map[sessionId] ?? {}) as Record<string, unknown>;
+    sessionEntries.map[sessionId] = {
+      ...existingEntry,
+      freshness: "authoritative",
+      activity: { is_working: true, last_turn_status: "running" },
+      queue: [
+        {
+          id: "queued-1",
+          session_id: sessionId,
+          turn_id: "turn-queued-1",
+          task_id: "task-1",
+          role: "user",
+          content: "send queued now",
+          created_at: "2026-04-10T00:00:00.000Z",
+          delivery: "queued",
+          attachments: [],
+        },
+      ],
+    };
+
+    render(<SessionView sessionId={sessionId} />);
+
+    await waitFor(() => {
+      expect(paneSpy).toHaveBeenCalled();
+    });
+
+    await act(async () => {
+      const props = paneSpy.mock.calls.at(-1)?.[0] as {
+        onSendQueuedNow: (message: {
+          id: string;
+          session_id: string;
+          turn_id: string;
+          task_id: string;
+          role: string;
+          content: string;
+          created_at: string;
+          delivery: string;
+          attachments: unknown[];
+        }) => Promise<void>;
+        queueForPanel: Array<{
+          id: string;
+          session_id: string;
+          turn_id: string;
+          task_id: string;
+          role: string;
+          content: string;
+          created_at: string;
+          delivery: string;
+          attachments: unknown[];
+        }>;
+      };
+      await props.onSendQueuedNow(props.queueForPanel[0]!);
+    });
+
+    expect(interruptSessionMock).toHaveBeenCalledWith(sessionId);
+    expect(deleteMessageMock).toHaveBeenCalledWith(sessionId, "queued-1");
+    await waitFor(() => {
+      const props = paneSpy.mock.calls.at(-1)?.[0] as {
+        interruptPending?: boolean;
+        sendError?: string | null;
+      };
+      expect(props.interruptPending).toBe(false);
+      expect(props.sendError).toBe("500 delete failed");
+    });
   });
 
   it("unblocks retry when the latest turn has already failed even if activity is still marked running", async () => {

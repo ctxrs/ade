@@ -159,6 +159,7 @@ mod delta_tests {
             last_event_seq: 11,
             projection_rev: 11,
             state_rev: 11,
+            emitted_at_ms: None,
             session: Some(updated_session.clone()),
             activity: Some(SessionActivityState {
                 is_working: true,
@@ -237,6 +238,7 @@ mod delta_tests {
                 last_event_seq: Some(5),
                 projection_rev: Some(4),
                 state_rev: Some(5),
+                emitted_at_ms: None,
             },
         );
 
@@ -263,6 +265,7 @@ mod delta_tests {
             last_event_seq: 7,
             projection_rev: 7,
             state_rev: 7,
+            emitted_at_ms: None,
             session: Some(session_metadata_from_session(&subagent)),
             activity: Some(SessionActivityState {
                 is_working: true,
@@ -302,6 +305,7 @@ mod delta_tests {
             last_event_seq: 7,
             projection_rev: 7,
             state_rev: 7,
+            emitted_at_ms: None,
             session: Some(session_metadata_from_session(&subagent)),
             activity: Some(SessionActivityState {
                 is_working: true,
@@ -337,6 +341,7 @@ mod delta_tests {
             last_event_seq: 7,
             projection_rev: 7,
             state_rev: 7,
+            emitted_at_ms: None,
             session: Some(session_metadata_from_session(&primary)),
             activity: Some(SessionActivityState {
                 is_working: true,
@@ -512,6 +517,7 @@ mod replay_tests {
             last_event_seq: 5,
             projection_rev: 5,
             state_rev: 0,
+            emitted_at_ms: None,
             session: None,
             activity: None,
             event: None,
@@ -524,6 +530,7 @@ mod replay_tests {
             last_event_seq: 6,
             projection_rev: 6,
             state_rev: 0,
+            emitted_at_ms: None,
             session: None,
             activity: None,
             event: None,
@@ -565,6 +572,7 @@ mod replay_tests {
             last_event_seq: 5,
             projection_rev: 5,
             state_rev: 0,
+            emitted_at_ms: None,
             session: None,
             activity: None,
             event: None,
@@ -577,6 +585,7 @@ mod replay_tests {
             last_event_seq: 5,
             projection_rev: 6,
             state_rev: 0,
+            emitted_at_ms: None,
             session: None,
             activity: None,
             event: None,
@@ -618,6 +627,7 @@ mod replay_tests {
             last_event_seq: 5,
             projection_rev: 5,
             state_rev: 0,
+            emitted_at_ms: None,
             session: None,
             activity: None,
             event: None,
@@ -630,6 +640,7 @@ mod replay_tests {
             last_event_seq: 5,
             projection_rev: 5,
             state_rev: 0,
+            emitted_at_ms: None,
             session: None,
             activity: None,
             event: Some(SessionEvent {
@@ -652,6 +663,7 @@ mod replay_tests {
             last_event_seq: 6,
             projection_rev: 6,
             state_rev: 0,
+            emitted_at_ms: None,
             session: None,
             activity: None,
             event: None,

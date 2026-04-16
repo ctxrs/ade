@@ -5,7 +5,7 @@ import type {
 } from "@ctx/types";
 import type { SessionSubscriptionCursor } from "./sessionSubscription";
 import type { PersistedWorkspaceActiveSnapshotV1 } from "./uiStateStore";
-import type { WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStoreCore";
+import type { WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshot/storeTypes";
 
 export type WorkspaceActiveSnapshotCommand =
   | {
@@ -31,7 +31,7 @@ export type WorkspaceActiveSnapshotCommand =
       snapshot: PersistedWorkspaceActiveSnapshotV1;
     }
   | { type: "set_subscribed_sessions"; sessions: SessionSubscriptionCursor[] }
-  | { type: "set_foreground_task_id"; taskId: string | null }
+  | { type: "set_foreground_session_id"; sessionId: string | null }
   | { type: "ensure_archived_loaded" }
   | { type: "load_more_archived" }
   | { type: "apply_task_update"; task: Task }
@@ -48,6 +48,8 @@ export type WorkspaceActiveSnapshotPatch = {
   archivedRev: number;
   activeSessionIds: string[];
   persist: boolean;
+  oldestEventReceivedAtMs?: number | null;
+  oldestForegroundEventReceivedAtMs?: number | null;
 };
 
 export type WorkspaceActiveSnapshotWorkerMessage = {

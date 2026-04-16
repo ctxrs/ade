@@ -57,6 +57,9 @@ const mergeOrderedTurnStatus = (
   previous: SessionTurn["status"] | null | undefined,
   next: SessionTurn["status"] | null | undefined,
 ): SessionTurn["status"] => {
+  if (previous === "failed" && next === "interrupted") {
+    return "interrupted";
+  }
   if (isTerminalTurnStatus(previous)) {
     return previous;
   }

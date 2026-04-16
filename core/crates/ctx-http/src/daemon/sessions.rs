@@ -250,6 +250,7 @@ fn build_session_summary_delta(
         last_event_seq: Some(last_event_seq),
         projection_rev: Some(projection_rev),
         state_rev: Some(state_rev),
+        emitted_at_ms: Some(chrono::Utc::now().timestamp_millis()),
     })
 }
 
@@ -601,6 +602,7 @@ impl SessionRuntime {
             last_event_seq,
             projection_rev,
             state_rev,
+            emitted_at_ms: Some(chrono::Utc::now().timestamp_millis()),
             session: should_include_session_metadata_in_head_delta(&event.event_type)
                 .then(|| session_metadata_from_session(&session)),
             activity,

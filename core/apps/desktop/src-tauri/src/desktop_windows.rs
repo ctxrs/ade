@@ -1,5 +1,34 @@
 use super::*;
 
+fn desktop_startup_initialization_script(window_label: &str, start_path: &str) -> String {
+    let window_created_at_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!(
+        "window.__CTX_DESKTOP_STARTUP__ = Object.assign({{}}, window.__CTX_DESKTOP_STARTUP__, {{ windowCreatedAtMs: {window_created_at_ms}, windowLabel: {}, startPath: {} }});",
+        serde_json::to_string(window_label).unwrap_or_else(|_| "\"unknown\"".to_string()),
+        serde_json::to_string(start_path).unwrap_or_else(|_| "\"/\"".to_string()),
+    )
+}
+
+fn log_window_created(window_label: &str, path: &str) {
+    log_desktop_startup(&format!(
+        "desktop_startup: window_created label={} path={}",
+        serde_json::to_string(window_label).unwrap_or_else(|_| "\"unknown\"".to_string()),
+        serde_json::to_string(path).unwrap_or_else(|_| "\"/\"".to_string()),
+    ));
+}
+
+fn log_navigation_start(window_label: &str, path: &str, reason: &str) {
+    log_desktop_startup(&format!(
+        "desktop_startup: navigation_start label={} path={} reason={}",
+        serde_json::to_string(window_label).unwrap_or_else(|_| "\"unknown\"".to_string()),
+        serde_json::to_string(path).unwrap_or_else(|_| "\"/\"".to_string()),
+        serde_json::to_string(reason).unwrap_or_else(|_| "\"unknown\"".to_string()),
+    ));
+}
+
 pub(super) fn open_workspace_window(
     app: &tauri::AppHandle,
     registry: &WorkspaceWindowRegistry,
@@ -10,6 +39,7 @@ pub(super) fn open_workspace_window(
             let _ = window.show();
             let _ = window.set_focus();
             let url = format!("/workspaces/{workspace_id}");
+            log_navigation_start(&window_label, &url, "reuse_window");
             let js = format!(
                 "window.location.href = {};",
                 serde_json::to_string(&url).unwrap_or_else(|_| "\"/\"".to_string())
@@ -31,6 +61,7 @@ pub(super) fn open_workspace_window(
     let _ = window.set_focus();
 
     let url = format!("/workspaces/{workspace_id}");
+    log_navigation_start("main", &url, "reuse_main_window");
     let js = format!(
         "window.location.href = {};",
         serde_json::to_string(&url).unwrap_or_else(|_| "\"/\"".to_string())
@@ -54,12 +85,16 @@ pub(super) fn open_workspace_in_new_window(
 
     let label = format!("workbench:{}", uuid::Uuid::new_v4());
     let url = format!("/workspaces/{workspace_id}");
+    let init_script = desktop_startup_initialization_script(&label, &url);
     let builder = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(url.into()))
         .title("")
-        .inner_size(1200.0, 900.0);
+        .inner_size(1200.0, 900.0)
+        .initialization_script(&init_script);
     let window = apply_workbench_titlebar(builder)
         .build()
         .context("creating window failed")?;
+    log_window_created(&label, &format!("/workspaces/{workspace_id}"));
+    log_navigation_start(&label, &format!("/workspaces/{workspace_id}"), "new_window");
     #[cfg(target_os = "macos")]
     {
         let _ = install_macos_settings_button(app, &window);
@@ -85,6 +120,7 @@ pub(super) fn focus_or_open_workspace_window(
             let _ = window.show();
             let _ = window.set_focus();
             let url = format!("/workspaces/{workspace_id}");
+            log_navigation_start(&window_label, &url, "focus_existing_window");
             let js = format!(
                 "window.location.href = {};",
                 serde_json::to_string(&url).unwrap_or_else(|_| "\"/\"".to_string())
@@ -102,12 +138,16 @@ pub(super) fn focus_or_open_workspace_window(
 
 pub(super) fn open_launcher_window(app: &tauri::AppHandle) -> Result<()> {
     let label = format!("launcher:{}", uuid::Uuid::new_v4());
+    let init_script = desktop_startup_initialization_script(&label, "/");
     let builder = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("/".into()))
         .title("")
-        .inner_size(1200.0, 900.0);
+        .inner_size(1200.0, 900.0)
+        .initialization_script(&init_script);
     let window = apply_workbench_titlebar(builder)
         .build()
         .context("creating launcher window failed")?;
+    log_window_created(&label, "/");
+    log_navigation_start(&label, "/", "launcher_window");
     #[cfg(target_os = "macos")]
     {
         let _ = install_macos_settings_button(app, &window);
@@ -362,11 +402,15 @@ pub(super) fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
     if app.get_webview_window("main").is_some() {
         return Ok(());
     }
-    let start_url = match std::env::var("CTX_DESKTOP_START_PATH") {
-        Ok(v) if v.trim().starts_with('/') => tauri::WebviewUrl::App(v.trim().into()),
-        _ => tauri::WebviewUrl::App("/".into()),
+    let start_path = match std::env::var("CTX_DESKTOP_START_PATH") {
+        Ok(v) if v.trim().starts_with('/') => v.trim().to_string(),
+        _ => "/".to_string(),
     };
-    let mut builder = tauri::WebviewWindowBuilder::new(app, "main", start_url).title("");
+    let init_script = desktop_startup_initialization_script("main", &start_path);
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App(start_path.clone().into()))
+        .title("")
+        .initialization_script(&init_script);
     if let Ok(Some(monitor)) = app.primary_monitor() {
         let size = monitor.size();
         let width = (size.width as f64 * 0.9).round().max(1200.0);
@@ -377,6 +421,8 @@ pub(super) fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
     }
     let builder = apply_workbench_titlebar(builder);
     let window = builder.build().context("creating window")?;
+    log_window_created("main", &start_path);
+    log_navigation_start("main", &start_path, "main_window");
     #[cfg(target_os = "macos")]
     {
         let _ = install_macos_settings_button(app, &window);
@@ -384,4 +430,18 @@ pub(super) fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
     let _ = window.show();
     let _ = window.set_focus();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_startup_initialization_script_includes_window_label_and_start_path() {
+        let script = desktop_startup_initialization_script("main", "/workspaces/ws-1");
+        assert!(script.contains("\"main\""));
+        assert!(script.contains("\"/workspaces/ws-1\""));
+        assert!(script.contains("windowLabel"));
+        assert!(script.contains("startPath"));
+    }
 }

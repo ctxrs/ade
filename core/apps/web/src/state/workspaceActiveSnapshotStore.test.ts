@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Session,
   SessionHeadSnapshot,
@@ -76,6 +76,9 @@ vi.mock("../api/client", () => {
       total_archived: 0,
       next_cursor: null,
     })),
+    recordClientCounterMetric: vi.fn(),
+    recordClientGaugeMetric: vi.fn(),
+    recordClientHistogramMetric: vi.fn(),
   };
 });
 
@@ -220,9 +223,14 @@ const mkOpenWs = (): MockWs => ({
 });
 
 describe("WorkspaceActiveSnapshotStore", () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
     resetUiDiagnosticsForTests();
+    vi.useRealTimers();
   });
 
   it("hydrates from stream snapshot without HTTP", async () => {
@@ -434,6 +442,176 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(payload.include_active_heads).toBe(false);
   });
 
+  it("includes the foreground session in subscribe messages", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    asStoreInternals(store).ws = ws;
+
+    store.setForegroundSessionId?.("session-foreground");
+
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
+    expect(payload.foreground_session_id).toBe("session-foreground");
+    store.destroy();
+  });
+
+  it("flushes worker patches immediately for foreground terminal session deltas", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    vi.useFakeTimers();
+    const patches: Array<{ events: Array<{ type: string }> }> = [];
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", {
+      disableWorker: true,
+      onPatch: (patch) => patches.push({ events: patch.events.map((event) => ({ type: event.type })) }),
+    });
+
+    store.setSubscribedSessions([{ sessionId: "session-1", replay: { kind: "auto" } }]);
+    store.setForegroundSessionId?.("session-1");
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 1,
+        event: {
+          type: "session_head_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          delta: {
+            session_id: "session-1",
+            last_event_seq: 1,
+            projection_rev: 1,
+            state_rev: 1,
+            event: {
+              seq: 1,
+              id: "event-1",
+              session_id: "session-1",
+              turn_id: "turn-1",
+              event_type: "assistant_complete",
+              payload_json: { full_content: "final" },
+              created_at: "2026-03-09T00:00:01.000Z",
+            },
+            message: {
+              id: "message-1",
+              session_id: "session-1",
+              task_id: "task-1",
+              turn_id: "turn-1",
+              role: "assistant",
+              content: "final",
+              delivery: "immediate",
+              created_at: "2026-03-09T00:00:01.000Z",
+            },
+          },
+        },
+      }),
+    );
+
+    expect(patches).toHaveLength(1);
+    expect(patches[0]?.events.map((event) => event.type)).toEqual(["session_head_delta"]);
+    store.destroy();
+  });
+
+  it("keeps terminal worker patches batched for subscribed non-foreground sessions", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    vi.useFakeTimers();
+    const patches: Array<{ events: Array<{ type: string }> }> = [];
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", {
+      disableWorker: true,
+      onPatch: (patch) => patches.push({ events: patch.events.map((event) => ({ type: event.type })) }),
+    });
+
+    store.setSubscribedSessions([{ sessionId: "session-1", replay: { kind: "auto" } }]);
+    store.setForegroundSessionId?.("session-2");
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 1,
+        event: {
+          type: "session_head_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          delta: {
+            session_id: "session-1",
+            last_event_seq: 1,
+            projection_rev: 1,
+            state_rev: 1,
+            event: {
+              seq: 1,
+              id: "event-1",
+              session_id: "session-1",
+              turn_id: "turn-1",
+              event_type: "assistant_complete",
+              payload_json: { full_content: "final" },
+              created_at: "2026-03-09T00:00:01.000Z",
+            },
+            message: {
+              id: "message-1",
+              session_id: "session-1",
+              task_id: "task-1",
+              turn_id: "turn-1",
+              role: "assistant",
+              content: "final",
+              delivery: "immediate",
+              created_at: "2026-03-09T00:00:01.000Z",
+            },
+          },
+        },
+      }),
+    );
+
+    expect(patches).toHaveLength(0);
+    vi.advanceTimersByTime(60);
+    expect(patches).toHaveLength(1);
+    expect(patches[0]?.events.map((event) => event.type)).toEqual(["session_head_delta"]);
+    store.destroy();
+  });
+
+  it("keeps partial-only worker patches batched for subscribed sessions", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    vi.useFakeTimers();
+    const patches: Array<{ events: Array<{ type: string }> }> = [];
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", {
+      disableWorker: true,
+      onPatch: (patch) => patches.push({ events: patch.events.map((event) => ({ type: event.type })) }),
+    });
+
+    store.setSubscribedSessions([{ sessionId: "session-1", replay: { kind: "auto" } }]);
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 1,
+        event: {
+          type: "session_head_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          delta: {
+            session_id: "session-1",
+            last_event_seq: 1,
+            projection_rev: 1,
+            state_rev: 1,
+            event: {
+              seq: 1,
+              id: "event-1",
+              session_id: "session-1",
+              turn_id: "turn-1",
+              event_type: "assistant_chunk",
+              payload_json: { content_fragment: "partial" },
+              created_at: "2026-03-09T00:00:01.000Z",
+            },
+          },
+        },
+      }),
+    );
+
+    expect(patches).toHaveLength(0);
+    vi.advanceTimersByTime(50);
+    expect(patches).toHaveLength(1);
+    expect(patches[0]?.events.map((event) => event.type)).toEqual(["session_head_delta"]);
+    store.destroy();
+  });
+
   it("does not flush subscribe messages when only the resume cursor advances", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 
@@ -470,7 +648,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
   it("keeps cache and render projections aligned with the shared active fixture", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
-    const { buildWorkbenchThreadViewModel } = await import("../pages/SessionPage");
+    const { buildWorkbenchThreadViewModel } = await import("../pages/SessionPage.workbenchViewModel");
 
     const fixture = getActiveProjectionFixture();
     const store = new WorkspaceActiveSnapshotStoreImpl(fixture.workspaceId, { disableWorker: true });

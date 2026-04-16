@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Duration;
 
 pub(super) struct SessionCursor {
     pub(super) last_sent: SessionReplayCursor,
@@ -44,7 +45,6 @@ pub(super) struct WorkspaceActiveSubscriptionState {
     pub(super) explicit_sessions: HashSet<SessionId>,
     pub(super) active_task_sessions: HashMap<TaskId, SessionId>,
     pub(super) active_task_vcs_sessions: HashMap<TaskId, HashSet<SessionId>>,
-    pub(super) foreground_task_id: Option<TaskId>,
     pub(super) foreground_session_ids: Option<HashSet<SessionId>>,
 }
 
@@ -108,6 +108,77 @@ pub(super) fn event_snapshot_rev(event: &WorkspaceActiveSnapshotEvent) -> Option
     }
 }
 
+pub(super) async fn sync_workspace_stream_session_pins<I, J>(
+    state: &Arc<AppState>,
+    current: I,
+    next: J,
+) where
+    I: IntoIterator<Item = SessionId>,
+    J: IntoIterator<Item = SessionId>,
+{
+    let current = current.into_iter().collect::<HashSet<_>>();
+    let next = next.into_iter().collect::<HashSet<_>>();
+    for session_id in next.difference(&current) {
+        state.attach_session(*session_id).await;
+    }
+    for session_id in current.difference(&next) {
+        state.detach_session(*session_id).await;
+    }
+}
+
+pub(super) async fn release_workspace_stream_session_pins<I>(state: &Arc<AppState>, current: I)
+where
+    I: IntoIterator<Item = SessionId>,
+{
+    for session_id in current {
+        state.detach_session(session_id).await;
+    }
+}
+
+pub(super) const SESSION_REPLAY_MAX_EVENTS: usize = 2000;
+pub(super) const WORKSPACE_STREAM_QUEUE_LIMIT: usize = 256;
+pub(super) const WORKSPACE_STREAM_QUEUE_MAX_AGE: Duration = Duration::from_secs(10);
+pub(super) const HEAD_BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(25);
+pub(super) const HEAD_BATCH_SESSION_LIMIT: usize = 200;
+
+pub(super) struct StreamSendControl {
+    disconnect_after_flush: AtomicBool,
+    hydrating: AtomicBool,
+}
+
+impl StreamSendControl {
+    pub(super) fn new() -> Self {
+        Self {
+            disconnect_after_flush: AtomicBool::new(false),
+            hydrating: AtomicBool::new(false),
+        }
+    }
+
+    pub(super) fn set_disconnect_after_flush(&self) {
+        self.disconnect_after_flush.store(true, Ordering::Relaxed);
+    }
+
+    pub(super) fn clear_disconnect_after_flush(&self) {
+        self.disconnect_after_flush.store(false, Ordering::Relaxed);
+    }
+
+    pub(super) fn should_disconnect_after_flush(&self) -> bool {
+        self.disconnect_after_flush.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn set_hydrating(&self) {
+        self.hydrating.store(true, Ordering::Relaxed);
+    }
+
+    pub(super) fn clear_hydrating(&self) {
+        self.hydrating.store(false, Ordering::Relaxed);
+    }
+
+    pub(super) fn is_hydrating(&self) -> bool {
+        self.hydrating.load(Ordering::Relaxed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,6 +191,7 @@ mod tests {
             last_event_seq: 5,
             projection_rev: 7,
             state_rev: 0,
+            emitted_at_ms: None,
             session: None,
             activity: None,
             event: Some(SessionEvent {
@@ -174,6 +246,7 @@ mod tests {
             last_event_seq: 5,
             projection_rev: 7,
             state_rev: 0,
+            emitted_at_ms: None,
             session: None,
             activity: None,
             event: None,
@@ -198,6 +271,7 @@ mod tests {
             last_event_seq: 5,
             projection_rev: 8,
             state_rev: 0,
+            emitted_at_ms: None,
             session: None,
             activity: None,
             event: None,

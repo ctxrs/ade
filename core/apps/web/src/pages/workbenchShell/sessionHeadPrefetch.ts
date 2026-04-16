@@ -46,18 +46,21 @@ export const collectSessionHeadsForSupervisor = (
   snapshot: WorkspaceActiveSnapshotState,
   store: SessionHeadStoreReader,
   bootstrapCache: SessionHeadBootstrapCache,
+  sessionIds?: readonly string[],
 ): Record<string, SessionHeadSnapshot> => {
-  const batchHeads = store.getSessionHeadsSnapshot?.();
-  const out: Record<string, SessionHeadSnapshot> = batchHeads ? { ...batchHeads } : {};
+  const out: Record<string, SessionHeadSnapshot> = {};
+  const targetSessionIds = Array.from(new Set((sessionIds ?? collectWorkspaceSessionHeadIds(snapshot)).filter(Boolean)));
+  const bootstrapHeads = bootstrapCache.snapshot();
 
-  for (const sessionId of collectWorkspaceSessionHeadIds(snapshot)) {
+  for (const sessionId of targetSessionIds) {
     const head = store.getSessionHeadSnapshot(sessionId);
     if (head) {
       out[sessionId] = head;
     }
   }
 
-  for (const [sessionId, head] of Object.entries(bootstrapCache.snapshot())) {
+  for (const [sessionId, head] of Object.entries(bootstrapHeads)) {
+    if (targetSessionIds.length > 0 && !targetSessionIds.includes(sessionId)) continue;
     if (shouldReplaceSessionHead(out[sessionId], head)) {
       out[sessionId] = head;
     }
@@ -83,12 +86,14 @@ export const primePersistedSessionHeads = async (
   snapshot: WorkspaceActiveSnapshotState,
   store: SessionHeadStoreReader,
   bootstrapCache: SessionHeadBootstrapCache,
+  sessionIds?: readonly string[],
 ): Promise<boolean> => {
   const batchHeads = store.getSessionHeadsSnapshot?.() ?? {};
   let changed = false;
+  const targetSessionIds = Array.from(new Set((sessionIds ?? collectWorkspaceSessionHeadIds(snapshot)).filter(Boolean)));
 
   await Promise.all(
-    collectWorkspaceSessionHeadIds(snapshot).map(async (sessionId) => {
+    targetSessionIds.map(async (sessionId) => {
       if (!bootstrapCache.beginPersistedPrefetch(sessionId)) return;
       const persisted = await loadSessionHeadV1(sessionId).catch(() => null);
       if (!persisted?.head) return;

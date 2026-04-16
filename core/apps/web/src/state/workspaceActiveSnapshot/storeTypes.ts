@@ -48,5 +48,5 @@ export type WorkspaceActiveSnapshotEventSource = {
   getWorktreeRoot: (worktreeId: string) => string | null;
   getWorktreeVcsSnapshot: (worktreeId: string) => WorktreeVcsSnapshot | null;
   setSubscribedSessions?: (sessions: SessionSubscriptionCursor[]) => void;
-  setForegroundTaskId?: (taskId: string | null) => void;
+  setForegroundSessionId?: (sessionId: string | null) => void;
 };

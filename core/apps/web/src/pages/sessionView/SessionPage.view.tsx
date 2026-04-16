@@ -59,7 +59,15 @@ import { useSharedSessionProviderOptions } from "./useSharedSessionProviderOptio
 import { useStableAskUserQuestionAnswers } from "./useStableAskUserQuestionAnswers";
 import { composeModelId } from "../../utils/modelEffort";
 import { useSessionModelSwitcher } from "./useSessionModelSwitcher";
+import { useSessionViewDebugBridge } from "./useSessionViewDebugBridge";
 import { noteSessionTranscriptWarmVerbosity } from "../sessionThread/sessionTranscriptWarmState";
+import {
+  clearInterruptPendingMetric,
+  noteFinalVisible,
+  noteInterruptClicked,
+  noteInterruptPendingVisible,
+  noteSessionSwitchFirstPaint,
+} from "../../state/foregroundFreshnessTelemetry";
 
 const SCROLLBACK_INCREASE_VIEWPORT_BY_PX = 240;
 
@@ -119,12 +127,12 @@ export function SessionView({
     }
   }, [id]);
   const messageListLicenseKey = VIRTUOSO_MESSAGE_LIST_LICENSE_KEY;
-  const perfStartRef = useRef<number>(0);
   const [verbosity, setVerbosity] = useState<SessionViewVerbosity>("default");
   const [inputInternal, setInputInternal] = useState("");
   const [workbenchModeInternal, setWorkbenchModeInternal] = useState<WorkbenchModeId>("default");
   const [sendBusy, setSendBusy] = useState(false);
   const sendBusyRef = useRef(false);
+  const [interruptPending, setInterruptPending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [queueActionBusyId, setQueueActionBusyId] = useState<string | null>(null);
   const [fileOpenError, setFileOpenError] = useState<string | null>(null);
@@ -156,6 +164,7 @@ export function SessionView({
   useEffect(() => {
     setDraftAttachmentsInternal([]);
     setSendError(null);
+    setInterruptPending(false);
     setFileOpenError(null);
     setModelSwitchError(null);
     setOptimisticModelId(null);
@@ -238,6 +247,7 @@ export function SessionView({
 
   const entry = useSessionEntry(id ?? "");
   const session: Session | null = entry?.session ?? null;
+
   const supervisorThreadProjection = useMemo(
     () => selectSessionThreadProjection(entry),
     [entry],
@@ -353,6 +363,25 @@ export function SessionView({
     () => hasSessionActiveTurn(entry?.activity, latestTurnStatus),
     [entry?.activity, latestTurnStatus],
   );
+  const interruptSessionId = useMemo(() => {
+    const worktreeId = String(session?.worktree_id ?? "").trim();
+    if (!hasActiveTurn || !worktreeId) return "";
+    return id;
+  }, [hasActiveTurn, id, session?.worktree_id]);
+  useEffect(() => {
+    if (!hasActiveTurn) {
+      setInterruptPending(false);
+    }
+  }, [hasActiveTurn]);
+  useEffect(() => {
+    if (interruptPending && interruptSessionId) {
+      noteInterruptPendingVisible(interruptSessionId);
+      return;
+    }
+    if (interruptSessionId) {
+      clearInterruptPendingMetric(interruptSessionId);
+    }
+  }, [interruptPending, interruptSessionId]);
   const sessionProjectionReady =
     entry?.loadState === "live" &&
     supervisorThreadProjection.toolSummariesReady &&
@@ -396,23 +425,6 @@ export function SessionView({
     eventsStamp: baseEventsStamp,
   });
 
-  useEffect(() => {
-    if (!perfEnabled) return;
-    perfStartRef.current = performance.now();
-  }, [id, perfEnabled]);
-
-  useEffect(() => {
-    if (!perfEnabled) return;
-    if (!perfStartRef.current) return;
-    if (!entry) return;
-    if (entry.loading) return;
-    // eslint-disable-next-line no-console
-    console.log(
-      `[perf] session_ready_ms=${(performance.now() - perfStartRef.current).toFixed(1)} events=${entry.events.length} diff_bytes=${(entry.diff ?? "").length}`,
-    );
-    perfStartRef.current = 0;
-  }, [perfEnabled, entry?.loading, entry?.events.length, entry?.diff]);
-
   const {
     view: workbenchThreadView,
     listItems: threadListItems,
@@ -438,6 +450,13 @@ export function SessionView({
   const debugEvents = workbenchThreadView.debugEvents;
   const wbListItems = threadListItems;
   const listItems = wbListItems;
+  useSessionViewDebugBridge({
+    sessionId: id,
+    entry,
+    listItems,
+    threadProjection,
+    perfEnabled,
+  });
   const messageListUiState = useMemo<WorkbenchMessageListUiState>(
     () => ({
       expandedTurnHeaders,
@@ -456,6 +475,9 @@ export function SessionView({
       verbosity,
     ],
   );
+  const handleInitialTranscriptRendered = useCallback(() => {
+    noteSessionSwitchFirstPaint(id);
+  }, [id]);
   const {
     threadProjectionOp,
     itemIdentity: messageListItemIdentity,
@@ -478,10 +500,26 @@ export function SessionView({
     },
     showDebug,
     onAtBottomChange: setAtBottom,
+    onInitialContentRendered: handleInitialTranscriptRendered,
     uiState: messageListUiState,
     workbenchThreadOp: rawWorkbenchThreadOp,
     projectionRevision,
   });
+
+  const terminalTurnIds = useMemo(
+    () =>
+      threadProjection.turns
+        .filter((turn) =>
+          turn.status === "completed" || turn.status === "interrupted" || turn.status === "failed",
+        )
+        .map((turn) => turn.turn_id),
+    [threadProjection.turns],
+  );
+
+  useEffect(() => {
+    if (!sessionProjectionReady || terminalTurnIds.length === 0) return;
+    noteFinalVisible(id, terminalTurnIds);
+  }, [id, sessionProjectionReady, terminalTurnIds, threadProjection.turnsStamp]);
 
   useEffect(() => {
     if (!showDebug || typeof window === "undefined") return;
@@ -717,8 +755,12 @@ export function SessionView({
     setQueueActionBusyId(mid);
     setSendError(null);
     try {
+      noteInterruptClicked(id, "queued_action");
+      setInterruptPending(true);
       await interruptSession(id);
     } catch (e: unknown) {
+      clearInterruptPendingMetric(id);
+      setInterruptPending(false);
       rollbackOptimisticQueueRemoval(mid);
       setSendError(errorMessage(e));
       setQueueActionBusyId(null);
@@ -728,6 +770,8 @@ export function SessionView({
       await deleteMessage(id, mid);
       supervisor.removeOptimisticQueuedMessage(id, mid);
     } catch (e: unknown) {
+      clearInterruptPendingMetric(id);
+      setInterruptPending(false);
       if (!shouldKeepQueueRemovalOnError(e)) {
         rollbackOptimisticQueueRemoval(mid);
       }
@@ -804,8 +848,17 @@ export function SessionView({
   }, [authMethodId, id, refreshAll]);
 
   const handleInterruptSession = useCallback(async () => {
-    await interruptSession(id);
-  }, [id]);
+    if (!interruptSessionId) return;
+    noteInterruptClicked(interruptSessionId, "thread_header");
+    setInterruptPending(true);
+    try {
+      await interruptSession(interruptSessionId);
+    } catch (error: unknown) {
+      clearInterruptPendingMetric(interruptSessionId);
+      setInterruptPending(false);
+      setSendError(errorMessage(error));
+    }
+  }, [interruptSessionId]);
 
   const handleToggleRecording = useCallback(() => {
     if (dictationRecording) {
@@ -894,6 +947,7 @@ export function SessionView({
       sendNow={sendNow}
       hasDraftContent={hasDraftContent}
       hasActiveTurn={hasActiveTurn}
+      interruptPending={interruptPending}
       atBottom={atBottom}
       setVerbosityPref={setVerbosityPref}
       workbenchMode={workbenchMode}
@@ -901,7 +955,7 @@ export function SessionView({
       contextWindow={contextWindow}
       dictationRecording={dictationRecording}
       onToggleRecording={handleToggleRecording}
-      onInterruptSession={handleInterruptSession}
+      onInterruptSession={interruptSessionId ? handleInterruptSession : null}
       sendError={sendError}
       fileOpenError={fileOpenError}
       dictationDebugText={dictationDebugText}
@@ -931,6 +985,7 @@ export function SessionView({
       currentModelId={displayedModelId}
       onSetModelId={handleSetModelId}
       modelSwitchError={modelSwitchError}
+      interruptSessionId={interruptSessionId}
     />
   );
 }

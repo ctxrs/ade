@@ -165,7 +165,7 @@ const workspaceSnapshotStoreMock = {
   getSnapshot: vi.fn(() => workspaceSnapshotSnap),
   getSessionHeadSnapshot: vi.fn(() => null),
   getSessionHeadsSnapshot: vi.fn(() => ({})),
-  setForegroundTaskId: vi.fn(),
+  setForegroundSessionId: vi.fn(),
   setSubscribedSessions: vi.fn(),
 };
 const { trackWorkbenchPanelToggledMock } = vi.hoisted(() => ({
@@ -229,6 +229,9 @@ vi.mock("../api/client", () => ({
       mobile_api_max: 1,
     },
   })),
+  recordClientCounterMetric: vi.fn(),
+  recordClientGaugeMetric: vi.fn(),
+  recordClientHistogramMetric: vi.fn(),
   getTitleGenerationLocalStatus: vi.fn(async () => ({
     ready: true,
     runtime: { version: "1.0.0", installed: true, path: "/tmp/runtime" },
@@ -494,7 +497,7 @@ beforeEach(() => {
   workspaceSnapshotStoreMock.getSessionHeadSnapshot.mockReturnValue(null);
   workspaceSnapshotStoreMock.getSessionHeadsSnapshot.mockReset();
   workspaceSnapshotStoreMock.getSessionHeadsSnapshot.mockReturnValue({});
-  workspaceSnapshotStoreMock.setForegroundTaskId.mockReset();
+  workspaceSnapshotStoreMock.setForegroundSessionId.mockReset();
   workspaceSnapshotStoreMock.setSubscribedSessions.mockReset();
   refreshWorkbenchBootstrapSpy.mockReset();
   sessionViewMountSpy.mockReset();

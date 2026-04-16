@@ -5,6 +5,7 @@ import type { SessionReplicaCommand } from "../sessionReplicaProtocol";
 import { classifyActiveSnapshotSeedMode } from "./activeSnapshotSeed";
 import type { ConnectionStatus, InternalEntry } from "./entryState";
 import { sameIdList } from "./cachePolicy";
+import { applySessionActivityUpdate } from "./subscriptions";
 import type {
   SessionSupervisorWorkspaceEvent,
   SessionSupervisorWorkspaceSessionHeads,
@@ -22,6 +23,7 @@ type SessionSupervisorWorkspaceAuthorityHost = {
   setConnection(next: ConnectionStatus): void;
   syncActiveSnapshot(state: WorkspaceActiveSnapshotState): void;
   markOpenSessionsRecovering(): void;
+  rehydrateRecoveringOpenSessions(): void;
   refreshSubscriptions(opts?: { emitIfUnchanged?: boolean }): void;
   emitSubscribedSessions(): void;
   clearTaskThoughts(taskId: string): Promise<void>;
@@ -51,9 +53,12 @@ export const setWorkspaceSnapshotState = (
   host.setWorkspaceActivePrimarySessionIds(nextWorkspaceActivePrimarySessionIds);
   const next = host.mapConnection(state.connection);
   host.setConnection(next);
-  host.syncActiveSnapshot(state);
   if (next !== "connected") {
+    host.syncActiveSnapshot(state);
     host.markOpenSessionsRecovering();
+  } else {
+    host.rehydrateRecoveringOpenSessions();
+    host.syncActiveSnapshot(state);
   }
   host.refreshSubscriptions({ emitIfUnchanged: activePrimaryMembershipChanged });
 };
@@ -66,7 +71,11 @@ export const setWorkspaceSessionHeads = (
   for (const [sessionId, head] of host.getWorkspaceSessionHeadsById().entries()) {
     const entry = host.entries.get(sessionId);
     if (!entry) continue;
-    if (classifyActiveSnapshotSeedMode(entry, head) !== "repair_replace") continue;
+    const recovering = entry.freshness === "recovering" || entry.loadState === "recovering";
+    if (!recovering) continue;
+    if (classifyActiveSnapshotSeedMode(entry, head, { allowRecoveringRefresh: true }) !== "repair_replace") {
+      continue;
+    }
     host.replicaDispatch({ type: "seed_head", sessionId, head, mode: "repair_replace" });
   }
   for (const entry of host.entries.values()) {
@@ -106,6 +115,28 @@ export const ingestWorkspaceEvent = (
         }
       }
     }
+  } else if (evt.type === "session_summary_delta") {
+    const sessionId = idToString(evt.delta.session_id);
+    if (sessionId) {
+      const result = applySessionActivityUpdate(host.entries, sessionId, evt.delta.activity, {
+        lastEventSeq: evt.delta.last_event_seq,
+        projectionRev: evt.delta.projection_rev,
+        stateRev: evt.delta.state_rev,
+      });
+      changed = result.changed || changed;
+      subscriptionCursorsChanged = result.subscriptionCursorChanged || subscriptionCursorsChanged;
+    }
+  } else if (evt.type === "session_summary") {
+    const sessionId = idToString(evt.summary.session.id);
+    if (sessionId) {
+      const result = applySessionActivityUpdate(host.entries, sessionId, evt.summary.activity, {
+        lastEventSeq: evt.summary.last_event_seq,
+        projectionRev: evt.summary.projection_rev,
+        stateRev: evt.summary.state_rev,
+      });
+      changed = result.changed || changed;
+      subscriptionCursorsChanged = result.subscriptionCursorChanged || subscriptionCursorsChanged;
+    }
   }
   if (changed) {
     host.publish();
@@ -131,7 +162,9 @@ export const syncActiveSnapshot = (
     if (!sessionId) continue;
     const entry = host.ensureEntry(sessionId);
     const mode = classifyActiveSnapshotSeedMode(entry, head, { allowRecoveringRefresh: true });
+    const recovering = entry.freshness === "recovering" || entry.loadState === "recovering";
     if (!mode) continue;
+    if (mode === "repair_replace" && !recovering) continue;
     host.replicaDispatch({ type: "seed_head", sessionId, head, mode });
   }
 };

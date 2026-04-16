@@ -2,6 +2,8 @@ import type { SessionHeadSnapshot } from "../../api/client";
 import type { SessionSubscriptionCursor } from "../sessionSubscription";
 import type { InternalEntry } from "./entryState";
 import { buildSessionSubscriptionPlan } from "./sessionSubscriptionPlan";
+import { reconcileActivityInterruptedFromTurns, reconcileLatestTurnInterruptedFromActivity } from "./cachePolicy";
+import { isReplicaAuthority } from "./config";
 
 export function buildSubscribedSessions(
   subscribedSessionIds: string[],
@@ -45,47 +47,102 @@ export function buildSubscribedSessions(
   });
 }
 
+const compareSessionVersionFreshness = (
+  incoming: { lastEventSeq: number | null; projectionRev: number | null; stateRev: number | null },
+  existing: { lastEventSeq: number | null; projectionRev: number | null; stateRev: number | null },
+): number => {
+  const fields: Array<keyof typeof incoming> = ["lastEventSeq", "projectionRev", "stateRev"];
+  for (const field of fields) {
+    const incomingValue = incoming[field];
+    const existingValue = existing[field];
+    if (incomingValue === existingValue) continue;
+    if (incomingValue === null) return -1;
+    if (existingValue === null) return 1;
+    return incomingValue - existingValue;
+  }
+  return 0;
+};
+
 export function applySessionActivityUpdate(
   entries: Map<string, InternalEntry>,
   sessionId: string,
   activity: InternalEntry["activity"],
-  version?: { lastEventSeq?: number | null; stateRev?: number | null },
-): boolean {
+  version?: { lastEventSeq?: number | null; projectionRev?: number | null; stateRev?: number | null },
+): { changed: boolean; subscriptionCursorChanged: boolean } {
   const entry = entries.get(sessionId);
-  if (!entry || activity === undefined) return false;
+  if (!entry) return { changed: false, subscriptionCursorChanged: false };
+  if (
+    entry.refCount > 0 ||
+    entry.subscribed ||
+    entry.loadState === "recovering" ||
+    isReplicaAuthority(entry.freshness)
+  ) {
+    return { changed: false, subscriptionCursorChanged: false };
+  }
+  const incomingProjectionRev =
+    typeof version?.projectionRev === "number" ? version.projectionRev : null;
   const incomingStateRev = typeof version?.stateRev === "number" ? version.stateRev : null;
   const incomingLastEventSeq =
     typeof version?.lastEventSeq === "number" ? version.lastEventSeq : null;
-  if (
-    incomingStateRev === null &&
-    incomingLastEventSeq === null &&
-    (typeof entry.stateRev === "number" || typeof entry.lastEventSeq === "number")
-  ) {
-    return false;
+  const incomingVersion = {
+    lastEventSeq: incomingLastEventSeq,
+    projectionRev: incomingProjectionRev,
+    stateRev: incomingStateRev,
+  };
+  const existingVersion = {
+    lastEventSeq: typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : null,
+    projectionRev: typeof entry.projectionRev === "number" ? entry.projectionRev : null,
+    stateRev: typeof entry.stateRev === "number" ? entry.stateRev : null,
+  };
+  if (compareSessionVersionFreshness(incomingVersion, existingVersion) < 0) {
+    return { changed: false, subscriptionCursorChanged: false };
   }
-  if (
-    incomingStateRev !== null &&
-    typeof entry.stateRev === "number" &&
-    incomingStateRev < entry.stateRev
-  ) {
-    return false;
+
+  let changed = false;
+  let subscriptionCursorChanged = false;
+  if (activity !== undefined) {
+    if (
+      (entry.activity?.is_working ?? false) !== (activity?.is_working ?? false) ||
+      (entry.activity?.last_turn_status ?? null) !== (activity?.last_turn_status ?? null)
+    ) {
+      entry.activity = activity ?? null;
+      changed = true;
+    }
+    if (reconcileLatestTurnInterruptedFromActivity(entry.turns, entry.activity)) {
+      entry.turnsRev += 1;
+      changed = true;
+    }
+    const reconciledActivity = reconcileActivityInterruptedFromTurns(entry.activity, entry.turns);
+    if (reconciledActivity !== entry.activity) {
+      entry.activity = reconciledActivity;
+      changed = true;
+    }
   }
-  if (
-    incomingLastEventSeq !== null &&
-    typeof entry.lastEventSeq === "number" &&
-    incomingLastEventSeq < entry.lastEventSeq
-  ) {
-    return false;
+  if (incomingLastEventSeq !== null && entry.lastEventSeq !== incomingLastEventSeq) {
+    entry.lastEventSeq = incomingLastEventSeq;
+    changed = true;
+    subscriptionCursorChanged = true;
   }
-  if (
-    (entry.activity?.is_working ?? false) === (activity?.is_working ?? false) &&
-    (entry.activity?.last_turn_status ?? null) === (activity?.last_turn_status ?? null)
-  ) {
-    return false;
+  if (incomingProjectionRev !== null && entry.projectionRev !== incomingProjectionRev) {
+    entry.projectionRev = incomingProjectionRev;
+    changed = true;
+    subscriptionCursorChanged = true;
   }
-  entry.activity = activity ?? null;
+  if (incomingStateRev !== null && entry.stateRev !== incomingStateRev) {
+    entry.stateRev = incomingStateRev;
+    changed = true;
+  }
+  if (changed && entry.freshness === "bootstrap") {
+    entry.freshness = "replica";
+  }
+  if (!changed) {
+    return { changed: false, subscriptionCursorChanged: false };
+  }
   entry.updatedAtMs = Date.now();
-  return true;
+  return {
+    changed: true,
+    subscriptionCursorChanged: subscriptionCursorChanged && entry.subscribed,
+  };
 }
 
 export type SessionSupervisorSubscriptionHost = {

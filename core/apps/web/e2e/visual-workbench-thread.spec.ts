@@ -34,6 +34,21 @@ const toolMarkerFor = (seed: string) =>
     },
   ])}\n[[/tool_calls]]`;
 
+const buildRunningFixturePrompt = () => {
+  const toolCalls = Array.from({ length: 6 }, (_, index) => ({
+    kind: "execute",
+    title: `t${index + 1}`,
+    input: { command: `echo ${index + 1}` },
+  }));
+  const body = Array.from({ length: 60 }, (_, index) => `visual thread running line ${index + 1}`).join("\n");
+  return `visual-thread-running
+slow-diff-test
+${body}
+[[tool_calls]]
+${JSON.stringify(toolCalls)}
+[[/tool_calls]]`;
+};
+
 async function setupRunningSession(page: Page, theme: VisualTheme, opts: { queuedMessages?: boolean } = {}) {
   if (opts.queuedMessages) {
     await enableQueuedMessages(page);
@@ -52,22 +67,20 @@ async function setupRunningSession(page: Page, theme: VisualTheme, opts: { queue
   await setVisualTheme(page, theme);
   await selectFakeHarness(page);
 
-  const prompt = `visual-thread-running
-[[tool_calls]]
-[
-  {"kind":"execute","title":"t1","input":{"command":"echo 1"}},
-  {"kind":"execute","title":"t2","input":{"command":"echo 2"}},
-  {"kind":"execute","title":"t3","input":{"command":"echo 3"}},
-  {"kind":"execute","title":"t4","input":{"command":"echo 4"}}
-]
-[[/tool_calls]]`;
+  const prompt = buildRunningFixturePrompt();
   await newTaskComposer(page).fill(prompt);
   await page.getByRole("button", { name: "Send" }).click();
   await expect(activeSessionComposer(page)).toBeVisible({ timeout: 20_000 });
-  await expect(page.locator('.wb-session-slot button[aria-label="Stop"]')).toBeVisible({
+  await expect
+    .poll(async () => readVisibleSessionId(page), {
+      timeout: 20_000,
+      message: "visible session never exposed a committed session id for running fixture",
+    })
+    .not.toBe("");
+  await expect(page.getByRole("button", { name: "Stop" })).toBeVisible({
     timeout: 20_000,
   });
-  await waitForVisualSettled(page);
+  await page.waitForTimeout(250);
 }
 
 async function queueMessage(page: Page, text: string) {
@@ -81,6 +94,23 @@ async function queueMessage(page: Page, text: string) {
   await page.locator('.wb-session-slot button[aria-label="Send"]').click();
   const response = await sendResponse;
   expect(response.ok()).toBeTruthy();
+}
+
+async function queueMessageViaApi(page: Page, sessionId: string, text: string) {
+  const response = await page.request.post(`/api/sessions/${sessionId}/messages`, {
+    data: {
+      content: text,
+      delivery: "queued",
+    },
+  });
+  expect(response.ok(), `queued message POST failed: ${response.url()}`).toBeTruthy();
+}
+
+async function readVisibleSessionId(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const node = document.querySelector('[data-testid="session-view"]') as HTMLElement | null;
+    return node?.getAttribute("data-session-id")?.trim() ?? "";
+  });
 }
 
 async function ensureToolRows(page: Page, sessionId: string) {
@@ -212,16 +242,67 @@ test.describe.serial("visual: workbench thread", () => {
     test(`queued ${theme}`, async ({ page }) => {
       await page.setViewportSize({ width: 1400, height: 900 });
       await setupRunningSession(page, theme, { queuedMessages: true });
-      const queuedText = `visual-queued-${theme}-${Date.now()}`;
-      await queueMessage(page, queuedText);
+      const sessionId = await readVisibleSessionId(page);
+      expect(sessionId).not.toBe("");
+      const firstQueuedText = `slow-diff-test visual-queued-primary-${theme}`;
+      const secondQueuedText = `visual-queued-secondary-${theme}`;
+      await queueMessageViaApi(page, sessionId, firstQueuedText);
+      await queueMessageViaApi(page, sessionId, secondQueuedText);
       const queuePanel = page.locator(".wb-session .queue-panel");
       await expect(queuePanel).toBeVisible({ timeout: 20_000 });
-      await expect(queuePanel).toContainText(queuedText, { timeout: 20_000 });
+      await expect(queuePanel).toContainText(secondQueuedText, { timeout: 20_000 });
       await captureVisual(
         page,
         buildVisualName(["workbench-thread", "queued-panel", theme, visualViewportLabel("desktop")]),
         { ready: queuePanel },
       );
+    });
+
+    test(`interrupt pending ${theme}`, async ({ page }) => {
+      await page.setViewportSize({ width: 1400, height: 900 });
+      await setupRunningSession(page, theme);
+      const sessionId = await readVisibleSessionId(page);
+      expect(sessionId).not.toBe("");
+
+      let releaseInterrupt!: () => void;
+      const interruptHeld = new Promise<void>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      const interruptRoute = `**/api/sessions/${sessionId}/interrupt`;
+      let stalledInterruptRequest = false;
+      await page.route(interruptRoute, async (route) => {
+        if (stalledInterruptRequest) {
+          await route.continue();
+          return;
+        }
+        stalledInterruptRequest = true;
+        await interruptHeld;
+        try {
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: "{}",
+          });
+        } catch (error) {
+          if (!(error instanceof Error) || !error.message.includes("Route is already handled")) {
+            throw error;
+          }
+        }
+      });
+
+      const stopButton = page.getByRole("button", { name: "Stop" });
+      await expect(stopButton).toBeVisible({ timeout: 20_000 });
+      await stopButton.click();
+      const stoppingButton = page.getByRole("button", { name: "Stopping..." });
+      await expect(stoppingButton).toBeVisible({ timeout: 20_000 });
+      await captureVisual(
+        page,
+        buildVisualName(["workbench-thread", "interrupt-pending", theme, visualViewportLabel("desktop")]),
+        { ready: stoppingButton },
+      );
+
+      releaseInterrupt();
+      await page.unroute(interruptRoute);
     });
   }
 });

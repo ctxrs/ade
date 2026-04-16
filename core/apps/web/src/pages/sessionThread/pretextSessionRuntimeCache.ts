@@ -175,8 +175,16 @@ export function createDefaultSessionTranscriptUiState(
 
 export function buildSessionPretextRuntimeSourceKey(
   listItems: readonly WorkbenchListItem[],
+  uiState: WorkbenchMessageListUiState,
 ): string {
-  return `items:${fingerprintString(listItems.map((item) => item.id).join("|"))}`;
+  const itemRevision = listItems
+    .map((item) =>
+      `${item.id}:${getWorkbenchListItemHeightRevision(item, uiState, {
+        verbosity: uiState.verbosity,
+      })}`,
+    )
+    .join("|");
+  return `items:${fingerprintString(itemRevision)}`;
 }
 
 export function buildSessionPretextRuntimeLayoutKey(
@@ -263,7 +271,7 @@ export function noteSessionPretextRuntimeSnapshot(
 ): void {
   record.preparedSnapshot = snapshot;
   record.preparedItems = listItems;
-  record.preparedSourceKey = buildSessionPretextRuntimeSourceKey(listItems);
+  record.preparedSourceKey = buildSessionPretextRuntimeSourceKey(listItems, record.uiState);
   record.preparedLayoutKey = buildSessionPretextRuntimeLayoutKey({
     uiState: record.uiState,
   });
@@ -275,7 +283,7 @@ export function primeSessionPretextRuntime(
   const record = getOrCreateSessionPretextRuntime(params.sessionId);
   incrementPretextPerfCounter("pretext_runtime_prime_calls");
   const nextUiStateRevision = getSessionTranscriptUiStateRevision(params.uiState);
-  const nextSourceKey = params.sourceKey ?? buildSessionPretextRuntimeSourceKey(params.listItems);
+  const nextSourceKey = params.sourceKey ?? buildSessionPretextRuntimeSourceKey(params.listItems, params.uiState);
   const nextLayoutKey =
     params.layoutKey ??
     buildSessionPretextRuntimeLayoutKey({

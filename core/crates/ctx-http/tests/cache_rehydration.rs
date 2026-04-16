@@ -901,6 +901,7 @@ async fn include_events_false_subagent_heads_fall_back_to_store_after_cold_delta
         last_event_seq: event.seq,
         projection_rev,
         state_rev: event.seq,
+        emitted_at_ms: None,
         session: None,
         activity: Some(SessionActivityState {
             is_working: true,
@@ -1389,6 +1390,7 @@ async fn include_events_false_primary_heads_fall_back_to_store_after_cold_delta(
         last_event_seq: event.seq,
         projection_rev,
         state_rev: event.seq,
+        emitted_at_ms: None,
         session: None,
         activity: Some(SessionActivityState {
             is_working: true,

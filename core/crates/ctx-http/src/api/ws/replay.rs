@@ -274,29 +274,6 @@ where
     ordered
 }
 
-async fn resolve_foreground_task_sessions(
-    state: &Arc<AppState>,
-    workspace_id: WorkspaceId,
-    task_id: TaskId,
-) -> HashSet<SessionId> {
-    if let Some(summary) = state
-        .workspaces
-        .workspace_active_snapshot
-        .active_task_summary(workspace_id, task_id)
-        .await
-    {
-        return session_ids_for_active_task_summary(&summary);
-    }
-    let store = match state.store_for_workspace(workspace_id).await {
-        Ok(store) => store,
-        Err(_) => return HashSet::new(),
-    };
-    match store.get_workspace_active_task_summary(task_id).await {
-        Ok(Some(summary)) => session_ids_for_active_task_summary(&summary),
-        _ => HashSet::new(),
-    }
-}
-
 fn resolve_session_replay(
     replay: Option<&WorkspaceActiveSnapshotSessionReplay>,
     existing_last_sent: Option<SessionReplayCursor>,
@@ -334,7 +311,7 @@ pub(super) async fn resolve_workspace_active_snapshot_subscriptions(
             session_ids,
             sessions,
             task_ids,
-            foreground_task_id,
+            foreground_session_id,
             scope,
             ..
         } => {
@@ -389,8 +366,9 @@ pub(super) async fn resolve_workspace_active_snapshot_subscriptions(
                     }
                 }
             }
-            if let Some(task_id) = foreground_task_id {
-                let sessions = resolve_foreground_task_sessions(state, workspace_id, task_id).await;
+            if let Some(session_id) = foreground_session_id {
+                let mut sessions = HashSet::new();
+                sessions.insert(session_id);
                 foreground_session_ids = Some(sessions);
             }
 
@@ -420,7 +398,6 @@ pub(super) async fn resolve_workspace_active_snapshot_subscriptions(
                 explicit_sessions,
                 active_task_sessions,
                 active_task_vcs_sessions,
-                foreground_task_id,
                 foreground_session_ids,
             };
             let worktree_vcs_session_ids = resolve_worktree_vcs_interest_session_ids(
@@ -777,5 +754,25 @@ mod tests {
             sessions[0].replay,
             WorkspaceActiveSnapshotSessionReplay::Reset
         ));
+    }
+
+    #[test]
+    fn replay_deserialization_reads_foreground_session_id() {
+        let message = serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(
+            r#"{
+                "type":"subscribe",
+                "foreground_session_id":"00000000-0000-0000-0000-000000000003"
+            }"#,
+        )
+        .unwrap();
+
+        let WorkspaceActiveSnapshotClientMessage::Subscribe {
+            foreground_session_id,
+            ..
+        } = message;
+        assert_eq!(
+            foreground_session_id,
+            Some(session_id("00000000-0000-0000-0000-000000000003"))
+        );
     }
 }

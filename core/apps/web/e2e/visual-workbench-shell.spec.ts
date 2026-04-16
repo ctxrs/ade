@@ -156,7 +156,7 @@ test.describe.serial("visual: workbench shell", () => {
       await expect(page.locator(".wb-task-row")).toHaveCount(3, { timeout: 20_000 });
       await selectFakeHarness(page);
       const composer = newTaskComposer(page);
-      await composer.fill(`visual-shell-running-${theme}`);
+      await composer.fill(`slow-diff-test visual-shell-running-${theme}`);
       await page.getByRole("button", { name: "Send" }).click();
       await expect(page.locator('.wb-session-slot button[aria-label="Stop"]')).toBeVisible({
         timeout: 20_000,
@@ -165,6 +165,30 @@ test.describe.serial("visual: workbench shell", () => {
       await captureVisual(
         page,
         buildVisualName(["workbench-shell", "mixed-task-list", theme, visualViewportLabel("desktop")]),
+      );
+    });
+
+    test(`warm switch end state ${theme}`, async ({ page, request }) => {
+      const switched = await seedDummyWorkspace(request, {
+        tasks: 2,
+        sessionsPerTask: 1,
+        turnsPerSession: 2,
+        throttleMs: 0,
+      });
+      await openWorkbenchVisualPage(page, switched.workspaceId, { theme, viewport: "desktop-tight" });
+      const rows = page.locator(".wb-task-row");
+      await expect(rows).toHaveCount(2, { timeout: 20_000 });
+      await rows.nth(0).click();
+      await expect(page.locator(".wb-session-slot .wb-turn-header-content").first()).toBeVisible({
+        timeout: 20_000,
+      });
+      await rows.nth(1).click();
+      await expect(page.locator(".wb-session-slot .wb-turn-header-content").first()).toBeVisible({
+        timeout: 20_000,
+      });
+      await captureVisual(
+        page,
+        buildVisualName(["workbench-shell", "warm-switch-end-state", theme, visualViewportLabel("desktop-tight")]),
       );
     });
 

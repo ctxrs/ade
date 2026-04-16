@@ -7,13 +7,8 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  type PretextVirtualizerLogicalAnchor,
-  type PretextVirtualizerSnapshot,
-} from "@pretext-virtualizer/core";
-import type {
-  PretextVirtualizerItemLocation,
-} from "@pretext-virtualizer/interface";
+import { type PretextVirtualizerLogicalAnchor, type PretextVirtualizerSnapshot } from "@pretext-virtualizer/core";
+import type { PretextVirtualizerItemLocation } from "@pretext-virtualizer/interface";
 import { PRETEXT_VIRTUALIZER_INITIAL_BOTTOM_LOCATION } from "../state/pretextVirtualizerViewportState";
 import {
   addPretextPerfBucket,
@@ -57,9 +52,7 @@ import {
   clearSessionThreadDomMeasurementCaches,
   consumeSessionThreadDomMeasurementFallbackItemIds,
 } from "./sessionThread/sessionThreadDomMeasurement";
-import {
-  noteSessionTranscriptWarmViewport,
-} from "./sessionThread/sessionTranscriptWarmState";
+import { noteSessionTranscriptWarmViewport } from "./sessionThread/sessionTranscriptWarmState";
 import { usePretextTranscriptScrollbar } from "./sessionThread/usePretextTranscriptScrollbar";
 import type { SessionThreadPretextVirtualizerListProps } from "./SessionThreadMessageList.pretextVirtualizer.types";
 import {
@@ -71,6 +64,7 @@ import {
   commitSessionThreadRuntimeSnapshot,
   getRenderedItemsFromSnapshot,
 } from "./sessionThread/pretextVirtualizerRuntimeState";
+import { usePretextActivationRestore } from "./sessionThread/usePretextActivationRestore";
 
 const BOTTOM_THRESHOLD_PX = SESSION_PRETEXT_BOTTOM_THRESHOLD_PX;
 const JUMP_TO_LATEST_THRESHOLD_PX = 200;
@@ -78,7 +72,7 @@ const JUMP_TO_LATEST_THRESHOLD_PX = 200;
 export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPretextVirtualizerList({
   style,
   sessionId,
-  isActive: _isActive,
+  isActive,
   listItems,
   threadProjectionOp,
   initialLocation = PRETEXT_VIRTUALIZER_INITIAL_BOTTOM_LOCATION,
@@ -521,6 +515,15 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     scrollToOffset,
     sessionId,
   ]);
+
+  usePretextActivationRestore({
+    containerRef,
+    followBottomRef,
+    initialLocation,
+    isActive,
+    restoreBottom,
+    syncFromDom,
+  });
 
   useLayoutEffect(() => {
     const scroller = containerRef.current;

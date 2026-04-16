@@ -3,6 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
+use std::time::Duration;
 
 // Terminal bytes are lossy; a slow browser should not force unbounded per-connection buffering.
 const TERMINAL_WS_EVENT_QUEUE_LIMIT: usize = 128;

@@ -272,6 +272,57 @@ describe("SessionThreadPretextVirtualizerList", () => {
     expect(shells.length).toBeGreaterThan(0);
   });
 
+  it("restores the current bottom snapshot when an inactive session becomes active", () => {
+    const sessionId = "session-activation-refresh";
+    const initialItems = makeItems(4);
+    const updatedItems: WorkbenchListItem[] = initialItems.map((item) =>
+      item.kind === "message" && item.id === "message-4"
+        ? { ...item, content: `${item.content} marker` }
+        : item,
+    );
+    const uiState = createDefaultSessionTranscriptUiState();
+
+    function Harness({
+      isActive,
+      listItems,
+    }: {
+      isActive: boolean;
+      listItems: WorkbenchListItem[];
+    }) {
+      return (
+        <SessionThreadPretextVirtualizerList
+          style={{ height: 240 }}
+          sessionId={sessionId}
+          isActive={isActive}
+          listItems={listItems}
+          threadProjectionOp={noopProjectionOp}
+          itemContent={(_, item) => <div>{item.kind === "message" ? item.content : item.id}</div>}
+          itemKey={(item) => item.id}
+          context={context}
+        />
+      );
+    }
+
+    const { container, rerender } = render(<Harness isActive={false} listItems={initialItems} />);
+    const scroller = container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    expect(scroller).not.toBeNull();
+    defineScrollerMetrics(scroller!, { clientHeight: 240, clientWidth: 900, scrollHeight: 240 });
+
+    act(() => {
+      primeSessionPretextRuntime({
+        sessionId,
+        listItems: updatedItems,
+        uiState,
+        viewportWidth: 900,
+        viewportHeight: 240,
+      });
+    });
+
+    rerender(<Harness isActive listItems={updatedItems} />);
+
+    expect(container.textContent ?? "").toContain("marker");
+  });
+
   it("shows the jump-to-latest control when detached from bottom", () => {
     const { container } = render(
       <SessionThreadPretextVirtualizerList
@@ -1046,6 +1097,57 @@ describe("SessionThreadPretextVirtualizerList", () => {
       viewportWidth: 900,
       viewportHeight: 300,
     });
+
+    const reopened = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={makeItems(24)}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const reopenedScroller = reopened.container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!reopenedScroller) throw new Error("Expected reopened transcript scroller");
+    defineScrollerMetrics(reopenedScroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 1800 });
+
+    act(() => {
+      resizeObserverInstances[resizeObserverInstances.length - 1]?.callback([], {} as ResizeObserver);
+    });
+
+    expect(reopenedScroller.getAttribute("data-pretext-virtualizer-snapshot-last-index")).toBe("23");
+    expect(screen.queryByRole("button", { name: "Jump to latest" })).not.toBeInTheDocument();
+  });
+
+  it("reopens at bottom when the current transcript is newer than the prepared runtime", () => {
+    const sessionId = "session-detached-revisit-current-items-newer";
+    const initial = render(
+      <SessionThreadPretextVirtualizerList
+        style={{ height: 400 }}
+        sessionId={sessionId}
+        isActive
+        listItems={makeItems(20)}
+        threadProjectionOp={noopProjectionOp}
+        itemContent={(_, item) => <div>{item.id}</div>}
+        itemKey={(item) => item.id}
+        context={context}
+      />,
+    );
+
+    const scroller = initial.container.querySelector<HTMLElement>("[data-pretext-virtualizer-list='1']");
+    if (!scroller) throw new Error("Expected transcript scroller");
+    defineScrollerMetrics(scroller, { clientHeight: 300, clientWidth: 900, scrollHeight: 1400 });
+
+    act(() => {
+      resizeObserverInstances[0]?.callback([], {} as ResizeObserver);
+      scroller.scrollTop = 500;
+      fireEvent.scroll(scroller);
+    });
+    initial.unmount();
 
     const reopened = render(
       <SessionThreadPretextVirtualizerList

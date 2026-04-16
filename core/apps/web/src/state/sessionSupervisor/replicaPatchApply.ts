@@ -12,7 +12,11 @@ import {
   mergeSessionTurns,
 } from "../sessionHeadState";
 import { hasModelList } from "./eventHydration";
-import { mergeTurnStatus } from "./cachePolicy";
+import {
+  mergeTurnStatus,
+  reconcileActivityInterruptedFromTurns,
+  reconcileLatestTurnInterruptedFromActivity,
+} from "./cachePolicy";
 import { resolveTurnAnalyticsMetadata } from "./turnAnalyticsMetadata";
 import { replayTurnStartEffectsFromTurns } from "./turnStartEffects";
 import { replayTurnOutcomeEffectsFromTurns } from "./turnOutcomeEffects";
@@ -43,6 +47,7 @@ export type SessionSupervisorReplicaPatchHost = {
   ensureProviderOptions(entry: InternalEntry): Promise<void>;
   ensureSubagentInvocations(entry: InternalEntry, opts?: { force?: boolean }): Promise<void>;
   syncSupportLoadsForOpenSession(entry: InternalEntry): void;
+  bumpTurnsRev(entry: InternalEntry): void;
 };
 
 function haveSameArrayRefs<T>(previous: readonly T[], next: readonly T[]): boolean {
@@ -463,6 +468,15 @@ const applyCanonicalTranscriptPatch = (
       entry.activity = nextActivity;
       changed = true;
     }
+    if (reconcileLatestTurnInterruptedFromActivity(entry.turns, nextActivity)) {
+      host.bumpTurnsRev(entry);
+      changed = true;
+    }
+  }
+  const reconciledActivity = reconcileActivityInterruptedFromTurns(entry.activity, entry.turns);
+  if (reconciledActivity !== entry.activity) {
+    entry.activity = reconciledActivity;
+    changed = true;
   }
   if (normalizedFreshness !== undefined) {
     if (entry.freshness !== normalizedFreshness) {

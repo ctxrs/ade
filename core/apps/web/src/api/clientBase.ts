@@ -469,11 +469,39 @@ export const recordClientCounterMetric = (
   labels: Record<string, string> = {},
   value = 1,
 ): void => {
+  recordClientMetric("counter", name, "count", value, labels);
+};
+
+export const recordClientHistogramMetric = (
+  name: string,
+  unit: string,
+  value: number,
+  labels: Record<string, string> = {},
+): void => {
+  recordClientMetric("histogram", name, unit, value, labels);
+};
+
+export const recordClientGaugeMetric = (
+  name: string,
+  unit: string,
+  value: number,
+  labels: Record<string, string> = {},
+): void => {
+  recordClientMetric("gauge", name, unit, value, labels);
+};
+
+const recordClientMetric = (
+  kind: ClientTelemetryMetric["kind"],
+  name: string,
+  unit: string,
+  value: number,
+  labels: Record<string, string> = {},
+) => {
   if (!name.trim() || typeof window === "undefined") return;
   queueClientTelemetry({
     name,
-    kind: "counter",
-    unit: "count",
+    kind,
+    unit,
     value,
     run_id: getTelemetryRunId(),
     labels: {

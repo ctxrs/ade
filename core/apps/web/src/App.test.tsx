@@ -35,6 +35,7 @@ const desktopHandlers = new Map<string, (payload?: unknown) => void>();
 
 vi.mock("./api/client", () => ({
   appendDesktopLog: vi.fn(async () => {}),
+  getDaemonConnectionReadiness: vi.fn(() => ({ isReady: false })),
 }));
 
 vi.mock("./components/DaemonAvailabilityOverlay", () => ({

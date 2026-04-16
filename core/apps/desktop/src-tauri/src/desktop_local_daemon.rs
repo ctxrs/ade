@@ -29,7 +29,7 @@ pub(super) async fn desktop_connect_local(
         let data_dir = daemon_data_dir(&app).map_err(to_err)?;
         let desktop_version = app.package_info().version.to_string();
         let desktop_dev_instance_id = desktop_dev_instance_id();
-        connect_local_with_sources(
+        let result = connect_local_with_sources(
             state.inner(),
             |url| {
                 existing_local_daemon_matches_or_absent(
@@ -50,8 +50,15 @@ pub(super) async fn desktop_connect_local(
                     desktop_dev_instance_id,
                 )
             },
-        )
-        .map_err(to_err)
+        );
+        if let Err(err) = &result {
+            log_desktop_startup_error(&format!(
+                "desktop_startup: daemon_connect_failed kind=local error={}",
+                serde_json::to_string(&err.to_string())
+                    .unwrap_or_else(|_| "\"unknown\"".to_string()),
+            ));
+        }
+        result.map_err(to_err)
     })
     .await
     .map_err(|e| format!("failed to connect to daemon: {e}"))?
@@ -202,86 +209,95 @@ pub(super) fn ensure_local_connection(
     app: &tauri::AppHandle,
     state: &ConnectionManager,
 ) -> Result<()> {
-    if !matches!(state.info().kind, DesktopConnectionKind::None) {
-        return Ok(());
-    }
-    // Multiple webview requests can race on cold start (overlay pollers, initial data loads, etc.).
-    // Serialize the "connect local" path so we don't concurrently spawn the daemon and trip the
-    // daemon's lockfile, which can surface as spurious "daemon unavailable" errors in the UI.
-    let _guard = lock_local_connect_gate()?;
-    if !matches!(state.info().kind, DesktopConnectionKind::None) {
-        return Ok(());
-    }
-    let data_dir = daemon_data_dir(app)?;
-    let desktop_version = app.package_info().version.to_string();
-    let desktop_dev_instance_id = desktop_dev_instance_id();
-    if let Some((url, token)) = resolve_env_local_daemon(app)? {
-        probe_daemon_health(&url)?;
-        state.set_local_attached(url, token, None, LocalConnectionSource::EnvOverride);
-        return Ok(());
-    }
-    if let Some((url, token, daemon_pid)) = resolve_existing_local_daemon(app, &data_dir)? {
-        state.set_local_attached(
-            url,
-            token,
-            daemon_pid,
-            LocalConnectionSource::ExistingCompatibleDaemon,
-        );
-        return Ok(());
-    }
-    let spawned = match spawn_and_validate_local_daemon(
-        app,
-        &data_dir,
-        &desktop_version,
-        desktop_dev_instance_id,
-    ) {
-        Ok(value) => value,
-        Err(err) => {
-            // This can happen if another thread already started the daemon but we raced before
-            // the auth file became visible or health was reachable. Retry by waiting for the auth
-            // file + health and then attaching as an external local connection.
-            let auth = read_daemon_auth_with_retry(&data_dir)
-                .with_context(|| format!("spawning local daemon failed: {err:#}"))?;
-            let Some(url) = auth.daemon_url.as_deref() else {
-                return Err(err)
-                    .context("spawning local daemon failed (auth file missing daemon_url)");
-            };
-            probe_local_daemon_health_with_retry(url)?;
-            let compatible = existing_local_daemon_matches(
-                url,
-                &data_dir,
-                &desktop_version,
-                desktop_dev_instance_id,
-            )
-            .with_context(|| {
-                format!(
-                    "spawning local daemon failed: {err:#}; validating existing local daemon compatibility"
-                )
-            })?;
-            if !compatible {
-                return Err(err).context(format!(
-                    "spawning local daemon failed and existing daemon is incompatible (url={url})"
-                ));
-            }
-            let daemon_pid = daemon_health(url)
-                .ok()
-                .and_then(|health| normalize_daemon_pid(health.pid));
+    let result = (|| -> Result<()> {
+        if !matches!(state.info().kind, DesktopConnectionKind::None) {
+            return Ok(());
+        }
+        // Multiple webview requests can race on cold start (overlay pollers, initial data loads, etc.).
+        // Serialize the "connect local" path so we don't concurrently spawn the daemon and trip the
+        // daemon's lockfile, which can surface as spurious "daemon unavailable" errors in the UI.
+        let _guard = lock_local_connect_gate()?;
+        if !matches!(state.info().kind, DesktopConnectionKind::None) {
+            return Ok(());
+        }
+        let data_dir = daemon_data_dir(app)?;
+        let desktop_version = app.package_info().version.to_string();
+        let desktop_dev_instance_id = desktop_dev_instance_id();
+        if let Some((url, token)) = resolve_env_local_daemon(app)? {
+            probe_daemon_health(&url)?;
+            state.set_local_attached(url, token, None, LocalConnectionSource::EnvOverride);
+            return Ok(());
+        }
+        if let Some((url, token, daemon_pid)) = resolve_existing_local_daemon(app, &data_dir)? {
             state.set_local_attached(
-                url.to_string(),
-                auth.token,
+                url,
+                token,
                 daemon_pid,
                 LocalConnectionSource::ExistingCompatibleDaemon,
             );
             return Ok(());
         }
-    };
-    state.set_local(
-        spawned.url,
-        spawned.token,
-        spawned.child,
-        spawned.systemd_scope,
-    );
-    Ok(())
+        let spawned = match spawn_and_validate_local_daemon(
+            app,
+            &data_dir,
+            &desktop_version,
+            desktop_dev_instance_id,
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                // This can happen if another thread already started the daemon but we raced before
+                // the auth file became visible or health was reachable. Retry by waiting for the auth
+                // file + health and then attaching as an external local connection.
+                let auth = read_daemon_auth_with_retry(&data_dir)
+                    .with_context(|| format!("spawning local daemon failed: {err:#}"))?;
+                let Some(url) = auth.daemon_url.as_deref() else {
+                    return Err(err)
+                        .context("spawning local daemon failed (auth file missing daemon_url)");
+                };
+                probe_local_daemon_health_with_retry(url)?;
+                let compatible = existing_local_daemon_matches(
+                    url,
+                    &data_dir,
+                    &desktop_version,
+                    desktop_dev_instance_id,
+                )
+                .with_context(|| {
+                    format!(
+                        "spawning local daemon failed: {err:#}; validating existing local daemon compatibility"
+                    )
+                })?;
+                if !compatible {
+                    return Err(err).context(format!(
+                        "spawning local daemon failed and existing daemon is incompatible (url={url})"
+                    ));
+                }
+                let daemon_pid = daemon_health(url)
+                    .ok()
+                    .and_then(|health| normalize_daemon_pid(health.pid));
+                state.set_local_attached(
+                    url.to_string(),
+                    auth.token,
+                    daemon_pid,
+                    LocalConnectionSource::ExistingCompatibleDaemon,
+                );
+                return Ok(());
+            }
+        };
+        state.set_local(
+            spawned.url,
+            spawned.token,
+            spawned.child,
+            spawned.systemd_scope,
+        );
+        Ok(())
+    })();
+    if let Err(err) = &result {
+        log_desktop_startup_error(&format!(
+            "desktop_startup: daemon_connect_failed kind=local error={}",
+            serde_json::to_string(&err.to_string()).unwrap_or_else(|_| "\"unknown\"".to_string()),
+        ));
+    }
+    result
 }
 
 #[cfg(test)]

@@ -12,6 +12,8 @@ export {
   daemonFetchRaw,
   idToString,
   recordClientCounterMetric,
+  recordClientGaugeMetric,
+  recordClientHistogramMetric,
 } from "./clientBase";
 export type {
   DaemonRawResponse,

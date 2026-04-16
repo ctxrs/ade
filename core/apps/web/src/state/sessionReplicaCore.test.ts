@@ -954,6 +954,248 @@ describe("SessionReplicaCore", () => {
     expect(latest.data.activity).toEqual({ is_working: true, last_turn_status: "running" });
   });
 
+  it("keeps canonical activity interrupted when later deltas report completed or failed", () => {
+    const sessionId = "session-interrupt-activity-stable";
+    const turnId = "turn-1";
+    const createdAt = new Date().toISOString();
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [
+          {
+            turn_id: turnId,
+            session_id: sessionId,
+            run_id: "run-1",
+            user_message_id: "message-1",
+            status: "running",
+            start_seq: 1,
+            end_seq: null,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: "",
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+          },
+        ],
+        events: [],
+        messages: [],
+        last_event_seq: 1,
+        projection_rev: 1,
+        state_rev: 1,
+        activity: { is_working: true, last_turn_status: "running" },
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "bootstrap_seed",
+    });
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 2,
+          projection_rev: 2,
+          state_rev: 2,
+          activity: { is_working: false, last_turn_status: "interrupted" },
+          event: {
+            seq: 2,
+            id: "event-2",
+            session_id: sessionId,
+            run_id: "run-1",
+            turn_id: turnId,
+            event_type: "turn_interrupted",
+            payload_json: { status: "interrupted" },
+            transient: false,
+            created_at: createdAt,
+          },
+        },
+      },
+    });
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 3,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 3,
+          projection_rev: 3,
+          state_rev: 3,
+          activity: { is_working: false, last_turn_status: "completed" },
+          event: {
+            seq: 3,
+            id: "event-3",
+            session_id: sessionId,
+            run_id: "run-1",
+            turn_id: turnId,
+            event_type: "turn_finished",
+            payload_json: { status: "completed" },
+            transient: false,
+            created_at: createdAt,
+          },
+        },
+      },
+    });
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 4,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 4,
+          projection_rev: 4,
+          state_rev: 4,
+          activity: { is_working: false, last_turn_status: "failed" },
+          event: {
+            seq: 4,
+            id: "event-4",
+            session_id: sessionId,
+            run_id: "run-1",
+            turn_id: turnId,
+            event_type: "error",
+            payload_json: { message: "cancelled" },
+            transient: false,
+            created_at: createdAt,
+          },
+        },
+      },
+    });
+
+    const latest = [...patches].reverse().find(
+      (patch) =>
+        patch.sessionId === sessionId &&
+        patch.op === "append" &&
+        patch.data.activity?.last_turn_status === "interrupted",
+    );
+    if (!latest || latest.op === "evict") {
+      throw new Error("expected interrupted canonical patch");
+    }
+    expect(latest.data.activity).toEqual({ is_working: false, last_turn_status: "interrupted" });
+    expect(latest.data.turns?.at(-1)?.status).toBe("interrupted");
+  });
+
+  it("does not clear interrupted activity when later head deltas omit activity", () => {
+    const sessionId = "session-interrupt-activity-null-delta";
+    const turnId = "turn-1";
+    const createdAt = new Date().toISOString();
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [
+          {
+            turn_id: turnId,
+            session_id: sessionId,
+            run_id: "run-1",
+            user_message_id: "message-1",
+            status: "interrupted",
+            start_seq: 1,
+            end_seq: 2,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: "",
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+          },
+        ],
+        events: [],
+        messages: [],
+        last_event_seq: 2,
+        projection_rev: 2,
+        state_rev: 2,
+        activity: { is_working: false, last_turn_status: "interrupted" },
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "bootstrap_seed",
+    });
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 3,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 3,
+          projection_rev: 3,
+          state_rev: 3,
+          activity: null,
+          event: {
+            seq: 3,
+            id: "event-3",
+            session_id: sessionId,
+            run_id: "run-1",
+            turn_id: turnId,
+            event_type: "assistant_message_inserted",
+            payload_json: { message_id: "m-2", content: "still interrupted" },
+            transient: false,
+            created_at: createdAt,
+          },
+          message: {
+            id: "m-2",
+            session_id: sessionId,
+            task_id: "task-1",
+            turn_id: turnId,
+            role: "assistant",
+            content: "still interrupted",
+            delivery: "immediate",
+            created_at: createdAt,
+          },
+        },
+      },
+    });
+
+    const latest = [...patches].reverse().find(
+      (patch) =>
+        patch.sessionId === sessionId &&
+        patch.op === "append" &&
+        patch.data.messages?.some((message) => message.id === "m-2"),
+    );
+    if (!latest || latest.op === "evict") {
+      throw new Error("expected appended message patch");
+    }
+    expect(latest.data.activity).toEqual({ is_working: false, last_turn_status: "interrupted" });
+    expect(latest.data.turns?.at(-1)?.status).toBe("interrupted");
+  });
+
   it("emits canonical merged transcript state for streamed event-only deltas", () => {
     const sessionId = "session-canonical-stream-delta";
     const patches: SessionReplicaPatch[] = [];

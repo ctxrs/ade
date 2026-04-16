@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo } from "react";
-import type { SessionHeadSnapshot } from "../../api/client";
+import { useCallback, useEffect, useLayoutEffect, useMemo } from "react";
+import { idToString, type SessionHeadSnapshot } from "../../api/client";
 import type { WorkspaceActiveSnapshotEvent } from "@ctx/types";
 import { SessionHeadBootstrapCache } from "../../state/sessionHeadBootstrapCache";
 import {
@@ -13,7 +13,12 @@ import type {
   WorkspaceActiveSnapshotState,
 } from "../../state/workspaceActiveSnapshotStore";
 import { WORKBENCH_TASK_IDLE_EVENT, type WorkbenchTaskIdleDetail } from "../../utils/updaterEvents";
+import { hasSessionActiveTurn } from "../../utils/sessionActivity";
 import type { WorkbenchStore } from "../../workbench/store";
+import {
+  noteNavThreadActivityMismatch,
+  noteSwitchStaleVisible,
+} from "../../state/foregroundFreshnessTelemetry";
 import type { OptimisticTaskSummary } from "./WorkbenchPage.types";
 import {
   collectSessionHeadsForSupervisor,
@@ -55,7 +60,7 @@ type TaskBridgeArgs = {
     | "subscribeEvents"
     | "getSnapshot"
     | "getSessionHeadSnapshot"
-    | "setForegroundTaskId"
+    | "setForegroundSessionId"
     | "setSubscribedSessions"
   > & { getSessionHeadsSnapshot?: () => Record<string, SessionHeadSnapshot> };
   markTaskRead: (taskId: string) => Promise<void>;
@@ -65,8 +70,9 @@ const readWorkspaceSessionHeads = (
   snapshot: WorkspaceActiveSnapshotState,
   store: TaskBridgeArgs["workspaceSnapshotStore"],
   bootstrapHeads: SessionHeadBootstrapCache,
+  sessionIds?: readonly string[],
 ): Record<string, SessionHeadSnapshot> => {
-  return collectSessionHeadsForSupervisor(snapshot, store, bootstrapHeads);
+  return collectSessionHeadsForSupervisor(snapshot, store, bootstrapHeads, sessionIds);
 };
 
 export function useWorkbenchSessionBridge({
@@ -84,33 +90,16 @@ export function useWorkbenchSessionBridge({
   markTaskRead,
 }: TaskBridgeArgs) {
   const lifecycleCoordinator = useSessionLifecycleCoordinator();
-  const { sessionSummaries, sessions, sessionIds, primarySessionId, activeTaskSessionIds } = useMemo(
-    () => deriveActiveTaskSessionIds(activeTaskSummary),
-    [activeTaskSummary],
+  const { sessionSummaries, sessions, sessionIds, primarySessionId } = useMemo(
+    () => deriveActiveTaskSessionIds(activeTaskSummary, activeSessionIdFromTab),
+    [activeSessionIdFromTab, activeTaskSummary],
   );
 
-  const warmSessionIds = useMemo(
-    () =>
-      deriveWarmSessionIds({
-        activeTaskSessionIds,
-        tasksById,
-        activeIds: workspaceSnapshot.activeIds,
-      }),
-    [activeTaskSessionIds, tasksById, workspaceSnapshot.activeIds],
-  );
   const sessionHeadBootstrapCache = useMemo(() => new SessionHeadBootstrapCache(), []);
-
-  useEffect(() => {
-    supervisor.setActiveTaskSessionIds(activeTaskSessionIds);
-  }, [activeTaskSessionIds, supervisor]);
-
-  useEffect(() => {
-    supervisor.setWarmSessionIds(warmSessionIds);
-  }, [supervisor, warmSessionIds]);
-
-  useEffect(() => {
-    workspaceSnapshotStore.setForegroundTaskId?.(activeTaskId ?? null);
-  }, [activeTaskId, workspaceSnapshotStore]);
+  const activeTaskHeadSessionIds = useMemo(
+    () => Array.from(new Set([...sessionIds, ...sessions.map((session) => idToString(session.id)).filter(Boolean)])),
+    [sessionIds, sessions],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -120,11 +109,12 @@ export function useWorkbenchSessionBridge({
         workspaceSnapshotStore.getSnapshot(),
         workspaceSnapshotStore,
         sessionHeadBootstrapCache,
+        activeTaskHeadSessionIds,
       );
       if (!changed || cancelled) return;
       const snapshot = workspaceSnapshotStore.getSnapshot();
       supervisor.setWorkspaceSessionHeads(
-        readWorkspaceSessionHeads(snapshot, workspaceSnapshotStore, sessionHeadBootstrapCache),
+        readWorkspaceSessionHeads(snapshot, workspaceSnapshotStore, sessionHeadBootstrapCache, activeTaskHeadSessionIds),
       );
     };
     void prefetchPersistedHeads();
@@ -138,6 +128,7 @@ export function useWorkbenchSessionBridge({
     workspaceSnapshot.initialized,
     workspaceSnapshot.tasksById,
     workspaceSnapshotStore,
+    activeTaskHeadSessionIds,
   ]);
 
   useEffect(() => {
@@ -224,6 +215,9 @@ export function useWorkbenchSessionBridge({
       return;
     }
     if (activeTab?.kind === "task" && activeTab.ref.taskId === activeTaskId && nextSessionId !== previousSessionId) {
+      if (previousSessionId && sessionSnap.sessions[previousSessionId]) {
+        noteSwitchStaleVisible(activeTaskId, previousSessionId, nextSessionId ?? "");
+      }
       workbenchStore.setActiveSessionForActiveTask(nextSessionId, { source: "system" });
     }
   }, [
@@ -265,11 +259,6 @@ export function useWorkbenchSessionBridge({
     void markTaskRead(activeTaskId);
   }, [activeTaskId, isTaskUnread, markTaskRead, optimisticTasksById, taskLiveInfo.workingByTask, tasksById]);
 
-  const providerIdsByTaskFromSessions = useMemo(
-    () => deriveProviderIdsByTask(sessionSnap.sessions),
-    [sessionSnap.sessions],
-  );
-
   const activeSessionId = useMemo(
     () =>
       resolveWorkbenchActiveSessionId({
@@ -280,13 +269,73 @@ export function useWorkbenchSessionBridge({
     [activeSessionIdFromTab, primarySessionId, sessions],
   );
 
+  useEffect(() => {
+    if (!activeTaskId || !activeSessionId) return;
+    const activeEntry = sessionSnap.sessions[activeSessionId];
+    if (!activeEntry) return;
+    const navWorking = taskLiveInfo.workingByTask.has(activeTaskId);
+    const latestTurnStatus = activeEntry.turns.at(-1)?.status ?? null;
+    const threadWorking = hasSessionActiveTurn(activeEntry.activity, latestTurnStatus);
+    if (navWorking === threadWorking) return;
+    noteNavThreadActivityMismatch(activeTaskId, activeSessionId, navWorking, threadWorking);
+  }, [activeSessionId, activeTaskId, sessionSnap.sessions, taskLiveInfo.workingByTask]);
+
+  const providerIdsByTaskFromSessions = useMemo(
+    () => deriveProviderIdsByTask(sessionSnap.sessions),
+    [sessionSnap.sessions],
+  );
+
+  const foregroundSessionIds = useMemo(
+    () => (activeSessionId ? [activeSessionId] : primarySessionId ? [primarySessionId] : []),
+    [activeSessionId, primarySessionId],
+  );
+
+  const warmSessionIds = useMemo(
+    () =>
+      deriveWarmSessionIds({
+        activeTaskSessionIds: foregroundSessionIds,
+        tasksById,
+        activeIds: workspaceSnapshot.activeIds,
+      }),
+    [foregroundSessionIds, tasksById, workspaceSnapshot.activeIds],
+  );
+
+  useLayoutEffect(() => {
+    if (activeTaskHeadSessionIds.length > 0) {
+      const snapshot = workspaceSnapshotStore.getSnapshot();
+      supervisor.setWorkspaceSessionHeads(
+        readWorkspaceSessionHeads(
+          snapshot,
+          workspaceSnapshotStore,
+          sessionHeadBootstrapCache,
+          activeTaskHeadSessionIds,
+        ),
+      );
+    }
+    supervisor.setActiveTaskSessionIds(foregroundSessionIds);
+  }, [
+    activeTaskHeadSessionIds,
+    foregroundSessionIds,
+    sessionHeadBootstrapCache,
+    supervisor,
+    workspaceSnapshotStore,
+  ]);
+
+  useEffect(() => {
+    supervisor.setWarmSessionIds(warmSessionIds);
+  }, [supervisor, warmSessionIds]);
+
+  useEffect(() => {
+    workspaceSnapshotStore.setForegroundSessionId?.(activeSessionId ?? primarySessionId ?? null);
+  }, [activeSessionId, primarySessionId, workspaceSnapshotStore]);
+
   return {
     sessionSummaries,
     sessions,
     sessionIds,
     activeSessionId,
     primarySessionId,
-    activeTaskSessionIds,
+    activeTaskSessionIds: foregroundSessionIds,
     taskLiveInfo,
     providerIdsByTaskFromSessions,
     isTaskUnread,

@@ -2,6 +2,7 @@ import React, { useRef, useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtuosoMessageListTestingContext } from "@virtuoso.dev/message-list";
+import type { Session } from "../../api/client";
 import type { MessageAttachment } from "../../api/client";
 import type { WorkbenchMessageListContext } from "../sessionThread";
 import type {
@@ -46,7 +47,13 @@ vi.mock("../../components/dictation/DictationOnboardingModal", () => ({
   DictationOnboardingModal: () => null,
 }));
 
-function TestPane() {
+function TestPane({
+  session = null,
+  interruptSessionId = "",
+}: {
+  session?: Session | null;
+  interruptSessionId?: string;
+}) {
   const listItems = useRef<WorkbenchListItem[]>([
     {
       kind: "turn_header",
@@ -76,7 +83,7 @@ function TestPane() {
         id="session-1"
         entryLoadState={undefined}
         entryError={null}
-        session={null}
+        session={session}
         sessionError={null}
         sessionLoadIssues={[]}
         dropActive={false}
@@ -178,6 +185,7 @@ function TestPane() {
         currentModelId=""
         onSetModelId={async () => {}}
         modelSwitchError={null}
+        interruptSessionId={interruptSessionId}
       />
     </VirtuosoMessageListTestingContext.Provider>
   );
@@ -313,6 +321,7 @@ function TestMessagePane() {
         currentModelId=""
         onSetModelId={async () => {}}
         modelSwitchError={null}
+        interruptSessionId=""
       />
     </VirtuosoMessageListTestingContext.Provider>
   );
@@ -449,6 +458,7 @@ function TestAssistantPane() {
         currentModelId=""
         onSetModelId={async () => {}}
         modelSwitchError={null}
+        interruptSessionId=""
       />
     </VirtuosoMessageListTestingContext.Provider>
   );
@@ -468,6 +478,54 @@ describe("SessionWorkbenchPane", () => {
       writable: true,
       value: ResizeObserverStub,
     });
+  });
+
+  it("does not expose a session id until interrupt target readiness is confirmed", () => {
+    render(
+      <TestPane
+        session={{
+          id: "session-1",
+          task_id: "task-1",
+          workspace_id: "workspace-1",
+          worktree_id: "worktree-1",
+          provider_id: "fake",
+          model_id: "fake-model",
+          title: "Session 1",
+          agent_role: "assistant",
+          status: "starting",
+          execution_environment: "sandbox",
+          created_at: "2025-01-01T00:00:00.000Z",
+          updated_at: "2025-01-01T00:00:00.000Z",
+        }}
+        interruptSessionId=""
+      />,
+    );
+
+    expect(screen.getByTestId("session-view")).toHaveAttribute("data-session-id", "");
+  });
+
+  it("exposes the interrupt session id once readiness is confirmed", () => {
+    render(
+      <TestPane
+        session={{
+          id: "session-1",
+          task_id: "task-1",
+          workspace_id: "workspace-1",
+          worktree_id: "worktree-1",
+          provider_id: "fake",
+          model_id: "fake-model",
+          title: "Session 1",
+          agent_role: "assistant",
+          status: "starting",
+          execution_environment: "sandbox",
+          created_at: "2025-01-01T00:00:00.000Z",
+          updated_at: "2025-01-01T00:00:00.000Z",
+        }}
+        interruptSessionId="session-1"
+      />,
+    );
+
+    expect(screen.getByTestId("session-view")).toHaveAttribute("data-session-id", "session-1");
   });
 
   it("expands a turn header when clicked inside the virtualized workbench list", async () => {

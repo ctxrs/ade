@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
@@ -25,8 +25,9 @@ use ctx_workspace_active_snapshot::{
 use super::{MobileSecureEnvelope, MobileSecureStreamQuery, SecureEnvelope};
 use common::{accept_session_delta, accept_session_head, send_secure_ws, SessionCursor};
 use queue::{
-    filter_partial_delta_for_active_tasks, log_head_batch_push_error, push_stream_message,
-    HeadBatchBuffer, StreamQueue,
+    filter_partial_delta_for_active_tasks, is_foreground_session, is_priority_control_event,
+    log_head_batch_push_error, push_stream_message, take_next_workspace_stream_item,
+    workspace_stream_is_idle, HeadBatchBuffer, NextWorkspaceStreamItem, StreamQueue,
 };
 use replay::{
     primary_session_id_for_active_task, queue_reset_required, queue_snapshot_payload,
@@ -45,9 +46,12 @@ mod web_session;
 mod workspace_active;
 
 use common::{
-    bump_latest_snapshot_rev, event_snapshot_rev, ResolvedWorkspaceActiveSessionReplay,
+    bump_latest_snapshot_rev, event_snapshot_rev, release_workspace_stream_session_pins,
+    sync_workspace_stream_session_pins, ResolvedWorkspaceActiveSessionReplay,
     ResolvedWorkspaceActiveSessionSubscription, ResolvedWorkspaceActiveSubscriptions,
-    WorkspaceActiveSubscriptionState,
+    StreamSendControl, WorkspaceActiveSubscriptionState, HEAD_BATCH_FLUSH_INTERVAL,
+    HEAD_BATCH_SESSION_LIMIT, SESSION_REPLAY_MAX_EVENTS, WORKSPACE_STREAM_QUEUE_LIMIT,
+    WORKSPACE_STREAM_QUEUE_MAX_AGE,
 };
 pub(super) use terminal::terminal_stream_ws;
 #[cfg(test)]
@@ -56,30 +60,6 @@ use terminal::{
 };
 pub(super) use web_session::web_session_signal;
 pub(super) use workspace_active::workspace_active_snapshot_stream_ws;
-
-async fn sync_workspace_stream_session_pins<I, J>(state: &Arc<AppState>, current: I, next: J)
-where
-    I: IntoIterator<Item = SessionId>,
-    J: IntoIterator<Item = SessionId>,
-{
-    let current = current.into_iter().collect::<HashSet<_>>();
-    let next = next.into_iter().collect::<HashSet<_>>();
-    for session_id in next.difference(&current) {
-        state.attach_session(*session_id).await;
-    }
-    for session_id in current.difference(&next) {
-        state.detach_session(*session_id).await;
-    }
-}
-
-async fn release_workspace_stream_session_pins<I>(state: &Arc<AppState>, current: I)
-where
-    I: IntoIterator<Item = SessionId>,
-{
-    for session_id in current {
-        state.detach_session(session_id).await;
-    }
-}
 
 pub(super) async fn mobile_secure_workspace_stream_ws(
     ws: WebSocketUpgrade,
@@ -132,11 +112,16 @@ async fn handle_mobile_secure_ws(
     let mut subscriptions: HashMap<SessionId, SessionCursor> = HashMap::new();
     let mut subscription_state = WorkspaceActiveSubscriptionState::default();
     let mut active_worktrees: HashSet<WorktreeId> = HashSet::new();
+    let priority_control = Arc::new(StreamQueue::new(
+        WORKSPACE_STREAM_QUEUE_LIMIT,
+        WORKSPACE_STREAM_QUEUE_MAX_AGE,
+    ));
     let control = Arc::new(StreamQueue::new(
         WORKSPACE_STREAM_QUEUE_LIMIT,
         WORKSPACE_STREAM_QUEUE_MAX_AGE,
     ));
-    let head_buffer = Arc::new(HeadBatchBuffer::new());
+    let foreground_head_buffer = Arc::new(HeadBatchBuffer::new());
+    let background_head_buffer = Arc::new(HeadBatchBuffer::new());
     let send_control = Arc::new(StreamSendControl::new());
     let mut reset_queued = false;
 
@@ -165,8 +150,10 @@ async fn handle_mobile_secure_ws(
 
     let latest_snapshot_rev = Arc::new(AtomicI64::new(snapshot_rev));
     let send_task = {
+        let priority_control = priority_control.clone();
         let control = control.clone();
-        let head_buffer = head_buffer.clone();
+        let foreground_head_buffer = foreground_head_buffer.clone();
+        let background_head_buffer = background_head_buffer.clone();
         let send_control = send_control.clone();
         let send_key = key.clone();
         let send_device_id = device_id.clone();
@@ -178,65 +165,114 @@ async fn handle_mobile_secure_ws(
             let mut tick = tokio::time::interval(HEAD_BATCH_FLUSH_INTERVAL);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                if let Some(entry) = control.pop().await {
-                    let message = entry.message;
-                    let queued_ms = entry.enqueued_at.elapsed().as_millis();
-                    let is_snapshot = matches!(
-                        message,
-                        WorkspaceActiveSnapshotStreamMessage::Snapshot { .. }
-                    );
-                    envelope_seq += 1;
-                    let message = match message {
-                        WorkspaceActiveSnapshotStreamMessage::ResetRequired { .. } => message,
-                        other => {
-                            stream_seq += 1;
-                            with_stream_rev(other, stream_seq)
+                if let Some(next) = take_next_workspace_stream_item(
+                    &priority_control,
+                    &control,
+                    &foreground_head_buffer,
+                    &background_head_buffer,
+                    send_control.is_hydrating(),
+                )
+                .await
+                {
+                    match next {
+                        NextWorkspaceStreamItem::Control(entry) => {
+                            let message = entry.message;
+                            let queued_ms = entry.enqueued_at.elapsed().as_millis();
+                            let is_snapshot = matches!(
+                                message,
+                                WorkspaceActiveSnapshotStreamMessage::Snapshot { .. }
+                            );
+                            envelope_seq += 1;
+                            let message = match message {
+                                WorkspaceActiveSnapshotStreamMessage::ResetRequired { .. } => {
+                                    message
+                                }
+                                other => {
+                                    stream_seq += 1;
+                                    with_stream_rev(other, stream_seq)
+                                }
+                            };
+                            let send_start = Instant::now();
+                            if send_secure_ws(
+                                &mut sender,
+                                &send_key,
+                                &send_device_id,
+                                envelope_seq,
+                                &message,
+                            )
+                            .await
+                            .is_err()
+                            {
+                                break;
+                            }
+                            if is_snapshot {
+                                let send_ms = send_start.elapsed().as_millis();
+                                let payload_bytes = serde_json::to_vec(&message)
+                                    .map(|data| data.len())
+                                    .unwrap_or(0);
+                                let (task_count, head_count) = match &message {
+                                    WorkspaceActiveSnapshotStreamMessage::Snapshot {
+                                        active_snapshot,
+                                        active_heads,
+                                        ..
+                                    } => (
+                                        active_snapshot.active.tasks.len(),
+                                        active_heads.as_ref().map(|h| h.heads.len()).unwrap_or(0),
+                                    ),
+                                    _ => (0, 0),
+                                };
+                                tracing::info!(
+                                    target: "ctx_http.ws_active_snapshot",
+                                    workspace_id = %workspace_id.0,
+                                    snapshot_bytes = payload_bytes,
+                                    snapshot_queue_ms = queued_ms,
+                                    snapshot_send_ms = send_ms,
+                                    active_tasks = task_count,
+                                    active_heads = head_count,
+                                    "workspace snapshot sent (secure)",
+                                );
+                            }
+                            if is_snapshot {
+                                send_control.clear_hydrating();
+                            }
                         }
-                    };
-                    let send_start = Instant::now();
-                    if send_secure_ws(
-                        &mut sender,
-                        &send_key,
-                        &send_device_id,
-                        envelope_seq,
-                        &message,
-                    )
-                    .await
-                    .is_err()
+                        NextWorkspaceStreamItem::HeadsBatch {
+                            snapshot_rev,
+                            deltas,
+                        } => {
+                            let latest_rev = latest_snapshot_rev.load(Ordering::Relaxed);
+                            let snapshot_rev = snapshot_rev.max(latest_rev);
+                            bump_latest_snapshot_rev(&latest_snapshot_rev, snapshot_rev);
+                            envelope_seq += 1;
+                            stream_seq += 1;
+                            let message = WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
+                                rev: stream_seq,
+                                snapshot_rev,
+                                deltas,
+                            };
+                            if send_secure_ws(
+                                &mut sender,
+                                &send_key,
+                                &send_device_id,
+                                envelope_seq,
+                                &message,
+                            )
+                            .await
+                            .is_err()
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    if send_control.should_disconnect_after_flush()
+                        && workspace_stream_is_idle(
+                            &priority_control,
+                            &control,
+                            &foreground_head_buffer,
+                            &background_head_buffer,
+                        )
+                        .await
                     {
-                        break;
-                    }
-                    if is_snapshot {
-                        let send_ms = send_start.elapsed().as_millis();
-                        let payload_bytes = serde_json::to_vec(&message)
-                            .map(|data| data.len())
-                            .unwrap_or(0);
-                        let (task_count, head_count) = match &message {
-                            WorkspaceActiveSnapshotStreamMessage::Snapshot {
-                                active_snapshot,
-                                active_heads,
-                                ..
-                            } => (
-                                active_snapshot.active.tasks.len(),
-                                active_heads.as_ref().map(|h| h.heads.len()).unwrap_or(0),
-                            ),
-                            _ => (0, 0),
-                        };
-                        tracing::info!(
-                            target: "ctx_http.ws_active_snapshot",
-                            workspace_id = %workspace_id.0,
-                            snapshot_bytes = payload_bytes,
-                            snapshot_queue_ms = queued_ms,
-                            snapshot_send_ms = send_ms,
-                            active_tasks = task_count,
-                            active_heads = head_count,
-                            "workspace snapshot sent (secure)",
-                        );
-                    }
-                    if is_snapshot {
-                        send_control.clear_hydrating();
-                    }
-                    if send_control.should_disconnect_after_flush() && control.is_empty().await {
                         break;
                     }
                     continue;
@@ -245,38 +281,11 @@ async fn handle_mobile_secure_ws(
                     break;
                 }
 
-                if !send_control.is_hydrating() {
-                    let (snapshot_rev, deltas) = head_buffer.take().await;
-                    if !deltas.is_empty() {
-                        let latest_rev = latest_snapshot_rev.load(Ordering::Relaxed);
-                        let snapshot_rev = snapshot_rev.max(latest_rev);
-                        bump_latest_snapshot_rev(&latest_snapshot_rev, snapshot_rev);
-                        envelope_seq += 1;
-                        stream_seq += 1;
-                        let message = WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
-                            rev: stream_seq,
-                            snapshot_rev,
-                            deltas,
-                        };
-                        if send_secure_ws(
-                            &mut sender,
-                            &send_key,
-                            &send_device_id,
-                            envelope_seq,
-                            &message,
-                        )
-                        .await
-                        .is_err()
-                        {
-                            break;
-                        }
-                        continue;
-                    }
-                }
-
                 tokio::select! {
+                    _ = priority_control.notify.notified() => {},
                     _ = control.notify.notified() => {},
-                    _ = head_buffer.notify.notified() => {},
+                    _ = foreground_head_buffer.notify.notified() => {},
+                    _ = background_head_buffer.notify.notified() => {},
                     _ = tick.tick() => {},
                 }
             }
@@ -327,9 +336,11 @@ async fn handle_mobile_secure_ws(
                                         workspace_id = %workspace_id.0,
                                         "workspace stream subscribe resolution failed (secure)",
                                     );
+                                    priority_control.clear().await;
                                     control.clear().await;
-                                    head_buffer.clear().await;
-                                    if queue_reset_required(&control, &state, workspace_id)
+                                    foreground_head_buffer.clear().await;
+                                    background_head_buffer.clear().await;
+                                    if queue_reset_required(&priority_control, &state, workspace_id)
                                         .await
                                         .is_err()
                                     {
@@ -346,8 +357,10 @@ async fn handle_mobile_secure_ws(
                                 state: next_state,
                             } = resolved;
 
+                            priority_control.clear().await;
                             control.clear().await;
-                            head_buffer.clear().await;
+                            foreground_head_buffer.clear().await;
+                            background_head_buffer.clear().await;
                             reset_queued = false;
                             send_control.clear_disconnect_after_flush();
                             sync_active_worktrees(
@@ -435,9 +448,13 @@ async fn handle_mobile_secure_ws(
                                     continue;
                                 }
                                 let control = control.clone();
-                                let head_buffer = head_buffer.clone();
+                                let priority_control = priority_control.clone();
+                                let foreground_head_buffer = foreground_head_buffer.clone();
+                                let background_head_buffer = background_head_buffer.clone();
                                 let active_task_sessions =
                                     next_state.active_task_sessions.clone();
+                                let foreground_session_ids =
+                                    next_state.foreground_session_ids.clone();
                                 let replay = replay_session_events(
                                     &state,
                                     workspace_id,
@@ -450,9 +467,15 @@ async fn handle_mobile_secure_ws(
                                     None,
                                     move |event| {
                                         let control = control.clone();
-                                        let head_buffer = head_buffer.clone();
+                                        let priority_control = priority_control.clone();
+                                        let foreground_head_buffer =
+                                            foreground_head_buffer.clone();
+                                        let background_head_buffer =
+                                            background_head_buffer.clone();
                                         let active_task_sessions =
                                             active_task_sessions.clone();
+                                        let foreground_session_ids =
+                                            foreground_session_ids.clone();
                                         async move {
                                             match event {
                                                 WorkspaceActiveSnapshotStreamMessage::Event {
@@ -468,13 +491,21 @@ async fn handle_mobile_secure_ws(
                                                             filter_partial_delta_for_active_tasks(
                                                                 *delta,
                                                                 &active_task_sessions,
+                                                                foreground_session_ids.as_ref(),
                                                             )
                                                         else {
                                                             return Ok(());
                                                         };
-                                                        if let Err(err) = head_buffer
-                                                            .push(snapshot_rev, delta)
-                                                            .await
+                                                        let head_buffer = if is_foreground_session(
+                                                            foreground_session_ids.as_ref(),
+                                                            delta.session_id,
+                                                        ) {
+                                                            &foreground_head_buffer
+                                                        } else {
+                                                            &background_head_buffer
+                                                        };
+                                                        if let Err(err) =
+                                                            head_buffer.push(snapshot_rev, delta).await
                                                         {
                                                             log_head_batch_push_error(
                                                                 "replay_secure",
@@ -486,8 +517,16 @@ async fn handle_mobile_secure_ws(
                                                         Ok(())
                                                     }
                                                     other => {
+                                                        let target = if is_priority_control_event(
+                                                            &other,
+                                                            foreground_session_ids.as_ref(),
+                                                        ) {
+                                                            &priority_control
+                                                        } else {
+                                                            &control
+                                                        };
                                                         push_stream_message(
-                                                            &control,
+                                                            target,
                                                             workspace_id,
                                                             Some(session_id),
                                                             "replay_secure",
@@ -533,9 +572,11 @@ async fn handle_mobile_secure_ws(
                                 };
                             }
                             if replay_failed {
+                                priority_control.clear().await;
                                 control.clear().await;
-                                head_buffer.clear().await;
-                                if queue_reset_required(&control, &state, workspace_id)
+                                foreground_head_buffer.clear().await;
+                                background_head_buffer.clear().await;
+                                if queue_reset_required(&priority_control, &state, workspace_id)
                                     .await
                                     .is_err()
                                 {
@@ -593,9 +634,11 @@ async fn handle_mobile_secure_ws(
                                 lagged,
                                 "workspace stream lagged (secure)",
                             );
+                            priority_control.clear().await;
                             control.clear().await;
-                            head_buffer.clear().await;
-                            if queue_reset_required(&control, &state, workspace_id)
+                            foreground_head_buffer.clear().await;
+                            background_head_buffer.clear().await;
+                            if queue_reset_required(&priority_control, &state, workspace_id)
                                 .await
                                 .is_err()
                             {
@@ -740,51 +783,6 @@ async fn handle_mobile_secure_ws(
                         .await;
                     }
 
-                    if let Some(foreground_task_id) = subscription_state.foreground_task_id {
-                        match &event {
-                            WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. }
-                                if task.task.id == foreground_task_id =>
-                            {
-                                subscription_state.foreground_session_ids =
-                                    Some(session_ids_for_active_task_summary(task));
-                            }
-                            WorkspaceActiveSnapshotEvent::ActiveTaskDelete { task_id, .. }
-                                if *task_id == foreground_task_id =>
-                            {
-                                subscription_state.foreground_session_ids =
-                                    Some(HashSet::new());
-                            }
-                            WorkspaceActiveSnapshotEvent::SessionSummary { summary, .. }
-                                if summary.session.task_id == foreground_task_id =>
-                            {
-                                if let Some(ids) =
-                                    subscription_state.foreground_session_ids.as_mut()
-                                {
-                                    ids.insert(summary.session.id);
-                                }
-                            }
-                            WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. }
-                                if delta.task_id == foreground_task_id =>
-                            {
-                                if let Some(ids) =
-                                    subscription_state.foreground_session_ids.as_mut()
-                                {
-                                    ids.insert(delta.session_id);
-                                }
-                            }
-                            WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. }
-                                if head.session.task_id == foreground_task_id =>
-                            {
-                                if let Some(ids) =
-                                    subscription_state.foreground_session_ids.as_mut()
-                                {
-                                    ids.insert(head.session.id);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-
                     match &event {
                         WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
                             let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
@@ -829,12 +827,19 @@ async fn handle_mobile_secure_ws(
                             let Some(delta) = filter_partial_delta_for_active_tasks(
                                 *delta,
                                 &subscription_state.active_task_sessions,
+                                subscription_state.foreground_session_ids.as_ref(),
                             ) else {
                                 continue;
                             };
-                            if let Err(err) =
-                                head_buffer.push(snapshot_rev, delta).await
-                            {
+                            let head_buffer = if is_foreground_session(
+                                subscription_state.foreground_session_ids.as_ref(),
+                                delta.session_id,
+                            ) {
+                                &foreground_head_buffer
+                            } else {
+                                &background_head_buffer
+                            };
+                            if let Err(err) = head_buffer.push(snapshot_rev, delta).await {
                                 log_head_batch_push_error(
                                     "event_secure",
                                     workspace_id,
@@ -843,9 +848,11 @@ async fn handle_mobile_secure_ws(
                                 if reset_queued {
                                     continue;
                                 }
+                                priority_control.clear().await;
                                 control.clear().await;
-                                head_buffer.clear().await;
-                                if queue_reset_required(&control, &state, workspace_id)
+                                foreground_head_buffer.clear().await;
+                                background_head_buffer.clear().await;
+                                if queue_reset_required(&priority_control, &state, workspace_id)
                                     .await
                                     .is_err()
                                 {
@@ -856,8 +863,16 @@ async fn handle_mobile_secure_ws(
                             }
                         }
                         other => {
+                            let target = if is_priority_control_event(
+                                &other,
+                                subscription_state.foreground_session_ids.as_ref(),
+                            ) {
+                                &priority_control
+                            } else {
+                                &control
+                            };
                             if push_stream_message(
-                                &control,
+                                target,
                                 workspace_id,
                                 session_id,
                                 "event_secure",
@@ -872,9 +887,11 @@ async fn handle_mobile_secure_ws(
                                 if reset_queued {
                                     continue;
                                 }
+                                priority_control.clear().await;
                                 control.clear().await;
-                                head_buffer.clear().await;
-                                if queue_reset_required(&control, &state, workspace_id)
+                                foreground_head_buffer.clear().await;
+                                background_head_buffer.clear().await;
+                                if queue_reset_required(&priority_control, &state, workspace_id)
                                     .await
                                     .is_err()
                                 {
@@ -894,7 +911,10 @@ async fn handle_mobile_secure_ws(
     let (send_task, recv_result) = crate::async_util::race_join_handle(send_task, recv_loop).await;
 
     send_control.set_disconnect_after_flush();
+    priority_control.notify.notify_one();
     control.notify.notify_one();
+    foreground_head_buffer.notify.notify_one();
+    background_head_buffer.notify.notify_one();
     if let Some(send_task) = send_task {
         let _ = send_task.await;
     }
@@ -905,49 +925,6 @@ async fn handle_mobile_secure_ws(
         .await;
 
     recv_result.unwrap_or(Ok(()))
-}
-
-const SESSION_REPLAY_MAX_EVENTS: usize = 2000;
-const WORKSPACE_STREAM_QUEUE_LIMIT: usize = 256;
-const WORKSPACE_STREAM_QUEUE_MAX_AGE: Duration = Duration::from_secs(10);
-const HEAD_BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(25);
-const HEAD_BATCH_SESSION_LIMIT: usize = 200;
-struct StreamSendControl {
-    disconnect_after_flush: AtomicBool,
-    hydrating: AtomicBool,
-}
-
-impl StreamSendControl {
-    fn new() -> Self {
-        Self {
-            disconnect_after_flush: AtomicBool::new(false),
-            hydrating: AtomicBool::new(false),
-        }
-    }
-
-    fn set_disconnect_after_flush(&self) {
-        self.disconnect_after_flush.store(true, Ordering::Relaxed);
-    }
-
-    fn clear_disconnect_after_flush(&self) {
-        self.disconnect_after_flush.store(false, Ordering::Relaxed);
-    }
-
-    fn should_disconnect_after_flush(&self) -> bool {
-        self.disconnect_after_flush.load(Ordering::Relaxed)
-    }
-
-    fn set_hydrating(&self) {
-        self.hydrating.store(true, Ordering::Relaxed);
-    }
-
-    fn clear_hydrating(&self) {
-        self.hydrating.store(false, Ordering::Relaxed);
-    }
-
-    fn is_hydrating(&self) -> bool {
-        self.hydrating.load(Ordering::Relaxed)
-    }
 }
 
 pub(super) async fn dictation_livekit_stream_ws(

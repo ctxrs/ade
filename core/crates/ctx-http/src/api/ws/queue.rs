@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Duration;
 
 pub(super) const HEAD_BATCH_TOTAL_LIMIT: usize = 1000;
 
@@ -31,6 +32,14 @@ pub(super) struct HeadBatchBuffer {
     pub(super) notify: Notify,
 }
 
+pub(super) enum NextWorkspaceStreamItem {
+    Control(StreamQueueEntry<WorkspaceActiveSnapshotStreamMessage>),
+    HeadsBatch {
+        snapshot_rev: i64,
+        deltas: Vec<SessionHeadDelta>,
+    },
+}
+
 #[derive(Debug)]
 pub(super) enum HeadBatchPushError {
     SessionLimit { session_id: SessionId, limit: usize },
@@ -55,13 +64,46 @@ fn allows_partial_for_active_primary_session(
         .any(|active_session_id| *active_session_id == session_id)
 }
 
+fn allows_partial_for_foreground_session(
+    foreground_session_ids: Option<&HashSet<SessionId>>,
+    session_id: SessionId,
+) -> bool {
+    foreground_session_ids
+        .map(|session_ids| session_ids.contains(&session_id))
+        .unwrap_or(false)
+}
+
+pub(super) fn is_foreground_session(
+    foreground_session_ids: Option<&HashSet<SessionId>>,
+    session_id: SessionId,
+) -> bool {
+    allows_partial_for_foreground_session(foreground_session_ids, session_id)
+}
+
+pub(super) fn is_priority_control_event(
+    event: &WorkspaceActiveSnapshotEvent,
+    foreground_session_ids: Option<&HashSet<SessionId>>,
+) -> bool {
+    match event {
+        WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. } => {
+            is_foreground_session(foreground_session_ids, *session_id)
+        }
+        WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
+            is_foreground_session(foreground_session_ids, head.session.id)
+        }
+        _ => false,
+    }
+}
+
 pub(super) fn filter_partial_delta_for_active_tasks(
     mut delta: SessionHeadDelta,
     active_task_sessions: &HashMap<TaskId, SessionId>,
+    foreground_session_ids: Option<&HashSet<SessionId>>,
 ) -> Option<SessionHeadDelta> {
     if let Some(event) = delta.event.as_ref() {
         if is_partial_event(event)
             && !allows_partial_for_active_primary_session(active_task_sessions, delta.session_id)
+            && !allows_partial_for_foreground_session(foreground_session_ids, delta.session_id)
         {
             delta.event = None;
             if delta.turn.is_none() && delta.message.is_none() && delta.tool_summaries.is_empty() {
@@ -222,6 +264,10 @@ impl HeadBatchBuffer {
         state.total_len = 0;
         state.snapshot_rev = 0;
     }
+
+    pub(super) async fn is_empty(&self) -> bool {
+        self.state.lock().await.deltas.is_empty()
+    }
 }
 
 impl<T> StreamQueue<T> {
@@ -274,6 +320,54 @@ impl<T> StreamQueue<T> {
     pub(super) async fn is_empty(&self) -> bool {
         self.pending.lock().await.is_empty()
     }
+}
+
+pub(super) async fn take_next_workspace_stream_item(
+    priority_control: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
+    control: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
+    foreground_head_buffer: &HeadBatchBuffer,
+    background_head_buffer: &HeadBatchBuffer,
+    hydrating: bool,
+) -> Option<NextWorkspaceStreamItem> {
+    if hydrating {
+        if let Some(entry) = control.pop().await {
+            return Some(NextWorkspaceStreamItem::Control(entry));
+        }
+        return None;
+    }
+    if let Some(entry) = priority_control.pop().await {
+        return Some(NextWorkspaceStreamItem::Control(entry));
+    }
+    let (snapshot_rev, deltas) = foreground_head_buffer.take().await;
+    if !deltas.is_empty() {
+        return Some(NextWorkspaceStreamItem::HeadsBatch {
+            snapshot_rev,
+            deltas,
+        });
+    }
+    if let Some(entry) = control.pop().await {
+        return Some(NextWorkspaceStreamItem::Control(entry));
+    }
+    let (snapshot_rev, deltas) = background_head_buffer.take().await;
+    if !deltas.is_empty() {
+        return Some(NextWorkspaceStreamItem::HeadsBatch {
+            snapshot_rev,
+            deltas,
+        });
+    }
+    None
+}
+
+pub(super) async fn workspace_stream_is_idle(
+    priority_control: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
+    control: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
+    foreground_head_buffer: &HeadBatchBuffer,
+    background_head_buffer: &HeadBatchBuffer,
+) -> bool {
+    priority_control.is_empty().await
+        && control.is_empty().await
+        && foreground_head_buffer.is_empty().await
+        && background_head_buffer.is_empty().await
 }
 
 fn log_stream_queue_push_error(
@@ -353,6 +447,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use serde_json::json;
+    use std::time::Duration;
 
     fn partial_delta(session_id: SessionId) -> SessionHeadDelta {
         SessionHeadDelta {
@@ -360,6 +455,7 @@ mod tests {
             last_event_seq: 5,
             projection_rev: 7,
             state_rev: 0,
+            emitted_at_ms: None,
             session: None,
             activity: None,
             event: Some(SessionEvent {
@@ -385,7 +481,9 @@ mod tests {
         let delta = partial_delta(session_id);
         let active_task_sessions = HashMap::new();
 
-        assert!(filter_partial_delta_for_active_tasks(delta, &active_task_sessions).is_none());
+        assert!(
+            filter_partial_delta_for_active_tasks(delta, &active_task_sessions, None).is_none()
+        );
     }
 
     #[test]
@@ -395,8 +493,25 @@ mod tests {
         let mut active_task_sessions = HashMap::new();
         active_task_sessions.insert(TaskId::new(), session_id);
 
-        let filtered = filter_partial_delta_for_active_tasks(delta, &active_task_sessions)
+        let filtered = filter_partial_delta_for_active_tasks(delta, &active_task_sessions, None)
             .expect("primary session partial delta should be preserved");
+        assert!(filtered.event.is_some());
+    }
+
+    #[test]
+    fn filter_partial_delta_keeps_foreground_secondary_session_partial_delta() {
+        let session_id = SessionId::new();
+        let delta = partial_delta(session_id);
+        let active_task_sessions = HashMap::new();
+        let mut foreground_session_ids = HashSet::new();
+        foreground_session_ids.insert(session_id);
+
+        let filtered = filter_partial_delta_for_active_tasks(
+            delta,
+            &active_task_sessions,
+            Some(&foreground_session_ids),
+        )
+        .expect("foreground session partial delta should be preserved");
         assert!(filtered.event.is_some());
     }
 
@@ -427,9 +542,257 @@ mod tests {
         });
         let active_task_sessions = HashMap::new();
 
-        let filtered = filter_partial_delta_for_active_tasks(delta, &active_task_sessions)
+        let filtered = filter_partial_delta_for_active_tasks(delta, &active_task_sessions, None)
             .expect("non-event payload should keep delta sendable");
         assert!(filtered.event.is_none());
         assert_eq!(filtered.tool_summaries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn next_workspace_stream_item_prioritizes_foreground_lane() {
+        let priority_control = StreamQueue::new(8, Duration::from_secs(1));
+        let control = StreamQueue::new(8, Duration::from_secs(1));
+        let foreground_head_buffer = HeadBatchBuffer::new();
+        let background_head_buffer = HeadBatchBuffer::new();
+        let workspace_id = WorkspaceId::new();
+        let foreground_session_id = SessionId::new();
+        let background_session_id = SessionId::new();
+
+        push_stream_message(
+            &control,
+            workspace_id,
+            Some(background_session_id),
+            "test_control",
+            WorkspaceActiveSnapshotStreamMessage::Event {
+                rev: 0,
+                event: Box::new(WorkspaceActiveSnapshotEvent::SessionGap {
+                    workspace_id,
+                    snapshot_rev: 1,
+                    session_id: background_session_id,
+                    after_seq: 10,
+                    reason: Some("background".to_string()),
+                }),
+            },
+        )
+        .await
+        .expect("control event should enqueue");
+        foreground_head_buffer
+            .push(2, partial_delta(foreground_session_id))
+            .await
+            .expect("foreground delta should enqueue");
+        background_head_buffer
+            .push(3, partial_delta(background_session_id))
+            .await
+            .expect("background delta should enqueue");
+        push_stream_message(
+            &priority_control,
+            workspace_id,
+            Some(foreground_session_id),
+            "test_priority",
+            WorkspaceActiveSnapshotStreamMessage::Event {
+                rev: 0,
+                event: Box::new(WorkspaceActiveSnapshotEvent::SessionGap {
+                    workspace_id,
+                    snapshot_rev: 4,
+                    session_id: foreground_session_id,
+                    after_seq: 11,
+                    reason: Some("foreground".to_string()),
+                }),
+            },
+        )
+        .await
+        .expect("priority control event should enqueue");
+
+        let Some(NextWorkspaceStreamItem::Control(entry)) = take_next_workspace_stream_item(
+            &priority_control,
+            &control,
+            &foreground_head_buffer,
+            &background_head_buffer,
+            false,
+        )
+        .await
+        else {
+            panic!("expected priority control event first");
+        };
+        assert!(matches!(
+            entry.message,
+            WorkspaceActiveSnapshotStreamMessage::Event { event, .. }
+                if matches!(
+                    event.as_ref(),
+                    WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. }
+                        if *session_id == foreground_session_id
+                )
+        ));
+
+        let Some(NextWorkspaceStreamItem::HeadsBatch { deltas, .. }) =
+            take_next_workspace_stream_item(
+                &priority_control,
+                &control,
+                &foreground_head_buffer,
+                &background_head_buffer,
+                false,
+            )
+            .await
+        else {
+            panic!("expected foreground heads batch second");
+        };
+        assert_eq!(deltas.len(), 1);
+        assert_eq!(deltas[0].session_id, foreground_session_id);
+
+        let Some(NextWorkspaceStreamItem::Control(entry)) = take_next_workspace_stream_item(
+            &priority_control,
+            &control,
+            &foreground_head_buffer,
+            &background_head_buffer,
+            false,
+        )
+        .await
+        else {
+            panic!("expected background control event third");
+        };
+        assert!(matches!(
+            entry.message,
+            WorkspaceActiveSnapshotStreamMessage::Event { event, .. }
+                if matches!(
+                    event.as_ref(),
+                    WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. }
+                        if *session_id == background_session_id
+                )
+        ));
+
+        let Some(NextWorkspaceStreamItem::HeadsBatch { deltas, .. }) =
+            take_next_workspace_stream_item(
+                &priority_control,
+                &control,
+                &foreground_head_buffer,
+                &background_head_buffer,
+                false,
+            )
+            .await
+        else {
+            panic!("expected background heads batch last");
+        };
+        assert_eq!(deltas.len(), 1);
+        assert_eq!(deltas[0].session_id, background_session_id);
+    }
+
+    #[tokio::test]
+    async fn priority_control_event_detection_only_matches_foreground_session() {
+        let workspace_id = WorkspaceId::new();
+        let foreground_session_id = SessionId::new();
+        let background_session_id = SessionId::new();
+        let mut foreground_session_ids = HashSet::new();
+        foreground_session_ids.insert(foreground_session_id);
+        let foreground_gap = WorkspaceActiveSnapshotEvent::SessionGap {
+            workspace_id,
+            snapshot_rev: 1,
+            session_id: foreground_session_id,
+            after_seq: 1,
+            reason: Some("foreground".to_string()),
+        };
+        let background_gap = WorkspaceActiveSnapshotEvent::SessionGap {
+            workspace_id,
+            snapshot_rev: 1,
+            session_id: background_session_id,
+            after_seq: 1,
+            reason: Some("background".to_string()),
+        };
+
+        assert!(is_priority_control_event(
+            &foreground_gap,
+            Some(&foreground_session_ids),
+        ));
+        assert!(!is_priority_control_event(
+            &background_gap,
+            Some(&foreground_session_ids),
+        ));
+    }
+
+    #[tokio::test]
+    async fn hydrating_keeps_snapshot_control_ahead_of_priority_lane() {
+        let priority_control = StreamQueue::new(8, Duration::from_secs(1));
+        let control = StreamQueue::new(8, Duration::from_secs(1));
+        let foreground_head_buffer = HeadBatchBuffer::new();
+        let background_head_buffer = HeadBatchBuffer::new();
+        let workspace_id = WorkspaceId::new();
+        let foreground_session_id = SessionId::new();
+
+        push_stream_message(
+            &control,
+            workspace_id,
+            None,
+            "test_snapshot",
+            WorkspaceActiveSnapshotStreamMessage::Snapshot {
+                rev: 0,
+                active_snapshot: WorkspaceActiveSnapshot {
+                    workspace_id,
+                    snapshot_rev: 1,
+                    archived_rev: 0,
+                    active: WorkspaceActivePage {
+                        tasks: Vec::new(),
+                        total_count: 0,
+                    },
+                    worktree_vcs_snapshots: Vec::new(),
+                },
+                active_heads: None,
+            },
+        )
+        .await
+        .expect("snapshot should enqueue");
+        push_stream_message(
+            &priority_control,
+            workspace_id,
+            Some(foreground_session_id),
+            "test_priority",
+            WorkspaceActiveSnapshotStreamMessage::Event {
+                rev: 0,
+                event: Box::new(WorkspaceActiveSnapshotEvent::SessionGap {
+                    workspace_id,
+                    snapshot_rev: 2,
+                    session_id: foreground_session_id,
+                    after_seq: 1,
+                    reason: Some("foreground".to_string()),
+                }),
+            },
+        )
+        .await
+        .expect("priority event should enqueue");
+
+        let Some(NextWorkspaceStreamItem::Control(entry)) = take_next_workspace_stream_item(
+            &priority_control,
+            &control,
+            &foreground_head_buffer,
+            &background_head_buffer,
+            true,
+        )
+        .await
+        else {
+            panic!("expected snapshot control while hydrating");
+        };
+        assert!(matches!(
+            entry.message,
+            WorkspaceActiveSnapshotStreamMessage::Snapshot { .. }
+        ));
+
+        let Some(NextWorkspaceStreamItem::Control(entry)) = take_next_workspace_stream_item(
+            &priority_control,
+            &control,
+            &foreground_head_buffer,
+            &background_head_buffer,
+            false,
+        )
+        .await
+        else {
+            panic!("expected priority event after hydration");
+        };
+        assert!(matches!(
+            entry.message,
+            WorkspaceActiveSnapshotStreamMessage::Event { event, .. }
+                if matches!(
+                    event.as_ref(),
+                    WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. }
+                        if *session_id == foreground_session_id
+                )
+        ));
     }
 }

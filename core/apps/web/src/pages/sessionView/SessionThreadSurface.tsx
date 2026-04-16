@@ -109,6 +109,7 @@ export type SessionThreadSurfaceComposerProps = {
   sendBusy: boolean;
   hasDraftContent: boolean;
   hasActiveTurn: boolean;
+  interruptPending?: boolean;
   setVerbosityPref: (next: SessionViewVerbosity) => void;
   workbenchMode: WorkbenchModeId;
   setWorkbenchMode: (next: WorkbenchModeId) => void;
@@ -370,6 +371,7 @@ export function SessionThreadSurface({
           }
           onInterrupt={composer.onInterruptSession}
           isWorking={composer.hasActiveTurn}
+          interruptPending={composer.interruptPending}
           verbosity={transcript.verbosity}
           onSetVerbosity={composer.setVerbosityPref}
           modeId={composer.workbenchMode}

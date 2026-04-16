@@ -1,4 +1,5 @@
 import type { SessionEvent, SessionTurn } from "../../api/client";
+import type { SessionActivityState } from "@ctx/types";
 import { isFinalThoughtEvent } from "./thoughtProjection";
 
 const mergePartial = (p: string, n: string): string => {
@@ -45,9 +46,47 @@ export const mergeTurnStatus = (
 ): SessionTurn["status"] => {
   if (!prev) return next ?? prev ?? "queued";
   if (!next) return prev;
+  if (prev === "failed" && next === "interrupted") {
+    return "interrupted";
+  }
+  if (prev === "interrupted" && (next === "completed" || next === "failed")) {
+    return "interrupted";
+  }
   const prevPriority = TURN_STATUS_PRIORITY[prev] ?? 0;
   const nextPriority = TURN_STATUS_PRIORITY[next] ?? 0;
   return nextPriority >= prevPriority ? next : prev;
+};
+
+export const reconcileLatestTurnInterruptedFromActivity = (
+  turns: SessionTurn[],
+  activity: SessionActivityState | null | undefined,
+): boolean => {
+  if ((activity?.last_turn_status ?? null) !== "interrupted") return false;
+  const latestTurn = turns.at(-1);
+  if (!latestTurn) return false;
+  const nextStatus = mergeTurnStatus(latestTurn.status, "interrupted");
+  if (nextStatus === latestTurn.status) return false;
+  turns[turns.length - 1] = { ...latestTurn, status: nextStatus };
+  return true;
+};
+
+export const reconcileActivityInterruptedFromTurns = (
+  activity: SessionActivityState | null | undefined,
+  turns: SessionTurn[],
+): SessionActivityState | null => {
+  const nextActivity = activity ?? null;
+  if (!nextActivity) return null;
+  const latestTurn = turns.at(-1);
+  if (!latestTurn || latestTurn.status !== "interrupted") return nextActivity;
+  if (nextActivity.last_turn_status === "interrupted") return nextActivity;
+  if (nextActivity.last_turn_status !== "completed" && nextActivity.last_turn_status !== "failed") {
+    return nextActivity;
+  }
+  return {
+    ...nextActivity,
+    is_working: false,
+    last_turn_status: "interrupted",
+  };
 };
 
 const PARTIAL_EVENT_TYPES = new Set(["assistant_chunk", "assistant_complete", "context_window_update"]);

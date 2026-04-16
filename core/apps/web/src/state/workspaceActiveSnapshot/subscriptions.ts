@@ -26,7 +26,7 @@ const toWorkspaceReplay = (
 
 export function buildWorkspaceActiveSubscribeMessage(
   reason: string,
-  foregroundTaskId: string | null,
+  foregroundSessionId: string | null,
   subscribedSessions: SessionSubscriptionCursor[],
 ): {
   message: WorkspaceActiveSnapshotClientMessage;
@@ -38,8 +38,8 @@ export function buildWorkspaceActiveSubscribeMessage(
     scope: "active",
     include_active_heads: requestSnapshot,
   };
-  if (foregroundTaskId) {
-    message.foreground_task_id = foregroundTaskId;
+  if (foregroundSessionId) {
+    message.foreground_session_id = foregroundSessionId;
   }
   if (subscribedSessions.length > 0) {
     message.session_ids = subscribedSessions.map((session) => session.sessionId);

@@ -97,6 +97,109 @@ describe("sessionSupervisor snapshotProjection", () => {
     expect(secondPublished?.threadProjection).toBe(firstPublished?.threadProjection);
   });
 
+  it("rebuilds threadProjection when transcript arrays mutate in place without revision bumps", () => {
+    const entry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
+    entry.support.stateLoaded = true;
+    entry.turns = [{
+      turn_id: "turn-1",
+      session_id: "session-1",
+      run_id: null,
+      user_message_id: "message-1",
+      status: "completed",
+      start_seq: 1,
+      end_seq: 2,
+      started_at: "2026-04-08T12:00:00.000Z",
+      updated_at: "2026-04-08T12:00:01.000Z",
+      assistant_partial: "",
+      thought_partial: "",
+      metrics_json: null,
+      tool_total: 0,
+      tool_pending: 0,
+      tool_running: 0,
+      tool_completed: 0,
+      tool_failed: 0,
+    }];
+    entry.messages = [{
+      id: "message-1",
+      session_id: "session-1",
+      task_id: "task-1",
+      turn_id: "turn-1",
+      turn_sequence: 1,
+      role: "assistant",
+      content: "old content",
+      created_at: "2026-04-08T12:00:01.000Z",
+      delivery: "immediate",
+      attachments: [],
+    }];
+    entry.events = [];
+    entry.turnsRev = 2;
+    entry.messagesRev = 3;
+    entry.eventsRev = 4;
+    entry.assistantStreamingRev = 5;
+    entry.projectionRev = 6;
+
+    const host = {
+      maxCachedSessions: 10,
+      listeners: new Set<() => void>(),
+      snapshot: { connection: "idle", sessions: {} } as SessionSupervisorSnapshot,
+      entries: new Map([[entry.sessionId, entry]]),
+    };
+
+    publish.call(host);
+    const firstPublished = host.snapshot.sessions["session-1"];
+
+    entry.turns.push({
+      turn_id: "turn-2",
+      session_id: "session-1",
+      run_id: null,
+      user_message_id: "message-2",
+      status: "completed",
+      start_seq: 3,
+      end_seq: 4,
+      started_at: "2026-04-08T12:00:02.000Z",
+      updated_at: "2026-04-08T12:00:03.000Z",
+      assistant_partial: "",
+      thought_partial: "",
+      metrics_json: null,
+      tool_total: 0,
+      tool_pending: 0,
+      tool_running: 0,
+      tool_completed: 0,
+      tool_failed: 0,
+    });
+    entry.messages[0] = {
+      ...entry.messages[0]!,
+      content: "new content",
+    };
+    entry.messages.push({
+      id: "message-2",
+      session_id: "session-1",
+      task_id: "task-1",
+      turn_id: "turn-2",
+      turn_sequence: 2,
+      role: "assistant",
+      content: "second content",
+      created_at: "2026-04-08T12:00:03.000Z",
+      delivery: "immediate",
+      attachments: [],
+    });
+
+    publish.call(host);
+    const secondPublished = host.snapshot.sessions["session-1"];
+    const secondThreadProjection = secondPublished?.threadProjection;
+
+    expect(secondPublished).not.toBe(firstPublished);
+    expect(secondThreadProjection).not.toBe(firstPublished?.threadProjection);
+    expect(secondThreadProjection).toBeDefined();
+    if (!secondThreadProjection) {
+      throw new Error("threadProjection should be defined after publish");
+    }
+    expect(secondThreadProjection.turns).toHaveLength(2);
+    expect(secondThreadProjection.messages).toHaveLength(2);
+    expect(secondThreadProjection.messages[0]?.content).toBe("new content");
+    expect(secondThreadProjection.messages[1]?.content).toBe("second content");
+  });
+
   it("skips listener notification when publish is a true no-op", () => {
     const entry = createInternalEntry("session-1", { transientSeqStart: 1, warmTtlMs: 60_000 });
     entry.support.stateLoaded = true;

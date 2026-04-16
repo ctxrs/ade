@@ -47,7 +47,7 @@ pub(crate) async fn spawn_ws_listener(
         session_ids: sessions,
         sessions: Vec::new(),
         task_ids: Vec::new(),
-        foreground_task_id: None,
+        foreground_session_id: None,
         scope: None,
         include_active_heads: false,
     };
@@ -162,7 +162,7 @@ pub(crate) async fn run_ws_replay_once(
             },
         }],
         task_ids: Vec::new(),
-        foreground_task_id: None,
+        foreground_session_id: None,
         scope: None,
         include_active_heads: false,
     };

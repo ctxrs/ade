@@ -77,6 +77,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     sendDisabledReason,
     onInterrupt,
     isWorking,
+    interruptPending,
     sessionIdForAutocomplete,
     workspaceIdForAutocomplete,
     slashCommands,
@@ -88,10 +89,10 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const canAdjustVerbosity = variant === "newSession" && typeof props.onSetVerbosity === "function";
   const contextWindow =
     variant === "activeSession" ? (props as ActiveSessionProps).contextWindow ?? null : null;
-  const showStop = !!onInterrupt && !!isWorking;
-  const sendActionDisabled = !showStop && (!!sendDisabled || !!sendDisabledReason);
-  const sendActionTitle = showStop ? "Stop" : sendDisabledReason ?? "Send";
-  const sendActionLabel = showStop ? "Stop" : "Send";
+  const showStop = !!onInterrupt && (!!isWorking || !!interruptPending);
+  const sendActionDisabled = !!interruptPending || (!showStop && (!!sendDisabled || !!sendDisabledReason));
+  const sendActionTitle = interruptPending ? "Stopping..." : showStop ? "Stop" : sendDisabledReason ?? "Send";
+  const sendActionLabel = showStop ? (interruptPending ? "Stopping..." : "Stop") : "Send";
   const contextWindowDisplay = useMemo(
     () => (variant === "activeSession" ? describeContextWindow(contextWindow) : null),
     [contextWindow, variant],
@@ -189,13 +190,16 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
 
   const handleSendAction = useCallback(() => {
     if (showStop) {
+      if (interruptPending) {
+        return;
+      }
       onInterrupt?.();
       return;
     }
 
     clearSelectionBeforeSubmit();
     onSend();
-  }, [clearSelectionBeforeSubmit, onInterrupt, onSend, showStop]);
+  }, [clearSelectionBeforeSubmit, interruptPending, onInterrupt, onSend, showStop]);
 
   const insertPastedText = useCallback((textarea: HTMLTextAreaElement, text: string) => {
     if (!text) return;

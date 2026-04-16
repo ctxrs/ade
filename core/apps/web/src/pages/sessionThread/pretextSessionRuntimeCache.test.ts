@@ -114,12 +114,12 @@ describe("pretextSessionRuntimeCache", () => {
       uiState,
       viewportWidth: 900,
       viewportHeight: 300,
-      sourceKey: buildSessionPretextRuntimeSourceKey(updatedItems),
+      sourceKey: buildSessionPretextRuntimeSourceKey(updatedItems, uiState),
       layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState }),
     });
 
     expect(readSessionPretextRuntimePreparedState(runtime)).toMatchObject({
-      sourceKey: buildSessionPretextRuntimeSourceKey(updatedItems),
+      sourceKey: buildSessionPretextRuntimeSourceKey(updatedItems, uiState),
       layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState }),
     });
   });
@@ -139,7 +139,7 @@ describe("pretextSessionRuntimeCache", () => {
     noteSessionPretextRuntimeSnapshot(runtime, expandedSnapshot, listItems);
 
     expect(readSessionPretextRuntimePreparedState(runtime)).toMatchObject({
-      sourceKey: buildSessionPretextRuntimeSourceKey(listItems),
+      sourceKey: buildSessionPretextRuntimeSourceKey(listItems, expandedUiState),
       layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState: expandedUiState }),
     });
 
@@ -150,9 +150,23 @@ describe("pretextSessionRuntimeCache", () => {
     noteSessionPretextRuntimeSnapshot(runtime, collapsedSnapshot, updatedItems);
 
     expect(readSessionPretextRuntimePreparedState(runtime)).toMatchObject({
-      sourceKey: buildSessionPretextRuntimeSourceKey(updatedItems),
+      sourceKey: buildSessionPretextRuntimeSourceKey(updatedItems, collapsedUiState),
       layoutKey: buildSessionPretextRuntimeLayoutKey({ uiState: collapsedUiState }),
     });
+  });
+
+  it("changes the prepared source key when same-id item content changes", () => {
+    const uiState = createDefaultSessionTranscriptUiState();
+    const initialItems = makeItems(2);
+    const updatedItems: WorkbenchListItem[] = initialItems.map((item) =>
+      item.kind === "message" && item.id === "message-2"
+        ? { ...item, content: `${item.content} marker` }
+        : item,
+    );
+
+    expect(buildSessionPretextRuntimeSourceKey(updatedItems, uiState)).not.toBe(
+      buildSessionPretextRuntimeSourceKey(initialItems, uiState),
+    );
   });
 
   it("keeps warm snapshots when pruning only the runtime slice", () => {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { appendDesktopLog, openLogsFolder } from "./api/client";
+import { appendDesktopLog, getDaemonConnectionReadiness, openLogsFolder } from "./api/client";
+import { useDaemonConnection } from "./api/useDaemonConnection";
 import DaemonAvailabilityOverlay from "./components/DaemonAvailabilityOverlay";
 import StorageGuardBanner from "./components/StorageGuardBanner";
 import UpdateNoticeBanner from "./components/UpdateNoticeBanner";
@@ -62,6 +63,13 @@ import {
   writeUpdaterRefreshBroadcast,
   type WorkbenchTaskIdleDetail,
 } from "./utils/updaterEvents";
+import {
+  noteDesktopDaemonReady,
+  noteDesktopFirstPaint,
+  noteDesktopRendererPing,
+  noteDesktopRendererTimeout,
+  noteDesktopWindowCreated,
+} from "./state/foregroundFreshnessTelemetry";
 
 function settingsTargetForPath(pathname: string): string {
   if (pathname.startsWith("/workspaces/")) {
@@ -75,6 +83,14 @@ function settingsTargetForPath(pathname: string): string {
 
 const RUNTIME_DIAGNOSTIC_DEDUPE_WINDOW_MS = 15_000;
 
+type WindowWithDesktopStartup = Window & {
+  __CTX_DESKTOP_STARTUP__?: {
+    windowCreatedAtMs?: unknown;
+    windowLabel?: unknown;
+    startPath?: unknown;
+  };
+};
+
 const safeJsonStringify = (value: unknown): string => {
   try {
     return JSON.stringify(value);
@@ -86,12 +102,30 @@ const safeJsonStringify = (value: unknown): string => {
 const shouldPersistRuntimeDiagnostic = (event: UiDiagnosticEvent): boolean =>
   event.source === "runtime" && (event.severity === "error" || event.fatal === true);
 
+const shouldPersistUiDiagnostic = (event: UiDiagnosticEvent): boolean => {
+  if (shouldPersistRuntimeDiagnostic(event)) return true;
+  if (event.source === "foreground_freshness" && event.severity !== "info") return true;
+  if (event.source === "desktop_startup") return true;
+  return false;
+};
+
 const buildRuntimeDiagnosticLogLine = (event: UiDiagnosticEvent): string => {
   const context =
     event.context && Object.keys(event.context).length > 0
       ? ` context=${safeJsonStringify(event.context)}`
       : "";
   return `ui_runtime: code=${event.code} severity=${event.severity} fatal=${event.fatal === true ? "true" : "false"} message=${event.message}${context}`;
+};
+
+const buildUiDiagnosticLogLine = (event: UiDiagnosticEvent): string => {
+  if (event.source === "runtime") {
+    return buildRuntimeDiagnosticLogLine(event);
+  }
+  const context =
+    event.context && Object.keys(event.context).length > 0
+      ? ` context=${safeJsonStringify(event.context)}`
+      : "";
+  return `${event.source}: code=${event.code} severity=${event.severity} message=${event.message}${context}`;
 };
 
 function DesktopSettingsListener() {
@@ -447,10 +481,72 @@ function GlobalUpdateNotice() {
 
 export default function App() {
   const runtimeLogDedupRef = useRef<Map<string, number>>(new Map());
+  const desktopFirstPaintLoggedRef = useRef(false);
+  const desktopDaemonReadyLoggedRef = useRef(false);
+  const daemonConnection = useDaemonConnection();
 
   useEffect(() => {
     appendDesktopLog("ui: app loaded").catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!isDesktopApp()) return;
+    const startup = (window as WindowWithDesktopStartup).__CTX_DESKTOP_STARTUP__;
+    const windowLabel =
+      typeof startup?.windowLabel === "string" && startup.windowLabel.trim().length > 0
+        ? startup.windowLabel.trim()
+        : "unknown";
+    const startupPath =
+      typeof startup?.startPath === "string" && startup.startPath.trim().length > 0
+        ? startup.startPath.trim()
+        : window.location.pathname;
+    const createdAtMs =
+      typeof startup?.windowCreatedAtMs === "number" && Number.isFinite(startup.windowCreatedAtMs)
+        ? startup.windowCreatedAtMs
+        : null;
+    if (createdAtMs !== null) {
+      noteDesktopWindowCreated(createdAtMs);
+    }
+    noteDesktopRendererPing();
+    void appendDesktopLog(
+      `desktop_startup: renderer_ping label=${safeJsonStringify(windowLabel)} path=${safeJsonStringify(startupPath)}`,
+    ).catch(() => {});
+    const timeoutId = window.setTimeout(() => {
+      if (desktopFirstPaintLoggedRef.current) return;
+      noteDesktopRendererTimeout();
+      void appendDesktopLog(
+        `desktop_startup: renderer_timeout label=${safeJsonStringify(windowLabel)} path=${safeJsonStringify(window.location.pathname)} readyState=${safeJsonStringify(document.readyState)} visibilityState=${safeJsonStringify(document.visibilityState)}`,
+        "error",
+      ).catch(() => {});
+    }, 1000);
+    const rafId = window.requestAnimationFrame(() => {
+      desktopFirstPaintLoggedRef.current = true;
+      noteDesktopFirstPaint();
+      void appendDesktopLog(
+        `desktop_startup: first_paint label=${safeJsonStringify(windowLabel)} path=${safeJsonStringify(window.location.pathname)}`,
+      ).catch(() => {});
+    });
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isDesktopApp()) return;
+    if (!getDaemonConnectionReadiness(daemonConnection).isReady) return;
+    if (desktopDaemonReadyLoggedRef.current) return;
+    desktopDaemonReadyLoggedRef.current = true;
+    const startup = (window as WindowWithDesktopStartup).__CTX_DESKTOP_STARTUP__;
+    const windowLabel =
+      typeof startup?.windowLabel === "string" && startup.windowLabel.trim().length > 0
+        ? startup.windowLabel.trim()
+        : "unknown";
+    noteDesktopDaemonReady();
+    void appendDesktopLog(
+      `desktop_startup: daemon_ready label=${safeJsonStringify(windowLabel)} path=${safeJsonStringify(window.location.pathname)}`,
+    ).catch(() => {});
+  }, [daemonConnection]);
 
   useEffect(() => {
     if (!isDesktopApp()) {
@@ -458,7 +554,7 @@ export default function App() {
       return;
     }
     setUiDiagnosticPersistenceSink((event) => {
-      if (!shouldPersistRuntimeDiagnostic(event)) return;
+      if (!shouldPersistUiDiagnostic(event)) return;
       const key = `${event.code}|${event.message}`;
       const now = Date.now();
       const prev = runtimeLogDedupRef.current.get(key);
@@ -466,7 +562,7 @@ export default function App() {
         return;
       }
       runtimeLogDedupRef.current.set(key, now);
-      void appendDesktopLog(buildRuntimeDiagnosticLogLine(event), "error").catch(() => {});
+      void appendDesktopLog(buildUiDiagnosticLogLine(event), event.severity).catch(() => {});
     });
     return () => {
       setUiDiagnosticPersistenceSink(null);

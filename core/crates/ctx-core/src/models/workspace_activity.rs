@@ -128,6 +128,8 @@ pub struct SessionSummaryDelta {
     pub projection_rev: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_rev: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emitted_at_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,6 +251,8 @@ pub struct SessionHeadDelta {
     pub projection_rev: i64,
     #[serde(default)]
     pub state_rev: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emitted_at_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<SessionMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -439,7 +443,7 @@ pub enum WorkspaceActiveSnapshotClientMessage {
         #[serde(default)]
         task_ids: Vec<TaskId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        foreground_task_id: Option<TaskId>,
+        foreground_session_id: Option<SessionId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scope: Option<WorkspaceActiveSnapshotSubscribeScope>,
         #[serde(default, skip_serializing_if = "is_false")]

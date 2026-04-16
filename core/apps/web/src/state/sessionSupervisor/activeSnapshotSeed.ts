@@ -60,6 +60,7 @@ export function seedReplicaFromActiveSnapshot(
   host: ActiveSnapshotSeedHost,
   sessionId: string,
   entry: InternalEntry,
+  opts?: { allowRecoveringRefresh?: boolean; allowRepairReplace?: boolean },
 ): boolean {
   const head = findWorkspaceSessionHead(
     host.workspaceSnapshotState,
@@ -74,7 +75,11 @@ export function seedReplicaFromActiveSnapshot(
     host.dispatchSeedHead({ type: "seed_head", sessionId, head, mode: "bootstrap_seed" });
     return true;
   }
-  if (classifyActiveSnapshotSeedMode(entry, head) !== "bootstrap_seed") return false;
-  host.dispatchSeedHead({ type: "seed_head", sessionId, head, mode: "bootstrap_seed" });
+  const mode = classifyActiveSnapshotSeedMode(entry, head, {
+    allowRecoveringRefresh: opts?.allowRecoveringRefresh,
+  });
+  if (!mode) return false;
+  if (mode === "repair_replace" && !opts?.allowRepairReplace) return false;
+  host.dispatchSeedHead({ type: "seed_head", sessionId, head, mode });
   return true;
 }

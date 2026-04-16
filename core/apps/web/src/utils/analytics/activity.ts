@@ -511,3 +511,42 @@ export const trackApiErrorObserved = (props: {
     error_signature: props.signature,
   });
 };
+
+export const trackForegroundFreshnessSlaMissed = (props: {
+  metric: string;
+  surface:
+    | "final_delivery"
+    | "interrupt"
+    | "session_switch"
+    | "gap_recovery"
+    | "workspace_backlog"
+    | "foreground_backlog"
+    | "desktop_startup";
+  bucket: "slight" | "moderate" | "severe";
+}): void => {
+  capture("foreground_freshness_sla_missed", {
+    metric: props.metric,
+    surface: props.surface,
+    severity_bucket: props.bucket,
+  });
+};
+
+export const trackForegroundBacklogObserved = (props: {
+  lane: "foreground" | "workspace";
+  bucket: "over_75ms" | "over_250ms" | "over_1000ms";
+}): void => {
+  capture("foreground_backlog_observed", {
+    lane: props.lane,
+    backlog_bucket: props.bucket,
+  });
+};
+
+export const trackForegroundGapRecoveryObserved = (props: {
+  result: "started" | "recovered" | "timeout";
+  bucket?: "under_250ms" | "250ms_to_1000ms" | "1000ms_plus";
+}): void => {
+  capture("foreground_gap_recovery_observed", {
+    result: props.result,
+    ...(props.bucket ? { duration_bucket: props.bucket } : {}),
+  });
+};

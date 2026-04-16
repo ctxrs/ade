@@ -139,6 +139,7 @@ type SessionWorkbenchPaneProps = {
   sendNow: () => Promise<void>;
   hasDraftContent: boolean;
   hasActiveTurn: boolean;
+  interruptPending?: boolean;
   atBottom: boolean;
   setVerbosityPref: (next: SessionViewVerbosity) => void;
   workbenchMode: WorkbenchModeId;
@@ -178,6 +179,7 @@ type SessionWorkbenchPaneProps = {
   currentModelId: string;
   onSetModelId: (next: string) => Promise<void>;
   modelSwitchError: string | null;
+  interruptSessionId: string;
 };
 
 export function SessionWorkbenchPane({
@@ -249,6 +251,7 @@ export function SessionWorkbenchPane({
   sendNow,
   hasDraftContent,
   hasActiveTurn,
+  interruptPending = false,
   atBottom,
   setVerbosityPref,
   workbenchMode,
@@ -286,6 +289,7 @@ export function SessionWorkbenchPane({
   currentModelId,
   onSetModelId,
   modelSwitchError,
+  interruptSessionId,
 }: SessionWorkbenchPaneProps) {
   const liveTailCount = liveTailItems.length;
   const totalVisibleThreadItems = listItems.length + liveTailCount;
@@ -296,7 +300,7 @@ export function SessionWorkbenchPane({
       ref={dropScopeRef}
       style={SESSION_THREAD_LAYOUT_STYLE}
       data-testid="session-view"
-      data-session-id={id}
+      data-session-id={interruptSessionId}
       data-thread-count={totalVisibleThreadItems}
     >
       {dropActive ? (
@@ -450,6 +454,7 @@ export function SessionWorkbenchPane({
             sendBusy,
             hasDraftContent,
             hasActiveTurn,
+            interruptPending,
             setVerbosityPref,
             workbenchMode,
             setWorkbenchMode,

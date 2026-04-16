@@ -17,6 +17,20 @@ export type WorkbenchTaskStatusKind = "error" | "working" | "unread" | "idle";
 
 type SessionTaskProviderSample = { providerId: string; updatedAt: number };
 
+const mergeUniqueIds = (...groups: Array<Array<string | null | undefined>>): string[] => {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const group of groups) {
+    for (const value of group) {
+      const id = idToString(value ?? "");
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      ordered.push(id);
+    }
+  }
+  return ordered;
+};
+
 export type WorkbenchTaskLiveState = {
   working: boolean;
   hasError: boolean;
@@ -118,6 +132,7 @@ export const deriveWorkbenchTaskStatusKind = ({
 
 export const deriveActiveTaskSessionIds = (
   activeTaskSummary: WorkspaceActiveSnapshotItem | OptimisticTaskSummary | null,
+  activeSessionIdFromTab?: string | null,
 ): {
   sessionSummaries: WorkspaceActiveSnapshotItem["sessions"];
   sessions: WorkspaceActiveSnapshotItem["sessions"][number]["session"][];
@@ -129,7 +144,11 @@ export const deriveActiveTaskSessionIds = (
   const sessions = sessionSummaries.map((summary) => summary.session);
   const sessionIds = sessionSummaries.map((summary) => idToString(summary.session.id)).filter(Boolean);
   const primarySessionId = resolvePrimarySessionId(activeTaskSummary);
-  const activeTaskSessionIds = primarySessionId ? [primarySessionId] : sessionIds;
+  const activeTaskSessionIds = mergeUniqueIds(
+    [activeSessionIdFromTab],
+    [primarySessionId],
+    sessionIds,
+  );
   return {
     sessionSummaries,
     sessions,

@@ -241,6 +241,7 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
                 last_event_seq: seq,
                 projection_rev: seq,
                 state_rev: 0,
+                emitted_at_ms: None,
                 session: None,
                 activity: None,
                 event: Some(SessionEvent {

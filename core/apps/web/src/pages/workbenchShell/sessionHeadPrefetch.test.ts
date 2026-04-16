@@ -168,4 +168,27 @@ describe("sessionHeadPrefetch", () => {
     expect(heads[sessionId]?.turns).toHaveLength(2);
     expect(heads[sessionId]?.messages).toHaveLength(2);
   });
+
+  it("collects only the requested session heads when an explicit target list is provided", () => {
+    const sessionId = "session-1";
+    const otherSessionId = "session-2";
+    const snapshot = makeSnapshot(sessionId);
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn((id: string) => {
+        if (id === sessionId) return makeHead(sessionId, { turnCount: 2, lastEventSeq: 2 });
+        if (id === otherSessionId) return makeHead(otherSessionId, { turnCount: 3, lastEventSeq: 3 });
+        return null;
+      }),
+      getSessionHeadsSnapshot: vi.fn(() => ({
+        [sessionId]: makeHead(sessionId, { turnCount: 2, lastEventSeq: 2 }),
+        [otherSessionId]: makeHead(otherSessionId, { turnCount: 3, lastEventSeq: 3 }),
+      })),
+    };
+
+    const heads = collectSessionHeadsForSupervisor(snapshot, store, bootstrapCache, [sessionId]);
+
+    expect(Object.keys(heads)).toEqual([sessionId]);
+    expect(heads[sessionId]?.turns).toHaveLength(2);
+  });
 });

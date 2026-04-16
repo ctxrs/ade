@@ -21,7 +21,7 @@ export const buildSessionSubscriptionPlan = ({
   warmSessionIds,
   previousSubscribedSessionIds,
 }: SessionSubscriptionPlanInput): SessionSubscriptionPlan => {
-  const nextSubscribedSessionIds = mergeOrderedIds(openSessionIds, activeTaskSessionIds, warmSessionIds);
+  const nextSubscribedSessionIds = mergeOrderedIds(activeTaskSessionIds, openSessionIds, warmSessionIds);
   const previousSet = new Set(previousSubscribedSessionIds);
   const nextSet = new Set(nextSubscribedSessionIds);
   return {

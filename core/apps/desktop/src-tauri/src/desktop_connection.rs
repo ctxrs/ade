@@ -139,6 +139,32 @@ struct SshConnection {
     http_client: std::sync::OnceLock<reqwest::blocking::Client>,
 }
 
+fn local_connection_source_label(source: LocalConnectionSource) -> &'static str {
+    match source {
+        LocalConnectionSource::EnvOverride => "env_override",
+        LocalConnectionSource::ExistingCompatibleDaemon => "existing_compatible_daemon",
+        LocalConnectionSource::SpawnedByDesktop => "spawned_by_desktop",
+    }
+}
+
+fn log_local_connection_established(source: LocalConnectionSource, daemon_pid: Option<u32>) {
+    log_desktop_startup(&format!(
+        "desktop_startup: daemon_connected kind=local source={} daemon_pid={}",
+        local_connection_source_label(source),
+        daemon_pid
+            .map(|pid| pid.to_string())
+            .unwrap_or_else(|| "none".to_string()),
+    ));
+}
+
+fn log_ssh_connection_established(host: &str, user: Option<&str>, remote_port: u16) {
+    log_desktop_startup(&format!(
+        "desktop_startup: daemon_connected kind=ssh host={} user={} remote_port={remote_port}",
+        serde_json::to_string(host).unwrap_or_else(|_| "\"unknown\"".to_string()),
+        serde_json::to_string(user.unwrap_or("")).unwrap_or_else(|_| "\"\"".to_string()),
+    ));
+}
+
 #[cfg(test)]
 thread_local! {
     static CONNECTION_HTTP_CLIENT_BUILD_COUNT: Cell<usize> = const { Cell::new(0) };
@@ -418,6 +444,7 @@ impl ConnectionManager {
         if let Some(previous) = previous {
             cleanup_active_connection(previous);
         }
+        log_local_connection_established(LocalConnectionSource::SpawnedByDesktop, daemon_pid);
     }
 
     pub(super) fn set_local_attached(
@@ -470,6 +497,7 @@ impl ConnectionManager {
         if let Some(previous) = previous {
             cleanup_active_connection(previous);
         }
+        log_local_connection_established(source, daemon_pid);
     }
 
     #[cfg(test)]
@@ -510,6 +538,8 @@ impl ConnectionManager {
         remote_data_dir: Option<String>,
         runtime: SshRuntimeMetadata,
     ) -> Result<(), String> {
+        let log_host = host.clone();
+        let log_user = user.clone();
         let previous = self.replace_with_ssh(
             base_url,
             token,
@@ -529,6 +559,7 @@ impl ConnectionManager {
                 format!("failed to clean up previous desktop connection after ssh handoff: {e}")
             })?;
         }
+        log_ssh_connection_established(&log_host, log_user.as_deref(), remote_port);
         Ok(())
     }
 

@@ -16,7 +16,6 @@ import type { TerminalPanelHandle } from "../../components/TerminalPanel";
 import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
 import { trackWorkbenchPanelToggled } from "../../utils/analytics";
 import { errorMessage } from "../../utils/errorMessage";
-import { getLoadTestTelemetry } from "../../utils/loadTestTelemetry";
 import { composeModelId, parseModelId } from "../../utils/modelEffort";
 import { hasSessionActiveTurn } from "../../utils/sessionActivity";
 import {
@@ -36,6 +35,10 @@ import {
 import { canRenderWorkbenchActiveSession } from "./workbenchTaskActivity";
 import { getDiffSummaryStats, isDiffSummaryTooLarge } from "./useWorkbenchDiffPane";
 import { useWorkbenchSessionActions } from "./useWorkbenchSessionActions";
+import {
+  resolveMeasuredSessionSwitchId,
+  useWorkbenchSessionSwitchMetrics,
+} from "./useWorkbenchSessionSwitchMetrics";
 import { buildGitPaneModel } from "./worktreeGitPaneModel";
 
 type PaneMode = "diff" | "artifacts" | "sessions" | null;
@@ -343,7 +346,7 @@ export function useWorkbenchActiveTaskController({
     !!activeSessionIdValue &&
     (optimisticSessionIdSet.has(activeSessionIdValue) ||
       activeSessionIdValue.startsWith("optimistic-") ||
-      (optimisticStartingSessionId && optimisticStartingSessionId === activeSessionIdValue));
+      optimisticStartingSessionId === activeSessionIdValue);
   const openSessionId = activeSessionId && !isOptimisticSessionId ? activeSessionId : "";
   useOpenSession(openSessionId, { watchDiff: diffOpen });
 
@@ -381,22 +384,11 @@ export function useWorkbenchActiveTaskController({
   const [activeWebSessionId, setActiveWebSessionId] = useState<string | null>(null);
   const [activeSessionKind, setActiveSessionKind] = useState("web");
   const webSessionsEnabled = false;
-  const lastSessionSwitchRef = useRef<string | null>(null);
-  const loadTestTelemetry = getLoadTestTelemetry();
-
-  useEffect(() => {
-    if (!loadTestTelemetry?.enabled) return;
-    const nextId = activeSessionId ?? null;
-    if (lastSessionSwitchRef.current === nextId) return;
-    loadTestTelemetry.startSessionSwitch(lastSessionSwitchRef.current, nextId);
-    lastSessionSwitchRef.current = nextId;
-  }, [activeSessionId, loadTestTelemetry]);
-
-  useEffect(() => {
-    if (!loadTestTelemetry?.enabled) return;
-    if (!activeSessionId || !activeEntry || activeEntry.loading) return;
-    loadTestTelemetry.finishSessionSwitch(activeSessionId);
-  }, [activeEntry?.loading, activeEntry?.updatedAtMs, activeSessionId, loadTestTelemetry]);
+  useWorkbenchSessionSwitchMetrics({
+    activeEntry,
+    activeSessionId: activeSessionId ?? null,
+    isOptimisticSessionId,
+  });
 
   useEffect(() => {
     if (!activeWorktreeId) {

@@ -1,4 +1,5 @@
 import { idToString, type Message } from "../api/client";
+import { noteLateChunkAfterTerminal } from "./foregroundFreshnessTelemetry";
 
 export type AssistantStreamingState = {
   content: string;
@@ -90,6 +91,7 @@ export function applyAssistantChunkToStreaming(
   const normalizedTurnId = normalizeTurnId(turnId);
   if (!normalizedTurnId || !fragment) return false;
   if (store.sealedAssistantTurnIds?.has(normalizedTurnId)) {
+    noteLateChunkAfterTerminal(normalizedTurnId);
     return false;
   }
   const current = store.assistantStreamingByTurnId[normalizedTurnId] ?? null;

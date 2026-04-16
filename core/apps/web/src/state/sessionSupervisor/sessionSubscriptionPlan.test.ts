@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildSessionSubscriptionPlan } from "./sessionSubscriptionPlan";
 
 describe("sessionSubscriptionPlan", () => {
-  it("keeps open sessions first and appends active-task and warm sessions without duplicates", () => {
+  it("keeps active task sessions first and appends open and warm sessions without duplicates", () => {
     expect(
       buildSessionSubscriptionPlan({
         openSessionIds: ["session-open", "session-open-2"],
@@ -12,7 +12,7 @@ describe("sessionSubscriptionPlan", () => {
       }),
     ).toEqual({
       openSessionIds: ["session-open", "session-open-2"],
-      nextSubscribedSessionIds: ["session-open", "session-open-2", "session-active", "session-warm"],
+      nextSubscribedSessionIds: ["session-open-2", "session-active", "session-open", "session-warm"],
       addedSessionIds: ["session-open-2", "session-active", "session-warm"],
       removedSessionIds: [],
       changed: true,
@@ -40,7 +40,7 @@ describe("sessionSubscriptionPlan", () => {
         openSessionIds: ["session-open"],
         activeTaskSessionIds: ["session-active"],
         warmSessionIds: [],
-        previousSubscribedSessionIds: ["session-open", "session-active"],
+        previousSubscribedSessionIds: ["session-active", "session-open"],
       }).changed,
     ).toBe(false);
   });

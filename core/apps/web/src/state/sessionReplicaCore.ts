@@ -35,7 +35,18 @@ import {
   isBoundedSessionHead,
   shouldRepairSessionHeadReplace,
 } from "./sessionHeadRepair";
-import { mergeTurnStatus } from "./sessionSupervisor/cachePolicy";
+import {
+  mergeTurnStatus,
+  reconcileActivityInterruptedFromTurns,
+  reconcileLatestTurnInterruptedFromActivity,
+} from "./sessionSupervisor/cachePolicy";
+import {
+  noteFinalDeltaReceived,
+  noteGapRepairMismatch,
+  noteGapRecoveryFinished,
+  noteGapRecoveryStarted,
+  noteProjectionOrSeqRegression,
+} from "./foregroundFreshnessTelemetry";
 import type {
   SessionReplicaCommand,
   SessionReplicaConfig,
@@ -111,12 +122,27 @@ const PARTIAL_EVENT_TYPES = new Set<string>([
   "context_window_update",
 ]);
 
+const FINAL_DELTA_EVENT_TYPES = new Set<string>(["assistant_complete", "assistant_message_inserted"]);
+
 const isPartialEvent = (event: SessionEvent | null | undefined): boolean => {
   if (!event) return false;
   const type = String(event.event_type ?? "");
   if (PARTIAL_EVENT_TYPES.has(type)) return true;
   if (type === "thought_chunk") return !isFinalThoughtEvent(event);
   return false;
+};
+
+const resolveFinalDeltaTurnId = (delta: SessionHeadDelta): string => {
+  const messageTurnId =
+    delta.message?.role === "assistant" ? normalizeId(delta.message.turn_id ?? "") : "";
+  const eventType = String(delta.event?.event_type ?? "");
+  if (FINAL_DELTA_EVENT_TYPES.has(eventType)) {
+    return normalizeId(delta.event?.turn_id ?? messageTurnId);
+  }
+  if (messageTurnId) {
+    return messageTurnId;
+  }
+  return "";
 };
 
 const stripTurnPartials = (turns: SessionTurn[]): SessionTurn[] =>
@@ -309,6 +335,7 @@ export class SessionReplicaCore {
   private entries = new Map<string, SessionReplicaEntry>();
   private config: SessionReplicaConfig = { eventBufferLimit: 800, headLimit: 60 };
   private gapAlertedSessionIds = new Set<string>();
+  private gapRepairBaselineBySessionId = new Map<string, { lastEventSeq: number | null }>();
   constructor(private deps: { api: SessionReplicaApi; emit: (patches: SessionReplicaPatch[]) => void }) {}
 
   handleCommand = (cmd: SessionReplicaCommand) => {
@@ -490,6 +517,7 @@ export class SessionReplicaCore {
   ) {
     const authoritative = isAuthoritativeSessionReplicaReplace(opts?.replaceMode);
     const preservingRepairReplace = opts?.replaceMode === "repair_replace";
+    const previousFreshness = entry.freshness;
     const data = headToData(head);
     let turns = data.turns ?? [];
     let messages = data.messages ?? [];
@@ -534,10 +562,27 @@ export class SessionReplicaCore {
         entry.activity = data.activity ?? null;
         entry.activityLastEventSeq = incomingSeq >= 0 ? incomingSeq : entry.activityLastEventSeq;
         entry.activityProjectionRev = incomingProjectionRev ?? entry.activityProjectionRev;
+        if (reconcileLatestTurnInterruptedFromActivity(entry.turns, entry.activity)) {
+          entry.turnsRev += 1;
+        }
+        entry.activity = reconcileActivityInterruptedFromTurns(entry.activity, entry.turns);
       }
     }
     if (opts?.freshness) {
       entry.freshness = opts.freshness;
+      if (previousFreshness === "recovering" && opts.freshness !== "recovering") {
+        const baseline = this.gapRepairBaselineBySessionId.get(entry.sessionId);
+        if (
+          baseline &&
+          typeof baseline.lastEventSeq === "number" &&
+          typeof entry.lastEventSeq === "number" &&
+          entry.lastEventSeq < baseline.lastEventSeq
+        ) {
+          noteGapRepairMismatch(entry.sessionId, baseline.lastEventSeq, entry.lastEventSeq);
+        }
+        this.gapRepairBaselineBySessionId.delete(entry.sessionId);
+        noteGapRecoveryFinished(entry.sessionId);
+      }
     }
     if (data.summaryCheckpoint !== undefined) {
       if (!incomingIsOlder) {
@@ -713,7 +758,21 @@ export class SessionReplicaCore {
     const evtType = (evt as { type?: string }).type;
     if (evtType === "session_head_delta" || evtType === "session_delta") {
       const delta = (evt as { delta?: SessionHeadDelta }).delta;
-      if (delta) this.applyHeadDelta(delta);
+      if (delta) {
+        const turnId = resolveFinalDeltaTurnId(delta);
+        if (turnId) {
+          noteFinalDeltaReceived({
+            sessionId: normalizeId(delta.session_id),
+            turnId,
+            emittedAtMs:
+              typeof delta.emitted_at_ms === "number" && Number.isFinite(delta.emitted_at_ms)
+                ? delta.emitted_at_ms
+                : null,
+            lastEventSeq: delta.last_event_seq,
+          });
+        }
+        this.applyHeadDelta(delta);
+      }
       return;
     }
     if (evtType === "session_head_seed") {
@@ -735,6 +794,15 @@ export class SessionReplicaCore {
       const sessionId = normalizeId((evt as { session_id?: unknown }).session_id);
       const afterSeq = typeof (evt as { after_seq?: number }).after_seq === "number" ? (evt as { after_seq?: number }).after_seq : undefined;
       if (!sessionId) return;
+      noteGapRecoveryStarted(
+        sessionId,
+        typeof (evt as { reason?: unknown }).reason === "string" ? String((evt as { reason?: unknown }).reason) : null,
+      );
+      const previousEntry = this.entries.get(sessionId);
+      this.gapRepairBaselineBySessionId.set(sessionId, {
+        lastEventSeq:
+          typeof previousEntry?.lastEventSeq === "number" ? previousEntry.lastEventSeq : null,
+      });
       if (typeof window !== "undefined" && SHOULD_EMIT_DEV_DIAGNOSTICS) {
         const prevSeq = this.entries.get(sessionId)?.lastEventSeq;
         const message = [
@@ -805,7 +873,21 @@ export class SessionReplicaCore {
     }
     const incomingSeq = typeof delta.last_event_seq === "number" ? delta.last_event_seq : -1;
     const existingSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
+    if (incomingSeq >= 0 && existingSeq >= 0 && incomingSeq < existingSeq) {
+      noteProjectionOrSeqRegression(sessionId, "last_event_seq", incomingSeq, existingSeq);
+    }
     if (typeof delta.projection_rev === "number") {
+      if (
+        typeof entry.projectionRev === "number" &&
+        delta.projection_rev < entry.projectionRev
+      ) {
+        noteProjectionOrSeqRegression(
+          sessionId,
+          "projection_rev",
+          delta.projection_rev,
+          entry.projectionRev,
+        );
+      }
       entry.projectionRev =
         typeof entry.projectionRev === "number"
           ? Math.max(entry.projectionRev, delta.projection_rev)
@@ -819,8 +901,8 @@ export class SessionReplicaCore {
     if (delta.session) {
       entry.session = delta.session;
     }
-    if ("activity" in delta) {
-      entry.activity = delta.activity ?? null;
+    if (delta.activity !== undefined && delta.activity !== null) {
+      entry.activity = delta.activity;
       if (typeof delta.last_event_seq === "number") {
         entry.activityLastEventSeq =
           typeof entry.activityLastEventSeq === "number"
@@ -834,6 +916,10 @@ export class SessionReplicaCore {
             : delta.projection_rev;
       }
     }
+    if (reconcileLatestTurnInterruptedFromActivity(entry.turns, entry.activity)) {
+      entry.turnsRev += 1;
+    }
+    entry.activity = reconcileActivityInterruptedFromTurns(entry.activity, entry.turns);
     entry.hydrated = true;
     this.emitPatch("append", sessionId, this.buildCanonicalPatch(entry));
     void this.persistHead(entry);

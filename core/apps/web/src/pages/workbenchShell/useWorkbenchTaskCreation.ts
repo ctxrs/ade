@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { flushSync } from "react-dom";
+import type { SessionActivityState } from "@ctx/types";
 import {
   createSession,
   createTask,
@@ -51,9 +52,14 @@ type UseWorkbenchTaskCreationArgs = {
   optimisticStartingTaskRef: MutableRefObject<OptimisticTaskSummary | null>;
   setOptimisticTasks: Dispatch<SetStateAction<OptimisticTaskSummary[]>>;
   setOptimisticFocus: Dispatch<SetStateAction<OptimisticFocus | null>>;
-  supervisor: Pick<SessionSupervisor, "setSession" | "setTurns" | "setMessages">;
+  supervisor: Pick<SessionSupervisor, "setSession" | "setSessionActivity" | "setTurns" | "setMessages">;
   newTaskDraftKey: string;
   onStartError: (message: string | null) => void;
+};
+
+const runningSessionActivity: SessionActivityState = {
+  is_working: true,
+  last_turn_status: "running",
 };
 
 export function useWorkbenchTaskCreation({
@@ -355,6 +361,9 @@ export function useWorkbenchTaskCreation({
         throw new Error("Session creation returned an unexpected id.");
       }
       supervisor.setSession(session);
+      if (shouldSendInitialPrompt) {
+        supervisor.setSessionActivity(sessionId, runningSessionActivity);
+      }
       setOptimisticTasks((prev) =>
         prev.map((item) => {
           if (item.id !== currentTaskId) return item;
@@ -395,6 +404,7 @@ export function useWorkbenchTaskCreation({
           },
         });
         supervisor.setMessages(sessionId, [posted]);
+        supervisor.setSessionActivity(sessionId, runningSessionActivity);
         primaryMessagePosted = true;
       }
       setOptimisticTasks((prev) =>

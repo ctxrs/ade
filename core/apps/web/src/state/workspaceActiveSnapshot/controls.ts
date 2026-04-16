@@ -14,8 +14,6 @@ import {
 import { buildWorkspaceActiveSubscribeMessage } from "./subscriptions";
 import type { WorkspaceActiveSnapshotStoreState } from "./storeState";
 
-const FOREGROUND_TASK_DEBOUNCE_MS = 150;
-
 export type WorkspaceActiveSnapshotControlHost = {
   e2eEnabled: boolean;
   e2eDropStreamMessages: boolean;
@@ -26,16 +24,52 @@ export type WorkspaceActiveSnapshotControlHost = {
   authTokenOverride: string | null;
   workspaceId: string;
   subscribedSessions: SessionSubscriptionCursor[];
-  foregroundTaskId: string | null;
+  foregroundSessionId: string | null;
   eventListeners: Set<(event: WorkspaceActiveSnapshotEvent) => void>;
   workerPatchEmitter: ((patch: WorkspaceActiveSnapshotPatch) => void) | null;
   workerPatchPendingEvents: WorkspaceActiveSnapshotEvent[];
-  foregroundTaskTimer: ReturnType<typeof globalThis.setTimeout> | null;
   postWorkerCommand(cmd: WorkspaceActiveSnapshotCommand): void;
   publish(): void;
   enqueueStreamMessage(data: unknown): void;
   scheduleSnapshotWarning(reason: string): void;
   scheduleWorkerPatchFlush(): void;
+  flushWorkerPatchNow(): void;
+};
+
+const isImmediateWorkerPatchEvent = (
+  host: WorkspaceActiveSnapshotControlHost,
+  evt: WorkspaceActiveSnapshotEvent,
+): boolean => {
+  const normalizeId = (value: string | null | undefined): string =>
+    typeof value === "string" ? value.trim() : "";
+  const foregroundSessionId = normalizeId(host.foregroundSessionId);
+  if (!foregroundSessionId) return false;
+  const isForegroundSession = (sessionId: string | null | undefined): boolean =>
+    normalizeId(sessionId) === foregroundSessionId;
+
+  switch (evt.type) {
+    case "session_gap":
+      return isForegroundSession(evt.session_id);
+    case "session_head_seed":
+      return isForegroundSession(evt.head.session.id);
+    case "session_summary":
+      return isForegroundSession(evt.summary.session.id);
+    case "session_summary_delta":
+      return isForegroundSession(evt.delta.session_id);
+    case "session_head_delta": {
+      if (!isForegroundSession(evt.delta.session_id)) return false;
+      if (evt.delta.message) return true;
+      const eventType = String(evt.delta.event?.event_type ?? "");
+      if (!eventType) return false;
+      return (
+        eventType !== "assistant_chunk" &&
+        eventType !== "thought_chunk" &&
+        eventType !== "context_window_update"
+      );
+    }
+    default:
+      return false;
+  }
 };
 
 const compareResumeReplay = (
@@ -97,6 +131,10 @@ export function notifyEventListeners(
   }
   if (host.workerPatchEmitter) {
     host.workerPatchPendingEvents.push(evt);
+    if (isImmediateWorkerPatchEvent(host, evt)) {
+      host.flushWorkerPatchNow();
+      return;
+    }
     host.scheduleWorkerPatchFlush();
   }
 }
@@ -176,19 +214,19 @@ export function setSubscribedSessions(
   flushSubscriptions(host, idsChanged ? "session_ids" : "session_cursors");
 }
 
-export function setForegroundTaskId(
+export function setForegroundSessionId(
   host: WorkspaceActiveSnapshotControlHost,
-  taskId: string | null,
+  sessionId: string | null,
 ) {
-  const normalized = typeof taskId === "string" ? taskId.trim() : "";
+  const normalized = typeof sessionId === "string" ? sessionId.trim() : "";
   const next = normalized ? normalized : null;
-  if (next === host.foregroundTaskId) return;
-  host.foregroundTaskId = next;
+  if (next === host.foregroundSessionId) return;
+  host.foregroundSessionId = next;
   if (host.worker) {
-    host.postWorkerCommand({ type: "set_foreground_task_id", taskId: next });
+    host.postWorkerCommand({ type: "set_foreground_session_id", sessionId: next });
     return;
   }
-  scheduleForegroundTaskFlush(host);
+  flushSubscriptions(host, "foreground_session");
 }
 
 export function flushSubscriptions(
@@ -199,7 +237,7 @@ export function flushSubscriptions(
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const { message, requestSnapshot } = buildWorkspaceActiveSubscribeMessage(
     reason,
-    host.foregroundTaskId,
+    host.foregroundSessionId,
     host.subscribedSessions,
   );
   if (requestSnapshot) {
@@ -210,14 +248,4 @@ export function flushSubscriptions(
   } catch {
     // ignore send errors
   }
-}
-
-export function scheduleForegroundTaskFlush(host: WorkspaceActiveSnapshotControlHost) {
-  if (host.foregroundTaskTimer) {
-    globalThis.clearTimeout(host.foregroundTaskTimer);
-  }
-  host.foregroundTaskTimer = globalThis.setTimeout(() => {
-    host.foregroundTaskTimer = null;
-    flushSubscriptions(host, "foreground_task");
-  }, FOREGROUND_TASK_DEBOUNCE_MS);
 }

@@ -80,6 +80,7 @@ fn make_partial_delta(session_id: SessionId, turn_id: TurnId, fragment: &str) ->
         last_event_seq: 0,
         projection_rev: 0,
         state_rev: 0,
+        emitted_at_ms: None,
         session: None,
         activity: None,
         event: Some(event),

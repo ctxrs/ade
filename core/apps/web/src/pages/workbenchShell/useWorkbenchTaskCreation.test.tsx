@@ -21,6 +21,18 @@ const { trackTaskCreatedMock, refreshProvidersBootstrapMock } = vi.hoisted(() =>
   refreshProvidersBootstrapMock: vi.fn(async () => undefined),
 }));
 
+const {
+  setSessionMock,
+  setSessionActivityMock,
+  setTurnsMock,
+  setMessagesMock,
+} = vi.hoisted(() => ({
+  setSessionMock: vi.fn(),
+  setSessionActivityMock: vi.fn(),
+  setTurnsMock: vi.fn(),
+  setMessagesMock: vi.fn(),
+}));
+
 vi.mock("../../api/client", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../api/client")>();
   return {
@@ -182,11 +194,12 @@ function Harness({
     [providersByIdProp],
   );
 
-  const supervisor = useMemo<Pick<SessionSupervisor, "setSession" | "setTurns" | "setMessages">>(
+  const supervisor = useMemo<Pick<SessionSupervisor, "setSession" | "setSessionActivity" | "setTurns" | "setMessages">>(
     () => ({
-      setSession: vi.fn(),
-      setTurns: vi.fn(),
-      setMessages: vi.fn(),
+      setSession: setSessionMock,
+      setSessionActivity: setSessionActivityMock,
+      setTurns: setTurnsMock,
+      setMessages: setMessagesMock,
     }),
     [],
   );
@@ -255,6 +268,10 @@ function Harness({
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  setSessionMock.mockClear();
+  setSessionActivityMock.mockClear();
+  setTurnsMock.mockClear();
+  setMessagesMock.mockClear();
   mockedGetWorkspaceExecutionConfig.mockResolvedValue({
     source: "workspace",
     environment: "sandbox",
@@ -317,6 +334,10 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     });
     expect(refreshProvidersBootstrapMock).toHaveBeenCalledWith("workspace-1");
     expect(mockedPostMessage).not.toHaveBeenCalled();
+    expect(setSessionActivityMock).toHaveBeenCalledWith("session-1", {
+      is_working: true,
+      last_turn_status: "running",
+    });
     expect(onStartError).toHaveBeenCalledWith(null);
   });
 
@@ -387,6 +408,10 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
         sessionKind: "primary",
         isFirstTurn: true,
       },
+    });
+    expect(setSessionActivityMock).toHaveBeenCalledWith("session-1", {
+      is_working: true,
+      last_turn_status: "running",
     });
     expect(onStartError).toHaveBeenCalledWith(null);
   });

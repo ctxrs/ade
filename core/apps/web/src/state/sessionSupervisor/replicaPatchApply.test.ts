@@ -20,6 +20,7 @@ function createReplicaHost(entry: ReturnType<typeof createInternalEntry>): Sessi
     ensureProviderOptions: async () => undefined,
     ensureSubagentInvocations: async () => undefined,
     syncSupportLoadsForOpenSession: () => undefined,
+    bumpTurnsRev: () => undefined,
   };
 }
 

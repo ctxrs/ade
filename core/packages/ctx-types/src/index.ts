@@ -442,6 +442,7 @@ export type SessionHeadDelta = {
   last_event_seq: number;
   projection_rev?: number;
   state_rev?: number;
+  emitted_at_ms?: number | null;
   session?: Session | null;
   activity?: SessionActivityState | null;
   event?: SessionEvent | null;
@@ -505,6 +506,7 @@ export type WorkspaceActiveSnapshotSessionSummaryDelta = {
   last_event_seq?: number | null;
   projection_rev?: number | null;
   state_rev?: number | null;
+  emitted_at_ms?: number | null;
 };
 
 export type WorkspaceActiveSnapshotSessionSummaryDeltaEvent = {
@@ -614,7 +616,7 @@ export type WorkspaceActiveSnapshotClientMessage =
       session_ids?: (string)[];
       sessions?: WorkspaceActiveSnapshotSessionSubscription[];
       task_ids?: (string)[];
-      foreground_task_id?: string;
+      foreground_session_id?: string;
       scope?: WorkspaceActiveSnapshotSubscribeScope | null;
       include_active_heads?: boolean;
     };

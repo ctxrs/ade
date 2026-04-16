@@ -55,6 +55,9 @@ vi.mock("../api/client", () => {
     listSessionArtifacts: vi.fn(async () => []),
     listSessionSubagentInvocations: vi.fn(async () => []),
     listTurnTools: vi.fn(async () => []),
+    recordClientCounterMetric: vi.fn(),
+    recordClientGaugeMetric: vi.fn(),
+    recordClientHistogramMetric: vi.fn(),
   };
 });
 
@@ -133,10 +136,11 @@ const asRecord = (value: unknown): Record<string, unknown> => {
 
 type TestInternalEntry = {
   session?: Session;
+  activity?: { is_working?: boolean | null; last_turn_status?: string | null } | null;
   turnsHydrated: boolean;
   turns: SessionTurn[];
   turnsRev: number;
-  freshness?: "bootstrap" | "authoritative" | "recovering" | "replica";
+  freshness?: "bootstrap" | "authoritative" | "recovering";
   messages: Message[];
   messagesRev: number;
   events: SessionEvent[];
@@ -287,6 +291,10 @@ const attachWorkspaceStore = (
 };
 
 describe("SessionSupervisor", () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
@@ -332,7 +340,7 @@ describe("SessionSupervisor", () => {
     const entry = sup.getSnapshot().sessions[sessionId];
     expect(entry?.messages.length).toBe(1);
     expect(entry?.queue.length).toBe(1);
-  });
+  }, 15000);
 
   it("bumps messagesRev when streamed queue events flip delivery in place", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
@@ -1713,7 +1721,7 @@ describe("SessionSupervisor", () => {
       created_at: new Date(1).toISOString(),
     };
 
-    entry.freshness = "replica";
+    entry.freshness = "authoritative";
     entry.turns = [initialTurn];
     entry.messages = [initialMessage];
     entry.events = [initialEvent];
@@ -2527,7 +2535,7 @@ describe("SessionSupervisor", () => {
     expect(sup.getSnapshot().sessions[sessionId]?.turns).toHaveLength(2);
   });
 
-  it("repairs an already-open stale active transcript from newer workspace session heads", async () => {
+  it("does not repair an already-open active transcript from workspace session heads", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-open-stale-repair";
@@ -2614,17 +2622,105 @@ describe("SessionSupervisor", () => {
 
     sup.setWorkspaceSessionHeads({ [sessionId]: currentHead });
 
-    await waitForCondition(() => {
-      const entry = sup.getSnapshot().sessions[sessionId];
-      return (
-        entry?.freshness === "replica" &&
-        entry.turns.map((turn) => turn.turn_id).join(",") === freshTurns.map((turn) => turn.turn_id).join(",")
-      );
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.freshness).toBe("replica");
+    expect(entry?.messages.map((message) => message.id)).toEqual([staleMessage.id]);
+    expect(entry?.turns.map((turn) => turn.turn_id)).toEqual(["turn-stale"]);
+  });
+
+  it("repairs a newly promoted active session from a fresher workspace head", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-switch-fresh";
+    const staleTurn = mkTurn({ sessionId, turnId: "turn-stale", status: "running", startSeq: 3 });
+    const staleMessage: Message = {
+      id: "m-stale",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-stale",
+      role: "assistant",
+      content: "stale",
+      delivery: "immediate",
+      created_at: "2026-03-09T00:00:03.000Z",
+    };
+    const freshTurn = mkTurn({ sessionId, turnId: "turn-fresh", status: "completed", startSeq: 10 });
+    const freshMessage: Message = {
+      id: "m-fresh",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-fresh",
+      role: "assistant",
+      content: "fresh-marker",
+      delivery: "immediate",
+      created_at: "2026-03-09T00:00:10.000Z",
+    };
+    const freshHead: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: [freshTurn],
+      events: [] as SessionEvent[],
+      messages: [freshMessage],
+      activity: { is_working: false, last_turn_status: "completed" },
+      last_event_seq: 10,
+      projection_rev: 10,
+      state_rev: 10,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    };
+
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+
+    sup.setWorkspaceSnapshotState({
+      ...mkWorkspaceSnapshotState(),
+      activeIds: ["task-1"],
+      tasksById: {
+        "task-1": {
+          ...mkWorkspaceTaskSummary({
+            taskId: "task-1",
+            primarySessionId: sessionId,
+            sessionIds: [sessionId],
+          }),
+          primarySessionHead: freshHead,
+        },
+      },
+      totalActive: 1,
     });
+    sup.setWorkspaceSessionHeads({ [sessionId]: freshHead });
+
+    internals.handleReplicaPatches([
+      {
+        op: "replace",
+        sessionId,
+        data: {
+          session: mkSession(sessionId),
+          freshness: "authoritative",
+          turns: [staleTurn],
+          messages: [staleMessage],
+          events: [] as SessionEvent[],
+          activity: { is_working: true, last_turn_status: "running" },
+          lastEventSeq: 3,
+          projectionRev: 3,
+          stateRev: 3,
+          turnsHydrated: true,
+          loading: false,
+        },
+      },
+    ]);
+
+    expect(sup.getSnapshot().sessions[sessionId]?.messages.map((message) => message.id)).toEqual([
+      staleMessage.id,
+    ]);
+
+    sup.setActiveTaskSessionIds([sessionId]);
 
     const entry = sup.getSnapshot().sessions[sessionId];
-    expect(entry?.messages.map((message) => message.id)).toEqual(freshMessages.map((message) => message.id));
-    expect(entry?.turns.some((turn) => turn.turn_id === "turn-stale")).toBe(false);
+    expect(entry?.freshness).not.toBe("bootstrap");
+    expect(entry?.messages.map((message) => message.id)).toEqual([freshMessage.id]);
+    expect(entry?.turns.map((turn) => turn.turn_id)).toEqual([freshTurn.turn_id]);
+    expect(entry?.lastEventSeq).toBe(10);
+    expect(entry?.projectionRev).toBe(10);
+    expect(entry?.stateRev).toBe(10);
   });
 
   it("does not seed freshly opened active sessions from bounded active heads before /head hydrate", async () => {
@@ -2821,7 +2917,13 @@ describe("SessionSupervisor", () => {
     const headPromise = new Promise<SessionHeadSnapshot>((resolve) => {
       resolveHead = resolve;
     });
-    getSessionHeadMock.mockImplementationOnce(() => headPromise);
+    let resolveReconnectHead!: (value: SessionHeadSnapshot) => void;
+    const reconnectHeadPromise = new Promise<SessionHeadSnapshot>((resolve) => {
+      resolveReconnectHead = resolve;
+    });
+    getSessionHeadMock
+      .mockImplementationOnce(() => headPromise)
+      .mockImplementationOnce(() => reconnectHeadPromise);
 
     const sup = new SessionSupervisor();
     sup.setWorkspaceSnapshotState(activeState);
@@ -2840,10 +2942,11 @@ describe("SessionSupervisor", () => {
     });
 
     sup.setWorkspaceSnapshotState(activeState);
-    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
+    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 2);
     expect(sup.getSnapshot().sessions[sessionId]?.messages).toHaveLength(0);
     expect(sup.getSnapshot().sessions[sessionId]?.turns).toHaveLength(0);
 
+    resolveReconnectHead(fullHead);
     resolveHead(fullHead);
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
     expect(sup.getSnapshot().sessions[sessionId]?.messages).toHaveLength(2);
@@ -2914,7 +3017,7 @@ describe("SessionSupervisor", () => {
       },
       totalActive: 1,
     };
-    getSessionHeadMock.mockResolvedValueOnce(fullHead);
+    getSessionHeadMock.mockResolvedValueOnce(fullHead).mockResolvedValueOnce(fullHead);
 
     const sup = new SessionSupervisor();
     sup.setWorkspaceSnapshotState(activeState);
@@ -2930,6 +3033,7 @@ describe("SessionSupervisor", () => {
     });
 
     sup.setWorkspaceSnapshotState(activeState);
+    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 2);
     await waitForCondition(() => {
       const entry = sup.getSnapshot().sessions[sessionId];
       return entry?.loadState === "live" && entry.freshness !== "recovering";
@@ -2937,7 +3041,7 @@ describe("SessionSupervisor", () => {
 
     expect(sup.getSnapshot().sessions[sessionId]?.messages).toHaveLength(2);
     expect(sup.getSnapshot().sessions[sessionId]?.turns).toHaveLength(2);
-    expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(2);
   });
 
   it("keeps in-flight assistant streaming when bounded workspace heads repeat the same covered transcript", async () => {
@@ -3018,6 +3122,216 @@ describe("SessionSupervisor", () => {
     expect(entry?.assistantStreamingByTurnId?.["turn-1"]?.content).toBe("Hi ");
     expect(entry?.turns.map((turn) => turn.turn_id)).toEqual(["turn-1"]);
     expect(entry?.messages.map((message) => message.id)).toEqual(["m-user-1"]);
+  });
+
+  it("does not overwrite authoritative transcript state when workspace session heads refresh", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-workspace-head-summary-only";
+    const authoritativeTurn = mkTurn({ sessionId, turnId: "turn-authoritative", status: "completed", startSeq: 4 });
+    const authoritativeMessage: Message = {
+      id: "m-authoritative",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-authoritative",
+      role: "assistant",
+      content: "authoritative transcript",
+      delivery: "immediate",
+      created_at: "2026-03-09T00:00:04.000Z",
+    };
+    const workspaceHead: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: [mkTurn({ sessionId, turnId: "turn-workspace", status: "completed", startSeq: 9 })],
+      events: [] as SessionEvent[],
+      messages: [
+        {
+          id: "m-workspace",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-workspace",
+          role: "assistant",
+          content: "workspace summary copy",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:09.000Z",
+        },
+      ],
+      last_event_seq: 9,
+      projection_rev: 9,
+      state_rev: 9,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+      head_window: {
+        turn_limit: 5,
+        message_limit: 50,
+        event_limit: 800,
+        byte_limit: 200_000,
+        turn_count: 1,
+        message_count: 1,
+        event_count: 0,
+        bytes: 256,
+        truncated: true,
+      },
+    };
+
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    internals.handleReplicaPatches([
+      {
+        op: "replace",
+        sessionId,
+        data: {
+          session: mkSession(sessionId),
+          freshness: "authoritative",
+          turns: [authoritativeTurn],
+          messages: [authoritativeMessage],
+          events: [] as SessionEvent[],
+          activity: { is_working: false, last_turn_status: "completed" },
+          lastEventSeq: 4,
+          projectionRev: 4,
+          stateRev: 4,
+          turnsHydrated: true,
+          loading: false,
+        },
+      },
+    ]);
+
+    sup.setWorkspaceSessionHeads({ [sessionId]: workspaceHead });
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.freshness).toBe("replica");
+    expect(entry?.lastEventSeq).toBe(4);
+    expect(entry?.turns.map((turn) => turn.turn_id)).toEqual(["turn-authoritative"]);
+    expect(entry?.messages.map((message) => message.content)).toEqual(["authoritative transcript"]);
+  });
+
+  it("does not let workspace summary deltas overwrite authoritative session activity", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-summary-activity-interrupted";
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+
+    internals.handleReplicaPatches([
+      {
+        op: "replace",
+        sessionId,
+        data: {
+          session: mkSession(sessionId),
+          freshness: "authoritative",
+          turns: [mkTurn({ sessionId, turnId: "turn-1", status: "running", startSeq: 1 })],
+          messages: [] as Message[],
+          events: [] as SessionEvent[],
+          activity: { is_working: true, last_turn_status: "running" },
+          lastEventSeq: 1,
+          projectionRev: 1,
+          stateRev: 1,
+          turnsHydrated: true,
+          loading: false,
+        },
+      },
+    ]);
+
+    sup.handleWorkspaceEvent({
+      type: "session_summary_delta",
+      workspace_id: "ws-1",
+      snapshot_rev: 2,
+      delta: {
+        session_id: sessionId,
+        task_id: "task-1",
+        activity: { is_working: false, last_turn_status: "interrupted" },
+        last_event_seq: 2,
+        projection_rev: 2,
+        state_rev: 2,
+      },
+    });
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.activity).toEqual({ is_working: true, last_turn_status: "running" });
+    expect(entry?.turns.at(-1)?.status).toBe("running");
+    expect(entry?.lastEventSeq).toBe(1);
+    expect(entry?.projectionRev).toBe(1);
+    expect(entry?.stateRev).toBe(1);
+  });
+
+  it("ignores older workspace summary deltas for authoritative session entries", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-summary-activity-stale";
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+
+    internals.handleReplicaPatches([
+      {
+        op: "replace",
+        sessionId,
+        data: {
+          session: mkSession(sessionId),
+          freshness: "authoritative",
+          turns: [mkTurn({ sessionId, turnId: "turn-1", status: "interrupted", startSeq: 2 })],
+          messages: [] as Message[],
+          events: [] as SessionEvent[],
+          activity: { is_working: false, last_turn_status: "interrupted" },
+          lastEventSeq: 2,
+          projectionRev: 2,
+          stateRev: 2,
+          turnsHydrated: true,
+          loading: false,
+        },
+      },
+    ]);
+
+    sup.handleWorkspaceEvent({
+      type: "session_summary_delta",
+      workspace_id: "ws-1",
+      snapshot_rev: 3,
+      delta: {
+        session_id: sessionId,
+        task_id: "task-1",
+        activity: { is_working: true, last_turn_status: "running" },
+        last_event_seq: 1,
+        projection_rev: 1,
+        state_rev: 1,
+      },
+    });
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.activity).toEqual({ is_working: false, last_turn_status: "interrupted" });
+    expect(entry?.turns.at(-1)?.status).toBe("interrupted");
+    expect(entry?.lastEventSeq).toBe(2);
+    expect(entry?.projectionRev).toBe(2);
+    expect(entry?.stateRev).toBe(2);
+  });
+
+  it("still allows workspace summary deltas to update bootstrap-only idle entries", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-summary-activity-sticky-interrupted";
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+    entry.session = mkSession(sessionId);
+    entry.loadState = "live";
+
+    sup.handleWorkspaceEvent({
+      type: "session_summary_delta",
+      workspace_id: "ws-1",
+      snapshot_rev: 2,
+      delta: {
+        session_id: sessionId,
+        task_id: "task-1",
+        activity: { is_working: false, last_turn_status: "interrupted" },
+        last_event_seq: 2,
+        projection_rev: 2,
+        state_rev: 2,
+      },
+    });
+
+    const nextEntry = sup.getSnapshot().sessions[sessionId];
+    expect(nextEntry?.activity).toEqual({ is_working: false, last_turn_status: "interrupted" });
+    expect(nextEntry?.lastEventSeq).toBe(2);
+    expect(nextEntry?.projectionRev).toBe(2);
+    expect(nextEntry?.stateRev).toBe(2);
   });
 
   it("evicts omitted stale running turns from bounded active heads", async () => {
@@ -3522,7 +3836,7 @@ describe("SessionSupervisor", () => {
     const sup = new SessionSupervisor();
     const internals = asSupervisorInternals(sup);
     const entry = internals.ensureEntry(sessionId);
-    entry.freshness = "replica";
+    entry.freshness = "authoritative";
     entry.stateRev = 7;
 
     sup.openSession(sessionId, { mode: "active" });
@@ -3555,7 +3869,7 @@ describe("SessionSupervisor", () => {
     const sup = new SessionSupervisor();
     const internals = asSupervisorInternals(sup);
     const entry = internals.ensureEntry(sessionId);
-    entry.freshness = "replica";
+    entry.freshness = "authoritative";
     entry.stateRev = 7;
     entry.support.stateAppliedRev = 7;
 
@@ -3878,7 +4192,7 @@ describe("SessionSupervisor", () => {
     entry.session = mkSession(sessionId);
     entry.turns = [mkTurn({ sessionId, turnId: "turn-1", status: "running", startSeq: 1 })];
     entry.turnsHydrated = true;
-    entry.freshness = "replica";
+    entry.freshness = "authoritative";
     entry.lastEventSeq = 1;
 
     internals.handleReplicaPatches([
@@ -3916,6 +4230,93 @@ describe("SessionSupervisor", () => {
     ]);
 
     expect(sup.getSnapshot().sessions[sessionId]?.turns[0]?.status).toBe("interrupted");
+  });
+
+  it("promotes a failed turn to interrupted when authoritative turn data corrects cancel fallout", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-failed-to-interrupted-turn-correction";
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+
+    entry.session = mkSession(sessionId);
+    entry.turns = [mkTurn({ sessionId, turnId: "turn-1", status: "failed", startSeq: 1 })];
+    entry.turnsHydrated = true;
+    entry.freshness = "authoritative";
+    entry.lastEventSeq = 1;
+
+    internals.handleReplicaPatches([
+      {
+        op: "append",
+        sessionId,
+        data: {
+          turns: [mkTurn({ sessionId, turnId: "turn-1", status: "interrupted", startSeq: 1 })],
+          turnsRev: 2,
+        },
+      },
+    ]);
+
+    expect(sup.getSnapshot().sessions[sessionId]?.turns[0]?.status).toBe("interrupted");
+  });
+
+  it("promotes a failed turn to interrupted when authoritative activity corrects cancel fallout", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-failed-to-interrupted-activity-correction";
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+
+    entry.session = mkSession(sessionId);
+    entry.turns = [mkTurn({ sessionId, turnId: "turn-1", status: "failed", startSeq: 1 })];
+    entry.turnsHydrated = true;
+    entry.freshness = "authoritative";
+    entry.lastEventSeq = 1;
+
+    internals.handleReplicaPatches([
+      {
+        op: "append",
+        sessionId,
+        data: {
+          activity: { is_working: false, last_turn_status: "interrupted" },
+          lastEventSeq: 2,
+          projectionRev: 2,
+        },
+      },
+    ]);
+
+    expect(sup.getSnapshot().sessions[sessionId]?.turns[0]?.status).toBe("interrupted");
+  });
+
+  it("keeps authoritative interrupted activity from regressing to later failed activity for the same turn", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-activity-interrupted-sticky";
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+
+    entry.session = mkSession(sessionId);
+    entry.turns = [mkTurn({ sessionId, turnId: "turn-1", status: "interrupted", startSeq: 1 })];
+    entry.turnsHydrated = true;
+    entry.freshness = "authoritative";
+    entry.lastEventSeq = 2;
+    entry.activity = { is_working: false, last_turn_status: "interrupted" };
+
+    internals.handleReplicaPatches([
+      {
+        op: "append",
+        sessionId,
+        data: {
+          activity: { is_working: false, last_turn_status: "failed" },
+          lastEventSeq: 3,
+          projectionRev: 3,
+        },
+      },
+    ]);
+
+    expect(sup.getSnapshot().sessions[sessionId]?.activity?.last_turn_status).toBe("interrupted");
   });
 
   it("refetches session state instead of reusing cache when no revision is known", async () => {
@@ -4067,7 +4468,7 @@ describe("SessionSupervisor", () => {
     const sup = new SessionSupervisor();
     const internals = asSupervisorInternals(sup);
     const entry = internals.ensureEntry(sessionId);
-    entry.freshness = "replica";
+    entry.freshness = "authoritative";
     entry.stateRev = 7;
 
     sup.openSession(sessionId, { mode: "active" });

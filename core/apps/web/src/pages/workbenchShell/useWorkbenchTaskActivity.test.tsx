@@ -329,6 +329,27 @@ describe("useWorkbenchTaskActivity helpers", () => {
     expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
   });
 
+  it("prioritizes the active tab session ahead of the task primary session", () => {
+    const primarySession = makeSession("session-primary", "task-1", "active");
+    const secondarySession = makeSession("session-secondary", "task-1", "active");
+    const taskSummary = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: "session-primary",
+      sessions: [
+        makeSessionSummary(primarySession),
+        makeSessionSummary(secondarySession),
+      ],
+    });
+
+    const { primarySessionId, activeTaskSessionIds } = deriveActiveTaskSessionIds(
+      taskSummary,
+      "session-secondary",
+    );
+
+    expect(primarySessionId).toBe("session-primary");
+    expect(activeTaskSessionIds).toEqual(["session-secondary", "session-primary"]);
+  });
+
   it("does not treat a user follow-up timestamp as a new unread assistant message", () => {
     const primarySession = makeSession("session-1", "task-1", "completed");
     const tasksById = {
@@ -1027,7 +1048,7 @@ const makeWorkspaceSnapshotStore = (snapshot: WorkspaceActiveSnapshotState) => (
   getSessionHeadSnapshot: vi.fn(() => null),
   getSessionHeadsSnapshot: vi.fn(() => ({})),
   setSubscribedSessions: vi.fn(),
-  setForegroundTaskId: vi.fn(),
+  setForegroundSessionId: vi.fn(),
 });
 
 describe("useWorkbenchTaskActivity", () => {
@@ -1094,7 +1115,7 @@ describe("useWorkbenchTaskActivity", () => {
       expect(supervisor.setWorkspaceSnapshotState).toHaveBeenCalledWith(workspaceSnapshot);
       expect(supervisor.setWorkspaceSessionHeads).toHaveBeenCalledWith({});
       expect(workbenchStore.setActiveSessionForActiveTask).toHaveBeenCalledWith("session-1", { source: "system" });
-      expect(workspaceSnapshotStore.setForegroundTaskId).toHaveBeenCalledWith("task-1");
+      expect(workspaceSnapshotStore.setForegroundSessionId).toHaveBeenCalledWith("session-1");
       const subscribedSessionsSink = supervisor.setSubscribedSessionIdsSink.mock.calls[0]?.[0];
       expect(subscribedSessionsSink).toBeTypeOf("function");
       subscribedSessionsSink?.([{ sessionId: "session-1", replay: { kind: "resume", afterSeq: 3 } }]);
@@ -1136,7 +1157,7 @@ describe("useWorkbenchTaskActivity", () => {
       getSnapshot: vi.fn(() => workspaceSnapshot),
       getSessionHeadSnapshot: vi.fn((sessionId: string) => (sessionId === "session-2" ? secondaryHead : null)),
       setSubscribedSessions: vi.fn(),
-      setForegroundTaskId: vi.fn(),
+      setForegroundSessionId: vi.fn(),
     };
 
     renderHarness({
@@ -1192,7 +1213,7 @@ describe("useWorkbenchTaskActivity", () => {
       getSessionHeadSnapshot: vi.fn(() => null),
       getSessionHeadsSnapshot: vi.fn(() => ({ "session-2": secondaryHead })),
       setSubscribedSessions: vi.fn(),
-      setForegroundTaskId: vi.fn(),
+      setForegroundSessionId: vi.fn(),
     };
 
     renderHarness({
@@ -1267,7 +1288,7 @@ describe("useWorkbenchTaskActivity", () => {
     });
     expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith(["session-1"]);
     expect(workbenchStore.setActiveSessionForActiveTask).toHaveBeenCalledWith("session-1", { source: "system" });
-    expect(workspaceSnapshotStore.setForegroundTaskId).toHaveBeenCalledWith("task-1");
+    expect(workspaceSnapshotStore.setForegroundSessionId).toHaveBeenCalledWith("session-1");
   });
 
   it("does not mark optimistic tasks read", async () => {
@@ -1387,8 +1408,9 @@ describe("useWorkbenchTaskActivity", () => {
     });
 
     await waitFor(() => {
-      expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith([]);
+      expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith(["session-from-tab"]);
     });
+    expect(workspaceSnapshotStore.setForegroundSessionId).toHaveBeenCalledWith("session-from-tab");
     expect(workbenchStore.setActiveSessionForActiveTask).not.toHaveBeenCalled();
   });
 
@@ -1434,8 +1456,9 @@ describe("useWorkbenchTaskActivity", () => {
     });
 
     await waitFor(() => {
-      expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith([]);
+      expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith([optimisticSessionId]);
     });
+    expect(workspaceSnapshotStore.setForegroundSessionId).toHaveBeenCalledWith(optimisticSessionId);
     expect(workbenchStore.setActiveSessionForActiveTask).not.toHaveBeenCalledWith(null, { source: "system" });
   });
 

@@ -47,6 +47,7 @@ type SharedProps = {
 
   onInterrupt?: (() => void) | null;
   isWorking?: boolean;
+  interruptPending?: boolean;
   verbosity?: SessionViewVerbosity;
   onSetVerbosity?: (next: SessionViewVerbosity) => void;
 

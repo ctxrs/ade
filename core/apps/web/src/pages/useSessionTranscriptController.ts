@@ -18,6 +18,7 @@ export function useSessionTranscriptController({
   loadOlder,
   showDebug,
   onAtBottomChange,
+  onInitialContentRendered,
   uiState,
   workbenchThreadOp,
   projectionRevision,
@@ -30,6 +31,7 @@ export function useSessionTranscriptController({
   loadOlder: () => Promise<void>;
   showDebug: boolean;
   onAtBottomChange: (atBottom: boolean) => void;
+  onInitialContentRendered?: () => void;
   uiState: WorkbenchMessageListUiState;
   workbenchThreadOp: WorkbenchThreadProjectionOp | null | undefined;
   projectionRevision: number;
@@ -72,6 +74,7 @@ export function useSessionTranscriptController({
     loadOlder,
     showDebug,
     onAtBottomChange,
+    onInitialContentRendered,
   });
 
   return {

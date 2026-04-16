@@ -13,7 +13,12 @@ import { saveSessionHeadV1 } from "../uiStateStore";
 import { clearAllAssistantStreaming, clearAssistantStreaming } from "../assistantStreaming";
 import { isBoundedSessionHead } from "../sessionHeadRepair";
 import { findWorkspaceSessionHead } from "../workspaceActiveSnapshot/projection";
-import { stripPartialEvents, stripTurnPartials } from "./cachePolicy";
+import {
+  reconcileActivityInterruptedFromTurns,
+  reconcileLatestTurnInterruptedFromActivity,
+  stripPartialEvents,
+  stripTurnPartials,
+} from "./cachePolicy";
 import { asRecord, hasModelList } from "./eventHydration";
 import { resolveTurnAnalyticsMetadata } from "./turnAnalyticsMetadata";
 import { replayTurnStartEffectsFromTurns } from "./turnStartEffects";
@@ -201,6 +206,10 @@ export function applyHead(
     this.adoptLoadedSubagentInvocationsRevision(entry, headStateRev);
   }
   this.mergeTurns(entry, head.turns ?? []);
+  if (reconcileLatestTurnInterruptedFromActivity(entry.turns, entry.activity)) {
+    this.bumpTurnsRev(entry);
+  }
+  entry.activity = reconcileActivityInterruptedFromTurns(entry.activity, entry.turns);
   // Historical snapshot hydration should not emit fresh analytics events.
   // Live analytics are produced via event-driven paths (replica append patches).
   // See: core/apps/web/src/state/sessionSupervisorCore.analytics.test.ts

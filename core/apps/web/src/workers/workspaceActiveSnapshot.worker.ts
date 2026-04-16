@@ -43,7 +43,7 @@ const listWorkspaceArchivedTaskSummaries = (
 let store: WorkspaceActiveSnapshotStoreImpl | null = null;
 let pendingSeed: PersistedWorkspaceActiveSnapshotV1 | null = null;
 let pendingSubscribedSessions: SessionSubscriptionCursor[] | null = null;
-let pendingForegroundTaskId: string | null = null;
+let pendingForegroundSessionId: string | null = null;
 
 const ensureStore = (cmd: Extract<WorkspaceActiveSnapshotCommand, { type: "init" }>) => {
   if (cmd.connectionSeq < latestConnectionSeq) return;
@@ -71,9 +71,9 @@ const ensureStore = (cmd: Extract<WorkspaceActiveSnapshotCommand, { type: "init"
     store.setSubscribedSessions?.(pendingSubscribedSessions);
     pendingSubscribedSessions = null;
   }
-  if (pendingForegroundTaskId !== null) {
-    store.setForegroundTaskId?.(pendingForegroundTaskId);
-    pendingForegroundTaskId = null;
+  if (pendingForegroundSessionId !== null) {
+    store.setForegroundSessionId?.(pendingForegroundSessionId);
+    pendingForegroundSessionId = null;
   }
 };
 
@@ -107,12 +107,12 @@ self.onmessage = (event: MessageEvent<WorkspaceActiveSnapshotCommand>) => {
       }
       store.setSubscribedSessions?.(cmd.sessions);
       return;
-    case "set_foreground_task_id":
+    case "set_foreground_session_id":
       if (!store) {
-        pendingForegroundTaskId = cmd.taskId;
+        pendingForegroundSessionId = cmd.sessionId;
         return;
       }
-      store.setForegroundTaskId?.(cmd.taskId);
+      store.setForegroundSessionId?.(cmd.sessionId);
       return;
     case "ensure_archived_loaded":
       store?.ensureArchivedLoaded();

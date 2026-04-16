@@ -41,6 +41,9 @@ export {
   trackRuntimeErrorObserved,
   trackSessionLoadFatalObserved,
   trackApiErrorObserved,
+  trackForegroundFreshnessSlaMissed,
+  trackForegroundBacklogObserved,
+  trackForegroundGapRecoveryObserved,
 } from "./activity";
 
 export { sanitizeAnalyticsProperties } from "./schema";

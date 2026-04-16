@@ -77,7 +77,12 @@ import {
   normalizeFinalThoughtPayload,
   readThoughtFullContent,
 } from "./sessionSupervisor/thoughtProjection";
-import { dedupeIds, sameIdList } from "./sessionSupervisor/cachePolicy";
+import {
+  dedupeIds,
+  reconcileActivityInterruptedFromTurns,
+  reconcileLatestTurnInterruptedFromActivity,
+  sameIdList,
+} from "./sessionSupervisor/cachePolicy";
 import {
   addOptimisticQueueRemovalId,
   reconcileOptimisticOverlay,
@@ -94,6 +99,7 @@ import {
   markOpenSessionsRecovering,
   refreshSubscriptions,
 } from "./sessionSupervisor/subscriptions";
+import type { SessionActivityState } from "@ctx/types";
 import {
   beginSessionOpen as beginSessionLifecycleOpen,
   closeSession as closeSessionLifecycle,
@@ -103,6 +109,7 @@ import {
   openSession as openSessionLifecycle,
   refreshSession as refreshSessionLifecycle,
 } from "./sessionSupervisor/sessionLifecycle";
+import { seedReplicaFromActiveSnapshot } from "./sessionSupervisor/activeSnapshotSeed";
 import { resolveSessionMode, shouldFailPendingSessionOpen } from "./sessionSupervisor/sessionMode";
 import {
   EVENT_BUFFER_LIMIT,
@@ -301,7 +308,22 @@ export class SessionSupervisor {
   setActiveTaskSessionIds = (sessionIds: string[]) => {
     const next = dedupeIds(sessionIds);
     if (sameIdList(next, this.activeTaskSessionIds)) return;
+    const previous = this.activeTaskSessionIds;
     this.activeTaskSessionIds = next;
+    for (const sessionId of next) {
+      if (previous.includes(sessionId)) continue;
+      const entry = this.ensureEntry(sessionId);
+      seedReplicaFromActiveSnapshot(
+        {
+          workspaceSnapshotState: this.workspaceSnapshotState,
+          workspaceSessionHeadsById: this.workspaceSessionHeadsById,
+          dispatchSeedHead: (cmd) => this.replicaDispatch(cmd),
+        },
+        sessionId,
+        entry,
+        { allowRecoveringRefresh: true, allowRepairReplace: true },
+      );
+    }
     this.refreshSubscriptions({ emitIfUnchanged: true });
   };
   setWarmSessionIds = (sessionIds: string[]) => {
@@ -315,6 +337,25 @@ export class SessionSupervisor {
     if (!sessionId) return;
     this.ensureEntry(sessionId);
     this.replica.dispatch({ type: "set_session", session });
+  };
+  setSessionActivity = (sessionId: string, activity: SessionActivityState | null) => {
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    const entry = this.ensureEntry(id);
+    const nextActivity = activity ?? null;
+    if (
+      (entry.activity?.is_working ?? false) === (nextActivity?.is_working ?? false) &&
+      (entry.activity?.last_turn_status ?? null) === (nextActivity?.last_turn_status ?? null)
+    ) {
+      return;
+    }
+    entry.activity = nextActivity;
+    if (reconcileLatestTurnInterruptedFromActivity(entry.turns, nextActivity)) {
+      this.bumpTurnsRev(entry);
+    }
+    entry.activity = reconcileActivityInterruptedFromTurns(entry.activity, entry.turns);
+    entry.updatedAtMs = Date.now();
+    this.publish();
   };
   setMessages = (sessionId: string, messages: Message[], opts?: { replace?: boolean }) => {
     const id = String(sessionId || "").trim();
@@ -496,6 +537,7 @@ export class SessionSupervisor {
         ensureProviderOptions: (entry) => this.ensureProviderOptions(entry),
         ensureSubagentInvocations: (entry, opts) => this.ensureSubagentInvocations(entry, opts),
         syncSupportLoadsForOpenSession: (entry) => this.syncSupportLoadsForOpenSession(entry),
+        bumpTurnsRev: (entry) => this.bumpTurnsRev(entry),
       },
       patches,
     );
@@ -611,6 +653,7 @@ export class SessionSupervisor {
       setConnection: (next: ConnectionStatus) => this.setConnection(next),
       syncActiveSnapshot: (state: WorkspaceActiveSnapshotState) => this.syncActiveSnapshot(state),
       markOpenSessionsRecovering: () => this.markOpenSessionsRecovering(),
+      rehydrateRecoveringOpenSessions: () => this.rehydrateRecoveringOpenSessions(),
       refreshSubscriptions: (opts?: { emitIfUnchanged?: boolean }) => this.refreshSubscriptions(opts),
       emitSubscribedSessions: () => this.emitSubscribedSessions(),
       clearTaskThoughts: (taskId: string) => this.clearTaskThoughts(taskId),
@@ -678,6 +721,26 @@ export class SessionSupervisor {
 
   private markOpenSessionsRecovering() {
     markOpenSessionsRecovering({ entries: this.entries, emitSubscribedSessions: () => this.emitSubscribedSessions(), publish: () => this.publish() });
+  }
+
+  private rehydrateRecoveringOpenSessions() {
+    let changed = false;
+    for (const entry of this.entries.values()) {
+      if (entry.refCount <= 0) continue;
+      if (entry.loadState !== "recovering" && entry.freshness !== "recovering") continue;
+      entry.error = undefined;
+      entry.updatedAtMs = Date.now();
+      changed = true;
+      this.replicaDispatch({
+        type: "hydrate_session_head",
+        sessionId: entry.sessionId,
+        force: true,
+        silent: true,
+      });
+    }
+    if (changed) {
+      this.publish();
+    }
   }
 
   private refreshSubscriptions(opts?: { emitIfUnchanged?: boolean }) {

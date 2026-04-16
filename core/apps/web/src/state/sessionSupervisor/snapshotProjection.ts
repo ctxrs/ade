@@ -5,6 +5,12 @@ import type {
   SessionSupervisorSnapshot,
 } from "./entryState";
 import { buildSessionThreadProjectionFromSnapshot } from "../sessionThreadProjection/applySnapshot";
+import { deriveSessionThreadEventsStamp } from "../sessionThreadProjection/applyEvents";
+import {
+  deriveAssistantStreamingKey,
+  deriveMessagesKey,
+  deriveTurnsKey,
+} from "../../pages/workbenchViewModel/messageKeys";
 
 export type SessionSupervisorSnapshotProjectionHost = {
   maxCachedSessions: number;
@@ -71,6 +77,32 @@ function haveSameRecordEntries(
   return true;
 }
 
+function threadProjectionStillMatchesEntry(
+  entry: InternalEntry,
+  previous: SessionCacheEntry,
+): boolean {
+  const projection = previous.threadProjection;
+  if (!projection) {
+    return false;
+  }
+  const assistantStreamingStamp = `${entry.assistantStreamingRev ?? 0}:${deriveAssistantStreamingKey(
+    entry.assistantStreamingByTurnId,
+  )}`;
+  if (projection.assistantStreamingStamp !== assistantStreamingStamp) {
+    return false;
+  }
+  const turnsStamp = `${entry.turnsRev ?? 0}:${deriveTurnsKey(entry.turns)}:${assistantStreamingStamp}`;
+  if (projection.turnsStamp !== turnsStamp) {
+    return false;
+  }
+  const messagesStamp = `${entry.messagesRev ?? 0}:${deriveMessagesKey(entry.messages)}`;
+  if (projection.messagesStamp !== messagesStamp) {
+    return false;
+  }
+  const eventsStamp = deriveSessionThreadEventsStamp(entry.events, entry.eventsRev);
+  return projection.eventsStamp === eventsStamp;
+}
+
 const cloneSessionEntry = (entry: InternalEntry, previous?: SessionCacheEntry): SessionCacheEntry => {
   const overlay = entry.overlay;
   const support = entry.support;
@@ -87,7 +119,8 @@ const cloneSessionEntry = (entry: InternalEntry, previous?: SessionCacheEntry): 
     previous.turnToolsByTurnId === support.turnToolsByTurnId &&
     previous.toolSummariesReady === support.toolSummariesReady &&
     previous.projectionRev === (entry.projectionRev ?? 0) &&
-    previous.stateLoaded === support.stateLoaded;
+    previous.stateLoaded === support.stateLoaded &&
+    threadProjectionStillMatchesEntry(entry, previous);
   const baseThreadProjection = canReuseThreadProjection
     ? previous.threadProjection!
     : buildSessionThreadProjectionFromSnapshot({

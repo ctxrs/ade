@@ -10,6 +10,8 @@
     "preview:public": "HOST=$(tailscale ip -4 2>/dev/null | head -n 1); if [ -z \"$HOST\" ]; then HOST=127.0.0.1; fi; vite preview --host \"$HOST\" --port 5173",
     "build:preview:public": "pnpm build && pnpm preview:public",
     "loadtest:replay": "node ./scripts/replay-loadtest.mjs",
+    "loadtest:replay:profiles": "node ./scripts/replay-loadtest-profiles.mjs",
+    "loadtest:replay:compare": "node ./scripts/replay-loadtest-compare.mjs",
     "wal:attach": "node ./scripts/wal-attach.mjs",
     "any:report": "node ./scripts/explicit-any-report.mjs --format table",
     "any:baseline": "node ./scripts/explicit-any-report.mjs --write-baseline --format table",

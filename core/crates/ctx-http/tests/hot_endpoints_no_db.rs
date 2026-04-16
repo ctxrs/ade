@@ -212,7 +212,7 @@ async fn assert_hot_endpoints_with_failpoints(failpoints: &[&'static str]) {
         session_ids: vec![session.id],
         sessions: Vec::new(),
         task_ids: Vec::new(),
-        foreground_task_id: None,
+        foreground_session_id: None,
         scope: None,
         include_active_heads: true,
     };

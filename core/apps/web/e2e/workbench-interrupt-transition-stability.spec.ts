@@ -222,12 +222,19 @@ test("workbench: interrupt transition does not bounce status or visibly reset th
     "message list recorded a replace/snapback flash during interrupt transition",
   ).toBe(false);
   expect(
-    debugState.projectionEntries.some((entry) => {
-      const record = entry as { lastTurnStatus?: string | null };
-      return /running|queued/i.test(String(record.lastTurnStatus ?? ""));
-    }) &&
-      firstInterruptedIndex >= 0 &&
-      samplesAfterInterrupted.length > 0,
+    (() => {
+      if (firstInterruptedIndex < 0 || samplesAfterInterrupted.length === 0) return false;
+      const projectionEntries = Array.isArray(debugState.projectionEntries) ? debugState.projectionEntries : [];
+      const firstInterruptedProjectionIndex = projectionEntries.findIndex((entry) => {
+        const record = entry as { lastTurnStatus?: string | null };
+        return /interrupted/i.test(String(record.lastTurnStatus ?? ""));
+      });
+      if (firstInterruptedProjectionIndex < 0) return false;
+      return projectionEntries.slice(firstInterruptedProjectionIndex + 1).some((entry) => {
+        const record = entry as { lastTurnStatus?: string | null };
+        return /running|queued/i.test(String(record.lastTurnStatus ?? ""));
+      });
+    })(),
     "projection debug still shows working/queued states after interrupt settled",
   ).toBe(false);
 });
