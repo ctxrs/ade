@@ -1160,16 +1160,46 @@ const verifyExistingBundles = () => {
   return destBundleDir;
 };
 
-const resolveHostTarget = () => {
-  const envTarget = process.env.CARGO_BUILD_TARGET || process.env.TAURI_ENV_TARGET_TRIPLE;
+function fallbackHostTarget({ platform = process.platform, arch = process.arch } = {}) {
+  if (platform === "darwin" && arch === "arm64") {
+    return "aarch64-apple-darwin";
+  }
+  if (platform === "darwin" && arch === "x64") {
+    return "x86_64-apple-darwin";
+  }
+  if (platform === "linux" && arch === "arm64") {
+    return "aarch64-unknown-linux-gnu";
+  }
+  if (platform === "linux" && arch === "x64") {
+    return "x86_64-unknown-linux-gnu";
+  }
+  if (platform === "win32" && arch === "arm64") {
+    return "aarch64-pc-windows-msvc";
+  }
+  if (platform === "win32" && arch === "x64") {
+    return "x86_64-pc-windows-msvc";
+  }
+  return null;
+}
+
+const resolveHostTarget = ({
+  env = process.env,
+  platform = process.platform,
+  arch = process.arch,
+  execSyncImpl = childProcess.execSync,
+} = {}) => {
+  const envTarget = env.CARGO_BUILD_TARGET || env.TAURI_ENV_TARGET_TRIPLE;
   if (envTarget) return envTarget;
   try {
-    const info = childProcess.execSync("rustc -vV", { encoding: "utf8" });
+    const info = execSyncImpl("rustc -vV", { encoding: "utf8" });
     const match = info.match(/^host:\s+(.+)$/m);
-    return match ? match[1].trim() : null;
+    if (match) {
+      return match[1].trim();
+    }
   } catch {
-    return null;
+    // Fall back to the known Node platform/arch mapping below.
   }
+  return fallbackHostTarget({ platform, arch });
 };
 
 const copySidecarBinary = ({
@@ -1335,15 +1365,17 @@ if (require.main === module) {
       assertRuntimeTargetsAvailable,
       buildLinuxCtxMcpContainerArgs,
       buildRemoteDaemonContainerArgs,
+      fallbackHostTarget,
       filterManagedAvfLocalPayloadErrors,
       readDefaultContainerImage,
       resetBundleDir,
+      resolveHostTarget,
       resolveBundleCacheRoot,
       shouldBundleLinuxCtxMcpRuntime,
-    writePlaceholderBundleManifest,
-    writeEffectiveBundleManifest,
-    ensureCargoBinOnPath,
-  },
+      writePlaceholderBundleManifest,
+      writeEffectiveBundleManifest,
+      ensureCargoBinOnPath,
+    },
     copySidecarBinary,
     parseAvfLinuxGuestRuntimeVersion,
     resolveBundledRuntimeIds,

@@ -4,7 +4,10 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { copySidecarBinary } = require("./desktop_sync_resources.cjs");
+const {
+  __desktopSyncResourcesTestHooks,
+  copySidecarBinary,
+} = require("./desktop_sync_resources.cjs");
 
 test("copySidecarBinary supports packaging a daemon under a distinct bundle name", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-sidecar-copy-"));
@@ -104,4 +107,45 @@ test("copySidecarBinary codesigns the AVF helper on darwin", () => {
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("resolveHostTarget falls back to a stable Node platform mapping when rustc metadata is unavailable", () => {
+  const { resolveHostTarget } = __desktopSyncResourcesTestHooks;
+  assert.equal(
+    resolveHostTarget({
+      env: {},
+      platform: "linux",
+      arch: "x64",
+      execSyncImpl: () => {
+        throw new Error("rustc unavailable");
+      },
+    }),
+    "x86_64-unknown-linux-gnu",
+  );
+  assert.equal(
+    resolveHostTarget({
+      env: {},
+      platform: "darwin",
+      arch: "arm64",
+      execSyncImpl: () => {
+        throw new Error("rustc unavailable");
+      },
+    }),
+    "aarch64-apple-darwin",
+  );
+});
+
+test("resolveHostTarget prefers an explicit target env over process and rustc detection", () => {
+  const { resolveHostTarget } = __desktopSyncResourcesTestHooks;
+  assert.equal(
+    resolveHostTarget({
+      env: { TAURI_ENV_TARGET_TRIPLE: "aarch64-unknown-linux-gnu" },
+      platform: "linux",
+      arch: "x64",
+      execSyncImpl: () => {
+        throw new Error("should not probe rustc when target env is explicit");
+      },
+    }),
+    "aarch64-unknown-linux-gnu",
+  );
 });
