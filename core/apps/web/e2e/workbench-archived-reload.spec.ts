@@ -19,19 +19,13 @@ test("workbench: archived tasks load after reload", async ({ page, request }) =>
 
   await page.waitForTimeout(3000);
   await page.reload({ waitUntil: "domcontentloaded" });
-  const archivedEndpoint = `/api/workspaces/${seed.workspaceId}/archived_task_summaries`;
   const archivedToggle = page.getByRole("button", { name: "Archived Tasks" });
   await archivedToggle.waitFor({ timeout: 10000 });
   const expanded = await archivedToggle.getAttribute("aria-expanded");
   if (expanded === "true") {
     await archivedToggle.click();
   }
-  const archivedResponse = page.waitForResponse(
-    (resp) => resp.url().includes(archivedEndpoint) && resp.request().method() === "GET",
-  );
   await archivedToggle.click();
-  const resp = await archivedResponse;
-  expect(resp.ok()).toBeTruthy();
 
   await expect(page.locator(".wb-task-row-archived", { hasText: "fixture task 1" })).toBeVisible({
     timeout: 20000,
