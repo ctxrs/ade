@@ -1,0 +1,36 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+CTX_TUNNEL_RELAY_DEPS = [
+    "@crates//:anyhow",
+    "@crates//:axum",
+    "@crates//:base64",
+    "@crates//:clap",
+    "@crates//:futures",
+    "@crates//:hmac",
+    "@crates//:serde",
+    "@crates//:serde_json",
+    "@crates//:sha2",
+    "@crates//:subtle",
+    "@crates//:tokio",
+    "@crates//:tracing",
+    "@crates//:tracing_subscriber",
+    "@crates//:uuid",
+]
+
+rust_binary(
+    name = "ctx-tunnel-relay",
+    crate_root = "src/main.rs",
+    edition = "2021",
+    srcs = glob(["src/**/*.rs"]),
+    deps = CTX_TUNNEL_RELAY_DEPS,
+)
+
+rust_test(
+    name = "unit_tests",
+    crate_root = "src/main.rs",
+    edition = "2021",
+    srcs = glob(["src/**/*.rs"]),
+    deps = CTX_TUNNEL_RELAY_DEPS,
+)

@@ -78,7 +78,7 @@
     "testing:scorecard": "bash -lc 'scripts/testing_scorecard.sh --daemon-lcov coverage/daemon.lcov --web-summary coverage/web/coverage-summary.json --out-json coverage/testing-scorecard.json --out-pretty coverage/testing-scorecard.txt'",
     "desktop:prep": "node scripts/desktop_prepare.cjs --mode debug-build",
     "desktop:ipc:generate": "node scripts/run_with_ctx_cache_env.cjs --mode workspace -- cargo run -p ctx-desktop-ipc --bin generate_typescript",
-    "desktop:ipc:check": "node scripts/run_bazel_pilot.cjs run //core/crates/ctx-desktop-ipc:typescript_check",
+    "desktop:ipc:check": "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-desktop-ipc:typescript_check_test",
     "desktop:demo:ping-pong": "node apps/desktop/scripts/demo_ping_pong_playback.mjs",
     "desktop:demo:hn-mobile": "node apps/desktop/scripts/demo_hn_mobile_playback.mjs",
     "desktop:demo:hn-mobile:record": "node apps/desktop/scripts/demo_hn_mobile_playback.mjs --record-video-out /tmp/ctx-demo-hn-mobile-recording.mp4 --record-fps 12",

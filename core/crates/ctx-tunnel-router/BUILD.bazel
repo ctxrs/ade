@@ -1,0 +1,36 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+CTX_TUNNEL_ROUTER_DEPS = [
+    "@crates//:anyhow",
+    "@crates//:axum",
+    "@crates//:clap",
+    "@crates//:futures",
+    "@crates//:redis",
+    "@crates//:reqwest",
+    "@crates//:serde",
+    "@crates//:serde_json",
+    "@crates//:sqlx",
+    "@crates//:tokio",
+    "@crates//:tokio_tungstenite",
+    "@crates//:tracing",
+    "@crates//:tracing_subscriber",
+    "@crates//:url",
+]
+
+rust_binary(
+    name = "ctx-tunnel-router",
+    crate_root = "src/main.rs",
+    edition = "2021",
+    srcs = glob(["src/**/*.rs"]),
+    deps = CTX_TUNNEL_ROUTER_DEPS,
+)
+
+rust_test(
+    name = "unit_tests",
+    crate_root = "src/main.rs",
+    edition = "2021",
+    srcs = glob(["src/**/*.rs"]),
+    deps = CTX_TUNNEL_ROUTER_DEPS,
+)

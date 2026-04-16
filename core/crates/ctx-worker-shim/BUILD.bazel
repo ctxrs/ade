@@ -1,0 +1,39 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+CTX_WORKER_SHIM_DEPS = [
+    "//core/crates/ctx-fs:lib",
+    "//core/crates/ctx-worker-protocol:lib",
+    "@crates//:anyhow",
+    "@crates//:base64",
+    "@crates//:chrono",
+    "@crates//:clap",
+    "@crates//:futures_util",
+    "@crates//:notify",
+    "@crates//:portable_pty",
+    "@crates//:reqwest",
+    "@crates//:rustls",
+    "@crates//:serde",
+    "@crates//:serde_json",
+    "@crates//:tokio",
+    "@crates//:tokio_tungstenite",
+    "@crates//:tracing",
+    "@crates//:tracing_subscriber",
+]
+
+rust_binary(
+    name = "ctx-worker-shim",
+    crate_root = "src/main.rs",
+    edition = "2021",
+    srcs = glob(["src/**/*.rs"]),
+    deps = CTX_WORKER_SHIM_DEPS,
+)
+
+rust_test(
+    name = "unit_tests",
+    crate_root = "src/main.rs",
+    edition = "2021",
+    srcs = glob(["src/**/*.rs"]),
+    deps = CTX_WORKER_SHIM_DEPS,
+)

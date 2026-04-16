@@ -1,5 +1,6 @@
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -39,6 +40,19 @@ rust_binary(
 
 sh_binary(
     name = "typescript_check",
+    srcs = ["check_typescript_bindings.sh"],
+    args = [
+        "$(location :generate_typescript)",
+        "$(location //core/apps/web:desktop_ipc_generated_typescript)",
+    ],
+    data = [
+        ":generate_typescript",
+        "//core/apps/web:desktop_ipc_generated_typescript",
+    ],
+)
+
+sh_test(
+    name = "typescript_check_test",
     srcs = ["check_typescript_bindings.sh"],
     args = [
         "$(location :generate_typescript)",

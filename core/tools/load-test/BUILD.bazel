@@ -1,0 +1,35 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+CTX_LOAD_TEST_DEPS = [
+    "//core/crates/ctx-client:lib",
+    "//core/crates/ctx-core:lib",
+    "@crates//:anyhow",
+    "@crates//:chrono",
+    "@crates//:clap",
+    "@crates//:futures",
+    "@crates//:rand",
+    "@crates//:serde",
+    "@crates//:serde_json",
+    "@crates//:tokio",
+    "@crates//:tokio_tungstenite",
+    "@crates//:url",
+    "@crates//:uuid",
+]
+
+rust_binary(
+    name = "ctx-load-test",
+    crate_root = "src/main.rs",
+    edition = "2021",
+    srcs = glob(["src/**/*.rs"]),
+    deps = CTX_LOAD_TEST_DEPS,
+)
+
+rust_test(
+    name = "unit_tests",
+    crate_root = "src/main.rs",
+    edition = "2021",
+    srcs = glob(["src/**/*.rs"]),
+    deps = CTX_LOAD_TEST_DEPS,
+)

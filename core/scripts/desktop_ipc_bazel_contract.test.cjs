@@ -16,10 +16,11 @@ const webBuild = fs.readFileSync(path.join(coreRoot, "apps", "web", "BUILD.bazel
 test("desktop IPC check routes through the Bazel-owned freshness target", () => {
   assert.equal(
     packageJson.scripts["desktop:ipc:check"],
-    "node scripts/run_bazel_pilot.cjs run //core/crates/ctx-desktop-ipc:typescript_check",
+    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-desktop-ipc:typescript_check_test",
   );
   assert.match(desktopIpcBuild, /name = "generate_typescript"/);
   assert.match(desktopIpcBuild, /name = "typescript_check"/);
+  assert.match(desktopIpcBuild, /name = "typescript_check_test"/);
   assert.match(desktopIpcBuild, /\$\(location :generate_typescript\)/);
   assert.match(desktopIpcBuild, /\$\(location \/\/core\/apps\/web:desktop_ipc_generated_typescript\)/);
   assert.match(webBuild, /name = "desktop_ipc_generated_typescript"/);

@@ -1,0 +1,49 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+MIGRATIONS = glob(["migrations/**/*.sql"])
+
+CTX_TUNNEL_CONTROL_PLANE_RUSTC_ENV = {
+    "CARGO_MANIFEST_DIR": "core/crates/ctx-tunnel-control-plane",
+}
+
+CTX_TUNNEL_CONTROL_PLANE_DEPS = [
+    "@crates//:anyhow",
+    "@crates//:axum",
+    "@crates//:base64",
+    "@crates//:clap",
+    "@crates//:hmac",
+    "@crates//:redis",
+    "@crates//:reqwest",
+    "@crates//:serde",
+    "@crates//:serde_json",
+    "@crates//:sha2",
+    "@crates//:sqlx",
+    "@crates//:tokio",
+    "@crates//:tracing",
+    "@crates//:tracing_subscriber",
+    "@crates//:url",
+    "@crates//:uuid",
+]
+
+rust_binary(
+    name = "ctx-tunnel-control-plane",
+    crate_root = "src/main.rs",
+    compile_data = MIGRATIONS,
+    edition = "2021",
+    rustc_env = CTX_TUNNEL_CONTROL_PLANE_RUSTC_ENV,
+    srcs = glob(["src/**/*.rs"]),
+    deps = CTX_TUNNEL_CONTROL_PLANE_DEPS,
+)
+
+rust_test(
+    name = "unit_tests",
+    crate_root = "src/main.rs",
+    compile_data = MIGRATIONS,
+    data = MIGRATIONS,
+    edition = "2021",
+    rustc_env = CTX_TUNNEL_CONTROL_PLANE_RUSTC_ENV,
+    srcs = glob(["src/**/*.rs"]),
+    deps = CTX_TUNNEL_CONTROL_PLANE_DEPS,
+)
