@@ -123,6 +123,21 @@ def _declare_ctx_http_test(name, common_srcs, compile_data, data, deps, proc_mac
         tags = tags,
     )
 
+def declare_ctx_http_rust_unit_test(name, args, compile_data, data, deps, proc_macro_deps, timeout = None):
+    kwargs = {}
+    if timeout != None:
+        kwargs["timeout"] = timeout
+    rust_test(
+        name = name,
+        crate = ":lib_test_support",
+        args = args,
+        compile_data = compile_data,
+        data = data,
+        deps = deps,
+        proc_macro_deps = proc_macro_deps,
+        **kwargs
+    )
+
 def declare_ctx_http_integration_tests(common_srcs, compile_data, data, deps, proc_macro_deps, rustc_env, test_args):
     declared = {}
     for suite_name in CTX_HTTP_SUITE_ORDER:

@@ -1,5 +1,9 @@
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_doc_test", "rust_library", "rust_test")
-load(":ctx_http_bazel_tests.bzl", "declare_ctx_http_integration_tests")
+load(
+    ":ctx_http_bazel_tests.bzl",
+    "declare_ctx_http_integration_tests",
+    "declare_ctx_http_rust_unit_test",
+)
 
 package(default_visibility = ["//visibility:public"])
 
@@ -19,10 +23,32 @@ CTX_HTTP_COMPILE_DATA = [
 CTX_HTTP_TEST_COMMON_SRCS = glob(["tests/common/**/*.rs"])
 
 CTX_HTTP_TEST_ARGS = []
-CTX_HTTP_MAIN_UNIT_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
+CTX_HTTP_UNIT_TEST_SERIAL_ARGS = CTX_HTTP_TEST_ARGS + [
+    "--test-threads=1",
+]
+CTX_HTTP_LIB_UNIT_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
+    "lib_tests::",
     "--skip=lib_tests::daemon_golden_path_with_fake_provider",
     "--skip=lib_tests::daemon_http_and_ws_streaming",
+]
+CTX_HTTP_EXECUTION_SETUP_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
+    "execution_setup::",
+    "--skip=execution_setup::tests::startup_prewarm_runs_runtime_warmup_for_cold_container_settings",
+    "--skip=execution_setup::tests::successful_workspace_launch_refresh_clears_stale_prewarm_metadata",
+    "--skip=execution_setup::tests::workspace_launch_reuses_active_runtime_prewarm_without_second_image_load",
     "--skip=execution_setup::tests::workspace_launch_reuses_startup_prewarm_without_second_image_load_when_machine_is_ready",
+]
+CTX_HTTP_EXECUTION_SETUP_STARTUP_PREWARM_RUNTIME_WARMUP_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
+    "--exact",
+    "execution_setup::tests::startup_prewarm_runs_runtime_warmup_for_cold_container_settings",
+]
+CTX_HTTP_EXECUTION_SETUP_REFRESH_CLEARS_STALE_PREWARM_METADATA_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
+    "--exact",
+    "execution_setup::tests::successful_workspace_launch_refresh_clears_stale_prewarm_metadata",
+]
+CTX_HTTP_EXECUTION_SETUP_REUSES_ACTIVE_RUNTIME_PREWARM_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
+    "--exact",
+    "execution_setup::tests::workspace_launch_reuses_active_runtime_prewarm_without_second_image_load",
 ]
 CTX_HTTP_DAEMON_GOLDEN_PATH_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
@@ -35,6 +61,9 @@ CTX_HTTP_DAEMON_HTTP_AND_WS_STREAMING_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
 CTX_HTTP_WORKSPACE_LAUNCH_PREWARM_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
     "execution_setup::tests::workspace_launch_reuses_startup_prewarm_without_second_image_load_when_machine_is_ready",
+]
+CTX_HTTP_WORKSPACE_RUNTIME_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
+    "workspace_runtime::",
 ]
 
 CTX_HTTP_SHARED_INTERNAL_DEPS = [
@@ -260,14 +289,137 @@ rust_binary(
     ],
 )
 
-rust_test(
-    name = "unit_tests",
-    crate = ":lib_test_support",
-    args = CTX_HTTP_MAIN_UNIT_TEST_ARGS,
+declare_ctx_http_rust_unit_test(
+    name = "unit_tests_api",
+    args = CTX_HTTP_TEST_ARGS + ["api::"],
     compile_data = CTX_HTTP_COMPILE_DATA,
     data = CTX_HTTP_COMPILE_DATA,
     deps = CTX_HTTP_DIRECT_TEST_DEPS,
     proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+)
+
+declare_ctx_http_rust_unit_test(
+    name = "unit_tests_daemon",
+    args = CTX_HTTP_TEST_ARGS + ["daemon::"],
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+)
+
+declare_ctx_http_rust_unit_test(
+    name = "unit_tests_execution_setup",
+    args = CTX_HTTP_EXECUTION_SETUP_UNIT_TEST_ARGS,
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+    timeout = "long",
+)
+
+declare_ctx_http_rust_unit_test(
+    name = "unit_tests_installer",
+    args = CTX_HTTP_TEST_ARGS + ["installer::"],
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+)
+
+declare_ctx_http_rust_unit_test(
+    name = "unit_tests_lib",
+    args = CTX_HTTP_LIB_UNIT_TEST_ARGS,
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+)
+
+declare_ctx_http_rust_unit_test(
+    name = "unit_tests_merge_queue",
+    args = CTX_HTTP_TEST_ARGS + ["merge_queue::"],
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+)
+
+declare_ctx_http_rust_unit_test(
+    name = "unit_tests_provider_launch",
+    args = CTX_HTTP_TEST_ARGS + ["provider_launch::"],
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+)
+
+declare_ctx_http_rust_unit_test(
+    name = "unit_tests_provider_matrix",
+    args = CTX_HTTP_TEST_ARGS + ["provider_matrix::"],
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+)
+
+declare_ctx_http_rust_unit_test(
+    name = "unit_tests_scheduler",
+    args = CTX_HTTP_TEST_ARGS + ["scheduler::"],
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+)
+
+declare_ctx_http_rust_unit_test(
+    name = "unit_tests_settings",
+    args = CTX_HTTP_TEST_ARGS + ["settings::"],
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+)
+
+declare_ctx_http_rust_unit_test(
+    name = "unit_tests_workspace_runtime",
+    args = CTX_HTTP_WORKSPACE_RUNTIME_UNIT_TEST_ARGS,
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+)
+
+rust_test(
+    name = "unit_tests_execution_setup_startup_prewarm_runtime_warmup",
+    crate = ":lib_test_support",
+    args = CTX_HTTP_EXECUTION_SETUP_STARTUP_PREWARM_RUNTIME_WARMUP_TEST_ARGS,
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+    timeout = "long",
+)
+
+rust_test(
+    name = "unit_tests_execution_setup_refresh_clears_stale_prewarm_metadata",
+    crate = ":lib_test_support",
+    args = CTX_HTTP_EXECUTION_SETUP_REFRESH_CLEARS_STALE_PREWARM_METADATA_TEST_ARGS,
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+    timeout = "long",
+)
+
+rust_test(
+    name = "unit_tests_execution_setup_reuses_active_runtime_prewarm",
+    crate = ":lib_test_support",
+    args = CTX_HTTP_EXECUTION_SETUP_REUSES_ACTIVE_RUNTIME_PREWARM_TEST_ARGS,
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+    timeout = "long",
 )
 
 rust_test(
@@ -303,6 +455,29 @@ rust_test(
     timeout = "long",
 )
 
+test_suite(
+    name = "unit_tests",
+    tests = [
+        ":unit_tests_api",
+        ":unit_tests_daemon",
+        ":unit_tests_execution_setup",
+        ":unit_tests_execution_setup_startup_prewarm_runtime_warmup",
+        ":unit_tests_execution_setup_refresh_clears_stale_prewarm_metadata",
+        ":unit_tests_execution_setup_reuses_active_runtime_prewarm",
+        ":unit_tests_installer",
+        ":unit_tests_lib",
+        ":unit_tests_merge_queue",
+        ":unit_tests_provider_launch",
+        ":unit_tests_provider_matrix",
+        ":unit_tests_scheduler",
+        ":unit_tests_settings",
+        ":unit_tests_workspace_runtime",
+        ":unit_tests_daemon_golden_path_with_fake_provider",
+        ":unit_tests_daemon_http_and_ws_streaming",
+        ":unit_tests_workspace_launch_reuses_startup_prewarm",
+    ],
+)
+
 rust_test(
     name = "bin_tests",
     crate = ":ctx",
@@ -320,9 +495,6 @@ test_suite(
     name = "base",
     tests = [
         ":unit_tests",
-        ":unit_tests_daemon_golden_path_with_fake_provider",
-        ":unit_tests_daemon_http_and_ws_streaming",
-        ":unit_tests_workspace_launch_reuses_startup_prewarm",
         ":bin_tests",
         ":doc_tests",
     ],
