@@ -381,7 +381,10 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
     let (host_status, host_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
         axum::http::Method::GET,
-        format!("/api/workspaces/{}/providers/{provider_id}/options", ws.id.0),
+        format!(
+            "/api/workspaces/{}/providers/{provider_id}/options",
+            ws.id.0
+        ),
         None,
     )
     .await;
@@ -452,7 +455,10 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
         axum::http::Method::GET,
-        format!("/api/workspaces/{}/providers/{provider_id}/options", ws.id.0),
+        format!(
+            "/api/workspaces/{}/providers/{provider_id}/options",
+            ws.id.0
+        ),
         None,
     )
     .await;
