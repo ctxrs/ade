@@ -145,10 +145,7 @@ async fn wait_for_session_idle(state: &Arc<AppState>, session_id: ctx_core::ids:
             return;
         }
         if tokio::time::Instant::now() >= deadline {
-            panic!(
-                "timed out waiting for session {:?} to stop running",
-                session_id
-            );
+            panic!("timed out waiting for session {session_id:?} to stop running");
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
