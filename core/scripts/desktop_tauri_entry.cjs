@@ -51,11 +51,19 @@ function resolveTauriCommand() {
   return localTauriBin;
 }
 
-function run(command, args) {
+function normalizeTauriCliEnv(env = process.env) {
+  const normalizedEnv = { ...env };
+  if (String(normalizedEnv.CI || "").trim() === "1") {
+    normalizedEnv.CI = "true";
+  }
+  return normalizedEnv;
+}
+
+function run(command, args, { env = process.env } = {}) {
   const result = childProcess.spawnSync(command, args, {
     cwd: command === "node" ? coreRoot : desktopAppRoot,
     stdio: "inherit",
-    env: process.env,
+    env,
   });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
@@ -65,7 +73,9 @@ function run(command, args) {
 function main(argv = process.argv) {
   const invocation = createInvocation(argv);
   run(invocation.prepCommand, invocation.prepArgs);
-  run(invocation.tauriCommand, invocation.tauriExecArgs);
+  run(invocation.tauriCommand, invocation.tauriExecArgs, {
+    env: normalizeTauriCliEnv(process.env),
+  });
 }
 
 if (require.main === module) {
@@ -75,6 +85,7 @@ if (require.main === module) {
 module.exports = {
   createInvocation,
   main,
+  normalizeTauriCliEnv,
   parseArgs,
   resolvePrepMode,
 };

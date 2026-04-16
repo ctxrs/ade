@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 
 const {
   createInvocation,
+  normalizeTauriCliEnv,
   resolvePrepMode,
 } = require("./desktop_tauri_entry.cjs");
 
@@ -44,4 +45,13 @@ test("desktop_tauri_entry uses dev prep for tauri dev", () => {
   const invocation = createInvocation(["node", "desktop_tauri_entry", "dev", "--no-watch"]);
   assert.equal(invocation.prepMode, "dev");
   assert.deepEqual(invocation.tauriExecArgs, ["dev", "--no-watch"]);
+});
+
+test("desktop_tauri_entry normalizes CI=1 for the tauri CLI", () => {
+  const normalized = normalizeTauriCliEnv({
+    CI: "1",
+    OTHER: "value",
+  });
+  assert.equal(normalized.CI, "true");
+  assert.equal(normalized.OTHER, "value");
 });
