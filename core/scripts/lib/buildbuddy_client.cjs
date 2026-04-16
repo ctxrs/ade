@@ -149,19 +149,32 @@ async function getInvocations({
   if (Object.keys(selector).length === 0) {
     throw new Error("BuildBuddy invocation selector requires invocationId or commitSha");
   }
-  const response = await apiRequest({
-    apiBaseUrl,
-    apiKey,
-    pathName: "/api/v1/GetInvocation",
-    payload: {
-      selector,
-      include_artifacts: includeArtifacts,
-      include_child_invocations: includeChildInvocations,
-      include_metadata: includeMetadata,
-      ...(String(pageToken || "").trim() ? { page_token: String(pageToken).trim() } : {}),
-    },
-  });
-  return Array.isArray(response.invocation) ? response.invocation : [];
+  const explicitPageToken = String(pageToken || "").trim();
+  let nextPageToken = explicitPageToken;
+  const invocations = [];
+  while (true) {
+    const response = await apiRequest({
+      apiBaseUrl,
+      apiKey,
+      pathName: "/api/v1/GetInvocation",
+      payload: {
+        selector,
+        include_artifacts: includeArtifacts,
+        include_child_invocations: includeChildInvocations,
+        include_metadata: includeMetadata,
+        ...(nextPageToken ? { page_token: nextPageToken } : {}),
+      },
+    });
+    if (Array.isArray(response.invocation) && response.invocation.length > 0) {
+      invocations.push(...response.invocation);
+    }
+    const responseNextPageToken = String(response.nextPageToken || response.next_page_token || "").trim();
+    if (explicitPageToken || !responseNextPageToken) {
+      break;
+    }
+    nextPageToken = responseNextPageToken;
+  }
+  return invocations;
 }
 
 async function getInvocationLogPage({ apiBaseUrl, apiKey, invocationId, pageToken = "" }) {
