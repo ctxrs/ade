@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const path = require("node:path");
 
 const {
   shouldBundleRemoteDaemons,
@@ -91,4 +92,26 @@ test("bundle cache root follows CARGO_TARGET_DIR before HOME cache fallbacks", (
     cacheRoot,
     "/tmp/ctx-cargo-target/desktop-sync-cache/desktop-remote-daemons",
   );
+});
+
+test("bundle script env preserves cargo bin on PATH when CARGO_HOME is set", () => {
+  const env = __desktopSyncResourcesTestHooks.ensureCargoBinOnPath({
+    CARGO_HOME: "/tmp/cargo-home",
+    PATH: "/usr/bin:/bin",
+  });
+
+  assert.equal(
+    env.PATH,
+    `${path.join("/tmp/cargo-home", "bin")}${path.delimiter}/usr/bin:/bin`,
+  );
+});
+
+test("bundle script env does not duplicate cargo bin on PATH", () => {
+  const cargoBin = path.join("/tmp/cargo-home", "bin");
+  const env = __desktopSyncResourcesTestHooks.ensureCargoBinOnPath({
+    CARGO_HOME: "/tmp/cargo-home",
+    PATH: `${cargoBin}${path.delimiter}/usr/bin:/bin`,
+  });
+
+  assert.equal(env.PATH, `${cargoBin}${path.delimiter}/usr/bin:/bin`);
 });

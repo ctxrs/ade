@@ -999,16 +999,34 @@ const writePlaceholderBundleManifest = (bundleDir = destBundleDir) => {
   fs.rmSync(effectiveManifestPath, { force: true });
 };
 
+const ensureCargoBinOnPath = (env) => {
+  const resolvedEnv = { ...env };
+  const cargoHome = String(resolvedEnv.CARGO_HOME || "").trim();
+  if (!cargoHome) {
+    return resolvedEnv;
+  }
+  const cargoBinDir = path.join(cargoHome, "bin");
+  const pathDelimiter = path.delimiter;
+  const currentPath = String(resolvedEnv.PATH || "");
+  const pathEntries = currentPath.split(pathDelimiter).filter(Boolean);
+  if (!pathEntries.includes(cargoBinDir)) {
+    resolvedEnv.PATH = currentPath
+      ? `${cargoBinDir}${pathDelimiter}${currentPath}`
+      : cargoBinDir;
+  }
+  return resolvedEnv;
+};
+
 const syncBundles = () => {
   if (!fs.existsSync(bundleScript)) {
     throw new Error(`missing bundle script: ${bundleScript}`);
   }
   writePlaceholderBundleManifest();
-  const env = {
+  const env = ensureCargoBinOnPath({
     ...process.env,
     CTX_BUNDLE_DIR: destBundleDir,
     CTX_BUNDLE_DEPENDENCY_AWARE_RUNTIMES: "0",
-  };
+  });
   const requiredProviderIds = readRuntimeLockRequiredIds("provider");
   const requiredRuntimeIds = readRuntimeLockRequiredIds("runtime");
   const bundledRuntimeIds = resolveBundledRuntimeIds(requiredRuntimeIds);
@@ -1322,9 +1340,10 @@ if (require.main === module) {
       resetBundleDir,
       resolveBundleCacheRoot,
       shouldBundleLinuxCtxMcpRuntime,
-      writePlaceholderBundleManifest,
-      writeEffectiveBundleManifest,
-    },
+    writePlaceholderBundleManifest,
+    writeEffectiveBundleManifest,
+    ensureCargoBinOnPath,
+  },
     copySidecarBinary,
     parseAvfLinuxGuestRuntimeVersion,
     resolveBundledRuntimeIds,
