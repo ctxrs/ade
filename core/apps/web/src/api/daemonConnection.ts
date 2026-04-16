@@ -526,13 +526,38 @@ const isLoopbackHost = (host: string): boolean => {
   return normalized === "localhost" || normalized === "::1" || normalized.startsWith("127.");
 };
 
+const getBrowserSameOriginBaseUrl = (): string | null => {
+  if (typeof window === "undefined" || isDesktopWindow()) return null;
+  const protocol = String(window.location.protocol || "").toLowerCase();
+  if (protocol !== "http:" && protocol !== "https:") return null;
+  return normalizeDaemonBaseUrl(window.location.origin);
+};
+
 export const bootstrapDaemonConnectionFromRuntime = () => {
   if (typeof window === "undefined") return;
   const params = new URLSearchParams(window.location.search);
   const tokenFromQuery = normalizeToken(params.get("token"));
   const hadTokenParam = Boolean(tokenFromQuery);
+  const envToken = import.meta.env.DEV ? normalizeToken(import.meta.env.VITE_CTX_AUTH_TOKEN) : null;
+  const envDaemonUrl = import.meta.env.DEV
+    ? normalizeDaemonBaseUrl(import.meta.env.VITE_CTX_DAEMON_URL ?? null)
+    : null;
   if (tokenFromQuery) {
-    setDaemonConnection({ authToken: tokenFromQuery, source: "url_token" });
+    const sameOriginBaseUrl = getBrowserSameOriginBaseUrl();
+    const current = getDaemonConnection();
+    const shouldResetBrowserBaseFromToken =
+      !envDaemonUrl
+      && Boolean(sameOriginBaseUrl)
+      && current.targetScope?.kind === "browser"
+      && current.baseUrl !== sameOriginBaseUrl;
+    setDaemonConnection(
+      {
+        baseUrl: shouldResetBrowserBaseFromToken ? sameOriginBaseUrl : undefined,
+        authToken: tokenFromQuery,
+        source: "url_token",
+      },
+      shouldResetBrowserBaseFromToken ? { clearPersistedBaseUrl: true } : undefined,
+    );
     params.delete("token");
     const next =
       window.location.pathname
@@ -542,8 +567,6 @@ export const bootstrapDaemonConnectionFromRuntime = () => {
   }
 
   if (import.meta.env.DEV) {
-    const envToken = normalizeToken(import.meta.env.VITE_CTX_AUTH_TOKEN);
-    const envDaemonUrl = normalizeDaemonBaseUrl(import.meta.env.VITE_CTX_DAEMON_URL ?? null);
     if (envToken || envDaemonUrl) {
       const host = String(window.location.hostname ?? "").toLowerCase();
       if (isLoopbackHost(host)) {
@@ -565,9 +588,9 @@ export const bootstrapDaemonConnectionFromRuntime = () => {
   // In browser mode, same-origin /api is valid. In desktop mode, daemon origin comes from
   // bridge-managed connection state instead of the webview origin.
   if (!latest.baseUrl && !isDesktopWindow()) {
-    const protocol = String(window.location.protocol || "").toLowerCase();
-    if (protocol === "http:" || protocol === "https:") {
-      setDaemonConnection({ baseUrl: window.location.origin, source: "same_origin_bootstrap" });
+    const sameOriginBaseUrl = getBrowserSameOriginBaseUrl();
+    if (sameOriginBaseUrl) {
+      setDaemonConnection({ baseUrl: sameOriginBaseUrl, source: "same_origin_bootstrap" });
     }
   }
 };

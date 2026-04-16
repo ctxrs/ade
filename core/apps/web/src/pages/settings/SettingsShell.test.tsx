@@ -32,6 +32,11 @@ describe("SettingsShell", () => {
 
     expect(screen.queryByText("Saving…")).not.toBeInTheDocument();
     expect(screen.queryByText("Saving...")).not.toBeInTheDocument();
+    const input = screen.getByPlaceholderText("Search settings ⌘F");
+    expect(input).toHaveAttribute("autocomplete", "off");
+    expect(input).toHaveAttribute("autocorrect", "off");
+    expect(input).toHaveAttribute("autocapitalize", "none");
+    expect(input).toHaveAttribute("spellcheck", "false");
   });
 
   it("keeps the not-saved subtitle when there is an error", () => {

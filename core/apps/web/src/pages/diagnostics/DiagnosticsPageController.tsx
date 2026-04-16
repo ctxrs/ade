@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Textarea } from "../../components/ui/text-input";
 import { Link, useLocation } from "react-router-dom";
 import {
   applyDaemonDesktopConnection,
@@ -578,7 +579,7 @@ export default function DiagnosticsPage() {
 
           <label>
             Diagnostics JSON
-            <textarea
+            <Textarea
               readOnly
               value={pretty}
               style={{ width: "100%", height: 340, fontFamily: "monospace" }}

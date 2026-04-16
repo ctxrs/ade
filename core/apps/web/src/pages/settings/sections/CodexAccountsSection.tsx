@@ -7,6 +7,7 @@ import {
   SelectValue,
 } from "../../../components/ui/select";
 import { Card, Row } from "../SettingsPage.components";
+import { TextInput } from "../../../components/ui/text-input";
 import { formatPct, formatResetLabel, summarizeCodexUsage } from "../SettingsPage.utils";
 import { useCodexAccountsController } from "../hooks/useCodexAccountsController";
 
@@ -196,7 +197,7 @@ export function CodexAccountsSection({ active }: CodexAccountsSectionProps) {
         description="Starts the Codex login flow on this daemon."
         control={
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <input
+            <TextInput
               className="settings-control"
               value={codexNewLabel}
               onChange={(e) => setCodexNewLabel(e.target.value)}
@@ -266,7 +267,7 @@ export function CodexAccountsSection({ active }: CodexAccountsSectionProps) {
                     >
                       Open login
                     </button>
-                    <input
+                    <TextInput
                       className="settings-control"
                       style={{ minWidth: 280 }}
                       placeholder={login.expected_callback_url ?? "Paste callback URL"}

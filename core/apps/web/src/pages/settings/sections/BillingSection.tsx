@@ -1,5 +1,6 @@
 import type { User } from "@supabase/supabase-js";
 import { Card, Row } from "../SettingsPage.components";
+import { TextInput } from "../../../components/ui/text-input";
 
 export function BillingSection({
   supabaseConfigured,
@@ -66,7 +67,7 @@ export function BillingSection({
             <Row
               title="Email"
               control={
-                <input
+                <TextInput
                   className="settings-control settings-control-wide"
                   value={billingEmail}
                   onChange={(event) => onBillingEmailChange(event.target.value)}
@@ -77,7 +78,7 @@ export function BillingSection({
             <Row
               title="Password"
               control={
-                <input
+                <TextInput
                   className="settings-control settings-control-wide"
                   value={billingPassword}
                   onChange={(event) => onBillingPasswordChange(event.target.value)}

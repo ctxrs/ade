@@ -1,4 +1,5 @@
 import { Row, Toggle } from "../SettingsPage.components";
+import { TextInput } from "../../../components/ui/text-input";
 import { useMergeQueueController } from "../hooks/useMergeQueueController";
 import { GeneralSection } from "./GeneralSection";
 
@@ -28,7 +29,7 @@ export function MergeQueueSection({ workspaceId, active }: MergeQueueSectionProp
           <Row
             title="Target branch"
             control={
-              <input
+              <TextInput
                 className="settings-control"
                 value={mergeQueueForm.target_branch}
                 onChange={(e) =>
@@ -46,7 +47,7 @@ export function MergeQueueSection({ workspaceId, active }: MergeQueueSectionProp
               <div className="settings-row-title">Verification command (optional)</div>
             </div>
             <div className="settings-row-field">
-              <input
+              <TextInput
                 className="settings-control settings-control-block wb-mono"
                 value={mergeQueueForm.verify_command}
                 onChange={(e) =>
@@ -85,7 +86,7 @@ export function MergeQueueSection({ workspaceId, active }: MergeQueueSectionProp
               <Row
                 title="Push remote"
                 control={
-                  <input
+                  <TextInput
                     className="settings-control"
                     value={mergeQueueForm.push_remote}
                     onChange={(e) =>
@@ -101,7 +102,7 @@ export function MergeQueueSection({ workspaceId, active }: MergeQueueSectionProp
               <Row
                 title="Push branch"
                 control={
-                  <input
+                  <TextInput
                     className="settings-control"
                     value={mergeQueueForm.push_branch}
                     onChange={(e) =>

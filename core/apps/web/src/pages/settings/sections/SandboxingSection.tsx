@@ -1,5 +1,6 @@
 import type { SandboxingSettings } from "../../../api/client";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
+import { TextInput } from "../../../components/ui/text-input";
 import { Card, Row } from "../SettingsPage.components";
 import { formatGiB } from "../SettingsPage.utils";
 
@@ -66,7 +67,7 @@ export function SandboxingSection({
           title="Idle shutdown (seconds)"
           description="Stop the local sandbox runtime after this much inactivity to reclaim RAM and swap."
           control={
-            <input
+            <TextInput
               className="settings-control"
               type="number"
               min={60}
@@ -82,7 +83,7 @@ export function SandboxingSection({
           title="Host pressure swap threshold (MiB)"
           description="If host swap use exceeds this threshold, ctx may stop an idle sandbox runtime sooner."
           control={
-            <input
+            <TextInput
               className="settings-control"
               type="number"
               min={0}

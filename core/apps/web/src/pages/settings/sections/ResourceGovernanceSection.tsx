@@ -4,6 +4,7 @@ import type {
   ResourceGovernanceStatus,
 } from "../../../api/client";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
+import { TextInput } from "../../../components/ui/text-input";
 import { Card, Row, Toggle } from "../SettingsPage.components";
 import { formatGiB } from "../SettingsPage.utils";
 
@@ -98,7 +99,7 @@ export function ResourceGovernanceSection({
               title="CPU quota (%)"
               description="100% = 1 core. Leave empty to use auto."
               control={
-                <input
+                <TextInput
                   className="settings-control"
                   type="number"
                   min={50}
@@ -114,7 +115,7 @@ export function ResourceGovernanceSection({
               title="Memory high (GiB)"
               description="Soft limit for reclaim pressure."
               control={
-                <input
+                <TextInput
                   className="settings-control"
                   type="number"
                   min={0}
@@ -130,7 +131,7 @@ export function ResourceGovernanceSection({
               title="Memory max (GiB)"
               description="Hard limit; processes are killed when exceeded."
               control={
-                <input
+                <TextInput
                   className="settings-control"
                   type="number"
                   min={0}

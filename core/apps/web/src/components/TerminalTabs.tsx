@@ -2,6 +2,7 @@ import React from "react";
 import { ChevronDown, Plus, SplitSquareVertical, Terminal as TerminalIcon, X } from "lucide-react";
 import type { TerminalSession } from "@ctx/types";
 import { idToString } from "../api/client";
+import { TextInput } from "./ui/text-input";
 import type { TerminalScope } from "../workbench/types";
 
 type TerminalTabsProps = {
@@ -118,7 +119,7 @@ export function TerminalTabs({
                 <TerminalIcon size={14} />
               )}
               {isRenaming ? (
-                <input
+                <TextInput
                   ref={renameInputRef}
                   className="wb-terminal-tab-input"
                   value={renameValue}

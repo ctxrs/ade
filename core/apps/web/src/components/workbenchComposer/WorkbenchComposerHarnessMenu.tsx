@@ -10,6 +10,7 @@ import { hasConfiguredHarnessAuth } from "../../utils/providerAuthStatus";
 import { UNSUPPORTED_HARNESS_IDS } from "../../utils/harnessCatalog";
 import { trackFeatureUsed, trackProviderSelected } from "../../utils/analytics";
 import { installErrorSummary } from "../../utils/providerInstallUi";
+import { TextInput } from "../ui/text-input";
 import { MenuTitleRow } from "./WorkbenchComposerMenu";
 import { MENU_DESCRIPTIONS } from "./WorkbenchComposer.utils";
 import type { NewSessionProps } from "./WorkbenchComposer.types";
@@ -141,7 +142,7 @@ export function WorkbenchComposerHarnessMenu({
     <div className="wb-menu wb-harness-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
       <div className="wb-menu-top">
         <MenuTitleRow title="Agents" description={MENU_DESCRIPTIONS.harness} tooltipId="wb-menu-tooltip-harness" />
-        <input
+        <TextInput
           className="wb-menu-search"
           value={harnessSearch}
           onChange={(e) => setHarnessSearch(e.target.value)}

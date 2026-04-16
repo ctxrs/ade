@@ -4,6 +4,7 @@ import { guessAttachmentName } from "../SettingsPage.utils";
 import { formatAttachmentStatus } from "../SettingsPage.helpers";
 import { idToString, type WorkspaceAttachment } from "../../../api/client";
 import { ExternalLink } from "../../../components/ExternalLink";
+import { TextInput } from "../../../components/ui/text-input";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -385,7 +386,7 @@ export function WorkspaceAttachmentsSection({ workspaceId, active }: WorkspaceAt
               >
                 <label className="settings-harness-modal-label" htmlFor="attachments-source">
                   Repository URL
-                  <input
+                  <TextInput
                     id="attachments-source"
                     className="settings-control settings-control-wide"
                     value={attachmentSource}
@@ -395,7 +396,7 @@ export function WorkspaceAttachmentsSection({ workspaceId, active }: WorkspaceAt
                 </label>
                 <label className="settings-harness-modal-label" htmlFor="attachments-name">
                   Display name
-                  <input
+                  <TextInput
                     id="attachments-name"
                     className="settings-control settings-control-wide"
                     value={attachmentName}
@@ -406,7 +407,7 @@ export function WorkspaceAttachmentsSection({ workspaceId, active }: WorkspaceAt
                 </label>
                 <label className="settings-harness-modal-label" htmlFor="attachments-revision">
                   Revision (optional)
-                  <input
+                  <TextInput
                     id="attachments-revision"
                     className="settings-control settings-control-wide"
                     value={attachmentRevision}
@@ -444,7 +445,7 @@ export function WorkspaceAttachmentsSection({ workspaceId, active }: WorkspaceAt
               >
                 <label className="settings-harness-modal-label" htmlFor="attachments-docs-source">
                   Docs URL
-                  <input
+                  <TextInput
                     id="attachments-docs-source"
                     className="settings-control settings-control-wide"
                     value={docsAttachmentSource}
@@ -454,7 +455,7 @@ export function WorkspaceAttachmentsSection({ workspaceId, active }: WorkspaceAt
                 </label>
                 <label className="settings-harness-modal-label" htmlFor="attachments-docs-name">
                   Display name
-                  <input
+                  <TextInput
                     id="attachments-docs-name"
                     className="settings-control settings-control-wide"
                     value={docsAttachmentName}

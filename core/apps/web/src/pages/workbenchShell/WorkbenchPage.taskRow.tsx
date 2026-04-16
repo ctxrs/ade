@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import React from "react";
 import { Archive, Ellipsis, LayersPlus, X } from "lucide-react";
+import { TextInput } from "../../components/ui/text-input";
 import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
 import { shouldSendOnEnter } from "../../utils/keyboard";
 import { formatRelativeAgeShort } from "../../utils/relativeTime";
@@ -180,7 +181,7 @@ export const TaskRow = React.memo(function TaskRow({
       </div>
       <div className="wb-task-body">
         {isRenaming ? (
-          <input
+          <TextInput
             ref={renameInputRef}
             className="wb-task-rename"
             value={renameDraft}

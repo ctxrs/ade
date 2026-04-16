@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { TextInput } from "./ui/text-input";
 import { errorMessage } from "../utils/errorMessage";
 
 type AskUserQuestionOption = { label: string; description?: string };
@@ -156,7 +157,7 @@ export function AskUserQuestionModal({
             {allowOther ? (
               <label className="askq-other">
                 <div className="askq-other-label">Other</div>
-                <input
+                <TextInput
                   className="askq-other-input"
                   value={otherByQuestion[active.question] ?? ""}
                   disabled={busy}

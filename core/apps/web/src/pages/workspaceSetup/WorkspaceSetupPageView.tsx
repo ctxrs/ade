@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
 import LauncherBrand from "../../components/LauncherBrand";
+import { TextInput, Textarea } from "../../components/ui/text-input";
 import {
   AuthImportStepPanel,
   HarnessDownloadsStepPanel,
@@ -187,7 +188,7 @@ export function WorkspaceSetupPageView({
                   <div className="wizard-input">
                     <label>
                       Allowed hosts (one per line)
-                      <textarea
+                      <Textarea
                         data-testid="wizard-network-allowlist"
                         placeholder={"github.com\nregistry.npmjs.org\npypi.org"}
                         value={networkAllowlist}
@@ -205,7 +206,7 @@ export function WorkspaceSetupPageView({
                     <div className="wizard-input">
                       <label>
                         Remote host
-                        <input
+                        <TextInput
                           data-testid="wizard-remote-host"
                           placeholder="user@host"
                           value={remoteHostInput}
@@ -216,7 +217,7 @@ export function WorkspaceSetupPageView({
                     <div className="wizard-input">
                       <label>
                         Remote daemon port
-                        <input
+                        <TextInput
                           data-testid="wizard-remote-port"
                           inputMode="numeric"
                           placeholder="4399"
@@ -228,7 +229,7 @@ export function WorkspaceSetupPageView({
                     <div className="wizard-input">
                       <label>
                         Remote data directory
-                        <input
+                        <TextInput
                           data-testid="wizard-remote-data-dir"
                           placeholder="Optional; defaults to ~/.ctx"
                           value={remoteDataDirInput}
@@ -240,17 +241,16 @@ export function WorkspaceSetupPageView({
                       <div className="wizard-input">
                         <label>
                           {remotePasswordPromptMode === "admin" ? "Remote Admin Password" : "SSH Password"}
-                          <input
+                          <TextInput
                             data-testid="wizard-remote-password-once"
                             type="password"
-                            autoComplete="current-password"
-                              value={remotePasswordInput}
-                              onChange={(event) => {
-                                setCreateError(null);
-                                onRemotePasswordInputChange(event.target.value);
-                                if (remoteStatus !== "idle") {
-                                  setRemoteStatus("idle");
-                                  setRemoteError(null);
+                            value={remotePasswordInput}
+                            onChange={(event) => {
+                              setCreateError(null);
+                              onRemotePasswordInputChange(event.target.value);
+                              if (remoteStatus !== "idle") {
+                                setRemoteStatus("idle");
+                                setRemoteError(null);
                               }
                             }}
                           />
@@ -295,10 +295,9 @@ export function WorkspaceSetupPageView({
                     <div className="wizard-input">
                       <label>
                         Linux Admin Password
-                        <input
+                        <TextInput
                           data-testid="wizard-local-admin-password-once"
                           type="password"
-                          autoComplete="current-password"
                           value={localAdminPasswordInput}
                           onChange={(event) => {
                             setCreateError(null);
@@ -409,7 +408,7 @@ export function WorkspaceSetupPageView({
                       <div className="wizard-input">
                         <label>
                           Endpoint base URL
-                          <input
+                          <TextInput
                             data-testid="wizard-titling-remote-base-url"
                             placeholder="https://api.your-llm-gateway.example/v1"
                             value={titlingRemoteBaseUrl}
@@ -421,7 +420,7 @@ export function WorkspaceSetupPageView({
                         </label>
                         <label>
                           API key
-                          <input
+                          <TextInput
                             data-testid="wizard-titling-remote-api-key"
                             placeholder="sk-..."
                             value={titlingRemoteApiKey}
@@ -434,7 +433,7 @@ export function WorkspaceSetupPageView({
                         </label>
                         <label>
                           Model
-                          <input
+                          <TextInput
                             data-testid="wizard-titling-remote-model"
                             placeholder="model-slug"
                             value={titlingRemoteModel}
@@ -492,7 +491,7 @@ export function WorkspaceSetupPageView({
                         ? "Existing folder"
                         : "Destination folder (host)"}
                       <div className="wizard-input-row">
-                        <input
+                        <TextInput
                           data-testid="wizard-source-path"
                           placeholder={selections.source === "import" ? "/Users/example-user/project" : "/Users/example-user/projects/"}
                           value={sourcePath}
@@ -548,7 +547,7 @@ export function WorkspaceSetupPageView({
                   <div className="wizard-input">
                     <label>
                       Repo URL
-                      <input
+                      <TextInput
                         data-testid="wizard-repo-url"
                         placeholder="https://github.com/org/repo.git"
                         value={repoUrl}
@@ -560,7 +559,7 @@ export function WorkspaceSetupPageView({
                     </label>
                     <label>
                       Branch (optional)
-                      <input
+                      <TextInput
                         data-testid="wizard-repo-branch"
                         placeholder="main"
                         value={repoBranch}
@@ -584,7 +583,7 @@ export function WorkspaceSetupPageView({
                 )}
                 {step.key === "setup" && (
                   <div className="wizard-input">
-                    <input
+                    <TextInput
                       data-testid="wizard-setup-hook"
                       placeholder="./prepare-worktree.sh"
                       value={setupHook}
@@ -599,7 +598,7 @@ export function WorkspaceSetupPageView({
                   <div className="wizard-input">
                     <label>
                       Workspace name (optional)
-                      <input
+                      <TextInput
                         data-testid="wizard-workspace-name"
                         placeholder="workspace"
                         value={workspaceName}
@@ -620,7 +619,7 @@ export function WorkspaceSetupPageView({
                   <div className="wizard-input">
                     <label>
                       Target branch
-                      <input
+                      <TextInput
                         data-testid="wizard-merge-target-branch"
                         placeholder="main"
                         value={targetBranch}
@@ -635,7 +634,7 @@ export function WorkspaceSetupPageView({
                     </label>
                     <label>
                       Verification command (optional)
-                      <input
+                      <TextInput
                         data-testid="wizard-merge-verify-command"
                         placeholder="./verify.sh"
                         value={verifyCommand}
@@ -681,7 +680,7 @@ export function WorkspaceSetupPageView({
                           <div className="wizard-input">
                             <label>
                               Push remote
-                              <input
+                              <TextInput
                                 data-testid="wizard-merge-push-remote"
                                 placeholder="origin"
                                 value={pushRemote}
@@ -694,7 +693,7 @@ export function WorkspaceSetupPageView({
                             </label>
                             <label>
                               Push branch
-                              <input
+                              <TextInput
                                 data-testid="wizard-merge-push-branch"
                                 placeholder={targetBranch || "main"}
                                 value={pushBranch}

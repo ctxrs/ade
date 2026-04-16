@@ -70,6 +70,13 @@ function makeProviderStatus(providerId: string, overrides: Partial<ProviderStatu
   };
 }
 
+function expectBrowserTextAssistsDisabled(element: HTMLElement) {
+  expect(element).toHaveAttribute("autocomplete", "off");
+  expect(element).toHaveAttribute("autocorrect", "off");
+  expect(element).toHaveAttribute("autocapitalize", "none");
+  expect(element).toHaveAttribute("spellcheck", "false");
+}
+
 describe("WorkbenchComposer textarea sizing", () => {
   type SubmitSnapshot = {
     activeTag: string | null;
@@ -181,6 +188,54 @@ describe("WorkbenchComposer textarea sizing", () => {
       await new Promise((r) => setTimeout(r, 0));
     });
     expect(textarea.style.height).toBe("380px");
+  });
+
+  it("disables browser text assistance on the composer textarea", () => {
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
+      const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: makeProviderStatus("codex"),
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{}}
+          onInstallProvider={vi.fn()}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={{}}
+          ensureProviderAuthSummary={async () => undefined}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
+          defaultProviderId="codex"
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+
+    expectBrowserTextAssistsDisabled(screen.getByPlaceholderText("@ for context, / for commands"));
   });
 
   it("avoids zeroing the textarea height during resize", async () => {

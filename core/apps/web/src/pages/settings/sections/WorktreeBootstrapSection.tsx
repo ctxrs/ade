@@ -1,5 +1,6 @@
 import { Check, Info, Loader2, X } from "lucide-react";
 import { promptAutosaveStatusLabel } from "../SettingsPage.utils";
+import { TextInput } from "../../../components/ui/text-input";
 import { Row, Toggle } from "../SettingsPage.components";
 import { useWorktreeBootstrapController } from "../hooks/useWorktreeBootstrapController";
 import { GeneralSection } from "./GeneralSection";
@@ -53,7 +54,7 @@ export function WorktreeBootstrapSection({ workspaceId, active }: WorktreeBootst
               </div>
             </div>
             <div className="settings-row-field">
-              <input
+              <TextInput
                 className="settings-control settings-control-block wb-mono"
                 value={worktreeBootstrapForm.setup_command}
                 onChange={(e) =>
@@ -73,7 +74,7 @@ export function WorktreeBootstrapSection({ workspaceId, active }: WorktreeBootst
             title="Timeout (seconds)"
             description="Timeout for the worktree bootstrap command."
             control={
-              <input
+              <TextInput
                 className="settings-control"
                 type="number"
                 min={1}

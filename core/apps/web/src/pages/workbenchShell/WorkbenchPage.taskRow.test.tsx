@@ -60,6 +60,10 @@ describe("TaskRow rename draft", () => {
     rerender(<TaskRow {...baseProps} key="b" title="Server update" />);
     const remountedInput = screen.getByLabelText("Rename task") as HTMLInputElement;
     expect(remountedInput.value).toBe("Draft title");
+    expect(remountedInput).toHaveAttribute("autocomplete", "off");
+    expect(remountedInput).toHaveAttribute("autocorrect", "off");
+    expect(remountedInput).toHaveAttribute("autocapitalize", "none");
+    expect(remountedInput).toHaveAttribute("spellcheck", "false");
   });
 
   it("opens the workbench task menu on context menu for real tasks", () => {

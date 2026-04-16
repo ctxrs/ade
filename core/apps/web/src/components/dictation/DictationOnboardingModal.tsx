@@ -1,4 +1,5 @@
 import { Cloud, Download, KeyRound, Laptop, X } from "lucide-react";
+import { TextInput } from "../ui/text-input";
 import type {
   DictationOnboardingCloudDraft,
   DictationOnboardingState,
@@ -164,7 +165,7 @@ export function DictationOnboardingModal({
             </div>
             <label className="settings-harness-modal-label">
               API key
-              <input
+              <TextInput
                 className="settings-control settings-control-wide"
                 value={state.cloud.apiKey}
                 onChange={(e) => onCloudChange({ apiKey: e.target.value })}
@@ -174,7 +175,7 @@ export function DictationOnboardingModal({
             </label>
             <label className="settings-harness-modal-label">
               API secret
-              <input
+              <TextInput
                 className="settings-control settings-control-wide"
                 value={state.cloud.apiSecret}
                 onChange={(e) => onCloudChange({ apiSecret: e.target.value })}
@@ -184,7 +185,7 @@ export function DictationOnboardingModal({
             </label>
             <label className="settings-harness-modal-label">
               Base URL
-              <input
+              <TextInput
                 className="settings-control settings-control-wide"
                 value={state.cloud.baseUrl}
                 onChange={(e) => onCloudChange({ baseUrl: e.target.value })}
@@ -193,7 +194,7 @@ export function DictationOnboardingModal({
             </label>
             <label className="settings-harness-modal-label">
               Model
-              <input
+              <TextInput
                 className="settings-control settings-control-wide"
                 value={state.cloud.model}
                 onChange={(e) => onCloudChange({ model: e.target.value })}
@@ -202,7 +203,7 @@ export function DictationOnboardingModal({
             </label>
             <label className="settings-harness-modal-label">
               Language
-              <input
+              <TextInput
                 className="settings-control settings-control-wide"
                 value={state.cloud.language}
                 onChange={(e) => onCloudChange({ language: e.target.value })}

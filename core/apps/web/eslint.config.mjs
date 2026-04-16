@@ -2,6 +2,7 @@ import reactHooks from "eslint-plugin-react-hooks";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 import noRawAnchorHrefRule from "./eslint/rules/no-raw-anchor-href.js";
+import noRawTextInputRule from "./eslint/rules/no-raw-text-input.js";
 
 const webFiles = ["src/**/*.{ts,tsx}"];
 
@@ -31,6 +32,7 @@ export default tseslint.config(
       "ctx-web": {
         rules: {
           "no-raw-anchor-href": noRawAnchorHrefRule,
+          "no-raw-text-input": noRawTextInputRule,
         },
       },
       "react-hooks": reactHooks,
@@ -42,6 +44,7 @@ export default tseslint.config(
       "prefer-const": "off",
       "constructor-super": "error",
       "ctx-web/no-raw-anchor-href": "error",
+      "ctx-web/no-raw-text-input": "error",
       "getter-return": "error",
       "no-async-promise-executor": "error",
       "no-constant-binary-expression": "error",
@@ -53,6 +56,12 @@ export default tseslint.config(
       "react-hooks/rules-of-hooks": "error",
       "use-isnan": "error",
       "valid-typeof": "error",
+    },
+  },
+  {
+    files: ["src/**/*.test.{ts,tsx}"],
+    rules: {
+      "ctx-web/no-raw-text-input": "off",
     },
   },
 );

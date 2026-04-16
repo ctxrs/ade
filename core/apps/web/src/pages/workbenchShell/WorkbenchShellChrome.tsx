@@ -3,6 +3,7 @@ import { Virtuoso, type ListRange } from "react-virtuoso";
 import { Link } from "react-router-dom";
 import { ChevronsLeft, ChevronsRight, Settings, SquarePen } from "lucide-react";
 
+import { TextInput } from "../../components/ui/text-input";
 import { TASK_LIST_COMPONENTS } from "./WorkbenchPage.taskList";
 import type { AnchorRect, TaskListContext, TaskListItem } from "./WorkbenchPage.types";
 
@@ -117,7 +118,7 @@ export function WorkbenchSidebar({
       <div className="wb-sidebar" aria-hidden={collapsed}>
         <div className="wb-sidebar-top">
           <div className="wb-sidebar-header">
-            <input
+            <TextInput
               ref={taskSearchRef}
               className="wb-search"
               data-testid="workbench-task-search"

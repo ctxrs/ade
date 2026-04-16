@@ -7,6 +7,8 @@ describe("daemonConnection", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.unstubAllEnvs();
+    vi.stubEnv("VITE_CTX_DAEMON_URL", "");
+    vi.stubEnv("VITE_CTX_AUTH_TOKEN", "");
     sessionStorage.clear();
     localStorage.clear();
     window.history.replaceState({}, "", "/");
@@ -250,6 +252,66 @@ describe("daemonConnection", () => {
 
     mod.bootstrapDaemonConnectionFromRuntime();
     const connection = mod.getDaemonConnection();
+    expect(connection.authToken).toBe("url-token");
+    expect(window.location.search).toBe("");
+  });
+
+  it("resets stale stored browser base to same-origin when URL token is present", async () => {
+    sessionStorage.setItem(
+      SESSION_CONNECTION_KEY,
+      JSON.stringify({
+        v: 1,
+        baseUrl: "http://127.0.0.1:4411",
+        wsBaseUrl: "ws://127.0.0.1:4411",
+        authToken: "stale-token",
+        source: "dev_env",
+      }),
+    );
+    localStorage.setItem(
+      LOCAL_PERSISTED_BASE_KEY,
+      JSON.stringify({
+        v: 1,
+        baseUrl: "http://127.0.0.1:4411",
+        wsBaseUrl: "ws://127.0.0.1:4411",
+      }),
+    );
+
+    const mod = await import("./daemonConnection");
+    window.history.replaceState({}, "", "/workspaces/ws-1?token=url-token");
+
+    mod.bootstrapDaemonConnectionFromRuntime();
+
+    const connection = mod.getDaemonConnection();
+    expect(connection.baseUrl).toBe(window.location.origin);
+    expect(connection.wsBaseUrl).toBe(window.location.origin.replace(/^http/, "ws"));
+    expect(connection.authToken).toBe("url-token");
+    expect(connection.source).toBe("url_token");
+    expect(localStorage.getItem(LOCAL_PERSISTED_BASE_KEY)).toBeNull();
+    expect(window.location.search).toBe("");
+  });
+
+  it("keeps explicit dev env daemon target authoritative when URL token is present", async () => {
+    vi.stubEnv("VITE_CTX_DAEMON_URL", "http://127.0.0.1:4399");
+    vi.stubEnv("VITE_CTX_AUTH_TOKEN", "env-token");
+    sessionStorage.setItem(
+      SESSION_CONNECTION_KEY,
+      JSON.stringify({
+        v: 1,
+        baseUrl: "http://127.0.0.1:4411",
+        wsBaseUrl: "ws://127.0.0.1:4411",
+        authToken: "stale-token",
+        source: "dev_env",
+      }),
+    );
+
+    const mod = await import("./daemonConnection");
+    window.history.replaceState({}, "", "/workspaces/ws-1?token=url-token");
+
+    mod.bootstrapDaemonConnectionFromRuntime();
+
+    const connection = mod.getDaemonConnection();
+    expect(connection.baseUrl).toBe("http://127.0.0.1:4399");
+    expect(connection.wsBaseUrl).toBe("ws://127.0.0.1:4399");
     expect(connection.authToken).toBe("url-token");
     expect(window.location.search).toBe("");
   });

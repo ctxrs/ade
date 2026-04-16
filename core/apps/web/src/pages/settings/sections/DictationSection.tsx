@@ -6,6 +6,7 @@ import {
   SelectValue,
 } from "../../../components/ui/select";
 import type { DictationSettings } from "../../../api/client";
+import { TextInput } from "../../../components/ui/text-input";
 import { MODEL_OPTIONS } from "../SettingsPage.constants";
 import { Row, Toggle } from "../SettingsPage.components";
 import { clampPct } from "../SettingsPage.utils";
@@ -153,7 +154,7 @@ export function DictationSection({ active }: DictationSectionProps) {
                 : "BCP-47 code (e.g. en, es, multi)."
             }
             control={
-              <input
+              <TextInput
                 className="settings-control"
                 value={language}
                 onChange={(e) => setLanguage(e.target.value)}
@@ -171,7 +172,7 @@ export function DictationSection({ active }: DictationSectionProps) {
                 title="Inference base URL"
                 description="LiveKit Agent Gateway endpoint."
                 control={
-                  <input
+                  <TextInput
                     className="settings-control settings-control-wide"
                     value={baseUrl}
                     onChange={(e) => setBaseUrl(e.target.value)}
@@ -184,7 +185,7 @@ export function DictationSection({ active }: DictationSectionProps) {
                 title="LiveKit API key"
                 description={apiKeySet ? "Key is stored; enter a new value to rotate." : "Stored locally in your ctx data dir."}
                 control={
-                  <input
+                  <TextInput
                     className="settings-control settings-control-wide"
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
@@ -198,7 +199,7 @@ export function DictationSection({ active }: DictationSectionProps) {
                 title="LiveKit API secret"
                 description={apiSecretSet ? "Secret is stored; enter a new value to rotate." : "Required."}
                 control={
-                  <input
+                  <TextInput
                     className="settings-control settings-control-wide"
                     value={apiSecret}
                     onChange={(e) => setApiSecret(e.target.value)}

@@ -1,3 +1,4 @@
+import { TextInput } from "./ui/text-input";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   buildAskUserQuestionAnswersFromState,
@@ -329,7 +330,7 @@ export function AskUserQuestionCard({
               return (
                 <div className="askq-other">
                   <div className="askq-other-label">{otherLabel}</div>
-                  <input
+                  <TextInput
                     ref={(node) => {
                       otherInputRefs.current[activeQuestion.question] = node;
                     }}

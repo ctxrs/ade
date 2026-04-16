@@ -7,6 +7,7 @@ import {
   SelectValue,
 } from "../../../components/ui/select";
 import type { DesktopEditorSettings } from "../../../utils/desktop";
+import { TextInput } from "../../../components/ui/text-input";
 import type { ThemeMode } from "../../../utils/theme";
 import { EDITOR_OPTIONS } from "../SettingsPage.constants";
 import { Row } from "../SettingsPage.components";
@@ -88,7 +89,7 @@ export function GeneralSettingsSection({
               title="Custom IDE command"
               description="Command to run when opening files."
               control={
-                <input
+                <TextInput
                   className="settings-control settings-control-wide"
                   value={editorSettings.custom_command ?? ""}
                   onChange={(e) => setEditorSettings((prev) => ({ ...prev, custom_command: e.target.value }))}
@@ -103,7 +104,7 @@ export function GeneralSettingsSection({
               title="VS Code Remote Authority"
               description="Optional: ssh-remote+my-host for remote worktrees."
               control={
-                <input
+                <TextInput
                   className="settings-control settings-control-wide"
                   value={editorSettings.remote_authority ?? ""}
                   onChange={(e) => setEditorSettings((prev) => ({ ...prev, remote_authority: e.target.value }))}

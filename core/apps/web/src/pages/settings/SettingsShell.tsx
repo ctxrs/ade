@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { TextInput } from "../../components/ui/text-input";
 import type { SectionId, SettingsSectionMeta } from "./SettingsPage.types";
 
 export function SettingsShell({
@@ -35,7 +36,7 @@ export function SettingsShell({
           </div>
 
           <div className="settings-search">
-            <input
+            <TextInput
               className="settings-search-input"
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}

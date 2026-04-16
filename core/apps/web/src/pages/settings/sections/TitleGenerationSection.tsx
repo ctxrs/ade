@@ -1,3 +1,4 @@
+import { TextInput } from "../../../components/ui/text-input";
 import {
   Select,
   SelectContent,
@@ -96,7 +97,7 @@ export function TitleGenerationSection({ active }: TitleGenerationSectionProps) 
                   title="Base URL"
                   description="OpenAI-compatible endpoint for title generation (best-effort; falls back to truncating the prompt)."
                   control={
-                    <input
+                    <TextInput
                       className="settings-control settings-control-wide"
                       value={titleGenBaseUrl}
                       onChange={(e) => setTitleGenBaseUrl(e.target.value)}
@@ -108,7 +109,7 @@ export function TitleGenerationSection({ active }: TitleGenerationSectionProps) 
                   title="API key"
                   description={titleGenApiKeySet ? "Key is stored; enter a new value to rotate." : "Stored locally in your ctx data dir."}
                   control={
-                    <input
+                    <TextInput
                       className="settings-control settings-control-wide"
                       value={titleGenApiKey}
                       onChange={(e) => setTitleGenApiKey(e.target.value)}
@@ -121,7 +122,7 @@ export function TitleGenerationSection({ active }: TitleGenerationSectionProps) 
                   title="Model"
                   description="Model used for generating session titles."
                   control={
-                    <input
+                    <TextInput
                       className="settings-control settings-control-wide"
                       value={titleGenModel}
                       onChange={(e) => setTitleGenModel(e.target.value)}
@@ -148,7 +149,7 @@ export function TitleGenerationSection({ active }: TitleGenerationSectionProps) 
                   title="Local model id"
                   description="Model id for the local title generator."
                   control={
-                    <input
+                    <TextInput
                       className="settings-control settings-control-wide"
                       value={titleGenLocalModelId}
                       onChange={(e) => setTitleGenLocalModelId(e.target.value)}

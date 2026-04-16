@@ -11,6 +11,7 @@ import { shouldHydrateProviderModels } from "../../pages/workbenchShell/useWorkb
 import { ComposerAutocompleteMenu } from "../ComposerAutocompleteMenu";
 import { useComposerAutocomplete } from "../../state/useComposerAutocomplete";
 import { imageFilesToMessageAttachments } from "../../utils/messageAttachments";
+import { TextInput, Textarea } from "../ui/text-input";
 import {
   extractImageFilesFromClipboardTransfer,
   clipboardHasImagePayload,
@@ -588,7 +589,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     <div className="wb-menu wb-model-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
       <div className="wb-menu-top">
         <MenuTitleRow title="Model" description={MENU_DESCRIPTIONS.model} tooltipId="wb-menu-tooltip-model" />
-        <input
+        <TextInput
           className="wb-menu-search"
           value={variant === "activeSession" ? "" : ""}
           onChange={() => {}}
@@ -617,7 +618,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         <div className="wb-menu-empty">
           <div style={{ marginBottom: 6 }}>{activeModelData.loading ? "Loading models…" : "Enter model id"}</div>
           {!activeModelData.loading ? (
-            <input
+            <TextInput
               className="wb-menu-search"
               value={activeModelData.parsed.full}
               onChange={(e) => setActiveModelId(e.target.value)}
@@ -725,7 +726,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         </div>
       )}
 
-      <textarea
+      <Textarea
         ref={setTextareaElement}
         className={
           variant === "newSession"

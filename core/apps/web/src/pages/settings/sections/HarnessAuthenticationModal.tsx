@@ -1,3 +1,4 @@
+import { TextInput, Textarea } from "../../../components/ui/text-input";
 import { KeyRound, User as UserIcon, X } from "lucide-react";
 import { ExternalLink } from "../../../components/ExternalLink";
 import {
@@ -274,7 +275,7 @@ export function HarnessAuthenticationModal({
               <>
                 <label className="settings-harness-modal-label">
                   Label (optional)
-                  <input
+                  <TextInput
                     className="settings-control"
                     value={harnessAuthModal.subscription_label}
                     onChange={(e) => patchHarnessAuthModal({ subscription_label: e.target.value })}
@@ -284,7 +285,7 @@ export function HarnessAuthenticationModal({
                 </label>
                 <label className="settings-harness-modal-label">
                   Setup token (recommended)
-                  <input
+                  <TextInput
                     className="settings-control"
                     value={harnessAuthModal.subscription_token}
                     onChange={(e) => patchHarnessAuthModal({ subscription_token: e.target.value })}
@@ -295,7 +296,6 @@ export function HarnessAuthenticationModal({
                     }}
                     placeholder="sk-ant-oat..."
                     type="password"
-                    autoComplete="new-password"
                   />
                 </label>
               </>
@@ -304,7 +304,7 @@ export function HarnessAuthenticationModal({
               <>
                 <label className="settings-harness-modal-label">
                   Label (optional)
-                  <input
+                  <TextInput
                     className="settings-control"
                     value={harnessAuthModal.subscription_label}
                     onChange={(e) => patchHarnessAuthModal({ subscription_label: e.target.value })}
@@ -331,7 +331,7 @@ export function HarnessAuthenticationModal({
                 {harnessAuthModal.provider_id === "kimi" && harnessAuthModal.subscription_device_code ? (
                   <label className="settings-harness-modal-label">
                     Kimi device code
-                    <input
+                    <TextInput
                       className="settings-control settings-control-wide"
                       value={harnessAuthModal.subscription_device_code}
                       readOnly
@@ -344,7 +344,7 @@ export function HarnessAuthenticationModal({
               <>
                 <label className="settings-harness-modal-label">
                   Label (optional)
-                  <input
+                  <TextInput
                     className="settings-control"
                     value={harnessAuthModal.subscription_label}
                     onChange={(e) => patchHarnessAuthModal({ subscription_label: e.target.value })}
@@ -354,7 +354,7 @@ export function HarnessAuthenticationModal({
                 </label>
                 <label className="settings-harness-modal-label">
                   Email (optional)
-                  <input
+                  <TextInput
                     className="settings-control"
                     value={harnessAuthModal.subscription_email}
                     onChange={(e) => patchHarnessAuthModal({ subscription_email: e.target.value })}
@@ -363,7 +363,7 @@ export function HarnessAuthenticationModal({
                 </label>
                 <label className="settings-harness-modal-label">
                   Token
-                  <input
+                  <TextInput
                     className="settings-control"
                     value={harnessAuthModal.subscription_token}
                     onChange={(e) => patchHarnessAuthModal({ subscription_token: e.target.value })}
@@ -510,7 +510,7 @@ export function HarnessAuthenticationModal({
               <>
                 <label className="settings-harness-modal-label">
                   {modalApiKeyLabel}
-                  <textarea
+                  <Textarea
                     className="settings-control settings-control-wide"
                     placeholder={modalApiKeyPlaceholder}
                     value={harnessAuthModal.service_account_json}
@@ -520,7 +520,7 @@ export function HarnessAuthenticationModal({
                 </label>
                 <label className="settings-harness-modal-label">
                   Project ID (optional)
-                  <input
+                  <TextInput
                     className="settings-control settings-control-wide"
                     placeholder="my-gcp-project"
                     value={harnessAuthModal.project_id}
@@ -529,7 +529,7 @@ export function HarnessAuthenticationModal({
                 </label>
                 <label className="settings-harness-modal-label">
                   Location (optional)
-                  <input
+                  <TextInput
                     className="settings-control settings-control-wide"
                     placeholder="global"
                     value={harnessAuthModal.location}
@@ -540,7 +540,7 @@ export function HarnessAuthenticationModal({
             ) : (
               <label className="settings-harness-modal-label">
                 {modalApiKeyLabel}
-                <input
+                <TextInput
                   className="settings-control settings-control-wide"
                   type="password"
                   placeholder={modalApiKeyPlaceholder}
@@ -552,7 +552,7 @@ export function HarnessAuthenticationModal({
             {!modalProviderUsesNativeKeyFlow ? (
               <label className="settings-harness-modal-label">
                 Manual model slugs (optional)
-                <textarea
+                <Textarea
                   className="settings-control settings-control-wide"
                   value={harnessAuthModal.manual_model_ids}
                   onChange={(e) => patchHarnessAuthModal({ manual_model_ids: e.target.value })}
@@ -563,7 +563,7 @@ export function HarnessAuthenticationModal({
             ) : null}
             <label className="settings-harness-modal-label">
               {modalEndpointNameLabel}
-              <input
+              <TextInput
                 className="settings-control settings-control-wide"
                 value={harnessAuthModal.endpoint_name}
                 onChange={(e) => patchHarnessAuthModal({ endpoint_name: e.target.value })}
@@ -572,7 +572,7 @@ export function HarnessAuthenticationModal({
             {showBaseUrlInput && !modalProviderUsesNativeKeyFlow ? (
               <label className="settings-harness-modal-label">
                 Base URL{modalRequiresBaseUrl ? "" : " (optional)"}
-                <input
+                <TextInput
                   className="settings-control settings-control-wide"
                   placeholder="https://api.example.com/v1"
                   value={harnessAuthModal.base_url}

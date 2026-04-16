@@ -48,7 +48,8 @@ describe("AskUserQuestionCard", () => {
       throw new Error("Expected other option");
     }
     fireEvent.click(otherOption);
-    fireEvent.change(screen.getByPlaceholderText("Type something"), {
+    const otherInput = screen.getByPlaceholderText("Type something");
+    fireEvent.change(otherInput, {
       target: { value: "A custom answer" },
     });
     fireEvent.click(screen.getByRole("tab", { name: "Submit" }));
