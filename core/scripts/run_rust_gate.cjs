@@ -16,6 +16,7 @@ const {
   ROOT_RUST_INPUTS,
   collectChangedCrates,
   expandReverseDependencies,
+  filterGateManagedCrateNames,
   getTurboTaskNamesForCrates,
 } = require("./lib/rust_workspace_graph.cjs");
 const { runTurbo } = require("./lib/turbo_runner.cjs");
@@ -76,7 +77,7 @@ function resolveCrates(graph, args) {
     return [...AGENT_GATE_CRATES];
   }
   if (args.all) {
-    return graph.crates.map((crate) => crate.crateName);
+    return filterGateManagedCrateNames(graph.crates.map((crate) => crate.crateName));
   }
 
   const workspaceLevelChange = args.changedFiles.some((changedFile) => {
@@ -84,7 +85,7 @@ function resolveCrates(graph, args) {
     return ROOT_RUST_INPUTS.includes(normalized);
   });
   if (workspaceLevelChange) {
-    return graph.crates.map((crate) => crate.crateName).sort();
+    return filterGateManagedCrateNames(graph.crates.map((crate) => crate.crateName));
   }
 
   const directCrates = new Set(args.crates);
@@ -97,9 +98,9 @@ function resolveCrates(graph, args) {
     FORCE_REVERSE_DEP_CRATES.has(crateName),
   );
   if (!args.includeReverseDeps && !forcedReverseDeps) {
-    return resolved;
+    return filterGateManagedCrateNames(resolved);
   }
-  return expandReverseDependencies(graph, resolved);
+  return filterGateManagedCrateNames(expandReverseDependencies(graph, resolved));
 }
 
 function runTaskPhase({ coreRoot, env, crateNames, taskKind, turboConcurrency = null }) {

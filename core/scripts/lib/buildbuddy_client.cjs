@@ -115,19 +115,53 @@ async function getInvocation({
   includeChildInvocations = false,
   includeMetadata = false,
   invocationId,
+  commitSha = "",
 }) {
+  const invocations = await getInvocations({
+    apiBaseUrl,
+    apiKey,
+    includeArtifacts,
+    includeChildInvocations,
+    includeMetadata,
+    invocationId,
+    commitSha,
+  });
+  return invocations[0] || null;
+}
+
+async function getInvocations({
+  apiBaseUrl,
+  apiKey,
+  includeArtifacts = false,
+  includeChildInvocations = false,
+  includeMetadata = false,
+  invocationId = "",
+  commitSha = "",
+  pageToken = "",
+}) {
+  const selector = {};
+  if (String(invocationId || "").trim()) {
+    selector.invocation_id = String(invocationId).trim();
+  }
+  if (String(commitSha || "").trim()) {
+    selector.commit_sha = String(commitSha).trim();
+  }
+  if (Object.keys(selector).length === 0) {
+    throw new Error("BuildBuddy invocation selector requires invocationId or commitSha");
+  }
   const response = await apiRequest({
     apiBaseUrl,
     apiKey,
     pathName: "/api/v1/GetInvocation",
     payload: {
-      selector: { invocation_id: invocationId },
+      selector,
       include_artifacts: includeArtifacts,
       include_child_invocations: includeChildInvocations,
       include_metadata: includeMetadata,
+      ...(String(pageToken || "").trim() ? { page_token: String(pageToken).trim() } : {}),
     },
   });
-  return Array.isArray(response.invocation) ? response.invocation[0] || null : null;
+  return Array.isArray(response.invocation) ? response.invocation : [];
 }
 
 async function getInvocationLogPage({ apiBaseUrl, apiKey, invocationId, pageToken = "" }) {
@@ -159,5 +193,6 @@ module.exports = {
   executeWorkflow,
   getFile,
   getInvocation,
+  getInvocations,
   getInvocationLogPage,
 };

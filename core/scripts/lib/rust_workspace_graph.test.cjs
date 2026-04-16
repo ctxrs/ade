@@ -3,6 +3,7 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  MANUAL_ONLY_RUST_CRATES,
   buildGeneratedPackageScripts,
   buildGeneratedTurboTasks,
   buildWorkspaceGraph,
@@ -65,6 +66,9 @@ test("generated package scripts include per-crate and ctx-http suite tasks", () 
   assert.equal(typeof scripts["rust:crate:test:ctx-http"], "string");
   assert.equal(typeof scripts["rust:crate:nextest:ctx-http"], "string");
   assert.equal(typeof scripts["rust:ctx-http:test:workspace-stream"], "string");
+  assert.equal(scripts["rust:crate:clippy:ctx-worker-gateway"], undefined);
+  assert.equal(scripts["rust:crate:test:ctx-worker-gateway"], undefined);
+  assert.equal(scripts["rust:crate:nextest:ctx-worker-gateway"], undefined);
 });
 
 test("generated turbo tasks include dependency-closure inputs", () => {
@@ -129,6 +133,14 @@ test("generated turbo tasks include extracted dependency crates for affected ctx
     sandboxCloudTask.inputs.includes("crates/ctx-workspace-runtime/**"),
     true,
   );
+  assert.equal(
+    sandboxCloudTask.inputs.includes("crates/ctx-http/tests/cloud_gateway_azure_e2e.rs"),
+    false,
+  );
+  assert.equal(
+    sandboxCloudTask.inputs.includes("crates/ctx-http/tests/cloud_gateway_gcp_e2e.rs"),
+    false,
+  );
 
   const providerAuthTask = tasks["rust:ctx-http:test:provider-auth"];
   assert.equal(
@@ -146,4 +158,15 @@ test("ctx-http test expansion returns explicit suite task names", () => {
   assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("base")), true);
   assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("workspace-stream")), true);
   assert.equal(taskNames.includes(getCtxHttpSuiteTaskName("sandbox-cloud")), true);
+});
+
+test("manual-only Rust crates stay out of generated CI task surfaces", () => {
+  assert.equal(MANUAL_ONLY_RUST_CRATES.has("ctx-worker-gateway"), true);
+
+  const graph = buildWorkspaceGraph(coreRoot);
+  const tasks = buildGeneratedTurboTasks(graph);
+
+  assert.equal(tasks["rust:crate:clippy:ctx-worker-gateway"], undefined);
+  assert.equal(tasks["rust:crate:test:ctx-worker-gateway"], undefined);
+  assert.equal(tasks["rust:crate:nextest:ctx-worker-gateway"], undefined);
 });

@@ -6,6 +6,10 @@ const CTX_HTTP_SUITE_SCRIPT_INPUTS = [
   "scripts/ctx_http_suite_task.cjs",
   "scripts/lib/ctx_http_suites.cjs",
 ];
+const MANUAL_ONLY_CTX_HTTP_TEST_FILES = new Set([
+  "cloud_gateway_azure_e2e",
+  "cloud_gateway_gcp_e2e",
+]);
 const CTX_HTTP_SHARED_SOURCE_GLOBS = [
   "crates/ctx-http/src/api/auth.rs",
   "crates/ctx-http/src/api/errors.rs",
@@ -273,7 +277,7 @@ const CTX_HTTP_SUITES = [
       "ctx-workspace-runtime",
     ],
     name: "sandbox-cloud",
-    description: "sandbox, cloud, system, and external-runtime ctx-http coverage",
+    description: "sandbox, system, and external-runtime ctx-http coverage",
     sourceGlobs: [
       "crates/ctx-http/src/container_builder.rs",
       "crates/ctx-http/src/container_fs.rs",
@@ -293,8 +297,6 @@ const CTX_HTTP_SUITES = [
       "crates/ctx-http/src/workspace_runtime/**",
     ],
     testFiles: [
-      "cloud_gateway_azure_e2e",
-      "cloud_gateway_gcp_e2e",
       "disk_isolated_sandbox_smoke",
       "disk_isolated_vcs_integrity",
       "harness_container_sandbox_e2e",
@@ -360,10 +362,14 @@ function validateCtxHttpSuites(coreRoot) {
       owners,
       testFile,
     }));
-  const missing = actualFiles.filter((testFile) => !assignedByFile.has(testFile));
+  const manualOnly = actualFiles.filter((testFile) => MANUAL_ONLY_CTX_HTTP_TEST_FILES.has(testFile));
+  const missing = actualFiles.filter(
+    (testFile) => !assignedByFile.has(testFile) && !MANUAL_ONLY_CTX_HTTP_TEST_FILES.has(testFile),
+  );
   const unknown = [...assignedByFile.keys()].filter((testFile) => !actualFiles.includes(testFile));
   return {
     duplicates,
+    manualOnly,
     missing,
     unknown,
   };
@@ -403,6 +409,7 @@ module.exports = {
   CTX_HTTP_SHARED_SOURCE_GLOBS,
   CTX_HTTP_SUITE_PREFIX,
   CTX_HTTP_SUITE_SCRIPT_INPUTS,
+  MANUAL_ONLY_CTX_HTTP_TEST_FILES,
   buildCtxHttpSuiteCommands,
   getCtxHttpSuiteByName,
   getCtxHttpSuiteNames,

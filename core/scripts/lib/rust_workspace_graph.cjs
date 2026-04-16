@@ -46,6 +46,10 @@ const GENERATED_TURBO_TASK_PREFIXES = [
   "rust:ctx-http:test:",
 ];
 
+// These crates remain in the Cargo workspace for manual/local use, but the
+// default CI/release gate surface should not auto-generate tasks for them.
+const MANUAL_ONLY_RUST_CRATES = new Set(["ctx-worker-gateway"]);
+
 function runCargoMetadata(coreRoot) {
   const output = childProcess.execFileSync(
     "cargo",
@@ -56,6 +60,18 @@ function runCargoMetadata(coreRoot) {
     },
   );
   return JSON.parse(output);
+}
+
+function isGateManagedCrate(crateName) {
+  return !MANUAL_ONLY_RUST_CRATES.has(crateName);
+}
+
+function filterGateManagedCrateNames(crateNames) {
+  return [...new Set(crateNames)].filter((crateName) => isGateManagedCrate(crateName)).sort();
+}
+
+function getGateManagedCrates(graph) {
+  return graph.crates.filter((crate) => isGateManagedCrate(crate.crateName));
 }
 
 function normalizePathForMatch(value) {
@@ -252,7 +268,7 @@ function buildGeneratedPackageScripts(graph) {
     "rust:turbo:sync": "node scripts/sync_rust_turbo_tasks.cjs",
     "rust:turbo:check": "node scripts/sync_rust_turbo_tasks.cjs --check",
   };
-  for (const crate of graph.crates) {
+  for (const crate of getGateManagedCrates(graph)) {
     scripts[getTurboClippyTaskName(crate.crateName)] =
       `node scripts/rust_crate_task.cjs --crate ${crate.crateName} --task clippy`;
     if (crate.crateName === "ctx-http") {
@@ -274,7 +290,7 @@ function buildGeneratedPackageScripts(graph) {
 
 function buildGeneratedTurboTasks(graph) {
   const tasks = {};
-  for (const crate of graph.crates) {
+  for (const crate of getGateManagedCrates(graph)) {
     const inputs = getClosureInputGlobs(graph, crate.crateName);
     tasks[getTurboClippyTaskName(crate.crateName)] = {
       inputs,
@@ -324,6 +340,7 @@ module.exports = {
   GENERATED_PACKAGE_SCRIPT_NAMES,
   GENERATED_PACKAGE_SCRIPT_PREFIXES,
   GENERATED_TURBO_TASK_PREFIXES,
+  MANUAL_ONLY_RUST_CRATES,
   ROOT_RUST_INPUTS,
   buildGeneratedPackageScripts,
   buildGeneratedTurboTasks,
@@ -331,9 +348,11 @@ module.exports = {
   collectChangedCrates,
   expandDependencies,
   expandReverseDependencies,
+  filterGateManagedCrateNames,
   getCtxHttpSuiteTaskName,
   getClosureInputGlobs,
   getCrateByChangedPath,
+  getGateManagedCrates,
   getTurboClippyTaskName,
   getTurboNextestTaskName,
   getTurboTaskNamesForCrates,

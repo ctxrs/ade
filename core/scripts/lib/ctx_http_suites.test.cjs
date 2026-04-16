@@ -5,6 +5,7 @@ const test = require("node:test");
 const {
   CTX_HTTP_SHARED_SOURCE_GLOBS,
   CTX_HTTP_SUITES,
+  MANUAL_ONLY_CTX_HTTP_TEST_FILES,
   buildCtxHttpSuiteCommands,
   getCtxHttpSuiteNames,
   getCtxHttpSuiteTaskName,
@@ -18,6 +19,7 @@ test("ctx-http suite assignments cover every integration test exactly once", () 
 
   assert.deepEqual(validation, {
     duplicates: [],
+    manualOnly: ["cloud_gateway_azure_e2e", "cloud_gateway_gcp_e2e"],
     missing: [],
     unknown: [],
   });
@@ -59,10 +61,22 @@ test("ctx-http suite command builder expands base and meta suites predictably", 
     args: ["test", "-q", "-p", "ctx-http", "--lib", "--bins"],
     command: "cargo",
   });
+  assert.equal(
+    allCommands.some((command) => command.args.includes("cloud_gateway_azure_e2e")),
+    false,
+  );
+  assert.equal(
+    allCommands.some((command) => command.args.includes("cloud_gateway_gcp_e2e")),
+    false,
+  );
 });
 
 test("ctx-http integration suites declare source ownership and dependency crates", () => {
   assert.equal(CTX_HTTP_SHARED_SOURCE_GLOBS.includes("crates/ctx-http/src/daemon/**"), true);
+  assert.deepEqual([...MANUAL_ONLY_CTX_HTTP_TEST_FILES].sort(), [
+    "cloud_gateway_azure_e2e",
+    "cloud_gateway_gcp_e2e",
+  ]);
 
   for (const suite of CTX_HTTP_SUITES) {
     assert.equal(Array.isArray(suite.dependencyCrates), true);

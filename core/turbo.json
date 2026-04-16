@@ -2864,75 +2864,6 @@
       ],
       "outputs": []
     },
-    "rust:crate:clippy:ctx-worker-gateway": {
-      "inputs": [
-        "Cargo.toml",
-        "Cargo.lock",
-        "rust-toolchain.toml",
-        "rustfmt.toml",
-        "clippy.toml",
-        ".cargo/config.toml",
-        "scripts/lib/cache_roots.cjs",
-        "scripts/lib/ctx_http_suites.cjs",
-        "scripts/lib/turbo_runner.cjs",
-        "scripts/lib/rust_workspace_graph.cjs",
-        "scripts/lib/rust_gate_plan.cjs",
-        "scripts/ctx_http_suite_task.cjs",
-        "scripts/rust_crate_task.cjs",
-        "scripts/run_rust_gate.cjs",
-        "scripts/run_rust_turbo.cjs",
-        "scripts/sync_rust_turbo_tasks.cjs",
-        "crates/ctx-worker-gateway/**",
-        "crates/ctx-worker-protocol/**"
-      ],
-      "outputs": []
-    },
-    "rust:crate:test:ctx-worker-gateway": {
-      "inputs": [
-        "Cargo.toml",
-        "Cargo.lock",
-        "rust-toolchain.toml",
-        "rustfmt.toml",
-        "clippy.toml",
-        ".cargo/config.toml",
-        "scripts/lib/cache_roots.cjs",
-        "scripts/lib/ctx_http_suites.cjs",
-        "scripts/lib/turbo_runner.cjs",
-        "scripts/lib/rust_workspace_graph.cjs",
-        "scripts/lib/rust_gate_plan.cjs",
-        "scripts/ctx_http_suite_task.cjs",
-        "scripts/rust_crate_task.cjs",
-        "scripts/run_rust_gate.cjs",
-        "scripts/run_rust_turbo.cjs",
-        "scripts/sync_rust_turbo_tasks.cjs",
-        "crates/ctx-worker-gateway/**",
-        "crates/ctx-worker-protocol/**"
-      ],
-      "outputs": []
-    },
-    "rust:crate:nextest:ctx-worker-gateway": {
-      "inputs": [
-        "Cargo.toml",
-        "Cargo.lock",
-        "rust-toolchain.toml",
-        "rustfmt.toml",
-        "clippy.toml",
-        ".cargo/config.toml",
-        "scripts/lib/cache_roots.cjs",
-        "scripts/lib/ctx_http_suites.cjs",
-        "scripts/lib/turbo_runner.cjs",
-        "scripts/lib/rust_workspace_graph.cjs",
-        "scripts/lib/rust_gate_plan.cjs",
-        "scripts/ctx_http_suite_task.cjs",
-        "scripts/rust_crate_task.cjs",
-        "scripts/run_rust_gate.cjs",
-        "scripts/run_rust_turbo.cjs",
-        "scripts/sync_rust_turbo_tasks.cjs",
-        "crates/ctx-worker-gateway/**",
-        "crates/ctx-worker-protocol/**"
-      ],
-      "outputs": []
-    },
     "rust:crate:clippy:ctx-worker-protocol": {
       "inputs": [
         "Cargo.toml",
@@ -4015,8 +3946,6 @@
         "crates/ctx-http/src/tool_cgroup.rs",
         "crates/ctx-http/src/workspace_runtime/**",
         "crates/ctx-http/tests/common/**",
-        "crates/ctx-http/tests/cloud_gateway_azure_e2e.rs",
-        "crates/ctx-http/tests/cloud_gateway_gcp_e2e.rs",
         "crates/ctx-http/tests/disk_isolated_sandbox_smoke.rs",
         "crates/ctx-http/tests/disk_isolated_vcs_integrity.rs",
         "crates/ctx-http/tests/harness_container_sandbox_e2e.rs",
