@@ -42,6 +42,8 @@ output_2404="$(
     "$SCRIPT" --print-selected-packages
 )"
 assert_line_present "$output_2404" "libfuse2t64"
+assert_line_present "$output_2404" "xauth"
+assert_line_present "$output_2404" "xvfb"
 assert_line_absent "$output_2404" "libfuse2"
 assert_line_absent "$output_2404" "docker-buildx"
 
@@ -51,6 +53,8 @@ output_2204="$(
     "$SCRIPT" --print-selected-packages
 )"
 assert_line_present "$output_2204" "libfuse2"
+assert_line_present "$output_2204" "xauth"
+assert_line_present "$output_2204" "xvfb"
 assert_line_absent "$output_2204" "docker-buildx"
 
 echo "ok: install_desktop_deps_linux_ubuntu resolves AppImage FUSE runtime packages"

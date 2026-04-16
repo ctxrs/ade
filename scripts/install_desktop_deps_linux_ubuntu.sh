@@ -78,6 +78,8 @@ packages=(
   sshpass
   file
   xdg-utils
+  xauth
+  xvfb
   desktop-file-utils
   squashfs-tools
   zsync
@@ -214,6 +216,15 @@ else
   echo "- xdg-mime: MISSING (install xdg-utils)" >&2
   exit 2
 fi
+
+for cmd in xauth xvfb-run; do
+  if command -v "$cmd" >/dev/null 2>&1; then
+    echo "- $cmd: OK ($(command -v "$cmd"))"
+  else
+    echo "- $cmd: MISSING (install xauth/xvfb for Linux desktop automation)" >&2
+    exit 2
+  fi
+done
 
 for cmd in desktop-file-validate mksquashfs zsyncmake patchelf appstreamcli gtk-update-icon-cache; do
   if command -v "$cmd" >/dev/null 2>&1; then

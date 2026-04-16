@@ -27,4 +27,14 @@ test("ubuntu desktop deps installer includes libcap for codex sandbox builds", (
     /docker buildx version/,
     "install_desktop_deps_linux_ubuntu.sh must sanity-check docker buildx availability",
   );
+  assert.match(
+    script,
+    /\n\s*xauth\n\s*xvfb\n/,
+    "install_desktop_deps_linux_ubuntu.sh must install xauth and xvfb for Linux desktop automation",
+  );
+  assert.match(
+    script,
+    /for cmd in xauth xvfb-run;/,
+    "install_desktop_deps_linux_ubuntu.sh must sanity-check xauth and xvfb-run availability",
+  );
 });
