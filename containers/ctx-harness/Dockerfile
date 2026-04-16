@@ -29,6 +29,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 
 FROM ubuntu:${UBUNTU_VERSION}
 
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
 RUN for sources in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do \
       if [ -f "$sources" ]; then \
         sed -i \
