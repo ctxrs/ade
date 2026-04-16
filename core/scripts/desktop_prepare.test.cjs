@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { createPrepSteps, parseArgs } = require("./desktop_prepare.cjs");
+const { createPrepSteps, parseArgs, resolveDesktopWebDist } = require("./desktop_prepare.cjs");
 
 test("desktop_prepare rejects invalid modes", () => {
   const exit = process.exit;
@@ -75,6 +75,44 @@ test("desktop_prepare dev mode skips web build and version checks", () => {
   assert.equal(steps.length, 1);
   assert.deepEqual(steps[0].args, ["scripts/desktop_sync_resources.cjs", "--profile", "debug"]);
   assert.equal(steps[0].env.CTX_DESKTOP_SYNC_BUNDLES, "1");
+});
+
+test("desktop_prepare build modes prefer an explicit CTX_DESKTOP_WEB_DIST", () => {
+  const desktopWebDist = resolveDesktopWebDist({
+    mode: "release-build",
+    coreRoot: "/repo/core",
+    prepEnv: {
+      CTX_DESKTOP_WEB_DIST: "apps/web/dist",
+    },
+    desktopVersion: "0.22.0",
+    ensureWebDistArtifactImpl: () => {
+      throw new Error("explicit CTX_DESKTOP_WEB_DIST should bypass Bazel web dist preparation");
+    },
+  });
+
+  assert.equal(desktopWebDist, "/repo/core/apps/web/dist");
+});
+
+test("desktop_prepare build modes fall back to cached Bazel web dist when no override is set", () => {
+  let invocation = null;
+  const desktopWebDist = resolveDesktopWebDist({
+    mode: "debug-build",
+    coreRoot: "/repo/core",
+    prepEnv: {},
+    desktopVersion: "0.22.0",
+    ensureWebDistArtifactImpl: (options) => {
+      invocation = options;
+      return { distDir: "/tmp/web-dist" };
+    },
+  });
+
+  assert.equal(desktopWebDist, "/tmp/web-dist");
+  assert.deepEqual(invocation, {
+    coreRoot: "/repo/core",
+    env: {},
+    appVersion: "0.22.0",
+    variant: "desktop-debug-build",
+  });
 });
 
 test("desktop_prepare forwards explicit Bazel sidecar paths into desktop sync", () => {

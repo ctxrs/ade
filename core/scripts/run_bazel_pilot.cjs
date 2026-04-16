@@ -15,6 +15,7 @@ const {
 const DEFAULT_TEST_TARGETS = getBazelTestTargetsForCrates(getBazelCoveredCrates());
 const DEFAULT_BUILD_TARGETS = getBazelBuildTargetsForCrates(getBazelCoveredCrates());
 const BAZELISK_SHIM = process.platform === "win32" ? "bazelisk.cmd" : "bazelisk";
+const BAZELISK_PACKAGE_DIR_PREFIX = "@bazel+bazelisk@";
 
 function commandExists(commandName, { env = process.env, cwd } = {}) {
   const result = childProcess.spawnSync(commandName, ["--version"], {
@@ -27,6 +28,52 @@ function commandExists(commandName, { env = process.env, cwd } = {}) {
     return false;
   }
   return true;
+}
+
+function pathIsRunnable(candidatePath, { access = fs.accessSync } = {}) {
+  try {
+    access(candidatePath, fs.constants.R_OK | fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolvePnpmBazeliskScript({
+  repoRoot,
+  fileExists = fs.existsSync,
+  readDir = fs.readdirSync,
+  pathRunnable = pathIsRunnable,
+} = {}) {
+  const pnpmDir = path.join(repoRoot, "core", "node_modules", ".pnpm");
+  if (!fileExists(pnpmDir)) {
+    return "";
+  }
+  let entries = [];
+  try {
+    entries = readDir(pnpmDir);
+  } catch {
+    return "";
+  }
+  const packageEntry = entries
+    .filter((entry) => entry.startsWith(BAZELISK_PACKAGE_DIR_PREFIX))
+    .sort()
+    .at(-1);
+  if (!packageEntry) {
+    return "";
+  }
+  const scriptPath = path.join(
+    pnpmDir,
+    packageEntry,
+    "node_modules",
+    "@bazel",
+    "bazelisk",
+    "bazelisk.js",
+  );
+  if (!fileExists(scriptPath) || !pathRunnable(scriptPath)) {
+    return "";
+  }
+  return scriptPath;
 }
 
 function parseRemoteExecutionMode(value) {
@@ -190,10 +237,21 @@ function resolveBazeliskCommand({
   repoRoot = path.resolve(__dirname, "..", ".."),
   env = process.env,
   fileExists = fs.existsSync,
+  pathRunnable = pathIsRunnable,
+  readDir = fs.readdirSync,
   commandAvailable = commandExists,
 } = {}) {
+  const pnpmBazeliskScript = resolvePnpmBazeliskScript({
+    repoRoot,
+    fileExists,
+    readDir,
+    pathRunnable,
+  });
+  if (pnpmBazeliskScript) {
+    return pnpmBazeliskScript;
+  }
   const repoLocalShim = path.join(repoRoot, "core", "node_modules", ".bin", BAZELISK_SHIM);
-  if (fileExists(repoLocalShim)) {
+  if (fileExists(repoLocalShim) && pathRunnable(repoLocalShim)) {
     return repoLocalShim;
   }
   for (const candidate of [BAZELISK_SHIM, "bazel"]) {

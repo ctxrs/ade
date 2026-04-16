@@ -6,7 +6,7 @@ const path = require("node:path");
 const { buildCtxCacheEnv } = require("./lib/cache_roots.cjs");
 const { readDesktopVersion } = require("./desktop_version.cjs");
 const { resolveCargoTargetDir } = require("./lib/cargo_target_dir.cjs");
-const { ensureWebDistArtifact } = require("./lib/web_dist_cache.cjs");
+const { ensureWebDistArtifact, resolveDesktopWebDistSource } = require("./lib/web_dist_cache.cjs");
 const { resolveDesktopSidecarPaths } = require("./ctx_http_bazel.cjs");
 
 const coreRoot = path.resolve(__dirname, "..");
@@ -174,14 +174,12 @@ function main(argv = process.argv) {
     mkdir: true,
   });
   const desktopVersion = readDesktopVersion(coreRoot);
-  const desktopWebDist = PREP_MODES[mode].buildWeb
-    ? ensureWebDistArtifact({
-      coreRoot,
-      env: prepEnv,
-      appVersion: desktopVersion,
-      variant: `desktop-${mode}`,
-    }).distDir
-    : trimDesktopWebDist(process.env.CTX_DESKTOP_WEB_DIST);
+  const desktopWebDist = resolveDesktopWebDist({
+    mode,
+    coreRoot,
+    prepEnv,
+    desktopVersion,
+  });
   const explicitSidecars = {
     CTX_DESKTOP_CTX_BIN: trimDesktopBinaryPath(prepEnv.CTX_DESKTOP_CTX_BIN),
     CTX_DESKTOP_CTX_MCP_BIN: trimDesktopBinaryPath(prepEnv.CTX_DESKTOP_CTX_MCP_BIN),
@@ -222,6 +220,28 @@ function trimDesktopBinaryPath(value) {
   return String(value ?? "").trim();
 }
 
+function resolveDesktopWebDist({
+  mode,
+  coreRoot: currentCoreRoot = coreRoot,
+  prepEnv = process.env,
+  desktopVersion,
+  ensureWebDistArtifactImpl = ensureWebDistArtifact,
+}) {
+  const explicitDesktopWebDist = trimDesktopWebDist(prepEnv.CTX_DESKTOP_WEB_DIST);
+  if (!PREP_MODES[mode].buildWeb) {
+    return explicitDesktopWebDist;
+  }
+  if (explicitDesktopWebDist) {
+    return resolveDesktopWebDistSource(currentCoreRoot, prepEnv);
+  }
+  return ensureWebDistArtifactImpl({
+    coreRoot: currentCoreRoot,
+    env: prepEnv,
+    appVersion: desktopVersion,
+    variant: `desktop-${mode}`,
+  }).distDir;
+}
+
 if (require.main === module) {
   main();
 }
@@ -231,6 +251,7 @@ module.exports = {
   createPrepSteps,
   main,
   parseArgs,
+  resolveDesktopWebDist,
   trimDesktopWebDist,
   trimDesktopBinaryPath,
 };

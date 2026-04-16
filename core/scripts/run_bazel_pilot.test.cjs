@@ -198,16 +198,49 @@ test("bazel pilot darwin remote execution uses the darwin BuildBuddy config dire
   );
 });
 
-test("bazel pilot prefers the repo-managed bazelisk shim when it exists", () => {
+test("bazel pilot falls back to the repo-managed bazelisk shim when no direct pnpm script exists", () => {
   const repoRoot = "/tmp/ctx-monorepo";
   const expected = path.join(repoRoot, "core", "node_modules", ".bin", process.platform === "win32" ? "bazelisk.cmd" : "bazelisk");
   assert.equal(
     resolveBazeliskCommand({
       repoRoot,
       fileExists: (candidate) => candidate === expected,
+      pathRunnable: (candidate) => candidate === expected,
+      readDir: () => [],
       commandAvailable: () => false,
     }),
     expected,
+  );
+});
+
+test("bazel pilot prefers the direct pnpm Bazelisk script over the repo shim when both exist", () => {
+  const repoRoot = "/tmp/ctx-monorepo";
+  const repoShim = path.join(repoRoot, "core", "node_modules", ".bin", process.platform === "win32" ? "bazelisk.cmd" : "bazelisk");
+  const expectedScript = path.join(
+    repoRoot,
+    "core",
+    "node_modules",
+    ".pnpm",
+    "@bazel+bazelisk@1.28.1",
+    "node_modules",
+    "@bazel",
+    "bazelisk",
+    "bazelisk.js",
+  );
+  const existingPaths = new Set([
+    repoShim,
+    path.join(repoRoot, "core", "node_modules", ".pnpm"),
+    expectedScript,
+  ]);
+  assert.equal(
+    resolveBazeliskCommand({
+      repoRoot,
+      fileExists: (candidate) => existingPaths.has(candidate),
+      pathRunnable: (candidate) => candidate === expectedScript || candidate === repoShim,
+      readDir: () => ["@bazel+bazelisk@1.28.1"],
+      commandAvailable: () => false,
+    }),
+    expectedScript,
   );
 });
 
