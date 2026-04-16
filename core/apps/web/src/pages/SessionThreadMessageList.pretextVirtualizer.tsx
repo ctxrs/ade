@@ -448,6 +448,7 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     lastAppliedUiStateLayoutRevisionRef.current = runtimeUiStateLayoutRevision;
     lastAppliedProjectionOpRef.current = null;
     setShowJumpToLatest(false);
+    const currentItems = listItemsRef.current;
     const scroller = containerRef.current;
     const currentItems = listItemsRef.current;
     if (!scroller) {

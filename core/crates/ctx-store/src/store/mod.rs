@@ -401,8 +401,10 @@ impl Store {
             write_gate: Arc::new(Mutex::new(())),
             _lease_guard: None,
         };
-        store.event_log.start_persister(store.clone());
-        store.active_head_projection.start_projector(store.clone());
+        store.event_log.start_persister(store.clone())?;
+        store
+            .active_head_projection
+            .start_projector(store.clone())?;
         Ok(store)
     }
 

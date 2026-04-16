@@ -8,6 +8,22 @@ pub(super) const EVENT_LOG_QUEUE_CAPACITY: usize = 4096;
 pub(super) const DEFAULT_ACTIVE_HEAD_PROJECTION_FLUSH_MS: u64 = 50;
 pub(super) const ACTIVE_HEAD_PROJECTION_QUEUE_CAPACITY: usize = 4096;
 
+fn store_background_runtime() -> Result<&'static tokio::runtime::Runtime> {
+    static RUNTIME: OnceLock<std::result::Result<tokio::runtime::Runtime, String>> =
+        OnceLock::new();
+    match RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("ctx-store-bg")
+            .enable_all()
+            .build()
+            .map_err(|err| format!("failed to initialize ctx-store background runtime: {err}"))
+    }) {
+        Ok(runtime) => Ok(runtime),
+        Err(err) => Err(anyhow::anyhow!(err.clone())),
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct EventLogConfig {
     flush_interval: Duration,
@@ -64,10 +80,13 @@ impl ActiveHeadProjectionRuntime {
         }
     }
 
-    pub(super) fn start_projector(&self, store: Store) {
-        let _ = self
-            .projector
-            .get_or_init(|| ActiveHeadProjectionProjector::spawn(store, self.config));
+    pub(super) fn start_projector(&self, store: Store) -> Result<()> {
+        if self.projector.get().is_some() {
+            return Ok(());
+        }
+        let projector = ActiveHeadProjectionProjector::spawn(store, self.config)?;
+        let _ = self.projector.set(projector);
+        Ok(())
     }
 
     pub(super) async fn enqueue(
@@ -120,9 +139,9 @@ pub(super) enum ActiveHeadProjectionCommand {
 }
 
 impl ActiveHeadProjectionProjector {
-    fn spawn(store: Store, config: ActiveHeadProjectionConfig) -> Self {
+    fn spawn(store: Store, config: ActiveHeadProjectionConfig) -> Result<Self> {
         let (tx, mut rx) = mpsc::channel(ACTIVE_HEAD_PROJECTION_QUEUE_CAPACITY);
-        tokio::spawn(async move {
+        store_background_runtime()?.spawn(async move {
             let mut dirty: HashMap<SessionId, Option<i64>> = HashMap::new();
             let mut flush_waiters: Vec<oneshot::Sender<Result<()>>> = Vec::new();
             let mut flush_interval = tokio::time::interval(config.flush_interval);
@@ -182,7 +201,7 @@ impl ActiveHeadProjectionProjector {
                 }
             }
         });
-        Self { tx }
+        Ok(Self { tx })
     }
 
     async fn enqueue(&self, session_id: SessionId, last_event_seq: Option<i64>) -> Result<()> {
@@ -422,11 +441,14 @@ impl EventLogRuntime {
         })
     }
 
-    pub(super) fn start_persister(&self, store: Store) {
-        let _ = self.persister.get_or_init(|| {
-            let initial_seq = self.next_seq.load(Ordering::Relaxed).saturating_sub(1);
-            EventLogPersister::spawn(store, self.config, initial_seq)
-        });
+    pub(super) fn start_persister(&self, store: Store) -> Result<()> {
+        if self.persister.get().is_some() {
+            return Ok(());
+        }
+        let initial_seq = self.next_seq.load(Ordering::Relaxed).saturating_sub(1);
+        let persister = EventLogPersister::spawn(store, self.config, initial_seq)?;
+        let _ = self.persister.set(persister);
+        Ok(())
     }
 
     pub(super) fn next_seq(&self) -> i64 {
@@ -474,9 +496,9 @@ pub(super) enum EventLogCommand {
 }
 
 impl EventLogPersister {
-    fn spawn(store: Store, config: EventLogConfig, initial_seq: i64) -> Self {
+    fn spawn(store: Store, config: EventLogConfig, initial_seq: i64) -> Result<Self> {
         let (tx, mut rx) = mpsc::channel(EVENT_LOG_QUEUE_CAPACITY);
-        tokio::spawn(async move {
+        store_background_runtime()?.spawn(async move {
             let mut buffer: Vec<SessionEvent> = Vec::new();
             let mut flush_waiters: Vec<oneshot::Sender<Result<()>>> = Vec::new();
             let mut last_applied_seq = initial_seq;
@@ -562,7 +584,7 @@ impl EventLogPersister {
                 }
             }
         });
-        Self { tx }
+        Ok(Self { tx })
     }
 
     async fn enqueue(&self, event: SessionEvent) -> Result<()> {

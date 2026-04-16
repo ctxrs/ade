@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -561,4 +563,10 @@ impl StoreManager {
             .join(workspace_id.0.to_string())
             .join("db.sqlite")
     }
+}
+
+#[cfg(test)]
+pub(crate) fn close_lifecycle_test_lock() -> &'static Arc<tokio::sync::Mutex<()>> {
+    static LOCK: OnceLock<Arc<tokio::sync::Mutex<()>>> = OnceLock::new();
+    LOCK.get_or_init(|| Arc::new(tokio::sync::Mutex::new(())))
 }

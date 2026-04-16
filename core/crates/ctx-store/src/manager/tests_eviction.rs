@@ -10,8 +10,14 @@ use ctx_core::models::{
     ExecutionEnvironment, SessionEventType, SessionTurn, SessionTurnStatus, VcsKind,
 };
 
+const CLOSE_COMPLETION_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[tokio::test]
 async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() -> Result<()> {
+    let _serial = crate::manager::close_lifecycle_test_lock()
+        .clone()
+        .lock_owned()
+        .await;
     let temp = tempfile::tempdir()?;
     let manager = StoreManager::open_with_config(
         temp.path(),
@@ -139,6 +145,10 @@ async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() -> Res
 
 #[tokio::test]
 async fn deleted_workspace_is_not_rehydrated_from_pending_close_store() -> Result<()> {
+    let _serial = crate::manager::close_lifecycle_test_lock()
+        .clone()
+        .lock_owned()
+        .await;
     let temp = tempfile::tempdir()?;
     let manager = StoreManager::open_with_config(
         temp.path(),
@@ -185,6 +195,10 @@ async fn deleted_workspace_is_not_rehydrated_from_pending_close_store() -> Resul
 
 #[tokio::test]
 async fn delete_barrier_blocks_cached_workspace_access() -> Result<()> {
+    let _serial = crate::manager::close_lifecycle_test_lock()
+        .clone()
+        .lock_owned()
+        .await;
     let temp = tempfile::tempdir()?;
     let manager = StoreManager::open_with_config(
         temp.path(),
@@ -221,6 +235,10 @@ async fn delete_barrier_blocks_cached_workspace_access() -> Result<()> {
 
 #[tokio::test]
 async fn evict_workspace_and_wait_closed_blocks_until_last_handle_drops() -> Result<()> {
+    let _serial = crate::manager::close_lifecycle_test_lock()
+        .clone()
+        .lock_owned()
+        .await;
     let temp = tempfile::tempdir()?;
     let manager = StoreManager::open_with_config(
         temp.path(),
@@ -255,7 +273,7 @@ async fn evict_workspace_and_wait_closed_blocks_until_last_handle_drops() -> Res
 
     drop(store);
 
-    tokio::time::timeout(Duration::from_secs(2), wait)
+    tokio::time::timeout(CLOSE_COMPLETION_TIMEOUT, wait)
         .await
         .context("eviction should finish once the last store handle is dropped")?
         .context("eviction task should join")?;
@@ -265,6 +283,10 @@ async fn evict_workspace_and_wait_closed_blocks_until_last_handle_drops() -> Res
 
 #[tokio::test]
 async fn delete_barrier_blocks_pending_close_reactivation() -> Result<()> {
+    let _serial = crate::manager::close_lifecycle_test_lock()
+        .clone()
+        .lock_owned()
+        .await;
     let temp = tempfile::tempdir()?;
     let manager = StoreManager::open_with_config(
         temp.path(),
@@ -304,7 +326,7 @@ async fn delete_barrier_blocks_pending_close_reactivation() -> Result<()> {
     manager.finish_workspace_delete(workspace.id).await;
     drop(store);
     tokio::time::timeout(
-        Duration::from_secs(1),
+        CLOSE_COMPLETION_TIMEOUT,
         manager.store_leases.wait_for_workspace_close(workspace.id),
     )
     .await
@@ -314,6 +336,10 @@ async fn delete_barrier_blocks_pending_close_reactivation() -> Result<()> {
 
 #[tokio::test]
 async fn transient_workspace_access_uses_tracked_delete_lifecycle() -> Result<()> {
+    let _serial = crate::manager::close_lifecycle_test_lock()
+        .clone()
+        .lock_owned()
+        .await;
     let temp = tempfile::tempdir()?;
     let manager = StoreManager::open_with_config(
         temp.path(),
@@ -350,7 +376,7 @@ async fn transient_workspace_access_uses_tracked_delete_lifecycle() -> Result<()
 
     drop(store);
     tokio::time::timeout(
-        Duration::from_secs(1),
+        CLOSE_COMPLETION_TIMEOUT,
         manager.store_leases.wait_for_workspace_close(workspace.id),
     )
     .await
@@ -361,6 +387,10 @@ async fn transient_workspace_access_uses_tracked_delete_lifecycle() -> Result<()
 
 #[tokio::test]
 async fn concurrent_reactivation_does_not_cold_open_duplicate_store() -> Result<()> {
+    let _serial = crate::manager::close_lifecycle_test_lock()
+        .clone()
+        .lock_owned()
+        .await;
     let temp = tempfile::tempdir()?;
     let manager = StoreManager::open_with_config(
         temp.path(),

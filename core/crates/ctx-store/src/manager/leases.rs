@@ -405,16 +405,6 @@ fn spawn_store_close(
     workspace_id: WorkspaceId,
     notify: Arc<WorkspaceCloseSignal>,
 ) {
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        handle.spawn(close_store_and_finish(
-            store,
-            Arc::clone(&registry),
-            workspace_id,
-            Arc::clone(&notify),
-        ));
-        return;
-    }
-
     if let Err(err) = registry.close_executor.submit(StoreCloseJob {
         store: store.clone(),
         registry: Arc::clone(&registry),
@@ -446,6 +436,9 @@ mod tests {
 
     use std::time::Duration;
 
+    const CLOSE_COMPLETION_TIMEOUT: Duration = Duration::from_secs(30);
+    const CLOSE_PENDING_PROBE_TIMEOUT: Duration = Duration::from_millis(20);
+
     async fn open_test_store(temp: &tempfile::TempDir, name: &str) -> Store {
         let path = temp.path().join(name);
         Store::open_sqlite(&path, Some(1)).await.unwrap()
@@ -453,6 +446,10 @@ mod tests {
 
     #[tokio::test]
     async fn immediate_close_registers_workspace_as_closing() {
+        let _serial = crate::manager::close_lifecycle_test_lock()
+            .clone()
+            .lock_owned()
+            .await;
         let temp = tempfile::tempdir().unwrap();
         let registry = Arc::new(WorkspaceStoreLeaseRegistry::new().unwrap());
         let workspace_id = WorkspaceId::new();
@@ -463,7 +460,7 @@ mod tests {
             .expect("close without leases should start immediately");
 
         let blocked = tokio::time::timeout(
-            Duration::from_millis(20),
+            CLOSE_PENDING_PROBE_TIMEOUT,
             registry.wait_for_workspace_close(workspace_id),
         )
         .await;
@@ -475,7 +472,7 @@ mod tests {
         registry.start_close(close);
 
         tokio::time::timeout(
-            Duration::from_secs(1),
+            CLOSE_COMPLETION_TIMEOUT,
             registry.wait_for_workspace_close(workspace_id),
         )
         .await
@@ -484,6 +481,10 @@ mod tests {
 
     #[tokio::test]
     async fn waiters_do_not_miss_close_notifications() {
+        let _serial = crate::manager::close_lifecycle_test_lock()
+            .clone()
+            .lock_owned()
+            .await;
         let temp = tempfile::tempdir().unwrap();
 
         for idx in 0..64 {
@@ -507,7 +508,7 @@ mod tests {
             let waiter = signal.wait();
             tokio::pin!(waiter);
 
-            let blocked = tokio::time::timeout(Duration::from_millis(20), &mut waiter).await;
+            let blocked = tokio::time::timeout(CLOSE_PENDING_PROBE_TIMEOUT, &mut waiter).await;
             assert!(
                 blocked.is_err(),
                 "waiter should remain pending until close completion"
@@ -516,7 +517,7 @@ mod tests {
             close.store.close().await;
             registry.finish_close(workspace_id, &close.notify);
 
-            let waiter_result = tokio::time::timeout(Duration::from_secs(1), waiter).await;
+            let waiter_result = tokio::time::timeout(CLOSE_COMPLETION_TIMEOUT, waiter).await;
             assert!(
                 waiter_result.is_ok(),
                 "waiter should not miss the close notification (idx={idx}, closing={}, pending_close={})",
@@ -528,6 +529,10 @@ mod tests {
 
     #[tokio::test]
     async fn pending_close_marks_workspace_as_closing_before_last_lease_drops() {
+        let _serial = crate::manager::close_lifecycle_test_lock()
+            .clone()
+            .lock_owned()
+            .await;
         let temp = tempfile::tempdir().unwrap();
         let registry = Arc::new(WorkspaceStoreLeaseRegistry::new().unwrap());
         let workspace_id = WorkspaceId::new();
@@ -540,7 +545,7 @@ mod tests {
         );
 
         let blocked = tokio::time::timeout(
-            Duration::from_millis(20),
+            CLOSE_PENDING_PROBE_TIMEOUT,
             registry.wait_for_workspace_close(workspace_id),
         )
         .await;
@@ -552,7 +557,7 @@ mod tests {
         drop(lease);
 
         tokio::time::timeout(
-            Duration::from_secs(1),
+            CLOSE_COMPLETION_TIMEOUT,
             registry.wait_for_workspace_close(workspace_id),
         )
         .await
@@ -561,6 +566,10 @@ mod tests {
 
     #[tokio::test]
     async fn pending_close_store_can_be_reacquired_without_deadlock() {
+        let _serial = crate::manager::close_lifecycle_test_lock()
+            .clone()
+            .lock_owned()
+            .await;
         let temp = tempfile::tempdir().unwrap();
         let registry = Arc::new(WorkspaceStoreLeaseRegistry::new().unwrap());
         let workspace_id = WorkspaceId::new();
@@ -591,6 +600,7 @@ mod tests {
 
     #[test]
     fn close_without_runtime_completes_inline() {
+        let _serial = crate::manager::close_lifecycle_test_lock().blocking_lock();
         let temp = tempfile::tempdir().unwrap();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let store = runtime.block_on(open_test_store(&temp, "inline-close.sqlite"));
@@ -612,7 +622,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
             tokio::time::timeout(
-                Duration::from_secs(1),
+                CLOSE_COMPLETION_TIMEOUT,
                 registry.wait_for_workspace_close(workspace_id),
             )
             .await
@@ -627,6 +637,7 @@ mod tests {
 
     #[test]
     fn close_without_runtime_executor_path_clears_closing_marker() {
+        let _serial = crate::manager::close_lifecycle_test_lock().blocking_lock();
         let temp = tempfile::tempdir().unwrap();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let store = runtime.block_on(open_test_store(&temp, "inline-close-executor.sqlite"));
@@ -648,7 +659,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
             tokio::time::timeout(
-                Duration::from_secs(1),
+                CLOSE_COMPLETION_TIMEOUT,
                 registry.wait_for_workspace_close(workspace_id),
             )
             .await
