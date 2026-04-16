@@ -33,4 +33,3 @@ if [[ -n "$codex_target" ]]; then
   node core/scripts/provider_matrix_archive_artifact_gate.cjs --provider codex --target "$codex_target"
 fi
 bash scripts/tests/desktop_merge_bundles.sh
-bash scripts/tests/ensure_bundled_harnesses_docker_only.sh

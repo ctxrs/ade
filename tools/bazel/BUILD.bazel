@@ -1,6 +1,7 @@
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 exports_files([
+    "bundled_harnesses_docker_contracts.sh",
     "linux_bundle_contracts.sh",
     "provider_managed_install_archive.sh",
     "provider_claude_crp_archive.sh",
@@ -8,6 +9,12 @@ exports_files([
     "release_bundle_contracts.sh",
     "run_workspace_task.sh",
 ])
+
+sh_binary(
+    name = "bundled_harnesses_docker_contracts",
+    srcs = ["bundled_harnesses_docker_contracts.sh"],
+    visibility = ["//visibility:public"],
+)
 
 sh_binary(
     name = "linux_bundle_contracts",
