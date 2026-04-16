@@ -15,6 +15,21 @@ Behavior:
 EOF
 }
 
+resolve_fast_gate_script() {
+  if [[ -n "${CTX_AFFECTED_TESTS_FAST_GATE:-}" ]]; then
+    printf '%s\n' "$CTX_AFFECTED_TESTS_FAST_GATE"
+    return 0
+  fi
+  case "$(uname -s)" in
+    Linux)
+      printf '%s\n' 'test:agent:linux-rbe'
+      ;;
+    *)
+      printf '%s\n' 'test:agent'
+      ;;
+  esac
+}
+
 base_ref=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -97,9 +112,15 @@ run() {
   "$@"
 }
 
+run_fast_gate() {
+  local fast_gate=""
+  fast_gate="$(resolve_fast_gate_script)"
+  run pnpm "$fast_gate"
+}
+
 if [[ "${high_risk}" -eq 1 ]]; then
   echo "high-risk paths changed; using full safety fallback"
-  run pnpm test:agent
+  run_fast_gate
   run pnpm verify:e2e
   exit 0
 fi
@@ -127,5 +148,5 @@ fi
 
 if [[ "${ran_any}" -eq 0 ]]; then
   echo "no targeted mapping hit; running default fast gate"
-  run pnpm test:agent
+  run_fast_gate
 fi

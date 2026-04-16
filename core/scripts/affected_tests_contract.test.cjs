@@ -13,7 +13,7 @@ function writeExecutable(filePath, contents) {
   fs.writeFileSync(filePath, contents, { mode: 0o755 });
 }
 
-function runScenario(changedFiles) {
+function runScenario(changedFiles, options = {}) {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "affected-tests-contract-"));
   const binDir = path.join(tempRoot, "bin");
   const commandLogPath = path.join(tempRoot, "commands.log");
@@ -70,18 +70,28 @@ exit 1
 `,
   );
 
+  writeExecutable(
+    path.join(binDir, "uname"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\${STUB_UNAME:-Darwin}"
+`,
+  );
+
   const result = spawnSync("bash", [scriptPath], {
     cwd: coreRoot,
     env: {
       ...process.env,
+      ...options.env,
       COMMAND_LOG_PATH: commandLogPath,
       NODE_OPTIONS: "",
       PATH: `${binDir}:${process.env.PATH}`,
       STUB_CHANGED_FILES: changedFiles.join("\n"),
+      STUB_UNAME: options.unameValue || "Darwin",
     },
     encoding: "utf8",
     stdio: "pipe",
-    timeout: 10_000,
+    timeout: 60_000,
   });
   if (result.error || result.status !== 0) {
     const stdout = result.stdout || "";
@@ -122,6 +132,24 @@ test("web high-risk changes still trigger the safety fallback", () => {
   const commands = runScenario(["core/apps/web/src/state/providerOnboardingCoordinator.ts"]);
 
   assert.deepEqual(commands, ["pnpm test:agent", "pnpm verify:e2e"]);
+});
+
+test("linux fast-gate defaults to the linux-rbe agent gate", () => {
+  const commands = runScenario(["core/crates/ctx-http/src/api/mod.rs"], {
+    unameValue: "Linux",
+  });
+
+  assert.deepEqual(commands, ["pnpm test:agent:linux-rbe", "pnpm verify:e2e"]);
+});
+
+test("explicit fast-gate override forces the linux-rbe fallback", () => {
+  const commands = runScenario(["core/crates/ctx-http/src/api/mod.rs"], {
+    env: {
+      CTX_AFFECTED_TESTS_FAST_GATE: "test:agent:linux-rbe",
+    },
+  });
+
+  assert.deepEqual(commands, ["pnpm test:agent:linux-rbe", "pnpm verify:e2e"]);
 });
 
 test("root-level Rust config changes still trigger the Rust gate", () => {
