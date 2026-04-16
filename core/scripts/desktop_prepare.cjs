@@ -104,7 +104,7 @@ function createPrepSteps({
   if (platform === "darwin" && mode !== "dev") {
     steps.push({
       command: "bash",
-      args: ["scripts/ensure_macos_avf_build_tools.sh"],
+      args: ["../scripts/ensure_macos_avf_build_tools.sh"],
       env: baseEnv,
     });
   }

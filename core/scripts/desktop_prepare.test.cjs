@@ -41,7 +41,7 @@ test("desktop_prepare release mode builds web, checks versions, and syncs releas
 
   assert.equal(steps[0].command, "node");
   assert.deepEqual(steps[0].args, ["scripts/desktop_check_versions.cjs"]);
-  assert.deepEqual(steps[1].args, ["scripts/ensure_macos_avf_build_tools.sh"]);
+  assert.deepEqual(steps[1].args, ["../scripts/ensure_macos_avf_build_tools.sh"]);
   assert.deepEqual(steps[2].args, [
     "scripts/prepare_avf_linux_guest_runtime.sh",
     "--output-dir",
@@ -147,7 +147,7 @@ test("desktop_prepare skips AVF guest runtime prep outside darwin arm64 release 
     false,
   );
   assert.equal(
-    steps.some((step) => step.args.includes("scripts/ensure_macos_avf_build_tools.sh")),
+    steps.some((step) => step.args.includes("../scripts/ensure_macos_avf_build_tools.sh")),
     true,
   );
   assert.equal(
@@ -179,7 +179,7 @@ test("desktop_prepare skips AVF guest runtime prep when managed AVF metadata is 
       false,
     );
     assert.equal(
-      steps.some((step) => step.args.includes("scripts/ensure_macos_avf_build_tools.sh")),
+      steps.some((step) => step.args.includes("../scripts/ensure_macos_avf_build_tools.sh")),
       true,
     );
     assert.equal(
@@ -211,7 +211,7 @@ test("desktop_prepare skips AVF tool bootstrap in dev mode", () => {
   });
 
   assert.equal(
-    steps.some((step) => step.args.includes("scripts/ensure_macos_avf_build_tools.sh")),
+    steps.some((step) => step.args.includes("../scripts/ensure_macos_avf_build_tools.sh")),
     false,
   );
 });
