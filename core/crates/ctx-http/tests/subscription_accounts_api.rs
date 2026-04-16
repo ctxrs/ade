@@ -23,6 +23,8 @@ use ctx_providers::adapters::{
 };
 use ctx_providers::events::NormalizedEvent;
 
+const PROVIDER_LOGIN_STATUS_TIMEOUT: Duration = Duration::from_secs(15);
+
 #[derive(Debug, Deserialize)]
 struct SubscriptionAccountEntry {
     id: String,
@@ -890,7 +892,7 @@ async fn poll_gemini_login_status(
         "{}/api/providers/gemini/accounts/login/{}",
         server.base_url, login_id
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + PROVIDER_LOGIN_STATUS_TIMEOUT;
     loop {
         let resp = server
             .client
@@ -918,7 +920,7 @@ async fn poll_qwen_login_status(
         "{}/api/providers/qwen/accounts/login/{}",
         server.base_url, login_id
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + PROVIDER_LOGIN_STATUS_TIMEOUT;
     loop {
         let resp = server
             .client
@@ -946,7 +948,7 @@ async fn poll_kimi_login_status(
         "{}/api/providers/kimi/accounts/login/{}",
         server.base_url, login_id
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + PROVIDER_LOGIN_STATUS_TIMEOUT;
     loop {
         let resp = server
             .client
@@ -974,7 +976,7 @@ async fn poll_mistral_login_status(
         "{}/api/providers/mistral/accounts/login/{}",
         server.base_url, login_id
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + PROVIDER_LOGIN_STATUS_TIMEOUT;
     loop {
         let resp = server
             .client
@@ -1002,7 +1004,7 @@ async fn poll_amp_login_status(
         "{}/api/providers/amp/accounts/login/{}",
         server.base_url, login_id
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + PROVIDER_LOGIN_STATUS_TIMEOUT;
     loop {
         let resp = server
             .client
@@ -1030,7 +1032,7 @@ async fn poll_cursor_login_status(
         "{}/api/providers/cursor/accounts/login/{}",
         server.base_url, login_id
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + PROVIDER_LOGIN_STATUS_TIMEOUT;
     loop {
         let resp = server
             .client

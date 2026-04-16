@@ -468,6 +468,7 @@ async fn start_claude_login_process(state: &Arc<AppState>) -> anyhow::Result<Cla
     let mut transcript = String::new();
     let hard_deadline = Instant::now() + CLAUDE_LOGIN_URL_WAIT;
     let mut settle_deadline: Option<Instant> = None;
+    let mut output_closed = false;
     loop {
         if refresh_claude_auth_url_from_capture_path(&mut auth_url, &browser_open_capture_path) {
             settle_deadline = Some(Instant::now() + CLAUDE_LOGIN_URL_SETTLE_WAIT);
@@ -487,6 +488,7 @@ async fn start_claude_login_process(state: &Arc<AppState>) -> anyhow::Result<Cla
         let wait = remaining.min(CLAUDE_LOGIN_CAPTURE_POLL_INTERVAL);
         match tokio::time::timeout(wait, rx.recv()).await {
             Ok(Some(line)) => {
+                output_closed = false;
                 transcript.push_str(&line);
                 transcript.push('\n');
                 hit_unsupported_manual_fallback |=
@@ -509,7 +511,18 @@ async fn start_claude_login_process(state: &Arc<AppState>) -> anyhow::Result<Cla
                     settle_deadline = Some(Instant::now() + CLAUDE_LOGIN_URL_SETTLE_WAIT);
                 }
             }
-            Ok(None) => break,
+            Ok(None) => {
+                if !output_closed {
+                    // The setup-token process can tear down its PTY before the
+                    // browser shim capture file becomes visible on disk. Keep
+                    // polling for one short settle window instead of exiting
+                    // immediately on EOF.
+                    output_closed = true;
+                    settle_deadline = Some(Instant::now() + CLAUDE_LOGIN_URL_SETTLE_WAIT);
+                }
+                tokio::time::sleep(wait.min(CLAUDE_LOGIN_CAPTURE_POLL_INTERVAL)).await;
+                continue;
+            }
             Err(_) => continue,
         }
     }

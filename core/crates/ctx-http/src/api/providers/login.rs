@@ -21,7 +21,7 @@ pub(crate) use kimi::{get_kimi_login, start_kimi_login};
 pub(crate) use mistral::{get_mistral_login, start_mistral_login};
 
 const CODEX_LOGIN_RPC_TIMEOUT: Duration = Duration::from_secs(30);
-const CLAUDE_LOGIN_URL_WAIT: Duration = Duration::from_secs(4);
+const CLAUDE_LOGIN_URL_WAIT: Duration = Duration::from_secs(8);
 const GEMINI_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
 const GEMINI_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
 const QWEN_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);

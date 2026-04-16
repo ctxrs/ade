@@ -450,7 +450,6 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     setShowJumpToLatest(false);
     const currentItems = listItemsRef.current;
     const scroller = containerRef.current;
-    const currentItems = listItemsRef.current;
     if (!scroller) {
       const nextSnapshot = core.getSnapshot();
       commitRuntimeSnapshot(nextSnapshot, currentItems);
