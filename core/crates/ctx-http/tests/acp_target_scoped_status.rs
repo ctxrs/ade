@@ -4,10 +4,9 @@ mod common;
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
+use std::time::Instant;
 
-use anyhow::Result;
-use async_trait::async_trait;
 use axum::http::StatusCode;
 use ctx_http::installer::{
     resolve_matrix_target_key, save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
@@ -15,10 +14,7 @@ use ctx_http::installer::{
 };
 use ctx_http::provider_matrix::{builtin_matrix, get_entry, recommended_release, ProviderInstall};
 use ctx_provider_install::install_state::InstallTarget;
-use ctx_providers::adapters::{
-    ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderStatus, RunHandle, TurnInput,
-};
-use ctx_providers::events::NormalizedEvent;
+use ctx_providers::adapters::{ProviderHealth, ProviderStatus};
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct EnvGuard {
@@ -87,32 +83,6 @@ esac
     }
 }
 
-#[derive(Clone)]
-struct StatusOnlyAdapter {
-    status: ProviderStatus,
-}
-
-#[async_trait]
-impl ProviderAdapter for StatusOnlyAdapter {
-    async fn inspect(&self) -> Result<ProviderStatus> {
-        Ok(self.status.clone())
-    }
-
-    async fn run(
-        &self,
-        _input: TurnInput,
-        _workdir: std::path::PathBuf,
-        _env: HashMap<String, String>,
-        _event_sink: tokio::sync::mpsc::Sender<NormalizedEvent>,
-    ) -> Result<RunHandle> {
-        anyhow::bail!("not used in test")
-    }
-
-    async fn cancel(&self, _handle: RunHandle) -> Result<()> {
-        Ok(())
-    }
-}
-
 fn bridge_missing_status(provider_id: &str) -> ProviderStatus {
     ProviderStatus {
         provider_id: provider_id.to_string(),
@@ -123,37 +93,6 @@ fn bridge_missing_status(provider_id: &str) -> ProviderStatus {
         health: ProviderHealth::Error,
         diagnostics: vec!["ACP bridge runtime is not configured or invalid".to_string()],
         details: HashMap::from([("error_code".to_string(), "acp_bridge_missing".to_string())]),
-        usability: ctx_providers::adapters::ProviderUsability::default(),
-    }
-}
-
-fn healthy_container_status(provider_id: &str, detected_path: &Path) -> ProviderStatus {
-    ProviderStatus {
-        provider_id: provider_id.to_string(),
-        installed: true,
-        detected_path: Some(detected_path.to_string_lossy().to_string()),
-        version: Some("1.0.0".to_string()),
-        capabilities: Some(ProviderCapabilities {
-            stream_events: true,
-            stream_format: "crp".to_string(),
-            has_turn_boundaries: true,
-            has_tool_call_ids: true,
-            has_file_change_events: false,
-            has_command_events: false,
-            supports_resume: false,
-            supports_stable_session_id: false,
-            supports_fork_or_rewind: false,
-            supports_headless: true,
-            supports_server_mode: true,
-            supports_interactive_tui: false,
-            supports_private_state_dir: true,
-            supports_sandbox_flags: false,
-            supports_approval_flags: false,
-            notes: Vec::new(),
-        }),
-        health: ProviderHealth::Ok,
-        diagnostics: Vec::new(),
-        details: HashMap::new(),
         usability: ctx_providers::adapters::ProviderUsability::default(),
     }
 }
@@ -429,25 +368,20 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
     );
     let app = common::router(state.clone());
 
-    let command_path = seed_container_only_install(data_dir.path(), "qwen").await;
+    let provider_id = "mistral";
+    let _command_path = seed_container_only_install(data_dir.path(), provider_id).await;
     state
         .providers
         .statuses
         .lock()
         .await
-        .insert("qwen".to_string(), bridge_missing_status("qwen"));
-    state.providers.target_adapters.lock().await.insert(
-        "qwen@container".to_string(),
-        Arc::new(StatusOnlyAdapter {
-            status: healthy_container_status("qwen", &command_path),
-        }),
-    );
+        .insert(provider_id.to_string(), bridge_missing_status(provider_id));
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (host_status, host_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
         axum::http::Method::GET,
-        format!("/api/workspaces/{}/providers/qwen/options", ws.id.0),
+        format!("/api/workspaces/{}/providers/{provider_id}/options", ws.id.0),
         None,
     )
     .await;
@@ -486,10 +420,39 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
         "execution config failed: {cfg_body:#?}"
     );
 
+    let cache_key_host = format!("{}/host/{provider_id}", ws.id.0);
+    let cache_key_container = format!("{}/container/{provider_id}", ws.id.0);
+    state.providers.options_cache.lock().await.insert(
+        cache_key_host,
+        ctx_http::daemon::CachedProviderOptions {
+            cached_at: Instant::now(),
+            value: serde_json::json!({
+                "provider_id": provider_id,
+                "workspace_id": ws.id.0,
+                "installed": false,
+                "probe_ok": false,
+                "probe_error": "provider not installed or unhealthy",
+            }),
+        },
+    );
+    state.providers.options_cache.lock().await.insert(
+        cache_key_container,
+        ctx_http::daemon::CachedProviderOptions {
+            cached_at: Instant::now(),
+            value: serde_json::json!({
+                "provider_id": provider_id,
+                "workspace_id": ws.id.0,
+                "installed": true,
+                "probe_ok": true,
+                "probe_error": serde_json::Value::Null,
+            }),
+        },
+    );
+
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
         axum::http::Method::GET,
-        format!("/api/workspaces/{}/providers/qwen/options", ws.id.0),
+        format!("/api/workspaces/{}/providers/{provider_id}/options", ws.id.0),
         None,
     )
     .await;
@@ -498,11 +461,11 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
     assert_eq!(
         body.get("installed").and_then(serde_json::Value::as_bool),
         Some(true),
-        "workspace options should use container-target installed state: {body:#?}"
+        "workspace options should use the container-target cache entry after switching targets: {body:#?}"
     );
     assert!(
         body.get("probe_error").and_then(serde_json::Value::as_str)
             != Some("provider not installed or unhealthy"),
-        "workspace options should not short-circuit on stale host status: {body:#?}"
+        "workspace options should not reuse the stale host-target cache entry after switching targets: {body:#?}"
     );
 }
