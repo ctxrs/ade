@@ -138,6 +138,22 @@ async fn wait_for_provider_session_ref(
     }
 }
 
+async fn wait_for_session_idle(state: &Arc<AppState>, session_id: ctx_core::ids::SessionId) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if !state.is_running(session_id).await {
+            return;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!(
+                "timed out waiting for session {:?} to stop running",
+                session_id
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
 async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model_id: &str) {
     let Some(python) = common::crp_fixture_runtime::python_binary() else {
         eprintln!("skipping: python3/python not found");
@@ -197,6 +213,7 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
     let provider_session_ref = wait_for_provider_session_ref(&state, session.id).await;
     assert_eq!(provider_session_ref, format!("{provider_id}-thread"));
     assert_eq!(adapter.list_processes().await.len(), 1);
+    wait_for_session_idle(&state, session.id).await;
 
     let sweep_stats = adapter
         .reap_idle_sessions(ProviderSessionSweepConfig {
