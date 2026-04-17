@@ -32,13 +32,19 @@ function resolvePrepMode({ command, tauriArgs }) {
   return tauriArgs.includes("--debug") ? "debug-build" : "release-build";
 }
 
-function createInvocation(argv = process.argv) {
+function shouldSkipPrep(env = process.env) {
+  return String(env.CTX_DESKTOP_SKIP_PREP || "").trim() === "1";
+}
+
+function createInvocation(argv = process.argv, env = process.env) {
   const parsed = parseArgs(argv);
+  const skipPrep = shouldSkipPrep(env);
   return {
     ...parsed,
     prepMode: resolvePrepMode(parsed),
-    prepCommand: "node",
-    prepArgs: ["scripts/desktop_prepare.cjs", "--mode", resolvePrepMode(parsed)],
+    prepCommand: skipPrep ? "" : "node",
+    prepArgs: skipPrep ? [] : ["scripts/desktop_prepare.cjs", "--mode", resolvePrepMode(parsed)],
+    skipPrep,
     tauriCommand: resolveTauriCommand(),
     tauriExecArgs: [parsed.command, ...parsed.tauriArgs],
   };
@@ -72,7 +78,9 @@ function run(command, args, { env = process.env } = {}) {
 
 function main(argv = process.argv) {
   const invocation = createInvocation(argv);
-  run(invocation.prepCommand, invocation.prepArgs);
+  if (!invocation.skipPrep) {
+    run(invocation.prepCommand, invocation.prepArgs);
+  }
   run(invocation.tauriCommand, invocation.tauriExecArgs, {
     env: normalizeTauriCliEnv(process.env),
   });
@@ -88,4 +96,5 @@ module.exports = {
   normalizeTauriCliEnv,
   parseArgs,
   resolvePrepMode,
+  shouldSkipPrep,
 };
