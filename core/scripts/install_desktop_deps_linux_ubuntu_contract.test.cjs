@@ -62,4 +62,19 @@ test("ubuntu desktop deps installer includes libcap for codex sandbox builds", (
     /Could not get lock\|Unable to acquire the dpkg frontend lock/,
     "install_desktop_deps_linux_ubuntu.sh must recognize transient apt\/dpkg lock contention",
   );
+  assert.doesNotMatch(
+    script,
+    /docker buildx version 2>\/dev\/null \| grep -Fq/,
+    "install_desktop_deps_linux_ubuntu.sh must not rely on a pipefail-sensitive docker buildx grep pipeline",
+  );
+  assert.doesNotMatch(
+    script,
+    /ldconfig -p \| grep -q/,
+    "install_desktop_deps_linux_ubuntu.sh must not rely on a pipefail-sensitive ldconfig grep pipeline",
+  );
+  assert.match(
+    script,
+    /if \[\[ -t 1 && -z "\$\{CI:-\}" && -z "\$\{BUILDKITE:-\}" \]\]; then[\s\S]*Next steps/,
+    "install_desktop_deps_linux_ubuntu.sh must only print the interactive next-steps banner outside CI and Buildkite",
+  );
 });

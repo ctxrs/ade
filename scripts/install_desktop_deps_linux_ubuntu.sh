@@ -234,7 +234,9 @@ install_docker_buildx_plugin() {
   esac
 
   if command -v docker >/dev/null 2>&1; then
-    if docker buildx version 2>/dev/null | grep -Fq "${DOCKER_BUILDX_VERSION#v}"; then
+    local buildx_version_output=""
+    buildx_version_output="$(docker buildx version 2>/dev/null || true)"
+    if [[ "$buildx_version_output" == *"${DOCKER_BUILDX_VERSION#v}"* ]]; then
       return 0
     fi
   fi
@@ -300,18 +302,26 @@ else
   exit 2
 fi
 
-if command -v ldconfig >/dev/null 2>&1 && ldconfig -p | grep -q 'libfuse\.so\.2'; then
+if command -v ldconfig >/dev/null 2>&1; then
+  ldconfig_output="$(ldconfig -p 2>/dev/null || true)"
+else
+  ldconfig_output=""
+fi
+
+if [[ "$ldconfig_output" == *"libfuse.so.2"* ]]; then
   echo "- libfuse.so.2: OK"
 else
   echo "- libfuse.so.2: MISSING (install ${fuse_runtime_pkg})" >&2
   exit 2
 fi
 
-echo
-echo "${BOLD}Next steps${RESET}"
-cat <<'EOF'
+if [[ -t 1 && -z "${CI:-}" && -z "${BUILDKITE:-}" ]]; then
+  echo
+  echo "${BOLD}Next steps${RESET}"
+  cat <<'EOF'
 - Ensure prerequisites: Rust toolchain + Node.js + pnpm
 - Install JS deps:    pnpm -C core install
 - Prep web + daemons: pnpm -C core desktop:prep
 - Run desktop dev:    pnpm -C core/apps/desktop dev
 EOF
+fi

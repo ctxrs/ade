@@ -129,6 +129,7 @@ bash ${shellQuote(scriptPath)}
     encoding: "utf8",
     env: {
       ...process.env,
+      CI: "1",
       CTX_TEST_STATE_DIR: fixture.stateDir,
       CTX_TEST_LOCK_FAILURES: "1",
       CTX_APT_LOCK_RETRY_ATTEMPTS: "3",
@@ -143,6 +144,7 @@ bash ${shellQuote(scriptPath)}
     `stdout:\n${result.stdout}\n\nstderr:\n${result.stderr}`,
   );
   assert.match(result.stderr, /apt\/dpkg lock is busy/);
+  assert.doesNotMatch(result.stdout, /Next steps/);
   assert.equal(fs.readFileSync(path.join(fixture.stateDir, "update-attempts"), "utf8"), "2");
   const installArgs = fs.readFileSync(path.join(fixture.stateDir, "install-args.txt"), "utf8");
   assert.match(installArgs, /\bbinutils\b/);
