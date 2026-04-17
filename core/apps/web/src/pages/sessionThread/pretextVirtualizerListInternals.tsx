@@ -178,31 +178,92 @@ export function haveSameItemIds(
   return true;
 }
 
+function nextItemsEndWithPreviousItems(
+  previousItems: readonly WorkbenchListItem[],
+  nextItems: readonly WorkbenchListItem[],
+): boolean {
+  if (previousItems.length === 0) return false;
+  if (nextItems.length <= previousItems.length) return false;
+  const prefixLen = nextItems.length - previousItems.length;
+  for (let index = 0; index < previousItems.length; index += 1) {
+    if (nextItems[prefixLen + index]?.id !== previousItems[index]?.id) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function previousItemsEndWithNextItems(
+  previousItems: readonly WorkbenchListItem[],
+  nextItems: readonly WorkbenchListItem[],
+): boolean {
+  if (nextItems.length === 0) return false;
+  if (previousItems.length <= nextItems.length) return false;
+  const prefixLen = previousItems.length - nextItems.length;
+  for (let index = 0; index < nextItems.length; index += 1) {
+    if (previousItems[prefixLen + index]?.id !== nextItems[index]?.id) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function containsItemId(
+  items: readonly WorkbenchListItem[],
+  itemId: string,
+): boolean {
+  return items.some((item) => item.id === itemId);
+}
+
 export function syncSnapshotForProjectionOp({
   core,
   items,
   projectionOp,
-  previousCount,
+  previousItems,
   anchorOverride,
 }: {
   core: ReturnType<typeof createPretextVirtualizerCore<WorkbenchListItem>>;
   items: readonly WorkbenchListItem[];
   projectionOp: WorkbenchThreadProjectionOp;
-  previousCount: number;
+  previousItems: readonly WorkbenchListItem[];
   anchorOverride?: PretextVirtualizerLogicalAnchor | null;
 }): PretextVirtualizerSnapshot<WorkbenchListItem> {
+  if (
+    projectionOp.kind !== "replace_session" &&
+    anchorOverride?.kind === "item" &&
+    previousItems.length > items.length &&
+    containsItemId(previousItems, anchorOverride.id) &&
+    !containsItemId(items, anchorOverride.id)
+  ) {
+    return core.syncItems(previousItems, anchorOverride);
+  }
+
+  if (
+    projectionOp.kind !== "replace_session" &&
+    previousItemsEndWithNextItems(previousItems, items)
+  ) {
+    const preservedPrefixLen = previousItems.length - items.length;
+    return core.syncItems(
+      [...previousItems.slice(0, preservedPrefixLen), ...items],
+      anchorOverride,
+    );
+  }
+
   const changedCount = projectionOp.changedItemIds.length;
   switch (projectionOp.kind) {
     case "replace_session":
       return core.replaceItems(items, anchorOverride);
     case "append_stream":
-      if (changedCount > 0 && items.length === previousCount + changedCount) {
+      if (changedCount > 0 && items.length === previousItems.length + changedCount) {
         return core.appendItems(items.slice(items.length - changedCount), anchorOverride);
       }
       return core.syncItems(items, anchorOverride);
     case "prepend_history":
-      // History extension can arrive alongside overlapping mixed-row changes, so the
-      // prefix-only fast path is not reliable enough to expose the full fetched prefix.
+      if (nextItemsEndWithPreviousItems(previousItems, items)) {
+        const prependCount = items.length - previousItems.length;
+        const prependedSnapshot = core.prependItems(items.slice(0, prependCount), anchorOverride);
+        return core.syncItems(items, prependedSnapshot.anchor);
+      }
       return core.syncItems(items, anchorOverride);
     case "hydrate_tools":
     case "terminalize_turn":
@@ -235,6 +296,32 @@ export function createVisibleItemAnchor(
     offsetPx,
     offsetRatio: visibleItem.height > 0 ? offsetPx / visibleItem.height : 0,
   };
+}
+
+export function resolveViewportTopAnchorOverride(
+  currentSnapshot: PretextVirtualizerSnapshot<WorkbenchListItem>,
+  fallback: PretextVirtualizerLogicalAnchor,
+): PretextVirtualizerLogicalAnchor {
+  const viewportTop = currentSnapshot.scrollTop;
+  const viewportBottom = viewportTop + currentSnapshot.viewportHeight;
+  const topVisibleItem = currentSnapshot.visibleItems.find((visibleItem) => {
+    const itemBottom = visibleItem.top + visibleItem.height;
+    return itemBottom > viewportTop && visibleItem.top < viewportBottom;
+  });
+  if (!topVisibleItem) {
+    return fallback;
+  }
+  return createVisibleItemAnchor(topVisibleItem, currentSnapshot.scrollTop);
+}
+
+export function resolveHistoryPrependAnchorOverride(
+  currentSnapshot: PretextVirtualizerSnapshot<WorkbenchListItem>,
+  fallback: PretextVirtualizerLogicalAnchor,
+): PretextVirtualizerLogicalAnchor {
+  if (fallback.kind === "bottom") {
+    return fallback;
+  }
+  return resolveViewportTopAnchorOverride(currentSnapshot, fallback);
 }
 
 export function resolveLocalizedAnchorOverride(

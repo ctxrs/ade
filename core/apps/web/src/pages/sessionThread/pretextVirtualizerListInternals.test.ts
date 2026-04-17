@@ -1,8 +1,14 @@
+import { createPretextVirtualizerCore } from "@pretext-virtualizer/core";
 import type { PretextVirtualizerLogicalAnchor, PretextVirtualizerSnapshot } from "@pretext-virtualizer/core";
 import { describe, expect, it } from "vitest";
 import type { WorkbenchListItem } from "../SessionPage.types";
 import type { WorkbenchThreadProjectionOp } from "../sessionThreadProjection";
-import { resolveLocalizedAnchorOverride } from "./pretextVirtualizerListInternals";
+import {
+  resolveHistoryPrependAnchorOverride,
+  resolveLocalizedAnchorOverride,
+  syncSnapshotForProjectionOp,
+  resolveViewportTopAnchorOverride,
+} from "./pretextVirtualizerListInternals";
 
 function makeMessage(id: string): Extract<WorkbenchListItem, { kind: "message" }> {
   return {
@@ -15,11 +21,27 @@ function makeMessage(id: string): Extract<WorkbenchListItem, { kind: "message" }
   };
 }
 
+function createCore(
+  items: readonly WorkbenchListItem[],
+  heights: Record<string, number>,
+) {
+  return createPretextVirtualizerCore<WorkbenchListItem>({
+    initialItems: items,
+    getPlannedLayout: (item) => ({ height: heights[item.id] ?? 40 }),
+    getId: (item) => item.id,
+    getLayoutRevision: () => 0,
+    viewportHeight: 100,
+    viewportWidth: 320,
+    overscanPx: 0,
+  });
+}
+
 function makeSnapshot(
   visibleItems: PretextVirtualizerSnapshot<WorkbenchListItem>["visibleItems"],
+  scrollTop = 100,
 ): PretextVirtualizerSnapshot<WorkbenchListItem> {
   return {
-    scrollTop: 100,
+    scrollTop,
     viewportHeight: 300,
     viewportWidth: 900,
     totalHeight: 2000,
@@ -89,6 +111,324 @@ describe("resolveLocalizedAnchorOverride", () => {
       index: 0,
       offsetPx: 40,
       offsetRatio: 40 / 140,
+    });
+  });
+});
+
+describe("resolveViewportTopAnchorOverride", () => {
+  it("anchors to the first item that actually intersects the viewport top", () => {
+    const snapshot = makeSnapshot([
+      {
+        id: "overscan",
+        index: 0,
+        item: makeMessage("overscan"),
+        layoutRevision: "overscan",
+        top: 20,
+        height: 60,
+        widthBucket: "w14",
+      },
+      {
+        id: "sliver",
+        index: 1,
+        item: makeMessage("sliver"),
+        layoutRevision: "sliver",
+        top: 80,
+        height: 40,
+        widthBucket: "w14",
+      },
+      {
+        id: "next",
+        index: 2,
+        item: makeMessage("next"),
+        layoutRevision: "next",
+        top: 120,
+        height: 80,
+        widthBucket: "w14",
+      },
+    ]);
+    const fallback: PretextVirtualizerLogicalAnchor = { kind: "bottom" };
+
+    expect(resolveViewportTopAnchorOverride(snapshot, fallback)).toEqual({
+      kind: "item",
+      id: "sliver",
+      index: 1,
+      offsetPx: 20,
+      offsetRatio: 0.5,
+    });
+  });
+});
+
+describe("resolveHistoryPrependAnchorOverride", () => {
+  it("uses the top-edge visible item when the scroller is still top-pinned", () => {
+    const snapshot = makeSnapshot(
+      [
+        {
+          id: "older-1",
+          index: 0,
+          item: makeMessage("older-1"),
+          layoutRevision: "older-1",
+          top: 0,
+          height: 40,
+          widthBucket: "w14",
+        },
+        {
+          id: "older-2",
+          index: 1,
+          item: makeMessage("older-2"),
+          layoutRevision: "older-2",
+          top: 40,
+          height: 80,
+          widthBucket: "w14",
+        },
+      ],
+      0,
+    );
+    const fallback: PretextVirtualizerLogicalAnchor = {
+      kind: "item",
+      id: "older-2",
+      index: 1,
+      offsetPx: 0,
+      offsetRatio: 0,
+    };
+
+    expect(resolveHistoryPrependAnchorOverride(snapshot, fallback)).toEqual({
+      kind: "item",
+      id: "older-1",
+      index: 0,
+      offsetPx: 0,
+      offsetRatio: 0,
+    });
+  });
+
+  it("preserves the current viewport-top item even after the user has moved away from the top edge", () => {
+    const snapshot = makeSnapshot(
+      [
+        {
+          id: "sliver",
+          index: 0,
+          item: makeMessage("sliver"),
+          layoutRevision: "sliver",
+          top: 240,
+          height: 40,
+          widthBucket: "w14",
+        },
+        {
+          id: "anchor",
+          index: 1,
+          item: makeMessage("anchor"),
+          layoutRevision: "anchor",
+          top: 280,
+          height: 120,
+          widthBucket: "w14",
+        },
+      ],
+      260,
+    );
+    const fallback: PretextVirtualizerLogicalAnchor = {
+      kind: "item",
+      id: "anchor",
+      index: 1,
+      offsetPx: 20,
+      offsetRatio: 20 / 120,
+    };
+
+    expect(resolveHistoryPrependAnchorOverride(snapshot, fallback)).toEqual({
+      kind: "item",
+      id: "sliver",
+      index: 0,
+      offsetPx: 20,
+      offsetRatio: 0.5,
+    });
+  });
+});
+
+describe("syncSnapshotForProjectionOp", () => {
+  it("preserves the active anchor across prepend_history updates", () => {
+    const previousItems = [makeMessage("item-1"), makeMessage("item-2"), makeMessage("item-3")];
+    const nextItems = [
+      makeMessage("older-1"),
+      makeMessage("older-2"),
+      ...previousItems,
+    ];
+    const heights = {
+      "older-1": 24,
+      "older-2": 36,
+      "item-1": 40,
+      "item-2": 64,
+      "item-3": 72,
+    };
+    const core = createCore(previousItems, heights);
+    core.syncViewport({
+      height: 100,
+      width: 320,
+      scrollTop: 40,
+    });
+
+    const snapshot = syncSnapshotForProjectionOp({
+      core,
+      items: nextItems,
+      projectionOp: {
+        kind: "prepend_history",
+        projectionRevision: 1,
+        changedItemIds: ["older-1", "older-2"],
+        remeasureItemIds: ["older-1", "older-2"],
+      },
+      previousItems,
+    });
+
+    expect(snapshot.scrollTop).toBe(100);
+    expect(snapshot.anchor).toEqual({
+      kind: "item",
+      id: "item-2",
+      index: 3,
+      offsetPx: 0,
+      offsetRatio: 0,
+    });
+  });
+
+  it("refreshes retained row payloads after prepend_history fast-path", () => {
+    const previousItems = [
+      makeMessage("item-1"),
+      { ...makeMessage("item-2"), content: "old payload" },
+      makeMessage("item-3"),
+    ];
+    const nextItems = [
+      makeMessage("older-1"),
+      makeMessage("older-2"),
+      previousItems[0]!,
+      { ...previousItems[1]!, content: "new payload" },
+      previousItems[2]!,
+    ];
+    const core = createCore(previousItems, {
+      "older-1": 24,
+      "older-2": 36,
+      "item-1": 40,
+      "item-2": 64,
+      "item-3": 72,
+    });
+    core.syncViewport({
+      height: 100,
+      width: 320,
+      scrollTop: 40,
+    });
+
+    const snapshot = syncSnapshotForProjectionOp({
+      core,
+      items: nextItems,
+      projectionOp: {
+        kind: "prepend_history",
+        projectionRevision: 1,
+        changedItemIds: ["older-1", "older-2"],
+        remeasureItemIds: ["older-1", "older-2"],
+      },
+      previousItems,
+    });
+
+    const refreshedItem = snapshot.visibleItems.find((item) => item.id === "item-2")?.item;
+    expect(refreshedItem && refreshedItem.kind === "message" ? refreshedItem.content : null).toBe("new payload");
+  });
+
+  it("preserves prepended history across a shorter bounded suffix reconcile", () => {
+    const previousItems = [
+      makeMessage("older-1"),
+      makeMessage("older-2"),
+      makeMessage("item-1"),
+      { ...makeMessage("item-2"), content: "old payload" },
+      makeMessage("item-3"),
+    ];
+    const nextItems = [
+      previousItems[2]!,
+      { ...previousItems[3]!, content: "new payload" },
+      previousItems[4]!,
+    ];
+    const core = createCore(previousItems, {
+      "older-1": 24,
+      "older-2": 36,
+      "item-1": 40,
+      "item-2": 64,
+      "item-3": 72,
+    });
+    core.syncViewport({
+      height: 100,
+      width: 320,
+      scrollTop: 100,
+    });
+
+    const snapshot = syncSnapshotForProjectionOp({
+      core,
+      items: nextItems,
+      projectionOp: {
+        kind: "reconcile",
+        projectionRevision: 2,
+        changedItemIds: ["item-2"],
+        remeasureItemIds: ["item-2"],
+      },
+      previousItems,
+    });
+
+    expect(snapshot.totalHeight).toBe(236);
+    expect(snapshot.anchor).toEqual({
+      kind: "item",
+      id: "item-2",
+      index: 3,
+      offsetPx: 0,
+      offsetRatio: 0,
+    });
+    const refreshedItem = snapshot.visibleItems.find((item) => item.id === "item-2")?.item;
+    expect(refreshedItem && refreshedItem.kind === "message" ? refreshedItem.content : null).toBe("new payload");
+  });
+
+  it("ignores shorter detached updates that omit the anchored history item", () => {
+    const previousItems = [
+      makeMessage("older-1"),
+      makeMessage("older-2"),
+      makeMessage("anchor-item"),
+      makeMessage("item-2"),
+      makeMessage("item-3"),
+    ];
+    const nextItems = [
+      makeMessage("item-2"),
+      makeMessage("item-3"),
+    ];
+    const core = createCore(previousItems, {
+      "older-1": 24,
+      "older-2": 36,
+      "anchor-item": 40,
+      "item-2": 64,
+      "item-3": 72,
+    });
+    core.syncViewport({
+      height: 100,
+      width: 320,
+      scrollTop: 100,
+    });
+
+    const snapshot = syncSnapshotForProjectionOp({
+      core,
+      items: nextItems,
+      projectionOp: {
+        kind: "reconcile",
+        projectionRevision: 3,
+        changedItemIds: ["item-2", "item-3"],
+        remeasureItemIds: ["item-2", "item-3"],
+      },
+      previousItems,
+      anchorOverride: {
+        kind: "item",
+        id: "anchor-item",
+        index: 2,
+        offsetPx: 0,
+        offsetRatio: 0,
+      },
+    });
+
+    expect(snapshot.totalHeight).toBe(236);
+    expect(snapshot.anchor).toEqual({
+      kind: "item",
+      id: "anchor-item",
+      index: 2,
+      offsetPx: 0,
+      offsetRatio: 0,
     });
   });
 });

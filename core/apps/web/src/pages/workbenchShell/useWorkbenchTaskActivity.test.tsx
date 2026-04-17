@@ -943,10 +943,21 @@ describe("useWorkbenchTaskActivity helpers", () => {
     expect(providerIdsByTask["task-1"]).toEqual(["codex", "claude-crp"]);
   });
 
-  it("resolves the visible workbench session from primary, tab, then inferred session order", () => {
+  it("resolves the visible workbench session from tab, then primary, then inferred session order", () => {
     expect(
       resolveWorkbenchActiveSessionId({
         activeSessionIdFromTab: "session-from-tab",
+        primarySessionId: "session-primary",
+        sessions: [
+          makeSession("session-from-tab", "task-1", "completed"),
+          makeSession("session-secondary", "task-1", "completed"),
+        ],
+      }),
+    ).toBe("session-from-tab");
+
+    expect(
+      resolveWorkbenchActiveSessionId({
+        activeSessionIdFromTab: "session-stale",
         primarySessionId: "session-primary",
         sessions: [makeSession("session-secondary", "task-1", "completed")],
       }),
@@ -995,17 +1006,25 @@ describe("useWorkbenchTaskActivity helpers", () => {
 
     expect(
       resolveRenderableWorkbenchActiveSessionId({
-        activeSessionIdFromTab: "session-1",
-        primarySessionId: "",
-        sessions: [session],
+        activeSessionIdFromTab: "session-from-tab",
+        primarySessionId: "session-primary",
+        sessions: [
+          makeSession("session-primary", "task-1", "active"),
+          makeSession("session-from-tab", "task-1", "active"),
+        ],
         sessionEntries: {
-          "session-1": {
+          "session-primary": {
             ...emptyEntry,
+            session: makeSession("session-primary", "task-1", "active"),
+          },
+          "session-from-tab": {
+            ...emptyEntry,
+            session: makeSession("session-from-tab", "task-1", "active"),
             stateLoaded: true,
           },
         },
       }),
-    ).toBe("session-1");
+    ).toBe("session-from-tab");
 
     expect(
       resolveRenderableWorkbenchActiveSessionId({

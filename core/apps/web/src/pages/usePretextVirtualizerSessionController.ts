@@ -161,8 +161,15 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
       }
 
       const topPinned = location.listOffset >= -1;
+      const previousListOffset = lastListOffsetRef.current;
+      const scrollingUp = previousListOffset == null ? topPinned : location.listOffset > previousListOffset;
+      const scrollingDown = previousListOffset != null && location.listOffset < previousListOffset;
+      lastListOffsetRef.current = location.listOffset;
       if (!topPinned) {
         blockedTopPinnedHistoryRef.current = false;
+      }
+      if (!topPinned || scrollingDown) {
+        continueHistoryAtTopRef.current = false;
       }
 
       if (!canLoadOlder || atBottom || pendingHistoryRef.current) {
@@ -173,14 +180,10 @@ export function usePretextVirtualizerSessionController(params: Params): Result {
           blockedTopPinnedHistoryRef.current = false;
           continueHistoryAtTopRef.current = false;
         }
-        lastListOffsetRef.current = location.listOffset;
         return;
       }
 
-      const previousListOffset = lastListOffsetRef.current;
-      lastListOffsetRef.current = location.listOffset;
       const nearTop = location.listOffset > -computeHistoryPrefetchThresholdPx(location.visibleListHeight);
-      const scrollingUp = previousListOffset == null ? topPinned : location.listOffset > previousListOffset;
       if (!nearTop || !scrollingUp) {
         return;
       }

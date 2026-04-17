@@ -101,8 +101,13 @@ export function useWorkbenchSessionBridge({
   const sessionHeadPrefetchCancelledRef = useRef(false);
   const prefetchSessionIdsRef = useRef<Set<string>>(new Set());
   const activeTaskHeadSessionIds = useMemo(
-    () => Array.from(new Set([...sessionIds, ...sessions.map((session) => idToString(session.id)).filter(Boolean)])),
-    [sessionIds, sessions],
+    () =>
+      Array.from(new Set([
+        ...sessionIds,
+        ...sessions.map((session) => idToString(session.id)).filter(Boolean),
+        ...(activeSessionIdFromTab ? [activeSessionIdFromTab] : []),
+      ])),
+    [activeSessionIdFromTab, sessionIds, sessions],
   );
   const primeAuthoritativeHeadsForSessions = useCallback(
     async (sessionIdsToPrime: readonly string[]) => {
@@ -224,7 +229,7 @@ export function useWorkbenchSessionBridge({
       workbenchStore.setActiveSessionForActiveTask(null, { source: "system" });
       return;
     }
-    const nextSessionId = primarySessionId || resolveWorkbenchActiveSessionId({
+    const nextSessionId = resolveWorkbenchActiveSessionId({
       activeSessionIdFromTab: previousSessionId,
       primarySessionId,
       sessions,

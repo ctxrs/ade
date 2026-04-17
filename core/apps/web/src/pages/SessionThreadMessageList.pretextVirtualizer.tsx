@@ -44,6 +44,7 @@ import {
   haveSameLayoutInputs,
   isLocalizedProjectionOp,
   resolveInteractionItemId,
+  resolveHistoryPrependAnchorOverride,
   resolveLocalizedAnchorOverride,
   resolveScrollTopForLocation,
   syncSnapshotForProjectionOp,
@@ -610,19 +611,21 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
       : core.getAnchor("detached");
     const anchorOverride = shouldFollowBottom
       ? defaultAnchorOverride
-      : resolveLocalizedAnchorOverride(
-          currentSnapshot,
-          threadProjectionOp,
-          activeChangedItemId,
-          defaultAnchorOverride,
-        );
+      : threadProjectionOp.kind === "prepend_history"
+        ? resolveHistoryPrependAnchorOverride(currentSnapshot, defaultAnchorOverride)
+        : resolveLocalizedAnchorOverride(
+            currentSnapshot,
+            threadProjectionOp,
+            activeChangedItemId,
+            defaultAnchorOverride,
+          );
     incrementPretextPerfCounter("pretext_visible_sync_items_calls");
     addPretextPerfBucket("pretext_visible_sync_items_kind", threadProjectionOp.kind);
     const nextSnapshot = syncSnapshotForProjectionOp({
       core,
       items: listItems,
       projectionOp: threadProjectionOp,
-      previousCount: lastSyncedItemCountRef.current,
+      previousItems: preparedState.listItems,
       anchorOverride,
     });
     lastSyncedItemCountRef.current = listItems.length;
@@ -809,11 +812,20 @@ export const SessionThreadPretextVirtualizerList = memo(function SessionThreadPr
     commitRuntimeSnapshot(nextSnapshot, listItemsRef.current);
     setSnapshot(nextSnapshot);
     emitScrollState(nextSnapshot);
-  }, [commitRuntimeSnapshot, core, emitScrollState, showScrollbarTemporarily]);
+  }, [
+    commitRuntimeSnapshot,
+    core,
+    emitScrollState,
+    showScrollbarTemporarily,
+  ]);
 
   const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if (event.deltaY < 0) {
       followBottomRef.current = false;
+      if (lastAtBottomRef.current !== false) {
+        lastAtBottomRef.current = false;
+        onAtBottomChangeRef.current?.(false);
+      }
     }
     showScrollbarTemporarily();
   }, [showScrollbarTemporarily]);

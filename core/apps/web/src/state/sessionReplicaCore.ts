@@ -33,6 +33,7 @@ import {
 } from "./sessionReplicaTranscript";
 import {
   isBoundedSessionHead,
+  shouldPreserveExistingTranscriptWindow,
   shouldRepairSessionHeadReplace,
 } from "./sessionHeadRepair";
 import {
@@ -537,7 +538,9 @@ export class SessionReplicaCore {
       (!authoritative || preservingRepairReplace) &&
       (turns.length < entry.turns.length ||
         messages.length < entry.messages.length ||
-        events.length < entry.events.length);
+        events.length < entry.events.length ||
+        (preservingRepairReplace &&
+          shouldPreserveExistingTranscriptWindow(entry, { turns, messages })));
     let toolSummaries = data.toolSummaries ?? entry.toolSummaries;
     if (incomingIsOlder || (!authoritative && existingSeq > incomingSeq) || incomingIsNarrower) {
       turns = mergeTurns(turns, entry.turns);

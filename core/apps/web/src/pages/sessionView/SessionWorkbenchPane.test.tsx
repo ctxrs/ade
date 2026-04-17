@@ -480,7 +480,7 @@ describe("SessionWorkbenchPane", () => {
     });
   });
 
-  it("does not expose a session id until interrupt target readiness is confirmed", () => {
+  it("always exposes the mounted session id", () => {
     render(
       <TestPane
         session={{
@@ -501,10 +501,10 @@ describe("SessionWorkbenchPane", () => {
       />,
     );
 
-    expect(screen.getByTestId("session-view")).toHaveAttribute("data-session-id", "");
+    expect(screen.getByTestId("session-view")).toHaveAttribute("data-session-id", "session-1");
   });
 
-  it("exposes the interrupt session id once readiness is confirmed", () => {
+  it("does not let interrupt readiness change the mounted session id", () => {
     render(
       <TestPane
         session={{

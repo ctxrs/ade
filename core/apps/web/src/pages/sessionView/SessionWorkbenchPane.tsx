@@ -300,7 +300,7 @@ export function SessionWorkbenchPane({
       ref={dropScopeRef}
       style={SESSION_THREAD_LAYOUT_STYLE}
       data-testid="session-view"
-      data-session-id={interruptSessionId}
+      data-session-id={id}
       data-thread-count={totalVisibleThreadItems}
     >
       {dropActive ? (

@@ -27,6 +27,7 @@ import {
 } from "./authorityPolicy";
 import type { InternalEntry } from "./entryState";
 import type { SessionReplicaPatch } from "../sessionReplicaProtocol";
+import { shouldPreserveExistingTranscriptWindow } from "../sessionHeadRepair";
 import { adoptLoadedStateRevision } from "./supportLoads";
 
 export type SessionSupervisorReplicaPatchHost = {
@@ -84,6 +85,17 @@ const repairReplaceIsCoveredByEntry = (
     incomingTurns.every((turn) => entryTurnIds.has(idToString(turn.turn_id))) &&
     incomingMessages.every((message) => entryMessageIds.has(idToString(message.id)))
   );
+};
+
+const repairReplaceShouldPreserveEntryTranscript = (
+  entry: Pick<InternalEntry, "turns" | "messages">,
+  data: Pick<Exclude<SessionReplicaPatch, { op: "evict" }>["data"], "turns" | "messages">,
+): boolean => {
+  if (repairReplaceIsCoveredByEntry(entry, data)) return true;
+  return shouldPreserveExistingTranscriptWindow(entry, {
+    turns: Array.isArray(data.turns) ? data.turns : [],
+    messages: Array.isArray(data.messages) ? data.messages : [],
+  });
 };
 
 const rebuildSeqAndStartState = (entry: InternalEntry) => {
@@ -323,7 +335,7 @@ const applyCanonicalTranscriptPatch = (
   });
   const preserveCoveredHistoryOnReplace =
     patch.op === "replace" &&
-    repairReplaceIsCoveredByEntry(entry, data) &&
+    repairReplaceShouldPreserveEntryTranscript(entry, data) &&
     (entry.historyExtended || replaceMode === "repair_replace");
   const localQueuedMessages =
     Array.isArray(data.messages) ? preserveLocalQueuedMessages(entry.messages, data.messages) : [];
