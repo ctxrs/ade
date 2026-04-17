@@ -138,10 +138,9 @@ async fn setup_state_and_app(
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
-    let lsp_server =
-        common::resolve_cargo_bin_exe(env!("CARGO_BIN_EXE_ctx-http-lsp-test-server"))
-            .display()
-            .to_string();
+    let lsp_server = common::resolve_cargo_bin_exe(env!("CARGO_BIN_EXE_ctx-http-lsp-test-server"))
+        .display()
+        .to_string();
     let state = Arc::new(AppState::new_with_lsp_config_and_flags(
         data_dir.path().to_path_buf(),
         stores,
@@ -210,10 +209,9 @@ async fn edit_plan_persists_across_restart_and_discards() {
     drop(state);
 
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let lsp_server =
-        common::resolve_cargo_bin_exe(env!("CARGO_BIN_EXE_ctx-http-lsp-test-server"))
-            .display()
-            .to_string();
+    let lsp_server = common::resolve_cargo_bin_exe(env!("CARGO_BIN_EXE_ctx-http-lsp-test-server"))
+        .display()
+        .to_string();
     let state2 = Arc::new(AppState::new_with_lsp_config_and_flags(
         data_dir.path().to_path_buf(),
         stores,

@@ -213,8 +213,12 @@ pub async fn selected_runtime_state(
                 runtime_sandbox_engine_ready(data_root, &mode).await,
             )?;
             let image_present = if machine_ready {
-                runtime_container_image_present(data_root, &mode, &resolve_container_image(settings))
-                    .await?
+                runtime_container_image_present(
+                    data_root,
+                    &mode,
+                    &resolve_container_image(settings),
+                )
+                .await?
             } else {
                 false
             };
@@ -241,10 +245,7 @@ pub async fn prewarm_selected_runtime_with_observer(
                     .await
             } else {
                 runtime_prefetch_container_startup_artifacts_with_observer(
-                    data_root,
-                    &mode,
-                    &image,
-                    observer,
+                    data_root, &mode, &image, observer,
                 )
                 .await
             }
