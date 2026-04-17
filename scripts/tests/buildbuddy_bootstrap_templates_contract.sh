@@ -47,6 +47,8 @@ render_mac() {
     BUILDBUDDY_EXECUTOR_ROOT_DIRECTORY="/Users/example-user/buildbuddy/remotebuilds" \
     BUILDBUDDY_EXECUTOR_LOCAL_CACHE_DIRECTORY="/Users/example-user/buildbuddy/filecache" \
     BUILDBUDDY_EXECUTOR_LOCAL_CACHE_SIZE_BYTES="100000000000" \
+    MY_HOSTNAME="mac-mini.tail123.ts.net" \
+    MY_PORT="1985" \
     MY_POOL="darwin-arm64-default" \
     envsubst <"scripts/buildbuddy/templates/mac-executor.config.yaml.tmpl" >"$tmpdir/mac-config.yaml"
 
@@ -57,6 +59,8 @@ render_mac() {
     BUILDBUDDY_EXECUTOR_ROOT_DIRECTORY="/Users/example-user/buildbuddy/remotebuilds" \
     BUILDBUDDY_EXECUTOR_LOCAL_CACHE_DIRECTORY="/Users/example-user/buildbuddy/filecache" \
     BUILDBUDDY_EXECUTOR_LOCAL_CACHE_SIZE_BYTES="100000000000" \
+    MY_HOSTNAME="mac-mini.tail123.ts.net" \
+    MY_PORT="1985" \
     MY_POOL="darwin-arm64-default" \
     envsubst <"scripts/buildbuddy/templates/buildbuddy-executor.plist.tmpl" >"$tmpdir/mac.plist"
 }
@@ -68,6 +72,10 @@ rg -F 'executor_tmp="$(mktemp /tmp/buildbuddy-executor.' "scripts/buildbuddy/boo
 rg -F 'mv "${executor_tmp}" /usr/local/bin/buildbuddy-executor' "scripts/buildbuddy/bootstrap_linux_executor.sh" >/dev/null
 rg -F 'executor_tmp="$(mktemp "${TMPDIR:-/tmp}/buildbuddy-executor.' "scripts/buildbuddy/bootstrap_darwin_executor.sh" >/dev/null
 rg -F 'mv "${executor_tmp}" "${BUILDBUDDY_EXECUTOR_STATE_ROOT}/bin/buildbuddy-executor"' "scripts/buildbuddy/bootstrap_darwin_executor.sh" >/dev/null
+rg -F 'MY_HOSTNAME' "scripts/buildbuddy/bootstrap_darwin_executor.sh" >/dev/null
+rg -F 'registered_to_scheduler' "scripts/buildbuddy/bootstrap_darwin_executor.sh" >/dev/null
+rg -F 'MY_HOSTNAME=' "scripts/buildbuddy/templates/mac-executor.env.example" >/dev/null
+rg -F 'MY_PORT=1985' "scripts/buildbuddy/templates/mac-executor.env.example" >/dev/null
 
 rg -F 'app_target: "grpcs://remote.buildbuddy.io"' "$tmpdir/linux-config.yaml" >/dev/null
 rg -F 'root_directory: "/var/lib/buildbuddy/remotebuilds"' "$tmpdir/linux-config.yaml" >/dev/null
