@@ -1604,6 +1604,7 @@ dependencies = [
  "ctx-workspace-config",
  "ctx-workspace-container",
  "ctx-workspace-runtime",
+ "ctx-workspace-services",
  "ctx-worktree-data-plane",
  "directories",
  "flate2",
@@ -1843,12 +1844,22 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
+ "ctx-core",
+ "ctx-harness-sources",
  "ctx-managed-installs",
+ "ctx-provider-accounts",
  "ctx-provider-install",
  "ctx-provider-matrix",
  "ctx-providers",
+ "directories",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
  "tempfile",
  "tokio",
+ "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -2202,6 +2213,18 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "ctx-workspace-services"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "ctx-core",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

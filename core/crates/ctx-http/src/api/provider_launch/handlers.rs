@@ -101,7 +101,7 @@ pub(in crate::api) async fn get_provider_options(
         provider_status_for_target(state.as_ref(), &managed, &matrix, &provider_id, install_target)
             .await;
     let has_active_auth = probe::provider_has_active_auth_for_workspace_runtime(
-        &state,
+        state.as_ref(),
         &workspace,
         &provider_id,
         source_config.as_ref(),
@@ -163,7 +163,7 @@ pub(in crate::api) async fn get_provider_options(
         ProviderOptionsProbePlan::EnvOnly => {
             let (probe_ok, auth_required, probe_error) =
                 match probe::provider_probe_env_for_workspace_runtime(
-                    &state,
+                    state.as_ref(),
                     &workspace,
                     &provider_id,
                 )
@@ -712,7 +712,11 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
         ))?;
 
     let probe_context =
-        probe::provider_auth_context_for_workspace_runtime(&state, &workspace, &provider_id)
+        probe::provider_auth_context_for_workspace_runtime(
+            state.as_ref(),
+            &workspace,
+            &provider_id,
+        )
             .await
             .map_err(|err| {
                 (

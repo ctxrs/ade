@@ -230,7 +230,7 @@ async fn load_pinned_subscription_model_catalog(
     )
     .await;
     let provider_status = crate::api::providers::provider_status_for_target(
-        state,
+        state.as_ref(),
         &managed,
         &matrix,
         provider_id,
@@ -526,7 +526,7 @@ async fn load_provider_model_catalog_for_install_target(
 
     let probe_context =
         match crate::provider_launch::probe::provider_probe_context_for_workspace_runtime(
-            state,
+            state.as_ref(),
             workspace,
             provider_id,
         )

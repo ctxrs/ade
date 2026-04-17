@@ -202,7 +202,7 @@ pub(crate) async fn authenticate_session(
     )
     .await;
     let probe_context = crate::provider_launch::probe::provider_auth_context_for_worktree_runtime(
-        &state,
+        state.as_ref(),
         &resolved_worktree.worktree,
         &session.provider_id,
     )

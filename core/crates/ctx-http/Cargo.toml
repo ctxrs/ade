@@ -39,6 +39,7 @@ ctx-worktree-data-plane = { path = "../ctx-worktree-data-plane" }
 ctx-workspace-runtime = { path = "../ctx-workspace-runtime" }
 ctx-workspace-config = { path = "../ctx-workspace-config" }
 ctx-workspace-container = { path = "../ctx-workspace-container" }
+ctx-workspace-services = { path = "../ctx-workspace-services" }
 ctx-workspace-active-snapshot = { path = "../ctx-workspace-active-snapshot" }
 ctx-worker-protocol = { path = "../ctx-worker-protocol" }
 ctx-lsp = { path = "../ctx-lsp" }

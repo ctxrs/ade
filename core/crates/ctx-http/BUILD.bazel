@@ -98,8 +98,8 @@ CTX_HTTP_SHARED_INTERNAL_DEPS = [
         "//core/crates/ctx-provider-install:lib",
         "//core/crates/ctx-provider-runtime:lib",
         "//core/crates/ctx-provider-matrix:lib",
-    "//core/crates/ctx-providers:lib",
-    "//core/crates/ctx-runtime-assets:lib",
+        "//core/crates/ctx-providers:lib",
+        "//core/crates/ctx-runtime-assets:lib",
     "//core/crates/ctx-sandbox-container-runtime:lib",
     "//core/crates/ctx-sandbox-contract:lib",
     "//core/crates/ctx-sandbox-materialization:lib",
@@ -111,6 +111,7 @@ CTX_HTTP_SHARED_INTERNAL_DEPS = [
     "//core/crates/ctx-workspace-active-snapshot:lib",
     "//core/crates/ctx-workspace-config:lib",
     "//core/crates/ctx-workspace-container:lib",
+    "//core/crates/ctx-workspace-services:lib",
     "//core/crates/ctx-worktree-data-plane:lib",
 ]
 

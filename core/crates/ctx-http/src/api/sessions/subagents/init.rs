@@ -243,7 +243,7 @@ pub(crate) async fn mcp_agent_init(
         }
 
         let status = crate::api::providers::provider_status_for_target(
-            &state,
+            state.as_ref(),
             &managed,
             &matrix,
             provider_id,

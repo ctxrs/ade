@@ -6,6 +6,8 @@ use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use tokio::sync::Mutex;
 
 pub mod provider_launch;
+pub mod provider_auth;
+pub mod provider_usage;
 pub mod provider_usability;
 
 pub trait ProviderRuntimeHost: Send + Sync + 'static {

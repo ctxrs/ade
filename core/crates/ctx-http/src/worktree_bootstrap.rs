@@ -4,13 +4,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use chrono::Utc;
-use tokio::io::AsyncReadExt;
-use tokio::process::Command;
-
+use async_trait::async_trait;
 use ctx_core::ids::WorktreeId;
 use ctx_core::models::{Workspace, Worktree, WorktreeBootstrapNotice, WorktreeBootstrapStatus};
 use ctx_store::WorktreeBootstrapResultUpdate;
+use tokio::io::AsyncReadExt;
+use tokio::process::Command;
 
 use crate::daemon::AppState;
 use crate::execution_effective;
@@ -19,42 +18,6 @@ use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::worktree_data_plane::resolve_worktree_data_plane;
 use ctx_workspace_config as workspace_config;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
-
-const DEFAULT_TIMEOUT_SEC: u64 = 60;
-const MAX_LOG_BYTES: usize = 200 * 1024;
-
-#[derive(Debug, Clone)]
-struct ResolvedBootstrap {
-    timeout: Duration,
-    command: String,
-    wait_for_completion: bool,
-}
-
-#[derive(Debug, Clone)]
-struct WorktreeBootstrapPlan {
-    timeout: Duration,
-    steps: Vec<BootstrapStep>,
-    wait_for_completion: bool,
-}
-
-#[derive(Debug, Clone)]
-struct BootstrapStep {
-    label: String,
-    kind: BootstrapStepKind,
-}
-
-#[derive(Debug, Clone)]
-enum BootstrapStepKind {
-    Command { command: String },
-}
-
-#[derive(Debug)]
-struct BootstrapCommandResult {
-    status: Option<i32>,
-    stdout: String,
-    stderr: String,
-    timed_out: bool,
-}
 
 struct SandboxBootstrapContext<'a> {
     settings: &'a crate::settings::ExecutionSettings,
@@ -67,10 +30,8 @@ pub async fn run_worktree_bootstrap(
     workspace: &Workspace,
     worktree: &Worktree,
 ) -> Result<()> {
-    let Some(plan) = prepare_worktree_bootstrap(state, workspace, worktree).await? else {
-        return Ok(());
-    };
-    run_worktree_bootstrap_plan(state, workspace, worktree, plan).await
+    ctx_workspace_services::worktree_bootstrap::run_worktree_bootstrap(state, workspace, worktree)
+        .await
 }
 
 pub async fn spawn_worktree_bootstrap(
@@ -78,270 +39,118 @@ pub async fn spawn_worktree_bootstrap(
     workspace: Workspace,
     worktree: Worktree,
 ) -> Result<()> {
-    let Some(plan) = prepare_worktree_bootstrap(&state, &workspace, &worktree).await? else {
-        return Ok(());
-    };
-
-    let worktree_id = worktree.id;
-    state
-        .register_worktree_bootstrap(worktree_id, plan.wait_for_completion)
-        .await;
-
-    tokio::spawn(async move {
-        if let Err(e) = run_worktree_bootstrap_plan(&state, &workspace, &worktree, plan).await {
-            tracing::warn!(worktree_id = %worktree_id.0, "worktree bootstrap failed: {e:?}");
-        }
-        state.finish_worktree_bootstrap(worktree_id).await;
-    });
-
-    Ok(())
+    ctx_workspace_services::worktree_bootstrap::spawn_worktree_bootstrap(state, workspace, worktree)
+        .await
 }
 
-async fn prepare_worktree_bootstrap(
-    state: &AppState,
-    workspace: &Workspace,
-    worktree: &Worktree,
-) -> Result<Option<WorktreeBootstrapPlan>> {
-    let has_vcs_ref = worktree.vcs_ref.is_some() || worktree.git_branch.is_some();
-    if !has_vcs_ref {
-        return Ok(None);
+#[async_trait]
+impl ctx_workspace_services::worktree_bootstrap::WorktreeBootstrapHost for AppState {
+    async fn load_bootstrap_config(
+        &self,
+        workspace: &Workspace,
+    ) -> Result<Option<ctx_workspace_services::worktree_bootstrap::BootstrapConfig>> {
+        let store = self.store_for_workspace(workspace.id).await?;
+        let Some(cfg) = workspace_config::load_worktree_bootstrap_config(&store).await? else {
+            return Ok(None);
+        };
+
+        let command = cfg
+            .setup_command
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let Some(command) = command else {
+            return Ok(None);
+        };
+
+        let timeout_sec = cfg.timeout_sec.unwrap_or(60);
+        let timeout_sec = if timeout_sec == 0 { 60 } else { timeout_sec };
+        let wait_for_completion = cfg.wait_for_completion.unwrap_or(false);
+        Ok(Some(
+            ctx_workspace_services::worktree_bootstrap::BootstrapConfig {
+                timeout: Duration::from_secs(timeout_sec),
+                command,
+                wait_for_completion,
+            },
+        ))
     }
 
-    let bootstrap = match load_bootstrap_config(state, workspace).await {
-        Ok(Some(cfg)) => cfg,
-        Ok(None) => return Ok(None),
-        Err(err) => {
-            let started_at = Utc::now();
-            let error = err.to_string();
-            let error_details = format!("{err:#}");
-            let mut log = String::new();
-            log.push_str("# ctx worktree bootstrap\n");
-            log.push_str(&format!("# Worktree: {}\n", worktree.root_path.trim()));
-            log.push_str(&format!("# Started: {}\n\n", started_at.to_rfc3339()));
-            log.push_str("[error]\n");
-            log.push_str(&error_details);
-            log.push('\n');
-            let finished_at = Utc::now();
-            log.push_str(&format!("\n# Finished: {}\n", finished_at.to_rfc3339()));
-            log.push_str("# Status: Failed\n");
+    async fn execute_bootstrap_step(
+        &self,
+        workspace: &Workspace,
+        worktree: &Worktree,
+        step: &ctx_workspace_services::worktree_bootstrap::BootstrapStep,
+        timeout: Duration,
+    ) -> Result<ctx_workspace_services::worktree_bootstrap::BootstrapCommandResult> {
+        run_bootstrap_step(self, step, workspace, worktree, timeout).await
+    }
 
-            let (log, log_truncated) = truncate_log(&logs::redact_sensitive(&log));
-            let log_path = write_bootstrap_log(state, worktree.id, &log).await.ok();
-            update_bootstrap_result(
-                state,
-                WorktreeBootstrapResultUpdate {
-                    worktree_id: worktree.id,
-                    status: WorktreeBootstrapStatus::Failed,
-                    started_at,
-                    finished_at,
-                    exit_code: None,
-                    timeout_sec: Some(DEFAULT_TIMEOUT_SEC as i64),
-                    error: Some(error.clone()),
-                    log_path: log_path.as_ref().map(|p| p.to_string_lossy().to_string()),
-                    log_truncated: Some(log_truncated),
-                    command: None,
-                    script_path: None,
-                },
-            )
-            .await;
+    async fn persist_bootstrap_report(
+        &self,
+        workspace_id: ctx_core::ids::WorkspaceId,
+        worktree: &Worktree,
+        report: ctx_workspace_services::worktree_bootstrap::BootstrapReport,
+    ) {
+        let (log, log_truncated) = ctx_workspace_services::worktree_bootstrap::truncate_log(
+            &logs::redact_sensitive(&report.raw_log),
+        );
+        let log_path = write_bootstrap_log(self, worktree.id, &log).await.ok();
+
+        update_bootstrap_result(
+            self,
+            WorktreeBootstrapResultUpdate {
+                worktree_id: worktree.id,
+                status: report.status.clone(),
+                started_at: report.started_at,
+                finished_at: report.finished_at,
+                exit_code: report.exit_code,
+                timeout_sec: Some(report.timeout_sec),
+                error: report.error.clone(),
+                log_path: log_path.as_ref().map(|p| p.to_string_lossy().to_string()),
+                log_truncated: Some(log_truncated),
+                command: report.command.clone(),
+                script_path: None,
+            },
+        )
+        .await;
+
+        if report.status != WorktreeBootstrapStatus::Success {
             let notice = WorktreeBootstrapNotice {
                 worktree_id: worktree.id,
                 worktree_root: worktree.root_path.clone(),
-                status: WorktreeBootstrapStatus::Failed,
-                started_at,
-                finished_at,
-                exit_code: None,
-                timeout_sec: Some(DEFAULT_TIMEOUT_SEC as i64),
-                command: None,
+                status: report.status,
+                started_at: report.started_at,
+                finished_at: report.finished_at,
+                exit_code: report.exit_code,
+                timeout_sec: Some(report.timeout_sec),
+                command: report.command,
                 script_path: None,
                 log_path: log_path.map(|p| p.to_string_lossy().to_string()),
                 log_truncated: Some(log_truncated),
-                error: Some(error),
+                error: report.error,
             };
-            emit_failure_notice(state, workspace.id, notice).await;
-            return Ok(None);
-        }
-    };
-
-    let steps = build_bootstrap_steps(&bootstrap.command)?;
-    if steps.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(WorktreeBootstrapPlan {
-        timeout: bootstrap.timeout,
-        steps,
-        wait_for_completion: bootstrap.wait_for_completion,
-    }))
-}
-
-async fn run_worktree_bootstrap_plan(
-    state: &AppState,
-    workspace: &Workspace,
-    worktree: &Worktree,
-    plan: WorktreeBootstrapPlan,
-) -> Result<()> {
-    let WorktreeBootstrapPlan { timeout, steps, .. } = plan;
-    let started_at = Utc::now();
-    let mut log = String::new();
-    log.push_str("# ctx worktree bootstrap\n");
-    log.push_str(&format!("# Worktree: {}\n", worktree.root_path.trim()));
-    log.push_str(&format!("# Started: {}\n\n", started_at.to_rfc3339()));
-
-    let mut last_exit = None;
-    let mut last_step: Option<BootstrapStep> = None;
-    let mut failure_status = None;
-    let mut failure_error = None;
-
-    for step in &steps {
-        last_step = Some(step.clone());
-        log.push_str(&format!("$ {}\n", step.label));
-
-        let result = match run_bootstrap_step(state, step, workspace, worktree, timeout).await {
-            Ok(result) => result,
-            Err(err) => {
-                failure_status = Some(WorktreeBootstrapStatus::Failed);
-                failure_error = Some(err.to_string());
-                break;
-            }
-        };
-        last_exit = result.status.map(|v| v as i64);
-
-        append_output(&mut log, &result.stdout, "stdout");
-        append_output(&mut log, &result.stderr, "stderr");
-
-        if result.timed_out {
-            failure_status = Some(WorktreeBootstrapStatus::Timeout);
-            failure_error = Some(format!("bootstrap timed out after {}s", timeout.as_secs()));
-            break;
-        }
-
-        if let Some(code) = result.status {
-            if code != 0 {
-                failure_status = Some(WorktreeBootstrapStatus::Failed);
-                failure_error = Some(format!("command exited with code {code}"));
-                break;
-            }
+            emit_failure_notice(self, workspace_id, notice).await;
         }
     }
 
-    let finished_at = Utc::now();
-    log.push_str(&format!("\n# Finished: {}\n", finished_at.to_rfc3339()));
-    if let Some(status) = &failure_status {
-        log.push_str(&format!("# Status: {status:?}\n"));
-    } else {
-        log.push_str("# Status: success\n");
+    async fn register_bootstrap(&self, worktree_id: WorktreeId, wait_for_completion: bool) {
+        self.register_worktree_bootstrap(worktree_id, wait_for_completion)
+            .await;
     }
 
-    let (log, log_truncated) = truncate_log(&logs::redact_sensitive(&log));
-    let log_path = write_bootstrap_log(state, worktree.id, &log).await.ok();
-
-    let (status, error) = match failure_status {
-        Some(status) => (status, failure_error),
-        None => (WorktreeBootstrapStatus::Success, None),
-    };
-
-    update_bootstrap_result(
-        state,
-        WorktreeBootstrapResultUpdate {
-            worktree_id: worktree.id,
-            status: status.clone(),
-            started_at,
-            finished_at,
-            exit_code: last_exit,
-            timeout_sec: Some(timeout.as_secs() as i64),
-            error: error.clone(),
-            log_path: log_path.as_ref().map(|p| p.to_string_lossy().to_string()),
-            log_truncated: Some(log_truncated),
-            command: last_step.as_ref().and_then(|step| step.command_value()),
-            script_path: None,
-        },
-    )
-    .await;
-
-    if status != WorktreeBootstrapStatus::Success {
-        let notice = WorktreeBootstrapNotice {
-            worktree_id: worktree.id,
-            worktree_root: worktree.root_path.clone(),
-            status,
-            started_at,
-            finished_at,
-            exit_code: last_exit,
-            timeout_sec: Some(timeout.as_secs() as i64),
-            command: last_step.as_ref().and_then(|step| step.command_value()),
-            script_path: None,
-            log_path: log_path.map(|p| p.to_string_lossy().to_string()),
-            log_truncated: Some(log_truncated),
-            error,
-        };
-        emit_failure_notice(state, workspace.id, notice).await;
+    async fn finish_bootstrap(&self, worktree_id: WorktreeId) {
+        self.finish_worktree_bootstrap(worktree_id).await;
     }
-
-    Ok(())
-}
-
-impl BootstrapStep {
-    fn command_value(&self) -> Option<String> {
-        match &self.kind {
-            BootstrapStepKind::Command { command } => Some(command.clone()),
-        }
-    }
-}
-
-async fn load_bootstrap_config(
-    state: &AppState,
-    workspace: &Workspace,
-) -> Result<Option<ResolvedBootstrap>> {
-    let store = state.store_for_workspace(workspace.id).await?;
-    let Some(cfg) = workspace_config::load_worktree_bootstrap_config(&store).await? else {
-        return Ok(None);
-    };
-
-    let command = cfg
-        .setup_command
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    let Some(command) = command else {
-        return Ok(None);
-    };
-
-    let timeout_sec = cfg.timeout_sec.unwrap_or(DEFAULT_TIMEOUT_SEC);
-    let timeout_sec = if timeout_sec == 0 {
-        DEFAULT_TIMEOUT_SEC
-    } else {
-        timeout_sec
-    };
-    let wait_for_completion = cfg.wait_for_completion.unwrap_or(false);
-    Ok(Some(ResolvedBootstrap {
-        timeout: Duration::from_secs(timeout_sec),
-        command,
-        wait_for_completion,
-    }))
-}
-
-fn build_bootstrap_steps(command: &str) -> Result<Vec<BootstrapStep>> {
-    let mut steps = Vec::new();
-    let trimmed = command.trim();
-    if !trimmed.is_empty() {
-        steps.push(BootstrapStep {
-            label: trimmed.to_string(),
-            kind: BootstrapStepKind::Command {
-                command: trimmed.to_string(),
-            },
-        });
-    }
-    Ok(steps)
 }
 
 async fn run_bootstrap_step(
     state: &AppState,
-    step: &BootstrapStep,
+    step: &ctx_workspace_services::worktree_bootstrap::BootstrapStep,
     workspace: &Workspace,
     worktree: &Worktree,
     timeout: Duration,
-) -> Result<BootstrapCommandResult> {
+) -> Result<ctx_workspace_services::worktree_bootstrap::BootstrapCommandResult> {
     let data_plane = resolve_worktree_data_plane(state, worktree).await?;
     let settings = execution_effective::effective_execution_settings(state, workspace.id).await?;
     let settings = apply_data_plane_to_execution_settings(&settings, &data_plane)?;
@@ -364,9 +173,7 @@ async fn run_bootstrap_step(
         .await;
     }
 
-    let mut cmd = match &step.kind {
-        BootstrapStepKind::Command { command } => command_for_shell(command),
-    };
+    let mut cmd = command_for_shell(&step.command);
 
     cmd.current_dir(&live_worktree_root)
         .stdin(Stdio::null())
@@ -432,8 +239,8 @@ async fn run_bootstrap_step(
     let stdout = stdout_task.await.unwrap_or_else(|_| Ok(Vec::new()))?;
     let stderr = stderr_task.await.unwrap_or_else(|_| Ok(Vec::new()))?;
 
-    Ok(BootstrapCommandResult {
-        status: status.code(),
+    Ok(ctx_workspace_services::worktree_bootstrap::BootstrapCommandResult {
+        exit_code: status.code(),
         stdout: String::from_utf8_lossy(&stdout).to_string(),
         stderr: String::from_utf8_lossy(&stderr).to_string(),
         timed_out,
@@ -442,13 +249,12 @@ async fn run_bootstrap_step(
 
 async fn run_bootstrap_step_in_container(
     state: &AppState,
-    step: &BootstrapStep,
+    step: &ctx_workspace_services::worktree_bootstrap::BootstrapStep,
     workspace: &Workspace,
     worktree: &Worktree,
     sandbox: SandboxBootstrapContext<'_>,
     timeout: Duration,
-) -> Result<BootstrapCommandResult> {
-    // Ensure the harness container is up, then execute within it.
+) -> Result<ctx_workspace_services::worktree_bootstrap::BootstrapCommandResult> {
     state
         .execution
         .harness
@@ -504,29 +310,23 @@ async fn run_bootstrap_step_in_container(
             for (key, value) in &env {
                 cmd.arg("--env").arg(format!("{key}={value}"));
             }
-            cmd.arg(container_name);
-            match &step.kind {
-                BootstrapStepKind::Command { command } => {
-                    cmd.arg("sh").arg("-lc").arg(command);
-                }
-            }
+            cmd.arg(container_name)
+                .arg("sh")
+                .arg("-lc")
+                .arg(&step.command);
             cmd
         }
-        ContainerRuntimeKind::SharedVmContainer => match &step.kind {
-            BootstrapStepKind::Command { command } => {
-                ctx_avf_linux_runtime::build_guest_exec_command(
-                    &state.core.data_root,
-                    workspace.id,
-                    worktree.id,
-                    sandbox.live_worktree_root,
-                    "sh",
-                    &["-lc".to_string(), command.clone()],
-                    &env,
-                    None,
-                    false,
-                )?
-            }
-        },
+        ContainerRuntimeKind::SharedVmContainer => ctx_avf_linux_runtime::build_guest_exec_command(
+            &state.core.data_root,
+            workspace.id,
+            worktree.id,
+            sandbox.live_worktree_root,
+            "sh",
+            &["-lc".to_string(), step.command.clone()],
+            &env,
+            None,
+            false,
+        )?,
     };
 
     let mut child = cmd
@@ -567,8 +367,8 @@ async fn run_bootstrap_step_in_container(
     let stdout = stdout_task.await.unwrap_or_else(|_| Ok(Vec::new()))?;
     let stderr = stderr_task.await.unwrap_or_else(|_| Ok(Vec::new()))?;
 
-    Ok(BootstrapCommandResult {
-        status: status.code(),
+    Ok(ctx_workspace_services::worktree_bootstrap::BootstrapCommandResult {
+        exit_code: status.code(),
         stdout: String::from_utf8_lossy(&stdout).to_string(),
         stderr: String::from_utf8_lossy(&stderr).to_string(),
         timed_out,
@@ -585,25 +385,6 @@ fn command_for_shell(command: &str) -> Command {
         cmd.arg("-lc").arg(command);
         cmd
     }
-}
-
-fn append_output(log: &mut String, output: &str, label: &str) {
-    let trimmed = output.trim_end_matches('\n');
-    if trimmed.is_empty() {
-        return;
-    }
-    log.push_str(&format!("[{label}]\n"));
-    log.push_str(trimmed);
-    log.push('\n');
-}
-
-fn truncate_log(input: &str) -> (String, bool) {
-    if input.len() <= MAX_LOG_BYTES {
-        return (input.to_string(), false);
-    }
-    let mut out = input.chars().take(MAX_LOG_BYTES).collect::<String>();
-    out.push_str("\n...(truncated)\n");
-    (out, true)
 }
 
 async fn write_bootstrap_log(

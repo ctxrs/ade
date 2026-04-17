@@ -225,7 +225,7 @@ async fn prepare_provider_runtime_probe(
     let args = runtime_command.args;
 
     let probe_context =
-        probe::provider_probe_context_for_workspace_runtime(state, workspace, provider_id)
+        probe::provider_probe_context_for_workspace_runtime(state.as_ref(), workspace, provider_id)
             .await
             .map_err(PreparedProviderRuntimeProbeError::Verify)?;
     let source = probe_context.source;

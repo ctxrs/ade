@@ -1,0 +1,12 @@
+[package]
+name = "ctx-workspace-services"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+ctx-core = { path = "../ctx-core" }
+tokio.workspace = true
+tracing.workspace = true
