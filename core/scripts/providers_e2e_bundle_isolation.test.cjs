@@ -235,13 +235,25 @@ test("bundle harnesses pin cargo artifacts under the bundle build dir by default
 
   assert.match(script, /CARGO_TARGET_DIR="\$bundle_build_dir\/cargo\/\$target_key"/);
   assert.match(script, /export CARGO_TARGET_DIR/);
-  assert.match(script, /CARGO_HOME="\$bundle_build_dir\/cargo-home"/);
+  assert.match(script, /bundle_cargo_home="\$\{CTX_BUNDLE_CARGO_HOME:-\$bundle_build_dir\/cargo-home\/\$target_key\}"/);
+  assert.doesNotMatch(script, /if \[\[ -n "\$\{CARGO_HOME:-\}" \]\]/);
+  assert.match(script, /CARGO_HOME="\$\(cd "\$bundle_cargo_home" && pwd\)"/);
   assert.match(script, /export CARGO_HOME/);
-  assert.match(script, /bundle_rustup_home="\$\{CTX_BUNDLE_RUSTUP_HOME:-\$bundle_build_dir\/rustup-home\}"/);
+  assert.match(script, /bundle_rustup_home="\$\{CTX_BUNDLE_RUSTUP_HOME:-\$bundle_build_dir\/rustup-home\/\$target_key\}"/);
   assert.match(script, /-v "\$CARGO_HOME:\/cargo-home:rw"/);
   assert.match(script, /-v "\$bundle_rustup_home:\/rustup-home:rw"/);
   assert.match(script, /-e CARGO_HOME=\/cargo-home/);
   assert.match(script, /-e RUSTUP_HOME=\/rustup-home/);
+});
+
+test("containerized Rust bundle builds prepare writable bind-mount roots before Docker runs", () => {
+  const script = fs.readFileSync(bundleHarnessScriptPath, "utf8");
+
+  assert.match(script, /ensure_container_bind_mount_dir\(\) \{/);
+  assert.match(script, /chmod 0777 "\$dir"/);
+  assert.match(script, /ensure_container_bind_mount_dir "\$CARGO_HOME"/);
+  assert.match(script, /ensure_container_bind_mount_dir "\$bundle_rustup_home"/);
+  assert.match(script, /ensure_container_bind_mount_dir "\$target_dir"/);
 });
 
 test("containerized Rust bundle builds pin an explicit stable toolchain", () => {

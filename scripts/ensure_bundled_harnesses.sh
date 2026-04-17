@@ -7,6 +7,16 @@ log() {
   printf '%s\n' "$*" >&2
 }
 
+ensure_container_bind_mount_dir() {
+  local dir="$1"
+  mkdir -p "$dir"
+  if [[ "$host_os" == "macos" ]]; then
+    # Docker Desktop bind mounts on macOS can preserve stale ownership across
+    # host/container bundle runs. Make the mount roots explicitly writable.
+    chmod 0777 "$dir" >/dev/null 2>&1 || true
+  fi
+}
+
 require_cmd() {
   local cmd="$1"
   if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -331,17 +341,12 @@ else
 fi
 export CARGO_TARGET_DIR
 
-if [[ -n "${CARGO_HOME:-}" ]]; then
-  mkdir -p "$CARGO_HOME"
-  CARGO_HOME="$(cd "$CARGO_HOME" && pwd)"
-else
-  CARGO_HOME="$bundle_build_dir/cargo-home"
-  mkdir -p "$CARGO_HOME"
-  CARGO_HOME="$(cd "$CARGO_HOME" && pwd)"
-fi
+bundle_cargo_home="${CTX_BUNDLE_CARGO_HOME:-$bundle_build_dir/cargo-home/$target_key}"
+mkdir -p "$bundle_cargo_home"
+CARGO_HOME="$(cd "$bundle_cargo_home" && pwd)"
 export CARGO_HOME
 
-bundle_rustup_home="${CTX_BUNDLE_RUSTUP_HOME:-$bundle_build_dir/rustup-home}"
+bundle_rustup_home="${CTX_BUNDLE_RUSTUP_HOME:-$bundle_build_dir/rustup-home/$target_key}"
 mkdir -p "$bundle_rustup_home"
 bundle_rustup_home="$(cd "$bundle_rustup_home" && pwd)"
 
@@ -609,6 +614,9 @@ require_bridge_binary() {
     fi
 
     local image="${CTX_BUNDLE_RUST_IMAGE:-rust:1.88-bookworm}"
+    ensure_container_bind_mount_dir "$CARGO_HOME"
+    ensure_container_bind_mount_dir "$bundle_rustup_home"
+    ensure_container_bind_mount_dir "$target_dir"
     docker run --rm --platform "$platform" \
       -v "$BRIDGE_DIR:/work:rw" \
       -v "$CARGO_HOME:/cargo-home:rw" \
