@@ -4065,6 +4065,121 @@ describe("SessionSupervisor", () => {
     expect(updated?.oldestTurnSeq).toBe(10);
   });
 
+  it("keeps prepended history rows across shifted bounded replace patches after history extension", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-history-shifted-replace-rows";
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const now = new Date(Date.UTC(2026, 3, 9, 0, 0, 0)).toISOString();
+    const turn10 = mkTurn({ sessionId, turnId: "turn-10", status: "completed", startSeq: 10 });
+    const turn20 = mkTurn({ sessionId, turnId: "turn-20", status: "completed", startSeq: 20 });
+    const turn30 = mkTurn({ sessionId, turnId: "turn-30", status: "completed", startSeq: 30 });
+    const turn40 = mkTurn({ sessionId, turnId: "turn-40", status: "completed", startSeq: 40 });
+    const message10 = {
+      id: "message-10",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-10",
+      role: "user",
+      content: "history 10",
+      delivery: "immediate",
+      created_at: now,
+      turn_sequence: 1,
+    } as Message;
+    const message20 = {
+      id: "message-20",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-20",
+      role: "user",
+      content: "history 20",
+      delivery: "immediate",
+      created_at: now,
+      turn_sequence: 2,
+    } as Message;
+    const message30 = {
+      id: "message-30",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-30",
+      role: "assistant",
+      content: "history 30",
+      delivery: "immediate",
+      created_at: now,
+      turn_sequence: 3,
+    } as Message;
+    const message40 = {
+      id: "message-40",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-40",
+      role: "assistant",
+      content: "history 40",
+      delivery: "immediate",
+      created_at: now,
+      turn_sequence: 4,
+    } as Message;
+
+    sup.setSession(mkSession(sessionId));
+    internals.handleReplicaPatches([
+      {
+        op: "replace",
+        sessionId,
+        data: {
+          session: mkSession(sessionId),
+          turns: [turn20, turn30],
+          events: [],
+          messages: [message20, message30],
+          lastEventSeq: 30,
+          hasMoreTurns: true,
+        },
+      },
+    ]);
+
+    getSessionHistoryMock.mockResolvedValueOnce({
+      turns: [turn10],
+      messages: [message10],
+      has_more: false,
+      next_cursor: null,
+    } as never);
+
+    await sup.loadMoreTurns(sessionId);
+
+    internals.handleReplicaPatches([
+      {
+        op: "replace",
+        sessionId,
+        data: {
+          session: mkSession(sessionId),
+          turns: [turn20, turn30, turn40],
+          events: [],
+          messages: [message20, message30, message40],
+          lastEventSeq: 40,
+          hasMoreTurns: false,
+          replaceMode: "repair_replace",
+        },
+      },
+    ]);
+
+    const updated = internals.entries.get(sessionId);
+    expect(updated?.turns.map((turn) => turn.turn_id)).toEqual([
+      "turn-10",
+      "turn-20",
+      "turn-30",
+      "turn-40",
+    ]);
+    expect(updated?.messages.map((message) => String(message.id))).toEqual([
+      "message-10",
+      "message-20",
+      "message-30",
+      "message-40",
+    ]);
+    expect(updated?.historyExtended).toBe(true);
+    expect(updated?.hasMoreTurns).toBe(true);
+    expect(updated?.oldestTurnSeq).toBe(10);
+  });
+
   it("does not let stale active-head seed regress an interrupted turn back to running", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 

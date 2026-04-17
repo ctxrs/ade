@@ -66,6 +66,37 @@ const hasOmittedNonTerminalTurns = (
   });
 };
 
+const hasTurnOverlap = (
+  entry: TranscriptCoverageEntry,
+  head: Pick<SessionHead | SessionHeadSnapshot, "turns">,
+): boolean => {
+  const headTurnIds = new Set(
+    (Array.isArray(head.turns) ? head.turns : []).map((turn) => normalizeId(turn.turn_id)).filter(Boolean),
+  );
+  if (headTurnIds.size === 0) return false;
+  return entry.turns.some((turn) => headTurnIds.has(normalizeId(turn.turn_id)));
+};
+
+const hasMessageOverlap = (
+  entry: TranscriptCoverageEntry,
+  head: Pick<SessionHead | SessionHeadSnapshot, "messages">,
+): boolean => {
+  const headMessageIds = new Set(
+    (Array.isArray(head.messages) ? head.messages : []).map((message) => normalizeId(message.id)).filter(Boolean),
+  );
+  if (headMessageIds.size === 0) return false;
+  return entry.messages.some((message) => headMessageIds.has(normalizeId(message.id)));
+};
+
+export function shouldPreserveExistingTranscriptWindow(
+  entry: TranscriptCoverageEntry,
+  head: Pick<SessionHead | SessionHeadSnapshot, "turns" | "messages">,
+): boolean {
+  const overlapsTranscript = hasTurnOverlap(entry, head) || hasMessageOverlap(entry, head);
+  if (!overlapsTranscript) return false;
+  return !coversTurns(entry, head) || !coversMessages(entry, head);
+}
+
 export function shouldRepairSessionHeadReplace(
   entry: TranscriptCoverageEntry,
   head: SessionHead | SessionHeadSnapshot,

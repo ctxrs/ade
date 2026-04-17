@@ -3100,6 +3100,7 @@
   margin-right: 0;
   padding: 0;
   box-sizing: border-box;
+  overflow-anchor: none;
 }
 
 .wb-thread-scroller[data-pretext-virtualizer-list="1"] .wb-thread-list[data-pretext-virtualizer-content="1"] [data-pretext-virtualizer-row-shell="1"] {
@@ -3109,6 +3110,7 @@
   box-sizing: border-box;
   display: flex;
   justify-content: center;
+  overflow-anchor: none;
 }
 
 .wb-thread-scroller[data-pretext-virtualizer-list="1"] .wb-pretext-virtualizer-row[data-pretext-virtualizer-row="1"] {
@@ -3117,6 +3119,7 @@
   padding-left: var(--wb-session-padding-inline);
   padding-right: var(--wb-session-padding-inline);
   box-sizing: border-box;
+  overflow-anchor: none;
 }
 
 .wb-thread-stack [data-testid="virtuoso-scroller"] {

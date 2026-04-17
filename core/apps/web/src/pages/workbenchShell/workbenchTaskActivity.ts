@@ -373,6 +373,13 @@ export const resolveWorkbenchActiveSessionId = ({
   primarySessionId: string;
   sessions: WorkspaceActiveSnapshotItem["sessions"][number]["session"][];
 }): string | null => {
+  const activeSessionBelongsToTask =
+    Boolean(activeSessionIdFromTab)
+    && (
+      activeSessionIdFromTab === primarySessionId
+      || sessions.some((session) => idToString(session.id) === activeSessionIdFromTab)
+    );
+  if (activeSessionBelongsToTask) return activeSessionIdFromTab;
   if (primarySessionId) return primarySessionId;
   if (sessions.length === 0) return activeSessionIdFromTab ?? null;
   return pickPreferredSessionId(sessions, activeSessionIdFromTab);

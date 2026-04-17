@@ -359,6 +359,81 @@ describe("usePretextVirtualizerSessionController", () => {
     });
   });
 
+  it("does not continue loading older history after a prepend once the user reverses downward", async () => {
+    const loadOlder = vi.fn(async () => {});
+    const scroller = document.createElement("div");
+    Object.defineProperty(scroller, "scrollTop", { value: 0, writable: true });
+    Object.defineProperty(scroller, "scrollHeight", { value: 3000, configurable: true });
+    Object.defineProperty(scroller, "clientHeight", { value: 600, configurable: true });
+    const methods: PretextVirtualizerListMethods<WorkbenchListItem, WorkbenchMessageListContext> = {
+      cancelSmoothScroll: () => undefined,
+      scrollerElement: () => scroller,
+      restoreAnchor: () => undefined,
+      scrollToBottom: () => undefined,
+      scrollToOffset: () => undefined,
+      scrollToItem: () => undefined,
+    };
+    const extendedListItems: WorkbenchListItem[] = [
+      {
+        kind: "message",
+        id: "message-0",
+        role: "user",
+        content: "older",
+        attachments: [],
+        created_at: "2026-03-17T23:59:00Z",
+      },
+      ...listItems,
+    ];
+
+    const { result, rerender } = renderHook(
+      ({ items }: { items: WorkbenchListItem[] }) =>
+        usePretextVirtualizerSessionController({
+          sessionId: "session-1",
+          isActive: true,
+          loaded: true,
+          listItems: items,
+          canLoadOlder: true,
+          loadOlder,
+          showDebug: false,
+        }),
+      { initialProps: { items: listItems } },
+    );
+
+    result.current.methodsRef.current = methods;
+
+    await act(async () => {
+      result.current.onScroll({
+        listOffset: -40,
+        visibleListHeight: 600,
+        bottomOffset: 440,
+      });
+      result.current.onScroll({
+        listOffset: -4,
+        visibleListHeight: 600,
+        bottomOffset: 360,
+      });
+      await Promise.resolve();
+    });
+
+    expect(loadOlder).toHaveBeenCalledTimes(1);
+
+    scroller.scrollTop = 24;
+    act(() => {
+      result.current.onScroll({
+        listOffset: -24,
+        visibleListHeight: 600,
+        bottomOffset: 360,
+      });
+    });
+
+    await act(async () => {
+      rerender({ items: extendedListItems });
+      await Promise.resolve();
+    });
+
+    expect(loadOlder).toHaveBeenCalledTimes(1);
+  });
+
   it("marks the initial projection as rendered once the first visible range arrives", () => {
     const onInitialContentRendered = vi.fn();
     const { result } = renderHook(() =>
