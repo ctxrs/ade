@@ -9,7 +9,7 @@ package(default_visibility = ["//visibility:public"])
 
 CTX_HTTP_RUSTC_ENV = {
     "CARGO_MANIFEST_DIR": "core/crates/ctx-http",
-    "CARGO_PKG_VERSION": "0.58.2",
+    "CARGO_PKG_VERSION": "0.58.3",
     "CTX_BUILD_ID": "bazel",
     "CTX_DEV_INSTANCE_ID": "bazel",
 }
